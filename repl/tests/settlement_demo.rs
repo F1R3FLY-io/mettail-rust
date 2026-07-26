@@ -30,30 +30,43 @@
 //! language RhoCalc …`, which will move with the production code that emits it), and every
 //! other needle names a BACKEND (`RhoMachine`, `Dovetail`) or another language (`Calculator`).
 //!
-//! ## ★ Defect D1 — a guard rejection does not backtrack to the next resting datum
+//! ## ★ Defect D1 — a guard rejection did not backtrack to the next resting datum (REPAIRED)
 //!
-//! Beat 3's third command (`{ desk | offer!(55u32) | offer!(42u32) }`) is claimed by the run
-//! sheet to settle the 42 deterministically. It does not: over 20 hand runs (2026-07-25) it
-//! produced `OUT: [42]` 12 times and `OUT: []` 8 times. The run sheet states the CORRECT
+//! **Historical record, retained because this file's Beat-3 assertions are its regression
+//! guard.** Until 2026-07-26, Beat 3's third command (`{ desk | offer!(55u32) | offer!(42u32) }`)
+//! did not settle the 42 deterministically: over 20 hand runs (2026-07-25) it produced
+//! `OUT: [42]` 12 times and `OUT: []` 8 times. The run sheet always stated the CORRECT
 //! semantics — a guarded receive with a satisfying datum available is an enabled COMM, and
-//! resting instead is a stuck state the rho calculus does not permit — and the matcher is
+//! resting instead is a stuck state the rho calculus does not permit — and the matcher was
 //! incomplete:
 //!
-//! * `rspace++/src/rspace/space_matcher.rs::find_matching_data_candidate` returns the FIRST
-//!   datum that matches SPATIALLY; the `where` guard is not consulted at that point.
-//! * `…::extract_first_match` then evaluates the guard through `Match::check_commit`, and on
-//!   rejection `continue`s to the next waiting CONTINUATION — never to the next DATUM.
-//! * `rspace.rs::consume` has the same shape: one `extract_data_candidates` pick, one
-//!   `check_commit`, and on `false` the continuation is installed and the data left alone.
+//! * `rspace++/src/rspace/space_matcher.rs::find_matching_data_candidate` returned the FIRST
+//!   datum that matched SPATIALLY; the `where` guard was not consulted at that point.
+//! * `…::extract_first_match` then evaluated the guard through `Match::check_commit`, and on
+//!   rejection `continue`d to the next waiting CONTINUATION — never to the next DATUM.
+//! * `rspace.rs::locked_consume` had the same shape: one `extract_data_candidates` pick, one
+//!   `check_commit`, and on `false` the continuation was installed and the data left alone.
 //!
-//! So the outcome is decided entirely by WHICH datum the single pick returns, and that is not
-//! stable — fixing the arrival order does not fix it either (see
-//! [`guard_rejection_does_not_backtrack_to_the_next_resting_datum`], which holds arrival order
-//! constant and still splits 6 : 2 over 8 runs). The stuck state is final rather than early:
-//! the store is read at quiescence, with an enabled COMM left unfired and no later produce to
-//! re-trigger it. That witness is written to FAIL LOUDLY once the matcher is repaired, so this
-//! file and the run sheet get revisited together, while the demo-level beats assert what is
-//! true in every run: the vetoed 55 is never consumed and never observed.
+//! So the outcome was decided entirely by WHICH datum the single pick returned, and that was
+//! not stable — fixing the arrival order did not fix it either.
+//!
+//! **The repair.** `f1r3node-rust-mettail` `feature/mettail` commits `6bc58743` (fix) and
+//! `5d37f67e` (tests). `SpaceMatcher::extract_guarded_data_candidates` is now ONE depth-first
+//! search over the candidate-selection tree with the guard evaluated at the leaf, returning the
+//! LEXICOGRAPHICALLY LEAST selection satisfying both the spatial patterns and the guard. The
+//! selection ORDER is unchanged; the SEARCH is completed. Every COMM-firing path goes through
+//! it (play consume, play produce, replay consume, replay produce), and the candidate order is
+//! hoisted into `rspace::candidate_order` so play and replay agree by construction. Selection
+//! is therefore a pure function of tuplespace CONTENT and the continuation: store insertion
+//! order no longer leaks into the outcome.
+//!
+//! **What guards it here.** [`guard_rejection_backtracks_to_the_next_resting_datum`] runs the
+//! fixed two-datum program 24 times in EACH arrival order and requires the settling outcome
+//! every single time, rejecting both the old stuck outcome (D1 has returned) and any third
+//! outcome (the 55 consumed, or a value fabricated). The demo-level beats
+//! ([`beat_3_the_inadmissible_offer_is_never_the_one_that_settles`],
+//! [`beat_3_two_offers_never_consume_the_inadmissible_one`]) are correspondingly unqualified:
+//! the 42 settles, the 55 rests, and that is the only outcome either of them accepts.
 
 #![cfg(feature = "rho-languages")]
 
@@ -438,30 +451,28 @@ async fn beat_3_the_vetoed_offer_is_left_resting_on_the_book() {
 
 /// Beat 3's third command, where the book holds BOTH an admissible and an inadmissible offer.
 ///
-/// ⚠ Defect D1 (module docs): the run sheet claims `OUT: [42] (1 value(s))` — the correct
-/// semantics, since a receive with a satisfying datum available is an enabled COMM — but the
-/// matcher never backtracks past a guard-rejected datum, so the outcome turns on which of the
-/// two offers the single spatial pick returns (12 × `[42]`, 8 × `[]` over 20 hand runs,
-/// 2026-07-25). What this test asserts is what holds in EVERY run and is the beat's actual
-/// claim about the guard: the 55 is never consumed and never observed. The settling half is
-/// asserted deterministically one offer at a time by
-/// [`beat_3_the_vetoed_offer_is_left_resting_on_the_book`], and the defect itself by
-/// [`guard_rejection_does_not_backtrack_to_the_next_resting_datum`].
+/// The guard vetoes the 55 and the matcher backtracks to the 42, so the enabled COMM fires:
+/// `OUT: [42] (1 value(s))`, unqualified, in every run. Until defect D1 was repaired (module
+/// docs) this returned `OUT: []` a substantial fraction of the time and the assertion below
+/// had to admit both outcomes; it no longer does. The resting half of the same beat — the 55
+/// still on the book, the 42 gone — is [`beat_3_two_offers_never_consume_the_inadmissible_one`],
+/// and the repetition experiment over both arrival orders is
+/// [`guard_rejection_backtracks_to_the_next_resting_datum`].
 #[test]
 fn beat_3_the_inadmissible_offer_is_never_the_one_that_settles() {
     let transcript = run_repl_with_desk(&[BEAT_3_TWO_OFFERS]);
-    let observed = out_lines(&transcript);
-    assert_eq!(observed.len(), 1, "one exec, one observation channel: {observed:?}");
-    assert!(
-        observed[0] == "OUT: [42] (1 value(s))" || observed[0] == "OUT: [] (0 value(s))",
-        "the two-offer book settles the 42 or rests (defect D1) — never anything else: {observed:?}"
+    assert_eq!(
+        out_lines(&transcript),
+        vec!["OUT: [42] (1 value(s))"],
+        "the two-offer book settles the 42: the guard's veto of the 55 sends the matcher to the \
+         next resting datum rather than abandoning an enabled COMM"
     );
     assert_absent(&transcript, "OUT: [55]");
 }
 
-/// The resting side of the same beat: whatever the scheduler picks, the 55 is on the book
-/// afterwards, and the 42 is on the book exactly when it did not settle. No run consumes the
-/// 55, and no run fabricates a value.
+/// The resting side of the same beat, read from the same quiescent store: the 42 settled and
+/// is gone from the book, the vetoed 55 is still on it. Nothing is consumed that the guard
+/// refused, and nothing is fabricated.
 #[tokio::test(flavor = "multi_thread")]
 async fn beat_3_two_offers_never_consume_the_inadmissible_one() {
     let observed = rest_on_channels(
@@ -469,20 +480,14 @@ async fn beat_3_two_offers_never_consume_the_inadmissible_one() {
         &["OUT", "offer"],
     )
     .await;
-    let out = &observed[0].1;
-    let offer = &observed[1].1;
-    assert!(
-        out.as_slice() == ["42".to_string()] || out.is_empty(),
-        "the guarded receive settles the 42 or rests (defect D1): {observed:?}"
-    );
-    assert!(offer.contains(&"55".to_string()), "the 55 is never consumed: {observed:?}");
-    let expected_offer: Vec<String> = match out.is_empty() {
-        true => vec!["42".to_string(), "55".to_string()],
-        false => vec!["55".to_string()],
-    };
     assert_eq!(
-        offer, &expected_offer,
-        "the book holds exactly what did not settle: {observed:?}"
+        observed,
+        vec![
+            ("OUT".to_string(), vec!["42".to_string()]),
+            ("offer".to_string(), vec!["55".to_string()]),
+        ],
+        "the admissible offer settles and the vetoed one is left resting — the guard decides \
+         WHICH datum the COMM takes, not WHETHER the enabled COMM happens"
     );
 }
 
@@ -771,80 +776,146 @@ fn the_shipped_guard_spellings_parse_and_lower() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
-// ⚠ Defect D1 — pinned as a repetition experiment over one fixed program
+// ★ D1 regression guard — a repetition experiment over one fixed program, in both orders
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-/// ⚠ The witness for defect D1 (module docs): a `where`-guard rejection does not backtrack to
-/// the next resting datum, so an ENABLED rendezvous can be permanently unreachable.
+/// The regression guard for defect D1 (module docs): a `where`-guard rejection MUST backtrack
+/// to the next resting datum, so an enabled rendezvous is never left unfired.
 ///
 /// **The fixed program.** Two data rest on `@"offer"` — a 55 the guard rejects and a 42 it
 /// admits — and only then is the guarded receive installed. There is no later produce to
 /// re-trigger the rendezvous, so whatever the consume decides is final: the store is read at
-/// quiescence. The 42 satisfies the guard in EVERY run, so the COMM is enabled in every run
-/// and `OUT == [42]`, `offer == [55]` is the only outcome the semantics admit.
+/// quiescence. The 42 satisfies the guard, so the COMM is enabled, and `OUT == [42]`,
+/// `offer == [55]` is the only outcome the semantics admit — in every run, without exception.
 ///
-/// **Why this is a repetition experiment rather than a single assertion.** The consume takes
-/// exactly ONE spatial pick (`find_matching_data_candidate` — the guard is not consulted),
-/// evaluates the guard once (`check_commit`), and on rejection abandons the attempt. WHICH of
-/// the two resting data it picks is not stable even with arrival order fixed: over 8
-/// consecutive runs (2026-07-25) this exact program rested 6 times and committed 2 times. So
-/// the defect is stated the only way it is true — the stuck state is REACHABLE — and both
-/// outcomes are required to appear, which together prove the run-to-run split rather than a
-/// uniformly-broken or uniformly-working matcher.
+/// **Why a repetition experiment rather than a single assertion.** A single run cannot tell
+/// "always settles" apart from "settled once because the pool happened to present the 42
+/// first" — which is precisely how this program behaved before the repair (6 rests : 2
+/// settlements over 8 consecutive runs, 2026-07-25, arrival order held constant). The
+/// pre-repair outcome was decided entirely by WHICH datum the single spatial pick returned, so
+/// the two axes that used to decide it are both swept here: repetition (`TRIALS` runs, each on
+/// a fresh in-memory machine) and arrival order (both permutations of the two producers). A
+/// re-broken matcher that settles even a `1/24` fraction of the time in either order fails.
 ///
-/// **Canary.** When the matcher backtracks past a guard-rejected datum, no run rests and this
-/// test FAILS on its `rested > 0` assertion — deliberately, so this file, the run sheet's
-/// Beat 3, and [`beat_3_the_inadmissible_offer_is_never_the_one_that_settles`] are revisited
-/// together. With `p(rest) ≈ 0.75` per trial the 24 trials below make a false failure
-/// (~`0.25^24`) unreachable in practice.
+/// **Why arrival order is a real axis and not decoration.** The repair hoists candidate order
+/// into `rspace::candidate_order` — a total order on candidate BYTES with the store index only
+/// as tie-breaker — so selection is a pure function of tuplespace CONTENT and the continuation.
+/// Producing the 55 first must therefore give the same answer as producing the 42 first. The
+/// f1r3node-side pair `guard_rejection_backtracks_to_the_next_resting_datum` /
+/// `the_guarded_selection_does_not_depend_on_arrival_order` (`5d37f67e`) is the same experiment
+/// at the reducer layer, where the pre-fix matcher passed the first and failed the second.
+///
+/// **On failure.** The stuck outcome `OUT == []`, `offer == [42, 55]` means D1 itself is back:
+/// the guard was consulted, rejected its one pick, and the consume never tried the other datum.
+/// Any other outcome is a larger defect — the 55 consumed (the guard is not being applied at
+/// all) or a value fabricated. The two are reported separately below, because they point at
+/// different code.
 #[tokio::test(flavor = "multi_thread")]
-async fn guard_rejection_does_not_backtrack_to_the_next_resting_datum() {
-    /// The desk's guard and offers, transliterated to Rholang: the defect lives in the SHARED
-    /// matcher, so the witness is written at the layer that reaches it most directly.
+async fn guard_rejection_backtracks_to_the_next_resting_datum() {
+    /// The desk's guard and offers, transliterated to Rholang: the defect lived in the SHARED
+    /// matcher, so the guard is written at the layer that reaches it most directly.
     const GUARDED_RECEIVE: &str = r#"for (@px <- @"offer" where px <= 45) { @"OUT"!(px) }"#;
     const ADMISSIBLE: &str = r#"@"offer"!(42)"#;
     const REJECTED: &str = r#"@"offer"!(55)"#;
-    /// Trials of the same fixed program. See the canary note for the sizing argument.
+    /// Trials of the same fixed program, per arrival order. See the sizing argument above.
     const TRIALS: usize = 24;
 
-    let mut committed = 0usize;
-    let mut rested = 0usize;
-    for trial in 0..TRIALS {
-        // Each producer is its own evaluation, so both data are resting BEFORE the guarded
-        // receive is installed — the consume path this defect is about.
-        let observed = run_rholang_source_sequence_for_oracle_and_read_ints(
-            &[ADMISSIBLE, REJECTED, GUARDED_RECEIVE],
-            &["OUT", "offer"],
-        )
-        .await
-        .expect("the guarded receive sequence runs");
-        let mut out = observed.get("OUT").cloned().unwrap_or_default();
-        let mut book = observed.get("offer").cloned().unwrap_or_default();
-        out.sort();
-        book.sort();
-        match (out.as_slice(), book.as_slice()) {
-            // The semantics: the admissible datum settles, the rejected one stays on the book.
-            ([42], [55]) => committed += 1,
-            // ⚠ D1: the guard rejected the pick and the consume never tried the other datum.
-            ([], [42, 55]) => rested += 1,
-            other => panic!(
-                "trial {trial}: a guarded consume may only settle the 42 or rest — it may \
-                 never consume the 55 and never fabricate a value: {other:?}"
-            ),
+    // Enforced at COMPILE time so the repetition cannot be quietly tuned away: one run cannot
+    // distinguish "always settles" from "settled once because the pool happened to order the
+    // 42 first", which is the whole point of this test.
+    const _: () = assert!(TRIALS > 1, "the trial count must stay a repetition, not one run");
+
+    // The two arrival orders. Each producer is its own evaluation on the shared machine, so
+    // both data are resting BEFORE the guarded receive is installed — the consume path D1 was
+    // about — and the order below is the order the store received them in.
+    let orders: [(&str, [&str; 3]); 2] = [
+        ("admissible first", [ADMISSIBLE, REJECTED, GUARDED_RECEIVE]),
+        ("rejected first", [REJECTED, ADMISSIBLE, GUARDED_RECEIVE]),
+    ];
+    let expected_settlements = TRIALS * orders.len();
+
+    let mut settled = 0usize;
+    for (order, sequence) in orders {
+        for trial in 0..TRIALS {
+            let observed =
+                run_rholang_source_sequence_for_oracle_and_read_ints(&sequence, &["OUT", "offer"])
+                    .await
+                    .expect("the guarded receive sequence runs");
+            let mut out = observed.get("OUT").cloned().unwrap_or_default();
+            let mut book = observed.get("offer").cloned().unwrap_or_default();
+            out.sort();
+            book.sort();
+            match (out.as_slice(), book.as_slice()) {
+                // The semantics: the admissible datum settles, the rejected one stays resting.
+                ([42], [55]) => settled += 1,
+                // ⚠ D1 has RETURNED: the guard rejected its pick and the consume gave up rather
+                // than trying the other datum, stranding an enabled COMM.
+                ([], [42, 55]) => panic!(
+                    "⚠ DEFECT D1 HAS RETURNED ({order}, trial {trial} of {TRIALS}): the guard \
+                     rejected the 55 and the consume never tried the 42, leaving an ENABLED \
+                     COMM unfired at quiescence. The matcher must search the whole selection \
+                     tree with the guard at the leaf (f1r3node `6bc58743`, \
+                     `SpaceMatcher::extract_guarded_data_candidates`), not approve a single \
+                     spatial pick."
+                ),
+                other => panic!(
+                    "{order}, trial {trial} of {TRIALS}: a guarded consume may only settle the \
+                     42 — it may never consume the 55 (which would mean the guard is not \
+                     applied at all) and never fabricate a value: {other:?}"
+                ),
+            }
         }
     }
 
-    assert!(
-        rested > 0,
-        "⚠ DEFECT D1 appears to be FIXED: {TRIALS}/{TRIALS} trials settled the enabled COMM. \
-         That is the correct semantics — so tighten this test to require it, restore Beat 3's \
-         unqualified `OUT: [42] (1 value(s))` in demos/rhocalc-settlement/RUN-SHEET.md, and \
-         tighten beat_3_the_inadmissible_offer_is_never_the_one_that_settles"
+    assert_eq!(
+        settled, expected_settlements,
+        "every trial in every arrival order must settle the enabled COMM"
     );
-    assert!(
-        committed > 0,
-        "the rendezvous must be REACHABLE — {TRIALS}/{TRIALS} trials rested, which would mean \
-         the guarded consume never commits at all rather than picking nondeterministically \
-         (a different, larger defect than D1)"
+}
+
+/// The negative control for [`guard_rejection_backtracks_to_the_next_resting_datum`], and the
+/// reason its green result carries information.
+///
+/// A completed search that never rests would satisfy that test vacuously — so would a harness
+/// that could not observe a rest at all. This runs the SAME program shape through the SAME
+/// readback with one variable changed, the guard's threshold, chosen so that NO resting datum
+/// satisfies it: the search must then exhaust every candidate and rest, leaving both data on
+/// the book, emitting nothing and fabricating nothing. That is the exact
+/// `OUT == []`, `offer == [42, 55]` shape the D1 arm above panics on, which is what proves the
+/// arm is live rather than dead code.
+///
+/// It is also the demo's guard-atomicity claim at its limit — `GuardedCommSoundness.v`'s
+/// `failed_guard_no_commit` and `guarded_attempt_no_fabrication` when the guard refuses the
+/// whole book — and the mettail-layer mirror of the f1r3node matcher suite's own negative
+/// (`rspace++/tests/guarded_matching_tests.rs`, `5d37f67e`).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_guard_no_resting_datum_satisfies_exhausts_the_search_and_rests() {
+    /// Same receive as the regression guard, with the threshold BELOW both offers — the single
+    /// changed variable.
+    const UNSATISFIABLE_RECEIVE: &str = r#"for (@px <- @"offer" where px <= 20) { @"OUT"!(px) }"#;
+    const ADMISSIBLE: &str = r#"@"offer"!(42)"#;
+    const REJECTED: &str = r#"@"offer"!(55)"#;
+
+    let observed = run_rholang_source_sequence_for_oracle_and_read_ints(
+        &[ADMISSIBLE, REJECTED, UNSATISFIABLE_RECEIVE],
+        &["OUT", "offer"],
+    )
+    .await
+    .expect("the guarded receive sequence runs");
+    let mut out = observed.get("OUT").cloned().unwrap_or_default();
+    let mut book = observed.get("offer").cloned().unwrap_or_default();
+    out.sort();
+    book.sort();
+
+    assert_eq!(
+        out,
+        Vec::<i64>::new(),
+        "a guard no datum satisfies must emit nothing: the search exhausts, it does not settle \
+         for an inadmissible candidate"
+    );
+    assert_eq!(
+        book,
+        vec![42, 55],
+        "…and it must consume nothing: every rejected datum is still resting at quiescence"
     );
 }

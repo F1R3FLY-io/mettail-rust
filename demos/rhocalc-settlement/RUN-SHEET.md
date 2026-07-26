@@ -4,9 +4,8 @@ A live REPL demonstration of semantic predicates (`where` clauses) in RhoCalc an
 applications dispatching via the rho-native integration onto F1r3node's RSpace. Stock RhoCalc —
 no custom language definition. Every `exec` runs on a fresh in-memory Rho machine; the `step`
 trace observes the production tuplespace one committed COMM at a time, so a recording and a live
-run match on trace content. Every beat below reproduced identically over five consecutive runs
-(2026-07-25) — with one exception, Beat 3's third command, which is nondeterministic for the
-reason recorded there.
+run match on trace content. Every beat below reproduces identically over consecutive runs
+(2026-07-25; Beat 3's third command re-validated 2026-07-26 — see its note).
 
 > Status: **VALIDATED end to end, 2026-07-25** — every command below was run by hand and every
 > output on this page is the observed one, pinned. The whole script is now a CI gate:
@@ -17,8 +16,9 @@ reason recorded there.
 > (`every_run_sheet_command_line_is_driven_by_this_test`). Guard-spelling fallbacks are inline
 > per beat and are **not** needed today — the shipped `<=` and infix-`*` spellings parse.
 >
-> ⚠ One beat is affected by a live defect: **Beat 3's third command is nondeterministic**
-> (defect D1, detailed in that beat). Read it before presenting.
+> ★ **No live defects.** Beat 3's third command used to be nondeterministic (defect D1); the
+> matcher was repaired on 2026-07-26 and the beat is deterministic. Every expected output on
+> this page is now unqualified.
 
 Launch (the repl package takes a startup language):
 
@@ -132,51 +132,47 @@ Expected: `OUT: [] (0 value(s))` — the veto is VISIBLE as an empty observation
 RhoCalc> exec { desk | @("offer")!(55u32) | @("offer")!(42u32) }
 ```
 
-Expected — ⚠ **read the defect note below before presenting**: `OUT: [42] (1 value(s))` is the
-CORRECT answer (the 55 offer is never consumed; it stays on the book), but today this command
-returns `OUT: [] (0 value(s))` a substantial fraction of the time: **12 × `[42]` and 8 × `[]`
-over 20 consecutive runs** (measured 2026-07-25).
+Expected: `OUT: [42] (1 value(s))` — the guard vetoes the 55, the matcher moves on to the next
+resting datum, and the 42 settles. The 55 is never consumed; it stays on the book.
 
-> ### ⚠ Defect D1 — a guard rejection does not backtrack to the next resting datum
+This is the beat that says the veto is a *selection* criterion and not merely an *approval*
+stamp. A guarded receive is enabled by *any* resting datum that matches the pattern **and**
+satisfies the guard, so with the 42 on the book the COMM is enabled — and an enabled COMM
+fires. Resting here would not be quiescence, it would be a stuck state the rho calculus does
+not admit.
+
+> ### ★ How this beat became deterministic — defect D1, repaired 2026-07-26
 >
-> **What the semantics require.** A guarded receive is enabled by *any* resting datum that
-> matches the pattern **and** satisfies the guard. With the 42 on the book the COMM is enabled,
-> so resting is not quiescence — it is a stuck state the rho calculus does not admit. The
-> expectation above is the specification; the implementation is incomplete.
+> Until 2026-07-26 this command returned `OUT: [] (0 value(s))` a substantial fraction of the
+> time — **12 × `[42]` and 8 × `[]` over 20 consecutive runs** (measured 2026-07-25). The
+> guard was part of candidate APPROVAL but not of candidate SELECTION, so rejection retried
+> the wrong axis: `space_matcher.rs::find_matching_data_candidate` returned the first datum
+> matching **spatially**, `extract_first_match` then evaluated the guard via
+> `Match::check_commit` and on rejection advanced to the next waiting **continuation** — never
+> to the next **datum** — and `rspace.rs::locked_consume` had the same shape. Because `@px`
+> matches either offer, the outcome was decided entirely by which datum the single pick
+> returned, and that was not stable even with the arrival order pinned.
 >
-> **Where it breaks.** The guard is not part of candidate SELECTION, only of candidate
-> APPROVAL, and rejection retries the wrong axis:
->
-> | site (`f1r3node-rust-mettail`) | what it does |
-> |---|---|
-> | `rspace++/src/rspace/space_matcher.rs` · `find_matching_data_candidate` | returns the FIRST datum matching **spatially**; the `where` guard is not consulted here |
-> | `rspace++/src/rspace/space_matcher.rs` · `extract_first_match` | evaluates the guard via `Match::check_commit`; on rejection `continue`s to the next waiting **continuation** — never to the next **datum** |
-> | `rspace++/src/rspace/rspace.rs` · `consume` | one `extract_data_candidates` pick, one `check_commit`; on `false` the continuation is installed and the data are left untouched |
->
-> Because the pattern `@px` matches either offer, the outcome is decided entirely by WHICH
-> datum the single pick returns — and that is not stable: pinning the arrival order does not
-> pin it either. A program that produces the 42, then the 55, then installs the receive — so
-> both offers are resting and no later produce can re-trigger the rendezvous — still rested 6
-> times and settled 2 times over 8 consecutive runs. The stuck state is therefore FINAL, not
-> merely early: the store is read at quiescence, with an enabled COMM left unfired.
+> **The repair** (`f1r3node-rust-mettail` `feature/mettail`, `6bc58743` + `5d37f67e`):
+> `SpaceMatcher::extract_guarded_data_candidates` is one depth-first search over the
+> candidate-selection tree with the guard evaluated at the leaf, returning the lexicographically
+> least selection that satisfies both the spatial patterns and the guard. The selection *order*
+> is unchanged; the *search* is completed. Every COMM-firing path uses it — play consume, play
+> produce, replay consume, replay produce — and candidate order is hoisted into
+> `rspace::candidate_order` so play and replay agree by construction. Selection is a pure
+> function of tuplespace *content* and the continuation: store insertion order no longer leaks
+> into the outcome, which is why this beat is now reproducible rather than merely likely.
 >
 > **Pinned, not narrated.** `repl/tests/settlement_demo.rs` ::
-> `guard_rejection_does_not_backtrack_to_the_next_resting_datum` runs that fixed program 24
-> times and requires BOTH outcomes to occur — the stuck one (the defect is real) and the
-> settling one (the rendezvous really is enabled, so the stuck runs are stuck rather than
-> impossible). It also fails on any THIRD outcome, which is what pins the part that never
-> varies: no run consumes the 55, and no run fabricates a value. The test is written to FAIL
-> once the matcher is repaired, so this beat gets revisited with it.
->
-> **Presenting.** Either skip this command, or run it and say the true thing: the veto is
-> absolute (the 55 is never consumed, in any run — `beat_3_two_offers_never_consume_the_inadmissible_one`),
-> and the *other* offer's rendezvous is currently at the mercy of a matcher that stops at its
-> first rejected candidate.
+> `guard_rejection_backtracks_to_the_next_resting_datum` runs the equivalent fixed program 24
+> times in *each* arrival order and requires the settling outcome every single time. It fails
+> loudly on the old stuck outcome (D1 has returned) and on any third outcome — no run may
+> consume the 55, and no run may fabricate a value.
 
 **Proves**: the `where` clause rides as `Receive.condition`; the machine matcher's
-`check_commit` evaluates it purely — COMM-free — and a failed guard leaves the consume
-uncommitted and the datum resting. Fail-closed veto, zero partial effects. (What it does *not*
-yet prove is liveness for a second, admissible datum on the same channel — defect D1.)
+`check_commit` evaluates it purely — COMM-free — a failed guard leaves that datum resting, and
+the search moves on to the next candidate rather than abandoning the rendezvous. Fail-closed
+veto, zero partial effects, and liveness for a second admissible datum on the same channel.
 
 ## Beat 3b — The guard the machine never sees (1.5 min, optional)
 
@@ -224,10 +220,10 @@ guard and a `true` guard drive `check_commit` to the identical verdict — mecha
 > "The guard is not an if-statement in the body — the body never starts. The veto happens inside
 > the machine's matcher, before the COMM commits, and the rejected offer is still on the book."
 
-(The stronger reading — "…still on the book *for anyone else*" — is the liveness half, and that
-is exactly what defect D1 currently withholds: another taker's rendezvous can be blocked by the
-rejected datum rather than merely coexisting with it. Say the resting half, which is proven, and
-leave the liveness half for when D1 is repaired.)
+(The stronger reading — "…still on the book *for anyone else*" — is the liveness half, and it
+holds too, since defect D1 was repaired on 2026-07-26: a rejected datum coexists with the
+rendezvous instead of blocking it, so another taker whose guard admits it still fires. Beat 3's
+third command is exactly that claim in one line.)
 
 ## Beat 4 — Atomic cross-channel settlement (2 min)
 
@@ -440,7 +436,8 @@ site, the operational face of INV-14.
 | Beat 3b's three claims (vacuous guard fires; its `where` is absent from the artifact; the refuted mirror keeps its guard and never fires) | `rholang-runtime/tests/guard_discharge_corpus.rs`: `the_run_sheets_beat_3b_is_exactly_what_the_compiler_does` |
 | Every settlement guard is payload-dependent, so compile-time discharge leaves the demo byte-identical | `guard_discharge_corpus.rs`: `every_settlement_demo_guard_is_residual_so_the_demo_is_unchanged` |
 | **Every beat on this page, as the audience sees it** | `repl/tests/settlement_demo.rs` — the built `repl` binary driven with these command lines |
-| ⚠ Defect D1: a guard rejection does not backtrack to the next resting datum | `repl/tests/settlement_demo.rs`: `guard_rejection_does_not_backtrack_to_the_next_resting_datum` — 24 trials of one fixed program, requiring both the stuck and the settling outcome and rejecting any third |
+| A guard rejection backtracks to the next resting datum, so an enabled COMM is never stranded (defect D1, repaired 2026-07-26) | `repl/tests/settlement_demo.rs`: `guard_rejection_backtracks_to_the_next_resting_datum` — 24 trials of one fixed program in each arrival order, requiring the settling outcome every time and rejecting both the stuck outcome and any third. Matcher-level: f1r3node `rspace++/tests/guarded_matching_tests.rs` (15 tests); reducer-level: `rholang/…/reduce_spec.rs` (`6bc58743` + `5d37f67e`) |
+| …and the search still fails CLOSED when the guard admits nothing: everything rests, nothing is fabricated | `repl/tests/settlement_demo.rs`: `a_guard_no_resting_datum_satisfies_exhausts_the_search_and_rests` — the negative control that also proves the row above is not vacuous |
 
 ## Prep status
 
@@ -455,13 +452,16 @@ site, the operational face of INV-14.
   replaced by the observed one; the shipped `<=` and infix-`*` guard spellings both parse; and
   piped stdin works (rustyline's non-tty path reads the script and suppresses the prompt, which
   is exactly what makes the CI gate possible). Two beats did not match and are corrected in
-  place: Beat 1's bare-numeral carrier (divergence I) and cameo A's τ promise. One beat is
-  defective: Beat 3's third command (defect D1).
-- **P4 (open — NOT a prerequisite for presenting)**: defect D1. Repairing it means making the
-  `where` guard part of candidate SELECTION rather than post-hoc approval — either by threading
-  the guard into `find_matching_data_candidate` so a rejected datum is simply not a match, or by
-  looping the guard check over remaining data before giving up. That is a change to
-  `f1r3node-rust-mettail`'s RSpace, so it belongs to the f1r3node workstream, not to this demo.
+  place: Beat 1's bare-numeral carrier (divergence I) and cameo A's τ promise. One beat was
+  defective — Beat 3's third command (defect D1) — and is now repaired; see P4.
+- **P4**: DONE (2026-07-26) — defect D1 is repaired. The `where` guard is now part of candidate
+  SELECTION rather than post-hoc approval: `SpaceMatcher::extract_guarded_data_candidates`
+  searches the whole selection tree with the guard at the leaf and returns the lexicographically
+  least admissible selection. Landed in `f1r3node-rust-mettail` `feature/mettail` (`6bc58743`
+  fix, `5d37f67e` tests), as anticipated — it was a change to that repo's RSpace, not to this
+  demo. Mettail-side follow-through: Beat 3's third command restored to its unqualified
+  `OUT: [42] (1 value(s))`, and `repl/tests/settlement_demo.rs` tightened from a
+  both-outcomes-must-occur witness to an every-trial-must-settle regression guard.
 - **Optional polish (not prerequisites)**: decimal rendering for BigInt observations
   (display-only); a consumed-cost readout in exec output (future work — metering runs, the REPL
   just doesn't print the number today; claim metering via the tests/source above).
