@@ -3,13 +3,15 @@
 // Run with: cargo run --bin simulate_class2smoke -- [OPTIONS]
 
 use clap::Parser;
-use mettail_languages::class2smoke::strategies::arb_proc;
-use mettail_languages::class2smoke::Class2SmokeLanguage;
-use mettail_runtime::Language;
 use mettail_simulation::invariant::{
     AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,
 };
 use mettail_simulation::runner::{SimulationConfig, SimulationRunner, TraceOutputFormat};
+#[path = "../../tests/definitions/class2smoke.rs"]
+mod class2smoke;
+use class2smoke::strategies::arb_proc;
+use class2smoke::Class2SmokeLanguage;
+use mettail_runtime::Language;
 use proptest::strategy::Strategy;
 use std::path::PathBuf;
 

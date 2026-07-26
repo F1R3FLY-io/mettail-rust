@@ -485,9 +485,21 @@ mod tests {
         panic!("bundled language {name} must reconstruct: {last_error}");
     }
 
-    /// Every bundled standalone language definition (all `language!` files under `languages/src`;
-    /// `bench_common.rs` declares no language and the `composition/` / `rhocalc/` subdirectories
-    /// hold fragments, not standalone definitions).
+    /// Every bundled standalone language definition — the PRODUCTION `language!` files under
+    /// `languages/src` PLUS the non-production ones under `languages/tests/definitions`
+    /// (`bench_common.rs` declares no language and the `composition/` / `rhocalc/`
+    /// subdirectories hold fragments, not standalone definitions).
+    ///
+    /// Task #11 split the definitions by role: `languages/src/` is production-only, and every
+    /// demonstration / fixture grammar is TEST-HOSTED (`options { hosted_in: … }`). Both roles
+    /// are listed here, and that totality is the point — this table is what proves the
+    /// binder-congruence disposition agrees with `rholang-codegen` for EVERY bundled language,
+    /// so a definition dropping out of it would silently narrow the agreement proof.
+    ///
+    /// `include_str!` needs a LITERAL path, so the table cannot derive a definition's location
+    /// from its own `hosted_in`; it is hand-maintained on purpose. The enforcement is that a
+    /// definition which moves without its entry being updated fails the `macros` build
+    /// immediately and by name — loud and unmissable, never silent drift.
     const BUNDLED_LANGUAGES: &[(&str, &str)] = &[
         ("acbagdemo", include_str!("../../../../languages/src/acbagdemo.rs")),
         ("acdemo", include_str!("../../../../languages/src/acdemo.rs")),
@@ -499,13 +511,28 @@ mod tests {
         ("calculator", include_str!("../../../../languages/src/calculator.rs")),
         (
             "class2hashmapsmoke",
-            include_str!("../../../../languages/src/class2hashmapsmoke.rs"),
+            include_str!("../../../../languages/tests/definitions/class2hashmapsmoke.rs"),
         ),
-        ("class2multi", include_str!("../../../../languages/src/class2multi.rs")),
-        ("class2optsmoke", include_str!("../../../../languages/src/class2optsmoke.rs")),
-        ("class2smoke", include_str!("../../../../languages/src/class2smoke.rs")),
-        ("class3multi", include_str!("../../../../languages/src/class3multi.rs")),
-        ("class3opt", include_str!("../../../../languages/src/class3opt.rs")),
+        (
+            "class2multi",
+            include_str!("../../../../languages/tests/definitions/class2multi.rs"),
+        ),
+        (
+            "class2optsmoke",
+            include_str!("../../../../languages/tests/definitions/class2optsmoke.rs"),
+        ),
+        (
+            "class2smoke",
+            include_str!("../../../../languages/tests/definitions/class2smoke.rs"),
+        ),
+        (
+            "class3multi",
+            include_str!("../../../../languages/tests/definitions/class3multi.rs"),
+        ),
+        (
+            "class3opt",
+            include_str!("../../../../languages/tests/definitions/class3opt.rs"),
+        ),
         ("commdemo", include_str!("../../../../languages/src/commdemo.rs")),
         ("ctxdemo", include_str!("../../../../languages/src/ctxdemo.rs")),
         ("fortran_model", include_str!("../../../../languages/src/fortran_model.rs")),
@@ -521,12 +548,6 @@ mod tests {
             include_str!("../../../../languages/tests/definitions/nativefolddemo.rs"),
         ),
         ("nlacdemo", include_str!("../../../../languages/src/nlacdemo.rs")),
-        // Task #11: TEST-HOSTED — this definition lives in `languages/tests/definitions/`,
-        // not in the library (`options { hosted_in: … }`). `include_str!` needs a LITERAL
-        // path, so this table cannot derive the location from the definition's own
-        // `hosted_in`; it is hand-maintained on purpose. The enforcement is that a
-        // definition which moves without its entry being updated fails the `macros` build
-        // immediately and by name — loud and unmissable, never silent drift.
         ("optsmoke", include_str!("../../../../languages/tests/definitions/optsmoke.rs")),
         ("refinementsmoke", include_str!("../../../../languages/src/refinementsmoke.rs")),
         ("reserved_model", include_str!("../../../../languages/src/reserved_model.rs")),

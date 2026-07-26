@@ -3,13 +3,15 @@
 // Run with: cargo run --bin simulate_class2hashmapsmoke -- [OPTIONS]
 
 use clap::Parser;
-use mettail_languages::class2hashmapsmoke::strategies::arb_proc;
-use mettail_languages::class2hashmapsmoke::Class2HashMapSmokeLanguage;
-use mettail_runtime::Language;
 use mettail_simulation::invariant::{
     AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,
 };
 use mettail_simulation::runner::{SimulationConfig, SimulationRunner, TraceOutputFormat};
+#[path = "../../tests/definitions/class2hashmapsmoke.rs"]
+mod class2hashmapsmoke;
+use class2hashmapsmoke::strategies::arb_proc;
+use class2hashmapsmoke::Class2HashMapSmokeLanguage;
+use mettail_runtime::Language;
 use proptest::strategy::Strategy;
 use std::path::PathBuf;
 

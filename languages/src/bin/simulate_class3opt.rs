@@ -3,13 +3,15 @@
 // Run with: cargo run --bin simulate_class3opt -- [OPTIONS]
 
 use clap::Parser;
-use mettail_languages::class3opt::strategies::arb_proc;
-use mettail_languages::class3opt::Class3OptLanguage;
-use mettail_runtime::Language;
 use mettail_simulation::invariant::{
     AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,
 };
 use mettail_simulation::runner::{SimulationConfig, SimulationRunner, TraceOutputFormat};
+#[path = "../../tests/definitions/class3opt.rs"]
+mod class3opt;
+use class3opt::strategies::arb_proc;
+use class3opt::Class3OptLanguage;
+use mettail_runtime::Language;
 use proptest::strategy::Strategy;
 use std::path::PathBuf;
 

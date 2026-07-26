@@ -31,7 +31,15 @@
 //! macros/src/gen/term_ops/normalize.rs:975). A future codegen
 //! generalization can re-enable Scope-not-last layouts.
 
+// Task #11 (extended 2026-07-26): as a library module this definition inherited
+// `languages/src/lib.rs`'s crate-level `#![allow(unused_imports, ...)]`. A `#[path]`-included
+// module inherits nothing, and each consumer exercises a different slice of the generated
+// surface (the parser, the codegen helpers, or neither), so `dead_code` / `unused_imports`
+// are expected here rather than a signal. They are allowed at the definition -- the one place
+// every consumer shares -- instead of being re-allowed at each `#[path]` site.
 #![allow(
+    dead_code,
+    unused_imports,
     non_local_definitions,
     clippy::crate_in_macro_def,
     clippy::empty_line_after_outer_attr
@@ -41,6 +49,17 @@ use mettail_macros::language;
 
 language! {
     name: Class3Multi,
+
+    options {
+        // Task #11 (extended 2026-07-26): this is a NON-PRODUCTION language definition
+        // (`languages/src/` is production-only), so it lives in
+        // `languages/tests/definitions/`. The key tells the macro to emit the generated
+        // suite INLINE (the opt-in `class3multi_generated_tests!` wrapper) instead of writing
+        // `languages/tests/gen_class3multi_*.rs`, whose `use mettail_languages::class3multi::*;`
+        // header cannot resolve once the definition has left the library; it also gives the
+        // simulation CLI a `#[path]` prologue instead of that same library import.
+        hosted_in: "tests/definitions/class3multi.rs",
+    },
 
     types {
         Proc

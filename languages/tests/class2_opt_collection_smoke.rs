@@ -6,7 +6,21 @@
 //! - Clone, Debug, PartialEq, Hash all work via derived/iterative codegen.
 //! - Display roundtrip through parse_via_wpda works for both None and Some.
 
-use mettail_languages::class2optsmoke::Proc;
+// Task #11 (extended 2026-07-26): `Class2OptSmoke` is a FIXTURE grammar, not a production
+// language, so its definition lives in `languages/tests/definitions/class2optsmoke.rs` rather
+// than in the `languages` library (`languages/src/` is production-only).
+//
+// This file is its DESIGNATED HOST: it declares the definition module and is the one and
+// only invoker of the opt-in `class2optsmoke_generated_tests!` wrapper, which materializes the
+// macro-generated unit / prop / analytical sections that used to be written to
+// `languages/tests/gen_class2optsmoke_*.rs`. Other consumers `#[path]`-include the same definition
+// WITHOUT invoking the wrapper, so the generated tests exist exactly once across the suite.
+#[path = "definitions/class2optsmoke.rs"]
+mod class2optsmoke;
+
+class2optsmoke::class2optsmoke_generated_tests!(crate::class2optsmoke);
+
+use class2optsmoke::Proc;
 
 #[test]
 fn choosemaybe_none_constructs_and_clones() {

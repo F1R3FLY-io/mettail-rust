@@ -1,6 +1,23 @@
 //! Regression coverage for display strings that must remain parseable through
 //! the WPDA pipeline.
 
+// Task #11 (extended 2026-07-26): the FIXTURE grammars exercised here are not production
+// languages, so their definitions live in `languages/tests/definitions/` and are
+// `#[path]`-included rather than named through `mettail_languages::<lang>`. This binary is a
+// CONSUMER of each: it deliberately does NOT invoke any `<lang>_generated_tests!` wrapper,
+// because each definition's DESIGNATED HOST (its own smoke-test binary) is the sole invoker,
+// so the generated suites stay single-instanced across the workspace.
+//
+// The per-test `#[cfg(feature = "<lang>")]` gates that used to guard these cases are removed
+// with the features themselves. Keeping them would be the silent-failure mode this whole
+// relocation has to avoid: an unsatisfiable `cfg` deletes the test rather than failing.
+#[path = "definitions/class2multi.rs"]
+mod class2multi;
+#[path = "definitions/class3multi.rs"]
+mod class3multi;
+#[path = "definitions/class3opt.rs"]
+mod class3opt;
+
 macro_rules! assert_wpda_display_roundtrip {
     ($ty:ty, $term:expr) => {{
         let term: $ty = $term;
@@ -11,10 +28,9 @@ macro_rules! assert_wpda_display_roundtrip {
     }};
 }
 
-#[cfg(feature = "class2multi")]
 #[test]
 fn class2multi_pair_collection_display_roundtrips() {
-    use mettail_languages::class2multi::Proc;
+    use crate::class2multi::Proc;
 
     assert_wpda_display_roundtrip!(
         Proc,
@@ -22,10 +38,9 @@ fn class2multi_pair_collection_display_roundtrips() {
     );
 }
 
-#[cfg(feature = "class3multi")]
 #[test]
 fn class3multi_tagged_inputs_display_roundtrips() {
-    use mettail_languages::class3multi::{Name, Proc};
+    use crate::class3multi::{Name, Proc};
     use mettail_runtime::{get_or_create_var, Binder, Scope};
     use std::sync::Arc;
 
@@ -49,10 +64,9 @@ fn class3multi_tagged_inputs_display_roundtrips() {
     );
 }
 
-#[cfg(feature = "class3multi")]
 #[test]
 fn class3multi_quoted_tagged_inputs_display_roundtrips() {
-    use mettail_languages::class3multi::{Name, Proc};
+    use crate::class3multi::{Name, Proc};
     use mettail_runtime::{get_or_create_var, Binder, Scope};
     use std::sync::Arc;
 
@@ -64,10 +78,9 @@ fn class3multi_quoted_tagged_inputs_display_roundtrips() {
     assert_wpda_display_roundtrip!(Name, Name::NQuote(Arc::new(proc)));
 }
 
-#[cfg(feature = "class3opt")]
 #[test]
 fn class3opt_optional_collection_display_roundtrips() {
-    use mettail_languages::class3opt::{Name, Proc};
+    use crate::class3opt::{Name, Proc};
     use mettail_runtime::{get_or_create_var, Binder, Scope};
     use std::sync::Arc;
 
@@ -85,10 +98,9 @@ fn class3opt_optional_collection_display_roundtrips() {
     );
 }
 
-#[cfg(feature = "class3opt")]
 #[test]
 fn class3opt_quoted_optional_collection_display_roundtrips() {
-    use mettail_languages::class3opt::{Name, Proc};
+    use crate::class3opt::{Name, Proc};
     use mettail_runtime::{get_or_create_var, Binder, Scope};
     use std::sync::Arc;
 

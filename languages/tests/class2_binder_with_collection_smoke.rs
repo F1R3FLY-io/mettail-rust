@@ -14,7 +14,21 @@
 //! - PRED-5: missing close paren → Err.
 //! - PRED-6: missing tag → Err.
 
-use mettail_languages::class2smoke::Proc;
+// Task #11 (extended 2026-07-26): `Class2Smoke` is a FIXTURE grammar, not a production
+// language, so its definition lives in `languages/tests/definitions/class2smoke.rs` rather
+// than in the `languages` library (`languages/src/` is production-only).
+//
+// This file is its DESIGNATED HOST: it declares the definition module and is the one and
+// only invoker of the opt-in `class2smoke_generated_tests!` wrapper, which materializes the
+// macro-generated unit / prop / analytical sections that used to be written to
+// `languages/tests/gen_class2smoke_*.rs`. Other consumers `#[path]`-include the same definition
+// WITHOUT invoking the wrapper, so the generated tests exist exactly once across the suite.
+#[path = "definitions/class2smoke.rs"]
+mod class2smoke;
+
+class2smoke::class2smoke_generated_tests!(crate::class2smoke);
+
+use class2smoke::Proc;
 
 #[test]
 fn pred1_empty_collection() {

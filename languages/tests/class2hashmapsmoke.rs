@@ -30,7 +30,21 @@
 //! cleanly. 2-level nested cases (e.g. `chooseMap 0 ( 0 : chooseMap 0
 //! ( 0 : 0 ) )`) also pass.
 
-use mettail_languages::class2hashmapsmoke::Proc;
+// Task #11 (extended 2026-07-26): `Class2HashMapSmoke` is a FIXTURE grammar, not a production
+// language, so its definition lives in `languages/tests/definitions/class2hashmapsmoke.rs` rather
+// than in the `languages` library (`languages/src/` is production-only).
+//
+// This file is its DESIGNATED HOST: it declares the definition module and is the one and
+// only invoker of the opt-in `class2hashmapsmoke_generated_tests!` wrapper, which materializes the
+// macro-generated unit / prop / analytical sections that used to be written to
+// `languages/tests/gen_class2hashmapsmoke_*.rs`. Other consumers `#[path]`-include the same definition
+// WITHOUT invoking the wrapper, so the generated tests exist exactly once across the suite.
+#[path = "definitions/class2hashmapsmoke.rs"]
+mod class2hashmapsmoke;
+
+class2hashmapsmoke::class2hashmapsmoke_generated_tests!(crate::class2hashmapsmoke);
+
+use class2hashmapsmoke::Proc;
 
 #[test]
 fn pred1_empty_map() {

@@ -3,13 +3,15 @@
 // Run with: cargo run --bin simulate_class2multi -- [OPTIONS]
 
 use clap::Parser;
-use mettail_languages::class2multi::strategies::arb_proc;
-use mettail_languages::class2multi::Class2MultiLanguage;
-use mettail_runtime::Language;
 use mettail_simulation::invariant::{
     AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,
 };
 use mettail_simulation::runner::{SimulationConfig, SimulationRunner, TraceOutputFormat};
+#[path = "../../tests/definitions/class2multi.rs"]
+mod class2multi;
+use class2multi::strategies::arb_proc;
+use class2multi::Class2MultiLanguage;
+use mettail_runtime::Language;
 use proptest::strategy::Strategy;
 use std::path::PathBuf;
 

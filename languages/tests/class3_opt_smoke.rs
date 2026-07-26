@@ -12,7 +12,7 @@
 //! match_pattern (the last three needed no change — derived Hash/Ord/PartialEq
 //! on `Option<Vec<T>>` work directly).
 //!
-//! Grammar (languages/src/class3opt.rs):
+//! Grammar (languages/tests/definitions/class3opt.rs):
 //!   PInputsOptTagged . ns:Vec(Name), *opt(qs:Vec(Proc)), ^[xs].p:[Name* -> Proc]
 //!       |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")"
 //!          "." "{" p "}"
@@ -34,7 +34,21 @@
 //! whose parse-side wiring hasn't landed yet (per the Phase 4 #3 caveat for
 //! class2optsmoke's "*opt taken nonempty" case).
 
-use mettail_languages::class3opt::{Name, Proc};
+// Task #11 (extended 2026-07-26): `Class3Opt` is a FIXTURE grammar, not a production
+// language, so its definition lives in `languages/tests/definitions/class3opt.rs` rather
+// than in the `languages` library (`languages/src/` is production-only).
+//
+// This file is its DESIGNATED HOST: it declares the definition module and is the one and
+// only invoker of the opt-in `class3opt_generated_tests!` wrapper, which materializes the
+// macro-generated unit / prop / analytical sections that used to be written to
+// `languages/tests/gen_class3opt_*.rs`. Other consumers `#[path]`-include the same definition
+// WITHOUT invoking the wrapper, so the generated tests exist exactly once across the suite.
+#[path = "definitions/class3opt.rs"]
+mod class3opt;
+
+class3opt::class3opt_generated_tests!(crate::class3opt);
+
+use class3opt::{Name, Proc};
 
 // =============================================================================
 // AST construction + Clone/PartialEq/Hash/Debug — these must work regardless of

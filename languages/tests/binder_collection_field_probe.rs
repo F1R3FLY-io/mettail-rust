@@ -15,9 +15,21 @@
 //! `Vec<Name>` slot and `class3opt::PInputsOptTagged`), which is why this
 //! language is the witness.
 
-#![cfg(feature = "class3multi")]
+// Task #11 (extended 2026-07-26): the `class3multi` LIBRARY FEATURE is gone — the
+// definition is test-hosted now — so this file-level gate would evaluate to FALSE and
+// silently delete the whole probe. The definition is `#[path]`-included unconditionally
+// below instead, which makes the probe unconditional (and loud if it ever breaks).
+// #![cfg(feature = "class3multi")]
 
-use mettail_languages::class3multi::Proc;
+// Task #11 (extended 2026-07-26): `Class3Multi` is a FIXTURE grammar whose definition lives in
+// `languages/tests/definitions/class3multi.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. This binary is a CONSUMER, not the definition's designated host
+// (`languages/tests/class3_multi_collection_smoke.rs` is), so it deliberately does NOT invoke the
+// `class3multi_generated_tests!` wrapper — the generated suite stays single-instanced.
+#[path = "definitions/class3multi.rs"]
+mod class3multi;
+
+use class3multi::Proc;
 
 fn parse(input: &str) -> Proc {
     mettail_runtime::clear_var_cache();

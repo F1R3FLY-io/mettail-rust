@@ -33,18 +33,22 @@ pub mod ambient;
 pub mod appsubst;
 #[cfg(feature = "calculator")]
 pub mod calculator;
-#[cfg(feature = "class2hashmapsmoke")]
-pub mod class2hashmapsmoke;
-#[cfg(feature = "class2multi")]
-pub mod class2multi;
-#[cfg(feature = "class2optsmoke")]
-pub mod class2optsmoke;
-#[cfg(feature = "class2smoke")]
-pub mod class2smoke;
-#[cfg(feature = "class3multi")]
-pub mod class3multi;
-#[cfg(feature = "class3opt")]
-pub mod class3opt;
+// Task #11 (extended 2026-07-26): the Class-2 / Class-3 collection FIXTURE grammars are
+// not production languages, so they moved to `languages/tests/definitions/`.
+// `languages/src/` is production-only. Consumers `#[path]`-include the definition files
+// directly; each definition's DESIGNATED HOST test binary invokes its generated suite.
+// #[cfg(feature = "class2hashmapsmoke")]
+// pub mod class2hashmapsmoke;
+// #[cfg(feature = "class2multi")]
+// pub mod class2multi;
+// #[cfg(feature = "class2optsmoke")]
+// pub mod class2optsmoke;
+// #[cfg(feature = "class2smoke")]
+// pub mod class2smoke;
+// #[cfg(feature = "class3multi")]
+// pub mod class3multi;
+// #[cfg(feature = "class3opt")]
+// pub mod class3opt;
 // Stage 3b: the canonical single-receive Rholang COMMUNICATION rule (non-linear AC firing).
 #[cfg(feature = "comm-demo")]
 pub mod commdemo;
