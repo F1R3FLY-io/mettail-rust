@@ -61,7 +61,7 @@ use mettail_prattail::algebra_tower::Sat3;
 use mettail_prattail::guard_formula::{
     ground_verdict_with, linear_atom, prop_var, static_verdict, str_equals, CmpOp, GuardAssignment,
     GuardAtom, GuardAtomKind, GuardFormula, GuardSiteKind, GuardValue, GuardVarMap, LinearForm,
-    ScalarOperand, StaticVerdict, SubstrateConfig,
+    ScalarOperand, StaticVerdict, CONSENSUS_SUBSTRATE_CONFIG,
 };
 use mettail_prattail::presburger::LinearConstraint;
 use mettail_runtime::{OrdVar, Var};
@@ -104,9 +104,13 @@ impl GuardEncoding {
         self.opaque.get(atom.id as usize).map(Arc::as_ref)
     }
 
-    /// The static verdict for this guard, over the default substrate domain.
+    /// The static verdict for this guard, over the CONSENSUS substrate domain.
+    ///
+    /// The budget is `CONSENSUS_SUBSTRATE_CONFIG`, not a caller-chosen one: a guard verdict
+    /// decides whether a COMM fires, and two nodes with different budgets can reach different
+    /// verdicts. See that constant's documentation.
     pub fn static_verdict(&self) -> StaticVerdict {
-        static_verdict(&self.formula, SubstrateConfig::DEFAULT)
+        static_verdict(&self.formula, CONSENSUS_SUBSTRATE_CONFIG)
     }
 }
 
@@ -599,7 +603,7 @@ pub fn eval_guard_disposition_via_substrate(cond: &Proc) -> GuardDisposition {
         &encoding.formula,
         &assignment,
         &encoding.vars,
-        SubstrateConfig::DEFAULT,
+        CONSENSUS_SUBSTRATE_CONFIG,
         &mut |atom| resolver.resolve(atom),
     );
     match verdict {
@@ -799,7 +803,7 @@ mod tests {
                 &encoding.formula,
                 &GuardAssignment::default(),
                 &encoding.vars,
-                SubstrateConfig::DEFAULT
+                CONSENSUS_SUBSTRATE_CONFIG
             ),
             Sat3::DontKnow
         );

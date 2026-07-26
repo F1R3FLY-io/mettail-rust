@@ -88,6 +88,17 @@ pub(crate) fn name_pattern_to_proc(name_pat: &Name) -> Proc {
         Name::NQuote(p) => p.as_ref().clone(),
         Name::NQuoteShort(p) => p.as_ref().clone(),
         Name::NQuoteNil => Proc::PZero,
+        // ★ A MISSING ARM, not a fabrication (2026-07-26). `NParen` (`rhocalc.rs`'s
+        // `NParen . n:Name |- "(" n ")"`) is a real, surviving constructor — `normalize_quote_name`
+        // below recurses through it, and the `ExecParenQuote` rewrite
+        // `(PDrop (NParen (NQuote P))) ~> P` exists precisely because it reaches rewritten terms.
+        // Falling to `Proc::Err` therefore made a *parenthesized* receive pattern — `for((x) <- c)`
+        // — lower to `Err` AS THE PATTERN, so it silently matched nothing.
+        //
+        // Parentheses are pure grouping: they carry no semantics of their own, so the pattern a
+        // parenthesized name denotes is exactly the pattern the inner name denotes. Recursing
+        // (rather than unwrapping one layer) also handles `((x))`.
+        Name::NParen(inner) => name_pattern_to_proc(inner),
         _ => Proc::Err,
     }
 }
@@ -750,7 +761,13 @@ pub(crate) fn eval_where_comm_single(
 ) -> Option<Proc> {
     let sub_body = receive_apply(pat, q, body)?;
     let sub_cond = receive_apply(pat, q, cond)?;
-    match eval_guard_disposition(&sub_cond) {
+    // ★ THE WIRE: the guard is decided by the Dovetail/SFT substrate, not by a bespoke walk
+    // over `Proc`. `sub_cond` is the guard AFTER the arrived payload was substituted in, so its
+    // operands are ground — the run-time half of *"compile time where statically decidable, run
+    // time otherwise"*. `eval_guard_disposition_via_substrate` is pinned to agree with
+    // `eval_guard_disposition` on the whole corpus by
+    // `languages/tests/rhocalc_guard_substrate_wire.rs`.
+    match crate::rhocalc::guard_substrate::eval_guard_disposition_via_substrate(&sub_cond) {
         GuardDisposition::Fires => Some(sub_body),
         // ★ #33 CONFLATION SITE 1 of 3 (LIVE). `Blocks` is "the machine would agree the
         // guard is false"; `Declines` is "the host could not decide, and the machine may
@@ -980,7 +997,8 @@ pub fn comm_pforjoin_subst(
     let acc_body = apply_pattern_env(body, &env);
     let acc_cond = apply_pattern_env(cond, &env);
 
-    match eval_guard_disposition(&acc_cond) {
+    // ★ THE WIRE — the multi-channel join twin of the arm in `eval_where_comm_single`.
+    match crate::rhocalc::guard_substrate::eval_guard_disposition_via_substrate(&acc_cond) {
         GuardDisposition::Fires => Some(acc_body),
         // ★ #33 CONFLATION SITE 2 of 3 (LIVE) — the multi-channel join twin of the arm in
         // `eval_where_comm_single`. Inert in stage A; see `GuardDisposition`.
@@ -1159,7 +1177,8 @@ fn finish_single_comm(
             return None;
         }
         if let Some(c) = recv_ctx.where_cond {
-            match eval_guard_disposition(c) {
+            // ★ THE WIRE — the empty-bind arm.
+            match crate::rhocalc::guard_substrate::eval_guard_disposition_via_substrate(c) {
                 GuardDisposition::Fires => recv_ctx.cont.clone(),
                 // ★ #33 CONFLATION SITE 3 of 3 (LIVE) — the empty-bind arm. Inert in
                 // stage A; see `GuardDisposition`.
