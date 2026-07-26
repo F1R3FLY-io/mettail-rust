@@ -8,7 +8,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use mettail_ast::grammar::{GrammarItem, GrammarRule, SyntaxExpr, TermParam};
-use mettail_ast::language::{BehavioralPred, GuardConfig, LanguageDef, Premise, RewriteRule};
+use mettail_ast::language::{
+    BehavioralPred, GuardConfig, GuardSlotDecl, LanguageDef, Premise, RewriteRule,
+};
 use mettail_ast::types::TypeExpr;
 use models::rhoapi::Par;
 
@@ -270,8 +272,39 @@ fn guard_pred_obligation_kind(pred: &BehavioralPred) -> RhoGuardObligationKind {
     }
 }
 
-fn collect_term_guard_obligations(rule: &GrammarRule, out: &mut BTreeSet<RhoGuardObligation>) {
-    fn walk_params(label: &str, params: &[TermParam], out: &mut BTreeSet<RhoGuardObligation>) {
+/// Induce the guard obligations of one `terms { }` rule.
+///
+/// A term parameter is a semantic-predicate slot in exactly two ways, and both induce the SAME
+/// obligation id — `term:<Label>:guard:<param>` — so no downstream consumer can tell them apart:
+///
+/// | surface | how it is recognized |
+/// |---|---|
+/// | `?param:Guard` | by its **type**: a [`TermParam::GuardBody`] |
+/// | `param:SomeCategory` + a `guards { guard_slots { Label(param); } }` declaration | by the author's **declaration** |
+///
+/// The second exists for a language whose guard sublanguage IS its own expression language.
+/// RhoCalc's `where` is the case: its guard is an ordinary `Proc`, which is what keeps
+/// `where x + y < 10` and `where t matches {phi | psi}` writable — neither is expressible as a
+/// `BehavioralPred`, whose grammar is relation queries, quantifiers and AC-matches with no
+/// comparison, no arithmetic and no nesting inside arguments. Retyping the slot to `Guard` would
+/// therefore not "make the guard a semantic predicate"; it would delete most of the guard
+/// language. The declaration says the same thing without the loss.
+///
+/// ★ It is a DECLARATION, never an inference. Nothing here reads the rule's syntax form, so no
+/// `"where"` literal and no parameter *name* is load-bearing — recognition by spelling is the
+/// drift this tree forbids, and `rhocalc/formula.rs` states the rule outright:
+/// *"Recognition is by CONSTRUCTOR, never by spelling."*
+fn collect_term_guard_obligations(
+    rule: &GrammarRule,
+    declared_slots: &[GuardSlotDecl],
+    out: &mut BTreeSet<RhoGuardObligation>,
+) {
+    fn walk_params(
+        label: &str,
+        params: &[TermParam],
+        declared: &BTreeSet<String>,
+        out: &mut BTreeSet<RhoGuardObligation>,
+    ) {
         for param in params {
             match param {
                 TermParam::GuardBody { name } => {
@@ -280,7 +313,14 @@ fn collect_term_guard_obligations(rule: &GrammarRule, out: &mut BTreeSet<RhoGuar
                         RhoGuardObligationKind::BehavioralPredicate,
                     ));
                 },
-                TermParam::Optional { params } => walk_params(label, params, out),
+                // A category-typed parameter the author DECLARED to be a guard slot.
+                TermParam::Simple { name, .. } if declared.contains(&name.to_string()) => {
+                    out.insert(RhoGuardObligation::new(
+                        format!("term:{label}:guard:{name}"),
+                        RhoGuardObligationKind::BehavioralPredicate,
+                    ));
+                },
+                TermParam::Optional { params } => walk_params(label, params, declared, out),
                 TermParam::Simple { .. }
                 | TermParam::Abstraction { .. }
                 | TermParam::MultiAbstraction { .. } => {},
@@ -289,7 +329,13 @@ fn collect_term_guard_obligations(rule: &GrammarRule, out: &mut BTreeSet<RhoGuar
     }
 
     if let Some(params) = rule.term_context.as_ref() {
-        walk_params(&rule.label.to_string(), params, out);
+        let label = rule.label.to_string();
+        let declared: BTreeSet<String> = declared_slots
+            .iter()
+            .filter(|decl| decl.label == label)
+            .map(|decl| decl.param.to_string())
+            .collect();
+        walk_params(&label, params, &declared, out);
     }
 }
 
@@ -386,8 +432,12 @@ pub fn collect_guard_obligations(def: &LanguageDef) -> Vec<RhoGuardObligation> {
         collect_guard_config_obligations(guard_config, &mut obligations);
     }
 
+    let declared_guard_slots: &[GuardSlotDecl] = def
+        .guard_config
+        .as_ref()
+        .map_or(&[], |config| config.guard_slots.as_slice());
     for rule in &def.terms {
-        collect_term_guard_obligations(rule, &mut obligations);
+        collect_term_guard_obligations(rule, declared_guard_slots, &mut obligations);
     }
     for equation in &def.equations {
         collect_premise_guard_obligations(

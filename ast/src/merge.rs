@@ -21,6 +21,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::language::GuardSlotDecl;
 use syn::Ident;
 
 use super::language::{
@@ -281,8 +282,32 @@ pub(crate) fn merge_guard_config(
                 (Some(base_ch), None) => Some(base_ch.clone()),
                 (None, None) => None,
             },
+            // Guard slots: UNION, deduplicated by `(label, param)`.
+            //
+            // Union rather than replace, because a guard slot is a fact about ONE rule: an
+            // extension that declares a slot on its own new rule must not silently drop the
+            // base's declaration on a rule it never mentioned. There is nothing to conflict
+            // over — the declaration carries no payload beyond the pair itself — so dedup is
+            // the whole merge.
+            guard_slots: merge_guard_slots(&b.guard_slots, &e.guard_slots),
         }),
     }
+}
+
+/// Union two guard-slot declaration lists, deduplicated by `(label, param)`.
+fn merge_guard_slots(
+    base: &[GuardSlotDecl],
+    extension: &[GuardSlotDecl],
+) -> Vec<GuardSlotDecl> {
+    let mut out: Vec<GuardSlotDecl> = Vec::with_capacity(base.len() + extension.len());
+    let mut seen: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
+    for decl in base.iter().chain(extension.iter()) {
+        let key = (decl.label.to_string(), decl.param.to_string());
+        if seen.insert(key) {
+            out.push(decl.clone());
+        }
+    }
+    out
 }
 
 /// Merge two optional builtin predicate lists.
@@ -1237,6 +1262,7 @@ mod tests {
             connectives: None,
             theories: vec![],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let mut errors = Vec::new();
         let result = merge_guard_config(&base, &None, &mut errors).expect("Some");
@@ -1253,6 +1279,7 @@ mod tests {
             connectives: None,
             theories: vec![],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let extension = Some(GuardConfig {
             builtin_predicates: Some(vec![
@@ -1261,6 +1288,7 @@ mod tests {
             connectives: None,
             theories: vec![],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let mut errors = Vec::new();
         let result = merge_guard_config(&base, &extension, &mut errors).expect("Some");
@@ -1282,12 +1310,14 @@ mod tests {
             connectives: None,
             theories: vec![],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let extension = Some(GuardConfig {
             builtin_predicates: Some(vec![make_pred("gt", 2, Some(0.7), None)]),
             connectives: None,
             theories: vec![],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let mut errors = Vec::new();
         let result = merge_guard_config(&base, &extension, &mut errors).expect("Some");
@@ -1305,12 +1335,14 @@ mod tests {
             connectives: None,
             theories: vec![],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let extension = Some(GuardConfig {
             builtin_predicates: Some(vec![make_pred("eq", 3, None, None)]),
             connectives: None,
             theories: vec![],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let mut errors = Vec::new();
         let _ = merge_guard_config(&base, &extension, &mut errors);
@@ -1345,6 +1377,7 @@ mod tests {
             ]),
             theories: vec![],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let extension = Some(GuardConfig {
             builtin_predicates: None,
@@ -1360,6 +1393,7 @@ mod tests {
             ]),
             theories: vec![],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let mut errors = Vec::new();
         let result = merge_guard_config(&base, &extension, &mut errors).expect("Some");
@@ -1384,12 +1418,14 @@ mod tests {
             connectives: None,
             theories: vec![make_theory("arithmetic", "PresburgerAlgebra")],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let extension = Some(GuardConfig {
             builtin_predicates: None,
             connectives: None,
             theories: vec![make_theory("patterns", "UnificationTheory")],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let mut errors = Vec::new();
         let result = merge_guard_config(&base, &extension, &mut errors).expect("Some");
@@ -1404,12 +1440,14 @@ mod tests {
             connectives: None,
             theories: vec![make_theory("arithmetic", "PresburgerAlgebra")],
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let extension = Some(GuardConfig {
             builtin_predicates: None,
             connectives: None,
             theories: vec![make_theory("arithmetic", "FloatTheory")], // different type!
             channels: None,
+                    guard_slots: Vec::new(),
         });
         let mut errors = Vec::new();
         let _ = merge_guard_config(&base, &extension, &mut errors);
@@ -1440,6 +1478,7 @@ mod tests {
                     }],
                 }],
             }),
+                    guard_slots: Vec::new(),
         });
         let extension = Some(GuardConfig {
             builtin_predicates: None,
@@ -1451,6 +1490,7 @@ mod tests {
                 }],
                 join_patterns: vec![],
             }),
+                    guard_slots: Vec::new(),
         });
         let mut errors = Vec::new();
         let result = merge_guard_config(&base, &extension, &mut errors).expect("Some");

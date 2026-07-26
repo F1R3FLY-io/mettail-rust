@@ -1524,12 +1524,14 @@ fn parse_guards(input: ParseStream) -> SynResult<GuardConfig> {
     let mut connectives: Option<Vec<ConnectiveDecl>> = None;
     let mut theories: Vec<TheoryRegistration> = Vec::new();
     let mut channels: Option<ChannelConfig> = None;
+    let mut guard_slots: Vec<GuardSlotDecl> = Vec::new();
     let mut saw_explicit_predicates = false;
 
     while !content.is_empty() {
         if !content.peek(Ident) {
             return Err(content.error(
-                "expected predicate declaration, 'connectives', 'theories', or 'channels'",
+                "expected predicate declaration, 'connectives', 'theories', 'channels', or \
+                 'guard_slots'",
             ));
         }
 
@@ -1565,6 +1567,15 @@ fn parse_guards(input: ParseStream) -> SynResult<GuardConfig> {
                 }
                 channels = Some(parse_channels_block(&content)?);
             },
+            "guard_slots" => {
+                if !guard_slots.is_empty() {
+                    return Err(syn::Error::new(
+                        kw.span(),
+                        "duplicate `guard_slots {}` sub-block in guards",
+                    ));
+                }
+                guard_slots = parse_guard_slots_block(&content)?;
+            },
             _ => {
                 // Direct item: builtin predicate declaration
                 builtin_predicates.push(parse_builtin_predicate(&content)?);
@@ -1587,7 +1598,50 @@ fn parse_guards(input: ParseStream) -> SynResult<GuardConfig> {
         connectives,
         theories,
         channels,
+        guard_slots,
     })
+}
+
+/// Parse the `guard_slots { <Label>(<param>); ... }` sub-block.
+///
+/// ```ignore
+/// guards {
+///     guard_slots {
+///         ForRowWhere(cond);
+///         ForRowSingleWhere(cond);
+///     }
+/// }
+/// ```
+///
+/// Each entry declares that the named term parameter of the named `terms { }` rule is a
+/// **semantic predicate**, so the Rho backend induces a `term:<Label>:guard:<param>` obligation
+/// for it — the same obligation a `?param:Guard` slot induces.
+///
+/// This exists for a language whose guard sublanguage is its own expression language and whose
+/// guard parameter therefore has an ordinary category type rather than `Guard`. It is a
+/// DECLARATION: nothing here inspects the rule's syntax form, so no `"where"` literal and no
+/// parameter name is load-bearing.
+fn parse_guard_slots_block(input: ParseStream) -> SynResult<Vec<GuardSlotDecl>> {
+    let kw_ident = input.parse::<Ident>()?;
+    if kw_ident != "guard_slots" {
+        return Err(syn::Error::new(kw_ident.span(), "expected 'guard_slots'"));
+    }
+    let content;
+    syn::braced!(content in input);
+
+    let mut decls = Vec::new();
+    while !content.is_empty() {
+        let label = content.parse::<Ident>()?;
+        let inner;
+        syn::parenthesized!(inner in content);
+        let param = inner.parse::<Ident>()?;
+        if !inner.is_empty() {
+            return Err(inner.error("a guard-slot declaration names exactly one parameter"));
+        }
+        let _ = content.parse::<Token![;]>()?;
+        decls.push(GuardSlotDecl { label, param });
+    }
+    Ok(decls)
 }
 
 /// Parse a single built-in predicate declaration:

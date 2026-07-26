@@ -752,6 +752,35 @@ pub struct GuardConfig {
     /// Channel configuration for M8/M11 dispatch (sub-block).
     /// `None` → fall back to heuristic channel inference.
     pub channels: Option<ChannelConfig>,
+
+    /// ★ Term parameters DECLARED to be semantic-predicate slots (sub-block).
+    ///
+    /// A `?name:Guard` slot is a semantic predicate by its *type*, and the codegen recognizes
+    /// it structurally. A language whose guard sublanguage is its own expression language —
+    /// RhoCalc's `where`, whose guard is an ordinary `Proc` so that `x + y < 10` and
+    /// `t matches {phi | psi}` remain writable — has no such type to key on, and its guard
+    /// parameter is an ordinary `TermParam::Simple`.
+    ///
+    /// This block is how such a language SAYS so. It is a declaration, never an inference:
+    /// nothing keys off the literal `"where"` or off a parameter being named `cond`, because
+    /// recognition by spelling is exactly the drift this tree forbids.
+    ///
+    /// Empty → no declared slots (the `?name:Guard` slots are still recognized on their own).
+    pub guard_slots: Vec<GuardSlotDecl>,
+}
+
+/// `<Label>(<param>);` — declares a term parameter as a semantic-predicate slot.
+///
+/// The obligation it induces is `term:<Label>:guard:<param>`, exactly the shape a
+/// `?name:Guard` slot induces, so a downstream consumer cannot tell which surface produced it —
+/// which is the point: the two spellings differ in *how the guard is written*, not in *what it
+/// is*.
+#[derive(Debug, Clone)]
+pub struct GuardSlotDecl {
+    /// The `terms { }` rule whose parameter this is.
+    pub label: Ident,
+    /// The parameter name.
+    pub param: Ident,
 }
 
 /// Rewrite rule in unified judgement syntax
