@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(substrate_verdict(&and), Some(false));
         let or = binary(|p1, p2| EI::EOrBody(EOr { p1, p2 }), gbool(true), gbool(false));
         assert_eq!(substrate_verdict(&or), Some(true));
-        let not = expr(EI::ENotBody(ENot { p: Some(Box::new(gbool(false))) }));
+        let not = expr(EI::ENotBody(ENot { p: Some(gbool(false)) }));
         assert_eq!(substrate_verdict(&not), Some(true));
     }
 
@@ -579,7 +579,7 @@ mod tests {
     /// therefore needs no `implies` arm, and material implication still settles.
     #[test]
     fn material_implication_arrives_already_decomposed_and_settles() {
-        let not_antecedent = expr(EI::ENotBody(ENot { p: Some(Box::new(gbool(false))) }));
+        let not_antecedent = expr(EI::ENotBody(ENot { p: Some(gbool(false)) }));
         let implication = binary(
             |p1, p2| EI::EOrBody(EOr { p1, p2 }),
             not_antecedent,

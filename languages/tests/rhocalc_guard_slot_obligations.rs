@@ -33,9 +33,7 @@
 #![cfg(feature = "rhocalc")]
 
 use mettail_languages::rhocalc::RhoCalcLanguage;
-use mettail_rholang_codegen::{
-    collect_guard_obligations, RhoGuardObligation, RhoGuardObligationKind,
-};
+use mettail_rholang_codegen::{collect_guard_obligations, RhoGuardObligationKind};
 use mettail_runtime::Language;
 
 fn rhocalc_def() -> mettail_ast::language::LanguageDef {
@@ -54,11 +52,11 @@ fn both_where_surfaces_induce_a_behavioral_predicate_obligation() {
     let obligations = collect_guard_obligations(&rhocalc_def());
 
     for expected_id in ["term:ForRowWhere:guard:cond", "term:ForRowSingleWhere:guard:cond"] {
+        // Compared field-wise rather than through the constructor: `RhoGuardObligation::new` is
+        // private, and a test needing a value is not a reason to widen a crate's API surface.
         assert!(
-            obligations.contains(&RhoGuardObligation::new(
-                expected_id,
-                RhoGuardObligationKind::BehavioralPredicate
-            )),
+            obligations.iter().any(|o| o.id == expected_id
+                && o.kind == RhoGuardObligationKind::BehavioralPredicate),
             "expected obligation `{expected_id}` (BehavioralPredicate); RhoCalc's `where` slot \
              is a semantic predicate and must induce one. Got: {:?}",
             obligations
