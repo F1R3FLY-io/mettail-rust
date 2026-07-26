@@ -13464,6 +13464,37 @@ where
                         ) else {
                             continue;
                         };
+                        // ── `[k-cand]`: the LOSING half of `[k-elect]` ──────────────
+                        // `[k-elect]` (the `realize_root_to_terms_with_weights` BIN
+                        // branch) prints only the CHOSEN entry's K-tuple, so an
+                        // election that disagrees with the weight-ordered `_all`
+                        // reading is visible but not ATTRIBUTABLE: you cannot tell
+                        // whether K-A (lateness), K-B (weight) or K-D (insertion
+                        // order) decided it, nor whether the reading you expected was
+                        // even a candidate. This dumps every Election candidate's key
+                        // legs as it enters the node's frontier, which makes those
+                        // four cases distinguishable from one run.
+                        //
+                        // Added while root-causing the sign-abutted numeric-literal
+                        // conformance divergence (2026-07-26), where it was what
+                        // EXONERATED the election: for `-7n` the root's packing family
+                        // contains no `NegProc` candidate at all, which is how the
+                        // string-level `@`-projection isolation prologue — not the
+                        // election — was identified as the seam.
+                        //
+                        // Same gating discipline as its siblings: `walker-trace` builds
+                        // only, behind its own env var, so production pays nothing.
+                        #[cfg(feature = "walker-trace")]
+                        if std::env::var_os("PRATTAIL_KBEST_CAND_DIAG").is_some() {
+                            if let KbestCandKey::Election(t) = &key {
+                                eprintln!(
+                                    "  [k-cand] node={node} pk={pk} pk_idx={pkidx_u32} \
+                                     lateness={} ords={:?}",
+                                    t.lateness,
+                                    t.sorted_ordinals(),
+                                );
+                            }
+                        }
                         let n = state.nodes.get_mut(&node).expect("kbest node state exists");
                         n.sub_mut(kind).frontier.push(std::cmp::Reverse(KbestCand {
                             key,
