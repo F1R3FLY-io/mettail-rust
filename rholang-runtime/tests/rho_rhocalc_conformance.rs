@@ -75,9 +75,23 @@
 //! | **H** | `==` / `!=` on **`Bool`** | `Bool` (was: `error`, no fold arm) | `Bool(true)` | — | ★ CLOSED |
 //! | **I** | a numeral's **carrier** depends on syntax (`@(1)`:`Int` vs `@1`:`BigInt`, `5u32`:`BigInt`) | `*(@(1)) + 2` ⟹ `error` | Rholang has ONE integer | the GRAMMAR (partitioned literal domains), NOT the WPDA projection | ★ CLOSED |
 //! | **J** | `x!()` satisfies `for(@y <- x)` | fires, `y = []` | arity-checked COMM: rests | C1 | open |
+//! | **K** | a `where` guard the host CANNOT DECIDE | the COMM **rests** (decline read as `false`) | decides it and **fires** | #33 stage C | open |
 //!
 //! `H` was **discovered by this suite**; `I` and `J` were discovered by the burndown described
-//! immediately below. None of the three is in the original `§17.11` inventory.
+//! immediately below; **`K` was discovered by pointing this suite at a `where` guard for the
+//! first time** (#33 stage D, 2026-07-25). None of the four is in the original `§17.11`
+//! inventory.
+//!
+//! ### ⚠ Why `K` took until 2026-07-25 to surface
+//!
+//! Not for want of a guard test — `rho_matches_differential.rs` has locked the host and the
+//! machine to the same *verdict* for `matches` guards since M-1b. But its agreement property is
+//! one-directional **by design**: a host `None` is an accepted escape hatch, on the reasoning
+//! that "`eval_guard_bool`'s callers treat an undecided guard as *do not fire* host-side". So the
+//! VERDICT was locked and the NORMAL FORM was never compared, and this suite — the one instrument
+//! that compares normal forms — had never been aimed at a guard. The permissive reading of the
+//! guard lane survived by never having been measured, which is the useful lesson: an invariant
+//! that is asserted in a doc comment and nowhere in a test is a hypothesis.
 //!
 //! ### ⚠ The pins this suite replaced did not pin anything — now FIXED
 //!
@@ -1492,4 +1506,177 @@ fn render_as_rhocalc_matches_the_rhocalc_surface_form() {
         )])),
         "{1:10}"
     );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// DIVERGENCE K — the `where`-GUARD LANE (#33 stage D, 2026-07-25)
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/// `{ for(@x <- @"c" where GUARD) { @"OUT"!("fired") } | @"c"!(DATUM) }`.
+///
+/// The COMM fires ⟺ the guard passes, and firing is OBSERVABLE on both legs: the fold's
+/// residue loses its `for(`, and the machine rests `"fired"` on `@"OUT"`.
+fn guarded_comm_program(guard: &str, datum: &str) -> String {
+    format!(r#"{{ for(@x <- @"c" where {guard}) {{ @"OUT"!("fired") }} | @"c"!({datum}) }}"#)
+}
+
+/// Did the FOLD fire the COMM? The receive is gone from the residue.
+///
+/// ⚠ Not `residue.contains("fired")` — the string `"fired"` also appears inside the body of
+/// an UNFIRED receive, so that test reports firing for every row. It cost this suite a
+/// wrong reading of its own first measurement.
+fn fold_fired(residue: &str) -> bool {
+    !residue.contains("for(")
+}
+
+/// **Divergence K (witness) — the host guard lane BLOCKS a COMM the machine FIRES.**
+///
+/// ## Why this row did not exist before
+///
+/// The suite's `fold_program`/`reduce_program` pair found divergences B, D, G, H, I and J,
+/// and had **never been pointed at a `where` guard**. The neighbouring
+/// `rho_matches_differential.rs` locks the host and machine to the same *verdict*, but its
+/// property (1) is one-directional by design — a host `None` is an accepted escape hatch,
+/// because "`eval_guard_bool`'s callers treat an undecided guard as *do not fire*
+/// host-side". So the VERDICT was locked and the NORMAL FORM was never examined, and the
+/// permissive reading of the guard lane survived by never having been tested.
+///
+/// `formula.rs` states that reading directly: declining "never costs decidability, and it
+/// can never produce a wrong answer." That is true of the **verdict** — the host never
+/// fires a COMM the machine would not — and false of the **normal form**, which is what
+/// this row measures.
+///
+/// ## Measured 2026-07-25
+///
+/// ```text
+///   guard                                  datum          fold    machine
+///   x == true                              true           fires   fires    agree
+///   x == true                              false          rests   rests    agree
+///   x matches "hi"                         "hi"           fires   fires    agree
+///   x matches {true | true}                {true | true}  RESTS   FIRES    ★ diverge
+///   (x matches {true | true}) or true      {true | true}  RESTS   FIRES    ★ diverge
+///   (x matches {true | true}) or false     false          RESTS   FIRES    ★ diverge
+/// ```
+///
+/// The first three are the controls that prove the instrument works — including
+/// `x == true`, which is divergence H's second half and would itself have diverged before
+/// stage B1 gave `eval_cmp_order` its `CastBool` arm.
+///
+/// ★ The last row is the sharpest. Its guard is `(x matches φ) or true`, whose value is
+/// forced to `true` by the right operand for EVERY `x`, and whose datum does not even match
+/// φ. The machine fires it. The host declines it — because `eval_guard_disposition`'s `Or`
+/// arm is LEFT-STRICT, so an undecided left operand short-circuits the whole disjunction to
+/// `Declines` before the settling `true` is ever consulted. A guard that is trivially,
+/// syntactically true does not fire host-side.
+///
+/// ## What decides it, and why the obvious fix is not obviously right
+///
+/// The declining operand is the SEPARATING conjunction `{φ | ψ}`, which
+/// `formula::host_matches_verdict` refuses on purpose: its semantics is AC matching with a
+/// remainder, and a host re-implementation would be the second, divergent matcher this
+/// design exists to avoid. Declining it is correct. Propagating that decline through `or`
+/// past a literal `true` is not.
+///
+/// The fix that suggests itself — make the connectives Kleene, so `unknown ∨ true = true`
+/// — is NOT sound in general, and #33 stage B2 is blocked on exactly that: f1r3node
+/// evaluates BOTH operands of `EOr`/`EAnd` unconditionally (`reduce.rs` — the work-stack
+/// driver pushes `EBool(p2)` and `EBool(p1)` together before `Combine(EvKont::Or)`, and the
+/// recursive fallback binds `b1` and `b2` with `?` before combining), and `guard_passes`
+/// maps any `Err` or non-boolean result to `false`. So where the undecided operand would
+/// ERROR on the machine, a Kleene host fires and the machine does not — unsoundness in the
+/// FIRING direction.
+///
+/// ★ These rows show the two cases are DIFFERENT input classes. Here the undecided operand
+/// does not error on the machine; it evaluates fine through the `SpatialMatcherOracle` and
+/// returns a boolean. A sound repair therefore has to distinguish "declined because the
+/// host may not decide it, though the machine will decide it totally" from "declined
+/// because evaluating it may fail" — which is a finer distinction than
+/// `GuardDisposition::Declines` currently draws.
+///
+/// Closed by **#33 stage C** (making the residue honest), which is why this is a witness
+/// and not a bug report.
+#[tokio::test(flavor = "multi_thread")]
+async fn divergence_k_witness_guard_lane_blocks_a_comm_the_machine_fires() {
+    // ── controls: the instrument fires and rests where it should ──
+    for (guard, datum, expected) in [
+        ("x == true", "true", true),
+        ("x == true", "false", false),
+        (r#"x matches "hi""#, r#""hi""#, true),
+    ] {
+        let proc = parse(&guarded_comm_program(guard, datum));
+        let residue = fold_program(&proc).expect("the COMM+fold fixpoint settles");
+        let observed = reduce_program(&proc).await.expect("the machine reduces");
+        assert_eq!(
+            fold_fired(&residue),
+            expected,
+            "control {guard:?} on {datum:?}: fold should {} — got {residue:?}",
+            if expected { "fire" } else { "rest" }
+        );
+        assert_eq!(
+            !observed.is_empty(),
+            expected,
+            "control {guard:?} on {datum:?}: machine should {}",
+            if expected { "fire" } else { "rest" }
+        );
+    }
+
+    // ── ★ the divergence: host rests, machine fires ──
+    for (guard, datum) in [
+        (r#"x matches {true | true}"#, "{true | true}"),
+        (r#"(x matches {true | true}) or true"#, "{true | true}"),
+        (r#"(x matches {true | true}) or true"#, "false"),
+    ] {
+        let proc = parse(&guarded_comm_program(guard, datum));
+        let residue = fold_program(&proc).expect("the COMM+fold fixpoint settles");
+        let observed = reduce_program(&proc).await.expect("the machine reduces");
+        assert!(
+            !fold_fired(&residue),
+            "K: the host is expected to DECLINE {guard:?} on {datum:?} today and leave the \
+             receive resting; if it now fires, stage C landed and this witness must be \
+             replaced by its target twin. Got {residue:?}"
+        );
+        assert_eq!(
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            vec![r#""fired""#.to_string()],
+            "K: the MACHINE fires {guard:?} on {datum:?} — that is the whole point of the \
+             divergence, and if it stops firing the reducer's guard semantics changed"
+        );
+    }
+}
+
+/// **Divergence K (target) — the guard lane's normal form agrees with the machine.**
+///
+/// The reducer is NORMATIVE ("rhocalc IS rholang"), so where the two disagree the host is
+/// wrong. This asserts the property the witness above measures the absence of: for a guard
+/// the machine decides, the fold's residue reflects the same decision.
+///
+/// It is stated as AGREEMENT rather than as "the host must fire", because the repair is not
+/// required to make the host decide these guards itself — leaving the COMM to the machine
+/// is legitimate. What is not legitimate is a *residue that looks settled* while the
+/// machine would have reduced it further. Stage C makes the residue say which of the two
+/// occurred, at which point this test becomes satisfiable without the host re-implementing
+/// the spatial matcher.
+///
+/// Closed by **#33 stage C**.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "divergence K: the host guard lane conflates `cannot decide` with `decided false`, \
+            so it rests where the machine fires (e.g. `(x matches {φ|ψ}) or true`, a guard \
+            forced true by its right operand); closed by #33 stage C"]
+async fn divergence_k_target_guard_lane_normal_form_agrees_with_the_machine() {
+    for (guard, datum) in [
+        (r#"x matches {true | true}"#, "{true | true}"),
+        (r#"(x matches {true | true}) or true"#, "{true | true}"),
+        (r#"(x matches {true | true}) or true"#, "false"),
+    ] {
+        let proc = parse(&guarded_comm_program(guard, datum));
+        let residue = fold_program(&proc).expect("the COMM+fold fixpoint settles");
+        let observed = reduce_program(&proc).await.expect("the machine reduces");
+        assert_eq!(
+            fold_fired(&residue),
+            !observed.is_empty(),
+            "K: fold and machine must agree on whether {guard:?} fires on {datum:?}; \
+             fold residue {residue:?} vs machine {:?}",
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>()
+        );
+    }
 }
