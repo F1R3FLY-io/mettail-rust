@@ -42,9 +42,12 @@
 #![cfg(feature = "rho-languages")]
 
 use mettail_languages::calculator::CalculatorLanguage;
+// Task #11 (extended 2026-07-26): `swapdemo_backed`, `acdemo_backed` and `ctxdemo_backed`
+// are gone — SwapDemo and the eleven rho_net DEMONSTRATION grammars are de-productionized
+// out of the REPL (USER: "I don't want REPL integration for the non-production grammars!").
+// The four PRODUCTION wrappers keep the zero-D-stage lock unchanged.
 use mettail_repl::rho_backends::{
-    acdemo_backed, ambient_backed, calculator_backed, ctxdemo_backed, lambda_backed,
-    rhocalc_backed, swapdemo_backed,
+    ambient_backed, calculator_backed, lambda_backed, rhocalc_backed,
 };
 use mettail_rholang_codegen::{
     RhoFoldDataflowDisposition, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
@@ -62,61 +65,73 @@ fn term_obs(constructor: &str, children: Vec<RuntimeObservationValue>) -> Runtim
     }
 }
 
-#[test]
-fn admitted_swapdemo_exec_builds_no_dovetail_report() {
-    let language = swapdemo_backed().expect("SwapDemo lazy backend installs");
-    let term = language
-        .parse_term("swap(A, B)")
-        .expect("swap(A, B) parses");
-
-    let before = dovetail_report_invocations();
-    let report = language
-        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
-        .expect("the admitted SwapDemo exec runs report-free in Rho");
-    let after = dovetail_report_invocations();
-
-    assert_eq!(
-        after - before,
-        0,
-        "an ADMITTED SwapDemo exec must build ZERO Dovetail reports (the D-stage is demoted)"
-    );
-    // Byte-identical exec result: the located Swap(A, B) redex fired in Rho → Pair(B, A).
-    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
-    let out = report
-        .observations_for_channel("OUT")
-        .expect("an OUT observation");
-    assert_eq!(
-        out.values,
-        vec![term_obs("Pair", vec![term_obs("B", Vec::new()), term_obs("A", Vec::new())])],
-        "the report-free match fires Swap(A, B) → Pair(B, A) exactly as the eager pipeline did"
-    );
-}
-
-#[test]
-fn admitted_swapdemo_multi_redex_exec_builds_no_dovetail_report() {
-    // The locate-all surface stays report-free too: nested + multiple redexes are LOCATED by
-    // the automaton from the reflected subject, never from report σ.
-    let language = swapdemo_backed().expect("SwapDemo lazy backend installs");
-    let term = language
-        .parse_term("pair(swap(A, B), swap(B, A))")
-        .expect("the two-redex term parses");
-
-    let before = dovetail_report_invocations();
-    let report = language
-        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
-        .expect("the multi-redex SwapDemo exec runs report-free in Rho");
-    let after = dovetail_report_invocations();
-
-    assert_eq!(after - before, 0, "locate-all admitted execs build ZERO Dovetail reports");
-    let out = report
-        .observations_for_channel("OUT")
-        .expect("an OUT observation");
-    assert_eq!(out.observed_count(), 2, "both located redexes fired (got {:?})", out.values);
-    let pair_b_a = term_obs("Pair", vec![term_obs("B", Vec::new()), term_obs("A", Vec::new())]);
-    let pair_a_b = term_obs("Pair", vec![term_obs("A", Vec::new()), term_obs("B", Vec::new())]);
-    assert!(out.values.contains(&pair_b_a) && out.values.contains(&pair_a_b));
-}
-
+// Task #11 (extended 2026-07-26) — TURNED OFF, not deleted. This test asserted the
+// zero-D-stage property of a *REPL-REGISTERED* wrapper. Per the USER decision "I don't
+// want REPL integration for the non-production grammars!" the wrapper no longer exists,
+// so the property it names has no subject in the REPL. It is NOT relocatable: the
+// subject was the registration, not the language.
+// Covered: SwapDemo's single-redex zero-D-stage lock. The property is unchanged and is asserted directly against the same in-Rho path by `rholang-runtime/tests/rho_net_equivalence.rs`.
+// #[test]
+// fn admitted_swapdemo_exec_builds_no_dovetail_report() {
+//     let language = swapdemo_backed().expect("SwapDemo lazy backend installs");
+//     let term = language
+//         .parse_term("swap(A, B)")
+//         .expect("swap(A, B) parses");
+//
+//     let before = dovetail_report_invocations();
+//     let report = language
+//         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+//         .expect("the admitted SwapDemo exec runs report-free in Rho");
+//     let after = dovetail_report_invocations();
+//
+//     assert_eq!(
+//         after - before,
+//         0,
+//         "an ADMITTED SwapDemo exec must build ZERO Dovetail reports (the D-stage is demoted)"
+//     );
+//     // Byte-identical exec result: the located Swap(A, B) redex fired in Rho → Pair(B, A).
+//     assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+//     let out = report
+//         .observations_for_channel("OUT")
+//         .expect("an OUT observation");
+//     assert_eq!(
+//         out.values,
+//         vec![term_obs("Pair", vec![term_obs("B", Vec::new()), term_obs("A", Vec::new())])],
+//         "the report-free match fires Swap(A, B) → Pair(B, A) exactly as the eager pipeline did"
+//     );
+// }
+//
+// Task #11 (extended 2026-07-26) — TURNED OFF, not deleted. This test asserted the
+// zero-D-stage property of a *REPL-REGISTERED* wrapper. Per the USER decision "I don't
+// want REPL integration for the non-production grammars!" the wrapper no longer exists,
+// so the property it names has no subject in the REPL. It is NOT relocatable: the
+// subject was the registration, not the language.
+// Covered: SwapDemo's MULTI-redex zero-D-stage lock. Same successor: `rholang-runtime/tests/rho_net_equivalence.rs` drives the multi-redex subject on the machine without the registry.
+// #[test]
+// fn admitted_swapdemo_multi_redex_exec_builds_no_dovetail_report() {
+//     // The locate-all surface stays report-free too: nested + multiple redexes are LOCATED by
+//     // the automaton from the reflected subject, never from report σ.
+//     let language = swapdemo_backed().expect("SwapDemo lazy backend installs");
+//     let term = language
+//         .parse_term("pair(swap(A, B), swap(B, A))")
+//         .expect("the two-redex term parses");
+//
+//     let before = dovetail_report_invocations();
+//     let report = language
+//         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+//         .expect("the multi-redex SwapDemo exec runs report-free in Rho");
+//     let after = dovetail_report_invocations();
+//
+//     assert_eq!(after - before, 0, "locate-all admitted execs build ZERO Dovetail reports");
+//     let out = report
+//         .observations_for_channel("OUT")
+//         .expect("an OUT observation");
+//     assert_eq!(out.observed_count(), 2, "both located redexes fired (got {:?})", out.values);
+//     let pair_b_a = term_obs("Pair", vec![term_obs("B", Vec::new()), term_obs("A", Vec::new())]);
+//     let pair_a_b = term_obs("Pair", vec![term_obs("A", Vec::new()), term_obs("B", Vec::new())]);
+//     assert!(out.values.contains(&pair_b_a) && out.values.contains(&pair_a_b));
+// }
+//
 #[test]
 fn admitted_calculator_exec_builds_no_dovetail_report() {
     let language = calculator_backed().expect("Calculator lazy backend installs");
@@ -271,73 +286,85 @@ fn a_s5_6_admitted_ambient_exec_builds_no_dovetail_report() {
     }
 }
 
-/// A-S6: an ADMITTED AC-demo exec locates and fires the bag redex fully in-Rho — ZERO
-/// Dovetail reports; `#{A | B | C}#` fires `AcStep . {x, ...rest} ~> wrap(x)` for one
-/// located pick.
-#[test]
-fn a_s6_admitted_acdemo_exec_builds_no_dovetail_report() {
-    let language = acdemo_backed().expect("AcDemo lazy backend installs");
-    let term = language
-        .parse_term("#{A | B | C}#")
-        .expect("the AC bag subject parses");
-
-    let before = dovetail_report_invocations();
-    let report = language
-        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
-        .expect("the admitted AcDemo exec runs report-free in Rho");
-    let after = dovetail_report_invocations();
-
-    assert_eq!(
-        after - before,
-        0,
-        "an ADMITTED AcDemo exec must build ZERO Dovetail reports (the report-free \
-         set-automaton match is the default exec path — A-S6)"
-    );
-    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
-    let out = report
-        .observations_for_channel("OUT")
-        .expect("an OUT observation");
-    assert_eq!(out.observed_count(), 1, "one located AC firing (got {:?})", out.values);
-    assert!(
-        matches!(
-            &out.values[0],
-            RuntimeObservationValue::Term { constructor, .. } if constructor == "Wrap"
-        ),
-        "AcStep fired {{x, ...rest}} ~> wrap(x): {:?}",
-        out.values
-    );
-}
-
-/// A-S6: an ADMITTED base-rewrite demo exec fires in-Rho with ZERO Dovetail reports —
-/// CtxDemo's `swap(A, B)` at the ROOT fires the flat base rewrite `Flip` (`~> pair(B, A)`),
-/// exactly the SwapDemo family shape.
-#[test]
-fn a_s6_admitted_ctxdemo_base_flip_exec_builds_no_dovetail_report() {
-    let language = ctxdemo_backed().expect("CtxDemo lazy backend installs");
-    let term = language.parse_term("swap(A, B)").expect("the flat Flip subject parses");
-
-    let before = dovetail_report_invocations();
-    let report = language
-        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
-        .expect("the admitted CtxDemo exec runs report-free in Rho");
-    let after = dovetail_report_invocations();
-
-    assert_eq!(
-        after - before,
-        0,
-        "an ADMITTED CtxDemo exec must build ZERO Dovetail reports (A-S6)"
-    );
-    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
-    let out = report
-        .observations_for_channel("OUT")
-        .expect("an OUT observation");
-    assert_eq!(
-        out.values,
-        vec![term_obs("Pair", vec![term_obs("B", Vec::new()), term_obs("A", Vec::new())])],
-        "Flip fired swap(A, B) ~> pair(B, A) in Rho"
-    );
-}
-
+// Task #11 (extended 2026-07-26) — TURNED OFF, not deleted. This test asserted the
+// zero-D-stage property of a *REPL-REGISTERED* wrapper. Per the USER decision "I don't
+// want REPL integration for the non-production grammars!" the wrapper no longer exists,
+// so the property it names has no subject in the REPL. It is NOT relocatable: the
+// subject was the registration, not the language.
+// Covered: AcDemo's AC-family zero-D-stage lock. Successor: `rholang-runtime/tests/rho_net_ac_firing.rs`.
+// /// A-S6: an ADMITTED AC-demo exec locates and fires the bag redex fully in-Rho — ZERO
+// /// Dovetail reports; `#{A | B | C}#` fires `AcStep . {x, ...rest} ~> wrap(x)` for one
+// /// located pick.
+// #[test]
+// fn a_s6_admitted_acdemo_exec_builds_no_dovetail_report() {
+//     let language = acdemo_backed().expect("AcDemo lazy backend installs");
+//     let term = language
+//         .parse_term("#{A | B | C}#")
+//         .expect("the AC bag subject parses");
+//
+//     let before = dovetail_report_invocations();
+//     let report = language
+//         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+//         .expect("the admitted AcDemo exec runs report-free in Rho");
+//     let after = dovetail_report_invocations();
+//
+//     assert_eq!(
+//         after - before,
+//         0,
+//         "an ADMITTED AcDemo exec must build ZERO Dovetail reports (the report-free \
+//          set-automaton match is the default exec path — A-S6)"
+//     );
+//     assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+//     let out = report
+//         .observations_for_channel("OUT")
+//         .expect("an OUT observation");
+//     assert_eq!(out.observed_count(), 1, "one located AC firing (got {:?})", out.values);
+//     assert!(
+//         matches!(
+//             &out.values[0],
+//             RuntimeObservationValue::Term { constructor, .. } if constructor == "Wrap"
+//         ),
+//         "AcStep fired {{x, ...rest}} ~> wrap(x): {:?}",
+//         out.values
+//     );
+// }
+//
+// Task #11 (extended 2026-07-26) — TURNED OFF, not deleted. This test asserted the
+// zero-D-stage property of a *REPL-REGISTERED* wrapper. Per the USER decision "I don't
+// want REPL integration for the non-production grammars!" the wrapper no longer exists,
+// so the property it names has no subject in the REPL. It is NOT relocatable: the
+// subject was the registration, not the language.
+// Covered: CtxDemo's root-position base-rewrite zero-D-stage lock. Successor: `rholang-runtime/tests/rho_net_contextual_firing.rs`.
+// /// A-S6: an ADMITTED base-rewrite demo exec fires in-Rho with ZERO Dovetail reports —
+// /// CtxDemo's `swap(A, B)` at the ROOT fires the flat base rewrite `Flip` (`~> pair(B, A)`),
+// /// exactly the SwapDemo family shape.
+// #[test]
+// fn a_s6_admitted_ctxdemo_base_flip_exec_builds_no_dovetail_report() {
+//     let language = ctxdemo_backed().expect("CtxDemo lazy backend installs");
+//     let term = language.parse_term("swap(A, B)").expect("the flat Flip subject parses");
+//
+//     let before = dovetail_report_invocations();
+//     let report = language
+//         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+//         .expect("the admitted CtxDemo exec runs report-free in Rho");
+//     let after = dovetail_report_invocations();
+//
+//     assert_eq!(
+//         after - before,
+//         0,
+//         "an ADMITTED CtxDemo exec must build ZERO Dovetail reports (A-S6)"
+//     );
+//     assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+//     let out = report
+//         .observations_for_channel("OUT")
+//         .expect("an OUT observation");
+//     assert_eq!(
+//         out.values,
+//         vec![term_obs("Pair", vec![term_obs("B", Vec::new()), term_obs("A", Vec::new())])],
+//         "Flip fired swap(A, B) ~> pair(B, A) in Rho"
+//     );
+// }
+//
 // Task #11 (extended 2026-07-26) — TURNED OFF, not deleted. This test asserted the
 // zero-D-stage property of NativeFoldDemo's *REPL-REGISTERED* wrapper. Per the USER
 // decision "I don't want REPL integration for the non-production grammars!",

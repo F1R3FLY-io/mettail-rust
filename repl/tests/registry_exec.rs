@@ -20,25 +20,32 @@ fn default_backends() -> HashMap<String, Option<RuntimeBackend>> {
         .collect()
 }
 
-/// A-S6: every rho_net demo language registered by the production `build_registry`.
+/// A-S6: the rho_net demo languages registered by the production `build_registry`.
 ///
-/// Task #11 (extended 2026-07-26): shrinking as the DEMONSTRATION grammars are
-/// de-productionized out of the REPL registry (USER: "I don't want REPL integration for
-/// the non-production grammars!"). An entry removed here is not a lost assertion — the
-/// language stops being a registry member by design.
-const A_S6_DEMOS: [&str; 12] = [
-    "SwapDemo",
-    "AcDemo",
-    "AcBagDemo",
-    "NlAcDemo",
-    "AmbDemo",
-    "AmbNewDemo",
-    "InOutDemo",
-    "CommDemo",
-    "CtxDemo",
-    "BiCongDemo",
-    "LambdaDemo",
-    "NativeDemo",
+/// Task #11 (extended 2026-07-26): EMPTY, by decision. Per the USER decision "I don't want
+/// REPL integration for the non-production grammars!", SwapDemo and the eleven rho_net
+/// DEMONSTRATION grammars are de-productionized out of the registry — REPL-unreachability
+/// is the intended outcome. An entry removed here is not a lost assertion: the language
+/// stops being a registry member by design, and its in-Rho behaviour is asserted directly
+/// in `rholang-runtime/tests/rho_net_*_firing.rs`.
+///
+/// The constant and both loops below are KEPT rather than deleted: they are the standing
+/// contract that WHATEVER the registry advertises must carry an installed default backend,
+/// so re-adding a language here re-arms the check with no other edit. The four production
+/// languages continue to be checked by name either way.
+const A_S6_DEMOS: [&str; 0] = [
+    // "SwapDemo",
+    // "AcDemo",
+    // "AcBagDemo",
+    // "NlAcDemo",
+    // "AmbDemo",
+    // "AmbNewDemo",
+    // "InOutDemo",
+    // "CommDemo",
+    // "CtxDemo",
+    // "BiCongDemo",
+    // "LambdaDemo",
+    // "NativeDemo",
     // "NativeFoldDemo",  // de-productionized 2026-07-26 (test-hosted)
 ];
 

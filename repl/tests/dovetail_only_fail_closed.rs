@@ -53,47 +53,57 @@ fn lambda_and_ambient_exec_fail_closed_pointing_at_the_rho_build() {
     }
 }
 
-/// A-S6: every flipped demo language registers, parses, advertises its production
-/// `RhoMachine` default, and fails exec CLOSED with the decision-(4) typed error naming
-/// the in-Rho set-automaton match and the rho build.
-#[test]
-fn a_s6_demos_exec_fail_closed_pointing_at_the_rho_build() {
-    let registry = build_registry().expect("the Dovetail-only registry builds");
-    for (name, subject) in [
-        ("SwapDemo", "swap(A, B)"),
-        ("AcDemo", "#{A | B | C}#"),
-        ("AcBagDemo", "#{A | B | C}#"),
-        ("NlAcDemo", "#{A | A | B}#"),
-        ("AmbDemo", "{ open(na, A) | na[B] }"),
-        ("AmbNewDemo", "new(x, { open(na, A) | na[B] })"),
-        ("InOutDemo", "{ na[{ in(nb, A) }] | nb[B] }"),
-        ("CommDemo", "{ for(y <- na){ y!(nc) } | na!(nb) }"),
-        ("CtxDemo", "wrap(swap(A, B))"),
-        ("BiCongDemo", "node(swap(A, B), swap(C, D))"),
-        ("LambdaDemo", "(lam x. f(x), A)"),
-        ("NativeDemo", "2 ^ 3"),
-        // Task #11 (extended 2026-07-26): NativeFoldDemo is de-productionized out of the
-        // REPL registry (test-hosted definition), so it has no fail-closed wrapper here.
-        // ("NativeFoldDemo", "2 + 3"),
-    ] {
-        let language = registry.get(name).expect("the demo registers");
-        let term = language
-            .parse_term(subject)
-            .unwrap_or_else(|err| panic!("{name} must still parse in this profile: {err}"));
-        assert_eq!(
-            language.selected_default_runtime_backend(),
-            Some(RuntimeBackend::RhoMachine),
-            "{name} advertises its production RhoMachine default even here"
-        );
-        let err = language
-            .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
-            .expect_err("demo exec must fail closed in the Dovetail-only profile");
-        assert!(
-            err.contains("in-Rho set-automaton match")
-                && err.contains("rho-languages")
-                && err.contains(name),
-            "{name}'s fail-closed error must name the match mechanism, the language, and \
-             the rho build flag: {err}"
-        );
-    }
-}
+// Task #11 (extended 2026-07-26) — TURNED OFF, not deleted. This test iterated the
+// TWELVE demo languages through the Dovetail-only REGISTRY and asserted each fails exec
+// closed pointing at the rho build. Per the USER decision "I don't want REPL integration
+// for the non-production grammars!" none of them registers any more, so the loop has no
+// subjects at all — `registry.get(name)` would panic on the first entry. The subject was
+// the REGISTRATION, not the language, so this is NOT relocatable. The decision-(4)
+// fail-closed discipline itself is unchanged and stays pinned by the production half of
+// this file (`lambda_and_ambient_exec_fail_closed_pointing_at_the_rho_build`), which
+// exercises the identical `RhoBuildRequiredLanguage` wrapper.
+// /// A-S6: every flipped demo language registers, parses, advertises its production
+// /// `RhoMachine` default, and fails exec CLOSED with the decision-(4) typed error naming
+// /// the in-Rho set-automaton match and the rho build.
+// #[test]
+// fn a_s6_demos_exec_fail_closed_pointing_at_the_rho_build() {
+//     let registry = build_registry().expect("the Dovetail-only registry builds");
+//     for (name, subject) in [
+//         ("SwapDemo", "swap(A, B)"),
+//         ("AcDemo", "#{A | B | C}#"),
+//         ("AcBagDemo", "#{A | B | C}#"),
+//         ("NlAcDemo", "#{A | A | B}#"),
+//         ("AmbDemo", "{ open(na, A) | na[B] }"),
+//         ("AmbNewDemo", "new(x, { open(na, A) | na[B] })"),
+//         ("InOutDemo", "{ na[{ in(nb, A) }] | nb[B] }"),
+//         ("CommDemo", "{ for(y <- na){ y!(nc) } | na!(nb) }"),
+//         ("CtxDemo", "wrap(swap(A, B))"),
+//         ("BiCongDemo", "node(swap(A, B), swap(C, D))"),
+//         ("LambdaDemo", "(lam x. f(x), A)"),
+//         ("NativeDemo", "2 ^ 3"),
+//         // Task #11 (extended 2026-07-26): NativeFoldDemo is de-productionized out of the
+//         // REPL registry (test-hosted definition), so it has no fail-closed wrapper here.
+//         // ("NativeFoldDemo", "2 + 3"),
+//     ] {
+//         let language = registry.get(name).expect("the demo registers");
+//         let term = language
+//             .parse_term(subject)
+//             .unwrap_or_else(|err| panic!("{name} must still parse in this profile: {err}"));
+//         assert_eq!(
+//             language.selected_default_runtime_backend(),
+//             Some(RuntimeBackend::RhoMachine),
+//             "{name} advertises its production RhoMachine default even here"
+//         );
+//         let err = language
+//             .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+//             .expect_err("demo exec must fail closed in the Dovetail-only profile");
+//         assert!(
+//             err.contains("in-Rho set-automaton match")
+//                 && err.contains("rho-languages")
+//                 && err.contains(name),
+//             "{name}'s fail-closed error must name the match mechanism, the language, and \
+//              the rho build flag: {err}"
+//         );
+//     }
+// }
+//

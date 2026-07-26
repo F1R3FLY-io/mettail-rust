@@ -213,19 +213,27 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         registry.register(crate::rho_backends::ambient_backed()?);
         registry.register(crate::rho_backends::rhocalc_backed()?);
         registry.register(crate::rho_backends::calculator_backed()?);
-        registry.register(crate::rho_backends::swapdemo_backed()?);
-        // A-S6 (USER decision 2026-07-20): the demo languages flip to the machine too.
-        registry.register(crate::rho_backends::acdemo_backed()?);
-        registry.register(crate::rho_backends::acbagdemo_backed()?);
-        registry.register(crate::rho_backends::nlacdemo_backed()?);
-        registry.register(crate::rho_backends::ambdemo_backed()?);
-        registry.register(crate::rho_backends::ambnewdemo_backed()?);
-        registry.register(crate::rho_backends::inoutdemo_backed()?);
-        registry.register(crate::rho_backends::commdemo_backed()?);
-        registry.register(crate::rho_backends::ctxdemo_backed()?);
-        registry.register(crate::rho_backends::bicongdemo_backed()?);
-        registry.register(crate::rho_backends::lambdademo_backed()?);
-        registry.register(crate::rho_backends::nativedemo_backed()?);
+        // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
+        // want REPL integration for the non-production grammars!" SwapDemo and the eleven
+        // rho_net demonstration grammars are NOT production languages, so they are no longer
+        // registry members and are no longer reachable from the REPL at all. That
+        // unreachability is the DESIRED OUTCOME, not a cost: the A-S6 in-Rho firing each
+        // wrapper exposed interactively stays covered end-to-end by the corresponding
+        // `rholang-runtime/tests/rho_net_*_firing.rs`, which drives the same machine path
+        // directly. Commented out, not deleted, so the A-S6 registry shape stays legible.
+        // registry.register(crate::rho_backends::swapdemo_backed()?);
+        // // A-S6 (USER decision 2026-07-20): the demo languages flip to the machine too.
+        // registry.register(crate::rho_backends::acdemo_backed()?);
+        // registry.register(crate::rho_backends::acbagdemo_backed()?);
+        // registry.register(crate::rho_backends::nlacdemo_backed()?);
+        // registry.register(crate::rho_backends::ambdemo_backed()?);
+        // registry.register(crate::rho_backends::ambnewdemo_backed()?);
+        // registry.register(crate::rho_backends::inoutdemo_backed()?);
+        // registry.register(crate::rho_backends::commdemo_backed()?);
+        // registry.register(crate::rho_backends::ctxdemo_backed()?);
+        // registry.register(crate::rho_backends::bicongdemo_backed()?);
+        // registry.register(crate::rho_backends::lambdademo_backed()?);
+        // registry.register(crate::rho_backends::nativedemo_backed()?);
         // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
         // want REPL integration for the non-production grammars!" NativeFoldDemo is a
         // DEMONSTRATION grammar whose definition moved to
@@ -247,18 +255,26 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         registry.register(crate::rho_backends::ambient_backed()?);
         registry.register(Box::new(CalculatorLanguage));
         registry.register(Box::new(RhoCalcLanguage));
-        registry.register(crate::rho_backends::swapdemo_backed()?);
-        registry.register(crate::rho_backends::acdemo_backed()?);
-        registry.register(crate::rho_backends::acbagdemo_backed()?);
-        registry.register(crate::rho_backends::nlacdemo_backed()?);
-        registry.register(crate::rho_backends::ambdemo_backed()?);
-        registry.register(crate::rho_backends::ambnewdemo_backed()?);
-        registry.register(crate::rho_backends::inoutdemo_backed()?);
-        registry.register(crate::rho_backends::commdemo_backed()?);
-        registry.register(crate::rho_backends::ctxdemo_backed()?);
-        registry.register(crate::rho_backends::bicongdemo_backed()?);
-        registry.register(crate::rho_backends::lambdademo_backed()?);
-        registry.register(crate::rho_backends::nativedemo_backed()?);
+        // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
+        // want REPL integration for the non-production grammars!" SwapDemo and the eleven
+        // rho_net demonstration grammars are NOT production languages, so they are no longer
+        // registry members and are no longer reachable from the REPL at all. That
+        // unreachability is the DESIRED OUTCOME, not a cost: the A-S6 in-Rho firing each
+        // wrapper exposed interactively stays covered end-to-end by the corresponding
+        // `rholang-runtime/tests/rho_net_*_firing.rs`, which drives the same machine path
+        // directly. Commented out, not deleted, so the A-S6 registry shape stays legible.
+        // registry.register(crate::rho_backends::swapdemo_backed()?);
+        // registry.register(crate::rho_backends::acdemo_backed()?);
+        // registry.register(crate::rho_backends::acbagdemo_backed()?);
+        // registry.register(crate::rho_backends::nlacdemo_backed()?);
+        // registry.register(crate::rho_backends::ambdemo_backed()?);
+        // registry.register(crate::rho_backends::ambnewdemo_backed()?);
+        // registry.register(crate::rho_backends::inoutdemo_backed()?);
+        // registry.register(crate::rho_backends::commdemo_backed()?);
+        // registry.register(crate::rho_backends::ctxdemo_backed()?);
+        // registry.register(crate::rho_backends::bicongdemo_backed()?);
+        // registry.register(crate::rho_backends::lambdademo_backed()?);
+        // registry.register(crate::rho_backends::nativedemo_backed()?);
         // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
         // want REPL integration for the non-production grammars!" NativeFoldDemo is a
         // DEMONSTRATION grammar whose definition moved to
