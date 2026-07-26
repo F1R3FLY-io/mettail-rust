@@ -294,10 +294,44 @@ Side by side — one unchanged set of results, three predicates, three outcomes:
 
 ---
 
-## Beat 5 — And it can refuse all of them (45 s — the honesty beat)
+## Beat 5 — Two ways to be refused, and why each matters (1.5 min — the honesty beat)
 
-Same three results, same pattern; the guard now names the *three*-argument constant combinator
-`lam a. lam b. lam c. a`, which is not the normal form of any contract.
+### 5a — The reduction is load-bearing
+
+Offer the desk Contract C **as it arrives** instead of as it reduces. Same channel, same pattern,
+and a `where` clause that is character-for-character Beat 3's — it still asks for the constant
+combinator. Only the datum changed:
+
+| | the datum on `@"assay"` | what it is |
+|---|---|---|
+| Beat 3 | `` lam`lam a. lam b. a` `` | Contract C's **normal form** — the constant combinator `K` |
+| here | `` lam`(lam x. x, lam a. lam b. a)` `` | Contract C **as it arrives** — the application `(I K)` |
+
+```
+$ target/debug/rhocalc demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho
+```
+
+```
+rhocalc — RhoCalc (Rholang 1.4) interpreter
+source: demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho
+comments: 35 retained on the COMMENTS channel
+mode: process → running to rest on the f1r3node reducer (observing @"OUT")
+  @"OUT": (the program rested without publishing any observation)
+```
+
+> "The desk's predicate is over the **result** of the foreign computation. `(I K)` reduces to `K`
+> — but only if something reduces it. So the run-to-completion in Beat 2 was not a warm-up act:
+> it is the step that turns an unacceptable arrival into an acceptable result. Take the reduction
+> away and the same desk, with the same guard, settles nothing."
+
+This also rules out a whole class of ways the demo could pass for the wrong reason: a guard that
+compared **source text**, or that matched loosely on the guest-term envelope rather than on the
+term, would have accepted this datum. It did not.
+
+### 5b — And the guard can refuse everything
+
+Back to the three reduced results, same pattern; the guard now names the *three*-argument constant
+combinator `lam a. lam b. lam c. a`, which is not the normal form of any contract.
 
 ```
 $ target/debug/rhocalc demos/flt-assay-desk/desk-accepts-nothing.rho
@@ -329,14 +363,16 @@ a fact about a *second* channel of the *same* quiescent store, so it is asserted
 level instead, by `rholang-runtime/tests/assay_desk_demo.rs`
 (`beat_3_the_two_refused_results_are_still_resting_on_the_book`,
 `beat_4_the_constant_combinator_is_among_what_this_desk_leaves_behind`,
-`beat_5_a_refusing_guard_consumes_nothing_at_all`). Each lowers the committed `.rho` file through
-the same parse-and-lower path the interpreter uses, runs it to rest, and reads `@"assay"` and
-`@"OUT"` from **one** execution:
+`beat_5_a_refusing_guard_consumes_nothing_at_all`,
+`beat_5a_the_unreduced_arrival_is_refused_and_left_resting`). Each lowers the committed `.rho`
+file through the same parse-and-lower path the interpreter uses, runs it to rest, and reads
+`@"assay"` and `@"OUT"` from **one** execution:
 
 | file | `@"OUT"` | resting on `@"assay"` |
 |---|---|---|
 | `desk-accepts-constant.rho` | the constant combinator + its label | the identity **and** the mirror |
 | `desk-accepts-identity.rho` | the identity combinator + its label | the mirror **and the constant** |
+| `desk-refuses-the-unreduced-arrival.rho` | *empty* | the un-reduced arrival `(I K)` |
 | `desk-accepts-nothing.rho` | *empty* | all three |
 
 Read the middle row against the top one: what Beat 3 accepted is exactly what Beat 4 leaves
@@ -357,11 +393,13 @@ fail spuriously.
 |---|---|---|
 | the FLT is inert — never reduced, only echoed | Beat 1 would print the un-reduced application and an empty `^fired` ledger | Beat 1: `^fired ["Beta","Beta"]`, and Beat 2's Contract C, whose *input* is not a $`\lambda`$ at all |
 | the drive ran out of fuel and the "normal form" is a stuck term | `^drive-fuel` would carry the stuck redex | Beats 1–2: `^drive-err: 0 · ^drive-fuel: 0` |
-| the `where` guard admits everything | Beat 5 would settle something | Beat 5 |
+| the `where` guard admits everything | Beat 5b would settle something | Beat 5b |
 | the `where` guard cannot be decided and fails closed | Beats 3 and 4 would settle nothing | Beats 3, 4 |
 | the guard tests only the first resting datum | one fixed answer regardless of predicate | Beats 3 vs 4 — two different answers, one unchanged set |
+| the guard compares source text, or matches the guest-term envelope rather than the term | the un-reduced arrival would be accepted by a predicate naming its normal form | Beat 5a |
+| the reduction is decorative — the desk would accept the arrival either way | Beat 5a would settle the constant combinator | Beat 5a |
 | the receive consumed everything and published one | `@"assay"` would be empty afterwards | the runtime readback above |
-| the sheet drifted from what runs | — | `every_run_sheet_command_line_is_driven_by_this_test` |
+| the sheet drifted from what runs | — | `every_run_sheet_command_line_is_driven_by_this_test`, and `every_transcript_in_the_run_sheet_is_the_observed_output`, which runs every command on this page and compares its output to the block printed beneath it |
 | a lucky schedule | — | `every_demo_file_is_byte_identical_over_consecutive_runs`; six full passes by hand |
 
 ---
@@ -396,9 +434,13 @@ expected outputs, and their tests are agnostic to the provenance of the resting 
   no drive, so an FLT in a send stays un-β-reduced (`demos/flt-foreign-exchange/foreign-exchange.rho`
   demonstrates exactly that — it publishes the un-reduced `⟦(λ.0 λ.λ.1)⟧`). Only a *bare term*
   program takes the drive path. The three contract files are therefore separate programs, and the
-  correspondence between what they produce and what the desk filters is asserted in CI rather than
-  assumed: `the_three_contracts_have_three_distinct_normal_forms` pins the three results, and the
-  desk beats pin the same three values as the set that rests. Driving an FLT *inside* a process
+  correspondence between what they produce and what the desk filters is **machine-checked, not
+  assumed**: `each_desk_payload_is_the_normal_form_its_contract_reduced_to` runs each of the desk's
+  three payloads as a bare term through the same interpreter and requires (i) that it reduces to
+  the same normal form the corresponding contract reduced to, and (ii) that its `^fired` ledger is
+  **empty** — which is the reducer's own statement that the payload is *already* in normal form.
+  `the_desk_files_publish_exactly_those_three_payloads` ties those probe terms to the sends the
+  committed desk files actually make. Driving an FLT *inside* a process
   needs a change to the interpreter's process mode (install the guest backend, seed a drive per
   FLT); that is a production change, deliberately not made here.
 * **No collection operations.** Nothing in this demo builds a list, map or PathMap of results and
@@ -422,6 +464,7 @@ expected outputs, and their tests are agnostic to the provenance of the resting 
 | `contract-c.rho` | bare FLT `I K` — drives to `⟦λ.λ.1⟧` in 1 β firing |
 | `desk-accepts-constant.rho` | three results rest; the guard keeps the constant combinator |
 | `desk-accepts-identity.rho` | the same three; one changed token in the guard keeps the identity |
+| `desk-refuses-the-unreduced-arrival.rho` | Beat 3's guard over Contract C **un-reduced** — refused |
 | `desk-accepts-nothing.rho` | the same three; a predicate none satisfies keeps nothing |
 | `RUN-SHEET.md` | this page |
 | `rholang-runtime/tests/assay_desk_demo.rs` | the CI gate that drives every command above |
