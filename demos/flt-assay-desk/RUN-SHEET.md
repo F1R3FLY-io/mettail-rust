@@ -8,16 +8,18 @@ and a **`where` clause selects** the ones the program needs, leaving the rest re
 channel.
 
 Everything below is stock RhoCalc plus the bundled `lam` guest. There is no Rust harness in the
-demo path: the presenter runs one interpreter binary on six committed `.rho` files.
+demo path: the presenter runs one interpreter binary on seven committed `.rho` files.
 
 > Status: **VALIDATED end to end, 2026-07-26** — every command on this page was run and every
-> output is the observed one, pinned. Six consecutive full passes were byte-identical. The whole
-> script is a CI gate: `rholang-runtime/tests/assay_desk_demo.rs` drives the built `rhocalc`
-> binary with these exact command lines and asserts each beat's observable, plus a runtime-level
-> readback for the "…and the refused results are still on the book" half that the interpreter's
-> single-channel `@"OUT"` view cannot show. A command line added or respelled here without
-> matching coverage there fails the build
-> (`every_run_sheet_command_line_is_driven_by_this_test`).
+> output is the observed one, pinned. Every file produced byte-identical output on every run:
+> six consecutive full passes over the first six files, then three more over all seven.
+> The whole script is a CI gate: `rholang-runtime/tests/assay_desk_demo.rs` drives the built
+> `rhocalc` binary with these exact command lines and asserts each beat's observable, plus a
+> runtime-level readback for the "…and the refused results are still on the book" half that the
+> interpreter's single-channel `@"OUT"` view cannot show. A command line added or respelled here
+> without matching coverage there fails the build
+> (`every_run_sheet_command_line_is_driven_by_this_test`), and every transcript printed below is
+> compared against a live run (`every_transcript_in_the_run_sheet_is_the_observed_output`).
 
 ---
 
@@ -84,7 +86,9 @@ RhoCalc language and its AST-first lowering, `lambda-runtime` pulls in the produ
 minutes cold. Everything after this is instant.
 
 CI drives the same binary through `env!("CARGO_BIN_EXE_rhocalc")`, so the presenter's binary and
-the gated one are built from one source. A release build behaves identically — only faster.
+the gated one are built from one source. A `--release` build behaves identically, but it lands at
+`target/release/rhocalc`, so the command lines below would need that path instead — the debug
+binary is what this page is written against, and every run of it completes in well under a second.
 
 Run every command from the workspace root.
 
