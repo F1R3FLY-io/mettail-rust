@@ -31,7 +31,6 @@
 use std::sync::Arc;
 
 use mettail_languages::rhocalc::*;
-use mettail_runtime::Language;
 
 const DOVETAIL_ITERS: usize = 256;
 const DOVETAIL_NODES: usize = 4_000_000;
@@ -71,12 +70,12 @@ enum Outcome {
 
 fn outcome(s: &str) -> Outcome {
     match fold_bool_of_string(s) {
-        Some(Proc::CastBool(b)) => match b.as_ref() {
+        Some(Proc::CastBool(ref b)) => match b.as_ref() {
             Bool::BoolLit(v) => Outcome::Answered(*v),
             other => Outcome::Other(format!("{other:?}")),
         },
         Some(Proc::Err) => Outcome::Errored,
-        Some(other) => Outcome::Other(format!("{other}")),
+        Some(ref other) => Outcome::Other(format!("{other}")),
         None => Outcome::Other("dovetail declined to normalize".to_string()),
     }
 }
