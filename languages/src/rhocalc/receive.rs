@@ -156,30 +156,90 @@ fn empty_bind_matches_payload(q: &Proc) -> bool {
     }
 }
 
-/// ⚠ ★ #33 LATENT CONFLATION SITE — and the DESTRUCTIVE one.
+/// The `__guard_then(cond, body)` internal guard gate — the `![…]` fold body for
+/// `Proc::GuardThen` (`rhocalc.rs`'s `GuardThen` rule).
 ///
-/// The two `_ => Proc::PZero` arms below fabricate a *result* for a condition the host could
-/// not decide. That is strictly worse than the three live COMM sites: they merely decline to
-/// rewrite, leaving the term for the machine, whereas this one **commits to an answer** — it
-/// erases `body` and yields the null process, which is indistinguishable from the guard
-/// having been decidably `false`.
+/// # Disposition table — three facts, three distinct residues
 ///
-/// It is also weaker than [`eval_guard_disposition`] on the deciding side: it only ever
-/// recognizes a literal `CastBool(BoolLit(_))`, so `__guard_then(1 < 2, P)` discards `P`
-/// even though the guard is trivially decidable. Both defects have the same root as the rest
-/// of #33 — a total function forced to answer where the honest answer is "I cannot decide".
+/// `__guard_then` is a BOOLEAN-CONSUMING fold, exactly like `Or` / `And` / `Implies`, and it
+/// now answers arm for arm the way they do. Its decision variable is `cond` ALONE (`body` is a
+/// process that need not be a value for the gate to decide), so its `_` fallback is the UNARY
+/// [`crate::rhocalc::runtime::unary_fallback`], the twin of the `binary_fallback` those three
+/// operators use.
 ///
-/// **NOT changed in stage A**, which is behaviourally inert by construction; repairing this
-/// arm changes normal forms and belongs to stage C. Documented here so the site cannot be
-/// re-derived as "obviously fine" by the next reader.
+/// | `cond` | fact | residue | why |
+/// |---|---|---|---|
+/// | `CastBool(BoolLit(true))` | decided TRUE | `body` | the gate opens |
+/// | `CastBool(BoolLit(false))` | decided FALSE | `Proc::PZero` | the gate closes — a VERDICT |
+/// | `CastBool(<non-literal>)` | undefined at this type | `Proc::Err` | mirrors `Or`/`And`/`Implies` |
+/// | ground, non-boolean (`0`, `Nil`, `"s"`, a list) | undefined at this type | `Proc::Err` | `unary_fallback`, ground leg |
+/// | anything else (a redex, a `PVar`, `1 < 2`) | NOT YET DECIDABLE | the redex `GuardThen(cond, body)` rebuilt | `unary_fallback`, redex leg |
+///
+/// # ★ The defect this repairs (2026-07-26)
+///
+/// Every one of the last three rows used to answer `Proc::PZero`. That is strictly worse than
+/// the three eager COMM sites' abstention: they merely decline to rewrite, leaving the term for
+/// the machine, whereas this **committed to an answer** — it erased `body` and yielded the null
+/// process, indistinguishable from the guard having been decidably `false`. A decider silently
+/// answering "false" for everything it does not understand is unrecoverable in a way that
+/// blocking is not.
+///
+/// ## ⚠ A measured correction to the previous doc comment
+///
+/// That comment additionally claimed the gate "only ever recognizes a literal
+/// `CastBool(BoolLit(_))`, so `__guard_then(1 < 2, P)` discards `P` even though the guard is
+/// trivially decidable". **Measured 2026-07-26: that half is FALSE of the fold lane.** The
+/// single-variable A/B (this fix reverted, tests unchanged) shows
+/// `the_fold_lane_decides_a_reducible_condition_instead_of_discarding_the_body` PASSING against
+/// the OLD body: Dovetail puts `Lt(1, 2)` and `CastBool(BoolLit(true))` in one e-class, and the
+/// dispatcher extracts the funded-best representative of `cond` before calling this function, so
+/// the gate is handed `true` and never sees the `Lt` at all. Only the four
+/// fabrication rows flipped. The claim was true of the FUNCTION read in isolation and untrue of
+/// the LANE it runs in; it is corrected here rather than propagated.
+///
+/// The fix still improves that axis, but the honest statement of how is: it makes the property
+/// *structural* instead of leaving it resting on extraction order. Returning the redex
+/// contributes nothing to its own e-class (a self-union — `dovetail::rules::apply_native_matches`
+/// merges only when `find(root) != find(result)`), so if extraction ever hands over an unfolded
+/// `cond`, congruence reduces it in the same class and the gate re-fires on the value instead of
+/// answering. And it does so *through the engine* rather than through a second evaluator, so
+/// there is no dual decision path for comparisons: `<` means exactly what the `Lt` fold says.
+///
+/// # Convention followed
+///
+/// [`crate::rhocalc::runtime::unary_fallback`] / `binary_fallback`
+/// (`languages/src/rhocalc/runtime.rs`), whose doc states the rule: *"both operands ground ⇒ the
+/// operator is genuinely undefined at these types ⇒ `Proc::Err`; otherwise ⇒ the redex rebuilt
+/// … so congruence gets to reduce the operand and the fold re-fires on the value."* The `Or`
+/// rule in `rhocalc.rs` states the other half: *"A failed operator must never invent a value
+/// (cf. `817ae380`) — hence `Proc::Err`, never a fabricated `BoolLit`."* This function was the
+/// last boolean-consuming fold in RhoCalc that did not obey either half.
+///
+/// The sibling guarded fold in this file, [`comm_pforwhere_subst`], obeys the same discipline
+/// from the other direction — its spec comment reads *"otherwise returns the original
+/// receive/send pair unchanged (blocked communication, identity)"*.
+///
+/// # Relationship to [`eval_guard_disposition`]
+///
+/// [`eval_guard_disposition`] is the HOST's evaluator for the eager COMM/`where` lane, where
+/// there is no e-graph to reduce a condition and the host must judge the surface term as given.
+/// This function is in the FOLD lane, where congruence does that work; deciding comparisons
+/// here as well would be a second implementation of `<` inside the same saturation. The two
+/// lanes agree on the taxonomy — `Fires`/`Blocks`/`Declines` maps onto `body`/`PZero`/redex —
+/// but only one of them has to own the arithmetic.
 pub fn guard_then(cond: &Proc, body: &Proc) -> Proc {
     match cond {
         Proc::CastBool(b) => match b.as_ref() {
             Bool::BoolLit(true) => body.clone(),
+            // The ONLY residue that may mean "the guard is false". A verdict, not an abstention.
             Bool::BoolLit(false) => Proc::PZero,
-            _ => Proc::PZero,
+            // A `Bool` that is not a literal (`BVar`, `LamProc`, `ApplyProc`, …) is data the gate
+            // is undefined on — `Or`/`And`/`Implies` answer `Proc::Err` for the identical shape.
+            _ => Proc::Err,
         },
-        _ => Proc::PZero,
+        _ => crate::rhocalc::runtime::unary_fallback(cond, || {
+            Proc::GuardThen(std::sync::Arc::new(cond.clone()), std::sync::Arc::new(body.clone()))
+        }),
     }
 }
 
@@ -292,8 +352,14 @@ fn eval_cmp_order(lhs: &Proc, rhs: &Proc) -> Option<Ordering> {
 ///
 /// * `eval_where_comm_single`, `finish_single_comm`'s empty-bind arm, and
 ///   `comm_pforjoin_subst` — the three LIVE eager sites, each marked inline below.
-/// * [`guard_then`] — LATENT and **destructive**: it fabricates `Proc::PZero` for an
-///   undecided condition, which is worse than blocking because it commits to an answer.
+///
+/// ★ [`guard_then`] used to head this list as LATENT and **destructive** — it fabricated
+/// `Proc::PZero` for an undecided condition, which is worse than blocking because it commits
+/// to an answer. **FIXED 2026-07-26**: it now answers the three facts with three distinct
+/// residues (`body` / `PZero` / the rebuilt redex, plus `Proc::Err` for a ground non-boolean),
+/// following `runtime::unary_fallback` — the same convention every other boolean-consuming
+/// fold in RhoCalc uses. See that function's disposition table and
+/// `guard_then_tests::a_ground_non_boolean_condition_is_not_answered_false`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GuardDisposition {
     /// The host DECIDED the guard `true`. The COMM fires.
@@ -1444,6 +1510,235 @@ mod guard_disposition_tests {
         assert!(GuardDisposition::Fires.fires());
         assert!(!GuardDisposition::Blocks.fires());
         assert!(!GuardDisposition::Declines.fires());
+    }
+}
+
+/// ★ The separating tests for [`guard_then`] — the fold-lane guard gate.
+///
+/// # What these discriminate
+///
+/// The repaired defect conflated THREE facts into ONE residue. Every row below therefore
+/// asserts a *distinction*, never just a value: checking only "the final process is `Nil`"
+/// is exactly the check that could not see the bug, because a fabricated answer and a decided
+/// `false` produced the same `Nil`.
+///
+/// | fact | residue | what makes it observable |
+/// |---|---|---|
+/// | decided FALSE | `Proc::PZero` | `body` is gone, and that is CORRECT |
+/// | undecided (still a redex) | `GuardThen(cond, body)` | `cond` AND `body` are still recoverable from the residue |
+/// | ground non-boolean | `Proc::Err` | loud, and `≠ PZero` |
+///
+/// The middle row is the one that fails against the pre-fix implementation, and it fails for
+/// the right reason: the residue no longer carries the body it was about to erase.
+#[cfg(test)]
+mod guard_then_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn bool_lit(v: bool) -> Proc {
+        Proc::CastBool(Arc::new(Bool::BoolLit(v)))
+    }
+
+    fn int_lit(n: i64) -> Proc {
+        Proc::CastInt(Arc::new(Int::NumLit(n)))
+    }
+
+    /// A body that is distinguishable from `Nil` by construction, so "the body survived" and
+    /// "the body was erased" can never be confused for one another.
+    fn marker_body() -> Proc {
+        Proc::CastStr(Arc::new(Str::StringLit("BODY".to_string())))
+    }
+
+    /// A condition the host cannot decide YET but which is not a type error: an operator node.
+    /// `Proc::Lt` is not a `Proc::CastBool`, and `runtime::is_ground_operand` does not list it,
+    /// so the gate must hand it back for congruence to reduce.
+    fn undecided_cond() -> Proc {
+        Proc::Lt(Arc::new(int_lit(1)), Arc::new(int_lit(2)))
+    }
+
+    /// Recover `(cond, body)` from a residue that blocked, or `None` if the gate answered.
+    fn as_blocked(residue: &Proc) -> Option<(Proc, Proc)> {
+        match residue {
+            Proc::GuardThen(c, b) => Some((c.as_ref().clone(), b.as_ref().clone())),
+            _ => None,
+        }
+    }
+
+    /// ── ROW 1: a decided TRUE opens the gate ──
+    #[test]
+    fn a_decided_true_guard_releases_the_body() {
+        assert_eq!(guard_then(&bool_lit(true), &marker_body()), marker_body());
+    }
+
+    /// ── ROW 2: a decided FALSE closes it, and `Nil` is the RIGHT answer here ──
+    ///
+    /// This row is the control for ROW 3: it pins that `Proc::PZero` remains reachable, so a
+    /// failure of ROW 3 cannot be "fixed" by making the gate never answer `Nil` at all.
+    #[test]
+    fn a_decided_false_guard_answers_nil() {
+        assert_eq!(
+            guard_then(&bool_lit(false), &marker_body()),
+            Proc::PZero,
+            "a DECIDED-false guard is a verdict: the null process is the correct residue"
+        );
+    }
+
+    /// ── ROW 3 ★ THE REGRESSION ──
+    ///
+    /// An undecided condition must not be answered. Before the fix this returned `Proc::PZero`,
+    /// which is byte-identical to ROW 2's residue — the gate committed to "false" for a guard
+    /// it had not decided, and erased `body` on the way.
+    ///
+    /// The assertion is deliberately *structural*, not `assert_ne!(got, PZero)` alone: what
+    /// makes an abstention recoverable is that the inputs survive it, so the test recovers
+    /// `cond` and `body` back out of the residue.
+    #[test]
+    fn an_undecided_condition_blocks_instead_of_being_answered_false() {
+        let cond = undecided_cond();
+        let residue = guard_then(&cond, &marker_body());
+
+        assert_ne!(
+            residue,
+            Proc::PZero,
+            "★ the destructive fabrication: an UNDECIDED condition answered `Nil`, which is \
+             indistinguishable from a decided-false verdict. Blocking is recoverable; \
+             committing to a wrong answer is not."
+        );
+
+        let (got_cond, got_body) = as_blocked(&residue).unwrap_or_else(|| {
+            panic!(
+                "an undecided condition must leave the redex standing so congruence can reduce \
+                 `cond` and the gate can re-fire; got {residue}"
+            )
+        });
+        assert_eq!(got_cond, cond, "the residue must still carry the undecided condition");
+        assert_eq!(
+            got_body,
+            marker_body(),
+            "the residue must still carry the body — erasing it is what made the old behaviour \
+             destructive rather than merely blocking"
+        );
+    }
+
+    /// ── ROW 4: the two outcomes ROW 2 and ROW 3 describe must be DIFFERENT terms ──
+    ///
+    /// Stated as its own row because it is the whole property: "answered false" and "did not
+    /// answer" were the same observation, and a caller had no way to tell them apart.
+    #[test]
+    fn a_decided_false_and_an_undecided_condition_are_distinguishable() {
+        let decided = guard_then(&bool_lit(false), &marker_body());
+        let undecided = guard_then(&undecided_cond(), &marker_body());
+        assert_ne!(
+            decided, undecided,
+            "a verdict and an abstention must not share a residue — that conflation IS the bug"
+        );
+    }
+
+    /// ── ROW 5: a GROUND non-boolean condition is a type error, loudly ──
+    ///
+    /// `0` / `Nil` / `"s"` are data (`runtime::is_ground_operand`), and no amount of congruence
+    /// turns them into a boolean, so the honest residue is the `error` term — `Or`/`And`/
+    /// `Implies` answer exactly that for the same shape. The point of the row is that it is not
+    /// `Proc::PZero`: a mis-typed guard must not be reported as a guard that came out false.
+    #[test]
+    fn a_ground_non_boolean_condition_is_not_answered_false() {
+        for cond in [int_lit(0), Proc::PZero, Proc::CastStr(Arc::new(Str::StringLit("s".into())))] {
+            let residue = guard_then(&cond, &marker_body());
+            assert_ne!(
+                residue,
+                Proc::PZero,
+                "`__guard_then({cond}, BODY)` is a TYPE error, not a false guard; answering \
+                 `Nil` fabricates a verdict the gate never reached"
+            );
+            assert_eq!(
+                residue,
+                Proc::Err,
+                "the fold lane's disposition for `the operator is undefined at these types` is \
+                 the `error` term (`runtime::unary_fallback`, ground leg)"
+            );
+        }
+    }
+
+    /// ── ROW 6: a `CastBool` whose inner `Bool` is not a literal ──
+    ///
+    /// `Bool::BVar` is a variable in the `Bool` category, not a decidable boolean. `Or`/`And`/
+    /// `Implies` all answer `Proc::Err` for this shape; the gate now mirrors them arm for arm
+    /// instead of answering `Nil`.
+    #[test]
+    fn a_non_literal_bool_condition_is_not_answered_false() {
+        let cond = Proc::CastBool(Arc::new(Bool::BVar(OrdVar(Var::Free(FreeVar::fresh_named(
+            "b".to_string(),
+        ))))));
+        let residue = guard_then(&cond, &marker_body());
+        assert_ne!(residue, Proc::PZero, "a non-literal `Bool` is not a decided-false guard");
+        assert_eq!(residue, Proc::Err);
+    }
+
+    /// ── ROW 7: END-TO-END through the real fold lane ──
+    ///
+    /// The unit rows above call `guard_then` directly. This one drives the actual Dovetail
+    /// e-graph saturation that invokes it (`RhoCalcLanguage::dovetail_normal_term`, whose
+    /// generated native dispatcher is the ONLY production caller), so the fix is checked where
+    /// it runs and not only where it is written.
+    ///
+    /// `__guard_then(0, "BODY")` is the destructive case in the wild: `0` is ground and can
+    /// never become a boolean. Pre-fix the gate added `Nil` to the redex's e-class, and `Nil`
+    /// is a nullary node that funded 1-best extraction prefers over anything structural — so
+    /// the reported normal form WAS `Nil`, i.e. the whole guarded process silently vanished.
+    #[test]
+    fn the_fold_lane_does_not_report_nil_for_a_ground_non_boolean_condition() {
+        use mettail_runtime::Language;
+        let lang = crate::rhocalc::RhoCalcLanguage;
+        let term = lang.parse_term("__guard_then(0, \"BODY\")").expect("parse");
+        let nf = crate::rhocalc::RhoCalcLanguage::dovetail_normal_term(term.as_ref(), 64, 1_000_000)
+            .expect("dovetail_normal_term");
+        let shown = lang.format_term(nf.as_ref());
+        assert_ne!(
+            shown, "Nil",
+            "★ end-to-end: a ground non-boolean guard must not silently reduce the whole \
+             guarded process to the null process"
+        );
+        assert_eq!(
+            shown, "error",
+            "the fold lane reports the `error` term for a guard it is undefined on"
+        );
+    }
+
+    /// ── ROW 8: END-TO-END regression pin for the decided-false verdict ──
+    ///
+    /// The complement of ROW 7: the one condition that SHOULD reduce to `Nil` still does, so
+    /// ROW 7 cannot be satisfied by breaking the gate's real job.
+    #[test]
+    fn the_fold_lane_still_reports_nil_for_a_decided_false_condition() {
+        use mettail_runtime::Language;
+        let lang = crate::rhocalc::RhoCalcLanguage;
+        let term = lang.parse_term("__guard_then(false, \"BODY\")").expect("parse");
+        let nf = crate::rhocalc::RhoCalcLanguage::dovetail_normal_term(term.as_ref(), 64, 1_000_000)
+            .expect("dovetail_normal_term");
+        assert_eq!(lang.format_term(nf.as_ref()), "Nil");
+    }
+
+    /// ── ROW 9: END-TO-END — the deciding side ──
+    ///
+    /// `1 < 2` is trivially decidable but is not itself a `CastBool`. The gate never learns
+    /// arithmetic: it declines until the arithmetic is done, and `Lt`'s own fold does it.
+    ///
+    /// ⚠ **This row PASSES against the pre-fix body too** (measured in the A/B), which is why it
+    /// is labelled a property pin rather than a regression pin. It refutes the previous doc
+    /// comment's claim that `__guard_then(1 < 2, P)` discarded `P`: the dispatcher extracts the
+    /// funded-best representative of `cond`'s e-class, which is the folded `true`, so the gate is
+    /// handed a literal either way. See the correction on [`guard_then`]. The row is kept because
+    /// the property is worth pinning — it just is not what was broken.
+    #[test]
+    fn the_fold_lane_decides_a_reducible_condition_instead_of_discarding_the_body() {
+        use mettail_runtime::Language;
+        let lang = crate::rhocalc::RhoCalcLanguage;
+        let term = lang.parse_term("__guard_then(1 < 2, \"BODY\")").expect("parse");
+        let nf = crate::rhocalc::RhoCalcLanguage::dovetail_normal_term(term.as_ref(), 64, 1_000_000)
+            .expect("dovetail_normal_term");
+        let shown = lang.format_term(nf.as_ref());
+        assert_ne!(shown, "Nil", "a decidable TRUE guard must not discard its body");
+        assert_eq!(shown, "\"BODY\"", "`1 < 2` folds to `true`, then the gate opens");
     }
 }
 
