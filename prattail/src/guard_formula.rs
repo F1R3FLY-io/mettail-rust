@@ -107,6 +107,10 @@ pub struct SubstrateConfig {
 
 impl SubstrateConfig {
     /// The default configuration: [`DEFAULT_BIT_WIDTH`].
+    ///
+    /// On the guard path this is [`CONSENSUS_SUBSTRATE_CONFIG`], which is **not** a default in
+    /// the ordinary "override it if you like" sense. Read that constant's documentation before
+    /// passing anything else to [`static_verdict`] or [`ground_verdict_with`] at a guard site.
     pub const DEFAULT: Self = Self { bit_width: DEFAULT_BIT_WIDTH };
 
     /// Inclusive lower bound of the integer domain.
@@ -130,6 +134,43 @@ impl Default for SubstrateConfig {
         Self::DEFAULT
     }
 }
+
+/// ★ **THE CONSENSUS BUDGET.** The one substrate configuration every node decides `where`-guards
+/// with.
+///
+/// # Why this is a consensus parameter and not a tuning knob
+///
+/// A guard verdict decides whether a COMM fires, and whether a COMM fired is part of the state
+/// every validator must agree on. The substrate's decision procedures are budgeted — the
+/// Presburger automata explore a domain bounded by `bit_width`, and an exhausted budget surfaces
+/// as [`Sat3::DontKnow`], which [`dont_know_policy`] turns into "the guard does not pass".
+///
+/// If two nodes ran different budgets, one could reach `Sat` where the other reached `DontKnow`,
+/// and they would then **disagree about whether a COMM happened**. That is a fork, not a
+/// performance difference — the same class of hazard as two nodes disagreeing about arithmetic.
+///
+/// Fixing the budget removes the hazard at its root rather than mitigating it: with one budget
+/// network-wide, `DontKnow` becomes a deterministic function of the guard alone, every node
+/// computes the same verdict, and COMM firing is deterministic. `DontKnow` is then an ordinary
+/// reproducible answer.
+///
+/// # ⚠ Consequences of changing this value
+///
+/// * It is **not per-node tunable.** A node that raises it to "decide more guards" changes which
+///   COMMs fire and forks itself off the network.
+/// * Changing it is a **protocol change**: it alters the observable behaviour of already-deployed
+///   programs (a guard that answered `DontKnow` under the old budget may answer `Sat` under a
+///   larger one, so a COMM that never fired starts firing). It therefore belongs to whatever
+///   process governs consensus-breaking changes, alongside a migration story for programs whose
+///   behaviour it moves.
+/// * It is **not** the same knob as a local analysis budget. Non-guard uses of the substrate
+///   (lints, offline analysis, tooling) are free to pass their own [`SubstrateConfig`]; only the
+///   guard path is bound to this one.
+///
+/// The value is [`DEFAULT_BIT_WIDTH`], i.e. integers range over `[-32768, 32767]`. That bound is
+/// also what makes a [`StaticVerdict`] domain-relative — see the bounded-domain caveat in the
+/// module docs, which is a *separate* fact from this one and is fenced separately.
+pub const CONSENSUS_SUBSTRATE_CONFIG: SubstrateConfig = SubstrateConfig::DEFAULT;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // GuardVarMap — binder ⇄ substrate variable index
@@ -532,20 +573,55 @@ pub enum GuardFormula {
 }
 
 impl GuardFormula {
-    /// `φ ∧ ψ`, with the two absorbing/unit simplifications applied.
+    /// `φ ∧ ψ`, with only the **discipline-safe** simplifications applied.
+    ///
+    /// # ⚠ Why `φ ∧ ⊥ = ⊥` is NOT applied
+    ///
+    /// It is classically valid and it is *wrong here*. [`ground_verdict_with`]'s connectives are
+    /// left-strict (see that function's docs): an undecided **left** operand propagates as
+    /// undecided even where the right operand would settle the result. Collapsing `φ ∧ ⊥` to
+    /// `⊥` at construction time would smuggle a decision past that discipline — the formula
+    /// would answer `Unsat` where the discipline answers `DontKnow`.
+    ///
+    /// The two are not interchangeable. The discipline exists because f1r3node evaluates *both*
+    /// operands of `EAnd`/`EOr` unconditionally and maps any error or non-boolean result to
+    /// `false`; a decider that settles from the right operand alone therefore disagrees with the
+    /// reducer, and in the `∨` case it disagrees in the **firing** direction, which is unsound.
+    ///
+    /// So exactly three simplifications survive, and each is the discipline's own behaviour
+    /// written out:
+    ///
+    /// | simplification | why it is safe |
+    /// |---|---|
+    /// | `⊤ ∧ φ = φ` | a decided-true left means "evaluate the right", which is `φ` |
+    /// | `⊥ ∧ φ = ⊥` | a decided-false left short-circuits, exactly as the discipline does |
+    /// | `φ ∧ ⊤ = φ` | evaluating `⊤` on the right returns the left's own verdict, unchanged |
     pub fn and(left: GuardFormula, right: GuardFormula) -> GuardFormula {
         match (left, right) {
-            (GuardFormula::False, _) | (_, GuardFormula::False) => GuardFormula::False,
-            (GuardFormula::True, other) | (other, GuardFormula::True) => other,
+            (GuardFormula::True, other) => other,
+            (GuardFormula::False, _) => GuardFormula::False,
+            (other, GuardFormula::True) => other,
             (a, b) => GuardFormula::And(Box::new(a), Box::new(b)),
         }
     }
 
-    /// `φ ∨ ψ`, with the two absorbing/unit simplifications applied.
+    /// `φ ∨ ψ`, with only the **discipline-safe** simplifications applied.
+    ///
+    /// The dual of [`GuardFormula::and`]: `φ ∨ ⊤ = ⊤` is classically valid and is **not**
+    /// applied, because the left-strict discipline answers `DontKnow` for an undecided left
+    /// operand. This is the arm that matters most — a wrongly-applied `φ ∨ ⊤ = ⊤` fires a COMM
+    /// that the reducer does not fire.
+    ///
+    /// | simplification | why it is safe |
+    /// |---|---|
+    /// | `⊥ ∨ φ = φ` | a decided-false left means "evaluate the right", which is `φ` |
+    /// | `⊤ ∨ φ = ⊤` | a decided-true left short-circuits, exactly as the discipline does |
+    /// | `φ ∨ ⊥ = φ` | evaluating `⊥` on the right returns the left's own verdict, unchanged |
     pub fn or(left: GuardFormula, right: GuardFormula) -> GuardFormula {
         match (left, right) {
-            (GuardFormula::True, _) | (_, GuardFormula::True) => GuardFormula::True,
-            (GuardFormula::False, other) | (other, GuardFormula::False) => other,
+            (GuardFormula::False, other) => other,
+            (GuardFormula::True, _) => GuardFormula::True,
+            (other, GuardFormula::False) => other,
             (a, b) => GuardFormula::Or(Box::new(a), Box::new(b)),
         }
     }
@@ -735,31 +811,37 @@ impl DontKnowPolicy {
 /// ★ **THE POLICY POINT.** The single place in the tree where an undecided guard verdict becomes
 /// a decision.
 ///
-/// # Why this is a seam and not just a default
+/// # The hazard, and how it is removed
 ///
 /// [`Sat3::DontKnow`] is documented as *"undecided within the available **budget** / procedure"*
-/// ([`crate::algebra_tower::Sat3::DontKnow`]). The *budget* half of that is the problem: if a
+/// ([`crate::algebra_tower::Sat3::DontKnow`]). The *budget* half is the dangerous one: if a
 /// budget-dependent `DontKnow` decided whether a COMM fires, then two nodes running with
 /// different budgets could disagree about whether a COMM **happened** — a consensus fork, not a
-/// performance difference. The procedure half is benign (every node runs the same procedure and
-/// reaches the same `DontKnow`).
+/// performance difference. The procedure half is benign, because every node runs the same
+/// procedure and reaches the same `DontKnow`.
 ///
-/// The two halves are not distinguishable from the `Sat3` value alone, so this function treats
-/// the whole variant as consensus-affecting.
+/// ## ★ THE RESOLUTION: the budget is a CONSENSUS PARAMETER
 ///
-/// # ⚠ PROVISIONAL — pending a USER decision
+/// The budget is **fixed**, not tuned per node — see [`CONSENSUS_SUBSTRATE_CONFIG`]. That
+/// converts the dangerous half into the benign half: with one budget for the whole network,
+/// `DontKnow` is a deterministic function of the guard, so every node reaches the same verdict
+/// and COMM firing is deterministic. `DontKnow` is then an ordinary, reproducible answer rather
+/// than a fork risk, and this function only has to say what that answer *means*.
 ///
-/// The interim answer is [`DontKnowPolicy::FailClosedBlock`]: an undecided guard blocks. It is
-/// the safe direction (a COMM that does not fire leaves a resting, observable continuation;
-/// a COMM that fires wrongly is unrecoverable), and it matches the behaviour every existing
-/// decider already had — `mettail_languages::rhocalc::receive::eval_guard_disposition`'s
-/// `Declines` yields no rewrite, and f1r3node's `guard_passes` maps every non-`true` result to
-/// `false`. So adopting it changes nothing observable today.
+/// It means the guard does not pass ([`DontKnowPolicy::FailClosedBlock`]). Two independent
+/// reasons:
 ///
-/// It is **not** asserted to be the right long-run answer. The alternatives are a real design
-/// question — reject the *program* at compile time rather than blocking at run time; or forbid
-/// budget-bearing procedures from the guard path entirely so `DontKnow` can only ever be the
-/// benign procedural kind. That choice is the USER's.
+/// * **It agrees with every decider already in the tree.** `eval_guard_disposition`'s `Declines`
+///   yields no rewrite, and f1r3node's `guard_passes` maps error, non-boolean and `false` alike
+///   to "do not commit". Choosing anything else would put this function in disagreement with
+///   the reducer.
+/// * **The failure modes are not symmetric.** A COMM that does not fire leaves a resting,
+///   observable continuation — it is in the normal form, the state hash and storage, and a
+///   later step can still consume it. A COMM that fires wrongly consumes a datum and runs a
+///   continuation, and nothing undoes that.
+///
+/// So the verdict is unchanged from what the tree already did; what changed is that it is now
+/// *justified by determinism* rather than by caution.
 pub fn dont_know_policy(_site: GuardSiteKind) -> DontKnowPolicy {
     DontKnowPolicy::FailClosedBlock
 }
@@ -796,6 +878,20 @@ pub enum UndecidedCause {
     /// budget-bearing procedure cannot be added without confronting the seam.
     Budget,
 }
+
+/// ⚠ **A recorded incompleteness of the static leg.**
+///
+/// [`GuardFormula::and`] and [`GuardFormula::or`] deliberately withhold the classical
+/// absorptions `φ ∧ ⊥ = ⊥` and `φ ∨ ⊤ = ⊤` because they are unsound for the left-strict *ground*
+/// discipline. One constructor serves both legs, so the static leg pays for that: a formula like
+/// `Atom ∨ ⊤`, which is classically valid, reaches [`static_verdict`] with its opaque atom
+/// intact and is answered [`UndecidedCause::OpaqueAtom`] instead of `Valid`.
+///
+/// This is a completeness cost, never a soundness one — `Undecided` always falls back to the
+/// run-time leg. It is recorded rather than fixed because the obvious fix (simplify classically
+/// before the static leg) would make "statically valid" stop implying "grounds to `Sat`", and
+/// that implication is what lets the two legs be reasoned about together.
+pub const STATIC_LEG_WITHHOLDS_CLASSICAL_ABSORPTION: bool = true;
 
 /// The static leg's answer for a guard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1813,6 +1909,52 @@ mod tests {
         );
     }
 
+    /// ★ REGRESSION. The smart constructors must not apply the classical absorptions
+    /// `φ ∨ ⊤ = ⊤` and `φ ∧ ⊥ = ⊥`.
+    ///
+    /// Caught by the cross-crate differential against the Rust fold, which reported
+    /// `or ?T  fold=Declines substrate=Fires`. The `∨` half is unsound in the FIRING direction:
+    /// the substrate would have fired a COMM that neither the fold nor the reducer fires.
+    #[test]
+    fn the_constructors_do_not_apply_the_classical_absorptions() {
+        let vars = GuardVarMap::new();
+        let assignment = GuardAssignment::default();
+        let unknown = GuardFormula::Atom(GuardAtom { id: 0, kind: GuardAtomKind::Uncovered });
+
+        let disjunction = GuardFormula::or(unknown.clone(), GuardFormula::True);
+        assert!(
+            !matches!(disjunction, GuardFormula::True),
+            "`phi or true` must NOT collapse to `true`: the left-strict discipline answers \
+             DontKnow, and collapsing fires a COMM the reducer does not fire"
+        );
+        assert_eq!(
+            ground_verdict(&disjunction, &assignment, &vars, cfg()),
+            Sat3::DontKnow
+        );
+
+        let conjunction = GuardFormula::and(unknown.clone(), GuardFormula::False);
+        assert!(!matches!(conjunction, GuardFormula::False));
+        assert_eq!(
+            ground_verdict(&conjunction, &assignment, &vars, cfg()),
+            Sat3::DontKnow
+        );
+
+        // The three surviving simplifications on each side ARE applied — they are the
+        // discipline's own behaviour, so withholding them would only cost work.
+        assert_eq!(GuardFormula::and(GuardFormula::True, unknown.clone()), unknown);
+        assert_eq!(GuardFormula::and(unknown.clone(), GuardFormula::True), unknown);
+        assert_eq!(
+            GuardFormula::and(GuardFormula::False, unknown.clone()),
+            GuardFormula::False
+        );
+        assert_eq!(GuardFormula::or(GuardFormula::False, unknown.clone()), unknown);
+        assert_eq!(GuardFormula::or(unknown.clone(), GuardFormula::False), unknown);
+        assert_eq!(
+            GuardFormula::or(GuardFormula::True, unknown),
+            GuardFormula::True
+        );
+    }
+
     /// The only way a spatial atom is ever decided is through the caller's resolver — there is
     /// no arm in this module that could become a second matcher.
     #[test]
@@ -1842,6 +1984,42 @@ mod tests {
             assert!(resolve_verdict(Sat3::Sat, site));
             assert!(!resolve_verdict(Sat3::Unsat, site));
         }
+    }
+
+    /// ★ THE CONSENSUS BUDGET IS FIXED. `DontKnow` is only safe to act on because every node
+    /// reaches the *same* `DontKnow`; that holds exactly while the guard path's budget is one
+    /// network-wide constant.
+    ///
+    /// This test is the tripwire: changing [`CONSENSUS_SUBSTRATE_CONFIG`] is a protocol change
+    /// (a guard that answered `DontKnow` under the old budget may answer `Sat` under a larger
+    /// one, so a COMM that never fired starts firing), and it must not be possible to make it
+    /// by accident.
+    #[test]
+    fn the_consensus_budget_is_a_fixed_network_wide_constant() {
+        assert_eq!(
+            CONSENSUS_SUBSTRATE_CONFIG.bit_width,
+            DEFAULT_BIT_WIDTH,
+            "the guard path's budget is a CONSENSUS PARAMETER, not a tuning knob: two nodes \
+             with different budgets can disagree about whether a COMM happened. Changing this \
+             value is a protocol change and needs the process that governs those."
+        );
+        assert_eq!(CONSENSUS_SUBSTRATE_CONFIG, SubstrateConfig::DEFAULT);
+    }
+
+    /// A budget really does change verdicts — so the constant above is load-bearing, not
+    /// decorative. Under an 8-bit budget the integer domain is `[-128, 128)`, so `x < 200` is
+    /// VALID; under the consensus budget it is contingent.
+    #[test]
+    fn a_different_budget_reaches_a_different_verdict() {
+        let guard = GuardFormula::Linear(PresburgerPred::lt(vec![(0, 1)], 200));
+        let narrow = SubstrateConfig { bit_width: 8 };
+        assert_eq!(static_verdict(&guard, narrow), StaticVerdict::Valid(narrow));
+        assert_eq!(
+            static_verdict(&guard, CONSENSUS_SUBSTRATE_CONFIG),
+            StaticVerdict::Contingent(CONSENSUS_SUBSTRATE_CONFIG),
+            "two budgets, two verdicts — which is precisely why the guard path's budget must \
+             be one network-wide constant"
+        );
     }
 
     // ── LinearForm ───────────────────────────────────────────────────────────
