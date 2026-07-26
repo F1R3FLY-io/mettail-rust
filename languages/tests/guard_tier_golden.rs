@@ -167,10 +167,21 @@ fn calculator_guard_tiers() {
 /// `matches` is decided post-match (in guard position) and `PPar(φ,ψ)` is a
 /// pattern former, so neither participates in the reduction relation at all.
 /// T3/T4 stay 0 and `worst` stays T2.
+///
+/// Trie-enumeration surface (2026-07-26): `getPath` (`RZGetPath . z:Proc`),
+/// `toNextLeaf` (`RZToNextLeaf . z:Proc`) and `leafCount`
+/// (`RZLeafCount . z:Proc`) add **1 + 1 + 1 = 3** structural fields ⇒
+/// T1 233 → 236, total 516 → 519. Each declares exactly ONE operand — the
+/// receiver `z`, a data-sort assertion like every other ReadZipper method
+/// (`RZGetLeaf`, `RZChildCount`, `RZDescendFirst`, `RZToNextSibling`) ⇒ T1.
+/// T2 is unchanged (283): none declares a binder, a rewrite condition, or a
+/// congruence premise — all three are queries over an already-reduced zipper
+/// and none participates in the reduction relation. T3/T4 stay 0 and `worst`
+/// stays T2.
 #[test]
 fn rhocalc_guard_tiers() {
     let meta = mettail_languages::rhocalc::RhoCalcLanguage.metadata();
-    assert_tier_tuple(meta, 516, 233, 283, 0, 0, T2);
+    assert_tier_tuple(meta, 519, 236, 283, 0, 0, T2);
 }
 
 /// **Ambient** — mobile ambients over `Proc`/`Name` (both non-scalar; no native

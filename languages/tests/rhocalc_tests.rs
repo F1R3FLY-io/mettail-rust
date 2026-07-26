@@ -3428,6 +3428,123 @@ mod native_ops {
                 );
             }
 
+            // ── ReadZipper ENUMERATION (getPath / toNextLeaf / leafCount) ──
+            //
+            // Surface-level pins. The semantics are pinned as unit tests in
+            // `languages/src/rhocalc/zipper.rs`; these assert the three methods
+            // parse and reduce THROUGH THE GRAMMAR, which is what a program
+            // written against the FIPS lookahead result actually depends on.
+
+            fn walk_db() -> &'static str {
+                "{| [1,2,3]:100, [1,2,4]:200, [2,1]:300 |}"
+            }
+
+            /// `leafCount()` is the map's cardinality at the root and the
+            /// branch's result count at a prefix — the decidable bound that
+            /// terminates a `toNextLeaf` walk.
+            #[test]
+            fn zipper_leaf_count_is_the_walk_bound() {
+                assert_reduces_to(&format!("{{{}.readZipper().leafCount()}}", walk_db()), "3");
+                assert_reduces_to(
+                    &format!("{{{}.readZipperAt([1]).leafCount()}}", walk_db()),
+                    "2",
+                );
+            }
+
+            /// `leafCount()` steps of `toNextLeaf()` visit every entry exactly
+            /// once, in depth-first order, and BOTH `getPath()` and `getLeaf()`
+            /// reduce at every stop.
+            #[test]
+            fn zipper_leaf_walk_visits_every_entry_in_order() {
+                let db = walk_db();
+                for (steps, path, leaf) in [
+                    (1, "[1,2,3]", "100"),
+                    (2, "[1,2,4]", "200"),
+                    (3, "[2,1]", "300"),
+                ] {
+                    let walk = ".toNextLeaf()".repeat(steps);
+                    assert_reduces_to(
+                        &format!("{{{db}.readZipper(){walk}.getPath()}}"),
+                        path,
+                    );
+                    assert_reduces_to(
+                        &format!("{{{db}.readZipper(){walk}.getLeaf()}}"),
+                        leaf,
+                    );
+                }
+            }
+
+            /// ★ The step past the last leaf STAYS STUCK — it must not wrap to
+            /// the first, because `to_next_val()` resets the zipper to the root
+            /// on exhaustion and a returning form would loop forever.
+            ///
+            /// The reducer signals this same condition as `Nil`; C1 must
+            /// translate it back to this stuck form. See the CROSS-ENDPOINT
+            /// CONTRACT block in `languages/src/rhocalc/zipper.rs` and its
+            /// f1r3node twin `to_next_leaf_returns_nil_when_exhausted`.
+            #[test]
+            fn zipper_leaf_walk_exhaustion_stays_stuck() {
+                let src = format!(
+                    "{{{}.readZipper().toNextLeaf().toNextLeaf().toNextLeaf().toNextLeaf()}}",
+                    walk_db()
+                );
+                let (results, initial_id) = run_with_initial(&src);
+                let nfs = reachable_normal_form_displays(&results, initial_id);
+                assert!(
+                    nfs.iter().any(|nf| nf.contains(".toNextLeaf(")),
+                    "exhaustion must stay stuck, never wrap to the first leaf: {nfs:?}"
+                );
+            }
+
+            /// The cursor key round-trips: `m.get(z.getPath())` is `z.getLeaf()`.
+            #[test]
+            fn zipper_get_path_round_trips_through_the_map() {
+                let db = walk_db();
+                assert_reduces_to(
+                    &format!("{{{db}.get({db}.readZipper().toNextLeaf().getPath())}}"),
+                    "100",
+                );
+            }
+
+            /// `getPath()` yields a LIST at every arity, so a trace is
+            /// indexable — which is what `trace.nth(…)` / `trace.length()` in
+            /// the FIPS lookahead examples require.
+            #[test]
+            fn zipper_get_path_is_an_indexable_list() {
+                let db = walk_db();
+                assert_reduces_to(
+                    &format!("{{{db}.readZipper().toNextLeaf().getPath().length()}}"),
+                    "3",
+                );
+                assert_reduces_to(
+                    &format!("{{{db}.readZipper().toNextLeaf().getPath().nth(0)}}"),
+                    "1",
+                );
+            }
+
+            /// Scoping an enumeration is ALGEBRAIC: `getSubtrieAt(p)` yields a
+            /// `Pathmap` of just that branch, whose `readZipper()` walks exactly
+            /// it (with keys relative to `p`). Walking from a zipper parked at a
+            /// strict prefix also stays in the branch, because prefix-sharing
+            /// keys are contiguous in depth-first order — there it reports
+            /// ABSOLUTE keys.
+            #[test]
+            fn zipper_scoped_enumeration_two_ways() {
+                let db = walk_db();
+                assert_reduces_to(
+                    &format!("{{{db}.getSubtrieAt([1]).readZipper().leafCount()}}"),
+                    "2",
+                );
+                assert_reduces_to(
+                    &format!("{{{db}.getSubtrieAt([1]).readZipper().toNextLeaf().getPath()}}"),
+                    "[2,3]",
+                );
+                assert_reduces_to(
+                    &format!("{{{db}.readZipperAt([1]).toNextLeaf().getPath()}}"),
+                    "[1,2,3]",
+                );
+            }
+
             #[test]
             fn zipper_navigation_stays_stuck_on_failed_moves() {
                 let nfs = reachable_normal_form_displays(

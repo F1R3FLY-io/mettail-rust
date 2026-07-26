@@ -2421,6 +2421,99 @@ language! {
             }
         }] fold;
 
+        // ── ReadZipper ENUMERATION ───────────────────────────────────────
+        //
+        // These three make walking a `Pathmap` TOTAL: descend to a leaf, read
+        // its key and its value, advance to the next leaf, and know the count
+        // in advance. Each SURFACES capability the `pathmap` crate already has
+        // — `ZipperMoving::path()`, `ZipperIteration::to_next_val()`, and
+        // `ZipperMoving::val_count()` respectively; the implementations are in
+        // `crate::rhocalc::zipper`, which carries the full rationale.
+        //
+        // ## Why enumeration is LEAF-granular and not built from the moves above
+        //
+        // A `Pathmap` key is a LIST of segments, and `flatten_segments` encodes
+        // it across many trie BYTES (`[1,2,3]` ▸ `31 FF 32 FF 33 FF`). Every
+        // move declared above — `descendFirst`, `toNextSibling`,
+        // `toPrevSibling`, `descendIndexedBranch`, `ascend` — steps exactly ONE
+        // BYTE, parking the focus MID-SEGMENT, where `getLeaf()` is stuck (no
+        // value lives there) and `getSubtrie()` FAILS (the relative keys below
+        // it open with a partial segment that no `Proc` can name).
+        //
+        // And RhoCalc surface syntax cannot ADDRESS a byte: `descendTo` takes a
+        // `Proc` and always encodes a whole segment. So the byte-granular moves
+        // cannot be composed into an enumeration FROM SOURCE at any arity, and
+        // adding a cursor-key accessor beside them would not have closed the
+        // gap. `toNextLeaf` sidesteps the granularity mismatch entirely by
+        // landing only on positions that carry a value — every one of which is
+        // a complete, segment-aligned, decodable key, so the `getPath()` and
+        // `getLeaf()` at each stop are BOTH guaranteed to reduce.
+        //
+        // The walk, whose bound is decidable and whose every step is total:
+        //
+        //     z <- m.readZipper() ;  n <- z.leafCount() ;
+        //     n x ( z <- z.toNextLeaf() ;  use z.getPath(), z.getLeaf() )
+        //
+        // Scoping an enumeration is served ALGEBRAICALLY instead:
+        // `m.getSubtrieAt(p).readZipper()` walks exactly the branch at `p`.
+
+        RZGetPath . z:Proc
+        |- z "." "getPath" "(" ")" : Proc ![{
+            // THE CURSOR KEY. Failed readout STAYS STUCK (user decision
+            // 2026-06-30), matching `RZGetLeaf`. Errors only at the trie root,
+            // which names no entry.
+            let stuck = || Proc::RZGetPath(std::sync::Arc::new(z.clone()));
+            match &z {
+                Proc::CastReadZipper(inner) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_get_path(z.as_ref()) {
+                        Ok(p) => p,
+                        Err(()) => stuck(),
+                    },
+                    _ => stuck(),
+                },
+                _ => stuck(),
+            }
+        }] fold;
+
+        RZToNextLeaf . z:Proc
+        |- z "." "toNextLeaf" "(" ")" : Proc ![{
+            // ⚠ EXHAUSTION STAYS STUCK, AND MUST. `to_next_val()` resets the
+            // zipper to the ROOT when it runs out, so a rewrite that returned
+            // that zipper would restart the walk forever with no error raised
+            // anywhere. The reducer reports this same condition as `Nil`; C1
+            // must translate `Nil` back to THIS stuck form. See the
+            // CROSS-ENDPOINT CONTRACT block in `crate::rhocalc::zipper`.
+            let stuck = || Proc::RZToNextLeaf(std::sync::Arc::new(z.clone()));
+            match &z {
+                Proc::CastReadZipper(inner) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_to_next_leaf(z.as_ref()) {
+                        Ok(out) => Proc::CastReadZipper(std::sync::Arc::new(ReadZipper::Lit(std::sync::Arc::new(out)))),
+                        Err(()) => stuck(),
+                    },
+                    _ => stuck(),
+                },
+                _ => stuck(),
+            }
+        }] fold;
+
+        RZLeafCount . z:Proc
+        |- z "." "leafCount" "(" ")" : Proc ![{
+            // Values AT AND BELOW the focus: the map's cardinality at the root,
+            // the branch's result count at a prefix — and the DECIDABLE BOUND
+            // that terminates a `toNextLeaf` walk. Mirrors `RZChildCount`'s
+            // `Proc::Err` convention (a count is not a navigation).
+            match &z {
+                Proc::CastReadZipper(inner) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_leaf_count(z.as_ref()) {
+                        Ok(n) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(n))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
         // ── WriteZipper methods ──────────────────────────────────────────
         WZSetLeaf . w:Proc, full:Proc, v:Proc
         |- w "." "setLeaf" "(" full "," v ")" : Proc ![{

@@ -5203,8 +5203,15 @@ mod tests {
     /// A-M5 census errata pins: every OTHER bundled mixfix cohort stays
     /// unfactored with the recorded reason — Name `,` (rep-part-0 ⇒
     /// EmptySequence ×2), Name `<-` (1-member slice ⇒ LoneRootChild), the
-    /// Proc `.` cohort (40 distinct method names ⇒ 40 LoneRootChild), and
+    /// Proc `.` cohort (43 distinct method names ⇒ 43 LoneRootChild), and
     /// InputBind `&`/`where` (rep-part-0 ×2 / singleton).
+    ///
+    /// Census delta (2026-07-26): the trie-enumeration surface added
+    /// `getPath()`, `toNextLeaf()` and `leafCount()` — three more nullary
+    /// `z "." NAME "(" ")"` methods — so the Proc `.` cohort grows 40 → 43.
+    /// The pinned PROPERTY is unchanged: each method name is distinct, so each
+    /// remains its own `LoneRootChild` singleton and the cohort still yields
+    /// zero factorable groups. Only the census count moves.
     #[test]
     fn rhocalc_mixfix_other_cohorts_stay_unfactored() {
         let def = rhocalc();
@@ -5234,8 +5241,8 @@ mod tests {
         assert_eq!(query.singletons[0].reason, SingletonReason::LoneRootChild);
         let dot = bucket(proc_src, ".");
         assert!(dot.groups.is_empty());
-        assert_eq!(dot.slice.len(), 40, "the 40-method cohort");
-        assert_eq!(dot.singletons.len(), 40);
+        assert_eq!(dot.slice.len(), 43, "the 43-method cohort");
+        assert_eq!(dot.singletons.len(), 43);
         assert!(dot
             .singletons
             .iter()

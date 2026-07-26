@@ -412,7 +412,7 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         return result.unwrap_proc();
     }
 
-    let choice = (reader.next_byte() as usize) % 115;
+    let choice = (reader.next_byte() as usize) % 118;
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapProc(Proc::PZero).unwrap_proc(),
@@ -920,43 +920,55 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         },
         105 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZGetPath(f0)
+        },
+        106 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZToNextLeaf(f0)
+        },
+        107 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            Proc::RZLeafCount(f0)
+        },
+        108 => {
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f2 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::WZSetLeaf(f0, f1, f2)
         },
-        106 => {
+        109 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::WZSetSubtrie(f0, f1)
         },
-        107 => {
+        110 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::WZRemoveLeaf(f0)
         },
-        108 => {
+        111 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::WZRemoveBranches(f0)
         },
-        109 => {
+        112 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::WZGraft(f0, f1)
         },
-        110 => {
+        113 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::WZJoinInto(f0, f1)
         },
-        111 => {
+        114 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::SAdd(f0, f1)
         },
-        112 => {
+        115 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Not(f0)
         },
-        113 => {
+        116 => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::ToBool(f0)
         },
