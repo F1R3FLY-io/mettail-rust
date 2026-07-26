@@ -93,6 +93,21 @@
 //! guard lane survived by never having been measured, which is the useful lesson: an invariant
 //! that is asserted in a doc comment and nowhere in a test is a hypothesis.
 //!
+//! ### The boundary of `K`: the GUARD lane, not the FORMULA lane
+//!
+//! RhoCalc spells `or` at two levels, and `K` belongs to exactly one of them. The guard-level
+//! `or` (`Proc::Or` ⟶ `EOr`, an EVALUATED expression) is `eval_guard_disposition`'s left-strict
+//! arm and is where `K` lives. The formula-level `or` (`FormulaShape::Disjunction` ⟶
+//! `ConnOrBody`, a MATCHED pattern) is `formula::kleene_or`, which is full Kleene — it already
+//! applies `unknown ∨ true = true`, the very rule the guard lane refuses as unsound.
+//!
+//! That looks like a live unsoundness and **is not**:
+//! `formula_level_disjunction_agrees_where_the_guard_level_or_diverges` measures all four
+//! reachable `kleene_or` cells against the machine and they agree, including `kleene_or(?, T)`.
+//! A pattern is never evaluated, so f1r3node's strict `EOr` — the thing that blocks stage B2 —
+//! has nothing to act on. ★ The repair therefore belongs in `receive::eval_guard_disposition`;
+//! changing `formula::kleene_or` would be fixing the lane that is already correct.
+//!
 //! ### ⚠ The pins this suite replaced did not pin anything — now FIXED
 //!
 //! `languages/tests/rhocalc_tests.rs::assert_reduces_to` — the helper behind most of that file's
@@ -1555,7 +1570,7 @@ fn fold_fired(residue: &str) -> bool {
 ///   x matches "hi"                         "hi"           fires   fires    agree
 ///   x matches {true | true}                {true | true}  RESTS   FIRES    ★ diverge
 ///   (x matches {true | true}) or true      {true | true}  RESTS   FIRES    ★ diverge
-///   (x matches {true | true}) or false     false          RESTS   FIRES    ★ diverge
+///   (x matches {true | true}) or true      false          RESTS   FIRES    ★ diverge
 /// ```
 ///
 /// The first three are the controls that prove the instrument works — including
@@ -1679,4 +1694,192 @@ async fn divergence_k_target_guard_lane_normal_form_agrees_with_the_machine() {
             observed.iter().map(render_as_rhocalc).collect::<Vec<_>>()
         );
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// DIVERGENCE K, THE BOUNDARY — the defect is in the GUARD lane, NOT in the FORMULA lane
+// (#33 stage D, 2026-07-25)
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/// **`formula::kleene_or` is sound, and the hazard divergence K exhibits does not reach it.**
+///
+/// ## The question this closes
+///
+/// Divergence K's sharpest row is `(x matches {φ|ψ}) or true` — a guard forced `true` by its
+/// right operand that the host nevertheless declines. RhoCalc spells `or` at TWO levels, and
+/// only one of them is the one that misbehaves:
+///
+/// ```text
+///   GUARD level     (x matches φ) or (x matches ψ)   Proc::Or        ⟶  EOr        ⟶  evaluated
+///   FORMULA level   x matches (φ or ψ)               FormulaShape::  ⟶  ConnOrBody ⟶  MATCHED
+///                                                    Disjunction
+/// ```
+///
+/// The guard-level `or` is `eval_guard_disposition`'s `Or` arm (left-strict: `Declines =>
+/// Declines`). The formula-level `or` is `formula::kleene_or`, which is FULL Kleene —
+/// `kleene_or(unknown, true) = true`, exactly the rule the guard lane refuses. Since the guard
+/// lane refuses it on soundness grounds, the obvious worry is that the formula lane, which
+/// already applies it, is unsound today.
+///
+/// **It is not, and this test measures that rather than arguing it.**
+///
+/// ## ① Which rows even reach `kleene_or` (measured 2026-07-25)
+///
+/// `host_matches_verdict` runs an `is_statically_true`/`is_statically_false` PRE-PASS before it
+/// classifies, and `is_statically_true(φ ∨ ψ)` is `is_statically_true(φ) || is_statically_true(ψ)`.
+/// So the disjunction that looks like the natural probe is answered before the Kleene table is
+/// ever consulted:
+///
+/// ```text
+///   formula                        static_true  static_false  reaches kleene_or?
+///   {true | true} or true          TRUE         false         NO — pre-pass answers Some(true)
+///   "hi" or "bye"                  false        false         yes
+///   "hi" or {true | @"a"!(1)}      false        false         yes
+///   {true | @"a"!(1)} or "hi"      false        false         yes
+///   (not "hi") or (not "hi")       false        false         yes
+/// ```
+///
+/// ## ② The operand verdicts `kleene_or` is actually fed, on the target `"hi"`
+///
+/// ```text
+///   host_matches_verdict("hi", "hi")                 Some(true)    a PROVED match
+///   host_matches_verdict("hi", "bye")                None          declined (positive-only term arm)
+///   host_matches_verdict("hi", {true | @"a"!(1)})    None          declined (SEPARATING conjunction)
+///   host_matches_verdict("hi", not "hi")             Some(false)   a PROVED non-match
+/// ```
+///
+/// so the four live rows exercise `kleene_or(T,?)`, `kleene_or(T,?)`, **`kleene_or(?,T)`** and
+/// `kleene_or(F,F)` — including the exact cell the guard lane refuses.
+///
+/// ## ③ Every formula-level row AGREES with the machine
+///
+/// ```text
+///   guard                                  datum   fold    machine
+///   x matches ({true | true} or true)      false   fires   fires    agree
+///   x matches ({true | true} or true)      {t | t} fires   fires    agree
+///   x matches ("hi" or "bye")              "hi"    fires   fires    agree
+///   x matches ("hi" or {true | @"a"!(1)})  "hi"    fires   fires    agree
+///   x matches ({true | @"a"!(1)} or "hi")  "hi"    fires   fires    agree   ★ kleene_or(?,T)
+///   x matches ((not "hi") or (not "hi"))   "hi"    rests   rests    agree
+/// ```
+///
+/// ## ④ ★ The contrast that localizes the defect
+///
+/// The last formula row and this guard row have the SAME two operands and the SAME datum. Only
+/// the position of `or` differs — and the host's answer flips while the machine's does not:
+///
+/// ```text
+///   x matches ({true | @"a"!(1)} or "hi")               "hi"   fires   fires   agree
+///   (x matches {true | @"a"!(1)}) or (x matches "hi")   "hi"   RESTS   FIRES   ★ diverge (K)
+/// ```
+///
+/// ## Why the strictness argument does not transfer
+///
+/// A formula is never EVALUATED. `t matches φ` lowers to one `EMatches{target, pattern}`
+/// (`rhocalc_ast.rs`'s `Matches` arm): the target is evaluated, the pattern is handed verbatim to
+/// the reducer's spatial matcher, and `ConnOrBody` there is a `find_map` over the disjuncts
+/// (f1r3node `rholang/src/rust/interpreter/matcher/spatial_matcher.rs`) — a disjunct that does not
+/// match simply yields `None` from the closure and the search moves on. **There is no error
+/// channel**, so the failure mode that blocks stage B2 — f1r3node evaluating BOTH operands of
+/// `EOr` and `guard_passes` mapping any `Err` or non-boolean to `false` — has nothing to act on.
+///
+/// Composed with `host_matches_verdict`'s positive-only containment lemma (a host match PROVES a
+/// machine match) and `ConnOr = ∃`, `kleene_or(Some(true), _) = Some(true)` is exactly as sound as
+/// the term arm it rests on; `kleene_or(Some(false), Some(false))` is sound because in this
+/// lattice a `Some(false)` is only ever produced by a proof of non-match, never by a failure to
+/// find one.
+///
+/// ★ The consequence for **#33 stage C / B2**: the repair belongs in
+/// `receive::eval_guard_disposition`, NOT in `formula.rs`. Changing `kleene_or` would be fixing
+/// the lane that is already correct.
+#[tokio::test(flavor = "multi_thread")]
+async fn formula_level_disjunction_agrees_where_the_guard_level_or_diverges() {
+    use mettail_languages::rhocalc::formula::{
+        host_matches_verdict, is_statically_false, is_statically_true,
+    };
+
+    // ── ① the static pre-pass decides WHICH rows reach the Kleene table ──
+    let named_probe = parse("{true | true} or true");
+    assert!(
+        is_statically_true(&named_probe),
+        "`{{true | true}} or true` is answered by the is_statically_true PRE-PASS, so it never \
+         reaches kleene_or; the disjunction-with-a-`true`-disjunct probe cannot test the Kleene \
+         table at all"
+    );
+    for formula_src in [
+        r#""hi" or "bye""#,
+        r#""hi" or {true | @"a"!(1)}"#,
+        r#"{true | @"a"!(1)} or "hi""#,
+        r#"(not "hi") or (not "hi")"#,
+    ] {
+        let formula = parse(formula_src);
+        assert!(
+            !is_statically_true(&formula) && !is_statically_false(&formula),
+            "{formula_src:?} must be statically UNDECIDED, or it would be short-circuited by the \
+             pre-pass and these rows would not exercise kleene_or at all"
+        );
+    }
+
+    // ── ② the operand verdicts kleene_or is fed, on the target `"hi"` ──
+    let target = parse(r#""hi""#);
+    for (operand_src, expected) in [
+        (r#""hi""#, Some(true)),
+        (r#""bye""#, None),
+        (r#"{true | @"a"!(1)}"#, None),
+        (r#"(not "hi")"#, Some(false)),
+    ] {
+        assert_eq!(
+            host_matches_verdict(&target, &parse(operand_src)),
+            expected,
+            "the operand {operand_src:?} on the target \"hi\" pins which kleene_or CELL the rows \
+             below exercise; if this moves, they stop testing what this test says they test"
+        );
+    }
+
+    // ── ③ every FORMULA-level disjunction agrees with the machine ──
+    for (guard, datum, fires) in [
+        (r#"x matches ({true | true} or true)"#, "false", true),
+        (r#"x matches ({true | true} or true)"#, "{true | true}", true),
+        (r#"x matches ("hi" or "bye")"#, r#""hi""#, true),
+        (r#"x matches ("hi" or {true | @"a"!(1)})"#, r#""hi""#, true),
+        // ★ kleene_or(unknown, true) — the cell the guard lane refuses as unsound.
+        (r#"x matches ({true | @"a"!(1)} or "hi")"#, r#""hi""#, true),
+        (r#"x matches ((not "hi") or (not "hi"))"#, r#""hi""#, false),
+    ] {
+        let proc = parse(&guarded_comm_program(guard, datum));
+        let residue = fold_program(&proc).expect("the COMM+fold fixpoint settles");
+        let observed = reduce_program(&proc).await.expect("the machine reduces");
+        assert_eq!(
+            fold_fired(&residue),
+            fires,
+            "the FOLD must {} {guard:?} on {datum:?} — got {residue:?}",
+            if fires { "fire" } else { "rest" }
+        );
+        assert_eq!(
+            !observed.is_empty(),
+            fires,
+            "the MACHINE must {} {guard:?} on {datum:?} — got {:?}",
+            if fires { "fire" } else { "rest" },
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>()
+        );
+    }
+
+    // ── ④ ★ the guard-level twin of the fifth row above: same operands, same datum, DIVERGES ──
+    let twin = r#"(x matches {true | @"a"!(1)}) or (x matches "hi")"#;
+    let proc = parse(&guarded_comm_program(twin, r#""hi""#));
+    let residue = fold_program(&proc).expect("the COMM+fold fixpoint settles");
+    let observed = reduce_program(&proc).await.expect("the machine reduces");
+    assert!(
+        !fold_fired(&residue),
+        "divergence K: moving the SAME disjunction from formula position to guard position must \
+         still make the host decline today, because eval_guard_disposition's Or arm is \
+         left-strict; if it now fires, stage C landed and the K witness must be replaced by its \
+         target twin. Got {residue:?}"
+    );
+    assert_eq!(
+        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        vec![r#""fired""#.to_string()],
+        "divergence K: the MACHINE fires the guard-level twin, which is what makes the host's \
+         decline a divergence rather than a shared abstention"
+    );
 }
