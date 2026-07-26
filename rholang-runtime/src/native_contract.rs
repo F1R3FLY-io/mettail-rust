@@ -44,7 +44,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use mettail_rholang_codegen::{
-    native_contract_body_ref, native_contract_channel, reflect_ground_term_par, GroundTerm,
+    check_body_refs_pairwise_distinct, native_contract_body_ref, native_contract_channel,
+    reflect_ground_term_par, BandAllocationError, GroundTerm, NATIVE_HANDLER_BAND,
     NativeHandlerSpec, REFLECTED_TERM_ABI_PREFIX,
 };
 use models::rhoapi::expr::ExprInstance;
@@ -165,9 +166,9 @@ pub fn native_definition(spec: &NativeHandlerSpec) -> Definition {
     let urn = spec.urn.clone();
     Definition {
         urn: spec.urn.clone(),
-        fixed_channel: native_contract_channel(spec.rule_index),
+        fixed_channel: native_contract_channel(spec.rule_index, &spec.fingerprint),
         arity: (arity + 1) as i32,
-        body_ref: native_contract_body_ref(spec.rule_index),
+        body_ref: native_contract_body_ref(spec.rule_index, &spec.fingerprint),
         remainder: None,
         handler: Box::new(move |ctx| {
             let space = ctx.space.clone();
@@ -243,8 +244,22 @@ pub fn native_definition(spec: &NativeHandlerSpec) -> Definition {
 
 /// Materialize the handler `Definition`s for the recorded native-handler specs (one per
 /// registrable native rule the report-free compile located).
-pub fn native_definitions_for(specs: &[NativeHandlerSpec]) -> Vec<Definition> {
-    specs.iter().map(native_definition).collect()
+pub fn native_definitions_for(
+    specs: &[NativeHandlerSpec],
+) -> Result<Vec<Definition>, BandAllocationError> {
+    // ★ #36 S4: a `body_ref` must fit ONE `i64` while `(fingerprint, rule_index)` is unbounded,
+    // so the derivation cannot be collision-free — only deterministic. Checking here converts
+    // the residual 48-bit digest collision from a SILENT wrong dispatch (f1r3node's
+    // `dispatch_table_creator` is a `HashMap` keyed by `body_ref`; the later insert simply
+    // wins) into a loud, typed refusal. Within one language this cannot fire — the rule index
+    // has its own bit field — so it is strictly a cross-co-installed-language guard.
+    check_body_refs_pairwise_distinct(
+        &NATIVE_HANDLER_BAND,
+        specs.iter().map(|spec| {
+            (spec.urn.as_str(), native_contract_body_ref(spec.rule_index, &spec.fingerprint))
+        }),
+    )?;
+    Ok(specs.iter().map(native_definition).collect())
 }
 
 /// Why a native-handler contract rejected its payload. Every case is an honest, loud failure —
@@ -342,7 +357,7 @@ mod tests {
         let definition = native_definition(&spec);
         assert_eq!(definition.urn, "mtl:native:fp:Int_PowInt");
         assert_eq!(definition.arity, 3, "k + 1 = σ operands plus the out channel");
-        assert_eq!(definition.body_ref, native_contract_body_ref(3));
-        assert_eq!(definition.fixed_channel, native_contract_channel(3));
+        assert_eq!(definition.body_ref, native_contract_body_ref(3, FP));
+        assert_eq!(definition.fixed_channel, native_contract_channel(3, FP));
     }
 }

@@ -209,7 +209,8 @@ async fn a_s3_multi_site_native_exec_admits_and_fires_each_site() {
     );
     assert_eq!(specs[0].fired_rule_label, "Int_AddInt");
 
-    let definitions = mettail_rholang_runtime::native_definitions_for(&specs);
+    let definitions = mettail_rholang_runtime::native_definitions_for(&specs)
+        .expect("#36 S4/S5: the band allocation is pairwise distinct for a single language");
     let observation = backend
         .run_rho_net_with_call_definitions_and_observe_runtime_values(
             &invocation.call,

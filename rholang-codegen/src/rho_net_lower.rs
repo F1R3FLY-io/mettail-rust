@@ -11630,7 +11630,8 @@ mod tests {
     #[test]
     fn native_locate_contract_bridge_is_a_value_free_forwarder() {
         let k = 2;
-        let native_channel = crate::native_handler::native_contract_channel(0);
+        let native_channel =
+            crate::native_handler::native_contract_channel(0, "mettail-langdef-v1:6ef0c40636bb0bca");
         let bridge = native_locate_contract_bridge_par("sa:scalar/PowInt", k, native_channel.clone());
 
         let [receive] = bridge.receives.as_slice() else {

@@ -1498,6 +1498,28 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// ★ #36 S5 — the language fingerprint every held-fold site is scoped to.
+///
+/// Held folds are lifted out of RhoCalc AST lowering, so the owning language is
+/// [`RhocalcAstRuntimeLanguage`] and its fingerprint is a constant of the build. It is read
+/// through the same `metadata().definition_fingerprint()` accessor every other emission path
+/// uses, so the fold band can never disagree with the reflect-tag ABI about which language a
+/// site belongs to.
+///
+/// A language whose metadata exposes no fingerprint has no identity to scope by; rather than
+/// silently falling back to an unscoped band (which is the defect S5 removes) the sites are
+/// scoped to the language NAME, which is still definition-specific and still keeps two
+/// co-installed languages apart. `RhocalcAstRuntimeLanguage` always exposes one — it forwards
+/// the generated `RhoCalcLanguage`'s — so the fallback is unreachable in this build and exists
+/// only so the derivation is total.
+fn held_fold_language_fingerprint() -> String {
+    RhocalcAstRuntimeLanguage
+        .metadata()
+        .definition_fingerprint()
+        .map(|fingerprint| fingerprint.to_string())
+        .unwrap_or_else(|| format!("mettail-langname:{}", RhocalcAstRuntimeLanguage.name()))
+}
+
 /// A liftable fold node's static spec pieces: `(operand, kind, width)`. `None` if `proc` is not a
 /// fold constructor OR its width is not a ground literal (the latter falls through to
 /// `lower_proc`'s typed fold error). The unary precision casts carry width 0 (unused).
@@ -1779,12 +1801,15 @@ fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcA
         return lower_proc(body, env);
     };
     let site_index = HELD_FOLD_SITES.with(|sites| sites.borrow().len()) as u8;
+    // ★ #36 S5: the site is scoped to the language it belongs to. `site_index` alone made two
+    // co-installed fold-bearing languages collide on `[0xF0, 0]` / `0xF000`.
+    let fingerprint = held_fold_language_fingerprint();
     HELD_FOLD_SITES.with(|sites| {
         sites
             .borrow_mut()
-            .push(FoldSpec { kind, width, site_index })
+            .push(FoldSpec { kind, width, site_index, fingerprint: fingerprint.clone() })
     });
-    let channel = fold_channel(site_index);
+    let channel = fold_channel(site_index, &fingerprint);
 
     // Fresh result binders: `new ret` (innermost) and the `for`-bound `r`.
     let ret_var = mettail_runtime::get_or_create_var(format!("__mtl_ret_{site_index}"));

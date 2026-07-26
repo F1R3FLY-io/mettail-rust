@@ -2280,8 +2280,13 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
                     #language_lit, __native_index, u8::MAX,
                 ));
             };
-            let __native_channel =
-                ::mettail_rholang_codegen::native_contract_channel(__rule_index);
+            // ★ #36 S4: the contract channel is FINGERPRINT-SCOPED. `__rule_index` alone made
+            // two co-installed native-bearing languages share `[0xF1, 0]`, and f1r3node's
+            // dispatch table silently keeps whichever installed last.
+            let __native_channel = ::mettail_rholang_codegen::native_contract_channel(
+                __rule_index,
+                &__ruleset.language_fingerprint,
+            );
             for _ in 0..__site_count {
                 __call = __call.append(
                     ::mettail_rholang_codegen::native_locate_contract_bridge_par(

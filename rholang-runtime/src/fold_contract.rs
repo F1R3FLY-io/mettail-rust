@@ -35,10 +35,9 @@ use mettail_languages::rhocalc::{BigInt, BigRat, Bool, Fixed, Float, Int, Proc, 
 // native-handler `[0xF1, rule]` / `0xF100+rule`, with the collision unit test) — so this module
 // IMPORTS its band rather than redeclaring it. The held-fold channel id is two-byte, so it
 // cannot collide with f1r3node's std (0–36) or test-framework (101–108) single-byte names.
-use mettail_rholang_codegen::{MTL_FOLD_BODY_REF_BASE, MTL_FOLD_CHANNEL_TAG};
+use mettail_rholang_codegen::{check_body_refs_pairwise_distinct, BandAllocationError, HELD_FOLD_BAND};
 use models::rhoapi::expr::ExprInstance;
-use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
-use models::rhoapi::{GPrivate, GUnforgeable, ListParWithRandom, Par};
+use models::rhoapi::{ListParWithRandom, Par};
 use rholang::rust::interpreter::contract_call::ContractCall;
 use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::system_processes::Definition;
@@ -164,23 +163,35 @@ pub struct FoldSpec {
     pub kind: FoldKind,
     pub width: i64,
     pub site_index: u8,
+    /// ★ #36 S5 — the language fingerprint the site belongs to.
+    ///
+    /// `FoldSpec` carried NO fingerprint at all, so `site_index` alone keyed both the channel
+    /// and the `body_ref`: two co-installed fold-bearing languages each allocate site 0 and
+    /// collide on `[0xF0, 0]` / `0xF000`, and f1r3node's `dispatch_table_creator` `HashMap`
+    /// silently keeps whichever installed last. Identical defect to the native band, which is
+    /// why both now derive from the one allocator (`mettail_rholang_codegen::HELD_FOLD_BAND`).
+    pub fingerprint: String,
 }
 
 impl FoldSpec {
-    /// The unforgeable contract channel `@[0xF0, site]` (the lowered send targets it; the
-    /// `Definition` installs on it).
+    /// The unforgeable contract channel (the lowered send targets it; the `Definition` installs
+    /// on it). ★ CONSENSUS-VISIBLE — it is a send target in the emitted `Par`.
     pub fn channel(&self) -> Par {
-        fold_channel(self.site_index)
+        fold_channel(self.site_index, &self.fingerprint)
+    }
+
+    /// The reserved `body_ref` for this site — a DETERMINISTIC function of
+    /// `(fingerprint, site_index)`, never an allocation counter. ★ Not state-root visible, but
+    /// replay-relevant.
+    pub fn body_ref(&self) -> i64 {
+        HELD_FOLD_BAND.body_ref(self.site_index, &self.fingerprint)
     }
 }
 
-/// The unforgeable held-fold contract channel for a site index (two-byte private name `[0xF0, n]`).
-pub fn fold_channel(site_index: u8) -> Par {
-    Par::default().with_unforgeables(vec![GUnforgeable {
-        unf_instance: Some(GPrivateBody(GPrivate {
-            id: vec![MTL_FOLD_CHANNEL_TAG, site_index],
-        })),
-    }])
+/// The unforgeable held-fold contract channel for a `(site_index, fingerprint)` pair —
+/// `GPrivate{id: [0xF0, site] ++ fingerprint.as_bytes()}`, collision-free by construction.
+pub fn fold_channel(site_index: u8, language_fingerprint: &str) -> Par {
+    HELD_FOLD_BAND.channel(site_index, language_fingerprint)
 }
 
 /// Build the system-process [`Definition`] for one fold site (held or ground — A-S4): a
@@ -193,10 +204,10 @@ pub fn fold_definition(spec: &FoldSpec) -> Definition {
     let width = spec.width;
     let site_index = spec.site_index;
     Definition {
-        urn: format!("mtl:fold:{}:{}#{}", kind.tag(), width, site_index),
-        fixed_channel: fold_channel(site_index),
+        urn: fold_urn(spec),
+        fixed_channel: spec.channel(),
         arity: 2,
-        body_ref: MTL_FOLD_BODY_REF_BASE + site_index as i64,
+        body_ref: spec.body_ref(),
         remainder: None,
         handler: Box::new(move |ctx| {
             let space = ctx.space.clone();
@@ -231,8 +242,34 @@ pub fn fold_definition(spec: &FoldSpec) -> Definition {
 }
 
 /// Materialize the contract `Definition`s for a term's held-fold sites (one per site).
-pub fn fold_definitions_for(specs: &[FoldSpec]) -> Vec<Definition> {
-    specs.iter().map(fold_definition).collect()
+pub fn fold_definitions_for(specs: &[FoldSpec]) -> Result<Vec<Definition>, BandAllocationError> {
+    // ★ #36 S5: a `body_ref` must fit ONE `i64` while `(fingerprint, site_index)` is unbounded,
+    // so the derivation cannot be collision-free. Checking here converts the residual 48-bit
+    // digest collision from a SILENT wrong dispatch (f1r3node keys its dispatch table by
+    // `body_ref` in a `HashMap`, so one handler would just shadow the other) into a loud,
+    // typed refusal. Within one language a collision is impossible by construction — the site
+    // index has its own bit field — so this can only fire across co-installed languages.
+    let urns: Vec<String> = specs.iter().map(fold_urn).collect();
+    check_body_refs_pairwise_distinct(
+        &HELD_FOLD_BAND,
+        urns.iter().map(String::as_str).zip(specs.iter().map(FoldSpec::body_ref)),
+    )?;
+    Ok(specs.iter().map(fold_definition).collect())
+}
+
+/// The `Definition` URN of one fold site: `mtl:fold:{kind}:{width}#{site}@{fingerprint}`.
+///
+/// The fingerprint suffix is #36 S5. The URN is not what f1r3node dispatches on — it keys on
+/// `body_ref` — but it IS the identity a band-allocation refusal names, so it must distinguish
+/// the two specs a collision is between.
+fn fold_urn(spec: &FoldSpec) -> String {
+    format!(
+        "mtl:fold:{}:{}#{}@{}",
+        spec.kind.tag(),
+        spec.width,
+        spec.site_index,
+        spec.fingerprint
+    )
 }
 
 /// Why a fold contract could not produce a result. Both are honest, non-silent failures.

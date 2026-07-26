@@ -1323,22 +1323,31 @@ fn clear_pending_fold_sites() {
 /// GROUND operands included — pre-A-S4 only COMM-held folds lifted) plus the A-S3 native-handler
 /// contracts (empty unless the report-free compile ADMITTED
 /// located native sites). Both ride the same `extra_system_processes` seam into
-/// [`run_rho_invocation_blocking`]; their reserved bands are disjoint by construction
-/// (`mettail_rholang_codegen::native_handler`, collision-tested). On a DEFERRAL return the
-/// drained definitions are simply dropped — nothing leaks into the fallback compile, which
-/// re-brackets itself.
+/// [`run_rho_invocation_blocking`]; both bands are allocated by the ONE fingerprint-scoped
+/// allocator (`mettail_rholang_codegen::system_process_band`) and are disjoint from each other
+/// and from f1r3node's own bands by construction. On a DEFERRAL return the drained definitions
+/// are simply dropped — nothing leaks into the fallback compile, which re-brackets itself.
+///
+/// ★ #36 S4/S5 — this is now FALLIBLE. A `body_ref` is one `i64` derived deterministically from
+/// `(fingerprint, index)`, so it cannot be collision-free; each band checks its own allocations
+/// for pairwise distinctness here, at the last point before the `Definition`s reach f1r3node's
+/// `dispatch_table_creator`. That `HashMap` is keyed by `body_ref` and would let a collision
+/// resolve silently to whichever handler inserted last — i.e. to install order — so refusing is
+/// the only outcome that keeps two nodes reducing the same term the same way.
 #[cfg(feature = "runtime-report")]
-fn drain_pending_fold_definitions() -> Vec<rholang::rust::interpreter::system_processes::Definition>
-{
+fn drain_pending_fold_definitions() -> Result<
+    Vec<rholang::rust::interpreter::system_processes::Definition>,
+    mettail_rholang_codegen::BandAllocationError,
+> {
     #[cfg(feature = "rhocalc-runtime")]
     let mut definitions =
-        crate::fold_contract::fold_definitions_for(&crate::rhocalc_ast::take_held_fold_sites());
+        crate::fold_contract::fold_definitions_for(&crate::rhocalc_ast::take_held_fold_sites())?;
     #[cfg(not(feature = "rhocalc-runtime"))]
     let mut definitions: Vec<rholang::rust::interpreter::system_processes::Definition> = Vec::new();
     definitions.extend(crate::native_contract::native_definitions_for(
         &mettail_rholang_codegen::take_pending_native_handler_specs(),
-    ));
-    definitions
+    )?);
+    Ok(definitions)
 }
 
 #[cfg(feature = "runtime-report")]
@@ -2030,7 +2039,12 @@ where
                         self.name()
                     )
                 })?;
-                let fold_definitions = drain_pending_fold_definitions();
+                let fold_definitions = drain_pending_fold_definitions().map_err(|err| {
+                    format!(
+                        "system-process band allocation for language {} refused: {err}",
+                        self.name()
+                    )
+                })?;
                 run_rho_invocation_blocking(self.backend.clone(), invocation, fold_definitions)
             },
             RuntimeBackend::Ascent => Err(format!(
@@ -2239,7 +2253,12 @@ where
                         self.name()
                     )
                 })?;
-                let fold_definitions = drain_pending_fold_definitions();
+                let fold_definitions = drain_pending_fold_definitions().map_err(|err| {
+                    format!(
+                        "system-process band allocation for language {} refused: {err}",
+                        self.name()
+                    )
+                })?;
                 match invocation {
                     RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => {
                         RuntimeBackendReport::try_dovetail(dovetail_report).map_err(|err| {
@@ -2343,7 +2362,12 @@ where
                 };
                 // The held-fold contract `Definition`s the lifted call targets (empty unless the
                 // term had a fold over a COMM-received value).
-                let fold_definitions = drain_pending_fold_definitions();
+                let fold_definitions = drain_pending_fold_definitions().map_err(|err| {
+                    format!(
+                        "system-process band allocation for language {} refused: {err}",
+                        self.name()
+                    )
+                })?;
                 // A-S5.6: classify τ-COMMs against this language's reserved channel names.
                 let tau = crate::step::TauChannelClassifier::for_language_fingerprint(
                     self.backend.plan().definition_fingerprint(),
@@ -2570,7 +2594,12 @@ where
                 // contracts (e.g. the RhoCalc AST lowering); they ride the executed invocation.
                 clear_pending_fold_sites();
                 let free = (self.invocation_free.compiler)(term);
-                let free_fold_definitions = drain_pending_fold_definitions();
+                let free_fold_definitions = drain_pending_fold_definitions().map_err(|err| {
+                    format!(
+                        "system-process band allocation for language {} refused: {err}",
+                        self.name()
+                    )
+                })?;
                 match free {
                     Ok(RhoBackendInvocation::RhoMachine(machine_invocation)) => {
                         // The admitted path: NO D-stage ran, no report exists.
@@ -2613,7 +2642,12 @@ where
                                     self.name()
                                 )
                             })?;
-                        let fold_definitions = drain_pending_fold_definitions();
+                        let fold_definitions = drain_pending_fold_definitions().map_err(|err| {
+                            format!(
+                                "system-process band allocation for language {} refused: {err}",
+                                self.name()
+                            )
+                        })?;
                         match invocation {
                             RhoBackendInvocation::DeferToDovetailSemanticPredicate { .. } => {
                                 RuntimeBackendReport::try_dovetail(dovetail_report).map_err(
@@ -2713,7 +2747,12 @@ where
                         None => call.clone(),
                     },
                 };
-                let fold_definitions = drain_pending_fold_definitions();
+                let fold_definitions = drain_pending_fold_definitions().map_err(|err| {
+                    format!(
+                        "system-process band allocation for language {} refused: {err}",
+                        self.name()
+                    )
+                })?;
                 // A-S5.6: classify τ-COMMs against this language's reserved channel names.
                 let tau = crate::step::TauChannelClassifier::for_language_fingerprint(
                     self.backend.plan().definition_fingerprint(),

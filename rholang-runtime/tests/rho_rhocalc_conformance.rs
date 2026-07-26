@@ -251,7 +251,8 @@ async fn reduce(proc: &Proc) -> Result<Vec<RuntimeObservationValue>, String> {
 async fn reduce_program(program: &Proc) -> Result<Vec<RuntimeObservationValue>, String> {
     clear_held_fold_sites();
     let par = lower_rhocalc_proc(program).map_err(|err| lower_error_message(&err))?;
-    let definitions = fold_definitions_for(&take_held_fold_sites());
+    let definitions = fold_definitions_for(&take_held_fold_sites())
+        .expect("#36 S4/S5: the band allocation is pairwise distinct for a single language");
     run_installed_program_with_call_definitions_and_read_runtime_values(
         &Par::default(),
         &par,

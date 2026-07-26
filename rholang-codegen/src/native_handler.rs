@@ -41,47 +41,41 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody;
-use models::rhoapi::{GPrivate, GUnforgeable, Par};
+use models::rhoapi::Par;
 
 use crate::rho_net_lower::GroundTerm;
 
-/// First byte of every held-fold contract's unforgeable channel id `[0xF0, site_index]` — the
-/// Tier-3 held-fold trampoline band (`rholang-runtime/src/fold_contract.rs` builds its channels
-/// from this).
-pub const MTL_FOLD_CHANNEL_TAG: u8 = 0xF0;
+/// ★ #36 S4+S5 — the band identifiers now live in ONE place,
+/// [`crate::system_process_band`], and BOTH bands are fingerprint-scoped there. They used to
+/// be four loose constants here plus two derivation functions, with the held-fold band's twin
+/// derivation duplicated in `rholang-runtime/src/fold_contract.rs`; the duplication is exactly
+/// how the two bands came to share an identical defect and get fixed separately.
+pub use crate::system_process_band::{
+    HELD_FOLD_BAND, MTL_FOLD_CHANNEL_TAG, MTL_NATIVE_CHANNEL_TAG, NATIVE_HANDLER_BAND,
+};
 
-/// Reserved `body_ref` band base for held-fold contracts: `0xF000 + site_index` (site is `u8`,
-/// so the band is `0xF000..=0xF0FF` — well clear of f1r3node's std 0–36 / test 101–108, and NOT
-/// in `non_deterministic_ops()`: the folds are pure, dispatch is a `DeterministicCall`).
-pub const MTL_FOLD_BODY_REF_BASE: i64 = 0xF000;
-
-/// First byte of every A-S3 native-handler contract's unforgeable channel id
-/// `[0xF1, rule_index]` — disjoint from the held-fold band by the leading tag byte.
-pub const MTL_NATIVE_CHANNEL_TAG: u8 = 0xF1;
-
-/// Reserved `body_ref` band base for A-S3 native-handler contracts: `0xF100 + rule_index`
-/// (rule index is `u8`, so the band is `0xF100..=0xF1FF` — disjoint from the held-fold band
-/// `0xF000..=0xF0FF`, from f1r3node's std/test refs, and NOT in `non_deterministic_ops()`:
-/// a registrable native evaluator is a pure function of its σ operands, so dispatch is a
-/// `DeterministicCall` and replay reproduces bit-identically).
-pub const MTL_NATIVE_BODY_REF_BASE: i64 = 0xF100;
-
-/// The unforgeable native-handler contract channel for a native rule index (two-byte private
-/// name `[0xF1, rule_index]`). The co-installed contract-call bridge
+/// The unforgeable native-handler contract channel for a `(rule_index, fingerprint)` pair. The
+/// co-installed contract-call bridge
 /// ([`native_locate_contract_bridge_par`](crate::native_locate_contract_bridge_par)) sends the
 /// located σ operands here, and the runtime installs the rule's handler `Definition` on it.
-pub fn native_contract_channel(rule_index: u8) -> Par {
-    Par::default().with_unforgeables(vec![GUnforgeable {
-        unf_instance: Some(GPrivateBody(GPrivate {
-            id: vec![MTL_NATIVE_CHANNEL_TAG, rule_index],
-        })),
-    }])
+///
+/// ★ CONSENSUS-VISIBLE (it is a send target in the emitted `Par`). Fingerprint-scoped as of
+/// #36 S4: without the fingerprint, two co-installed native-bearing languages both allocate
+/// rule index 0 and f1r3node's `dispatch_table_creator` silently lets the later install win.
+pub fn native_contract_channel(rule_index: u8, language_fingerprint: &str) -> Par {
+    NATIVE_HANDLER_BAND.channel(rule_index, language_fingerprint)
 }
 
-/// The reserved `body_ref` for a native rule index's handler `Definition`.
-pub fn native_contract_body_ref(rule_index: u8) -> i64 {
-    MTL_NATIVE_BODY_REF_BASE + rule_index as i64
+/// The reserved `body_ref` for a `(rule_index, fingerprint)` pair's handler `Definition` — a
+/// DETERMINISTIC function of both, never an allocation counter (which would reintroduce the
+/// install-order dependence this scoping removes).
+///
+/// ★ Not state-root visible (`installed_continuations` is excluded from
+/// `hot_store::changes()`) but replay-relevant. Because it must fit one `i64` it cannot be
+/// collision-free; [`crate::check_body_refs_pairwise_distinct`] turns the residual digest
+/// collision into a loud refusal at the point `Definition`s are materialized.
+pub fn native_contract_body_ref(rule_index: u8, language_fingerprint: &str) -> i64 {
+    NATIVE_HANDLER_BAND.body_ref(rule_index, language_fingerprint)
 }
 
 /// The URN of a registered native-handler `Definition`: `mtl:native:{fingerprint}:{label}` —
@@ -180,53 +174,46 @@ pub fn clear_pending_native_handler_specs() {
 mod tests {
     use super::*;
 
-    /// The reserved-band collision test the band table above promises: the held-fold and
-    /// native-handler bands are disjoint from each other (channels by leading tag byte,
-    /// body_refs by non-overlapping `u8`-offset ranges) and from f1r3node's own bands
-    /// (single-byte channel ids std 0–36 / test 101–108; body_refs 0–36).
+    /// The reserved-band collision test the band table above promises, RE-AIMED at #36 S4/S5.
+    ///
+    /// The structural band properties (disjointness of the two bands, positivity, distance from
+    /// f1r3node's own std/test `body_ref`s, per-index distinctness within one language, and the
+    /// cross-language non-collision that is the whole point) are proven once in
+    /// [`crate::system_process_band`]'s own suite, against the ONE allocator. What is asserted
+    /// here is the property this module is responsible for: that the native-handler surface
+    /// really routes through that allocator rather than re-deriving the band locally, which is
+    /// how the held-fold and native bands drifted into having the identical defect.
     #[test]
-    fn mettail_system_process_bands_do_not_collide() {
-        // Channel bands: both MeTTaIL bands are TWO-byte ids, so no single-byte f1r3node id
-        // (std or test framework) can ever equal one; the two MeTTaIL bands differ in their
-        // leading tag byte, so `[0xF0, a] != [0xF1, b]` for every `a`, `b`.
+    fn the_native_surface_delegates_to_the_one_band_allocator() {
+        const FP_A: &str = "mettail-langdef-v1:6ef0c40636bb0bca";
+        const FP_B: &str = "mettail-langdef-v1:0123456789abcdef";
+        for index in [0u8, 1, 42, u8::MAX] {
+            assert_eq!(
+                native_contract_channel(index, FP_A),
+                NATIVE_HANDLER_BAND.channel(index, FP_A),
+                "the native channel must BE the band's channel, not a local re-derivation"
+            );
+            assert_eq!(
+                native_contract_body_ref(index, FP_A),
+                NATIVE_HANDLER_BAND.body_ref(index, FP_A),
+                "the native body_ref must BE the band's body_ref"
+            );
+            // The defect, restated at this surface: same index, different language.
+            assert_ne!(
+                native_contract_channel(index, FP_A),
+                native_contract_channel(index, FP_B),
+                "two co-installed languages must not share a native contract channel"
+            );
+            assert_ne!(
+                native_contract_body_ref(index, FP_A),
+                native_contract_body_ref(index, FP_B),
+                "two co-installed languages must not share a native body_ref"
+            );
+        }
         assert_ne!(
             MTL_FOLD_CHANNEL_TAG, MTL_NATIVE_CHANNEL_TAG,
             "the held-fold and native-handler channel bands must differ in their leading tag byte"
         );
-        for index in [0u8, 1, 42, u8::MAX] {
-            let native = native_contract_channel(index);
-            let [unforgeable] = native.unforgeables.as_slice() else {
-                panic!("native contract channel is a single unforgeable");
-            };
-            let Some(GPrivateBody(private)) = unforgeable.unf_instance.as_ref() else {
-                panic!("native contract channel is a GPrivate");
-            };
-            assert_eq!(
-                private.id,
-                vec![MTL_NATIVE_CHANNEL_TAG, index],
-                "the native channel id is the two-byte [0xF1, rule_index]"
-            );
-            assert_eq!(private.id.len(), 2, "two-byte id: disjoint from every single-byte band");
-        }
-
-        // body_ref bands: the held-fold band is 0xF000..=0xF0FF (u8 site offset), the native
-        // band 0xF100..=0xF1FF (u8 rule offset) — disjoint ranges, both far above f1r3node's
-        // std body_refs 0–36.
-        let fold_band = MTL_FOLD_BODY_REF_BASE..=MTL_FOLD_BODY_REF_BASE + u8::MAX as i64;
-        let native_band = MTL_NATIVE_BODY_REF_BASE..=MTL_NATIVE_BODY_REF_BASE + u8::MAX as i64;
-        assert!(
-            fold_band.end() < native_band.start(),
-            "the held-fold body_ref band must end before the native band starts \
-             ({:#x} < {:#x})",
-            fold_band.end(),
-            native_band.start()
-        );
-        assert!(
-            *fold_band.start() > 108,
-            "both MeTTaIL body_ref bands sit above f1r3node's std (0-36) and test (101-108) refs"
-        );
-        assert_eq!(native_contract_body_ref(0), MTL_NATIVE_BODY_REF_BASE);
-        assert_eq!(native_contract_body_ref(u8::MAX), MTL_NATIVE_BODY_REF_BASE + 255);
     }
 
     /// The pending registry is a clear/record/take bracket: record accumulates, take drains and

@@ -395,7 +395,8 @@ async fn a_s3_admitted_native_value_is_computed_by_the_registered_handler_at_com
 
     // (3) WITH the Definitions, the machine's COMM invokes the trusted evaluator at COMM time
     // and the σ-receiver consumes the RETURNED value: OUT = NumLit(8).
-    let definitions = mettail_rholang_runtime::native_definitions_for(&specs);
+    let definitions = mettail_rholang_runtime::native_definitions_for(&specs)
+        .expect("#36 S4/S5: the band allocation is pairwise distinct for a single language");
     let observation = backend
         .run_rho_net_with_call_definitions_and_observe_runtime_values(
             &invocation.call,
@@ -446,7 +447,8 @@ async fn a_s3_wrong_sigma_probe_handler_computes_from_the_delivered_operands() {
     // captures σ = (5, 3).
     let corrupted = corrupt_par_bytes(&invocation.call, b"NumLit(2)", b"NumLit(5)");
 
-    let definitions = mettail_rholang_runtime::native_definitions_for(&specs);
+    let definitions = mettail_rholang_runtime::native_definitions_for(&specs)
+        .expect("#36 S4/S5: the band allocation is pairwise distinct for a single language");
     let observation = backend
         .run_rho_net_with_call_definitions_and_observe_runtime_values(
             &corrupted,

@@ -105,7 +105,8 @@ async fn run_with_folds(source: &str) -> (usize, Vec<RuntimeObservationValue>) {
     let observed = run_installed_program_with_call_definitions_and_read_runtime_values(
         &Par::default(),
         &par,
-        fold_definitions_for(&sites),
+        fold_definitions_for(&sites)
+            .expect("#36 S4/S5: the band allocation is pairwise distinct for a single language"),
         "OUT",
     )
     .await

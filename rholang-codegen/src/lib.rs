@@ -103,6 +103,7 @@ pub mod lower;
 /// (held-fold + native, the single enumeration point), the [`NativeHandlerSpec`] the
 /// generated report-free match body records, and its thread-local pending registry.
 pub mod native_handler;
+pub mod system_process_band;
 pub mod need;
 /// E-3 Stage-0: SELF-time span instrumentation of the six-phase in-Rho compilation
 /// pipeline (thread-local span stack; collection off by default). The phases re-enter
@@ -187,8 +188,12 @@ pub use mettail_ast::types::CollectionType;
 pub use native_handler::{
     clear_pending_native_handler_specs, native_contract_body_ref, native_contract_channel,
     native_handler_urn, record_pending_native_handler_specs, take_pending_native_handler_specs,
-    NativeHandlerEvaluator, NativeHandlerSpec, MTL_FOLD_BODY_REF_BASE, MTL_FOLD_CHANNEL_TAG,
-    MTL_NATIVE_BODY_REF_BASE, MTL_NATIVE_CHANNEL_TAG,
+    NativeHandlerEvaluator, NativeHandlerSpec,
+};
+pub use system_process_band::{
+    check_body_refs_pairwise_distinct, fingerprint_digest, BandAllocationError,
+    SystemProcessBand, HELD_FOLD_BAND, MTL_FOLD_CHANNEL_TAG, MTL_NATIVE_CHANNEL_TAG,
+    NATIVE_HANDLER_BAND,
 };
 pub use need::{
     admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_ast_from_spec,
