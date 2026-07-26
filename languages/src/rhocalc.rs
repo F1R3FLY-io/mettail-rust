@@ -261,6 +261,32 @@ language! {
         }
     },
 
+    // ★ THE `where` SLOT IS A SEMANTIC PREDICATE — declared, not inferred.
+    //
+    // *"If it is in a `where` clause, it is a semantic predicate."* RhoCalc's `where` guard is
+    // typed `cond:Proc` rather than `?cond:Guard`, and that is deliberate: `Guard` switches the
+    // parser into the predicate sublanguage, whose runtime `BehavioralPred` is relation queries,
+    // quantifiers and AC-matches — with **no** comparison operators, **no** arithmetic, and no
+    // nesting inside arguments. `where x == 42` would survive only as a flat relation query, and
+    // `where x + y < 10` and `where t matches {P | Q}` would not be expressible at all. Retyping
+    // the slot would therefore not make the guard a semantic predicate; it would delete most of
+    // the guard language.
+    //
+    // `guard_slots` says the same thing without the loss. It induces exactly the obligations a
+    // `?cond:Guard` slot would — `term:ForRowWhere:guard:cond` and
+    // `term:ForRowSingleWhere:guard:cond`, both `BehavioralPredicate` — so no consumer can tell
+    // which surface produced them, while the guard stays a full `Proc` expression that
+    // `rhocalc::guard_substrate` encodes into the Dovetail/SFT substrate.
+    //
+    // It is a DECLARATION: the codegen reads this block, never the `"where"` literal or the
+    // parameter's name.
+    guards {
+        guard_slots {
+            ForRowWhere(cond);
+            ForRowSingleWhere(cond);
+        }
+    },
+
     terms {
         PZero .
         |- "Nil" : Proc;
@@ -2546,8 +2572,28 @@ language! {
                     Fixed::FixedLit(fp) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(!Zero::is_zero(fp.unscaled())))),
                     _ => Proc::Err,
                 },
+                // ★ A FAILED PARSE IS AN ERROR, NEVER THE VALUE `false` (2026-07-26).
+                //
+                // This arm used to read `s.parse::<bool>().unwrap_or(false)`. Rust's
+                // `FromStr for bool` accepts only the two spellings `"true"` and `"false"`,
+                // so `bool("True")`, `bool("1")`, `bool("yes")` and `bool("")` all folded to
+                // the VALUE `false` — indistinguishable, at every consumer, from a string
+                // that really did spell `false`.
+                //
+                // That is the fabrication this file's own convention forbids: the governing
+                // rule at `rhocalc/runtime.rs` and restated on the boolean operators above is
+                // *"A failed operator must never invent a value — hence `Proc::Err`, never a
+                // fabricated `BoolLit`."* Every sibling arm in this very `match` already
+                // answers `Proc::Err`; this one was the outlier.
+                //
+                // It matters more here than at a typical operator because `bool(...)` feeds
+                // the GUARD lane: a fabricated `false` is a fabricated guard verdict, and a
+                // guard verdict decides whether a COMM fires.
                 Proc::CastStr(x) => match &**x {
-                    Str::StringLit(s) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(s.parse::<bool>().unwrap_or(false)))),
+                    Str::StringLit(s) => match s.parse::<bool>() {
+                        Ok(v) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(v))),
+                        Err(_) => Proc::Err,
+                    },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
