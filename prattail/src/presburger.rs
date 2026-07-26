@@ -89,16 +89,72 @@ impl LinearConstraint {
         self.terms.iter().map(|&(v, _)| v + 1).max().unwrap_or(0)
     }
 
+    /// ★ Evaluate this constraint on a concrete assignment, **exactly**.
+    ///
+    /// `Some(true)` iff `Σ aᵢ·assignment[xᵢ] ≤ b` over the integers `ℤ`, `Some(false)` iff the
+    /// inequality is violated over `ℤ`, and `None` iff the left-hand side is not representable
+    /// even in the widened accumulator — i.e. the procedure has no answer, as distinct from a
+    /// negative one.
+    ///
+    /// # Why this is not `i64` arithmetic
+    ///
+    /// Until 2026-07-26 this computed `Σ coeffᵢ * assignment[varᵢ]` with **unchecked `i64`**.
+    /// Both the products and the running sum can leave `i64` for perfectly ordinary guards
+    /// (`2 * x` with `x = i64::MAX`), and unchecked overflow is not a benign approximation:
+    ///
+    /// | build | behaviour on overflow | consequence |
+    /// |---|---|---|
+    /// | debug | panic | a `Match::check_commit` that is contractually total aborts the node |
+    /// | release | two's-complement **wrap** | a *silently wrong* verdict on a consensus-relevant predicate |
+    ///
+    /// The release case is the dangerous one: a wrapped sum answers a different inequality than
+    /// the one that was asked, so two nodes agreeing on the term can still disagree on whether a
+    /// COMM fired. That is a fork, and it is reachable today through the public
+    /// [`crate::guard_formula::ground_verdict`] with a non-empty
+    /// [`crate::guard_formula::GuardAssignment`].
+    ///
+    /// # Why `i128`, and what `None` really costs
+    ///
+    /// Each product `aᵢ·xᵢ` of two `i64` values fits in `i128` exactly (`|a·x| < 2^126`), so
+    /// widening the accumulator makes the *product* step total and the *sum* step total for any
+    /// term count below `2^2`… and beyond that the `checked_add` below still refuses to wrap.
+    /// The comparison against `rhs` is then performed in `i128`, where it is the exact
+    /// mathematical comparison. In practice `None` is unreachable for constraints this crate
+    /// builds (`LinearForm`'s `checked_*` encoders cannot emit a term vector whose `i128`
+    /// product-sum overflows), which is precisely the point: the widened accumulator buys
+    /// exactness *and* totality, where checked `i64` arithmetic alone would have bought totality
+    /// by turning ordinary in-range answers into "don't know".
+    ///
+    /// Note that partial-sum order is irrelevant to the *result* here but not to the `None`
+    /// boundary: `checked_add` in `i128` can only refuse on a genuinely astronomical term
+    /// vector, and refusing is the fail-closed direction.
+    pub fn evaluate_checked(&self, assignment: &IntAssignment) -> Option<bool> {
+        let mut sum: i128 = 0;
+        for &(var, coeff) in &self.terms {
+            let value = assignment.0.get(var).copied().unwrap_or(0);
+            // i64 × i64 is exact in i128; only the accumulation can conceivably leave it.
+            sum = sum.checked_add(i128::from(coeff) * i128::from(value))?;
+        }
+        Some(sum <= i128::from(self.rhs))
+    }
+
     /// Evaluate this constraint on a concrete assignment.
     ///
     /// Returns `true` iff `Σ aᵢ·assignment[xᵢ] ≤ b`.
+    ///
+    /// # ⚠ Total, but two-valued — prefer [`LinearConstraint::evaluate_checked`]
+    ///
+    /// This is the `bool`-returning form kept for the callers whose signature is fixed by a
+    /// trait ([`crate::symbolic::BooleanAlgebra`], [`crate::symbolic::ConstraintTheory`]). It
+    /// collapses the `None` of [`LinearConstraint::evaluate_checked`] to `false`: an
+    /// unrepresentable left-hand side is *not* a satisfied constraint. That collapse is safe
+    /// where a constraint is only ever asked positively (a solver check), and it is **not** safe
+    /// under a negation — `!evaluate(c)` would read an unanswerable constraint as *satisfied*.
+    /// Every soundness-critical caller — above all the `where`-guard ground leg in
+    /// [`crate::guard_formula::ground_verdict_with`] — must therefore use the three-valued form
+    /// and route `None` to [`crate::algebra_tower::Sat3::DontKnow`].
     pub fn evaluate(&self, assignment: &IntAssignment) -> bool {
-        let sum: i64 = self
-            .terms
-            .iter()
-            .map(|&(var, coeff)| coeff * assignment.0.get(var).copied().unwrap_or(0))
-            .sum();
-        sum <= self.rhs
+        self.evaluate_checked(assignment).unwrap_or(false)
     }
 
     // ── Normal form conversions ─────────────────────────────────────────
@@ -290,28 +346,71 @@ impl fmt::Display for IntAssignment {
     }
 }
 
-/// Evaluate a Presburger predicate on a concrete assignment.
+/// ★ Evaluate a Presburger predicate on a concrete assignment, **three-valued**.
 ///
-/// Recursively evaluates the Boolean formula. Quantified variables
-/// are evaluated by bounded search over the bit-width range.
-pub fn evaluate_presburger(
+/// `Some(b)` when the predicate's truth on `assignment` is determined, `None` when it is not —
+/// which happens exactly when every route to an answer passes through a
+/// [`LinearConstraint::evaluate_checked`] that could not represent its left-hand side.
+///
+/// # The propagation is Kleene's *strong* three-valued semantics, and why that is right here
+///
+/// | connective | rule | justification |
+/// |---|---|---|
+/// | `φ ∧ ψ` | a determined `false` on either side determines the conjunction | `⊥ ∧ u = ⊥` holds over `ℤ` whatever `u` would have been |
+/// | `φ ∨ ψ` | a determined `true` on either side determines the disjunction | `⊤ ∨ u = ⊤` holds over `ℤ` whatever `u` would have been |
+/// | `¬φ` | negation of a determined operand; `None` otherwise | `¬` is total on `{⊤,⊥}` and strict on `u` |
+/// | `∃x. φ` | a witness determines `true`; otherwise `false` only if **no** candidate was undetermined | a witness is positive evidence; an undetermined candidate could have been one |
+///
+/// This is a statement about *mathematical* truth over `ℤ`, and it is deliberately **not** the
+/// left-strict, short-circuiting discipline that [`crate::guard_formula::ground_verdict_with`]
+/// applies to its own connectives. The two layers answer different questions:
+///
+/// * here the question is "is `φ` true of this assignment over `ℤ`?", where an undetermined
+///   *sub*-answer that cannot change the result must not be allowed to destroy it — refusing
+///   `x ≠ 0` merely because one of the two normal-form disjuncts (`Σaᵢxᵢ ≤ -1` and
+///   `-Σaᵢxᵢ ≤ -1`) overflowed on negation would answer "don't know" to a question whose answer
+///   is plainly `true`;
+/// * there the question is "does the reducer commit this COMM?", where the answer must track an
+///   *evaluator* (`rho_pure_eval`) that is strict in both operands and maps every error to
+///   guard-fail.
+///
+/// A `GuardFormula::Linear` node carries exactly one surface comparison, whose internal
+/// `And`/`Or` structure comes only from the `=`/`≠` normalizations
+/// ([`PresburgerPred::eq`], [`PresburgerPred::neq`]) — so the Kleene rules above can only ever
+/// recover the truth of that single comparison, never combine two independent surface operands
+/// behind the guard layer's back.
+pub fn evaluate_presburger_checked(
     pred: &PresburgerPred,
     assignment: &IntAssignment,
     bit_width: usize,
-) -> bool {
+) -> Option<bool> {
     match pred {
-        PresburgerPred::True => true,
-        PresburgerPred::False => false,
-        PresburgerPred::Atom(c) => c.evaluate(assignment),
+        PresburgerPred::True => Some(true),
+        PresburgerPred::False => Some(false),
+        PresburgerPred::Atom(c) => c.evaluate_checked(assignment),
         PresburgerPred::And(a, b) => {
-            evaluate_presburger(a, assignment, bit_width)
-                && evaluate_presburger(b, assignment, bit_width)
+            match (
+                evaluate_presburger_checked(a, assignment, bit_width),
+                evaluate_presburger_checked(b, assignment, bit_width),
+            ) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            }
         },
         PresburgerPred::Or(a, b) => {
-            evaluate_presburger(a, assignment, bit_width)
-                || evaluate_presburger(b, assignment, bit_width)
+            match (
+                evaluate_presburger_checked(a, assignment, bit_width),
+                evaluate_presburger_checked(b, assignment, bit_width),
+            ) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            }
         },
-        PresburgerPred::Not(inner) => !evaluate_presburger(inner, assignment, bit_width),
+        PresburgerPred::Not(inner) => {
+            evaluate_presburger_checked(inner, assignment, bit_width).map(|decided| !decided)
+        },
         PresburgerPred::Exists { var, body } => {
             // Bounded search: try all values in the bit-width range.
             // For small bit widths this is feasible; for larger ones,
@@ -319,16 +418,46 @@ pub fn evaluate_presburger(
             let half = 1i64 << (bit_width - 1);
             let lo = -half;
             let hi = half;
-            (lo..hi).any(|val| {
-                let mut ext = assignment.clone();
-                while ext.0.len() <= *var {
-                    ext.0.push(0);
-                }
+            let mut saw_undetermined = false;
+            let mut ext = assignment.clone();
+            while ext.0.len() <= *var {
+                ext.0.push(0);
+            }
+            for val in lo..hi {
                 ext.0[*var] = val;
-                evaluate_presburger(body, &ext, bit_width)
-            })
+                match evaluate_presburger_checked(body, &ext, bit_width) {
+                    Some(true) => return Some(true),
+                    Some(false) => {},
+                    None => saw_undetermined = true,
+                }
+            }
+            match saw_undetermined {
+                true => None,
+                false => Some(false),
+            }
         },
     }
+}
+
+/// Evaluate a Presburger predicate on a concrete assignment.
+///
+/// Recursively evaluates the Boolean formula. Quantified variables
+/// are evaluated by bounded search over the bit-width range.
+///
+/// # ⚠ Total, but two-valued — prefer [`evaluate_presburger_checked`]
+///
+/// The `bool`-returning form, for callers whose signature is fixed by a trait
+/// ([`crate::symbolic::BooleanAlgebra`]). It reads an undetermined predicate as *false*, which
+/// is safe only where the result is consumed positively; a soundness-critical caller must use
+/// [`evaluate_presburger_checked`] and route `None` to
+/// [`crate::algebra_tower::Sat3::DontKnow`], as
+/// [`crate::guard_formula::ground_verdict_with`] does.
+pub fn evaluate_presburger(
+    pred: &PresburgerPred,
+    assignment: &IntAssignment,
+    bit_width: usize,
+) -> bool {
+    evaluate_presburger_checked(pred, assignment, bit_width).unwrap_or(false)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1823,6 +1952,158 @@ mod tests {
         };
         assert!(evaluate_presburger(&p, &IntAssignment::new(vec![3]), 8));
         assert!(evaluate_presburger(&p, &IntAssignment::new(vec![10]), 8));
+    }
+
+    // ── ★ Exactness and totality of the ground evaluation ────────────────
+    //
+    // These pin the 2026-07-26 fix. Before it, `LinearConstraint::evaluate` multiplied and
+    // summed with UNCHECKED `i64`: the rows below panicked in a debug build and answered the
+    // WRONG BOOLEAN in a release build. Both outcomes are unacceptable for a predicate that
+    // decides whether a COMM fires, so each row asserts the mathematical answer over `ℤ` and
+    // names the wrapped answer it replaces.
+
+    #[test]
+    fn a_product_that_leaves_i64_is_evaluated_exactly_not_wrapped() {
+        // `2·x ≤ 0` at `x = i64::MAX`. Over ℤ the left-hand side is 2^64 − 2, which is NOT ≤ 0.
+        // Unchecked `i64` wraps `2 · i64::MAX` to −2 and answers `true` — the opposite verdict.
+        let c = LinearConstraint::new(vec![(0, 2)], 0);
+        let assignment = IntAssignment::new(vec![i64::MAX]);
+        assert_eq!(c.evaluate_checked(&assignment), Some(false));
+        assert!(!c.evaluate(&assignment));
+    }
+
+    #[test]
+    fn a_sum_that_leaves_i64_is_evaluated_exactly_not_wrapped() {
+        // `x₀ + x₁ ≤ 0` at `x₀ = x₁ = i64::MAX`: 2^64 − 2 over ℤ, −2 when the accumulator wraps.
+        let c = LinearConstraint::new(vec![(0, 1), (1, 1)], 0);
+        let assignment = IntAssignment::new(vec![i64::MAX, i64::MAX]);
+        assert_eq!(c.evaluate_checked(&assignment), Some(false));
+        // …and the symmetric underflow: `x₀ + x₁ ≤ −1` at `i64::MIN` is TRUE over ℤ.
+        let c = LinearConstraint::new(vec![(0, 1), (1, 1)], -1);
+        assert_eq!(
+            c.evaluate_checked(&IntAssignment::new(vec![i64::MIN, i64::MIN])),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn the_extreme_negation_normal_forms_no_longer_panic() {
+        // `-x ≤ -1` (i.e. `x ≥ 1`) at `x = i64::MIN`: the product `(−1)·i64::MIN` has no `i64`
+        // image at all, so the pre-fix code panicked here in a debug build.
+        let c = LinearConstraint::from_gte(vec![(0, 1)], 1);
+        assert_eq!(c.evaluate_checked(&IntAssignment::new(vec![i64::MIN])), Some(false));
+        assert!(!c.evaluate(&IntAssignment::new(vec![i64::MIN])));
+    }
+
+    #[test]
+    fn a_left_hand_side_beyond_even_i128_is_undetermined_rather_than_wrapped() {
+        // Three `i64::MAX · i64::MAX` products ≈ 3 · 2^126 exceed `i128::MAX ≈ 2^127`, so even
+        // the widened accumulator has no answer. It must say so, not wrap.
+        let c = LinearConstraint::new(vec![(0, i64::MAX), (1, i64::MAX), (2, i64::MAX)], 0);
+        let assignment = IntAssignment::new(vec![i64::MAX, i64::MAX, i64::MAX]);
+        assert_eq!(c.evaluate_checked(&assignment), None);
+        // The two-valued form collapses `None` to `false` — an unrepresentable left-hand side
+        // is not a satisfied constraint.
+        assert!(!c.evaluate(&assignment));
+    }
+
+    #[test]
+    fn the_three_valued_evaluator_follows_kleenes_strong_tables() {
+        let undetermined =
+            PresburgerPred::Atom(LinearConstraint::new(
+                vec![(0, i64::MAX), (1, i64::MAX), (2, i64::MAX)],
+                0,
+            ));
+        let assignment = IntAssignment::new(vec![i64::MAX, i64::MAX, i64::MAX]);
+        assert_eq!(evaluate_presburger_checked(&undetermined, &assignment, 8), None);
+
+        // `⊤ ∨ u = ⊤` and `⊥ ∧ u = ⊥` — a determined operand that settles the connective by
+        // itself must survive an undetermined sibling, in either argument position.
+        let t = PresburgerPred::True;
+        let f = PresburgerPred::False;
+        for (left, right) in [(t.clone(), undetermined.clone()), (undetermined.clone(), t.clone())]
+        {
+            let disjunction = PresburgerPred::Or(Box::new(left), Box::new(right));
+            assert_eq!(evaluate_presburger_checked(&disjunction, &assignment, 8), Some(true));
+        }
+        for (left, right) in [(f.clone(), undetermined.clone()), (undetermined.clone(), f.clone())]
+        {
+            let conjunction = PresburgerPred::And(Box::new(left), Box::new(right));
+            assert_eq!(evaluate_presburger_checked(&conjunction, &assignment, 8), Some(false));
+        }
+
+        // …and an operand that CANNOT settle it by itself leaves the connective undetermined.
+        assert_eq!(
+            evaluate_presburger_checked(
+                &PresburgerPred::Or(Box::new(f.clone()), Box::new(undetermined.clone())),
+                &assignment,
+                8
+            ),
+            None
+        );
+        assert_eq!(
+            evaluate_presburger_checked(
+                &PresburgerPred::And(Box::new(t), Box::new(undetermined.clone())),
+                &assignment,
+                8
+            ),
+            None
+        );
+
+        // ★ Negation is STRICT. Reading an undetermined operand as `false` here would make its
+        // negation `true` — an undecidable guard firing a COMM.
+        assert_eq!(
+            evaluate_presburger_checked(
+                &PresburgerPred::Not(Box::new(undetermined.clone())),
+                &assignment,
+                8
+            ),
+            None
+        );
+        assert!(!evaluate_presburger(&PresburgerPred::Not(Box::new(undetermined)), &assignment, 8));
+    }
+
+    #[test]
+    fn an_existential_is_determined_by_a_witness_but_not_by_an_undetermined_sweep() {
+        // A witness settles `∃`: `∃x₁. x₀ + x₁ = 10` at `x₀ = 3` has the witness `x₁ = 7`, and
+        // finding it must not be prevented by anything else in the sweep.
+        let with_witness = PresburgerPred::Exists {
+            var: 1,
+            body: Box::new(PresburgerPred::eq(vec![(0, 1), (1, 1)], 10)),
+        };
+        assert_eq!(
+            evaluate_presburger_checked(&with_witness, &IntAssignment::new(vec![3]), 8),
+            Some(true)
+        );
+
+        // With no witness and no undetermined candidate the answer is a definite `false`:
+        // `∃x₁. x₀ + x₁ ≤ −1000` cannot be met from an 8-bit sweep at `x₀ = 0`.
+        let without_witness = PresburgerPred::Exists {
+            var: 1,
+            body: Box::new(PresburgerPred::leq(vec![(0, 1), (1, 1)], -1000)),
+        };
+        assert_eq!(
+            evaluate_presburger_checked(&without_witness, &IntAssignment::new(vec![0]), 8),
+            Some(false)
+        );
+
+        // But an undetermined candidate could have been the witness, so the sweep may not
+        // report `false`.
+        let undetermined_body = PresburgerPred::Exists {
+            var: 1,
+            body: Box::new(PresburgerPred::Atom(LinearConstraint::new(
+                vec![(0, i64::MAX), (1, i64::MAX), (2, i64::MAX)],
+                0,
+            ))),
+        };
+        assert_eq!(
+            evaluate_presburger_checked(
+                &undetermined_body,
+                &IntAssignment::new(vec![i64::MAX, 0, i64::MAX]),
+                8
+            ),
+            None
+        );
     }
 
     // ── NFA construction (single variable) ──────────────────────────────

@@ -62,7 +62,30 @@
 //! carries the domain it was decided over ([`StaticVerdict::domain`]) so a consumer cannot
 //! misread it by accident.
 //!
-//! The **ground** leg has no such caveat: it evaluates concretely on `i64`, so it is exact.
+//! ## What the **ground** leg's caveat is instead
+//!
+//! The ground leg does not consult `bit_width` at all on a quantifier-free formula
+//! ([`crate::presburger::evaluate_presburger_checked`] reads it only in the `Exists` arm), so
+//! the *bounded-domain* hazard above does not reach it. What it has instead is a
+//! **representability** caveat, and until 2026-07-26 this paragraph denied it — it claimed the
+//! leg "evaluates concretely on `i64`, so it is exact", which is true only of the degenerate
+//! case where the [`GuardAssignment`] is **empty** and every linear constraint has therefore
+//! already been folded to a constant by the encoder. With a non-empty assignment the leg
+//! evaluates `Σ aᵢ·xᵢ`, and that sum can leave `i64` for ordinary guards (`2·x` at
+//! `x = i64::MAX`). It was neither exact (release builds wrapped) nor total (debug builds
+//! panicked).
+//!
+//! It is now both, in the only way those two can be had together:
+//!
+//! * **exact** — the sum and its comparison against the bound are computed in `i128`, where
+//!   every product of two `i64` operands is representable, so a determined answer is the
+//!   mathematical answer over `ℤ` rather than over a wrapped ring;
+//! * **total** — a left-hand side that not even `i128` can hold yields `None`, which
+//!   [`ground_verdict_with`] turns into [`Sat3::DontKnow`] and [`dont_know_policy`] then turns
+//!   into "the guard does not pass". No panic, and no silent wrap.
+//!
+//! So the ground leg's answers are exact over `ℤ` where it has one, and it says so where it
+//! does not. See [`crate::presburger::LinearConstraint::evaluate_checked`].
 //!
 //! # What this module deliberately does NOT do
 //!
@@ -84,8 +107,8 @@ use crate::ordered_field::OrderedF64;
 use crate::any_algebra::{AnyDomain, AnyPred, Sort};
 use crate::kat::BooleanTest;
 use crate::presburger::{
-    evaluate_presburger, is_satisfiable_nfa, IntAssignment, LinearConstraint, PresburgerPred,
-    DEFAULT_BIT_WIDTH,
+    evaluate_presburger_checked, is_satisfiable_nfa, IntAssignment, LinearConstraint,
+    PresburgerPred, DEFAULT_BIT_WIDTH,
 };
 use crate::string_algebra::{StrPred, StringAlgebra};
 use crate::symbolic::{BooleanAlgebra, IntervalAlgebra, IntervalPred, KatBooleanAlgebra};
@@ -1408,11 +1431,17 @@ where
             required.sort_unstable();
             required.dedup();
             match assignment.int_assignment(&required) {
-                Some(int_assignment) => Sat3::from_decidable(evaluate_presburger(
-                    pred,
-                    &int_assignment,
-                    config.bit_width,
-                )),
+                // ★ THREE-VALUED, not two. `evaluate_presburger_checked` answers `None` when the
+                // constraint's left-hand side is not representable; reading that as `false`
+                // would put a *wrong* verdict on a consensus-relevant predicate — and, under a
+                // `Not`, a wrong verdict in the FIRING direction. It is an undecided guard, so
+                // it takes the undecided path to `dont_know_policy` like every other one.
+                Some(int_assignment) => {
+                    match evaluate_presburger_checked(pred, &int_assignment, config.bit_width) {
+                        Some(decided) => Sat3::from_decidable(decided),
+                        None => Sat3::DontKnow,
+                    }
+                },
                 None => Sat3::DontKnow,
             }
         },
@@ -1793,6 +1822,51 @@ mod tests {
         assert_eq!(ground_verdict(&int_eq(0, 42), &assignment, &vars, cfg()), Sat3::Sat);
         assert_eq!(ground_verdict(&int_eq(0, 41), &assignment, &vars, cfg()), Sat3::Unsat);
         assert_eq!(ground_verdict(&int_lt(0, 46), &assignment, &vars, cfg()), Sat3::Sat);
+    }
+
+    /// ★ THE GROUND LEG IS EXACT OVER `ℤ`, NOT OVER A WRAPPED RING.
+    ///
+    /// `2·x ≤ 0` at `x = i64::MAX` is `false` over `ℤ`. Before 2026-07-26 the leg computed the
+    /// left-hand side with unchecked `i64`: a debug build panicked (breaking the totality
+    /// contract of every consumer, `Match::check_commit` above all) and a release build wrapped
+    /// `2 · i64::MAX` to `−2` and answered `Sat` — a COMM firing on a guard that does not hold.
+    #[test]
+    fn an_overflowing_linear_guard_is_decided_over_the_integers_not_wrapped() {
+        let vars = one_var_map("x");
+        let mut assignment = GuardAssignment::with_len(1);
+        assignment.bind(0, GuardValue::Int(i64::MAX));
+        let formula = GuardFormula::Linear(PresburgerPred::leq(vec![(0, 2)], 0));
+        assert_eq!(ground_verdict(&formula, &assignment, &vars, cfg()), Sat3::Unsat);
+        // …and its negation is the dual, rather than the negation of a wrapped answer.
+        assert_eq!(
+            ground_verdict(&GuardFormula::not(formula), &assignment, &vars, cfg()),
+            Sat3::Sat
+        );
+    }
+
+    /// ★ A left-hand side beyond even the widened accumulator is UNDECIDED, and therefore
+    /// fail-closed — never a confident boolean derived from a wrapped sum.
+    #[test]
+    fn an_unrepresentable_linear_guard_is_dont_know_and_stays_dont_know_under_negation() {
+        let mut vars = GuardVarMap::with_capacity(3);
+        vars.intern("x");
+        vars.intern("y");
+        vars.intern("z");
+        let mut assignment = GuardAssignment::with_len(3);
+        for idx in 0..3 {
+            assignment.bind(idx, GuardValue::Int(i64::MAX));
+        }
+        let formula = GuardFormula::Linear(PresburgerPred::leq(
+            vec![(0, i64::MAX), (1, i64::MAX), (2, i64::MAX)],
+            0,
+        ));
+        assert_eq!(ground_verdict(&formula, &assignment, &vars, cfg()), Sat3::DontKnow);
+        assert_eq!(
+            ground_verdict(&GuardFormula::not(formula), &assignment, &vars, cfg()),
+            Sat3::DontKnow
+        );
+        // The policy point then makes the guard fail closed.
+        assert!(!resolve_verdict(Sat3::DontKnow, GuardSiteKind::ReceiveWhere));
     }
 
     /// ★ An UNBOUND integer variable must be `DontKnow`, never silently `0`.
