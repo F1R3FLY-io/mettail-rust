@@ -13,6 +13,14 @@ use std::ops::Neg;
 /// (`rholang-runtime::rhocalc_formula`). `pub`, not `pub(crate)`, precisely so
 /// there is ONE classification and the two consumers cannot drift apart.
 pub mod formula;
+/// ★ THE `where` → Dovetail/SFT WIRE, surface half: the `Proc` → [`mettail_prattail::guard_formula::GuardFormula`]
+/// encoder, and the COMM-time guard decision derived from it.
+///
+/// A `where` clause is a SEMANTIC PREDICATE, so it is evaluated by the substrate — at compile
+/// time where it is statically decidable (Presburger automata / the propositional algebra /
+/// a scalar sort's effective Boolean algebra), at run time otherwise. An `if` condition is
+/// unaffected: that is the Rholang interpreter's to decide.
+pub mod guard_substrate;
 pub(crate) mod pathmap;
 /// The HOST receive semantics — including [`receive::eval_guard_bool`], the host `where`-guard
 /// evaluator.

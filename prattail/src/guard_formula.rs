@@ -76,7 +76,11 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use num_bigint::BigInt;
+use num_rational::BigRational;
+
 use crate::algebra_tower::Sat3;
+use crate::ordered_field::OrderedF64;
 use crate::any_algebra::{AnyDomain, AnyPred, Sort};
 use crate::kat::BooleanTest;
 use crate::presburger::{
@@ -205,6 +209,10 @@ impl GuardVarMap {
 /// can inhabit. Structured payloads (bags, maps, processes) are not [`GuardValue`]s — a guard
 /// over one of those is a structural question and reaches the substrate as a
 /// [`GuardAtomKind::Spatial`] atom instead.
+/// The sort tags are **distinct per surface type even where the carrier coincides**:
+/// `Fixed` and `BigRat` are both carried by [`BigRational`] but are different sorts, so a
+/// comparison between them is refused rather than silently answered. That mirrors the front
+/// end, whose comparison arms require the two operands to share a constructor.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum GuardValue {
     /// Integer-sorted binder.
@@ -213,6 +221,14 @@ pub enum GuardValue {
     Str(String),
     /// Boolean-sorted binder.
     Bool(bool),
+    /// Arbitrary-precision integer.
+    BigInt(BigInt),
+    /// Exact rational.
+    BigRat(BigRational),
+    /// Fixed-point decimal on a rational carrier — a DIFFERENT sort from [`GuardValue::BigRat`].
+    Fixed(BigRational),
+    /// Float, in the total-order wrapper the substrate's ordered-field algebra uses.
+    Float(OrderedF64),
 }
 
 impl GuardValue {
@@ -222,6 +238,10 @@ impl GuardValue {
             GuardValue::Int(_) => Sort::Int,
             GuardValue::Str(_) => Sort::Str,
             GuardValue::Bool(_) => Sort::Bool,
+            GuardValue::BigInt(_) => Sort::BigInt,
+            GuardValue::BigRat(_) => Sort::BigRat,
+            GuardValue::Fixed(_) => Sort::Fixed,
+            GuardValue::Float(_) => Sort::Float,
         }
     }
 
@@ -240,6 +260,10 @@ impl GuardValue {
                 map.insert(name.to_string(), *b);
                 AnyDomain::Bool(map)
             },
+            GuardValue::BigInt(v) => AnyDomain::BigInt(v.clone()),
+            GuardValue::BigRat(v) => AnyDomain::BigRat(v.clone()),
+            GuardValue::Fixed(v) => AnyDomain::Fixed(v.clone()),
+            GuardValue::Float(v) => AnyDomain::Float(*v),
         }
     }
 }
@@ -387,6 +411,11 @@ pub enum GuardAtomKind {
     /// reducer's own matcher. This module has no procedure for it *by construction*; see the
     /// module docs.
     Spatial,
+    /// Equality between two **structured** operands (a list, a bag, a map, a process). Like
+    /// [`GuardAtomKind::Spatial`] this is a structural question and belongs to the structural
+    /// core; it is separated from `Spatial` only so a caller can route the two to their
+    /// respective deciders without inspecting the fragment.
+    StructuralEquality,
     /// Integer arithmetic outside the linear fragment — `x * y` with two variables, `/`, `%`.
     /// Presburger arithmetic is linear by definition, so these are outside the theory rather
     /// than merely hard. Statically undecided; **concretely** decidable by a caller's resolver,
@@ -410,6 +439,33 @@ pub struct GuardAtom {
     pub id: u32,
     /// Why it is opaque here.
     pub kind: GuardAtomKind,
+}
+
+/// One side of a [`GuardFormula::ScalarRel`]: either a binder or a literal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScalarOperand {
+    /// The value bound at this [`GuardVarMap`] index.
+    Var(usize),
+    /// A literal.
+    Lit(GuardValue),
+}
+
+impl ScalarOperand {
+    /// Resolve this operand against an assignment.
+    pub fn resolve<'a>(&'a self, assignment: &'a GuardAssignment) -> Option<&'a GuardValue> {
+        match self {
+            ScalarOperand::Var(idx) => assignment.get(*idx),
+            ScalarOperand::Lit(value) => Some(value),
+        }
+    }
+
+    /// The [`GuardVarMap`] index this operand reads, if it is a variable.
+    pub fn var(&self) -> Option<usize> {
+        match self {
+            ScalarOperand::Var(idx) => Some(*idx),
+            ScalarOperand::Lit(_) => None,
+        }
+    }
 }
 
 /// The substrate image of a `where` guard.
@@ -444,19 +500,24 @@ pub enum GuardFormula {
         /// The leaf predicate, in its sort's algebra.
         pred: AnyPred,
     },
-    /// A comparison between two non-integer scalar **variables**.
+    /// A comparison over a scalar sort that has no *symbolic* encoding here.
     ///
-    /// [`AnyPred`] is a *unary* predicate, so it cannot relate two positions; this variant
-    /// records the relation instead of fabricating one. Statically undecided, exactly decided
-    /// at run time — which is the correct split under the rule (compile time where statically
-    /// decidable, run time otherwise).
+    /// Two cases land in this variant, and both are "exactly decidable at run time, not
+    /// statically" — which is the correct split under the rule (compile time where statically
+    /// decidable, run time otherwise):
+    ///
+    /// * **variable vs. variable** — [`AnyPred`] is a *unary* predicate, so it cannot relate two
+    ///   positions. This variant records the relation instead of fabricating one.
+    /// * **an ordered comparison on a sort whose algebra has no order predicate** — `<`/`>` on
+    ///   strings is lexicographic, which [`StrPred`] (a *language*, not an order) cannot express;
+    ///   the arbitrary-precision and floating sorts likewise have no bounded-automaton encoding.
     ScalarRel {
         /// The comparison.
         op: CmpOp,
-        /// Left operand's [`GuardVarMap`] index.
-        left: usize,
-        /// Right operand's [`GuardVarMap`] index.
-        right: usize,
+        /// Left operand.
+        left: ScalarOperand,
+        /// Right operand.
+        right: ScalarOperand,
     },
     /// `φ and ψ`.
     And(Box<GuardFormula>, Box<GuardFormula>),
@@ -601,8 +662,8 @@ impl GuardFormula {
         match self {
             GuardFormula::Scalar { var, .. } => out.push(*var),
             GuardFormula::ScalarRel { left, right, .. } => {
-                out.push(*left);
-                out.push(*right);
+                out.extend(left.var());
+                out.extend(right.var());
             },
             GuardFormula::Not(inner) => inner.collect_scalar_vars(out),
             GuardFormula::And(a, b) | GuardFormula::Or(a, b) | GuardFormula::Implies(a, b) => {
@@ -1286,7 +1347,7 @@ where
         },
 
         GuardFormula::ScalarRel { op, left, right } => {
-            match (assignment.get(*left), assignment.get(*right)) {
+            match (left.resolve(assignment), right.resolve(assignment)) {
                 (Some(a), Some(b)) => match op.decide(a, b) {
                     Some(v) => Sat3::from_decidable(v),
                     None => Sat3::DontKnow,
@@ -1680,7 +1741,11 @@ mod tests {
         let mut assignment = GuardAssignment::with_len(2);
         assignment.bind(0, GuardValue::Str("hi".to_string()));
         assignment.bind(1, GuardValue::Str("hi".to_string()));
-        let formula = GuardFormula::ScalarRel { op: CmpOp::Eq, left: 0, right: 1 };
+        let formula = GuardFormula::ScalarRel {
+            op: CmpOp::Eq,
+            left: ScalarOperand::Var(0),
+            right: ScalarOperand::Var(1),
+        };
         assert_eq!(ground_verdict(&formula, &assignment, &vars, cfg()), Sat3::Sat);
         // ...but statically undecided: `AnyPred` is unary.
         assert!(matches!(
