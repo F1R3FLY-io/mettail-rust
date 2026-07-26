@@ -1385,6 +1385,65 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             // expose all alternatives; this path only replaces the returned
             // representative when concrete display evidence exists in a
             // bounded, lazy raw-realization probe before semantic dedup.
+            //
+            // ── DEFECT 2 (fixed 2026-07-26): display stability ≠ term preservation ──
+            //
+            // The pre-fix loop (retained verbatim below, COMMENTED OUT) accepted a
+            // representative as soon as its display was a FIXPOINT of display∘parse:
+            //
+            //     let redisplay = format!("{}", reparsed);
+            //     if redisplay == display { return Ok(reparsed); }   // ← WRONG TEST
+            //
+            // `display` there is the display of the PREVIOUS pass, not `input`. So
+            // the accepted term is a derivation of a string that is not the caller's
+            // string, and the accepted fixpoint need not denote the input at all.
+            // Measured on rhocalc (`languages/tests/display_parse_term_preservation.rs`):
+            //
+            //     input          "1 + 2"
+            //     pass0 AST      Add(CastInt 1, CastInt 2)          ← the CORRECT term
+            //     pass0 display  "@Nil!(1) + @Nil!(2)"              ← defect 1
+            //     pass1 AST      Add(POutputNil 1, POutputNil 2)    ← two SENDS
+            //     pass1 display  "@Nil!(1) + @Nil!(2)"  == pass0 display ⇒ "FIXPOINT"
+            //     returned       Add(POutputNil 1, POutputNil 2)    ← NOT the input's term
+            //
+            // The loop's own stated purpose ("surface-faithful representative
+            // selection") is not served by that test either: the accepted fixpoint is
+            // not required to equal `input`, and the genuinely surface-preserving
+            // repair (`parse_via_wpda_surface_exact`) only ran afterwards.
+            //
+            // The corrected loop below keeps the cheap probe but tests the ONE
+            // property that makes a representative surface-faithful to the CALLER's
+            // string: `redisplay == input`. Three consequences:
+            //
+            //   1. accept only on `redisplay == input` — the accepted term's surface
+            //      IS the input, so `display` is a left inverse of `parse` on it;
+            //   2. `redisplay == display` now BREAKS instead of accepting — display
+            //      and parse are deterministic, so once the display stops moving no
+            //      further pass can produce anything new; iterating is pure waste;
+            //   3. the fallback is `parsed` — the WPDA's own representative FOR THE
+            //      INPUT — not the reparse of some intermediate display.
+            //
+            // The second raw repair (`parse_via_wpda_surface_exact(&display, …)`) is
+            // dropped for the same reason: it searches derivations of `display`, a
+            // string the caller never wrote, and returns one whose display equals
+            // `display` — i.e. a term denoting the intermediate surface, not `input`.
+            //
+            //  ── pre-fix body, retained for provenance (DO NOT RE-ENABLE) ──
+            //  let mut stable = parsed;
+            //  const DISPLAY_FIXPOINT_PARSE_PASSES: usize = 4;
+            //  for _ in 0..DISPLAY_FIXPOINT_PARSE_PASSES {
+            //      let reparsed = match Self::parse_via_wpda(&display) {
+            //          Ok(reparsed) => reparsed,
+            //          Err(_) => break,
+            //      };
+            //      let redisplay = format!("{}", reparsed);
+            //      if redisplay == display {
+            //          return Ok(reparsed);
+            //      }
+            //      stable = reparsed;
+            //      display = redisplay;
+            //  }
+            //  … then surface_exact(input) … then surface_exact(&display) … then Ok(stable)
             let parse_structured_body = quote! {
                 {
                     let parsed = Self::parse_via_wpda(input)?;
@@ -1398,14 +1457,17 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         return Ok(parsed);
                     }
 
-                    // Prefer the normal parser/display fixpoint before raw
-                    // surface reconstruction. Raw SPPF realization is still
-                    // available as a bounded repair when the canonical
-                    // representative does not stabilize, but a deep legal
-                    // input whose first representative already has a stable
-                    // display must not pay an exact-source reconstruction
-                    // cost just because redundant grouping was normalized.
-                    let mut stable = parsed;
+                    // Prefer the cheap parser/display probe before raw surface
+                    // reconstruction. Raw SPPF realization is still available as a
+                    // bounded repair when the probe finds no surface-faithful
+                    // representative, but a deep legal input whose first
+                    // representative already displays as the input must not pay an
+                    // exact-source reconstruction cost just because redundant
+                    // grouping was normalized.
+                    //
+                    // TERM-PRESERVING ACCEPT TEST: a reparse is adopted only when its
+                    // display equals `input` — never merely when the display stopped
+                    // changing (see the DEFECT 2 note at the emission site).
                     const DISPLAY_FIXPOINT_PARSE_PASSES: usize = 4;
                     for _ in 0..DISPLAY_FIXPOINT_PARSE_PASSES {
                         let reparsed = match Self::parse_via_wpda(&display) {
@@ -1413,10 +1475,14 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             Err(_) => break,
                         };
                         let redisplay = format!("{}", reparsed);
-                        if redisplay == display {
+                        if redisplay == input {
                             return Ok(reparsed);
                         }
-                        stable = reparsed;
+                        if redisplay == display {
+                            // Display fixpoint: parse and display are deterministic,
+                            // so every further pass reproduces this same pair. Stop.
+                            break;
+                        }
                         display = redisplay;
                     }
 
@@ -1427,13 +1493,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     ) {
                         return Ok(surface_exact);
                     }
-                    if let Some(surface_exact) = Self::parse_via_wpda_surface_exact(
-                        &display,
-                        SURFACE_PRESERVING_RAW_DERIVATION_DEMAND,
-                    ) {
-                        return Ok(surface_exact);
-                    }
-                    Ok(stable)
+                    Ok(parsed)
                 }
             };
             quote! {
