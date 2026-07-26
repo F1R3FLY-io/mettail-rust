@@ -222,7 +222,7 @@ It has two mechanisms, split by whether the closure is finite at compile time:
   substitution TRS: five persistent reserved receivers whose mutually-recursive
   `Match` bodies drive the substitution as a cascade of COMMs
   (`rho_net_subst_trs.rs:1-57`). A $`\beta`$-fire seeds
-  `^subst(⟦Z⟧, a, b, out)` and the cascade self-drives to the normal form on
+  `^subst(⟦^Z⟧, a, b, out)` and the cascade self-drives to the normal form on
   `out`.
 
 | Reserved receiver | Channel | Computes | Site |

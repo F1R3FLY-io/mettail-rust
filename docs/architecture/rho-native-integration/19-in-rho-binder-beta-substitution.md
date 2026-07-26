@@ -93,8 +93,14 @@ are reader annotations for those `Par` values.
 
 Throughout, $`[\![ t ]\!]`$ denotes the reflected `Par` image of a term
 $`t`$, and $`b[a/j]`$ the de-Bruijn substitution of $`a`$ for index $`j`$ in $`b`$ (so the
-$`\beta`$-reduct is $`b[a/0]`$). Peano numerals encode indices: $`\mathtt{Z}`$ is zero and
-$`\mathtt{S}\,n`$ is the successor of $`n`$.
+$`\beta`$-reduct is $`b[a/0]`$). Peano numerals encode indices: $`\text{\textasciicircum}\mathtt{Z}`$ is zero and
+$`\text{\textasciicircum}\mathtt{S}\,n`$ is the successor of $`n`$. Both tags carry the reserved
+`^` prefix, like every other machinery tag. That is a *completeness* property, not a
+convention: the reserved namespace is **exactly** the `^`-prefixed labels
+(`mettail_ast::validation::is_reserved_reflect_label`), with no named exceptions, and a
+user constructor label is a Rust `Ident`, which cannot contain `^`. The two sets are
+therefore disjoint by construction, so no language can collide with a Peano numeral —
+including one that names its own successor `S`, which several fixtures in this tree do.
 
 ## 3. Reflection: object term to de-Bruijn ground term
 
@@ -124,15 +130,15 @@ per-language tag:
 |---|---|
 | nullary constructor `A` | `EList[ GPrivate(⌜A⌝) ]` |
 | constructor `C(t₀,…,t_{m-1})` | `EList[ GPrivate(⌜C⌝), ⟦t₀⟧, …, ⟦t_{m-1}⟧ ]` |
-| Peano `Z` | `EList[ GPrivate(⌜Z⌝) ]` |
-| Peano `S(n)` | `EList[ GPrivate(⌜S⌝), ⟦n⟧ ]` |
+| Peano `^Z` | `EList[ GPrivate(⌜^Z⌝) ]` |
+| Peano `^S(n)` | `EList[ GPrivate(⌜^S⌝), ⟦n⟧ ]` |
 | `^bound(n)` | `EList[ GPrivate(⌜^bound⌝), ⟦n⟧ ]` (`n` a Peano numeral) |
 | `^lambda(b)` | `EList[ GPrivate(⌜^lambda⌝), ⟦b⟧ ]` |
 | `^free(x)` | `EList[ GPrivate(⌜^free⌝), ⟦x⟧ ]` |
 | `^cmp` result `Eq`/`Lt`/`Gt` | `EList[ GPrivate(⌜^Eq⌝ / ⌜^Lt⌝ / ⌜^Gt⌝) ]` (internal only) |
 
 Figure 19-3 shows the reflection of the running redex `App(Lam(^x. f(x)), A)` into
-its ground image `App(^lambda(F(^bound(Z))), A)`.
+its ground image `App(^lambda(F(^bound(^Z))), A)`.
 
 ![Figure 19-3 — MATCH-side reflection: object AST to reserved-tagged ground term](figures/19-reflection-debruijn-tree.svg)
 
@@ -237,7 +243,7 @@ return):
 ^shift(c,^lambda b)  → ^lambda(^shift(S c, b))
 ^shift(c,^free x)    → ^free x
 ^shift(c,C(t…))      → C(^shift(c,t)…)
-^shiftk(Z,a)=a ; ^shiftk(S k,a)=^shift(Z, ^shiftk(k,a))
+^shiftk(^Z,a)=a ; ^shiftk(^S k,a)=^shift(^Z, ^shiftk(k,a))
 ^cmp(Z,Z)=Eq; ^cmp(Z,S_)=Lt; ^cmp(S_,Z)=Gt; ^cmp(S m,S n)=^cmp(m,n)
 ^pred(Z)=Z; ^pred(S n)=n                                     -- TOTAL
 ```
@@ -251,7 +257,7 @@ it, `^bound n`).
 
 Figure 19-2 draws the five receivers as a self-re-spreading cascade: each edge is a
 rule that sends reduced sub-work on a reserved channel, and the base cases (a `^free`
-leaf, `^shiftk(Z, ·)`, `^cmp(Z,Z)`, `^pred(Z)`, an `Lt` bound variable) return an
+leaf, `^shiftk(^Z, ·)`, `^cmp(^Z,^Z)`, `^pred(^Z)`, an `Lt` bound variable) return an
 object without re-spreading.
 
 ![Figure 19-2 — the five reserved de-Bruijn TRS receivers as a cascade topology](figures/19-subst-shift-trs.svg)

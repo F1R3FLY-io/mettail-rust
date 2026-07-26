@@ -79,9 +79,18 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_5_golden() {
     assert_eq!(installed.receives.len(), 7, "β seed + 5 TRS + ^drive");
     assert_eq!(
         par_fingerprint(&installed),
-        (12807, 0xa6eaeb15696e7583),
+        // ★ #36 S3 RE-CAPTURE (12807, 0xa6eaeb15696e7583) → (12824, 0x89ea12b54e7c61a0).
+        // EXPLAINED DIFF: `Z`/`S` → `^Z`/`^S`, so each Peano `GPrivate(reflect_tag(…))`
+        // tag string in the five subst-TRS receivers grew by one byte. The `^drive`
+        // pin above is UNCHANGED (4357) — the driver family emits no Peano node — so the
+        // delta is confined to the TRS half. Proof that nothing else moved: inverting S3
+        // at its source restores this and every other byte pin exactly (see the `#36 S3`
+        // note on `rho_net_subst_trs::reserved_subst_trs_labels`); and the doc-28 RENDERED
+        // form of this same program differs from its predecessor only in lines a targeted
+        // `.Z)`→`.^Z)` / `.S)`→`.^S)` substitution maps back byte-for-byte.
+        (12824, 0x89ea12b54e7c61a0),
         "the full Lambda installed program must be byte-identical to the pre-A-S5.5 \
-         golden (captured at ee1514da)"
+         golden (captured at ee1514da; RE-CAPTURED at #36 S3, diff explained above)"
     );
 }
 

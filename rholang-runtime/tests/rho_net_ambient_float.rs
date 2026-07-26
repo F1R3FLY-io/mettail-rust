@@ -39,7 +39,8 @@
 use mettail_languages::ambient::AmbientLanguage;
 use mettail_rholang_codegen::{
     reflect_ground_term_par, rho_net_drive_float_call_par_with_fuel, CollectionType, GroundTerm,
-    DRIVE_DEFAULT_FUEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    BOUND_VAR_REFLECT_LABEL, DRIVE_DEFAULT_FUEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::{DriveObservationChannels, PlannedRhoBackend};
 use mettail_runtime::{Language, RuntimeObservationValue};
@@ -120,12 +121,19 @@ fn oname(atom: &str) -> Value {
 fn olam(body: Value) -> Value {
     oterm(LAMBDA_REFLECT_LABEL, vec![body])
 }
+/// ★ The reflect-ABI tags come from the codegen CONSTANTS, never re-spelled as literals.
+/// These helpers used to hardcode `"Z"`/`"S"`/`"^bound"`; when #36 S3 moved the Peano
+/// numerals into the `^` namespace the literals silently stopped naming the machinery, so
+/// `g_bound` built `^bound(Z)` with `Z` reading as an ordinary object constructor — the
+/// `^cmp`/`^shift` cascade no longer matched it, the σ-slot shift never resolved, and
+/// `OpenRule`'s binder-consistency guard failed while `Seal` (which has no such guard) still
+/// fired. A fixture that re-spells an ABI tag is a second, unversioned copy of the ABI.
 fn obound(index: usize) -> Value {
-    let mut peano = oterm("Z", Vec::new());
+    let mut peano = oterm(PEANO_ZERO_REFLECT_LABEL, Vec::new());
     for _ in 0..index {
-        peano = oterm("S", vec![peano]);
+        peano = oterm(PEANO_SUCC_REFLECT_LABEL, vec![peano]);
     }
-    oterm("^bound", vec![peano])
+    oterm(BOUND_VAR_REFLECT_LABEL, vec![peano])
 }
 fn oamb(name: Value, body: Value) -> Value {
     oterm("PAmb", vec![name, body])
@@ -159,11 +167,11 @@ fn g_name(atom: &str) -> GroundTerm {
     g_node(FREE_VAR_REFLECT_LABEL, vec![GroundTerm::nullary(atom)])
 }
 fn g_bound(index: usize) -> GroundTerm {
-    let mut peano = GroundTerm::nullary("Z");
+    let mut peano = GroundTerm::nullary(PEANO_ZERO_REFLECT_LABEL);
     for _ in 0..index {
-        peano = g_node("S", vec![peano]);
+        peano = g_node(PEANO_SUCC_REFLECT_LABEL, vec![peano]);
     }
-    g_node("^bound", vec![peano])
+    g_node(BOUND_VAR_REFLECT_LABEL, vec![peano])
 }
 fn g_lam(body: GroundTerm) -> GroundTerm {
     g_node(LAMBDA_REFLECT_LABEL, vec![body])
@@ -225,7 +233,7 @@ fn flatten(value: &Value) -> Value {
 /// Decode a `^bound(peano)` leaf's index.
 fn bound_index(value: &Value) -> Option<usize> {
     let Value::Term { constructor, children } = value else { return None };
-    if constructor != "^bound" || children.len() != 1 {
+    if constructor != BOUND_VAR_REFLECT_LABEL || children.len() != 1 {
         return None;
     }
     let mut index = 0usize;
@@ -233,8 +241,8 @@ fn bound_index(value: &Value) -> Option<usize> {
     loop {
         let Value::Term { constructor, children } = cursor else { return None };
         match constructor.as_str() {
-            "Z" if children.is_empty() => return Some(index),
-            "S" if children.len() == 1 => {
+            PEANO_ZERO_REFLECT_LABEL if children.is_empty() => return Some(index),
+            PEANO_SUCC_REFLECT_LABEL if children.len() == 1 => {
                 index += 1;
                 cursor = &children[0];
             },
@@ -343,7 +351,7 @@ fn run_permutation_equal(a: &Value, b: &Value) -> bool {
 fn contains_bound(value: &Value) -> bool {
     match value {
         Value::Term { constructor, children } => {
-            constructor == "^bound" || children.iter().any(contains_bound)
+            constructor == BOUND_VAR_REFLECT_LABEL || children.iter().any(contains_bound)
         },
         Value::Bag(entries) => entries.iter().any(|(element, _)| contains_bound(element)),
         _ => false,

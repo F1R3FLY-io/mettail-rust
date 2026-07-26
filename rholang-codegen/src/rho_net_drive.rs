@@ -3120,7 +3120,17 @@ mod tests {
         assert_eq!(installed.receives.len(), 7, "β seed + 5 TRS + ^drive");
         assert_eq!(
             par_fingerprint(&installed),
-            (12807, 12027684232042018179),
+            // ★ #36 S3 RE-CAPTURE (12807, 12027684232042018179) → (12824, …). EXPLAINED
+            // DIFF: the Peano reflect labels moved into the `^` namespace (`Z`/`S` →
+            // `^Z`/`^S`), so every `GPrivate(reflect_tag(fp, Z|S))` tag string in the
+            // subst-TRS receivers grew by one byte. The `^drive` family above is
+            // UNCHANGED (4357) — it emits no Peano node — which localizes the delta to
+            // the TRS half of the installed program. Proof that nothing else moved:
+            // inverting S3 at its source (the two constants + the
+            // `is_marked_object_label` Peano arm they made redundant) restores this pin
+            // and every other byte-identity pin EXACTLY; see the `#36 S3` note on
+            // `rho_net_subst_trs::reserved_subst_trs_labels`.
+            (12824, 9937776097661575584),
             "SM-6: the full synthetic-Lambda installed program (ContractumRedrive) — pin \
              pre-restructure; ContractumRedrive byte-identity across the E-1 restructure \
              (E-2-D re-pin: reflected-ABI v2 adds the hereditary-ground marker at index 1)"

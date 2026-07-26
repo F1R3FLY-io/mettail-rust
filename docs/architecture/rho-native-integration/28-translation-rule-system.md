@@ -170,7 +170,7 @@ Supporting notation:
   (`reflect_ground_term_par`, `rho_net_lower.rs:2303`), with the collection-kind
   exceptions of §4.12. The substitution TRS's module documentation
   (`rho_net_subst_trs.rs:1`) tabulates the same carrier for the binder shapes
-  (`^bound(n)`, `^lambda(b)`, `^free(x)`, Peano `Z`/`S`), so a captured lambda body flows
+  (`^bound(n)`, `^lambda(b)`, `^free(x)`, Peano `^Z`/`^S`), so a captured lambda body flows
   from the automaton into a `^subst` seed with no re-encoding.
 - **Channels.** The nine concrete channel forms, all $`\nu`$-free deterministic quoted
   names: `loc:{site}` and the derived child `{parent}/{op}.{i}`
@@ -445,7 +445,7 @@ normal form the TRS delivers on `out`. Template (`lower_subst_rewrite`,
 `rho_net_lower.rs:941`; `subst_seed_receiver_par`, `rho_net_subst_trs.rs:1021`):
 
 ```text
-for (fun, arg, out <= sa:{trace-of-Beta}) { ^subst!(⟦Z⟧, arg, fun, out) }
+for (fun, arg, out <= sa:{trace-of-Beta}) { ^subst!(⟦^Z⟧, arg, fun, out) }
 ```
 
 The five reserved receivers — installed once per language, iff any rule lowered to
@@ -461,7 +461,7 @@ The five reserved receivers — installed once per language, iff any rule lowere
 ^shift(c,^bound n)   → ^cmp(n,c){ Lt → ^bound n ; _ → ^bound(S n) }
 ^shift(c,^lambda b)  → ^lambda(^shift(S c, b))
 ^shift(c,C(t…))      → C(^shift(c,t)…)
-^shiftk(Z,a)=a ; ^shiftk(S k,a)=^shift(Z, ^shiftk(k,a))
+^shiftk(^Z,a)=a ; ^shiftk(^S k,a)=^shift(^Z, ^shiftk(k,a))
 ^cmp(Z,Z)=Eq; ^cmp(Z,S_)=Lt; ^cmp(S_,Z)=Gt; ^cmp(S m,S n)=^cmp(m,n)
 ^pred(Z)=Z; ^pred(S n)=n
 ```
@@ -818,29 +818,29 @@ absent: the binder constructor is remapped to the reserved `^lambda` tag, §4.9)
 <!-- doc28-golden-listing:begin -->
 ```text
 for (fv(0), fv(1), fv(2) <= "sa:pattern/lhs:0ecc8282fec9495d") {
-  priv(mettail.term.fp.^subst)!([priv(mettail.term.fp.Z)], bv(1), bv(2), bv(0))
+  priv(mettail.term.fp.^subst)!([priv(mettail.term.fp.^Z)], bv(1), bv(2), bv(0))
 } |
 for (fv(0), fv(1) <= "sa:pattern/lhs:cfd391d0e3aae3c9") {
   bv(0)!(bv(1))
 } |
 for (fv(0), fv(1), fv(2) <= priv(mettail.term.fp.^cmp)) {
   match bv(2) {
-    [priv(mettail.term.fp.Z)] => {
+    [priv(mettail.term.fp.^Z)] => {
       match bv(1) {
-        [priv(mettail.term.fp.Z)] => {
+        [priv(mettail.term.fp.^Z)] => {
           bv(0)!([priv(mettail.term.fp.^Eq)])
         } |
-        [priv(mettail.term.fp.S), _] => {
+        [priv(mettail.term.fp.^S), _] => {
           bv(0)!([priv(mettail.term.fp.^Lt)])
         }
       }
     } |
-    [priv(mettail.term.fp.S), fv(0)] => {
+    [priv(mettail.term.fp.^S), fv(0)] => {
       match bv(2) {
-        [priv(mettail.term.fp.Z)] => {
+        [priv(mettail.term.fp.^Z)] => {
           bv(1)!([priv(mettail.term.fp.^Gt)])
         } |
-        [priv(mettail.term.fp.S), fv(0)] => {
+        [priv(mettail.term.fp.^S), fv(0)] => {
           priv(mettail.term.fp.^cmp)!(bv(1), bv(0), bv(2))
         }
       }
@@ -849,24 +849,24 @@ for (fv(0), fv(1), fv(2) <= priv(mettail.term.fp.^cmp)) {
 } |
 for (fv(0), fv(1) <= priv(mettail.term.fp.^pred)) {
   match bv(1) {
-    [priv(mettail.term.fp.Z)] => {
-      bv(0)!([priv(mettail.term.fp.Z)])
+    [priv(mettail.term.fp.^Z)] => {
+      bv(0)!([priv(mettail.term.fp.^Z)])
     } |
-    [priv(mettail.term.fp.S), fv(0)] => {
+    [priv(mettail.term.fp.^S), fv(0)] => {
       bv(1)!(bv(0))
     }
   }
 } |
 for (fv(0), fv(1), fv(2) <= priv(mettail.term.fp.^shiftk)) {
   match bv(2) {
-    [priv(mettail.term.fp.Z)] => {
+    [priv(mettail.term.fp.^Z)] => {
       bv(0)!(bv(1))
     } |
-    [priv(mettail.term.fp.S), fv(0)] => {
+    [priv(mettail.term.fp.^S), fv(0)] => {
       new 1 {
         priv(mettail.term.fp.^shiftk)!(bv(1), bv(3), bv(0)) |
         for (fv(0) <- bv(0)) {
-          priv(mettail.term.fp.^shift)!([priv(mettail.term.fp.Z)], bv(0), bv(3))
+          priv(mettail.term.fp.^shift)!([priv(mettail.term.fp.^Z)], bv(0), bv(3))
         }
       }
     }
@@ -886,7 +886,7 @@ for (fv(0), fv(1), fv(2) <= priv(mettail.term.fp.^shift)) {
               bv(3)!([priv(mettail.term.fp.^bound), priv(mettail.term.fp.^nog), bv(2)])
             } |
             _ => {
-              bv(3)!([priv(mettail.term.fp.^bound), priv(mettail.term.fp.^nog), [priv(mettail.term.fp.S), bv(2)]])
+              bv(3)!([priv(mettail.term.fp.^bound), priv(mettail.term.fp.^nog), [priv(mettail.term.fp.^S), bv(2)]])
             }
           }
         }
@@ -894,7 +894,7 @@ for (fv(0), fv(1), fv(2) <= priv(mettail.term.fp.^shift)) {
     } |
     [priv(mettail.term.fp.^lambda), _, fv(0)] => {
       new 1 {
-        priv(mettail.term.fp.^shift)!([priv(mettail.term.fp.S), bv(4)], bv(1), bv(0)) |
+        priv(mettail.term.fp.^shift)!([priv(mettail.term.fp.^S), bv(4)], bv(1), bv(0)) |
         for (fv(0) <- bv(0)) {
           bv(3)!([priv(mettail.term.fp.^lambda), priv(mettail.term.fp.^nog), bv(0)])
         }
@@ -955,7 +955,7 @@ for (fv(0), fv(1), fv(2), fv(3) <= priv(mettail.term.fp.^subst)) {
     } |
     [priv(mettail.term.fp.^lambda), _, fv(0)] => {
       new 1 {
-        priv(mettail.term.fp.^subst)!([priv(mettail.term.fp.S), bv(5)], bv(4), bv(1), bv(0)) |
+        priv(mettail.term.fp.^subst)!([priv(mettail.term.fp.^S), bv(5)], bv(4), bv(1), bv(0)) |
         for (fv(0) <- bv(0)) {
           bv(3)!([priv(mettail.term.fp.^lambda), priv(mettail.term.fp.^nog), bv(0)])
         }
@@ -993,7 +993,7 @@ for (fv(0), fv(1), fv(2), fv(3) <= priv(mettail.term.fp.^subst)) {
 
 Take the subject $`t = \mathrm{App}(\mathrm{Lam}(\hat{x}.\,x),\ \mathrm{A})`$ and the
 MATCH invocation at the fresh site root $`\rho`$. The reflected subject is
-$`\mathrm{App}(\mathrm{\widehat{lambda}}(\mathrm{\widehat{bound}}(Z)),\ \mathrm{A})`$,
+$`\mathrm{App}(\mathrm{\widehat{lambda}}(\mathrm{\widehat{bound}}(\mathrm{\widehat{Z}})),\ \mathrm{A})`$,
 and its only located site is the root — `collect_redex_sites` pre-filters by the rule
 roots $`\{\mathrm{App}, \mathrm{F}\}`$ and finds one — so the nested `Beta` entry is
 admitted (§5). The complete event sequence, with real channel names and the
@@ -1001,23 +1001,23 @@ $`\tau`$/visible split of [13 §5](13-knotted-topoi-operational-invariants.md) (
 
 1. **Spread** (§4.1): the injector publishes the head tags
    `loc:ρ!(⌜App⌝)`, `loc:ρ/App.0!(⌜^lambda⌝)`, `loc:ρ/App.0/^lambda.0!(⌜^bound⌝)`,
-   `loc:ρ/App.0/^lambda.0/^bound.0!(⌜Z⌝)`, `loc:ρ/App.1!(⌜A⌝)`, and the collapse folds
+   `loc:ρ/App.0/^lambda.0/^bound.0!(⌜^Z⌝)`, `loc:ρ/App.1!(⌜A⌝)`, and the collapse folds
    publish $`[\![ \text{subtree} ]\!]`$ bottom-up on the `col:`/`cap:` mirrors — all
    $`\tau`$.
 2. **Match** (§4.3 machinery): the network's root receive consumes `loc:ρ`'s head tag,
    `Match`-dispatches on `⌜App⌝` into the `Beta` NESTED case, descends
    `loc:ρ/App.0` to match `⌜^lambda⌝`, and captures
-   `cap:ρ/App.0/^lambda.0` as $`\sigma_{\mathit{fun}} = [\![ \mathrm{\widehat{bound}}(Z) ]\!]`$
+   `cap:ρ/App.0/^lambda.0` as $`\sigma_{\mathit{fun}} = [\![ \mathrm{\widehat{bound}}(\mathrm{\widehat{Z}}) ]\!]`$
    and `cap:ρ/App.1` as $`\sigma_{\mathit{arg}} = [\![ \mathrm{A} ]\!]`$ — `sa:` $`\tau`$
    COMMs, each spread message consumed exactly once (O1).
 3. **Accept** ($`\tau`$): the case body sends
-   `sa:pattern/lhs:0ecc8282fec9495d!(⟦^bound(Z)⟧, ⟦A⟧, @out)` — the accept triad's
+   `sa:pattern/lhs:0ecc8282fec9495d!(⟦^bound(^Z)⟧, ⟦A⟧, @out)` — the accept triad's
    channel, byte-identical to the seed receiver's source in the §7.2 listing.
 4. **The observable $`\beta`$-fire** (the one visible COMM of this reduction, §4.9): the
    `Beta` seed receiver fires
-   `^subst!(⟦Z⟧, ⟦A⟧, ⟦^bound(Z)⟧, out)`.
+   `^subst!(⟦^Z⟧, ⟦A⟧, ⟦^bound(^Z)⟧, out)`.
 5. **Cascade** ($`\tau`$): the `^subst` receiver's `^bound` arm compares the index
-   against the depth via `^cmp(Z, Z)` — equal at depth zero — so `^shiftk(Z, ⟦A⟧)`
+   against the depth via `^cmp(^Z, ^Z)` — equal at depth zero — so `^shiftk(^Z, ⟦A⟧)`
    returns the replacement unshifted, and the continuation delivers it to the seed's
    threaded `out`. (A deeper body walks the object-congruence arms instead: each child
    re-sent on `^subst` with a `new`-bound return, the parent rebuilt only from the

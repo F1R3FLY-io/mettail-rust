@@ -108,6 +108,60 @@ const CMP_GT_LABEL: &str = "^Gt";
 /// constructor (a user `Ident`) is disjoint from this set BY CONSTRUCTION; the codegen assertion in
 /// [`object_congruence_constructors`] is the defensive guard that keeps it that way (e.g. if a future
 /// binder-tag mapping regressed).
+///
+/// # What membership MEANS — and why the Peano numerals are NOT members (#36 S3)
+///
+/// Membership is not "this label is reserved". Reserved-ness is stated once, globally, by
+/// [`mettail_ast::validation::is_reserved_reflect_label`] (`^`-prefix) and censused by
+/// [`crate::rho_net_lower::all_reserved_reflect_labels`]. Membership HERE is the strictly
+/// stronger claim that **the generated TRS installs a SPECIFIC subject-position arm for this
+/// tag, which a generic congruence arm would SHADOW**. Every one of the entries below is such
+/// a head: `^lambda`/`^multilambda` have the depth-increment arm (a generic descent would drop
+/// the `S j` and CAPTURE), `^bound`/`^free` have the `^cmp`-dispatch and inert-leaf arms,
+/// `^subst`/`^shift`/`^shiftk`/`^cmp`/`^pred` are receiver rendezvous, `^sb`/`^shb` are the
+/// inlined `^cmp`-result rules, and the driver/AC/float tags name live dispatch or carrier
+/// positions. For each, "must not receive a generic congruence arm" protects a real competitor.
+///
+/// The Peano numerals `^Z`/`^S` have NO subject-position arm to protect. They are the payload
+/// ALPHABET of a numeral ARGUMENT — the `^bound` scope offset, `^subst`'s depth `j`, `^shift`'s
+/// cutoff `c`, `^shiftk`'s count `k` — consumed only inside the `^cmp`/`^pred`/`^shiftk` arms'
+/// `match` scrutinees, never presented to the cascade as the term being substituted into. A bare
+/// numeral in subject position is a MALFORMED subject and the cascade fails closed on it
+/// (`crate::rho_net_lower::shift_reflected_ground_term`'s `… | PEANO_ZERO_REFLECT_LABEL |
+/// PEANO_SUCC_REFLECT_LABEL => None` arm). Listing them here would assert that a generic arm
+/// could shadow a specific one that does not exist, which is the opposite of informative.
+///
+/// The reason they were briefly added (and reverted) is worth recording, because the pull is
+/// real: S3 wanted a census in which every reserved label appears, and this was the longest
+/// existing enumeration. But this enumeration is a SWITCH, not an inventory — it drives
+/// [`object_congruence_constructors`]. The census that wants them is
+/// [`crate::rho_net_lower::all_reserved_reflect_labels`], which already carries them among its
+/// loose constants, so nothing was gained by the addition and the switch's meaning was diluted.
+///
+/// # MEASURED: the addition was behaviourally INERT — do not read this revert as a bug fix
+///
+/// [`object_congruence_constructors`] consults this set in exactly one way: a codegen-time
+/// assertion that no EMITTED object constructor's label is a member. The labels it tests are
+/// user constructor names, i.e. Rust `Ident`s, which cannot contain `^`. So once every member
+/// is `^`-prefixed no member can ever match, and adding two more `^`-prefixed members cannot
+/// change any decision. A 2×2 on the Ambient double-binder witness
+/// (`rholang-runtime/tests/rho_net_ambient_float.rs`,
+/// `witness_double_binder_subject_shifts_consistently_and_fires`) confirmed it:
+///
+/// | this set  | test fixture's `g_bound` tags | `OpenRule` fires |
+/// |-----------|-------------------------------|------------------|
+/// | 21 (Peano in)  | literal `"Z"`/`"S"`      | NO               |
+/// | 19 (Peano out) | literal `"Z"`/`"S"`      | NO               |
+/// | 21 (Peano in)  | the constants            | YES              |
+/// | 19 (Peano out) | the constants            | YES              |
+///
+/// The set is not a determinant of the outcome in either column; the fixture is. `OpenRule`
+/// stopped firing because the fixture RE-SPELLED the ABI tags as string literals, so after the
+/// rename it built `^bound(Z)` with `Z` reading as an ordinary object constructor — the
+/// `^cmp`/`^shift` cascade no longer matched the numeral, the σ-slot shift never resolved, and
+/// `OpenRule`'s binder-consistency guard failed. `Seal`, which carries no such guard, still
+/// fired, which is what produced the one-rule-short ledger. This revert is a decision about
+/// what the set MEANS, not a repair.
 pub fn reserved_subst_trs_labels() -> [&'static str; 19] {
     [
         LAMBDA_REFLECT_LABEL,
@@ -143,6 +197,14 @@ pub fn reserved_subst_trs_labels() -> [&'static str; 19] {
         FLOAT_RESERVED_LABEL,
         FLOAT_HOIST_RESERVED_LABEL,
         FLOAT_MERGE_RESERVED_LABEL,
+        // ★ #36 S3 — the Peano numerals `^Z`/`^S` were briefly added here (registry 19 → 21)
+        // and are DELIBERATELY NOT members; see the "What membership MEANS" section of this
+        // function's doc comment. They are `^`-prefixed and reserved, and the census
+        // (`crate::rho_net_lower::all_reserved_reflect_labels`) carries them — but they have no
+        // subject-position arm for a generic congruence arm to shadow, so the C2 switch has
+        // nothing to say about them.
+        //   PEANO_ZERO_REFLECT_LABEL,
+        //   PEANO_SUCC_REFLECT_LABEL,
     ]
 }
 

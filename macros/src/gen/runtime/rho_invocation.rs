@@ -3050,6 +3050,16 @@ mod tests {
     /// `()` appended — +1 byte on the rendered item (5027 → 5028) and a new hash. No
     /// other token changed; the S2 float-branch invariants (legacy seed path, no float
     /// token) are unaffected and still asserted above the pin.
+    ///
+    /// RE-CAPTURED (#36 S3, 2026-07-25) — explained diff: the Peano reflect labels moved
+    /// into the reserved `^` namespace (`Z`/`S` → `^Z`/`^S`), and this fn item interpolates
+    /// both as string literals (`lit(PEANO_ZERO_REFLECT_LABEL)` /
+    /// `lit(PEANO_SUCC_REFLECT_LABEL)`). Exactly two literals gain exactly one `^` each:
+    /// **+2 bytes on the rendered item (5028 → 5030)** and a new hash. The byte delta being
+    /// exactly 2 is itself the proof that no other token moved — a single extra token, or a
+    /// changed path, or a re-ordered field would not land on +2. The S2 float-branch
+    /// invariants (legacy seed path, no float token) are unaffected and still asserted
+    /// above the pin.
     #[test]
     fn lambda_drive_fn_item_is_byte_identical_across_the_s2_seed_switch() {
         use std::hash::{Hash, Hasher};
@@ -3067,7 +3077,7 @@ mod tests {
         item.hash(&mut hasher);
         assert_eq!(
             (item.len(), hasher.finish()),
-            (5028, 0x06029c0cdafad64a),
+            (5030, 0x6d0b15ae799c671e),
             "the Lambda drive fn item must be byte-identical to the E-3 T-LAZY emission \
              (the S2 switch's non-float branch interpolates the SAME \
              `::mettail_rholang_codegen::rho_net_drive_invocation` path tokens the \
@@ -3258,9 +3268,17 @@ mod tests {
         let name_reflect = reflect_category_fn(&language, &format_ident!("Name")).to_string();
         assert!(name_reflect.contains("\"^bound\""), "a bound Name occurrence reflects to ^bound");
         assert!(name_reflect.contains("\"^free\""), "a free Name occurrence reflects to ^free");
+        // ★ #36 S3: the expected token spelling is DERIVED from the ABI constants, never
+        // re-spelled. This assertion previously hardcoded `"\"Z\""` / `"\"S\""`; when the
+        // Peano labels moved into the `^` namespace the literals stopped naming the
+        // machinery and the assertion started testing for a user constructor named `Z`.
+        // A test that re-spells an ABI tag is a second, unversioned copy of the ABI —
+        // exactly the defect that made this test fail rather than the emitter.
+        let peano_zero = format!("{:?}", mettail_rholang_codegen::PEANO_ZERO_REFLECT_LABEL);
+        let peano_succ = format!("{:?}", mettail_rholang_codegen::PEANO_SUCC_REFLECT_LABEL);
         assert!(
-            name_reflect.contains("\"Z\"") && name_reflect.contains("\"S\""),
-            "the ^bound depth is a Peano numeral Z/S(…)"
+            name_reflect.contains(&peano_zero) && name_reflect.contains(&peano_succ),
+            "the ^bound depth is a Peano numeral {peano_zero}/{peano_succ}(…)"
         );
     }
 

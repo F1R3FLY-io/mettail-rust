@@ -221,8 +221,8 @@ async fn s_binder_reduct_is_report_sigma_independent() {
     );
     assert_ne!(
         observation.values[0],
-        oterm("F", vec![oterm(BOUND_VAR_REFLECT_LABEL, vec![onullary("Z")])]),
-        "the reduct is the SUBSTITUTED NF f(A), not the raw captured body f(^bound Z)"
+        oterm("F", vec![oterm(BOUND_VAR_REFLECT_LABEL, vec![onullary(PEANO_ZERO_REFLECT_LABEL)])]),
+        "the reduct is the SUBSTITUTED NF f(A), not the raw captured body f(^bound ^Z)"
     );
 }
 

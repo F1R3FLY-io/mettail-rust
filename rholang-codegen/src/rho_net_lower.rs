@@ -2715,17 +2715,28 @@ fn instantiate_rhs(
 ///
 /// TRUE for OBJECT nodes — the binder/variable leaves (`^lambda`/`^multilambda`/`^bound`/
 /// `^free`) and every USER constructor (a Rust `Ident`, so NEVER `^`-prefixed). FALSE for
-/// MACHINERY — the Peano numerals `Z`/`S`, the `^cmp` results, the reserved reduction tags
+/// MACHINERY — the Peano numerals `^Z`/`^S`, the `^cmp` results, the reserved reduction tags
 /// (`^subst`/`^shift`/`^cmp`/…), and the marker tokens themselves (every `^`-prefixed label
 /// that is not a binder/variable leaf). The subst cascade dispatches on OBJECT nodes; the
-/// numeric machinery is byte-unchanged. (A rare USER constructor literally named `Z`/`S` is
-/// treated as UNMARKED too — CONSISTENTLY: its emitter and its `pat_tagged` matcher agree, so
-/// there is no shape mismatch; it merely forgoes the ground short-circuit — sound + correct.)
+/// numeric machinery is byte-unchanged.
+///
+/// ★ #36 S3 changed the answer for exactly one input class: a USER constructor literally named
+/// `Z` or `S` is now MARKED, like every other user constructor. Before the Peano rename it was
+/// forced UNMARKED by an explicit arm, because it was indistinguishable from the machinery
+/// numerals. That was sound but name-dependent — such a language silently forfeited the `^gnd`
+/// ground short-circuit while an identical language naming its successor `Succ` kept it. With
+/// the numerals moved into the `^` namespace the ambiguity is gone at the source and the rule
+/// is uniform: marked ⟺ not `^`-prefixed, plus the four binder/variable leaves.
 pub fn is_marked_object_label(label: &str) -> bool {
     match label {
         LAMBDA_REFLECT_LABEL | MULTILAMBDA_REFLECT_LABEL | BOUND_VAR_REFLECT_LABEL
         | FREE_VAR_REFLECT_LABEL => true,
-        PEANO_ZERO_REFLECT_LABEL | PEANO_SUCC_REFLECT_LABEL => false,
+        // ★ #36 S3: REDUNDANT once the Peano labels are `^`-prefixed — the generic
+        // `other => !other.starts_with('^')` arm below now covers them. Retained,
+        // commented out, as the record of why it existed: while the labels were bare
+        // `Z`/`S` they were indistinguishable from user constructors and needed the
+        // explicit exclusion.
+        //   PEANO_ZERO_REFLECT_LABEL | PEANO_SUCC_REFLECT_LABEL => false,
         other => !other.starts_with('^'),
     }
 }
@@ -3754,8 +3765,20 @@ pub const FREE_VAR_REFLECT_LABEL: &str = "^free";
 /// nullary/unary tags: the reserved-ness is carried by the enclosing `^bound`, and a
 /// user constructor named `Z`/`S` only appears UNDER `^bound` in a bound-var leaf
 /// (its own `Z`/`S` term reflects structurally, never mistaken for a Peano index).
-pub const PEANO_ZERO_REFLECT_LABEL: &str = "Z";
-pub const PEANO_SUCC_REFLECT_LABEL: &str = "S";
+/// ★ #36 S3. `^`-PREFIXED, so the reserved namespace is a prefix and the rule
+/// `is_reserved_reflect_label(l) = l.starts_with('^')` is complete BY CONSTRUCTION.
+///
+/// These were the bare identifiers `Z` and `S`, which made them the only two members
+/// of the reserved set that a user constructor could collide with — and
+/// `S . x:Proc |- "s" "(" x ")" : Proc` already appears as a fixture in four places
+/// in this tree, so the collision needed no attacker and no network.
+///
+/// The alternative — reserving the bare identifiers — would have made the namespace
+/// rule "starts with `^`, OR is one of these magic words", a permanent special case
+/// in every future safety argument, and would have REJECTED those four fixtures.
+/// Prefixing costs two bytes per tag and makes the rule true.
+pub const PEANO_ZERO_REFLECT_LABEL: &str = "^Z";
+pub const PEANO_SUCC_REFLECT_LABEL: &str = "^S";
 
 /// E-2 MECHANISM D — the reflected-ABI HEREDITARY-GROUND MARKER (reflected-ABI v2).
 ///
@@ -3776,7 +3799,7 @@ pub const PEANO_SUCC_REFLECT_LABEL: &str = "S";
 /// runtime-reassembled node conservatively carries `^nog` (never wrong, only a missed skip).
 ///
 /// This is the reflected-ABI VERSION BUMP: pre-D reflected object nodes were `EList[tag,
-/// children…]`; v2 interposes the marker at index 1. Machinery labels (Peano `Z`/`S`, `^cmp`
+/// children…]`; v2 interposes the marker at index 1. Machinery labels (Peano `^Z`/`^S`, `^cmp`
 /// results, reserved reduction tags) are NOT marked (`is_marked_object_label` = false), so the
 /// numeric cascade is byte-unchanged.
 pub const GROUND_MARK_REFLECT_LABEL: &str = "^gnd";
@@ -3791,11 +3814,18 @@ pub const NONGROUND_MARK_REFLECT_LABEL: &str = "^nog";
 /// results, the float family, the Peano numerals) that no list contained. Nothing
 /// ever asserted that the union satisfies the namespace rule
 /// [`mettail_ast::validation::is_reserved_reflect_label`] the whole safety
-/// argument rests on — and two members do not.
+/// argument rests on — and two members did not (the bare `Z`/`S`, until S3
+/// renamed them to `^Z`/`^S`).
 ///
 /// This is the census that makes that assertion possible. Adding a reserved label
 /// without adding it here is caught by
 /// `every_reserved_label_is_in_the_reserved_namespace`.
+///
+/// ★ THE CENSUS IS AN INVENTORY, NOT A SWITCH. It is read by tests only; nothing in
+/// codegen branches on membership. That is exactly why the Peano numerals belong
+/// here and NOT in [`crate::rho_net_subst_trs::reserved_subst_trs_labels`], which
+/// IS a switch (it drives `object_congruence_constructors`). Wanting a label to be
+/// censused is never a reason to add it to a switch; add it to this list.
 pub fn all_reserved_reflect_labels() -> Vec<&'static str> {
     let mut labels: Vec<&'static str> = Vec::with_capacity(32);
     labels.extend(crate::rho_net_subst_trs::reserved_subst_trs_labels());
@@ -3822,29 +3852,49 @@ pub fn all_reserved_reflect_labels() -> Vec<&'static str> {
 }
 
 /// ★ THE KNOWN VIOLATORS of the reserved-namespace rule, named rather than omitted.
+/// **EMPTY as of #36 S3 — the namespace rule is now complete by construction.**
 ///
 /// [`all_reserved_reflect_labels`] is complete, and every member of it MUST satisfy
-/// [`mettail_ast::validation::is_reserved_reflect_label`] — except these two, which
-/// are the bare identifiers `Z` and `S`. They are reserved in fact (the `^cmp` /
-/// `^pred` / `^shiftk` receivers and the `^bound` payload read them as the Peano
-/// numeral encoding of a de Bruijn scope offset) but they are NOT `^`-prefixed, so
-/// the namespace rule does not cover them.
+/// [`mettail_ast::validation::is_reserved_reflect_label`]. This list is the named
+/// escape hatch for members that do not, so that a gap is VISIBLE IN CODE rather
+/// than expressed as a silent omission from the census. It is empty, so
+/// `every_reserved_label_is_in_the_reserved_namespace` now asserts the unqualified
+/// claim, with no edit to the assertion itself.
 ///
-/// That is a live defect, not a theoretical one: `S . x:Proc |- "s" "(" x ")" : Proc`
-/// already appears as a fixture in four places in this tree, and a language
-/// declaring natural-number constructors named `S`/`Z` collides from the macro
-/// frontend with no attacker involved. Traced, the collision is fail-closed rather
-/// than wrong-answer — `shift_reflected_ground_term` declines any σ value carrying
-/// an `S`/`Z` node under a binder, and the `^gnd` short-circuit is permanently lost
-/// on such subtrees — but "a language that names its successor `Succ` reduces and
-/// one that names it `S` does not" is a name-dependent semantic difference.
+/// # What it held, and why it is empty (the historical record)
 ///
-/// This list exists so the gap is VISIBLE IN CODE rather than expressed as an
-/// omission from the census. S3 renames the two constants to `^Z`/`^S` and empties
-/// this list; that rename moves emitted bytes, so it is staged separately behind
-/// its own golden-diff review.
-pub fn reserved_labels_outside_the_namespace() -> [&'static str; 2] {
-    [PEANO_ZERO_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL]
+/// It held the two bare identifiers `Z` and `S` — the Peano numeral encoding of a de
+/// Bruijn scope offset, read by the `^cmp`/`^pred`/`^shiftk` receivers and carried in
+/// the `^bound` payload. They were reserved IN FACT but not `^`-prefixed, so the
+/// namespace rule did not cover them, and they were the ONLY two members of the
+/// reserved set a user constructor could collide with.
+///
+/// That was a live defect, not a theoretical one: `S . x:Proc |- "s" "(" x ")" : Proc`
+/// already appears as a fixture in four places in this tree, and a language declaring
+/// natural-number constructors named `S`/`Z` collided from the macro frontend with no
+/// attacker involved. Traced, the collision was fail-closed rather than wrong-answer —
+/// [`shift_reflected_ground_term`] declines any σ value carrying an `S`/`Z` node under
+/// a binder, and the `^gnd` short-circuit was permanently lost on such subtrees — but
+/// "a language that names its successor `Succ` reduces and one that names it `S` does
+/// not" is a name-dependent semantic difference, which is not a semantics anyone chose.
+///
+/// S3 renamed the two constants to `^Z`/`^S`
+/// ([`PEANO_ZERO_REFLECT_LABEL`] / [`PEANO_SUCC_REFLECT_LABEL`]) and emptied this list.
+/// The alternative — reserving the bare identifiers — would have made the namespace
+/// rule "starts with `^`, OR is one of these magic words", a permanent special case in
+/// every future safety argument, and would have REJECTED those four fixtures.
+///
+/// # Why it is retained rather than deleted
+///
+/// The assertion it feeds is written as "every censused label is in the namespace,
+/// EXCEPT the named exceptions, and every named exception is itself censused". With
+/// the list empty both halves are the strongest form of the claim. Deleting the hatch
+/// would mean a future reserved family that cannot be `^`-prefixed (e.g. one whose tag
+/// is dictated by an external ABI) has nowhere to declare itself and would be pushed
+/// back into being a silent census omission — which is the failure mode this list was
+/// created to end. Keeping it empty costs one function and preserves the escape.
+pub fn reserved_labels_outside_the_namespace() -> [&'static str; 0] {
+    []
 }
 
 /// The reserved reduction-channel / rule tags for the generated de-Bruijn substitution
@@ -8606,6 +8656,10 @@ mod tests {
         // Every reserved label, so a future addition to any reserved family is
         // automatically covered by this round trip.
         labels.extend(crate::rho_net_subst_trs::reserved_subst_trs_labels().iter().map(|l| (*l).to_string()));
+        // The `^respread` family is bench-quarantined behind `bench-naive-baseline`,
+        // so it only exists to be round-tripped when that feature is on. The CI gate
+        // runs `--all-features`, so CI always covers the complete set.
+        #[cfg(feature = "bench-naive-baseline")]
         labels.extend(crate::rho_net_naive_kt::respread_reserved_labels().iter().map(|l| (*l).to_string()));
         labels.push(DRIVE_RESERVED_LABEL.to_string());
         labels.push(GROUND_MARK_REFLECT_LABEL.to_string());
@@ -8641,8 +8695,10 @@ mod tests {
     fn every_reserved_label_is_in_the_reserved_namespace() {
         use mettail_ast::validation::is_reserved_reflect_label;
 
-        // The census is sorted, so compare against a sorted exception list — the
-        // claim is about the SET, not the declaration order.
+        // ★ #36 S3: this list is now EMPTY, so the assertion below is the unqualified
+        // claim — EVERY reserved label is in the reserved namespace. It was written with
+        // a named-exception escape precisely so that emptying the exceptions would
+        // tighten the test with no edit to the assertion itself.
         let mut exceptions = reserved_labels_outside_the_namespace();
         exceptions.sort_unstable();
         let violators: Vec<&str> = all_reserved_reflect_labels()
@@ -8659,8 +8715,9 @@ mod tests {
              the substitution TRS and BinderReflectionTotalOrReject.v both rest on."
         );
 
-        // And the exceptions are genuinely reserved — they are not a licence to
-        // drop a label from the census.
+        // And any exception must still be genuinely reserved — never a licence to
+        // drop a label from the census. Vacuous now that the list is empty; retained
+        // so a future exception cannot be added without also being censused.
         for exception in exceptions {
             assert!(
                 all_reserved_reflect_labels().contains(&exception),
@@ -8693,8 +8750,49 @@ mod tests {
             FLOAT_RESERVED_LABEL,
             FLOAT_HOIST_RESERVED_LABEL,
             FLOAT_MERGE_RESERVED_LABEL,
+            // ★ #36 S3: the Peano numerals belong to NO family list — they are the
+            // payload alphabet of a numeral argument, not a dispatch head, so they are
+            // deliberately absent from the C2 exclusion set
+            // (`reserved_subst_trs_labels`, which is a SWITCH). Pinning them here is
+            // what keeps them censused: this loop is the inventory obligation the
+            // family lists discharge for their own members.
+            PEANO_ZERO_REFLECT_LABEL,
+            PEANO_SUCC_REFLECT_LABEL,
         ] {
             assert!(census.contains(&loose), "census is missing the reserved label {loose:?}");
+        }
+    }
+
+    /// ★ #36 S3 — the C2 exclusion set is a SWITCH, not an inventory, and the Peano
+    /// numerals are not in it.
+    ///
+    /// `reserved_subst_trs_labels` drives `object_congruence_constructors`: membership
+    /// asserts that the generated TRS installs a SPECIFIC subject-position arm for the
+    /// tag which a generic congruence arm would shadow. `^Z`/`^S` have no such arm —
+    /// they are a numeral ARGUMENT's alphabet, and a bare numeral in subject position
+    /// is a malformed subject the cascade fails closed on. They are nonetheless fully
+    /// reserved and fully censused, which the two assertions below pin TOGETHER so a
+    /// future reader cannot conclude from the absence that they were forgotten.
+    #[test]
+    fn the_peano_numerals_are_censused_and_reserved_but_not_c2_excluded() {
+        use mettail_ast::validation::is_reserved_reflect_label;
+
+        let census = all_reserved_reflect_labels();
+        let c2 = crate::rho_net_subst_trs::reserved_subst_trs_labels();
+        for label in [PEANO_ZERO_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL] {
+            assert!(
+                is_reserved_reflect_label(label),
+                "{label:?} must be in the `^` namespace — the S3 rename is what made \
+                 `reserved_labels_outside_the_namespace` empty"
+            );
+            assert!(census.contains(&label), "{label:?} must be censused");
+            assert!(
+                !c2.contains(&label),
+                "{label:?} must NOT be in the C2 object-congruence exclusion set: it has no \
+                 subject-position arm for a generic congruence arm to shadow, so membership \
+                 would assert a protection that protects nothing. Wanting it enumerated is a \
+                 reason to add it to `all_reserved_reflect_labels`, never to a switch."
+            );
         }
     }
 

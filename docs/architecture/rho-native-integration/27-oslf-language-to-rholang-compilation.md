@@ -680,7 +680,7 @@ When the RHS is a top-level substitution (`is_top_level_substitution`), `lower_s
 `App(Lam(fun), arg)` is matched and $`\sigma`$-bound `(body, arg)` by the **same positional
 automaton** (§5.3); only the fire differs: `subst_seed_receiver_par` (`rho_net_subst_trs.rs:1021`)
 is a $`(k+1)`$-ary receiver whose body **sends** the seed
-`^subst(⟦Z⟧, BoundVar(repl_bv), BoundVar(scope_bv), BoundVar(0))` on the reserved `^subst` channel —
+`^subst(⟦^Z⟧, BoundVar(repl_bv), BoundVar(scope_bv), BoundVar(0))` on the reserved `^subst` channel —
 this one COMM is the observable $`\beta`$-fire. The five reserved receivers are installed once per
 language by `subst_trs_program_par` (`:1003`) on disjoint `GPrivate(reflect_tag(fp, label))` roots:
 `^cmp` (`:417`, Peano compare), `^pred` (`:494`, predecessor), `^shiftk` (`:524`, $`k`$ iterated

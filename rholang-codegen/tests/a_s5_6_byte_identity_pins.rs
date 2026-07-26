@@ -108,9 +108,14 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_6_golden() {
     assert_eq!(installed.receives.len(), 7, "β seed + 5 TRS + ^drive");
     assert_eq!(
         par_fingerprint(&installed),
-        (12807, 0xa6eaeb15696e7583),
+        // ★ #36 S3 RE-CAPTURE (12807, 0xa6eaeb15696e7583) → (12824, 0x89ea12b54e7c61a0) —
+        // the SAME artifact and the SAME delta as the `a_s5_5` pin (these two pins have
+        // always agreed; S3 keeps them agreeing). EXPLAINED DIFF: `Z`/`S` → `^Z`/`^S`
+        // grows each Peano tag string by one byte inside the subst-TRS receivers; the
+        // `^drive` pin above is UNCHANGED (4357).
+        (12824, 0x89ea12b54e7c61a0),
         "the full Lambda installed program must be byte-identical to the pre-A-S5.6 \
-         golden (captured at a9193914)"
+         golden (captured at a9193914; RE-CAPTURED at #36 S3, diff explained above)"
     );
 }
 
@@ -148,8 +153,16 @@ fn ambient_driver_par_is_byte_identical_to_the_a_s5_8_golden() {
     );
     assert_eq!(
         par_fingerprint(&installed),
-        (56314, 0x4d95f2df46f3450a),
+        // ★ #36 S3 RE-CAPTURE (56314, 0x4d95f2df46f3450a) → (56328, 0x021489df5ccd86cd).
+        // EXPLAINED DIFF: `Z`/`S` → `^Z`/`^S`. Ambient's delta is +14 where Lambda's is
+        // +17 because the two programs contain different counts of Peano tag occurrences
+        // (Ambient's `^float` family carries no Peano node, and its `^drive` pin above is
+        // likewise UNCHANGED at 36836); the delta is one byte per occurrence, not a
+        // constant. Proof that nothing else moved: inverting S3 at its source restores
+        // this pin exactly.
+        (56328, 0x021489df5ccd86cd),
         "the full Ambient installed program must be byte-identical to the A-S5.8 golden \
-         (the ^float family appended; captured at the A-S5.8 leg-1 tree)"
+         (the ^float family appended; captured at the A-S5.8 leg-1 tree; RE-CAPTURED at \
+         #36 S3, diff explained above)"
     );
 }

@@ -46,7 +46,10 @@ use mettail_repl::rho_backends::{
     acdemo_backed, ambient_backed, calculator_backed, ctxdemo_backed, lambda_backed,
     nativefolddemo_backed, rhocalc_backed, swapdemo_backed,
 };
-use mettail_rholang_codegen::RhoFoldDataflowDisposition;
+use mettail_rholang_codegen::{
+    RhoFoldDataflowDisposition, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+};
 use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations;
 use mettail_runtime::{Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue};
 use models::rhoapi::Par;
@@ -200,12 +203,21 @@ fn a_s5_6_admitted_lambda_exec_builds_no_dovetail_report() {
     let out = report
         .observations_for_channel("OUT")
         .expect("an OUT observation");
-    // K = λ.λ.1 — the α-erased de Bruijn image of `lam a. lam b. a` (Peano depth `S(Z)`).
+    // K = λ.λ.1 — the α-erased de Bruijn image of `lam a. lam b. a` (Peano depth `^S(^Z)`).
+    // The tags come from the codegen CONSTANTS, never re-spelled: #36 S3 moved the Peano
+    // numerals into the `^` namespace, and a literal spelling would have kept asserting the
+    // OLD ABI while the runtime emitted the new one.
     let konst = term_obs(
-        "^lambda",
+        LAMBDA_REFLECT_LABEL,
         vec![term_obs(
-            "^lambda",
-            vec![term_obs("^bound", vec![term_obs("S", vec![term_obs("Z", Vec::new())])])],
+            LAMBDA_REFLECT_LABEL,
+            vec![term_obs(
+                BOUND_VAR_REFLECT_LABEL,
+                vec![term_obs(
+                    PEANO_SUCC_REFLECT_LABEL,
+                    vec![term_obs(PEANO_ZERO_REFLECT_LABEL, Vec::new())],
+                )],
+            )],
         )],
     );
     assert_eq!(
