@@ -598,6 +598,16 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
         SyntaxItemSpec::IdentCapture { param_name } => {
             RDSyntaxItem::IdentCapture { param_name: param_name.clone() }
         },
+        // L9-3: the RD-IR mirror, field for field. `RDSyntaxItem::TokenKindCapture`
+        // documents itself as "the RD-IR mirror of `SyntaxItemSpec::TokenKindCapture`"
+        // (`prattail/src/grammar/ir.rs:56-60`), so this arm is a direct transcription
+        // rather than a lowering choice.
+        SyntaxItemSpec::TokenKindCapture { param_name, kind_name } => {
+            RDSyntaxItem::TokenKindCapture {
+                param_name: param_name.clone(),
+                kind_name: kind_name.clone(),
+            }
+        },
         SyntaxItemSpec::Binder { param_name, category, .. } => RDSyntaxItem::Binder {
             param_name: param_name.clone(),
             binder_category: category.clone(),
@@ -771,6 +781,10 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
                         }
                     },
                     SyntaxItemSpec::IdentCapture { .. } => FirstItem::Ident,
+                    // L9-3: "Parallel to `IdentCapture`" per the variant's own doc, and
+                    // the captured value is just text, so it presents the same first-item
+                    // shape (`prattail/src/grammar/ir.rs:56-60`).
+                    SyntaxItemSpec::TokenKindCapture { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Binder { .. } => FirstItem::Ident,
                     SyntaxItemSpec::BinderCollection { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Collection { .. } => FirstItem::Ident,
