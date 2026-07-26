@@ -71,6 +71,18 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
+      # Neither `cargo nextest run` nor `cargo test` builds bench targets, so a bench
+      # that stops compiling passes every other gate silently. That is not theoretical:
+      # `SyntaxItemSpec::TokenKindCapture` was added to the enum without updating the two
+      # exhaustive matches in `prattail/benches/bench_specs/mod.rs`, and the break sat at
+      # HEAD long enough to block `--all-targets` for every crate — which in turn pushed
+      # several verification runs onto crate-scoped evidence and caused two failures to be
+      # misattributed to concurrent work. `--all-targets` compiles benches and examples too,
+      # so an exhaustive match that loses a variant fails HERE, by name, at the commit that
+      # introduced it. Check-only: this builds nothing that is run, and adds no test time.
+      - name: Compile every target (benches and examples included)
+        run: cargo check -j1 --workspace --all-features --all-targets
+
       - name: Run tests (nextest, ci profile — bounded slow-timeouts)
         run: >
           cargo nextest run --profile ci -j1
