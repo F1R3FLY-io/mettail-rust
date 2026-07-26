@@ -29,7 +29,15 @@ use std::sync::Arc;
 
 use dovetail::rules::Pattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
-use mettail_languages::swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
+// Task #11 (extended 2026-07-26): `SwapDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/swapdemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `swapdemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/swapdemo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/swapdemo.rs"]
+mod swapdemo;
+
+use swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 use mettail_rholang_codegen::{
     ac_bag_pattern, ac_contract_call, ac_sigma_receiver_par, automaton_receiver_network_par,
     compile_in_rho_matching_ruleset, in_rho_match_call_par, lower_language_def,

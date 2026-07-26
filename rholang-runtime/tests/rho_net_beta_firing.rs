@@ -28,7 +28,15 @@
 //! spike's real-`Par` analogue) in `rho_net_subst_trs_reducer.rs`.
 #![cfg(feature = "lambda-demo-runtime")]
 
-use mettail_languages::lambdademo::LambdaDemoLanguage;
+// Task #11 (extended 2026-07-26): `LambdaDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/lambdademo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `lambdademo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/lambdademo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/lambdademo.rs"]
+mod lambdademo;
+
+use lambdademo::LambdaDemoLanguage;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def, reflect_ground_term_par,
     subst_seed_send_par, suggest_rejected_rule_dispositions, GroundTerm, RhoCoverageEvidence,

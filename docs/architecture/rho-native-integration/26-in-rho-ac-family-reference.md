@@ -85,7 +85,7 @@ The design goals, in order:
 | **Native carriers** | set/map are genuine sets/maps, not soups | `ESet` / `EMap` and their sorted-dedup invariants ([section 7](#7-the-carrier-taxonomy-hashbag-set-map-zip)) |
 | **Zero-cost in the CLTS ledger** | AC adds no new internal transitions | the atomic consume is below observable granularity ([section 10](#10-the-zero-new-tau-economy)) |
 
-Throughout, the running example is **AcDemo** (`languages/src/acdemo.rs`), the minimal
+Throughout, the running example is **AcDemo** (`languages/tests/definitions/acdemo.rs`), the minimal
 one-rule AC language whose only rewrite is the linear with-`rest` HashBag rule
 
 ```math
@@ -480,7 +480,7 @@ element removed — the reject-safe `merge_substs = None`).
 
 Because the guard reads the selection's **output** (the bound slot values), not the bag, it is
 invariant under the bag's shuffle order — the concrete $`x = x'`$ check the rho-into-rho pattern needs.
-The `NlAcDemo` language (`languages/src/nlacdemo.rs`) is the generated witness: its non-linear AC
+The `NlAcDemo` language (`languages/tests/definitions/nlacdemo.rs`) is the generated witness: its non-linear AC
 rule fires in Rho from the spread, and its corrupted-report probe is
 `s_ac_nonlinear_guard_fires_in_rho_from_the_spread_not_the_report`
 (`rholang-runtime/tests/rho_net_nl_ac_firing.rs`). The guard's soundness is
@@ -828,7 +828,7 @@ and the `ac_match_call_par` locate walk);
 `rholang-codegen/src/rho_net_ruleset.rs` (the base+AC locate-all integration);
 `macros/src/gen/runtime/rho_invocation.rs` (whole-term reflection and the `^kv` map-entry arm);
 `dovetail/src/rules.rs` (`add_flattened_bag`);
-`languages/src/acdemo.rs`, `languages/src/nlacdemo.rs` (the generated AC witnesses);
+`languages/tests/definitions/acdemo.rs`, `languages/tests/definitions/nlacdemo.rs` (the generated AC witnesses);
 `rholang-runtime/tests/rho_net_ac_firing.rs`, `rholang-runtime/tests/rho_net_nl_ac_firing.rs`,
 `rholang-runtime/tests/rho_net_ac_bag_firing.rs`, `rholang-runtime/tests/rho_net_mapzip_firing.rs`
 (the in-Rho firing and corrupted-report tests).

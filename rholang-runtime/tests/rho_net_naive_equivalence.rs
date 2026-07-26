@@ -45,9 +45,33 @@
 
 use dovetail::rules::Pattern;
 use dovetail::set_automaton::{PatternId, SetAutomaton};
-use mettail_languages::ctxdemo::CtxDemoLanguage;
-use mettail_languages::lambdademo::LambdaDemoLanguage;
-use mettail_languages::swapdemo::SwapDemoLanguage;
+// Task #11 (extended 2026-07-26): `CtxDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/ctxdemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `ctxdemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/ctxdemo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/ctxdemo.rs"]
+mod ctxdemo;
+
+// Task #11 (extended 2026-07-26): `LambdaDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/lambdademo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `lambdademo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/lambdademo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/lambdademo.rs"]
+mod lambdademo;
+
+// Task #11 (extended 2026-07-26): `SwapDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/swapdemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `swapdemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/swapdemo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/swapdemo.rs"]
+mod swapdemo;
+
+use ctxdemo::CtxDemoLanguage;
+use lambdademo::LambdaDemoLanguage;
+use swapdemo::SwapDemoLanguage;
 use mettail_rholang_codegen::{
     compile_in_rho_matching_ruleset, contextual_match_call_par, in_rho_match_all_sites_call_par,
     in_rho_match_call_par, lower_language_def, naive_kt_contextual_match_call_par,

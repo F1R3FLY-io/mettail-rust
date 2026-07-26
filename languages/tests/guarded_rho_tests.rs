@@ -14,7 +14,22 @@
 //! statically" — these hand-written tests fill that gap by parsing
 //! source strings rather than constructing the term directly.
 
-use mettail_languages::guardedrho::*;
+// Task #11 (extended 2026-07-26): `GuardedRho` is a rough PROTOTYPE grammar (USER: "GuardedRho
+// was a rough prototype to test the where clause and guards block"), not a production language,
+// so its definition lives in `languages/tests/definitions/guarded_rho.rs` rather than in the
+// `languages` library (`languages/src/` is production-only).
+//
+// This file is its DESIGNATED HOST: it declares the definition module and is the one and only
+// invoker of the opt-in `guardedrho_generated_tests!` wrapper, which materializes the
+// macro-generated unit / prop / analytical sections that used to be written to
+// `languages/tests/gen_guardedrho_*.rs`. Other consumers `#[path]`-include the same definition
+// WITHOUT invoking the wrapper, so the generated tests exist exactly once across the suite.
+#[path = "definitions/guarded_rho.rs"]
+mod guardedrho;
+
+guardedrho::guardedrho_generated_tests!(crate::guardedrho);
+
+use guardedrho::*;
 use mettail_runtime::{BehavioralPred, Language, PredArg};
 
 // ────────────────────────────────────────────────────────────────────────────

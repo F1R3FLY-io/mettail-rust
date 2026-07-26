@@ -150,7 +150,7 @@ The `LanguageDef` fields map one-to-one to these clauses. The three that constit
 `terms`, `equations`, and `rewrites`; the rest configure lexing, native evaluation, and predicated
 types.
 
-**A worked spec** (the $`\lambda`$-calculus GSLT, `languages/src/lambdademo.rs`):
+**A worked spec** (the $`\lambda`$-calculus GSLT, `languages/tests/definitions/lambdademo.rs`):
 
 ```text
 language! {

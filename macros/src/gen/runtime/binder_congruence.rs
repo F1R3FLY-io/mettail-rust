@@ -501,16 +501,31 @@ mod tests {
     /// definition which moves without its entry being updated fails the `macros` build
     /// immediately and by name — loud and unmissable, never silent drift.
     const BUNDLED_LANGUAGES: &[(&str, &str)] = &[
-        ("acbagdemo", include_str!("../../../../languages/src/acbagdemo.rs")),
-        ("acdemo", include_str!("../../../../languages/src/acdemo.rs")),
-        ("ambdemo", include_str!("../../../../languages/src/ambdemo.rs")),
+        (
+            "acbagdemo",
+            include_str!("../../../../languages/tests/definitions/acbagdemo.rs"),
+        ),
+        (
+            "acdemo",
+            include_str!("../../../../languages/tests/definitions/acdemo.rs"),
+        ),
+        (
+            "ambdemo",
+            include_str!("../../../../languages/tests/definitions/ambdemo.rs"),
+        ),
         ("ambient", include_str!("../../../../languages/src/ambient.rs")),
-        ("ambnewdemo", include_str!("../../../../languages/src/ambnewdemo.rs")),
+        (
+            "ambnewdemo",
+            include_str!("../../../../languages/tests/definitions/ambnewdemo.rs"),
+        ),
         (
             "appsubst",
             include_str!("../../../../languages/tests/definitions/appsubst.rs"),
         ),
-        ("bicongdemo", include_str!("../../../../languages/src/bicongdemo.rs")),
+        (
+            "bicongdemo",
+            include_str!("../../../../languages/tests/definitions/bicongdemo.rs"),
+        ),
         ("calculator", include_str!("../../../../languages/src/calculator.rs")),
         (
             "class2hashmapsmoke",
@@ -536,30 +551,51 @@ mod tests {
             "class3opt",
             include_str!("../../../../languages/tests/definitions/class3opt.rs"),
         ),
-        ("commdemo", include_str!("../../../../languages/src/commdemo.rs")),
-        ("ctxdemo", include_str!("../../../../languages/src/ctxdemo.rs")),
+        (
+            "commdemo",
+            include_str!("../../../../languages/tests/definitions/commdemo.rs"),
+        ),
+        (
+            "ctxdemo",
+            include_str!("../../../../languages/tests/definitions/ctxdemo.rs"),
+        ),
         (
             "fortran_model",
             include_str!("../../../../languages/tests/definitions/fortran_model.rs"),
         ),
-        ("guarded_rho", include_str!("../../../../languages/src/guarded_rho.rs")),
+        (
+            "guarded_rho",
+            include_str!("../../../../languages/tests/definitions/guarded_rho.rs"),
+        ),
         (
             "guardoptsmoke",
             include_str!("../../../../languages/tests/definitions/guardoptsmoke.rs"),
         ),
-        ("inoutdemo", include_str!("../../../../languages/src/inoutdemo.rs")),
-        ("lambdademo", include_str!("../../../../languages/src/lambdademo.rs")),
+        (
+            "inoutdemo",
+            include_str!("../../../../languages/tests/definitions/inoutdemo.rs"),
+        ),
+        (
+            "lambdademo",
+            include_str!("../../../../languages/tests/definitions/lambdademo.rs"),
+        ),
         ("lambda", include_str!("../../../../languages/src/lambda.rs")),
         (
             "led_test",
             include_str!("../../../../languages/tests/definitions/led_test.rs"),
         ),
-        ("nativedemo", include_str!("../../../../languages/src/nativedemo.rs")),
+        (
+            "nativedemo",
+            include_str!("../../../../languages/tests/definitions/nativedemo.rs"),
+        ),
         (
             "nativefolddemo",
             include_str!("../../../../languages/tests/definitions/nativefolddemo.rs"),
         ),
-        ("nlacdemo", include_str!("../../../../languages/src/nlacdemo.rs")),
+        (
+            "nlacdemo",
+            include_str!("../../../../languages/tests/definitions/nlacdemo.rs"),
+        ),
         ("optsmoke", include_str!("../../../../languages/tests/definitions/optsmoke.rs")),
         (
             "refinementsmoke",
@@ -570,7 +606,10 @@ mod tests {
             include_str!("../../../../languages/tests/definitions/reserved_model.rs"),
         ),
         ("rhocalc", include_str!("../../../../languages/src/rhocalc.rs")),
-        ("swapdemo", include_str!("../../../../languages/src/swapdemo.rs")),
+        (
+            "swapdemo",
+            include_str!("../../../../languages/tests/definitions/swapdemo.rs"),
+        ),
     ];
 
     /// A-S5.4b CROSS-CRATE AGREEMENT (design v2 §3.2): for EVERY bundled language definition, the

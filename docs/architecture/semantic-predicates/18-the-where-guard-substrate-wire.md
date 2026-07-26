@@ -434,7 +434,7 @@ substrate.
 
 ## 8. On GuardedRho
 
-`languages/src/guarded_rho.rs` is a **prototype** — the smallest language that proved the
+`languages/tests/definitions/guarded_rho.rs` is a **prototype** — the smallest language that proved the
 `?guard:Guard` mechanism works — and not a reference implementation. Its fixed relation
 vocabulary (`logic { relation halts(Proc); relation safe(Proc); }`) is the shape a spike takes,
 not a design to generalize from: a *finite, declared* set of named relations cannot serve a guard

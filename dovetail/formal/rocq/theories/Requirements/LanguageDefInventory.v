@@ -138,7 +138,12 @@ Section LanguageDefInventory.
        coverage proofs below hold unchanged. *)
     {| inventory_name := "swapdemo"; inventory_requirements := [ ReqDirectionalRewrite ] |};
     {| inventory_name := "guardoptsmoke"; inventory_requirements := guardopt_smoke_surface |};
-    (* rho_net Dovetail->Rho firing demo languages (Epic 4, `languages/src/*demo.rs`).
+    (* rho_net Dovetail->Rho firing demo languages (Epic 4). Task #11 (2026-07-26) relocated
+       every DEMONSTRATION grammar out of the production tree: they now live in
+       `languages/tests/definitions/*demo.rs`, declared `options { hosted_in: ... }`. The
+       inventory is UNAFFECTED by the move -- `dovetail/tests/language_inventory.rs` scans
+       BOTH `languages/src` and `languages/tests/definitions`, precisely so relocation can
+       never drop a language out of the formal requirements coverage.
        Each is a real reduction language, so it is inventoried fail-closed (it is NOT a
        `parse_only` fixture). Requirements mirror the taxonomy that
        `dovetail/tests/language_inventory.rs::classify_source` derives from each

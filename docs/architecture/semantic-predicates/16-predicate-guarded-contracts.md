@@ -42,7 +42,7 @@ concrete run-time handler are the two pieces that remain to be wired (§4, §5).
 
 ### 2.1 The three declaration pieces — ✅
 
-The shipping prototype is the `GuardedRho` language (`languages/src/guarded_rho.rs`). A
+The shipping prototype is the `GuardedRho` language (`languages/tests/definitions/guarded_rho.rs`). A
 guarded receive is declared with three pieces, each of which exists today:
 
 ```

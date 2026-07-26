@@ -32,6 +32,14 @@
 
 #![cfg(feature = "rhocalc")]
 
+// Task #11 (extended 2026-07-26): `GuardedRho` is a PROTOTYPE grammar whose definition lives in
+// `languages/tests/definitions/guarded_rho.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. This binary is a CONSUMER, not the definition's designated host
+// (`languages/tests/guarded_rho_tests.rs` is), so it deliberately does NOT invoke the
+// `guardedrho_generated_tests!` wrapper — the generated suite stays single-instanced.
+#[path = "definitions/guarded_rho.rs"]
+mod guardedrho;
+
 use mettail_languages::rhocalc::RhoCalcLanguage;
 use mettail_rholang_codegen::{collect_guard_obligations, RhoGuardObligationKind};
 use mettail_runtime::Language;
@@ -96,7 +104,7 @@ fn a_declared_slot_and_a_typed_slot_induce_the_same_shape() {
         .expect("the declared slot's obligation");
 
     // GuardedRho's `?guard:Guard` slot, the typed surface, for comparison.
-    let guarded_rho_source = mettail_languages::guardedrho::GuardedRhoLanguage
+    let guarded_rho_source = crate::guardedrho::GuardedRhoLanguage
         .metadata()
         .definition_source()
         .expect("generated GuardedRhoLanguage must expose its definition_source");

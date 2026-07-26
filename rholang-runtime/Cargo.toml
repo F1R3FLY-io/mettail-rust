@@ -65,24 +65,28 @@ rhocalc-runtime = [
 # dovetail-driven Rho σ-injection equivalence test (`rho_net_equivalence`). Needs
 # the generated `dovetail_report_for` (σ population, `dovetail-codegen`) and the
 # generated `rho_net_invocation_from_dovetail_to` F-function (`rho-codegen`).
-swap-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/swap-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+swap-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # Stage AC-U3: pulls in the generated `AcDemo` language for the end-to-end in-Rho AC
 # firing test (`rho_net_ac_firing`) — a generated HashBag AC rewrite `PPar{x, ...rest} ~>
 # Wrap(x)` firing as a COMM on the reducer. Needs the generated `dovetail_report_for` (AC σ
 # population, `dovetail-codegen`) and the AC σ-injection F-function (`rho-codegen`).
-ac-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/ac-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+ac-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # Stage AC2b: pulls in the generated `AcBagDemo` language for the end-to-end in-Rho BAG-VALUED
 # AC firing test (`rho_net_ac_bag_firing`) — a generated HashBag bag-TRANSFORMING rewrite
 # `PPar{x, ...rest} ~> PPar{Wrap(x), ...rest}` firing as a COMM on the reducer, landing the
@@ -90,58 +94,68 @@ ac-demo-runtime = [
 # (AC σ population, `dovetail-codegen`) and the AC σ-injection F-function (`rho-codegen`); the
 # receiver body's `⟦R⟧σ` is the bag soup (`reflect_hashbag_soup_par`), decoded by
 # `decode_ac_bag_soup`.
-ac-bag-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/ac-bag-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+ac-bag-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # Stage 4 S-AC (AC3) — the NON-LINEAR bare-var HashBag AC firing test (`rho_net_nl_ac_firing`) — a
 # generated `PPar{x, x, ...rest} ~> Wrap(x)` whose repeated element var carries the `Receive.condition`
 # consistency guard, matched + fired in Rho from the subject spread.
-nl-ac-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/nl-ac-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+nl-ac-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # Stage 3a: pulls in the generated `CtxDemo` language for the end-to-end in-Rho CONTEXTUAL
 # firing test (`rho_net_contextual_firing`) — a generated unary congruence rewrite
 # `WrapCong: | S ~> T |- Wrap(S) ~> Wrap(T)` firing as an atomic JOIN COMM on the reducer.
 # Needs the generated `dovetail_report_for` (premise σ population, `dovetail-codegen`) and the
 # contextual σ-injection F-function (`rho-codegen`).
-ctx-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/ctx-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+ctx-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # Stage 4 S-contextual (sub-slice 2): pulls in the generated `BiCongDemo` language for the
 # end-to-end in-Rho N-ARY (n > 1) CONTEXTUAL firing test (`rho_net_bicong_firing`) — a generated
 # 2-ary congruence `NodeCong: | S0 ~> T0, S1 ~> T1 |- Node(S0, S1) ~> Node(T0, T1)` firing as an
 # atomic 2-premise JOIN COMM on the reducer. Same generated surface as `ctx-demo-runtime`.
-bicong-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/bicong-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+bicong-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # Stage 3c: pulls in the generated `LambdaDemo` language for the end-to-end in-Rho BINDER
 # firing test (`rho_net_beta_firing`) — a generated β-reduction `App(Lam(^x. b), a) ~>
 # subst(b, x := a)` firing as a COMM on the reducer. Needs the generated `dovetail_report_for`
 # (σ + contractum population, `dovetail-codegen`) and the substitution σ-injection F-function
 # (`rho-codegen`).
-lambda-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/lambda-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+lambda-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # A-S5.2: pulls in the PRODUCTION `Lambda` language for the end-to-end in-Rho QUIESCENCE-DRIVER
 # firing tests (`rho_net_lambda_firing`) — the generated `rho_net_drive_invocation_to` seed
 # driving REAL Lambda subjects (β chains, under-binder redexes, Ω fuel exhaustion) to normal
@@ -174,13 +188,15 @@ ambient-runtime = [
 # `PowInt(a, b) ~> a^b` firing as a COMM on the reducer, emitting the value the host's TRUSTED
 # native handler computed. Needs the generated `dovetail_report_for` (native firing σ + contractum
 # population, `dovetail-codegen`) and the native σ-injection F-function (`rho-codegen`).
-native-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/native-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+native-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # Stage 3b: pulls in the generated `CommDemo` language for the end-to-end in-Rho non-linear
 # COMMUNICATION firing test (`rho_net_comm_firing`) — the canonical single-receive Rholang Comm
 # rule `PPar{(PFor N cont), (POutput N Q), ...rest} ~> PPar{(eval cont Q), ...rest}` firing as ONE
@@ -188,13 +204,15 @@ native-demo-runtime = [
 # receiver's `Receive.condition` and the substituted element `cont[Q/y]` is the host-computed
 # contractum spliced into the residual bag. Needs the generated `dovetail_report_for` (σ +
 # contractum population, `dovetail-codegen`) and the Comm σ-injection F-function (`rho-codegen`).
-comm-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/comm-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+comm-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # Stage 3d: pulls in the generated `AmbDemo` language for the end-to-end in-Rho structural
 # non-linear AC firing test (`rho_net_ambient_firing`) — the Ambient-calculus `OpenRule`
 # `{(open N P), N[Q], ...rest} ~> {P, Q, ...rest}` (`open(n, P) | n[Q] ~> P | Q`) firing as ONE
@@ -203,14 +221,15 @@ comm-demo-runtime = [
 # elements (no host substitution) and spliced into the residual bag. Needs the generated
 # `dovetail_report_for` (σ population, `dovetail-codegen`) and the structural-AC σ-injection
 # F-function (`rho-codegen`).
-amb-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/amb-demo",
-    "mettail-languages/amb-new-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+amb-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # Stage 4 (Ambient In/Out): pulls in the generated `InOutDemo` language for the end-to-end in-Rho
 # DEPTH-2 NESTED structural non-linear AC firing test (`rho_net_inout_firing`) — the Ambient-calculus
 # `InRule` `{ n[{in(m,P), ...q}], m[R], ...s } ~> { m[{ n[{P, ...q}], R }], ...s }` and its `out` dual
@@ -219,13 +238,15 @@ amb-demo-runtime = [
 # (host-computed `RHS[σ]`) is reconstructed from σ and spliced with the outer remainder. Needs the
 # generated `dovetail_report_for` (σ + contractum population, `dovetail-codegen`) and the nested
 # structural-AC σ-injection F-function (`rho-codegen`).
-in-out-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/in-out-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): the language above is TEST-HOSTED
+# (`languages/tests/definitions/`), so the test `#[path]`-includes the definition instead of
+# importing `mettail_languages::<lang>`. A `cfg` inside a macro expansion resolves against the
+# crate BEING COMPILED, so the expansion's `#[cfg(feature = "rho-codegen")]` /
+# `#[cfg(feature = "dovetail-codegen")]` blocks must be satisfied by THIS crate now — see the
+# `rho-codegen` / `dovetail-codegen` declarations below. Forwarding
+# `mettail-languages/<lang>` would not fail loudly if left in place; it would simply stop
+# meaning anything, which is why every forward is removed rather than trimmed.
+in-out-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # Stage 3f: pulls in the generated `NativeFoldDemo` language for the end-to-end in-Rho
 # NATIVE-SCALAR-FOLD firing test (`rho_net_native_fold_firing`) — a generated `fold` native scalar
 # arithmetic `AddInt(a, b) ~> a + b` firing as a COMM on the reducer, emitting the reduced value the
@@ -252,8 +273,24 @@ native-fold-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
 # (`mettail-rholang-codegen` normal; `dovetail`, `rigail`, `mettail-dovetail-runtime`,
 # `mettail-macros` dev). Omitting them would NOT fail loudly — the gated blocks would
 # simply vanish and the tests would fail to resolve the generated helpers.
-rho-codegen = []
-dovetail-codegen = []
+rho-codegen = [
+    "dep:mettail-macros",
+    "dep:rigail",
+    "dep:moniker",
+    "dep:rand",
+    "dep:indexmap",
+    "dep:mettail-dovetail-runtime",
+    "dep:dovetail",
+]
+dovetail-codegen = [
+    "dep:mettail-macros",
+    "dep:rigail",
+    "dep:moniker",
+    "dep:rand",
+    "dep:indexmap",
+    "dep:mettail-dovetail-runtime",
+    "dep:dovetail",
+]
 # Backward-compatible test/oracle feature name. New production code should use
 # `rhocalc-runtime` directly.
 oracle-rhocalc = ["rhocalc-runtime"]
@@ -368,19 +405,32 @@ num-bigint = "0.4"
 # Inert unless the quarantined bench feature is enabled.
 dovetail = { package = "dovetail", path = "../dovetail", optional = true }
 
+# Task #11 (extended 2026-07-26): the TEST-HOSTED demo definitions are `#[path]`-included by
+# the `rho_net_*_firing` tests, by `benches/support/workloads.rs`, and — through that shared
+# module — by the two `[[bin]]` bench DRIVERS. Those builds expand `language!` themselves and
+# so need the macro plus the crates the expansion names, which were previously reached only
+# transitively through `mettail-languages`.
+#
+# These are NORMAL optional dependencies rather than dev-dependencies on purpose: a `[[bin]]`
+# target does NOT see `[dev-dependencies]`, so `bench_sa_vs_naive_driver` and
+# `bench_e6a_pathmap_driver` would fail with `unresolved import mettail_macros`. They are
+# `optional` and reached only through the (non-default) demo `*-runtime` features, so no
+# production build pulls them in.
+#
+# `BoundTerm` derive → `::moniker`; `random_generation.rs` → `rand`; `env_types.rs` /
+# `subst.rs` env maps → `indexmap`; the Dovetail report compiler → `rigail`.
+mettail-macros = { package = "macros", path = "../macros", optional = true }
+rigail = { path = "../rigail", optional = true }
+moniker = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+indexmap = { workspace = true, optional = true }
+# The generated Dovetail report compiler names `::mettail_dovetail_runtime` directly. It is
+# already a dev-dependency (for the tests), but a `[[bin]]` sees only `[dependencies]`, so the
+# bench drivers need this optional normal entry as well; Cargo unifies the two into one build
+# of the same path dependency.
+mettail-dovetail-runtime = { package = "dovetail-runtime", path = "../dovetail-runtime", optional = true }
+
 [dev-dependencies]
-# Task #11 (extended 2026-07-26): the TEST-HOSTED demo definitions are `#[path]`-included
-# by the `rho_net_*_firing` tests, so this crate's test builds now expand `language!`
-# themselves and need the macro plus the two crates the expansion names that were
-# previously reached only transitively through `languages`.
-mettail-macros = { package = "macros", path = "../macros" }
-rigail = { path = "../rigail" }
-# The expansion's own crate references, previously satisfied by the `languages` crate on
-# these tests' behalf: `BoundTerm` derive → `::moniker`; `random_generation.rs` → `rand`;
-# `env_types.rs` / `subst.rs` env maps → `indexmap`.
-moniker = { workspace = true }
-rand = { workspace = true }
-indexmap = { workspace = true }
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive
 # the RhoRuntime run / differential oracle.
 mettail-ast = { package = "ast", path = "../ast" }

@@ -168,7 +168,13 @@ fn ambient_def() -> LanguageDef {
 /// A-S5.3 demo-parity reference: its structural-AC admission long predates the real Ambient's, so
 /// the real entry must coincide with it.
 fn ambdemo_def() -> LanguageDef {
-    let body = extract_language_body(include_str!("../../languages/src/ambdemo.rs"));
+    // Task #11 (extended 2026-07-26): `AmbDemo` is a DEMONSTRATION grammar — TEST-HOSTED in
+    // `languages/tests/definitions/`, not in the `languages` library. `include_str!` needs a
+    // LITERAL path, so this reference is hand-maintained; a definition that moves without it
+    // fails this build immediately and by name.
+    let body = extract_language_body(include_str!(
+        "../../languages/tests/definitions/ambdemo.rs"
+    ));
     let def = reconstruct_language_def(body).expect("the AmbDemo body must reconstruct");
     mettail_ast::validation::validate_language(&def).expect("the AmbDemo definition must validate");
     def

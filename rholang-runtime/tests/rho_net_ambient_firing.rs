@@ -43,8 +43,24 @@
 //! the Rho backend — this demo proves the CLEAN OpenRule half fires end-to-end.
 #![cfg(feature = "amb-demo-runtime")]
 
-use mettail_languages::ambdemo::AmbDemoLanguage;
-use mettail_languages::ambnewdemo::AmbNewDemoLanguage;
+// Task #11 (extended 2026-07-26): `AmbDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/ambdemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `ambdemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/ambdemo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/ambdemo.rs"]
+mod ambdemo;
+
+// Task #11 (extended 2026-07-26): `AmbNewDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/ambnewdemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `ambnewdemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/ambnewdemo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/ambnewdemo.rs"]
+mod ambnewdemo;
+
+use ambdemo::AmbDemoLanguage;
+use ambnewdemo::AmbNewDemoLanguage;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     rho_net_structural_ac_injection_sites, suggest_rejected_rule_dispositions, RhoCoverageEvidence,

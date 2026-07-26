@@ -27,7 +27,15 @@
 
 use std::collections::HashMap;
 
-use mettail_languages::acbagdemo::{AcBagDemoLanguage, AcBagDemoTerm, AcBagDemoTermInner, Proc};
+// Task #11 (extended 2026-07-26): `AcBagDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/acbagdemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `acbagdemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/acbagdemo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/acbagdemo.rs"]
+mod acbagdemo;
+
+use acbagdemo::{AcBagDemoLanguage, AcBagDemoTerm, AcBagDemoTermInner, Proc};
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,

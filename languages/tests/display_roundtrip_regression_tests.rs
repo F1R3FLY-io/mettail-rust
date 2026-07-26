@@ -19,6 +19,8 @@ mod class3multi;
 mod class3opt;
 #[path = "definitions/led_test.rs"]
 mod ledtest;
+#[path = "definitions/guarded_rho.rs"]
+mod guardedrho;
 
 macro_rules! assert_wpda_display_roundtrip {
     ($ty:ty, $term:expr) => {{
@@ -114,10 +116,9 @@ fn class3opt_quoted_optional_collection_display_roundtrips() {
     assert_wpda_display_roundtrip!(Name, Name::NQuote(Arc::new(proc)));
 }
 
-#[cfg(feature = "guarded-rho")]
 #[test]
 fn guardedrho_parallel_and_quote_display_roundtrip() {
-    use mettail_languages::guardedrho::{Name, Proc};
+    use crate::guardedrho::{Name, Proc};
     use mettail_runtime::{get_or_create_var, HashBag, OrdVar, Var};
     use std::sync::Arc;
 

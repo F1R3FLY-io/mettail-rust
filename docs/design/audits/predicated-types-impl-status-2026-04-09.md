@@ -171,7 +171,7 @@ recorded here for traceability:
 - `prattail/src/weighted_mso/compile_tests.rs` (Phase 5F)
 - `macros/src/logic/stratification.rs` (Phase 3F)
 - `macros/src/logic/multi_channel_analysis.rs` (Phases 8 + 9)
-- `languages/src/guarded_rho.rs` (Phase 14)
+- `languages/tests/definitions/guarded_rho.rs` (Phase 14)
 - `languages/tests/guarded_rho_tests.rs` (Phase 3A-T5)
 - `simulation/examples/demo_guarded_evaluation.rs` (Phase 16)
 - `docs/design/audits/predicated-types-impl-status-2026-04-09.md` (Phase 18, this document)

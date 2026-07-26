@@ -133,7 +133,7 @@ division between §4.3 (base) and §4.4 (contextual), and it is why cost attache
 firing COMM and never per congruence step ([COST-RHO](references.md#cost-rho),
 [13 §5](13-knotted-topoi-operational-invariants.md) INV-9).
 
-For the running $`\lambda`$ instance (`languages/src/lambdademo.rs`, and §7's
+For the running $`\lambda`$ instance (`languages/tests/definitions/lambdademo.rs`, and §7's
 TwoRuleLambda), the K-family is the application constructor: $`K = \mathrm{App}`$, whose
 one hypothesis-free rule is $`\beta`$ — `Beta . |- (App (Lam fun) arg) ~> (eval fun arg)`.
 The program/environment cut is *absolute* there (function side vs argument side); for a
@@ -754,7 +754,7 @@ distinct announcement contexts.
 TwoRuleLambda is the acceptance criterion (2) of §1: a whole language small enough to
 list **completely**, large enough to exercise two different §4 rules — the
 binder-$`\beta`$ seed (§4.9) and a plain base rewrite (§4.3) — plus the once-appended
-TRS. It is `lambdademo`'s grammar (`languages/src/lambdademo.rs`: `Lam`, `App`, `F`, `A`)
+TRS. It is `lambdademo`'s grammar (`languages/tests/definitions/lambdademo.rs`: `Lam`, `App`, `F`, `A`)
 with `Beta` kept and one base rewrite added:
 
 ```text

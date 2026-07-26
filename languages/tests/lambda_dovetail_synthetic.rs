@@ -7,7 +7,7 @@
 //! names (or on `name == "Lambda"`) rather than derived from `LanguageDef`, this language would NOT
 //! β-reduce. It does — proving the mechanism is fully generalized.
 //!
-//! `AppSubst` is a `src` fixture (`languages/src/appsubst.rs`), not a test-local `language!`: the
+//! `AppSubst` is a `src` fixture (`languages/tests/definitions/appsubst.rs`), not a test-local `language!`: the
 //! macro emits a crate-coupled `src/bin/simulate_<lang>.rs` for every invocation, so a test-local
 //! invocation would write a bin referencing a nonexistent `mettail_languages::appsubst` module and
 //! break `cargo build -p languages`. See the fixture's module doc.

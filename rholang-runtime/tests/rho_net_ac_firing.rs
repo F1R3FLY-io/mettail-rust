@@ -23,7 +23,15 @@
 
 use std::collections::HashMap;
 
-use mettail_languages::acdemo::{AcDemoLanguage, AcDemoTerm, AcDemoTermInner, Proc};
+// Task #11 (extended 2026-07-26): `AcDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/acdemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `acdemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/acdemo_ac_firing_report.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/acdemo.rs"]
+mod acdemo;
+
+use acdemo::{AcDemoLanguage, AcDemoTerm, AcDemoTermInner, Proc};
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,

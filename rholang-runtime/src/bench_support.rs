@@ -2016,34 +2016,16 @@ mod tests {
         assert_eq!(out, "a\\\"b\\\\c\\nd\\te\\u0001f");
     }
 
-    /// (B3) The warm-mode hoist compiles SwapDemo ONCE: the ruleset and the
-    /// plan share one fingerprint, the installed σ-receiver program is a real
-    /// receiver network, and the compiled artifacts are reusable by reference.
-    #[cfg(feature = "swap-demo-runtime")]
-    #[test]
-    fn compile_bench_language_hoists_swapdemo_once() {
-        use mettail_languages::swapdemo::SwapDemoLanguage;
-        use mettail_runtime::Language;
-
-        let source = SwapDemoLanguage
-            .metadata()
-            .definition_source()
-            .expect("the generated SwapDemo exposes its definition_source");
-        let compiled = compile_bench_language(source)
-            .expect("SwapDemo compiles through the warm-mode hoist");
-        assert_eq!(
-            compiled.ruleset.language_fingerprint,
-            compiled.lowered.definition_fingerprint(),
-            "the hoisted ruleset and lowering share ONE fingerprint"
-        );
-        assert!(
-            compiled.ruleset.automaton.view().entry_count() >= 1,
-            "SwapDemo compiles at least the SwapStep entry"
-        );
-        assert!(
-            count_receive_nodes(&compiled.installed_program) >= 1,
-            "the installed program is a real σ-receiver network"
-        );
-        assert!(!compiled.def.rewrites.is_empty(), "the reconstructed def carries its rewrites");
-    }
+    // Task #11 (extended 2026-07-26) — RELOCATED, not removed. The B3 warm-mode-hoist test
+    // that lived here (`compile_bench_language_hoists_swapdemo_once`) is LANGUAGE-scoped, so it
+    // survives the relocation of `SwapDemo` out of `languages/src/`; it simply cannot live in
+    // THIS crate any more.
+    //
+    // `SwapDemo` is now test-hosted (`languages/tests/definitions/swapdemo.rs`), so a consumer
+    // must `#[path]`-include the definition and expand `language!` itself — and
+    // `rholang-runtime/src/lib.rs` carries `#![forbid(unsafe_code)]`, which the expansion's
+    // generated iterative comparison / hashing / normalization code cannot satisfy (`forbid`
+    // is not overridable by an inner `#![allow]`, by design). The test therefore moved to
+    // `rholang-runtime/tests/bench_support_swapdemo_hoist.rs`, an integration-test crate root
+    // where the lint level does not apply. Every assertion moved with it verbatim.
 }

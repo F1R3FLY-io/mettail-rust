@@ -11,6 +11,16 @@
 //! benchmark-before-optimize discipline. Requires the crate's default features
 //! (`dovetail-codegen` + `rho-codegen`).
 
+// Task #11 (extended 2026-07-26): `SwapDemo` is a DEMONSTRATION grammar whose definition
+// lives in `languages/tests/definitions/swapdemo.rs`, not in the `languages` library, so it
+// is `#[path]`-included here. Declared at FILE scope: a `#[path]` on a module nested inside
+// an inline block resolves relative to the nesting path, whereas at file scope it resolves
+// relative to `languages/benches/`, which is what this relative path is written against.
+// This bench is a CONSUMER: it does not invoke the `swapdemo_generated_tests!` wrapper,
+// whose sole invoker is `languages/tests/swapdemo.rs`.
+#[path = "../tests/definitions/swapdemo.rs"]
+mod swapdemo;
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use mettail_runtime::Language;
 
@@ -56,7 +66,7 @@ fn bench_rho_net_lowering(c: &mut Criterion) {
         reconstruct_language_def(source).expect("definition source reconstructs")
     }
 
-    let swap_src = mettail_languages::swapdemo::SwapDemoLanguage
+    let swap_src = crate::swapdemo::SwapDemoLanguage
         .metadata()
         .definition_source()
         .expect("SwapDemo exposes its definition source");

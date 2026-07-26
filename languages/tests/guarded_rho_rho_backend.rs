@@ -13,9 +13,21 @@
 //! language. The behavioral-predicate legs are recorded as `RejectSafeApprox`
 //! (the M7 mixed-guard / Heyting reject-safe case), not `Unknown`.
 
-#![cfg(all(feature = "guarded-rho", feature = "rho-codegen"))]
+// Task #11 (extended 2026-07-26): the `guarded-rho` LIBRARY FEATURE is gone (the definition
+// is test-hosted now), so naming it in this gate would make the gate unsatisfiable and
+// SILENTLY delete the whole Rho-default-backend suite. Only the `rho-codegen` half remains a
+// real condition; the definition itself is `#[path]`-included unconditionally below.
+#![cfg(feature = "rho-codegen")]
 
-use mettail_languages::guardedrho::GuardedRhoLanguage;
+// Task #11 (extended 2026-07-26): `GuardedRho` is a PROTOTYPE grammar whose definition lives in
+// `languages/tests/definitions/guarded_rho.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. This binary is a CONSUMER, not the definition's designated host
+// (`languages/tests/guarded_rho_tests.rs` is), so it deliberately does NOT invoke the
+// `guardedrho_generated_tests!` wrapper — the generated suite stays single-instanced.
+#[path = "definitions/guarded_rho.rs"]
+mod guardedrho;
+
+use guardedrho::GuardedRhoLanguage;
 use mettail_rholang_codegen::guard_quality::{derive_guard_qualities, RhoGuardQuality};
 use mettail_rholang_codegen::{
     audit_rho_default_backend, collect_guard_obligations, lower_language_def,

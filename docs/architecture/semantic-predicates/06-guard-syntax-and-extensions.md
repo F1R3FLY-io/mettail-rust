@@ -193,7 +193,7 @@ chan_param   ::= Ident ":" Ident                               (* param : Catego
 
 Activation is deterministic: a `join` with `≥ 2` parameters activates module M8; an
 M8 join over `≥ 2` distinct categories activates M11. This is the **only**
-`guards { }` sub-block any shipping language uses. From `languages/src/guarded_rho.rs`:
+`guards { }` sub-block any shipping language uses. From `languages/tests/definitions/guarded_rho.rs`:
 
 ```text
 guards { channels { channel Name; join PGuardedInput(ch: Name); } }
@@ -212,7 +212,7 @@ parameter reference in the syntax form after `|-`; at that position the generate
 parser emits a `GuardExpression` item and switches into the predicate sublanguage.
 The guard value is stored as a per-instance runtime `BehavioralPred` field on the
 generated enum variant — it is *not* fixed at language-spec time. The canonical
-example (`languages/src/guarded_rho.rs`):
+example (`languages/tests/definitions/guarded_rho.rs`):
 
 ```text
 PGuardedInput . n:Name, ?guard:Guard, ^x.p:[Name -> Proc]
@@ -291,7 +291,7 @@ relation_decl ::= "relation" Ident "(" Type ("," Type)* ")" ";"
 
 External relations declared here are exactly what `where`-clause `RelationQuery`
 names resolve against, and they are always available even in closed-world mode.
-From `languages/src/guarded_rho.rs`:
+From `languages/tests/definitions/guarded_rho.rs`:
 
 ```text
 logic { relation halts(Proc); relation safe(Proc); }

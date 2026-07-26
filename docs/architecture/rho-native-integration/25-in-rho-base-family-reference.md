@@ -73,7 +73,7 @@ The design goals, in order:
 | **Replacement** | $`\sigma`$ comes from the automaton, not the report | the corrupted-$`\sigma`$ probe ([section 9](#9-substitution-provenance-replacement-not-duplicate)) |
 | **Fail closed** | never emit an incorrect network | typed `AutomatonUnsupported` rejections routing to the replay driver |
 
-Throughout, the running example is **SwapDemo** (`languages/src/swapdemo.rs`), the
+Throughout, the running example is **SwapDemo** (`languages/tests/definitions/swapdemo.rs`), the
 minimal one-rule language:
 
 ```
@@ -876,5 +876,5 @@ Full bibliographic detail (with verified DOIs where available) is in
 `rholang-codegen/src/rho_net_automaton.rs` (the `sa:` network plus accept);
 `rholang-codegen/src/rho_net_ruleset.rs` (locate-all plus the gate);
 `rholang-codegen/src/rho_net.rs` (the `sa:`$`tc(K)`$ channel);
-`languages/src/swapdemo.rs` (the running example);
+`languages/tests/definitions/swapdemo.rs` (the running example);
 `rholang-runtime/tests/rho_net_equivalence.rs` (the in-Rho and corrupted-$`\sigma`$ tests).

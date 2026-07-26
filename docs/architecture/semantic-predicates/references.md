@@ -334,7 +334,7 @@ The declaration surface (the `ast` crate) and the consumer (`rholang-codegen`):
 
 The example language and its tests:
 
-- `languages/src/guarded_rho.rs`
+- `languages/tests/definitions/guarded_rho.rs`
 - `languages/tests/guarded_rho_rho_backend.rs`
 - `rholang-runtime/tests/rho_guard_oracle.rs`
 

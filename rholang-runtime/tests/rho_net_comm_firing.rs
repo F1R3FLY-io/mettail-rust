@@ -41,7 +41,15 @@
 //! the non-linear `Receive.condition` the belt-and-suspenders gate. No hand-built σ remains.
 #![cfg(feature = "comm-demo-runtime")]
 
-use mettail_languages::commdemo::CommDemoLanguage;
+// Task #11 (extended 2026-07-26): `CommDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/commdemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `commdemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/commdemo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/commdemo.rs"]
+mod commdemo;
+
+use commdemo::CommDemoLanguage;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     rho_net_comm_injection_sites, suggest_rejected_rule_dispositions, RhoCoverageEvidence,

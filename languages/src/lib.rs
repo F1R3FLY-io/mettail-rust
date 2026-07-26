@@ -9,24 +9,42 @@
     unused_imports, // generated parser code may include unused imports
 )]
 
-#[cfg(feature = "ac-demo")]
-pub mod acdemo;
+// Task #11 (extended 2026-07-26): `AcDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/acdemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "ac-demo")]
+// pub mod acdemo;
 // Stage AC2b: the bag-TRANSFORMING (nested-bag RHS) AC firing demonstration language.
-#[cfg(feature = "ac-bag-demo")]
-pub mod acbagdemo;
+// Task #11 (extended 2026-07-26): `AcBagDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/acbagdemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "ac-bag-demo")]
+// pub mod acbagdemo;
 // Stage 4 S-AC (AC3): the NON-LINEAR `{x, x, ...rest}` bare-var AC firing demonstration language.
-#[cfg(feature = "nl-ac-demo")]
-pub mod nlacdemo;
+// Task #11 (extended 2026-07-26): `NlAcDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/nlacdemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "nl-ac-demo")]
+// pub mod nlacdemo;
 // Stage 3d: the Ambient-calculus `OpenRule` STRUCTURAL non-linear AC firing demonstration language.
-#[cfg(feature = "amb-demo")]
-pub mod ambdemo;
+// Task #11 (extended 2026-07-26): `AmbDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/ambdemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "amb-demo")]
+// pub mod ambdemo;
 
-#[cfg(feature = "amb-new-demo")]
-pub mod ambnewdemo;
+// Task #11 (extended 2026-07-26): `AmbNewDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/ambnewdemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "amb-new-demo")]
+// pub mod ambnewdemo;
 // Stage 4 (Ambient In/Out): the DEPTH-2 NESTED structural non-linear AC firing demonstration language
 // (the Ambient-calculus `InRule`/`OutRule`), generalizing `AmbDemo`'s flat `OpenRule`.
-#[cfg(feature = "in-out-demo")]
-pub mod inoutdemo;
+// Task #11 (extended 2026-07-26): `InOutDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/inoutdemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "in-out-demo")]
+// pub mod inoutdemo;
 #[cfg(feature = "ambient")]
 pub mod ambient;
 // Task #11 (extended 2026-07-26): `AppSubst` is a binder-calculus FIXTURE (the generality
@@ -53,20 +71,35 @@ pub mod calculator;
 // #[cfg(feature = "class3opt")]
 // pub mod class3opt;
 // Stage 3b: the canonical single-receive Rholang COMMUNICATION rule (non-linear AC firing).
-#[cfg(feature = "comm-demo")]
-pub mod commdemo;
+// Task #11 (extended 2026-07-26): `CommDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/commdemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "comm-demo")]
+// pub mod commdemo;
 // Stage 3a: the unary-congruence (contextual join) demonstration language.
-#[cfg(feature = "ctx-demo")]
-pub mod ctxdemo;
+// Task #11 (extended 2026-07-26): `CtxDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/ctxdemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "ctx-demo")]
+// pub mod ctxdemo;
 // Stage 4 S-contextual (sub-slice 2): the 2-ARY-congruence (n-hole contextual join) demonstration.
-#[cfg(feature = "bicong-demo")]
-pub mod bicongdemo;
+// Task #11 (extended 2026-07-26): `BiCongDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/bicongdemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "bicong-demo")]
+// pub mod bicongdemo;
 // Stage 3c: the untyped λ-calculus binder/β-substitution demonstration language.
-#[cfg(feature = "lambda-demo")]
-pub mod lambdademo;
+// Task #11 (extended 2026-07-26): `LambdaDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/lambdademo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "lambda-demo")]
+// pub mod lambdademo;
 // Stage 3e (rho-native): the native-system-process (`![…] fold` PowInt) firing demonstration.
-#[cfg(feature = "native-demo")]
-pub mod nativedemo;
+// Task #11 (extended 2026-07-26): `NativeDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/nativedemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "native-demo")]
+// pub mod nativedemo;
 // Stage 3f (rho-native): the native-scalar-fold (`![…] fold` AddInt) firing demonstration.
 // Task #11 (extended 2026-07-26): `NativeFoldDemo` is a DEMONSTRATION language definition;
 // it moved to `languages/tests/definitions/nativefolddemo.rs`. `languages/src/` is
@@ -78,8 +111,11 @@ pub mod nativedemo;
 // it moved to `languages/tests/definitions/fortran_model.rs`.
 // #[cfg(feature = "fortran_model")]
 // pub mod fortran_model;
-#[cfg(feature = "guarded-rho")]
-pub mod guarded_rho;
+// Task #11 (extended 2026-07-26): `GuardedRho` is a rough PROTOTYPE grammar (USER: "GuardedRho
+// was a rough prototype to test the where clause and guards block"), not a production
+// language, so it moved to `languages/tests/definitions/guarded_rho.rs`.
+// #[cfg(feature = "guarded-rho")]
+// pub mod guarded_rho;
 #[cfg(feature = "lambda")]
 pub mod lambda;
 // Task #11 (extended 2026-07-26): `LedTest` is the LED-delegation FIXTURE grammar; it moved
@@ -104,8 +140,11 @@ pub mod lambda;
 // pub mod reserved_model;
 #[cfg(feature = "rhocalc")]
 pub mod rhocalc;
-#[cfg(feature = "swap-demo")]
-pub mod swapdemo;
+// Task #11 (extended 2026-07-26): `SwapDemo` is a DEMONSTRATION grammar, not a production
+// language, so it moved to `languages/tests/definitions/swapdemo.rs`. `languages/src/` is
+// production-only; consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "swap-demo")]
+// pub mod swapdemo;
 
 // Composition test languages — module order matters for proc-macro registry population.
 // fragments and base_lang must compile before their consumers.
@@ -122,8 +161,12 @@ pub use composition::extended_lang as extmath;
 pub use composition::grammar_import_lang as importedmath;
 #[cfg(feature = "composition")]
 pub use composition::mixed_lang as mixedmath;
-#[cfg(feature = "guarded-rho")]
-pub use guarded_rho as guardedrho;
+// Task #11 (extended 2026-07-26): `GuardedRho` is test-hosted, so there is no library module
+// to alias. Consumers `#[path]`-include `tests/definitions/guarded_rho.rs` and name the module
+// `guardedrho` at the include site (the macro derives that name from the language NAME, which
+// is what the `guardedrho_generated_tests!` wrapper uses).
+// #[cfg(feature = "guarded-rho")]
+// pub use guarded_rho as guardedrho;
 // Task #11 (extended 2026-07-26): `LedTest` is test-hosted now, so there is no library
 // module to alias. Consumers `#[path]`-include `tests/definitions/led_test.rs` and name the
 // module `ledtest` at the include site (the macro derives the alias from the language NAME,

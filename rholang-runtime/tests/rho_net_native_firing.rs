@@ -37,7 +37,15 @@
 //! (`RhoLoweringTotalOrRejects.v`).
 #![cfg(feature = "native-demo-runtime")]
 
-use mettail_languages::nativedemo::NativeDemoLanguage;
+// Task #11 (extended 2026-07-26): `NativeDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/nativedemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `nativedemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/nativedemo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/nativedemo.rs"]
+mod nativedemo;
+
+use nativedemo::NativeDemoLanguage;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,

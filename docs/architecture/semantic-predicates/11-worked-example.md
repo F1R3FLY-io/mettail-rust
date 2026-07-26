@@ -8,7 +8,7 @@ This document instantiates the whole suite on one real language. It follows
 guarded receive — from its `language!` declaration, through the substrate's
 compile-time classification, to the fail-closed flip gate, to host-routed run-time
 enforcement. Every fact below is taken from the shipping source
-(`languages/src/guarded_rho.rs`), the live planning test
+(`languages/tests/definitions/guarded_rho.rs`), the live planning test
 (`languages/tests/guarded_rho_rho_backend.rs`), and the host oracle
 (`rholang-runtime/tests/rho_guard_oracle.rs`).
 

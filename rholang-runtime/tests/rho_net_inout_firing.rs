@@ -42,7 +42,15 @@
 //! other family.
 #![cfg(feature = "in-out-demo-runtime")]
 
-use mettail_languages::inoutdemo::InOutDemoLanguage;
+// Task #11 (extended 2026-07-26): `InOutDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/inoutdemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `inoutdemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/inout_dovetail_report.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/inoutdemo.rs"]
+mod inoutdemo;
+
+use inoutdemo::InOutDemoLanguage;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     rho_net_nested_structural_ac_injection_sites, suggest_rejected_rule_dispositions,

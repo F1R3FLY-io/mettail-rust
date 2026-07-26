@@ -22,31 +22,21 @@ name = "mettail_languages"
 # (already default) to give the default build a complete runtime surface.
 default = ["all-languages", "rho-codegen", "dovetail-codegen"]
 all-languages = [
-    "ac-demo",
-    "ac-bag-demo",
-    "nl-ac-demo",
-    "amb-demo",
-    "amb-new-demo",
-    "in-out-demo",
     "ambient",
     "calculator",
-    "comm-demo",
     "composition",
-    "ctx-demo",
-    "bicong-demo",
-    "guarded-rho",
     "lambda",
-    "lambda-demo",
-    "native-demo",
     "rhocalc",
-    "swap-demo",
 ]
-ac-demo = []
-ac-bag-demo = []
-nl-ac-demo = []
-amb-demo = []
-amb-new-demo = []
-in-out-demo = []
+# Task #11 (extended 2026-07-26): the twelve rho_net DEMONSTRATION grammars moved to
+# `tests/definitions/`. A TEST-HOSTED definition is not a library module, so it needs no
+# library feature; its consumers `#[path]`-include the definition file directly.
+# ac-demo = []
+# ac-bag-demo = []
+# nl-ac-demo = []
+# amb-demo = []
+# amb-new-demo = []
+# in-out-demo = []
 ambient = []
 # Task #11 (extended 2026-07-26): `AppSubst` moved to `tests/definitions/`. A TEST-HOSTED
 # definition is not a library module, so it needs no library feature; its consumers
@@ -62,15 +52,17 @@ calculator = []
 # class2smoke = []
 # class3multi = []
 # class3opt = []
-comm-demo = []
+# comm-demo = []
 composition = ["calculator", "lambda"]
-ctx-demo = []
-bicong-demo = []
+# ctx-demo = []
+# bicong-demo = []
 # Task #11 (extended 2026-07-26): the keyword-reservation FIXTURE twins moved to
 # `tests/definitions/`; their consumers `#[path]`-include the definition files directly.
 # fortran_model = []
 # reserved_model = []
-guarded-rho = []
+# Task #11 (extended 2026-07-26): `GuardedRho` (a rough PROTOTYPE for the `where` clause
+# and guards block) moved to `tests/definitions/`.
+# guarded-rho = []
 # A-11 (P3.d/F1) site-2 smoke. Task #14 (2026-07-13) closed the historical
 # compile blockers (15 term-ops codegen errors across 8 generated files +
 # the eval classify compile_error — the emitters now carry Option<Guard>
@@ -87,10 +79,10 @@ guarded-rho = []
 # `[[test]]` stanzas that gated those files are removed below for the same reason.
 # guardoptsmoke = []
 lambda = []
-lambda-demo = []
+# lambda-demo = []
 # Task #11 (extended 2026-07-26): `LedTest` moved to `tests/definitions/`.
 # led-test = []
-native-demo = []
+# native-demo = []
 # Task #11 (extended 2026-07-26): `NativeFoldDemo` moved to
 # `tests/definitions/nativefolddemo.rs`. A TEST-HOSTED definition is not a library
 # module, so it needs no library feature; its consumers `#[path]`-include the
@@ -103,7 +95,7 @@ native-demo = []
 # Task #11 (extended 2026-07-26): `RefinementSmoke` moved to `tests/definitions/`.
 # refinementsmoke = []
 rhocalc = []
-swap-demo = []
+# swap-demo = []
 ## Expose public proptest strategies for generating random well-formed terms.
 ## External crates can depend on `mettail-languages/strategies` and use
 ## `arb_{cat}(max_depth)` to generate terms for property-based testing.

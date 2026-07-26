@@ -48,6 +48,8 @@
 // binary is the sole invoker, so the generated suites stay single-instanced.
 #[path = "definitions/led_test.rs"]
 mod ledtest;
+#[path = "definitions/guarded_rho.rs"]
+mod guardedrho;
 
 use mettail_runtime::{Language, LanguageMetadata};
 use mettail_testkit::analytical::guards::check_guard_decidability;
@@ -223,7 +225,7 @@ fn lambda_guard_tiers() {
 /// premises. T2 = 0 + 0 + 1 binder = 1. worst = T2 (the single binder).
 #[test]
 fn guardedrho_guard_tiers() {
-    let meta = mettail_languages::guardedrho::GuardedRhoLanguage.metadata();
+    let meta = crate::guardedrho::GuardedRhoLanguage.metadata();
     assert_tier_tuple(meta, 8, 7, 1, 0, 0, T2);
 }
 
@@ -269,7 +271,7 @@ fn binders_never_enter_structural_tally() {
         mettail_languages::rhocalc::RhoCalcLanguage.metadata(),
         mettail_languages::ambient::AmbientLanguage.metadata(),
         mettail_languages::lambda::LambdaLanguage.metadata(),
-        mettail_languages::guardedrho::GuardedRhoLanguage.metadata(),
+        crate::guardedrho::GuardedRhoLanguage.metadata(),
     ] {
         let r = check_guard_decidability(meta);
 

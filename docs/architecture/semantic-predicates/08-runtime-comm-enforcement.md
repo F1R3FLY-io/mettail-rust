@@ -241,7 +241,7 @@ at compile time and the gate already admitted it; the handler enforces the
 
 GuardedRho is the canonical instance: its `?guard` is a `RelationQuery` over the
 external relations `halts`/`safe` "populated by user code"
-(`languages/src/guarded_rho.rs`). Host-routing via `RhoNativeJoin` is still
+(`languages/tests/definitions/guarded_rho.rs`). Host-routing via `RhoNativeJoin` is still
 **derived-required** there and not a preference — but on one premise, not two.
 `halts` and `safe` are populated outside the Rholang state a validator replays, so
 no `Receive.condition` expression can denote them; there is nothing for

@@ -64,6 +64,32 @@
 mod nativefolddemo;
 #[path = "definitions/appsubst.rs"]
 mod appsubst;
+#[path = "definitions/guarded_rho.rs"]
+mod guardedrho;
+#[path = "definitions/swapdemo.rs"]
+mod swapdemo;
+#[path = "definitions/ctxdemo.rs"]
+mod ctxdemo;
+#[path = "definitions/bicongdemo.rs"]
+mod bicongdemo;
+#[path = "definitions/acdemo.rs"]
+mod acdemo;
+#[path = "definitions/acbagdemo.rs"]
+mod acbagdemo;
+#[path = "definitions/nlacdemo.rs"]
+mod nlacdemo;
+#[path = "definitions/commdemo.rs"]
+mod commdemo;
+#[path = "definitions/lambdademo.rs"]
+mod lambdademo;
+#[path = "definitions/nativedemo.rs"]
+mod nativedemo;
+#[path = "definitions/ambdemo.rs"]
+mod ambdemo;
+#[path = "definitions/ambnewdemo.rs"]
+mod ambnewdemo;
+#[path = "definitions/inoutdemo.rs"]
+mod inoutdemo;
 
 use dovetail::rules::Pattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton, SetAutomatonView, StateId};
@@ -164,25 +190,25 @@ fn per_language_in_rho_automaton_is_size_optimal() {
         }};
     }
 
-    check!("SwapDemo", mettail_languages::swapdemo::SwapDemoLanguage, 3);
-    check!("CtxDemo", mettail_languages::ctxdemo::CtxDemoLanguage, 3);
-    check!("BiCongDemo", mettail_languages::bicongdemo::BiCongDemoLanguage, 3);
-    check!("AcDemo", mettail_languages::acdemo::AcDemoLanguage, 0);
-    check!("AcBagDemo", mettail_languages::acbagdemo::AcBagDemoLanguage, 0);
-    check!("NlAcDemo", mettail_languages::nlacdemo::NlAcDemoLanguage, 0);
-    check!("CommDemo", mettail_languages::commdemo::CommDemoLanguage, 0);
-    check!("LambdaDemo", mettail_languages::lambdademo::LambdaDemoLanguage, 4);
-    check!("NativeDemo", mettail_languages::nativedemo::NativeDemoLanguage, 3);
+    check!("SwapDemo", crate::swapdemo::SwapDemoLanguage, 3);
+    check!("CtxDemo", crate::ctxdemo::CtxDemoLanguage, 3);
+    check!("BiCongDemo", crate::bicongdemo::BiCongDemoLanguage, 3);
+    check!("AcDemo", crate::acdemo::AcDemoLanguage, 0);
+    check!("AcBagDemo", crate::acbagdemo::AcBagDemoLanguage, 0);
+    check!("NlAcDemo", crate::nlacdemo::NlAcDemoLanguage, 0);
+    check!("CommDemo", crate::commdemo::CommDemoLanguage, 0);
+    check!("LambdaDemo", crate::lambdademo::LambdaDemoLanguage, 4);
+    check!("NativeDemo", crate::nativedemo::NativeDemoLanguage, 3);
     check!("NativeFoldDemo", crate::nativefolddemo::NativeFoldDemoLanguage, 3);
-    check!("AmbDemo", mettail_languages::ambdemo::AmbDemoLanguage, 0);
-    check!("AmbNewDemo", mettail_languages::ambnewdemo::AmbNewDemoLanguage, 0);
-    check!("InOutDemo", mettail_languages::inoutdemo::InOutDemoLanguage, 0);
+    check!("AmbDemo", crate::ambdemo::AmbDemoLanguage, 0);
+    check!("AmbNewDemo", crate::ambnewdemo::AmbNewDemoLanguage, 0);
+    check!("InOutDemo", crate::inoutdemo::InOutDemoLanguage, 0);
     check!("RhoCalc", mettail_languages::rhocalc::RhoCalcLanguage, 130);
     check!("Calculator", mettail_languages::calculator::CalculatorLanguage, 78);
     check!("Ambient", mettail_languages::ambient::AmbientLanguage, 0);
     check!("AppSubst", crate::appsubst::AppSubstLanguage, 4);
     check!("Lambda", mettail_languages::lambda::LambdaLanguage, 4);
-    check!("GuardedRho", mettail_languages::guardedrho::GuardedRhoLanguage, 0);
+    check!("GuardedRho", crate::guardedrho::GuardedRhoLanguage, 0);
 }
 
 #[test]

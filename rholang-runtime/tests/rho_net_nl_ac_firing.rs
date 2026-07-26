@@ -14,7 +14,15 @@
 //! `rest = {B}`, and OUT is `Wrap(A)` deterministically. This is the AC3 slice's decisive evidence:
 //! the guarded, non-linear pick happens on the reducer, over the subject spread (not the report σ).
 
-use mettail_languages::nlacdemo::{NlAcDemoLanguage, NlAcDemoTerm, NlAcDemoTermInner, Proc};
+// Task #11 (extended 2026-07-26): `NlAcDemo` is a DEMONSTRATION grammar — its definition lives
+// in `languages/tests/definitions/nlacdemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `nlacdemo_generated_tests!` wrapper the expansion also defines is
+// deliberately NOT invoked: this binary is a consumer, not the definition's designated host
+// (`languages/tests/nlacdemo.rs` is), so the generated suite stays single-instanced.
+#[path = "../../languages/tests/definitions/nlacdemo.rs"]
+mod nlacdemo;
+
+use nlacdemo::{NlAcDemoLanguage, NlAcDemoTerm, NlAcDemoTermInner, Proc};
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,

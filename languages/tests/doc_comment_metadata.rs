@@ -38,7 +38,7 @@ fn optsmoke_ifelse_description_round_trips() {
         .description
         .expect("IfElse has a `///` doc comment, so description must be Some");
 
-    // The doc comment in `languages/src/optsmoke.rs` is multi-line; the
+    // The doc comment in `languages/tests/definitions/optsmoke.rs` is multi-line; the
     // first line should be present verbatim, and a blank line should be
     // preserved between the summary and the elaboration.
     assert!(

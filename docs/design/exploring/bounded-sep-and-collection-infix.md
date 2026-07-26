@@ -3,7 +3,7 @@
 **Status:** Exploring
 **Date:** 2026-04-21
 **Scope:** Extension to the `language!` macro in crates `ast`, `prattail`, `macros`
-**Target consumer:** `languages/src/guarded_rho.rs` (and, optionally, future rules with chain-infix semantics)
+**Target consumer:** `languages/tests/definitions/guarded_rho.rs` (and, optionally, future rules with chain-infix semantics)
 
 ---
 
@@ -28,7 +28,7 @@ PPar . ps:HashBag(Proc) ⊢ ps.*sep("|", 1) : Proc ;
 
 ### 1.1 Motivating Example
 
-The current GuardedRho parallel-composition rule (`languages/src/guarded_rho.rs:73`) reads:
+The current GuardedRho parallel-composition rule (`languages/tests/definitions/guarded_rho.rs:73`) reads:
 
 ```
 PPar . ps:HashBag(Proc) ⊢ "{" ps.*sep("|") "}" : Proc ;
@@ -326,7 +326,7 @@ The precedence guard `SELF_BP + 1` is conventionally associated with left-associ
 
 ### 6.1 Before and After
 
-**Before (`languages/src/guarded_rho.rs:73`):**
+**Before (`languages/tests/definitions/guarded_rho.rs:73`):**
 
 ```
 PPar . ps:HashBag(Proc) ⊢ "{" ps.*sep("|") "}" : Proc ;
@@ -431,7 +431,7 @@ GuardedRho uses `guards { channels { channel Name; join PGuardedInput(ch: Name);
 | `prattail/src/trampoline.rs:164–168`                      | Skip standalone-fn emission for collection-infix rules              | +5  |
 | `macros/src/gen/syntax/parser/prattail_bridge.rs:691–845` | Plumb `min`, `max` through Sep conversion                           | +10 |
 | `prattail/src/lint.rs`                                    | Warn on shared infix separators                                     | +20 |
-| `languages/src/guarded_rho.rs:73`                         | Drop braces, switch to `sep("\|", 1)`                               | 1   |
+| `languages/tests/definitions/guarded_rho.rs:73`                         | Drop braces, switch to `sep("\|", 1)`                               | 1   |
 | `languages/tests/gen_guardedrho_*.rs` + snapshots         | Update parse inputs                                                 | ~20 |
 
 **Net:** ≈ 356 LoC across 14 files.
@@ -439,7 +439,7 @@ GuardedRho uses `guards { channels { channel Name; join PGuardedInput(ch: Name);
 ### 8.2 Staged Rollout
 
 1. **Stage 1:** Part I (bounded `sep`) lands with `min ≥ 1` exercising only the standard recursive-descent path (no collection-infix yet). Verifiable via new unit tests.
-2. **Stage 2:** Classification predicate + LED codegen. Gated off by default; `languages/src/guarded_rho.rs` stays on the braced form.
+2. **Stage 2:** Classification predicate + LED codegen. Gated off by default; `languages/tests/definitions/guarded_rho.rs` stays on the braced form.
 3. **Stage 3:** Flip GuardedRho to the bracket-free form. Verify property tests still pass.
 4. **Stage 4:** Lint for shared infix separators. Emit as warnings initially; promote to deny-by-default after one release cycle.
 

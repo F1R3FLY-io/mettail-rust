@@ -36,7 +36,7 @@ targets).
     field (proven by the struct literal at `rholang-runtime/src/rhocalc_ast.rs:413-418`,
     which specifies all fields with no `..default`). RSpace matching is purely structural.
   - GuardedRho's `?guard` is a `BehavioralPred::RelationQuery` over the **external relations**
-    `halts`/`safe`, "populated by user code" (`languages/src/guarded_rho.rs:33-34,92-95`).
+    `halts`/`safe`, "populated by user code" (`languages/tests/definitions/guarded_rho.rs:33-34,92-95`).
     These are not Rholang-computable and not structural patterns, so they cannot be encoded in
     a `ReceiveBind` pattern, nor evaluated in a desugared `Par` body.
   - Therefore lowering `PGuardedInput` to a plain `rhoapi` `Receive` would have to DROP the

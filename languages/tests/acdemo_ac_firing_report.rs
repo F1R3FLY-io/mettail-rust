@@ -10,7 +10,21 @@
 //! `RuntimeReflectedSubterm { constructor: "PPar", children: [complement elements] }` and the
 //! whole operand bag is `[σ[x]] ⊎ σ[rest].children`.
 
-use mettail_languages::acdemo::{AcDemoLanguage, AcDemoTerm, AcDemoTermInner, Proc};
+// Task #11 (extended 2026-07-26): `AcDemo` is a DEMONSTRATION grammar, not a production
+// language, so its definition lives in `languages/tests/definitions/acdemo.rs` rather than in
+// the `languages` library (`languages/src/` is production-only).
+//
+// This file is its DESIGNATED HOST: it declares the definition module and is the one and only
+// invoker of the opt-in `acdemo_generated_tests!` wrapper, which materializes the
+// macro-generated sections that used to be written to `languages/tests/gen_acdemo_*.rs`.
+// Other consumers `#[path]`-include the same definition WITHOUT invoking the wrapper, so the
+// generated tests exist exactly once across the whole suite.
+#[path = "definitions/acdemo.rs"]
+mod acdemo;
+
+acdemo::acdemo_generated_tests!(crate::acdemo);
+
+use acdemo::{AcDemoLanguage, AcDemoTerm, AcDemoTermInner, Proc};
 use mettail_runtime::RuntimeReflectedSubterm;
 
 /// A σ sub-term is a "bare element" iff it is a nullary constructor whose label is one of the

@@ -1578,7 +1578,7 @@ fn exempt_or_record(
 /// empty premise list (a base rewrite) is never exempt either. Proven
 /// outcome-neutral corpus-wide (red-team F13): every bundled congruence rewrite
 /// carries only congruence premises — the only multi-premise rewrite,
-/// `bicongdemo`'s `NodeCong` (`languages/src/bicongdemo.rs`), carries two
+/// `bicongdemo`'s `NodeCong` (`languages/tests/definitions/bicongdemo.rs`), carries two
 /// congruence premises and stays exempt under `all`; auto-injected `NormCast`
 /// rules carry only `SyntheticInjGuard` (no congruence premise) and are unaffected.
 ///
@@ -12996,7 +12996,7 @@ mod tests {
         assert!(!first_par.receives.is_empty(), "the SwapStep σ-receiver is installed");
     }
 
-    /// The BiCongDemo shape (mirrors `languages/src/bicongdemo.rs` — `NodeCong`
+    /// The BiCongDemo shape (mirrors `languages/tests/definitions/bicongdemo.rs` — `NodeCong`
     /// carries TWO congruence premises): the red-team F13 regression pin for the
     /// `any→all` hardening.
     const BICONG_DEMO_FRAGMENT: &str = r#"
