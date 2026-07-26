@@ -44,7 +44,7 @@
 use mettail_languages::calculator::CalculatorLanguage;
 use mettail_repl::rho_backends::{
     acdemo_backed, ambient_backed, calculator_backed, ctxdemo_backed, lambda_backed,
-    nativefolddemo_backed, rhocalc_backed, swapdemo_backed,
+    rhocalc_backed, swapdemo_backed,
 };
 use mettail_rholang_codegen::{
     RhoFoldDataflowDisposition, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
@@ -338,36 +338,45 @@ fn a_s6_admitted_ctxdemo_base_flip_exec_builds_no_dovetail_report() {
     );
 }
 
-/// A-S6: an ADMITTED native-demo exec through the REGISTERED wrapper computes on the
-/// machine with ZERO Dovetail reports — the located AddInt site registers its machine-side
-/// handler (the wrapper's clear/drain bracket) and the dispatch COMM computes `2 + 3 = 5`
-/// at COMM time (closing the A-S3 note above: the native demos are REPL backends now).
-#[test]
-fn a_s6_admitted_nativefolddemo_exec_builds_no_dovetail_report() {
-    let language = nativefolddemo_backed().expect("NativeFoldDemo lazy backend installs");
-    let term = language.parse_term("2 + 3").expect("the native redex parses");
-
-    let before = dovetail_report_invocations();
-    let report = language
-        .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
-        .expect("the admitted NativeFoldDemo exec runs report-free on the machine");
-    let after = dovetail_report_invocations();
-
-    assert_eq!(
-        after - before,
-        0,
-        "an ADMITTED NativeFoldDemo exec must build ZERO Dovetail reports (A-S6)"
-    );
-    assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
-    let out = report
-        .observations_for_channel("OUT")
-        .expect("an OUT observation");
-    assert_eq!(
-        out.values,
-        vec![term_obs("NumLit(5)", Vec::new())],
-        "the registered handler computed 2 + 3 = 5 at COMM time"
-    );
-}
+// Task #11 (extended 2026-07-26) — TURNED OFF, not deleted. This test asserted the
+// zero-D-stage property of NativeFoldDemo's *REPL-REGISTERED* wrapper. Per the USER
+// decision "I don't want REPL integration for the non-production grammars!",
+// NativeFoldDemo is no longer REPL-registered and `nativefolddemo_backed` no longer
+// exists, so the property this test names has no subject in the REPL any more. It is
+// NOT relocatable: the subject was the registration itself, not the language. The
+// underlying in-Rho native-scalar-fold firing stays covered end-to-end by
+// `rholang-runtime/tests/rho_net_native_fold_firing.rs`. The remaining production
+// languages in this file keep the zero-D-stage lock unchanged.
+// /// A-S6: an ADMITTED native-demo exec through the REGISTERED wrapper computes on the
+// /// machine with ZERO Dovetail reports — the located AddInt site registers its machine-side
+// /// handler (the wrapper's clear/drain bracket) and the dispatch COMM computes `2 + 3 = 5`
+// /// at COMM time (closing the A-S3 note above: the native demos are REPL backends now).
+// #[test]
+// fn a_s6_admitted_nativefolddemo_exec_builds_no_dovetail_report() {
+//     let language = nativefolddemo_backed().expect("NativeFoldDemo lazy backend installs");
+//     let term = language.parse_term("2 + 3").expect("the native redex parses");
+//
+//     let before = dovetail_report_invocations();
+//     let report = language
+//         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
+//         .expect("the admitted NativeFoldDemo exec runs report-free on the machine");
+//     let after = dovetail_report_invocations();
+//
+//     assert_eq!(
+//         after - before,
+//         0,
+//         "an ADMITTED NativeFoldDemo exec must build ZERO Dovetail reports (A-S6)"
+//     );
+//     assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
+//     let out = report
+//         .observations_for_channel("OUT")
+//         .expect("an OUT observation");
+//     assert_eq!(
+//         out.values,
+//         vec![term_obs("NumLit(5)", Vec::new())],
+//         "the registered handler computed 2 + 3 = 5 at COMM time"
+//     );
+// }
 
 /// A-S3/A-S4 probe helper: whether the prost-encoded bytes of `par` contain `needle`.
 fn par_bytes_contain(par: &Par, needle: &[u8]) -> bool {

@@ -516,7 +516,10 @@ mod tests {
         ("lambda", include_str!("../../../../languages/src/lambda.rs")),
         ("led_test", include_str!("../../../../languages/src/led_test.rs")),
         ("nativedemo", include_str!("../../../../languages/src/nativedemo.rs")),
-        ("nativefolddemo", include_str!("../../../../languages/src/nativefolddemo.rs")),
+        (
+            "nativefolddemo",
+            include_str!("../../../../languages/tests/definitions/nativefolddemo.rs"),
+        ),
         ("nlacdemo", include_str!("../../../../languages/src/nlacdemo.rs")),
         // Task #11: TEST-HOSTED — this definition lives in `languages/tests/definitions/`,
         // not in the library (`options { hosted_in: … }`). `include_str!` needs a LITERAL

@@ -61,8 +61,11 @@ pub mod lambdademo;
 #[cfg(feature = "native-demo")]
 pub mod nativedemo;
 // Stage 3f (rho-native): the native-scalar-fold (`![…] fold` AddInt) firing demonstration.
-#[cfg(feature = "native-fold-demo")]
-pub mod nativefolddemo;
+// Task #11 (extended 2026-07-26): `NativeFoldDemo` is a DEMONSTRATION language definition;
+// it moved to `languages/tests/definitions/nativefolddemo.rs`. `languages/src/` is
+// production-only. Consumers `#[path]`-include the definition file directly.
+// #[cfg(feature = "native-fold-demo")]
+// pub mod nativefolddemo;
 // PIECE 3: keyword-reservation OPT-OUT fixture (Fortran-style full ambiguity).
 #[cfg(feature = "fortran_model")]
 pub mod fortran_model;

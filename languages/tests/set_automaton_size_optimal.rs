@@ -54,6 +54,15 @@
 //! RhoCalc 124 states / 117 entries / 314 raw nodes; Calculator 72 / 70 / 188; every
 //! demo language ≤ 4 states.
 
+// Task #11 (extended 2026-07-26): the DEMONSTRATION / fixture languages are test-hosted
+// (`options { hosted_in: "tests/definitions/<lang>.rs" }`) — their definitions left the
+// `languages` library, so they are `#[path]`-included here rather than named through
+// `mettail_languages::<lang>`. This file does NOT invoke any `<lang>_generated_tests!`
+// wrapper; each definition's DESIGNATED HOST binary (`languages/tests/<lang>.rs`) is the
+// sole invoker, so the generated suites exist exactly once across the whole suite.
+#[path = "definitions/nativefolddemo.rs"]
+mod nativefolddemo;
+
 use dovetail::rules::Pattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton, SetAutomatonView, StateId};
 use mettail_rholang_codegen::{compile_in_rho_matching_ruleset, reconstruct_language_def};
@@ -162,7 +171,7 @@ fn per_language_in_rho_automaton_is_size_optimal() {
     check!("CommDemo", mettail_languages::commdemo::CommDemoLanguage, 0);
     check!("LambdaDemo", mettail_languages::lambdademo::LambdaDemoLanguage, 4);
     check!("NativeDemo", mettail_languages::nativedemo::NativeDemoLanguage, 3);
-    check!("NativeFoldDemo", mettail_languages::nativefolddemo::NativeFoldDemoLanguage, 3);
+    check!("NativeFoldDemo", crate::nativefolddemo::NativeFoldDemoLanguage, 3);
     check!("AmbDemo", mettail_languages::ambdemo::AmbDemoLanguage, 0);
     check!("AmbNewDemo", mettail_languages::ambnewdemo::AmbNewDemoLanguage, 0);
     check!("InOutDemo", mettail_languages::inoutdemo::InOutDemoLanguage, 0);

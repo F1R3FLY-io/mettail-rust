@@ -21,7 +21,12 @@ fn default_backends() -> HashMap<String, Option<RuntimeBackend>> {
 }
 
 /// A-S6: every rho_net demo language registered by the production `build_registry`.
-const A_S6_DEMOS: [&str; 13] = [
+///
+/// Task #11 (extended 2026-07-26): shrinking as the DEMONSTRATION grammars are
+/// de-productionized out of the REPL registry (USER: "I don't want REPL integration for
+/// the non-production grammars!"). An entry removed here is not a lost assertion — the
+/// language stops being a registry member by design.
+const A_S6_DEMOS: [&str; 12] = [
     "SwapDemo",
     "AcDemo",
     "AcBagDemo",
@@ -34,7 +39,7 @@ const A_S6_DEMOS: [&str; 13] = [
     "BiCongDemo",
     "LambdaDemo",
     "NativeDemo",
-    "NativeFoldDemo",
+    // "NativeFoldDemo",  // de-productionized 2026-07-26 (test-hosted)
 ];
 
 #[test]

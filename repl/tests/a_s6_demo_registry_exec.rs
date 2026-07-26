@@ -273,17 +273,22 @@ fn a_s6_nativedemo_powint_computes_on_the_machine() {
     assert_eq!(out, vec![nullary("NumLit(8)")], "the handler computed 2^3 = 8 at COMM time");
 }
 
-/// Native scalar fold, MULTI-SITE: NativeFoldDemo's `1 + 2 + 3` locates BOTH AddInt
-/// sites — each drives its own machine-side handler invocation (A-S3 lifts the
-/// single-native-firing restriction on the admitted path).
-#[test]
-fn a_s6_nativefolddemo_multi_site_folds_compute_on_the_machine() {
-    let (out, delta) = registry_exec("NativeFoldDemo", "1 + 2 + 3", "OUT");
-    assert_eq!(delta, 0, "an ADMITTED NativeFoldDemo exec builds ZERO Dovetail reports");
-    assert_eq!(out.len(), 2, "both located AddInt sites fired: {out:?}");
-    assert!(
-        out.contains(&nullary("NumLit(3)")) && out.contains(&nullary("NumLit(6)")),
-        "the nested site computes 1 + 2 = 3 and the root site computes (1 + 2) + 3 = 6 \
-         (recursive ground evaluation of the captured subtree): {out:?}"
-    );
-}
+// Task #11 (extended 2026-07-26) — TURNED OFF, not deleted. `registry_exec("NativeFoldDemo", …)`
+// resolves the language through the REPL REGISTRY, and per the USER decision "I don't want REPL
+// integration for the non-production grammars!" NativeFoldDemo is no longer registered. The
+// multi-site native-scalar-fold behavior itself is unaffected and stays covered by
+// `rholang-runtime/tests/rho_net_native_fold_firing.rs`.
+// /// Native scalar fold, MULTI-SITE: NativeFoldDemo's `1 + 2 + 3` locates BOTH AddInt
+// /// sites — each drives its own machine-side handler invocation (A-S3 lifts the
+// /// single-native-firing restriction on the admitted path).
+// #[test]
+// fn a_s6_nativefolddemo_multi_site_folds_compute_on_the_machine() {
+//     let (out, delta) = registry_exec("NativeFoldDemo", "1 + 2 + 3", "OUT");
+//     assert_eq!(delta, 0, "an ADMITTED NativeFoldDemo exec builds ZERO Dovetail reports");
+//     assert_eq!(out.len(), 2, "both located AddInt sites fired: {out:?}");
+//     assert!(
+//         out.contains(&nullary("NumLit(3)")) && out.contains(&nullary("NumLit(6)")),
+//         "the nested site computes 1 + 2 = 3 and the root site computes (1 + 2) + 3 = 6 \
+//          (recursive ground evaluation of the captured subtree): {out:?}"
+//     );
+// }

@@ -72,7 +72,9 @@ fn a_s6_demos_exec_fail_closed_pointing_at_the_rho_build() {
         ("BiCongDemo", "node(swap(A, B), swap(C, D))"),
         ("LambdaDemo", "(lam x. f(x), A)"),
         ("NativeDemo", "2 ^ 3"),
-        ("NativeFoldDemo", "2 + 3"),
+        // Task #11 (extended 2026-07-26): NativeFoldDemo is de-productionized out of the
+        // REPL registry (test-hosted definition), so it has no fail-closed wrapper here.
+        // ("NativeFoldDemo", "2 + 3"),
     ] {
         let language = registry.get(name).expect("the demo registers");
         let term = language

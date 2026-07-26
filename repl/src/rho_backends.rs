@@ -71,7 +71,6 @@ mod dovetail_only {
     use mettail_languages::lambda::LambdaLanguage;
     use mettail_languages::lambdademo::LambdaDemoLanguage;
     use mettail_languages::nativedemo::NativeDemoLanguage;
-    use mettail_languages::nativefolddemo::NativeFoldDemoLanguage;
     use mettail_languages::nlacdemo::NlAcDemoLanguage;
     use mettail_languages::swapdemo::SwapDemoLanguage;
     use mettail_runtime::{
@@ -289,17 +288,20 @@ mod dovetail_only {
         /// NativeDemo in the Dovetail-only profile (fail-closed, A-S6).
         nativedemo_backed, NativeDemoLanguage
     );
-    demo_fail_closed!(
-        /// NativeFoldDemo in the Dovetail-only profile (fail-closed, A-S6).
-        nativefolddemo_backed, NativeFoldDemoLanguage
-    );
+    // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED alongside the `rho` profile's
+    // `nativefolddemo_backed` (see the rationale there). Commented out, not deleted.
+    //
+    // demo_fail_closed!(
+    //     /// NativeFoldDemo in the Dovetail-only profile (fail-closed, A-S6).
+    //     nativefolddemo_backed, NativeFoldDemoLanguage
+    // );
 }
 
 #[cfg(not(feature = "rho-languages"))]
 pub use dovetail_only::{
     acbagdemo_backed, acdemo_backed, ambdemo_backed, ambient_backed, ambnewdemo_backed,
     bicongdemo_backed, commdemo_backed, ctxdemo_backed, inoutdemo_backed, lambda_backed,
-    lambdademo_backed, nativedemo_backed, nativefolddemo_backed, nlacdemo_backed, swapdemo_backed,
+    lambdademo_backed, nativedemo_backed, nlacdemo_backed, swapdemo_backed,
 };
 
 #[cfg(feature = "rho-languages")]
@@ -319,7 +321,6 @@ mod rho {
     use mettail_languages::lambda::LambdaLanguage;
     use mettail_languages::lambdademo::LambdaDemoLanguage;
     use mettail_languages::nativedemo::NativeDemoLanguage;
-    use mettail_languages::nativefolddemo::NativeFoldDemoLanguage;
     use mettail_languages::nlacdemo::NlAcDemoLanguage;
     use mettail_languages::swapdemo::SwapDemoLanguage;
     use mettail_runtime::{Language, RuntimeDovetailRunReport, Term};
@@ -927,19 +928,28 @@ mod rho {
         step: typed_step_graph, fallback: match_then_replay
     );
 
-    demo_rho_backed!(
-        /// NativeFoldDemo (the native scalar-fold `AddInt` demonstration) → two-stage
-        /// lazy Dovetail+Rholang backend (A-S6). Multi-site subjects admit — each
-        /// located site drives its own machine-side handler invocation.
-        nativefolddemo_backed, NativeFoldDemoLanguage, "NativeFoldDemo",
-        step: typed_step_graph, fallback: match_then_replay
-    );
+    // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't want
+    // REPL integration for the non-production grammars!" `NativeFoldDemo` is a Stage 3f
+    // DEMONSTRATION grammar; its definition moved to
+    // `languages/tests/definitions/nativefolddemo.rs` and is no longer a library module, so
+    // the REPL cannot (and must not) register it. The in-Rho native-scalar-fold firing path
+    // this wrapper used to expose interactively remains covered end-to-end by
+    // `rholang-runtime/tests/rho_net_native_fold_firing.rs`, which `#[path]`-includes the
+    // definition directly. Commented out rather than deleted so the A-S6 shape stays legible.
+    //
+    // demo_rho_backed!(
+    //     /// NativeFoldDemo (the native scalar-fold `AddInt` demonstration) → two-stage
+    //     /// lazy Dovetail+Rholang backend (A-S6). Multi-site subjects admit — each
+    //     /// located site drives its own machine-side handler invocation.
+    //     nativefolddemo_backed, NativeFoldDemoLanguage, "NativeFoldDemo",
+    //     step: typed_step_graph, fallback: match_then_replay
+    // );
 }
 
 #[cfg(feature = "rho-languages")]
 pub use rho::{
     acbagdemo_backed, acdemo_backed, ambdemo_backed, ambient_backed, ambnewdemo_backed,
     bicongdemo_backed, calculator_backed, commdemo_backed, ctxdemo_backed, inoutdemo_backed,
-    lambda_backed, lambdademo_backed, nativedemo_backed, nativefolddemo_backed, nlacdemo_backed,
-    rhocalc_backed, swapdemo_backed,
+    lambda_backed, lambdademo_backed, nativedemo_backed, nlacdemo_backed, rhocalc_backed,
+    swapdemo_backed,
 };

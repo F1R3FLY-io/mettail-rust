@@ -39,7 +39,16 @@
 //! correspondence (`LinearCommCorrespondence.v`) and install boundary (`RhoLoweringTotalOrRejects.v`).
 #![cfg(feature = "native-fold-demo-runtime")]
 
-use mettail_languages::nativefolddemo::NativeFoldDemoLanguage;
+// Task #11 (extended 2026-07-26): `NativeFoldDemo` is TEST-HOSTED — its definition lives in
+// `languages/tests/definitions/nativefolddemo.rs`, not in the `languages` library, so it is
+// `#[path]`-included here. The `nativefolddemo_generated_tests!` wrapper the expansion also
+// defines is deliberately NOT invoked: this binary is a consumer, not the definition's
+// designated host (`languages/tests/nativefolddemo.rs` is), so the generated suite stays
+// single-instanced across the workspace.
+#[path = "../../languages/tests/definitions/nativefolddemo.rs"]
+mod nativefolddemo;
+
+use nativefolddemo::NativeFoldDemoLanguage;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,

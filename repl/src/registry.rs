@@ -226,7 +226,12 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         registry.register(crate::rho_backends::bicongdemo_backed()?);
         registry.register(crate::rho_backends::lambdademo_backed()?);
         registry.register(crate::rho_backends::nativedemo_backed()?);
-        registry.register(crate::rho_backends::nativefolddemo_backed()?);
+        // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
+        // want REPL integration for the non-production grammars!" NativeFoldDemo is a
+        // DEMONSTRATION grammar whose definition moved to
+        // `languages/tests/definitions/nativefolddemo.rs`; it is no longer a library module,
+        // so there is nothing to register. Commented out, not deleted.
+        // registry.register(crate::rho_backends::nativefolddemo_backed()?);
         Ok(registry)
     }
 
@@ -254,7 +259,12 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         registry.register(crate::rho_backends::bicongdemo_backed()?);
         registry.register(crate::rho_backends::lambdademo_backed()?);
         registry.register(crate::rho_backends::nativedemo_backed()?);
-        registry.register(crate::rho_backends::nativefolddemo_backed()?);
+        // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
+        // want REPL integration for the non-production grammars!" NativeFoldDemo is a
+        // DEMONSTRATION grammar whose definition moved to
+        // `languages/tests/definitions/nativefolddemo.rs`; it is no longer a library module,
+        // so there is nothing to register. Commented out, not deleted.
+        // registry.register(crate::rho_backends::nativefolddemo_backed()?);
         Ok(registry)
     }
 

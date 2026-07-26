@@ -231,13 +231,29 @@ in-out-demo-runtime = [
 # arithmetic `AddInt(a, b) ~> a + b` firing as a COMM on the reducer, emitting the reduced value the
 # host computed. Needs the generated `dovetail_report_for` (native-fold firing σ + contractum
 # population, `dovetail-codegen`) and the native-fold σ-injection F-function (`rho-codegen`).
-native-fold-demo-runtime = [
-    "runtime-report",
-    "dep:mettail-languages",
-    "mettail-languages/native-fold-demo",
-    "mettail-languages/dovetail-codegen",
-    "mettail-languages/rho-codegen",
-]
+# Task #11 (extended 2026-07-26): `NativeFoldDemo` is now TEST-HOSTED
+# (`languages/tests/definitions/nativefolddemo.rs`), so the test `#[path]`-includes the
+# definition instead of importing `mettail_languages::nativefolddemo`. The two codegen
+# gates therefore have to be satisfied by THIS crate — see `rho-codegen` /
+# `dovetail-codegen` below.
+native-fold-demo-runtime = ["runtime-report", "rho-codegen", "dovetail-codegen"]
+# Task #11 (extended 2026-07-26) — the TEST-HOSTED demo-language codegen gates.
+#
+# A `language!` expansion carries `#[cfg(feature = "rho-codegen")]` and
+# `#[cfg(feature = "dovetail-codegen")]` blocks (the Rho σ-injection F-functions and the
+# Dovetail report compiler respectively). A `cfg` inside a macro expansion resolves
+# against the crate BEING COMPILED, so while the demo definitions lived in
+# `languages/src/` those gates were satisfied by the `languages` crate's own features and
+# the `*-demo-runtime` features here forwarded them (`mettail-languages/rho-codegen`).
+#
+# The demo definitions are now `#[path]`-included directly into THIS crate's test
+# binaries, so the gates resolve here and must be declared here. Declaring them is
+# necessary AND sufficient: every crate the gated code names is already a dependency
+# (`mettail-rholang-codegen` normal; `dovetail`, `rigail`, `mettail-dovetail-runtime`,
+# `mettail-macros` dev). Omitting them would NOT fail loudly — the gated blocks would
+# simply vanish and the tests would fail to resolve the generated helpers.
+rho-codegen = []
+dovetail-codegen = []
 # Backward-compatible test/oracle feature name. New production code should use
 # `rhocalc-runtime` directly.
 oracle-rhocalc = ["rhocalc-runtime"]
@@ -353,6 +369,18 @@ num-bigint = "0.4"
 dovetail = { package = "dovetail", path = "../dovetail", optional = true }
 
 [dev-dependencies]
+# Task #11 (extended 2026-07-26): the TEST-HOSTED demo definitions are `#[path]`-included
+# by the `rho_net_*_firing` tests, so this crate's test builds now expand `language!`
+# themselves and need the macro plus the two crates the expansion names that were
+# previously reached only transitively through `languages`.
+mettail-macros = { package = "macros", path = "../macros" }
+rigail = { path = "../rigail" }
+# The expansion's own crate references, previously satisfied by the `languages` crate on
+# these tests' behalf: `BoundTerm` derive → `::moniker`; `random_generation.rs` → `rand`;
+# `env_types.rs` / `subst.rs` env maps → `indexmap`.
+moniker = { workspace = true }
+rand = { workspace = true }
+indexmap = { workspace = true }
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive
 # the RhoRuntime run / differential oracle.
 mettail-ast = { package = "ast", path = "../ast" }
