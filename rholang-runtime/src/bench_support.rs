@@ -134,6 +134,7 @@ use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreMana
 use rspace_plus_plus::rspace::trace::event::Produce;
 use rspace_plus_plus::rspace::trace::Log;
 
+use crate::guard_par_substrate::SubstrateGuardMatcher;
 use crate::run::quoted_channel;
 
 /// Deterministic seed for every bench `inj` — the same fixed-bytes pattern as the
@@ -710,8 +711,18 @@ impl MatchAttemptCounters {
 /// and `check_commit` verbatim (cross-channel `where`-clause guards behave
 /// byte-identically — a guard veto is NOT a spatial-match failure and is
 /// deliberately not counted).
+///
+/// ★ The `check_commit` it forwards to is [`SubstrateGuardMatcher`], the SAME decider
+/// `run::build_runtime` and `step::run_stepped_inj` install — not f1r3node's `Matcher`. A
+/// benchmark runtime that decided `where` guards differently from the production bring-up it
+/// exists to measure would be a second runtime path, and there is no such thing here. It costs
+/// the measurement nothing: `check_commit` short-circuits on a continuation with no guard, which
+/// is every Track-B workload, and a guard veto was never counted either way.
 struct CountingMatcher {
+    /// f1r3node's spatial matcher, for `get` — the counted operation.
     inner: Matcher,
+    /// The production guard decider, for `check_commit` — the uncounted one.
+    guards: SubstrateGuardMatcher,
     counters: MatchAttemptCounters,
 }
 
@@ -730,7 +741,7 @@ impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for CountingMatch
     }
 
     fn check_commit(&self, k: &TaggedContinuation, matched: &[&ListParWithRandom]) -> bool {
-        self.inner.check_commit(k, matched)
+        self.guards.check_commit(k, matched)
     }
 }
 
@@ -766,6 +777,7 @@ pub async fn bench_runtime_with_counters(
         store,
         Arc::new(Box::new(CountingMatcher {
             inner: Matcher,
+            guards: SubstrateGuardMatcher::new(),
             counters: match_counters.clone(),
         })),
     )

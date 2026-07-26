@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::guard_par_substrate::SubstrateGuardMatcher;
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use mettail_rholang_codegen::ValidatedRhoProgram;
 #[cfg(feature = "runtime-report")]
@@ -27,7 +28,6 @@ use prost::Message;
 use rho_pure_eval::Env;
 use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::external_services::ExternalServices;
-use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::rho_runtime::{create_rho_runtime, RhoRuntime};
 use rholang::rust::interpreter::system_processes::Definition;
 
@@ -505,8 +505,14 @@ async fn build_runtime_with_definitions(
         .r_space_stores()
         .await
         .map_err(|e| format!("in-mem store: {e:?}"))?;
+    // ★ THE `where` → Dovetail/SFT WIRE, run-time half. `RSpace::create` takes the `Match` trait
+    // object that will decide every `where` guard at COMM time (`space_matcher.rs` →
+    // `Match::check_commit`), so the decider is chosen HERE, by whoever constructs the space —
+    // no f1r3node change. `SubstrateGuardMatcher` delegates `get` to f1r3node's `Matcher`
+    // verbatim (spatial matching is untouched) and decides `check_commit` with the substrate.
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
-        RSpace::create(store, Arc::new(Box::new(Matcher))).map_err(|e| format!("rspace: {e:?}"))?;
+        RSpace::create(store, Arc::new(Box::new(SubstrateGuardMatcher::new())))
+            .map_err(|e| format!("rspace: {e:?}"))?;
 
     Ok(create_rho_runtime(
         space,

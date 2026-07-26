@@ -39,7 +39,6 @@ use rho_pure_eval::Env;
 use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::has_cost::HasCost;
 use rholang::rust::interpreter::external_services::ExternalServices;
-use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::pretty_printer::PrettyPrinter;
 use rholang::rust::interpreter::rho_runtime::{create_rho_runtime, RhoRuntime};
 use rholang::rust::interpreter::system_processes::Definition;
@@ -54,6 +53,7 @@ use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreMana
 use rspace_plus_plus::rspace::trace::event::Produce;
 use rspace_plus_plus::rspace::trace::Log;
 
+use crate::guard_par_substrate::SubstrateGuardMatcher;
 use mettail_runtime::{
     ReductionStepper, RuntimeCommEvent, RuntimeReductionEngine, RuntimeReductionKind,
     RuntimeReductionStep, RuntimeTauClass,
@@ -618,10 +618,13 @@ fn run_stepped_inj(
             .r_space_stores()
             .await
             .map_err(|e| format!("in-mem store: {e:?}"))?;
+        // ★ THE `where` → Dovetail/SFT WIRE, run-time half — the same decider `run::build_runtime`
+        // installs, so a stepped reduction and a straight-through one decide guards identically.
+        // `get` is f1r3node's `Matcher` verbatim; only `check_commit` changes.
         let inner_space =
             RSpace::<Par, BindPattern, ListParWithRandom, TaggedContinuation>::create(
                 store,
-                Arc::new(Box::new(Matcher)),
+                Arc::new(Box::new(SubstrateGuardMatcher::new())),
             )
             .map_err(|e| format!("rspace: {e:?}"))?;
         let output_observer = observer.clone();
