@@ -168,6 +168,19 @@ lambda-runtime = [
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
+# Pulls in the PRODUCTION `Calculator` language so the `rhocalc` interpreter can register it as the
+# `calc` Foreign Language Term guest. A bare `calc`…`` term is evaluated on the reducer through the
+# E3 FOLD DATAFLOW (`CalculatorLanguage::rho_fold_dataflow_invocation_to` — `rho-codegen`), which
+# wires the parsed expression tree through one installed Rholang contract per operator node, so
+# `2 + 3 * 4` executes as real metered arithmetic on the f1r3node reducer. `dovetail-codegen`
+# supplies the backend plan surface, exactly as for `lambda-runtime`.
+calculator-runtime = [
+    "runtime-report",
+    "dep:mettail-languages",
+    "mettail-languages/calculator",
+    "mettail-languages/dovetail-codegen",
+    "mettail-languages/rho-codegen",
+]
 # A-S5.5: pulls in the PRODUCTION `Ambient` language for the end-to-end in-Rho
 # QUIESCENCE-DRIVER firing suite (`rho_net_ambient_full`) — the generated
 # `rho_net_drive_invocation_to` seed driving REAL Ambient subjects (Open/In/the
@@ -719,13 +732,13 @@ required-features = ["rhocalc-runtime"]
 
 # The `rhocalc` interpreter binary. It parses RhoCalc (Rholang 1.4) source with the GENERATED
 # parser, lowers it (`lower_rhocalc_proc_with_resolver`), and evaluates on the f1r3node reducer.
-# The RhoCalc grammar supports Foreign Language Terms, so the interpreter bundles the `lam` guest
+# The RhoCalc grammar supports Foreign Language Terms, so the interpreter bundles the `lambda` guest
 # (the production LambdaLanguage) to lower programs that embed λ-terms — hence `lambda-runtime`;
 # `rhocalc-runtime` provides the generated `Proc` parser.
 [[bin]]
 name = "rhocalc"
 path = "src/bin/rhocalc.rs"
-required-features = ["rhocalc-runtime", "lambda-runtime"]
+required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
 
 # CI gate for the `rhocalc` binary: runs it on the committed demo `.rho` file and asserts the
 # RhoCalc program (which exercises the grammar's FLT feature) reduces on the reducer — the COMM
@@ -733,7 +746,7 @@ required-features = ["rhocalc-runtime", "lambda-runtime"]
 [[test]]
 name = "rhocalc_bin"
 path = "tests/rhocalc_bin.rs"
-required-features = ["rhocalc-runtime", "lambda-runtime"]
+required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
 
 # `where`-guard expression lowering + the monadic receive arity, through the production parse and
 # lowering path. Pins BOTH directions of the guard matrix (a true guard fires, a false guard does
@@ -750,4 +763,4 @@ required-features = ["rhocalc-runtime"]
 [[test]]
 name = "rhocalc_bin_guards"
 path = "tests/rhocalc_bin_guards.rs"
-required-features = ["rhocalc-runtime", "lambda-runtime"]
+required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]

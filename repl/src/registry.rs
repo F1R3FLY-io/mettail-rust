@@ -79,7 +79,7 @@ impl Default for LanguageRegistry {
 
 /// FLT (Foreign Language Term) Phase 2 — the tag-keyed resolver over a [`LanguageRegistry`].
 ///
-/// An FLT surface `` L`…` `` names its guest language by a REQUIRED reserved tag `L` (e.g. `lam`);
+/// An FLT surface `` L`…` `` names its guest language by a REQUIRED reserved tag `L` (e.g. `lambda`);
 /// this resolver maps that tag to the guest [`Language`] value and its stable
 /// `definition_fingerprint()` — the `fp` every public FLT reflector
 /// ([`mettail_rholang_codegen::reflect_flt_pattern`] et al.) keys its unforgeable reflected tags on.
@@ -87,7 +87,7 @@ impl Default for LanguageRegistry {
 /// first-match composition is moot (design §Registry).
 ///
 /// The reserved tag need not equal the language NAME (the registry key). A tag alias
-/// ([`register_tag`](Self::register_tag)) maps a surface tag (e.g. `lam`) to a guest language name
+/// ([`register_tag`](Self::register_tag)) maps a surface tag (e.g. `lambda`) to a guest language name
 /// (e.g. `Lambda`); [`resolve`](Self::resolve) falls back to treating the tag AS a language name
 /// when no alias is registered.
 pub struct FltResolver<'a> {
@@ -113,13 +113,13 @@ impl<'a> FltResolver<'a> {
         }
     }
 
-    /// A resolver pre-seeded with the bundled FLT surface-tag aliases (the demo's `lam` → `Lambda`)
+    /// A resolver pre-seeded with the bundled FLT surface-tag aliases (the demo's `lambda` → `Lambda`)
     /// and — where the codegen reflector surface is linked — the matching guest reflectors.
     pub fn with_default_aliases(registry: &'a LanguageRegistry) -> Self {
         let mut resolver = Self::new(registry);
-        resolver.register_tag("lam", "Lambda");
+        resolver.register_tag("lambda", "Lambda");
         #[cfg(feature = "rho-languages")]
-        resolver.register_guest("lam", Box::new(mettail_languages::lambda::LambdaLanguage));
+        resolver.register_guest("lambda", Box::new(mettail_languages::lambda::LambdaLanguage));
         resolver
     }
 
@@ -294,7 +294,7 @@ pub fn build_registry() -> Result<LanguageRegistry> {
 mod flt_resolver_tests {
     use super::*;
 
-    /// GATE (Phase 2 Stage 4): the FLT tag `lam` resolves to the Lambda language and its Phase-1
+    /// GATE (Phase 2 Stage 4): the FLT tag `lambda` resolves to the Lambda language and its Phase-1
     /// definition fingerprint; the tag is also resolvable AS the language name, and an unknown tag
     /// fails closed.
     #[test]
@@ -302,8 +302,8 @@ mod flt_resolver_tests {
         let registry = build_registry().expect("the production registry builds");
         let resolver = FltResolver::with_default_aliases(&registry);
 
-        let (language, fingerprint) = resolver.resolve("lam").expect("the `lam` tag resolves");
-        assert_eq!(language.name(), "Lambda", "the `lam` tag resolves to the Lambda language");
+        let (language, fingerprint) = resolver.resolve("lambda").expect("the `lambda` tag resolves");
+        assert_eq!(language.name(), "Lambda", "the `lambda` tag resolves to the Lambda language");
         assert_eq!(
             fingerprint, "mettail-langdef-v1:6ef0c40636bb0bca",
             "the resolved fingerprint is the Phase-1 Lambda definition fingerprint"
@@ -317,7 +317,7 @@ mod flt_resolver_tests {
         assert!(resolver.resolve("not-a-language").is_err(), "an unknown FLT tag fails closed");
     }
 
-    /// THE Stage-4 gate: `parse_and_reflect_flt("lam", "(f, lam a. lam b. a)")` — the guest surface
+    /// THE Stage-4 gate: `parse_and_reflect_flt("lambda", "(f, lam a. lam b. a)")` — the guest surface
     /// of `App($f, K)` — reflects to `App(^free(f), K)` with a STABLE `^free(f)` hole leaf (the
     /// moniker `pretty_name` "f", NOT the reflector's `format!("{:?}", fv)` debug string), paired
     /// with the Lambda definition fingerprint.
@@ -332,8 +332,8 @@ mod flt_resolver_tests {
         let resolver = FltResolver::with_default_aliases(&registry);
 
         let (ground, fingerprint) = resolver
-            .parse_and_reflect_flt("lam", "(f, lam a. lam b. a)")
-            .expect("the `lam` FLT template `App($f, K)` reflects");
+            .parse_and_reflect_flt("lambda", "(f, lam a. lam b. a)")
+            .expect("the `lambda` FLT template `App($f, K)` reflects");
         assert_eq!(
             fingerprint, "mettail-langdef-v1:6ef0c40636bb0bca",
             "the reflection is paired with the Lambda definition fingerprint"

@@ -1,0 +1,9 @@
+// Ω — the term that β-reduces to ITSELF, forever. `(λx. x x)(λx. x x)` steps to `(λx. x x)(λx. x x)`.
+//
+// The in-Rho driver is fuel-bounded, so it stops and SAYS SO on the ^drive-fuel channel, naming the
+// redex it could not finish. Run-to-completion that cannot complete reports; it does not hang, and
+// it does not quietly hand back a half-reduced term as if it were an answer.
+//
+// EXPECT   reduction fuel exhausted, stuck redex ⟦(λ.(0 0) λ.(0 0))⟧
+
+lambda`(lam x. (x, x), lam x. (x, x))`

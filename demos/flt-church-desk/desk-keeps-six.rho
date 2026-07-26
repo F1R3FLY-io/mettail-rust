@@ -1,0 +1,17 @@
+// `desk-keeps-five.rho` with ONE token changed: the guard now names Church 6. Same three terms,
+// same channel, same receive pattern, same order in the file — a different answer comes out.
+//
+// So the guard is genuinely DECIDED, not failing closed: a guard the substrate could not decide
+// would reject everything and this file would publish nothing. And Church 5 was resting on
+// @"results" during the previous run all along — the desk SELECTS out of the set, it does not
+// consume it.
+//
+// EXPECT   @"OUT" = Church numeral 6      (5 and 0 left resting on @"results")
+
+@"results"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
+@"results"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, (f, x))))))`) |
+@"results"!(lambda`lam f. lam x. x`) |
+
+for(@lambda`${r}` <- @"results" where lambda`${r}` == lambda`lam f. lam x. (f, (f, (f, (f, (f, (f, x))))))`) {
+  @"OUT"!(lambda`${r}`)
+}

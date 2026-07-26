@@ -1,0 +1,14 @@
+// Three λ-terms rest on one channel — Church 5, Church 6, Church 0. A `where` guard selects ONE.
+// The other two are NOT consumed: they are still on @"results" when the program comes to rest.
+//
+// `desk-keeps-six.rho` is this file with ONE token changed, in the guard. Run both.
+//
+// EXPECT   @"OUT" = Church numeral 5      (6 and 0 left resting on @"results")
+
+@"results"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
+@"results"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, (f, x))))))`) |
+@"results"!(lambda`lam f. lam x. x`) |
+
+for(@lambda`${r}` <- @"results" where lambda`${r}` == lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) {
+  @"OUT"!(lambda`${r}`)
+}

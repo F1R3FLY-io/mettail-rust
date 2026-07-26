@@ -1,0 +1,7 @@
+// A Foreign Language Term in the CALCULATOR grammar. The text between the back-ticks is the
+// guest's own concrete syntax; the interpreter hands it to the Calculator's reflector, never to a
+// string splicer. Each operator becomes a real metered Rholang expression on the f1r3node reducer.
+//
+// EXPECT   14
+
+calc`2 + 3 * 4`

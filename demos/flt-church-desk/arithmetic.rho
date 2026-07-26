@@ -1,0 +1,13 @@
+// A second guest language, same feature. `lambda`…`` embeds the untyped λ-calculus, where
+// `(f, a)` is application. The λ-calculus has no numbers, so numbers are ENCODED as functions:
+//
+//     n   =   lam f. lam x. (f, (f, ... (f, x)))          n applications of f
+//     plus =  lam m. lam n. lam f. lam x. ((m, f), ((n, f), x))
+//     mult =  lam m. lam n. lam f. (m, (n, f))
+//
+// This term is   mult (plus 1 2) (plus 2 2)   =  3 * 4.  Nothing here computes on the host:
+// every β-step is a committed communication on the reducer, and the ^fired ledger is the receipt.
+//
+// EXPECT   Church numeral 12, from 21 in-Rho β firings
+
+lambda`((lam m. lam n. lam f. (m, (n, f)), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, x)), lam f. lam x. (f, (f, x)))), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, x))))`

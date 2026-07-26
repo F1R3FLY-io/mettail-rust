@@ -24,4 +24,4 @@
 //        ^drive-err / ^drive-fuel empty                   ⟹ it terminated by QUIESCENCE
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-lam`((lam a. lam b. b, lam x. x), lam a. lam b. b)`
+lambda`((lam a. lam b. b, lam x. x), lam a. lam b. b)`

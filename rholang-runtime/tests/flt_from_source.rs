@@ -1,9 +1,9 @@
 //! L9-6b — the Foreign Exchange, driven FROM SOURCE. The sibling
 //! `flt_abi_over_rspace.rs` hand-builds every reflected pattern/construction with the
 //! `models` builders; here the SAME observables are produced by lowering RhoCalc FLT
-//! surface syntax (`lam`(…, …)``) through the `PFlt` arms (`lower_proc` construction →
+//! surface syntax (`lambda`(…, …)``) through the `PFlt` arms (`lower_proc` construction →
 //! `reflect_flt_construction`; the receive-pattern path → `reflect_flt_pattern`), with a
-//! `FltRegistry` mapping the opener tag `"lam"` → `LambdaLanguage`.
+//! `FltRegistry` mapping the opener tag `"lambda"` → `LambdaLanguage`.
 //!
 //! Beats reproduced: 0 (the construction reflects byte-identically to the hand-built
 //! `⟦App(id, K)⟧`), 1 (the typed hole binds the function position), 2 (the ground `⟦K⟧`
@@ -79,18 +79,18 @@ fn g_app(fun: GroundTerm, arg: GroundTerm) -> GroundTerm {
     g_node("App", vec![fun, arg])
 }
 
-/// The `"lam"` → `LambdaLanguage` FLT resolver every from-source lowering installs.
+/// The `"lambda"` → `LambdaLanguage` FLT resolver every from-source lowering installs.
 fn lambda_resolver() -> Arc<dyn FltResolve> {
-    Arc::new(FltRegistry::new().with_guest("lam", Box::new(LambdaLanguage)))
+    Arc::new(FltRegistry::new().with_guest("lambda", Box::new(LambdaLanguage)))
 }
 
 /// The guest-body surface for `App(id, K)` in Lambda's own syntax (`App` is spelled
 /// `(fun, arg)`; the combinators are spelled out, so they reflect GROUND).
-const APP_ID_K_BODY: &str = "lam`(lam x. x, lam a. lam b. a)`";
+const APP_ID_K_BODY: &str = "lambda`(lam x. x, lam a. lam b. a)`";
 
 // ── Beat 0 (from source) — the FLT construction reflects to ⟦App(id, K)⟧ ────────────────────────
 
-/// The `lam`(…, …)`` FLT, lowered in construction position, reflects BYTE-FOR-BYTE to the
+/// The `lambda`(…, …)`` FLT, lowered in construction position, reflects BYTE-FOR-BYTE to the
 /// hand-built `⟦App(id, K)⟧` — the wire format, produced by the source path. Also pins the
 /// coherence the whole demo rests on: `metadata().definition_fingerprint()` (what the `PFlt`
 /// arm reflects with) equals the backend plan's fingerprint (what it drives against).
@@ -142,7 +142,7 @@ fn oid() -> RuntimeObservationValue {
     olambda(obound(0))
 }
 
-/// Lower a from-source RhoCalc FLT program (installing the `lam` guest) and run it to rest,
+/// Lower a from-source RhoCalc FLT program (installing the `lambda` guest) and run it to rest,
 /// reading the `RuntimeObservationValue`s published to `@"OUT"`.
 async fn out_values_from_source(program_src: &str) -> Vec<RuntimeObservationValue> {
     let proc = Proc::parse(program_src).expect("the from-source FLT program parses");
@@ -155,7 +155,7 @@ async fn out_values_from_source(program_src: &str) -> Vec<RuntimeObservationValu
 
 // ── Beat 1 (from source) — ship an FLT, destructure it with a typed hole ────────────────────────
 
-/// `@"fltX"!(lam`(id, K)`) | for( @lam`(${f}, K)` <- @"fltX" ){ @"OUT"!(f) }`, written in FLT
+/// `@"fltX"!(lambda`(id, K)`) | for( @lambda`(${f}, K)` <- @"fltX" ){ @"OUT"!(f) }`, written in FLT
 /// surface syntax and lowered end-to-end: the send's `PFlt` reflects to `⟦App(id, K)⟧`, the
 /// receive's `PFlt` reflects to the typed-hole pattern `[⌜App⌝, _, ${f}, ⟦K⟧]`, and the body's
 /// `f` resolves to the captured hole — so OUT de-reflects to `id = λ.0`. Reproduces
@@ -164,8 +164,8 @@ async fn out_values_from_source(program_src: &str) -> Vec<RuntimeObservationValu
 async fn beat1_from_source_typed_hole_binds_the_function_position() {
     mettail_runtime::clear_var_cache();
     let fired = out_values_from_source(
-        "@\"fltX\"!(lam`(lam x. x, lam a. lam b. a)`) | \
-         for( @lam`(${f}, lam a. lam b. a)` <- @\"fltX\" ){ @\"OUT\"!(f) }",
+        "@\"fltX\"!(lambda`(lam x. x, lam a. lam b. a)`) | \
+         for( @lambda`(${f}, lam a. lam b. a)` <- @\"fltX\" ){ @\"OUT\"!(f) }",
     )
     .await;
     assert_eq!(fired, vec![oid()], "the ${{f}} hole binds ⟦id⟧ — OUT de-reflects to λ.0");
@@ -181,22 +181,22 @@ fn okonst() -> RuntimeObservationValue {
 
 // ── Beat 2 (from source) — the ground `⟦K⟧` subpattern vetoes a foreign argument ────────────────
 
-/// Against the source pattern `for( @lam`(${f}, K)` <- … )`, `⟦App(id, K)⟧` matches (arg = ⟦K⟧,
+/// Against the source pattern `for( @lambda`(${f}, K)` <- … )`, `⟦App(id, K)⟧` matches (arg = ⟦K⟧,
 /// OUT = [⟦id⟧]) while `⟦App(id, id)⟧` fails (arg ⟦id⟧ ≠ ⟦K⟧, OUT empty — veto, zero effects).
 #[tokio::test]
 async fn beat2_from_source_ground_subpattern_vetoes() {
     mettail_runtime::clear_var_cache();
     let matches = out_values_from_source(
-        "@\"fltX\"!(lam`(lam x. x, lam a. lam b. a)`) | \
-         for( @lam`(${f}, lam a. lam b. a)` <- @\"fltX\" ){ @\"OUT\"!(f) }",
+        "@\"fltX\"!(lambda`(lam x. x, lam a. lam b. a)`) | \
+         for( @lambda`(${f}, lam a. lam b. a)` <- @\"fltX\" ){ @\"OUT\"!(f) }",
     )
     .await;
     assert_eq!(matches, vec![oid()], "⟦App(id, K)⟧ satisfies the ⟦K⟧ argument subpattern");
 
     mettail_runtime::clear_var_cache();
     let vetoed = out_values_from_source(
-        "@\"fltX\"!(lam`(lam x. x, lam x. x)`) | \
-         for( @lam`(${f}, lam a. lam b. a)` <- @\"fltX\" ){ @\"OUT\"!(f) }",
+        "@\"fltX\"!(lambda`(lam x. x, lam x. x)`) | \
+         for( @lambda`(${f}, lam a. lam b. a)` <- @\"fltX\" ){ @\"OUT\"!(f) }",
     )
     .await;
     assert!(vetoed.is_empty(), "⟦App(id, id)⟧ has ⟦id⟧ ≠ ⟦K⟧ at the argument — veto, OUT empty");
@@ -205,7 +205,7 @@ async fn beat2_from_source_ground_subpattern_vetoes() {
 // ── Beat 4 (from source, re-quote) — capture the holes, re-quote, reconstruct ⟦App(id, K)⟧ ──────
 
 /// The full-arity FLT rendezvous: a receiver captures BOTH holes `${f}`,`${k}` from `⟦App(id, K)⟧`
-/// and its body RE-QUOTES `lam`(${f}, ${k})`` (a construction-position `PFlt` whose holes are the
+/// and its body RE-QUOTES `lambda`(${f}, ${k})`` (a construction-position `PFlt` whose holes are the
 /// captured bound vars — `lower_flt_construction` fills them with `^bound` and C2 forces `⌜^nog⌝`).
 /// After the COMM substitutes the captured `⟦id⟧`/`⟦K⟧`, OUT rests at the reconstructed
 /// `⟦App(id, K)⟧` — the hole-filling construction path, from source.
@@ -213,8 +213,8 @@ async fn beat2_from_source_ground_subpattern_vetoes() {
 async fn beat4_from_source_requote_reconstructs_app() {
     mettail_runtime::clear_var_cache();
     let out = out_values_from_source(
-        "@\"fltX\"!(lam`(lam x. x, lam a. lam b. a)`) | \
-         for( @lam`(${f}, ${k})` <- @\"fltX\" ){ @\"OUT\"!(lam`(${f}, ${k})`) }",
+        "@\"fltX\"!(lambda`(lam x. x, lam a. lam b. a)`) | \
+         for( @lambda`(${f}, ${k})` <- @\"fltX\" ){ @\"OUT\"!(lambda`(${f}, ${k})`) }",
     )
     .await;
     assert_eq!(
@@ -226,7 +226,7 @@ async fn beat4_from_source_requote_reconstructs_app() {
 
 // ── Beat 4 (from source, THE WOW) — the source FLT subject drives to β-NF ⟦K⟧ ────────────────────
 
-/// `(λx.x) K` — the FLT subject `lam`(id, K)`` built FROM SOURCE — is seeded to the backend's
+/// `(λx.x) K` — the FLT subject `lambda`(id, K)`` built FROM SOURCE — is seeded to the backend's
 /// installed `^drive` quiescence family and drives fully in-Rho to β-NF `K = λ.λ.1`: `^fired`
 /// records exactly `["Beta"]`, both fail-close channels stay empty. Reproduces
 /// `flt_abi_over_rspace::beat4_app_id_k_drives_to_konst_in_rho`, its subject from source.
@@ -261,7 +261,7 @@ async fn beat4_from_source_subject_drives_to_konst() {
 
 // ── Beat 3 (from source pattern) — the counterfeit is rejected: tags are unforgeable ────────────
 
-/// The SOURCE receive pattern `for( @lam`(${f}, K)` <- … )` requires the unforgeable `GPrivate`
+/// The SOURCE receive pattern `for( @lambda`(${f}, K)` <- … )` requires the unforgeable `GPrivate`
 /// `⌜App⌝` head. A 4-element `GString`-tagged counterfeit `["App", ⌜^nog⌝, ⟦id⟧, ⟦K⟧]` — byte-for-
 /// byte `⟦App(id, K)⟧` EXCEPT a ground string `"App"` head — matches the arity, the wildcarded
 /// marker slot, and the ground `⟦K⟧`, so the ONLY discriminant is the head tag: it never matches,
@@ -298,7 +298,7 @@ async fn beat3_from_source_pattern_rejects_counterfeit() {
     );
     // The receive pattern, FROM SOURCE.
     let receive_proc =
-        Proc::parse("for( @lam`(${f}, lam a. lam b. a)` <- @\"fltX\" ){ @\"OUT\"!(f) }")
+        Proc::parse("for( @lambda`(${f}, lam a. lam b. a)` <- @\"fltX\" ){ @\"OUT\"!(f) }")
             .expect("the source receive parses");
     let receive = lower_rhocalc_proc_with_resolver(&receive_proc, lambda_resolver())
         .expect("the source receive lowers");
@@ -315,7 +315,7 @@ async fn beat3_from_source_pattern_rejects_counterfeit() {
 
 // ── #14 (from source) — an FLT hole and a moniker binder co-bind in one `&`-join ────────────────
 
-/// A `&`-join whose FIRST bind is an FLT typed-hole pattern (`@lam`(${f}, K)` <- fltX`) and whose
+/// A `&`-join whose FIRST bind is an FLT typed-hole pattern (`@lambda`(${f}, K)` <- fltX`) and whose
 /// SECOND is an ordinary moniker binder (`@g <- other`): the FLT hole `f` (bound by NAME) and the
 /// moniker `g` (bound by its `FreeVar`) share ONE coherent de-Bruijn numbering, so the body's `f`
 /// and `g` BOTH resolve — `f ← ⟦id⟧` (from the FLT), `g ← ⟦K⟧` (from `@"other"`). Closes the L9-6b
@@ -324,8 +324,8 @@ async fn beat3_from_source_pattern_rejects_counterfeit() {
 async fn join14_from_source_flt_hole_and_moniker_binder_co_bind() {
     mettail_runtime::clear_var_cache();
     let mut out = out_values_from_source(
-        "@\"fltX\"!(lam`(lam x. x, lam a. lam b. a)`) | @\"other\"!(lam`lam a. lam b. a`) | \
-         for( @lam`(${f}, lam a. lam b. a)` <- @\"fltX\" & @g <- @\"other\" ){ \
+        "@\"fltX\"!(lambda`(lam x. x, lam a. lam b. a)`) | @\"other\"!(lambda`lam a. lam b. a`) | \
+         for( @lambda`(${f}, lam a. lam b. a)` <- @\"fltX\" & @g <- @\"other\" ){ \
          @\"OUT\"!(f) | @\"OUT\"!(g) }",
     )
     .await;

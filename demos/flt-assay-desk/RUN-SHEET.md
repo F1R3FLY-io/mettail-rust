@@ -7,7 +7,7 @@ host interpreter; the results are **extracted** into the RhoCalc program by type
 and a **`where` clause selects** the ones the program needs, leaving the rest resting on the
 channel.
 
-Everything below is stock RhoCalc plus the bundled `lam` guest. There is no Rust harness in the
+Everything below is stock RhoCalc plus the bundled `lambda` guest. There is no Rust harness in the
 demo path: the presenter runs one interpreter binary on seven committed `.rho` files.
 
 > Status: **VALIDATED end to end, 2026-07-26** — every command on this page was run and every
@@ -34,9 +34,9 @@ demo path: the presenter runs one interpreter binary on seven committed `.rho` f
 ```
        ╭──────────────── written in the GUEST's own syntax ────────────────╮
        │                                                                   │
-  contract-a.rho    lam`((lam a. lam b. a, lam x. x), lam a. lam b. a)`    │  ⎫
-  contract-b.rho    lam`((lam a. lam b. b, lam x. x), lam a. lam b. b)`    │  ⎬ Beats 1–2
-  contract-c.rho    lam`(lam x. x, lam a. lam b. a)`                       │  ⎭
+  contract-a.rho    lambda`((lam a. lam b. a, lam x. x), lam a. lam b. a)`    │  ⎫
+  contract-b.rho    lambda`((lam a. lam b. b, lam x. x), lam a. lam b. b)`    │  ⎬ Beats 1–2
+  contract-c.rho    lambda`(lam x. x, lam a. lam b. a)`                       │  ⎭
        │                                                                   │
        ╰───────────────────────────────┬───────────────────────────────────╯
                                        │
@@ -56,7 +56,7 @@ demo path: the presenter runs one interpreter binary on seven committed `.rho` f
                             │      @"assay"        │   ⎫
                             └──────────┬───────────┘   ⎪
                                        │               ⎪
-     for( @lam`${r}` <- @"assay"  where lam`${r}` == … )⎬ Beats 3–5
+     for( @lambda`${r}` <- @"assay"  where lambda`${r}` == … )⎬ Beats 3–5
              └──── EXTRACT ────┘  └──── FILTER ────┘   ⎪
                                        │               ⎭
                         ┌──────────────┴──────────────┐
@@ -69,8 +69,8 @@ Two mechanisms are stacked in that one receive, and they do different jobs:
 
 | | what it is | what it does |
 |---|---|---|
-| `` @lam`${r}` `` | the receive **pattern** — itself an FLT, carrying one typed hole | matches a reflected guest term by **shape** and binds the whole $`\lambda`$-term to `r`. This is the **extraction**: the foreign result becomes a value the RhoCalc program holds. A `${x}` hole is a secure typed-AST hole; it never splices strings (No-Injection). |
-| `` where lam`${r}` == … `` | the **guard** | re-quotes the captured term and **decides** it against a reference term. This is the **filter**, and the decision is made by the substrate, not by the pattern. |
+| `` @lambda`${r}` `` | the receive **pattern** — itself an FLT, carrying one typed hole | matches a reflected guest term by **shape** and binds the whole $`\lambda`$-term to `r`. This is the **extraction**: the foreign result becomes a value the RhoCalc program holds. A `${x}` hole is a secure typed-AST hole; it never splices strings (No-Injection). |
+| `` where lambda`${r}` == … `` | the **guard** | re-quotes the captured term and **decides** it against a reference term. This is the **filter**, and the decision is made by the substrate, not by the pattern. |
 
 ---
 
@@ -82,7 +82,7 @@ $ cargo build -p rholang-runtime --bin rhocalc --features "rhocalc-runtime lambd
 
 Both features are required by the `rhocalc` bin target: `rhocalc-runtime` pulls in the generated
 RhoCalc language and its AST-first lowering, `lambda-runtime` pulls in the production
-`LambdaLanguage` that the interpreter registers as the `lam` guest. The build takes several
+`LambdaLanguage` that the interpreter registers as the `lambda` guest. The build takes several
 minutes cold. Everything after this is instant.
 
 CI drives the same binary through `env!("CARGO_BIN_EXE_rhocalc")`, so the presenter's binary and
@@ -103,10 +103,10 @@ $ tail -1 demos/flt-assay-desk/contract-a.rho
 ```
 
 ```
-lam`((lam a. lam b. a, lam x. x), lam a. lam b. a)`
+lambda`((lam a. lam b. a, lam x. x), lam a. lam b. a)`
 ```
 
-> "`` lam`…` `` is RhoCalc's opener for a term of another language. Everything between the
+> "`` lambda`…` `` is RhoCalc's opener for a term of another language. Everything between the
 > back-ticks is the **guest's** concrete syntax — the untyped λ-calculus — handed to the guest's
 > own reflector. In the guest, `(f, a)` is application. So with the two standard combinators
 >
@@ -210,12 +210,12 @@ $ tail -7 demos/flt-assay-desk/desk-accepts-constant.rho
 ```
 
 ```
-@"assay"!(lam`lam x. x`) |
-@"assay"!(lam`lam a. lam b. b`) |
-@"assay"!(lam`lam a. lam b. a`) |
+@"assay"!(lambda`lam x. x`) |
+@"assay"!(lambda`lam a. lam b. b`) |
+@"assay"!(lambda`lam a. lam b. a`) |
 
-for(@lam`${r}` <- @"assay" where lam`${r}` == lam`lam a. lam b. a`) {
-  @"OUT"!(lam`${r}`)
+for(@lambda`${r}` <- @"assay" where lambda`${r}` == lambda`lam a. lam b. a`) {
+  @"OUT"!(lambda`${r}`)
 }
 ```
 
@@ -223,7 +223,7 @@ for(@lam`${r}` <- @"assay" where lam`${r}` == lam`lam a. lam b. a`) {
 > machine compute — the identity, the mirror, the constant. They are resting on one channel.
 >
 > The receive does two things at once. Its **pattern** is itself a foreign term with a typed hole
-> in it, `` @lam`${r}` ``; that matches a reflected guest term by shape and binds it — that is how the
+> in it, `` @lambda`${r}` ``; that matches a reflected guest term by shape and binds it — that is how the
 > foreign result gets *into* the RhoCalc program. Its **`where` clause** is the filter: it decides
 > the captured term against the constant combinator.
 >
@@ -289,9 +289,9 @@ Side by side — one unchanged set of results, three predicates, three outcomes:
 
 | file | the guard | kept | left behind on `@"assay"` |
 |---|---|---|---|
-| `desk-accepts-constant.rho` | `` == lam`lam a. lam b. a` `` | `⟦λ.λ.1⟧` | `⟦λ.0⟧`, `⟦λ.λ.0⟧` |
-| `desk-accepts-identity.rho` | `` == lam`lam x. x` `` | `⟦λ.0⟧` | `⟦λ.λ.0⟧`, `⟦λ.λ.1⟧` |
-| `desk-accepts-nothing.rho` | `` == lam`lam a. lam b. lam c. a` `` | *nothing* | all three |
+| `desk-accepts-constant.rho` | `` == lambda`lam a. lam b. a` `` | `⟦λ.λ.1⟧` | `⟦λ.0⟧`, `⟦λ.λ.0⟧` |
+| `desk-accepts-identity.rho` | `` == lambda`lam x. x` `` | `⟦λ.0⟧` | `⟦λ.λ.0⟧`, `⟦λ.λ.1⟧` |
+| `desk-accepts-nothing.rho` | `` == lambda`lam a. lam b. lam c. a` `` | *nothing* | all three |
 
 ---
 
@@ -305,8 +305,8 @@ combinator. Only the datum changed:
 
 | | the datum on `@"assay"` | what it is |
 |---|---|---|
-| Beat 3 | `` lam`lam a. lam b. a` `` | Contract C's **normal form** — the constant combinator `K` |
-| here | `` lam`(lam x. x, lam a. lam b. a)` `` | Contract C **as it arrives** — the application `(I K)` |
+| Beat 3 | `` lambda`lam a. lam b. a` `` | Contract C's **normal form** — the constant combinator `K` |
+| here | `` lambda`(lam x. x, lam a. lam b. a)` `` | Contract C **as it arrives** — the application `(I K)` |
 
 ```
 $ target/debug/rhocalc demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho
@@ -449,7 +449,7 @@ expected outputs, and their tests are agnostic to the provenance of the resting 
   which is both the shape that works today and the sharper demonstration, since the guarded search
   over resting data is the mechanism that was repaired this morning.
 * **No labels on `@"OUT"` — one datum per accept, deliberately.** An earlier draft had each accept
-  publish the result *and* a human-readable label, `` @"OUT"!(lam`${r}`) | @"OUT"!("ACCEPTED: …") ``.
+  publish the result *and* a human-readable label, `` @"OUT"!(lambda`${r}`) | @"OUT"!("ACCEPTED: …") ``.
   That is two data resting on one channel, and they come back in an order the scheduler decides:
   nine sequential hand-runs all put the term first, and the first run under parallel load swapped
   them. The demo's own determinism gate

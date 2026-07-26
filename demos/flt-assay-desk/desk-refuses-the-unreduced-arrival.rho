@@ -11,8 +11,8 @@
 //  `where` clause is character-for-character the same — it still asks for the constant
 //  combinator K. What rests on @"assay" is Contract C in the form it ARRIVES in:
 //
-//        offered here      lam`(lam x. x, lam a. lam b. a)`      = the APPLICATION (I K)
-//        offered in Beat 3 lam`lam a. lam b. a`                  = its NORMAL FORM K
+//        offered here      lambda`(lam x. x, lam a. lam b. a)`      = the APPLICATION (I K)
+//        offered in Beat 3 lambda`lam a. lam b. a`                  = its NORMAL FORM K
 //
 //  and those are different terms. `(I K)` β-reduces to `K` — but only if something reduces it.
 //
@@ -34,8 +34,8 @@
 //        the un-reduced arrival still resting, untouched, on @"assay"
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-@"assay"!(lam`(lam x. x, lam a. lam b. a)`) |
+@"assay"!(lambda`(lam x. x, lam a. lam b. a)`) |
 
-for(@lam`${r}` <- @"assay" where lam`${r}` == lam`lam a. lam b. a`) {
-  @"OUT"!(lam`${r}`)
+for(@lambda`${r}` <- @"assay" where lambda`${r}` == lambda`lam a. lam b. a`) {
+  @"OUT"!(lambda`${r}`)
 }
