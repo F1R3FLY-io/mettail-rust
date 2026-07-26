@@ -3106,9 +3106,18 @@ mod tests {
 
     #[cfg(feature = "runtime-report")]
     fn mini_requirements() -> mettail_rholang_codegen::RhoDefaultBackendRequirements {
+        // DERIVED, not asserted — see `substrate_guard_coverage`. A language that induces no
+        // guard obligations yields an empty vector, i.e. exactly what `NoGuardObligations`
+        // meant; a language that declares a guard slot is now covered instead of failing the
+        // gate at an unrelated call site.
         mettail_rholang_codegen::RhoDefaultBackendRequirements {
             coverage: mettail_rholang_codegen::RhoCoverageEvidence::AllRulesLowered,
-            guard_coverage: mettail_rholang_codegen::RhoGuardCoverageEvidence::NoGuardObligations,
+            guard_coverage:
+                mettail_rholang_codegen::RhoGuardCoverageEvidence::CoveredGuardObligations(
+                    mettail_rholang_codegen::guard_quality::substrate_guard_coverage(
+                        &mini_language_def(),
+                    ),
+                ),
         }
     }
 

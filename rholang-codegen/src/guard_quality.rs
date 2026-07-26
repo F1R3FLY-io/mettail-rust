@@ -311,6 +311,32 @@ pub fn derive_guard_qualities(def: &LanguageDef) -> Vec<RhoGuardDispositionQuali
         .collect()
 }
 
+/// The substrate's coverage evidence for a language: one gate-compatible disposition per
+/// induced guard obligation, DERIVED rather than asserted.
+///
+/// # Why this exists
+///
+/// A caller that knows a language has no guard obligations can pass
+/// `RhoGuardCoverageEvidence::NoGuardObligations`. That is an *assertion about the language*,
+/// and it silently becomes false the moment the language grows one — the plan then fails
+/// coverage at a call site that has no idea why. (Measured: RhoCalc declaring its `where` slots
+/// broke every consumer of the production registry, because the registry asserted
+/// `NoGuardObligations`.)
+///
+/// This function makes the evidence a FUNCTION of the definition instead. Every obligation the
+/// `LanguageDef` induces gets the substrate's own default disposition for its kind, which
+/// [`derive_guard_qualities`] already computes and which is gate-compatible by construction.
+/// A language that induces none yields an empty vector, so it behaves exactly as
+/// `NoGuardObligations` did.
+pub fn substrate_guard_coverage(def: &LanguageDef) -> Vec<crate::backend::RhoGuardDisposition> {
+    derive_guard_qualities(def)
+        .into_iter()
+        .map(|quality| {
+            crate::backend::RhoGuardDisposition::new(quality.obligation, quality.kind)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

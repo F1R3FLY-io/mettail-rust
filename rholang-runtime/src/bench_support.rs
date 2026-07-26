@@ -1252,7 +1252,12 @@ pub fn compile_bench_language(definition_source: &str) -> Result<CompiledBenchLa
         coverage: RhoCoverageEvidence::CoveredRejectedRules(suggest_rejected_rule_dispositions(
             &def, &lowering,
         )),
-        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
+        // DERIVED, not asserted — `NoGuardObligations` is a claim about the language that
+        // silently becomes false the moment it declares a guard slot. A language with no
+        // obligations yields an empty vector, i.e. exactly the old behaviour.
+        guard_coverage: RhoGuardCoverageEvidence::CoveredGuardObligations(
+            mettail_rholang_codegen::guard_quality::substrate_guard_coverage(&def),
+        ),
     };
     let plan = plan_rho_default_backend(&def, requirements)
         .map_err(|error| format!("Rho-default backend plan rejected: {error:?}"))?;

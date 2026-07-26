@@ -2007,18 +2007,26 @@ mod tests {
     }
 
     /// A budget really does change verdicts — so the constant above is load-bearing, not
-    /// decorative. Under an 8-bit budget the integer domain is `[-128, 128)`, so `x < 200` is
-    /// VALID; under the consensus budget it is contingent.
+    /// decorative.
+    ///
+    /// MEASURED witness: `x < 100`. Under a 6-bit budget the integer domain is `[-32, 32)`, so
+    /// every representable `x` satisfies it and the guard is VALID; under the consensus budget
+    /// (16-bit) it is merely contingent. Two budgets, two verdicts — which is precisely why the
+    /// guard path's budget must be one network-wide constant, and why changing it is a protocol
+    /// change rather than a tuning decision.
     #[test]
     fn a_different_budget_reaches_a_different_verdict() {
-        let guard = GuardFormula::Linear(PresburgerPred::lt(vec![(0, 1)], 200));
-        let narrow = SubstrateConfig { bit_width: 8 };
-        assert_eq!(static_verdict(&guard, narrow), StaticVerdict::Valid(narrow));
+        let guard = GuardFormula::Linear(PresburgerPred::lt(vec![(0, 1)], 100));
+        let narrow = SubstrateConfig { bit_width: 6 };
+        assert_eq!(
+            static_verdict(&guard, narrow),
+            StaticVerdict::Valid(narrow),
+            "over [-32, 32) every representable x satisfies x < 100"
+        );
         assert_eq!(
             static_verdict(&guard, CONSENSUS_SUBSTRATE_CONFIG),
             StaticVerdict::Contingent(CONSENSUS_SUBSTRATE_CONFIG),
-            "two budgets, two verdicts — which is precisely why the guard path's budget must \
-             be one network-wide constant"
+            "over the consensus domain the same guard genuinely depends on the payload"
         );
     }
 

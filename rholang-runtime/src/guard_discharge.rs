@@ -682,48 +682,116 @@ mod tests {
         assert_eq!(machine(&bad), GuardDischarge::Residual);
     }
 
-    /// ★ ROUTE-SITE INVARIANT. A guard routed to another substrate is never decided here, even
-    /// when it is a closed constant this module could trivially fold.
+    /// ★ ROUTE-SITE INVARIANT, in its post-WIRE form.
+    ///
+    /// The route is still CONSULTED and never derived — `classify` reads `GuardRouting` and
+    /// decides nothing about it. What changed is the ANSWER for the substrate route.
+    ///
+    /// `OtherSubstrate` used to force `Residual`, justified by *"the compile-time evaluator is
+    /// not that substrate"*. THE WIRE removes that premise: `classify`'s authority leg IS the
+    /// substrate (`guard_par_substrate::substrate_verdict`). Deciding a substrate-routed guard
+    /// with the substrate's own procedure is not a routing decision — it is the route being
+    /// honoured — so both routes now permit a compile-time decision, and for the same guard they
+    /// reach the same verdict.
     #[test]
-    fn a_guard_routed_elsewhere_is_never_discharged_here() {
-        assert_eq!(
-            classify(Some(true), &gbool(true), GuardRouting::OtherSubstrate),
-            GuardDischarge::Residual
-        );
-        assert_eq!(
-            classify(Some(true), &gbool(true), GuardRouting::MachineEvaluated),
-            GuardDischarge::Discharged
-        );
+    fn both_routes_permit_a_compile_time_decision_and_agree() {
+        for routing in [GuardRouting::MachineEvaluated, GuardRouting::OtherSubstrate] {
+            assert_eq!(
+                classify(Some(true), &gbool(true), routing),
+                GuardDischarge::Discharged,
+                "a closed `true` guard is discharged on every route that permits a \
+                 compile-time decision ({routing:?})"
+            );
+            assert_eq!(
+                classify(Some(false), &gbool(false), routing),
+                GuardDischarge::Refuted,
+                "and a closed `false` guard is refuted on every such route ({routing:?})"
+            );
+        }
     }
 
-    /// ★ THE FENCE. A fabricated disagreement must fall to Residual, never to Discharged.
+    /// ★ THE FENCE, retargeted. The pair that must agree is now (SUBSTRATE, machine); the
+    /// front-end leg is advisory and cannot move the verdict either way.
+    ///
+    /// The disagreement arm cannot be provoked through the public entry point on a *sound*
+    /// implementation — both legs are total functions of the same condition, and provoking a
+    /// disagreement would require a condition on which they genuinely differ, which is exactly
+    /// the defect the fence exists to catch. So the property is pinned from the other side:
+    /// whatever the ADVISORY front-end leg says, the verdict is unchanged, which is what
+    /// "retired from the decision" means operationally.
     #[test]
-    fn evaluator_disagreement_falls_to_residual() {
-        // machine says true; a (hypothetical) host leg says false.
-        assert_eq!(
-            classify(Some(false), &gbool(true), GuardRouting::MachineEvaluated),
-            GuardDischarge::Residual
-        );
-        // machine says false; host says true.
-        assert_eq!(
-            classify(Some(true), &gbool(false), GuardRouting::MachineEvaluated),
-            GuardDischarge::Residual
-        );
+    fn the_front_end_leg_is_advisory_and_cannot_move_the_verdict() {
+        for host in [Some(true), Some(false), None] {
+            assert_eq!(
+                classify(host, &gbool(true), GuardRouting::MachineEvaluated),
+                GuardDischarge::Discharged,
+                "a closed `true` guard discharges whatever the advisory front-end leg says \
+                 (host = {host:?})"
+            );
+            assert_eq!(
+                classify(host, &gbool(false), GuardRouting::MachineEvaluated),
+                GuardDischarge::Refuted,
+                "and a closed `false` guard is refuted likewise (host = {host:?})"
+            );
+        }
     }
 
-    /// A host leg that DECLINED (`None`) can never license discharge, however confident the
-    /// machine is. This is what keeps the eager-site `None`-handling defect in
-    /// `languages/src/rhocalc/receive.rs` (an unevaluable guard treated as false) from ever
-    /// reaching the artifact through this path.
+    /// ★ AND THE FENCE STILL BITES where it must: a condition the concrete-semantics evaluator
+    /// cannot decide is `Residual` however confident anything else is. This is the arm that
+    /// contains the bounded-domain hazard — a substrate verdict alone may never change the
+    /// artifact.
     #[test]
-    fn a_declining_host_leg_never_licenses_discharge() {
+    fn a_guard_the_concrete_evaluator_declines_is_residual() {
+        // `"a" > 1` — a heterogeneous comparison the machine's `cmp_binop` refuses.
+        let undecidable = expr_par(ExprInstance::EGtBody(EGt {
+            p1: Some(new_gstring_par("a".to_string(), Vec::new(), false)),
+            p2: Some(gint(1)),
+        }));
+        assert_eq!(machine_verdict(&undecidable), None, "the fence leg declines");
+        for host in [Some(true), Some(false), None] {
+            assert_eq!(
+                classify(host, &undecidable, GuardRouting::MachineEvaluated),
+                GuardDischarge::Residual
+            );
+        }
+    }
+
+    /// ★ AN OPEN GUARD IS NEVER DISCHARGED, even though the substrate can now SETTLE one.
+    ///
+    /// This is the capability the wire adds and deliberately does not act on: `x < x + 1` is
+    /// Presburger-VALID and `x == 1 and x == 2` Presburger-UNSATISFIABLE, and `rho_pure_eval`
+    /// cannot touch either because it requires a binder-closed condition. Acting on such a
+    /// verdict would be unsound — it is relative to a bounded integer domain and has no
+    /// concrete-semantics witness — so the guard stays `Residual` and the verdict is a
+    /// diagnostic only.
+    #[test]
+    fn an_open_guard_the_substrate_settles_is_still_residual() {
+        // x < x + 1, over de Bruijn slot 0.
+        let x = || {
+            expr_par(ExprInstance::EVarBody(models::rhoapi::EVar {
+                v: Some(models::rhoapi::Var {
+                    var_instance: Some(models::rhoapi::var::VarInstance::BoundVar(0)),
+                }),
+            }))
+        };
+        let x_plus_1 = expr_par(ExprInstance::EPlusBody(models::rhoapi::EPlus {
+            p1: Some(x()),
+            p2: Some(gint(1)),
+        }));
+        let tautology =
+            expr_par(ExprInstance::ELtBody(models::rhoapi::ELt { p1: Some(x()), p2: Some(x_plus_1) }));
+
         assert_eq!(
-            classify(None, &gbool(true), GuardRouting::MachineEvaluated),
-            GuardDischarge::Residual
+            crate::guard_par_substrate::substrate_verdict(&tautology),
+            Some(true),
+            "the substrate SETTLES an open tautology — the capability rho_pure_eval lacks"
         );
+        assert!(!is_binder_closed(&tautology), "and it mentions a binder");
         assert_eq!(
-            classify(None, &gbool(false), GuardRouting::MachineEvaluated),
-            GuardDischarge::Residual
+            classify(Some(true), &tautology, GuardRouting::MachineEvaluated),
+            GuardDischarge::Residual,
+            "…and it is still NOT discharged: a bounded-domain verdict with no \
+             concrete-semantics witness may not change the artifact"
         );
     }
 
@@ -781,19 +849,23 @@ mod tests {
         assert_eq!(report.total(), 3);
     }
 
-    /// S-Q: every outcome maps to a per-SITE tier, and `SubstrateDecided` is unreachable from
-    /// here by construction (a substrate-routed guard is refused before it can get an outcome).
+    /// S-Q: every outcome maps to a per-SITE tier.
+    ///
+    /// The tier is a property of the OUTCOME, not of the route — a discharged guard is a static
+    /// constant in the artifact however it was routed. That separation is why the tier mapping
+    /// survived the wire unchanged even though the route's answer did not.
     #[test]
     fn every_outcome_carries_its_per_site_tier() {
         assert_eq!(GuardDischarge::Discharged.site_tier(), RhoGuardSiteTier::StaticConstant);
         assert_eq!(GuardDischarge::Refuted.site_tier(), RhoGuardSiteTier::StaticConstant);
         assert_eq!(GuardDischarge::Residual.site_tier(), RhoGuardSiteTier::MachineEvaluated);
-        // A guard on another substrate never reaches an outcome, so this path can never
-        // report `SubstrateDecided` — it reports the safe `Residual`/`MachineEvaluated` pair.
-        assert_eq!(
-            classify(Some(true), &gbool(true), GuardRouting::OtherSubstrate).site_tier(),
-            RhoGuardSiteTier::MachineEvaluated
-        );
+        for routing in [GuardRouting::MachineEvaluated, GuardRouting::OtherSubstrate] {
+            assert_eq!(
+                classify(Some(true), &gbool(true), routing).site_tier(),
+                RhoGuardSiteTier::StaticConstant,
+                "a discharged guard is a static constant on either route ({routing:?})"
+            );
+        }
     }
 
     #[test]

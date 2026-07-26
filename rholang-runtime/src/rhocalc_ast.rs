@@ -517,7 +517,14 @@ fn rho_default_coverage_requirements(
     let dispositions = suggest_rejected_rule_dispositions(def, &lowering);
     RhoDefaultBackendRequirements {
         coverage: RhoCoverageEvidence::CoveredRejectedRules(dispositions),
-        guard_coverage: RhoGuardCoverageEvidence::NoGuardObligations,
+        // DERIVED, not asserted — `NoGuardObligations` is a claim about the language that
+        // silently becomes false the moment it declares a guard slot, and the plan then fails
+        // coverage here with no local explanation. The substrate's own default disposition per
+        // obligation kind is gate-compatible by construction; a language with no obligations
+        // yields an empty vector, i.e. exactly the old behaviour.
+        guard_coverage: RhoGuardCoverageEvidence::CoveredGuardObligations(
+            mettail_rholang_codegen::guard_quality::substrate_guard_coverage(def),
+        ),
     }
 }
 
