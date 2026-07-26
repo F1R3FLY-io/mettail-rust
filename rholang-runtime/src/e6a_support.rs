@@ -178,14 +178,22 @@ pub fn e6a_tag_string(language_fingerprint: &str, constructor: &str) -> String {
     format!("t.{}.{constructor}", &language_fingerprint[..prefix_len])
 }
 
-/// The persistent index channel of the subject spread at root site `root_site`.
-pub fn e6a_index_channel(root_site: &str) -> String {
-    format!("e6a:idx:{root_site}")
+/// The persistent index channel of the subject spread at root site `root_site`,
+/// fingerprint-scoped per INV-S6 — `e6a:idx:{fingerprint}/{root_site}`.
+///
+/// E-6a is a treatment-arm-only family and its own docs note the bench discipline of one
+/// language per counting runtime, so this scope is not load-bearing TODAY. It is applied
+/// anyway: INV-S6 is a property of the emitted name set, and an exception maintained by
+/// an external convention ("only one language is installed") is exactly the kind of
+/// assumption that stops holding silently when the experiment graduates.
+pub fn e6a_index_channel(language_fingerprint: &str, root_site: &str) -> String {
+    format!("e6a:idx:{language_fingerprint}/{root_site}")
 }
 
-/// The machine-side site-enumeration RESULT channel for rule-root op `op`.
-pub fn e6a_sites_channel(root_site: &str, op: &str) -> String {
-    format!("e6a:sites:{root_site}/{op}")
+/// The machine-side site-enumeration RESULT channel for rule-root op `op`,
+/// fingerprint-scoped per INV-S6 — `e6a:sites:{fingerprint}/{root_site}/{op}`.
+pub fn e6a_sites_channel(language_fingerprint: &str, root_site: &str, op: &str) -> String {
+    format!("e6a:sites:{language_fingerprint}/{root_site}/{op}")
 }
 
 fn quoted(name: &str) -> Par {
@@ -482,7 +490,7 @@ pub fn pathmap_spread_term_par(
 ) -> Result<(Par, PathmapIndex), String> {
     let built = build_pathmap_index(subject, language_fingerprint, root_site)?;
     let publish = new_send_par(
-        quoted(&e6a_index_channel(root_site)),
+        quoted(&e6a_index_channel(language_fingerprint, root_site)),
         vec![built.index.clone()],
         true, // PERSISTENT: one produce serves every query COMM.
         Vec::new(),
@@ -548,7 +556,7 @@ pub fn discovery_call_par(
         );
         let subtrie = method_par(zipper, "getSubtrie", Vec::new(), &[0]);
         let publish = new_send_par(
-            quoted(&e6a_sites_channel(root_site, &op)),
+            quoted(&e6a_sites_channel(language_fingerprint, root_site, &op)),
             vec![subtrie],
             false,
             create_bit_vector(&[0]),
@@ -559,7 +567,7 @@ pub fn discovery_call_par(
         let receive = new_receive_par(
             vec![ReceiveBind {
                 patterns: vec![new_freevar_par(0, Vec::new())],
-                source: Some(quoted(&e6a_index_channel(root_site))),
+                source: Some(quoted(&e6a_index_channel(language_fingerprint, root_site))),
                 remainder: None,
                 free_count: 1,
             }],
@@ -1003,7 +1011,7 @@ pub fn entry_query_match_par(
     Ok(new_receive_par(
         vec![ReceiveBind {
             patterns: vec![new_freevar_par(0, Vec::new())],
-            source: Some(quoted(&e6a_index_channel(root_site))),
+            source: Some(quoted(&e6a_index_channel(language_fingerprint, root_site))),
             remainder: None,
             free_count: 1,
         }],
@@ -1164,19 +1172,19 @@ pub async fn drive_e6a_treatment(
     let mut machine_sites: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut all_sites: Vec<String> = Vec::new();
     for op in &ops {
-        let channel = quoted(&e6a_sites_channel(root_site, op));
+        let channel = quoted(&e6a_sites_channel(language_fingerprint, root_site, op));
         let data = runtime.get_data(&channel).await;
         let [datum] = data.as_slice() else {
             return Err(E6aDriveFailure::new(format!(
                 "expected exactly one discovery result on {}, got {}",
-                e6a_sites_channel(root_site, op),
+                e6a_sites_channel(language_fingerprint, root_site, op),
                 data.len(),
             )));
         };
         let [value] = datum.a.pars.as_slice() else {
             return Err(E6aDriveFailure::new(format!(
                 "discovery result on {} is not a single value",
-                e6a_sites_channel(root_site, op),
+                e6a_sites_channel(language_fingerprint, root_site, op),
             )));
         };
         let sites = decode_sites_par(value, &e6a_tag_string(language_fingerprint, op))

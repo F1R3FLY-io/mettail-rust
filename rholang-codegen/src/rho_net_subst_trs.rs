@@ -890,7 +890,7 @@ fn shift_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
     let bag_ops = crate::rho_net_drive::hashbag_collection_ops(def);
     for op in &bag_ops {
         cases.push(Case {
-            pattern: crate::rho_net_drive::soup_peel_pattern(op),
+            pattern: crate::rho_net_drive::soup_peel_pattern(fp, op),
             free_count: 2,
             body: {
                 let env = env.push(&["e", "rem"]);
@@ -909,7 +909,7 @@ fn shift_cases(def: &LanguageDef, fp: &str, env: &Env) -> Vec<Case> {
                         send(
                             env.var("ret"),
                             vec![par2(
-                                crate::rho_net_drive::wrap_element_send(op, env.var("se")),
+                                crate::rho_net_drive::wrap_element_send(fp, op, env.var("se")),
                                 env.var("sr"),
                             )],
                         )

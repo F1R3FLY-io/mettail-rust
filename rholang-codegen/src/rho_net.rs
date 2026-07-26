@@ -62,25 +62,103 @@ impl RhoNetChannel {
         Self { name: name.into(), kind }
     }
 
-    /// Reflected term-location channel from the `knotted-topoi` semantics.
-    pub fn location(path: impl Into<String>) -> Self {
-        Self::new(format!("loc:{}", path.into()), RhoNetChannelKind::Location)
+    /// Reflected term-location channel from the `knotted-topoi` semantics —
+    /// `loc:{fingerprint}/{path}`, fingerprint-scoped per INV-S6.
+    pub fn location(language_fingerprint: &str, path: impl Into<String>) -> Self {
+        Self::new(
+            scoped_channel_name("loc", language_fingerprint, path),
+            RhoNetChannelKind::Location,
+        )
     }
 
-    /// Reflected set-automaton trace/state channel.
-    pub fn set_automaton_trace(trace: impl Into<String>) -> Self {
-        Self::new(format!("sa:{}", trace.into()), RhoNetChannelKind::SetAutomatonTrace)
+    /// Reflected set-automaton trace/state channel — `sa:{fingerprint}/{trace}`,
+    /// fingerprint-scoped per INV-S6.
+    pub fn set_automaton_trace(language_fingerprint: &str, trace: impl Into<String>) -> Self {
+        Self::new(
+            scoped_channel_name("sa", language_fingerprint, trace),
+            RhoNetChannelKind::SetAutomatonTrace,
+        )
     }
 
-    /// Name-consistency channel used for non-linear pattern variables.
-    pub fn consistency(name: impl Into<String>) -> Self {
-        Self::new(format!("eq:{}", name.into()), RhoNetChannelKind::Consistency)
+    /// Name-consistency channel used for non-linear pattern variables —
+    /// `eq:{fingerprint}/{name}`, fingerprint-scoped per INV-S6.
+    pub fn consistency(language_fingerprint: &str, name: impl Into<String>) -> Self {
+        Self::new(
+            scoped_channel_name("eq", language_fingerprint, name),
+            RhoNetChannelKind::Consistency,
+        )
     }
 
-    /// User/runtime observation channel.
-    pub fn observation(name: impl Into<String>) -> Self {
-        Self::new(format!("obs:{}", name.into()), RhoNetChannelKind::Observation)
+    /// User/runtime observation channel — `obs:{fingerprint}/{name}`, fingerprint-scoped
+    /// per INV-S6.
+    pub fn observation(language_fingerprint: &str, name: impl Into<String>) -> Self {
+        Self::new(
+            scoped_channel_name("obs", language_fingerprint, name),
+            RhoNetChannelKind::Observation,
+        )
     }
+}
+
+/// THE fingerprint-scoping primitive of INV-S6: `{family}:{language_fingerprint}/{path}`.
+///
+/// # The invariant
+///
+/// > Every channel name emitted by the driver network — firing-visible (`sa:`), carrier
+/// > (`ac:`), matching-τ (`loc:`/`col:`/`cap:`), contextual plumbing (`ph:`), and PathMap
+/// > index (`e6a:`) — contains the emitting language's fingerprint.
+///
+/// It is stated as an INVARIANT over emitted names rather than as a list of emission sites,
+/// and enforced by a sweep of the emitted `Par` (`rholang-codegen/tests/s6_channel_
+/// fingerprint_invariant.rs`) rather than by review of that list. Two prior enumerations of
+/// the affected sites were both short — `RhoNetChannel::location` alone has nineteen
+/// production callers — which is precisely why the scoping lives at the KEY DERIVATION
+/// POINTS and every derived child name inherits it by composition:
+///
+/// ```text
+///   spread_child_location(parent, op, i) = "{parent}/{op}.{i}"      ← inherits from parent
+///   ac_carrier_channel(loc_channel, op)  = "ac:{loc_channel}/{op}"  ← inherits from loc:
+///   contextual_premise_hole_channel(c)   = "ph:{c}"                 ← inherits from loc:
+///   "{dispatch_channel}/sa-locate"                                  ← inherits from sa:
+/// ```
+///
+/// so scoping the roots scopes the whole tree, and a new emission site cannot opt out
+/// without constructing a raw `format!` that the sweep test then fails on.
+///
+/// # Why the fingerprint, and why verbatim
+///
+/// Without it, two co-installed languages can share a driver-network channel and consume
+/// each other's operands — a cross-fingerprint WRONG FIRING, not merely starvation. The
+/// sharpest construction is the capture channel: a σ capture CANNOT discriminate by
+/// construction, because a pattern variable must accept an arbitrary subterm, so
+/// `wrap_capture_chain` binds the fully collapsed subterm with no tag to match on and no
+/// possibility of one. Language B's capture receiver therefore consumes language A's
+/// collapsed subterm and instantiates B's RHS with A's operand. It needs only a shared
+/// constructor name and site string — no shared pattern text, and no attacker.
+///
+/// The fingerprint rides VERBATIM (the S4/S5 convention: collision-free BY CONSTRUCTION,
+/// not by digest), so two scoped names are equal iff their `(family, fingerprint, path)`
+/// triples are equal. There is no collision probability to bound.
+///
+/// # Why `/` separates the fingerprint from the path
+///
+/// `language_definition_fingerprint` renders `mettail-langdef-v1:{16 hex}`, which contains
+/// `:` but is slash-free. The FIRST `/` after the family prefix therefore splits the
+/// fingerprint from the path unambiguously, which is what lets the `ac:` reader recover its
+/// operator label and the classification taxonomy keep matching on the bare family prefix.
+/// The slash-freedom is asserted here, mirroring the dot-free `debug_assert` that guards the
+/// reflected-tag ABI in [`crate::rho_net_lower::reflect_tag`].
+pub fn scoped_channel_name(
+    family: &str,
+    language_fingerprint: &str,
+    path: impl Into<String>,
+) -> String {
+    debug_assert!(
+        !language_fingerprint.contains('/'),
+        "INV-S6 channel ABI: the fingerprint must be slash-free so a reader can split the \
+         scope at the FIRST `/` and leave a slashed location path intact; got \
+         {language_fingerprint:?}"
+    );
+    format!("{family}:{language_fingerprint}/{}", path.into())
 }
 
 /// Role of a channel in the lowered RhoNet program.
@@ -253,8 +331,8 @@ impl RhoNetProgram {
 
     fn add_scalar_lowering(&mut self, lowering: &RhoLowering) {
         for abi in &lowering.scalar_contract_abi {
-            let input = RhoNetChannel::set_automaton_trace(format!("scalar/{}", abi.rule_label));
-            let output = RhoNetChannel::location(format!("scalar/{}/result", abi.rule_label));
+            let input = RhoNetChannel::set_automaton_trace(&self.language_fingerprint, format!("scalar/{}", abi.rule_label));
+            let output = RhoNetChannel::location(&self.language_fingerprint, format!("scalar/{}/result", abi.rule_label));
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:{}", abi.rule_label),
                 format!("{}:{}", self.language_fingerprint, abi.rule_label),
@@ -278,8 +356,8 @@ impl RhoNetProgram {
     fn add_constructor_rules(&mut self, terms: &[GrammarRule]) {
         for (index, term) in terms.iter().enumerate() {
             let label = term.label.to_string();
-            let syntax = RhoNetChannel::set_automaton_trace(format!("term/{index}/{label}/syntax"));
-            let output = RhoNetChannel::location(format!("term/{index}/{label}/value"));
+            let syntax = RhoNetChannel::set_automaton_trace(&self.language_fingerprint, format!("term/{index}/{label}/syntax"));
+            let output = RhoNetChannel::location(&self.language_fingerprint, format!("term/{index}/{label}/value"));
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:term:{index}:{label}"),
                 format!(
@@ -319,10 +397,10 @@ impl RhoNetProgram {
                 continue;
             }
 
-            let constructed = RhoNetChannel::location(format!("term/{index}/{label}/value"));
+            let constructed = RhoNetChannel::location(&self.language_fingerprint, format!("term/{index}/{label}/value"));
             let dispatch =
-                RhoNetChannel::set_automaton_trace(format!("native/{index}/{label}/dispatch"));
-            let output = RhoNetChannel::location(format!("native/{index}/{label}/result"));
+                RhoNetChannel::set_automaton_trace(&self.language_fingerprint, format!("native/{index}/{label}/dispatch"));
+            let output = RhoNetChannel::location(&self.language_fingerprint, format!("native/{index}/{label}/result"));
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:native:{index}:{label}"),
                 format!(
@@ -363,21 +441,21 @@ impl RhoNetProgram {
         for (item_index, item) in term.items.iter().enumerate() {
             match item {
                 GrammarItem::NonTerminal { ident, .. } => {
-                    let channel = RhoNetChannel::location(format!(
+                    let channel = RhoNetChannel::location(&self.language_fingerprint, format!(
                         "term/{index}/{label}/item/{item_index}/{ident}"
                     ));
                     inputs.push(channel.name.clone());
                     self.push_channel(channel);
                 },
                 GrammarItem::Binder { category } => {
-                    let channel = RhoNetChannel::location(format!(
+                    let channel = RhoNetChannel::location(&self.language_fingerprint, format!(
                         "term/{index}/{label}/binder/{item_index}/{category}"
                     ));
                     inputs.push(channel.name.clone());
                     self.push_channel(channel);
                 },
                 GrammarItem::Collection { element_type, .. } => {
-                    let channel = RhoNetChannel::location(format!(
+                    let channel = RhoNetChannel::location(&self.language_fingerprint, format!(
                         "term/{index}/{label}/collection/{item_index}/{element_type}"
                     ));
                     inputs.push(channel.name.clone());
@@ -399,27 +477,27 @@ impl RhoNetProgram {
             match param {
                 TermParam::Simple { name, .. } => {
                     let channel =
-                        RhoNetChannel::location(format!("term/{index}/{label}/param/{name}"));
+                        RhoNetChannel::location(&self.language_fingerprint, format!("term/{index}/{label}/param/{name}"));
                     inputs.push(channel.name.clone());
                     self.push_channel(channel);
                 },
                 TermParam::Abstraction { binder, body, .. } => {
-                    let binder_channel = RhoNetChannel::location(format!(
+                    let binder_channel = RhoNetChannel::location(&self.language_fingerprint, format!(
                         "term/{index}/{label}/binder-param/{binder}"
                     ));
                     let body_channel =
-                        RhoNetChannel::location(format!("term/{index}/{label}/param/{body}"));
+                        RhoNetChannel::location(&self.language_fingerprint, format!("term/{index}/{label}/param/{body}"));
                     inputs.push(binder_channel.name.clone());
                     inputs.push(body_channel.name.clone());
                     self.push_channel(binder_channel);
                     self.push_channel(body_channel);
                 },
                 TermParam::MultiAbstraction { binder, body, .. } => {
-                    let binder_channel = RhoNetChannel::location(format!(
+                    let binder_channel = RhoNetChannel::location(&self.language_fingerprint, format!(
                         "term/{index}/{label}/multi-binder-param/{binder}"
                     ));
                     let body_channel =
-                        RhoNetChannel::location(format!("term/{index}/{label}/param/{body}"));
+                        RhoNetChannel::location(&self.language_fingerprint, format!("term/{index}/{label}/param/{body}"));
                     inputs.push(binder_channel.name.clone());
                     inputs.push(body_channel.name.clone());
                     self.push_channel(binder_channel);
@@ -438,7 +516,7 @@ impl RhoNetProgram {
             let name = equation.name.to_string();
             let input = self.pattern_trace_channel(&equation.left);
             let output =
-                RhoNetChannel::location(format!("equation/{index}/{name}/structural-result"));
+                RhoNetChannel::location(&self.language_fingerprint, format!("equation/{index}/{name}/structural-result"));
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:equation:{index}:{name}"),
                 format!(
@@ -474,7 +552,7 @@ impl RhoNetProgram {
         for (index, rewrite) in rewrites.iter().enumerate() {
             let name = rewrite.name.to_string();
             let input = self.pattern_trace_channel(&rewrite.left);
-            let output = RhoNetChannel::location(format!("rewrite/{index}/{name}/rhs"));
+            let output = RhoNetChannel::location(&self.language_fingerprint, format!("rewrite/{index}/{name}/rhs"));
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:rewrite:{index}:{name}"),
                 format!(
@@ -513,7 +591,7 @@ impl RhoNetProgram {
 
     fn add_join_patterns(&mut self, channels: &ChannelConfig) {
         for channel in &channels.channel_categories {
-            self.push_channel(RhoNetChannel::location(format!("channel/{}", channel.category)));
+            self.push_channel(RhoNetChannel::location(&self.language_fingerprint, format!("channel/{}", channel.category)));
         }
 
         for join in &channels.join_patterns {
@@ -521,7 +599,7 @@ impl RhoNetProgram {
             let mut inputs = Vec::new();
             let mut signature = String::new();
             for param in &join.channel_params {
-                let input = RhoNetChannel::location(format!(
+                let input = RhoNetChannel::location(&self.language_fingerprint, format!(
                     "join/{label}/input/{}:{}",
                     param.param_name, param.category
                 ));
@@ -529,7 +607,7 @@ impl RhoNetProgram {
                 inputs.push(input.name.clone());
                 self.push_channel(input);
             }
-            let output = RhoNetChannel::location(format!("join/{label}/continuation"));
+            let output = RhoNetChannel::location(&self.language_fingerprint, format!("join/{label}/continuation"));
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:join:{label}"),
                 format!(
@@ -655,7 +733,7 @@ impl RhoNetProgram {
                 inputs,
             ),
             Premise::Congruence { source, target } => {
-                let channel = RhoNetChannel::location(format!(
+                let channel = RhoNetChannel::location(&self.language_fingerprint, format!(
                     "{owner_kind}/{owner_name}/contextual-premise/{index}/{source}-to-{target}"
                 ));
                 inputs.push(channel.name.clone());
@@ -679,7 +757,7 @@ impl RhoNetProgram {
             Premise::BehavioralGuard(pred) => {
                 let id = format!("{owner_kind}:{owner_name}:guard:{index}");
                 if behavioral_predicate_has_structural_component(pred) {
-                    let channel = RhoNetChannel::consistency(format!(
+                    let channel = RhoNetChannel::consistency(&self.language_fingerprint, format!(
                         "{owner_kind}/{owner_name}/structural-guard/{index}/{}",
                         fingerprint_fragment("behavioral", &behavioral_predicate_identity(pred))
                     ));
@@ -702,7 +780,7 @@ impl RhoNetProgram {
         premise: &Premise,
         inputs: &mut Vec<String>,
     ) {
-        let channel = RhoNetChannel::consistency(format!(
+        let channel = RhoNetChannel::consistency(&self.language_fingerprint, format!(
             "{}/{}",
             name,
             fingerprint_fragment("premise", &premises_identity(std::slice::from_ref(premise)))
@@ -712,7 +790,7 @@ impl RhoNetProgram {
     }
 
     fn pattern_trace_channel(&self, pattern: &mettail_ast::pattern::Pattern) -> RhoNetChannel {
-        lhs_pattern_trace_channel(pattern)
+        lhs_pattern_trace_channel(&self.language_fingerprint, pattern)
     }
 
     fn push_channel(&mut self, channel: RhoNetChannel) {
@@ -906,20 +984,58 @@ fn collect_unique<'a>(
 }
 
 /// The set-automaton TRACE channel of one rule-spec LHS pattern —
-/// `sa:pattern/lhs:{fnv1a64(pattern_identity(lhs))}`. The SINGLE derivation both
-/// the plan builder ([`RhoNetProgram::pattern_trace_channel`], which delegates
-/// here) and the E-3 T-INCR per-rule bypass (`rho_net_incremental`) use, so the
-/// incremental accept channel can never drift from the batch site channel.
+/// `sa:{fingerprint}/pattern/lhs:{fnv1a64(pattern_identity(lhs))}`. The SINGLE
+/// derivation both the plan builder ([`RhoNetProgram::pattern_trace_channel`], which
+/// delegates here) and the E-3 T-INCR per-rule bypass (`rho_net_incremental`) use, so
+/// the incremental accept channel can never drift from the batch site channel.
 ///
-/// Pattern-CONTENT-hashed and therefore fingerprint- AND declaration-index-
-/// independent (red-team amendment EM-6): a rule append never changes an existing
-/// rule's trace channel, and the appended rule's channel is derivable per-rule
-/// without re-running the lowering pipeline (EM-4b).
-pub(crate) fn lhs_pattern_trace_channel(pattern: &mettail_ast::pattern::Pattern) -> RhoNetChannel {
-    RhoNetChannel::set_automaton_trace(format!(
-        "pattern/{}",
-        fingerprint_fragment("lhs", &pattern_identity(pattern))
-    ))
+/// Pattern-CONTENT-hashed and therefore DECLARATION-INDEX-independent (red-team
+/// amendment EM-6): a rule append never changes an existing rule's trace channel
+/// *within one language*, and the appended rule's channel is derivable per-rule without
+/// re-running the lowering pipeline (EM-4b). Both properties EM-4b/EM-6 actually rest on
+/// are preserved.
+///
+/// ★ It is NOT fingerprint-independent, and S6 removed that property deliberately: it was
+/// the defect. Two languages whose LHS pattern TEXT coincides used to land two σ-receivers
+/// on ONE channel, and whichever won the consume applied ITS OWN RHS to the other's σ — a
+/// cross-fingerprint wrong firing. See [`scoped_channel_name`] for the invariant.
+///
+/// The consequence for the T-INCR bypass is real and is handled explicitly rather than
+/// inherited: appending a rewrite changes the WHOLE-DEFINITION fingerprint, so the base
+/// ruleset's cloned accept channels and contextual premise channels no longer match what a
+/// batch compile of the extended definition would derive. `rho_net_incremental` re-scopes
+/// them through [`rescope_channel_fingerprint`]; the debug cross-check against the batch
+/// derivation is what proves the re-scope exact.
+pub(crate) fn lhs_pattern_trace_channel(
+    language_fingerprint: &str,
+    pattern: &mettail_ast::pattern::Pattern,
+) -> RhoNetChannel {
+    RhoNetChannel::set_automaton_trace(
+        language_fingerprint,
+        format!("pattern/{}", fingerprint_fragment("lhs", &pattern_identity(pattern))),
+    )
+}
+
+/// Re-scope an already-derived channel name from one language fingerprint to another —
+/// the T-INCR (E-3) bypass's counterpart to [`scoped_channel_name`].
+///
+/// # Why a substring substitution is EXACT here, not a heuristic
+///
+/// Every INV-S6 name embeds the fingerprint VERBATIM, and derived families nest their
+/// scopes (`ac:loc:{fp}/…`, `ph:loc:{fp}/…`), so there is no single fixed position to
+/// splice. Substituting the fingerprint text itself handles every family — including the
+/// nested ones — uniformly, and it is exactly the value a batch compile under
+/// `to_fingerprint` would produce, because every derivation is a pure function of
+/// `(family, fingerprint, content)` in which the fingerprint appears only as this scope.
+///
+/// A false positive would require the PATH portion to contain the literal text
+/// `mettail-langdef-v1:{16 hex}`. Paths are built from rule labels, category names,
+/// declaration indices, and FNV hex fragments; a Rust identifier admits neither `-` nor
+/// `:`, so no label can spell it. The absence of a residual occurrence is nevertheless
+/// CHECKED by the caller rather than assumed, and the debug cross-check against the full
+/// batch derivation is the final arbiter.
+pub fn rescope_channel_fingerprint(name: &str, from_fingerprint: &str, to_fingerprint: &str) -> String {
+    name.replace(from_fingerprint, to_fingerprint)
 }
 
 fn fingerprint_fragment(prefix: &str, text: &str) -> String {
@@ -988,6 +1104,11 @@ mod tests {
     use crate::lower::lower_language_def;
     use mettail_ast::language::{BehavioralPred, LanguageDef, PredArg, Premise, RewriteRule};
     use mettail_ast::pattern::{Pattern, PatternTerm};
+
+    /// The INV-S6 scope these plan-level channel unit tests derive their names under.
+    /// Any slash-free string serves: these tests assert plan structure (duplicate
+    /// detection, dangling references), not the scope's value.
+    const TEST_FP: &str = "mettail-langdef-v1:0000000000000000";
 
     const SCALAR_FRAGMENT: &str = r#"
         name: RhoNetScalarFrag,
@@ -1082,11 +1203,14 @@ mod tests {
 
     #[test]
     fn valid_program_admits_only_rho_rules_with_semantic_predicate_guards() {
-        let in_channel = RhoNetChannel::set_automaton_trace("root/f/0").name;
-        let out_channel = RhoNetChannel::location("root").name;
+        let in_channel = RhoNetChannel::set_automaton_trace(TEST_FP, "root/f/0").name;
+        let out_channel = RhoNetChannel::location(TEST_FP, "root").name;
         let mut program = RhoNetProgram::new("lang-fp");
         program.channels =
-            vec![RhoNetChannel::set_automaton_trace("root/f/0"), RhoNetChannel::location("root")];
+            vec![
+                RhoNetChannel::set_automaton_trace(TEST_FP, "root/f/0"),
+                RhoNetChannel::location(TEST_FP, "root"),
+            ];
         program.semantic_predicates = vec![RhoNetSemanticPredicate::new(
             "guard:is-ground",
             RhoNetSemanticPredicateQuality::RejectSafeApprox,
@@ -1297,7 +1421,7 @@ mod tests {
     #[test]
     fn validation_rejects_unknown_channels_templates_and_guards() {
         let mut program = RhoNetProgram::new("lang-fp");
-        program.channels = vec![RhoNetChannel::location("root")];
+        program.channels = vec![RhoNetChannel::location(TEST_FP, "root")];
         program.rhs_templates = vec![RhoNetRhsTemplate::new("rhs:ok", "rhs-fp")];
         program.rules = vec![RhoNetRule::new(
             "rule:bad",
@@ -1333,7 +1457,8 @@ mod tests {
     #[test]
     fn validation_reports_duplicate_ids() {
         let mut program = RhoNetProgram::new("lang-fp");
-        program.channels = vec![RhoNetChannel::location("root"), RhoNetChannel::location("root")];
+        program.channels =
+            vec![RhoNetChannel::location(TEST_FP, "root"), RhoNetChannel::location(TEST_FP, "root")];
         program.semantic_predicates = vec![
             RhoNetSemanticPredicate::new("guard", RhoNetSemanticPredicateQuality::ExactDecidable),
             RhoNetSemanticPredicate::new(
@@ -1364,7 +1489,9 @@ mod tests {
             .validate_rho_native_contract()
             .expect_err("duplicates must reject");
 
-        assert!(errors.contains(&RhoNetValidationError::DuplicateChannel("loc:root".to_string())));
+        assert!(errors.contains(&RhoNetValidationError::DuplicateChannel(
+            RhoNetChannel::location(TEST_FP, "root").name
+        )));
         assert!(errors
             .contains(&RhoNetValidationError::DuplicateSemanticPredicate("guard".to_string())));
         assert!(errors.contains(&RhoNetValidationError::DuplicateRhsTemplate("rhs".to_string())));

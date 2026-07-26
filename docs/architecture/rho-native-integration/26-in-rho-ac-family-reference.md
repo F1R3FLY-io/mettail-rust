@@ -379,6 +379,17 @@ though `op` is shared. Both the carrier delivery and the co-installed receiver d
 through this one helper, so they rendezvous on **exactly one** bag's soup. Figure B shows the
 disjointness and the refuted shared-channel design.
 
+> **★ INV-S6 (2026-07-25).** This site-keyed carrier takes **no** fingerprint argument, and
+> deliberately so: `loc_channel` is already fingerprint-scoped at its root
+> ([25 §2.1](25-in-rho-base-family-reference.md#21-inv-s6-the-channel-name-fingerprint-invariant)),
+> so the carrier reads `ac:loc:{fingerprint}/{site}/…/{op}` and inherits cross-language
+> disjointness from the same key that gives it cross-*position* disjointness. Red-team #5
+> keyed by position; INV-S6 keys by language; one composition delivers both. The **bare**
+> (non-site-keyed) soup carrier has no such parent and scopes itself — `ac_soup_channel`
+> yields `ac:{fingerprint}/{op}`; see
+> [18](18-in-rho-ac-matching.md) §2 for why the earlier "it needs no fingerprint"
+> rationale did not hold.
+
 ![The site-keyed carrier — disjoint carriers under locate-all](figures/in-rho-ac-matching-site-keyed-carrier.svg)
 
 **Figure B — the site-keyed carrier.** One spread of $`\mathrm{Node}(\mathrm{PPar}\{A,B\}, \mathrm{PPar}\{C,D\})`$ publishes the two bags on disjoint carriers `ac:ρ/Node.0/PPar` and

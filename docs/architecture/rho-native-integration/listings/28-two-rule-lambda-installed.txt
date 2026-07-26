@@ -1,7 +1,7 @@
-for (fv(0), fv(1), fv(2) <= "sa:pattern/lhs:0ecc8282fec9495d") {
+for (fv(0), fv(1), fv(2) <= "sa:fp/pattern/lhs:0ecc8282fec9495d") {
   priv(mettail.term.fp.^subst)!([priv(mettail.term.fp.^Z)], bv(1), bv(2), bv(0))
 } |
-for (fv(0), fv(1) <= "sa:pattern/lhs:cfd391d0e3aae3c9") {
+for (fv(0), fv(1) <= "sa:fp/pattern/lhs:cfd391d0e3aae3c9") {
   bv(0)!(bv(1))
 } |
 for (fv(0), fv(1), fv(2) <= priv(mettail.term.fp.^cmp)) {

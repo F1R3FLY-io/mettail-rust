@@ -2890,7 +2890,7 @@ fn reflect_ground_term_marked(term: &GroundTerm, language_fingerprint: &str) -> 
 /// with the pattern's process remainder. This is the subject side of Stage AC's Scheme B —
 /// the AC receiver's collection pattern matches this carrier inside one atomic `consume`.
 fn reflect_ac_bag_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
-    let element_channel = format!("ac:{}", term.constructor);
+    let element_channel = ac_soup_channel(language_fingerprint, &term.constructor);
     let mut soup = Par::default();
     for child in &term.children {
         let element = reflect_ground_term_par(child, language_fingerprint);
@@ -2982,15 +2982,21 @@ fn reflect_ac_map_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
 /// (Stage 4 S-AC / AC4): a `HashBag` yields the process-soup connective ([`ac_bag_pattern`]); a
 /// `HashSet` the `ESet` connective ([`ac_set_pattern`]); a `HashMap` the `EMap` connective
 /// ([`ac_map_pattern`]). Each binds the fixed element slots + a residual-binding remainder, matched
-/// order-independently by the native spatial matcher inside one atomic `consume`. `op` is used only
-/// by the `HashBag` soup (its element channel `ac:{op}`); the native `ESet`/`EMap` carriers need no
-/// element channel.
-pub fn ac_collection_pattern(kind: CollectionType, op: &str, k: usize) -> Par {
+/// order-independently by the native spatial matcher inside one atomic `consume`. `op` and
+/// `language_fingerprint` are used only by the `HashBag` soup (its element channel
+/// [`ac_soup_channel`]); the native `ESet`/`EMap` carriers are structural connectives that
+/// name no channel at all, so INV-S6 has nothing to scope on those two arms.
+pub fn ac_collection_pattern(
+    kind: CollectionType,
+    language_fingerprint: &str,
+    op: &str,
+    k: usize,
+) -> Par {
     match kind {
         CollectionType::HashSet => ac_set_pattern(k),
         CollectionType::HashMap => ac_map_pattern(k),
         // `HashBag` (and any other kind routed here) → the process-soup pattern.
-        _ => ac_bag_pattern(op, k),
+        _ => ac_bag_pattern(language_fingerprint, op, k),
     }
 }
 
@@ -3034,8 +3040,8 @@ pub fn ac_map_pattern(k: usize) -> Par {
 ///
 /// The remainder is `new_freevar_par(k)`, whose `EVar(FreeVar(k))` in `exprs` is exactly the
 /// `var_level` the spatial matcher reads (`spatial_matcher.rs`); element `i` binds `FreeVar(i)`.
-pub fn ac_bag_pattern(op: &str, k: usize) -> Par {
-    let element_channel = format!("ac:{op}");
+pub fn ac_bag_pattern(language_fingerprint: &str, op: &str, k: usize) -> Par {
+    let element_channel = ac_soup_channel(language_fingerprint, op);
     // Start from the process remainder (a top-level free var at level k; connective_used).
     let mut pattern = new_freevar_par(k as i32, Vec::new());
     for i in 0..k {
@@ -3315,16 +3321,41 @@ pub fn contextual_hole_bridge_par(
     Par::default().with_receives(vec![receive])
 }
 
-/// The location channel of a spread term's ROOT — a `loc:`-kind quoted name
-/// derived from the site-root string `root_location`.
+/// The location channel of a spread term's ROOT — a `loc:`-kind quoted name derived from
+/// the LANGUAGE FINGERPRINT and the site-root string `root_location`.
 ///
 /// Per INV-7 / `rem:fresh` ("freshness is supplied as rho supplies all freshness,
 /// by quoting … no ν, no central allocator") the whole location scheme is ν-free:
 /// location channels are deterministic ground names, never fresh `New` bindings.
 /// `root_location` is the quoted per-site nonce ρ of the `⌜(ρ,ℓ)⌝` idiom — a plain
-/// string IS its quote — so distinct redex sites use disjoint channel prefixes.
-pub fn spread_root_location(root_location: &str) -> String {
-    format!("loc:{root_location}")
+/// string IS its quote — so distinct redex sites within ONE language use disjoint channel
+/// prefixes.
+///
+/// ★ `root_location` alone is NOT a cross-language separator, and this doc comment used to
+/// imply otherwise. It is a plain caller-supplied `&str`, never derived from the
+/// fingerprint — `spread_term_par(term, language_fingerprint, root_location)` takes the
+/// fingerprint FOR THE TAGS and the location as an INDEPENDENT argument — so two languages
+/// spreading at the same site string (`"site0"`, or a `rewrite/{label}/…` path built from a
+/// constructor name they happen to share) collided on every `loc:`/`col:`/`cap:` channel of
+/// that site.
+///
+/// A pure `loc:` collision alone would be destructive starvation rather than a wrong
+/// firing: `wrap_descent` builds `for(h <- loc){ match h { op̲ => … } }`, so the receive
+/// binds `h` UNCONDITIONALLY and the tag test is a `match` INSIDE the continuation with a
+/// single ground arm and no wildcard — the COMM fires, the match finds no arm, and both
+/// languages starve. But `cap:` is not an independent family: it is derived from the SAME
+/// `root_location` by [`collapse_capture_location`], and `rho_net_automaton` derives both
+/// roots together. A σ capture CANNOT discriminate by construction — `wrap_children` /
+/// `wrap_capture_chain` bind the fully collapsed subterm, because a pattern variable must
+/// accept an arbitrary subterm, so there is no tag to match on and there could not be one.
+/// Language B's capture receiver therefore consumed language A's collapsed subterm and
+/// instantiated B's RHS with A's operand.
+///
+/// Hence INV-S6: the fingerprint scopes the KEY, and every derived child path inherits it
+/// because [`spread_child_location`] COMPOSES from the parent. See
+/// [`crate::rho_net::scoped_channel_name`].
+pub fn spread_root_location(language_fingerprint: &str, root_location: &str) -> String {
+    crate::rho_net::scoped_channel_name("loc", language_fingerprint, root_location)
 }
 
 /// The location channel of the `index`-th child (under constructor `op`) of the
@@ -3339,8 +3370,12 @@ pub fn spread_child_location(parent: &str, op: &str, index: usize) -> String {
 /// The CHAIN collapse channel of the node at `root_location`'s spread — the `col:`-kind
 /// quoted name that carries `⟦subtree⟧` UP to the parent's collapse receiver. It is read
 /// exactly once (by the parent), so the bottom-up fold never contends with the automaton.
-pub fn collapse_chain_location(root_location: &str) -> String {
-    format!("col:{root_location}")
+///
+/// Fingerprint-scoped per INV-S6 ([`crate::rho_net::scoped_channel_name`]), from the SAME
+/// `(language_fingerprint, root_location)` pair as [`spread_root_location`] — the three
+/// matching-τ families are ONE key, so scoping them apart would be a latent divergence.
+pub fn collapse_chain_location(language_fingerprint: &str, root_location: &str) -> String {
+    crate::rho_net::scoped_channel_name("col", language_fingerprint, root_location)
 }
 
 /// The CAPTURE collapse channel of the node at `root_location`'s spread — the `cap:`-kind
@@ -3348,8 +3383,31 @@ pub fn collapse_chain_location(root_location: &str) -> String {
 /// an ARBITRARY-depth matched subterm (the M-collapse fix). It carries the SAME `⟦subtree⟧`
 /// value as the chain channel but on a DISJOINT name, so the parent's chain read and the
 /// automaton's capture read never race for one value (each is consumed at most once — O1).
-pub fn collapse_capture_location(root_location: &str) -> String {
-    format!("cap:{root_location}")
+///
+/// ★ THIS is the channel the S6 cross-fingerprint wrong firing rode on, and it is the one
+/// family that cannot defend itself: the value it carries is a fully collapsed subterm bound
+/// by a pattern VARIABLE, which must accept an arbitrary subterm, so no tag test is possible
+/// at the capture. Scoping the name is therefore the only available discriminator. Derived
+/// from the SAME `(language_fingerprint, root_location)` pair as [`spread_root_location`].
+pub fn collapse_capture_location(language_fingerprint: &str, root_location: &str) -> String {
+    crate::rho_net::scoped_channel_name("cap", language_fingerprint, root_location)
+}
+
+/// The BARE AC soup carrier channel for operand constructor `op` — `ac:{fingerprint}/{op}`,
+/// the process-soup name a bag's element sends ride when the carrier is NOT site-keyed.
+///
+/// THE single derivation point for the bare `ac:` family (fourteen call sites across
+/// `rho_net_lower` and `rho_net_drive` reached it independently before S6, all of them
+/// spelling `format!("ac:{op}")`). Its site-keyed sibling [`ac_carrier_channel`] inherits
+/// its scope from the `loc:` channel instead and needs no fingerprint of its own.
+///
+/// ★ Keyed by the BARE constructor label, this was the family that collided WITHOUT an
+/// attacker and without even a shared site string: two languages that each declare an AC
+/// constructor named `PPar` shared `@"ac:PPar"`, and `PPar` is the actual name used in
+/// `rhocalc` and in every AC/Ambient demo. Co-installing two process calculi collided here
+/// BY DEFAULT.
+pub fn ac_soup_channel(language_fingerprint: &str, op: &str) -> String {
+    crate::rho_net::scoped_channel_name("ac", language_fingerprint, op)
 }
 
 /// The SITE-KEYED AC carrier channel of a HashBag AC operand bag at the spread node whose `loc:`
@@ -3364,6 +3422,12 @@ pub fn collapse_capture_location(root_location: &str) -> String {
 /// soups would intermingle on one `ac:op` channel and the native matcher could pick cross-bag
 /// elements, a latent soundness bug. Both the carrier delivery and the co-installed receiver derive
 /// the channel through THIS one helper, so they rendezvous on exactly one bag's soup.
+///
+/// INV-S6: this family takes NO fingerprint argument because it already inherits one —
+/// `loc_channel` is a [`spread_root_location`] / [`spread_child_location`] path, which is
+/// fingerprint-scoped at its root, so the carrier reads
+/// `ac:loc:{fingerprint}/{site}/…/{op}`. The bare (non-site-keyed) sibling has no such
+/// parent and scopes itself via [`ac_soup_channel`].
 pub fn ac_carrier_channel(loc_channel: &str, op: &str) -> String {
     format!("ac:{loc_channel}/{op}")
 }
@@ -3398,9 +3462,9 @@ pub fn spread_term_par(term: &GroundTerm, language_fingerprint: &str, root_locat
     spread_term_par_at(
         term,
         language_fingerprint,
-        &spread_root_location(root_location),
-        &collapse_chain_location(root_location),
-        &collapse_capture_location(root_location),
+        &spread_root_location(language_fingerprint, root_location),
+        &collapse_chain_location(language_fingerprint, root_location),
+        &collapse_capture_location(language_fingerprint, root_location),
     )
 }
 
@@ -3441,7 +3505,7 @@ pub fn ac_match_call_par(
         entries.iter().map(|entry| (entry.op.as_str(), entry)).collect();
     ac_match_install_at(
         subject,
-        &spread_root_location(root_site),
+        &spread_root_location(language_fingerprint, root_site),
         &by_op,
         out_channel,
         language_fingerprint,
@@ -3470,6 +3534,7 @@ fn ac_match_install_at(
         // source differs (so it picks k-of-n from the SPREAD bag, not the report σ).
         let receiver = ac_sigma_receiver_par_with_condition(
             entry.kind.clone(),
+            language_fingerprint,
             &entry.op,
             entry.arity,
             entry.rhs_par.clone(),
@@ -4221,7 +4286,7 @@ fn reflect_hashbag_soup_par(
     binder_env: &mut Vec<String>,
     def: &LanguageDef,
 ) -> Result<Par, UnsupportedFamily> {
-    let element_channel = format!("ac:{op}");
+    let element_channel = ac_soup_channel(language_fingerprint, &op.to_string());
     let mut soup = Par::default();
     // Each fixed element `e_i` → a ground send `@"ac:{op}"!(⟦e_i⟧σ)` (the subject side's
     // `reflect_ac_bag_par` element shape). Reflected with `Some(def)` so a nested same-op bag
@@ -4403,8 +4468,22 @@ pub fn contextual_join_receiver_par(context_rhs: Par, premise_channels: &[Par]) 
 /// `out` (`BoundVar(0)`). `rhs_par` = `⟦R⟧σ` must reference element `i` as `BoundVar(k+1-i)` and
 /// `rest` as `BoundVar(1)` (the reverse De Bruijn over the `k+2` bind free vars). Verified end to
 /// end by `ac_receiver_fires_the_matched_element_on_the_dynamic_out`.
-pub fn ac_sigma_receiver_par(op: &str, k: usize, rhs_par: Par, source: Par) -> Par {
-    ac_sigma_receiver_par_with_condition(CollectionType::HashBag, op, k, rhs_par, source, None)
+pub fn ac_sigma_receiver_par(
+    language_fingerprint: &str,
+    op: &str,
+    k: usize,
+    rhs_par: Par,
+    source: Par,
+) -> Par {
+    ac_sigma_receiver_par_with_condition(
+        CollectionType::HashBag,
+        language_fingerprint,
+        op,
+        k,
+        rhs_par,
+        source,
+        None,
+    )
 }
 
 /// The number of connective element σ SLOTS an AC receiver of `kind` binds for `k` fixed LHS
@@ -4433,6 +4512,7 @@ pub fn ac_element_slot_count(kind: CollectionType, k: usize) -> usize {
 /// condition-less gap. Every other formal (rest, out) and the body are the linear receiver's.
 pub fn ac_sigma_receiver_par_with_condition(
     kind: CollectionType,
+    language_fingerprint: &str,
     op: &str,
     k: usize,
     rhs_par: Par,
@@ -4450,7 +4530,7 @@ pub fn ac_sigma_receiver_par_with_condition(
     let receive = Receive {
         binds: vec![ReceiveBind {
             patterns: vec![
-                ac_collection_pattern(kind, op, k),
+                ac_collection_pattern(kind, language_fingerprint, op, k),
                 new_freevar_par((slots + 1) as i32, Vec::new()),
             ],
             source: Some(source),
@@ -4619,7 +4699,15 @@ pub fn ac_rule_receiver(
     // collection-VALUED RHS reflects to the kind's carrier (soup / `ESet`) via `def`. A repeated var
     // resolves to its FIRST occurrence slot (matching the guard's canonical slot).
     let rhs = reflect_term_par(right, &vars, k + 1, language_fingerprint, def).ok()?;
-    Some(ac_sigma_receiver_par_with_condition(kind, &op, k, rhs, source, condition))
+    Some(ac_sigma_receiver_par_with_condition(
+        kind,
+        language_fingerprint,
+        &op,
+        k,
+        rhs,
+        source,
+        condition,
+    ))
 }
 
 /// The effective BARE-VAR AC operand kind of a linear AC rewrite LHS: the pattern collection's own
@@ -5180,7 +5268,7 @@ fn expr_par_with(instance: Expr, free: &[usize]) -> Par {
 /// [`structural_ac_receiver_par`] uses for its `m` σ-delivered reducts; the two receivers now differ
 /// only in WHERE the injection sources each slot's value.
 fn comm_receiver_par(shape: &CommShape, source: Par, language_fingerprint: &str) -> Par {
-    let element_channel = format!("ac:{}", shape.op);
+    let element_channel = ac_soup_channel(language_fingerprint, &shape.op);
     let k = shape.elements.len(); // 2
     let m = shape.reducts.len(); // 1 (asynchronous) or ≥2 (synchronous)
     let rest_level = k;
@@ -5574,7 +5662,7 @@ fn structural_ac_receiver_par(
     source: Par,
     language_fingerprint: &str,
 ) -> Par {
-    let element_channel = format!("ac:{}", shape.op);
+    let element_channel = ac_soup_channel(language_fingerprint, &shape.op);
     let k = shape.elements.len();
     let m = shape.reduct_vars.len();
     let rest_level = k;
@@ -5967,7 +6055,7 @@ pub fn structural_ac_match_call_par(
         entries.iter().map(|entry| (entry.shape.op.as_str(), entry)).collect();
     structural_ac_match_install_at(
         subject,
-        &spread_root_location(root_site),
+        &spread_root_location(language_fingerprint, root_site),
         &by_op,
         out_channel,
         language_fingerprint,
@@ -6106,7 +6194,7 @@ fn structural_ac_match_receiver_par(
     source: Par,
     language_fingerprint: &str,
 ) -> Par {
-    let element_channel = format!("ac:{}", shape.op);
+    let element_channel = ac_soup_channel(language_fingerprint, &shape.op);
     let k = shape.elements.len();
     let rest_level = k;
 
@@ -6929,7 +7017,8 @@ pub(crate) fn nested_match_pattern_for(
                 // `op{ elements, ...rest }` — the process-soup pattern. The remainder is the bound
                 // SPLICED-rest σ slot iff this is the OUTER bag (`rest == spliced_rest`); a nested-bag
                 // remainder (e.g. `rest1`) rides the reduct, so it is a wildcard.
-                let element_channel = format!("ac:{constructor}");
+                let element_channel =
+                    ac_soup_channel(language_fingerprint, &constructor.to_string());
                 let mut soup = if rest.as_ref() == Some(spliced_rest) {
                     new_freevar_par(spliced_rest_slot as i32, Vec::new())
                 } else {
@@ -7012,7 +7101,7 @@ fn nested_structural_ac_receiver_par(
     source: Par,
     language_fingerprint: &str,
 ) -> Par {
-    let element_channel = format!("ac:{}", shape.op);
+    let element_channel = ac_soup_channel(language_fingerprint, &shape.op);
     let g = count_var_occurrences(&shape.root_pattern, &shape.nonlinear_var);
     let m = shape.reduct_templates.len();
     let spliced_rest_slot = g;
@@ -8170,7 +8259,8 @@ pub(crate) fn nested_match_bind_pattern_for(
                 // `op{ elements, ...rest }` — the process-soup pattern. The remainder binds a σ slot
                 // iff the reduct references this rest (the inner `rest1` OR the outer spliced
                 // `rest2`); an unreferenced rest is a wildcard.
-                let element_channel = format!("ac:{constructor}");
+                let element_channel =
+                    ac_soup_channel(language_fingerprint, &constructor.to_string());
                 let mut soup = match rest {
                     Some(r) if referenced.contains(&r.to_string()) => {
                         let slot = state.next_level;
@@ -8274,7 +8364,7 @@ fn reflect_ac_template_bound_par(
             new_elist_par(items, locally_free.clone(), false, None, locally_free, false)
         },
         AcReconstructTemplate::Bag { op, elements, rest } => {
-            let element_channel = format!("ac:{op}");
+            let element_channel = ac_soup_channel(language_fingerprint, op);
             let mut soup = Par::default();
             for element in elements {
                 let element =
@@ -8349,7 +8439,7 @@ fn nested_structural_ac_match_receiver_par(
     source: Par,
     language_fingerprint: &str,
 ) -> Par {
-    let element_channel = format!("ac:{}", shape.op);
+    let element_channel = ac_soup_channel(language_fingerprint, &shape.op);
 
     // The var/rest NAMES the RHS reducts reference, PLUS the outer spliced rest — the operand pattern
     // must BIND each (the report-path pattern wildcards them, taking them host-side), so the body can
@@ -8597,7 +8687,7 @@ pub fn nested_structural_ac_match_call_par(
     }
     nested_structural_ac_match_install_at(
         subject,
-        &spread_root_location(root_site),
+        &spread_root_location(language_fingerprint, root_site),
         &by_root,
         out_channel,
         language_fingerprint,
@@ -8612,6 +8702,12 @@ mod tests {
     // every type defined in this module; only the extras below are new.
     use super::*;
     use crate::lower::lower_language_def;
+
+    /// The INV-S6 scope these unit tests derive their channel names under. Any
+    /// slash-free string serves: these tests assert Par SHAPE (case structure, send
+    /// targets, receiver arity), not the scope's value — a production emission takes
+    /// its scope from `language_definition_fingerprint`.
+    const TEST_FP: &str = "mettail-langdef-v1:0000000000000000";
     use mettail_ast::language::{Equation, FreshnessCondition, FreshnessTarget};
 
     /// S1 — the reflected-tag ABI has ONE writer and ONE reader, and they are
@@ -8861,7 +8957,7 @@ mod tests {
     fn assert_spread_encodes(term: &GroundTerm, fingerprint: &str, root: &str) {
         let spread = spread_term_par(term, fingerprint, root);
         let mut expected = Vec::new();
-        expected_spread_nodes(term, &spread_root_location(root), &mut expected);
+        expected_spread_nodes(term, &spread_root_location(fingerprint, root), &mut expected);
 
         assert_eq!(loc_head_tag_sends(&spread), expected.len(), "one loc: head-tag send per node");
         assert!(spread.news.is_empty(), "ν-free spread: no New (INV-7)");
@@ -8910,7 +9006,7 @@ mod tests {
             }
         }
         let spread = spread_term_par(term, fingerprint, root);
-        walk(term, fingerprint, &collapse_capture_location(root), &spread);
+        walk(term, fingerprint, &collapse_capture_location(fingerprint, root), &spread);
     }
 
     #[test]
@@ -8927,11 +9023,14 @@ mod tests {
             .filter_map(gstring_value)
             .filter(|c| c.starts_with("loc:"))
             .collect();
-        let want: std::collections::BTreeSet<String> =
-            ["loc:site0", "loc:site0/Swap.0", "loc:site0/Swap.1"]
-                .into_iter()
-                .map(String::from)
-                .collect();
+        let root = spread_root_location("testfp", "site0");
+        let want: std::collections::BTreeSet<String> = [
+            root.clone(),
+            spread_child_location(&root, "Swap", 0),
+            spread_child_location(&root, "Swap", 1),
+        ]
+        .into_iter()
+        .collect();
         assert_eq!(loc_channels, want, "the exact derived location channels");
         // The two leaves publish their collapse values on the derived `cap:` channels.
         let cap_channels: std::collections::BTreeSet<String> = spread
@@ -8941,10 +9040,13 @@ mod tests {
             .filter_map(gstring_value)
             .filter(|c| c.starts_with("cap:"))
             .collect();
-        let want_cap: std::collections::BTreeSet<String> = ["cap:site0/Swap.0", "cap:site0/Swap.1"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let cap_root = collapse_capture_location("testfp", "site0");
+        let want_cap: std::collections::BTreeSet<String> = [
+            spread_child_location(&cap_root, "Swap", 0),
+            spread_child_location(&cap_root, "Swap", 1),
+        ]
+        .into_iter()
+        .collect();
         assert_eq!(cap_channels, want_cap, "the leaves' capture channels");
     }
 
@@ -8970,7 +9072,8 @@ mod tests {
         let spread = spread_term_par(&leaf, "testfp", "site0");
         let expected_tag = GPrivateBuilder::new_par_from_string(reflect_tag("testfp", "A"));
         // The `loc:` head-tag send carries the tag ALONE.
-        let loc_channel = new_gstring_par("loc:site0".to_string(), Vec::new(), false);
+        let loc_channel =
+            new_gstring_par(spread_root_location("testfp", "site0"), Vec::new(), false);
         let loc_send = spread
             .sends
             .iter()
@@ -8982,7 +9085,8 @@ mod tests {
             "loc: head tag is the shared-ABI tag"
         );
         // The `cap:` collapse send carries ⟦leaf⟧ = EList[tag] = reflect_ground_term_par(leaf).
-        let cap_channel = new_gstring_par("cap:site0".to_string(), Vec::new(), false);
+        let cap_channel =
+            new_gstring_par(collapse_capture_location("testfp", "site0"), Vec::new(), false);
         let cap_send = spread
             .sends
             .iter()
@@ -9274,8 +9378,18 @@ mod tests {
             .expect("the dispatch receiver rests on its source channel");
         assert_eq!(
             source,
-            &new_gstring_par("sa:scalar/AddInt".to_string(), Vec::new(), false),
-            "the firing dispatch receiver rests on the `sa:scalar/AddInt` trace channel, NOT the \
+            &new_gstring_par(
+                crate::rho_net::RhoNetChannel::set_automaton_trace(
+                    &program.language_fingerprint,
+                    "scalar/AddInt",
+                )
+                .name,
+                Vec::new(),
+                false,
+            ),
+            "the firing dispatch receiver rests on the INV-S6-scoped \
+             `sa:{{fingerprint}}/scalar/AddInt` \
+             trace channel, NOT the \
              scalar contract's `@\"AddInt\"` channel"
         );
 
@@ -9288,7 +9402,13 @@ mod tests {
             "the `fold` AddInt must surface exactly one native-fold firing site"
         );
         assert_eq!(sites[0].rule_label, "Int_AddInt");
-        assert_eq!(sites[0].channel, "sa:scalar/AddInt");
+        assert_eq!(
+            sites[0].channel,
+            crate::rho_net::RhoNetChannel::set_automaton_trace(
+                &program.language_fingerprint,
+                "scalar/AddInt",
+            ).name
+        );
 
         // The program installs cleanly (the firing receiver is a real materialized contract).
         assert!(
@@ -11944,7 +12064,7 @@ mod tests {
             assert_eq!(send.data.len(), 1, "each send carries one reflected element");
             assert_eq!(
                 send.chan.as_ref().unwrap(),
-                &new_gstring_par("ac:PPar".to_string(), Vec::new(), false),
+                &new_gstring_par(ac_soup_channel(fp, "PPar"), Vec::new(), false),
                 "elements are sent on the AC element channel ac:{{op}}"
             );
             assert_eq!(
@@ -11968,7 +12088,7 @@ mod tests {
         // The AC receiver's collection pattern: k send-patterns @"ac:PPar"!(FreeVar(i)) + a
         // process remainder EVar(FreeVar(k)), connective (the native sub_pars matcher assigns
         // the k patterns to k carrier sends in any order and binds the residual to `rest`).
-        let pattern = ac_bag_pattern("PPar", 2);
+        let pattern = ac_bag_pattern(TEST_FP, "PPar", 2);
         assert_eq!(pattern.sends.len(), 2, "one send-pattern per fixed element");
         assert!(pattern.connective_used, "a matching pattern with free vars is connective");
         assert_eq!(pattern.exprs.len(), 1, "the process remainder is one top-level free var");
@@ -12030,8 +12150,8 @@ mod tests {
         let send = &soup.sends[0];
         assert_eq!(
             gstring_value(send.chan.as_ref().expect("send channel")),
-            Some("ac:PPar".to_string()),
-            "the element send is on the @\"ac:{{op}}\" carrier channel"
+            Some(ac_soup_channel(fp, "PPar")),
+            "the element send is on the @\"ac:{{fingerprint}}/{{op}}\" carrier channel"
         );
         let elem = elist_body(&send.data[0]);
         assert_eq!(
@@ -12124,8 +12244,8 @@ mod tests {
         assert_eq!(soup.sends.len(), 1, "the transformed bag has one fixed-element send");
         assert_eq!(
             gstring_value(soup.sends[0].chan.as_ref().expect("element channel")),
-            Some("ac:PPar".to_string()),
-            "the fixed element rides the @\"ac:PPar\" carrier"
+            Some(ac_soup_channel(fp, "PPar")),
+            "the fixed element rides the INV-S6-scoped @\"ac:{{fingerprint}}/PPar\" carrier"
         );
         let elem = elist_body(&soup.sends[0].data[0]);
         assert_eq!(
@@ -12455,7 +12575,7 @@ mod tests {
             .first()
             .expect("σ-receiver source channel");
         assert!(
-            channel.starts_with("sa:pattern/"),
+            channel.starts_with(&format!("sa:{}/pattern/", plan.definition_fingerprint())),
             "σ source is the LHS pattern-trace channel, got {channel:?}"
         );
 

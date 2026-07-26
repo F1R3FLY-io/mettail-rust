@@ -799,7 +799,7 @@ async fn ac_bag_pattern_matches_the_process_soup_in_rho() {
     // The receiver: for(<ac_bag_pattern PPar/1> <- c_ac){ OUT!(x) }. The pattern binds the
     // element x = FreeVar(0) and rest = FreeVar(1); at the body's depth 2 the element is
     // BoundVar(1) (reverse De Bruijn over the bind's 2 free vars).
-    let pattern = ac_bag_pattern("PPar", 1);
+    let pattern = ac_bag_pattern(&fingerprint, "PPar", 1);
     let body = new_send_par(
         new_gstring_par("OUT".to_string(), Vec::new(), false),
         vec![new_boundvar_par(1, create_bit_vector(&[1]), false)],
@@ -881,7 +881,7 @@ async fn ac_receiver_fires_the_matched_element_on_the_dynamic_out() {
 
     // Bind [collection pattern (element FreeVar(0), rest FreeVar(1)), out FreeVar(2)]. The body
     // fires on out = BoundVar(0) the element = BoundVar(2) (reverse De Bruijn, 3 bind free vars).
-    let pattern = ac_bag_pattern("PPar", 1);
+    let pattern = ac_bag_pattern(&fingerprint, "PPar", 1);
     let out_pattern = new_freevar_par(2, Vec::new());
     let body = new_send_par(
         new_boundvar_par(0, create_bit_vector(&[0]), false),
@@ -958,6 +958,7 @@ async fn ac_sigma_receiver_par_builds_a_working_receiver() {
     // rhs = the element σ (BoundVar(k+1-0) = BoundVar(2) for k=1) — fired on out by the receiver.
     let rhs = new_boundvar_par(2, create_bit_vector(&[2]), false);
     let receiver = ac_sigma_receiver_par(
+        &fingerprint,
         "PPar",
         1,
         rhs,
@@ -998,6 +999,7 @@ async fn ac_contract_call_fires_the_ac_receiver() {
     // The AC receiver (codegen), source = c_ac; fires the element σ (BoundVar(2), k=1) on out.
     let rhs = new_boundvar_par(2, create_bit_vector(&[2]), false);
     let receiver = ac_sigma_receiver_par(
+        &fingerprint,
         "PPar",
         1,
         rhs,

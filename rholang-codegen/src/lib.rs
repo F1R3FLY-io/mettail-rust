@@ -204,8 +204,9 @@ pub use need::{
     CallByNeedThunkSpec, CallByNeedThunkSpecError,
 };
 pub use rho_net::{
-    RhoNetChannel, RhoNetChannelKind, RhoNetProgram, RhoNetRhsTemplate, RhoNetRule, RhoNetRuleKind,
-    RhoNetSemanticPredicate, RhoNetSemanticPredicateQuality, RhoNetValidationError,
+    rescope_channel_fingerprint, scoped_channel_name, RhoNetChannel, RhoNetChannelKind,
+    RhoNetProgram, RhoNetRhsTemplate, RhoNetRule, RhoNetRuleKind, RhoNetSemanticPredicate,
+    RhoNetSemanticPredicateQuality, RhoNetValidationError,
 };
 pub use rho_net_automaton::{
     automaton_receiver_network_par, multi_pattern_receiver_network_par, AutomatonAcceptTarget,
@@ -221,6 +222,7 @@ pub use rho_net_naive_kt::{
 };
 pub use rho_net_lower::{
     ac_bag_pattern, ac_carrier_channel, ac_collection_pattern, ac_contract_call,
+    ac_soup_channel,
     ac_element_slot_count, ac_map_pattern, ac_match_call_par, ac_rule_receiver,
     ac_set_correlation_condition, ac_set_element_pattern, ac_set_paired_receiver_par, ac_set_pattern,
     ac_sigma_receiver_par, ac_sigma_receiver_par_with_condition, collapse_capture_location,

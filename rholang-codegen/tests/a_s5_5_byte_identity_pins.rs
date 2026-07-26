@@ -69,7 +69,16 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_5_golden() {
     let drive = lowered.drive().expect("production Lambda is drive-admitted");
     assert_eq!(
         par_fingerprint(drive),
-        (4357, 0xcd74c7d13495d5d5),
+        // ★ #36 S6 RE-CAPTURE — INV-S6 fingerprint-scopes every driver-network channel
+        // name, so every `sa:`/`loc:`/`col:`/`cap:`/`ac:` name in the emission grows by
+        // the scope `"{fingerprint}/"` (36 bytes: 35-char fingerprint + separator).
+        // PROVEN to be EXACTLY and ONLY that insertion: inverting the ONE line that adds
+        // it (`rho_net::scoped_channel_name`) restores this pin byte-for-byte, and the
+        // byte delta is fully accounted below. Nothing else moved — the receive counts
+        // are unchanged.
+        // ACCOUNTING: 4357 → 4429 = +72 = 2 scope insertions × 36, exactly (no name
+        // crossed prost's 127-byte varint length-prefix boundary).
+        (4429, 0x0cfebce014446d5d),
         "the Lambda ^drive receiver family must be byte-identical to the pre-A-S5.5 \
          golden (captured at ee1514da)"
     );
@@ -88,7 +97,15 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_5_golden() {
         // note on `rho_net_subst_trs::reserved_subst_trs_labels`); and the doc-28 RENDERED
         // form of this same program differs from its predecessor only in lines a targeted
         // `.Z)`→`.^Z)` / `.S)`→`.^S)` substitution maps back byte-for-byte.
-        (12824, 0x89ea12b54e7c61a0),
+        // ★ #36 S6 RE-CAPTURE — INV-S6 fingerprint-scopes every driver-network channel
+        // name, so every `sa:`/`loc:`/`col:`/`cap:`/`ac:` name in the emission grows by
+        // the scope `"{fingerprint}/"` (36 bytes: 35-char fingerprint + separator).
+        // PROVEN to be EXACTLY and ONLY that insertion: inverting the ONE line that adds
+        // it (`rho_net::scoped_channel_name`) restores this pin byte-for-byte, and the
+        // byte delta is fully accounted below. Nothing else moved — the receive counts
+        // are unchanged.
+        // ACCOUNTING: 12824 → 12932 = +108 = 3 × 36, exactly.
+        (12932, 0x87c0768a017c399d),
         "the full Lambda installed program must be byte-identical to the pre-A-S5.5 \
          golden (captured at ee1514da; RE-CAPTURED at #36 S3, diff explained above)"
     );
@@ -103,9 +120,16 @@ fn ambient_legacy_ac_receivers_are_byte_identical_to_the_pre_a_s5_5_goldens() {
     let plan = plan_for(include_str!("../../languages/src/ambient.rs"));
     let lowered = plan.rho_net_lowered();
     let goldens: &[(&str, (usize, u64))] = &[
-        ("rule:rewrite:0:InRule", (610, 0xf464b25652689343)),
-        ("rule:rewrite:1:OutRule", (627, 0x08d041e371a31213)),
-        ("rule:rewrite:2:OpenRule", (533, 0xa7f563b1a93f4595)),
+        // ★ #36 S6 RE-CAPTURE — see the note on the pins above. Each σ-receiver carries
+        // FIVE scoped names (its `ac:` carrier plus the `loc:`/`cap:` positions it reads),
+        // so each grows by 5 × 36 = 180 bytes plus the prost varint length-prefix bytes of
+        // the names that crossed 127: InRule +1, OutRule +3, OpenRule +3.
+        //   InRule    610 → 791  (+181 = 180 + 1)
+        //   OutRule   627 → 810  (+183 = 180 + 3)
+        //   OpenRule  533 → 716  (+183 = 180 + 3)
+        ("rule:rewrite:0:InRule", (791, 0xc98308695f97287b)),
+        ("rule:rewrite:1:OutRule", (810, 0xee3b373df2352123)),
+        ("rule:rewrite:2:OpenRule", (716, 0xedd385091b46233c)),
     ];
     for (rule_id, expected) in goldens {
         let par = lowered

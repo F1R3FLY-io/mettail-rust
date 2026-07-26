@@ -284,6 +284,7 @@ struct NaiveEntrySchedule {
 fn collect_entry_schedule(
     view: &SetAutomatonView<'_, String>,
     entry: usize,
+    language_fingerprint: &str,
     site: &str,
 ) -> Result<NaiveEntrySchedule, NaiveKtUnsupported> {
     let root = view.entry_root_state(entry);
@@ -291,8 +292,8 @@ fn collect_entry_schedule(
         AutomatonNode::Var(_) => Err(NaiveKtUnsupported::VariableRootPattern),
         AutomatonNode::App { op, args } => {
             let root_op = op.to_string();
-            let root_loc = spread_root_location(site);
-            let cap_root = collapse_capture_location(site);
+            let root_loc = spread_root_location(language_fingerprint, site);
+            let cap_root = collapse_capture_location(language_fingerprint, site);
             let mut descents: Vec<Descent> = Vec::new();
             let mut captures: Vec<String> = Vec::new();
             let mut names: Vec<String> = Vec::new();
@@ -344,18 +345,26 @@ fn collect_non_root_ops(
 /// The RULESET-level admission gates, run BEFORE any emission:
 ///
 /// 1. per-entry: Var root / non-linear entry (via [`collect_entry_schedule`]
-///    at a probe site — only names and node kinds matter, so the site string is
-///    irrelevant to the verdict);
+///    at a probe site AND a probe INV-S6 scope — only names and node kinds
+///    matter, so neither the site string nor the fingerprint scope can change
+///    the verdict);
 /// 2. [`NaiveKtUnsupported::OverlappingTagDemand`]: no entry's NON-ROOT op may
 ///    equal any entry's ROOT op (nested-vs-root demand), and no two DISTINCT
 ///    entries may share a ROOT op (duplicate-root demand). See the variant's
 ///    rustdoc for why each shape drops a match under the once-published spread.
 fn validate_naive_ruleset(view: &SetAutomatonView<'_, String>) -> Result<(), NaiveKtUnsupported> {
+    /// The INV-S6 scope the admission PROBE derives its throwaway channel names under.
+    /// `validate_naive_ruleset` inspects only `schedule.root_op` and the linearity of the
+    /// capture names, never a channel string, so the scope cannot reach the verdict — the
+    /// same reason the probe passes a fixed `"gate-probe"` site. Using a fixed probe value
+    /// keeps the gate callable where no language fingerprint is in scope.
+    const GATE_PROBE_FINGERPRINT: &str = "mettail-langdef-v1:0000000000000000";
+
     let entry_count = view.entry_count();
     // Per-entry root op (also runs the Var-root + linearity gates).
     let mut root_ops: Vec<(PatternId, String)> = Vec::with_capacity(entry_count);
     for entry in 0..entry_count {
-        let schedule = collect_entry_schedule(view, entry, "gate-probe")?;
+        let schedule = collect_entry_schedule(view, entry, GATE_PROBE_FINGERPRINT, "gate-probe")?;
         root_ops.push((view.entry_id(entry), schedule.root_op));
     }
     // Duplicate roots: two DISTINCT entries sharing a root op.
@@ -521,7 +530,7 @@ pub fn naive_kt_entry_receiver_par(
     language_fingerprint: &str,
     encoding: NaiveGuardEncoding,
 ) -> Result<Par, NaiveKtUnsupported> {
-    let schedule = collect_entry_schedule(view, entry, site)?;
+    let schedule = collect_entry_schedule(view, entry, language_fingerprint, site)?;
     // Linear entry: k distinct vars in DFS (first-occurrence) order, so
     // `first_occ = [0,…,k-1]` — the SAME arguments the optimized emitter passes
     // for a linear entry, making the accept send byte-identical by construction.
@@ -540,7 +549,13 @@ pub fn naive_kt_entry_receiver_par(
         language_fingerprint,
         &schedule.root_op,
     ));
-    Ok(naive_tag_receive(&spread_root_location(site), root_tag, body, true, encoding))
+    Ok(naive_tag_receive(
+        &spread_root_location(language_fingerprint, site),
+        root_tag,
+        body,
+        true,
+        encoding,
+    ))
 }
 
 /// Collect the per-position SITE strings of `node` whose head constructor is
@@ -947,7 +962,7 @@ fn selfdriving_entry_receiver_par(
     accept_channel: &str,
     language_fingerprint: &str,
 ) -> Result<Par, NaiveKtUnsupported> {
-    let schedule = collect_entry_schedule(view, entry, site)?;
+    let schedule = collect_entry_schedule(view, entry, language_fingerprint, site)?;
     // Linear entry ⇒ first_occ = [0,…,k-1] (see `naive_kt_entry_receiver_par`).
     let k = schedule.captures.len();
     let first_occ: Vec<usize> = (0..k).collect();
@@ -972,7 +987,7 @@ fn selfdriving_entry_receiver_par(
         &schedule.root_op,
     ));
     Ok(naive_tag_receive(
-        &spread_root_location(site),
+        &spread_root_location(language_fingerprint, site),
         root_tag,
         body,
         true,
@@ -1066,12 +1081,12 @@ pub fn respread_root_receiver_par(
                 vec![
                     env.var("t"),
                     trs::ground(new_gstring_par(
-                        spread_root_location(root_site),
+                        spread_root_location(fp, root_site),
                         Vec::new(),
                         false,
                     )),
                     trs::ground(new_gstring_par(
-                        collapse_capture_location(root_site),
+                        collapse_capture_location(fp, root_site),
                         Vec::new(),
                         false,
                     )),
@@ -1388,7 +1403,7 @@ mod tests {
         assert!(root.persistent, "the Appendix-A rule receiver is persistent at its site");
         assert_eq!(root.bind_count, 0, "PatternGuard binds nothing at the tag");
         assert_eq!(root.binds[0].free_count, 0);
-        assert_eq!(gstring(root.binds[0].source.as_ref().expect("source")), Some("loc:site0"));
+        assert_eq!(gstring(root.binds[0].source.as_ref().expect("source")), Some(spread_root_location(FP, "site0").as_str()));
         assert_eq!(
             root.binds[0].patterns[0],
             tag_par("Swap"),
@@ -1400,12 +1415,12 @@ mod tests {
         assert!(!cap_x.persistent, "captures are one-shot");
         assert_eq!(
             gstring(cap_x.binds[0].source.as_ref().expect("source")),
-            Some("cap:site0/Swap.0")
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 0).as_str())
         );
         let cap_y = &cap_x.body.as_ref().expect("x body").receives[0];
         assert_eq!(
             gstring(cap_y.binds[0].source.as_ref().expect("source")),
-            Some("cap:site0/Swap.1")
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 1).as_str())
         );
 
         // Accept: sa:acc!(BoundVar(1), BoundVar(0), @"OUT") — the SHARED
@@ -1444,21 +1459,21 @@ mod tests {
         // Level 1: persistent for(⌜f⌝ <= loc:site0).
         let root = &network.receives[0];
         assert!(root.persistent);
-        assert_eq!(gstring(root.binds[0].source.as_ref().expect("source")), Some("loc:site0"));
+        assert_eq!(gstring(root.binds[0].source.as_ref().expect("source")), Some(spread_root_location(FP, "site0").as_str()));
         assert_eq!(root.binds[0].patterns[0], tag_par("f"));
         // Level 2: one-shot for(⌜g⌝ <- loc:site0/f.0).
         let descent = &root.body.as_ref().expect("root body").receives[0];
         assert!(!descent.persistent, "descent tag receives are one-shot");
         assert_eq!(
             gstring(descent.binds[0].source.as_ref().expect("source")),
-            Some("loc:site0/f.0")
+            Some(spread_child_location(&spread_root_location(FP, "site0"), "f", 0).as_str())
         );
         assert_eq!(descent.binds[0].patterns[0], tag_par("g"));
         // Capture: for(v <- cap:site0/f.0/g.0){ accept } — the deep collapse value.
         let capture = &descent.body.as_ref().expect("descent body").receives[0];
         assert_eq!(
             gstring(capture.binds[0].source.as_ref().expect("source")),
-            Some("cap:site0/f.0/g.0")
+            Some(spread_child_location(&spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0), "g", 0).as_str())
         );
         let accept = &capture.body.as_ref().expect("capture body").sends[0];
         assert_eq!(gstring(accept.chan.as_ref().expect("chan")), Some("sa:acc"));
@@ -1490,9 +1505,16 @@ mod tests {
         assert_closed(&network, "the naive Triple receiver");
 
         let mut body = network.receives[0].body.as_ref().expect("root body");
-        for expected in ["cap:site0/Triple.0", "cap:site0/Triple.1", "cap:site0/Triple.2"] {
+        for expected in [
+            spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 0),
+            spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 1),
+            spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 2),
+        ] {
             let receive = &body.receives[0];
-            assert_eq!(gstring(receive.binds[0].source.as_ref().expect("source")), Some(expected));
+            assert_eq!(
+                gstring(receive.binds[0].source.as_ref().expect("source")),
+                Some(expected.as_str())
+            );
             body = receive.body.as_ref().expect("capture body");
         }
         let send = &body.sends[0];
@@ -1532,12 +1554,12 @@ mod tests {
         let cap_x = &descent.body.as_ref().expect("descent body").receives[0];
         assert_eq!(
             gstring(cap_x.binds[0].source.as_ref().expect("source")),
-            Some("cap:site0/f.0/g.0")
+            Some(spread_child_location(&spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0), "g", 0).as_str())
         );
         let cap_y = &cap_x.body.as_ref().expect("x body").receives[0];
         assert_eq!(
             gstring(cap_y.binds[0].source.as_ref().expect("source")),
-            Some("cap:site0/f.1")
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 1).as_str())
         );
         let send = &cap_y.body.as_ref().expect("y body").sends[0];
         assert_eq!(boundvar_index(&send.data[0]), Some(1), "σ[x] = BoundVar(1) (DFS-first)");
@@ -1575,7 +1597,7 @@ mod tests {
             &new_wildcard_par(Vec::new(), true)
         );
         let republish = &m.cases[1].source.as_ref().expect("else body").sends[0];
-        assert_eq!(gstring(republish.chan.as_ref().expect("chan")), Some("loc:site0"));
+        assert_eq!(gstring(republish.chan.as_ref().expect("chan")), Some(spread_root_location(FP, "site0").as_str()));
         assert_eq!(boundvar_index(&republish.data[0]), Some(0), "republishes the consumed tag");
 
         // The continuation under the tag case still ends in the SAME accept
@@ -1853,19 +1875,23 @@ mod tests {
             .map(|receive| gstring(receive.binds[0].source.as_ref().expect("source")))
             .collect();
         for expected in
-            ["loc:site0/Pair.0", "loc:site0/Pair.1/Pair.0", "loc:site0/Pair.1/Pair.1"]
+            [
+            spread_child_location(&spread_root_location(FP, "site0"), "Pair", 0),
+            spread_child_location(&spread_child_location(&spread_root_location(FP, "site0"), "Pair", 1), "Pair", 0),
+            spread_child_location(&spread_child_location(&spread_root_location(FP, "site0"), "Pair", 1), "Pair", 1),
+        ]
         {
             assert!(
-                persistent_sources.contains(&Some(expected)),
+                persistent_sources.contains(&Some(expected.as_str())),
                 "a per-site receiver must read {expected} (got {persistent_sources:?})"
             );
         }
-        // Exactly one spread of the whole subject: its root head-tag send on
-        // loc:site0 is present.
+        // Exactly one spread of the whole subject: its root head-tag send on the
+        // INV-S6-scoped root location channel is present.
         let root_tag_sends = call
             .sends
             .iter()
-            .filter(|send| gstring(send.chan.as_ref().expect("chan")) == Some("loc:site0"))
+            .filter(|send| gstring(send.chan.as_ref().expect("chan")) == Some(spread_root_location(FP, "site0").as_str()))
             .count();
         assert_eq!(root_tag_sends, 1, "exactly ONE spread is appended");
     }
@@ -1965,7 +1991,7 @@ mod tests {
             .find(|receive| {
                 receive.persistent
                     && gstring(receive.binds[0].source.as_ref().expect("source"))
-                        == Some("loc:site0/Wrap.0")
+                        == Some(spread_child_location(&spread_root_location(FP, "site0"), "Wrap", 0).as_str())
             })
             .expect("the naive locator is installed at the hole site");
         let cap_x = &locator.body.as_ref().expect("locator body").receives[0];
@@ -2126,7 +2152,7 @@ mod tests {
         assert_closed(&call, "the R3 self-driving call");
 
         // The matcher: persistent on loc:site0, tag-as-pattern ⌜App⌝.
-        let loc_root = new_gstring_par("loc:site0".to_string(), Vec::new(), false);
+        let loc_root = new_gstring_par(spread_root_location(FP, "site0"), Vec::new(), false);
         let matcher = persistent_receive_on(&call, &loc_root, "R3 matcher");
         assert_eq!(matcher.binds[0].patterns[0], tag_par("App"));
         assert_eq!(matcher.bind_count, 0, "PatternGuard binds nothing at the tag");
@@ -2169,7 +2195,7 @@ mod tests {
         let root_tag_sends = call
             .sends
             .iter()
-            .filter(|send| gstring(send.chan.as_ref().expect("chan")) == Some("loc:site0"))
+            .filter(|send| gstring(send.chan.as_ref().expect("chan")) == Some(spread_root_location(FP, "site0").as_str()))
             .count();
         assert_eq!(root_tag_sends, 1, "exactly ONE spread is appended");
     }
@@ -2192,7 +2218,7 @@ mod tests {
         // wildcard = 6, sorted-label deterministic.
         assert_eq!(dispatch.cases.len(), 6, "1 redex + 4 NF + wildcard arms");
 
-        // The App arm seeds the walker with (t, "loc:site0", "cap:site0").
+        // The App arm seeds the walker with (t, loc-root, cap-root) — both INV-S6 scoped.
         let app_arm = dispatch
             .cases
             .iter()
@@ -2211,8 +2237,8 @@ mod tests {
         );
         assert_eq!(seed.data.len(), 3, "^respread!(t, loc, cap)");
         assert_eq!(boundvar_index(&seed.data[0]), Some(0), "t is the bound reduct");
-        assert_eq!(gstring(&seed.data[1]), Some("loc:site0"));
-        assert_eq!(gstring(&seed.data[2]), Some("cap:site0"));
+        assert_eq!(gstring(&seed.data[1]), Some(spread_root_location(FP, "site0").as_str()));
+        assert_eq!(gstring(&seed.data[2]), Some(collapse_capture_location(FP, "site0").as_str()));
 
         // An NF arm (the terminal atom A) sends the reduct to OUT.
         let a_arm = dispatch
@@ -2442,8 +2468,8 @@ mod tests {
             let mut captures = Vec::new();
             let mut names = Vec::new();
             if let AutomatonNode::App { op, args } = view.node(view.entry_root_state(0)) {
-                let root_loc = spread_root_location("site0");
-                let cap_root = collapse_capture_location("site0");
+                let root_loc = spread_root_location(FP, "site0");
+                let cap_root = collapse_capture_location(FP, "site0");
                 for (index, &arg) in args.iter().enumerate() {
                     collect_nested_schedule(
                         &view,

@@ -448,10 +448,10 @@ pub fn multi_pattern_receiver_network_par(
         return Err(AutomatonUnsupported::VariableRootPattern);
     }
 
-    let root_channel = spread_root_location(root_location);
+    let root_channel = spread_root_location(language_fingerprint, root_location);
     // Var-leaf states read the `cap:` COLLAPSE channels (fully collapsed subterms); the root
     // Match and every nested App descent read `loc:` head-tag channels.
-    let capture_root = collapse_capture_location(root_location);
+    let capture_root = collapse_capture_location(language_fingerprint, root_location);
 
     // Group entries by root op (first-seen order). A FLAT entry (all direct children are Var
     // leaves) joins the O1/O3 partition grouping; a NESTED entry (some direct child is an App)
@@ -657,6 +657,17 @@ mod tests {
     use dovetail::set_automaton::{PatternId, SetAutomaton};
     use models::rhoapi::expr::ExprInstance;
 
+    /// The INV-S6 scope these automaton wiring tests derive their channel names under.
+    ///
+    /// The expectations below deliberately call the PRODUCTION derivations
+    /// (`spread_root_location` / `spread_child_location` / `collapse_capture_location`)
+    /// rather than spelling scoped literals. These are AGREEMENT tests — the automaton
+    /// must read on exactly the channels the spread publishes on — so deriving both sides
+    /// through the one helper is what the assertion is actually about, and it keeps the
+    /// path SHAPE (`site0/Swap.1`, `site0/f.0/g.0`) pinned, which is the part a wiring
+    /// regression would break.
+    const FP: &str = "mettail-langdef-v1:0000000000000000";
+
     fn swap_automaton() -> SetAutomaton<String> {
         SetAutomaton::compile_structural([(
             PatternId(0),
@@ -692,7 +703,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            automaton_receiver_network_par(&multi.view(), "s", "acc", "OUT", "fp"),
+            automaton_receiver_network_par(&multi.view(), "s", "acc", "OUT", FP),
             Err(AutomatonUnsupported::MultiPattern)
         );
 
@@ -700,7 +711,7 @@ mod tests {
         let var_root =
             SetAutomaton::compile_structural([(PatternId(0), Pattern::var("x"))]).unwrap();
         assert_eq!(
-            automaton_receiver_network_par(&var_root.view(), "s", "acc", "OUT", "fp"),
+            automaton_receiver_network_par(&var_root.view(), "s", "acc", "OUT", FP),
             Err(AutomatonUnsupported::VariableRootPattern)
         );
     }
@@ -719,23 +730,23 @@ mod tests {
         )])
         .unwrap();
         let network =
-            automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", "fp")
+            automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", FP)
                 .expect("a nested-App pattern now descends-then-collapses");
         assert!(network.locally_free.is_empty(), "the nested network is a closed contract");
 
         // Root: for(h <- loc:site0){ match h { f => <descent> } }.
         let root = &network.receives[0];
-        assert_eq!(gstring(root.binds[0].source.as_ref().unwrap()), Some("loc:site0"));
+        assert_eq!(gstring(root.binds[0].source.as_ref().unwrap()), Some(spread_root_location(FP, "site0").as_str()));
         let f_case = &root.body.as_ref().unwrap().matches[0].cases[0];
         // Descent: for(h1 <- loc:site0/f.0){ match h1 { g => <capture> } }.
         let descent = &f_case.source.as_ref().unwrap().receives[0];
-        assert_eq!(gstring(descent.binds[0].source.as_ref().unwrap()), Some("loc:site0/f.0"));
+        assert_eq!(gstring(descent.binds[0].source.as_ref().unwrap()), Some(spread_child_location(&spread_root_location(FP, "site0"), "f", 0).as_str()));
         let g_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
         // Capture: for(v <- cap:site0/f.0/g.0){ accept }.
         let capture = &g_case.source.as_ref().unwrap().receives[0];
         assert_eq!(
             gstring(capture.binds[0].source.as_ref().unwrap()),
-            Some("cap:site0/f.0/g.0"),
+            Some(spread_child_location(&spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0), "g", 0).as_str()),
             "the Var leaf captures the COLLAPSED subterm at its deep cap: channel"
         );
         // Accept: sa:acc!( BoundVar(0), @"OUT" ) — the single σ slot ⟦subtree at f.0/g.0⟧.
@@ -760,16 +771,16 @@ mod tests {
         )])
         .unwrap();
         let network =
-            automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", "fp")
+            automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", FP)
                 .expect("a nested pattern with a flat sibling serializes");
         let f_case = &network.receives[0].body.as_ref().unwrap().matches[0].cases[0];
         let descent = &f_case.source.as_ref().unwrap().receives[0];
         let g_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
         // Inside the g descent: for(vx <- cap:site0/f.0/g.0){ for(vy <- cap:site0/f.1){ accept } }.
         let cap_x = &g_case.source.as_ref().unwrap().receives[0];
-        assert_eq!(gstring(cap_x.binds[0].source.as_ref().unwrap()), Some("cap:site0/f.0/g.0"));
+        assert_eq!(gstring(cap_x.binds[0].source.as_ref().unwrap()), Some(spread_child_location(&spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0), "g", 0).as_str()));
         let cap_y = &cap_x.body.as_ref().unwrap().receives[0];
-        assert_eq!(gstring(cap_y.binds[0].source.as_ref().unwrap()), Some("cap:site0/f.1"));
+        assert_eq!(gstring(cap_y.binds[0].source.as_ref().unwrap()), Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 1).as_str()));
         let accept = &cap_y.body.as_ref().unwrap().sends[0];
         assert_eq!(accept.data.len(), 3, "σ[x], σ[y], @out");
         assert_eq!(boundvar_index(&accept.data[0]), Some(1), "σ[x] = BoundVar(1) (DFS-first)");
@@ -789,7 +800,7 @@ mod tests {
         )])
         .expect("f(x, x) compiles");
         let network =
-            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", "fp")
+            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", FP)
                 .expect("f(x, x) serializes with the eq: guard");
         assert!(network.locally_free.is_empty(), "the network is still a closed contract");
 
@@ -801,8 +812,8 @@ mod tests {
 
         // Two binds, on the two child CAPTURE (collapse) channels — one atomic polyadic join.
         assert_eq!(join.bind_count, 2, "the join binds both children in one receive");
-        assert_eq!(gstring(join.binds[0].source.as_ref().unwrap()), Some("cap:site0/f.0"));
-        assert_eq!(gstring(join.binds[1].source.as_ref().unwrap()), Some("cap:site0/f.1"));
+        assert_eq!(gstring(join.binds[0].source.as_ref().unwrap()), Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0).as_str()));
+        assert_eq!(gstring(join.binds[1].source.as_ref().unwrap()), Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 1).as_str()));
 
         // The consistency condition: EEq(BoundVar(1), BoundVar(0)) (occurrence 0 == occurrence 1).
         let guard = join
@@ -843,7 +854,7 @@ mod tests {
         )])
         .expect("f(x, x, y) compiles");
         let network =
-            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", "fp")
+            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", FP)
                 .expect("f(x, x, y) serializes");
         let root_recv = &network.receives[0];
         let m = &root_recv.body.as_ref().unwrap().matches[0];
@@ -893,7 +904,7 @@ mod tests {
             },
         ];
         assert_eq!(
-            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, "fp"),
+            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP),
             Err(AutomatonUnsupported::NonLinearSharedOp)
         );
     }
@@ -902,7 +913,7 @@ mod tests {
     fn serializes_swap_to_the_worked_out_frame() {
         let automaton = swap_automaton();
         let network =
-            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", "fp")
+            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", FP)
                 .expect("Swap(x, y) serializes");
 
         // Root: exactly one receive on loc:site0, closed (locally_free empty).
@@ -910,7 +921,7 @@ mod tests {
         assert!(network.locally_free.is_empty(), "the network is a closed contract");
         let root_recv = &network.receives[0];
         assert_eq!(root_recv.bind_count, 1);
-        assert_eq!(gstring(root_recv.binds[0].source.as_ref().unwrap()), Some("loc:site0"));
+        assert_eq!(gstring(root_recv.binds[0].source.as_ref().unwrap()), Some(spread_root_location(FP, "site0").as_str()));
 
         // Root body: match BoundVar(0) { GPrivate(⌜Swap⌝) => <Var fors> }.
         let root_body = root_recv.body.as_ref().unwrap();
@@ -929,12 +940,12 @@ mod tests {
         let r1 = m.cases[0].source.as_ref().unwrap();
         assert_eq!(
             gstring(r1.receives[0].binds[0].source.as_ref().unwrap()),
-            Some("cap:site0/Swap.0")
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 0).as_str())
         );
         let r1_body = r1.receives[0].body.as_ref().unwrap();
         assert_eq!(
             gstring(r1_body.receives[0].binds[0].source.as_ref().unwrap()),
-            Some("cap:site0/Swap.1")
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 1).as_str())
         );
 
         // Accept send: sa:acc!( BoundVar(1), BoundVar(0), @"OUT" ) — each σ slot is the bound
@@ -967,7 +978,7 @@ mod tests {
         )])
         .expect("Triple(x, y, z) compiles");
         let network =
-            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", "fp")
+            automaton_receiver_network_par(&automaton.view(), "site0", "sa:acc", "OUT", FP)
                 .expect("the ternary automaton serializes");
 
         // Descend root for → Match → for x → for y → for z → accept.
@@ -977,17 +988,17 @@ mod tests {
             .unwrap();
         assert_eq!(
             gstring(r_x.receives[0].binds[0].source.as_ref().unwrap()),
-            Some("cap:site0/Triple.0")
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 0).as_str())
         );
         let r_y = r_x.receives[0].body.as_ref().unwrap();
         assert_eq!(
             gstring(r_y.receives[0].binds[0].source.as_ref().unwrap()),
-            Some("cap:site0/Triple.1")
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 1).as_str())
         );
         let r_z = r_y.receives[0].body.as_ref().unwrap();
         assert_eq!(
             gstring(r_z.receives[0].binds[0].source.as_ref().unwrap()),
-            Some("cap:site0/Triple.2")
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 2).as_str())
         );
         let accept = r_z.receives[0].body.as_ref().unwrap();
 
@@ -1033,12 +1044,12 @@ mod tests {
         .expect("two distinct-op patterns compile");
         let targets = [target(PatternId(0), "sa:swap"), target(PatternId(1), "sa:pair")];
         let network =
-            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, "fp")
+            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP)
                 .expect("two distinct-op patterns serialize");
 
         assert_eq!(network.receives.len(), 1, "one shared root receive");
         let root = &network.receives[0];
-        assert_eq!(gstring(root.binds[0].source.as_ref().unwrap()), Some("loc:site0"));
+        assert_eq!(gstring(root.binds[0].source.as_ref().unwrap()), Some(spread_root_location(FP, "site0").as_str()));
         let m = &root.body.as_ref().unwrap().matches[0];
         assert_eq!(m.cases.len(), 2, "one Match case per distinct root op");
 
@@ -1072,7 +1083,7 @@ mod tests {
         .expect("two same-op rules compile");
         let targets = [target(PatternId(0), "sa:one"), target(PatternId(1), "sa:two")];
         let network =
-            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, "fp")
+            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP)
                 .expect("two same-op rules serialize");
 
         let m = &network.receives[0].body.as_ref().unwrap().matches[0];
@@ -1099,7 +1110,7 @@ mod tests {
         .expect("patterns compile");
         let targets = [target(PatternId(0), "a"), target(PatternId(1), "b")];
         assert_eq!(
-            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, "fp"),
+            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP),
             Err(AutomatonUnsupported::ConflictingArityForOp)
         );
     }
@@ -1113,7 +1124,7 @@ mod tests {
         .expect("pattern compiles");
         let targets = [target(PatternId(0), "sa:swap")]; // wrong id — no target for PatternId(5)
         assert_eq!(
-            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, "fp"),
+            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP),
             Err(AutomatonUnsupported::MissingAcceptTarget)
         );
     }

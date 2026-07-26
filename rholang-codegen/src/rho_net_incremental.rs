@@ -37,7 +37,12 @@
 //!    only the new rule's converted pattern (append-only interning, StateId
 //!    prefix-stable), and the new rule's accept channel is derived PER-RULE from
 //!    its LHS pattern content ([`crate::rho_net::lhs_pattern_trace_channel`] —
-//!    fingerprint- and index-independent, EM-6).
+//!    declaration-INDEX-independent, EM-6). Since S6 that channel is scoped by
+//!    the language fingerprint, which the append CHANGES, so the base ruleset's
+//!    reused accept channels and contextual premise channels are re-scoped to the
+//!    extended fingerprint ([`crate::rho_net::rescope_channel_fingerprint`]) — a
+//!    pure string function, not a re-lowering, checked exactly by
+//!    `cross_check_against_batch`.
 //! 4. **FULL Par re-emission (the fingerprint constraint)** — the incremental
 //!    artifacts' `lowered`/`installed_par` cells start UNSET; forcing them runs
 //!    the SAME pure pipeline on the EM-2-identical extended def, re-emitting every
@@ -60,9 +65,11 @@
 //! follow-up candidate (EM-4c style), out of this leg's scope.
 //!
 //! Contextual (congruence) dispatch entries ARE reused: they are keyed by rule
-//! label + premise-content hash + LHS hole paths — fingerprint- and
-//! index-independent — and the auto-injected congruence rewrites (the EM-2
-//! anti-vacuity case) land exactly there.
+//! label + premise-content hash + LHS hole paths — index-independent — and the
+//! auto-injected congruence rewrites (the EM-2 anti-vacuity case) land exactly
+//! there. Their `premise_channels` are `loc:`-family names, so since S6 they are
+//! re-scoped to the extended fingerprint on reuse; the ENTRY identity is
+//! unaffected.
 
 use std::sync::Arc;
 
@@ -71,12 +78,13 @@ use mettail_ast::auto_inject::emit_auto_injection_rules;
 use mettail_ast::identity::language_definition_fingerprint;
 use mettail_ast::language::{parse_rewrite_fragment, splice_rewrite_into_source, RewriteRule};
 
-use crate::rho_net::lhs_pattern_trace_channel;
+use crate::rho_net::{lhs_pattern_trace_channel, rescope_channel_fingerprint};
 use crate::rho_net_cache::{
     cached_in_rho_artifacts, insert_in_rho_artifacts, CompiledInRhoArtifacts,
 };
 use crate::rho_net_lower::{
     is_top_level_substitution, lower_lhs_vars, lower_rhs, rewrite_pattern_unsupported,
+    RhoNetContextualMatchEntry,
 };
 use crate::rho_net_ruleset::{convert_lhs_pattern, InRhoMatchingRuleset};
 
@@ -389,12 +397,66 @@ fn admit_and_extend(
         // shape was not taken), kept total + fail-closed.
         return Err(IncrementalUnsupported::AcLhs);
     }
+    // ── INV-S6: RE-SCOPE the reused channel names to the EXTENDED fingerprint. ──
+    // Every driver-network channel name embeds the language fingerprint (S6), and the
+    // append changes the WHOLE-DEFINITION fingerprint (decision D1: whole-def FNV,
+    // recomputed, never patched). So the base's channel strings are scoped to the BASE
+    // fingerprint and would no longer rendezvous with the spread this ruleset emits — the
+    // accept sends and the σ-receivers would sit on disjoint names and every reused rule
+    // would silently stop firing.
+    //
+    // Before S6 these two reuses were sound because both keys were fingerprint-independent
+    // (EM-6 for accept channels, "label + premise-content-hash + LHS-path" for contextual
+    // dispatch), and the module documented them that way. That independence is exactly the
+    // property S6 removed, deliberately — it was what let two co-installed languages share a
+    // channel. The reuse is still sound, but it now needs this re-scope to stay so.
+    //
+    // The re-scope is a pure function of the two fingerprints, so it does NOT reintroduce
+    // the lowering pipeline the EM-4b bypass exists to avoid: it is O(channels) string work,
+    // not a recompile. Its exactness is not assumed — `cross_check_against_batch` compares
+    // `accept_channels` and `contextual_dispatch` field-by-field against a FULL batch
+    // derivation of the extended source in every debug build.
+    let base_fingerprint = base_ruleset.language_fingerprint.as_str();
+    let rescope = |name: &String| {
+        let rescoped = rescope_channel_fingerprint(name, base_fingerprint, &language_fingerprint);
+        debug_assert!(
+            base_fingerprint == language_fingerprint
+                || !rescoped.contains(base_fingerprint),
+            "INV-S6 T-INCR re-scope: `{name}` still carries the BASE fingerprint \
+             {base_fingerprint:?} after re-scoping to {language_fingerprint:?}"
+        );
+        rescoped
+    };
+
     let mut accept_channels = Vec::with_capacity(base_ruleset.accept_channels.len() + 1);
-    accept_channels.extend(base_ruleset.accept_channels.iter().cloned());
+    accept_channels.extend(
+        base_ruleset
+            .accept_channels
+            .iter()
+            .map(|(pattern, channel)| (*pattern, rescope(channel))),
+    );
     // The per-rule accept channel (EM-6): pattern-content-hashed, the SAME
     // derivation `add_rewrites` embeds as the rule's first input channel and
-    // `rho_net_injection_sites` surfaces as the σ-receiver site.
-    accept_channels.push((PatternId(new_index), lhs_pattern_trace_channel(&new_rewrite.left).name));
+    // `rho_net_injection_sites` surfaces as the σ-receiver site. Derived directly under
+    // the EXTENDED fingerprint, so it needs no re-scope.
+    accept_channels.push((
+        PatternId(new_index),
+        lhs_pattern_trace_channel(&language_fingerprint, &new_rewrite.left).name,
+    ));
+
+    // Reused: label + premise-content-hash + LHS-path keyed, so the base entries remain the
+    // right ENTRIES — this is where the EM-2 auto-injected congruence rewrites live. Only
+    // their `premise_channels` (`loc:`-family names) carry a fingerprint scope, and only
+    // those are re-scoped; `fired_rule_label` and `hole_positions` are scope-free.
+    let contextual_dispatch = base_ruleset
+        .contextual_dispatch
+        .iter()
+        .map(|entry| RhoNetContextualMatchEntry {
+            fired_rule_label: entry.fired_rule_label.clone(),
+            premise_channels: entry.premise_channels.iter().map(&rescope).collect(),
+            hole_positions: entry.hole_positions.clone(),
+        })
+        .collect();
 
     let ruleset = InRhoMatchingRuleset {
         automaton,
@@ -409,10 +471,7 @@ fn admit_and_extend(
         ac_dispatch: Vec::new(),
         structural_ac_dispatch: Vec::new(),
         nested_structural_ac_dispatch: Vec::new(),
-        // Reused: label + premise-content-hash + LHS-path keyed (fingerprint- and
-        // index-independent) — this is where the EM-2 auto-injected congruence
-        // rewrites live.
-        contextual_dispatch: base_ruleset.contextual_dispatch.clone(),
+        contextual_dispatch,
     };
 
     Ok(Arc::new(CompiledInRhoArtifacts::from_incremental_parts(

@@ -318,7 +318,7 @@ fn float_dispatcher_par(def: &LanguageDef, fp: &str, table: &FloatSatelliteTable
                 par2(par2(float_element, float_remainder), join_node)
             })
         };
-        cases.push(Case { pattern: soup_peel_pattern(op), free_count: 2, body });
+        cases.push(Case { pattern: soup_peel_pattern(fp, op), free_count: 2, body });
     }
 
     // (6) The Nil (empty-bag) leaf — its own float NF (AM-3; also the peel recursion's
@@ -546,7 +546,7 @@ fn float_merge_receiver_par(fp: &str, op: &str) -> Par {
     // BASE: neither side is binder-headed — dispatch `u`'s fragment and compose with `v`.
     let base_case = new_scope(1, {
         let env = env.push(&["__f"]);
-        let dispatch = bag_fragment_dispatch(op, env.var("u"), env.var("__f"));
+        let dispatch = bag_fragment_dispatch(fp, op, env.var("u"), env.var("__f"));
         let observe = for1(env.var("__f"), {
             let env = env.push(&["__w"]);
             send(env.var("ret"), vec![par2(env.var("__w"), env.var("v"))])

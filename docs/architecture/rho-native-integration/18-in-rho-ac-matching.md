@@ -45,9 +45,27 @@ the bag is their PARALLEL composition. Order-independence is inherited from `par
 [\![ \mathtt{op}\{e_1, \dots, e_m\} ]\!] \;=\; \Big\Vert_{i=1}^{m} \; \mathtt{@"ac:}\mathtt{op"}!\bigl([\![ e_i ]\!]\bigr)
 ```
 
-The element channel `ac:{op}` is scoped INSIDE the carried message (never free in the
-tuplespace), so it needs no fingerprint — both the carrier and the pattern use the
-identical `format!("ac:{op}")`.
+The element channel is `ac:{fingerprint}/{op}`, derived by `ac_soup_channel`
+(`rholang-codegen/src/rho_net_lower.rs`) — both the carrier and the pattern go through
+that one helper, so they cannot disagree.
+
+> **★ INV-S6 (2026-07-25) — this paragraph previously read "it needs no fingerprint".**
+> The reason given was that the bare `ac:{op}` name is scoped INSIDE the carried message
+> and is never free in the tuplespace. The premise is true — a bag soup is a `Par` *value*,
+> matched structurally by `ac_bag_pattern` inside one `consume`, not a live rendezvous
+> name — but the conclusion did not follow. A structural name is still a **discriminator**,
+> and an unscoped one discriminates only by operator label. Two co-installed languages that
+> each declare an AC constructor named `PPar` therefore produced *structurally
+> indistinguishable* bags, so either language's `ac_bag_pattern("PPar", k)` would bind the
+> other's elements wherever a value crossed between them. `PPar` is the actual name used in
+> `rhocalc` and in every AC/Ambient demo, so two co-installed process calculi collided here
+> **by default** — no attacker required. See
+> [25 §2.1](25-in-rho-base-family-reference.md#21-inv-s6-the-channel-name-fingerprint-invariant)
+> for the invariant and the scoping ABI.
+>
+> The site-keyed sibling `ac_carrier_channel(loc_channel, op)` — which *is* a live
+> tuplespace channel — takes no fingerprint argument, because it already inherits one from
+> the `loc:` path it is keyed on.
 
 ## 3. The connective pattern — `ac_bag_pattern`
 

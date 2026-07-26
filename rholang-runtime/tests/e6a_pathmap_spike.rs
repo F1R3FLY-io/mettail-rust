@@ -26,7 +26,8 @@ use mettail_rholang_codegen::{reflect_ground_term_par, GroundTerm, InRhoMatching
 use rholang::rust::interpreter::rho_runtime::RhoRuntime;
 use mettail_rholang_runtime::{
     bench_inj_and_read, bench_runtime_with_counters, decode_sites_par, discovery_call_par,
-    e6a_sites_channel, e6a_tag_string, entry_query_match_par, entry_query_shape,
+    e6a_index_channel, e6a_sites_channel, e6a_tag_string, entry_query_match_par,
+    entry_query_shape,
     pathmap_spread_term_par, sites_non_ancestral, BenchWorkloadParams, CommCounterSnapshot,
 };
 
@@ -190,7 +191,7 @@ async fn u1_receive_pattern_cannot_destructure_epathmap() {
     let destructuring_receive = new_receive_par(
         vec![ReceiveBind {
             patterns: vec![destructuring_pattern],
-            source: Some(quoted("e6a:idx:site0")),
+            source: Some(quoted(&e6a_index_channel(FP, ROOT_SITE))),
             remainder: None,
             free_count: 1,
         }],
@@ -209,7 +210,7 @@ async fn u1_receive_pattern_cannot_destructure_epathmap() {
     let bind_receive = new_receive_par(
         vec![ReceiveBind {
             patterns: vec![new_freevar_par(0, Vec::new())],
-            source: Some(quoted("e6a:idx:site0")),
+            source: Some(quoted(&e6a_index_channel(FP, ROOT_SITE))),
             remainder: None,
             free_count: 1,
         }],
@@ -298,7 +299,7 @@ async fn drive_flat_two_swap() -> (Vec<String>, Vec<String>, CommCounterSnapshot
         .expect("inj executes");
 
     // Machine-side site enumeration readback.
-    let sites_channel = e6a_sites_channel(ROOT_SITE, "Swap");
+    let sites_channel = e6a_sites_channel(FP, ROOT_SITE, "Swap");
     let sites_data = runtime.get_data(&quoted(&sites_channel)).await;
     assert_eq!(sites_data.len(), 1, "exactly one discovery result rests on {sites_channel}");
     let decoded = decode_sites_par(

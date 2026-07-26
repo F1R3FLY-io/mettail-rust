@@ -45,6 +45,7 @@ async fn fire(collection: GroundTerm, kind: CollectionType, op: &str, k: usize, 
     let rhs = new_boundvar_par(rhs_bound_var, create_bit_vector(&[rhs_bound_var as usize]), false);
     let receiver = ac_sigma_receiver_par_with_condition(
         kind,
+        FINGERPRINT,
         op,
         k,
         rhs,

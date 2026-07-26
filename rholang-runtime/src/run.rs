@@ -222,12 +222,30 @@ fn par_is_empty_nil(par: &Par) -> bool {
         && !par.connective_used
 }
 
-/// The AC bag-carrier operator label `op` a soup send's channel `@"ac:{op}"` carries, when the
-/// channel is a quoted `GString` with the reserved `"ac:"` prefix and a non-empty operator.
+/// The CARRIER IDENTITY a soup send's channel `@"ac:…"` denotes — everything after the
+/// reserved `"ac:"` prefix — when the channel is a quoted, non-empty `GString`.
+///
+/// Deliberately NOT parsed down to the bare operator label, because the `ac:` family has two
+/// shapes and only one of them ends in the operator: the bare soup carrier
+/// [`ac_soup_channel`](mettail_rholang_codegen::ac_soup_channel) is
+/// `ac:{fingerprint}/{op}`, while the site-keyed
+/// [`ac_carrier_channel`](mettail_rholang_codegen::ac_carrier_channel) is
+/// `ac:loc:{fingerprint}/{site path}/{op}`. Splitting either one to recover `op` alone would
+/// need to know which shape it is holding, and the sole caller does not care: it uses this
+/// value ONLY to check that every send in a candidate soup rides the SAME carrier, and
+/// carrier equality is the stronger, correct test.
+///
+/// ★ INV-S6 makes this test strictly sharper than it was. Before the carriers carried a
+/// fingerprint, two co-installed languages' same-`op` soups shared one channel name and this
+/// decoder MERGED them into a single bag without any way to notice. They now differ in their
+/// scope segment, so the `Some(_) => return None` mixed-carrier arm rejects the mixture and
+/// fails closed.
 #[cfg(feature = "runtime-report")]
-fn ac_soup_channel_op(chan: &Par) -> Option<&str> {
+fn ac_soup_carrier_identity(chan: &Par) -> Option<&str> {
     match single_expr_instance(chan)? {
-        ExprInstance::GString(name) => name.strip_prefix("ac:").filter(|op| !op.is_empty()),
+        ExprInstance::GString(name) => {
+            name.strip_prefix("ac:").filter(|carrier| !carrier.is_empty())
+        },
         _ => None,
     }
 }
@@ -249,17 +267,18 @@ fn decode_ac_bag_soup(par: &Par) -> Option<Vec<(RuntimeObservationValue, usize)>
     if !par_is_only_sends(par) {
         return None;
     }
-    let mut op: Option<&str> = None;
+    let mut carrier: Option<&str> = None;
     let mut counts = std::collections::BTreeMap::<RuntimeObservationValue, usize>::new();
     for send in &par.sends {
         if send.persistent {
             return None;
         }
-        let send_op = ac_soup_channel_op(send.chan.as_ref()?)?;
-        match op {
-            None => op = Some(send_op),
-            Some(existing) if existing == send_op => {},
-            // Mixed operators are not a single AC bag — fail closed rather than merge two bags.
+        let send_carrier = ac_soup_carrier_identity(send.chan.as_ref()?)?;
+        match carrier {
+            None => carrier = Some(send_carrier),
+            Some(existing) if existing == send_carrier => {},
+            // A mixed carrier is not a single AC bag — two operators, two sites, or (since
+            // INV-S6) two LANGUAGES. Fail closed rather than merge two bags.
             Some(_) => return None,
         }
         let [datum] = send.data.as_slice() else {

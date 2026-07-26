@@ -27,6 +27,7 @@
 
 1. [What problem this solves](#1-what-problem-this-solves)
 2. [Notation and glossary](#2-notation-and-glossary)
+   - [2.1 INV-S6: the channel-name fingerprint invariant](#21-inv-s6-the-channel-name-fingerprint-invariant)
 3. [Theoretical basis](#3-theoretical-basis)
 4. [The three-layer architecture](#4-the-three-layer-architecture)
 5. [Layer 1a: Term to GroundTerm reflection](#5-layer-1a-term-to-groundterm-reflection)
@@ -125,7 +126,9 @@ Rust items or Rholang channels. Every symbol is defined here before first use.
   **suspended automaton trace** of a context $`K`$ — the paper's *optimal* channel name
   ([section 3](#3-theoretical-basis)). Structurally equal sub-patterns share one
   interned `StateId`, hence one `sa:` channel. Built by
-  `RhoNetChannel::new(format!("sa:{trace}"), …)` (`rholang-codegen/src/rho_net.rs`).
+  `RhoNetChannel::set_automaton_trace(fingerprint, trace)`
+  (`rholang-codegen/src/rho_net.rs`), which yields `sa:{fingerprint}/{trace}`
+  ([section 2.1](#21-inv-s6-the-channel-name-fingerprint-invariant)).
 - **`loc:` / `col:` / `cap:` channels**: the three *spread* channel families
   ([section 6](#6-layer-1b-the-colcap-collapse-fold)). `loc:` carries a node's head tag
   (head-symbol dispatch); `col:` (chain) carries a fully-collapsed subterm *up to its
@@ -164,6 +167,100 @@ rewrite $`L \Rightarrow R`$ firing at location channel $`c`$ is one atomic COMM,
 
 Everything below is the machinery that lets the interpreter *locate* $`c`$ and *bind*
 $`\sigma`$ so this law can fire, in Rho, at every redex.
+
+---
+
+### 2.1 INV-S6: the channel-name fingerprint invariant
+
+> **INV-S6.** Every channel name emitted by the driver network contains the emitting
+> language's fingerprint.
+
+**The ABI.** Every name in every driver-network family is minted by one primitive,
+`rho_net::scoped_channel_name` (`rholang-codegen/src/rho_net.rs`):
+
+```math
+\mathrm{chan}(\mathit{family}, \mathit{fp}, \mathit{path}) \;=\;
+\mathit{family} \;\Vert\; \mathtt{":"} \;\Vert\; \mathit{fp} \;\Vert\; \mathtt{"/"} \;\Vert\; \mathit{path}
+```
+
+where $`\mathit{fp}`$ is `language_definition_fingerprint(def)`, rendered
+`mettail-langdef-v1:{16 hex}`. The fingerprint rides **verbatim**, so two names are equal
+iff their $`(\mathit{family}, \mathit{fp}, \mathit{path})`$ triples are equal: the scheme
+is collision-free *by construction*, with no probability to bound. Because $`\mathit{fp}`$
+is slash-free, the first `/` after the family prefix splits scope from path unambiguously.
+
+**Why the scoping lives at the KEY, not at the emission sites.** Only the *roots* are
+scoped; every derived name inherits by composition:
+
+```math
+\begin{aligned}
+\texttt{spread\_child\_location}(\mathit{parent}, f, i) &= \mathit{parent} \Vert \mathtt{"/"} \Vert f \Vert \mathtt{"."} \Vert i \\
+\texttt{ac\_carrier\_channel}(\mathit{loc}, \mathit{op}) &= \mathtt{"ac:"} \Vert \mathit{loc} \Vert \mathtt{"/"} \Vert \mathit{op} \\
+\texttt{contextual\_premise\_hole\_channel}(c) &= \mathtt{"ph:"} \Vert c
+\end{aligned}
+```
+
+so scoping the roots scopes the whole tree. This matters practically: `RhoNetChannel::
+location` alone has **nineteen** production callers, and two separate attempts to fix the
+defect below by enumerating emission sites both came up short. The requirement is therefore
+stated as a property of the emitted `Par` and **checked by sweep**
+(`rholang-codegen/tests/s6_channel_fingerprint_invariant.rs`), which walks every channel
+position of two fully compiled production languages, buckets each name by the runtime COMM
+taxonomy, and fails on any unscoped name or unrecognized family.
+
+#### The defect it closes: a cross-fingerprint WRONG FIRING
+
+Before INV-S6 the families were keyed on values two languages routinely share:
+
+| family | old key | collides when |
+|---|---|---|
+| `sa:pattern/…` | `fnv1a64(pattern_identity(lhs))` | two LHS patterns have the same TEXT |
+| `ac:{op}` | the bare constructor label | two languages declare an AC constructor of the same NAME |
+| `loc:`/`col:`/`cap:` | a caller-supplied site string | two languages spread at the same site string |
+
+The third is the sharpest, and it is a wrong firing rather than mere starvation. A pure
+`loc:` collision alone would only starve both parties: `wrap_descent` emits
+`for(h <- loc){ match h { f̲ => … } }`, so the receive binds `h` **unconditionally** and the
+tag test is a `match` *inside* the continuation with a single ground arm and no wildcard —
+the COMM fires, the match finds no arm, and the value is consumed and lost. But `cap:` is
+**not an independent family**: `spread_root_location` and `collapse_capture_location` derive
+from the *same* `root_location`, and `rho_net_automaton` derives both roots together. And a
+σ capture **cannot discriminate by construction** — `wrap_children` / `wrap_capture_chain`
+bind the fully collapsed subterm, because a pattern variable must accept an *arbitrary*
+subterm, so there is no tag to match on and there could not be one. Language B's capture
+receiver therefore consumed language A's collapsed subterm and instantiated **B's RHS with
+A's operand**.
+
+```text
+       language A (fp_A)                        language B (fp_B)
+   ┌──────────────────────────┐             ┌──────────────────────────┐
+   │ spread ⟦Swap(X,Y)⟧ at ρ  │             │ automaton for Swap(x,y)  │
+   └───────────┬──────────────┘             └───────────┬──────────────┘
+               │ publishes ⟦X⟧                          │ reads σ-slot
+               ▼                                        ▼
+      BEFORE:  cap:ρ/Swap.0  ●───────── SAME NAME ──────● cap:ρ/Swap.0
+                             ↑
+                     no tag test is possible here — a Var-leaf
+                     binds an arbitrary subterm by definition
+                             ↓
+                     B fires ITS RHS on A's operand   ⚠ WRONG FIRING
+
+      AFTER:   cap:fp_A/ρ/Swap.0  ✗   ≠   ✗  cap:fp_B/ρ/Swap.0
+                                 disjoint by construction
+```
+
+**The site nonce was not a defence.** `spread_root_location`'s documentation described
+`root_location` as "the quoted per-site nonce $`\rho`$ of the $`\ulcorner(\rho,\ell)\urcorner`$
+idiom", which reads as though it separated languages. It did not: `root_location` is a plain
+caller-supplied `&str`, and `spread_term_par(term, language_fingerprint, root_location)`
+takes the fingerprint **for the tags** and the location as an **independent** argument, never
+derived from it. Two languages spreading at `"site0"` — or at a `rewrite/{label}/…` path built
+from a constructor name they happen to share — collided on every location channel of that site.
+
+**Consequence for incremental compilation.** Appending a rewrite changes the whole-definition
+fingerprint, so the E-3 T-INCR bypass's reused accept channels and contextual premise channels
+must be re-scoped (`rescope_channel_fingerprint`); its debug cross-check against the full batch
+derivation is what proves the re-scope exact. See `rholang-codegen/src/rho_net_incremental.rs`.
 
 ---
 
@@ -344,18 +441,24 @@ for a node at location $`\ell`$,
 ```
 
 Each node publishes **only** its head tag $`\underline{f}`$ on its deterministic location
-channel `loc:`$`\ell`$ (`spread_root_location` gives `loc:ρ`; `spread_child_location`
-gives `loc:ρ/f.i`); child locations are *derived*, never carried in the message. The
+channel `loc:`$`\ell`$ (`spread_root_location` gives `loc:fp/ρ`; `spread_child_location`
+gives `loc:fp/ρ/f.i`); child locations are *derived*, never carried in the message. The
 scheme is **`nu`-free** (INV-7): a flat parallel composition of ground sends — no `New`,
 no bound variable.
 
 **The collapse fold.** `collapse_publish` emits, per node, its fully-collapsed subterm
 value $`[\![ \text{subtree} ]\!]`$ on **two disjoint channels**:
 
-- **`col:`** $`\ell`$ (chain, `collapse_chain_location`, i.e. `"col:" + ℓ`): read **once**
-  by the *parent's* fold, so a parent can rebuild *its* subtree from its children.
-- **`cap:`** $`\ell`$ (capture, `collapse_capture_location`, i.e. `"cap:" + ℓ`): read
-  **once** by the *automaton's* Var-leaf state, so a variable binds the subtree.
+- **`col:`** $`\ell`$ (chain, `collapse_chain_location`, i.e. `"col:" + fp + "/" + ℓ`):
+  read **once** by the *parent's* fold, so a parent can rebuild *its* subtree from its
+  children.
+- **`cap:`** $`\ell`$ (capture, `collapse_capture_location`, i.e. `"cap:" + fp + "/" + ℓ`):
+  read **once** by the *automaton's* Var-leaf state, so a variable binds the subtree.
+
+Here $`\mathit{fp}`$ is the language fingerprint that scopes every channel name
+([section 2.1](#21-inv-s6-the-channel-name-fingerprint-invariant)); it is the *only*
+discriminator available on `cap:`, because a Var-leaf capture binds an arbitrary subterm
+and so admits no tag test.
 
 A **leaf** publishes two ground sends
 $`\texttt{col:}\ell\,!(\mathtt{EList}[\underline{f}]) \mid \texttt{cap:}\ell\,!(\mathtt{EList}[\underline{f}])`$.

@@ -98,7 +98,15 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_6_golden() {
         .expect("production Lambda is drive-admitted");
     assert_eq!(
         par_fingerprint(drive),
-        (4357, 0xcd74c7d13495d5d5),
+        // ★ #36 S6 RE-CAPTURE — INV-S6 fingerprint-scopes every driver-network channel
+        // name, so every `sa:`/`loc:`/`col:`/`cap:`/`ac:` name in the emission grows by
+        // the scope `"{fingerprint}/"` (36 bytes: 35-char fingerprint + separator).
+        // PROVEN to be EXACTLY and ONLY that insertion: inverting the ONE line that adds
+        // it (`rho_net::scoped_channel_name`) restores this pin byte-for-byte, and the
+        // byte delta is fully accounted below. Nothing else moved — the receive counts
+        // are unchanged.
+        // ACCOUNTING: 4357 → 4429 = +72 = 2 × 36, exactly.
+        (4429, 0x0cfebce014446d5d),
         "the Lambda ^drive receiver family must be byte-identical to the pre-A-S5.6 \
          golden (captured at a9193914)"
     );
@@ -113,7 +121,15 @@ fn lambda_driver_par_is_byte_identical_to_the_pre_a_s5_6_golden() {
         // always agreed; S3 keeps them agreeing). EXPLAINED DIFF: `Z`/`S` → `^Z`/`^S`
         // grows each Peano tag string by one byte inside the subst-TRS receivers; the
         // `^drive` pin above is UNCHANGED (4357).
-        (12824, 0x89ea12b54e7c61a0),
+        // ★ #36 S6 RE-CAPTURE — INV-S6 fingerprint-scopes every driver-network channel
+        // name, so every `sa:`/`loc:`/`col:`/`cap:`/`ac:` name in the emission grows by
+        // the scope `"{fingerprint}/"` (36 bytes: 35-char fingerprint + separator).
+        // PROVEN to be EXACTLY and ONLY that insertion: inverting the ONE line that adds
+        // it (`rho_net::scoped_channel_name`) restores this pin byte-for-byte, and the
+        // byte delta is fully accounted below. Nothing else moved — the receive counts
+        // are unchanged.
+        // ACCOUNTING: 12824 → 12932 = +108 = 3 × 36, exactly.
+        (12932, 0x87c0768a017c399d),
         "the full Lambda installed program must be byte-identical to the pre-A-S5.6 \
          golden (captured at a9193914; RE-CAPTURED at #36 S3, diff explained above)"
     );
@@ -139,7 +155,16 @@ fn ambient_driver_par_is_byte_identical_to_the_a_s5_8_golden() {
         .expect("production Ambient is drive-admitted");
     assert_eq!(
         par_fingerprint(drive),
-        (36836, 0xf2001e22a109b902),
+        // ★ #36 S6 RE-CAPTURE — INV-S6 fingerprint-scopes every driver-network channel
+        // name, so every `sa:`/`loc:`/`col:`/`cap:`/`ac:` name in the emission grows by
+        // the scope `"{fingerprint}/"` (36 bytes: 35-char fingerprint + separator).
+        // PROVEN to be EXACTLY and ONLY that insertion: inverting the ONE line that adds
+        // it (`rho_net::scoped_channel_name`) restores this pin byte-for-byte, and the
+        // byte delta is fully accounted below. Nothing else moved — the receive counts
+        // are unchanged.
+        // ACCOUNTING: 36836 → 39223 = +2387 = 66 × 36 + 11, where the 11 is the extra
+        // prost varint length-prefix byte of the 11 names that crossed 127 bytes.
+        (39223, 0x3f9161ce0bfe0793),
         "the Ambient ^drive receiver family must be byte-identical to the A-S5.8 golden \
          (float-routed firing emissions; captured at the A-S5.8 leg-1 tree)"
     );
@@ -160,7 +185,15 @@ fn ambient_driver_par_is_byte_identical_to_the_a_s5_8_golden() {
         // likewise UNCHANGED at 36836); the delta is one byte per occurrence, not a
         // constant. Proof that nothing else moved: inverting S3 at its source restores
         // this pin exactly.
-        (56328, 0x021489df5ccd86cd),
+        // ★ #36 S6 RE-CAPTURE — INV-S6 fingerprint-scopes every driver-network channel
+        // name, so every `sa:`/`loc:`/`col:`/`cap:`/`ac:` name in the emission grows by
+        // the scope `"{fingerprint}/"` (36 bytes: 35-char fingerprint + separator).
+        // PROVEN to be EXACTLY and ONLY that insertion: inverting the ONE line that adds
+        // it (`rho_net::scoped_channel_name`) restores this pin byte-for-byte, and the
+        // byte delta is fully accounted below. Nothing else moved — the receive counts
+        // are unchanged.
+        // ACCOUNTING: 56328 → 59442 = +3114 = 86 × 36 + 18 (18 names crossed 127 bytes).
+        (59442, 0xa8ae1dcbd6979830),
         "the full Ambient installed program must be byte-identical to the A-S5.8 golden \
          (the ^float family appended; captured at the A-S5.8 leg-1 tree; RE-CAPTURED at \
          #36 S3, diff explained above)"

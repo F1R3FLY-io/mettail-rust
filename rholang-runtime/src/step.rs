@@ -1065,7 +1065,14 @@ mod tests {
         );
         // Unclassified: user + legacy matching machinery + reflected CONSTRUCTOR tags +
         // the same reserved names under a DIFFERENT fingerprint.
-        for name in ["OUT", "sa:pattern/lhs:abc", "ac:loc:site0/PPar", "loc:site0"] {
+        // INV-S6 shapes: every driver-network name carries the `{fingerprint}/` scope.
+        const FP: &str = "mettail-langdef-v1:0011223344556677";
+        for name in [
+            "OUT".to_string(),
+            format!("sa:{FP}/pattern/lhs:abc"),
+            format!("ac:loc:{FP}/site0/PPar"),
+            format!("loc:{FP}/site0"),
+        ] {
             assert_eq!(classifier.classify(&[gstr(name.to_string())]), None, "{name} stays visible");
         }
         assert_eq!(classifier.classify(&[gpriv(reflected_tag_string(fp, "App"))]), None);

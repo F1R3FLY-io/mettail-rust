@@ -1513,44 +1513,79 @@ mod tests {
     /// bucket, with the contextual-premise `loc:` refinement, the five reserved
     /// subst-TRS tag channels, the configured OUT name, and the unknown
     /// fallback all covered.
+    ///
+    /// ★ The fixtures carry the INV-S6 scope (`{family}:{fingerprint}/{path}`) because
+    /// that is the shape a real emission now has — the classifier keys on the family
+    /// PREFIX, so the scope does not change any verdict, but a fixture spelling an
+    /// unscoped name would be documenting a channel the codegen can no longer produce.
     #[test]
     fn classification_covers_every_channel_family() {
+        /// The INV-S6 scope the fixtures below are written under.
+        const FP: &str = "mettail-langdef-v1:0011223344556677";
         let counters = CommCounters::new("OUT");
         let cases: Vec<(Par, CommChannelClass, &str)> = vec![
-            (quoted("loc:site0"), CommChannelClass::MatchingTau, "spread root location"),
-            (quoted("loc:site0/Swap.1"), CommChannelClass::MatchingTau, "spread child location"),
-            (quoted("col:site0"), CommChannelClass::MatchingTau, "chain collapse"),
-            (quoted("cap:site0/Swap.0"), CommChannelClass::MatchingTau, "capture collapse"),
-            (quoted("sa:pattern/abc123"), CommChannelClass::FiringVisible, "σ-receiver source"),
-            (quoted("sa:scalar/AddInt"), CommChannelClass::FiringVisible, "native dispatch"),
             (
-                quoted("sa:scalar/AddInt/sa-locate"),
+                quoted(&format!("loc:{FP}/site0")),
+                CommChannelClass::MatchingTau,
+                "spread root location",
+            ),
+            (
+                quoted(&format!("loc:{FP}/site0/Swap.1")),
+                CommChannelClass::MatchingTau,
+                "spread child location",
+            ),
+            (
+                quoted(&format!("col:{FP}/site0")),
+                CommChannelClass::MatchingTau,
+                "chain collapse",
+            ),
+            (
+                quoted(&format!("cap:{FP}/site0/Swap.0")),
+                CommChannelClass::MatchingTau,
+                "capture collapse",
+            ),
+            (
+                quoted(&format!("sa:{FP}/pattern/lhs:abc123")),
+                CommChannelClass::FiringVisible,
+                "σ-receiver source",
+            ),
+            (
+                quoted(&format!("sa:{FP}/scalar/AddInt")),
+                CommChannelClass::FiringVisible,
+                "native dispatch",
+            ),
+            (
+                quoted(&format!("sa:{FP}/scalar/AddInt/sa-locate")),
                 CommChannelClass::FiringVisible,
                 "native locate trigger",
             ),
-            (quoted("ac:PPar"), CommChannelClass::AcCarrier, "bare AC soup carrier"),
             (
-                quoted("ac:loc:site0/PPar.0/PPar"),
+                quoted(&format!("ac:{FP}/PPar")),
+                CommChannelClass::AcCarrier,
+                "bare AC soup carrier",
+            ),
+            (
+                quoted(&format!("ac:loc:{FP}/site0/PPar.0/PPar")),
                 CommChannelClass::AcCarrier,
                 "site-keyed AC carrier",
             ),
             (
-                quoted("e6a:idx:site0"),
+                quoted(&format!("e6a:idx:{FP}/site0")),
                 CommChannelClass::PathMapIndex,
                 "the E-6a persistent subject-index channel",
             ),
             (
-                quoted("e6a:sites:site0/Swap"),
+                quoted(&format!("e6a:sites:{FP}/site0/Swap")),
                 CommChannelClass::PathMapIndex,
                 "an E-6a machine-side site-enumeration result channel",
             ),
             (
-                quoted("ph:loc:rewrite/WrapCong/contextual-premise/0/S-to-T"),
+                quoted(&format!("ph:loc:{FP}/rewrite/WrapCong/contextual-premise/0/S-to-T")),
                 CommChannelClass::ContextualPlumbing,
                 "premise-hole bridge",
             ),
             (
-                quoted("loc:rewrite/WrapCong/contextual-premise/0/S-to-T"),
+                quoted(&format!("loc:{FP}/rewrite/WrapCong/contextual-premise/0/S-to-T")),
                 CommChannelClass::ContextualPlumbing,
                 "contextual join premise",
             ),
@@ -1630,14 +1665,23 @@ mod tests {
         let counters = CommCounters::new("OUT");
 
         // Two matching channels (the root collapse join shape) → matching_tau.
-        counters.record_comm(&[quoted("col:site0/Swap.0"), quoted("col:site0/Swap.1")]);
+        counters.record_comm(&[
+            quoted("col:mettail-langdef-v1:0011223344556677/site0/Swap.0"),
+            quoted("col:mettail-langdef-v1:0011223344556677/site0/Swap.1"),
+        ]);
         // A capture + an accept → firing_visible outranks matching_tau.
-        counters.record_comm(&[quoted("cap:site0/Swap.0"), quoted("sa:swap")]);
+        counters.record_comm(&[
+            quoted("cap:mettail-langdef-v1:0011223344556677/site0/Swap.0"),
+            quoted("sa:mettail-langdef-v1:0011223344556677/swap"),
+        ]);
         // A single unknown channel → other, with its rendering retained.
         counters.record_comm(&[quoted("mystery:chan")]);
         // A known + unknown join → the known class wins, the unknown member is
         // still retained for diagnosis (never silently dropped).
-        counters.record_comm(&[quoted("loc:site0"), quoted("mystery:other")]);
+        counters.record_comm(&[
+            quoted("loc:mettail-langdef-v1:0011223344556677/site0"),
+            quoted("mystery:other"),
+        ]);
 
         let snapshot = counters.snapshot();
         assert_eq!(snapshot.matching_tau, 2, "col-join + loc-with-unknown-join");

@@ -202,7 +202,7 @@ use syn::Ident;
 
 use crate::rho_net::RhoNetProgram;
 use crate::rho_net_lower::{
-    count_var_occurrences, lower_lhs_vars, nested_match_bind_pattern_for,
+    ac_soup_channel, count_var_occurrences, lower_lhs_vars, nested_match_bind_pattern_for,
     nested_match_pattern_for, nested_structural_ac_rule_shape,
     nested_structural_ac_shape_is_match_representable, nonlinear_consistency_condition,
     resolve_ac_collection_type, resolve_constructor_collection_type, structural_ac_rule_shape,
@@ -812,9 +812,9 @@ fn build_drive_ac_arm(
 ///
 /// `pub(crate)`: shared with the A-S5.8 `^float` family (`crate::rho_net_float`), whose
 /// merge base case rides the SAME three-case dispatch.
-pub(crate) fn soup_case_pattern(op: &str) -> Par {
+pub(crate) fn soup_case_pattern(language_fingerprint: &str, op: &str) -> Par {
     let send_pattern = new_send_par(
-        new_gstring_par(format!("ac:{op}"), Vec::new(), false),
+        new_gstring_par(ac_soup_channel(language_fingerprint, op), Vec::new(), false),
         vec![pat_wildcard()],
         false,
         Vec::new(),
@@ -833,9 +833,9 @@ pub(crate) fn soup_case_pattern(op: &str) -> Par {
 /// `pub(crate)`: shared with the A-S5.8 `^float` dispatcher's soup-peel arm
 /// (`crate::rho_net_float`) and the A-S5.8 `^shift` soup arm
 /// (`crate::rho_net_subst_trs::shift_receiver_par` — F8-AM-5d/5e).
-pub(crate) fn soup_peel_pattern(op: &str) -> Par {
+pub(crate) fn soup_peel_pattern(language_fingerprint: &str, op: &str) -> Par {
     let send_pattern = new_send_par(
-        new_gstring_par(format!("ac:{op}"), Vec::new(), false),
+        new_gstring_par(ac_soup_channel(language_fingerprint, op), Vec::new(), false),
         vec![pat_free(0)],
         false,
         Vec::new(),
@@ -852,9 +852,9 @@ pub(crate) fn soup_peel_pattern(op: &str) -> Par {
 ///
 /// `pub(crate)`: shared with the A-S5.8 `^float` family and the `^shift` soup arm's
 /// rewrap (`crate::rho_net_float` / `crate::rho_net_subst_trs` — F8-AM-5d/5e).
-pub(crate) fn wrap_element_send(op: &str, element: Node) -> Node {
+pub(crate) fn wrap_element_send(language_fingerprint: &str, op: &str, element: Node) -> Node {
     send(
-        ground(new_gstring_par(format!("ac:{op}"), Vec::new(), false)),
+        ground(new_gstring_par(ac_soup_channel(language_fingerprint, op), Vec::new(), false)),
         vec![element],
     )
 }
@@ -879,7 +879,12 @@ pub(crate) fn wrap_element_send(op: &str, element: Node) -> Node {
 ///
 /// `pub(crate)`: shared with the A-S5.8 `^float-merge:{op}` satellite's base case
 /// (`crate::rho_net_float` — the AM-2/AM-3 splice INSIDE the float).
-pub(crate) fn bag_fragment_dispatch(op: &str, value: Node, dest: Node) -> Node {
+pub(crate) fn bag_fragment_dispatch(
+    language_fingerprint: &str,
+    op: &str,
+    value: Node,
+    dest: Node,
+) -> Node {
     match_(
         value.clone(),
         vec![
@@ -891,7 +896,7 @@ pub(crate) fn bag_fragment_dispatch(op: &str, value: Node, dest: Node) -> Node {
             },
             // A same-op soup ⟹ the value ITSELF is the fragment (its sends splice).
             Case {
-                pattern: soup_case_pattern(op),
+                pattern: soup_case_pattern(language_fingerprint, op),
                 free_count: 0,
                 body: send(dest.clone(), vec![value.clone()]),
             },
@@ -899,7 +904,7 @@ pub(crate) fn bag_fragment_dispatch(op: &str, value: Node, dest: Node) -> Node {
             Case {
                 pattern: pat_wildcard(),
                 free_count: 0,
-                body: send(dest, vec![wrap_element_send(op, value)]),
+                body: send(dest, vec![wrap_element_send(language_fingerprint, op, value)]),
             },
         ],
     )
@@ -1083,6 +1088,7 @@ fn rebuild_template_node(
                     // A constructor / binder element is statically non-bag ⟹ wrap.
                     AcReconstructTemplate::Node { .. } | AcReconstructTemplate::Binder { .. } => {
                         wrap_element_send(
+                            fingerprint,
                             op,
                             rebuild_template_node(element, env, fingerprint, depth),
                         )
@@ -1094,7 +1100,7 @@ fn rebuild_template_node(
                         if inner_op == op {
                             rebuilt
                         } else {
-                            wrap_element_send(op, rebuilt)
+                            wrap_element_send(fingerprint, op, rebuilt)
                         }
                     },
                 };
@@ -1223,6 +1229,7 @@ fn ac_carrier_receiver_par(
                 AcReconstructTemplate::Var(name) => env.var(&fragment_value_name(name, 0)),
                 AcReconstructTemplate::Node { .. } | AcReconstructTemplate::Binder { .. } => {
                     wrap_element_send(
+                        fingerprint,
                         &spec.op,
                         rebuild_template_node(template, env, fingerprint, 0),
                     )
@@ -1232,7 +1239,7 @@ fn ac_carrier_receiver_par(
                     if *inner_op == spec.op {
                         rebuilt
                     } else {
-                        wrap_element_send(&spec.op, rebuilt)
+                        wrap_element_send(fingerprint, &spec.op, rebuilt)
                     }
                 },
             };
@@ -1263,6 +1270,7 @@ fn ac_carrier_receiver_par(
             let mut composed: Option<Node> = None;
             for (i, (slot, depth)) in fragment_slots.iter().enumerate() {
                 let dispatch = bag_fragment_dispatch(
+                    fingerprint,
                     &spec.op,
                     env.var(&slot_value_name(slot, *depth)),
                     env.var(&dispatch_names[i]),
@@ -2887,7 +2895,8 @@ pub(crate) fn drive_program_par(
                     let env = env.push(&["ve", "vr"]);
                     new_scope(1, {
                         let env = env.push(&["f"]);
-                        let dispatch = bag_fragment_dispatch(op, env.var("ve"), env.var("f"));
+                        let dispatch =
+                            bag_fragment_dispatch(fingerprint, op, env.var("ve"), env.var("f"));
                         let observe = for1(env.var("f"), {
                             let env = env.push(&["w"]);
                             recheck_node(
@@ -2909,7 +2918,7 @@ pub(crate) fn drive_program_par(
             })
         };
         cases.push((
-            Case { pattern: soup_peel_pattern(op), free_count: 2, body },
+            Case { pattern: soup_peel_pattern(fingerprint, op), free_count: 2, body },
             None,
         ));
     }
@@ -2999,6 +3008,12 @@ mod tests {
     use super::*;
     use crate::lower::lower_language_def;
     use mettail_ast::language::LanguageDef;
+
+    /// The INV-S6 scope these unit tests derive their channel names under. Any
+    /// slash-free string serves: these tests assert Par SHAPE (case structure, send
+    /// targets, receiver arity), not the scope's value — a production emission takes
+    /// its scope from `language_definition_fingerprint`.
+    const FP: &str = "mettail-langdef-v1:0000000000000000";
 
     /// The PRODUCTION-Lambda-shaped def (same name, terms, rewrites as
     /// `languages/src/lambda.rs`) — name `Lambda` IS in [`DRIVE_OPT_IN`].
@@ -3109,7 +3124,14 @@ mod tests {
         let drive = lowered.drive().expect("the Lambda-shaped def is drive-admitted");
         assert_eq!(
             par_fingerprint(drive),
-            (4357, 14804677576417990101),
+            // ★ #36 S6 RE-CAPTURE (4357, 0xcd74c7d13495d5d5) → (4429, 0x0cfebce014446d5d).
+            // EXPLAINED DIFF: INV-S6 scopes every driver-network channel name by the
+            // language fingerprint, growing this emission by exactly 2 × 36 bytes (two
+            // scope insertions; no name crossed prost's 127-byte varint boundary).
+            // PROVEN to be EXACTLY that: inverting `rho_net::scoped_channel_name`'s one
+            // scope-insertion line restores (4357, 0xcd74c7d13495d5d5) byte-for-byte.
+            // The ContractumRedrive SHAPE this pin guards is unchanged.
+            (4429, 936393443138366813),
             "SM-6: the synthetic-Lambda ^drive receiver family (ContractumRedrive) — pin \
              pre-restructure; the E-1 firing_emission_node restructure must keep this exact \
              (E-2-D re-pin: reflected-ABI v2 adds the hereditary-ground marker at index 1)"
@@ -3130,7 +3152,13 @@ mod tests {
             // `is_marked_object_label` Peano arm they made redundant) restores this pin
             // and every other byte-identity pin EXACTLY; see the `#36 S3` note on
             // `rho_net_subst_trs::reserved_subst_trs_labels`.
-            (12824, 9937776097661575584),
+            // ★ #36 S6 RE-CAPTURE (12824, 0x89ea12b54e7c61a0) → (12932, 0x87c0768a017c399d).
+            // EXPLAINED DIFF: INV-S6 fingerprint-scoping, exactly 3 × 36 bytes (three scope
+            // insertions; no name crossed prost's 127-byte varint boundary). PROVEN by the
+            // same inversion as the `^drive` pin above: reverting `scoped_channel_name`'s
+            // one scope-insertion line restores (12824, 0x89ea12b54e7c61a0) byte-for-byte.
+            // Receive count UNCHANGED at 7 — only names grew.
+            (12932, 9781948725751200157),
             "SM-6: the full synthetic-Lambda installed program (ContractumRedrive) — pin \
              pre-restructure; ContractumRedrive byte-identity across the E-1 restructure \
              (E-2-D re-pin: reflected-ABI v2 adds the hereditary-ground marker at index 1)"
@@ -3440,7 +3468,7 @@ mod tests {
     #[test]
     fn three_case_bag_fragment_dispatch_shape() {
         let env = Env::root(&["v", "dest"]);
-        let node = bag_fragment_dispatch("PPar", env.var("v"), env.var("dest"));
+        let node = bag_fragment_dispatch(FP, "PPar", env.var("v"), env.var("dest"));
         assert_eq!(node.par.matches.len(), 1, "the dispatch is one Match");
         let cases = &node.par.matches[0].cases;
         assert_eq!(cases.len(), 3, "Nil / soup / wrap — exactly three cases");
@@ -3451,7 +3479,7 @@ mod tests {
         );
         assert_eq!(
             cases[1].pattern.as_ref(),
-            Some(&soup_case_pattern("PPar")),
+            Some(&soup_case_pattern(FP, "PPar")),
             "case 1 claims a same-op soup — compose its sends directly"
         );
         assert_eq!(
@@ -3459,14 +3487,14 @@ mod tests {
             Some(&pat_wildcard()),
             "case 2 is the wildcard — wrap one element send"
         );
-        // The wrap leg sends `@\"ac:PPar\"!(v)` as its datum.
+        // The wrap leg sends `@\"ac:{fingerprint}/PPar\"!(v)` as its datum.
         let wrap_body = cases[2].source.as_ref().expect("wrap body");
         let datum = &wrap_body.sends[0].data[0];
         assert_eq!(datum.sends.len(), 1, "the wrapped fragment is one element send");
         assert_eq!(
             datum.sends[0].chan,
-            Some(new_gstring_par("ac:PPar".to_string(), Vec::new(), false)),
-            "the wrap rides the op's ac: carrier"
+            Some(new_gstring_par(ac_soup_channel(FP, "PPar"), Vec::new(), false)),
+            "the wrap rides the op's INV-S6-scoped ac: carrier"
         );
     }
 
