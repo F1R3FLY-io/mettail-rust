@@ -820,3 +820,14 @@ required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
 name = "s2_graph_shape_probe"
 path = "tests/s2_graph_shape_probe.rs"
 required-features = ["ambient-runtime"]
+
+# Stage 2 — the `[*]` / `[n]` ABI seam, end to end: `LookaheadService` given a request's
+# operands must produce, in `Par` form, exactly what each of `lookahead.rs`'s report
+# channels carries — one BARE term per success branch on the reply channel, `[trace, term]`
+# provenance, `[trace, [code, message]]` failures, and `[trace, handle, |E(S)|]` truncations
+# whose handle the service takes back and resumes. Pins the wire and the engine against
+# each other rather than against their own documentation. Hand-built `Par`s only.
+[[test]]
+name = "s2_lookahead_service"
+path = "tests/s2_lookahead_service.rs"
+required-features = ["runtime-report"]
