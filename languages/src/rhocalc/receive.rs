@@ -156,6 +156,22 @@ fn empty_bind_matches_payload(q: &Proc) -> bool {
     }
 }
 
+/// ⚠ ★ #33 LATENT CONFLATION SITE — and the DESTRUCTIVE one.
+///
+/// The two `_ => Proc::PZero` arms below fabricate a *result* for a condition the host could
+/// not decide. That is strictly worse than the three live COMM sites: they merely decline to
+/// rewrite, leaving the term for the machine, whereas this one **commits to an answer** — it
+/// erases `body` and yields the null process, which is indistinguishable from the guard
+/// having been decidably `false`.
+///
+/// It is also weaker than [`eval_guard_disposition`] on the deciding side: it only ever
+/// recognizes a literal `CastBool(BoolLit(_))`, so `__guard_then(1 < 2, P)` discards `P`
+/// even though the guard is trivially decidable. Both defects have the same root as the rest
+/// of #33 — a total function forced to answer where the honest answer is "I cannot decide".
+///
+/// **NOT changed in stage A**, which is behaviourally inert by construction; repairing this
+/// arm changes normal forms and belongs to stage C. Documented here so the site cannot be
+/// re-derived as "obviously fine" by the next reader.
 pub fn guard_then(cond: &Proc, body: &Proc) -> Proc {
     match cond {
         Proc::CastBool(b) => match b.as_ref() {
@@ -225,77 +241,235 @@ fn eval_cmp_order(lhs: &Proc, rhs: &Proc) -> Option<Ordering> {
     }
 }
 
-/// The HOST `where`-guard evaluator: `Some(b)` iff this guard decides to the ground boolean
-/// `b`, `None` if the host declines the fragment (the fail-CLOSED disposition — see the
-/// `matches` arm below).
+/// ★ #33 STAGE A — the HOST's disposition toward one `where` guard.
 ///
-/// `pub` since S-D0. Besides its own eager COMM sites, it is the HOST leg of
-/// `rholang-runtime::guard_discharge`'s anti-divergence fence: compile-time discharge of a
-/// binder-closed guard requires this evaluator AND the machine's (`rho_pure_eval` under the
-/// reducer's `SpatialMatcherOracle`) to return the same verdict. The machine leg is the
-/// authority — it is what runs — so this one costs nothing and buys a loud warning wherever the
-/// two readings of the same surface guard would have diverged. A `None` here can never license
-/// a discharge; it falls to `Residual` and the machine decides at COMM time, as today.
-pub fn eval_guard_bool(cond: &Proc) -> Option<bool> {
+/// # Why this type exists
+///
+/// The host guard evaluator used to answer `Option<bool>`, and its `None` conflated two
+/// facts that are not the same fact:
+///
+/// | fact | what it licenses |
+/// |------|------------------|
+/// | the guard is decidably **FALSE** | the COMM must not fire, and that is the final answer |
+/// | the host **CANNOT DECIDE** the guard | the host must not fire it, but the MACHINE may |
+///
+/// Both produce "no rewrite" at every eager COMM site, so the conflation was invisible —
+/// and that invisibility is the defect's real cost. It does not merely mis-handle genuinely
+/// undecidable guards; it **conceals ordinary evaluator gaps**. Divergence H's second half
+/// (`Eq(CastBool, CastBool)`, closed in stage B1) is the worked example: `eval_cmp_order`
+/// had no `CastBool` arm, so `where x == true` answered `None`, every eager site read that
+/// as `false`, and the host silently blocked a COMM the machine fires. The identical gap in
+/// the FOLD lane yields `Proc::Err`, which is loud, and was caught the same day.
+///
+/// # Why these three names
+///
+/// They deliberately mirror `rholang-runtime::guard_discharge::GuardDischarge`
+/// `{Discharged, Refuted, Residual}`, so there is ONE guard-disposition vocabulary across
+/// both lanes rather than two:
+///
+/// ```text
+///     guard lane (here)          compile-time discharge lane
+///     ────────────────────       ───────────────────────────
+///     Fires      ⟷              Discharged   (decided true)
+///     Blocks     ⟷              Refuted      (decided false)
+///     Declines   ⟷              Residual     (undecided — the machine decides)
+/// ```
+///
+/// The discharge lane already separates these correctly, and its own test
+/// `a_declining_host_leg_never_licenses_discharge` names this very defect as the thing it
+/// is protecting the emitted artifact from. This type brings the guard lane's vocabulary up
+/// to the discharge lane's.
+///
+/// # Scope of stage A
+///
+/// **Behaviourally inert.** `Blocks` and `Declines` both still produce no rewrite at every
+/// call site, so no reduction, normal form, or golden moves. Stage A only makes the
+/// distinction *representable and observable*; making the residue honest about which one
+/// occurred is stage C.
+///
+/// Known sites that still conflate the two, retained here as the checklist stage C works
+/// against:
+///
+/// * `eval_where_comm_single`, `finish_single_comm`'s empty-bind arm, and
+///   `comm_pforjoin_subst` — the three LIVE eager sites, each marked inline below.
+/// * [`guard_then`] — LATENT and **destructive**: it fabricates `Proc::PZero` for an
+///   undecided condition, which is worse than blocking because it commits to an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GuardDisposition {
+    /// The host DECIDED the guard `true`. The COMM fires.
+    Fires,
+    /// The host DECIDED the guard `false`. The COMM must not fire, and the machine would
+    /// agree — this is a verdict, not an abstention.
+    Blocks,
+    /// The host CANNOT DECIDE this guard. The host must not fire it, but this is **not** a
+    /// verdict of `false`: the machine may well fire it at COMM time. Reaching this for a
+    /// guard the host ought to be able to decide is an evaluator GAP, not an undecidable
+    /// guard, and stage C is what makes the two distinguishable from the outside.
+    Declines,
+}
+
+impl GuardDisposition {
+    /// A decided verdict.
+    pub const fn from_decided(verdict: bool) -> Self {
+        if verdict {
+            Self::Fires
+        } else {
+            Self::Blocks
+        }
+    }
+
+    /// Lift the legacy `Option<bool>` encoding. `None` reads as "declined".
+    pub const fn from_verdict(verdict: Option<bool>) -> Self {
+        match verdict {
+            Some(v) => Self::from_decided(v),
+            None => Self::Declines,
+        }
+    }
+
+    /// Project back to the legacy `Option<bool>` encoding. Total and lossless in this
+    /// direction; the information lost is `Blocks` vs `Declines`, which is precisely the
+    /// distinction this type exists to preserve.
+    pub const fn verdict(self) -> Option<bool> {
+        match self {
+            Self::Fires => Some(true),
+            Self::Blocks => Some(false),
+            Self::Declines => None,
+        }
+    }
+
+    /// `true` iff this disposition licenses the COMM to fire.
+    pub const fn fires(self) -> bool {
+        matches!(self, Self::Fires)
+    }
+
+    /// Three-valued negation: `Declines` is its own negation, because "unknown" negated is
+    /// still "unknown".
+    pub const fn negate(self) -> Self {
+        match self {
+            Self::Fires => Self::Blocks,
+            Self::Blocks => Self::Fires,
+            Self::Declines => Self::Declines,
+        }
+    }
+}
+
+/// The HOST `where`-guard evaluator, answering the three-way [`GuardDisposition`].
+///
+/// This is THE host guard evaluator — [`eval_guard_bool`] is a projection of it, not a
+/// second implementation, so there is no dual path and no way for the two to drift.
+///
+/// ## Connective discipline (preserved EXACTLY from the `Option<bool>` original)
+///
+/// The original arms were written `Some(eval_guard_bool(a)? && eval_guard_bool(b)?)` and
+/// friends. That expression is **left-strict** in `a` (the `?` runs first) and then
+/// **short-circuiting** in `b` (Rust's `&&`/`||` do not evaluate their right operand once
+/// the left settles the result). So `false and <undecided>` was already `Some(false)`, not
+/// `None`. Each arm below reproduces that behaviour verbatim; the `match` simply makes the
+/// discipline legible instead of leaving it implicit in operator semantics.
+///
+/// ★ It is NOT full Kleene, and stage B2's proposal to make it so is **not** obviously
+/// sound — see the measurement recorded on [`GuardDisposition`]'s stage-C checklist and in
+/// the `#33` report: f1r3node evaluates BOTH operands of `EAnd`/`EOr` unconditionally
+/// (`reduce.rs` — the work-stack driver pushes `EBool(p2)` and `EBool(p1)` together, and the
+/// recursive fallback binds `b1` and `b2` with `?` before combining), and `guard_passes`
+/// maps any `Err` or non-boolean result to `false`. So `kleene_or(Some(true), None)` would
+/// fire host-side while the machine does NOT fire — unsoundness in the FIRING direction.
+pub fn eval_guard_disposition(cond: &Proc) -> GuardDisposition {
+    use GuardDisposition::{Blocks, Declines, Fires};
     match cond {
         Proc::CastBool(b) => match b.as_ref() {
-            Bool::BoolLit(v) => Some(*v),
-            _ => None,
+            Bool::BoolLit(v) => GuardDisposition::from_decided(*v),
+            _ => Declines,
         },
-        Proc::And(a, b) => Some(eval_guard_bool(a)? && eval_guard_bool(b)?),
-        Proc::Or(a, b) => Some(eval_guard_bool(a)? || eval_guard_bool(b)?),
-        // M-0: material implication `a implies b ≡ (not a) or b`. Written with `||` so it
-        // inherits the SAME evaluation discipline as the `Or`/`And`/`Not` arms above (Rust's
-        // `||` short-circuits its right operand exactly as the `Or` arm does); the machine
-        // twin is `EOrBody(ENotBody ⟦a⟧, ⟦b⟧)` in `rhocalc_ast::lower_proc`. On the four
+        // `a and b`: left-strict, then short-circuit on a decided-FALSE left.
+        Proc::And(a, b) => match eval_guard_disposition(a) {
+            Declines => Declines,
+            Blocks => Blocks,
+            Fires => eval_guard_disposition(b),
+        },
+        // `a or b`: dual — short-circuit on a decided-TRUE left.
+        Proc::Or(a, b) => match eval_guard_disposition(a) {
+            Declines => Declines,
+            Fires => Fires,
+            Blocks => eval_guard_disposition(b),
+        },
+        // M-0: material implication `a implies b ≡ (not a) or b`, and therefore the `Or`
+        // discipline applied to the NEGATED antecedent: a decided-FALSE antecedent
+        // short-circuits to `Fires` (vacuous truth). The machine twin is
+        // `EOrBody(ENotBody ⟦a⟧, ⟦b⟧)` in `rhocalc_ast::lower_proc`. On the four
         // ground-boolean rows the two paths agree by construction (see the truth table in
         // `rholang-runtime/tests/rho_implies_guard.rs`, which drives both).
-        Proc::Implies(a, b) => Some(!eval_guard_bool(a)? || eval_guard_bool(b)?),
+        Proc::Implies(a, b) => match eval_guard_disposition(a) {
+            Declines => Declines,
+            Blocks => Fires,
+            Fires => eval_guard_disposition(b),
+        },
         // M-1b: the SPATIAL satisfaction operator `t matches φ`.
         //
         // Delegated to `formula::host_matches_verdict`, which decides the fragment
         // for which the generated first-order `Proc::match_pattern` is a faithful
         // model of the reducer's spatial matcher (the logical constants, the
-        // propositional connectives, and a concrete term pattern) and answers
-        // `None` for the SEPARATING conjunction, whose AC-with-remainder semantics
-        // belongs to the reducer alone.
+        // propositional connectives, and a concrete term pattern) and DECLINES the
+        // SEPARATING conjunction, whose AC-with-remainder semantics belongs to the
+        // reducer alone.
         //
-        // `None` here is the fail-CLOSED disposition, not an error: it flows out
-        // of `eval_guard_bool` to `eval_where_comm_single`, whose `_ => None` arm
-        // declines the host COMM and leaves a `CommWhere` marker. The guard is
-        // then decided where it can be decided soundly — on the machine, by
-        // `rho_pure_eval` through the `SpatialMatch` oracle. Nothing is guessed
-        // and nothing is fabricated.
-        Proc::Matches(target, formula) => {
-            crate::rhocalc::formula::host_matches_verdict(target, formula)
+        // ★ This is the arm where `Declines` is a genuine, permanent abstention rather
+        // than an evaluator gap: nothing is guessed and nothing is fabricated, and the
+        // guard is decided where it can be decided soundly — on the machine, by
+        // `rho_pure_eval` through the `SpatialMatch` oracle.
+        Proc::Matches(target, formula) => GuardDisposition::from_verdict(
+            crate::rhocalc::formula::host_matches_verdict(target, formula),
+        ),
+        Proc::Not(a) => eval_guard_disposition(a).negate(),
+        Proc::Eq(a, b) => match crate::rhocalc::runtime::compare_collection_equality(a, b) {
+            Some(v) => GuardDisposition::from_decided(v),
+            None => {
+                GuardDisposition::from_verdict(eval_cmp_order(a, b).map(|o| o == Ordering::Equal))
+            },
         },
-        Proc::Not(a) => Some(!eval_guard_bool(a)?),
-        Proc::Eq(a, b) => {
-            if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(a, b) {
-                Some(v)
-            } else {
-                Some(eval_cmp_order(a, b)? == Ordering::Equal)
-            }
+        Proc::Ne(a, b) => match crate::rhocalc::runtime::compare_collection_equality(a, b) {
+            Some(v) => GuardDisposition::from_decided(!v),
+            None => {
+                GuardDisposition::from_verdict(eval_cmp_order(a, b).map(|o| o != Ordering::Equal))
+            },
         },
-        Proc::Ne(a, b) => {
-            if let Some(v) = crate::rhocalc::runtime::compare_collection_equality(a, b) {
-                Some(!v)
-            } else {
-                Some(eval_cmp_order(a, b)? != Ordering::Equal)
-            }
+        Proc::Gt(a, b) => {
+            GuardDisposition::from_verdict(eval_cmp_order(a, b).map(|o| o == Ordering::Greater))
         },
-        Proc::Gt(a, b) => Some(eval_cmp_order(a, b)? == Ordering::Greater),
-        Proc::Lt(a, b) => Some(eval_cmp_order(a, b)? == Ordering::Less),
-        Proc::GtEq(a, b) => {
-            let o = eval_cmp_order(a, b)?;
-            Some(o == Ordering::Greater || o == Ordering::Equal)
+        Proc::Lt(a, b) => {
+            GuardDisposition::from_verdict(eval_cmp_order(a, b).map(|o| o == Ordering::Less))
         },
-        Proc::LtEq(a, b) => {
-            let o = eval_cmp_order(a, b)?;
-            Some(o == Ordering::Less || o == Ordering::Equal)
-        },
-        _ => None,
+        Proc::GtEq(a, b) => GuardDisposition::from_verdict(
+            eval_cmp_order(a, b).map(|o| o == Ordering::Greater || o == Ordering::Equal),
+        ),
+        Proc::LtEq(a, b) => GuardDisposition::from_verdict(
+            eval_cmp_order(a, b).map(|o| o == Ordering::Less || o == Ordering::Equal),
+        ),
+        // ★ THE CONCEALER. Every shape the host has no arm for lands here. Under the old
+        // `Option<bool>` encoding this was indistinguishable from a decided `false` at every
+        // caller, which is how divergence H's second half stayed silent for as long as it
+        // did. It is still `Declines` — but now it SAYS so.
+        _ => Declines,
     }
+}
+
+/// The HOST `where`-guard evaluator in its legacy `Option<bool>` encoding: `Some(b)` iff
+/// this guard decides to the ground boolean `b`, `None` if the host declines the fragment.
+///
+/// A thin projection of [`eval_guard_disposition`] — NOT a second implementation. Retained
+/// with its exact original signature because it is the HOST leg of
+/// `rholang-runtime::guard_discharge`'s anti-divergence fence, whose `classify` takes
+/// `Option<bool>` and whose three-way `GuardDischarge` this crate must not depend on
+/// (`languages` sits below `rholang-runtime`).
+///
+/// `pub` since S-D0. Compile-time discharge of a binder-closed guard requires this
+/// evaluator AND the machine's (`rho_pure_eval` under the reducer's `SpatialMatcherOracle`)
+/// to return the same verdict. The machine leg is the authority — it is what runs — so this
+/// one costs nothing and buys a loud warning wherever the two readings of the same surface
+/// guard would have diverged. A `None` here can never license a discharge; it falls to
+/// `Residual` and the machine decides at COMM time, as today.
+pub fn eval_guard_bool(cond: &Proc) -> Option<bool> {
+    eval_guard_disposition(cond).verdict()
 }
 
 fn collect_pattern_bindings(
@@ -510,9 +684,14 @@ pub(crate) fn eval_where_comm_single(
 ) -> Option<Proc> {
     let sub_body = receive_apply(pat, q, body)?;
     let sub_cond = receive_apply(pat, q, cond)?;
-    match eval_guard_bool(&sub_cond) {
-        Some(true) => Some(sub_body),
-        _ => None,
+    match eval_guard_disposition(&sub_cond) {
+        GuardDisposition::Fires => Some(sub_body),
+        // ★ #33 CONFLATION SITE 1 of 3 (LIVE). `Blocks` is "the machine would agree the
+        // guard is false"; `Declines` is "the host could not decide, and the machine may
+        // still fire". Both yield no rewrite TODAY — that is what makes stage A inert —
+        // but they are different facts, and only `Blocks` is a correct reason to leave the
+        // COMM unfired for good. Stage C makes the residue say which one occurred.
+        GuardDisposition::Blocks | GuardDisposition::Declines => None,
     }
 }
 
@@ -735,9 +914,11 @@ pub fn comm_pforjoin_subst(
     let acc_body = apply_pattern_env(body, &env);
     let acc_cond = apply_pattern_env(cond, &env);
 
-    match eval_guard_bool(&acc_cond) {
-        Some(true) => Some(acc_body),
-        _ => None,
+    match eval_guard_disposition(&acc_cond) {
+        GuardDisposition::Fires => Some(acc_body),
+        // ★ #33 CONFLATION SITE 2 of 3 (LIVE) — the multi-channel join twin of the arm in
+        // `eval_where_comm_single`. Inert in stage A; see `GuardDisposition`.
+        GuardDisposition::Blocks | GuardDisposition::Declines => None,
     }
 }
 
@@ -912,9 +1093,11 @@ fn finish_single_comm(
             return None;
         }
         if let Some(c) = recv_ctx.where_cond {
-            match eval_guard_bool(c) {
-                Some(true) => recv_ctx.cont.clone(),
-                _ => return None,
+            match eval_guard_disposition(c) {
+                GuardDisposition::Fires => recv_ctx.cont.clone(),
+                // ★ #33 CONFLATION SITE 3 of 3 (LIVE) — the empty-bind arm. Inert in
+                // stage A; see `GuardDisposition`.
+                GuardDisposition::Blocks | GuardDisposition::Declines => return None,
             }
         } else {
             recv_ctx.cont.clone()
@@ -1054,6 +1237,214 @@ fn try_comm_join(
     }
     work.insert(res);
     Some(Proc::PPar(work))
+}
+
+/// ★ #33 STAGE A — the separating tests for [`GuardDisposition`].
+///
+/// Each row here is a guard for which the old `Option<bool>` encoding answered `None`, and
+/// therefore for which every eager COMM site behaved *exactly* as if the guard were
+/// decidably `false`. The point of these tests is that the two are now distinguishable, and
+/// that they are distinguished the RIGHT way round — `Declines`, not `Blocks`.
+///
+/// They are also the regression fence for stage A's inertness claim: every row additionally
+/// asserts that the legacy projection `eval_guard_bool` is unchanged, so a future edit
+/// cannot quietly turn a `Declines` into a decided verdict (or vice versa) without failing
+/// here.
+#[cfg(test)]
+mod guard_disposition_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn bool_lit(v: bool) -> Proc {
+        Proc::CastBool(Arc::new(Bool::BoolLit(v)))
+    }
+
+    fn int_lit(n: i64) -> Proc {
+        Proc::CastInt(Arc::new(Int::NumLit(n)))
+    }
+
+    fn str_lit(s: &str) -> Proc {
+        Proc::CastStr(Arc::new(Str::StringLit(s.to_string())))
+    }
+
+    /// `t matches { φ | ψ }` — the SEPARATING conjunction. `formula::classify` gives
+    /// `PParInfix` the `FormulaShape::Separation` shape, and `host_matches_verdict` declines
+    /// it on purpose: its semantics is AC matching with a remainder, which belongs to the
+    /// reducer's spatial matcher alone.
+    fn separating_guard() -> Proc {
+        Proc::Matches(
+            Arc::new(str_lit("hi")),
+            Arc::new(Proc::PParInfix(Arc::new(str_lit("hi")), Arc::new(bool_lit(true)))),
+        )
+    }
+
+    /// ── ROW 1: the separating conjunction ──
+    ///
+    /// A permanent, principled abstention: the host has no sound way to decide it and says
+    /// so. Under `Option<bool>` this was `None` and read as `false` at every COMM site, so
+    /// the host blocked a COMM the machine may well fire.
+    #[test]
+    fn a_separating_formula_declines_rather_than_blocks() {
+        let guard = separating_guard();
+        assert_eq!(
+            eval_guard_disposition(&guard),
+            GuardDisposition::Declines,
+            "`t matches {{φ | ψ}}` must DECLINE — the separating conjunction is the \
+             reducer's to decide. Answering `Blocks` would assert the machine agrees the \
+             guard is false, which the host has no evidence for."
+        );
+        assert_ne!(
+            eval_guard_disposition(&guard),
+            GuardDisposition::Blocks,
+            "declining must not be spelled as a false verdict"
+        );
+        // Inertness: the legacy projection is unchanged.
+        assert_eq!(eval_guard_bool(&guard), None);
+    }
+
+    /// ── ROW 2a: `Eq(CastBool, CastBool)` — the stage-B1 regression pin ──
+    ///
+    /// This is divergence H's second half. Before B1, `eval_cmp_order` had no `CastBool`
+    /// arm, so `where x == true` answered `None` and the host blocked a COMM the machine
+    /// fires — a *silent evaluator gap* wearing a decline's clothing. It must now DECIDE.
+    #[test]
+    fn eq_on_two_bool_literals_decides_and_does_not_decline() {
+        let t = Proc::Eq(Arc::new(bool_lit(true)), Arc::new(bool_lit(true)));
+        assert_eq!(
+            eval_guard_disposition(&t),
+            GuardDisposition::Fires,
+            "`true == true` is decidable and must FIRE (stage B1)"
+        );
+        let f = Proc::Eq(Arc::new(bool_lit(true)), Arc::new(bool_lit(false)));
+        assert_eq!(
+            eval_guard_disposition(&f),
+            GuardDisposition::Blocks,
+            "`true == false` is decidably FALSE — a genuine verdict, not an abstention"
+        );
+        assert_eq!(eval_guard_bool(&t), Some(true));
+        assert_eq!(eval_guard_bool(&f), Some(false));
+    }
+
+    /// ── ROW 2b: `Eq` the host cannot decide ──
+    ///
+    /// The complement of 2a, and the row that shows `Blocks` and `Declines` are genuinely
+    /// two different answers from the SAME constructor. Comparing a bare process variable
+    /// has no `eval_cmp_order` arm and is not a collection, so the host must abstain — it
+    /// must NOT report the `false` that `_ => None` used to be read as.
+    #[test]
+    fn eq_on_an_undecidable_shape_declines_rather_than_blocks() {
+        let guard = Proc::Eq(Arc::new(Proc::PZero), Arc::new(int_lit(0)));
+        assert_eq!(
+            eval_guard_disposition(&guard),
+            GuardDisposition::Declines,
+            "`Nil == 0` is not decided by any `eval_cmp_order` arm and is not a collection \
+             comparison, so the host must DECLINE. Reporting `Blocks` here is exactly the \
+             #33 defect: a missing evaluator arm masquerading as a false verdict."
+        );
+        assert_eq!(eval_guard_bool(&guard), None);
+    }
+
+    /// ── ROW 3: `Or(<separating>, true)` ★ THE B2 ROW ──
+    ///
+    /// Left-strict: the undecided left operand makes the whole disjunction DECLINE, even
+    /// though the right operand is literally `true`.
+    ///
+    /// ★ This is precisely the row stage B2 proposed to change, by making the connectives
+    /// Kleene so that `kleene_or(unknown, true) = true`. **The measurement says do not.**
+    /// f1r3node evaluates BOTH operands of `EOr` unconditionally — the work-stack driver
+    /// pushes `EBool(p2)` and `EBool(p1)` together before `Combine(EvKont::Or)`, and the
+    /// recursive fallback binds `b1` and `b2` with `?` before combining — and
+    /// `guard_passes` maps any `Err` or non-boolean result to `false`. So a Kleene host
+    /// would FIRE where the machine does NOT: unsoundness in the firing direction, which is
+    /// the worst kind. This test therefore pins the CURRENT, sound behaviour, and its
+    /// failure would mean B2 was applied without re-doing that measurement.
+    #[test]
+    fn or_of_a_declining_left_and_true_declines_and_must_not_fire() {
+        let guard = Proc::Or(Arc::new(separating_guard()), Arc::new(bool_lit(true)));
+        assert_eq!(
+            eval_guard_disposition(&guard),
+            GuardDisposition::Declines,
+            "a declining left operand must make `or` DECLINE, not fire. Firing here would \
+             diverge from f1r3node, whose `EOr` evaluates both operands and whose \
+             `guard_passes` turns the resulting error into `false`."
+        );
+        assert!(!eval_guard_disposition(&guard).fires());
+        assert_eq!(eval_guard_bool(&guard), None);
+    }
+
+    /// The short-circuit discipline the `Option<bool>` original had implicitly, pinned
+    /// explicitly so the refactor's inertness is checkable rather than asserted.
+    ///
+    /// `Some(eval(a)? && eval(b)?)` is left-strict then short-circuiting, so a decided-FALSE
+    /// left operand settles `and` WITHOUT looking at the right — `false and <undecided>` is
+    /// `Blocks`, not `Declines`. The dual holds for `or`, and `implies` inherits it through
+    /// `¬a ∨ b`.
+    #[test]
+    fn the_connectives_keep_their_original_short_circuit_discipline() {
+        let undecided = separating_guard();
+
+        let and_false = Proc::And(Arc::new(bool_lit(false)), Arc::new(undecided.clone()));
+        assert_eq!(
+            eval_guard_disposition(&and_false),
+            GuardDisposition::Blocks,
+            "`false and ?` is settled by the left operand alone"
+        );
+
+        let or_true = Proc::Or(Arc::new(bool_lit(true)), Arc::new(undecided.clone()));
+        assert_eq!(
+            eval_guard_disposition(&or_true),
+            GuardDisposition::Fires,
+            "`true or ?` is settled by the left operand alone"
+        );
+
+        let implies_false = Proc::Implies(Arc::new(bool_lit(false)), Arc::new(undecided.clone()));
+        assert_eq!(
+            eval_guard_disposition(&implies_false),
+            GuardDisposition::Fires,
+            "`false implies ?` is vacuously true, settled by the antecedent alone"
+        );
+
+        // …and the cases the left operand does NOT settle still propagate the decline.
+        let and_true = Proc::And(Arc::new(bool_lit(true)), Arc::new(undecided.clone()));
+        assert_eq!(eval_guard_disposition(&and_true), GuardDisposition::Declines);
+        let or_false = Proc::Or(Arc::new(bool_lit(false)), Arc::new(undecided.clone()));
+        assert_eq!(eval_guard_disposition(&or_false), GuardDisposition::Declines);
+        let implies_true = Proc::Implies(Arc::new(bool_lit(true)), Arc::new(undecided));
+        assert_eq!(eval_guard_disposition(&implies_true), GuardDisposition::Declines);
+    }
+
+    /// `Not` is three-valued: negating an abstention is still an abstention. A `Declines`
+    /// that flipped to a verdict under `not` would let the defect manufacture one.
+    #[test]
+    fn negation_is_three_valued() {
+        assert_eq!(
+            eval_guard_disposition(&Proc::Not(Arc::new(separating_guard()))),
+            GuardDisposition::Declines,
+            "`not ?` is `?`"
+        );
+        assert_eq!(
+            eval_guard_disposition(&Proc::Not(Arc::new(bool_lit(true)))),
+            GuardDisposition::Blocks
+        );
+        assert_eq!(
+            eval_guard_disposition(&Proc::Not(Arc::new(bool_lit(false)))),
+            GuardDisposition::Fires
+        );
+    }
+
+    /// The projection is total and lossless in the `Option<bool>` direction, which is what
+    /// lets `eval_guard_bool` keep serving `guard_discharge::classify` unchanged.
+    #[test]
+    fn the_legacy_projection_round_trips() {
+        for d in [GuardDisposition::Fires, GuardDisposition::Blocks, GuardDisposition::Declines] {
+            assert_eq!(GuardDisposition::from_verdict(d.verdict()), d);
+        }
+        assert_eq!(GuardDisposition::from_decided(true), GuardDisposition::Fires);
+        assert_eq!(GuardDisposition::from_decided(false), GuardDisposition::Blocks);
+        assert!(GuardDisposition::Fires.fires());
+        assert!(!GuardDisposition::Blocks.fires());
+        assert!(!GuardDisposition::Declines.fires());
+    }
 }
 
 #[cfg(test)]
