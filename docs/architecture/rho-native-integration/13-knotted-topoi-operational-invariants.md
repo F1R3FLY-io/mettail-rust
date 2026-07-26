@@ -1,6 +1,6 @@
 # 13 — Knotted-Topoi Operational Invariants
 
-Last updated: 2026-07-10
+Last updated: 2026-07-25 (adds §5.2: Substrate-as-Definition and INV-14b′)
 
 This document extracts concrete, checkable operational requirements from the
 north-star paper *Knotted Topoi*
@@ -269,6 +269,7 @@ FV theories are under `formal/rocq/rho_bridge/theories/`.
 | INV-12 | **Compile to core rho; reuse the host Rho machine.** The target is core rho; nothing depends on a MeTTaIL primitive; execution is on the host machine. | §1.5 (standing conventions) | Artifact is `rhoapi::Par` injected into F1r3node `RhoRuntime`/RSpace; one-way bridge. `HostRhoMachineReuse.v`, `BridgeInertness.v` | Satisfied |
 | INV-13 | **Channel-intension freedom — same CLTS.** Any matching intension is admissible iff it induces the paper's CLTS. | §1.5 (Q2); `Remark` "non-optimality" (Q3) | The whole-$`[\![ G ]\!]`$ **finite-execution** opcorr is landed: `WholeGsltInRhoOpCorrespondence.whole_gslt_in_rho_opcorrespondence` composes the six per-family per-step arms (base / contextual / AC-linear / AC-structural / binder-β / native) into a both-direction finite-trace barb-equivalence; `whole_gslt_opcorr_over_optimal_matching` threads obligation (iii) `advanced_automata/InRhoSameCLTSWeakBisim.same_clts_weak_bisim` so it holds over the O1-OPTIMAL `set_automaton_trace` scheme — the `rem:nonopt` (Q3) discharge. Non-vacuity: `swapdemo_base_finite_trace_opcorr`. `RhoNetChannel` reserves both `location` and `set_automaton_trace` kinds | Satisfied (finite executions, in-Rho realization) |
 | INV-14 | **Semantic predicates as the only off-machine obligation.** Beyond the paper's pure-rho fragment; consistent, not required. | (not in the paper's fragment) | `RhoBackendInvocation::DeferToDovetailSemanticPredicate`; audit boundary in [Runtime Invocation Migration](12-runtime-invocation-migration.md). `RhoDefaultBackendAudit.v`. Excluded from the whole-$`[\![ G ]\!]`$ opcorr BY CONSTRUCTION — `WholeGsltInRhoOpCorrespondence.semantic_predicates_emit_no_comm` (a predicate disposition carries no $`c(\ell)`$ label, so it emits no COMM and is absent from every opcorr trace; `Family` has no predicate constructor) | Consistent (beyond paper scope; opcorr-excluded by the fence) |
+| INV-14b′ | **Single decider at a guard site.** At a guard site the **substrate is the only decider**: no second evaluator reaches a verdict on the same guard atom, and no verdict is composed from two evaluators. INV-14 does **not** entail this and cannot discriminate the routes (§5.2). | (not in the paper's fragment; §7 states the invariants "do not constrain" this boundary) | Governing decision **Substrate-as-Definition** (§5.2). Coverage side mechanized as `RhoHostObligationBoundary.guard_site_coverage_excludes_host_dispositions` (T-HB4) with the non-vacuity and default-preservation companions; the non-discrimination of INV-14 mechanized as `WholeGsltInRhoOpCorrespondence.machine_guard_also_emits_no_comm` and `inv14_cannot_discriminate_guard_routing` (T-INV14b′). Run-time enforcement path: [semantic-predicates 08 §3.2](../semantic-predicates/08-runtime-comm-enforcement.md#32-pure-boolean-guards-the-rholang-where-clause) | Satisfied (decision recorded; both legs mechanized) |
 
 ### 5.1 Two loci, one firing (illustration)
 
@@ -283,6 +284,138 @@ atomic flat-$`\sigma`$-receiver firing but moves the *match decision* onto the i
 — the redex is located and bound by `sa:` COMMs — recovering O1 while preserving the
 same $`c(\ell)`$-labelled firing, and is proven CLTS-equivalent to the sound scheme
 ([22](22-end-to-end-formal-verification.md)).
+
+### 5.2 Substrate-as-Definition and INV-14b′: the single decider at a guard site
+
+§5.1 settles *where* a firing happens. This subsection settles something INV-1
+through INV-14 deliberately leave open, and which §7 below states outright is
+"outside the paper": at a **guard site** — the moment a candidate COMM is tested
+against a semantic predicate — **whose semantics decides?**
+
+#### 5.2.1 The governing decision
+
+> **Substrate-as-Definition.** For every **guard atom**, the *substrate's*
+> denotation **is the specification**. The reducer's behaviour on the same
+> expression is a **claim to be discharged** against that specification — never a
+> specification to be copied. Where the two differ, either the reducer is
+> **defective**, or the expression lies **outside the admissible fragment** and the
+> guard site fails closed. The direction of obligation never reverses.
+
+The scope is exact and deliberately narrow: **guard atoms**, not whole programs.
+Inside a COMM body the consensus reducer remains the semantics of the rewrite; the
+decision above governs only the boolean verdict that gates a commit.
+
+The rationale is the purpose semantic predicates serve. They exist for **theorem
+proving and correctness by construction**: a guard atom is precisely the place
+where a mechanized statement about a program becomes a run-time gate. A
+specification defined as "whatever the reducer happens to do" cannot serve that
+purpose, because it makes every theorem about a guard a theorem about an
+implementation detail — revisable by any reducer change, and unprovable in advance
+of one. Defining the substrate as the specification inverts the dependency: the
+reducer acquires a proof obligation, and a reducer/substrate disagreement becomes a
+**bug report** rather than a semantic ambiguity to be arbitrated case by case.
+
+#### 5.2.2 Consequence: the integer-overflow divergence is resolved, not accommodated
+
+The concrete case that forced the decision is the **integer-overflow divergence**
+inside f1r3node itself. Two evaluators in the same repository disagree on
+$`\mathtt{i64::MAX} + 1`$:
+
+| Evaluator | Behaviour on $`\mathtt{i64::MAX} + 1`$ | Evidence (verified 2026-07-25, `feature/mettail`) |
+|---|---|---|
+| consensus reducer | **wraps** to $`\mathtt{i64::MIN}`$ | `rholang/src/rust/interpreter/reduce.rs:3116` — `ExprInstance::GInt(lhs.wrapping_add(rhs))` |
+| guard evaluator (`rho_pure_eval`) | **errors** with `EvalError::ArithmeticOverflow` | `rho-pure-eval/src/eval.rs:171-178` dispatching `int_binop_checked("+", …, i64::checked_add)`, defined at `:398-417` |
+
+Read as a symmetric conflict between two peers, this is an open question: *which
+`+` is normative?* Under Substrate-as-Definition it is not symmetric and not open.
+At a guard site the substrate's denotation is the specification, so the **checked**
+behaviour is the semantics, and the reducer's wrapping behaviour is simply not in
+evidence there. Two facts make this the cheapest possible resolution rather than a
+new burden:
+
+1. **Checked is not a third semantics being invented.** It is what a Rholang
+   `where` guard **already does today on the consensus path**. A guard rides on
+   `Receive.condition` / `TaggedContinuation.guard` and is evaluated by
+   `guard_passes` (`rholang/src/rust/interpreter/matcher/match.rs:141-167`) through
+   `rho_pure_eval::eval_with` — the checked evaluator. Recording the decision
+   changes no shipped behaviour; it names the behaviour already shipped.
+2. **Overflow at a guard site is already reject-safe.** `guard_passes` collapses
+   `false`, "did not reduce to a boolean", and "evaluation raised an error" into a
+   single **guard-fail** verdict. An overflowing guard therefore refuses the commit
+   rather than committing on a wrapped value — which is exactly the disposition
+   correctness-by-construction requires, and exactly what INV-3's atomicity
+   guarantees leave intact (a failed guard consumes nothing and emits nothing).
+
+The residual — that the reducer and the guard evaluator differ *at all* — is an
+upstream f1r3node question about body arithmetic. It is recorded here, not
+resolved here, and it does not reach a guard site.
+
+#### 5.2.3 INV-14b′ (single decider)
+
+> **INV-14b′ (single decider).** At a guard site, **the substrate is the only
+> decider**. No second evaluator reaches a verdict on the same guard atom, and no
+> verdict is composed from two evaluators.
+
+INV-14b′ is the operational form of §5.2.1: Substrate-as-Definition fixes *whose
+semantics* a guard verdict has, and INV-14b′ forbids the one arrangement that would
+silently undo it — a second evaluator answering the same question, whose agreement
+with the substrate no one is obliged to prove.
+
+Its coverage side is mechanized. `RhoHostObligationBoundary.v` models the shipped
+coverage matrix `guard_disposition_covers` (`rholang-codegen/src/backend.rs:217-248`)
+and adds the **guard-site** restriction of it:
+`guard_site_coverage_excludes_host_dispositions` (**T-HB4**) proves that at a guard
+site no obligation is covered by a host disposition (`NativeHandler`,
+`ExternalContract`). Three companions keep that from being a vacuous restriction —
+`guard_site_covers_is_exactly_covers_minus_host` (it removes the host entries and
+nothing else), `every_obligation_kind_has_a_guard_site_decider` (no obligation kind
+is stranded), and `default_disposition_is_guard_site_admissible` (every default the
+substrate emits, per `default_classification` in
+`rholang-codegen/src/guard_quality.rs:259-290`, remains admissible — so no shipped
+language's disposition changes). That last theorem is why T-HB4 entails **no Rust
+change**: the restriction is already satisfied by everything the substrate ships.
+Checked, not assumed — `default_classification` maps `BehavioralPredicate` to
+`EffectiveBooleanAlgebra` (`:274-280`), and no production path in the workspace
+emits `RhoGuardDispositionKind::NativeHandler` or `::ExternalContract` at all; the
+only occurrences are the coverage matrix itself and its unit tests.
+
+#### 5.2.4 Why INV-14 cannot itself be the discriminator
+
+It is tempting to read INV-14 as already settling the routing question: *a
+semantic-predicate rule emits no $`c(\ell)`$, therefore it is off-machine, therefore
+it is host-routed.* That reading is invalid, on two independent grounds.
+
+**(i) INV-14's observable does not separate the two routes.** A guard decided **on
+the machine** by `rho_pure_eval` — the `Receive.condition` route of
+[semantic-predicates 08 §3.2](../semantic-predicates/08-runtime-comm-enforcement.md#32-pure-boolean-guards-the-rholang-where-clause)
+— also emits no $`c(\ell)`$. It is a *precondition on a commit*, not a
+communication. Both candidate routes satisfy INV-14 identically, and a property
+shared by both cannot distinguish them. This is now mechanized rather than argued,
+in `WholeGsltInRhoOpCorrespondence.v`:
+
+- `machine_guard_also_emits_no_comm` — the machine-decided guard route carries no
+  COMM label, exactly as `semantic_predicates_emit_no_comm` shows for the
+  host-decided route;
+- `guard_routes_are_distinct` — the two routes are nevertheless *different*
+  dispositions, so there is something to discriminate;
+- `inv14_cannot_discriminate_guard_routing` — **any** decision procedure that
+  factors through the INV-14 observable returns the *same* answer on both, for
+  every result type. INV-14 is therefore provably not a discriminator, rather than
+  merely observed not to be one.
+
+**(ii) The invariants disclaim this boundary in their own words.** §7 below states
+that the semantic-predicate boundary "is an implementation refinement that the paper
+is silent on and that the invariants above do not constrain." An invariant that
+explicitly does not constrain a boundary cannot be the rule that decides it.
+
+Both grounds point the same way: the routing question needs its own invariant, which
+is why INV-14b′ exists alongside INV-14 rather than being derived from it. The
+existing INV-14 fence remains what it always was — an exclusion **by construction**
+from the opcorr traces: `Family` has no predicate constructor
+(`WholeGsltInRhoOpCorrespondence.v:144-151`) and `family_of` maps only `CommLabel`s
+(`:182`), so a rule family is reachable only through a disposition that carries a
+COMM label. That fence is sound and unchanged; it simply never spoke to *who
+decides* a guard.
 
 ## 6. Mapping to the Formal-Verification Suite
 
@@ -354,6 +487,14 @@ them as the sole off-machine obligation neither satisfies nor violates a paper
 invariant — it is an implementation refinement that the paper is silent on and
 that the invariants above do not constrain.
 
+That last clause is exactly why **INV-14b′** had to be stated separately (§5.2): a
+boundary the paper-derived invariants explicitly do not constrain cannot be decided
+*by* them, and INV-14 in particular is provably not a discriminator here — a
+machine-decided guard emits no $`c(\ell)`$ just as a host-decided one does
+(§5.2.4). INV-14b′ and the **Substrate-as-Definition** decision it operationalizes
+are MeTTaIL's own commitments, taken on correctness-by-construction grounds; they
+are recorded as such, and neither is claimed as a paper requirement.
+
 ## 8. Summary
 
 - The paper is topos-theoretic; its operational requirement is the **context-
@@ -373,6 +514,14 @@ that the invariants above do not constrain.
   matching via obligation (iii), and contextual joins + structural premises (INV-6)
   fire as atomic COMMs; the residual is divergent / infinite executions and rule
   families beyond the covered six + slotted In/Out.
+- At a **guard site** the decider is fixed by MeTTaIL's own commitments rather than
+  by the paper: **Substrate-as-Definition** makes the substrate's denotation the
+  specification for every guard atom, and **INV-14b′** makes it the *only* decider
+  there (§5.2). This resolves the integer-overflow divergence at guard sites
+  (checked, not wrapping) without inventing a third semantics — checked is what a
+  Rholang `where` guard already does on the consensus path — and it is stated
+  separately from INV-14 because INV-14 provably cannot discriminate the two
+  routing choices.
 - The per-item crosswalk and the claim architecture are owned by
   [29 — Knotted-Topoi Satisfaction Crosswalk](29-knotted-topoi-satisfaction-crosswalk.md):
   every labeled item of the paper receives a status row there

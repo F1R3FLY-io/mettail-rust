@@ -1,19 +1,37 @@
 # Predicated Types: Guarded Communication in MeTTaIL
 
-> **Historical design-of-record — guard-evaluation framing superseded.**
+> **Historical design-of-record — guard-evaluation *mechanism* superseded; the
+> two-phase compile-time/run-time split is NOT.** *(Supersession scope narrowed
+> 2026-07-25 — see "What is un-superseded" below.)*
+>
 > This document is the original design narrative for predicated types and is
 > preserved as-is for its motivation, derivations, and architectural history.
-> Its account of *how a guard is evaluated* — framed throughout in terms of
-> Ascent / Datalog fixpoint queries (notably **§6 The Guarded Comm Rule**,
+> Its account of *by what machinery* a guard is evaluated — framed throughout in
+> terms of Ascent / Datalog fixpoint queries (notably **§6 The Guarded Comm Rule**,
 > **§8 Behavioral Predicates**, and the surface-syntax sections that read
 > `where` as Datalog relation queries) — is **superseded**. Ascent was retired
 > in the P6 milestone. Guard evaluation is now a two-phase model: the
-> classify-only **prattail semantic-predicate substrate** (the EBA `𝔅` / SFA /
-> SFT / Heyting algebra tower) runs **at compile time**, emitting coverage
-> evidence and a quality tag per guard obligation; the surviving guard is then
-> enforced **at run time by the host** — RSpace structural matching, a Rholang
-> `where` boolean guard, or a host-routed `RhoNativeJoin` — never by re-running
-> the algebra.
+> **prattail semantic-predicate substrate** (the EBA `𝔅` / SFA / SFT / Heyting
+> algebra tower) runs **at compile time**, classifying each guard obligation and
+> emitting coverage evidence plus a quality tag; the surviving guard is then
+> enforced **at run time** — RSpace structural matching, a Rholang `where` boolean
+> guard (from source *or* from generated AST, via `Receive.condition`), or a
+> host-routed `RhoNativeJoin` — without re-executing a symbolic-automaton decision
+> procedure inside the COMM commit.
+>
+> **What is un-superseded (2026-07-25).** §7's *When Each Subsystem Is Used* table
+> gives, for **Guard Codegen**, a compile-time role of "SFA compilation, tier
+> classification, code emit" and a run-time role of "Guard function evaluation per
+> behavioral Comm fire". **The run-time half of that row was correct and is
+> restored to current standing.** A guard *is* evaluated per candidate Comm fire;
+> what changed is only *which evaluator* runs it — F1r3node's guard path
+> (`guard_passes` over `Receive.condition`, via `rho_pure_eval`) or a
+> `RhoNativeJoin` handler, in place of an Ascent fixpoint query. The blanket
+> phrasing "classify-only, the algebra never runs at run time" over-reached: it
+> was written on a premise about the `rhoapi` wire format that was already false by
+> 53 days, corrected in
+> [08 §0](../architecture/semantic-predicates/08-runtime-comm-enforcement.md#0-correction-notice-the-ast-path-premise-was-false-when-written).
+> The compile-time half of the row stands unchanged.
 >
 > The authoritative, parser-grounded reference is the suite
 > [`docs/architecture/semantic-predicates/`](../architecture/semantic-predicates/README.md).
@@ -24,7 +42,10 @@
 > (compile-time classification and the fail-closed flip gate that replaces the
 > Comm-rule evaluation story), and
 > [08 — Runtime COMM Enforcement](../architecture/semantic-predicates/08-runtime-comm-enforcement.md)
-> (how the surviving predicate is enforced at run time).
+> (how the surviving predicate is enforced at run time). Whose *semantics* a guard
+> verdict has — the governing **Substrate-as-Definition** decision and **INV-14b′**
+> — is
+> [13 §5.2](../architecture/rho-native-integration/13-knotted-topoi-operational-invariants.md#52-substrate-as-definition-and-inv-14b-the-single-decider-at-a-guard-site).
 
 ---
 
@@ -4648,6 +4669,18 @@ Ascent             —     calls at RT     calls at RT  consumes       —
 | AscentClauses   | Pattern → Datalog clause translation              | —                                                     |
 | Ascent Engine   | —                                                 | Fixpoint evaluation of all generated rules            |
 | Guard Codegen   | SFA compilation, tier classification, code emit   | Guard function evaluation per behavioral Comm fire    |
+
+> **Standing of the Guard Codegen row (restored 2026-07-25).** Both halves of this
+> row are **current**, with one substitution. Compile time is unchanged. Run time —
+> *"guard function evaluation per behavioral Comm fire"* — is also unchanged **as a
+> statement of when a guard is evaluated**; what the P6 retirement replaced is only
+> the *evaluator*: F1r3node's guard path (`guard_passes` over `Receive.condition`,
+> through `rho_pure_eval`) or a `RhoNativeJoin` handler, in place of the Ascent
+> fixpoint query that the rest of this table's `Ascent Engine` row describes. The
+> `AscentClauses` and `Ascent Engine` rows remain superseded in full. See the
+> supersession banner at the head of this document, and
+> [08 §0](../architecture/semantic-predicates/08-runtime-comm-enforcement.md#0-correction-notice-the-ast-path-premise-was-false-when-written)
+> for why the stronger "classify-only" phrasing was withdrawn.
 
 Guard selectivity interacts with the constraint theory suite (§16) when
 guards involve theory-specific predicates.

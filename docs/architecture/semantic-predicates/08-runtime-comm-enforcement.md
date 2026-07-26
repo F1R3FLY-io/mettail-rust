@@ -1,6 +1,6 @@
 # Runtime COMM Enforcement
 
-Last updated: 2026-06-22
+Last updated: 2026-07-25 (correction, §0). First published 2026-06-22.
 
 All symbols are defined in [Concepts and Glossary](01-concepts-and-glossary.md).
 This document answers the single most-asked and most-misunderstood question about
@@ -8,28 +8,93 @@ the substrate: **once a language has been dispatched, how is a semantic predicat
 enforced at run time — and what, exactly, does Rholang do?** The honest answer is
 the spine of this page, so it is stated immediately and then justified.
 
+## 0. Correction notice — the AST-path premise was false when written
+
+The 2026-06-22 edition of this document justified routing every non-structural
+guard away from Rholang with a claim about the wire format. In §3.2 it read:
+
+> MeTTaIL's production Rho lane builds `rhoapi::Par` **AST directly** (no source
+> round-trip), and the `rhoapi::ReceiveBind` struct it constructs has fields
+> `{patterns, source, remainder, free_count}` — **no guard field**. So MeTTaIL
+> cannot emit a literal `where` through the AST path.
+
+**The premise was false on the day it was written, and had been false for 53
+days.** This is not a claim that expired: the guard field predated the document.
+It exists, and it is on the enclosing `Receive` message rather than on
+`ReceiveBind` — which is where a guard belongs, since one guard covers the
+combined bindings of *all* binds of a join, not one bind in isolation.
+
+| Statement in the 2026-06-22 edition | Verified status | Source of record |
+|---|---|---|
+| `ReceiveBind` has fields `{patterns, source, remainder, free_count}` and no guard field | **True**, and immaterial — a per-bind guard could not see cross-bind variables | `RhoTypes.proto:129-134` |
+| therefore MeTTaIL cannot emit a `where` guard through the AST path | **False** — `Receive` carries `Par condition = 8` | `RhoTypes.proto:161-167` |
+| therefore a pure boolean guard must be host-routed to `RhoNativeJoin` | **False** — it may be emitted as a `Receive.condition` and evaluated by the host before commit | `matcher/match.rs:141-167` |
+
+The provenance, verified in the sibling checkout MeTTaIL path-depends on
+(`Cargo.toml:59-63` points every f1r3node crate at `../f1r3node-rust-mettail`):
+
+- **Commit** `8d540d2086f493f82008c5d3098447bb76860e1c`, authored **2026-04-30**,
+  titled *"[agent] feat(rholang): normalize where-guards into `Receive.condition`
+  and `MatchCase.guard`"*, and labelled **CONSENSUS-AFFECTING** in its own body
+  (block hashes differ before versus after, so a coordinated upgrade was required
+  — the strongest possible signal that the field is a live part of the wire
+  format, not a sketch).
+- **Ancestry**, on the exact branch the path dependencies resolve to:
+
+  ```console
+  $ git -C ../f1r3node-rust-mettail branch --show-current
+  feature/mettail
+  $ git -C ../f1r3node-rust-mettail merge-base --is-ancestor 8d540d20 HEAD; echo $?
+  0
+  ```
+
+  Exit status `0` is `--is-ancestor`'s affirmative: the guard commit is reachable
+  from the head MeTTaIL compiles against.
+- **Elapsed interval.** 2026-04-30 to 2026-06-22 is 53 days (0 remaining days in
+  April, 31 in May, 22 in June).
+- **MeTTaIL already emits it.** The generated-AST claim is refuted by MeTTaIL's own
+  production codegen, which sets the field on two lowering paths — cited by function
+  because both files are under active development and line numbers drift:
+  `rholang-codegen/src/rho_net_automaton.rs`, `join_children_receiver` (emits
+  `condition: Some(guard)`, the in-Rho set automaton's non-linear consistency guard
+  built by `consistency_guard`), and `rholang-codegen/src/rho_net_drive.rs`,
+  `ac_carrier_receiver_par` (emits `condition: Some(condition)`, the drive-AC
+  carrier's redex check).
+
+What survives the correction is §1's *observation* — the EBA/SFA/SFT algebra is
+not itself re-run inside a COMM commit — because `Receive.condition` carries a
+**Rholang expression** evaluated by `rho_pure_eval`, not a request to re-execute a
+symbolic-automaton decision procedure. What does **not** survive is the
+*derivation*: the AST path was never the reason, so "pure boolean guard, therefore
+host-routed" was never entailed. §1, §3.2, §3.3, §4 and §5 below are corrected
+accordingly, and the classify-only posture is restated as the design decision it
+is rather than as a consequence of a wire-format limitation.
+
 ## 1. The honest answer, up front
 
-> **Rholang does not evaluate the semantic-predicate algebra at run time.** The
-> prattail EBA/SFA/SFT substrate runs entirely at **compile time** and is
-> classify-only ([07](07-language-to-rholang-integration.md)). At run time the
-> *surviving* guard is enforced by the host in one of three ways, none of which
-> re-runs the algebra:
+> **Rholang does not re-run the semantic-predicate algebra inside a COMM commit.**
+> The prattail EBA/SFA/SFT substrate is used **at compile time** to classify each
+> guard obligation and emit coverage evidence ([07](07-language-to-rholang-integration.md)).
+> At run time the *surviving* guard is enforced in one of three ways, none of which
+> re-executes a symbolic-automaton decision procedure:
 >
 > 1. **structural** guards, via RSpace **spatial pattern matching**;
 > 2. **pure boolean** guards over bound ground values, via a Rholang **`where`
->    receive guard** that F1r3node evaluates before commit;
+>    receive guard** that F1r3node evaluates before commit. This route is open to
+>    generated `rhoapi::Par` as well as to Rholang source: the guard rides on
+>    `Receive.condition` (§0), and MeTTaIL's own lowering already uses it;
 > 3. **everything richer** (effective-theory, transducer, behavioral, multi-channel
->    join), via a **host-routed native join** (`RhoNativeJoin`) that gates the COMM
->    at the RSpace boundary.
+>    join over non-Rholang-computable relations), via a **host-routed native join**
+>    (`RhoNativeJoin`) that gates the COMM at the RSpace boundary.
 
 Admission is decided *before* run time by the fail-closed flip gate of
 [07 §5](07-language-to-rholang-integration.md): a language only runs on the Rho
 backend if every guard obligation was covered with non-`Unknown` quality. So "how
-Rholang applies the semantic predicate" is, precisely: **it doesn't apply the
-algebra at all** — it matches structure, it may evaluate a simple `where` boolean,
-and it defers everything else to a host gate. What is *guaranteed* at run time is
-**guard atomicity**: a failed guard consumes nothing and emits nothing.
+Rholang applies the semantic predicate" is, precisely: it matches structure, it
+evaluates the guard expression when the guard is a Rholang-computable boolean over
+bound values, and it defers to a host gate exactly when the predicate is *not*
+Rholang-computable. What is *guaranteed* at run time is **guard atomicity**: a
+failed guard consumes nothing and emits nothing.
 
 ![Runtime COMM enforcement: where each predicate class is gated](figures/08-comm-enforcement.svg)
 
@@ -116,23 +181,55 @@ These run real Rholang source on the host RSpace and validate the guard-atomicit
 theorems of §3.4 — in particular **Theorem 3.1** (`failed_guard_no_commit`) — against an
 actual interpreter.
 
-> **The boundary that forces host-routing.** The `where` clause is enforceable when
-> the predicate is a pure boolean over bound ground values *and the program is
-> expressed as Rholang source*. MeTTaIL's production Rho lane builds `rhoapi::Par`
-> **AST directly** (no source round-trip), and the `rhoapi::ReceiveBind` struct it
-> constructs has fields `{patterns, source, remainder, free_count}` — **no guard
-> field**. So MeTTaIL cannot emit a literal `where` through the AST path; a guard
-> that cannot be folded into the match pattern is therefore routed to the native
-> join of §3.3. The `where` oracle proves the *semantics* the native join must
-> reproduce.
+> **The boundary that forces host-routing (corrected).** The `where` clause is
+> enforceable whenever the predicate is a **Rholang-computable boolean over bound
+> values** — independently of whether the program arrives as Rholang source or as
+> generated `rhoapi::Par`. MeTTaIL's production Rho lane builds AST directly, with
+> no source round-trip, and that path carries the guard: `ReceiveBind` indeed has
+> only `{patterns, source, remainder, free_count}`, but the guard is not a per-bind
+> field — it is `Par condition = 8` on the enclosing `Receive`
+> (`RhoTypes.proto:161-167`), precisely so that one guard can range over the
+> combined bindings of every bind in a join. The **surviving** boundary that forces
+> host-routing is therefore *computability*, not *encodability*: a predicate that
+> Rholang cannot decide (an external relation such as `halts`, a Presburger
+> decision, an SFT run) goes to the native join of §3.3; a predicate Rholang *can*
+> decide rides on `Receive.condition` and is enforced by the same F1r3node guard
+> path the oracle above exercises. See §0 for the provenance of the field and for
+> the false premise this paragraph replaces.
+
+The host-side evaluation path for a guard reaching the machine as AST is the same
+one the source path uses, which is why the `where` oracle is an oracle for both:
+`rholang/src/rust/interpreter/matcher/match.rs:141-167` (`guard_passes`) evaluates
+the condition with `rho_pure_eval::eval_with` against the combined cross-bind
+environment and commits only on `GBool(true)`; the sibling
+`Reduce::eval_match` (`reduce.rs:1723`) does the same for the `match … where` case
+guard, using the same evaluator. Three facts about that path matter downstream:
+
+1. **Cross-bind scope.** The guard is evaluated after every spatial pattern has
+   matched, against the combined bindings of all binds, which is exactly what a
+   guard field on `Receive` (rather than on `ReceiveBind`) buys.
+2. **Fail-closed collapse.** `false`, "did not reduce to a boolean", and
+   "evaluation raised an error" collapse into a single **guard-fail** verdict
+   (`guard_passes`, `Err(_) => false`). The collapse is deliberate and
+   consensus-visible: it is what makes a partial guard reject-safe rather than
+   commit-unsafe.
+3. **Checked integer arithmetic.** `rho_pure_eval` uses `i64::checked_add`,
+   `checked_sub`, and `checked_mul` through `int_binop_checked`
+   (`rho-pure-eval/src/eval.rs:171-194, 398-417`), so an overflowing guard raises
+   `EvalError::ArithmeticOverflow` and, by fact 2, fails the guard. A guard
+   therefore never commits a COMM on a wrapped-around value.
 
 ### 3.3 Everything richer — the host-routed native join (`RhoNativeJoin`)
 
 An effective-theory predicate (a Presburger formula), a transducer relation, or a
 **behavioral** predicate over external relations (`halts`, `safe`) is **not
 Rholang-computable**: Rholang cannot decide a linear-integer formula, run an SFT, or
-query a host relation, and — per §3.2 — cannot even carry a guard field in the AST
-it is handed. These guards take the `RhoNativeJoin` disposition.
+query a host relation. That, and that alone, is what routes such a guard to the
+`RhoNativeJoin` disposition. The 2026-06-22 edition adjoined a second reason —
+"and cannot even carry a guard field in the AST it is handed" — which was false
+when written (§0) and is withdrawn here; encodability never bore on the routing
+decision, and a Rholang-decidable guard is *not* routed away merely because its
+program arrived as AST.
 
 At run time a **native join handler** sits at the RSpace COMM boundary. When a
 candidate join is enabled, the handler decides whether the guard permits the commit
@@ -144,11 +241,16 @@ at compile time and the gate already admitted it; the handler enforces the
 
 GuardedRho is the canonical instance: its `?guard` is a `RelationQuery` over the
 external relations `halts`/`safe` "populated by user code"
-(`languages/src/guarded_rho.rs`). Because `rhoapi::ReceiveBind` has no guard field
-and external relations are not Rholang-computable, a sound generated-AST lowering of
-the guarded receive is *impossible* — host-routing via `RhoNativeJoin` is
-**derived-required**, not a preference. The worked trace is
-[11 — Worked Example](11-worked-example.md).
+(`languages/src/guarded_rho.rs`). Host-routing via `RhoNativeJoin` is still
+**derived-required** there and not a preference — but on one premise, not two.
+`halts` and `safe` are populated outside the Rholang state a validator replays, so
+no `Receive.condition` expression can denote them; there is nothing for
+`rho_pure_eval` to reduce. The 2026-06-22 edition rested the same conclusion
+additionally on "`rhoapi::ReceiveBind` has no guard field", which was false (§0).
+Removing the false premise does not weaken the conclusion for GuardedRho, because
+non-Rholang-computability alone is sufficient — but it does narrow the conclusion's
+*reach*: it no longer extends to guards that Rholang can decide. The worked trace
+is [11 — Worked Example](11-worked-example.md).
 
 ### 3.4 The guard-atomicity model and its theorems
 
@@ -241,21 +343,25 @@ matrix and §5 architecture rest on them.
 |---|---|---|---|
 | structural shape match | yes (RSpace patterns) | RSpace | structural disposition |
 | pure boolean over ground values, source path | yes (`where`) | F1r3node `where` eval | `rho_guard_oracle.rs` |
-| pure boolean, AST path | no (no guard field) | host-routed native join | `rhoapi::ReceiveBind` shape |
+| pure boolean, AST path | yes — `Receive.condition` | the same F1r3node guard eval (`guard_passes`) | `RhoTypes.proto:167`; `rho_net_automaton.rs::join_children_receiver`; `rho_net_drive.rs::ac_carrier_receiver_par`; §0 |
 | effective-theory predicate (Presburger, intervals) | no | compile-time classification + host gate | [02](02-effective-boolean-algebra.md), `RhoNativeJoin` |
 | transducer relation (SFT/STFT) | no | compile-time classification + host gate | [04](04-symbolic-transducers-sft-stft.md) |
 | behavioral predicate (`halts`/`safe`, modal) | no (not Rholang-computable) | host native join | `guarded_rho.rs`, `rho_guard_oracle.rs` |
 | guard atomicity (no-commit-on-false) | enforced for all of the above | RSpace + handler | §3.4 Theorems 3.1–3.4 (`GuardedCommSoundness.v`) |
 
-The pattern is uniform: **Rholang/RSpace enforces structure and simple booleans;
-the host gate enforces everything the algebra classified; the algebra itself never
-runs at run time.**
+The pattern is uniform, and the discriminator in column 2 is **computability**:
+Rholang/RSpace enforces structure and every guard Rholang can decide — from source
+or from generated AST alike; the host gate enforces exactly what Rholang cannot
+decide; and no symbolic-automaton decision procedure is re-executed inside a COMM
+commit. The AST/source distinction, which the 2026-06-22 edition placed in this
+column, is not a discriminator at all (§0).
 
 ## 5. Why this division is the correct architecture
 
-It is not a limitation worked around — it is the soundness boundary of
+It is not a limitation worked around, and — since §0 — it is not a wire-format
+consequence either. It is the soundness boundary of
 [05 — Algebra Pyramid](05-algebra-pyramid-and-decidability.md) projected onto run
-time:
+time, chosen deliberately:
 
 1. **Semi-decidable predicates must not be evaluated speculatively in the hot
    path.** A behavioral guard is reject-safe precisely because a bounded search can
@@ -264,8 +370,8 @@ time:
    a host handler keeps the run-time COMM decision *total and fast*.
 2. **The decidable predicates are already decided.** An `ExactDecidable` or
    `BoundedDecidable` obligation was settled by the substrate before run time; the
-   run-time job is to *match structure* or *consult the recorded decision*, not to
-   re-derive it.
+   run-time job is to *match structure*, *evaluate the emitted `Receive.condition`*,
+   or *consult the recorded decision* — not to re-derive the classification.
 3. **Admission is fail-closed.** A language with any `Unknown`-quality obligation
    never reaches run time on the Rho backend, so the run-time mechanisms only ever
    face obligations that *were* coverable.
@@ -274,6 +380,17 @@ time:
    likewise (Theorem 3.4), no fact is fabricated (Theorem 3.3), and a later satisfying
    candidate can still commit (Theorem 3.2). That is the property a developer can rely on
    regardless of how a particular guard is enforced.
+5. **A guard site has exactly one decider, and the substrate is it.** Reasons 1-4
+   say which *mechanism* enforces a guard; they do not say whose *semantics* the
+   verdict is. That is the separate governing decision recorded as
+   **Substrate-as-Definition** and **INV-14b′** in
+   [13 — Knotted-Topoi Operational Invariants §5.2](../rho-native-integration/13-knotted-topoi-operational-invariants.md#52-substrate-as-definition-and-inv-14b-the-single-decider-at-a-guard-site):
+   at a guard site the substrate's denotation *is* the specification, and the
+   reducer's behaviour on the same expression is an obligation to discharge against
+   it. That decision is what makes §3.2's checked-arithmetic observation a
+   *guarantee* rather than a coincidence, and it is mechanized as
+   `RhoHostObligationBoundary.guard_site_coverage_excludes_host_dispositions`
+   (T-HB4).
 
 The resource axis this gate composes with — *a COMM fires iff the guard is
 satisfied **and** the rewrite is funded* — is

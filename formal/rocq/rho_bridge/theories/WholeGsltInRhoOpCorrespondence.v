@@ -90,8 +90,15 @@
  * Semantic predicates (INV-14) are excluded by CONSTRUCTION: `Family` has no
  * predicate constructor, `family_of` is total over COMM labels only, and a predicate
  * rule emits no c(ℓ) label — see the statement-only fence
- * `semantic_predicates_emit_no_comm`. All-G universality is CONDITIONAL on the
- * install gate admitting G (`g_install_gate_admits`, cite
+ * `semantic_predicates_emit_no_comm`. ★ THE FENCE IS AN EXCLUSION, NOT A ROUTING
+ * RULE: a MACHINE-decided guard (a `Receive.condition` evaluated by `rho_pure_eval`
+ * before commit) emits no c(ℓ) either, so INV-14 is provably unable to choose between
+ * the two guard routes — `machine_guard_also_emits_no_comm` and
+ * `inv14_cannot_discriminate_guard_routing` (T-INV14b', §4.1b). The routing decision
+ * belongs to INV-14b' / Substrate-as-Definition; do not re-derive it from this fence.
+ *
+ * All-G universality is CONDITIONAL on the install gate admitting G
+ * (`g_install_gate_admits`, cite
  * InRhoEncoderTotalOrReject.gate_admits_iff_all_fired_matchable, ix): a G with an
  * uncovered rule shape fail-closes at install (total-or-reject, INV-11) and produces
  * no GConfig, so it is outside scope.
@@ -284,22 +291,107 @@ Section WholeGsltInRhoOpCorrespondence.
   (* ============================================================================
      4.1b  INV-14 fence (statement-only): a semantic-predicate rule emits no c(ℓ).
 
-     A rule's disposition is either a COMM emission carrying a `CommLabel`, or a
-     semantic-predicate check that carries NO label. The fence proves the predicate
-     disposition is never a COMM emission, so it contributes no `gstep` transition and
-     is absent from every finite trace this capstone ranges over. This is exclusion by
-     non-existence of a label, complementing the `Family` type having no predicate
-     constructor.
+     A rule's disposition is a COMM emission carrying a `CommLabel`, or a guard check
+     that carries NO label. The fence proves a guard disposition is never a COMM
+     emission, so it contributes no `gstep` transition and is absent from every finite
+     trace this capstone ranges over. This is exclusion by non-existence of a label,
+     complementing the `Family` type having no predicate constructor.
+
+     ★ 2026-07-25, T-INV14b': THE FENCE IS NOT A ROUTING RULE. There are TWO guard
+     dispositions, not one, and INV-14 cannot tell them apart:
+
+       SemanticPredicateNoComm — the guard is decided OFF the machine (a host handler
+         / external contract), the disposition INV-14 was written about;
+       MachineGuardNoComm     — the guard is decided ON the machine, by the F1r3node
+         guard path: a `Receive.condition` / `TaggedContinuation.guard` evaluated by
+         `rho_pure_eval` before commit (matcher/match.rs:141-167). It is a
+         PRECONDITION ON A COMMIT, not a communication, so it emits no c(l) either.
+
+     Both satisfy INV-14 identically. It is therefore INVALID to read INV-14 as
+     "emits no COMM, hence must be host-routed": the observable it exposes is constant
+     across the two routes. That is proved below, not merely observed —
+     `machine_guard_also_emits_no_comm` for the second route, `guard_routes_are_distinct`
+     to show there really is something to discriminate, and
+     `inv14_cannot_discriminate_guard_routing` to show that ANY decision procedure
+     factoring through the INV-14 observable returns the SAME answer on both, at every
+     result type. The routing question needs its own invariant: INV-14b' (single
+     decider), stated in
+     docs/architecture/rho-native-integration/13-knotted-topoi-operational-invariants.md
+     section 5.2, whose coverage side is
+     RhoHostObligationBoundary.guard_site_coverage_excludes_host_dispositions (T-HB4).
+
+     Adding the constructor does NOT widen the capstone: `Family` still has no guard
+     constructor and `family_of` still ranges over `CommLabel` only, so a rule family
+     is reachable only through `EmitsComm` — proved as
+     `family_is_reached_only_through_a_comm_label`.
      ============================================================================ *)
   Inductive RuleDisposition : Type :=
     | EmitsComm (l : CommLabel)
-    | SemanticPredicateNoComm.
+    | SemanticPredicateNoComm
+    | MachineGuardNoComm.
 
   Definition emits_a_comm (d : RuleDisposition) : Prop :=
     exists l, d = EmitsComm l.
 
   Theorem semantic_predicates_emit_no_comm : ~ emits_a_comm SemanticPredicateNoComm.
   Proof. intros [l H]. discriminate H. Qed.
+
+  (* T-INV14b' (MAIN): the MACHINE-decided guard route also emits no COMM. *)
+  Theorem machine_guard_also_emits_no_comm : ~ emits_a_comm MachineGuardNoComm.
+  Proof. intros [l H]. discriminate H. Qed.
+
+  (* The two guard routes are genuinely DIFFERENT dispositions, so the previous two
+     theorems are not two names for one thing: there IS a distinction, and INV-14
+     simply fails to make it. *)
+  Theorem guard_routes_are_distinct : SemanticPredicateNoComm <> MachineGuardNoComm.
+  Proof. intro H. discriminate H. Qed.
+
+  (* The INV-14 OBSERVABLE, as a boolean, together with its reflection lemma. *)
+  Definition emits_comm_b (d : RuleDisposition) : bool :=
+    match d with EmitsComm _ => true | _ => false end.
+
+  Lemma emits_comm_b_reflects : forall d, emits_comm_b d = true <-> emits_a_comm d.
+  Proof.
+    intro d. split.
+    - destruct d as [l | | ]; simpl; intro H.
+      + exists l. reflexivity.
+      + discriminate H.
+      + discriminate H.
+    - intros [l H]. subst d. reflexivity.
+  Qed.
+
+  Theorem inv14_observable_agrees_on_both_guard_routes :
+    emits_comm_b SemanticPredicateNoComm = emits_comm_b MachineGuardNoComm.
+  Proof. reflexivity. Qed.
+
+  (* INV-14 IS PROVABLY NOT THE DISCRIMINATOR. Any decision procedure that factors
+     through the INV-14 observable — for ANY result type A — returns the same verdict
+     on the host-decided and machine-decided guard routes. So no such procedure can
+     choose between them, and the routing choice must come from elsewhere (INV-14b'). *)
+  Theorem inv14_cannot_discriminate_guard_routing :
+    forall (A : Type) (decide : bool -> A),
+      decide (emits_comm_b SemanticPredicateNoComm)
+      = decide (emits_comm_b MachineGuardNoComm).
+  Proof. intros A decide. reflexivity. Qed.
+
+  (* The `Family` fence, made explicit: a disposition's COMM label, and the fact that
+     only `EmitsComm` carries one. `family_of` is total over `CommLabel` and there is
+     no other way to reach a `Family`, so neither guard route contributes a family — and
+     hence neither contributes a `gstep` arm. *)
+  Definition label_of (d : RuleDisposition) : option CommLabel :=
+    match d with EmitsComm l => Some l | _ => None end.
+
+  Theorem guard_dispositions_carry_no_comm_label : forall d,
+    d = SemanticPredicateNoComm \/ d = MachineGuardNoComm -> label_of d = None.
+  Proof. intros d [H | H]; subst d; reflexivity. Qed.
+
+  Theorem family_is_reached_only_through_a_comm_label : forall d f,
+    (exists l, label_of d = Some l /\ family_of l = Some f) -> emits_a_comm d.
+  Proof.
+    intros d f [l [Hlab _]].
+    destruct d as [l' | | ]; simpl in Hlab; try discriminate Hlab.
+    exists l'. reflexivity.
+  Qed.
 
   (* ============================================================================
      4.2  assembled_R_barb — the lift's barb obligation.
@@ -664,6 +756,13 @@ Qed.
 
 (* Zero-admission confirmation. *)
 Print Assumptions semantic_predicates_emit_no_comm.
+Print Assumptions machine_guard_also_emits_no_comm.
+Print Assumptions guard_routes_are_distinct.
+Print Assumptions emits_comm_b_reflects.
+Print Assumptions inv14_observable_agrees_on_both_guard_routes.
+Print Assumptions inv14_cannot_discriminate_guard_routing.
+Print Assumptions guard_dispositions_carry_no_comm_label.
+Print Assumptions family_is_reached_only_through_a_comm_label.
 Print Assumptions whole_gslt_in_rho_opcorrespondence.
 Print Assumptions swapdemo_base_finite_trace_opcorr.
 Print Assumptions whole_gslt_opcorr_over_optimal_matching.

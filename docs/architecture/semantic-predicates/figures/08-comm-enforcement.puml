@@ -23,9 +23,9 @@ RS -> RS : structural pattern match
 
 alt structural guard
   RS -> RS : RSpace decides (spatial match)
-else where boolean (source path)
-  RS -> RS : evaluate where before commit
-else behavioral / EBA / SFT
+else Rholang-decidable boolean\n(source OR generated AST)
+  RS -> RS : evaluate Receive.condition\nbefore commit (guard_passes)
+else not Rholang-computable\n(behavioral / EBA / SFT)
   RS -> NJ : consult host relation / decide
   activate NJ
   NJ --> RS : permit or refuse
@@ -42,10 +42,13 @@ end
 deactivate RS
 
 note over RS, NJ
-  The EBA/SFT is NOT re-evaluated at run time — it was classified
-  at compile time and the flip gate already admitted it. The host
-  gates the COMM; the algebra never runs in the hot path. A failed
-  guard consumes nothing and emits nothing (failed_guard_no_commit).
+  The EBA/SFT decision procedure is NOT re-executed inside a COMM
+  commit — it was classified at compile time and the flip gate
+  already admitted it. The branch discriminator is COMPUTABILITY,
+  not source-vs-AST: a Rholang-decidable guard rides on
+  Receive.condition (RhoTypes.proto:167) even from generated AST.
+  A failed guard consumes nothing and emits nothing
+  (failed_guard_no_commit).
 end note
 
 legend bottom
