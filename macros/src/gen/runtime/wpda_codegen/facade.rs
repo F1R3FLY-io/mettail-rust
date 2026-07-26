@@ -31,6 +31,8 @@ use mettail_ast::types::{CollectionType, TypeExpr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+use super::lit_boundary;
+
 /// Emit the generated-module-scope `__MettailWpdaSemanticKeyHasher` ONCE
 /// (2026-06-28, SPPF-realize observational-dedup).
 ///
@@ -1161,6 +1163,15 @@ pub(crate) struct ProjIsoShape {
     /// so the scan/dedup elects the specific keyword-send (`@Nil!(q)`) before the
     /// general `@p!(q)` — matching the monolithic rule-order preference.
     variants: Vec<ProjVariant>,
+    /// THE TOKEN-BOUNDARY ALPHABET (2026-07-26) — per-`Lit` `pre`/`ext` byte sets
+    /// derived from the language's OWN token patterns by
+    /// [`lit_boundary::literal_boundary_sets`]. A literal ABSENT from this map
+    /// imposes no condition beyond the pre-existing ident-run test, so its emitted
+    /// matcher code is byte-identical (`@`, `(`, `*` are all absent in every bundled
+    /// grammar). Present entries are what stops the `NegProc` sigil `-` from matching
+    /// INSIDE the signed numeral `-7n`, which framed it as `- ⟨7n⟩` and destroyed the
+    /// adjacency the lexer had preserved.
+    lit_boundaries: std::collections::BTreeMap<String, lit_boundary::LitBoundary>,
 }
 
 /// Grammar-derived DISTINCT first-bytes of a projection shape's σ-led variants'
@@ -1542,7 +1553,24 @@ fn derive_projection_iso_shape(
         };
         lits(b).cmp(&lits(a)).then_with(|| a.label.cmp(&b.label))
     });
-    Some(ProjIsoShape { result_src_idx, variants })
+    // THE TOKEN-BOUNDARY ALPHABET. Every `Lit` slot in every variant is a TOKEN of this
+    // language, so it may only match where the lexer would end that token. The
+    // pre-existing ident-run test says that for ident-shaped literals only; these sets
+    // say it for ALL of them, derived from the grammar's own token patterns. See
+    // `lit_boundary` for the full statement, including why the ident-run test is RETAINED
+    // alongside rather than replaced, and why an over-conservative set is safe (it can
+    // only make the helper DECLINE, and a decline falls through to the authoritative
+    // monolithic walker — `ProjectionIsolation.v` T7).
+    let lit_texts: std::collections::BTreeSet<String> = variants
+        .iter()
+        .flat_map(|v| v.slots.iter())
+        .filter_map(|s| match s {
+            ProjSlot::Lit(l) => Some(l.clone()),
+            _ => None,
+        })
+        .collect();
+    let lit_boundaries = lit_boundary::literal_boundary_sets(language, &lit_texts);
+    Some(ProjIsoShape { result_src_idx, variants, lit_boundaries })
 }
 
 /// The module-scope identifier of the projection-isolation helper for `cat_name`.
@@ -1752,6 +1780,7 @@ fn emit_proj_variant_arm(
     variant: &ProjVariant,
     variant_idx: usize,
     has_method: bool,
+    lit_boundaries: &std::collections::BTreeMap<String, lit_boundary::LitBoundary>,
 ) -> TokenStream {
     let label_ident = format_ident!("{}", variant.label);
     let variant_idx_lit = variant_idx as u16;
@@ -1760,11 +1789,24 @@ fn emit_proj_variant_arm(
     // `SepList` operand extracts the SAME bracket-delimited region as a scalar
     // `Op` (delimited by the next literal); the SPLIT into elements happens in
     // the arm below — so the runtime matcher treats both as `__Slot::Op`.
+    //
+    // Each `Lit` also carries its TOKEN-BOUNDARY ALPHABET. A literal with no entry in
+    // `lit_boundaries` gets two EMPTY slices, which make `__lit_boundary_ok`'s conjuncts
+    // vacuous — so `@ Nil ! ( q )` and `( n )` emit exactly the same matching decisions
+    // they did before this alphabet existed.
     let slot_exprs: Vec<TokenStream> = variant
         .slots
         .iter()
         .map(|s| match s {
-            ProjSlot::Lit(l) => quote! { __Slot::Lit(#l) },
+            ProjSlot::Lit(l) => {
+                let (pre, ext) = match lit_boundaries.get(l) {
+                    Some(b) => (b.pre.clone(), b.ext.clone()),
+                    None => (Vec::new(), Vec::new()),
+                };
+                let pre_lits = pre.iter().map(|b| quote! { #b });
+                let ext_lits = ext.iter().map(|b| quote! { #b });
+                quote! { __Slot::Lit(#l, &[#(#pre_lits),*], &[#(#ext_lits),*]) }
+            },
             ProjSlot::Operand { .. } | ProjSlot::SepList { .. } => quote! { __Slot::Op },
         })
         .collect();
@@ -2290,7 +2332,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
         .variants
         .iter()
         .enumerate()
-        .map(|(vi, v)| emit_proj_variant_arm(cat_ident, v, vi, has_method))
+        .map(|(vi, v)| emit_proj_variant_arm(cat_ident, v, vi, has_method, &shape.lit_boundaries))
         .collect();
 
     // PROJ_ISO_LITERAL_RUN_ANCHOR (2026-07-06): the InputBind query-frame
@@ -2301,7 +2343,8 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
     let run_anchor_helper: TokenStream = quote! {
             /// Match the MAXIMAL run of consecutive `Lit` slots of `skel` starting
             /// at slot `ks`, from byte `p0` (whitespace-flexible, with the SAME
-            /// word-boundary rule as the main `Lit` arm), returning the byte
+            /// token-boundary rule as the main `Lit` arm — BOTH halves: the
+            /// ident-run test and `__lit_boundary_ok`), returning the byte
             /// position AFTER the last matched literal, or `None` if any literal in
             /// the run fails. Anchors an operand's right boundary on the FULL fixed-
             /// literal frame (not just the first literal) so an operand that itself
@@ -2319,7 +2362,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                 let mut k = ks;
                 while k < skel.len() {
                     match &skel[k] {
-                        __Slot::Lit(l) => {
+                        __Slot::Lit(l, __pre, __ext) => {
                             while p < n && bytes[p].is_ascii_whitespace() {
                                 p += 1;
                             }
@@ -2334,6 +2377,12 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                 if !(before_ok && after_ok) {
                                     return None;
                                 }
+                            }
+                            // The GENERAL half of the same rule (see `__lit_boundary_ok`):
+                            // a punctuation sigil must not sit inside a longer token
+                            // either. Vacuous when the literal has no boundary alphabet.
+                            if !__lit_boundary_ok(bytes, n, p, lb, __pre, __ext) {
+                                return None;
                             }
                             p += lb.len();
                             k += 1;
@@ -2393,7 +2442,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                     return if j == n { vec![vec![]] } else { vec![] };
                 }
                 match &skel[k] {
-                    __Slot::Lit(l) => {
+                    __Slot::Lit(l, __pre, __ext) => {
                         let lb = l.as_bytes();
                         if i + lb.len() > n || &bytes[i..i + lb.len()] != lb {
                             return vec![];
@@ -2406,15 +2455,23 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                 return vec![];
                             }
                         }
+                        // The GENERAL half of the same rule (see `__lit_boundary_ok`).
+                        // THIS is the site the sign-abutted numeral divergence turns on:
+                        // slot 0 of `NegProc . a:Proc |- "-" a` is the literal `-`, and in
+                        // `-7n` a digit follows it, so `-` is a proper prefix of the
+                        // `BigInt` token rather than a token of its own.
+                        if !__lit_boundary_ok(bytes, n, i, lb, __pre, __ext) {
+                            return vec![];
+                        }
                         go(
                             bytes, n, skel, amb, k + 1, i + lb.len(),
                             leading_greedy_last,
                         )
                     }
                     __Slot::Op => {
-                        let next_lit: Option<&'static str> =
+                        let next_lit: Option<(&'static str, &'static [u8], &'static [u8])> =
                             skel[k + 1..].iter().find_map(|s| match s {
-                                __Slot::Lit(l) => Some(*l),
+                                __Slot::Lit(l, pre, ext) => Some((*l, *pre, *ext)),
                                 __Slot::Op => None,
                             });
                         let start = i;
@@ -2429,7 +2486,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                 }
                                 subs
                             }
-                            Some(l) => {
+                            Some((l, __pre, __ext)) => {
                                 let lb = l.as_bytes();
                                 let identish = lb.iter().all(|&c| __is_word(c));
                                 let greedy_last = k == 0 && leading_greedy_last;
@@ -2443,10 +2500,15 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                         && j + lb.len() <= n
                                         && &bytes[j..j + lb.len()] == lb
                                     {
-                                        let wb = !identish
+                                        let wb = (!identish
                                             || ((j == 0 || !__is_word(bytes[j - 1]))
                                                 && (j + lb.len() == n
-                                                    || !__is_word(bytes[j + lb.len()])));
+                                                    || !__is_word(bytes[j + lb.len()]))))
+                                            // The GENERAL half (see `__lit_boundary_ok`):
+                                            // an operand's right delimiter must also be a
+                                            // real token boundary, or the operand is split
+                                            // in the middle of a longer token.
+                                            && __lit_boundary_ok(bytes, n, j, lb, __pre, __ext);
                                         let __run_ok =
                                             __match_lit_run(bytes, n, skel, k + 1, j).is_some();
                                         if wb && __run_ok {
@@ -2582,12 +2644,55 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             const __RESULT_SRC_IDX: u16 = #result_src_idx;
 
             // One skeleton slot: a fixed literal token or a cross-cat operand hole.
+            //
+            // ★ A `Lit` carries its TOKEN-BOUNDARY ALPHABET alongside its text: `pre` =
+            // the bytes that, immediately before it, mean a token starting there runs
+            // INTO it; `ext` = the bytes that, immediately after it, extend it into a
+            // strictly longer token starting at the same position. Both are derived from
+            // this language's own token patterns at macro time (`lit_boundary`), and both
+            // are EMPTY for a literal no token can cover — `@`, `(`, `*` — so those
+            // literals' matching is unchanged down to the byte.
             enum __Slot {
-                Lit(&'static str),
+                Lit(&'static str, &'static [u8], &'static [u8]),
                 Op,
             }
             fn __is_word(c: u8) -> bool {
                 c.is_ascii_alphanumeric() || c == b'_'
+            }
+            /// Is the literal `lb` at byte `p` a genuine TOKEN BOUNDARY — i.e. is there no
+            /// longer token of this language covering that position?
+            ///
+            /// Two conjuncts, one per direction, exactly as the ident-run test has always
+            /// had two: nothing may run INTO the literal from the left (`pre`), and
+            /// nothing may EXTEND it to the right (`ext`). An empty set makes its conjunct
+            /// vacuously true, so a literal with no boundary alphabet costs one length
+            /// check per side and nothing else.
+            ///
+            /// ⚠ This is the half of the boundary rule the matcher previously stated only
+            /// for IDENT-shaped literals. RhoCalc's numerals carry their sign
+            /// (`Int = -?…`, mirroring consensus Rholang's `long_literal /-?\d+/`), so in
+            /// `-7n` the maximal munch at byte 0 is `BigInt("-7n")` and the `NegProc`
+            /// skeleton's one-byte `-` is a PROPER PREFIX of it. Matching there framed the
+            /// input as `- ⟨7n⟩` and destroyed the adjacency the lexer preserved. Refusing
+            /// makes the helper decline, which falls through to the monolithic walker —
+            /// the authoritative, ambiguity-preserving path — so the correction can only
+            /// ever cost the fast path, never a reading.
+            fn __lit_boundary_ok(
+                bytes: &[u8],
+                n: usize,
+                p: usize,
+                lb: &[u8],
+                pre: &[u8],
+                ext: &[u8],
+            ) -> bool {
+                if p > 0 && !pre.is_empty() && pre.contains(&bytes[p - 1]) {
+                    return false;
+                }
+                let after = p + lb.len();
+                if after < n && !ext.is_empty() && ext.contains(&bytes[after]) {
+                    return false;
+                }
+                true
             }
             #run_anchor_helper
             #matcher_def

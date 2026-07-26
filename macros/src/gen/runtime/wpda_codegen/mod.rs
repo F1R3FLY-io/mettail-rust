@@ -80,6 +80,13 @@ pub mod infix;
 /// Used by the lex-Fork emitter to bind alternative tokens to prefix-site
 /// token-consuming rules before forking.
 pub mod kind_dispatch;
+/// THE TOKEN-BOUNDARY ALPHABET (2026-07-26): grammar-derived per-literal `pre`/`ext`
+/// byte sets answering *"could a longer token of this language cover this position?"*.
+/// Consumed by `facade`'s projection-isolation `Lit` matcher, which previously enforced
+/// a token boundary only for IDENT-SHAPED literals — so a punctuation sigil that is a
+/// proper prefix of a signed numeral (`-` in `-7n`) matched inside that numeral and
+/// framed it as `- ⟨7n⟩`. Vacuous (⇒ no emission, byte-identical codegen) for `@`/`(`/`*`.
+pub mod lit_boundary;
 /// EP-P2 (Stage B) Parikh obligation tables: emits
 /// `WPDA_PARIKH_CLASS_OF` (token-class function) and `WPDA_MUST_MASK`
 /// (per-`RuleAt`-frame suffix-`must` masks) consumed by the walker's

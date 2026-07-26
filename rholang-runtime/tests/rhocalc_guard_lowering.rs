@@ -374,18 +374,20 @@ async fn a_scalar_ground_pattern_does_not_match_a_listed_send() {
 /// THE REPAIR, and why THIS row closed while some rows in the artifact matrix have not. RhoCalc's
 /// `Int` and `BigRat` token patterns gained the leading `-?` that `BigInt`/`Float`/`Fixed` already
 /// carried, so a sign-abutted numeral now has its conforming one-token reading in the lattice, and
-/// the parser elects it under `LexicographicWeight`'s `open_len` leg (maximal munch). What is NOT
-/// yet fixed is the string-entry `@`-projection isolation prologue, which short-circuits the
-/// single-winner facade for an input that is ITSELF a whole σ-led span (a bare `-7`, or
-/// `@"OUT"!(-7)` on its own) — see the module header of
+/// the parser elects it under `LexicographicWeight`'s `open_len` leg (maximal munch). What was NOT
+/// fixed by the token patterns alone was the string-entry `@`-projection isolation prologue, which
+/// short-circuited the single-winner facade for an input that is ITSELF a whole σ-led span (a bare
+/// `-7`, or `@"OUT"!(-7)` on its own) — see the module header of
 /// `rhocalc_ground_literal_conformance.rs`. A REAL program is never such a span: the numeral is
-/// nested inside a larger term, the prologue does not frame it, and the walker's election decides.
-/// That is exactly why this behavioural row closed on the token patterns alone.
+/// nested inside a larger term, the prologue did not frame it, and the walker's election decided.
+/// That is exactly why this behavioural row closed on the token patterns alone, while the
+/// whole-input artifact rows had to wait for the projection helper's token-boundary repair
+/// (`macros/src/gen/runtime/wpda_codegen/lit_boundary.rs`, 2026-07-26).
 ///
 /// ⚠ This test is NOT a substitute for the artifact matrix, and passing it is NOT conformance —
-/// `rhocalc_ground_literal_conformance.rs::false_agreement_is_not_conformance` exhibits a row that
-/// COMMITS while carrying the WRONG artifact on both sides. The artifact assertion below is what
-/// makes this row's pass mean what it says.
+/// `rhocalc_ground_literal_conformance.rs::a_firing_comm_does_not_witness_artifact_conformance`
+/// exhibits two spellings that both COMMIT while carrying DIFFERENT artifacts. The artifact
+/// assertion below is what makes this row's pass mean what it says.
 #[tokio::test]
 async fn negative_literal_patterns_match_like_consensus_rholang() {
     let source = monadic("-7", "-7");
