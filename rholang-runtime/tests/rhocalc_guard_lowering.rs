@@ -318,6 +318,16 @@ async fn a_scalar_ground_pattern_matches_a_scalar_send() {
         "Set(1,2)",    // ⚠ CastSet
         "#{1|2}#",     // ⚠ CastBag
         "[1,2]",       //   CastList — matched before the fix (the exemption)
+        // ★ The SIGN-ABUTTED numerals, moved here 2026-07-26 when the token patterns gained the
+        // leading `-?` (see `negative_literal_patterns_match_like_consensus_rholang` for the full
+        // mechanism). Each is ONE signed literal token, so pattern and datum carry the same
+        // ground literal and the COMM commits exactly as it does in consensus Rholang.
+        "-7",          //   Int
+        "-7n",         //   BigInt
+        "-7r",         //   BigRat
+        "-1.5f64",     //   Float
+        "-1.5p2",      //   Fixed
+        "[-7]",        //   the nested row — a signed element inside a collection
     ] {
         let source = monadic(subject, subject);
         assert!(
@@ -343,56 +353,62 @@ async fn a_scalar_ground_pattern_does_not_match_a_listed_send() {
     }
 }
 
-/// ══ ⚠ CHARACTERIZATION TEST — the BEHAVIOURAL face of an OPEN divergence from consensus
-///    Rholang. The ARTIFACT-level matrix that actually governs it lives in
-///    `rhocalc_ground_literal_conformance.rs`; this test is retained because it is the row where
-///    the divergence is directly observable as a COMM that does not happen. ═══════════════════
+/// ══ ★ CLOSED 2026-07-26 — this WAS the characterization test for an open divergence; it is now
+///    the POSITIVE pin for its repair. It is kept (not deleted, per its own instructions) because
+///    the row it covers is the one place the divergence was directly observable as a COMM that
+///    did not happen, and a repair deserves a pin at least as strong as the defect had. ════════
 ///
-/// A sign-abutted numeral lowers to an unevaluated `ENeg` (`rhocalc_ast.rs::lower_int_value`
-/// carries the full argument). Send data are evaluated before they are stored; patterns are not.
-/// So `@"c"!(-7)` stores `GInt(-7)` while `for(@-7 <- @"c")` matches against `ENeg(GInt(7))`, and
-/// no COMM occurs. Consensus Rholang DOES commit it — measured against f1r3node's own normalizer
-/// and reducer, `for (@-7 <- @"c") { @"OUT"!(1) } | @"c"!(-7)` leaves `1` on `@"OUT"`.
+/// THE DEFECT, as it stood. A sign-abutted numeral parsed to an unevaluated `NegProc` and lowered
+/// to `ENeg`. Send data are evaluated before they are stored; patterns are not. So `@"c"!(-7)`
+/// stored `GInt(-7)` while `for(@-7 <- @"c")` matched against `ENeg(GInt(7))`, and no COMM
+/// occurred. Consensus Rholang DOES commit it — measured against f1r3node's own normalizer and
+/// reducer, `for (@-7 <- @"c") { @"OUT"!(1) } | @"c"!(-7)` leaves `1` on `@"OUT"`.
 ///
-/// ★ MECHANISM, CORRECTED 2026-07-26. f1r3node folds nothing: its LEXER puts the sign inside the
-/// numeric literal token (`long_literal /-?\d+/` and siblings), so no negation node is ever built
-/// for an abutted numeral. The discriminator is ADJACENCY — `- 7` and `-(7)` build a real `ENeg`
-/// on both sides and already conform. The fix is therefore a FRONT-END fix, in two parts, and
-/// **not** a fold in `lower_int_value`: by lowering time `-7`, `- 7` and `-(7)` are the same term,
-/// so folding there would break the spellings that conform today. The full derivation, the two
-/// refuted grounds for declining it, and the two fix sites are recorded above `lower_int_value`.
+/// THE MECHANISM. f1r3node folds nothing: its LEXER puts the sign inside the numeric literal
+/// token (`long_literal /-?\d+/` and siblings), so no negation node is ever built for an abutted
+/// numeral. The discriminator is ADJACENCY — `- 7` and `-(7)` build a real `ENeg` on both sides
+/// and always conformed. The repair is therefore a FRONT-END repair and **not** a fold in
+/// `lower_int_value`: by lowering time `-7`, `- 7` and `-(7)` are the same term, so folding there
+/// would have broken the spellings that already conformed.
 ///
-/// ★ WHEN THIS TEST FAILS, the divergence has been FIXED. Move `-7` into
-/// [`a_scalar_ground_pattern_matches_a_scalar_send`], delete this characterization test, and
-/// update `rhocalc_ground_literal_conformance.rs` (whose per-row pins are the authority) together
-/// with the ⚠ note in `lower_int_value`.
+/// THE REPAIR, and why THIS row closed while some rows in the artifact matrix have not. RhoCalc's
+/// `Int` and `BigRat` token patterns gained the leading `-?` that `BigInt`/`Float`/`Fixed` already
+/// carried, so a sign-abutted numeral now has its conforming one-token reading in the lattice, and
+/// the parser elects it under `LexicographicWeight`'s `open_len` leg (maximal munch). What is NOT
+/// yet fixed is the string-entry `@`-projection isolation prologue, which short-circuits the
+/// single-winner facade for an input that is ITSELF a whole σ-led span (a bare `-7`, or
+/// `@"OUT"!(-7)` on its own) — see the module header of
+/// `rhocalc_ground_literal_conformance.rs`. A REAL program is never such a span: the numeral is
+/// nested inside a larger term, the prologue does not frame it, and the walker's election decides.
+/// That is exactly why this behavioural row closed on the token patterns alone.
 ///
-/// ⚠ Do NOT weaken this to "some negative literal does not match": the `-7n`/`-1.5f64`/`-1.5p2`
-/// spellings DO commit today, for the wrong reason (both sides carry the same *unevaluated*
-/// `ENeg`, so they are structurally equal while both differ from f1r3node's artifact). Only the
-/// artifact matrix distinguishes that false pass; see
-/// `rhocalc_ground_literal_conformance.rs::false_agreement_is_not_conformance`.
+/// ⚠ This test is NOT a substitute for the artifact matrix, and passing it is NOT conformance —
+/// `rhocalc_ground_literal_conformance.rs::false_agreement_is_not_conformance` exhibits a row that
+/// COMMITS while carrying the WRONG artifact on both sides. The artifact assertion below is what
+/// makes this row's pass mean what it says.
 #[tokio::test]
-async fn negative_literal_patterns_are_an_open_divergence() {
+async fn negative_literal_patterns_match_like_consensus_rholang() {
     let source = monadic("-7", "-7");
     assert!(
-        !fired(&source).await,
-        "`for(@-7 <- c)` now matches `c!(-7)` — the sign-abutted numeric-literal divergence \
-         recorded above `lower_int_value` has been FIXED. Move `-7` into \
-         `a_scalar_ground_pattern_matches_a_scalar_send`, delete this characterization test, and \
-         update `rhocalc_ground_literal_conformance.rs` + the divergence note in \
-         `lower_int_value`.\n{source}"
+        fired(&source).await,
+        "`for(@-7 <- c)` must match `c!(-7)` — a sign-abutted numeral is ONE signed literal token \
+         on both sides, exactly as in consensus Rholang. If this regressed, the `-?` on RhoCalc's \
+         `Int` literal pattern (`languages/src/rhocalc.rs`) is gone, or something now elects the \
+         `NegProc` reading over the folded one.\n{source}"
     );
 
-    // The POSITIVE twin commits, which is what isolates the defect to the sign rather than to the
+    // The POSITIVE twin commits, which is what isolates the row to the sign rather than to the
     // arity fix or to anything else in this file.
     let positive = monadic("7", "7");
     assert!(fired(&positive).await, "`for(@7 <- c)` must match `c!(7)`\n{positive}");
 
-    // The NON-ABUTTED twin behaves identically in MeTTaIL and in f1r3node (both build a real
-    // `ENeg` pattern against an evaluated `GInt(-7)` datum, so neither commits). Pinned here so a
-    // fold applied at the wrong layer — which would make this row start firing — is caught by the
-    // behavioural suite too, not only by the artifact matrix.
+    // ★★ THE CONTROL THAT KEEPS THE REPAIR AT THE RIGHT LAYER — DO NOT WEAKEN.
+    //
+    // The NON-ABUTTED twin behaves identically in MeTTaIL and in f1r3node: with the sign detached,
+    // the pattern is a real `ENeg` and the datum evaluates to `GInt(-7)`, so NEITHER commits. A
+    // fold applied AFTER parsing cannot see the whitespace, so it would make this row start
+    // firing. That this row still does NOT fire while the abutted row above now DOES is the
+    // behavioural proof that the repair landed in the lexer, where adjacency is still observable.
     let spaced = monadic("- 7", "- 7");
     assert!(
         !fired(&spaced).await,

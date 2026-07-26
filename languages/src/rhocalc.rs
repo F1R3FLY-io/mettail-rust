@@ -137,12 +137,63 @@ language! {
     // (`5000000000u32`) is REJECTED by every category, exactly as Rust rejects it.
     // That is fail-closed and text-determined — it can never yield a divergent
     // *value* — and it is deliberately NOT part of divergence I.
+    // ── Divergence I(b) (2026-07-26): the SIGN IS PART OF THE NUMERAL TOKEN ────────
+    //
+    // f1r3node folds nothing — its `UnaryExpOp::Neg` arm (`compiler/normalize.rs:185`)
+    // is a plain `ENeg` constructor and its matcher evaluates only `where`-guards. Its
+    // conformance on `-7` is purely LEXICAL: every signed numeric literal in the
+    // consensus tree-sitter grammar carries the sign INSIDE the token, so for a
+    // SIGN-ABUTTED numeral no negation node is ever built.
+    //
+    //     long_literal        /-?\d+/            bigint_literal      /-?\d+n/
+    //     signed_int_literal  /-?\d+i[1-9]\d*/   bigrat_literal      /-?\d+r/
+    //     float_literal       /-?…f(32|64|…)/    fixed_point_literal /-?…p\d+/
+    //     unsigned_int_literal /\d+u[1-9]\d*/  ← THE ONE EXCEPTION: no sign
+    //
+    // The discriminator is ADJACENCY, and f1r3node honours it in BOTH directions:
+    // `- 7` (whitespace) and `-(7)` (parenthesis) DO build a real `ENeg`, because the
+    // sign cannot be part of the numeral token there. So this is a LEXER fact, not a
+    // constant-folding fact, and the fix belongs HERE — where adjacency still exists.
+    // By lowering time it is gone: `-7`, `- 7` and `-(7)` all parse to the identical
+    // `NegProc(CastInt(NumLit(7)))`, so a fold in `rholang-runtime`'s `lower_int_value`
+    // would fix the abutted spellings and BREAK the non-abutted ones (pinned by
+    // `rhocalc_ground_literal_conformance.rs::adjacency_is_honoured`).
+    //
+    // `BigInt`, `Fixed` and `Float` below already carried `-?`; `Int` and `BigRat` did
+    // not, so `-7`/`-7i32`/`-7i64`/`-7r` had NO folded reading in the lattice at all.
+    // They now carry it, and the `u32` spelling is SPLIT OUT so that it stays unsigned
+    // exactly as `unsigned_int_literal` is upstream — `-0u32` therefore keeps lexing as
+    // `Minus`+`Integer` and stays the `NegProc` reading it is today (f1r3node REJECTS
+    // that source outright; pinned by
+    // `f1r3node_rejects_unspaced_subtraction_and_negated_unsigned`).
+    //
+    // AMBIGUITY IS PRESERVED, NOT RESOLVED HERE (never-disambiguate-early): the lexer
+    // FORKS at a sign-abutted numeral — `-7n` yields BOTH the one-token
+    // `BigInt("-7n")` reading and the two-token `Minus`,`BigInt("7n")` reading — and the
+    // parser elects between them under the declared weight order, whose first
+    // tie-breaker below `primary` is `LexicographicWeight::open_len`, i.e. MAXIMAL MUNCH
+    // (`rigail/src/lex_weight.rs::lex_cmp`). That is what keeps `1-7` parsing as
+    // subtraction: its one-token reading `1`,`-7` is two adjacent processes, which is
+    // infeasible for a single `Proc`, so the fork dies on feasibility and `Minus` wins.
+    // (f1r3node cannot compile `1-7` at all — its maximal-munch lexer commits before
+    // feasibility is known. MeTTaIL is deliberately the more permissive front end there;
+    // pinned in the same test.)
+    //
+    // The radix forms are signed too (`-0x1F`): `parse_int_lit` strips the sign BEFORE
+    // the radix prefix. `parse_rational_lit` does NOT (it splits the radix prefix first),
+    // so a negative RADIX rational (`-0x1Fr`) has no folded reading and keeps today's
+    // `NegProc` one — text-determined, fail-closed, and unreachable from Rholang, which
+    // has no radix literals.
     literals {
         Int {
             // The full `normalize_ground` ≤64-bit suffix set. `(i64)?` alone left
             // `5i32`/`5u32` un-lexable as a single `Int` token even though both are
             // `GInt` upstream.
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32|i64|u32)?";
+            //
+            // Two alternatives, because the sign covers `long`/`signed_int` but NOT
+            // `unsigned_int` (see the divergence I(b) note above): `-?<digits>(i32|i64)?`
+            // and the UNSIGNED `<digits>u32`.
+            pattern: r"(-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32|i64)?|(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)u32)";
             eval: ![ {
                 // The `…n` tail is BigInt's ALONE; every other spelling that fits i64
                 // is Int's. The generated `as_i64()` conversion rejects the rest, which
@@ -174,7 +225,8 @@ language! {
             } ]
         }
         BigRat {
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r";
+            // `-?` mirrors upstream `bigrat_literal /-?\d+r/` (divergence I(b) above).
+            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r";
             eval: ![ {
                 mettail_prattail::parse_rational_lit(text).map_err(|_| ())
             } ]

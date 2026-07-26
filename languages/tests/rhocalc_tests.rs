@@ -2431,10 +2431,36 @@ mod native_ops {
         }
 
         /// Regression: `fraction` must use `fold` on Proc (not `step`), or Ascent never emits rw_proc.
+        ///
+        /// ★ THE `r` TAIL (2026-07-26, divergence I(b)). `BigRat`'s declared pattern gained the
+        /// leading `-?` that makes a sign-abutted rational one token (conformance with upstream
+        /// `bigrat_literal /-?\d+r/`). `mandatory_literal_tail_of_pattern`
+        /// (`macros/src/gen/syntax/display.rs`) refuses a tail for a SIGNED payload whose pattern
+        /// cannot spell a negative value as one token — which is the ONLY reason `BigRat` had no
+        /// tail while `BigInt` (`-?…n`) has had one since Stage C. That refusal names its own exit
+        /// condition: *"giving them a tail is a separate grammar change (their pattern would have
+        /// to gain `-?`, as `BigInt`'s already has)"*. This is that change, so the tail is now
+        /// emitted, exactly as `bigint("123n")` below already records for the `n` tail.
+        ///
+        /// For a WHOLE rational the tail is a strict repair: `7r` now displays as `7r` and reads
+        /// back as `CastBigRat(7)`, where the tail-less `7` read back as an `Int`.
+        ///
+        /// ⚠ RESIDUE, recorded because this test is where it is visible: for a COMPOSITE rational
+        /// the tail is appended to `Ratio`'s own `n/d` rendering, so `2/3` becomes `2/3r` — and
+        /// `2/3r` reads back as `Div(CastInt(2), CastBigRat(3))`, not as `CastBigRat(2/3)`. The
+        /// only surface that spells that value is `2r/3r`. So the display→parse fixpoint is STILL
+        /// broken for composite rationals — as it was before this change, when `2/3` read back as
+        /// `Div(CastInt(2), CastInt(3))` and silently integer-divided to `0`. The new spelling
+        /// fails CLOSED (carrier-exact ops give `error`) instead of silently computing a wrong
+        /// value, and the whole-rational half is now correct, so this is strictly fewer broken
+        /// cases — but it is not zero. The real defect is that
+        /// `mandatory_literal_tail_of_pattern`'s side condition ("the pattern's language covers
+        /// EVERY value the native type can render") is checked only for the SIGN half, never for
+        /// the composite half; closing it belongs in `display.rs`, not in this grammar.
         #[test]
         fn fraction_at_top_level_reduces() {
-            assert_normal_form_display("fraction(2n, 3n)", "2/3");
-            assert_normal_form_display("fraction(2n, 3n) + fraction(1n, 2n)", "7/6");
+            assert_normal_form_display("fraction(2n, 3n)", "2/3r");
+            assert_normal_form_display("fraction(2n, 3n) + fraction(1n, 2n)", "7/6r");
         }
 
         #[test]
@@ -2488,8 +2514,10 @@ mod native_ops {
 
         #[test]
         fn bigrat_and_or_not() {
-            assert_normal_form_display("3r/4r bitand 1r/4r", "1/4");
-            assert_normal_form_display("1r/2r bitand 1r/3r", "1/3");
+            // The `r` tail on a composite rational — derived, and fully argued at
+            // [`super::arithmetic::fraction_at_top_level_reduces`].
+            assert_normal_form_display("3r/4r bitand 1r/4r", "1/4r");
+            assert_normal_form_display("1r/2r bitand 1r/3r", "1/3r");
             let results = run("bitnot 0r");
             let nfs = normal_form_displays(&results);
             assert!(
@@ -4696,7 +4724,10 @@ fn rhocalc_casts_from_numeric_strings() {
     // declared pattern requires (divergence I, Stage C) — without it a `BigInt` displayed as a
     // word that reads back as an `Int`.
     assert_reduces_to(r#"bigint("123n")"#, "123n");
-    assert_normal_form_display(r#"bigrat("1r/2r")"#, "1/2");
+    // ★ `1/2r`, not `1/2`: the SAME Stage-C mechanism, now reaching `BigRat` because its pattern
+    // gained the leading `-?` (divergence I(b), 2026-07-26). Derivation and the composite-surface
+    // residue are recorded at `native_ops::arithmetic::fraction_at_top_level_reduces`.
+    assert_normal_form_display(r#"bigrat("1r/2r")"#, "1/2r");
 }
 
 #[test]

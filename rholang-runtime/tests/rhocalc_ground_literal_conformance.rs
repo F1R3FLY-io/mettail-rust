@@ -37,24 +37,51 @@
 //! sign. The distinction is ADJACENCY, and f1r3node honours it in both directions: `- 7` (spaced)
 //! and `-(7)` (parenthesised) DO build an `ENeg`, and MeTTaIL agrees with f1r3node on those.
 //!
-//! # Where MeTTaIL diverges
+//! # Where MeTTaIL diverges — TWO front-end defects, (A) CLOSED, (B) OPEN
 //!
 //! MeTTaIL's lexer preserves the same adjacency distinction (`-7n` → one `BigInt("-7n")` token,
-//! `- 7n` → `Minus | BigInt("7n")`), and its reading LATTICE already contains the conforming
-//! folded-literal reading at index `[0]`. Two things stop it reaching the emitted `Par`:
+//! `- 7n` → `Minus | BigInt("7n")`), and the parser elects between the two under the declared
+//! weight order, whose first tie-breaker below `primary` is `LexicographicWeight::open_len` —
+//! MAXIMAL MUNCH (`rigail/src/lex_weight.rs::lex_cmp`). Two things stopped the conforming reading
+//! reaching the emitted `Par`.
 //!
-//! * **(A) two token patterns are missing the sign.** `languages/src/rhocalc.rs` gives `BigInt`,
-//!   `Fixed` and `Float` a leading `-?` but gives `Int` and `BigRat` none, so for `-7`, `-7i32`,
-//!   `-7i64` and `-7r` no folded reading is generated at all.
-//! * **(B) the single-winner election does not pick its own lex-min reading.**
-//!   `Proc::parse_via_wpda_all("@\"OUT\"!(-7n)")` returns `[0] CastBigInt(-7)`,
-//!   `[1] NegProc(CastBigInt(7))`; `Proc::parse_via_wpda` of the same source elects `[1]`. The
-//!   seam is `wpda_walker.rs`'s `RealizeRequestMode::SingleResultElection`, which does not agree
-//!   with the ordering `__all_with_weights_monolithic` reports.
+//! * **(A) two token patterns were missing the sign — ✅ CLOSED 2026-07-26.**
+//!   `languages/src/rhocalc.rs` gave `BigInt`, `Fixed` and `Float` a leading `-?` but gave `Int`
+//!   and `BigRat` none, so for `-7`, `-7i32`, `-7i64` and `-7r` NO folded reading was generated at
+//!   all. Both now carry it (with the `u32` spelling split out so it stays unsigned, mirroring
+//!   upstream `unsigned_int_literal`). Measured effect of (A) ALONE: the folded reading appears at
+//!   lattice `[0]` for every row, the COLLECTION rows below become conformant outright, `1-7`
+//!   still parses as `Sub` (its one-token fork is two adjacent processes ⇒ infeasible ⇒ dies), and
+//!   nothing regresses.
+//! * **(B) the single-winner facade never asks the walker — ⚠ STILL OPEN.**
+//!   `emit_projection_isolation_prologue(…, SepSeam::Single)`
+//!   (`macros/src/gen/runtime/wpda_codegen/facade.rs`) SHORT-CIRCUITS — `return Ok(__t)` — as soon
+//!   as the `@`-projection isolation helper matches. `NegProc . a:Proc |- "-" a : Proc` qualifies
+//!   as a sigil-led projection shape under eligibility clause (a) of `derive_projection_iso_shape`
+//!   (*"slot 0 is a NON-ident sigil literal — the `@`/`(`/`*`/`-`-led projection shapes"*), so for
+//!   a sign-abutted numeral the helper frames the RAW STRING as `- ⟨operand⟩`, sub-parses the
+//!   operand, wraps in `NegProc` and returns — **destroying the adjacency the lexer preserved**.
 //!
-//! **(A) alone is NOT sufficient, and this is measured rather than argued**: `BigInt`, `Float` and
-//! `Fixed` ALREADY carry `-?`, and they diverge anyway — see [`the_open_divergence_family`]. Any
-//! fix that only widens the token patterns will leave every row still failing.
+//! ★ (B) is NOT the k-best election, and that matters because it is the natural suspect. Measured
+//! with `PRATTAIL_CGLL_DIAG` + `PRATTAIL_KBEST_CAND_DIAG` on `-7n`: the single-result walker's
+//! accepting root carries a packing family of exactly `{ CastBigInt, CastBigRat }` — there is no
+//! `NegProc` candidate in it at all — and `[k-elect]` picks `CastBigInt`, the CONFORMING reading.
+//! The election is correct; the facade discards its answer. The decisive single-variable A/B is
+//! the committed kill switch:
+//!
+//! ```text
+//!   Proc::parse_via_wpda("-7n")                          ⇒ NegProc(CastBigInt(NumLit(7)))
+//!   PRATTAIL_NO_PROJ_ISOLATION=1 … same call             ⇒ CastBigInt(NumLit(-7))   ← conforming
+//! ```
+//!
+//! The `_all` seam had exactly this defect and it was repaired (#28 / G3, 2026-07-25) by UNIONing
+//! with `__all_with_weights_monolithic` instead of short-circuiting; that commit deliberately left
+//! the `Single` seam alone, recording *"there is no evidence the election is wrong"*. These rows
+//! are that evidence, for the LEXICAL class the note did not consider. The fix belongs in the
+//! helper's `__Slot::Lit` matcher, which already enforces a token-boundary condition
+//! (`before_ok && after_ok`) for WORD-shaped literals — the rule that stops `Nil` matching inside
+//! `Nilish` — but enforces none for a punctuation sigil. Generalizing it from "word characters" to
+//! "the lexer's own maximal munch" is vacuous for `@`/`(`/`!` and closes exactly this class.
 //!
 //! # ⚠ Why a lowering-time fold is the WRONG fix
 //!
@@ -198,9 +225,87 @@ fn unevaluated_ground_expressions_conform() {
     }
 }
 
+/// ★★ THE (A) RECEIPT, and the row that localizes the REMAINING defect to the string entry.
+///
+/// A sign-abutted numeral is CONFORMANT as a collection ELEMENT — `[-7]` emits f1r3node's
+/// `GInt(-7)` — while the very same numeral written alone, or as a send datum, or as a receive
+/// pattern, still diverges (see [`the_open_divergence_family`]). That asymmetry is not a mystery,
+/// it is the shape of defect (B): the `@`-projection isolation prologue frames only a WHOLE-INPUT
+/// σ-led span, so it never pre-empts an element nested inside `[…]` / `{…}`. Those elements are
+/// therefore parsed by the monolithic walker, whose election honours maximal munch (`open_len`)
+/// and picks the folded reading — exactly what the whole-input rows will do once (B) is closed.
+///
+/// ⚠ So this test is load-bearing in BOTH directions. If a future change makes these rows diverge
+/// again, (A) has been undone. If it makes them diverge in the SAME way as the whole-input rows,
+/// the fix for (B) was applied at the wrong layer (a fold after parsing cannot see adjacency —
+/// see [`adjacency_is_honoured`]).
+#[test]
+fn sign_abutted_numerals_conform_as_collection_elements() {
+    for literal in ["[-7]", "[-7i32]", "[-7r]", "[-7n]", "{-7 : 1}", "[-1.5f64]"] {
+        assert!(
+            agrees(literal),
+            "`{literal}` must emit f1r3node's artifact — a sign-abutted numeral is one signed \
+             literal TOKEN, and inside a collection nothing pre-empts the walker's election.\n  \
+             f1r3node: {}\n  mettail : {}",
+            render(&f1r3node_par(literal)),
+            render(&mettail_par(literal)),
+        );
+    }
+}
+
+/// ★★★ THE ROW THAT MATTERS TO A PROGRAM — the sign-abutted numeral EMBEDDED in a real term,
+/// compared at the ARTIFACT level.
+///
+/// The three [`positions`] used elsewhere in this file are each a whole-input σ-led span, which is
+/// exactly the shape the string-entry projection prologue frames (defect (B), module header). A
+/// program is not that shape: it is a `{ … | … }`, a `new`, a `contract` — and the numeral sits
+/// somewhere inside it, where the prologue never reaches and the walker's election decides. So
+/// this row measures the case that actually governs whether MeTTaIL and f1r3node agree on a
+/// deployed term, and it is the artifact-level counterpart of
+/// `rhocalc_guard_lowering.rs::negative_literal_patterns_match_like_consensus_rholang`.
+///
+/// ⚠ It exists BECAUSE that behavioural test is not enough. A COMM firing proves only that the two
+/// sides of MeTTaIL's OWN program agree with each other — which is precisely the false pass
+/// [`false_agreement_is_not_conformance`] exhibits. Only this comparison shows the artifact is
+/// f1r3node's.
+#[test]
+fn sign_abutted_numerals_conform_embedded_in_a_program() {
+    for literal in ["-7", "-0", "-7i32", "-7i64", "-7n", "-7r", "-1.5f64", "-1.5p2"] {
+        let source =
+            format!(r#"{{ for(@{literal} <- @"c") {{ @"OUT"!(1) }} | @"c"!({literal}) }}"#);
+        assert!(
+            agrees(&source),
+            "`{source}` must emit f1r3node's artifact. This is the position a real program puts a \
+             signed numeral in, and it is the one the projection prologue does not pre-empt.\n  \
+             f1r3node: {}\n  mettail : {}",
+            render(&f1r3node_par(&source)),
+            render(&mettail_par(&source)),
+        );
+    }
+}
+
+/// The non-abutted control for the row above: with the sign detached, BOTH front ends build a real
+/// `ENeg` in the pattern, so the artifacts must still agree — and they agree on a DIFFERENT
+/// artifact than the abutted spelling produces. A fold applied after parsing would collapse the
+/// two spellings together and break this row while appearing to fix the one above.
+#[test]
+fn non_abutted_signs_conform_embedded_in_a_program() {
+    for literal in ["- 7", "-(7)", "- 7n", "- 1.5f64"] {
+        let source =
+            format!(r#"{{ for(@{literal} <- @"c") {{ @"OUT"!(1) }} | @"c"!({literal}) }}"#);
+        assert!(
+            agrees(&source),
+            "`{source}` has a NON-abutted sign, so both front ends must build an `ENeg` and the \
+             artifacts must agree.\n  f1r3node: {}\n  mettail : {}",
+            render(&f1r3node_par(&source)),
+            render(&mettail_par(&source)),
+        );
+    }
+}
+
 /// Collections carry their elements' artifacts through unchanged, so a conforming element stays
-/// conforming inside a list. (`[-7]` does NOT appear here — it is a §2 row, because its element
-/// diverges; that it diverges INSIDE a collection too is asserted there.)
+/// conforming inside a list. (The sign-abutted elements have their own row above, because they
+/// are the (A) receipt rather than an unremarkable pass-through.)
 #[test]
 fn collections_of_conforming_elements_conform() {
     for literal in ["[1, 2]", "[1 + 1]", "[7n]", r#"["hi"]"#, "[true]"] {
@@ -246,13 +351,18 @@ fn adjacency_is_honoured() {
 //      fixing it is a conscious, visible act. ★ WHEN A ROW HERE FAILS, THAT ROW IS FIXED.
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 
-/// Every sign-abutted numeric literal spelling RhoCalc and Rholang share. f1r3node emits the
-/// signed ground literal; MeTTaIL emits an unevaluated `ENeg` over the unsigned one.
+/// Every sign-abutted numeric literal spelling RhoCalc and Rholang share, in the three positions
+/// where the STRING ENTRY is the whole numeral-led span. f1r3node emits the signed ground literal;
+/// MeTTaIL emits an unevaluated `ENeg` over the unsigned one.
 ///
-/// The `Int` and `BigRat` rows additionally have NO folded reading in MeTTaIL's lattice at all
-/// (their token patterns in `languages/src/rhocalc.rs` lack the leading `-?` that `BigInt`,
-/// `Float` and `Fixed` already carry); the other rows DO have one, at lattice index `[0]`, and
-/// lose the single-winner election anyway. Both defects must be fixed — see the module header.
+/// Since (A) landed, EVERY row here has the conforming folded reading in its lattice, at index
+/// `[0]`, and it is the lex-min under `LexicographicWeight` (`open_len` = maximal munch; in
+/// receive position it is even strictly cheaper on `primary`, 0.1 vs 0.3). What still loses is not
+/// an election — it is the `SepSeam::Single` short-circuit described in the module header, which
+/// returns the projection helper's string-level `- ⟨operand⟩` framing without ever consulting the
+/// walker. The same numerals nested inside a collection already conform
+/// ([`sign_abutted_numerals_conform_as_collection_elements`]), which is what pins the residue to
+/// the string entry rather than to the grammar or the lowering.
 const SIGN_ABUTTED_NUMERALS: [&str; 8] =
     ["-7", "-0", "-7i32", "-7i64", "-7n", "-7r", "-1.5f64", "-1.5p2"];
 
@@ -274,28 +384,18 @@ fn the_open_divergence_family() {
     }
 }
 
-/// The divergence propagates structurally: a divergent element makes its container divergent.
-/// Pinned separately so that a fix which only handles the top level is detected as incomplete.
-#[test]
-fn the_open_divergence_propagates_into_collections() {
-    for literal in ["[-7]", "[-7i32]", "[-7r]", "{-7 : 1}"] {
-        assert!(
-            !agrees(literal),
-            "★ `{literal}` now conforms — a nested row of the sign-abutted divergence is FIXED; \
-             see `the_open_divergence_family` for what to update.\n  artifact: {}",
-            render(&mettail_par(literal)),
-        );
-    }
-}
-
 /// A precedence consequence of the same root, recorded because it is the one row where the
 /// divergence changes the SHAPE of the tree rather than just a leaf.
 ///
 /// `languages/src/rhocalc.rs` states the intent directly — "`NegProc` is declared after `/` and
 /// `%` so `-` binds tighter than division (e.g. `-3r/2r` is `(-3r)/2r`)". It is not: MeTTaIL
 /// elects `ENeg(EDiv(3r, 2r))` = `-(3r/2r)`. f1r3node gets `EDiv(GBigRat(-3), GBigRat(2))`
-/// for free, because `-3r` is one token. Folding the literal fixes the stated intent and the
-/// conformance in the same stroke.
+/// for free, because `-3r` is one token.
+///
+/// Since (A) landed, the conforming shape `Div(CastBigRat(-3), CastBigRat(2))` IS in the lattice
+/// at `[0]` (measured), so this row is now waiting on (B) alone, exactly like
+/// [`the_open_divergence_family`] — it is a whole-input σ-led span, so the projection prologue
+/// frames it as `- ⟨3r/2r⟩` before the walker is ever consulted.
 #[test]
 fn the_open_divergence_changes_tree_shape_under_division() {
     assert!(
