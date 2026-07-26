@@ -63,7 +63,11 @@
 //! **What guards it here.** [`guard_rejection_backtracks_to_the_next_resting_datum`] runs the
 //! fixed two-datum program 24 times in EACH arrival order and requires the settling outcome
 //! every single time, rejecting both the old stuck outcome (D1 has returned) and any third
-//! outcome (the 55 consumed, or a value fabricated). The demo-level beats
+//! outcome (the 55 consumed, or a value fabricated). Its negative control,
+//! [`a_guard_no_resting_datum_satisfies_exhausts_the_search_and_rests`], holds the program
+//! shape fixed and lowers the guard threshold below both offers: the search must then exhaust
+//! and rest, which is what keeps the guard above from passing vacuously — the stuck shape it
+//! panics on is demonstrably observable through this same harness. The demo-level beats
 //! ([`beat_3_the_inadmissible_offer_is_never_the_one_that_settles`],
 //! [`beat_3_two_offers_never_consume_the_inadmissible_one`]) are correspondingly unqualified:
 //! the 42 settles, the 55 rests, and that is the only outcome either of them accepts.
