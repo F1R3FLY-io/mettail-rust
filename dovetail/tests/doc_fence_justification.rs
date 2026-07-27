@@ -340,7 +340,10 @@ fn scan_reaches_the_workspace_and_sees_real_fences() {
         assert!(names.contains(expected), "member scan missed {expected}: {names:?}");
     }
 
-    let total_files: usize = roots.iter().map(|root| discover_rust_files(root).len()).sum();
+    let total_files: usize = roots
+        .iter()
+        .map(|root| discover_rust_files(root).len())
+        .sum();
     assert!(total_files > 100, "expected to walk >100 source files, walked {total_files}");
 
     // The fences deliberately kept as `ignore` are found AND read as justified, so the
@@ -370,11 +373,7 @@ fn scan_reaches_the_workspace_and_sees_real_fences() {
             .collect();
         assert!(!fences.is_empty(), "{relative} should still hold an `ignore` fence");
         for fence in fences {
-            assert!(
-                is_justified(&lines, fence),
-                "{relative}:{} lost its justification",
-                fence + 1,
-            );
+            assert!(is_justified(&lines, fence), "{relative}:{} lost its justification", fence + 1,);
         }
     }
 }
