@@ -1,8 +1,10 @@
 //! Test file generation for `language!` specifications.
 //!
-//! This module generates `languages/tests/generated/{name}_tests.rs` files
-//! containing `#[test]` and `proptest!` functions that exercise the language
-//! specification. Generated tests cover:
+//! Every section is written to `target/generated/<lang>/tests_<section>.rs` and reached
+//! from a hand-written host binary through the `<lang>_generated_tests!` wrapper. Nothing
+//! this module writes lives outside `target/` — see [`write_test_file`] for why that is
+//! the whole point, and `macros/tests/generated_output_locality.rs` for the standing
+//! proof. Generated tests cover:
 //!
 //! 1. **Unit tests** — one per constructor (roundtrip with concrete values)
 //! 2. **Equation tests** — one per equation (symmetry via Ascent)
@@ -52,7 +54,7 @@ use mettail_prattail::PipelineAnalysis;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// The `options { hosted_in: "tests/definitions/<lang>.rs" }` declaration, if present.
@@ -71,49 +73,68 @@ pub fn hosted_in(language: &LanguageDef) -> Option<String> {
     })
 }
 
+/// The directory that holds proptest counterexample corpora, resolved from the manifest.
+///
+/// This is the single path the `language!` expansion resolves OUTSIDE `target/`, and the
+/// only one it is allowed to: a corpus is an INPUT to the generated property tests, not a
+/// generated source. `[package.metadata.mettail] proptest_corpus_dir` is where it is
+/// declared; see `ast::manifest`.
+fn proptest_corpus_dir() -> Result<PathBuf, String> {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+    let workspace_root = mettail_ast::manifest::find_workspace_root(Path::new(&manifest_dir))
+        .ok_or_else(|| {
+            format!("no `[workspace]` manifest above {manifest_dir}; cannot locate the corpus")
+        })?;
+    mettail_ast::manifest::proptest_corpus_dir(&workspace_root)
+}
+
 /// The `#![proptest_config(…)]` expression for a generated `proptest!` block.
 ///
-/// # Why this is not just `ProptestConfig::with_cases(n)` everywhere
+/// # Why this is not just `ProptestConfig::with_cases(n)`
 ///
 /// proptest's default [`FileFailurePersistence::SourceParallel`] derives the
-/// counterexample-corpus path from `file!()` at the `proptest!` invocation. For a
-/// library-hosted language that resolves to `languages/tests/gen_{lang}_prop.rs`,
-/// so the corpus lands next to it as
-/// `languages/tests/gen_{lang}_prop.proptest-regressions` — a COMMITTED file that
-/// replays previously-found failing seeds on every run. Nine such corpora exist.
+/// counterexample-corpus path from `file!()` at the `proptest!` invocation. Every
+/// generated prop section is now `include!`d from `target/generated/{lang}/tests_prop.rs`,
+/// and `file!()` reports the INCLUDED file — so the default would put each corpus inside
+/// `target/`, where `cargo clean` erases it. Nothing would fail; the seeds would just
+/// quietly stop being replayed and coverage would evaporate silently.
 ///
-/// A test-hosted language's prop section is `include!`d from
-/// `target/generated/{lang}/tests_prop.rs`, and `file!()` reports the INCLUDED
-/// file. The corpus would silently relocate into `target/` — wiped by
-/// `cargo clean`, never committed — so those seeds would quietly stop being
-/// replayed. Nothing would fail; coverage would just evaporate.
+/// Pinning [`FileFailurePersistence::Direct`] at a path under the manifest-declared
+/// `proptest_corpus_dir` keeps every corpus outside `target/` and therefore durable
+/// across cleans. This is deliberately the SAME rule for every language: before S4 it
+/// applied only to test-hosted languages, because library-hosted sections were written
+/// into `languages/tests/` and `file!()` already resolved there. Now that no generated
+/// file lives outside `target/`, the distinction has no referent.
 ///
-/// Pinning `FileFailurePersistence::Direct` at the corpus's existing committed
-/// path keeps the nine corpora exactly where they are and exactly as effective.
-/// Library-hosted languages keep the literal `ProptestConfig::with_cases(n)` they
-/// have always emitted, byte-for-byte.
+/// # An inherited claim that was FALSE, corrected here
+///
+/// The note this replaces asserted that the pin protected "nine" corpora that were
+/// "COMMITTED". Neither half held. `.gitignore` carries a global `*.proptest-regressions`
+/// rule, so a file at this path can never be committed, and no such file exists anywhere
+/// in the repository — the three real corpora (`macros/`, `prattail/`, `rholang-runtime/`)
+/// are `.txt` files under a `proptest-regressions/` DIRECTORY, proptest's default
+/// `SourceParallel` layout, which no generated test uses. What the pin actually buys is
+/// therefore narrower than was claimed, and still worth having: a corpus that survives
+/// `cargo clean` and accumulates seeds within a working tree. Whether these corpora
+/// SHOULD be committed — which would require removing the `.gitignore` rule — is a
+/// question for whoever owns the test policy, not something to decide by leaving an
+/// inaccurate comment in place.
 pub fn proptest_config_expr(language: &LanguageDef, cases: u32) -> String {
-    match hosted_in(language) {
-        None => format!("ProptestConfig::with_cases({})", cases),
-        Some(_) => {
-            let lang_lower = language.name.to_string().to_lowercase();
-            let corpus = format!("gen_{}_prop.proptest-regressions", lang_lower);
-            match get_test_output_path(&corpus) {
-                Ok(path) => format!(
-                    "ProptestConfig {{ failure_persistence: \
-                     Some(Box::new(proptest::test_runner::FileFailurePersistence::Direct({:?}))), \
-                     ..ProptestConfig::with_cases({}) }}",
-                    path.to_string_lossy().into_owned(),
-                    cases
-                ),
-                // Fail LOUD rather than silently degrading to a target/-local corpus.
-                Err(e) => panic!(
-                    "cannot resolve the committed proptest corpus path for test-hosted \
-                     language {}: {}",
-                    language.name, e
-                ),
-            }
-        },
+    let lang_lower = language.name.to_string().to_lowercase();
+    let corpus = format!("gen_{}_prop.proptest-regressions", lang_lower);
+    match proptest_corpus_dir() {
+        Ok(dir) => format!(
+            "ProptestConfig {{ failure_persistence: \
+             Some(Box::new(proptest::test_runner::FileFailurePersistence::Direct({:?}))), \
+             ..ProptestConfig::with_cases({}) }}",
+            dir.join(corpus).to_string_lossy().into_owned(),
+            cases
+        ),
+        // Fail LOUD rather than silently degrading to a target/-local corpus.
+        Err(e) => panic!(
+            "cannot resolve the proptest corpus directory for language {}: {}",
+            language.name, e
+        ),
     }
 }
 
@@ -180,37 +201,45 @@ fn format_generated_rust_source(content: &str) -> String {
 /// - `gen_{lang}_op.rs`          — operational semantics eval tests (all phases, may be further split if still too large)
 /// - `gen_{lang}_analytical.rs`  — analytical + user + program tests (small)
 ///
-/// Stale `gen_{lang}.rs` (monolithic) is deleted on first run to avoid
-/// duplicate #[test] symbols across old and new binaries.
-/// # Two emission paths, deliberately kept apart
+/// # ONE emission path (S4)
 ///
-/// A **library-hosted** language (no `hosted_in`) takes the historical path
-/// above: one file per section under `languages/tests/`, auto-discovered by
-/// cargo as separate test binaries.
+/// Every language — library-hosted or test-hosted — has each section spilled, WITHOUT a
+/// file header, to `target/generated/<lang>/tests_<section>.rs`, and re-exposed through
+/// the opt-in `<lang>_generated_tests!` wrapper that a HAND-WRITTEN host binary invokes.
 ///
-/// A **test-hosted** language (`options { hosted_in: "tests/definitions/X.rs" }`)
-/// cannot use that path at all: every emitted file opens with
-/// `use mettail_languages::<lang>::*;`, and once the definition leaves the
-/// library that module does not exist (E0432). Its sections are therefore
-/// spilled *without* a header into `target/generated/<lang>/tests_<section>.rs`
-/// and re-exposed through an opt-in `<lang>_generated_tests!` wrapper that the
-/// designated host binary invokes.
+/// There used to be a second path: a library-hosted language had its sections written
+/// straight into `languages/tests/gen_<lang>_<section>.rs`, complete with a
+/// `use mettail_languages::<lang>::*;` header, as TRACKED source files. That destination
+/// was computed from `CARGO_MANIFEST_DIR` regardless of which crate was compiling, so
+/// **the workspace could not be built without mutating tracked files** — adding or
+/// removing a spec in `languages/src/` rewrote 32 committed files. Removing that path is
+/// the whole of S4; `macros/tests/generated_output_locality.rs` is the standing proof that
+/// it stays removed.
 ///
-/// ## Do NOT "simplify" these two paths back into one
+/// The header is what forced the split in the first place: it opened with
+/// `use mettail_languages::<lang>::*;`, which does not resolve once a definition leaves
+/// the library (E0432). Now no section carries a header at all — the wrapper supplies the
+/// imports, because only the invoking host knows the module path its definition lives at.
 ///
-/// The per-section split exists because of a MEASURED incident: the original
-/// monolithic `gen_{lang}.rs` (24,000+ lines for Calculator) peaked at **96 GB
-/// RSS on a 125 GB machine**, because rustc holds one file's full AST, type
-/// info, and codegen IR in a single process. Splitting bounded each binary's
-/// memory to O(file size) (see the `# Why split?` note above).
+/// # What must NOT be "simplified" away: the per-section BINARY split
 ///
-/// The test-hosted path puts all of a language's sections back into ONE binary,
-/// which is superficially the shape that blew up. It is safe here for a reason
-/// that must stay true: only test-hosted languages take it, and their suites are
-/// small (the largest, LedTest, is ~35 KB). The production languages whose suites
-/// are large — Calculator (~324 KB) and Rholang (~360 KB) — are library-hosted
-/// and keep the split path untouched. Merging the paths, or moving a large
-/// language to `hosted_in`, re-arms the 96 GB failure.
+/// The sections are separate FILES because of a MEASURED incident: the original
+/// monolithic `gen_{lang}.rs` (24,000+ lines for Calculator) peaked at **96 GB RSS on a
+/// 125 GB machine**, because rustc holds one file's full AST, type info, and codegen IR in
+/// a single process. Splitting bounded each binary's memory to O(file size).
+///
+/// Unifying the two WRITE paths does not touch that, but collapsing the two HOST shapes
+/// would have. The wrapper's no-selector arm materializes every section into one binary,
+/// which is exactly the shape that blew up; it is safe only for the small suites that use
+/// it (the largest test-hosted suite, LedTest, is ~35 KB). Calculator (~344 KB) and
+/// Rholang (~392 KB) must stay split, so the wrapper also offers a
+/// `section <name>` arm and those languages get one host binary PER SECTION. The memory
+/// profile is therefore unchanged by S4: the same sections compile in the same number of
+/// processes as before.
+///
+/// Asking for a section a language did not emit hits a dedicated `compile_error!` arm that
+/// names the sections which DO exist — a loud, self-explaining failure, which is what a
+/// host that has drifted from its language deserves.
 pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) -> TokenStream {
     let lang_name = language.name.to_string();
 
@@ -229,25 +258,13 @@ pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) -> T
         sections.push(("analytical", analytical_content));
     }
 
-    match hosted_in(language) {
-        // ── Library-hosted: the historical path, byte-for-byte ──────────────
-        None => {
-            // Delete the stale monolithic file if it exists (pre-split artifact).
-            delete_stale_monolithic_file(&lang_name);
-            for (section, content) in &sections {
-                write_test_section(&lang_name, section, content);
-            }
-            // Stage 10.1 (2026-05-04): parity-section emission deleted alongside
-            // `parity` module. The dual-codegen comparison was tautological after
-            // Stage 10b's parse_preserving_vars rewrite (both routes Walker-driven).
-            TokenStream::new()
-        },
-        // ── Test-hosted: spill header-less sections + an opt-in wrapper ─────
-        Some(_) => emit_inline_test_suite(&lang_name, &sections),
-    }
+    // Stage 10.1 (2026-05-04): parity-section emission deleted alongside the `parity`
+    // module. The dual-codegen comparison was tautological after Stage 10b's
+    // parse_preserving_vars rewrite (both routes Walker-driven).
+    emit_inline_test_suite(&lang_name, &sections)
 }
 
-/// Build the opt-in `<lang>_generated_tests!` wrapper for a test-hosted language.
+/// Build the opt-in `<lang>_generated_tests!` wrapper.
 ///
 /// Each section is spilled (header-less) to `target/generated/<lang>/` and pulled
 /// back in by an absolute-path `include!`, so the wrapper itself stays a handful
@@ -263,13 +280,30 @@ pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) -> T
 /// tests and the suite total would stop meaning anything. Exactly ONE designated
 /// host binary invokes the wrapper; every other consumer simply does not.
 ///
+/// # Two arms: whole suite, or one section
+///
+/// The no-selector arm materializes EVERY section into the invoking binary. That is the
+/// right shape for a small suite and the wrong one for a large suite: a single binary
+/// holding all of Calculator's or Rholang's tests is the shape that peaked at 96 GB RSS
+/// (see [`write_test_file`]). The `section <name>` arm materializes exactly one, so a
+/// large language gets one host binary per section and keeps the bounded-memory profile
+/// the split was introduced for.
+///
+/// The section arms are matched FIRST. `$($definition:tt)*` matches any token sequence
+/// including one that starts with `section`, so a catch-all placed first would swallow
+/// every selective invocation and silently materialize the whole suite.
+///
 /// # Invocation
 ///
 // ignore-justification: `#[path = "definitions/acdemo.rs"] mod acdemo;` loads a file off disk relative to the including source file; a doctest has no such file, and the `acdemo_generated_tests!` wrapper it then invokes is emitted BY this crate into that definition, so neither half can exist here.
 /// ```ignore
+/// // Whole suite, one binary — for a small test-hosted definition:
 /// #[path = "definitions/acdemo.rs"]
 /// mod acdemo;
 /// acdemo::acdemo_generated_tests!(crate::acdemo);
+///
+/// // One section per binary — for a large library-hosted language:
+/// mettail_languages::calculator_generated_tests!(section unit, mettail_languages::calculator);
 /// ```
 ///
 /// The definition's module path is a parameter rather than a baked `crate::<lang>`
@@ -283,6 +317,7 @@ fn emit_inline_test_suite(lang_name: &str, sections: &[(&'static str, String)]) 
     let macro_ident = format_ident!("{}_generated_tests", lang_lower);
 
     let mut section_mods = Vec::with_capacity(sections.len());
+    let mut section_arms = Vec::with_capacity(sections.len());
     for (section, content) in sections {
         let formatted = format_generated_rust_source(content);
         let path = match crate::logic::writer::write_lang_module(
@@ -301,7 +336,8 @@ fn emit_inline_test_suite(lang_name: &str, sections: &[(&'static str, String)]) 
         };
         let include = crate::logic::writer::include_stmt(&path);
         let mod_ident = format_ident!("gen_{}_{}", lang_lower, section);
-        section_mods.push(quote! {
+        let section_ident = format_ident!("{}", section);
+        let one_section = quote! {
             #[allow(unused_imports, dead_code)]
             mod #mod_ident {
                 use $($definition)*::*;
@@ -309,20 +345,53 @@ fn emit_inline_test_suite(lang_name: &str, sections: &[(&'static str, String)]) 
                 use mettail_runtime::Language;
                 #include
             }
+        };
+        section_arms.push(quote! {
+            (section #section_ident, $($definition:tt)*) => { #one_section };
         });
+        section_mods.push(one_section);
     }
 
+    let section_names = sections
+        .iter()
+        .map(|(section, _)| *section)
+        .collect::<Vec<_>>()
+        .join(", ");
+    // A `section` selector this language has no arm for must say SO, naming what exists.
+    // Without this arm the request would fall through to the catch-all, which would try to
+    // read `section <name>` as the definition's module path and report
+    // "expected one of `::`, `;`, or `as`" — a hard error, but one that points at Rust
+    // syntax instead of at the mistake.
+    let unknown_section_message = format!(
+        "`{}` has no generated test section by that name. Sections emitted for this \
+         language: {}. A host asks for one with \
+         `{}_generated_tests!(section <name>, <path to the definition module>);`",
+        lang_name, section_names, lang_lower
+    );
+    let unknown_section_arm = quote! {
+        (section $unknown:tt, $($definition:tt)*) => {
+            compile_error!(#unknown_section_message);
+        };
+    };
     let doc = format!(
-        "Opt-in generated test suite for the test-hosted `{}` language definition.\n\n\
-         Invoke ONCE, from the crate root of the designated host test binary:\n\
-         `{}::{}_generated_tests!(crate::{});`",
-        lang_name, lang_lower, lang_lower, lang_lower
+        "Opt-in generated test suite for the `{}` language definition.\n\n\
+         Sections emitted: {}.\n\n\
+         Invoke ONCE per section-or-suite, from the crate root of a designated host test \
+         binary:\n\
+         - whole suite in one binary: `{}_generated_tests!(<path to the definition module>);`\n\
+         - one section per binary: `{}_generated_tests!(section unit, <path to the definition module>);`\n\n\
+         A large language must use the per-section form: one binary holding every section \
+         is the shape that peaked at 96 GB RSS.",
+        lang_name, section_names, lang_lower, lang_lower
     );
 
     quote! {
         #[doc = #doc]
         #[macro_export]
         macro_rules! #macro_ident {
+            // Selective arms FIRST: both arms below match these too.
+            #(#section_arms)*
+            #unknown_section_arm
             ($($definition:tt)*) => {
                 #(#section_mods)*
             };
@@ -331,86 +400,38 @@ fn emit_inline_test_suite(lang_name: &str, sections: &[(&'static str, String)]) 
     }
 }
 
-/// Emit a standard test-file header (imports and allow directives)
-/// shared by every per-section file.
+/// Emit the standard header shared by every per-section file.
 ///
-/// `hosted` selects which of the two emission paths this section is bound for
-/// (see [`write_test_file`]). A library-hosted section is a standalone test
-/// binary, so it carries a crate-level `#![allow(…)]` and imports the definition
-/// from the library. A test-hosted section is `include!`d into a `mod` the
-/// wrapper generates, so it must carry NEITHER: an inner attribute is illegal
-/// once `include!` has placed content mid-module, and the definition's import is
-/// supplied by the wrapper (which alone knows the module path it was invoked
-/// with). Emitting them here would be a hard compile error, not a style wart.
+/// The header is comments ONLY — no inner attribute, no import. Every section is
+/// `include!`d into a `mod` the `<lang>_generated_tests!` wrapper generates, and both
+/// would be errors there rather than style warts: an inner attribute is illegal once
+/// `include!` has placed content mid-module, and the definition's import can only be
+/// supplied by the wrapper, which alone knows the module path it was invoked with.
+///
+/// Before S4 this took a `hosted` flag and emitted a crate-level `#![allow(…)]` plus
+/// `use mettail_languages::<lang>::*;` for library-hosted languages, whose sections were
+/// written as standalone test binaries into tracked `languages/tests/` files. Those files
+/// are gone; the flag had one reachable value left.
 fn emit_test_file_header(
     out: &mut String,
     lang_name: &str,
     lang_name_lower: &str,
     section: &str,
     dead_rules_note: Option<&str>,
-    hosted: bool,
 ) {
     out.push_str(&format!(
         "// AUTO-GENERATED by language! macro for {} ({}) — do not edit\n",
         lang_name, section
     ));
     out.push_str("// Regenerated on each compilation of the language definition.\n");
-    if hosted {
-        out.push_str(&format!(
-            "// Test-hosted: included by the `{}_generated_tests!` wrapper.\n\n",
-            lang_name_lower
-        ));
-    } else {
-        out.push_str("// Run with: cargo test -p mettail-languages\n\n");
-        out.push_str("#![allow(unused_imports, dead_code)]\n\n");
-        out.push_str(&format!("use mettail_languages::{}::*;\n", lang_name_lower));
-        out.push_str("use mettail_runtime::Language;\n");
-        out.push_str("use mettail_runtime::BehavioralPred;\n\n");
-    }
+    out.push_str(&format!(
+        "// Included by the `{}_generated_tests!` wrapper; its hosts live under \
+         `languages/tests/`.\n\n",
+        lang_name_lower
+    ));
 
     if let Some(rules) = dead_rules_note {
         out.push_str(&format!("// Dead rules detected by WFST analysis: {}\n\n", rules));
-    }
-}
-
-/// Delete a previously-written monolithic `gen_{lang}.rs` test file, if
-/// it exists. The split-file emission (`gen_{lang}_unit.rs` etc.) may
-/// redefine the same `#[test]` names, so the old file must go before
-/// cargo sees both.
-fn delete_stale_monolithic_file(lang_name: &str) {
-    let filename = format!("gen_{}.rs", lang_name.to_lowercase());
-    if let Ok(path) = get_test_output_path(&filename) {
-        if path.exists() {
-            let _ = std::fs::remove_file(&path);
-        }
-    }
-}
-
-/// Write one test-section file to disk.
-fn write_test_section(lang_name: &str, section: &str, content: &str) {
-    let filename = format!("gen_{}_{}.rs", lang_name.to_lowercase(), section);
-    match get_test_output_path(&filename) {
-        Ok(path) => {
-            let formatted = format_generated_rust_source(content);
-            match write_if_changed(&path, &formatted) {
-                Ok(true) => {
-                    eprintln!("  ({}) Generated test file: {}", lang_name, path.display());
-                },
-                Ok(false) => { /* unchanged; no mtime bump */ },
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to write test file for {} ({}): {}",
-                        lang_name, section, e
-                    );
-                },
-            }
-        },
-        Err(e) => {
-            eprintln!(
-                "Warning: Failed to resolve test path for {} ({}): {}",
-                lang_name, section, e
-            );
-        },
     }
 }
 
@@ -438,7 +459,6 @@ fn generate_unit_section(language: &LanguageDef, pipeline: &PipelineAnalysis) ->
         &lang_name_lower,
         "unit",
         dead_rules_str.as_deref(),
-        hosted_in(language).is_some(),
     );
 
     out.push_str("// ═══════════════════════════════════════════════════════════\n");
@@ -476,8 +496,7 @@ fn generate_prop_section(language: &LanguageDef, pipeline: &PipelineAnalysis) ->
     let lang_name = language.name.to_string();
     let lang_name_lower = lang_name.to_lowercase();
     let mut out = String::with_capacity(32768);
-    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "prop", None,
-        hosted_in(language).is_some());
+    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "prop", None);
 
     out.push_str("// ═══════════════════════════════════════════════════════════\n");
     out.push_str("// Proptest strategies + property tests (tape-based)\n");
@@ -496,8 +515,7 @@ fn generate_rewrite_section(language: &LanguageDef, pipeline: &PipelineAnalysis)
     let lang_name = language.name.to_string();
     let lang_name_lower = lang_name.to_lowercase();
     let mut out = String::with_capacity(8192);
-    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "rewrite", None,
-        hosted_in(language).is_some());
+    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "rewrite", None);
 
     if !language.equations.is_empty() {
         out.push_str("// ═══════════════════════════════════════════════════════════\n");
@@ -550,8 +568,7 @@ fn generate_analytical_section(language: &LanguageDef, pipeline: &PipelineAnalys
             + pratt_bp.len()
             + 1024,
     );
-    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "analytical", None,
-        hosted_in(language).is_some());
+    emit_test_file_header(&mut out, &lang_name, &lang_name_lower, "analytical", None);
     push_analytical_subsection(&mut out, "__mettail_analytical", &a);
     push_analytical_subsection(&mut out, "__mettail_user_tests", &u);
     push_analytical_subsection(&mut out, "__mettail_program_tests", &p);
@@ -574,9 +591,13 @@ fn push_analytical_subsection(out: &mut String, module_name: &str, content: &str
     out.push_str("\n}\n\n");
 }
 
-/// Generate the per-language simulation CLI binary source file.
-/// Gated by `options { emit_simulator: true }` (default: true).
-pub fn write_simulation_binary_if_enabled(language: &LanguageDef) {
+/// Spill the per-language simulation CLI body and return its `<lang>_simulation_main!`
+/// wrapper, or nothing when `options { emit_simulator: false }`.
+///
+/// The returned tokens MUST be spliced into the expansion: the wrapper is the only way a
+/// hand-written `languages/src/bin/simulate_<lang>.rs` host can reach the generated body.
+/// See [`simulation_binary::write_simulation_binary`].
+pub fn write_simulation_binary_if_enabled(language: &LanguageDef) -> TokenStream {
     let emit = language
         .options
         .get("emit_simulator")
@@ -585,8 +606,9 @@ pub fn write_simulation_binary_if_enabled(language: &LanguageDef) {
             _ => None,
         })
         .unwrap_or(true);
-    if emit {
-        simulation_binary::write_simulation_binary(language);
+    match emit {
+        true => simulation_binary::write_simulation_binary(language),
+        false => TokenStream::new(),
     }
 }
 
@@ -645,41 +667,4 @@ fn verify_display_parseability(language: &LanguageDef, pipeline: &PipelineAnalys
             lang_name, cat
         );
     }
-}
-
-/// Write content to a file only if it differs from what is already on disk.
-///
-/// Skipping the write when content is unchanged prevents cargo from seeing a
-/// newer mtime on generated files and triggering spurious recompilation of the
-/// entire `mettail-languages` crate on every build.
-///
-/// Returns `true` if the file was written, `false` if it was unchanged.
-fn write_if_changed(path: &std::path::Path, content: &str) -> std::io::Result<bool> {
-    if let Ok(existing) = std::fs::read_to_string(path) {
-        if existing == content {
-            return Ok(false);
-        }
-    }
-    std::fs::write(path, content)?;
-    Ok(true)
-}
-
-/// Get the output path for generated test files.
-///
-/// Targets `languages/tests/` directly (not a subdirectory) so cargo
-/// auto-discovers them. Uses `gen_` prefix to distinguish from hand-written tests.
-fn get_test_output_path(filename: &str) -> std::io::Result<PathBuf> {
-    // CARGO_MANIFEST_DIR points to macros/ — go up to workspace root
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-
-    let mut path = PathBuf::from(manifest_dir);
-    path.pop(); // Go up from macros/ to workspace root
-    path.push("languages");
-    path.push("tests");
-
-    // Create directory if it doesn't exist
-    std::fs::create_dir_all(&path)?;
-
-    path.push(filename);
-    Ok(path)
 }

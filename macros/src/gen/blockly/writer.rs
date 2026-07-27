@@ -25,7 +25,7 @@ fn write_if_changed(path: &Path, content: &str) -> std::io::Result<bool> {
 /// Write block definitions to TypeScript file
 pub fn write_blockly_blocks(language_name: &str, output: &BlocklyOutput) -> std::io::Result<()> {
     let filename = format!("{}-blocks.ts", language_name.to_lowercase());
-    let path = get_output_path(&filename)?;
+    let path = get_output_path(language_name, &filename)?;
 
     let content = generate_blocks_typescript(output);
 
@@ -42,7 +42,7 @@ pub fn write_blockly_categories(
     output: &BlocklyOutput,
 ) -> std::io::Result<()> {
     let filename = format!("{}-categories.ts", language_name.to_lowercase());
-    let path = get_output_path(&filename)?;
+    let path = get_output_path(language_name, &filename)?;
 
     let content = generate_categories_typescript(output);
 
@@ -53,22 +53,23 @@ pub fn write_blockly_categories(
     Ok(())
 }
 
-/// Get output path for generated files
-fn get_output_path(filename: &str) -> std::io::Result<PathBuf> {
-    // Get workspace root (parent of macros/)
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-
-    let mut path = PathBuf::from(manifest_dir);
-    path.pop(); // Go up from macros/ to workspace root
-    path.push("languages");
-    path.push("src");
-    path.push("generated");
-
-    // Create directory if it doesn't exist
-    std::fs::create_dir_all(&path)?;
-
-    path.push(filename);
-    Ok(path)
+/// Get the output path for a generated Blockly file.
+///
+/// Blockly output is inspection material — TypeScript that nothing in this workspace
+/// compiles — so it goes where every other `language!` artifact goes:
+/// `<workspace-root>/target/generated/<lang>/`. It cannot use
+/// [`crate::logic::writer::write_lang_module`], which appends `.rs`, so it takes the
+/// directory rule from [`crate::logic::writer::lang_generated_dir`] and supplies its own
+/// `.ts` filename.
+///
+/// Before S4 this wrote into `languages/src/src/generated/` — a destination computed from
+/// `CARGO_MANIFEST_DIR` regardless of which crate was compiling, and the largest single
+/// source of build-time worktree mutation: 46 files. See
+/// `macros/tests/generated_output_locality.rs`.
+fn get_output_path(language_name: &str, filename: &str) -> std::io::Result<PathBuf> {
+    let dir = crate::logic::writer::lang_generated_dir(language_name);
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join(filename))
 }
 
 /// Generate TypeScript for block definitions

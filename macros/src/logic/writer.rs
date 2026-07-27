@@ -52,7 +52,11 @@ fn write_if_changed(path: &Path, content: &str) -> std::io::Result<bool> {
 /// crate-level `target/` is not what cargo actually uses — cargo uses
 /// `<workspace>/target/`. Writing to the real workspace target keeps generated
 /// files in one discoverable location and matches where `cargo clean` cleans.
-fn lang_generated_dir(lang_name: &str) -> PathBuf {
+///
+/// This is the ONLY destination any `language!` writer may compute. It is public so the
+/// non-Rust emitters (Blockly TypeScript) can reach it too: `write_lang_module` appends
+/// `.rs`, which is wrong for them, but the DIRECTORY rule must still be the same one.
+pub fn lang_generated_dir(lang_name: &str) -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
     let base = Path::new(&manifest_dir);
     let target_root = find_workspace_root(base).unwrap_or_else(|| base.to_path_buf());

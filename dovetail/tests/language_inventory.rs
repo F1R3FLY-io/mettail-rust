@@ -1009,181 +1009,38 @@ fn requirements_are_not_inherited_from_prose() {
     }
 }
 
-fn relation_head(line: &str) -> Option<&str> {
-    let line = line.trim();
-    if !line.contains("<--") {
-        return None;
-    }
-    let open = line.find('(')?;
-    let head = line[..open].trim();
-    (!head.is_empty()
-        && head
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_'))
-    .then_some(head)
-}
-
-fn declared_relation_head(line: &str) -> Option<&str> {
-    let line = line.trim();
-    let marker = "relation ";
-    let marker_start = line.find(marker)?;
-    let after_marker = &line[marker_start + marker.len()..];
-    let open = after_marker.find('(')?;
-    let head = after_marker[..open].trim();
-    (!head.is_empty()
-        && head
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_'))
-    .then_some(head)
-}
-
-#[derive(Debug)]
-struct RelationDecl {
-    head: String,
-    params: Vec<String>,
-}
-
-fn declared_relation(line: &str) -> Option<RelationDecl> {
-    let line = line.trim();
-    let marker = "relation ";
-    let marker_start = line.find(marker)?;
-    let after_marker = &line[marker_start + marker.len()..];
-    let open = after_marker.find('(')?;
-    let close = after_marker[open + 1..].find(')')? + open + 1;
-    let head = after_marker[..open].trim();
-    if head.is_empty()
-        || !head
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    {
-        return None;
-    }
-
-    let params = split_relation_params(&after_marker[open + 1..close]);
-    Some(RelationDecl { head: head.to_owned(), params })
-}
-
-fn split_relation_params(params: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut start = 0usize;
-    let mut angle_depth = 0usize;
-
-    for (idx, ch) in params.char_indices() {
-        match ch {
-            '<' => angle_depth += 1,
-            '>' => angle_depth = angle_depth.saturating_sub(1),
-            ',' if angle_depth == 0 => {
-                let param = params[start..idx].trim();
-                if !param.is_empty() {
-                    out.push(param.to_owned());
-                }
-                start = idx + ch.len_utf8();
-            },
-            _ => {},
-        }
-    }
-
-    let param = params[start..].trim();
-    if !param.is_empty() {
-        out.push(param.to_owned());
-    }
-    out
-}
-
-fn is_generated_category_relation(decl: &RelationDecl) -> bool {
-    let [payload_type] = decl.params.as_slice() else {
-        return false;
-    };
-    decl.head == payload_type.to_ascii_lowercase()
-}
-
-fn category_relation_heads_from_datalog(source: &str) -> BTreeSet<String> {
-    let relation_prelude = source.split("// Category rules").next().unwrap_or(source);
-    relation_prelude
-        .lines()
-        .filter_map(declared_relation)
-        .filter(is_generated_category_relation)
-        .map(|decl| decl.head)
-        .collect()
-}
-
-fn generated_category_heads(source: &str) -> BTreeSet<String> {
-    let mut in_category_info = false;
-    let mut brace_depth = 0usize;
-    let mut heads = BTreeSet::new();
-
-    for line in source.lines() {
-        if !in_category_info {
-            if line.contains("export const categoryInfo = {") {
-                in_category_info = true;
-                brace_depth = 1;
-            }
-            continue;
-        }
-
-        let trimmed = line.trim();
-        if brace_depth == 1 && trimmed.ends_with('{') {
-            if let Some((head, _)) = trimmed.split_once(':') {
-                let head = head.trim().trim_matches('"').trim_matches('\'');
-                if !head.is_empty() {
-                    heads.insert(head.to_ascii_lowercase());
-                }
-            }
-        }
-
-        for ch in line.chars() {
-            match ch {
-                '{' => brace_depth += 1,
-                '}' => brace_depth = brace_depth.saturating_sub(1),
-                _ => {},
-            }
-        }
-        if brace_depth == 0 {
-            break;
-        }
-    }
-
-    heads
-}
-
-fn classify_datalog_head(head: &str) -> Option<Requirement> {
-    if head.starts_with("rw_") {
-        Some(Requirement::DirectionalRewrite)
-    } else if head.starts_with("fold_") {
-        Some(Requirement::FoldNativeHandler)
-    } else if head.starts_with("eq_") {
-        Some(Requirement::Equation)
-    } else if head.ends_with("_contains") || head.ends_with("_vec") {
-        Some(Requirement::CollectionPattern)
-    } else {
-        None
-    }
-}
-
-#[test]
-fn generated_category_heads_are_derived_from_relation_signatures() {
-    let source = r#"
-        ascent_source! {
-            sample_source:
-
-            // Relations
-            relation proc(Proc);
-            #[ds(crate::eqrel)] relation eq_proc(Proc, Proc);
-            #[ds(crate::dual_indexed)] relation rw_proc(Proc, Proc);
-            relation name(Name);
-            relation step_term(Proc);
-            #[ds(crate::dual_indexed)] relation ppar_contains(Proc, Proc);
-
-            // Category rules
-            proc(t) <-- proc(t);
-        }
-    "#;
-
-    assert_eq!(
-        category_relation_heads_from_datalog(source),
-        BTreeSet::from(["name".to_owned(), "proc".to_owned()])
-    );
-}
+// ── The generated-Datalog audit was REMOVED (task #69 S6) ────────────────────────
+//
+// `generated_datalog_relation_heads_are_requirement_classified` read
+// `languages/src/generated/*-datalog.rs` and classified each declared relation head into
+// the requirement taxonomy. Three independent things made it dead residue rather than
+// coverage:
+//
+//   1. Its subject no longer exists. Datalog/Ascent was replaced by Dovetail/SFT/Rholang;
+//      NO generator in this tree emits a `*-datalog.rs`. The files it read were stale
+//      output of code deleted long before.
+//   2. Its subject set depended on LOCAL BUILD HISTORY. It globbed a gitignored directory,
+//      so what it audited was whichever languages happened to have been compiled in that
+//      working tree — a different set on a clean checkout than on a developer's machine,
+//      and empty on CI. A test whose extension is decided by build history asserts nothing
+//      reproducible.
+//   3. Its subject set had drifted into fiction. Of the ten `*-datalog.rs` files present,
+//      `rhocalc` named a language that no longer exists anywhere in the repository (it was
+//      renamed to `rholang`), and the wider directory also held `class2opt`,
+//      `crosscatsubst`, `dovetailsmoke` and `fltprobe` — four more stems with no live
+//      declaration. The audit was classifying relation heads of languages that are gone.
+//
+// The requirement coverage it nominally provided is unaffected: the same
+// `⊆ current_mettail_rewrite_requirements` property is asserted from the real
+// `language!` sources by `source_language_inventory_matches_rocq_inventory_and_taxonomy`,
+// which reads declarations rather than build leftovers.
+//
+// Removed with it: `relation_head`, `declared_relation_head`, `declared_relation`,
+// `RelationDecl`, `split_relation_params`, `is_generated_category_relation`,
+// `category_relation_heads_from_datalog`, `generated_category_heads`,
+// `classify_datalog_head`, and the unit test
+// `generated_category_heads_are_derived_from_relation_signatures` — every one of which was
+// reachable only from that audit (verified: zero references elsewhere in the workspace).
 
 fn rocq_requirement_name(requirement: Requirement) -> &'static str {
     match requirement {
@@ -1274,100 +1131,5 @@ fn source_language_inventory_matches_rocq_inventory_and_taxonomy() {
     assert!(
         aggregate_requirements.is_subset(&formal_requirements),
         "source-classified LanguageDef requirements are not covered by Rocq current_mettail_rewrite_requirements: source={aggregate_requirements:?}, formal={formal_requirements:?}"
-    );
-}
-
-#[test]
-fn generated_datalog_relation_heads_are_requirement_classified() {
-    let generated_dir = repo_root().join("languages/src/generated");
-    let mut datalog_files = fs::read_dir(&generated_dir)
-        .unwrap_or_else(|err| panic!("failed to read {generated_dir:?}: {err}"))
-        .map(|entry| entry.expect("generated dir entry").path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with("-datalog.rs"))
-        })
-        .collect::<Vec<_>>();
-    datalog_files.sort();
-    assert!(!datalog_files.is_empty(), "no generated Datalog files found");
-
-    let mut classified = BTreeSet::new();
-    let mut unknown_heads = Vec::new();
-    let mut category_metadata_pairs = 0usize;
-    for path in datalog_files {
-        let source = fs::read_to_string(&path)
-            .unwrap_or_else(|err| panic!("failed to read {path:?}: {err}"));
-        let declared_heads = source
-            .lines()
-            .filter_map(declared_relation_head)
-            .collect::<BTreeSet<_>>();
-        assert!(
-            !declared_heads.is_empty(),
-            "{} has no generated relation declarations to audit",
-            path.display()
-        );
-
-        for head in &declared_heads {
-            if let Some(req) = classify_datalog_head(head) {
-                classified.insert(req);
-            }
-        }
-
-        for head in source.lines().filter_map(relation_head) {
-            if let Some(req) = classify_datalog_head(head) {
-                classified.insert(req);
-            } else if !declared_heads.contains(head) {
-                unknown_heads.push(format!("{}:{head}", path.display()));
-            }
-        }
-
-        let category_path = path.with_file_name(
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .expect("generated Datalog file name")
-                .replace("-datalog.rs", "-categories.ts"),
-        );
-        if category_path.exists() {
-            category_metadata_pairs += 1;
-            let category_source = fs::read_to_string(&category_path)
-                .unwrap_or_else(|err| panic!("failed to read {category_path:?}: {err}"));
-            let category_heads = generated_category_heads(&category_source);
-            assert!(
-                !category_heads.is_empty(),
-                "{} has no generated category metadata heads to audit",
-                category_path.display()
-            );
-            let relation_category_heads = category_relation_heads_from_datalog(&source);
-            assert_eq!(
-                category_heads, relation_category_heads,
-                "{} generated category metadata must exactly match generated Datalog category relations",
-                path.display(),
-            );
-        }
-    }
-
-    assert!(
-        category_metadata_pairs > 0,
-        "no generated Datalog/category metadata pairs found"
-    );
-    assert!(
-        unknown_heads.is_empty(),
-        "unclassified generated Datalog relation heads: {unknown_heads:#?}"
-    );
-    assert!(
-        !classified.is_empty(),
-        "generated Datalog did not expose any classified relation families"
-    );
-    let formal_coverage =
-        read_repo_file("dovetail/formal/rocq/theories/Requirements/MeTTaILRewriteCoverage.v");
-    let formal_requirements = rocq_current_requirement_names(&formal_coverage);
-    let classified_requirements = classified
-        .iter()
-        .map(|requirement| rocq_requirement_name(*requirement).to_owned())
-        .collect::<BTreeSet<_>>();
-    assert!(
-        classified_requirements.is_subset(&formal_requirements),
-        "generated Datalog relation families are not covered by Rocq current_mettail_rewrite_requirements: generated={classified_requirements:?}, formal={formal_requirements:?}"
     );
 }

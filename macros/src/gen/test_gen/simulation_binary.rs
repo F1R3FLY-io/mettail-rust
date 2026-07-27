@@ -1,8 +1,13 @@
 //! Per-language simulation CLI binary generation.
 //!
-//! Generates `languages/src/bin/simulate_{lang_lower}.rs` for each language
-//! defined via the `language!` macro. Each binary provides a CLI interface
-//! for running simulation campaigns with configurable parameters.
+//! Generates `target/generated/{lang_lower}/simulate.rs` for each language defined via
+//! the `language!` macro. A HAND-WRITTEN host at `languages/src/bin/simulate_{lang}.rs`
+//! `include!`s it, which is what makes the target a cargo `[[bin]]`.
+//!
+//! Before S4 this wrote the binary straight into `languages/src/bin/` as tracked source,
+//! at a destination computed from `CARGO_MANIFEST_DIR` regardless of which crate was
+//! compiling. Eighteen committed files were rewritten on every build of the workspace.
+//! See `macros/tests/generated_output_locality.rs`.
 //!
 //! ## Generated Binary Features
 //!
@@ -13,45 +18,86 @@
 //! - Prints summary to stdout
 
 use mettail_ast::language::LanguageDef;
-use std::path::{Path, PathBuf};
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
 
-/// Write content to a file only if it differs from what is already on disk.
+/// Spill the simulation CLI body and return the `<lang>_simulation_main!` wrapper.
 ///
-/// Skipping the write when content is unchanged prevents cargo from seeing a
-/// newer mtime on generated files and triggering spurious recompilation of the
-/// entire `mettail-languages` crate on every build.
+/// The body goes to `target/generated/{lang_lower}/simulate.rs`; the cargo `[[bin]]`
+/// target is a hand-written host that invokes the returned wrapper. It uses `clap` for
+/// argument parsing and `mettail-simulation` for execution.
 ///
-/// Returns `true` if the file was written, `false` if it was unchanged.
-fn write_if_changed(path: &Path, content: &str) -> std::io::Result<bool> {
-    if let Ok(existing) = std::fs::read_to_string(path) {
-        if existing == content {
-            return Ok(false);
-        }
-    }
-    std::fs::write(path, content)?;
-    Ok(true)
-}
-
-/// Write a simulation CLI binary source file for the given language.
+/// # Why a wrapper and not a bare `include!` in the host
 ///
-/// The binary is written to `languages/src/bin/simulate_{lang_lower}.rs`.
-/// It uses `clap` for argument parsing and `mettail-simulation` for execution.
-pub fn write_simulation_binary(language: &LanguageDef) {
+/// The host cannot simply `include!` the body, and the reason is a BOOTSTRAP hazard rather
+/// than a matter of taste. A test-hosted language's definition lives in
+/// `languages/tests/definitions/<lang>.rs`; the only targets that compile it are its host
+/// test binary and this CLI. On a clean tree — right after `cargo clean`, or on a fresh
+/// checkout — `target/generated/<lang>/simulate.rs` does not exist yet, so whether a bare
+/// `include!` resolves would depend on rustc happening to expand the `#[path] mod`
+/// (which runs `language!`, which writes the file) before reaching the `include!` later in
+/// the same file. That is an ordering coincidence, not a guarantee, and a build that
+/// depends on one is precisely the fragility this work exists to remove.
+///
+/// Emitting the `include!` from INSIDE the macro that wrote the file removes the question:
+/// the write and the include belong to the same expansion, in that order, always. It is
+/// also the mechanism already proven by `<lang>_generated_tests!`, so the CLI and the test
+/// suite now reach their generated bodies the same way.
+pub fn write_simulation_binary(language: &LanguageDef) -> TokenStream {
     let lang_name = language.name.to_string();
     let lang_lower = lang_name.to_lowercase();
     let content = super::format_generated_rust_source(&generate_simulation_binary(language));
 
-    match write_binary_to_disk(&lang_lower, &content) {
-        Ok((path, true)) => {
+    let path = match crate::logic::writer::write_lang_module(&lang_name, "simulate", &content) {
+        Ok(path) => {
             eprintln!("  ({}) Generated simulation binary: {}", lang_name, path.display());
-        },
-        Ok((_, false)) => {
-            // Content unchanged — skip write, no message (avoids mtime update)
+            path
         },
         Err(e) => {
             eprintln!("Warning: Failed to write simulation binary for {}: {}", lang_name, e);
+            return TokenStream::new();
         },
+    };
+
+    let primary_cat_lower = primary_category(language).to_lowercase();
+    let macro_ident = format_ident!("{}_simulation_main", lang_lower);
+    let arb_ident = format_ident!("arb_{}", primary_cat_lower);
+    let include = crate::logic::writer::include_stmt(&path);
+    let doc = format!(
+        "Simulation CLI entry point for `{}`.\n\n         Invoke ONCE, from the crate root of `languages/src/bin/simulate_{}.rs`, passing \
+         the path of the module the definition lives in:\n\
+         `{}_simulation_main!(mettail_languages::{});` for a library-hosted language, or \
+         `{}_simulation_main!(crate::{});` after `#[path] mod {};` for a test-hosted one.\n\n         Expands to the `fn main` and clap argument struct; the body itself is included \
+         from `target/generated/{}/simulate.rs`.",
+        lang_name, lang_lower, lang_lower, lang_lower, lang_lower, lang_lower, lang_lower,
+        lang_lower,
+    );
+
+    quote! {
+        #[doc = #doc]
+        #[macro_export]
+        macro_rules! #macro_ident {
+            ($($definition:tt)*) => {
+                // The definition's own path is a PARAMETER for the same reason the test
+                // wrapper takes one: only the invoking host knows whether the language is
+                // a library module or a `#[path]`-included test definition.
+                use $($definition)*::*;
+                use $($definition)*::strategies::#arb_ident;
+                #include
+            };
+        }
+        pub use #macro_ident;
     }
+}
+
+/// The language's primary category — the first declared type, which is what the CLI
+/// generates terms for.
+fn primary_category(language: &LanguageDef) -> String {
+    language
+        .types
+        .first()
+        .map(|t| t.name.to_string())
+        .unwrap_or_else(|| "Term".to_string())
 }
 
 /// Generate the full source code for a per-language simulation binary.
@@ -60,13 +106,7 @@ fn generate_simulation_binary(language: &LanguageDef) -> String {
     let lang_lower = lang_name.to_lowercase();
     let lang_struct = format!("{}Language", lang_name);
 
-    // Determine the primary category (first type in the language definition).
-    let primary_cat = language
-        .types
-        .first()
-        .map(|t| t.name.to_string())
-        .unwrap_or_else(|| "Term".to_string());
-    let primary_cat_lower = primary_cat.to_lowercase();
+    let primary_cat_lower = primary_category(language).to_lowercase();
 
     let mut out = String::with_capacity(8192);
 
@@ -89,41 +129,12 @@ fn generate_simulation_binary(language: &LanguageDef) -> String {
     out.push_str("use mettail_simulation::invariant::{\n");
     out.push_str("    AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,\n");
     out.push_str("};\n");
-    // How the CLI reaches its language depends on where the definition lives.
-    //
-    // LIBRARY-hosted (the historical case): import it from the library.
-    //
-    // TEST-hosted (`options { hosted_in: "tests/definitions/<lang>.rs" }`): the
-    // definition is NOT in the library, so `mettail_languages::<lang>` does not
-    // resolve (E0433/E0432). The binary instead `#[path]`-includes the definition
-    // file directly — an intra-package reference from `languages/src/bin/` to
-    // `languages/tests/definitions/`, which is why the CLI survives the move at all.
-    // Verified end-to-end: the binary builds AND runs its campaign, resolving both
-    // the language struct and the feature-gated `strategies` submodule.
-    //
-    // The binary keeps its existing `[[bin]] … required-features = ["strategies"]`
-    // stanza in `languages/Cargo.toml`; nothing about the target changes, only how
-    // it names the language.
-    match super::hosted_in(language) {
-        None => {
-            out.push_str(&format!("use mettail_languages::{}::{};\n", lang_lower, lang_struct));
-            out.push_str(&format!(
-                "use mettail_languages::{}::strategies::arb_{};\n",
-                lang_lower, primary_cat_lower
-            ));
-        },
-        Some(definition_path) => {
-            // `definition_path` is relative to the `languages` package root; the
-            // binary lives in `languages/src/bin/`, hence the `../../` prefix.
-            out.push_str(&format!("#[path = \"../../{}\"]\n", definition_path));
-            out.push_str(&format!("mod {};\n", lang_lower));
-            out.push_str(&format!("use {}::{};\n", lang_lower, lang_struct));
-            out.push_str(&format!(
-                "use {}::strategies::arb_{};\n",
-                lang_lower, primary_cat_lower
-            ));
-        },
-    }
+    // The definition's imports are NOT emitted here. `<lang>_simulation_main!` supplies
+    // them from the module path its host passes in, which is the only thing that knows
+    // whether the language is a library module (`mettail_languages::<lang>`) or a
+    // `#[path]`-included test definition (`crate::<lang>`). Emitting a literal path here
+    // is what used to make this file host-specific, and it is why the `hosted_in` branch
+    // that stood here is gone.
     out.push_str("use mettail_runtime::Language;\n");
     out.push_str("use proptest::strategy::Strategy;\n");
     out.push_str("use std::path::PathBuf;\n\n");
@@ -306,28 +317,4 @@ struct Args {{
     ));
 
     out
-}
-
-/// Write the simulation binary source file to disk.
-///
-/// Returns `(path, written)` where `written` is `true` if the file was actually
-/// changed on disk, `false` if the content was already up-to-date.
-fn write_binary_to_disk(lang_lower: &str, content: &str) -> std::io::Result<(PathBuf, bool)> {
-    let filename = format!("simulate_{}.rs", lang_lower);
-
-    // CARGO_MANIFEST_DIR points to macros/ — go up to workspace root.
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-
-    let mut path = PathBuf::from(manifest_dir);
-    path.pop(); // Go up from macros/ to workspace root
-    path.push("languages");
-    path.push("src");
-    path.push("bin");
-
-    // Create directory if it doesn't exist.
-    std::fs::create_dir_all(&path)?;
-
-    path.push(filename);
-    let written = write_if_changed(&path, content)?;
-    Ok((path, written))
 }

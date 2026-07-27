@@ -190,9 +190,12 @@ pub fn language(input: TokenStream) -> TokenStream {
         proc_macro2::TokenStream::new()
     };
 
-    // Generate per-language simulation CLI binary.
-    // Gated by `options { emit_simulator: true }` (default: true).
-    gen::test_gen::write_simulation_binary_if_enabled(&language_def);
+    // Generate per-language simulation CLI binary. Gated by
+    // `options { emit_simulator: true }` (default: true). Like the test suite, the body is
+    // spilled to `target/generated/<lang>/` and reached through an opt-in wrapper that the
+    // hand-written `[[bin]]` host invokes, so the tokens must be spliced in.
+    let generated_simulation_main =
+        gen::test_gen::write_simulation_binary_if_enabled(&language_def);
 
     // Generate Blockly block definitions.
     // Gated by `options { emit_blockly: true }` (default: true).
@@ -251,9 +254,15 @@ pub fn language(input: TokenStream) -> TokenStream {
             #strategies_include
         }
 
-        // Empty for a library-hosted language; the opt-in
-        // `{lang}_generated_tests!` wrapper for a test-hosted one.
+        // The opt-in `{lang}_generated_tests!` wrapper, which a hand-written host test
+        // binary invokes to materialize the generated suite. Empty under
+        // `options { emit_tests: false }`.
         #generated_test_suite
+
+        // The `{lang}_simulation_main!` wrapper, which the hand-written
+        // `languages/src/bin/simulate_{lang}.rs` host invokes. Empty under
+        // `options { emit_simulator: false }`.
+        #generated_simulation_main
     };
 
     TokenStream::from(combined)
