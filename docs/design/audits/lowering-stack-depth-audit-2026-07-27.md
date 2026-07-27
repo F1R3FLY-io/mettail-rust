@@ -149,7 +149,7 @@ needing two or three `Par`/`Result<Par, _>` temporaries, `89 × 3 × 224 ≈ 60`
 order of magnitude for the measured 48 KB — so the hypothesis was quantitatively plausible
 before it was tested.
 
-### 4.1 ★ The recursion SCC has 19 members, not one
+### 4.1 ★ The recursion SCC has 19 members, not one — and 87 after M-1
 
 This is the audit's most consequential structural finding, and it invalidates any conversion
 scoped to "the self-recursive call sites of `lower_proc`".
@@ -191,6 +191,68 @@ A Tarjan strongly-connected-component decomposition of the call graph of `rhocal
 Every edge in this component is traversable an unbounded number of times by a program, so
 **the whole component must be driven by one machine**. A conversion covering a proper subset
 leaves a reachable Θ(depth) path.
+
+#### 4.1.1 ★ RE-DERIVED after M-1: the component has **87** members, not 19
+
+The table above was derived **before** M-1. M-1 hoisted each of `lower_proc`'s 89 arm bodies
+into its own `#[inline(never)]` free function (§5); 68 of those 68 arms call back into the
+component, so each became a member of it. Re-derived on the M-1 tree:
+
+```math
+|\mathrm{SCC}| \;=\; \underbrace{19}_{\text{helpers}} \;+\; \underbrace{68}_{\text{recursive } \texttt{lower\_arm\_*}} \;=\; 87 ,
+```
+
+with the remaining `89 - 68 = 21` arms being leaves (`lower_arm_p_zero`, the ground-literal
+casts, the fail-closed arms, `lower_arm_p_var`, `lower_arm_unsupported`, …) which call nothing
+in the component and are therefore **not** members.
+
+★ This matters for scoping, not for bookkeeping. "Convert the SCC" read against the 19-member
+table understates the work by 78%, and — worse — the 68 arms are precisely where the per-level
+frames live after M-1.
+
+#### 4.1.2 The re-derivation method, so the number is reproducible
+
+The component is recovered from source by the following procedure, which needs no build and no
+type information. It is stated in full rather than cited, because the *only* thing that makes
+"87" checkable is being able to run it again.
+
+```
+INPUT   the translation units that form the lowering:
+        rholang-runtime/src/rhocalc_ast.rs, rholang-runtime/src/rhocalc_formula.rs
+
+1  ERASE NOISE.  Replace every line comment, block comment, string literal, raw string
+   literal and char literal by an equal number of spaces (newlines preserved, so byte
+   offsets and line numbers survive).  Rationale: an identifier inside a doc comment or a
+   diagnostic message must not be mistaken for a call site — `rhocalc_ast.rs` documents
+   `lower_list` dozens of times in prose.
+
+2  LOCATE DEFINITIONS.  For each match of /^(pub )?(pub\(crate\) )?fn NAME/ in the erased
+   text, delimit the body by matching the parameter list's parentheses, skipping the return
+   type and any where-clause, then brace-matching from the first `{`.  A definition whose
+   signature is followed by `;` (a trait declaration) has no body and is skipped.
+   Definitions nested inside another definition's span are folded into their parent.
+
+3  EDGES.  Inside each body, every word-boundary-delimited occurrence of a NAME found in
+   step 2, followed by `(`, `::<` or `)` — the last covers a function passed by value —
+   is an edge caller → callee.
+
+4  TARJAN.  Run Tarjan's strongly-connected-components algorithm on the digraph.  Report
+   every component of size > 1, plus every singleton with a self-loop (a directly
+   self-recursive function, e.g. `lower_int_value`).
+```
+
+Step 4's second clause is not a detail: it is what surfaced `lower_int_value`, a
+**self-recursive function that is not in the component** (it calls nothing that reaches
+`lower_proc`) and therefore had its own Θ(depth) axis through nested `Int::NegInt`. A
+conversion scoped to the component would have left `- - - … - 5` exactly as it was. It is
+converted, and gated by the `lower_neg` subject.
+
+Running the procedure on the M-1 tree also reports three unrelated components, recorded so
+that "not converted" is never mistaken for "not examined": `{replace_fold, replace_fold_in_name,
+rebuild_binary}` and `{find_fold, find_fold_in_name}` (both walk a body once per **fold site**,
+not once per nesting level, and both are called BY the driver rather than from inside it), and
+`{proc_has_machine_effects, name_has_machine_effects}` (a predicate on the raw term, outside the
+lowering).
 
 ---
 
@@ -539,6 +601,124 @@ different visit order could retain a different representative.
 
 ---
 
+## 9. ★ M-2 — LANDED, and what it did and did not move
+
+Commit `3c0c3585`. The whole 87-member component of §4.1.1 is driven by one explicit
+`Job`/`Kont` worklist (`rhocalc_ast::drive`), in the idiom of `prattail/src/sppf_realize.rs:164`.
+The recursive form is retained VERBATIM under `cfg(test)` in
+`rholang-runtime/src/rhocalc_ast/recursive_oracle.rs` and compared against the driver by five
+differentials (byte-identical encoded `Par`, identical typed errors, identical side registers,
+over 97 surface-syntax entries plus a depth-400 term, with all 31 continuations asserted reached).
+
+### 9.1 ★ The instrument changed, and the old one was measuring a proxy
+
+Every number below is a **direct bisection of `RLIMIT_STACK`, installed in a forked child before
+`exec`, with the subject running on that child's MAIN thread**. The gate's previous probe ran each
+subject on a `std::thread::Builder::stack_size` thread. That is precise but it is not the thing:
+a spawned thread's stack is one `mmap` with a guard page; a main thread's is a kernel-grown VMA
+bounded by the rlimit, and §1.1 is the whole reason it is the latter that production faults on.
+
+The probe therefore had to stop being a `#[test]`, for a mechanical reason: **libtest runs every
+test on a spawned thread**, so a `#[test]` body cannot execute on a main thread whatever the
+parent sets. It is now `rholang-runtime/src/bin/stack_depth_probe.rs`, a program whose `main`
+runs the subject directly.
+
+Two independent cross-validations say the instruments agree where they overlap: `parse_depth`
+bisects to **1,408 B/level**, reproducing §6.2 to the byte; and the pre-M-2 release binary
+bisects to **7,277 B/level** against §5's least-squares 7,266 — 0.15%.
+
+### 9.2 The lowering
+
+B/level, bisected 16 → 4,096 (width subjects 4 → 65,536):
+
+| subject | traversal | debug | release |
+|---|---|---|---|
+| `lower_leak` | the lowering ALONE — both teardowns removed | **0** | **1** |
+| `lower_depth` | `CastList` ⇄ `lower_list` (the reproducer's path) | **1** | **0** |
+| `lower_add` | the binary-expression cycle | **0** | **0** |
+| `lower_par` | `PParInfix` — recurses on BOTH operands | **1** | **0** |
+| `lower_neg` | `Int::NegInt` ⇄ `lower_int_value` (§4.1.2) | **0** | **1** |
+| `lower_width` | sibling count | **1** | **0** |
+| `lower_new` − `new_build` | the `PNew` arm, minus its own builder | **1** | **0** |
+
+A reading of 0 or 1 B/level is one 4 KiB bisection bucket across a 4,080-step ladder — the
+instrument's floor. Several readings are NEGATIVE before clamping, which is what a flat subject
+looks like when address-space layout shifts by a bucket. Against §5.2's pre-M-2 release
+`lower_depth` of 2,157 B/level, the class is gone.
+
+### 9.3 ★ ANTI-VACUITY changed a conclusion here, and the record should say so
+
+`lower_depth` FIRST read **252 B/level**, and the obvious reading — "the conversion is
+incomplete" — was wrong. `ast_drop`, a subject that builds the identical term and lowers
+*nothing*, read **254**. The slope was the AST's own teardown, and it had been inside every
+lowering subject all along because the gate `drop`ped the input term.
+
+The discriminator is `lower_leak`: build, lower, `mem::forget` both sides. It reads 0. The rule
+§6.3 adopted for probe POINTS ("both must clear the subject's own floor") has a companion for
+probe SUBJECTS: **a subject that contains two traversals measures neither**, and the only way to
+know which one a slope belongs to is to build the subject that contains one of them.
+
+The gate's earlier claim that a plain `drop(term)` is correct here — on the grounds that the
+`language!` macro emits a pooled iterative `Drop` — is **superseded**. It is true of a pure
+`Proc` chain and false across a type hop; see §9.4.
+
+### 9.4 ★ THE RESIDUE — every Θ(depth) traversal still on the main thread
+
+| subject | traversal | owner | debug | release |
+|---|---|---|---|---|
+| `par_drop` | `drop_in_place::<Par>` — `prost`'s DERIVED recursive `Drop` | `models` (f1r3node) | 368 | 95 |
+| `ast_drop` | the `language!` iterative `Drop`, ACROSS a cross-type hop | `macros/src/gen/` | 271 | 96 |
+| `render` | `observation::render_par_text` — decode + format | this crate | 3,665 | 911 |
+| `lower_formula` | `formula::is_statically_false` ⇄ `is_statically_true` | `languages/src/` | 4,094 | 978 |
+| `parse_depth` | the WPDA parser (§6) | `prattail` | 1,408 | 303 |
+
+★ **The two `Drop`s belong to the DERIVED-IMPL class and are not reachable by the pushdown
+transform this audit specifies.** A pushdown transform rewrites a traversal *whose text you own*
+into a worklist. `drop_in_place::<Par>` has no text: it is glue the compiler derives from the
+type, and the only repairs are to change the type or to intercept at the call site. f1r3node's
+`par_children::dismantle` IS that call-site interception, which is why `par_drop` — the one
+subject that deliberately does not use it — is the only one still paying.
+
+`ast_drop` is the same class with a twist worth recording: the macro **does** emit a pooled
+iterative `Drop`, and `lower_add` (a pure `Proc::Add(Arc<Proc>, …)` chain) is flat under it. But
+`nested_list` alternates `Proc::CastList(Arc<List>)` with `List::ListLit(Vec<Proc>)`, and the
+worklist does not follow the hop through `List`. The generated teardown is iterative *within* a
+type and recursive *across* types.
+
+`lower_formula`'s slope is **not** the formula compiler — that was converted, and
+`Job::Formula`/`Kont::Formula*` drive it from the same work stack. It is the syntactic
+static-falsity judgement `lower_proc`'s `Matches` arm consults *before* lowering, a mutually
+recursive pair in another crate.
+
+### 9.5 ★ The whole binary — and a superseded attribution
+
+`ulimit -s` bisection of `rhocalc` on a `nest-d.rho` ladder at `d` = 100 and 400,
+`RUST_MIN_STACK` pinned to 1 GiB so only the main thread binds:
+
+| profile | before (M-1) | after (M-2) | factor |
+|---|---|---|---|
+| release | 7,277 | **2,567** | **2.83×** |
+| debug | 15,132 *(§5, reproduced)* | **15,155** | **1.00×** |
+
+The release result is the expected one: the lowering was the binding main-thread traversal, and
+removing it leaves the residue of §9.4. `D_max` on the 8 MiB default rises from ~1,140 to ~3,260.
+
+★ **The debug result is a finding, and it supersedes §5's attribution.** Minimum stack is a
+`max` over the deepest single path, not a sum over traversals — parsing, lowering, rendering and
+teardown run *sequentially*. Removing the lowering entirely left the debug binary's slope
+unchanged at 15,155, so **the lowering was never the binding main-thread traversal in the debug
+build**; something else costs ~15,150 B/level there and always did. §5 recorded 15,132 as "the
+M-1 lowering", and that is now known to be a coincidence of magnitude rather than an attribution:
+the gate's debug lowering subjects read 0.
+
+The residues of §9.4 sum to ~5,700 B/level in debug, so ~9,400 B/level of the debug binary's
+main-thread cost is **still unattributed**. The likely candidate — f1r3node's normalizer /
+`substitute` / sort running on the main thread before the reduction is handed to tokio — is
+named as a candidate and deliberately **not** claimed: it has not been measured, and this
+document's standard is that an unmeasured mechanism is written down as a question.
+
+---
+
 ## Appendix A — reproducing the measurements
 
 The probe program, at nesting depth `d`:
@@ -580,10 +760,12 @@ cargo test -p rholang-runtime --features "rhocalc-runtime lambda-runtime calcula
 |---|---|---|
 | instruments + baseline | ✅ | 48,392 B/level; `D_max` 169 (main) / 132 (default) |
 | threshold reconciliation | ✅ | §2.1 |
-| SCC enumeration | ✅ | §4.1 — 19 members |
+| SCC enumeration | ✅ | §4.1 — 19 members; **re-derived 87** after M-1 — §4.1.1, method §4.1.2 |
 | M-1 per-arm split | ✅ landed | debug 15,132 B/level (3.20×); release 7,266 (1.07×) — §5.1 |
-| M-2 explicit-stack driver | ☐ outstanding | — |
-| M-3/M-4 `collect_proc_alternatives`, ambiguity-nesting axis | ☐ outstanding | — |
+| M-2 explicit-stack driver | ✅ landed `3c0c3585` | lowering **0 B/level**, both profiles — §9.2 |
+| M-3/M-4 `collect_proc_alternatives`, ambiguity-nesting axis | ✅ | §8.3 — bounded by 2, no axis |
+| M-8 the residue (`par_drop`, `ast_drop`, `render`, static falsity) | ☐ outstanding | §9.4 — each has a gate subject and a number |
+| M-9 the debug binary's unattributed ~9,400 B/level | ☐ open question | §9.5 |
 | M-5 gate | ✅ landed | tripwire + width axis green |
 | M-6 parser probe | ✅ | depth 1,408 B/level (asymptotic); width 0 B/sibling — §6 |
 | M-7 run-sheet prefixes | ✅ landed | 13 demos green at the default stack |
