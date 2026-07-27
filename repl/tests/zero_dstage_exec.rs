@@ -433,9 +433,18 @@ fn a_s4_calculator_call_par_does_not_embed_the_result_literal() {
         Ok(RhoFoldDataflowDisposition::Run(invocation)) => invocation,
         other => panic!("the raw arithmetic tree must lower to a Run dataflow, got {other:?}"),
     };
-    assert!(par_bytes_contain(&invocation.call, &gint_par_needle(2)), "operand 2 rides the call");
-    assert!(par_bytes_contain(&invocation.call, &gint_par_needle(3)), "operand 3 rides the call");
-    assert!(par_bytes_contain(&invocation.call, &gint_par_needle(4)), "operand 4 rides the call");
+    assert!(
+        par_bytes_contain(&invocation.call, &gint_par_needle(2)),
+        "operand 2 rides the call"
+    );
+    assert!(
+        par_bytes_contain(&invocation.call, &gint_par_needle(3)),
+        "operand 3 rides the call"
+    );
+    assert!(
+        par_bytes_contain(&invocation.call, &gint_par_needle(4)),
+        "operand 4 rides the call"
+    );
     assert!(
         !par_bytes_contain(&invocation.call, &gint_par_needle(14)),
         "A-S4: no host-pre-computed value may ride the injected call Par"

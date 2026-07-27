@@ -54,7 +54,10 @@ fn dovetail_era_nf_display(language: &dyn Language, source: &str) -> String {
         );
     };
     let record = &dovetail.terms[*root];
-    record.source_display.clone().unwrap_or_else(|| record.op_display.clone())
+    record
+        .source_display
+        .clone()
+        .unwrap_or_else(|| record.op_display.clone())
 }
 
 /// The golden corpus (the A-S5.6 task list): Lambda — single β, a 4-chain, an
@@ -72,11 +75,7 @@ fn golden_corpus() -> Vec<(&'static str, &'static str, &'static str)> {
         ("Lambda", "normal form", "lam a. lam b. a"),
         ("Ambient", "open", "{open(n, a[{0}]) | n[{b[{0}]}]}"),
         ("Ambient", "in", "{n[{in(m, 0)}] | m[{c[{0}]}]}"),
-        (
-            "Ambient",
-            "redeclared 3-element out",
-            "m[{n[{out(m, 0)}] | a[{0}] | b[{0}]}]",
-        ),
+        ("Ambient", "redeclared 3-element out", "m[{n[{out(m, 0)}] | a[{0}] | b[{0}]}]"),
         ("Ambient", "singleton out", "m[{n[{out(m, 0)}]}]"),
         ("Ambient", "2-step cascade", "{n[{in(m, 0)}] | m[{open(n, c[{0}])}]}"),
     ]
@@ -241,7 +240,9 @@ fn lambda_flipped_exec_nfs_are_alpha_equal_to_the_dovetail_era_nfs() {
         // The Dovetail-era golden TERM (the live fixture-capture path). Every parse in
         // this test is the cache-preserving `parse_term_for_env` (see
         // `flipped_exec_surface`) so free-variable identities are shared by name.
-        let subject = language.parse_term_for_env(source).expect("the subject parses");
+        let subject = language
+            .parse_term_for_env(source)
+            .expect("the subject parses");
         let dovetail_nf = mettail_languages::lambda::LambdaLanguage::dovetail_normal_term(
             subject.as_ref(),
             64,
@@ -288,16 +289,14 @@ fn ambient_flipped_exec_nfs_are_alpha_equal_to_the_declared_cg_nfs() {
     use mettail_languages::ambient::{AmbientTerm, AmbientTermInner};
     mettail_runtime::clear_var_cache();
     let language = ambient_backed().expect("the flipped Ambient wrapper installs");
-    let ambient_proc = |term: &dyn mettail_runtime::Term| {
-        match &term
-            .as_any()
-            .downcast_ref::<AmbientTerm>()
-            .expect("an AmbientTerm")
-            .0
-        {
-            AmbientTermInner::Proc(proc) => proc.clone(),
-            other => panic!("the golden term is a Proc, got {other:?}"),
-        }
+    let ambient_proc = |term: &dyn mettail_runtime::Term| match &term
+        .as_any()
+        .downcast_ref::<AmbientTerm>()
+        .expect("an AmbientTerm")
+        .0
+    {
+        AmbientTermInner::Proc(proc) => proc.clone(),
+        other => panic!("the golden term is a Proc, got {other:?}"),
     };
     for (language_name, label, source) in golden_corpus() {
         if language_name != "Ambient" {
@@ -386,7 +385,8 @@ fn f1_subject_dereflected_nf_never_recaptures_the_free_variable() {
     };
     let free = BoundTerm::free_vars(proc);
     assert!(
-        free.iter().any(|var| var.pretty_name.as_deref() == Some("x")),
+        free.iter()
+            .any(|var| var.pretty_name.as_deref() == Some("x")),
         "the residual free `x` survives FREE in the de-reflected NF (never captured by \
          the generated binder name): {surface}"
     );
