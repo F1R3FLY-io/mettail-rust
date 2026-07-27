@@ -642,11 +642,18 @@ fn generate_display_visit_helper(
                     | crate::gen::native::NativeType::UInt128
                     | crate::gen::native::NativeType::Usize
             );
+            let category_has_unary_minus = category_has_unary_minus_rule(language, category);
             let mandatory_literal_tail = language
                 .token_defs
                 .iter()
                 .find(|td| td.from_literals && td.category.as_ref().is_some_and(|c| c == category))
-                .and_then(|td| mandatory_literal_tail_of_pattern(&td.pattern, payload_is_signed));
+                .and_then(|td| {
+                    mandatory_literal_tail_of_pattern(
+                        &td.pattern,
+                        payload_is_signed,
+                        category_has_unary_minus,
+                    )
+                });
             variant_arms.push(generate_engine_auto_literal_arm(
                 category,
                 native_type,
@@ -3587,12 +3594,13 @@ fn extract_map_value_ident(native_type: &syn::Type) -> Option<syn::Ident> {
 ///
 /// `mandatory_literal_tail` (divergence I / Stage C) is the literal suffix the
 /// category's declared `literals { }` pattern forces onto every word it accepts,
-/// if any — see [`mandatory_literal_tail_of_pattern`].
+/// if any — see [`mandatory_literal_tail_of_pattern`]. Its `composite_separator`
+/// carries the declared COMPOSITE form's separator when the pattern has one.
 fn generate_engine_auto_literal_arm(
     category: &syn::Ident,
     native_type: &syn::Type,
     collection_kind: Option<&mettail_ast::language::CollectionCategory>,
-    mandatory_literal_tail: Option<String>,
+    mandatory_literal_tail: Option<MandatoryTail>,
 ) -> TokenStream {
     let literal_label = generate_literal_label(native_type);
     let nt = crate::gen::native::NativeType::from_syn_type(native_type);
@@ -3839,7 +3847,7 @@ fn generate_engine_auto_literal_arm(
                 }
             },
         }
-    } else if let Some(tail) = mandatory_literal_tail {
+    } else if let Some(MandatoryTail { tail, composite_separator }) = mandatory_literal_tail {
         // ── Divergence I / Stage C (2026-07-25): MANDATORY LITERAL TAIL ──────────
         //
         // A `literals { }` pattern whose language forces every accepted word to end
@@ -3858,10 +3866,50 @@ fn generate_engine_auto_literal_arm(
         // The tail is DERIVED from the declared pattern (see
         // [`mandatory_literal_tail_of_pattern`]), never hardcoded per language, so any
         // grammar that declares a suffix-terminated literal category gets it.
-        quote! {
-            #category::#literal_label(v) => {
-                stack.push(DisplayTask::WriteString(format!(concat!("{}", #tail), v)));
-            }
+        //
+        // ── The COMPOSITE form (2026-07-27) ──────────────────────────────────────
+        //
+        // Appending the tail to the payload's WHOLE rendering is right only while that
+        // rendering is a single numeral. `CanonicalBigRat` renders `3/4` for a
+        // non-unit denominator, and `format!("{}r", v)` then yields `3/4r` — which is
+        // not a word of `(…)r(/(…)r)?` in either language that declares one:
+        //
+        //   Calculator  `3/4`   ⇒ IntToBigRat(DivInt 3 4)   ← INTEGER division, value 0
+        //   RhoCalc     `3/4r`  ⇒ parse error at BigRat
+        //
+        // The tail belongs to each COMPONENT of the composite, not to the rendering:
+        // `3r/4r`. The separator is the one the pattern's own optional group declares,
+        // so this is grammar-derived exactly as the tail is. When no composite is
+        // declared, `composite_separator` is `None` and the emitted arm is
+        // byte-identical to the append-once form above — `BigInt`'s `-7` ⇒ `-7n` and
+        // `UInt32`'s `4294967295` ⇒ `4294967295u32` do not move.
+        match composite_separator {
+            None => quote! {
+                #category::#literal_label(v) => {
+                    stack.push(DisplayTask::WriteString(format!(concat!("{}", #tail), v)));
+                }
+            },
+            Some(separator) => quote! {
+                #category::#literal_label(v) => {
+                    // The payload's own rendering, re-tailed component-wise. A rendering
+                    // with no separator has exactly one component, so the whole-value and
+                    // composite cases share this one path.
+                    let __rendered = format!("{}", v);
+                    let mut __out = std::string::String::with_capacity(
+                        __rendered.len() + #tail.len() * 2,
+                    );
+                    let mut __first = true;
+                    for __component in __rendered.split(#separator) {
+                        if !__first {
+                            __out.push_str(#separator);
+                        }
+                        __first = false;
+                        __out.push_str(__component);
+                        __out.push_str(#tail);
+                    }
+                    stack.push(DisplayTask::WriteString(__out));
+                }
+            },
         }
     } else {
         // Bare value display for all numeric types (matches main). Suffixes
@@ -3910,7 +3958,53 @@ fn generate_engine_auto_literal_arm(
 /// that case keeps Display total and byte-identical to its pre-Stage-C output for
 /// such categories; giving them a tail is a separate grammar change (their pattern
 /// would have to gain `-?`, as `BigInt`'s already has).
-fn mandatory_literal_tail_of_pattern(pattern: &str, payload_is_signed: bool) -> Option<String> {
+fn mandatory_literal_tail_of_pattern(
+    pattern: &str,
+    payload_is_signed: bool,
+    category_has_unary_minus: bool,
+) -> Option<MandatoryTail> {
+    // ── The OPTIONAL-REPEAT form (2026-07-27) ───────────────────────────────────
+    //
+    // A pattern may end in a `?`-quantified group — Calculator's `BigRat`,
+    // `(…)r(/(…)r)?`, whose optional half is the composite rational `3r/4r`. The
+    // backward scan below sees the `?` first and refuses, which is how that category
+    // ended up with NO tail at all and a `Display` that wrote `3/4` — a surface its
+    // own acceptor rejects and that `Int`'s acceptor takes instead, as INTEGER
+    // division (`3/4 ⇒ 0`). See [`composite_repeat_of_optional_group`].
+    if let Some(mandatory) =
+        composite_repeat_of_optional_group(pattern, payload_is_signed, category_has_unary_minus)
+    {
+        return Some(mandatory);
+    }
+    let tail = mandatory_literal_tail_run(pattern)?;
+    if payload_is_signed && !pattern.starts_with('-') && !category_has_unary_minus {
+        // The pattern cannot spell a negative value as one token, and the category has
+        // no unary-minus rule to read a detached sign either; see above.
+        return None;
+    }
+    Some(MandatoryTail { tail, composite_separator: None })
+}
+
+/// A category's mandatory literal tail, plus the separator of its declared COMPOSITE
+/// form when it has one.
+///
+/// `composite_separator` is `Some(sep)` exactly when the declared pattern ends in an
+/// optional group that repeats the same tail after `sep` — i.e. the payload's own
+/// `Display` may render as `A<sep>B`, and the tail then belongs to **each** component
+/// rather than to the rendering as a whole. `None` restores the historical
+/// append-once behaviour byte-for-byte.
+#[derive(Debug, Clone)]
+struct MandatoryTail {
+    tail: String,
+    composite_separator: Option<String>,
+}
+
+/// The trailing run of unquantified literal characters of `pattern`, or `None`.
+///
+/// Extracted from [`mandatory_literal_tail_of_pattern`] so the optional-repeat case can
+/// re-use it on a pattern PREFIX. The stop conditions are unchanged and are documented
+/// on the caller.
+fn mandatory_literal_tail_run(pattern: &str) -> Option<String> {
     let bytes = pattern.as_bytes();
     let mut i = bytes.len();
     while i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
@@ -3925,11 +4019,109 @@ fn mandatory_literal_tail_of_pattern(pattern: &str, payload_is_signed: bool) -> 
         b'|' | b'\\' => return None,
         _ => {},
     }
-    if payload_is_signed && !pattern.starts_with('-') {
-        // The pattern cannot spell a negative value as one token; see above.
+    Some(pattern[i..].to_string())
+}
+
+/// Recognise `…<prefix><tail>(<sep>…<tail>)?` — a pattern whose last element is an
+/// OPTIONAL group repeating the prefix's own tail after a fixed literal separator.
+///
+/// The recognition is deliberately conservative and each condition is a proof
+/// obligation, not a convenience:
+///
+/// 1. the pattern ends in `)?`, and its `(` is found by a BALANCED backward scan
+///    (so a `?` inside the group cannot be mistaken for the quantifier);
+/// 2. the PREFIX before the group has a mandatory tail `T` — this is what every word
+///    ends with when the optional group is ABSENT;
+/// 3. the group's body ALSO ends with `T` — without this, a word WITH the group would
+///    not end in `T` and `T` would not be mandatory at all;
+/// 4. the group's body begins with a run of plain literal characters, which is the
+///    separator between the two components.
+///
+/// The sign side condition of the caller applies here too, with the same relaxation:
+/// a pattern that cannot spell a leading `-` is still usable when the CATEGORY has a
+/// unary-minus rule to read the detached sign (Calculator's
+/// `NegBigRat . a:BigRat |- "-" a : BigRat`), because then `-1r/2r` is read as
+/// `NegBigRat(RatLit 1/2)` — a term of the same denotation whose own Display is that
+/// same string, so `Display` stays total AND lands inside the language.
+fn composite_repeat_of_optional_group(
+    pattern: &str,
+    payload_is_signed: bool,
+    category_has_unary_minus: bool,
+) -> Option<MandatoryTail> {
+    let without_quantifier = pattern.strip_suffix(")?")?;
+    // Balanced backward scan for the `(` that opens the final group. `depth` counts
+    // the closers seen but not yet matched, starting at 1 for the `)` just stripped.
+    let bytes = without_quantifier.as_bytes();
+    let mut depth = 1usize;
+    let mut open = None;
+    for i in (0..bytes.len()).rev() {
+        match bytes[i] {
+            b')' if i == 0 || bytes[i - 1] != b'\\' => depth += 1,
+            b'(' if i == 0 || bytes[i - 1] != b'\\' => {
+                depth -= 1;
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+            },
+            _ => {},
+        }
+    }
+    let open = open?;
+    let prefix = &without_quantifier[..open];
+    let body = &without_quantifier[open + 1..];
+
+    let tail = mandatory_literal_tail_run(prefix)?;
+    if !body.ends_with(&tail) {
+        // A word carrying the optional group would not end in `tail`.
         return None;
     }
-    Some(pattern[i..].to_string())
+    let separator: String = body.chars().take_while(|c| !is_regex_metacharacter(*c)).collect();
+    if separator.is_empty() {
+        return None;
+    }
+    if payload_is_signed && !pattern.starts_with('-') && !category_has_unary_minus {
+        return None;
+    }
+    Some(MandatoryTail { tail, composite_separator: Some(separator) })
+}
+
+/// Whether `c` carries regex meaning rather than standing for itself. Used only to
+/// bound the separator run of a composite group, so it errs toward stopping early.
+fn is_regex_metacharacter(c: char) -> bool {
+    matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | '|' | '?' | '*' | '+' | '.' | '\\' | '^' | '$')
+}
+
+/// Whether `category` has a unary-minus rule over ITSELF — `"-" a : Cat` for a single
+/// parameter `a : Cat`.
+///
+/// This is the predicate the sign side condition of
+/// [`mandatory_literal_tail_of_pattern`] always MEANT: its comment refused a tail
+/// because those grammars had "no unary-minus rule to read at the category", but it
+/// tested the PATTERN for a `-?` instead of testing the grammar for the rule. Where the
+/// rule exists, a detached sign is readable and the tail is safe.
+fn category_has_unary_minus_rule(language: &LanguageDef, category: &syn::Ident) -> bool {
+    language.terms.iter().any(|rule| {
+        if &rule.category != category {
+            return false;
+        }
+        let Some(pattern) = rule.syntax_pattern.as_ref() else {
+            return false;
+        };
+        let [SyntaxExpr::Literal(sign), SyntaxExpr::Param(param)] = pattern.as_slice() else {
+            return false;
+        };
+        if sign != "-" {
+            return false;
+        }
+        rule.term_context.as_ref().is_some_and(|params| {
+            matches!(
+                params.as_slice(),
+                [TermParam::Simple { name, ty: TypeExpr::Base(base) }]
+                    if name == param && base == category
+            )
+        })
+    })
 }
 
 // =============================================================================

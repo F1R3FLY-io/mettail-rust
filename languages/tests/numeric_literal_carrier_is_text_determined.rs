@@ -93,13 +93,16 @@
 //! election is context-free" — the election is still global, and that is correct. What
 //! the fix restores is that its freedom is *unobservable in the token stream*.
 //!
-//! A SECOND, distinct literal asymmetry — calculator's `BigRat` literal `Display` drops
-//! the `r` its pattern makes mandatory — is the mirror of the one fixed here (a `Display`
-//! narrower than its acceptor, rather than an acceptor wider than its `Display`). It is
-//! measured and bounded by [`bigrat_literal_display_drops_its_declared_r_tail`], which
-//! also records why it cannot produce THIS failure (measured from `display(t)`, where the
-//! property lives, the surface is a fixpoint from the first parse) and why repairing it is
-//! a separate change with its own golden churn.
+//! A SECOND, distinct literal asymmetry — calculator's `BigRat` literal `Display` DROPPED
+//! the `r` its pattern makes mandatory — is the MIRROR of the one fixed here: a `Display`
+//! narrower than its acceptor, rather than an acceptor wider than its `Display`. It was
+//! closed on the same day and is pinned by
+//! [`bigrat_literal_display_writes_its_declared_r_tail`], which also records that its
+//! consequence was a wrong NUMBER, not a wrong spelling: `RatLit 3/4` displayed `3/4`,
+//! which `Int` reads as integer division, value 0.
+//!
+//! The sweep that proves there is no THIRD instance — in either direction, in any
+//! language — is `languages/tests/literal_domain_agreement.rs`.
 //!
 //! # Non-vacuity
 //!
@@ -379,8 +382,11 @@ fn numeral_carrier_is_a_function_of_the_text() {
 ///     "0x1F + 1"        ⇒ "31 + 1"           radix normalised to decimal (still Int)
 ///     "3000000000 + 1"  ⇒ "3000000000n + 1"  BigInt's declared unsuffixed-overflow
 ///                                            superset written back with its `n` tail
-///     "3r/4r + 1"       ⇒ "3/4 + 1"          composite rational (see the residual below)
 /// ```
+///
+/// (Before 2026-07-27 `"3r/4r + 1"` normalised to `"3/4 + 1"` and belonged in that table
+/// too. It no longer moves at all: the rational keeps its declared spelling —
+/// [`bigrat_literal_display_writes_its_declared_r_tail`].)
 ///
 /// Canonicalising first is also the exact domain the round-trip property lives on: it
 /// never hands `parse` anything other than a string `display` produced. Asserting over raw
@@ -507,8 +513,15 @@ fn the_seed_terms_surface_stops_moving_after_one_parse() {
     mettail_runtime::clear_var_cache();
     let term = seed_term();
     let s0 = format!("{term}");
+    // ★ GOLDEN RE-DERIVED 2026-07-27. Was
+    //   "(1501459918 + 1779999505) * 280584074 * 1388007349p0 bitand -260592200p0"
+    // — the three `RatLit`s wrote NO `r`, because calculator's `BigRat` Display omitted
+    // the tail its own pattern makes mandatory (the residual this file used to pin as a
+    // measured fact). With that closed, each rational carries its declared `r`. Only the
+    // three rational spellings moved; the two `p0` fixed-point literals and the whole
+    // operator/grouping structure are unchanged.
     assert_eq!(
-        s0, "(1501459918 + 1779999505) * 280584074 * 1388007349p0 bitand -260592200p0",
+        s0, "(1501459918r + 1779999505r) * 280584074r * 1388007349p0 bitand -260592200p0",
         "the seed's own surface moved; the rest of this test would be measuring something else"
     );
 
@@ -572,46 +585,49 @@ fn the_numeric_towers_surface_stops_moving_after_one_parse() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// THE RESIDUAL — characterised, not excused
+// THE MIRROR DEFECT — closed 2026-07-27
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// ⚠ **A SECOND, DISTINCT literal asymmetry — pinned here, deliberately NOT fixed here.**
-///
-/// It is the MIRROR of the defect this file guards:
+/// ★ **The MIRROR of the defect this file guards, and it is now CLOSED.**
 ///
 /// | | acceptor | `Display` | symptom |
 /// |---|---|---|---|
-/// | `UInt32` (fixed 2026-07-27) | wider than the pattern — took a bare numeral | writes the declared `u32` tail | a bare numeral came back re-spelled ⇒ **no fixpoint** |
-/// | `BigRat` (pinned below) | exactly the declared `…r` domain | NARROWER — drops the `r` | a rational literal comes back as an `Int` injection ⇒ **fixpoint after one layer** |
+/// | `UInt32` | was WIDER — took a bare numeral | writes the declared `u32` tail | a bare numeral came back re-spelled ⇒ **no fixpoint** |
+/// | `BigRat` | exactly the declared `…r(/…r)?` domain | was NARROWER — dropped the `r` | `RatLit 3/4` displayed `3/4`, which `Int` reads as **integer division ⇒ the VALUE 0** |
 ///
-/// The generated arm is `format!("{}", v)` where rhocalc's is `format!("{}r", v)`; the
-/// difference is that calculator's `BigRat` pattern ends in the OPTIONAL composite group
-/// `(/…r)?`, so no mandatory tail is derived from it.
+/// Both are one invariant — a category's `eval`, its `pattern` and its `Display` must
+/// describe ONE language — violated in opposite directions.
 ///
-/// **Why it is not this fix's business.** The consequence is bounded and it is bounded on
-/// the RIGHT side of the round-trip property. The property measures from `display(t)`, and
-/// from there the drop settles immediately:
+/// ## What was wrong, and why it was worse than a spelling
+///
+/// `Display` wrote `format!("{}", v)`: no tail at all. Two independent reasons, both in
+/// `macros/src/gen/syntax/display.rs`, and BOTH had to be fixed:
+///
+/// 1. `mandatory_literal_tail_of_pattern`'s backward literal scan saw the trailing `?` of
+///    the optional composite group `(/(…)r)?` and refused. Now
+///    `composite_repeat_of_optional_group` strips a `?`-quantified balanced group and
+///    proves the tail is still mandatory by requiring the group's body to end with it.
+/// 2. the sign side condition refused any tail for a signed payload whose pattern has no
+///    `-?`, on the stated grounds that the grammar had "no unary-minus rule to read at
+///    the category" — which it never checked. Calculator HAS
+///    `NegBigRat . a:BigRat |- "-" a : BigRat`, so `category_has_unary_minus_rule` now
+///    tests the grammar instead of assuming.
+///
+/// And the tail could not simply be appended: `CanonicalBigRat` renders `3/4`, so
+/// `format!("{}r", v)` would give `3/4r`, which is not a word of the pattern either. The
+/// tail belongs to each COMPONENT of the composite — `3r/4r` — with the separator taken
+/// from the pattern's own optional group.
+///
+/// The consequence of the old behaviour was not cosmetic. `3/4` is not a rational at
+/// `Int`; it is integer division:
 ///
 /// ```text
-///     t = RatLit 7/1     display(t) = "7"      ⇒ "7"       ⇒ "7"        fixpoint at s0
-///     t = RatLit 3/4     display(t) = "3/4"    ⇒ "3 / 4"   ⇒ "3 / 4"    fixpoint at s1
+///     RatLit 3/4  ─display→  "3/4"  ─parse→  IntToBigRat(DivInt 3 4)  ─eval→  0
 /// ```
 ///
-/// A user-written `"3r/4r"` takes one step more (`"3r/4r"` ⇒ `"3/4"` ⇒ `"3 / 4"`), but no
-/// `Display` ever emits that spelling, so it is outside the property's domain. The
-/// `UInt32` defect was different in kind: there the surface kept moving *after* the first
-/// parse, which is what the property forbids. The two must not be conflated.
-///
-/// Repairing this one means teaching `Display` the composite spelling (`3r/4r`, not
-/// `3/4r` — which is what a naive mandatory-tail derivation would emit, and which does not
-/// re-lex), i.e. a `CanonicalBigRat`-aware arm rather than a suffix, and it moves every
-/// calculator `BigRat`-literal golden in the tree.
-///
-/// This test exists so the residual is a MEASURED, NAMED fact with a failing message
-/// attached rather than a silent one: the day someone repairs it, this cell fails and
-/// says exactly what changed and where the reasoning lives.
+/// so a displayed rational, read back, was a DIFFERENT NUMBER.
 #[test]
-fn bigrat_literal_display_drops_its_declared_r_tail() {
+fn bigrat_literal_display_writes_its_declared_r_tail() {
     fn rat_lit(numer: i64, denom: i64) -> BigRat {
         BigRat::RatLit(
             mettail_runtime::CanonicalBigRat::try_from_nd(numer.into(), denom.into())
@@ -619,42 +635,58 @@ fn bigrat_literal_display_drops_its_declared_r_tail() {
         )
     }
 
-    assert_eq!(
-        format!("{}", rat_lit(7, 1)),
-        "7",
-        "MEASURED: calculator's BigRat literal Display omits the `r` its pattern declares. \
-         If this now reads \"7r\", the residual described above has been repaired — update \
-         this cell and the note in \
-         `no_reading_of_a_canonical_numeric_surface_respells_a_numeral`."
-    );
+    // The whole and composite spellings the pattern `(…)r(/(…)r)?` declares.
+    assert_eq!(format!("{}", rat_lit(0, 1)), "0r");
+    assert_eq!(format!("{}", rat_lit(7, 1)), "7r");
     assert_eq!(
         format!("{}", rat_lit(3, 4)),
-        "3/4",
-        "MEASURED: the composite spelling is written `3/4`, not the declared `3r/4r`"
+        "3r/4r",
+        "the tail belongs to each COMPONENT of the composite, not to the rendering"
     );
+    // The sign is detached — the pattern has no `-?` — and `NegBigRat` reads it.
+    assert_eq!(format!("{}", rat_lit(-7, 1)), "-7r");
+    assert_eq!(format!("{}", rat_lit(-1, 2)), "-1r/2r");
 
-    // The acceptor, by contrast, demands the tail — which is what makes the pair asymmetric.
-    assert!(
-        matches!(BigRat::parse("7r"), Ok(BigRat::RatLit(_))),
-        "the `…r` spelling must still be the BigRat literal"
-    );
+    // Acceptor and Display now describe the same language, in both directions.
+    for (numer, denom) in [(0i64, 1i64), (7, 1), (3, 4), (22, 7)] {
+        mettail_runtime::clear_var_cache();
+        let lit = rat_lit(numer, denom);
+        let surface = format!("{lit}");
+        assert_eq!(
+            format!("{:?}", BigRat::parse(&surface).expect("its own surface must parse")),
+            format!("{lit:?}"),
+            "the rational must be recovered from its own display ({surface:?})"
+        );
+    }
     assert!(
         !matches!(BigRat::parse("7"), Ok(BigRat::RatLit(_))),
-        "a bare numeral must NOT be a BigRat literal; it reaches BigRat by injection"
+        "a bare numeral must still NOT be a BigRat literal; it reaches BigRat by injection"
     );
 
-    // …and the consequence is bounded ON THE PROPERTY'S DOMAIN: measured from `display(t)`,
-    // the surface is a fixpoint from the first parse onward, for both spellings.
-    for term in [rat_lit(7, 1), rat_lit(3, 4), rat_lit(-1, 2)] {
+    // ★ THE VALUE, not the spelling. Before the fix this round-tripped to zero.
+    let three_quarters = rat_lit(3, 4);
+    let recovered = BigRat::parse(&format!("{three_quarters}")).expect("must parse");
+    assert_eq!(
+        format!("{recovered:?}"),
+        "RatLit(Ratio { numer: 3, denom: 4 })",
+        "a displayed rational must read back as the SAME NUMBER, not as integer division"
+    );
+    assert!(
+        !format!("{recovered:?}").contains("DivInt"),
+        "the composite must not be read as Int division: {recovered:?}"
+    );
+
+    // Negatives round-trip through the declared unary-minus rule: a different term, the
+    // same denotation, and a surface that is a fixpoint from the first parse.
+    for term in [rat_lit(-7, 1), rat_lit(-1, 2)] {
         mettail_runtime::clear_var_cache();
-        let trajectory = display_parse_trajectory(&format!("{term}"));
-        assert_eq!(
-            trajectory[1],
-            trajectory[2],
-            "the `r`-drop must not keep moving the surface after the first parse — that is \
-             the property `UInt32` broke. Term {term:?}, trajectory:\n{}",
-            show(&trajectory),
+        let surface = format!("{term}");
+        let back = BigRat::parse(&surface).expect("the negative rational must parse");
+        assert!(
+            format!("{back:?}").starts_with("NegBigRat(RatLit("),
+            "the detached sign must be read by `NegBigRat`, keeping the BigRat carrier: {back:?}"
         );
+        assert_eq!(format!("{back}"), surface, "…and re-display to the same surface");
     }
 }
 
@@ -712,12 +744,19 @@ fn negative_control_uint32_still_has_a_literal_surface() {
 ///
 /// Every trajectory above asserts `s1 == s2`, which a harness that returned a constant
 /// vector would satisfy. This control feeds it a surface that genuinely moves at the
-/// FIRST step — a `BigRat` literal, whose `r` is dropped by Display (see
-/// [`bigrat_literal_display_drops_its_declared_r_tail`]) — and asserts the harness reports
-/// `s0 != s1`. Motion at s0→s1 is legal; it is motion at s1→s2 that the property forbids.
+/// FIRST step and asserts the harness reports `s0 != s1`. Motion at s0→s1 is legal; it is
+/// motion at s1→s2 that the property forbids.
+///
+/// ★ MOVER RE-DERIVED 2026-07-27. This used to be `"7r + 1"`, which moved because
+/// calculator's `BigRat` Display dropped the `r` its pattern declares. That defect is
+/// closed ([`bigrat_literal_display_writes_its_declared_r_tail`]) and `"7r + 1"` is now a
+/// fixpoint at s0, which would make this control prove nothing. The replacement is a
+/// RADIX spelling: `0x1F` is a legal `Int` word that `Display` does not choose, so it
+/// normalises to decimal on the first parse — a canonicalisation, which is the same class
+/// of legal first-step motion and one that no bug fix will remove.
 #[test]
 fn negative_control_trajectory_detects_a_moving_surface() {
-    let trajectory = display_parse_trajectory("7r + 1");
+    let trajectory = display_parse_trajectory("0x1F + 1");
     assert_eq!(trajectory.len(), TRAJECTORY_STEPS + 1, "the harness must walk every step");
     assert_ne!(
         trajectory[0],
