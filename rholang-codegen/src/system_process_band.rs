@@ -149,10 +149,33 @@ pub const NATIVE_HANDLER_BAND: SystemProcessBand = SystemProcessBand {
     channel_tag: MTL_NATIVE_CHANNEL_TAG,
 };
 
+/// The `[*]` / `[n]` LOOKAHEAD band — the request server's two system processes
+/// (`^spec-all`, `^spec-n`; `rholang-runtime/src/speculation/server.rs`).
+///
+/// ⚠ This band supplies the `body_ref` only. A lookahead request is a send on a **quoted
+/// string** channel (`@"^spec-all"`), because that is what the surface lowering emits and a
+/// `Definition`'s `fixed_channel` has to be the channel the program actually sends on — so
+/// [`SystemProcessBand::channel`] is deliberately NOT used here. The band's job is the one it
+/// is needed for: a deterministic `body_ref` that provably cannot collide with f1r3node's own
+/// (`0..=36`, `101..=108`), with the held-fold band, or with the native-handler band.
+///
+/// The `index` field distinguishes the two request channels (0 = `[*]`, 1 = `[n]`) and the
+/// "fingerprint" input is the ABI version string rather than a language fingerprint, because
+/// the lookahead wire is fixed for the whole tree rather than scoped to one language.
+pub const LOOKAHEAD_BAND: SystemProcessBand = SystemProcessBand {
+    name: "lookahead",
+    band_id: 3,
+    channel_tag: MTL_LOOKAHEAD_CHANNEL_TAG,
+};
+
 /// Leading byte of every held-fold contract channel id.
 pub const MTL_FOLD_CHANNEL_TAG: u8 = 0xF0;
 /// Leading byte of every native-handler contract channel id.
 pub const MTL_NATIVE_CHANNEL_TAG: u8 = 0xF1;
+/// Leading byte reserved for the lookahead band's channel ids. Unused by the request server
+/// itself (see [`LOOKAHEAD_BAND`]) and reserved so that no later band can claim it and make
+/// two unrelated allocations equal.
+pub const MTL_LOOKAHEAD_CHANNEL_TAG: u8 = 0xF2;
 
 impl SystemProcessBand {
     /// The unforgeable contract channel for `(index, fingerprint)` in this band:
@@ -278,7 +301,7 @@ mod tests {
     /// longer produce the same channel or the same `body_ref` in either band.
     #[test]
     fn index_zero_in_two_languages_no_longer_collides() {
-        for band in [HELD_FOLD_BAND, NATIVE_HANDLER_BAND] {
+        for band in [HELD_FOLD_BAND, NATIVE_HANDLER_BAND, LOOKAHEAD_BAND] {
             assert_ne!(
                 band.channel(0, FP_A),
                 band.channel(0, FP_B),
@@ -317,22 +340,29 @@ mod tests {
         );
     }
 
-    /// The two bands are disjoint from each other and from f1r3node's own `body_ref`s, and every
-    /// allocation is a positive `i64` (the sign bit is structurally clear).
+    /// The three bands are disjoint from each other and from f1r3node's own `body_ref`s, and
+    /// every allocation is a positive `i64` (the sign bit is structurally clear).
     #[test]
     fn the_bands_are_disjoint_and_positive() {
         let fold = HELD_FOLD_BAND.body_ref_range();
         let native = NATIVE_HANDLER_BAND.body_ref_range();
-        assert!(fold.end() < native.start(), "the two bands must not overlap");
+        let lookahead = LOOKAHEAD_BAND.body_ref_range();
+        assert!(fold.end() < native.start(), "the fold and native bands must not overlap");
+        assert!(
+            native.end() < lookahead.start(),
+            "the native and lookahead bands must not overlap"
+        );
         assert!(
             *fold.start() > 108,
-            "both bands sit above f1r3node's std (0-36) and test-framework (101-108) body_refs"
+            "every band sits above f1r3node's std (0-36) and test-framework (101-108) body_refs"
         );
         for fingerprint in [FP_A, FP_B, "", "not-a-fingerprint"] {
             for index in [0u8, 1, 42, u8::MAX] {
-                for (band, range) in
-                    [(HELD_FOLD_BAND, &fold), (NATIVE_HANDLER_BAND, &native)]
-                {
+                for (band, range) in [
+                    (HELD_FOLD_BAND, &fold),
+                    (NATIVE_HANDLER_BAND, &native),
+                    (LOOKAHEAD_BAND, &lookahead),
+                ] {
                     let body_ref = band.body_ref(index, fingerprint);
                     assert!(body_ref > 0, "{}: body_ref must be positive", band.name);
                     assert!(

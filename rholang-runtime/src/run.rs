@@ -1641,6 +1641,54 @@ pub async fn run_normalized_par_for_oracle_and_read_runtime_value_channels(
     Ok(result)
 }
 
+/// **Run `program` with the `[*]` / `[n]` request server installed**, and read back every
+/// requested quoted channel VERBATIM from the one quiescent store.
+///
+/// This is the entry a lookahead-bearing program needs, and the only one: without the two
+/// `^spec-*` system processes a `[*]` request has nothing to consume it, so it rests and
+/// `crate::lookahead::unserved_requests` reports it. The reads are verbatim `Par`s because a
+/// speculative result is an arbitrary datum — a reflected foreign term, an `ESet` of
+/// `EList`s, a reified process — and every typed reader FILTERS, which would turn "the
+/// engine delivered something I cannot decode" into "the engine delivered nothing".
+///
+/// The ordering inside is forced and is the whole reason this is a function rather than two
+/// lines at each call site:
+///
+/// 1. build the `Definition`s (the runtime does not exist yet);
+/// 2. `create_rho_runtime` with them installed;
+/// 3. **bind the runtime's budget into the engine** — the handlers cannot fund a sandbox from
+///    a budget that did not exist when they were built;
+/// 4. inject, and run to rest.
+///
+/// Step 3 is not optional: an engine with no bound budget refuses every request typed, on
+/// `^spec-err`, rather than running an unfunded (silently empty) exploration.
+#[cfg(feature = "runtime-report")]
+pub async fn run_normalized_par_with_lookahead_engine(
+    program: &Par,
+    engine: &crate::speculation::server::LookaheadEngine,
+    out_channels: &[&str],
+) -> Result<HashMap<String, Vec<Par>>, String> {
+    use rholang::rust::interpreter::accounting::has_cost::HasCost;
+
+    let mut definitions = take_pending_fold_definitions();
+    definitions.extend(engine.definitions());
+    let mut runtime = build_runtime_with_definitions(definitions).await?;
+    // The budget is the RUNTIME's, and `RuntimeBudget` is a handle over shared atomics — so
+    // this clone observes `inj_on_runtime`'s later `set`, rather than a snapshot taken before
+    // the deploy was funded.
+    engine.bind_host(runtime.cost().clone());
+    inj_on_runtime(&mut runtime, program.clone()).await?;
+
+    let mut result = HashMap::with_capacity(out_channels.len());
+    for channel in out_channels {
+        result.insert(
+            (*channel).to_string(),
+            read_ground_from_runtime(&runtime, channel, par_verbatim).await,
+        );
+    }
+    Ok(result)
+}
+
 /// Build an in-memory `RhoRuntime`, inject normalized `program` for an
 /// oracle/debug test, and return every datum resting on each requested quoted
 /// channel VERBATIM, as the `Par` it is — from ONE execution.

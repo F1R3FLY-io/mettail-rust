@@ -115,6 +115,35 @@ pub const SPEC_TRUNCATED_CHANNEL: &str = "^spec-truncated";
 /// about a *branch*; this is about the *request*.
 pub const SPEC_ERR_CHANNEL: &str = "^spec-err";
 
+/// The FIPS's own three collections, as ONE datum: `[success, truncated, failure]`, each an
+/// `ESet` of `EList` entries `[step₀ … step_{k-1}, leaf]`
+/// ([`crate::speculation::delivery::SpeculationDelivery`]).
+///
+/// ★ This is the **other half** of the shape reconciliation, and it exists because the two
+/// readings answer different questions and neither subsumes the other:
+///
+/// | reading | where | leaf | the question it answers |
+/// |---|---|---|---|
+/// | the bare projected term | the send's own channel `x` | the guest's answer | *"what did `P` compute?"* — an ordinary FLT receive pattern matches it verbatim |
+/// | the trace-keyed per-branch datum | [`SPEC_SUCCESS_CHANNEL`] & co. | the projected term | *"which branch computed it, and how did it get there?"* |
+/// | the FIPS collection | this channel | the reified terminal **configuration** | *"what is the whole path set?"* — one value, keyed by trace, the FIPS's `success`/`failure` maps verbatim |
+///
+/// Delivering only the first would discard provenance; delivering only the third would force
+/// every consumer to destructure an `ESet` before it could read an answer. All three are
+/// published, from one exploration.
+pub const SPEC_DELIVERY_CHANNEL: &str = "^spec-delivery";
+
+/// ⚠ **Sandbox-internal, never host-visible.** The channel a guest's in-Rho quiescence driver
+/// is pointed at when the request server seeds it, and therefore the channel
+/// [`crate::speculation::service::LeafProjection::RestingOn`] reads a branch's answer off.
+///
+/// It is listed here, with the wire names, because it is a reserved name and reserved names
+/// that live in two places drift apart. It is *not* in [`SPEC_REPORT_CHANNELS`]: nothing ever
+/// rests on it in the host store — it exists only inside a speculative sandbox, where it is the
+/// address the guest's `^drive` publishes each branch's normal form to before the projection
+/// lifts it onto the reply channel.
+pub const SPEC_LEAF_CHANNEL: &str = "^spec-leaf";
+
 /// Every channel a lookahead request can rest on unanswered — the fail-closed check's input.
 pub const SPEC_REQUEST_CHANNELS: &[&str] = &[SPEC_ALL_CHANNEL, SPEC_N_CHANNEL];
 
@@ -124,6 +153,7 @@ pub const SPEC_REPORT_CHANNELS: &[&str] = &[
     SPEC_FAILURE_CHANNEL,
     SPEC_TRUNCATED_CHANNEL,
     SPEC_ERR_CHANNEL,
+    SPEC_DELIVERY_CHANNEL,
 ];
 
 // ════════════════════════════════════════════════════════════════════════════════════════════

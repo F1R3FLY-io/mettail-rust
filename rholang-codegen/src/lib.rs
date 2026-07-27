@@ -192,8 +192,8 @@ pub use native_handler::{
 };
 pub use system_process_band::{
     check_body_refs_pairwise_distinct, fingerprint_digest, BandAllocationError,
-    SystemProcessBand, HELD_FOLD_BAND, MTL_FOLD_CHANNEL_TAG, MTL_NATIVE_CHANNEL_TAG,
-    NATIVE_HANDLER_BAND,
+    SystemProcessBand, HELD_FOLD_BAND, LOOKAHEAD_BAND, MTL_FOLD_CHANNEL_TAG,
+    MTL_LOOKAHEAD_CHANNEL_TAG, MTL_NATIVE_CHANNEL_TAG, NATIVE_HANDLER_BAND,
 };
 pub use need::{
     admit_call_by_need_force, build_call_by_need_thunk_ast, build_call_by_need_thunk_ast_from_spec,

@@ -458,6 +458,27 @@ pub enum ErrorCode {
     NotFired = 5,
     /// The sandbox could not be built.
     Bootstrap = 6,
+    /// ★ The branch reached tuplespace quiescence, but the **guest's own
+    /// evaluator** refused the subject along it: the in-Rho quiescence driver
+    /// rested a typed diagnostic on its `^drive-err:{fingerprint}` channel
+    /// (an unrecognized driven head).
+    ///
+    /// Distinct from [`ErrorCode::Interpreter`], which is the *reducer*
+    /// refusing a term. Here the reducer was content — nothing raised, `E(S)`
+    /// simply emptied — and the branch nevertheless computed no answer. Without
+    /// this code such a branch would deliver an empty projection and be
+    /// indistinguishable from a branch that legitimately published nothing,
+    /// which is the silence the whole fail-closed design exists to prevent.
+    GuestEvaluatorRefused = 7,
+    /// ★ The branch reached tuplespace quiescence with the guest's evaluator
+    /// **out of per-path fuel**: the driver rested the stuck redex on its
+    /// `^drive-fuel:{fingerprint}` channel. Ω under `[*]` is this.
+    ///
+    /// Separate from [`ErrorCode::GuestEvaluatorRefused`] for the same reason
+    /// truncation is separate from failure: *"I could not reduce this"* and
+    /// *"I stopped before finishing"* are different facts and a consumer must
+    /// be able to tell them apart.
+    GuestEvaluatorExhausted = 8,
 }
 
 impl ErrorCode {
@@ -676,6 +697,54 @@ fn intersect_sleep(left: &SleepSet, right: &SleepSet) -> SleepSet {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// The metering mirror
+// ══════════════════════════════════════════════════════════════════════════
+
+/// **Charge `host` for `owed` committed COMMs.** The single implementation of
+/// the charge-back; [`Explorer::charge_host`] is this with `owed` read off its
+/// own sandbox.
+///
+/// ⚠ A budget unit is ONE COMM, not one unit of `Cost.value`:
+/// `MeteredMachine::reserve_comm(amount)` charges **one** regardless of `amount`
+/// (the `Cost` is the diagnostic weight that rides into the event log and the
+/// cost-trace digest). So charging back `k` COMMs is `k` *calls*, which is what
+/// this does — one call passing `owed` would charge 1.
+///
+/// It is a free function because the charge-back has two callers with different
+/// lifetimes: the [`Explorer`], which still holds its sandbox, and the request
+/// server ([`crate::speculation::server`]), which holds only the
+/// [`LookaheadResponse::consumed`](crate::speculation::service::LookaheadResponse::consumed)
+/// a finished `serve` handed back. Two call sites reimplementing "one
+/// `reserve_comm` per committed COMM" is exactly how a metering path drifts, so
+/// there is one.
+///
+/// Fails with `OutOfPhlogistonsError` on the call that exceeds the host's
+/// budget, exactly like any other over-budget program, and reports how many were
+/// charged before it did.
+///
+/// This owns no budget and defines no cost: `host` is f1r3node's own
+/// `RuntimeBudget` and `reserve_comm` is f1r3node's own charge point. Budgets
+/// are F1r3node's.
+pub fn charge_host_comms(
+    host: &RuntimeBudget,
+    owed: Cost,
+    weight: Cost,
+) -> Result<usize, (usize, InterpreterError)> {
+    let owed = owed.value.max(0) as usize;
+    let machine = MeteredMachine::new(host.clone());
+    for charged in 0..owed {
+        // `Cost` is not `Copy` (it carries its operation label), so each charge
+        // takes its own clone. The label is diagnostic and identical across the
+        // calls by design: the charge-back is one COMM per COMM the exploration
+        // committed, and they are all the same kind of event.
+        if let Err(error) = machine.reserve_comm(weight.clone()) {
+            return Err((charged, error));
+        }
+    }
+    Ok(owed)
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // The explorer
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -688,7 +757,15 @@ fn intersect_sleep(left: &SleepSet, right: &SleepSet) -> SleepSet {
 pub struct Explorer<'sandbox> {
     sandbox: &'sandbox SpeculativeSandbox,
     mode: TraceMode,
-    observer: Option<Box<dyn FnMut(&LevelReport) + 'sandbox>>,
+    // ★ `Send` is not decoration. An exploration is awaited from inside the `[*]`
+    // request server's system-process handler
+    // ([`crate::speculation::server`]), and f1r3node requires a system process's
+    // future to be `Send` — it is polled on a multi-threaded tokio runtime and
+    // may migrate between workers. A non-`Send` observer would make the whole
+    // `serve` future non-`Send` and the server unrepresentable. An observer that
+    // is only ever a progress print is `Send` in every existing caller anyway;
+    // requiring it makes that a type-checked fact rather than a coincidence.
+    observer: Option<Box<dyn FnMut(&LevelReport) + Send + 'sandbox>>,
 }
 
 /// One BFS level, as it completes — the search's own progress report.
@@ -746,8 +823,9 @@ impl<'sandbox> Explorer<'sandbox> {
         }
     }
 
-    /// Attach a per-level progress observer. See [`LevelReport`].
-    pub fn observing(mut self, observer: impl FnMut(&LevelReport) + 'sandbox) -> Self {
+    /// Attach a per-level progress observer. See [`LevelReport`], and the `Send` note on
+    /// [`Explorer`]'s `observer` field for why the bound is what it is.
+    pub fn observing(mut self, observer: impl FnMut(&LevelReport) + Send + 'sandbox) -> Self {
         self.observer = Some(Box::new(observer));
         self
     }
@@ -878,19 +956,7 @@ impl<'sandbox> Explorer<'sandbox> {
         host: &RuntimeBudget,
         weight: Cost,
     ) -> Result<usize, (usize, InterpreterError)> {
-        let owed = self.sandbox.consumed().value.max(0) as usize;
-        let machine = MeteredMachine::new(host.clone());
-        for charged in 0..owed {
-            // `Cost` is not `Copy` (it carries its operation label), so each
-            // charge takes its own clone. The label is diagnostic and identical
-            // across the calls by design: the charge-back is one COMM per COMM
-            // the exploration committed, and they are all the same kind of
-            // event.
-            if let Err(error) = machine.reserve_comm(weight.clone()) {
-                return Err((charged, error));
-            }
-        }
-        Ok(owed)
+        charge_host_comms(host, self.sandbox.consumed(), weight)
     }
 
     // ── the search itself ────────────────────────────────────────────────

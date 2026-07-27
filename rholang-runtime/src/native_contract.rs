@@ -62,7 +62,12 @@ use rholang::rust::interpreter::system_processes::Definition;
 /// string with `<String as prost::Message>`, so `String::decode` is its exact inverse. `None`
 /// for any `Par` that is not exactly one `GPrivate` unforgeable (mirrors `run.rs`'s
 /// `private_name_tag`, kept local so this module has no dependency on the observation decoder).
-fn private_name_tag(par: &Par) -> Option<String> {
+///
+/// `pub(crate)` because the `[*]` request server ([`crate::speculation::server`]) has to answer
+/// the same question this module's decoder asks — *"is this `Par` a reflected constructor term,
+/// and of WHICH language?"* — and a second hand-rolled tag reader is exactly the ABI drift
+/// `parse_reflected_tag` was consolidated to remove.
+pub(crate) fn private_name_tag(par: &Par) -> Option<String> {
     if !par.exprs.is_empty()
         || !par.sends.is_empty()
         || !par.receives.is_empty()

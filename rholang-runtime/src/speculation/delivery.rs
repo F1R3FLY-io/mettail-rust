@@ -118,6 +118,7 @@ use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 
 use super::search::{AbortedLeaf, Exploration, QuiescentLeaf, TruncatedLeaf};
 use super::{RendezvousName, SpeculativeState};
+use crate::lookahead::{SPEC_FAILURE_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL};
 
 // ══════════════════════════════════════════════════════════════════════════
 // Trace naming
@@ -385,8 +386,37 @@ pub struct SpeculationDelivery {
 impl SpeculationDelivery {
     /// The three collections in FIPS order, for a caller placing them on a
     /// channel.
+    ///
+    /// ⚠ This is a *positional* reading — `[success, truncated, failure]` — and
+    /// a caller that pairs it with channel names by position is one edit away
+    /// from publishing the failure set on the truncated channel. Use
+    /// [`on_report_channels`](Self::on_report_channels) when the pairing is what
+    /// is wanted; this stays because
+    /// [`SPEC_DELIVERY_CHANNEL`](crate::lookahead::SPEC_DELIVERY_CHANNEL)
+    /// publishes the three as one ordered datum, where position IS the shape.
     pub fn as_slice(&self) -> [&Par; 3] {
         [&self.success, &self.truncated, &self.failure]
+    }
+
+    /// **Each collection paired with the reserved channel it belongs on.**
+    ///
+    /// [`crate::lookahead`] owns the channel names; this module owns the values.
+    /// Naming the pairing here — in one place, from the constants themselves
+    /// rather than from a parallel spelling — is what stops the two from
+    /// drifting: a renamed channel is a compile-time edit in exactly one file,
+    /// and a reordered field cannot silently move a collection onto the wrong
+    /// wire.
+    ///
+    /// The order is [`SPEC_REPORT_CHANNELS`](crate::lookahead::SPEC_REPORT_CHANNELS)'s,
+    /// which is the order a transcript shows, NOT [`as_slice`](Self::as_slice)'s
+    /// FIPS order — and the fact that those two differ is precisely why the
+    /// pairing must not be positional.
+    pub fn on_report_channels(&self) -> [(&'static str, &Par); 3] {
+        [
+            (SPEC_SUCCESS_CHANNEL, &self.success),
+            (SPEC_FAILURE_CHANNEL, &self.failure),
+            (SPEC_TRUNCATED_CHANNEL, &self.truncated),
+        ]
     }
 }
 

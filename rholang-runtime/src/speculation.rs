@@ -285,6 +285,14 @@ pub mod delivery;
 /// search; the search names no channel.
 pub mod service;
 
+/// **Stage 3 — the REQUEST SERVER.** The system-process `Definition`s on
+/// `^spec-all` / `^spec-n` that consume a request out of a *running* program,
+/// call [`service::LookaheadService::serve`], and publish the results back into
+/// that same program — concurrently, so the collecting `for` fires in the same
+/// round. This is what makes `x!(P)[*]` an executable construct rather than a
+/// wire shape.
+pub mod server;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
