@@ -86,6 +86,46 @@ fn transcript(output: &Output) -> String {
 ///
 /// The comment header explains what the answers are, so a naive grep over the whole file would
 /// find "5" and "6" in prose. The claim is about the program.
+/// The run sheet's **shell lines** — every non-empty line inside a fenced code block, trimmed.
+///
+/// This is the single definition of *"a command the sheet tells a presenter to type"*, and both
+/// run-sheet gates are built on it. They previously used two different notions — one matched any
+/// line containing `target/debug/rhocalc`, the other matched three hardcoded environment-
+/// assignment prefixes — so the sheet had two inconsistent ideas of what a command was, and the
+/// prefix list would silently miss a fourth spelling.
+///
+/// Working from the fence rather than from patterns also makes the prose/command distinction
+/// structural instead of heuristic: explaining a retired incantation in a paragraph is free,
+/// while putting it in a block a presenter would copy is not.
+///
+/// Transcript blocks (the expected-output samples) are included, which is harmless for both
+/// callers: they are asserted against observed output elsewhere, and an output line that
+/// invoked the binary or set the variable would be a genuine defect in the sheet.
+fn run_sheet_shell_lines() -> Vec<&'static str> {
+    // Leaked so callers get `&'static str` and can hold borrowed slices without threading a
+    // lifetime through every gate. The sheet is a few kilobytes read once per test process.
+    let sheet: &'static str = Box::leak(
+        std::fs::read_to_string(workspace_root().join(DEMO_DIR).join("RUN-SHEET.md"))
+            .expect("the run sheet must be readable")
+            .into_boxed_str(),
+    );
+    let mut inside = false;
+    let mut lines = Vec::new();
+    for line in sheet.lines() {
+        let trimmed = line.trim();
+        // A fence is ``` possibly followed by an info string; toggling on every fence handles
+        // both the opening and closing marker without tracking which is which.
+        if trimmed.starts_with("```") {
+            inside = !inside;
+            continue;
+        }
+        if inside && !trimmed.is_empty() {
+            lines.push(trimmed);
+        }
+    }
+    lines
+}
+
 fn program_without_comments() -> String {
     let source = std::fs::read_to_string(workspace_root().join(PROGRAM))
         .expect("the committed demo program must be readable");
@@ -286,11 +326,10 @@ fn the_demo_source_contains_no_transcribed_answer() {
 /// presenter's page cannot name a command nobody runs.
 #[test]
 fn every_run_sheet_command_line_is_driven_by_this_test() {
-    let sheet = std::fs::read_to_string(workspace_root().join(DEMO_DIR).join("RUN-SHEET.md"))
-        .expect("the run sheet must be readable");
-    let invocations: Vec<&str> = sheet
-        .lines()
-        .map(str::trim)
+    let shell = run_sheet_shell_lines();
+    let invocations: Vec<&str> = shell
+        .iter()
+        .copied()
         .filter(|line| line.contains("target/debug/rhocalc"))
         .collect();
     assert!(!invocations.is_empty(), "the run sheet must show how to run the demo");
@@ -325,17 +364,14 @@ fn every_run_sheet_command_line_is_driven_by_this_test() {
 /// stack is explicitly not an accepted resolution in this tree.
 #[test]
 fn no_run_sheet_command_line_raises_the_stack() {
-    let sheet = std::fs::read_to_string(workspace_root().join(DEMO_DIR).join("RUN-SHEET.md"))
-        .expect("the run sheet must be readable");
-    // Prose ABOUT the retired incantation is wanted — it is why the incantation stays retired.
-    // What must not appear is an actual assignment: an `export`/`env` line, or the variable
-    // prefixed onto a command. Checking for the bare token would forbid explaining the fix.
-    for line in sheet.lines().map(str::trim) {
-        let assigns = line.starts_with("export RUST_MIN_STACK")
-            || line.starts_with("RUST_MIN_STACK=")
-            || line.starts_with("env RUST_MIN_STACK");
+    // Prose ABOUT the retired incantation is wanted — it is why the incantation stays retired —
+    // and it is admitted for free, because [`run_sheet_shell_lines`] yields only what is inside
+    // a fenced block. Inside a fence, any mention of the variable IS a use of it, so this needs
+    // no pattern for the spellings (`export X=`, `X= cmd`, `env X=`): the extraction already
+    // decided what counts as a command.
+    for line in run_sheet_shell_lines() {
         assert!(
-            !assigns,
+            !line.contains("RUST_MIN_STACK"),
             "the run sheet must not raise the stack — the demos run at the default: {line:?}"
         );
     }
