@@ -359,8 +359,9 @@ fn numeral_carrier_is_a_function_of_the_text() {
 /// `Display` never writes. So the invariant is stated **modulo inert grouping**:
 ///
 /// ```text
-///     ∀ surface s, ∀ reading r ∈ readings(s).
-///         modulo_inert_grouping(display(r)) == modulo_inert_grouping(s)
+///     ∀ surface s. let c = display(parse(s)).            ← the CANONICAL spelling
+///         ∀ reading r ∈ readings(c).
+///             modulo_inert_grouping(display(r)) == modulo_inert_grouping(c)
 /// ```
 ///
 /// This is strictly weaker than display equality (it permits the bracketing fix) and
@@ -396,7 +397,7 @@ fn no_reading_of_a_canonical_numeric_surface_respells_a_numeral() {
         "(1501459918 + 1779999505) * 280584074u32 * (1388007349p0 bitand -260592200p0)",
         "1 * 2 bitand 3",
         "1 + 2u32",
-        // The three spellings Display normalises — included precisely BECAUSE they move,
+        // The four spellings Display normalises — included precisely BECAUSE they move,
         // so the canonicalisation step is exercised rather than assumed away.
         "0x1F + 1",
         "3000000000 + 1",
