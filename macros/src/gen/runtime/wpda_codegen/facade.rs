@@ -3688,6 +3688,10 @@ pub(crate) fn emit_parse_fns(
     // ROOT-1: whether ≥1 category emits an `@`-projection helper (which references
     // the reject accessors) ⇒ gates the module-scope reject preamble.
     let mut any_proj_eligible = false;
+    // ★ STAGE C — the per-`(site, literal)` alphabet rows the ENUMERATING GATE sweeps.
+    // Accumulated from the SAME shapes the emitters consume, so the gate can never be
+    // asked about a literal the emitter does not actually match, nor miss one it does.
+    let mut scan_site_literal_rows: Vec<(&'static str, String, Vec<u8>, Vec<u8>)> = Vec::new();
     for (cat_src_idx, cat_name) in categories.iter().enumerate() {
         let cat_ident = format_ident!("{}", cat_name);
         let fn_name = format_ident!("parse_{}_via_wpda", cat_name);
@@ -3739,7 +3743,30 @@ pub(crate) fn emit_parse_fns(
         // post-lex LATTICE) is available. OFF / not-in-set / no-shape ⇒ empty ⇒
         // BYTE-IDENTICAL.
         let sep_helper_fns = match sep_isolation_shape(language, cat_name, categories) {
-            Some(shape) => emit_sep_isolation(&cat_ident, &shape),
+            Some(shape) => {
+                // ★ STAGE C rows for `sep.lead` and `sep.split`.
+                for v in &shape.variants {
+                    for g in &v.operand_groups {
+                        let lb = shape.lead_boundaries.get(&g.lead).cloned().unwrap_or_default();
+                        scan_site_literal_rows.push((
+                            scan_site::SEP_LEAD.id,
+                            g.lead.clone(),
+                            lb.pre.clone(),
+                            lb.ext.clone(),
+                        ));
+                    }
+                }
+                // The separator discharges EVIDENCE on both sides, so it carries no
+                // boundary alphabet; it is still swept, because RULE-inert applies to it
+                // regardless (that is the half evidence says nothing about).
+                scan_site_literal_rows.push((
+                    scan_site::SEP_SPLIT.id,
+                    shape.separator.clone(),
+                    Vec::new(),
+                    Vec::new(),
+                ));
+                emit_sep_isolation(&cat_ident, &shape)
+            },
             None => quote! {},
         };
 
@@ -3756,6 +3783,56 @@ pub(crate) fn emit_parse_fns(
                 // ROOT-1: this category emits a proj helper that references the reject
                 // accessors ⇒ the module preamble must be emitted.
                 any_proj_eligible = true;
+                // ★ STAGE C rows for every skeleton `Lit` — the three projection sites
+                // (`proj.lit`, `proj.lit_run`, `proj.operand_delim`) match exactly these
+                // literals with exactly these alphabets, so one pass populates all three.
+                for l in shape
+                    .variants
+                    .iter()
+                    .flat_map(|v| v.slots.iter())
+                    .filter_map(|s| match s {
+                        ProjSlot::Lit(l) => Some(l.clone()),
+                        _ => None,
+                    })
+                    .collect::<std::collections::BTreeSet<_>>()
+                {
+                    let lb = shape.lit_boundaries.get(&l).cloned().unwrap_or_default();
+                    for site in [
+                        scan_site::PROJ_LIT.id,
+                        scan_site::PROJ_LIT_RUN.id,
+                        scan_site::PROJ_OPERAND_DELIM.id,
+                        scan_site::PROJ_SIGIL_REJECT.id,
+                    ] {
+                        scan_site_literal_rows.push((
+                            site,
+                            l.clone(),
+                            lb.pre.clone(),
+                            lb.ext.clone(),
+                        ));
+                    }
+                }
+                // ★ STAGE C rows for `proj.sep_region` — the separators of the arm's
+                // `SepList` operands. Like `sep.split` these discharge EVIDENCE on both
+                // sides and carry no boundary alphabet, so what the sweep exercises is
+                // RULE-inert. Without these rows the site would sit in the registry and
+                // never be swept, which is exactly what the coverage gate caught.
+                for sep in shape
+                    .variants
+                    .iter()
+                    .flat_map(|v| v.slots.iter())
+                    .filter_map(|s| match s {
+                        ProjSlot::SepList { separator, .. } => Some(separator.clone()),
+                        _ => None,
+                    })
+                    .collect::<std::collections::BTreeSet<_>>()
+                {
+                    scan_site_literal_rows.push((
+                        scan_site::PROJ_SEP_REGION.id,
+                        sep,
+                        Vec::new(),
+                        Vec::new(),
+                    ));
+                }
                 emit_projection_isolation(&cat_ident, &shape)
             },
             None => quote! {},
@@ -3770,7 +3847,22 @@ pub(crate) fn emit_parse_fns(
         // the same STRING parse entries (`gen/mod.rs`), wired AFTER the proj + sep
         // prologues. OFF / not-in-set / no-shape ⇒ empty ⇒ BYTE-IDENTICAL.
         let infix_helper_fns = match infix_iso_shape(language, cat_name, categories) {
-            Some(shape) => emit_infix_isolation(&cat_ident, &shape),
+            Some(shape) => {
+                // ★ STAGE C rows for `infix.ops`. The alphabets are empty on the shipped
+                // leg (this site is derivably EXEMPT from the boundary obligation), so
+                // what the sweep actually exercises here is RULE-inert — which is the
+                // obligation this site DID break.
+                for op in &shape.ops {
+                    let lb = shape.op_boundaries.get(&op.terminal).cloned().unwrap_or_default();
+                    scan_site_literal_rows.push((
+                        scan_site::INFIX_OPS.id,
+                        op.terminal.clone(),
+                        lb.pre.clone(),
+                        lb.ext.clone(),
+                    ));
+                }
+                emit_infix_isolation(&cat_ident, &shape)
+            },
             None => quote! {},
         };
 
@@ -5130,11 +5222,29 @@ pub(crate) fn emit_parse_fns(
     // Gated by the SAME artifact lever as the annotations: the table is registry
     // SURFACE, consumed only by the generated Stage-C gate, so turning the lever off
     // recovers a byte-identical artifact.
-    let scan_site_table = if any_iso_eligible && super::scan_site::SCAN_SITE_ANNOTATE_ARTIFACT {
-        super::scan_site::emit_registry_table()
-    } else {
-        quote! {}
-    };
+    let (scan_site_table, scan_site_literals, scan_site_gate) =
+        if any_iso_eligible && super::scan_site::SCAN_SITE_ANNOTATE_ARTIFACT {
+            // Dedup: the same literal reaches several sites (and several categories share
+            // skeleton literals), and the sweep is O(rows × 256 × 4).
+            scan_site_literal_rows.sort();
+            scan_site_literal_rows.dedup();
+            // ⚠ The Stage-C gate uses `lex_with_streams` as its ORACLE, so it may only be
+            // emitted for a language that HAS one. A grammar with no stream-annotated
+            // token (`json`, `monoid`, …) does not, and emitting the gate there is a
+            // build error — a real regression in this change, caught by `--all-features`.
+            let gate = if super::lit_boundary::language_emits_lex_with_streams(language) {
+                super::scan_site::emit_stage_c_gate()
+            } else {
+                quote! {}
+            };
+            (
+                super::scan_site::emit_registry_table(),
+                super::scan_site::emit_literal_table(&scan_site_literal_rows),
+                gate,
+            )
+        } else {
+            (quote! {}, quote! {}, quote! {})
+        };
     quote! {
         // ★ RULE-inert (Stage B): the language-derived inert-span skipper, shared by
         // every registered scan. Empty when no isolation helper is emitted, or when the
@@ -5142,6 +5252,10 @@ pub(crate) fn emit_parse_fns(
         #inert_skipper
         // ★ The SCAN-SITE REGISTRY, as data, for the generated conformance gate.
         #scan_site_table
+        #scan_site_literals
+        // ★ STAGE C — the ENUMERATING GATE. Sweeps every site × literal × neighbouring
+        // byte and checks the emitter's acceptance against the language's OWN lexer.
+        #scan_site_gate
         // ROOT-P MEMOIZED BEST-PARSE (design af7680e2): shared epoch/depth
         // thread-local preamble + `__ProjMemoGuard`. Empty when OFF / no
         // iso-eligible category (byte-identical).

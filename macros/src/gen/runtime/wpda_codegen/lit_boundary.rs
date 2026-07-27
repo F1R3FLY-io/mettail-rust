@@ -183,8 +183,30 @@ fn is_word_shaped(l: &str) -> bool {
     !l.is_empty() && l.as_bytes().iter().all(|&c| is_word(c))
 }
 
-/// Every fixed terminal the grammar spells: literals in any rule's syntax pattern, plus
-/// `.*sep` separators (a separator is lexed as a terminal like any other).
+/// Every fixed terminal the grammar spells: literals in any rule's syntax pattern,
+/// `.*sep` separators (a separator is lexed as a terminal like any other), **and the
+/// declared COLLECTION DELIMITERS**.
+///
+/// ⚠ **THE COLLECTION DELIMITERS WERE THE MISSING PART OF THIS FUNCTION'S OWN RULE, and
+/// they were found by the Stage-C enumerating gate, not by inspection.** The gate reported:
+///
+/// ```text
+///   SCAN SITE `proj.lit` accepts literal "{" at byte 0 of "{|", but the language's own
+///   lexer does NOT produce it as a DEFAULT-channel token there.
+/// ```
+///
+/// RhoCalc declares `![PathMapLit<Proc,Proc>] as Pathmap { open_parts: ["{|"],
+/// close_parts: ["|}"], sep: "," }` and `as Bag { open_parts: ["#{"], close_parts: ["}#"] }`
+/// in its `types { … }` block — **not** as `SyntaxExpr::Literal` in any rule's syntax
+/// pattern. So `{|` was never in the terminal set, `ext("{")` was missing `'|'`, and the
+/// projection matcher would match the one-byte `{` at position 0 of a `{| … |}` literal
+/// where the lexer's maximal munch is the two-byte `{|`.
+///
+/// That is the SAME defect shape as `-` inside `-7n`: a literal matching as a PROPER
+/// PREFIX of a longer token at `p == 0`, where no left span exists and `ext` is therefore
+/// the sole possible refuter. This function claimed *"every fixed terminal the grammar
+/// spells"* and implemented it over a proper subset — the exact family this whole change
+/// is about, found in the module that was supposed to be the family's cure.
 fn grammar_terminals(language: &LanguageDef) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for rule in &language.terms {
@@ -204,6 +226,22 @@ fn grammar_terminals(language: &LanguageDef) -> BTreeSet<String> {
                     }
                 },
                 _ => {},
+            }
+        }
+    }
+    // ── The declared collection delimiters. A `{| … |}` opener is lexed as one token
+    // exactly like any rule literal, so it belongs in the same set. Read through the
+    // variant-agnostic `CollectionCategory::delimiters()` accessor, so a new collection
+    // container shape is covered without a new match arm here.
+    for ty in &language.types {
+        let Some(kind) = &ty.collection_kind else { continue };
+        let d = kind.delimiters();
+        for part in [Some(&d.open), Some(&d.close), Some(&d.sep), d.key_val_sep.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            if !part.is_empty() {
+                out.insert(part.clone());
             }
         }
     }
@@ -413,6 +451,22 @@ pub(crate) fn inert_token_patterns(language: &LanguageDef) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// Does this language emit a `lex_with_streams` entry point?
+///
+/// MIRRORS `prattail/src/lexer.rs`'s own `has_streams` predicate EXACTLY, including its
+/// use of bare `stream.is_some()` rather than `!= "main"`, so the two cannot disagree
+/// about whether the function exists. The Stage-C gate calls `lex_with_streams` as its
+/// oracle, so it may only be emitted for a language that has one — a JSON grammar with no
+/// stream-annotated token does not, and emitting the gate there is a build error. (That
+/// was a real regression in this change, caught by `--all-features`.)
+pub(crate) fn language_emits_lex_with_streams(language: &LanguageDef) -> bool {
+    language.token_defs.iter().any(|td| td.stream.is_some())
+        || language
+            .mode_defs
+            .iter()
+            .any(|m| m.token_defs.iter().any(|td| td.stream.is_some()))
 }
 
 /// Emit the per-language `__inert_skip` helper: given `bytes` and an index `i`, return

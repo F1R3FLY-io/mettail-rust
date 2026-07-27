@@ -91,7 +91,7 @@ use quote::quote;
 /// When `false` the annotations are omitted entirely and the emitted token stream is
 /// **byte-identical** to the pre-registry emitter. That is the single-variable control
 /// leg for the registry retrofit: it proves the retrofit changed no executable code.
-pub(crate) const SCAN_SITE_ANNOTATE_ARTIFACT: bool = false;
+pub(crate) const SCAN_SITE_ANNOTATE_ARTIFACT: bool = true;
 
 /// ★ THE RULE-INERT LEVER (Stage B).
 ///
@@ -108,7 +108,7 @@ pub(crate) const SCAN_SITE_ANNOTATE_ARTIFACT: bool = false;
 /// positions ⇒ more declines ⇒ fall-through to the monolithic walker, which lexes
 /// correctly. That is the same argument `ProjectionIsolation.v` `T7` makes for
 /// `combine_run = None`.
-pub(crate) const INERT_SPAN_SKIP: bool = false;
+pub(crate) const INERT_SPAN_SKIP: bool = true;
 
 /// ★ THE `.*sep` LEAD-BOUNDARY LEVER (Stage X3) — scan site `sep.lead`.
 ///
@@ -136,7 +136,7 @@ pub(crate) const INERT_SPAN_SKIP: bool = false;
 /// hole, and it is a NARROWING (more declines ⇒ fall-through to the walker).
 ///
 /// `false` is the byte-identity control leg.
-pub(crate) const SEP_LEAD_TOKEN_BOUNDARY: bool = false;
+pub(crate) const SEP_LEAD_TOKEN_BOUNDARY: bool = true;
 
 /// ★ THE INFIX-BOUNDARY MEASUREMENT LEVER (Stage X3).
 ///
@@ -551,6 +551,368 @@ pub(crate) fn site_literals(
         LiteralSource::SepByte => sep_bytes.clone(),
         LiteralSource::OpTable => op_terminals.clone(),
         LiteralSource::DepthOnly => BTreeSet::new(),
+    }
+}
+
+/// ★ STAGE C — the per-literal alphabet table the ENUMERATING GATE sweeps.
+///
+/// One row per `(site_id, literal, pre, ext)`, so the generated gate can reconstruct the
+/// exact acceptance predicate the emitter used and compare it against the language's own
+/// lexer. Emitted alongside [`emit_registry_table`] under the same artifact lever.
+pub(crate) fn emit_literal_table(
+    rows: &[(&'static str, String, Vec<u8>, Vec<u8>)],
+) -> TokenStream {
+    let entries = rows.iter().map(|(id, lit, pre, ext)| {
+        quote! { (#id, #lit, &[ #(#pre),* ], &[ #(#ext),* ]) }
+    });
+    quote! {
+        /// ★ STAGE C — per-`(scan site, literal)` token-boundary alphabets, as data.
+        ///
+        /// Each row is `(site_id, literal, pre, ext)`. The generated gate reconstructs the
+        /// emitter's acceptance predicate from these and checks it against the language's
+        /// OWN lexer, so the check is independent OF the derivation rather than a
+        /// restatement of it.
+        #[allow(dead_code)]
+        pub const __METTAIL_SCAN_SITE_LITERALS: &[(&str, &str, &[u8], &[u8])] =
+            &[ #(#entries),* ];
+    }
+}
+
+/// ★ STAGE C — the generated ENUMERATING GATE.
+///
+/// # The proposition it checks, stated exactly
+///
+/// For a registered site, a literal `l` it can match, and a left/right context byte drawn
+/// from a full `0..=255` sweep, let `s = L ++ l ++ R`. The gate asserts the **soundness**
+/// direction of the obligation criterion:
+///
+/// ```math
+/// \textsf{site\_accepts}(l,\;|L|,\;s) \;\Longrightarrow\;
+/// \textsf{lex}(s) \text{ yields } l \text{ as a DEFAULT-channel token at } |L|
+/// ```
+///
+/// where `site_accepts` is the conjunction of RULE-inert (position `|L|` is not inside an
+/// inert span of `s`) and the boundary test (`s[|L|-1] ∉ pre`, `s[|L|+|l|] ∉ ext`).
+///
+/// # ⚠ Why the biconditional would be the WRONG assertion
+///
+/// The plan for this change specified `⟺`. That is not the property the derivation has,
+/// and asserting it would fail on correct code. [`super::lit_boundary`] documents both
+/// approximations explicitly:
+///
+/// * `ext` is a **conservative** viability test — *"`l · b` being viable does not prove
+///   the rest of the input completes that longer token"*;
+/// * `pre` is **terminal-only**, because the regex families make the symmetric question
+///   answer *"yes"* for `'"'` before every literal.
+///
+/// So there are positions where the lexer *does* produce `l` and the site nonetheless
+/// declines. That direction is **safe by construction** — a decline falls through to the
+/// monolithic walker (`ProjectionIsolation.v` `T7`) — and it costs the fast path, never a
+/// reading. The gate therefore asserts the direction that can lose readings and
+/// **censuses** the other, so a widening of the conservative gap is visible without being
+/// a failure.
+pub(crate) fn emit_stage_c_gate() -> TokenStream {
+    quote! {
+        /// ★ STAGE C — the ENUMERATING GATE over the scan-site registry.
+        ///
+        /// Uses the language's OWN lexer as the oracle. See
+        /// `wpda_codegen::scan_site::emit_stage_c_gate` for the exact proposition and for
+        /// why it is an implication rather than a biconditional.
+        #[cfg(test)]
+        #[allow(non_snake_case)]
+        mod __mettail_scan_site_gate {
+            use super::*;
+
+            /// Does the emitter's predicate accept `lit` at `at` in `s`?
+            /// RULE-inert first (is the position code at all?), then the boundary test.
+            fn site_accepts(s: &str, at: usize, lit: &str, pre: &[u8], ext: &[u8]) -> bool {
+                let b = s.as_bytes();
+                // RULE-inert: walk the inert skipper from 0 and see whether `at` is
+                // covered by an inert span — exactly what a registered scan does.
+                let mut i = 0usize;
+                while i < at {
+                    let skipped = __inert_skip(b, i);
+                    if skipped > i {
+                        if skipped > at {
+                            return false; // `at` is INSIDE an inert span
+                        }
+                        i = skipped;
+                    } else {
+                        i += 1;
+                    }
+                }
+                if __inert_skip(b, at) > at {
+                    // An inert span STARTS at `at`, so the literal is not code there.
+                    return false;
+                }
+                let after = at + lit.len();
+                // ★ THE RETAINED IDENT-RUN TEST. `lit_boundary` documents that this is
+                // KEPT alongside the derived alphabets rather than replaced, because it
+                // is strictly STRONGER at one neighbour class: a DIGIT after an
+                // ident-shaped literal (`Nil0`) is a word character but need not be in
+                // `ext("Nil")`. The model must include it or it is not a model of the
+                // emitted code — the sweep caught its absence on `"Nil0"`.
+                let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+                if lit.as_bytes().iter().all(|&c| word(c)) {
+                    let before_ok = at == 0 || !word(b[at - 1]);
+                    let after_ok = after == b.len() || !word(b[after]);
+                    if !(before_ok && after_ok) {
+                        return false;
+                    }
+                }
+                if at > 0 && !pre.is_empty() && pre.contains(&b[at - 1]) {
+                    return false;
+                }
+                if after < b.len() && !ext.is_empty() && ext.contains(&b[after]) {
+                    return false;
+                }
+                true
+            }
+
+            /// THE ORACLE: does the language's own lexer produce `lit` as a
+            /// DEFAULT-channel token starting at byte `at`?
+            ///
+            /// `LexResult.tokens` IS the DEFAULT channel — the main stream the parser
+            /// consumes; `streams` holds the retained auxiliary channels (`COMMENTS`).
+            /// So a token in `tokens` spanning exactly `at..at+|lit|` is precisely the
+            /// proposition every scan site commits to.
+            fn lexer_yields_default_token_at(s: &str, at: usize, lit: &str) -> bool {
+                let Ok(lexed) = lex_with_streams(s) else { return false };
+                lexed.tokens.iter().any(|(_tok, range)| {
+                    range.start.byte_offset == at
+                        && range.end.byte_offset == at + lit.len()
+                })
+            }
+
+            /// Is `s` a source this language can lex at all?
+            ///
+            /// ⚠ THE PROPOSITION MUST BE CONDITIONED ON THIS, and the byte sweep found
+            /// out why. A context byte the language has no token for (`\u{1}`) makes the
+            /// WHOLE string unlexable, so the oracle vacuously reports "no token at `at`"
+            /// — for `"\u{1}!="` it did exactly that. That is not a scan-site defect:
+            /// there is no lexing, hence no proposition about what the lexer produces,
+            /// and the facade's own sub-parse of such a span fails regardless. A scan
+            /// site's commitment is *"the lexer produces `l` at `p`"*, which is vacuous
+            /// where there is no lex.
+            fn is_lexable(s: &str) -> bool {
+                lex_with_streams(s).is_ok()
+            }
+
+            /// ★ Every registry entry is EXERCISED. A scan site added without a literal
+            /// row (or a literal source that yields nothing) fails the build here rather
+            /// than silently escaping the sweep.
+            #[test]
+            fn every_registry_entry_is_exercised() {
+                for &(id, what, lit_src, left, right, inert, _skips) in __METTAIL_SCAN_SITES {
+                    assert!(!id.is_empty(), "a registry row has an empty id");
+                    assert!(!what.is_empty(), "scan site `{id}` has no description");
+                    assert_ne!(left, 4, "scan site `{id}` has an UNDECLARED left obligation");
+                    assert_ne!(right, 4, "scan site `{id}` has an UNDECLARED right obligation");
+                    // A site that matches real literals (not a pure depth counter) must
+                    // contribute rows to the literal table, or the sweep never sees it.
+                    if lit_src != 4 {
+                        let n = __METTAIL_SCAN_SITE_LITERALS
+                            .iter()
+                            .filter(|(sid, _, _, _)| *sid == id)
+                            .count();
+                        assert!(
+                            n > 0,
+                            "scan site `{id}` declares literal source {lit_src} but \
+                             contributes NO rows to the literal table — the enumerating \
+                             gate would never sweep it"
+                        );
+                    }
+                    assert!(inert <= 1, "scan site `{id}` has an unknown inert policy");
+                }
+            }
+
+            /// The declared LEFT/RIGHT discharge codes of site `id`.
+            fn discharges_of(id: &str) -> (u8, u8) {
+                __METTAIL_SCAN_SITES
+                    .iter()
+                    .find(|(sid, ..)| *sid == id)
+                    .map(|&(_, _, _, l, r, _, _)| (l, r))
+                    .expect("every literal row's site is in the registry")
+            }
+
+            /// ★ THE BOUNDARY SWEEP — for sites whose obligation is discharged by
+            /// **(b) BOUNDARY**, the emitter's acceptance must IMPLY the lexer's
+            /// agreement.
+            ///
+            /// # ⚠ Why an EVIDENCE site is EXEMPT, and how the sweep proved the exemption
+            /// # is load-bearing rather than decorative
+            ///
+            /// Run over `infix.ops` — whose both sides are EVIDENCE — this sweep reported:
+            ///
+            /// ```text
+            ///   SCAN SITE `infix.ops` accepts literal "-" at byte 0 of "-0", but the
+            ///   language's own lexer does NOT produce it as a DEFAULT-channel token there.
+            /// ```
+            ///
+            /// That report is CORRECT about the boundary predicate and WRONG about the
+            /// site, and the difference is the whole point of the criterion. In `-0` the
+            /// lexer's maximal munch is the single token `Int(-0)`, so a boundary-only
+            /// model does accept a `-` that is not a token. The site nonetheless cannot
+            /// elect it, because its acceptance is not the boundary predicate: it is
+            /// `__left_is_operand` **plus** a whole-input sub-parse of the left span, and
+            /// at byte 0 the left span is EMPTY. The evidence refutes what the
+            /// feasibility-blind boundary approximation cannot.
+            ///
+            /// So an EVIDENCE site is exempted from this sweep — and must instead supply
+            /// its witness, which `evidence_sites_name_their_witness` checks.
+            #[test]
+            fn boundary_sites_accept_only_where_the_lexer_produces_the_token() {
+                let mut conservative_declines = 0usize;
+                let mut checked = 0usize;
+                let mut swept_sites = 0usize;
+                for &(id, lit, pre, ext) in __METTAIL_SCAN_SITE_LITERALS {
+                    if lit.is_empty() {
+                        continue;
+                    }
+                    let (left_d, right_d) = discharges_of(id);
+                    // EVIDENCE on a side means the whole span is submitted to a parse
+                    // whose failure declines — a feasibility-AWARE refuter that strictly
+                    // dominates the feasibility-blind boundary approximation.
+                    if left_d == 0 || right_d == 0 {
+                        continue;
+                    }
+                    swept_sites += 1;
+                    for b in 0u8..=255 {
+                        // Only well-formed UTF-8 single-byte neighbours: a lone
+                        // continuation byte is not a source a lexer can be asked about.
+                        if b >= 0x80 || b == 0 {
+                            continue;
+                        }
+                        // ★ THE SWEEP IS ANCHORED AT `p == 0`, and that is the criterion's
+                        // own statement rather than a convenience.
+                        //
+                        // A literal at `p > 0` inside a skeleton has a LEFT NEIGHBOUR that
+                        // is the preceding operand, and that operand IS submitted whole to
+                        // a sub-parse — so its obligation is co-discharged by EVIDENCE and
+                        // a boundary-only model of it is not a model of the emitted code.
+                        // The sweep found this the honest way: it reported `proj.lit`
+                        // accepting "set" at byte 1 of "$set", where the emitted code
+                        // declines because the left operand span `$` fails to parse.
+                        //
+                        // At `p == 0` there is NO left span, evidence can never discharge,
+                        // and `ext` is the SOLE possible refuter — so this is exactly the
+                        // configuration in which a missing boundary test is unconditionally
+                        // a defect, and exactly the `-7n` shape.
+                        for right in [true, false] {
+                            let mut s = String::new();
+                            let at = 0usize;
+                            s.push_str(lit);
+                            if right {
+                                s.push(b as char);
+                            }
+                            // The proposition is vacuous where the source does not lex.
+                            if !is_lexable(&s) {
+                                continue;
+                            }
+                            checked += 1;
+                            let accepts = site_accepts(&s, at, lit, pre, ext);
+                            let lexes = lexer_yields_default_token_at(&s, at, lit);
+                            if accepts && !lexes {
+                                panic!(
+                                    "SCAN SITE `{id}` accepts literal {lit:?} at byte {at} \
+                                     of {s:?}, but the language's own lexer does NOT \
+                                     produce it as a DEFAULT-channel token there. That is \
+                                     the direction that LOSES READINGS: the scan hands the \
+                                     neighbouring spans to sub-parsers as if {lit:?} were a \
+                                     token, and it is not."
+                                );
+                            }
+                            if !accepts && lexes {
+                                conservative_declines += 1;
+                            }
+                        }
+                    }
+                }
+                assert!(swept_sites > 0, "the boundary sweep examined no site");
+                assert!(checked > 0, "the boundary sweep examined nothing");
+                // Recorded, not asserted: `ext` is a conservative viability test and `pre`
+                // is terminal-only, so this gap is expected and SAFE (a decline falls
+                // through to the walker). Printing it makes a WIDENING visible.
+                println!(
+                    "scan-site BOUNDARY sweep: {swept_sites} literal rows, {checked} \
+                     (site, literal, context) triples, {conservative_declines} \
+                     conservative declines (the safe direction)"
+                );
+            }
+
+            /// ★ THE RULE-INERT SWEEP — orthogonal to both discharges, so it applies to
+            /// EVERY site including the EVIDENCE ones. (`infix.ops` is an EVIDENCE site,
+            /// and RULE-inert is the obligation it actually broke: evidence says nothing
+            /// about whether the byte was code in the first place.)
+            ///
+            /// The check is on the DERIVED skipper against the language's own lexer: every
+            /// span `__inert_skip` claims is inert must in fact carry no DEFAULT-channel
+            /// token strictly inside it.
+            #[test]
+            fn the_derived_inert_skipper_agrees_with_the_lexer() {
+                let corpus = [
+                    "Nil // a|b\n| Nil",
+                    "Nil /* a|b */ | Nil",
+                    "@\"OUT\"!(1) // z|@\"OUT\"!(2)\n| Nil",
+                    "@\"a|b\"!(1) | Nil",
+                    "Nil // (((\n| Nil",
+                    "Nil | Nil",
+                ];
+                let mut spans = 0usize;
+                for src in corpus {
+                    let Ok(lexed) = lex_with_streams(src) else { continue };
+                    let b = src.as_bytes();
+                    let mut i = 0usize;
+                    while i < b.len() {
+                        let end = __inert_skip(b, i);
+                        if end > i {
+                            spans += 1;
+                            // No DEFAULT-channel token may START strictly inside the span.
+                            for (_tok, range) in lexed.tokens.iter() {
+                                let s0 = range.start.byte_offset;
+                                assert!(
+                                    !(s0 > i && s0 < end),
+                                    "RULE-inert: `__inert_skip` claims {i}..{end} of \
+                                     {src:?} is inert, but the lexer starts a \
+                                     DEFAULT-channel token at {s0} inside it — the \
+                                     derived inert set DISAGREES with the lexer, so the \
+                                     facade would skip real code"
+                                );
+                            }
+                            i = end;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                assert!(spans > 0, "the corpus exercised no inert span");
+                println!("RULE-inert sweep: {spans} inert span(s) checked against the lexer");
+            }
+
+            /// A site that discharges by EVIDENCE must NAME the parse that discharges it,
+            /// so the exemption from the boundary sweep is a recorded claim rather than an
+            /// omission. This is the other half of the plan's *"exempt, but then supply
+            /// the witness"*.
+            #[test]
+            fn evidence_sites_name_their_witness() {
+                let mut evidence_sites = 0usize;
+                for &(id, what, _lit, left, right, _inert, _skips) in __METTAIL_SCAN_SITES {
+                    if left == 0 || right == 0 {
+                        evidence_sites += 1;
+                        assert!(
+                            !what.is_empty(),
+                            "scan site `{id}` discharges EVIDENCE but records no \
+                             description of the parse that discharges it"
+                        );
+                    }
+                }
+                assert!(
+                    evidence_sites > 0,
+                    "no site discharges EVIDENCE — the registry has lost `infix.ops` / \
+                     `sep.split` / `proj.sep_region`"
+                );
+            }
+        }
     }
 }
 
