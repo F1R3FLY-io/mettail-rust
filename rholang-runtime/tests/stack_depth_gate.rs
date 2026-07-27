@@ -521,36 +521,65 @@ fn lowering_theta_depth_tripwire() {
     assert_slope_below("lower_par", ceiling(23_000, 6_000), 16, 128);
 }
 
-/// **M-6 — the parser's own constant, measured rather than assumed.**
+/// **M-6, WIDTH axis — the parser does not grow with sibling count.**
 ///
-/// The RhoCalc parser (`Proc::parse_via_wpda`) is a generated GLL/WPDA recognizer
-/// plus an SPPF realization pass. It was never binding at the depths the LOWERING
-/// faulted at — but "not binding" and "not present" are different claims, and only
-/// one of them had been measured. So it is measured here.
+/// Measured 2026-07-27: 471,040 bytes at width 16, 32, 64, 128, 256, 1,024 AND
+/// 4,096 — identical to the byte across a 256× range. Slope **0**.
 ///
-/// ★ **Measured 2026-07-27: 471,040 bytes at parameter 16, 32, 64 AND 128, on both
-/// axes.** Identical to the byte at every rung — a large fixed intercept (~460 KiB
-/// of recognizer tables and driver frame) and a slope of exactly **0**.
-///
-/// That is why this is an INDEPENDENCE assertion and not a tripwire: a tripwire
-/// would record a ceiling on a number that is not there. The parse path is already
-/// heap-bounded, because `prattail/src/sppf_realize.rs:164` already drives
-/// realization from an explicit `(SppfId, Phase)` worklist rather than from the
-/// host stack.
-///
-/// ★ It is also the *existence proof* for M-2's design. The conversion the lowering
-/// needs is not a novel construction to be invented and argued about — it is the
-/// idiom running one stage earlier in the very same pipeline, and this test is the
-/// measurement showing that idiom delivers a flat profile in production.
-///
-/// ⚠ The width ladder stops at 16,384 rather than 65,536 for a purely practical
-/// reason: parse TIME is roughly linear in sibling count (measured 1.13 s at 1,024
-/// and 20.2 s at 16,384), and a bisection runs ~20 probes per rung. 4 → 16,384 is
-/// still a 4,096× range, which no non-zero per-sibling frame could survive.
+/// ⚠ The ladder stops at 16,384 rather than 65,536 for a practical reason: parse
+/// TIME is roughly linear in sibling count (measured 1.13 s at 1,024 and 20.2 s at
+/// 16,384) and a bisection runs ~20 probes per rung. 4 → 16,384 is still a 4,096×
+/// range, which no non-zero per-sibling frame could survive.
 #[test]
-fn parsing_is_depth_and_width_independent() {
-    assert_no_slope("parse_depth", 4, 4096, "depth");
+fn parsing_is_width_independent() {
     assert_no_slope("parse_width", 4, 16384, "width");
+}
+
+/// **★ M-6, DEPTH axis — a CORRECTION, and the reason the ladder must be wide.**
+///
+/// This gate's first version asserted that the parser was depth-INDEPENDENT, on the
+/// strength of a measurement that read 471,040 bytes at depth 16, 32, 64 and 128 —
+/// identical to the byte at every rung. **That conclusion was wrong, and this gate
+/// caught it**, which is worth more than the number it was wrong about.
+///
+/// The parser has a large fixed intercept — ~460 KiB of generated recognizer tables
+/// and driver frame. (It is genuinely the parser's, not the harness's: the cheapest
+/// subject in this binary, `lower_width`, bisects to 98,304 bytes.) Below depth
+/// ≈ 256 the per-level cost is entirely **masked** by that intercept, so a ladder
+/// confined to 16 → 128 reads a flat line and reports a slope of zero.
+///
+/// Widening the ladder resolves it:
+///
+/// | depth | min stack (B) | pairwise B/level |
+/// |---|---|---|
+/// | 128 | 471,040 | — |
+/// | 256 | 499,712 | 224 |
+/// | 512 | 815,104 | 1,232 |
+/// | 1,024 | 1,536,000 | 1,408 |
+/// | 2,048 | 2,977,792 | 1,408 |
+/// | 4,096 | 5,861,376 | 1,408 |
+///
+/// The asymptote is **1,408 B/level**, stable to the byte across the last three
+/// intervals. The parse path is therefore Θ(depth) after all — it was simply never
+/// the binding constraint, at 10.7× cheaper than the M-1 lowering (15,132) and 34×
+/// cheaper than the original (48,392).
+///
+/// ★ **The methodological lesson, which generalises past this subject.** The module
+/// header warns that a large intercept with a small slope passes a FIXED-STACK
+/// ladder while still being Θ(depth). This is that hazard's dual: a large intercept
+/// with a small slope also reads as *zero slope* on a ladder that never leaves the
+/// intercept-dominated regime. Both probe points of a slope measurement must sit
+/// clear of the subject's own floor, or the derived slope is understated — here, to
+/// zero. That is why the ceilings below are probed at 512 and 4,096 rather than at
+/// the 16 and 128 that produced the retracted claim.
+///
+/// The shape of the growth (flat to ≈256, then linear) is reported as measured; the
+/// mechanism behind the knee is not established here and is deliberately not
+/// guessed at.
+#[test]
+fn parser_theta_depth_tripwire() {
+    // ~1.5× the measured 1,408 B/level, per profile, as everywhere else in this file.
+    assert_slope_below("parse_depth", ceiling(2_200, 900), 512, 4096);
 }
 
 /// The reported reproducer, end-to-end (parse **and** lower), at a depth far past

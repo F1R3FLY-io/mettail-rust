@@ -236,35 +236,80 @@ to answer.
 
 ---
 
-## 6. ★ M-6 — the parser, measured
+## 6. ★ M-6 — the parser, measured (and a retracted claim)
 
 The parse path had never been measured on this axis. "Not measured" must not be allowed to
 read as "not present", so it was measured, on both axes, with explicit thread stack sizes.
 
-| subject | parameter 16 | 32 | 64 | 128 | slope |
-|---|---|---|---|---|---|
-| `parse_depth` | 471,040 B | 471,040 | 471,040 | 471,040 | **0** |
-| `parse_width` | 471,040 B | 471,040 | 471,040 | 471,040 | **0** |
+### 6.1 The first measurement, and why it was wrong
 
-Identical to the byte at every rung: a large **fixed** intercept (~460 KiB of generated
-recognizer tables and driver frame) and a slope of exactly zero, on both axes.
+The first ladder ran at parameters 16, 32, 64 and 128, and read **471,040 bytes at every
+rung on both axes** — identical to the byte. The conclusion drawn was "slope 0, the parser is
+not a member of this family".
 
-The parser is therefore **not** a member of this family. The reason is structural rather than
-fortunate: `prattail/src/sppf_realize.rs:164` already drives SPPF realization from an explicit
-worklist,
+**That conclusion was wrong.** It was retracted within the hour by the very gate this audit
+introduces, which bisects at *both ends of a wide ladder* rather than sampling a narrow one.
 
-```rust
-let mut stack: Vec<(SppfId, Phase)> = vec![(root, Phase::Enter)];
+### 6.2 What is actually there
+
+| depth | min stack (B) | pairwise B/level |
+|---|---|---|
+| 128 | 471,040 | — |
+| 256 | 499,712 | 224 |
+| 512 | 815,104 | 1,232 |
+| 1,024 | 1,536,000 | 1,408 |
+| 2,048 | 2,977,792 | 1,408 |
+| 4,096 | 5,861,376 | 1,408 |
+
+The asymptotic slope is **1,408 B/level**, stable to the byte across the last three intervals.
+Growth is flat to depth ≈ 256 and linear thereafter; the mechanism behind the knee is not
+established here and is deliberately not guessed at.
+
+The **width** axis is genuinely flat — 471,040 B at width 16, 32, 64, 128, 256, 1,024 and
+4,096, a 256× range with slope **0**.
+
+### 6.3 ★ The methodological lesson
+
+The 471,040 B floor is the parser's **own** fixed intercept (~460 KiB of generated recognizer
+tables and driver frame), not an artifact of the harness: the cheapest subject in the same test
+binary, `lower_width`, bisects to 98,304 B.
+
+§8 of this document, and the gate's own module header, warn that *a large intercept with a
+small slope passes a fixed-stack ladder while still being Θ(depth)*. The retracted claim is
+that hazard's **dual**: a large intercept with a small slope also reads as **zero slope** on a
+ladder that never leaves the intercept-dominated regime.
+
+```
+        min stack
+            ▲
+            │                                          ╱ slope 1,408 B/level
+   5,861 KiB┤                                       ╱
+            │                                    ╱
+            │                                ╱
+   1,536 KiB┤                            ╱
+            │                        ╱
+     815 KiB┤                    ╱
+     471 KiB┤━━━━━━━━━━━━━━━━╱                ← intercept-dominated: the FIRST ladder
+            │  16  64 128  256   512   1024   2048   4096      lived entirely in here
+            └──────────────────────────────────────────────▶ depth
+               ╰── reads as "slope 0" ──╯
 ```
 
-rather than from the host stack.
+**Rule adopted for every slope measurement in this family:** both probe points must sit clear
+of the subject's own floor, or the derived slope is understated — here, all the way to zero.
+The parser tripwire is accordingly probed at 512 and 4,096, not at the 16 and 128 that produced
+the retracted claim.
 
-★ This doubles as the **existence proof for the conversion standard in §8**: the discipline the
-lowering needs is not a novel construction to be argued about — it is the idiom already running
-one stage earlier in the same pipeline, and the table above is the measurement showing that
-idiom delivers a flat profile in production.
+### 6.4 Disposition
 
----
+The parser is Θ(depth) at 1,408 B/level, but it was never the binding constraint: 10.7× cheaper
+per level than the M-1 lowering (15,132) and 34× cheaper than the original (48,392). It sits in
+`parser_theta_depth_tripwire` with a ceiling at ~1.5× measured, and the width axis sits in
+`parsing_is_width_independent`.
+
+⚠ The claim in the M-5/M-6 commit message that the parser measures "0 B/level" on the depth
+axis is **superseded by this section**. It is left in the history rather than rewritten, because
+the retraction is part of the record.
 
 ## 7. M-7 — the run-sheet prefixes (retired)
 
@@ -409,5 +454,5 @@ cargo test -p rholang-runtime --features "rhocalc-runtime lambda-runtime calcula
 | M-2 explicit-stack driver | ☐ outstanding | — |
 | M-3/M-4 `collect_proc_alternatives`, ambiguity-nesting axis | ☐ outstanding | — |
 | M-5 gate | ✅ landed | tripwire + width axis green |
-| M-6 parser probe | ✅ | 0 B/level, 0 B/sibling |
+| M-6 parser probe | ✅ | depth 1,408 B/level (asymptotic); width 0 B/sibling — §6 |
 | M-7 run-sheet prefixes | ✅ landed | 13 demos green at the default stack |
