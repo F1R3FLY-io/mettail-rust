@@ -28,12 +28,12 @@ use mettail_runtime::{
     RuntimeDovetailRunReport, Term, TermType, Var, VarTypeInfo, WeightedRewriteSeed,
     WeightedSeedId,
 };
+use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{
     EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMatches, EMethod, EMinus, EMod, EMult, ENeg, ENeq,
     ENot, EOr, EPlus, EPlusPlus, Expr, Par, ReceiveBind,
 };
-use models::create_bit_vector;
 use models::rust::rholang::implicits::GPrivateBuilder;
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_emap_par, new_eset_par, new_freevar_par, new_gbigint_expr,
@@ -150,7 +150,10 @@ impl BoundEnv {
     /// those must still resolve to their `BoundVar`s; it is only the UNBOUND
     /// residue whose reading changes. See [`BoundEnv::free_vars_are_patterns`].
     pub fn in_pattern_position(&self) -> BoundEnv {
-        BoundEnv { free_vars_are_patterns: true, ..self.clone() }
+        BoundEnv {
+            free_vars_are_patterns: true,
+            ..self.clone()
+        }
     }
 
     /// The empty binder environment carrying `resolver` — the L9-6b entry that
@@ -160,10 +163,7 @@ impl BoundEnv {
     }
 
     /// [`BoundEnv::with_resolver`] under explicit [`LoweringOptions`].
-    fn with_resolver_and_options(
-        resolver: Arc<dyn FltResolve>,
-        options: LoweringOptions,
-    ) -> Self {
+    fn with_resolver_and_options(resolver: Arc<dyn FltResolve>, options: LoweringOptions) -> Self {
         BoundEnv {
             options,
             binders: HashMap::new(),
@@ -270,7 +270,10 @@ pub enum RhocalcAstLowerError {
     UnsupportedName(&'static str),
     FreeVarWithoutName,
     EmptyInputJoin,
-    InputArityMismatch { names: usize, binders: usize },
+    InputArityMismatch {
+        names: usize,
+        binders: usize,
+    },
     /// L9-6: a `PFlt` node's `tag` resolves to no guest in the installed
     /// [`FltResolve`] registry (the empty-resolver default, or an unregistered
     /// tag). A `PFlt` cannot elaborate without its guest reflector — fail closed.
@@ -937,247 +940,104 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         return lower_proc(&desugared, env);
     }
     match proc {
-        Proc::PZero => Ok(Par::default()),
-        Proc::PDrop(name) => lower_drop(name.as_ref(), env),
+        Proc::PZero => lower_arm_p_zero(),
+        Proc::PDrop(name) => lower_arm_p_drop(name, env),
         // L9-6b CONSTRUCTION arm: a `PFlt*` in VALUE position (a send payload, a
         // re-quote) elaborates to the reflected foreign term via the guest
         // reflector selected by its `tag`. The three delimiter forms are identical
         // at this level — same `Arc<FltNode>` payload.
         Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
-            lower_flt_construction(node.as_ref(), env)
+            lower_arm_p_flt(node, env)
         },
-        Proc::PPar(parts) => parts
-            .iter_elements()
-            .try_fold(Par::default(), |acc, part| Ok(acc.append(lower_proc(part, env)?))),
+        Proc::PPar(parts) => lower_arm_p_par(parts, env),
         // Bare infix parallel `a | b` (no outer braces). The WPDA parser emits the raw `PParInfix`
         // node; its `fold` to `PPar({a, b})` (`merge_pp_parallel`) runs only at eval time. Parallel
         // composition lowers to `Par::append` (associative/commutative over sends/receives/etc.),
         // which is exactly what lowering the folded `PPar` bag would produce. A free-process member
         // (e.g. `q` in `c!(p) | q`) lowers via its own `PVar` arm, so it rides this path too.
-        Proc::PParInfix(left, right) => {
-            Ok(lower_proc(left.as_ref(), env)?.append(lower_proc(right.as_ref(), env)?))
-        },
-        Proc::POutput(channel, payload) => {
-            let channel = lower_name(channel.as_ref(), env)?;
-            let payload = lower_proc(payload.as_ref(), env)?;
-            Ok(send_par(channel, vec![payload]))
-        },
+        Proc::PParInfix(left, right) => lower_arm_p_par_infix(left, right, env),
+        Proc::POutput(channel, payload) => lower_arm_p_output(channel, payload, env),
         // ★ THE LOOKAHEAD ARMS — `x!(P)[*]` and `x!(P)[n]`.
         //
         // These do NOT lower to a send. `x!(P)[*]` is not "send P on x, and also explore": it is
         // an EXPLORATION whose results are delivered on `x`. So the lowering emits a speculation
         // REQUEST and no send at all; the data that eventually rest on `x` are the terminal terms
         // the engine computed.
-        Proc::PLookaheadAll(subject) => {
-            let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
-            Ok(crate::lookahead::spec_all_request(payload, channel))
-        },
-        Proc::PLookahead(subject, bound) => {
-            let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
-            let bound = lookahead_bound(bound.as_ref())?;
-            Ok(crate::lookahead::spec_n_request(payload, bound, channel))
-        },
+        Proc::PLookaheadAll(subject) => lower_arm_p_lookahead_all(subject, env),
+        Proc::PLookahead(subject, bound) => lower_arm_p_lookahead(subject, bound, env),
         // `for(...)` receive. Each `;`-separated row nests as the continuation of the previous one;
         // each row may be a single bind, a `&`-join, persistent (`<=`), empty (`<- n`), and may
         // carry a `where` guard. See [`lower_pfor_user`].
-        Proc::PForUser(rows, body) => lower_pfor_user(rows, body.as_ref(), env),
-        Proc::PPersistOutput(channel, payload) => {
-            let channel = lower_name(channel.as_ref(), env)?;
-            let payload = lower_proc(payload.as_ref(), env)?;
-            Ok(send_par_persistent(channel, vec![payload]))
-        },
+        Proc::PForUser(rows, body) => lower_arm_p_for_user(rows, body, env),
+        Proc::PPersistOutput(channel, payload) => lower_arm_p_persist_output(channel, payload, env),
         // Rholang-style short sends `@P!(q)` / `@P!!(q)`. The WPDA parser emits the raw `*Short`
         // nodes (the `fold` to `POutput(NQuote(P), q)` / `PPersistOutput(NQuote(P), q)` runs only at
         // eval time), so lower them here with the SAME semantics: the channel is the quote of `P`,
         // i.e. `lower_name(NQuote(P)) == lower_proc(P)`. This is the canonical rho send idiom and the
         // body of most COMM examples (`@("c")!(@("OUT")!("p"))` nests two of these).
         Proc::POutputShort(channel_proc, payload) => {
-            let channel = lower_proc(channel_proc.as_ref(), env)?;
-            let payload = lower_proc(payload.as_ref(), env)?;
-            Ok(send_par(channel, vec![payload]))
+            lower_arm_p_output_short(channel_proc, payload, env)
         },
         Proc::PPersistOutputShort(channel_proc, payload) => {
-            let channel = lower_proc(channel_proc.as_ref(), env)?;
-            let payload = lower_proc(payload.as_ref(), env)?;
-            Ok(send_par_persistent(channel, vec![payload]))
+            lower_arm_p_persist_output_short(channel_proc, payload, env)
         },
-        Proc::PNew(scope) => {
-            let (binders, body) = scope.clone().unbind::<String>();
-            let extended_env = extend_env(env, &binders);
-            // A-S4: the `new` body is a fold-lift scope — a width/precision fold inside it
-            // trampolines here (mirrors receive bodies and the top level).
-            let body = lower_body_lifting_folds(body.as_ref(), &extended_env)?;
-            let locally_free = filter_and_adjust_bitset(&body.locally_free, binders.len());
-
-            let connective_used = body.connective_used;
-            Ok(new_new_par(
-                binders.len() as i32,
-                body,
-                Vec::new(),
-                BTreeMap::new(),
-                locally_free.clone(),
-                locally_free,
-                connective_used,
-            ))
-        },
+        Proc::PNew(scope) => lower_arm_p_new(scope, env),
         // ── A-S4 cast purity: casts lower STRUCTURALLY ─────────────────────────────────────
         // A literal leaf is DATA (embedding `GInt(5)` is translation, not evaluation); a
         // structural node lowers to the machine's own metered `Expr` (`-a` → `ENeg`); anything
         // with no machine algebra (the macro-injected cross-type conversion constructors, an
         // unsubstituted category variable, a lambda) fails closed, typed and named. The former
         // `.try_eval()` arms computed those values host-side at lowering time.
-        Proc::CastInt(value) => lower_int_value(value.as_ref(), env),
-        Proc::CastBool(value) => match value.as_ref() {
-            Bool::BoolLit(literal) => Ok(new_gbool_par(*literal, Vec::new(), false)),
-            _ => Err(RhocalcAstLowerError::UnsupportedProc(
-                "non-literal boolean expression (Bool category)",
-            )),
-        },
-        Proc::CastStr(value) => match value.as_ref() {
-            Str::StringLit(literal) => Ok(new_gstring_par(literal.clone(), Vec::new(), false)),
-            _ => Err(RhocalcAstLowerError::UnsupportedProc(
-                "non-literal string expression (Str category)",
-            )),
-        },
-        Proc::PVar(var) => lower_proc_var(var, env),
-        Proc::Err => Err(RhocalcAstLowerError::UnsupportedProc("error process")),
-        Proc::CastBigRat(value) => match value.as_ref() {
-            BigRat::RatLit(literal) => {
-                let rational = literal.get();
-                Ok(expr_par(new_gbigrat_expr(
-                    rational.numer().to_signed_bytes_be(),
-                    rational.denom().to_signed_bytes_be(),
-                )))
-            },
-            _ => Err(RhocalcAstLowerError::UnsupportedProc(
-                "non-literal big-rational expression (BigRat category)",
-            )),
-        },
-        Proc::CastFixed(value) => match value.as_ref() {
-            Fixed::FixedLit(literal) => Ok(expr_par(new_gfixedpoint_expr(
-                literal.unscaled().to_signed_bytes_be(),
-                literal.places(),
-            ))),
-            _ => Err(RhocalcAstLowerError::UnsupportedProc(
-                "non-literal fixed-point expression (Fixed category)",
-            )),
-        },
-        Proc::CastFloat(value) => match value.as_ref() {
-            Float::FloatLit(literal) => Ok(expr_par(new_gdouble_expr(literal.get()))),
-            _ => Err(RhocalcAstLowerError::UnsupportedProc(
-                "non-literal float expression (Float category)",
-            )),
-        },
-        Proc::CastBigInt(value) => match value.as_ref() {
-            BigInt::NumLit(literal) => {
-                Ok(expr_par(new_gbigint_expr(literal.get().to_signed_bytes_be())))
-            },
-            _ => Err(RhocalcAstLowerError::UnsupportedProc(
-                "non-literal big-integer expression (BigInt category)",
-            )),
-        },
-        Proc::CastUInt32(value) => match value.as_ref() {
-            UInt32::NumLit(literal) => Ok(new_gint_par(i64::from(*literal), Vec::new(), false)),
-            _ => Err(RhocalcAstLowerError::UnsupportedProc(
-                "non-literal u32 expression (UInt32 category)",
-            )),
-        },
-        Proc::CastList(value) => lower_list(value.as_ref(), env),
-        Proc::CastBag(value) => lower_bag(value.as_ref(), env),
-        Proc::CastMap(value) => lower_map(value.as_ref(), env),
-        Proc::CastSet(value) => lower_set(value.as_ref(), env),
-        Proc::CastPathmap(value) => lower_pathmap(value.as_ref(), env),
-        Proc::CastBytes(value) => match value.as_ref() {
-            // RhoCalc `Bytes` is a `String`-backed literal (`![String] as Bytes`); lower the ground
-            // literal to a Rholang `GString` (mirrors `CastStr`). Non-ground bytes are unsupported.
-            Bytes::StringLit(string) => Ok(new_gstring_par(string.clone(), Vec::new(), false)),
-            _ => Err(RhocalcAstLowerError::UnsupportedProc("non-ground bytes process")),
-        },
+        Proc::CastInt(value) => lower_arm_cast_int(value, env),
+        Proc::CastBool(value) => lower_arm_cast_bool(value),
+        Proc::CastStr(value) => lower_arm_cast_str(value),
+        Proc::PVar(var) => lower_arm_p_var(var, env),
+        Proc::Err => lower_arm_err(),
+        Proc::CastBigRat(value) => lower_arm_cast_big_rat(value),
+        Proc::CastFixed(value) => lower_arm_cast_fixed(value),
+        Proc::CastFloat(value) => lower_arm_cast_float(value),
+        Proc::CastBigInt(value) => lower_arm_cast_big_int(value),
+        Proc::CastUInt32(value) => lower_arm_cast_u_int32(value),
+        Proc::CastList(value) => lower_arm_cast_list(value, env),
+        Proc::CastBag(value) => lower_arm_cast_bag(value, env),
+        Proc::CastMap(value) => lower_arm_cast_map(value, env),
+        Proc::CastSet(value) => lower_arm_cast_set(value, env),
+        Proc::CastPathmap(value) => lower_arm_cast_pathmap(value, env),
+        Proc::CastBytes(value) => lower_arm_cast_bytes(value),
         // ── A-S4 fold purity: EVERY width/precision fold trampolines on the machine ─────────
         // Fold nodes are lifted into fold-contract trampolines by [`lower_body_lifting_folds`]
         // BEFORE `lower_proc` descends (ground operands included — the former Tier-1 in-place
         // `try_eval_fold_proc` host fold is deleted). A fold reaching THIS arm sits in a position
         // the lift traversal cannot reach (inside a hashed-collection literal, a receive
         // pattern, or a fold with a non-ground width) — fail closed, typed and named.
-        Proc::IntBinProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
-            "int(a, w) width fold outside a fold-liftable position (or non-ground width)",
-        )),
-        Proc::UIntBinProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
-            "uint(a, w) width fold outside a fold-liftable position (or non-ground width)",
-        )),
-        Proc::FloatBinProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
-            "float(a, w) width fold outside a fold-liftable position (or non-ground width)",
-        )),
-        Proc::FixedBinProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
-            "fixed(a, w) width fold outside a fold-liftable position (or non-ground width)",
-        )),
-        Proc::BigintCastProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
-            "bigint(a) precision cast outside a fold-liftable position",
-        )),
-        Proc::BigratCastProc(..) => Err(RhocalcAstLowerError::UnsupportedProc(
-            "bigrat(a) precision cast outside a fold-liftable position",
-        )),
+        Proc::IntBinProc(..) => lower_arm_int_bin_proc(),
+        Proc::UIntBinProc(..) => lower_arm_u_int_bin_proc(),
+        Proc::FloatBinProc(..) => lower_arm_float_bin_proc(),
+        Proc::FixedBinProc(..) => lower_arm_fixed_bin_proc(),
+        Proc::BigintCastProc(..) => lower_arm_bigint_cast_proc(),
+        Proc::BigratCastProc(..) => lower_arm_bigrat_cast_proc(),
         // ── A-S4 metered machine arithmetic (the RhoCalc face of the E3 pattern) ────────────
         // Operands lower STRUCTURALLY; the machine's reducer evaluates the expression with its
         // size-dependent primitive costs (f1r3node `reduce.rs`: `EPlus`/`EMinus`/`EMult`/`EDiv`/
         // `EMod`/`ENeg` over GInt/GDouble/GBigInt/GBigRat/GFixedPoint). String `+` is Rholang
         // `++` (`EPlusPlus`): when BOTH operands lower to ground string leaves the concat parity
         // arm is chosen; `EPlus` has no GString algebra.
-        Proc::Add(a, b) => {
-            let lhs = lower_proc(a.as_ref(), env)?;
-            let rhs = lower_proc(b.as_ref(), env)?;
-            if is_single_gstring_value(&lhs) && is_single_gstring_value(&rhs) {
-                Ok(binary_expr_par(lhs, rhs, |p1, p2| {
-                    ExprInstance::EPlusPlusBody(EPlusPlus { p1, p2 })
-                }))
-            } else {
-                Ok(binary_expr_par(lhs, rhs, |p1, p2| {
-                    ExprInstance::EPlusBody(EPlus { p1, p2 })
-                }))
-            }
-        },
-        Proc::Sub(a, b) => lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
-            ExprInstance::EMinusBody(EMinus { p1, p2 })
-        }),
-        Proc::Mul(a, b) => lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
-            ExprInstance::EMultBody(EMult { p1, p2 })
-        }),
-        Proc::Div(a, b) => lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
-            ExprInstance::EDivBody(EDiv { p1, p2 })
-        }),
-        Proc::Mod(a, b) => lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
-            ExprInstance::EModBody(EMod { p1, p2 })
-        }),
-        Proc::NegProc(a) => {
-            let operand = lower_proc(a.as_ref(), env)?;
-            Ok(unary_expr_par(operand, |p| ExprInstance::ENegBody(ENeg { p })))
-        },
+        Proc::Add(a, b) => lower_arm_add(a, b, env),
+        Proc::Sub(a, b) => lower_arm_sub(a, b, env),
+        Proc::Mul(a, b) => lower_arm_mul(a, b, env),
+        Proc::Div(a, b) => lower_arm_div(a, b, env),
+        Proc::Mod(a, b) => lower_arm_mod(a, b, env),
+        Proc::NegProc(a) => lower_arm_neg_proc(a, env),
         // Boolean/comparison guard operators (used by `where`-conditions and boolean payloads):
         // lower both operands and wrap in the matching Rholang comparison/logical `Expr`.
-        Proc::Eq(a, b) => {
-            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EEqBody(EEq { p1, p2 }))
-        },
-        Proc::Ne(a, b) => {
-            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ENeqBody(ENeq { p1, p2 }))
-        },
-        Proc::Lt(a, b) => {
-            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELtBody(ELt { p1, p2 }))
-        },
-        Proc::Gt(a, b) => {
-            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGtBody(EGt { p1, p2 }))
-        },
-        Proc::LtEq(a, b) => {
-            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELteBody(ELte { p1, p2 }))
-        },
-        Proc::GtEq(a, b) => {
-            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGteBody(EGte { p1, p2 }))
-        },
-        Proc::And(a, b) => {
-            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EAndBody(EAnd { p1, p2 }))
-        },
-        Proc::Or(a, b) => {
-            lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EOrBody(EOr { p1, p2 }))
-        },
+        Proc::Eq(a, b) => lower_arm_eq(a, b, env),
+        Proc::Ne(a, b) => lower_arm_ne(a, b, env),
+        Proc::Lt(a, b) => lower_arm_lt(a, b, env),
+        Proc::Gt(a, b) => lower_arm_gt(a, b, env),
+        Proc::LtEq(a, b) => lower_arm_lt_eq(a, b, env),
+        Proc::GtEq(a, b) => lower_arm_gt_eq(a, b, env),
+        Proc::And(a, b) => lower_arm_and(a, b, env),
+        Proc::Or(a, b) => lower_arm_or(a, b, env),
         // M-0 — material implication. Rholang's expression algebra has no `EImplies`, and it
         // needs none: `a implies b ≡ (not a) or b`, and BOTH halves of that identity are
         // already emitted on this very path (`ENotBody` two arms below, `EOrBody` one arm
@@ -1191,18 +1051,8 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // antecedent's `locally_free`/`connective_used` onto the `ENot`, and
         // `binary_expr_par` then unions that with the consequent's — so the resulting `Par`
         // carries exactly the free-variable footprint of `a` ∪ `b`, as `Or` would.
-        Proc::Implies(a, b) => {
-            let antecedent = lower_proc(a.as_ref(), env)?;
-            let consequent = lower_proc(b.as_ref(), env)?;
-            let negated = unary_expr_par(antecedent, |p| ExprInstance::ENotBody(ENot { p }));
-            Ok(binary_expr_par(negated, consequent, |p1, p2| {
-                ExprInstance::EOrBody(EOr { p1, p2 })
-            }))
-        },
-        Proc::Not(a) => {
-            let operand = lower_proc(a.as_ref(), env)?;
-            Ok(unary_expr_par(operand, |p| ExprInstance::ENotBody(ENot { p })))
-        },
+        Proc::Implies(a, b) => lower_arm_implies(a, b, env),
+        Proc::Not(a) => lower_arm_not(a, env),
         // M-1b — the SPATIAL satisfaction operator `t matches φ`.
         //
         // The TARGET is an ordinary term, lowered by `lower_proc`; the FORMULA is
@@ -1222,32 +1072,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // The TARGET is still lowered, and its typed lowering error still
         // propagates: folding must not turn an ill-formed program into a
         // well-formed `false`.
-        Proc::Matches(target, formula) => {
-            let target = lower_proc(target.as_ref(), env)?;
-            if mettail_languages::rhocalc::formula::is_statically_false(formula.as_ref()) {
-                let mut folded = new_gbool_par(false, Vec::new(), false);
-                folded.locally_free = target.locally_free;
-                return Ok(folded);
-            }
-            let pattern = crate::rhocalc_formula::lower_formula_in_env(formula.as_ref(), env)?;
-            // `connective_used` is NOT propagated from the pattern. The result of
-            // `matches` is a BOOLEAN expression, not a pattern: it is the one place
-            // in the lowering where a connective legitimately appears inside a Par
-            // that is itself not a pattern. This mirrors f1r3node's own
-            // `normalize_p_matches`, which builds the `EMatches` from a target
-            // normalized in the OUTER scope and a pattern normalized in a PUSHED
-            // scope with a fresh free map, and returns the LEFT operand's free map.
-            let locally_free = union(target.locally_free.clone(), pattern.locally_free.clone());
-            let mut par = Par::default().with_exprs(vec![Expr {
-                expr_instance: Some(ExprInstance::EMatchesBody(EMatches {
-                    target: Some(target),
-                    pattern: Some(pattern),
-                })),
-            }]);
-            par.locally_free = locally_free;
-            par.connective_used = false;
-            Ok(par)
-        },
+        Proc::Matches(target, formula) => lower_arm_matches(target, formula, env),
         // M-1b — `PPar(φ, ψ)` is a PATTERN former, not a term former. It denotes
         // the separating conjunction, which is meaningful only as the right operand
         // of `matches` (where `rhocalc_formula` compiles it to a par-pattern). In
@@ -1256,10 +1081,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // composition — which would look like it worked while meaning something
         // different (`a | b` builds a process; `PPar(a,b)` asserts a split).
         // A program that wants parallel composition writes `{ a | b }` or `a | b`.
-        Proc::SpatialPPar(..) => Err(RhocalcAstLowerError::UnsupportedProc(
-            "PPar(a, b) outside a `matches` formula (the spatial connective is a pattern former, \
-             not a term former; write `{ a | b }` for parallel composition)",
-        )),
+        Proc::SpatialPPar(..) => lower_arm_spatial_p_par(),
         // ── Methods routed to the reducer's OWN method table (option C, C1/C2) ───────────────
         //
         // Every name below is a key of `reduce.rs::method_table` (8197-8256). Dispatch is on the
@@ -1272,7 +1094,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // (`languages/proto/rhocalc_wire.proto` + `languages/src/rhocalc/wire.rs`), which encoded
         // a hex `GString` in protobuf BYTE order and could not encode any collection the RhoCalc
         // grammar actually produces.
-        Proc::MToByteArray(m) => lower_method("toByteArray", m.as_ref(), &[], env),
+        Proc::MToByteArray(m) => lower_arm_m_to_byte_array(m, env),
         //
         // ── C1 — the collection method surface (landed 2026-07-26) ──────────────────────────
         //
@@ -1314,17 +1136,17 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // lives on `length` and `nth` — the two routed methods that DO accept `EListBody` — and
         // those two are gated by [`lower_length`] / [`lower_nth`]. Measured, not hypothesized:
         // `rho_rhocalc_conformance.rs::c1_bag_encoding_is_rejected_by_every_routed_method`.
-        Proc::MGet(m, k) => lower_method("get", m.as_ref(), &[k.as_ref()], env),
-        Proc::MSet(m, k, v) => lower_method("set", m.as_ref(), &[k.as_ref(), v.as_ref()], env),
-        Proc::MContains(m, k) => lower_method("contains", m.as_ref(), &[k.as_ref()], env),
-        Proc::MDelete(m, k) => lower_method("delete", m.as_ref(), &[k.as_ref()], env),
-        Proc::MUnion(a, b) => lower_method("union", a.as_ref(), &[b.as_ref()], env),
-        Proc::MSize(m) => lower_method("size", m.as_ref(), &[], env),
-        Proc::MKeys(m) => lower_method("keys", m.as_ref(), &[], env),
-        Proc::BDiff(a, b) => lower_method("diff", a.as_ref(), &[b.as_ref()], env),
-        Proc::SAdd(s, e) => lower_method("add", s.as_ref(), &[e.as_ref()], env),
-        Proc::LLength(l) => lower_length(l.as_ref(), env),
-        Proc::LNth(l, i) => lower_nth(l.as_ref(), i.as_ref(), env),
+        Proc::MGet(m, k) => lower_arm_m_get(m, k, env),
+        Proc::MSet(m, k, v) => lower_arm_m_set(m, k, v, env),
+        Proc::MContains(m, k) => lower_arm_m_contains(m, k, env),
+        Proc::MDelete(m, k) => lower_arm_m_delete(m, k, env),
+        Proc::MUnion(a, b) => lower_arm_m_union(a, b, env),
+        Proc::MSize(m) => lower_arm_m_size(m, env),
+        Proc::MKeys(m) => lower_arm_m_keys(m, env),
+        Proc::BDiff(a, b) => lower_arm_b_diff(a, b, env),
+        Proc::SAdd(s, e) => lower_arm_s_add(s, e, env),
+        Proc::LLength(l) => lower_arm_l_length(l, env),
+        Proc::LNth(l, i) => lower_arm_l_nth(l, i, env),
         // `concat` is the one C1 method with NO `method_table` key: Rholang spells list/string
         // concatenation as the `++` OPERATOR (`EPlusPlus`), not as a method. Routing to `++`
         // still hands the operation to the reducer's own evaluator — the single-evaluator
@@ -1335,7 +1157,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // Ungated, `#{1|2}#.concat(#{3}#)` would concatenate the two ENCODINGS into a 4-element
         // list carrying two ABI tags — where the fold body, which accepts only (List, List) and
         // (Str, Str), answers `error`. See [`lower_concat`].
-        Proc::LConcat(l, r) => lower_concat(l.as_ref(), r.as_ref(), env),
+        Proc::LConcat(l, r) => lower_arm_l_concat(l, r, env),
         //
         // ── C1b — the Pathmap/Zipper family: routed, but UNREACHABLE until C4 ───────────────
         //
@@ -1415,25 +1237,23 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // [`unsupported_construct_name`]). The property is proved end-to-end, against the real
         // reducer and BOUNDED so a violation fails instead of hanging, by
         // `rho_rhocalc_conformance.rs::c1_zipper_walk_exhaustion_terminates_within_leaf_count`.
-        Proc::PGetSubtrie(m) => lower_method("getSubtrie", m.as_ref(), &[], env),
-        Proc::PReadZipper(m) => lower_method("readZipper", m.as_ref(), &[], env),
-        Proc::PReadZipperAt(m, p) => lower_method("readZipperAt", m.as_ref(), &[p.as_ref()], env),
-        Proc::PWriteZipper(m) => lower_method("writeZipper", m.as_ref(), &[], env),
-        Proc::PWriteZipperAt(m, p) => lower_method("writeZipperAt", m.as_ref(), &[p.as_ref()], env),
-        Proc::RZGetLeaf(z) => lower_method("getLeaf", z.as_ref(), &[], env),
-        Proc::RZDescendTo(z, rel) => lower_method("descendTo", z.as_ref(), &[rel.as_ref()], env),
-        Proc::RZChildCount(z) => lower_method("childCount", z.as_ref(), &[], env),
-        Proc::RZDescendFirst(z) => lower_method("descendFirst", z.as_ref(), &[], env),
-        Proc::RZToNextSibling(z) => lower_method("toNextSibling", z.as_ref(), &[], env),
-        Proc::RZToPrevSibling(z) => lower_method("toPrevSibling", z.as_ref(), &[], env),
-        Proc::RZDescendIndexedBranch(z, i) => {
-            lower_method("descendIndexedBranch", z.as_ref(), &[i.as_ref()], env)
-        },
-        Proc::RZAscendOne(z) => lower_method("ascendOne", z.as_ref(), &[], env),
-        Proc::RZAscend(z, n) => lower_method("ascend", z.as_ref(), &[n.as_ref()], env),
-        Proc::RZGetPath(z) => lower_method("getPath", z.as_ref(), &[], env),
-        Proc::RZToNextLeaf(z) => lower_method("toNextLeaf", z.as_ref(), &[], env),
-        Proc::RZLeafCount(z) => lower_method("leafCount", z.as_ref(), &[], env),
+        Proc::PGetSubtrie(m) => lower_arm_p_get_subtrie(m, env),
+        Proc::PReadZipper(m) => lower_arm_p_read_zipper(m, env),
+        Proc::PReadZipperAt(m, p) => lower_arm_p_read_zipper_at(m, p, env),
+        Proc::PWriteZipper(m) => lower_arm_p_write_zipper(m, env),
+        Proc::PWriteZipperAt(m, p) => lower_arm_p_write_zipper_at(m, p, env),
+        Proc::RZGetLeaf(z) => lower_arm_r_z_get_leaf(z, env),
+        Proc::RZDescendTo(z, rel) => lower_arm_r_z_descend_to(z, rel, env),
+        Proc::RZChildCount(z) => lower_arm_r_z_child_count(z, env),
+        Proc::RZDescendFirst(z) => lower_arm_r_z_descend_first(z, env),
+        Proc::RZToNextSibling(z) => lower_arm_r_z_to_next_sibling(z, env),
+        Proc::RZToPrevSibling(z) => lower_arm_r_z_to_prev_sibling(z, env),
+        Proc::RZDescendIndexedBranch(z, i) => lower_arm_r_z_descend_indexed_branch(z, i, env),
+        Proc::RZAscendOne(z) => lower_arm_r_z_ascend_one(z, env),
+        Proc::RZAscend(z, n) => lower_arm_r_z_ascend(z, n, env),
+        Proc::RZGetPath(z) => lower_arm_r_z_get_path(z, env),
+        Proc::RZToNextLeaf(z) => lower_arm_r_z_to_next_leaf(z, env),
+        Proc::RZLeafCount(z) => lower_arm_r_z_leaf_count(z, env),
         // ⚠ `setLeaf` is NOT routed, and it is the reason this file checks ARITY and SEMANTICS
         // rather than trusting a shared name. The two `setLeaf`s are different operations:
         //
@@ -1479,17 +1299,1225 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         //
         // The arity of every other routed zipper method was checked against the interpreter's own
         // `expected:` counts, and `setLeaf` is the only mismatch.
-        Proc::WZSetSubtrie(w, rel) => lower_method("setSubtrie", w.as_ref(), &[rel.as_ref()], env),
-        Proc::WZRemoveLeaf(w) => lower_method("removeLeaf", w.as_ref(), &[], env),
-        Proc::WZRemoveBranches(w) => lower_method("removeBranches", w.as_ref(), &[], env),
-        Proc::WZGraft(w, rz) => lower_method("graft", w.as_ref(), &[rz.as_ref()], env),
-        Proc::WZJoinInto(w, rz) => lower_method("joinInto", w.as_ref(), &[rz.as_ref()], env),
+        Proc::WZSetSubtrie(w, rel) => lower_arm_w_z_set_subtrie(w, rel, env),
+        Proc::WZRemoveLeaf(w) => lower_arm_w_z_remove_leaf(w, env),
+        Proc::WZRemoveBranches(w) => lower_arm_w_z_remove_branches(w, env),
+        Proc::WZGraft(w, rz) => lower_arm_w_z_graft(w, rz, env),
+        Proc::WZJoinInto(w, rz) => lower_arm_w_z_join_into(w, rz, env),
         //
         // A-S4 fail-closed: every remaining construct has no machine algebra (bitwise ops,
         // cross-type conversions, the MeTTaIL-only collection residue, lambda forms, internal
         // gates). The typed error NAMES the construct; nothing silently host-evaluates.
-        other => Err(RhocalcAstLowerError::UnsupportedProc(unsupported_construct_name(other))),
+        other => lower_arm_unsupported(other),
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// M-1 — THE PER-ARM FRAMES
+//
+// Every arm of [`lower_proc`]'s match lives below as its own `#[inline(never)]` function.
+// This is PURE CODE MOTION: not one expression was rewritten, and the call sites above keep
+// the documentation that explains each arm's semantics.
+//
+// ## Why the split is the point rather than a tidy-up
+//
+// At `-O0` rustc does not overlay the stack slots of mutually exclusive match arms. One
+// function carrying 89 arms therefore pays the SUM of every arm's locals in a single frame —
+// and `lower_proc` is self-recursive, so that sum was paid once PER NESTING LEVEL of the term
+// being lowered. Measured before this split: 48,394 B per level (debug), which put a
+// SIGSEGV at nesting depth 170 on an 8 MiB main-thread stack.
+//
+// After the split, each frame on the recursion path is bounded by ONE arm's locals BY
+// CONSTRUCTION, rather than by an accidental property of how many unrelated arms happen to
+// share the function. `#[inline(never)]` is what makes that a guarantee instead of a hope:
+// without it, LLVM (or cranelift, which this workspace uses for `[profile.dev]`) is free to
+// inline the callee straight back into the caller and restore the sum.
+//
+// ⚠ This is a CONSTANT-factor fix, not a class fix. The traversal is still Θ(depth); M-2
+// converts it to an explicit-stack driver, which is what removes the class. The two are
+// deliberately separate commits so that each is measured on its own.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/// The `Proc::PZero` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_zero() -> Result<Par, RhocalcAstLowerError> {
+    Ok(Par::default())
+}
+
+/// The `Proc::PDrop(name)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_drop(
+    name: &std::sync::Arc<Name>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_drop(name.as_ref(), env)
+}
+
+/// The `Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_flt(
+    node: &std::sync::Arc<mettail_runtime::FltNode>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_flt_construction(node.as_ref(), env)
+}
+
+/// The `Proc::PPar(parts)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_par(
+    parts: &mettail_runtime::HashBag<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    parts
+        .iter_elements()
+        .try_fold(Par::default(), |acc, part| Ok(acc.append(lower_proc(part, env)?)))
+}
+
+/// The `Proc::PParInfix(left, right)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_par_infix(
+    left: &std::sync::Arc<Proc>,
+    right: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    Ok(lower_proc(left.as_ref(), env)?.append(lower_proc(right.as_ref(), env)?))
+}
+
+/// The `Proc::POutput(channel, payload)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_output(
+    channel: &std::sync::Arc<Name>,
+    payload: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let channel = lower_name(channel.as_ref(), env)?;
+    let payload = lower_proc(payload.as_ref(), env)?;
+    Ok(send_par(channel, vec![payload]))
+}
+
+/// The `Proc::PLookaheadAll(subject)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_lookahead_all(
+    subject: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
+    Ok(crate::lookahead::spec_all_request(payload, channel))
+}
+
+/// The `Proc::PLookahead(subject, bound)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_lookahead(
+    subject: &std::sync::Arc<Proc>,
+    bound: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
+    let bound = lookahead_bound(bound.as_ref())?;
+    Ok(crate::lookahead::spec_n_request(payload, bound, channel))
+}
+
+/// The `Proc::PForUser(rows, body)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_for_user(
+    rows: &Vec<ForRow>,
+    body: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_pfor_user(rows, body.as_ref(), env)
+}
+
+/// The `Proc::PPersistOutput(channel, payload)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_persist_output(
+    channel: &std::sync::Arc<Name>,
+    payload: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let channel = lower_name(channel.as_ref(), env)?;
+    let payload = lower_proc(payload.as_ref(), env)?;
+    Ok(send_par_persistent(channel, vec![payload]))
+}
+
+/// The `Proc::POutputShort(channel_proc, payload)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_output_short(
+    channel_proc: &std::sync::Arc<Proc>,
+    payload: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let channel = lower_proc(channel_proc.as_ref(), env)?;
+    let payload = lower_proc(payload.as_ref(), env)?;
+    Ok(send_par(channel, vec![payload]))
+}
+
+/// The `Proc::PPersistOutputShort(channel_proc, payload)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_persist_output_short(
+    channel_proc: &std::sync::Arc<Proc>,
+    payload: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let channel = lower_proc(channel_proc.as_ref(), env)?;
+    let payload = lower_proc(payload.as_ref(), env)?;
+    Ok(send_par_persistent(channel, vec![payload]))
+}
+
+/// The `Proc::PNew(scope)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_new(
+    scope: &mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<Proc>>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let (binders, body) = scope.clone().unbind::<String>();
+    let extended_env = extend_env(env, &binders);
+    // A-S4: the `new` body is a fold-lift scope — a width/precision fold inside it
+    // trampolines here (mirrors receive bodies and the top level).
+    let body = lower_body_lifting_folds(body.as_ref(), &extended_env)?;
+    let locally_free = filter_and_adjust_bitset(&body.locally_free, binders.len());
+
+    let connective_used = body.connective_used;
+    Ok(new_new_par(
+        binders.len() as i32,
+        body,
+        Vec::new(),
+        BTreeMap::new(),
+        locally_free.clone(),
+        locally_free,
+        connective_used,
+    ))
+}
+
+/// The `Proc::CastInt(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_int(
+    value: &std::sync::Arc<Int>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_int_value(value.as_ref(), env)
+}
+
+/// The `Proc::CastBool(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_bool(value: &std::sync::Arc<Bool>) -> Result<Par, RhocalcAstLowerError> {
+    match value.as_ref() {
+        Bool::BoolLit(literal) => Ok(new_gbool_par(*literal, Vec::new(), false)),
+        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+            "non-literal boolean expression (Bool category)",
+        )),
+    }
+}
+
+/// The `Proc::CastStr(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_str(value: &std::sync::Arc<Str>) -> Result<Par, RhocalcAstLowerError> {
+    match value.as_ref() {
+        Str::StringLit(literal) => Ok(new_gstring_par(literal.clone(), Vec::new(), false)),
+        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+            "non-literal string expression (Str category)",
+        )),
+    }
+}
+
+/// The `Proc::PVar(var)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_var(
+    var: &mettail_runtime::OrdVar,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_proc_var(var, env)
+}
+
+/// The `Proc::Err` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_err() -> Result<Par, RhocalcAstLowerError> {
+    Err(RhocalcAstLowerError::UnsupportedProc("error process"))
+}
+
+/// The `Proc::CastBigRat(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_big_rat(value: &std::sync::Arc<BigRat>) -> Result<Par, RhocalcAstLowerError> {
+    match value.as_ref() {
+        BigRat::RatLit(literal) => {
+            let rational = literal.get();
+            Ok(expr_par(new_gbigrat_expr(
+                rational.numer().to_signed_bytes_be(),
+                rational.denom().to_signed_bytes_be(),
+            )))
+        },
+        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+            "non-literal big-rational expression (BigRat category)",
+        )),
+    }
+}
+
+/// The `Proc::CastFixed(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_fixed(value: &std::sync::Arc<Fixed>) -> Result<Par, RhocalcAstLowerError> {
+    match value.as_ref() {
+        Fixed::FixedLit(literal) => Ok(expr_par(new_gfixedpoint_expr(
+            literal.unscaled().to_signed_bytes_be(),
+            literal.places(),
+        ))),
+        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+            "non-literal fixed-point expression (Fixed category)",
+        )),
+    }
+}
+
+/// The `Proc::CastFloat(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_float(value: &std::sync::Arc<Float>) -> Result<Par, RhocalcAstLowerError> {
+    match value.as_ref() {
+        Float::FloatLit(literal) => Ok(expr_par(new_gdouble_expr(literal.get()))),
+        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+            "non-literal float expression (Float category)",
+        )),
+    }
+}
+
+/// The `Proc::CastBigInt(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_big_int(value: &std::sync::Arc<BigInt>) -> Result<Par, RhocalcAstLowerError> {
+    match value.as_ref() {
+        BigInt::NumLit(literal) => {
+            Ok(expr_par(new_gbigint_expr(literal.get().to_signed_bytes_be())))
+        },
+        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+            "non-literal big-integer expression (BigInt category)",
+        )),
+    }
+}
+
+/// The `Proc::CastUInt32(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_u_int32(value: &std::sync::Arc<UInt32>) -> Result<Par, RhocalcAstLowerError> {
+    match value.as_ref() {
+        UInt32::NumLit(literal) => Ok(new_gint_par(i64::from(*literal), Vec::new(), false)),
+        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+            "non-literal u32 expression (UInt32 category)",
+        )),
+    }
+}
+
+/// The `Proc::CastList(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_list(
+    value: &std::sync::Arc<List>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_list(value.as_ref(), env)
+}
+
+/// The `Proc::CastBag(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_bag(
+    value: &std::sync::Arc<Bag>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_bag(value.as_ref(), env)
+}
+
+/// The `Proc::CastMap(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_map(
+    value: &std::sync::Arc<Map>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_map(value.as_ref(), env)
+}
+
+/// The `Proc::CastSet(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_set(
+    value: &std::sync::Arc<Set>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_set(value.as_ref(), env)
+}
+
+/// The `Proc::CastPathmap(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_pathmap(
+    value: &std::sync::Arc<Pathmap>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_pathmap(value.as_ref(), env)
+}
+
+/// The `Proc::CastBytes(value)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_cast_bytes(value: &std::sync::Arc<Bytes>) -> Result<Par, RhocalcAstLowerError> {
+    match value.as_ref() {
+        // RhoCalc `Bytes` is a `String`-backed literal (`![String] as Bytes`); lower the ground
+        // literal to a Rholang `GString` (mirrors `CastStr`). Non-ground bytes are unsupported.
+        Bytes::StringLit(string) => Ok(new_gstring_par(string.clone(), Vec::new(), false)),
+        _ => Err(RhocalcAstLowerError::UnsupportedProc("non-ground bytes process")),
+    }
+}
+
+/// The `Proc::IntBinProc(..)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_int_bin_proc() -> Result<Par, RhocalcAstLowerError> {
+    Err(RhocalcAstLowerError::UnsupportedProc(
+        "int(a, w) width fold outside a fold-liftable position (or non-ground width)",
+    ))
+}
+
+/// The `Proc::UIntBinProc(..)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_u_int_bin_proc() -> Result<Par, RhocalcAstLowerError> {
+    Err(RhocalcAstLowerError::UnsupportedProc(
+        "uint(a, w) width fold outside a fold-liftable position (or non-ground width)",
+    ))
+}
+
+/// The `Proc::FloatBinProc(..)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_float_bin_proc() -> Result<Par, RhocalcAstLowerError> {
+    Err(RhocalcAstLowerError::UnsupportedProc(
+        "float(a, w) width fold outside a fold-liftable position (or non-ground width)",
+    ))
+}
+
+/// The `Proc::FixedBinProc(..)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_fixed_bin_proc() -> Result<Par, RhocalcAstLowerError> {
+    Err(RhocalcAstLowerError::UnsupportedProc(
+        "fixed(a, w) width fold outside a fold-liftable position (or non-ground width)",
+    ))
+}
+
+/// The `Proc::BigintCastProc(..)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_bigint_cast_proc() -> Result<Par, RhocalcAstLowerError> {
+    Err(RhocalcAstLowerError::UnsupportedProc(
+        "bigint(a) precision cast outside a fold-liftable position",
+    ))
+}
+
+/// The `Proc::BigratCastProc(..)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_bigrat_cast_proc() -> Result<Par, RhocalcAstLowerError> {
+    Err(RhocalcAstLowerError::UnsupportedProc(
+        "bigrat(a) precision cast outside a fold-liftable position",
+    ))
+}
+
+/// The `Proc::Add(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_add(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let lhs = lower_proc(a.as_ref(), env)?;
+    let rhs = lower_proc(b.as_ref(), env)?;
+    if is_single_gstring_value(&lhs) && is_single_gstring_value(&rhs) {
+        Ok(binary_expr_par(lhs, rhs, |p1, p2| {
+            ExprInstance::EPlusPlusBody(EPlusPlus { p1, p2 })
+        }))
+    } else {
+        Ok(binary_expr_par(lhs, rhs, |p1, p2| ExprInstance::EPlusBody(EPlus { p1, p2 })))
+    }
+}
+
+/// The `Proc::Sub(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_sub(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
+        ExprInstance::EMinusBody(EMinus { p1, p2 })
+    })
+}
+
+/// The `Proc::Mul(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_mul(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
+        ExprInstance::EMultBody(EMult { p1, p2 })
+    })
+}
+
+/// The `Proc::Div(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_div(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EDivBody(EDiv { p1, p2 }))
+}
+
+/// The `Proc::Mod(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_mod(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EModBody(EMod { p1, p2 }))
+}
+
+/// The `Proc::NegProc(a)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_neg_proc(
+    a: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let operand = lower_proc(a.as_ref(), env)?;
+    Ok(unary_expr_par(operand, |p| ExprInstance::ENegBody(ENeg { p })))
+}
+
+/// The `Proc::Eq(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_eq(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EEqBody(EEq { p1, p2 }))
+}
+
+/// The `Proc::Ne(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_ne(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ENeqBody(ENeq { p1, p2 }))
+}
+
+/// The `Proc::Lt(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_lt(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELtBody(ELt { p1, p2 }))
+}
+
+/// The `Proc::Gt(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_gt(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGtBody(EGt { p1, p2 }))
+}
+
+/// The `Proc::LtEq(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_lt_eq(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELteBody(ELte { p1, p2 }))
+}
+
+/// The `Proc::GtEq(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_gt_eq(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGteBody(EGte { p1, p2 }))
+}
+
+/// The `Proc::And(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_and(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EAndBody(EAnd { p1, p2 }))
+}
+
+/// The `Proc::Or(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_or(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EOrBody(EOr { p1, p2 }))
+}
+
+/// The `Proc::Implies(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_implies(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let antecedent = lower_proc(a.as_ref(), env)?;
+    let consequent = lower_proc(b.as_ref(), env)?;
+    let negated = unary_expr_par(antecedent, |p| ExprInstance::ENotBody(ENot { p }));
+    Ok(binary_expr_par(negated, consequent, |p1, p2| {
+        ExprInstance::EOrBody(EOr { p1, p2 })
+    }))
+}
+
+/// The `Proc::Not(a)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_not(a: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    let operand = lower_proc(a.as_ref(), env)?;
+    Ok(unary_expr_par(operand, |p| ExprInstance::ENotBody(ENot { p })))
+}
+
+/// The `Proc::Matches(target, formula)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_matches(
+    target: &std::sync::Arc<Proc>,
+    formula: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    let target = lower_proc(target.as_ref(), env)?;
+    if mettail_languages::rhocalc::formula::is_statically_false(formula.as_ref()) {
+        let mut folded = new_gbool_par(false, Vec::new(), false);
+        folded.locally_free = target.locally_free;
+        return Ok(folded);
+    }
+    let pattern = crate::rhocalc_formula::lower_formula_in_env(formula.as_ref(), env)?;
+    // `connective_used` is NOT propagated from the pattern. The result of
+    // `matches` is a BOOLEAN expression, not a pattern: it is the one place
+    // in the lowering where a connective legitimately appears inside a Par
+    // that is itself not a pattern. This mirrors f1r3node's own
+    // `normalize_p_matches`, which builds the `EMatches` from a target
+    // normalized in the OUTER scope and a pattern normalized in a PUSHED
+    // scope with a fresh free map, and returns the LEFT operand's free map.
+    let locally_free = union(target.locally_free.clone(), pattern.locally_free.clone());
+    let mut par = Par::default().with_exprs(vec![Expr {
+        expr_instance: Some(ExprInstance::EMatchesBody(EMatches {
+            target: Some(target),
+            pattern: Some(pattern),
+        })),
+    }]);
+    par.locally_free = locally_free;
+    par.connective_used = false;
+    Ok(par)
+}
+
+/// The `Proc::SpatialPPar(..)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_spatial_p_par() -> Result<Par, RhocalcAstLowerError> {
+    Err(RhocalcAstLowerError::UnsupportedProc(
+        "PPar(a, b) outside a `matches` formula (the spatial connective is a pattern former, \
+             not a term former; write `{ a | b }` for parallel composition)",
+    ))
+}
+
+/// The `Proc::MToByteArray(m)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_m_to_byte_array(
+    m: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("toByteArray", m.as_ref(), &[], env)
+}
+
+/// The `Proc::MGet(m, k)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_m_get(
+    m: &std::sync::Arc<Proc>,
+    k: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("get", m.as_ref(), &[k.as_ref()], env)
+}
+
+/// The `Proc::MSet(m, k, v)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_m_set(
+    m: &std::sync::Arc<Proc>,
+    k: &std::sync::Arc<Proc>,
+    v: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("set", m.as_ref(), &[k.as_ref(), v.as_ref()], env)
+}
+
+/// The `Proc::MContains(m, k)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_m_contains(
+    m: &std::sync::Arc<Proc>,
+    k: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("contains", m.as_ref(), &[k.as_ref()], env)
+}
+
+/// The `Proc::MDelete(m, k)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_m_delete(
+    m: &std::sync::Arc<Proc>,
+    k: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("delete", m.as_ref(), &[k.as_ref()], env)
+}
+
+/// The `Proc::MUnion(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_m_union(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("union", a.as_ref(), &[b.as_ref()], env)
+}
+
+/// The `Proc::MSize(m)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_m_size(m: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("size", m.as_ref(), &[], env)
+}
+
+/// The `Proc::MKeys(m)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_m_keys(m: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("keys", m.as_ref(), &[], env)
+}
+
+/// The `Proc::BDiff(a, b)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_b_diff(
+    a: &std::sync::Arc<Proc>,
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("diff", a.as_ref(), &[b.as_ref()], env)
+}
+
+/// The `Proc::SAdd(s, e)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_s_add(
+    s: &std::sync::Arc<Proc>,
+    e: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("add", s.as_ref(), &[e.as_ref()], env)
+}
+
+/// The `Proc::LLength(l)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_l_length(
+    l: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_length(l.as_ref(), env)
+}
+
+/// The `Proc::LNth(l, i)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_l_nth(
+    l: &std::sync::Arc<Proc>,
+    i: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_nth(l.as_ref(), i.as_ref(), env)
+}
+
+/// The `Proc::LConcat(l, r)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_l_concat(
+    l: &std::sync::Arc<Proc>,
+    r: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_concat(l.as_ref(), r.as_ref(), env)
+}
+
+/// The `Proc::PGetSubtrie(m)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_get_subtrie(
+    m: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("getSubtrie", m.as_ref(), &[], env)
+}
+
+/// The `Proc::PReadZipper(m)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_read_zipper(
+    m: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("readZipper", m.as_ref(), &[], env)
+}
+
+/// The `Proc::PReadZipperAt(m, p)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_read_zipper_at(
+    m: &std::sync::Arc<Proc>,
+    p: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("readZipperAt", m.as_ref(), &[p.as_ref()], env)
+}
+
+/// The `Proc::PWriteZipper(m)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_write_zipper(
+    m: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("writeZipper", m.as_ref(), &[], env)
+}
+
+/// The `Proc::PWriteZipperAt(m, p)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_p_write_zipper_at(
+    m: &std::sync::Arc<Proc>,
+    p: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("writeZipperAt", m.as_ref(), &[p.as_ref()], env)
+}
+
+/// The `Proc::RZGetLeaf(z)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_get_leaf(
+    z: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("getLeaf", z.as_ref(), &[], env)
+}
+
+/// The `Proc::RZDescendTo(z, rel)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_descend_to(
+    z: &std::sync::Arc<Proc>,
+    rel: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("descendTo", z.as_ref(), &[rel.as_ref()], env)
+}
+
+/// The `Proc::RZChildCount(z)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_child_count(
+    z: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("childCount", z.as_ref(), &[], env)
+}
+
+/// The `Proc::RZDescendFirst(z)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_descend_first(
+    z: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("descendFirst", z.as_ref(), &[], env)
+}
+
+/// The `Proc::RZToNextSibling(z)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_to_next_sibling(
+    z: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("toNextSibling", z.as_ref(), &[], env)
+}
+
+/// The `Proc::RZToPrevSibling(z)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_to_prev_sibling(
+    z: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("toPrevSibling", z.as_ref(), &[], env)
+}
+
+/// The `Proc::RZDescendIndexedBranch(z, i)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_descend_indexed_branch(
+    z: &std::sync::Arc<Proc>,
+    i: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("descendIndexedBranch", z.as_ref(), &[i.as_ref()], env)
+}
+
+/// The `Proc::RZAscendOne(z)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_ascend_one(
+    z: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("ascendOne", z.as_ref(), &[], env)
+}
+
+/// The `Proc::RZAscend(z, n)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_ascend(
+    z: &std::sync::Arc<Proc>,
+    n: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("ascend", z.as_ref(), &[n.as_ref()], env)
+}
+
+/// The `Proc::RZGetPath(z)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_get_path(
+    z: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("getPath", z.as_ref(), &[], env)
+}
+
+/// The `Proc::RZToNextLeaf(z)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_to_next_leaf(
+    z: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("toNextLeaf", z.as_ref(), &[], env)
+}
+
+/// The `Proc::RZLeafCount(z)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_r_z_leaf_count(
+    z: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("leafCount", z.as_ref(), &[], env)
+}
+
+/// The `Proc::WZSetSubtrie(w, rel)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_w_z_set_subtrie(
+    w: &std::sync::Arc<Proc>,
+    rel: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("setSubtrie", w.as_ref(), &[rel.as_ref()], env)
+}
+
+/// The `Proc::WZRemoveLeaf(w)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_w_z_remove_leaf(
+    w: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("removeLeaf", w.as_ref(), &[], env)
+}
+
+/// The `Proc::WZRemoveBranches(w)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_w_z_remove_branches(
+    w: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("removeBranches", w.as_ref(), &[], env)
+}
+
+/// The `Proc::WZGraft(w, rz)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_w_z_graft(
+    w: &std::sync::Arc<Proc>,
+    rz: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("graft", w.as_ref(), &[rz.as_ref()], env)
+}
+
+/// The `Proc::WZJoinInto(w, rz)` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_w_z_join_into(
+    w: &std::sync::Arc<Proc>,
+    rz: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RhocalcAstLowerError> {
+    lower_method("joinInto", w.as_ref(), &[rz.as_ref()], env)
+}
+
+/// The `other` arm.
+///
+/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
+/// reasoning behind them, are documented at the call site.
+#[inline(never)]
+fn lower_arm_unsupported(other: &Proc) -> Result<Par, RhocalcAstLowerError> {
+    Err(RhocalcAstLowerError::UnsupportedProc(unsupported_construct_name(other)))
 }
 
 /// The static construct name for the A-S4 fail-closed lowering error — every `Proc` variant the
@@ -1787,11 +2815,9 @@ fn lower_concat(left: &Proc, right: &Proc, env: &BoundEnv) -> Result<Par, Rhocal
             "#{…}#.concat(…) bag concatenation (no Rholang analog — `++` would concatenate the \
              2-element bag ABI encodings, tags and all; C3 residue)",
         )),
-        false => Ok(binary_expr_par(
-            lower_proc(left, env)?,
-            lower_proc(right, env)?,
-            |p1, p2| ExprInstance::EPlusPlusBody(EPlusPlus { p1, p2 }),
-        )),
+        false => Ok(binary_expr_par(lower_proc(left, env)?, lower_proc(right, env)?, |p1, p2| {
+            ExprInstance::EPlusPlusBody(EPlusPlus { p1, p2 })
+        })),
     }
 }
 
@@ -2126,10 +3152,9 @@ fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
             }
             proc.clone()
         },
-        Proc::POutput(name, payload) => Proc::POutput(
-            name.clone(),
-            Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)),
-        ),
+        Proc::POutput(name, payload) => {
+            Proc::POutput(name.clone(), Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)))
+        },
         Proc::PPersistOutput(name, payload) => Proc::PPersistOutput(
             name.clone(),
             Arc::new(replace_fold(payload.as_ref(), r_drop, replaced)),
@@ -2180,9 +3205,7 @@ fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
             Arc::new(replace_fold(target.as_ref(), r_drop, replaced)),
             formula.clone(),
         ),
-        Proc::NegProc(a) => {
-            Proc::NegProc(Arc::new(replace_fold(a.as_ref(), r_drop, replaced)))
-        },
+        Proc::NegProc(a) => Proc::NegProc(Arc::new(replace_fold(a.as_ref(), r_drop, replaced))),
         Proc::Not(a) => Proc::Not(Arc::new(replace_fold(a.as_ref(), r_drop, replaced))),
         Proc::PDrop(name) => {
             Proc::PDrop(Arc::new(replace_fold_in_name(name.as_ref(), r_drop, replaced)))
@@ -2239,9 +3262,7 @@ fn rebuild_binary(
 
 fn replace_fold_in_name(name: &Name, r_drop: &Proc, replaced: &mut bool) -> Name {
     match name {
-        Name::NQuote(proc) => {
-            Name::NQuote(Arc::new(replace_fold(proc.as_ref(), r_drop, replaced)))
-        },
+        Name::NQuote(proc) => Name::NQuote(Arc::new(replace_fold(proc.as_ref(), r_drop, replaced))),
         Name::NQuoteShort(proc) => {
             Name::NQuoteShort(Arc::new(replace_fold(proc.as_ref(), r_drop, replaced)))
         },
@@ -2267,9 +3288,12 @@ fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcA
     // co-installed fold-bearing languages collide on `[0xF0, 0]` / `0xF000`.
     let fingerprint = held_fold_language_fingerprint();
     HELD_FOLD_SITES.with(|sites| {
-        sites
-            .borrow_mut()
-            .push(FoldSpec { kind, width, site_index, fingerprint: fingerprint.clone() })
+        sites.borrow_mut().push(FoldSpec {
+            kind,
+            width,
+            site_index,
+            fingerprint: fingerprint.clone(),
+        })
     });
     let channel = fold_channel(site_index, &fingerprint);
 
@@ -2728,10 +3752,11 @@ fn lower_pfor_user(
     // Every term-position receive lowers concrete sources and a concrete body, so
     // this is `false` there and the emitted `Par` is byte-identical; it becomes
     // load-bearing only for a receive appearing inside a `matches` formula.
-    let connective_used = binds_rho
-        .iter()
-        .any(|bind| bind.source.as_ref().is_some_and(|source| source.connective_used))
-        || lowered_body.connective_used;
+    let connective_used = binds_rho.iter().any(|bind| {
+        bind.source
+            .as_ref()
+            .is_some_and(|source| source.connective_used)
+    }) || lowered_body.connective_used;
     let mut receive_par = new_receive_par(
         binds_rho,
         lowered_body,
@@ -2853,7 +3878,8 @@ fn lower_pattern_proc(
                 for (key, value) in entries.iter() {
                     let key = lower_pattern_proc(key, counter, binders)?;
                     let value = lower_pattern_proc(value, counter, binders)?;
-                    connective_used = connective_used || key.connective_used || value.connective_used;
+                    connective_used =
+                        connective_used || key.connective_used || value.connective_used;
                     locally_free = union(
                         locally_free,
                         union(key.locally_free.clone(), value.locally_free.clone()),
@@ -2984,11 +4010,11 @@ fn lookahead_bound(bound: &Proc) -> Result<i64, RhocalcAstLowerError> {
     match bound {
         Proc::CastInt(value) => match value.as_ref() {
             Int::NumLit(literal) if *literal >= 0 => Ok(*literal),
-            Int::NumLit(literal) => Err(
-                RhocalcAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
+            Int::NumLit(literal) => {
+                Err(RhocalcAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
                     "negative bound {literal}"
-                )),
-            ),
+                )))
+            },
             other => Err(RhocalcAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
                 "{other:?}"
             ))),
@@ -3002,9 +4028,8 @@ fn lookahead_bound(bound: &Proc) -> Result<i64, RhocalcAstLowerError> {
 fn desugar_send_node(proc: &Proc) -> Option<Proc> {
     let quote = |p: &Arc<Proc>| Arc::new(Name::NQuote(p.clone()));
     let quote_nil = || Arc::new(Name::NQuote(Arc::new(Proc::PZero)));
-    let quote_name = |n: &Arc<Name>| {
-        Arc::new(Name::NQuote(Arc::new(name_pattern_to_proc(n.as_ref()))))
-    };
+    let quote_name =
+        |n: &Arc<Name>| Arc::new(Name::NQuote(Arc::new(name_pattern_to_proc(n.as_ref()))));
     let list1 = |a: &Arc<Proc>, bs: &[Proc]| {
         let mut items = Vec::with_capacity(1 + bs.len());
         items.push(a.as_ref().clone());
@@ -3293,7 +4318,9 @@ fn lower_proc_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerEr
 /// pretty-name is never shadowed by a same-named hole in an unrelated scope — the
 /// hole map only carries names introduced by an enclosing FLT pattern.
 fn flt_hole_bound_level(free_var: &FreeVar<String>, env: &BoundEnv) -> Option<usize> {
-    pretty_var_name(free_var).ok().and_then(|name| env.flt_hole_level(name))
+    pretty_var_name(free_var)
+        .ok()
+        .and_then(|name| env.flt_hole_level(name))
 }
 
 // ── L9-6b: FLT `PFlt` elaboration (construction + pattern) ─────────────────────────────────────
@@ -3413,14 +4440,18 @@ fn lower_flt_pattern(
 ) -> Result<(Par, i32, Vec<String>), RhocalcAstLowerError> {
     let (ground, fingerprint) = flt_resolve_and_reflect(node, env)?;
     let holes = flt_holes_of(node);
-    let FltPatternReflection { pattern, free_count, mut hole_bindings, .. } =
-        reflect_flt_pattern(&ground, &holes, &fingerprint)
-            .map_err(|error| RhocalcAstLowerError::FltReflect(error.to_string()))?;
+    let FltPatternReflection {
+        pattern, free_count, mut hole_bindings, ..
+    } = reflect_flt_pattern(&ground, &holes, &fingerprint)
+        .map_err(|error| RhocalcAstLowerError::FltReflect(error.to_string()))?;
     // `hole_bindings` is `(name, FreeVar level)` in first-appearance order; sort by
     // level to index it positionally (defensive — first-appearance already IS level
     // order), then project to the names.
     hole_bindings.sort_by_key(|(_, level)| *level);
-    let hole_names = hole_bindings.into_iter().map(|(name, _)| name).collect::<Vec<String>>();
+    let hole_names = hole_bindings
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect::<Vec<String>>();
     Ok((pattern, free_count, hole_names))
 }
 
