@@ -47,7 +47,12 @@ pub fn language(input: TokenStream) -> TokenStream {
     // Store binary-encoded input tokens in registry (no bridge types retained).
     // MUST happen before any processing so consuming grammars get the full
     // unprocessed rule set.
-    mettail_ast::registry::register_language(&lang_name, &input_for_registry);
+    // Fails closed on a name already taken in this compilation unit. Two specifications
+    // sharing a `name:` would otherwise silently change what a third one's `extends:`
+    // resolves to — see `ast::registry::duplicate_registration_diagnostic`.
+    if let Err(msg) = mettail_ast::registry::register_language(&lang_name, &input_for_registry) {
+        abort!(language_def.name.span(), "{}", msg);
+    }
 
     // Apply composition clauses in order:
     // 1. extends — full inheritance (Error on duplicate labels)
@@ -284,7 +289,11 @@ pub fn language_fragment(input: TokenStream) -> TokenStream {
     }
 
     let frag_name = fragment_def.name.to_string();
-    mettail_ast::registry::register_fragment(&frag_name, &input_for_registry);
+    // Fails closed on a name already taken in this compilation unit — fragments and
+    // languages share one namespace because `lookup_language_def` resolves both.
+    if let Err(msg) = mettail_ast::registry::register_fragment(&frag_name, &input_for_registry) {
+        abort!(fragment_def.name.span(), "{}", msg);
+    }
 
     // Fragments generate NO code — the consuming language! generates everything
     TokenStream::new()

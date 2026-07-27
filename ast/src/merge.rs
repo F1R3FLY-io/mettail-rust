@@ -1164,7 +1164,8 @@ mod tests {
                     Shared . a:Int |- a : Int;
                 }
             },
-        );
+        )
+        .expect("OrderFragInt is registered once");
         super::super::registry::register_fragment(
             "OrderFragBool",
             &quote::quote! {
@@ -1177,7 +1178,8 @@ mod tests {
                     Shared . b:Bool |- b : Bool;
                 }
             },
-        );
+        )
+        .expect("OrderFragBool is registered once");
 
         let mut def = make_lang("MixedOrder");
         def.mixin_names
