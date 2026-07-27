@@ -2,6 +2,14 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// The single reader for the workspace manifest keys that say where specifications live.
+///
+/// Pulled in by `#[path]` rather than as a dependency: `dovetail` has exactly one
+/// workspace dependency (`rigail`) by design, and this audit must not be the thing that
+/// breaks that. The file is `ast`'s module of the same name — one source, two consumers.
+#[path = "../../ast/src/manifest.rs"]
+mod manifest;
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum Requirement {
     Equation,
@@ -436,8 +444,24 @@ fn discover_rust_files(root: &Path) -> Vec<PathBuf> {
 /// removes it from the audit and no test says anything. The root is therefore the
 /// package itself, and [`language_declarations_cannot_hide_outside_the_scanned_roots`]
 /// proves the choice is total for the whole repository rather than just this package.
+///
+/// # Why the root is READ rather than written here
+///
+/// The same list is needed by `ast/tests/dovetail_language_inventory.rs`, which audits
+/// the identical corpus through the real `LanguageDef` parser instead of a textual scan.
+/// Two literals that must agree is a drift waiting to happen — widen one and a
+/// specification becomes invisible to the other audit, silently. Both now read the single
+/// declaration in the workspace manifest, `[package.metadata.mettail] language_roots`,
+/// through [`manifest`] — which is itself ONE file, shared by `#[path]` because `dovetail`
+/// deliberately depends on nothing but `rigail`.
 fn language_definition_roots() -> Vec<std::path::PathBuf> {
-    vec![repo_root().join("languages")]
+    manifest::language_roots(&repo_root()).unwrap_or_else(|err| {
+        panic!(
+            "cannot determine the language definition roots: {err}\n\nThis audit scans \
+             exactly those roots, so it must NOT continue with a guess: an empty or \
+             narrowed root list would make it pass by scanning nothing."
+        )
+    })
 }
 
 /// Whether the REPOSITORY-WIDE sweep declines to enter a directory.

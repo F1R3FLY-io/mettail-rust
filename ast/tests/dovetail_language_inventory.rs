@@ -48,12 +48,25 @@ const NON_SOURCE_DIRECTORIES: &[&str] = &["target", "generated"];
 /// [`language_declarations_cannot_hide_outside_the_scanned_roots`] proves that choice
 /// covers the whole repository.
 ///
-/// The same list appears in `dovetail/tests/language_inventory.rs`. That duplication is
-/// deliberate — the two audits are independent, one structural and one textual — and it
-/// is safe because each enforces the repository-wide totality invariant on its own: a
-/// definition can only escape one audit's roots by tripping that audit's own check.
+/// # Why the root is READ rather than written here
+///
+/// `dovetail/tests/language_inventory.rs` audits the identical corpus by textual scan
+/// where this one uses the real `LanguageDef` parser. The two audits stay INDEPENDENT —
+/// that is the point of having both, and each enforces the repository-wide totality
+/// invariant on its own — but they must agree on WHAT to read. When the list was written
+/// out in both files, widening one and forgetting the other would have narrowed an audit
+/// silently, which is exactly the failure the totality invariant exists to prevent and
+/// exactly the kind a second literal reintroduces. Both now read the single declaration in
+/// the workspace manifest, `[package.metadata.mettail] language_roots`, through
+/// [`mettail_ast::manifest`].
 fn language_definition_roots() -> Vec<PathBuf> {
-    vec![repo_root().join("languages")]
+    mettail_ast::manifest::language_roots(&repo_root()).unwrap_or_else(|err| {
+        panic!(
+            "cannot determine the language definition roots: {err}\n\nThis audit scans \
+             exactly those roots, so it must NOT continue with a guess: an empty or \
+             narrowed root list would make it pass by scanning nothing."
+        )
+    })
 }
 
 fn language_files() -> Vec<PathBuf> {

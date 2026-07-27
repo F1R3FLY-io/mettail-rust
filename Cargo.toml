@@ -15,6 +15,24 @@ homepage.workspace = true
 default-run = "mettail"
 publish = false
 
+# ── The single declaration site for specification-related paths ──────────────────
+# Read by `ast::manifest` and by nothing else; see that module for why three separate
+# hardcoded literals were replaced by one key each.
+#
+# `language_roots` — the directories that hold `language!` declarations. Both
+# specification audits scan exactly these, and each proves its own scan is TOTAL for the
+# repository (`language_declarations_cannot_hide_outside_the_scanned_roots`), so a
+# declaration written outside a root fails loudly instead of silently escaping formal
+# coverage.
+#
+# `proptest_corpus_dir` — where generated property tests persist counterexample seeds.
+# It is the ONE path the `language!` macro resolves outside `target/`, because a corpus is
+# an INPUT to the tests rather than a generated source: under `target/` it would be erased
+# by `cargo clean` and the seeds would quietly stop being replayed.
+[package.metadata.mettail]
+language_roots = ["languages"]
+proptest_corpus_dir = "languages/tests"
+
 [[bin]]
 name = "mettail"
 path = "repl/src/main.rs"
