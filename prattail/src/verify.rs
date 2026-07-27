@@ -582,6 +582,129 @@ mod tests {
         assert!(result.witness_trace.is_empty());
     }
 
+    /// ★ The **executed reddening leg** for `test_empty_bad_states_is_safe`.
+    ///
+    /// The test above pins the repaired verdict, but on its own it cannot distinguish
+    /// the repaired `symbol_weight` from the defective one *by execution* — it only
+    /// records, in prose, that the defective one used to answer differently. That is
+    /// the shape of an un-failable guard: swap the two accessors inside `check_safety`
+    /// and the prose stays true while the code goes wrong.
+    ///
+    /// It does not have to stay that way here, because **the pre-fix expression is
+    /// still public**. `symbol_weight`'s body before `8fc3f7a1` summed every
+    /// out-transition regardless of target; that is verbatim what
+    /// [`PAutomaton::stack_top_weight`](crate::wpds::PAutomaton::stack_top_weight)
+    /// computes today, kept for the five liveness callers that genuinely want the
+    /// over-approximation. So the DEFECTIVE decision procedure can simply be RUN, on
+    /// the exact datum that produced the defect, and shown to return the wrong answer
+    /// — no reimplementation, no mutation of production code, no mock.
+    ///
+    /// | leg     | bad set          | `stack_top_weight` (pre-fix) | `symbol_weight` (post-fix) |
+    /// |---------|------------------|------------------------------|----------------------------|
+    /// | risky   | `∅`              | non-zero ⇒ UNSAFE ✗          | zero ⇒ safe ✓              |
+    /// | control | `{Add@0, Add@1}` | non-zero ⇒ unsafe ✓          | non-zero ⇒ unsafe ✓        |
+    ///
+    /// Divergence on the risky shape **and** agreement on the control together pin
+    /// WHICH clause does the rejecting — the `final_states.contains(&t.to)` conjunct,
+    /// and nothing else:
+    ///
+    /// - drop that conjunct (i.e. read `stack_top_weight` where `symbol_weight`
+    ///   belongs) and the risky leg's post-fix assertion fails;
+    /// - make it reject unconditionally (`symbol_weight ≡ zero`) and the control leg's
+    ///   post-fix assertion fails.
+    ///
+    /// Neither accessor can absorb the other while both legs are green, which is
+    /// exactly the claim `test_empty_bad_states_is_safe` needs and cannot make alone.
+    #[test]
+    fn the_empty_bad_set_guard_can_go_red() {
+        let wpds = wpds_with_rules_of_every_kind();
+        let gamma0 = wpds.initial_symbol.clone();
+
+        // ── Risky leg: the empty bad set, the datum that produced the defect. ──
+        let empty_bad = build_bad_state_automaton(&wpds, &[]);
+        assert!(empty_bad.transitions.is_empty(), "the risky leg's bad set must be empty");
+        let risky = crate::wpds::prestar(&wpds, &empty_bad);
+
+        // Saturation really did fire — otherwise there is nothing to over-count and
+        // the two accessors would agree for an uninteresting reason (N2: the
+        // observation came from the real saturation, not from an empty automaton).
+        let out_edges: Vec<_> = risky
+            .transitions_by_source
+            .get(&risky.initial_state)
+            .map(|idx| idx.iter().map(|&i| &risky.transitions[i]).collect())
+            .unwrap_or_default();
+        let gamma0_edges: Vec<_> = out_edges.iter().filter(|t| t.symbol == gamma0).collect();
+        assert!(
+            !gamma0_edges.is_empty(),
+            "prestar must have saturated at least one transition on ⟨p, {gamma0:?}⟩ for the \
+             two accessors to be able to disagree; got out-edges {out_edges:?}"
+        );
+
+        // The clause under test, read directly off the datum: every transition on γ₀
+        // targets a NON-final state. `stack_top_weight` counts them, `symbol_weight`
+        // discards them, and that is the entire difference between the two.
+        assert!(
+            gamma0_edges
+                .iter()
+                .all(|t| !risky.final_states.contains(&t.to)),
+            "the defect is that saturation seeds ⟨p, γ₀⟩-transitions to non-accepting \
+             targets; if any target here were final the legs below would agree for the \
+             wrong reason. Edges: {gamma0_edges:?}, final states: {:?}",
+            risky.final_states
+        );
+
+        assert!(
+            !risky.stack_top_weight(&gamma0).is_zero(),
+            "PRE-FIX: summing every out-transition regardless of target must still \
+             report ⟨p, γ₀⟩ as reachable — this is the wrong answer that shipped, and \
+             if it ever became zero this leg would stop testing anything"
+        );
+        assert!(
+            risky.symbol_weight(&gamma0).is_zero(),
+            "POST-FIX: requiring an accepting target must report ⟨p, γ₀⟩ as NOT in \
+             pre*(∅). Non-zero here means the final-state conjunct was lost."
+        );
+
+        // ── Control leg: a bad set that really is reachable. ──
+        // Both accessors must now agree, so the divergence above is attributable to
+        // the empty-bad-set shape and not to `symbol_weight` rejecting everything.
+        let real_bad = build_bad_state_automaton(&wpds, &["Add"]);
+        assert!(!real_bad.transitions.is_empty(), "the control leg's bad set must be non-empty");
+        let control = crate::wpds::prestar(&wpds, &real_bad);
+
+        assert!(
+            !control.stack_top_weight(&gamma0).is_zero(),
+            "PRE-FIX on the control: ⟨p, Expr⟩ ↪ ⟨p, Add@0⟩ is one step from the bad set"
+        );
+        assert!(
+            !control.symbol_weight(&gamma0).is_zero(),
+            "POST-FIX on the control: the repaired accessor must AGREE with the \
+             pre-fix one whenever an accepting target exists. Zero here means the fix \
+             degenerated into a blanket `safe`."
+        );
+
+        // And the reason it agrees: on the control there IS an accepting target, so
+        // the conjunct that rejected the risky leg is satisfiable rather than dead.
+        let control_edges: Vec<_> = control
+            .transitions_by_source
+            .get(&control.initial_state)
+            .map(|idx| {
+                idx.iter()
+                    .map(|&i| &control.transitions[i])
+                    .filter(|t| t.symbol == gamma0)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            control_edges
+                .iter()
+                .any(|t| control.final_states.contains(&t.to)),
+            "the control leg must exercise the accepting branch of the very conjunct \
+             that rejected the risky leg; edges {control_edges:?}, final states {:?}",
+            control.final_states
+        );
+    }
+
     /// The converse, so the fix above cannot be a blanket "always safe".
     ///
     /// `⟨p, Expr⟩ ↪ ⟨p, Add@0⟩` puts a bad configuration one step from the initial one,
