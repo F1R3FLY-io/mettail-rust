@@ -102,11 +102,22 @@ of minutes cold. Everything after this is instant.
 CI drives the same binary through `env!("CARGO_BIN_EXE_rhocalc")`, so the presenter's binary and
 the gated one are built from one source.
 
-⚠ **Every run line below is prefixed `RUST_MIN_STACK=134217728`.** The λ-guest's reduction on terms this size
-recurses deeper in the reducer than the default 2 MiB thread stack allows, and without the prefix
-the arithmetic beat aborts on a stack overflow. It is a host resource setting, not a semantic one
-— the reduction it enables is the same reduction. The gate asserts that no run line on this page
-is printed without it (`every_run_line_in_the_sheet_carries_the_stack_prefix`).
+★ **No run line below needs a `RUST_MIN_STACK` prefix, and none carries one.** Every run line on
+this page used to be prefixed `RUST_MIN_STACK=134217728`, because the λ-guest's reduction on terms
+this size once recursed deeper than the default thread stack allowed. That is no longer true, and
+the sheet no longer says it is: the gate now asserts the **absence** of the prefix
+(`no_run_line_in_the_sheet_carries_a_stack_prefix`), measured against a live run of each beat.
+
+Two reasons the change is worth a sentence rather than a silent deletion:
+
+* A run sheet that tells a presenter to set a resource knob is teaching them that the knob is part
+  of the program. It is not — it never was. It was a symptom of a traversal that consumed native
+  stack in proportion to the size of the term it was walking, and the fix belonged in the
+  traversal.
+* The prefix was also **misleading about where the cost was**. `RUST_MIN_STACK` resizes *spawned*
+  threads only; it cannot resize a main thread, whose size is fixed by `ulimit -s` before `main`
+  is entered. So on any beat whose cost fell on the main thread — parsing and lowering both do —
+  the prefix was inert, and a presenter who trusted it would have been debugging the wrong knob.
 
 Run every command from the workspace root.
 
@@ -118,7 +129,7 @@ Start here because it needs no explanation at all. The file is one line of the *
 grammar, embedded in a RhoCalc program.
 
 ```
-$ RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/calculator.rho
+$ target/debug/rhocalc demos/flt-church-desk/calculator.rho
 ```
 
 ```
@@ -173,7 +184,7 @@ That is `$\mathrm{mult}\;(\mathrm{plus}\;1\;2)\;(\mathrm{plus}\;2\;2)$` — in o
 Addition and multiplication are not primitives here. They are **consequences of substitution**.
 
 ```
-$ RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/arithmetic.rho
+$ target/debug/rhocalc demos/flt-church-desk/arithmetic.rho
 ```
 
 ```
@@ -205,7 +216,7 @@ Three things to point at, in order:
 ## Beat 2 — and when it cannot finish, it says so (2 min)
 
 ```
-$ RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/divergence.rho
+$ target/debug/rhocalc demos/flt-church-desk/divergence.rho
 ```
 
 ```
@@ -236,7 +247,7 @@ This is the beat that makes Beat 1's `^drive-fuel: 0` mean something.
 Three Church numerals rest on one channel — 5, 6, and 0. A `where` clause picks one.
 
 ```
-$ RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/desk-keeps-five.rho
+$ target/debug/rhocalc demos/flt-church-desk/desk-keeps-five.rho
 ```
 
 ```
@@ -266,7 +277,7 @@ that — the CI gate reads a second channel of the same quiescent store and asse
 terms, same channel, same receive pattern, same order in the file.
 
 ```
-$ RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/desk-keeps-six.rho
+$ target/debug/rhocalc demos/flt-church-desk/desk-keeps-six.rho
 ```
 
 ```
@@ -321,7 +332,7 @@ Look at the receive pattern. It is itself a foreign term — and its hole is **n
 position*. Three terms are resting; only the first has the shape.
 
 ```
-$ RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/destructure.rho
+$ target/debug/rhocalc demos/flt-church-desk/destructure.rho
 ```
 
 ```
@@ -375,7 +386,7 @@ No single defect produces all six outcomes, which is why the demo is six files a
 
 | symptom | cause | fix |
 |---|---|---|
-| `has overflowed its stack` | the `RUST_MIN_STACK=134217728` prefix was dropped | re-run with the prefix; it is on every run line above |
+| `has overflowed its stack` | a regression — no beat on this page should be able to produce this | do **not** paper over it with `RUST_MIN_STACK`; that knob does not reach a main thread at all. Report it: `rholang-runtime/tests/stack_depth_gate.rs` is the gate that is supposed to catch it |
 | `unknown guest language ⌜…⌝` | an opener was mistyped | an opener is the lower-cased grammar name: `calculator`, `lambda` |
 | a beat prints a different numeral | the binary is stale | rebuild with the setup line; the bin's required features changed on 2026-07-26 |
 

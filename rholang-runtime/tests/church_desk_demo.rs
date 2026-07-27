@@ -66,19 +66,24 @@ const DEMO_DIR: &str = "demos/flt-church-desk";
 const BUILD_COMMAND: &str = "cargo build -p rholang-runtime --bin rhocalc --features \
      \"rhocalc-runtime lambda-runtime calculator-runtime\"";
 
-/// The λ-guest's reduction on a term this size recurses deeper in the reducer than the default
-/// 2 MiB thread stack allows, so every run line in the sheet carries this prefix. It is a HOST
-/// resource setting, not a semantic one: the reduction it enables is the same reduction.
-const STACK: &str = "RUST_MIN_STACK=134217728";
+/// The environment-variable prefix every run line in this sheet **used to** carry, kept as a
+/// named constant so the gate below can assert its ABSENCE by name rather than by a string
+/// literal buried in an assertion.
+///
+/// It was there because the λ-guest's reduction on a term this size once recursed deeper than the
+/// default thread stack allowed. Stage M removed the cause. It is deliberately *not* deleted
+/// outright: a demo page that once required a resource knob is exactly the page a future change
+/// would silently re-break, and a gate that names the knob is what makes the re-break loud.
+const RETIRED_STACK_PREFIX: &str = "RUST_MIN_STACK";
 
-const BEAT_0_RUN: &str = "RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/calculator.rho";
+const BEAT_0_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/calculator.rho";
 const BEAT_1_SHOW: &str = "tail -1 demos/flt-church-desk/arithmetic.rho";
-const BEAT_1_RUN: &str = "RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/arithmetic.rho";
-const BEAT_2_RUN: &str = "RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/divergence.rho";
-const BEAT_3_RUN: &str = "RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/desk-keeps-five.rho";
-const BEAT_4_RUN: &str = "RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/desk-keeps-six.rho";
+const BEAT_1_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/arithmetic.rho";
+const BEAT_2_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/divergence.rho";
+const BEAT_3_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/desk-keeps-five.rho";
+const BEAT_4_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/desk-keeps-six.rho";
 const BEAT_5_SHOW: &str = "tail -7 demos/flt-church-desk/destructure.rho";
-const BEAT_5_RUN: &str = "RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-church-desk/destructure.rho";
+const BEAT_5_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/destructure.rho";
 
 /// Every command line this file drives, in sheet order.
 /// [`every_run_sheet_command_line_is_driven_by_this_test`] compares this against the sheet, so a
@@ -128,11 +133,18 @@ fn demo_file(name: &str) -> PathBuf {
     workspace_root().join(DEMO_DIR).join(name)
 }
 
-/// Run the built `rhocalc` binary on one committed demo file, with the sheet's `RUST_MIN_STACK`.
+/// Run the built `rhocalc` binary on one committed demo file, in exactly the environment the run
+/// sheet now tells a presenter to use: the ambient one, with `RUST_MIN_STACK` explicitly REMOVED.
+///
+/// `env_remove` rather than "just don't set it": the test process may itself have been launched
+/// with `RUST_MIN_STACK` in its environment (the repo's own gate command sets it), and a child
+/// inherits it. Without the removal this harness would quietly run the demos on a stack the
+/// presenter will not have, and the transcript gate would then certify output that a presenter
+/// cannot reproduce — the precise failure mode Stage M is removing from this page.
 fn run_demo(name: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_rhocalc"))
         .arg(demo_file(name))
-        .env("RUST_MIN_STACK", "134217728")
+        .env_remove("RUST_MIN_STACK")
         .current_dir(workspace_root())
         .output()
         .unwrap_or_else(|err| panic!("the rhocalc binary must run on {name}: {err}"))
@@ -182,10 +194,12 @@ fn out_scalars(stdout: &str) -> Vec<String> {
 fn guest_resolver() -> Arc<dyn FltResolve> {
     let guests: Vec<Box<dyn FltReflect>> =
         vec![Box::new(CalculatorLanguage), Box::new(LambdaLanguage)];
-    let registry = guests.into_iter().fold(FltRegistry::new(), |registry, guest| {
-        let tag = guest.name().to_lowercase();
-        registry.with_guest(tag, guest)
-    });
+    let registry = guests
+        .into_iter()
+        .fold(FltRegistry::new(), |registry, guest| {
+            let tag = guest.name().to_lowercase();
+            registry.with_guest(tag, guest)
+        });
     Arc::new(registry)
 }
 
@@ -235,7 +249,10 @@ async fn rest_on_channels_of_demo(demo: &str, channels: &[&str]) -> Vec<(String,
 async fn resting_display_of(guest_term: &str) -> String {
     let program = format!("@\"results\"!(lambda`{guest_term}`)");
     let resting = rest_on_channels(&program, &["results"]).await;
-    let (_channel, values) = resting.into_iter().next().expect("one channel was requested");
+    let (_channel, values) = resting
+        .into_iter()
+        .next()
+        .expect("one channel was requested");
     assert_eq!(
         values.len(),
         1,
@@ -261,8 +278,8 @@ async fn resting_set(terms: &[&str]) -> Vec<String> {
 /// The Calculator guest's opener is the lower-cased grammar name, and the committed file uses it.
 #[test]
 fn beat_0_the_calculator_guest_is_opened_by_the_lower_cased_grammar_name() {
-    let source =
-        std::fs::read_to_string(demo_file("calculator.rho")).expect("the demo ships calculator.rho");
+    let source = std::fs::read_to_string(demo_file("calculator.rho"))
+        .expect("the demo ships calculator.rho");
     assert_eq!(
         source.lines().last().expect("calculator.rho is non-empty"),
         "calculator`2 + 3 * 4`",
@@ -300,8 +317,8 @@ fn beat_0_calculator_term_evaluates_to_fourteen_on_the_reducer() {
 /// prints it with `tail -1`, so what the audience reads is the committed source.
 #[test]
 fn beat_1_the_foreign_term_as_written_is_the_last_line_of_the_file() {
-    let source =
-        std::fs::read_to_string(demo_file("arithmetic.rho")).expect("the demo ships arithmetic.rho");
+    let source = std::fs::read_to_string(demo_file("arithmetic.rho"))
+        .expect("the demo ships arithmetic.rho");
     let last = source.lines().last().expect("arithmetic.rho is non-empty");
     assert!(
         last.starts_with("lambda`") && last.ends_with('`'),
@@ -406,10 +423,7 @@ async fn beat_3_the_desk_keeps_five_and_leaves_six_and_zero_resting() {
     let resting = rest_on_channels_of_demo("desk-keeps-five.rho", &["results"]).await;
     assert_eq!(
         resting,
-        vec![(
-            "results".to_string(),
-            resting_set(&[CHURCH_6, CHURCH_0]).await
-        )],
+        vec![("results".to_string(), resting_set(&[CHURCH_6, CHURCH_0]).await)],
         "the two REFUSED numerals must still be on @\"results\" — the desk selected out of the \
          resting set, it did not consume it"
     );
@@ -436,10 +450,7 @@ async fn beat_4_one_changed_token_selects_six_from_the_same_resting_set() {
     let resting = rest_on_channels_of_demo("desk-keeps-six.rho", &["results"]).await;
     assert_eq!(
         resting,
-        vec![(
-            "results".to_string(),
-            resting_set(&[CHURCH_5, CHURCH_0]).await
-        )],
+        vec![("results".to_string(), resting_set(&[CHURCH_5, CHURCH_0]).await)],
         "and Church 5 — the previous run's answer — is among the ones left resting here"
     );
 }
@@ -516,10 +527,7 @@ async fn beat_5_the_shapes_that_do_not_fit_are_refused_and_rest() {
     let resting = rest_on_channels_of_demo("destructure.rho", &["results"]).await;
     assert_eq!(
         resting,
-        vec![(
-            "results".to_string(),
-            resting_set(&[IDENTITY, APPLICATION]).await
-        )],
+        vec![("results".to_string(), resting_set(&[IDENTITY, APPLICATION]).await)],
         "the one-binder identity and the application must BOTH still be on @\"results\""
     );
 }
@@ -625,10 +633,7 @@ fn every_run_sheet_command_line_is_driven_by_this_test() {
 #[test]
 fn the_run_sheet_build_line_names_the_features_the_binary_requires() {
     for feature in ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"] {
-        assert!(
-            BUILD_COMMAND.contains(feature),
-            "the sheet's build line must enable {feature}"
-        );
+        assert!(BUILD_COMMAND.contains(feature), "the sheet's build line must enable {feature}");
     }
     assert!(
         BUILD_COMMAND.contains("--bin rhocalc"),
@@ -640,17 +645,64 @@ fn the_run_sheet_build_line_names_the_features_the_binary_requires() {
     );
 }
 
-/// Every run line in the sheet carries the `RUST_MIN_STACK` prefix. A presenter who drops it hits
-/// a stack overflow on the arithmetic beat, so the sheet must never print a bare run line.
+/// ★ INVERTED BY STAGE M. No run line in the sheet may carry a `RUST_MIN_STACK` prefix.
+///
+/// This assertion used to be its own negation — *every* run line had to carry the prefix, because
+/// dropping it aborted the arithmetic beat on a stack overflow. Stage M converted the RhoCalc
+/// lowering off host recursion, and every beat on this page now runs at the default stack; the
+/// prefix removal is measured, not assumed (`every_committed_demo_runs_at_the_default_stack`).
+///
+/// The gate is kept — pointing the other way — rather than deleted, for two reasons:
+///
+/// 1. **It is the regression detector for the fix.** If a future change re-introduces a
+///    depth-proportional traversal on this path, the natural repair under presentation pressure is
+///    to put the prefix back on the sheet. That must fail the build, loudly, and name the real
+///    gate (`stack_depth_gate.rs`) instead.
+/// 2. **The prefix was never a correct remedy here anyway.** `RUST_MIN_STACK` is read only by
+///    `std::thread`'s spawn path, so it cannot resize a *main* thread — and `rhocalc.rs` is
+///    `#[tokio::main] async fn main`, which is where parsing and lowering run. On those beats the
+///    prefix was inert. A sheet that recommends an inert knob teaches a presenter to mis-diagnose.
 #[test]
-fn every_run_line_in_the_sheet_carries_the_stack_prefix() {
+fn no_run_line_in_the_sheet_carries_a_stack_prefix() {
     for command in run_sheet_commands() {
-        if command.contains("target/debug/rhocalc") {
-            assert!(
-                command.starts_with(STACK),
-                "every rhocalc run line must carry the {STACK} prefix: {command}"
-            );
-        }
+        assert!(
+            !command.contains(RETIRED_STACK_PREFIX),
+            "no command line in the run sheet may carry a {RETIRED_STACK_PREFIX} prefix — \
+             Stage M removed the need for it, and it never reached the main thread in any case. \
+             Offending line: {command}"
+        );
+    }
+}
+
+/// The measurement behind [`no_run_line_in_the_sheet_carries_a_stack_prefix`]: every committed
+/// demo file in this suite runs to its documented exit status on a binary invoked with **no**
+/// `RUST_MIN_STACK` in its environment.
+///
+/// `divergence.rho` exits 70 — that is its documented fuel-exhaustion beat, not a fault — so the
+/// assertion is on the *absence of a stack overflow*, which is the property the prefix existed to
+/// buy, rather than on exit status alone.
+#[test]
+fn every_committed_demo_runs_at_the_default_stack() {
+    for name in [
+        "calculator.rho",
+        "arithmetic.rho",
+        "divergence.rho",
+        "desk-keeps-five.rho",
+        "desk-keeps-six.rho",
+        "destructure.rho",
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rhocalc"))
+            .arg(demo_file(name))
+            .env_remove("RUST_MIN_STACK")
+            .current_dir(workspace_root())
+            .output()
+            .unwrap_or_else(|err| panic!("the rhocalc binary must run on {name}: {err}"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("overflowed its stack"),
+            "{name} overflowed the stack with no RUST_MIN_STACK set — Stage M's conversion has \
+             regressed, or a new depth-proportional traversal reached this path.\n{stderr}"
+        );
     }
 }
 
@@ -688,7 +740,7 @@ fn every_transcript_in_the_run_sheet_is_the_observed_output() {
         }
         let printed = lines[start..end].join("\n");
 
-        let observed = if let Some(rest) = command.strip_prefix(&format!("{STACK} target/debug/rhocalc ")) {
+        let observed = if let Some(rest) = command.strip_prefix("target/debug/rhocalc ") {
             let demo = rest
                 .strip_prefix(&format!("{DEMO_DIR}/"))
                 .unwrap_or_else(|| panic!("the sheet runs demo files from {DEMO_DIR}: {command}"));
@@ -749,7 +801,13 @@ fn every_transcript_in_the_run_sheet_is_the_observed_output() {
 fn the_demo_directory_holds_exactly_the_files_the_sheet_runs() {
     let mut shipped: Vec<String> = std::fs::read_dir(workspace_root().join(DEMO_DIR))
         .expect("the demo directory exists")
-        .map(|entry| entry.expect("a readable entry").file_name().to_string_lossy().to_string())
+        .map(|entry| {
+            entry
+                .expect("a readable entry")
+                .file_name()
+                .to_string_lossy()
+                .to_string()
+        })
         .filter(|name| name.ends_with(".rho"))
         .collect();
     shipped.sort();
