@@ -108,8 +108,34 @@ jobs:
           -p testkit
           -p dovetail
 
-      # nextest does not execute doctests; run them separately so doc examples
-      # stay covered after the migration.
+      # nextest does not execute doctests, so they run separately or not at all.
+      #
+      # This list is an ENUMERATION, and an enumeration written once silently omits
+      # whatever is added later. It did: the workspace has 16 members plus the root
+      # `mettail`, and `simulation` and `dovetail-runtime` were in none of the
+      # doctest steps on x86. `simulation` was carrying two examples that had never
+      # been compiled by any gate on this runner.
+      #
+      # `--workspace` is NOT the fix, and the reason is a measurement, not a
+      # preference: `languages`, `repl`, and the root `mettail` reach the f1r3node
+      # sibling (`cargo tree` counts 6, 19, and 19 edges into
+      # ../f1r3node-rust-mettail), and they also drag in a full `languages` build.
+      # Their doctests run in `rho-backend`, which clones that sibling and builds
+      # `languages` already. The two crates added here reach it ZERO times, so they
+      # cost this job nothing but their own compile.
+      #
+      # ⚠ This step is NOT sibling-free today, and saying otherwise would repeat the
+      # defect this comment exists to avoid. `macros` — listed since the migration —
+      # pulls 6 sibling edges through `rholang-codegen`, and the `cargo check
+      # --workspace --all-features --all-targets` step above needs the sibling for
+      # the whole workspace. Neither is discharged by anything in this job. That is a
+      # real gap, logged and not fixed here; the split below is by MEASURED sibling
+      # distance so it stays correct once the gap is closed.
+      #
+      # `rholang-{codegen,adapter,runtime}` are covered by `rho-backend`'s plain
+      # `cargo test -p …`, which runs doctests. `languages` is NOT covered by that
+      # job's `--test rhocalc_tests` step: `--test X` selects only that one target
+      # and excludes doctests.
       - name: Run doctests
         run: >
           cargo test --doc -j1
@@ -122,6 +148,8 @@ jobs:
           -p query
           -p testkit
           -p dovetail
+          -p simulation
+          -p dovetail-runtime
 
   dovetail-exhaustive:
     name: Dovetail Exhaustive Runtime Tests
@@ -324,6 +352,27 @@ jobs:
 
       - name: rhocalc parser/runtime corpus gate
         run: cargo test -j1 -p languages --no-default-features --features rhocalc --test rhocalc_tests
+
+      # The three gates above run doctests as a side effect of plain `cargo test -p …`.
+      # The step above them does NOT: `--test rhocalc_tests` selects exactly that one
+      # target, so `languages`' doctests were run by no job on x86 — only by the ARM64
+      # `--all-features --workspace` job.
+      #
+      # These three live here rather than in `test` because they reach the f1r3node
+      # sibling this job clones (`cargo tree` counts 6 edges for `languages`, 19 for
+      # `repl`, 19 for the root `mettail`) and because `languages` is already built
+      # above, so the marginal cost is the doctest compile alone.
+      #
+      # `languages` currently reports 40 doctests, all `ignored`: they are the
+      # `generate_random_at_depth` examples emitted into `target/generated/` by
+      # `macros/src/gen/term_gen/random.rs`, whose `ignore` is justified at the
+      # emitting site (the example names a category type that only exists in the
+      # generated crate). `repl` and the root `mettail` report zero doctests today —
+      # they are enumerated so that the FIRST one anyone writes is compiled, which is
+      # the property this step buys and the reason a count of zero is not a reason to
+      # leave a package out.
+      - name: Rho-side doctests (sibling-dependent packages)
+        run: cargo test --doc -j1 -p languages -p repl -p mettail
 
       # Retired in P6 (Ascent backend removal): the `oracle-ascent` feature and the
       # `rho_vs_ascent` test no longer exist, so this differential-oracle step is dead
