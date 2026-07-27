@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Task #22 — `RhoCalc` is renamed `Rholang`, workspace-wide (2026-07-27)
+
+USER: *"rhocalc IS rholang."* The language the `language!` macro declared as `RhoCalc`
+has always been MeTTaIL's Rholang 1.4 surface; it now carries that name everywhere.
+4,088 lowercase, ~1,698 `RhoCalc`, 590 `Rhocalc` and 46 `RHOCALC` occurrences moved
+across six commits. Every casing variant is 7 characters in and 7 out, so no
+rustfmt output shifted.
+
+#### Changed — BREAKING
+
+- **The bag ABI tag changed value.** `RHOCALC_BAG_ABI_TAG = "mettail.rhocalc.bag.v1"`
+  became `RHOLANG_BAG_ABI_TAG = "mettail.rholang.bag.v1"`
+  (`rholang-codegen/src/lib.rs`). A `Bag` — a MeTTaIL-only category with no Rholang
+  analog — lowers to an `EList` tagged with a `GPrivate` built from this string, so the
+  tag's BYTES ride the encoding: a `Par` produced by the old constant does not decode as
+  a bag under the new one. Producer (`rholang-codegen/src/ast.rs`) and consumers
+  (`rholang-runtime/src/{run,observation}.rs`,
+  `rholang-runtime/src/rholang_ast/recursive_oracle.rs`) are all in this repository, and
+  the sibling f1r3node checkout names the tag nowhere, so nothing off-tree is keyed to
+  it. Both halves — the constant AND its value — moved together, deliberately: leaving
+  the value behind would have made the name a lie at the one place the bytes are read.
+- **The interpreter binary `rhocalc` is now `rholang`** (`--bin rholang`,
+  `target/debug/rholang`). No `rholang` binary existed to collide with: f1r3node's is
+  `rholang-cli`, and it is a path dependency rather than a workspace member, so `--bin`
+  could never have resolved to it.
+- **The REPL registry key is now `rholang`.** `LanguageRegistry` keys on
+  `language.name().to_lowercase()`, so `lang rhocalc` becomes `lang rholang` and the
+  example environment auto-loaded at language load moved with it
+  (`repl/src/examples/rholang.txt`).
+- **The Cargo feature `rhocalc-runtime` is now `rholang-runtime`** (convention
+  `{lang}-runtime`), and `oracle-rhocalc` is now `oracle-rholang`. A feature may share a
+  name with its own package; only a DEPENDENCY name would collide, and f1r3node's
+  `rholang` crate is a non-optional dependency, so it declares no implicit feature.
+- **`languages`' feature `rhocalc` is now `rholang`**, and the module moved:
+  `languages/src/rhocalc.rs` + `languages/src/rhocalc/` -> `rholang.rs` + `rholang/`.
+
+#### Notes
+
+- **The definition fingerprint of this language changed.** The name is the first field
+  `ast/src/identity.rs` writes, so `Rholang`'s `definition_fingerprint()` differs from
+  `RhoCalc`'s. Nothing required re-pinning: the only literal `mettail-langdef-v1:` pins
+  in the tree are Lambda's and synthetic test constants, and the set-automaton size pin,
+  the guard-tier goldens and the a_s5_6 byte-identity pins are structural or name-free.
+  Verified by measurement — the full suite reports the same 10,725 passing tests before
+  and after.
+- **`macros/src/gen/compose_gen.rs` is excluded from the rename on purpose.** Its
+  `assert_eq!(to_snake_case("RhoCalc"), "rho_calc")` uses `RhoCalc` as a CAMEL-SPLITTING
+  INPUT, not as a reference to the language; substituting it would have produced the
+  silently-wrong `to_snake_case("Rholang") == "rho_calc"`.
+- **Historical measurements keep the old name**: `docs/benchmarks/**`,
+  `prattail/docs/benchmarks/**` and the captured `baseline-cf03e571` files record what
+  was run, and what was run was called rhocalc. `docs/archive/**` and the rootcause
+  artifacts likewise. "rho calculus" prose is untouched throughout — Meredith's process
+  calculus is not this language.
+
 ### A-S5.8 — the in-Rho `^float` receiver family: the boundary-float premise discharged constructively (2026-07-20)
 
 #### Added
