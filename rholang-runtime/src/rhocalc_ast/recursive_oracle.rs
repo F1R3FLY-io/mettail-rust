@@ -312,15 +312,22 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         //     this file emits an `EMap` (`c1_pathmap_methods_answer_through_the_emap_encoding`), so
         //     the flip trades twenty-two dead methods for seven newly dead ones unless each is
         //     re-expressed. Measured by `c4_the_native_carrier_refuses_the_map_method_surface`.
-        //   * ⚠ and a RhoCalc pathmap key is BARE by default (`{| 1 : 10 |}` has key `1`), which is
-        //     the element shape whose trie key the interpreter inserts WITHOUT the `0x00`
-        //     terminator its readers unconditionally append. Every value read then misses and
-        //     answers `Nil`, and `toNextLeaf` becomes a FIXED POINT — a walk-until-`Nil` over
-        //     `{| 1, 2, 3 |}` does not terminate. Measured by
-        //     `c4_defect_a_bare_element_reads_back_as_nil` and
-        //     `c4_defect_a_bare_element_walk_never_advances`. Pointing `lower_pathmap` at
-        //     `EPathmapBody` today would therefore make the very enumeration surface C4 exists to
-        //     unlock HANG rather than work.
+        //   * ✅ RETIRED 2026-07-27 — a SECOND blocker used to be recorded here and it no longer
+        //     exists. A RhoCalc pathmap key is BARE by default (`{| 1 : 10 |}` has key `1`), and
+        //     that element shape used to read back as `Nil` while `toNextLeaf` sat on a FIXED
+        //     POINT, so a walk-until-`Nil` over `{| 1, 2, 3 |}` did not terminate; pointing
+        //     `lower_pathmap` at `EPathmapBody` would have made the very enumeration surface C4
+        //     exists to unlock HANG rather than work. f1r3node closed it in three commits —
+        //     `5aacebc3` (the walk primitive `next_value_key` is total for a `from_key` that does
+        //     not exist, which is where the fixed point actually lived: an upstream pathmap-0.2.2
+        //     iteration rewind, NOT key termination), `0a6d2ce0` (`entry_key_at`: a reader holding
+        //     the whole path `Par` asks the codec), and `7dcff96f` (`EZipper.cursor_kind`: the
+        //     cursor carries its own Split/Bare/Prefix arm). No canonical key moved and no
+        //     activation height was needed. Now measured SOUND by
+        //     `rho_rhocalc_conformance.rs::c4_a_bare_element_reads_back_as_itself` and
+        //     `::c4_a_bare_element_walk_visits_every_element_in_order`, and the bare row is back in
+        //     `::c1_zipper_walk_exhaustion_terminates_within_leaf_count` where it was written.
+        //     ⚠ So the VALUE SLOT below is the whole of what holds C4 — do not cite the walk.
         //
         // So C4 requires DECIDING what RhoCalc's value slot becomes — drop it, fuse it into the key
         // path (which changes what `getPath`/`getLeaf` mean), or add a value arm to the consensus

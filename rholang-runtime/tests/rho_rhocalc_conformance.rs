@@ -562,7 +562,9 @@ async fn conformance_collection_equality() {
 async fn conformance_runtime_bound_integer_add_after_comm() {
     let source = r#"@("c")!(1) | for (@s <- @("c")) { @("OUT")!(s + 2) }"#;
     let proc = parse(source);
-    let observed = reduce_program(&proc).await.expect("the program runs to rest");
+    let observed = reduce_program(&proc)
+        .await
+        .expect("the program runs to rest");
     assert_eq!(
         observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
         vec!["3".to_string()],
@@ -641,7 +643,9 @@ async fn divergence_a2_closed_int_division_by_zero_fails_closed() {
         "error",
         "A2: `Int` ÷0 is the `error` term, not a fabricated 0"
     );
-    let err = reduce(&proc).await.expect_err("the reducer refuses to divide by zero");
+    let err = reduce(&proc)
+        .await
+        .expect_err("the reducer refuses to divide by zero");
     assert!(
         err.contains("Division by zero"),
         "A2: the consensus reducer raises a recoverable error, got {err:?}"
@@ -785,9 +789,19 @@ async fn divergence_b_witness_runtime_bound_string_add_diverges_by_static_shape(
     let ground = parse(r#"@("OUT")!("hello " + "world")"#);
     assert_eq!(
         fold_program(&ground).expect("the ground twin folds"),
-        r#"@("OUT")!("hello world")"#
+        // ★ SURFACE SYNONYMY (2026-07-26): the folded channel is `NQuote(CastStr("OUT"))`, and
+        // RhoCalc's `Name` synonymy class `{ NQuote, NQuoteShort, NQuoteNil }` renders through
+        // its DECLARED canonical member `NQuoteShort`, so the surface is the Rholang shorthand
+        // `@"OUT"` rather than `@("OUT")`. The INPUT spelling above is unchanged and still
+        // parses; only the rendered form moved, and it moved toward official Rholang, which
+        // writes `@"OUT"!(…)`. What this control pins — that the STATICALLY ground twin folds
+        // through the `++` shim while the runtime-bound one raises `OperatorNotDefined` — is
+        // untouched. See `languages/tests/surface_synonymy_gate.rs`.
+        r#"@"OUT"!("hello world")"#
     );
-    let observed = reduce_program(&ground).await.expect("the ground twin concatenates");
+    let observed = reduce_program(&ground)
+        .await
+        .expect("the ground twin concatenates");
     assert_eq!(
         observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
         vec![r#""hello world""#.to_string()]
@@ -818,8 +832,14 @@ async fn divergence_b_target_string_add_is_position_independent() {
     .await;
     match (ground, bound) {
         (Ok(ground_values), Ok(bound_values)) => assert_eq!(
-            ground_values.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
-            bound_values.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            ground_values
+                .iter()
+                .map(render_as_rhocalc)
+                .collect::<Vec<_>>(),
+            bound_values
+                .iter()
+                .map(render_as_rhocalc)
+                .collect::<Vec<_>>(),
             "B: `+` on strings must not depend on when the operand became known"
         ),
         (Err(ground_err), Err(bound_err)) => assert_eq!(
@@ -930,7 +950,9 @@ async fn divergence_d_witness_fixed_scale_mismatch_rescales_in_the_fold() {
         "1.5p1",
         "D: the fold rescales mismatched fixed-point operands"
     );
-    let err = reduce(&proc).await.expect_err("the reducer rejects mismatched scales");
+    let err = reduce(&proc)
+        .await
+        .expect_err("the reducer rejects mismatched scales");
     assert!(
         err.contains("OperatorExpectedError") && err.contains("FixedPoint"),
         "D: expected reduce.rs's scale-equality precondition, got {err:?}"
@@ -1041,9 +1063,9 @@ async fn c2_closed_to_byte_array_is_the_reducers_own_encoding() {
         // to mis-type. Byte-identical across every re-baseline: `2a03a20100`.
         ("[].toByteArray()", "2a03a20100"),
     ] {
-        let observed = reduce(&parse(source)).await.unwrap_or_else(|err| {
-            panic!("{source:?}: the machine must own toByteArray: {err}")
-        });
+        let observed = reduce(&parse(source))
+            .await
+            .unwrap_or_else(|err| panic!("{source:?}: the machine must own toByteArray: {err}"));
         let [RuntimeObservationValue::Bytes(bytes)] = observed.as_slice() else {
             panic!("{source:?}: `toByteArray` must return a GByteArray, got {observed:?}");
         };
@@ -1153,13 +1175,20 @@ async fn divergence_g_witness_pathmap_lowers_to_emap_and_zippers_are_unsupported
 
     // ① A method Rholang defines on a Map now ANSWERS, through the encoding, because the encoding
     //    happens to be key-faithful. The value is right; it is the carrier that was lost.
-    let observed = reduce(&parse("{|1:2|}.get(1)")).await.expect("get routes and answers");
-    assert_eq!(observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(), vec!["2".to_string()]);
+    let observed = reduce(&parse("{|1:2|}.get(1)"))
+        .await
+        .expect("get routes and answers");
+    assert_eq!(
+        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        vec!["2".to_string()]
+    );
 
     // ② A method that needs the TRIE cannot be rescued by a key-faithful encoding: it reaches the
     //    reducer and is refused at the carrier. This is G, stated where it actually bites.
     assert_eq!(
-        reduce(&parse("{|1:2|}.readZipper()")).await.expect_err("no EPathmapBody exists yet"),
+        reduce(&parse("{|1:2|}.readZipper()"))
+            .await
+            .expect_err("no EPathmapBody exists yet"),
         r#"reduce: inj: MethodNotDefined { method: "readZipper", other_type: "map" }"#,
         "G: a zipper cannot be built over an EMap — this is exactly what C4 closes"
     );
@@ -1194,21 +1223,33 @@ async fn divergence_g_witness_pathmap_lowers_to_emap_and_zippers_are_unsupported
 ///
 /// The `#[ignore]` reason has been corrected too. G is NOT blocked on a lowering that simply has
 /// not been written; it is blocked on a semantic decision, because `EPathMap` has no value slot for
-/// RhoCalc's `{| k : v |}` to land in, and because RhoCalc's keys are BARE — the element shape over
-/// which the interpreter's own walk does not terminate. See the C1b block in
-/// `rholang-runtime/src/rhocalc_ast.rs`, and `c4_defect_a_bare_element_walk_never_advances`.
+/// RhoCalc's `{| k : v |}` to land in. See the C1b block in `rholang-runtime/src/rhocalc_ast.rs`.
+///
+/// ★★ AMENDED AGAIN (2026-07-27) — **half of the stated blocker is gone.** The reason above used to
+/// name a SECOND blocker: *"RhoCalc keys are BARE, the shape whose walk does not terminate on the
+/// interpreter"*. That is no longer true of the interpreter — the bare-element enumeration surface
+/// is sound and is pinned by [`c4_a_bare_element_walk_visits_every_element_in_order`] and
+/// [`c4_a_bare_element_reads_back_as_itself`]. Re-measured with the blocker removed, this test
+/// still fails, and it fails at the FIRST assertion for the ORIGINAL reason: `{|1:2|}` still
+/// observes as an `EMap`, because `lower_pathmap` still emits one. Nothing downstream of the
+/// lowering is what holds G — the value-slot decision is, alone.
 ///
 /// ⚠ Note also what this test can and cannot say about VALUES. Under a key-≡-value carrier
 /// `{|1:2|}` cannot round-trip: the value `2` has nowhere to live. So a future version of this test
 /// must assert whatever the carrier decision settles on, and asserting a value readout today would
 /// be pre-judging it. It therefore asserts only that the calls REACH the pathmap surface.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence G: blocked on the C4 CARRIER DECISION, not on unwritten plumbing — \
-            EPathMap has no value slot for RhoCalc's `{| k : v |}` (proto fields 6/7 were the \
-            retired value_form/value_entries experiment; the ground wire is a KEY stream), and \
-            RhoCalc keys are BARE, the shape whose walk does not terminate on the interpreter"]
+#[ignore = "divergence G: blocked on the C4 CARRIER DECISION, not on unwritten plumbing — EPathMap \
+            has no value slot for RhoCalc's `{| k : v |}` (proto fields 6/7 were the retired \
+            value_form/value_entries experiment; the ground wire is a KEY stream). ⚠ The former \
+            second clause — `RhoCalc keys are BARE, the shape whose walk does not terminate` — is \
+            RETIRED: that interpreter defect is fixed (f1r3node 5aacebc3 + 0a6d2ce0 + 7dcff96f). \
+            Re-measured 2026-07-27 with it gone: this still fails at its FIRST assertion, because \
+            `lower_pathmap` still emits an EMap, which is the value-slot decision itself"]
 async fn divergence_g_target_pathmap_and_zippers_use_their_native_carriers() {
-    let observed = reduce(&parse("{|1:2|}")).await.expect("the pathmap literal lowers");
+    let observed = reduce(&parse("{|1:2|}"))
+        .await
+        .expect("the pathmap literal lowers");
     assert!(
         !matches!(observed.as_slice(), [RuntimeObservationValue::Map(_)]),
         "G: a Pathmap must not observe as an EMap — the trie carrier must survive lowering"
@@ -1392,10 +1433,7 @@ async fn divergence_j_witness_empty_send_satisfies_an_arity_one_receive() {
 async fn divergence_j_target_empty_send_does_not_satisfy_an_arity_one_receive() {
     let source = "for(@y <- x){y} | x!()";
     let folded = fold_program(&parse(source)).expect("the fold fixpoint settles");
-    assert!(
-        folded.contains("for("),
-        "J: the receive must still be waiting, got {folded:?}"
-    );
+    assert!(folded.contains("for("), "J: the receive must still be waiting, got {folded:?}");
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1428,12 +1466,19 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
         // rational renders `1/2r`. `98d861a3` re-baselined the three `rhocalc_tests.rs` goldens
         // this moved and MISSED this fourth one, in a different file.
         //
-        // ⚠ The tail is appended to `Ratio`'s own `n/d` rendering, so `1/2r` reads BACK as
-        // `Div(CastInt(1), CastBigRat(2))`, not as `CastBigRat(1/2)`; the only surface that spells
-        // the composite value is `1r/2r`. That display→parse asymmetry is pre-existing, is
-        // recorded in `98d861a3`'s message as a changed PROPERTY, and belongs to `display.rs`'s
-        // composite half — it is not this pin's subject.
-        ("fraction(1, 2)", "1/2r", "unsupported: fraction(a, b) rational constructor"),
+        // ★ RE-DERIVED A SECOND TIME (2026-07-27), and the asymmetry the note below recorded is
+        // now CLOSED. `98d861a3` left `BigRat` able to render a word it could not read back: the
+        // `r` tail was appended to `Ratio`'s own `n/d` rendering, so `1/2r` re-parsed as
+        // `Div(CastInt(1), CastBigRat(2))` rather than as the composite rational, and `1r/2r` —
+        // the only spelling of the composite value — was a hard parse error. D2
+        // (`ab13aee0`, *"a literal category must be able to spell every value it can hold"*)
+        // widened `BigRat`'s pattern with `(/(…)r)?`, and the already-grammar-derived composite
+        // arm then WRITES the spelling it can read: `fraction(1, 2)` ⇒ `1r/2r`.
+        //
+        // ⚠ That commit re-baselined the three `rhocalc_tests.rs` goldens the change moved and,
+        // exactly as `98d861a3` did before it, MISSED this fourth one in a different file. The
+        // golden is updated, NOT relaxed — `1r/2r` is the surface that round-trips.
+        ("fraction(1, 2)", "1r/2r", "unsupported: fraction(a, b) rational constructor"),
         // `reduce.rs::method_table` provides `keys` but NOT `values` — a Map's values are
         // reachable in Rholang only via `toList`/`get`. So `.values()` is a RhoCalc extension
         // with no Rholang counterpart, and it stays MeTTaIL-only under C3.
@@ -1505,7 +1550,9 @@ async fn c1_bag_encoding_is_rejected_by_every_routed_method() {
             "C1: {source:?} — the MeTTaIL-side multiset answer"
         );
         assert_eq!(
-            reduce(&proc).await.expect_err("the bag encoding must be refused"),
+            reduce(&proc)
+                .await
+                .expect_err("the bag encoding must be refused"),
             machine_error,
             "C1: {source:?} — the machine must REFUSE the bag encoding, not measure it"
         );
@@ -1570,11 +1617,7 @@ async fn c1_bag_length_and_nth_are_gated_at_lowering() {
 async fn c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime() {
     let source = "[#{1 | 2 | 2}#].nth(0).length()";
     let proc = parse(source);
-    assert_eq!(
-        fold(&proc).expect("the fold converges"),
-        "3",
-        "the fold measures the MULTISET"
-    );
+    assert_eq!(fold(&proc).expect("the fold converges"), "3", "the fold measures the MULTISET");
     let observed = reduce(&proc).await.expect("the machine reduces");
     assert_eq!(
         observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
@@ -1602,7 +1645,9 @@ async fn c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier() {
         ("{| 1 : 10 |}.getSubtrie()", "getSubtrie"),
     ] {
         let proc = parse(source);
-        let error = reduce(&proc).await.expect_err("the EMap carrier must be refused");
+        let error = reduce(&proc)
+            .await
+            .expect_err("the EMap carrier must be refused");
         assert_eq!(
             error,
             format!(r#"reduce: inj: MethodNotDefined {{ method: "{method}", other_type: "map" }}"#),
@@ -1654,11 +1699,7 @@ async fn c1_pathmap_methods_answer_through_the_emap_encoding() {
 
     // ③ ⚠ same value, different CARRIER: `{|…|}` from the fold, `{…}` from the machine.
     for (source, fold_answer, machine_answer) in [
-        (
-            "{| 1 : 10, 2 : 20 |}.set(3, 30)",
-            "{|1:10, 2:20, 3:30|}",
-            "{1:10, 2:20, 3:30}",
-        ),
+        ("{| 1 : 10, 2 : 20 |}.set(3, 30)", "{|1:10, 2:20, 3:30|}", "{1:10, 2:20, 3:30}"),
         (
             "{| 1 : 10, 2 : 20 |}.union({| 3 : 30 |})",
             "{|1:10, 2:20, 3:30|}",
@@ -1720,7 +1761,10 @@ async fn c1_length_on_a_map_is_fold_only() {
 #[tokio::test(flavor = "multi_thread")]
 async fn c1_residue_without_an_interpreter_counterpart_fails_closed_and_named() {
     for (source, expected_error) in [
-        ("{1 : 10}.values()", "unsupported: m.values() map method (no Rholang analog; C3 residue)"),
+        (
+            "{1 : 10}.values()",
+            "unsupported: m.values() map method (no Rholang analog; C3 residue)",
+        ),
         (
             "#{1 | 2 | 2}#.count(2)",
             "unsupported: b.count(e) bag method (no Rholang analog; C3 residue)",
@@ -1751,7 +1795,9 @@ async fn c1_residue_without_an_interpreter_counterpart_fails_closed_and_named() 
         ("{| 1 : 10 |}.getSubtrieAt(1)", "`readZipperAt(q).getSubtrie()`"),
     ] {
         let proc = parse(source);
-        let error = reduce(&proc).await.expect_err("routing is held by the carrier decision");
+        let error = reduce(&proc)
+            .await
+            .expect_err("routing is held by the carrier decision");
         assert!(
             error.contains(measured_fact) && error.contains("C4 carrier decision"),
             "C1: {source:?} — the error must carry the MEASURED mapping and name what holds it, \
@@ -1822,10 +1868,7 @@ async fn c1_target_collection_methods_route_to_the_reducer() {
 #[tokio::test(flavor = "multi_thread")]
 async fn c1_routed_methods_see_through_a_comm() {
     for (program, expected) in [
-        (
-            r#"@("c")!([424242, 7, 7]) | for (@x <- @("c")) { @("OUT")!(x.length()) }"#,
-            "3",
-        ),
+        (r#"@("c")!([424242, 7, 7]) | for (@x <- @("c")) { @("OUT")!(x.length()) }"#, "3"),
         (
             r#"@("c")!([424242, 7, 7]) | for (@x <- @("c")) { @("OUT")!(x.nth(0)) }"#,
             "424242",
@@ -1944,7 +1987,9 @@ async fn divergence_l_witness_collection_order_is_lexicographic_in_the_fold() {
         ("{10 : 1, 2 : 1}.set(3, 1)", "{2:1, 3:1, 10:1}"),
         ("{10 : 1, 2 : 1}.keys()", "Set(2, 10)"),
     ] {
-        let observed = reduce(&parse(source)).await.expect("the routed method reduces");
+        let observed = reduce(&parse(source))
+            .await
+            .expect("the routed method reduces");
         assert_eq!(
             observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
             vec![machine_order.to_string()],
@@ -1983,10 +2028,7 @@ fn render_as_rhocalc_matches_the_rhocalc_surface_form() {
     assert_eq!(render_as_rhocalc(&RuntimeObservationValue::Int(-3)), "-3");
     // ★ The `n` tail (divergence I, Stage C): `GBigInt`'s RhoCalc surface form REQUIRES it —
     // `-7` is the surface form of the `Int` `-7`, a different carrier.
-    assert_eq!(
-        render_as_rhocalc(&RuntimeObservationValue::BigIntBytes(vec![249])),
-        "-7n"
-    );
+    assert_eq!(render_as_rhocalc(&RuntimeObservationValue::BigIntBytes(vec![249])), "-7n");
     assert_eq!(render_as_rhocalc(&RuntimeObservationValue::Bool(false)), "false");
     assert_eq!(
         render_as_rhocalc(&RuntimeObservationValue::Text("a\"b".to_string())),
@@ -2407,8 +2449,8 @@ async fn formula_level_disjunction_agrees_where_the_guard_level_or_diverges() {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 use models::rhoapi::expr::ExprInstance as ZExprInstance;
-use models::rhoapi::{EEq as ZEEq, EList as ZEList, EMethod as ZEMethod, EPathMap as ZEPathMap};
 use models::rhoapi::Expr as ZExpr;
+use models::rhoapi::{EEq as ZEEq, EList as ZEList, EMethod as ZEMethod, EPathMap as ZEPathMap};
 
 fn zipper_expr_par(instance: ZExprInstance) -> Par {
     Par::default().with_exprs(vec![ZExpr { expr_instance: Some(instance) }])
@@ -2423,12 +2465,7 @@ fn zipper_expr_par(instance: ZExprInstance) -> Par {
 /// exercises the routed method names against the real reducer NOW, so that when C4 lands the
 /// contract is already proved rather than discovered.
 fn zipper_epathmap(elements: Vec<Par>) -> Par {
-    zipper_expr_par(ZExprInstance::EPathmapBody(ZEPathMap::new(
-        elements,
-        Vec::new(),
-        false,
-        None,
-    )))
+    zipper_expr_par(ZExprInstance::EPathmapBody(ZEPathMap::new(elements, Vec::new(), false, None)))
 }
 
 fn zipper_gstring(text: &str) -> Par {
@@ -2493,8 +2530,8 @@ fn four_leaf_pathmap() -> Par {
 ///
 /// `pathmap_integration::par_to_path` splits only a ground `EList` into per-element segments; every
 /// other Par yields ONE segment. So this fixture is the second of the carrier's two element shapes,
-/// and it is the shape that exposes the key-termination defect measured by
-/// [`c4_defect_a_bare_element_reads_back_as_nil`].
+/// and it is the shape whose whole enumeration surface C4 measured as defective and
+/// [`c4_a_bare_element_reads_back_as_itself`] now measures as sound.
 fn bare_element_pathmap() -> Par {
     zipper_epathmap(vec![
         zipper_expr_par(ZExprInstance::GInt(1)),
@@ -2526,12 +2563,20 @@ fn walk_is_nil(steps: usize) -> Par {
     walk_from_is_nil(zipper_method("readZipper", four_leaf_pathmap(), Vec::new()), steps)
 }
 
-/// `walk_from(root, steps) == Nil` — the reducer's own exhaustion test, as a `GBool`.
-fn walk_from_is_nil(root: Par, steps: usize) -> Par {
+/// `value == Nil`, as a `GBool`.
+///
+/// `Nil` is `Par::default()`, which renders as the EMPTY observation, so "did this answer `Nil`?"
+/// cannot be read off the rendering — comparing against `Nil` in the reducer is the reliable probe.
+fn reads_as_nil(value: Par) -> Par {
     zipper_expr_par(ZExprInstance::EEqBody(ZEEq {
-        p1: Some(walk_from(root, steps)),
+        p1: Some(value),
         p2: Some(Par::default()),
     }))
+}
+
+/// `walk_from(root, steps) == Nil` — the reducer's own exhaustion test, as a `GBool`.
+fn walk_from_is_nil(root: Par, steps: usize) -> Par {
+    reads_as_nil(walk_from(root, steps))
 }
 
 /// **★ THE EXHAUSTION TEETH-TEST — the walk terminates within `leafCount()` + 1 steps.**
@@ -2552,22 +2597,43 @@ async fn c1_zipper_walk_exhaustion_terminates_within_leaf_count() {
     // is necessary but not sufficient. A walk can exhaust exactly on schedule while REVISITING one
     // leaf and skipping another, and the counted idiom would then read the right NUMBER of entries
     // and the wrong entries. So this version also requires the walk to ADVANCE — every step's
-    // `getPath()` differs from the step before — which is the property whose failure the
-    // bare-element carrier actually exhibits (see below).
+    // `getPath()` differs from the step before — which is exactly the property the bare-element
+    // carrier used to violate.
     //
-    // ⚠ TWO further rows were written first and both FAILED. Neither is weakened away; each is
+    // ⚠ TWO further rows were written first and both FAILED. Neither was weakened away; each was
     // promoted to its own test, because each failure was the measurement:
     //
     //   * a SUBTRIE root (`readZipperAt(["a"])`, branch count 2) never became `Nil` at 3 — the walk
-    //     is MAP-scoped and leaves the branch at step 3. Promoted to
+    //     is MAP-scoped and leaves the branch at step 3. That one is a genuine property of the
+    //     contract's SCOPE and stays promoted, at
     //     [`c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil`].
-    //   * BARE (non-list) elements never became `Nil` at all — the walk is a FIXED POINT at the
-    //     first leaf and a walk-until-`Nil` over `{| 1, 2, 3 |}` does not terminate. Promoted to
-    //     [`c4_defect_a_bare_element_walk_never_advances`]. That is an interpreter defect, not a
-    //     property of this contract, which is why this test keeps the shape the contract holds for.
-    for (label, root, expected_leaf_count) in
-        [("whole map", zipper_method("readZipper", four_leaf_pathmap(), Vec::new()), 4usize)]
-    {
+    //   * BARE (non-list) elements never became `Nil` at all — the walk was a FIXED POINT at the
+    //     first leaf, so a walk-until-`Nil` over `{| 1, 2, 3 |}` did not terminate.
+    //
+    // ★★ THE BARE ROW IS RESTORED (2026-07-27). That second failure was an INTERPRETER defect, not
+    // a property of this contract, and the interpreter is fixed — so the row comes back to where it
+    // was written rather than living on as a witness. Measured over `{| 1, 2, 3 |}`:
+    //
+    //     step        1     2     3     4          leafCount() == 3
+    //     getPath()   1     2     3     ✗ error    ← ADVANCES, and the paths are BARE
+    //     == Nil ?    F     F     F     true       ← exhausts at leafCount() + 1
+    //
+    // Three f1r3node commits closed it, and NEITHER of the two fixes the retired witnesses proposed
+    // is among them; the full derivation is on [`c4_a_bare_element_reads_back_as_itself`]. What
+    // matters here is that the exhaustion contract is now carrier-INDEPENDENT: it holds for the
+    // ground-list element shape and for the bare one, under one identical body.
+    for (label, root, expected_leaf_count) in [
+        (
+            "whole map, GROUND-LIST elements",
+            zipper_method("readZipper", four_leaf_pathmap(), Vec::new()),
+            4usize,
+        ),
+        (
+            "whole map, BARE elements",
+            zipper_method("readZipper", bare_element_pathmap(), Vec::new()),
+            3usize,
+        ),
+    ] {
         // The DECIDABLE BOUND. A stuck term is not an end-test, which is precisely why
         // `leafCount()` exists and why it — not a "did it fail?" probe — terminates a counted walk.
         let counted = reduce_expression(zipper_method("leafCount", root.clone(), Vec::new()))
@@ -2602,7 +2668,9 @@ async fn c1_zipper_walk_exhaustion_terminates_within_leaf_count() {
                     break;
                 },
                 "false" => continue,
-                other => panic!("{label} step {steps}: `walk == Nil` must be a Bool, got {other:?}"),
+                other => {
+                    panic!("{label} step {steps}: `walk == Nil` must be a Bool, got {other:?}")
+                },
             }
         }
 
@@ -2676,9 +2744,48 @@ async fn c1_zipper_counted_walk_visits_every_leaf_once_in_order() {
 ///
 /// Both probes below are one step beyond where [`c1_zipper_walk_exhaustion_terminates_within_leaf_count`]
 /// found the `Nil`.
+///
+/// ── ★ THE TWO EXHAUSTION SURFACES ARE DIFFERENT QUESTIONS (settled 2026-07-27) ───────────────────
+///
+/// A reader who knows only that the contract says `walk == Nil` can reasonably expect `getPath()`
+/// at that step to answer `Nil` too. It does not — it RAISES. Both are correct, because they ask
+/// different questions of the sentinel:
+///
+/// | expression                     | at `leafCount() + 1`                    | why                |
+/// |-------------------------------|-----------------------------------------|--------------------|
+/// | `walk == Nil`                  | `true`                                  | the SENTINEL TEST  |
+/// | `walk.getPath()`               | `ReduceError`                            | an ACCESSOR ON it  |
+/// | `walk.toNextLeaf()` (step + 1) | `ReduceError`                            | a MOVE from it     |
+///
+/// The sentinel is comparison, which every Par supports. An accessor is a METHOD, and `Nil` is
+/// `Par::default()` — zero `exprs`, no `EZipperBody` — so `eval_single_expr`'s dispatch has no
+/// receiver to match and fails closed BEFORE any zipper code runs. That is the whole guarantee this
+/// test exists for: exhaustion is unusable rather than silently root-reset.
+///
+/// ⚠ The MESSAGE is misleading and is deliberately so upstream. `Nil` has ZERO expressions, and the
+/// text says *"Multiple expressions given."* — it is `eval_single_expr`'s `_`-arm
+/// (`reduce.rs::descend_single`, `match p.exprs.as_slice() { [e] => …, _ => Err(…) }`), which
+/// catches both zero and many. f1r3node names this exact string `NIL_MID_CHAIN_ERROR`
+/// (`fused_pathmap_chain.rs`, *"the misleading string IS the pin"*) and asserts it as the PM-4(d)
+/// Nil-source parity target in `rholang/tests/epathmap_differential_scaffold.rs`, so the fused
+/// chain and the unfused one fail identically. It is a diagnostic-quality wart with a consensus
+/// obligation attached, NOT a semantic defect — pinned here rather than worked around, and
+/// asserted as EQUAL ACROSS CARRIERS so a bare-element chain cannot start failing differently.
 #[tokio::test(flavor = "multi_thread")]
 async fn c1_zipper_walk_cannot_continue_past_exhaustion() {
     let leaf_count = 4usize;
+
+    // ① The SENTINEL answers cleanly at `leafCount() + 1`. This is the contract every walk body
+    //    tests, and it is the reason the raises below are not a contradiction.
+    let sentinel = reduce_expression(walk_is_nil(leaf_count + 1))
+        .await
+        .expect("the exhaustion sentinel must reduce to a Bool");
+    assert_eq!(
+        sentinel.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        vec!["true".to_string()],
+        "★ `walk == Nil` IS the exhaustion test, and it must answer — a walk body that follows the \
+         documented contract never reaches the accessor raises below"
+    );
 
     // `toNextLeaf()` ON the exhausted Nil.
     let stepped = reduce_expression(leaf_walk(leaf_count + 2)).await;
@@ -2689,11 +2796,36 @@ async fn c1_zipper_walk_cannot_continue_past_exhaustion() {
     );
 
     // `getPath()` ON the exhausted Nil — the accessor a walk body would call.
-    let path = reduce_expression(zipper_method("getPath", leaf_walk(leaf_count + 1), Vec::new()))
-        .await;
+    let path =
+        reduce_expression(zipper_method("getPath", leaf_walk(leaf_count + 1), Vec::new())).await;
     assert!(
         path.is_err(),
         "★ reading a path out of the exhausted Nil must FAIL, not answer the first leaf. Got {path:?}"
+    );
+
+    // ② The exact fail-closed shape, and the fact that it does not depend on the element shape.
+    //    A carrier-DEPENDENT failure mode here would be a real defect: the two element shapes would
+    //    need two different walk bodies.
+    let bare_root = zipper_method("readZipper", bare_element_pathmap(), Vec::new());
+    let bare_path =
+        reduce_expression(zipper_method("getPath", walk_from(bare_root, 3 + 1), Vec::new()))
+            .await
+            .expect_err(
+                "★ the bare carrier must fail closed at exhaustion, exactly as the list one",
+            );
+    let list_path = path.expect_err("checked immediately above");
+    assert_eq!(
+        bare_path, list_path,
+        "★ the exhausted-accessor failure must be the SAME for BARE and GROUND-LIST elements — a \
+         difference here means the two shapes need two walk bodies"
+    );
+    assert_eq!(
+        list_path, r#"reduce: inj: ReduceError("Error: Multiple expressions given.")"#,
+        "★ PM-4(d): the exhausted accessor raises `eval_single_expr`'s `_`-arm. `Nil` has ZERO \
+         expressions, so the wording is wrong and DELIBERATELY pinned upstream \
+         (`fused_pathmap_chain.rs::NIL_MID_CHAIN_ERROR`) because the fused chain must fail with \
+         the identical string. If this moves, mettail is reading a DIFFERENT failure than the one \
+         f1r3node's own differential asserts"
     );
 }
 
@@ -2715,7 +2847,6 @@ async fn c1_rhocalc_side_still_reports_exhaustion_as_stuck() {
          is the convention the reducer's Nil has to be translated FROM. Got {residue:?}"
     );
 }
-
 
 /// **★ Every routed zipper/pathmap method is exercised against a REAL `EPathMap` — the check that
 /// caught `setLeaf`.**
@@ -2959,7 +3090,9 @@ async fn c4_set_leaf_appends_an_element_and_ignores_the_focus() {
 
     // ① The map GREW. A focus-write would have replaced the entry at `["b"]` and left the count at
     //    four; an append adds a fifth.
-    let observed = reduce_expression(count_of(after("b"))).await.expect("setLeaf reduces");
+    let observed = reduce_expression(count_of(after("b")))
+        .await
+        .expect("setLeaf reduces");
     assert_eq!(
         rendered(observed),
         vec!["5".to_string()],
@@ -2999,10 +3132,8 @@ async fn c4_set_leaf_appends_an_element_and_ignores_the_focus() {
             ),
         ),
     ] {
-        let same = zipper_expr_par(ZExprInstance::EEqBody(ZEEq {
-            p1: Some(left),
-            p2: Some(right),
-        }));
+        let same =
+            zipper_expr_par(ZExprInstance::EEqBody(ZEEq { p1: Some(left), p2: Some(right) }));
         let observed = reduce_expression(same)
             .await
             .unwrap_or_else(|err| panic!("C4-3 {label}: the comparison must reduce: {err}"));
@@ -3064,8 +3195,12 @@ async fn c4_restrict_is_not_restriction_and_meet_is_intersection() {
             zipper_elist(vec![zipper_gstring("b")]),
         ])
     };
-    let prefix_mask =
-        || zipper_epathmap(vec![zipper_elist(vec![zipper_gstring("a")]), zipper_elist(vec![zipper_gstring("c")])]);
+    let prefix_mask = || {
+        zipper_epathmap(vec![
+            zipper_elist(vec![zipper_gstring("a")]),
+            zipper_elist(vec![zipper_gstring("c")]),
+        ])
+    };
     let exact_mask = || {
         zipper_epathmap(vec![
             zipper_elist(vec![zipper_gstring("a"), zipper_gstring("x")]),
@@ -3075,13 +3210,29 @@ async fn c4_restrict_is_not_restriction_and_meet_is_intersection() {
 
     for (label, call, expected_count) in [
         // PREFIX mask: `restriction` keeps both entries under `["a"]` …
-        ("restriction/prefix", zipper_method("restriction", base(), vec![prefix_mask()]), "2"),
+        (
+            "restriction/prefix",
+            zipper_method("restriction", base(), vec![prefix_mask()]),
+            "2",
+        ),
         // … while `intersection` keeps NONE, because `["a"]` is not itself an entry of base.
-        ("intersection/prefix", zipper_method("intersection", base(), vec![prefix_mask()]), "0"),
+        (
+            "intersection/prefix",
+            zipper_method("intersection", base(), vec![prefix_mask()]),
+            "0",
+        ),
         // EXACT mask: the two coincide, which is why an exact-only fixture could never have caught
         // the difference.
-        ("restriction/exact", zipper_method("restriction", base(), vec![exact_mask()]), "1"),
-        ("intersection/exact", zipper_method("intersection", base(), vec![exact_mask()]), "1"),
+        (
+            "restriction/exact",
+            zipper_method("restriction", base(), vec![exact_mask()]),
+            "1",
+        ),
+        (
+            "intersection/exact",
+            zipper_method("intersection", base(), vec![exact_mask()]),
+            "1",
+        ),
     ] {
         let observed = reduce_expression(zipper_method("leafCount", call, Vec::new()))
             .await
@@ -3142,9 +3293,10 @@ async fn c4_get_subtrie_at_is_read_zipper_at_then_get_subtrie() {
         ("leaf", "b", "1"),
         ("miss is fail-soft, not an error", "zz", "0"),
     ] {
-        let observed = reduce_expression(zipper_method("leafCount", subtrie_at(segment), Vec::new()))
-            .await
-            .unwrap_or_else(|err| panic!("C4-5 {label}: must reduce: {err}"));
+        let observed =
+            reduce_expression(zipper_method("leafCount", subtrie_at(segment), Vec::new()))
+                .await
+                .unwrap_or_else(|err| panic!("C4-5 {label}: must reduce: {err}"));
         assert_eq!(
             observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
             vec![expected_count.to_string()],
@@ -3169,45 +3321,83 @@ async fn c4_get_subtrie_at_is_read_zipper_at_then_get_subtrie() {
     );
 }
 
-/// **★ C4-6 (⚠ f1r3node DEFECT, measured; reported, NOT fixed here) — every read of a BARE element
-/// silently answers `Nil`.**
+/// **★ C4-6 — a BARE element reads back AS ITSELF. The positive twin of a retired witness.**
 ///
-/// `create_pathmap_from_elements` keys an element by `canonical_path::encode_trie_path(par)`.
-/// `getLeaf` and `atPath` look the element up by `segments_to_key(par_to_path(par), true)` — the
-/// same segments, with the `0x00` terminator appended unconditionally. For a ground `EList` the two
-/// agree; for a **bare** Par they do not, because `encode_trie_path`'s bare form carries no
-/// terminator. Measured at the codec level (`models/tests`, C4 probe):
+/// ## What this replaced, and why the replacement is not a relaxation
+///
+/// Until 2026-07-27 this slot held `c4_defect_a_bare_element_reads_back_as_nil`, which asserted
+/// that every VALUE read of a bare element answered `Nil`. That defect is FIXED, so the witness
+/// would have been a check that can no longer fail; it is replaced here by the assertions it told
+/// its reader to write, extended with an executable control (③ below) that reproduces the retired
+/// behaviour on demand.
+///
+/// ## The defect that was
+///
+/// `create_pathmap_from_elements` keys an element by `canonical_path::encode_trie_path(par)`, whose
+/// two arms are
+///
+/// ```text
+///     split (a ground list [e1..ek])   key = enc(e1) ‖ … ‖ enc(ek) ‖ 0x00
+///     bare  (anything else)            key = enc(par)                     ← NO terminator
+/// ```
+///
+/// while every READER rebuilt the key as `segments_to_key(par_to_path(par), true)` — the same
+/// segments with the terminator appended unconditionally, i.e. the split arm, always. The two agree
+/// on a ground `EList` and disagree on every bare Par:
 ///
 /// ```text
 ///     element      insert key (encode_trie_path)   read key (segments_to_key(_, true))
 ///     ────────     ─────────────────────────────   ───────────────────────────────────
 ///     1            0302                            030200          ✗ disagree
-///     "p"          040170                           04017000       ✗ disagree
-///     true         02                               0200           ✗ disagree
-///     ["a"]        04016100                         04016100       ✓ agree
-///     ["a","x"]    04016104017800                   04016104017800 ✓ agree
+///     "p"          040170                          04017000        ✗ disagree
+///     true         02                              0200            ✗ disagree
+///     ["a"]        04016100                        04016100        ✓ agree
+///     ["a","x"]    04016104017800                  04016104017800  ✓ agree
 /// ```
 ///
-/// So the lookup always misses and the reducer returns its "not found" answer, `Nil`. This is a
-/// SILENTLY WRONG result, not a fail-closed one, and it reaches the simplest pathmap a user can
-/// write (`{| 1, 2, 3 |}`).
+/// ## ⚠ THE NARRATIVE THIS SLOT USED TO CARRY WAS WRONG — do not follow it
 ///
-/// It is pinned here as a WITNESS rather than fixed. The two candidate fixes are both
-/// consensus-visible and therefore presentable, not landable, decisions:
+/// The retired witness offered two candidate fixes and called them "consensus-visible and therefore
+/// presentable, not landable". **Both were refuted, and the fix that landed is neither.** A later
+/// reader who starts from the old text starts from a dead path, which is why it is rewritten here
+/// rather than annotated.
 ///
-///   * key bare elements WITH the terminator — `encode_trie_path` is the canonical key stream
-///     (`serialized_paths`, proto field 8) and the Blake2b hash preimage, so this re-keys every
-///     ground map containing a bare element and moves its canonical identity; or
-///   * read with `terminate = false` for bare elements — but the reader has only `current_path`
-///     segments, and a bare `"a"` and the one-element list `["a"]` produce the SAME single segment
-///     while requiring DIFFERENT keys, so the read side cannot tell them apart. The fix has to be
-///     on the insert side.
+/// * ✗ *"key bare elements WITH the terminator"* — would have moved `encode_trie_path`, the
+///   canonical key stream (`serialized_paths`, proto field 8) and the Blake2b hash preimage,
+///   re-keying every ground map holding a bare element. It was also **insufficient**: `5aacebc3`
+///   established that the walk's fixed point lives inside the walk primitive, so terminating the
+///   key would have removed one trigger and left the others (`readZipperAt` on a miss, any
+///   `descendTo` into empty space).
+/// * ✗ *"read with `terminate = false` for bare elements — the read side cannot tell them apart"* —
+///   true only of a reader holding SEGMENTS. It is false of a reader holding the whole path as a
+///   `Par`, and false of a cursor that is allowed to carry its own arm. The premise was the bug.
 ///
-/// The walk itself is sound over this shape — [`c1_zipper_walk_exhaustion_terminates_within_leaf_count`]
-/// carries a bare-element row precisely so the blast radius of this defect stays measured.
+/// ## The three f1r3node commits that actually closed it
+///
+/// | # | commit | what it fixed | key stream |
+/// |---|---|---|---|
+/// | 2 | `5aacebc3` | `next_value_key` is total: the LEAST key strictly greater than `from_key`, for any `from_key`, existing or not | untouched |
+/// | 3 | `0a6d2ce0` | `entry_key_at` — a reader holding the whole path `Par` asks the codec instead of rebuilding | untouched |
+/// | 4-6 | `7dcff96f` | `EZipper.cursor_kind` (`RhoTypes.proto`) — the cursor carries `Split`/`Bare`/`Prefix`, and `cursor_entry_key` spends it | untouched |
+///
+/// Stage 2 is the one that shows how far off the old attribution was: the `toNextLeaf` fixed point
+/// was an upstream pathmap-0.2.2 iteration bug (`DenseByteNode::iter_token_for_path` returns the
+/// node's FULL child mask when the dangling key is longer than one byte, silently REWINDING to that
+/// node's first child), and not a key-termination problem at all. It also explains why the defect
+/// looked shape-dependent — `LineListNode`'s twin compares the whole key and does not rewind, so
+/// two-entry tries advanced and three-entry tries did not.
+///
+/// ★ **No canonical key moved and no activation height was needed.** All three commits are
+/// explicit that `create_pathmap_from_elements`, `encode_trie_path` and `path_stream_of` are
+/// untouched; `cursor_kind` is ADDITIVE with `Split == 0`, and prost omits a default-valued scalar,
+/// so `ezipper.prost.bin` is byte-identical and every zipper serialized before the field existed
+/// decodes to exactly the prior semantics. The consensus-commitment framing the witness used to
+/// hold this behind never applied to the fix that was available.
 #[tokio::test(flavor = "multi_thread")]
-async fn c4_defect_a_bare_element_reads_back_as_nil() {
-    // The map is fully present: the count and the cursor key are both correct …
+async fn c4_a_bare_element_reads_back_as_itself() {
+    // ① The map, its count, and the BARE cursor the walk lands on. `getPath()` answers the element
+    //    `1` and NOT the singleton list `[1]`: those are different entries that one map may hold at
+    //    once, and reporting the wrong one was the defect, not a rendering choice.
     for (label, call, expected) in [
         ("leafCount", zipper_method("leafCount", bare_element_pathmap(), Vec::new()), "3"),
         (
@@ -3217,7 +3407,7 @@ async fn c4_defect_a_bare_element_reads_back_as_nil() {
                 walk_from(zipper_method("readZipper", bare_element_pathmap(), Vec::new()), 1),
                 Vec::new(),
             ),
-            "[1]",
+            "1",
         ),
     ] {
         let observed = reduce_expression(call)
@@ -3226,56 +3416,100 @@ async fn c4_defect_a_bare_element_reads_back_as_nil() {
         assert_eq!(
             observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
             vec![expected.to_string()],
-            "C4-6 {label}: the trie holds the entry — only the VALUE readout is defective"
+            "C4-6 {label}: the cursor names the BARE entry — `[1]` here is the singleton LIST, a \
+             different entry"
         );
     }
 
-    // … and yet every VALUE read answers Nil. `Nil` is `Par::default()`, which renders as the empty
-    // observation, so the comparison against `Nil` is the reliable probe.
-    for (label, value_read) in [
-        (
-            "getLeaf on the walk",
-            zipper_method(
-                "getLeaf",
-                walk_from(zipper_method("readZipper", bare_element_pathmap(), Vec::new()), 1),
-                Vec::new(),
-            ),
-        ),
-        (
-            "atPath with the bare key",
-            zipper_method(
-                "atPath",
-                bare_element_pathmap(),
-                vec![zipper_expr_par(ZExprInstance::GInt(1))],
-            ),
-        ),
-        (
-            "atPath with the one-segment list key",
-            zipper_method(
-                "atPath",
-                bare_element_pathmap(),
-                vec![zipper_elist(vec![zipper_expr_par(ZExprInstance::GInt(1))])],
-            ),
-        ),
-    ] {
-        let is_nil = zipper_expr_par(ZExprInstance::EEqBody(ZEEq {
-            p1: Some(value_read),
-            p2: Some(Par::default()),
-        }));
-        let observed = reduce_expression(is_nil)
-            .await
-            .unwrap_or_else(|err| panic!("C4-6 {label}: the comparison must reduce: {err}"));
+    // ② Every VALUE read answers the element. In an `EPathMap` an element is its own key AND its
+    //    own value, so `getLeaf()` at a stop equals `getPath()` there, and `atPath(k)` returns `k`.
+    for steps in 1..=3usize {
+        let expected = steps.to_string();
+        let observed = reduce_expression(zipper_method(
+            "getLeaf",
+            walk_from(zipper_method("readZipper", bare_element_pathmap(), Vec::new()), steps),
+            Vec::new(),
+        ))
+        .await
+        .unwrap_or_else(|err| panic!("C4-6 getLeaf at step {steps}: must reduce: {err}"));
         assert_eq!(
             observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
-            vec!["true".to_string()],
-            "C4-6 {label}: WITNESS — this is the DEFECT, not the desired behaviour. When the \
-             insert-side key termination is fixed this assertion flips to `false` and this test \
-             must be replaced by its positive twin (the value equals the element)."
+            vec![expected.clone()],
+            "C4-6 getLeaf at step {steps}: the walk's own cursor must read its element back"
+        );
+
+        let observed = reduce_expression(zipper_method(
+            "atPath",
+            bare_element_pathmap(),
+            vec![zipper_expr_par(ZExprInstance::GInt(steps as i64))],
+        ))
+        .await
+        .unwrap_or_else(|err| panic!("C4-6 atPath({steps}): must reduce: {err}"));
+        assert_eq!(
+            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            vec![expected],
+            "C4-6 atPath({steps}): the BARE key addresses the entry it was inserted under"
         );
     }
 
-    // The ground-list control: the very same reads answer correctly, which is what localises the
-    // defect to the bare-element key rather than to the readers.
+    // ③ ★ ANTI-VACUITY — the retired behaviour, RUN. `readZipperAt` given a ground-LIST argument
+    //    produces a `Split` cursor, and `par_to_path` gives the bare element `1` and the singleton
+    //    list `[1]` the SAME segment vector. So `readZipperAt([1])` on this map is exactly the
+    //    pre-fix cursor: identical segments, arm guessed as split. `cursor_entry_key(segs, Split, m)
+    //    == segments_to_key(segs, true)` BY CONSTRUCTION, so its reads run the byte-identical
+    //    expression `7dcff96f^` ran unconditionally — and they still answer the pre-fix values.
+    //
+    //    This is what keeps ② from being a check that cannot fail: ② and ③ differ ONLY in the
+    //    cursor's arm, so if the discriminator were dropped, every row of ② would collapse onto ③.
+    let split_cursor_at_one = || {
+        zipper_method(
+            "readZipperAt",
+            bare_element_pathmap(),
+            vec![zipper_elist(vec![zipper_expr_par(ZExprInstance::GInt(1))])],
+        )
+    };
+    let observed = reduce_expression(zipper_method("getPath", split_cursor_at_one(), Vec::new()))
+        .await
+        .expect("C4-6 pre-fix control: getPath must reduce");
+    assert_eq!(
+        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        vec!["[1]".to_string()],
+        "C4-6 pre-fix control: a SPLIT cursor over the same segments reports the LIST — this is \
+         the exact value the retired witness asserted for the walk's own cursor"
+    );
+    let observed = reduce_expression(reads_as_nil(zipper_method(
+        "getLeaf",
+        split_cursor_at_one(),
+        Vec::new(),
+    )))
+    .await
+    .expect("C4-6 pre-fix control: the Nil comparison must reduce");
+    assert_eq!(
+        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        vec!["true".to_string()],
+        "C4-6 pre-fix control: the split key `030200` is not in this map, so the guessing reader \
+         still answers Nil. If THIS ever flips, the arm stopped being spent and ② is vacuous"
+    );
+
+    // ④ The same statement from the argument side, and it is a semantic row as well as a control:
+    //    `[1]` is genuinely NOT an entry of `{| 1, 2, 3 |}`, and the pre-fix reader computed this
+    //    very key for the bare `1`.
+    let observed = reduce_expression(reads_as_nil(zipper_method(
+        "atPath",
+        bare_element_pathmap(),
+        vec![zipper_elist(vec![zipper_expr_par(ZExprInstance::GInt(1))])],
+    )))
+    .await
+    .expect("C4-6: the one-segment list comparison must reduce");
+    assert_eq!(
+        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        vec!["true".to_string()],
+        "C4-6: `atPath([1])` must MISS — the bare `1` and the list `[1]` are different entries, and \
+         conflating them is what `entry_key_at` removed"
+    );
+
+    // ⑤ The ground-list control, unchanged from the witness: the very same reads answer correctly
+    //    on the other element shape, which is what localises every claim above to the bare arm.
     let observed = reduce_expression(zipper_method(
         "atPath",
         four_leaf_pathmap(),
@@ -3286,8 +3520,8 @@ async fn c4_defect_a_bare_element_reads_back_as_nil() {
     assert_eq!(
         observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
         vec![r#"["b"]"#.to_string()],
-        "C4-6 control: a GROUND-LIST element reads back correctly — the defect is confined to the \
-         bare form's missing key terminator"
+        "C4-6 control: a GROUND-LIST element still reads back through the split arm — the fix moved \
+         ZERO bytes on this shape"
     );
 }
 
@@ -3355,12 +3589,16 @@ async fn c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil() {
 
     // ② Step by step: the first two stay in, the next two ESCAPE, and `Nil` arrives only at the
     //    whole map's count + 1.
-    for (steps, expected_path) in
-        [(1usize, r#"["a", "x"]"#), (2, r#"["a", "y"]"#), (3, r#"["b"]"#), (4, r#"["c", "z"]"#)]
-    {
-        let observed = reduce_expression(zipper_method("getPath", walk_from(at_a(), steps), vec![]))
-            .await
-            .unwrap_or_else(|err| panic!("C4-7 step {steps}: must reduce: {err}"));
+    for (steps, expected_path) in [
+        (1usize, r#"["a", "x"]"#),
+        (2, r#"["a", "y"]"#),
+        (3, r#"["b"]"#),
+        (4, r#"["c", "z"]"#),
+    ] {
+        let observed =
+            reduce_expression(zipper_method("getPath", walk_from(at_a(), steps), vec![]))
+                .await
+                .unwrap_or_else(|err| panic!("C4-7 step {steps}: must reduce: {err}"));
         assert_eq!(
             observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
             vec![expected_path.to_string()],
@@ -3392,9 +3630,8 @@ async fn c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil() {
 
     // ④ The SAFE idiom: scope algebraically first. `getSubtrie()` yields the branch as a map in its
     //    own right, and THAT map's walk exhausts at the branch's own count + 1.
-    let branch = || {
-        zipper_method("readZipper", zipper_method("getSubtrie", at_a(), Vec::new()), Vec::new())
-    };
+    let branch =
+        || zipper_method("readZipper", zipper_method("getSubtrie", at_a(), Vec::new()), Vec::new());
     for (steps, expected) in [(1usize, "false"), (2, "false"), (3, "true")] {
         let observed = reduce_expression(walk_from_is_nil(branch(), steps))
             .await
@@ -3408,76 +3645,84 @@ async fn c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil() {
     }
 }
 
-/// **★★ C4-8 (⚠ f1r3node DEFECT, measured; reported, NOT fixed here) — over BARE elements the leaf
-/// walk is a FIXED POINT: it never advances and never exhausts.**
+/// **★★ C4-8 — over BARE elements the leaf walk visits every element, in order, and STOPS.**
 ///
-/// This is C4-6's defect one level up, and it is far more serious there. The same key-termination
-/// mismatch that makes `getLeaf()` answer `Nil` also makes `toNextLeaf()` a no-op:
-///
-/// ```text
-///     reduce.rs::to_next_leaf_method
-///         let from_key = segments_to_key(&zipper.current_path, /*terminate=*/ true);
-///         next_value_path(&map, &from_key)          ▸ pathmap_native_query.rs:147
-///             zipper.move_to_path(from_key); zipper.to_next_val()
-/// ```
-///
-/// `from_key` is ALWAYS terminated. A bare element's stored key is NOT (`encode_trie_path`'s bare
-/// form carries no `0x00`), so `move_to_path` lands on a path that has no node, and the recovery
-/// `to_next_val()` performs from there re-selects the FIRST value. Measured over `{| 1, 2, 3 |}`:
+/// The positive twin of `c4_defect_a_bare_element_walk_never_advances`, which held this slot until
+/// 2026-07-27 and asserted the exact opposite at six consecutive steps. That witness had told its
+/// reader what to do when the walk was fixed — restore the bare row to
+/// [`c1_zipper_walk_exhaustion_terminates_within_leaf_count`], which is where it was written — and
+/// the row IS restored there. What remains here is the part that row does not carry: the per-step
+/// VALUES, which are the direct positive image of the witness's parked table.
 ///
 /// ```text
-///     step  1  2  3  4  5  6      leafCount() == 3
-///     path [1][1][1][1][1][1]     ← never moves
-///     Nil?  F  F  F  F  F  F      ← never exhausts
+///     RETIRED WITNESS (measured 2026-07-26)          NOW (measured 2026-07-27)
+///     step  1  2  3  4  5  6                         step  1  2  3  4
+///     path [1][1][1][1][1][1]  ← never moves         path  1  2  3  ✗ raises
+///     Nil?  F  F  F  F  F  F   ← never exhausts      Nil?  F  F  F  true
 /// ```
 ///
-/// ⚠ **Both idioms fail, and neither fails loudly.**
+/// ⚠ **Six steps were needed to tell those two apart, and one was not.** At step 1 alone the move
+/// is `["[1]"]` → `["1"]`, which is equally consistent with *"still parked, only the RENDERING
+/// changed"* — the walk staying on the first leaf while `getPath` learned to report the bare
+/// element instead of the singleton list. Only enumerating the whole bound distinguishes a walk
+/// that moved from a walk that was re-rendered, and both halves DID move here: the paths are bare
+/// AND they advance.
 ///
-/// * counted (`leafCount()` as bound) — reads entry `1` three times and reports a complete
-///   enumeration of a three-entry map. Silently wrong.
-/// * sentinel (walk until `Nil`) — **does not terminate.** This is precisely the hang the
-///   cross-endpoint exhaustion contract exists to prevent, reached from inside the interpreter
-///   rather than from a mistranslated seam.
+/// ## What actually fixed it — and it is not what the witness predicted
 ///
-/// ★ **This is the hardest blocker C4 has, and it is not a mettail-side one.** RhoCalc pathmap keys
-/// are bare by default — `{| 1 : 10 |}` has key `1`, and `encode_proc_path_entry` gives a bare
-/// `Proc` one segment. So if `lower_pathmap` were pointed at `EPathmapBody` today, *every* RhoCalc
-/// pathmap would land in exactly this state, and the enumeration surface that C4 exists to unlock
-/// (`getPath` / `toNextLeaf` / `leafCount`) would hang rather than work.
+/// The witness attributed the fixed point to key termination: *"`from_key` is ALWAYS terminated, a
+/// bare element's stored key is NOT, so `move_to_path` lands on a path that has no node and the
+/// recovery `to_next_val()` re-selects the FIRST value."* The symptom was right and the cause was
+/// not. f1r3node `5aacebc3` measured the fixed point INSIDE the walk primitive, in pathmap-0.2.2:
+/// `ReadZipperCore::to_next_get_val` opens iteration with `iter_token_for_path(node_key())`, and
+/// `DenseByteNode::iter_token_for_path` answers with the node's FULL child mask whenever that key
+/// is longer than one byte — i.e. it REWINDS to the node's first child. Any focus dangling two or
+/// more bytes past the deepest existing node triggers it, so terminating the key would have removed
+/// one trigger and left `readZipperAt` on a miss and every `descendTo` into empty space.
 ///
-/// The candidate fixes and why neither is landed here are recorded on
-/// [`c4_defect_a_bare_element_reads_back_as_nil`]; both change interpreter results, and the clean
-/// one moves the canonical key stream, so both are consensus commitments to be presented.
+/// `next_value_key` replaces it with an ORDER property — *the least key in the map strictly greater
+/// than `from_key`, or `None`* — which is total, needs `from_key` neither to exist nor to prefix
+/// anything, and never asks the crate to iterate from a dangling focus. The rest of the cluster
+/// (the `Nil` value reads, and `getPath` reporting the list) is `0a6d2ce0` + `7dcff96f`; the full
+/// three-commit derivation is on [`c4_a_bare_element_reads_back_as_itself`].
 ///
-/// ⚠ **BOUNDED BY CONSTRUCTION.** This test asserts the defect over a FIXED, small number of steps.
-/// It can never hang, whichever way the defect is eventually resolved: when the walk is fixed, the
-/// `assert` flips and this test must be replaced by its positive twin — a bare-element row restored
-/// to [`c1_zipper_walk_exhaustion_terminates_within_leaf_count`], which is where it was written.
+/// ## ⚠ The RhoCalc consequence, which was the whole reason this mattered
+///
+/// RhoCalc pathmap keys are BARE by default — `{| 1 : 10 |}` has key `1`, and
+/// `encode_proc_path_entry` gives a bare `Proc` one segment. The witness recorded that pointing
+/// `lower_pathmap` at `EPathmapBody` would therefore make the enumeration surface C4 exists to
+/// unlock HANG rather than work. **That blocker is gone.** What still blocks C4 is the carrier's
+/// missing VALUE SLOT, and only that — see
+/// [`divergence_g_target_pathmap_and_zippers_use_their_native_carriers`].
+///
+/// ⚠ **STILL BOUNDED BY CONSTRUCTION.** Every step below is a fixed, small number; nothing here can
+/// hang however the walk behaves.
 #[tokio::test(flavor = "multi_thread")]
-async fn c4_defect_a_bare_element_walk_never_advances() {
+async fn c4_a_bare_element_walk_visits_every_element_in_order() {
     let root = || zipper_method("readZipper", bare_element_pathmap(), Vec::new());
 
-    // The bound the carrier advertises — three entries, so a counted walk would take three steps.
+    // The bound the carrier advertises, and now also the number of steps the walk takes.
     let counted = reduce_expression(zipper_method("leafCount", root(), Vec::new()))
         .await
         .expect("leafCount reduces");
     assert_eq!(
         counted.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
         vec!["3".to_string()],
-        "C4-8: the map really does hold three entries — the COUNT is right, the WALK is not"
+        "C4-8: the map holds three entries, and a counted walk over it now reads three DISTINCT \
+         ones"
     );
 
-    // Six steps: twice the advertised bound, still finite. Every one parks on the first leaf and
-    // none is `Nil`.
-    for steps in 1..=6usize {
+    // ① The per-step values: byte-lex order over the bare keys, each element reported bare.
+    for (steps, expected_path) in [(1usize, "1"), (2, "2"), (3, "3")] {
         let path = reduce_expression(zipper_method("getPath", walk_from(root(), steps), vec![]))
             .await
             .unwrap_or_else(|err| panic!("C4-8 step {steps}: getPath must reduce: {err}"));
         assert_eq!(
             path.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
-            vec!["[1]".to_string()],
-            "C4-8 step {steps}: WITNESS — the walk is parked on the first leaf. When the key \
-             termination is fixed this becomes [2], [3], … and the witness must be retired."
+            vec![expected_path.to_string()],
+            "C4-8 step {steps}: the walk must ADVANCE, and must report the BARE element. `[{}]` \
+             here would be the retired fixed point wearing a new rendering",
+            expected_path
         );
 
         let is_nil = reduce_expression(walk_from_is_nil(root(), steps))
@@ -3486,8 +3731,21 @@ async fn c4_defect_a_bare_element_walk_never_advances() {
         assert_eq!(
             is_nil.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
             vec!["false".to_string()],
-            "C4-8 step {steps}: WITNESS — the walk never exhausts, so `walk until Nil` over a \
-             bare-element pathmap does not terminate"
+            "C4-8 step {steps}: an entry the count promised must not be exhausted early"
         );
     }
+
+    // ② And it STOPS — at exactly `leafCount() + 1`, which is what makes `walk until Nil` a
+    //    terminating idiom over this element shape. The accessor on that sentinel fails closed;
+    //    both facts, and why they are not in conflict, are pinned by
+    //    [`c1_zipper_walk_cannot_continue_past_exhaustion`].
+    let is_nil = reduce_expression(walk_from_is_nil(root(), 4))
+        .await
+        .expect("C4-8: the exhaustion test at leafCount() + 1 must reduce");
+    assert_eq!(
+        is_nil.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        vec!["true".to_string()],
+        "C4-8: `walk until Nil` over a bare-element pathmap TERMINATES — this is the assertion the \
+         retired witness recorded as false at six consecutive steps"
+    );
 }
