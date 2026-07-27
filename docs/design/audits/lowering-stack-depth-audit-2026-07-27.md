@@ -204,7 +204,11 @@ function, parameters typed from the generated `Proc` enum. Pure code motion — 
 rewritten; each call site retains the documentation explaining its semantics. `#[inline(never)]`
 is load-bearing: without it the backend may re-inline the callees and restore the sum.
 
-**Result.** Same instrument, same probe, same machine:
+**Result.** Same instrument, same probe, same machine. ★ **Both profiles**, because the
+acceptance criteria require it — and because, as it turns out, the profiles disagree
+qualitatively rather than merely by a factor.
+
+Debug (cranelift, `-O0`):
 
 | depth `N` | baseline (KiB) | M-1 (KiB) |
 |---|---|---|
@@ -214,25 +218,64 @@ is load-bearing: without it the backend may re-inline the callees and restore th
 | 200 | 9,648 | 3,116 |
 | 400 | 19,100 | 6,080 |
 
+Release (LLVM, `opt-level = 3`) — a deeper ladder, since the per-level cost is far smaller:
+
+| depth `N` | baseline (KiB) | M-1 (KiB) |
+|---|---|---|
+| 100 | 824 | 784 |
+| 200 | 1,592 | 1,496 |
+| 400 | 3,108 | 2,912 |
+| 800 | 6,144 | 5,752 |
+| 1,600 | 12,220 | 11,428 |
+
+All four series are linear with no curvature (pairwise slopes agree to <1.5%).
+
 ```math
-S_{\text{baseline}}(N) = 197.5 + 47.257\,N,
-\qquad
-S_{\text{M-1}}(N) = 165.5 + 14.777\,N \qquad \text{(KiB)}.
+\begin{aligned}
+S^{\text{dbg}}_{\text{base}}(N) &= 197.5 + 47.257\,N &
+S^{\text{dbg}}_{\text{M-1}}(N) &= 165.5 + 14.777\,N \\
+S^{\text{rel}}_{\text{base}}(N) &= \phantom{0}69.0 + \phantom{0}7.595\,N &
+S^{\text{rel}}_{\text{M-1}}(N) &= \phantom{0}75.2 + \phantom{0}7.096\,N
+\end{aligned}
+\qquad\text{(KiB)}
 ```
 
-| | baseline | M-1 | factor |
-|---|---|---|---|
-| bytes per level (debug) | 48,392 | **15,132** | **3.20×** (68.7% removed) |
-| `D_max`, main thread at 8 MiB | 169 | **542** | 3.21× |
+| profile | baseline B/level | M-1 B/level | factor | `D_max` @ 8 MiB |
+|---|---|---|---|---|
+| **debug** | 48,392 | **15,132** | **3.20×** (68.7% removed) | 169 → 542 |
+| **release** | 7,777 | **7,266** | **1.07×** (6.6% removed) | 1,069 → 1,143 |
 
-**Verdict — `H1` partially confirmed.** The 89-arm match was the single largest contributor,
-but not the whole cost: **15,132 B/level survives**, distributed over the other 18 SCC members
-of §4.1 and the iterator-adapter frames of the `.collect::<Result<Vec<_>, _>>()` sites.
+### 5.1 ★ M-1 is a DEBUG-PROFILE result, and the release numbers say why
 
-★ **This is a constant-factor result and must not be read as a fix.** The traversal remains
-Θ(depth); `D_max` merely moved from 169 to 542. It is reported as a measured *attribution* —
-how much of the constant the arm-splitting owned — which is precisely the question it was run
-to answer.
+The two profiles do not merely differ in scale — they disagree about whether the intervention
+did anything:
+
+* **debug**: 3.20×, 68.7% of the constant removed;
+* **release**: 1.07×, 6.6% removed.
+
+The explanation is the mechanism in §4, read in reverse. The arm-splitting removes cost only to
+the extent that the compiler was *failing* to overlay mutually exclusive match arms. At
+`-O0`/cranelift it fails completely, so the 89-arm frame really was the sum of 89 arms' locals
+and hoisting them was worth 3.2×. At `opt-level = 3` **LLVM already performs that overlay**, so
+there was almost nothing there to remove, and M-1 bought only the small residue.
+
+This is corroborated by the debug/release ratio of the *baseline* itself: **6.2×**
+(48,392 vs 7,777), collapsing to **2.1×** after M-1 (15,132 vs 7,266). M-1 did not make the
+lowering cheaper in any deep sense; it made the **debug build stop paying a penalty the release
+build never paid**.
+
+Two consequences, and both matter more than the headline factor:
+
+1. **The win is not worthless — debug is where this code is exercised.** The gate runs debug, CI
+   runs debug, and every demo run sheet drives `target/debug/rhocalc`. Depth 169 → 542 in the
+   profile a presenter actually uses is a real improvement, and it is what let the run-sheet
+   prefixes come off (§7).
+2. **★ Release is where the STRUCTURAL cost is visible, and it is 7,266 B/level — essentially
+   untouched.** That residue is the genuine per-level frame of the 19-member SCC of §4.1: real
+   locals in real functions, not a codegen artifact. It is what M-2 has to remove, and the
+   release profile is the honest measure of M-2's success. A debug-only reading of M-1 would
+   have suggested the problem was two-thirds solved; the release reading shows the structural
+   problem is essentially entirely still there.
 
 ---
 
@@ -351,16 +394,39 @@ rather than claiming a class it does not occupy.
   * **Combine**: pop `arity(k)` values, apply the arm's post-order body, push one value;
 * final configuration: work empty, exactly one value.
 
-**Deficit invariant**, asserted at the head of the drive loop behind `debug_assert!`:
+**Deficit invariant**, asserted at the head of the drive loop behind `debug_assert!`. Let `V` be
+the value stack, `D` the number of `Enter` items in the work stack, and `C` the set of pending
+`Combine` items:
 
 ```math
-|\mathit{vals}| \;+\; \bigl|\{\,\texttt{Enter} \in \mathit{work}\,\}\bigr|
-\;=\; 1 \;+\; \sum_{\texttt{Combine}(k)\,\in\,\mathit{work}} \mathrm{arity}(k).
+|V| \;+\; D \;+\; |C| \;-\; \sum_{k \in C}\mathrm{arity}(k) \;=\; 1 .
 ```
 
-`arity` is written as an exhaustive `match`, deliberately duplicating the pop counts, because
-the point is to cross-check them against an independent statement. This fires on the first
-malformed configuration on **any** term, whereas a differential fires only if the corpus
+⚠ An earlier form of this invariant, `|V| + D = 1 + \sum \mathrm{arity}`, is **wrong**: it is off
+by `|C|` and fires immediately after the root descends. The corrected form is verified
+transition-by-transition below — every reachable configuration, not a spot check.
+
+| # | configuration | `\|V\|` | `D` | `\|C\|` | `Σ arity` | total |
+|---|---|---|---|---|---|---|
+| 0 | initial: `work = [Enter(root)]` | 0 | 1 | 0 | 0 | **1** ✓ |
+| 1 | after `Enter` of an `n`-ary node: pop the `Enter`, push `Combine(k)` with `arity(k) = n`, push `n` `Enter`s | 0 | `n` | 1 | `n` | **1** ✓ |
+| 2 | after `Enter` of a leaf (`n = 0`): pop the `Enter`, push one value | +1 | −1 | 0 | 0 | **1** ✓ |
+| 3 | after `j` of those `n` children have resolved | `j` | `n − j` | 1 | `n` | **1** ✓ |
+| 4 | all `n` resolved | `n` | 0 | 1 | `n` | **1** ✓ |
+| 5 | after `Combine(k)`: pop `n` values, pop the `Combine`, push one value | `n − n + 1` | 0 | 0 | 0 | **1** ✓ |
+| 6 | final: work empty, exactly one value | 1 | 0 | 0 | 0 | **1** ✓ |
+
+Rows 1–5 are the only two transition shapes `δ` has, in their general form, so the table is
+exhaustive over reachable configurations rather than illustrative.
+
+⚠ **Maintain it with incremental counters, not an O(n) rescan.** `D`, `|C|` and `Σ arity` are
+each updated by a constant on every push and pop, so the assertion is `O(1)` per step. A rescan
+would make the debug build `O(n²)` on exactly the deep terms the gate gives it — the gate
+bisects at depth 4,096.
+
+`arity` is written as an exhaustive `match` over `Kont`, deliberately duplicating the pop counts,
+because the point is to cross-check them against an independent statement. This fires on the
+first malformed configuration on **any** term, whereas a differential fires only if the corpus
 happens to contain the witness.
 
 ### 8.1 Constraints that are not negotiable
@@ -399,12 +465,52 @@ roughly 12 of the 15 frames per level, and must be **absorbed into M-2** rather 
 alone: a ~4× constant win moves `D_max` from ~542 to ~2,000 and would read as success while
 leaving the class intact.
 
-### 8.3 ⚠ Not a member of this family
+### 8.3 ⚠ Not members of this family
 
-`prattail/src/lint/lints.rs:5193`'s `max_depth` (PAR01) walks the **category reference
-digraph** with cycle cutting. Its value is bounded by the number of categories and fixed at
-grammar-compile time: it measures a static constant, not growth in input nesting. It is useful
-codegen hygiene and nothing more.
+Two candidates were examined and **excluded on evidence**. They are recorded here so that
+"not converted" is never later mistaken for "not examined".
+
+#### PAR01 — a static constant, not a growth axis
+
+`prattail/src/lint/lints.rs:5193`'s `max_depth` walks the **category reference digraph** with
+cycle cutting. Its value is bounded by the number of categories and fixed at grammar-compile
+time: it measures a static constant, not growth in input nesting. Useful codegen hygiene and
+nothing more.
+
+#### The "ambiguity nesting" axis — bounded by 2, and therefore not an axis
+
+`collect_proc_alternatives` (`rhocalc_ast.rs`) recurses over
+`RhoCalcTermInner::Ambiguous(Vec<RhoCalcTermInner>)`, which *looks* like a third growth axis
+alongside depth and width. It is not: on any parser-produced term its recursion depth is
+**bounded by 2**, because `Ambiguous` is flat by construction. Three independent mechanisms
+enforce that, and all three were read rather than assumed:
+
+| # | mechanism | location |
+|---|---|---|
+| 1 | **construction flattens one level** — `from_alternatives` opens with `alts.into_iter().flat_map(\|a\| match a { Self::Ambiguous(inner) => inner, other => vec![other] })`, which maintains flatness inductively | `macros/src/gen/runtime/language.rs:659` |
+| 2 | **the generated type declares it** — *"Multiple parse alternatives (2+, flat — no nested Ambiguous)"* | `target/generated/rhocalc/term_wrapper.rs:31` |
+| 3 | **four `unreachable!` guards assert it** at the `all_alts()` seams — *"all_alts() returns flat alternatives, not nested Ambiguous"* | `macros/src/gen/runtime/dovetail_report.rs`, `dovetail_report/typed_report.rs` |
+
+So no gate subject was built for it and no ladder was measured: there is no slope to find, and
+a subject that measured one would be measuring a shape no parser emits.
+
+`Ambiguous` is nonetheless a public variant that a caller *can* nest by hand — the Calculator
+test suite does exactly that — so the walk stays **total** rather than asserting flatness.
+
+★ It was converted to an explicit work stack anyway, in its own commit, and the commit says
+plainly that this is a **consistency fix and not a depth fix**. The justification is
+independent of this audit: every *macro-generated* traversal over the same variant (`Clone`,
+`Hash`, `PartialEq` in `macros/src/gen/runtime/language.rs`) already uses an explicit work
+stack, and says so — *"no compiler-generated recursion through nested Ambiguous trees. Per the
+stack-safety mandate."* `collect_proc_alternatives` was the last hand-written exception to a
+mandate the generated code already honours. Removing an exception is worth doing on its own
+terms; letting it borrow the depth work's justification would have inflated both.
+
+Order is load-bearing in the conversion and is pinned by a differential test against the
+retained recursive implementation
+(`iterative_alternative_collection_matches_the_recursive_walk`): `lower_proc_alternatives`
+dedups by semantic key with `BTreeSet::insert`, which keeps the **first** occurrence, so a
+different visit order could retain a different representative.
 
 ---
 
@@ -450,7 +556,7 @@ cargo test -p rholang-runtime --features "rhocalc-runtime lambda-runtime calcula
 | instruments + baseline | ✅ | 48,392 B/level; `D_max` 169 (main) / 132 (default) |
 | threshold reconciliation | ✅ | §2.1 |
 | SCC enumeration | ✅ | §4.1 — 19 members |
-| M-1 per-arm split | ✅ landed | 15,132 B/level (3.20×) |
+| M-1 per-arm split | ✅ landed | debug 15,132 B/level (3.20×); release 7,266 (1.07×) — §5.1 |
 | M-2 explicit-stack driver | ☐ outstanding | — |
 | M-3/M-4 `collect_proc_alternatives`, ambiguity-nesting axis | ☐ outstanding | — |
 | M-5 gate | ✅ landed | tripwire + width axis green |
