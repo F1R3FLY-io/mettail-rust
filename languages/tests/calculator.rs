@@ -254,14 +254,29 @@ fn test_factorial_with_addition() {
     assert_eq!(result.eval(), 123, "postfix ! should bind tighter than +");
 }
 
-/// Operator-form negatives (merge decision #4): the calculator `Int` regex
-/// dropped the leading `-?`, aligning with main/Rholang — unary minus is an
-/// operator, not a signed literal. `-3!` therefore no longer forks in the lex
-/// DAG into an atomic-negative `Fact(NumLit(-3))` branch; the Int-category WPDA
-/// yields the single operator-form reading `Neg(Fact(NumLit(3)))` (postfix `!`
-/// binds tighter than prefix `-`). This test guards that the parser exposes the
-/// operator-form reading and NO longer produces the (removed) atomic-negative
-/// branch.
+/// ★ RE-DERIVED 2026-07-27 (ledger D1, `languages/tests/literal_domain_agreement.rs`).
+///
+/// This test was written under "merge decision #4" — the calculator `Int` regex dropped
+/// its leading `-?` on the ground that Rholang treats unary minus as an operator rather
+/// than a signed literal — and asserted the CONSEQUENCE of that: `-3!` no longer forks in
+/// the lex DAG, so the atomic-negative branch `Fact(NumLit(-3))` must not appear.
+///
+/// The premise was refuted (Rholang's own grammar puts the sign INSIDE the token:
+/// `long_literal /-?\d+/`), and it left `i32::MIN` with no surface at all — its `Display`
+/// is `-2147483648` and the operator form does not exist for it, since `Neg`'s operand
+/// `2147483648` overflows `i32`. `Int`'s pattern carries `-?` again, so the fork is back.
+///
+/// The test therefore asserts the opposite of its old negative clause, and that is the
+/// point rather than a concession: `-3!` is genuinely ambiguous between the two readings
+/// below, they DENOTE THE SAME NUMBER, and never-disambiguate-early says an ambiguity
+/// belongs in the lattice rather than being removed by narrowing the lexer.
+///
+///   * `-(3!) = Neg(Fact(NumLit(3)))`   — postfix `!` binds tighter than prefix `-`
+///   * `(-3)! = Fact(NumLit(-3))`       — the sign is part of the numeral token
+///
+/// The operator-spelled inner negative `Fact(Neg(NumLit(3)))` is NOT among them: with a
+/// signed literal available, `-3` is spelled atomically, so the `(-3)!` reading carries
+/// its sign in the literal. That is one reading of `(-3)!`, not two.
 #[test]
 fn calculator_unary_minus_factorial_parser_exposes_both_alternatives() {
     use calc::Int;
@@ -281,14 +296,11 @@ fn calculator_unary_minus_factorial_parser_exposes_both_alternatives() {
         "expected operator-form reading Neg(Fact(NumLit(3))); got {:?}",
         alts
     );
-    // The atomic-negative branch Fact(NumLit(-3)) was removed together with the
-    // leading `-?` (merge decision #4) and must NOT reappear.
+    // Atomic-negative reading: (-3)! = Fact(NumLit(-3)).
     assert!(
-        !alts
-            .iter()
-            .any(|t| matches!(t, Int::Fact(a) if matches!(a.as_ref(), Int::NumLit(-3)))),
-        "atomic-negative branch Fact(NumLit(-3)) must NOT be produced under \
-         operator-form negatives; got {:?}",
+        alts.iter().any(|t| matches!(t, Int::Fact(a) if matches!(a.as_ref(), Int::NumLit(-3)))),
+        "expected atomic-negative reading Fact(NumLit(-3)) — the `Int` literal is signed \
+         again (D1), so the lex DAG forks at a sign-abutted numeral; got {:?}",
         alts
     );
 }
@@ -302,12 +314,16 @@ fn calculator_unary_minus_factorial_parser_exposes_both_alternatives() {
 /// (`parse_via_wpda_all`) routes through the NON-demand driver, so the demand
 /// flag is never set and the pass is a no-op there.
 ///
-/// Operator-form negatives (merge decision #4) removed the atomic-negative lex
-/// fork for `-3!`, so the Int-category WPDA is no longer ambiguous there — it
-/// yields the single operator-form reading `Neg(Fact(NumLit(3)))`. This test
-/// guards that the `_all` facade still surfaces that operator-form reading with
-/// subsumption default-ON (the gate stays disjoint from the multi-result path)
-/// and does not resurrect the removed atomic-negative branch.
+/// ★ RE-DERIVED 2026-07-27 (ledger D1). This test's SUBJECT is gate disjointness — the
+/// single-result subsumption pass must be a no-op on the multi-result `_all` path — and
+/// `-3!` is only its vehicle. Under "merge decision #4" the vehicle had become degenerate:
+/// with a signless `Int` literal `-3!` had ONE Int-category reading, so "ambiguity is
+/// preserved by the `_all` facade" was being asserted over a term with no ambiguity left
+/// to preserve, and the test would have passed even if subsumption had collapsed the path.
+///
+/// D1 restored the sign to the `Int` literal, so `-3!` is two-way ambiguous again and the
+/// vehicle carries the subject once more: BOTH readings must survive with
+/// `PRATTAIL_SR_SUBSUME` at its production default.
 #[test]
 fn all_facade_preserves_ambiguity_with_sr_subsume_default_on() {
     use calc::Int;
@@ -330,21 +346,25 @@ fn all_facade_preserves_ambiguity_with_sr_subsume_default_on() {
          with single-result subsumption default-ON; got {:?}",
         alts
     );
-    // The removed atomic-negative branch must not be resurrected by the _all path.
+    // …and so must the atomic-negative reading: subsumption is single-result-only, so the
+    // `_all` path must not drop EITHER member of a genuine ambiguity.
     assert!(
-        !alts
-            .iter()
-            .any(|t| matches!(t, Int::Fact(a) if matches!(a.as_ref(), Int::NumLit(-3)))),
-        "atomic-negative branch Fact(NumLit(-3)) must NOT appear on the _all path; got {:?}",
+        alts.iter().any(|t| matches!(t, Int::Fact(a) if matches!(a.as_ref(), Int::NumLit(-3)))),
+        "atomic-negative reading Fact(NumLit(-3)) must ALSO survive on the _all path — \
+         the subsumption gate is disjoint from the multi-result driver; got {:?}",
         alts
     );
 }
 
-/// Operator-form negatives (merge decision #4): `-3!` yields the single
-/// operator-form reading `Neg(Fact(NumLit(3)))`, so the eager `_all` parse
-/// returns exactly one alternative. This test guards that the bounded-demand
-/// prefix parser (`parse_via_wpda_prefix_with_weights`) returns the same eager
-/// prefix (terms + weights) as the unbounded `_all` parser at each demand.
+/// ★ RE-DERIVED 2026-07-27 (ledger D1). The SUBJECT is prefix agreement: the
+/// bounded-demand parser (`parse_via_wpda_prefix_with_weights`) must return the same
+/// eager prefix (terms + weights) as the unbounded `_all` parser at every demand.
+///
+/// Under "merge decision #4" `-3!` had a single Int-category reading, which made the
+/// `prefix(2)` leg below identical to the `prefix(1)` leg and the whole agreement claim
+/// vacuous past demand 1. D1 restored the signed `Int` literal, so `-3!` has TWO readings
+/// and each demand level now discriminates: this asserts the count that makes the legs
+/// meaningful, not merely the count that happens to hold.
 #[test]
 fn calculator_wpda_prefix_matches_eager_prefix_for_unary_minus_factorial() {
     use calc::Int;
@@ -354,8 +374,9 @@ fn calculator_wpda_prefix_matches_eager_prefix_for_unary_minus_factorial() {
         Int::parse_via_wpda_all_with_weights("-3!").expect("-3! should parse through WPDA");
     assert_eq!(
         eager_terms.len(),
-        1,
-        "operator-form -3! has a single Int-category reading, got {:?}",
+        2,
+        "-3! is two-way ambiguous at Int — `Fact(NumLit(-3))` and `Neg(Fact(NumLit(3)))`; \
+         got {:?}",
         eager_terms
     );
     assert_eq!(eager_terms.len(), eager_weights.len());
@@ -376,16 +397,26 @@ fn calculator_wpda_prefix_matches_eager_prefix_for_unary_minus_factorial() {
     assert_eq!(prefix_two_weights, eager_weights.iter().take(2).cloned().collect::<Vec<_>>());
 }
 
-/// Operator-form negatives (merge decision #4): `-3!` no longer forks into an
-/// atomic-negative `Fact(NumLit(-3))` branch. At the LANGUAGE level the parse is
-/// still genuinely ambiguous, but now between the two OPERATOR-FORM readings —
-/// `-(3!) = Neg(Fact(NumLit(3)))` (postfix `!` binds tighter) and
-/// `(-3)! = Fact(Neg(NumLit(3)))` (prefix `-` binds tighter) — surfaced across
-/// the cross-category cast tower. This test guards that BOTH operator-form
-/// readings are preserved and the removed atomic-negative branch does NOT appear.
+/// ★ RE-DERIVED 2026-07-27 (ledger D1 in `languages/tests/literal_domain_agreement.rs`),
+/// and the THIRD assertion is the one that moved.
+///
+/// At the LANGUAGE level `-3!` is genuinely ambiguous, and the two readings this test has
+/// always guarded are unchanged:
+///
+///   * `-(3!) = Neg(Fact(NumLit(3)))`  — postfix `!` binds tighter than prefix `-`
+///   * `(-3)! = Fact(Neg(NumLit(3)))`  — prefix `-` binds tighter
+///
+/// Under "merge decision #4" the calculator `Int` regex had no leading `-?`, so `-3` had
+/// only an operator spelling and the test could add "…and the atomic-negative literal
+/// `NumLit(-3)` must NOT appear". D1 restored the `-?` — the decision's premise was refuted
+/// by Rholang's own grammar, and its absence left `i32::MIN` with no surface at all — so
+/// `-3` now ALSO has a literal spelling and the third reading `(-3)! = Fact(NumLit(-3))` is
+/// back. It is denotationally identical to `Fact(Neg(NumLit(3)))` beside it; the negative
+/// clause is therefore inverted rather than dropped, so the reading is asserted PRESENT
+/// instead of merely being un-forbidden.
 ///
 /// The alternatives are matched on their derived `Debug` (AST) representation —
-/// not their `Display` (surface) form — because the `(-3)!` reading only appears
+/// not their `Display` (surface) form — because the `(-3)!` readings only appear
 /// wrapped in cross-category injections (`ProcInt(..)`, `IntToBigInt(..)`,
 /// `IntToBigRat(..)`), so a substring check over the AST Debug is the robust
 /// shape assertion across every wrapper.
@@ -415,11 +446,11 @@ fn test_factorial_ambiguous_language_parse_preserves_both_alternatives() {
         "expected operator-form reading Fact(Neg(NumLit(3))); got {:?}",
         asts
     );
-    // The atomic-negative literal NumLit(-3) was removed (merge decision #4).
+    // Atomic-negative reading (-3)! = Fact(NumLit(-3)) — the `Int` literal is signed
+    // again (D1), so `-3` has a literal spelling as well as an operator one.
     assert!(
-        !asts.iter().any(|a| a.contains("NumLit(-3)")),
-        "atomic-negative literal NumLit(-3) must NOT appear under operator-form \
-         negatives; got {:?}",
+        asts.iter().any(|a| a.contains("Fact(NumLit(-3))")),
+        "expected atomic-negative reading Fact(NumLit(-3)); got {:?}",
         asts
     );
 }

@@ -35,19 +35,26 @@ fn rhocalc_name_keyword_text_uses_identifier_alternative_in_all_parse() {
     );
 }
 
-/// Operator-form negatives (merge decision #4): the calculator `Int` regex
-/// dropped the leading `-?`, so `-3!` no longer forks in the lex DAG into an
-/// atomic-negative `Fact(NumLit(-3))` branch. The source-generic WPDA facade
-/// (`parse_Int_via_wpda_all_with_source`) therefore returns the single
-/// operator-form reading `Neg(Fact(NumLit(3)))`, with one realized weight, and
-/// consumes the whole DAG. This test guards that operator-form behavior plus the
-/// one-weight-per-term invariant of the all-results facade.
+/// ★ RE-DERIVED 2026-07-27 (ledger D1 in
+/// `languages/tests/literal_domain_agreement.rs`). The SUBJECT is the one-weight-per-term
+/// invariant of the source-generic all-results facade
+/// (`parse_Int_via_wpda_all_with_source`) over a LATTICE token source, and the test's
+/// whole reason to use a lattice source is that the source FORKS.
+///
+/// Under "merge decision #4" the calculator `Int` regex had dropped its leading `-?`, so
+/// `-3!` stopped forking and the test asserted `!dag.has_ambiguity()` — at which point it
+/// was exercising the facade over a degenerate, linear DAG and could not have detected a
+/// weight/term mismatch on a forked one. D1 restored the sign to the `Int` literal, so the
+/// DAG forks again and the assertion is inverted to say so: the fork is the PRECONDITION
+/// of the invariant under test, not an incidental property.
 #[test]
 fn calculator_parse_all_with_source_returns_weight_for_each_neg_factorial_alternative() {
     let dag = calculator::lex_dag("-3!").expect("calculator lex DAG should accept -3!");
     assert!(
-        !dag.has_ambiguity(),
-        "-3! must NOT fork in the lex DAG under operator-form negatives (no atomic-negative literal)",
+        dag.has_ambiguity(),
+        "-3! MUST fork in the lex DAG — the `Int` literal is signed (D1), so `-3` is both \
+         one token and two; a linear DAG here would make the one-weight-per-term assertion \
+         below vacuous",
     );
     let source = LatticeTokenSource::new(dag);
     let mut pos = 0usize;
@@ -76,16 +83,18 @@ fn calculator_parse_all_with_source_returns_weight_for_each_neg_factorial_altern
         "expected operator-form reading Neg(Fact(NumLit(3))); got {:?}",
         terms
     );
-    // The removed atomic-negative branch must NOT reappear.
+    // …and the atomic-negative reading (-3)! = Fact(NumLit(-3)), the other side of the
+    // fork, so `terms.len() == weights.len()` above is checked on a genuinely multi-term
+    // realization rather than a singleton.
     assert!(
-        !terms.iter().any(|t| {
+        terms.iter().any(|t| {
             matches!(
                 t,
                 calculator::Int::Fact(a)
                     if matches!(a.as_ref(), calculator::Int::NumLit(-3))
             )
         }),
-        "atomic-negative branch Fact(NumLit(-3)) must NOT be produced; got {:?}",
+        "expected atomic-negative reading Fact(NumLit(-3)); got {:?}",
         terms
     );
 }

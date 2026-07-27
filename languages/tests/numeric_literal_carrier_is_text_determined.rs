@@ -283,9 +283,18 @@ fn uint32_literal_accepts_exactly_its_declared_u32_domain() {
 /// The carrier table. Every spelling maps to at most one literal category, and which one
 /// depends on the text and on nothing else — no context, no parentheses, no election.
 ///
-/// `None` means "no literal carrier": either the spelling is a compound (`-7` is
-/// `Neg` applied to `7`, because calculator's `Int` pattern carries no sign) or it is
-/// fail-closed (`5000000000u32` overflows its declared width).
+/// `None` means "no literal carrier": the spelling is fail-closed
+/// (`5000000000u32` overflows its declared width, so every category rejects it).
+///
+/// ★ The `("-7", None)` row moved to `Some("Int")` on 2026-07-27 (ledger D1 in
+/// `languages/tests/literal_domain_agreement.rs`). It read `None` because calculator's
+/// `Int` pattern carried no sign, so `-7` was `Neg(NumLit(7))` — a compound, not a
+/// literal. That is precisely the gap that left `i32::MIN` with NO surface at all: its
+/// `Display` is `-2147483648`, and the compound form does not exist for it, because
+/// `Neg`'s operand `2147483648` overflows `i32`. With `-?` in the pattern the sign is
+/// part of the numeral, both rows are literals, and the table stays text-determined —
+/// `-2147483648` is added below so the value that forced the change is in the table that
+/// records it.
 #[test]
 fn numeral_carrier_is_a_function_of_the_text() {
     let table: &[(&str, Option<&str>)] = &[
@@ -295,6 +304,9 @@ fn numeral_carrier_is_a_function_of_the_text() {
         ("7i32", Some("Int")),
         ("0x1F", Some("Int")),
         ("2147483647", Some("Int")),
+        // signed — the sign is part of the numeral token (D1)
+        ("-7", Some("Int")),
+        ("-2147483648", Some("Int")),
         // unsuffixed overflow — BigInt's declared superset
         ("3000000000", Some("BigInt")),
         ("4294967296", Some("BigInt")),
@@ -316,7 +328,6 @@ fn numeral_carrier_is_a_function_of_the_text() {
         ("7.5", Some("Float")),
         ("1e3", Some("Float")),
         // no literal carrier
-        ("-7", None),
         ("5000000000u32", None),
     ];
 

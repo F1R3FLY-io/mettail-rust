@@ -80,10 +80,58 @@ language! {
             } ]
         }
         Int {
-            // Int (i32) literals; unsuffixed defaults to i32. Leading `-?`
-            // No leading `-?`: aligned with main/Rholang (unary minus is an operator,
-            // not a signed literal) — merge decision "prefer main's regexes".
-            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32)?";
+            // Int (i32) literals; unsuffixed defaults to i32.
+            //
+            // ★ D1 (2026-07-27). The leading `-?` is BACK, and this REVERSES the merge
+            // decision that removed it — "No leading `-?`: aligned with main/Rholang
+            // (unary minus is an operator, not a signed literal) — merge decision
+            // 'prefer main's regexes'" (`cc21ee1b`, 2026-07-05; the goldens it moved are
+            // tagged "merge decision #4" in `languages/tests/calculator.rs`). The reversal
+            // is argued, not assumed:
+            //
+            // (1) THE DECISION'S PREMISE IS FALSE. Rholang's own grammar puts the sign
+            //     INSIDE the numeral token — `/home/dylon/Workspace/f1r3fly.io/rholang-rs/
+            //     rholang-tree-sitter/grammar.js`:
+            //
+            //         long_literal         /-?\d+/           bigint_literal  /-?\d+n/
+            //         signed_int_literal   /-?\d+i[1-9]\d*/  bigrat_literal  /-?\d+r/
+            //         float_literal        /-?…f(32|64|…)/   fixed_point_literal /-?…p\d+/
+            //         unsigned_int_literal /\d+u[1-9]\d*/  ← the ONE exception
+            //
+            //     so "aligned with Rholang" is exactly backwards for a SIGNED integer
+            //     literal: alignment REQUIRES the `-?`. The merged file already applied the
+            //     ground inconsistently — `BigInt` kept `-?…n`, `Fixed` and `Float` kept
+            //     theirs, and only `Int` and `BigRat` lost it.
+            // (2) THE REPO ALREADY CORRECTED IT WHERE IT MATTERS MOST. RhoCalc — which IS
+            //     the Rholang 1.4 grammar — restored `-?` on `Int` and `BigRat` as
+            //     divergence I(b) (`12704fc1`, 2026-07-26), with the full lexer argument
+            //     (adjacency is a LEXER fact; the fork is elected by maximal munch; `1-7`
+            //     still subtracts because its one-token reading is two adjacent processes
+            //     and dies on feasibility). Calculator was the last holdout of a refuted
+            //     premise.
+            // (3) THE CASE THE PREMISE DOES NOT COVER. `i32::MIN` is an inhabitant of the
+            //     DECLARED domain `![i32] as Int` — reachable by folding (`-2147483647 - 1`)
+            //     and by an `arb_int` draw. Its `Display` is `-2147483648`; with a signless
+            //     pattern the sign must be read by `Neg`, whose operand `2147483648`
+            //     overflows `i32`, so `Int::parse("-2147483648")` FAILED outright (measured)
+            //     and the proptest that unwraps it PANICKED. "Unary minus is an operator"
+            //     cannot spell this value at all: the operator form does not exist for it.
+            //     The alternative direction — declaring `i32::MIN` outside the domain and
+            //     fixing it at CONSTRUCTION — would narrow `![i32]` to `i32 ∖ {MIN}`, i.e.
+            //     invent a refinement type, make the derived `NumLit` constructor fallible,
+            //     and still leave `Display` writing an unparseable word for a value any
+            //     consumer can build directly. The domain is the native type; the pattern
+            //     must be able to spell every inhabitant of it.
+            //
+            // What is PRESERVED (measured, not assumed): `1-7` still parses as
+            // `SubInt(NumLit(1), NumLit(7))` — the one-token `1`,`-7` reading is two
+            // adjacent `Int`s, which is infeasible, so the fork dies and `Minus` wins. What
+            // MOVES: a sign-abutted numeral is now a literal reading as well as an operator
+            // one, so `-3!` regains its atomic-negative branch `Fact(NumLit(-3))`. That
+            // branch is denotationally equal to the operator reading `Fact(Neg(NumLit(3)))`
+            // it sits beside, so restoring it restores an AMBIGUITY rather than a meaning —
+            // and never-disambiguate-early says an ambiguity belongs in the lattice.
+            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)(i32)?";
             eval: ![ {
                 mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::I32)).map_err(|_| ())
             } ]

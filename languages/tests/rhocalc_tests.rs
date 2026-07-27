@@ -2450,22 +2450,32 @@ mod native_ops {
         /// For a WHOLE rational the tail is a strict repair: `7r` now displays as `7r` and reads
         /// back as `CastBigRat(7)`, where the tail-less `7` read back as an `Int`.
         ///
-        /// ⚠ RESIDUE, recorded because this test is where it is visible: for a COMPOSITE rational
-        /// the tail is appended to `Ratio`'s own `n/d` rendering, so `2/3` becomes `2/3r` — and
-        /// `2/3r` reads back as `Div(CastInt(2), CastBigRat(3))`, not as `CastBigRat(2/3)`. The
-        /// only surface that spells that value is `2r/3r`. So the display→parse fixpoint is STILL
-        /// broken for composite rationals — as it was before this change, when `2/3` read back as
-        /// `Div(CastInt(2), CastInt(3))` and silently integer-divided to `0`. The new spelling
-        /// fails CLOSED (carrier-exact ops give `error`) instead of silently computing a wrong
-        /// value, and the whole-rational half is now correct, so this is strictly fewer broken
-        /// cases — but it is not zero. The real defect is that
-        /// `mandatory_literal_tail_of_pattern`'s side condition ("the pattern's language covers
-        /// EVERY value the native type can render") is checked only for the SIGN half, never for
-        /// the composite half; closing it belongs in `display.rs`, not in this grammar.
+        /// ★ THE COMPOSITE SPELLING (2026-07-27, divergence I(d) — ledger D2 in
+        /// `languages/tests/literal_domain_agreement.rs`). The paragraph this replaces recorded a
+        /// RESIDUE that has now been closed, and it is worth restating what it said, because the
+        /// fix is the one it asked for:
+        ///
+        /// > for a COMPOSITE rational the tail is appended to `Ratio`'s own `n/d` rendering, so
+        /// > `2/3` becomes `2/3r` … The only surface that spells that value is `2r/3r`. So the
+        /// > display→parse fixpoint is STILL broken for composite rationals … The real defect is
+        /// > that `mandatory_literal_tail_of_pattern`'s side condition (*"the pattern's language
+        /// > covers EVERY value the native type can render"*) is checked only for the SIGN half,
+        /// > never for the composite half; closing it belongs in `display.rs`, not in this
+        /// > grammar.
+        ///
+        /// The side condition is now SATISFIED rather than needing to fire: `BigRat`'s declared
+        /// pattern gained the composite `(/(…)r)?` group, so its language really does cover every
+        /// value `CanonicalBigRat` can render, and the already-grammar-derived composite arm
+        /// (`composite_repeat_of_optional_group`) puts the tail on each COMPONENT — `2r/3r`, the
+        /// surface the residue note itself named as the only one that spells the value. No
+        /// `display.rs` change was needed; the generator was right and the pattern was narrow.
+        ///
+        /// For a WHOLE rational the tail was already a strict repair: `7r` displays as `7r` and
+        /// reads back as `CastBigRat(7)`, where the tail-less `7` read back as an `Int`.
         #[test]
         fn fraction_at_top_level_reduces() {
-            assert_normal_form_display("fraction(2n, 3n)", "2/3r");
-            assert_normal_form_display("fraction(2n, 3n) + fraction(1n, 2n)", "7/6r");
+            assert_normal_form_display("fraction(2n, 3n)", "2r/3r");
+            assert_normal_form_display("fraction(2n, 3n) + fraction(1n, 2n)", "7r/6r");
         }
 
         #[test]
@@ -2519,10 +2529,13 @@ mod native_ops {
 
         #[test]
         fn bigrat_and_or_not() {
-            // The `r` tail on a composite rational — derived, and fully argued at
-            // [`super::arithmetic::fraction_at_top_level_reduces`].
-            assert_normal_form_display("3r/4r bitand 1r/4r", "1/4r");
-            assert_normal_form_display("1r/2r bitand 1r/3r", "1/3r");
+            // The `r` tail on a composite rational, one per COMPONENT — derived, and fully
+            // argued at [`super::arithmetic::fraction_at_top_level_reduces`]. These two rows
+            // also demonstrate that divergence I(d) is value-preserving: the SOURCE operands
+            // are now single composite literals where they used to be `Div` folds, and the
+            // answers are unchanged.
+            assert_normal_form_display("3r/4r bitand 1r/4r", "1r/4r");
+            assert_normal_form_display("1r/2r bitand 1r/3r", "1r/3r");
             let results = run("bitnot 0r");
             let nfs = normal_form_displays(&results);
             assert!(
@@ -4729,10 +4742,13 @@ fn rhocalc_casts_from_numeric_strings() {
     // declared pattern requires (divergence I, Stage C) — without it a `BigInt` displayed as a
     // word that reads back as an `Int`.
     assert_reduces_to(r#"bigint("123n")"#, "123n");
-    // ★ `1/2r`, not `1/2`: the SAME Stage-C mechanism, now reaching `BigRat` because its pattern
-    // gained the leading `-?` (divergence I(b), 2026-07-26). Derivation and the composite-surface
-    // residue are recorded at `native_ops::arithmetic::fraction_at_top_level_reduces`.
-    assert_normal_form_display(r#"bigrat("1r/2r")"#, "1/2r");
+    // ★ `1r/2r`, not `1/2r` and not `1/2`: the SAME Stage-C mechanism, now reaching `BigRat`
+    // because its pattern gained the leading `-?` (divergence I(b), 2026-07-26) AND the composite
+    // `(/(…)r)?` group (divergence I(d), 2026-07-27 — ledger D2 in
+    // `languages/tests/literal_domain_agreement.rs`). The tail belongs to each COMPONENT of the
+    // composite, because that is what the declared pattern spells; derivation at
+    // `native_ops::arithmetic::fraction_at_top_level_reduces`.
+    assert_normal_form_display(r#"bigrat("1r/2r")"#, "1r/2r");
 }
 
 #[test]

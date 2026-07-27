@@ -109,12 +109,25 @@ language! {
     //     bare digits ▸ GInt        `…i32` / `…i64` ▸ GInt
     //     `…u32` (≤ i64::MAX) ▸ GInt        `…n` ▸ GBigInt
     //
-    // so **`Int` is THE ≤64-bit literal carrier** and **`UInt32` has NO literal
-    // surface** — the 32-bit wraparound carrier is reachable ONLY through the
-    // MeTTaIL-only `uint(x, 32)` cast. Each `eval` below therefore accepts EXACTLY
-    // the spellings its own `pattern` declares, and the three accepted domains are
-    // pairwise DISJOINT, so a numeral's carrier is a function of the numeral TEXT
-    // and of nothing else — no election, no context, no parentheses.
+    // so **`Int` is THE ≤64-bit literal carrier** — every Rholang numeral spelling,
+    // `…u32` included, is `Int`'s, because the `u32` SUFFIX IS A SPELLING OF A `GInt`
+    // rather than a different carrier (`bitnot 0u32` is `-1`, not the 32-bit all-ones
+    // `4294967295`; pinned by `rhocalc_tests::numeral_carrier_is_context_independent::
+    // u32_suffix_is_an_i64_literal`). The 32-bit wraparound carrier is reached ONLY
+    // through the MeTTaIL-only `uint(x, 32)` cast. Each `eval` below therefore accepts
+    // EXACTLY the spellings its own `pattern` declares, and the accepted domains are
+    // pairwise DISJOINT, so a numeral's carrier is a function of the numeral TEXT and of
+    // nothing else — no election, no context, no parentheses.
+    //
+    // ⚠ CORRECTED 2026-07-27. This paragraph used to add "and **`UInt32` has NO literal
+    // surface**". That clause was FALSE OF THE CODE: `UInt32` declares no `literals { … }`
+    // entry, so it inherits the SYNTHESIZED universal acceptor and takes six of `Int`'s
+    // spellings — so the "pairwise DISJOINT … no election" claim above holds of the four
+    // entries below and NOT of `UInt32`. Nor can the clause simply be made true, because
+    // `uint(x, 32)` folds to a `UInt32::NumLit` that `Display` must write and the category
+    // must read back. That is open defect D3
+    // (`languages/tests/literal_domain_agreement.rs`); the `literals` block below records
+    // what was tried and why it was rejected.
     //
     // What this replaced: `BigInt`'s eval used to be `parse_int_lit(text, None)`, a
     // **universal acceptor of every integer spelling**, flatly contradicting its own
@@ -185,6 +198,29 @@ language! {
     // `NegProc` one — text-determined, fail-closed, and unreachable from Rholang, which
     // has no radix literals.
     literals {
+        // ⚠ THERE IS DELIBERATELY NO `UInt32` ENTRY HERE, AND THAT IS AN OPEN DEFECT —
+        // ledger D3 in `languages/tests/literal_domain_agreement.rs`, which enumerates its
+        // six shared spellings exactly so it cannot be forgotten.
+        //
+        // Without an entry, `UInt32` inherits the SYNTHESIZED default acceptor
+        // (`macros/src/gen/runtime/wpda_codegen/prefix.rs::default_eval_body_for_native_kind`
+        // ⇒ `parse_int_lit(text, Some(Suffix::U32))`), which takes EVERY unsuffixed integer
+        // fitting `u32` — spellings `Int` already owns.
+        //
+        // ★ THE OBVIOUS REPAIR IS REFUTED — do not re-attempt it. Giving `UInt32` the
+        // `…u32` spelling and taking it off `Int` (the shape `languages/src/calculator.rs`
+        // uses) was implemented and MEASURED on 2026-07-27, and it changes a VALUE:
+        //
+        //     bitnot 0u32   ⇒ -1          (today, and what f1r3node computes)
+        //     bitnot 0u32   ⇒ 4294967295  (with the spelling moved to `UInt32`)
+        //
+        // because `normalize_ground` maps `UnsignedIntLiteral{bits ≤ 64, ≤ i64::MAX}` to
+        // `GInt` — the `u32` SUFFIX IS A SPELLING OF A `GInt`, not a different carrier
+        // (pinned by `rhocalc_tests::numeral_carrier_is_context_independent::
+        // u32_suffix_is_an_i64_literal`). Every Rholang numeral spelling is therefore
+        // `Int`'s, which leaves `UInt32` no spelling it may own, and the remaining repair —
+        // giving a `UInt32` value the surface of the cast that PRODUCES it, `uint(v, 32)` —
+        // is a `Display` codegen change, not a grammar change. See the ledger entry.
         Int {
             // The full `normalize_ground` ≤64-bit suffix set. `(i64)?` alone left
             // `5i32`/`5u32` un-lexable as a single `Int` token even though both are
@@ -226,8 +262,65 @@ language! {
         }
         BigRat {
             // `-?` mirrors upstream `bigrat_literal /-?\d+r/` (divergence I(b) above).
-            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r";
+            //
+            // ── Divergence I(d) (2026-07-27): the COMPOSITE `Nr/Dr` form ────────────────
+            //
+            // ★ A DELIBERATE WIDENING BEYOND UPSTREAM, and the only change that closes the
+            // defect. Upstream's `bigrat_literal` is `/-?\d+r/` — WHOLE rationals only —
+            // and that suffices there for a precise reason: **f1r3node folds nothing**, so
+            // no upstream normalization ever PRODUCES a rational with a denominator ≠ 1.
+            // A front end that never produces one never has to print one.
+            //
+            // MeTTaIL does produce them. `Div` is a `fold` rule, and its `BigRat` arm is
+            // `BigRat::RatLit(*x / *y)`, so `3r / 4r` reduces to `CastBigRat(RatLit 3/4)` —
+            // a value of the declared domain `![CanonicalBigRat] as BigRat`, which
+            // `arb_bigrat` also draws. `Display` wrote it as `3/4r` (measured): the tail
+            // was appended once to `CanonicalBigRat`'s own `3/4` rendering, giving a word
+            // that is NOT in the declared literal language, and `BigRat::parse("3/4r")`
+            // FAILED (measured: `unexpected "/" after parsing`).
+            //
+            // DIRECTION CHECK — is `Display` wrong, or the pattern? The pattern. At the
+            // BigRat CATEGORY there is no operator that could read a detached `/`: RhoCalc
+            // sites division at `Proc` (`Div . a:Proc, b:Proc`), so unlike the detached
+            // SIGN — which `NegBigRat`/`NegProc` genuinely reads — there is no operator
+            // form of `3/4` inside `BigRat` for `Display` to fall back on. A1
+            // (`parse_BigRat(display(RatLit v)) = RatLit v`) is therefore satisfiable ONLY
+            // by a literal spelling, and the pattern is the thing that lacked one.
+            //
+            // EXPOSURE, MEASURED — unparseability, NOT value corruption. Calculator's twin
+            // defect DID corrupt values: `RatLit 3/4` displayed `3/4`, which re-parsed as
+            // `IntToBigRat(DivInt 3 4)` — INTEGER division — and evaluated to `0`. RhoCalc
+            // cannot reach that: its broken word `3/4r` keeps the `r` on the right operand,
+            // so the right factor stays in the rational carrier and no integer division is
+            // expressible. `BigRat::parse("3/4r")` is a hard parse ERROR, which is
+            // fail-closed. The defect is that the value has no surface, not that it has a
+            // wrong one.
+            //
+            // WHAT THE DIVERGENCE COSTS, EXACTLY. It claims ONE spelling: the UNSPACED
+            // `Nr/Dr`, which upstream lexes as three tokens (`3r`, `/`, `4r`) and
+            // normalizes to `EDiv`. In RhoCalc it now lexes as one `BigRat` token. Three
+            // things bound the cost:
+            //   * VALUE-PRESERVING. The three-token reading folds to
+            //     `CastBigRat(RatLit 3/4)`, which is precisely what the one-token reading
+            //     denotes. No RhoCalc program changes value; only the pre-fold term shape
+            //     of the unspaced spelling changes.
+            //   * NO SURFACE IS STOLEN. `Div`'s own `Display` writes the SPACED `3r / 4r`
+            //     (measured), and any whitespace defeats maximal munch, so every division
+            //     term still round-trips to a division term.
+            //   * AMBIGUITY PRESERVED, NOT RESOLVED. The lexer forks; the three-token
+            //     reading stays in the lattice and is elected wherever the one-token one is
+            //     infeasible. Maximal munch (`LexicographicWeight::open_len`) elects the
+            //     literal, exactly as it elects the sign-abutted numeral in I(b).
+            // The residual is a quoted, UNREDUCED, unspaced `@(3r/4r)`, whose Par carries
+            // `GBigRat(3/4)` where f1r3node's carries `EDiv`. That is the same class of
+            // cost I(b) accepted in the other direction, and it is the price of being able
+            // to print a value the language can compute.
+            pattern: r"-?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r(/(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)r)?";
             eval: ![ {
+                // Already composite-aware and sign-aware — measured before the pattern
+                // changed: `parse_rational_lit("3r/4r") = Ok(3/4)` and
+                // `parse_rational_lit("-1r/2r") = Ok(-1/2)`. Only the pattern was narrower
+                // than its own acceptor.
                 mettail_prattail::parse_rational_lit(text).map_err(|_| ())
             } ]
         }
@@ -948,7 +1041,10 @@ language! {
         }] fold;
 
         // Unary minus on Int (width args like `int(x, -7)`) and on Proc (`-7`, `-3r/2r`, …).
-        // `NegProc` is declared after `/` and `%` so `-` binds tighter than division (e.g. `-3r/2r` is `(-3r)/2r`).
+        // `NegProc` is declared after `/` and `%` so `-` binds tighter than division (e.g. `-3r/2r` is `(-3r)/2r`
+        // — pinned by `proj_iso_token_boundary::a_signed_numeral_is_the_operator_s_operand_not_its_argument`).
+        // ⚠ Since divergence I(d) that spelling ALSO has a one-token composite-literal reading, `RatLit(-3/2)`;
+        // the two denote the same rational, the lattice keeps both, and the demand facade elects the `Div` one.
         NegInt . a:Int |- "-" a : Int ![(-a)] fold;
 
         // `fold` (not `step`): `step` HOL rules are skipped for non-native categories like Proc.
