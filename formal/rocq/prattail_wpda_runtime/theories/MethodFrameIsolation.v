@@ -5,7 +5,7 @@
  * the STRING-level divide-and-conquer linearizer to the RECEIVER-LED POSTFIX
  * (method-call) frames `recv "." name "(" args ")"`.
  *
- * THE DEFECT (Stage-0 measured, rhocalc): a method rule (`m:Proc "." "get" "("
+ * THE DEFECT (Stage-0 measured, rholang): a method rule (`m:Proc "." "get" "("
  * k:Proc ")"`) begins with an OPERAND (the receiver), not a sigil, and has no
  * `.*sep` list, so the proj-iso eligibility declined it — a deep-`@` method-call
  * ARG parsed MONOLITHICALLY, EXPONENTIAL (`Nil.concat(@^d Nil)` = 23→55→269→1568

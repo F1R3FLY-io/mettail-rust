@@ -89,12 +89,12 @@
  *
  * The concrete INSTANCE pinned at the end is the ONLY real interior-accept
  * cohort across all 22 bundled engines (F5-1 plan §1 census, red-team
- * confirmed): rhocalc `(InputBind, "@")` = {InputBindQuotedQuery = 2,
+ * confirmed): rholang `(InputBind, "@")` = {InputBindQuotedQuery = 2,
  * InputBindQuoted = 3 (the accept), InputBindQuotedPersistent = 6}.
  * Item codes: 0 = P(Proc,0) · 1 = L"<-" · 2 = P(Name,0) · 3 = L"!" ·
  * 4 = L"?" · 5 = L"(" · 6 = L"<=".
  * Trie (the committed test pin, factoring.rs
- * `rhocalc_inputbind_at_cohort_factors_with_accept_continue`):
+ * `rholang_inputbind_at_cohort_factors_with_accept_continue`):
  *   P(0,0)[L(<-)[P(Name,0)[L(!)=>r2] P(Name,0)=>r3] L(<=)=>r6]
  * — the r3 accept leaf SHARES its P(Name) edge item with the continuation
  * subtree, listed AFTER it (★A1).
@@ -1132,7 +1132,7 @@ Proof.
 Qed.
 
 (* ═══════════════════════════════════════════════════════════════════════
-   INSTANCE PIN — the rhocalc InputBind@ cohort (the ONLY interior-accept
+   INSTANCE PIN — the rholang InputBind@ cohort (the ONLY interior-accept
    cohort in all 22 bundled engines; F5-1 plan §1, census red-team
    confirmed; member indices per the committed P1 re-pin: QuotedQuery = 2,
    Quoted = 3 = THE ACCEPT, QuotedPersistent = 6).
@@ -1150,7 +1150,7 @@ Definition ib_quoted : member := MkMember 3 KBinder [0;1;2] 3 false.
 Definition ib_persistent : member := MkMember 6 KBinder [0;6;2] 3 false.
 
 (* The committed trie pin (factoring.rs test
-   `rhocalc_inputbind_at_cohort_factors_with_accept_continue`):
+   `rholang_inputbind_at_cohort_factors_with_accept_continue`):
      P(0,0)[L(<-)[P(Name,0)[L(!)=>r2] P(Name,0)=>r3] L(<=)=>r6]
    — single-root; the P(Name) node lists the interior continuation BEFORE
    the r3 accept leaf (★A1), both carrying the SAME P(Name) edge item. *)
@@ -1161,13 +1161,13 @@ Definition ib_forest : list tree :=
          TLeaf 2 ib_quoted 3];
       TLeaf 6 ib_persistent 2]].
 
-Theorem rhocalc_inputbind_forest :
+Theorem rholang_inputbind_forest :
   build_node_a 32 1 0 [ib_query; ib_quoted; ib_persistent] = Some ib_forest.
 Proof. vm_compute. reflexivity. Qed.
 
 (* Leaves ↔ members incl. the accept; leaf order = the ★A1 normative order
    (remainder-first puts r2 before the r3 accept at the P(Name) node). *)
-Theorem rhocalc_inputbind_leaves :
+Theorem rholang_inputbind_leaves :
   forest_leaf_rules ib_forest = [2; 3; 6].
 Proof. vm_compute. reflexivity. Qed.
 
@@ -1175,7 +1175,7 @@ Proof. vm_compute. reflexivity. Qed.
    accept (resume 4 = its final-pos Pop arm, NO remainder), r6 the ordinary
    earliest-uniqueness leaf (resume 3, member-side `n` remainder), r2 the
    truncated continuation (resume 5, collection-tail remainder). *)
-Theorem rhocalc_inputbind_commits :
+Theorem rholang_inputbind_commits :
   finalize_commit ib_quoted 3 = CBinder 3 4
   /\ has_remainder ib_quoted 3 = false
   /\ finalize_commit ib_persistent 2 = CBinder 6 3
@@ -1186,7 +1186,7 @@ Proof. vm_compute. repeat split. Qed.
 
 (* r3 satisfies the (d′) TRUE-accept law: untruncated, total == leaf depth,
    resume_pos = total + 1 = the member's own final-pos Pop arm. *)
-Theorem rhocalc_inputbind_true_accept :
+Theorem rholang_inputbind_true_accept :
   finalize_commit ib_quoted 3 = CBinder (m_rule ib_quoted)
                                         (S (m_total ib_quoted))
   /\ has_remainder ib_quoted 3 = false.
@@ -1196,45 +1196,45 @@ Qed.
 
 (* Every leaf path spells its member's own item prefix; the r3 accept's path
    IS its full sequence (leaf edge = its last item, P(Name)). *)
-Theorem rhocalc_inputbind_paths :
+Theorem rholang_inputbind_paths :
   flat_map (leaf_entries []) ib_forest
   = [(ib_query, 4, [0;1;2;3]);
      (ib_quoted, 3, [0;1;2]);
      (ib_persistent, 2, [0;6])].
 Proof. vm_compute. reflexivity. Qed.
 
-Theorem rhocalc_inputbind_accept_path_is_full_items :
+Theorem rholang_inputbind_accept_path_is_full_items :
   firstn 3 (m_items ib_quoted) = m_items ib_quoted.
 Proof. vm_compute. reflexivity. Qed.
 
 (* The (e′) sharing pin at the P(Name) node: both children carry item 2 =
    P(Name,0) — the accept SHARES its edge item with the continuation
    subtree — with exactly ONE interior among them. *)
-Theorem rhocalc_inputbind_accept_shares_edge :
+Theorem rholang_inputbind_accept_shares_edge :
   map titem [TInterior 2 [TLeaf 3 ib_query 4]; TLeaf 2 ib_quoted 3]
   = [2; 2]
   /\ interior_items [TInterior 2 [TLeaf 3 ib_query 4]; TLeaf 2 ib_quoted 3]
      = [2].
 Proof. vm_compute. split; reflexivity. Qed.
 
-Theorem rhocalc_inputbind_wf :
+Theorem rholang_inputbind_wf :
   Forall wf_forest_tree ib_forest.
 Proof.
   exact (built_forest_wf 32 1 0 [ib_query; ib_quoted; ib_persistent]
-           ib_forest rhocalc_inputbind_forest).
+           ib_forest rholang_inputbind_forest).
 Qed.
 
 (* The (c′) ABSORPTION receipt pair — the SAME bucket under both stances:
    F0 defers the whole part as InteriorAccept-ineligible ([[2;3;6]] in the
    ineligible slot); F5-1 absorbs it as ONE group ([[2;3;6]] in the groups
    slot) — `ineligible 1→0, groups 0→1`, cohort formula 3 = 3 both ways. *)
-Theorem rhocalc_inputbind_bucket_accept_stance :
+Theorem rholang_inputbind_bucket_accept_stance :
   bucket_partition_a (fun _ => false) 32
     [ib_query; ib_quoted; ib_persistent]
   = ([[2; 3; 6]], [], []).
 Proof. vm_compute. reflexivity. Qed.
 
-Theorem rhocalc_inputbind_bucket_f0_stance :
+Theorem rholang_inputbind_bucket_f0_stance :
   bucket_partition (fun _ => false) 32
     [ib_query; ib_quoted; ib_persistent]
   = ([], [], [[2; 3; 6]]).
@@ -1294,16 +1294,16 @@ Print Assumptions built_forest_wf.
 Print Assumptions wf_interior_children_nodup.
 Print Assumptions wf_no_empty_interior.
 Print Assumptions all_exhausted_accepts_only.
-Print Assumptions rhocalc_inputbind_forest.
-Print Assumptions rhocalc_inputbind_leaves.
-Print Assumptions rhocalc_inputbind_commits.
-Print Assumptions rhocalc_inputbind_true_accept.
-Print Assumptions rhocalc_inputbind_paths.
-Print Assumptions rhocalc_inputbind_accept_path_is_full_items.
-Print Assumptions rhocalc_inputbind_accept_shares_edge.
-Print Assumptions rhocalc_inputbind_wf.
-Print Assumptions rhocalc_inputbind_bucket_accept_stance.
-Print Assumptions rhocalc_inputbind_bucket_f0_stance.
+Print Assumptions rholang_inputbind_forest.
+Print Assumptions rholang_inputbind_leaves.
+Print Assumptions rholang_inputbind_commits.
+Print Assumptions rholang_inputbind_true_accept.
+Print Assumptions rholang_inputbind_paths.
+Print Assumptions rholang_inputbind_accept_path_is_full_items.
+Print Assumptions rholang_inputbind_accept_shares_edge.
+Print Assumptions rholang_inputbind_wf.
+Print Assumptions rholang_inputbind_bucket_accept_stance.
+Print Assumptions rholang_inputbind_bucket_f0_stance.
 Print Assumptions all_twins_accepts_only_witness.
 Print Assumptions all_twins_spliced_witness.
 Print Assumptions root_accept_multi_root_witness.

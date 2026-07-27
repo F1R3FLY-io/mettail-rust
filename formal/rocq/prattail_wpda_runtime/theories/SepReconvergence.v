@@ -3,7 +3,7 @@
  * ROOT-P `.*sep` divide-and-conquer linearization that the generated facade
  * SHIPS (Plan a7986200, 2026-07-05, session da0842dc).
  *
- * THE DEFECT (measured; rhocalc ForRow `b "&" bs.*sep("&") ["where" cond]`):
+ * THE DEFECT (measured; rholang ForRow `b "&" bs.*sep("&") ["where" cond]`):
  * parsing a k-separator list MONOLITHICALLY forks `dᵏ` cursor paths across the
  * separator run — the per-`&`-segment edge-stack blocks never reconverge the
  * Tomita frontier — so wall-time is EXPONENTIAL in the segment count (Stage-0

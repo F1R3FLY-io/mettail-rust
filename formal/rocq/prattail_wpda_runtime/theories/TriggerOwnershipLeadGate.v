@@ -8,7 +8,7 @@
  * `WpdaEngine::rule_has_leading_structural_trigger`).
  *
  * ─────────────────────────────────────────────────────────────────────────
- * THE DEFECT (trace-evidenced; deterministic; rhocalc category ordering
+ * THE DEFECT (trace-evidenced; deterministic; rholang category ordering
  *   Proc=0, InputBind=1, ForRow=2, Name=3):
  *
  *   `Proc::parse("@Nil!!(\"dpyl\", error <= Map(), fraction(a, Map()))")` — and

@@ -32,7 +32,7 @@
  *     cursor from its OWN `Fixed(kw)` accept, not the (now-removed) `Ident`
  *     co-accept. Gated `NULLARY_KEYWORD_LEXFORK_SEED` (default on); provably
  *     INERT without reservation (the `Ident` co-accept still seeds it).
- *   @Nil-SEND CANON (aa78d51b, rhocalc/runtime.rs): with `Nil` reserved,
+ *   @Nil-SEND CANON (aa78d51b, rholang/runtime.rs): with `Nil` reserved,
  *     `@Nil!(q)` matches BOTH the specialized `POutputNil(q)` and the general
  *     `POutputShort(PZero, q)` — the IDENTICAL term (send `q` on the
  *     null-process channel `NQuote(PZero)`). `normalize_send_sugar_canon`

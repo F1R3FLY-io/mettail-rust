@@ -1,10 +1,10 @@
 (*
- * CollectionLexForkClearSoundness: the soundness invariant of the rhocalc
+ * CollectionLexForkClearSoundness: the soundness invariant of the rholang
  * collection `lex_fork_path` clear-at-element-seal fix (commit cc91d291,
  * "collapse lexical-ambiguity cursor cross-product in collections").
  *
  * Design source of truth:
- *   docs/design/rhocalc-collection-fork-explosion.md
+ *   docs/design/rholang-collection-fork-explosion.md
  *     §2.4   the `lex_fork_path` sidecar is appended per lexical fork-arm and
  *            never popped — the redundant anti-merge axis.
  *     §3.1   Change B: clear the element's lexical stamps at the splice that

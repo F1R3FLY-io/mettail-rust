@@ -26,7 +26,7 @@
  *     u(d) = { S(x) : x in w(d-1) } — the E (channel-first) branch is
  *     excluded at POutputNil's unwrapped argument slot.
  *
- * MODEL CORRESPONDENCE (grammar: languages/src/rhocalc.rs — rule heads
+ * MODEL CORRESPONDENCE (grammar: languages/src/rholang.rs — rule heads
  * PZero @120, POutputEmpty @143, POutputNil @186, POutputQuotedEmpty @281,
  * POutputShortEmpty @288, NQuote @538, NQuoteShort @566, NParen @572;
  * measured multisets: logs_s2b0/ast_pure_grp_d{1..5}.log, cross-check

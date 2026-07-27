@@ -1,10 +1,10 @@
 (*
- * RhocalcAstLowering: proof model for the AST-first rhocalc Proc/Name
- * lowerer in `rholang-runtime::rhocalc_ast`.
+ * RholangAstLowering: proof model for the AST-first rholang Proc/Name
+ * lowerer in `rholang-runtime::rholang_ast`.
  *
  * Rust image:
- *   - rhocalc source is parsed by MeTTaIL/WPDA.
- *   - `lower_rhocalc_proc` maps the supported transport-pure process subset
+ *   - rholang source is parsed by MeTTaIL/WPDA.
+ *   - `lower_rholang_proc` maps the supported transport-pure process subset
  *     directly to normalized `rhoapi::Par`.
  *   - generated artifacts are AST values, never Rholang source text.
  *   - `PInputs` becomes one host RSpace receive; multiple input channels are
@@ -21,7 +21,7 @@ From Stdlib Require Import PeanoNat.
 
 Import ListNotations.
 
-Section RhocalcAstLowering.
+Section RholangAstLowering.
 
   Definition Channel : Type := nat.
   Definition Value : Type := nat.
@@ -235,7 +235,7 @@ Section RhocalcAstLowering.
              (APar (ASend lhs payload_left) (ASend rhs payload_right)))
           (subst_ast [payload_right; payload_left] body).
 
-  Theorem accepted_rhocalc_lowering_is_ast_not_source_text :
+  Theorem accepted_rholang_lowering_is_ast_not_source_text :
     forall proc artifact,
       lower_artifact proc = Some artifact ->
       is_source_text_artifact artifact = false.
@@ -368,4 +368,4 @@ Section RhocalcAstLowering.
       filter_adjust 2 (b0 :: b1 :: rest) = rest.
   Proof. intros b0 b1 rest. reflexivity. Qed.
 
-End RhocalcAstLowering.
+End RholangAstLowering.

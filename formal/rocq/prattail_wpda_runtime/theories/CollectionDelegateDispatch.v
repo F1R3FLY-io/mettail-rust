@@ -1,7 +1,7 @@
 (*
  * CollectionDelegateDispatch: FV-FIRST spec for ROOT-B — the source-committed
  * multi-length fall-through that lets a cross-cat collection projection whose
- * open token is MULTI-CHAR and lex-ambiguous (RhoCalc Pathmap `{|…|}`, open
+ * open token is MULTI-CHAR and lex-ambiguous (Rholang Pathmap `{|…|}`, open
  * `{|`) actually ENTER its source category (cat 14) instead of re-projecting
  * across the numeric cats (the SnapshotDuplicate storm).
  *

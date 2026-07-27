@@ -2,9 +2,9 @@
  * LiteralCarrierContextIndependence — divergence I: a numeral's CARRIER is a
  * function of the numeral, and of nothing else.
  *
- * GROUND TRUTH (measured 2026-07-25, `languages/tests/rhocalc_tests.rs`,
- * `rholang-runtime/tests/rho_rhocalc_conformance.rs`):
- *   RhoCalc offers several carriers for Rholang's ONE integer type — `Int`
+ * GROUND TRUTH (measured 2026-07-25, `languages/tests/rholang_tests.rs`,
+ * `rholang-runtime/tests/rho_rholang_conformance.rs`):
+ *   Rholang offers several carriers for Rholang's ONE integer type — `Int`
  *   (i64 ▸ GInt), `BigInt` (arbitrary precision ▸ GBigInt), `UInt32`. That is
  *   sound only while the carrier is a function of the SOURCE. It was not:
  *
@@ -42,7 +42,7 @@
  *   and the engine change (Stage D) is prophylaxis.
  *
  * THE MODEL. A token text is abstracted by the three DECIDABLE predicates the
- * implementation actually branches on (`languages/src/rhocalc.rs`, `literals`):
+ * implementation actually branches on (`languages/src/rholang.rs`, `literals`):
  *   - [t_ends_n]    : the text ends in the `n` tail `BigInt`'s pattern declares;
  *   - [t_suffixed]  : the text carries an explicit fixed-width suffix
  *                     (`IntSuffix::from_text ≠ Unsuffixed`);
@@ -287,7 +287,7 @@ End ContextIndependence.
 (* ── T3 — nothing lost, and the ONE narrowing characterised exactly ───────── *)
 
 (* A GRAMMAR-derived side condition, not an assumption about the engine: the
-   suffixes RhoCalc's `Int` pattern admits are `i32`, `i64` and `u32`, and every
+   suffixes Rholang's `Int` pattern admits are `i32`, `i64` and `u32`, and every
    value that fits one of those also fits `i64`. (A `u64`/`u128` suffix, which
    could be well-formed yet exceed `i64`, is not in the declared token language
    at all — the pattern is `(…)(i32|i64|u32)?`.) *)

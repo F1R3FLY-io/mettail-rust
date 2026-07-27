@@ -3,7 +3,7 @@
  * every mixfix rule literal is consumed EXACTLY ONCE by a CHECKED,
  * edge-membership consume that advances along the MATCHED lattice edge.
  *
- * THE DEFECT (flip-evidenced; rhocalc POutput `n "!" "(" q ")"`, `x!(0)`):
+ * THE DEFECT (flip-evidenced; rholang POutput `n "!" "(" q ")"`, `x!(0)`):
  *   - the trigger arm dispatches the part-0 operand WITHOUT consuming the
  *     part's preceding literals ["("] (no "before part 0" state exists);
  *   - the following-literal run consumes ")" UNCHECKED (`_expected` is

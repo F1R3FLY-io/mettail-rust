@@ -38,7 +38,7 @@
  *       (i) an UNFACTORED operand-leading rule (owner lookup None — e.g.
  *       the Name-led PPersistOutput2Plus family, rules 4-9, F5 territory)
  *       in the phantom configuration (foreign owner, positioned, no lead
- *       trigger, no killswitch) is refused; (ii) the rhocalc instance:
+ *       trigger, no killswitch) is refused; (ii) the rholang instance:
  *       rule 24 = PPersistOutputShort2Plus (Short-group member) firing
  *       against a QUOTED-spine-owned trigger has
  *       trigger_spine_owner(Proc, 24) = Some SHORT_SPINE <> QUOTED_SPINE;
@@ -48,8 +48,8 @@
  *       (TriggerOwnershipLeadGate), and with the killswitch it is
  *       claim_old — so all six shipped lead-gate theorems transport.
  *
- * The concrete partition instance is the rhocalc Proc-@ cohort pinned by
- * F0 (factoring.rs test rhocalc_proc_at_cohort_pins_three_groups_6_3_6):
+ * The concrete partition instance is the rholang Proc-@ cohort pinned by
+ * F0 (factoring.rs test rholang_proc_at_cohort_pins_three_groups_6_3_6):
  * Nil = 0xF800 {10,11,15,16,20,21}, Quoted = 0xF801 {12,17,22},
  * Short = 0xF802 {13,14,18,19,23,24}.
  *
@@ -353,7 +353,7 @@ Proof.
   unfold claim_new. rewrite Hom. reflexivity.
 Qed.
 
-(* ── The rhocalc Proc-@ instance (F0 pins: 3 groups 6/3/6) ── *)
+(* ── The rholang Proc-@ instance (F0 pins: 3 groups 6/3/6) ── *)
 
 Definition NIL_SPINE : nat := 63488.     (* 0xF800 *)
 Definition QUOTED_SPINE : nat := 63489.  (* 0xF801 *)

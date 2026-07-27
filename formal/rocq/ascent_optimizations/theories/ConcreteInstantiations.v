@@ -1,5 +1,5 @@
 (*
- * ConcreteInstantiations: Calculator and RhoCalc language instances.
+ * ConcreteInstantiations: Calculator and Rholang language instances.
  *
  * Instantiates each abstract theorem to concrete languages:
  *
@@ -7,7 +7,7 @@
  *      - No cross-category rules, trivial reachability
  *      - Demonstrates Opts 2, 3, 4 on simplest possible grammar
  *
- *   2. RhoCalc language (6 categories: Proc, Name, Expr, Chan, Ground, Float)
+ *   2. Rholang language (6 categories: Proc, Name, Expr, Chan, Ground, Float)
  *      - Core = {Proc, Name} (bidirectionally reachable)
  *      - Demonstrates Opt 5 SCC splitting
  *
@@ -16,8 +16,8 @@
  *   -------------------------|---------------------------------------|--------------------------
  *   IntKind                  | Calculator Int constructors           | calculator.mettail
  *   CalcCat                  | Single-category "Int"                 | calculator.mettail
- *   RhoCat                   | RhoCalc categories                    | rhocalc.mettail
- *   rho_edge                 | Constructor field references          | rhocalc.mettail
+ *   RhoCat                   | Rholang categories                    | rholang.mettail
+ *   rho_edge                 | Constructor field references          | rholang.mettail
  *
  * Rocq 9.1 compatible.
  *)
@@ -139,14 +139,14 @@ Section CalculatorLanguage.
 End CalculatorLanguage.
 
 (* ===================================================================== *)
-(*  PART 2: RhoCalc Language — Multi-Category with SCC Splitting          *)
+(*  PART 2: Rholang Language — Multi-Category with SCC Splitting          *)
 (* ===================================================================== *)
 
-(* The RhoCalc language has 6 categories:
+(* The Rholang language has 6 categories:
    Proc, Name, Expr, Chan, Ground, Float
    Core = {Proc, Name} (bidirectionally reachable from Proc, the primary) *)
 
-Section RhoCalcLanguage.
+Section RholangLanguage.
 
   (* Categories *)
   Inductive RhoCat : Type :=
@@ -340,7 +340,7 @@ Section RhoCalcLanguage.
        empty and remain empty throughout the fixpoint computation. *)
 
   Remark rho_scc_splitting_applicable :
-    (* SCC splitting is applicable to RhoCalc:
+    (* SCC splitting is applicable to Rholang:
        - Primary = Proc
        - Core = {Proc, Name}
        - Non-core = {Expr, Chan, Ground, Float}
@@ -352,7 +352,7 @@ Section RhoCalcLanguage.
     True.
   Proof. exact I. Qed.
 
-End RhoCalcLanguage.
+End RholangLanguage.
 
 (* ===================================================================== *)
 (*  Summary of Proven Properties                                          *)
@@ -367,19 +367,19 @@ End RhoCalcLanguage.
  *   P2: dead_rule_derives_nothing   [DeadRulePruning.v: P2_dead_rule_derives_nothing]
  *   P3: pruned_equals_full          [DeadRulePruning.v: P3_pruned_equals_full]
  *   Calculator: trivially vacuous (single category, no dead rules)
- *   RhoCalc: Proc→Float, Proc→Ground, etc. are dead (Proc cannot reach them)
+ *   Rholang: Proc→Float, Proc→Ground, etc. are dead (Proc cannot reach them)
  *
  * Opt 4 (OrdVar / Scope Ordering):
  *   O1a-d: OrdVar total order       [TotalOrder.v: O1a/b/c/d_cmp_var_*]
  *   O2a-c: Scope total preorder     [TotalOrder.v: O2a/b/c_cmp_scope_*]
  *   O3: Hash-Ord consistency        [TotalOrder.v: O3_hash_ord_consistency]
  *   O4: PartialEq → Ord-Eq          [TotalOrder.v: O4_eq_implies_cmp_eq]
- *   Language-independent (applies to Calculator, RhoCalc, and all others)
+ *   Language-independent (applies to Calculator, Rholang, and all others)
  *
  * Opt 5 (SCC Splitting):
  *   S1: non_core_derives_nothing    [SCCSplitting.v: S1_non_core_derives_nothing]
  *   S2: core_derivations_equal      [SCCSplitting.v: S2_core_derivations_equal]
  *   S3: fixpoint_restriction        [SCCSplitting.v: S3_fixpoint_restriction]
- *   RhoCalc: Core = {Proc, Name}, proven bidirectional reachability
+ *   Rholang: Core = {Proc, Name}, proven bidirectional reachability
  *            Non-core = {Expr, Chan, Ground, Float}, proven unreachable from Proc
  *)

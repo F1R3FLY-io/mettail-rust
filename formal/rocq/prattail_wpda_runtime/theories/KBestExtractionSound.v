@@ -202,7 +202,7 @@
  * theorems (house style, cf. PurePackingPreservation.v).
  *
  * ★ DIVERGENCE-I RE-CHECK (2026-07-25). Closing divergence I partitioned
- * RhoCalc's/Calculator's integer LITERAL domains (`BigInt`'s eval was a
+ * Rholang's/Calculator's integer LITERAL domains (`BigInt`'s eval was a
  * universal acceptor of every integer spelling). That STRICTLY SHRINKS the
  * literal cohort at every token shape — proved, not assumed, as
  * `LiteralCarrierContextIndependence.T_CohortShrinks`, with the a-fortiori step

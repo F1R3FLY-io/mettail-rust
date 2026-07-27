@@ -15,7 +15,7 @@
 #   TotalOrder.v           — Opt 4 (standalone, depends only on Prelude)
 #   DeadRulePruning.v      — Opt 3 (depends on GraphReachability)
 #   SCCSplitting.v         — Opt 5 (depends on GraphReachability, DeadRulePruning)
-#   ConcreteInstantiations.v — Calculator / RhoCalc instances (depends on all)
+#   ConcreteInstantiations.v — Calculator / Rholang instances (depends on all)
 
 -Q theories AscentOptimizations
 

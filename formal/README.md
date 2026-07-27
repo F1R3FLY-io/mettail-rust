@@ -116,7 +116,7 @@ The capped entry point runs:
 - the WPDA macro-codegen unit tests
 - generated-language WPDA smoke tests for cross-category infix dispatch and
   structural-delimiter collection parsing
-- the RhoCalc lattice-token backend regression that verifies keyword text can
+- the Rholang lattice-token backend regression that verifies keyword text can
   still parse through identifier alternatives when the target category requires
   the variable rule
 
@@ -133,7 +133,7 @@ The active Prattail runtime proof directory includes:
   its R-D A1 engine-divergence note — was pruned in S6, 2026-07-15, together
   with the classic diagnostic engine it modeled; the production descriptor-pure
   engine enforces distinct-realized-term cardinality whole-run at resolve,
-  validated behaviourally by the calculator/rhocalc flip-set rather than in
+  validated behaviourally by the calculator/rholang flip-set rather than in
   this model.)
   Dispatch cache keys are modeled with full natural-number positions, with a
   generic obligation that distinct positions are not quotiented; Rust also

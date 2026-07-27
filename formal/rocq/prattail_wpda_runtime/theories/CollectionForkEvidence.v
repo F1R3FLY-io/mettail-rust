@@ -2,7 +2,7 @@
  * CollectionForkEvidence: the spec for the #307 ROOT-F fix — the
  * CollectionLoop post-element fork emits ONLY evidence-justified branches.
  *
- * THE DEFECT (trace-evidenced; rhocalc PPar `"{" ps.*sep("|") "}"`):
+ * THE DEFECT (trace-evidenced; rholang PPar `"{" ps.*sep("|") "}"`):
  * the generated kv_phase=0 three-way fork (collection.rs:401-472) emits,
  * UNCONDITIONALLY at every post-element position:
  *   BRANCH 1 (close)        — consumes ONE token REGARDLESS of its text
@@ -80,7 +80,7 @@ Section CollectionForkEvidence.
   Variable elem_spell : nat -> nat -> Prop.
 
   (* Whether the grammar declares an EMPTY separator (whitespace-joined
-     collections). rhocalc PPar has sep = "|" (nonempty). *)
+     collections). rholang PPar has sep = "|" (nonempty). *)
   Variable sep_empty : bool.
 
   (* ── The collection CONTINUATION language after a completed element:
@@ -312,7 +312,7 @@ End DefectWitnesses.
        for ROOT-A's mixfix literals, WRONG for a collection close);
      ConsumeAndPop                    — pops + finalizes but advances
        along edge alt-0 ONLY (child_next_pos is alt-0-hardwired; wrong
-       for a lattice-ambiguous close such as the rhocalc Bag `}#`);
+       for a lattice-ambiguous close such as the rholang Bag `}#`);
      ConsumeAtAndPop { next_pos }     — the REQUIRED new action: pops +
        finalizes AND advances along the MATCHED edge.
 
@@ -401,7 +401,7 @@ Section ActionSemantics.
   Qed.
 
   (* ── A2 — the alt-0 pop lands on a NON-close target whenever the
-        close edge is not alt-0 (the `}`-vs-`}#` rhocalc-Bag lattice
+        close edge is not alt-0 (the `}`-vs-`}#` rholang-Bag lattice
         class): with out_edges 0 = [(9, 1); (l_close, 2)] (alt-0 is a
         different token), the alt-0 pop reaches node 1, which is NOT a
         close-edge target. The fabricated-position / wrong-edge class. ── *)

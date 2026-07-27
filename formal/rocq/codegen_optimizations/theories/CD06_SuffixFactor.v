@@ -17,7 +17,7 @@
  * (decision_tree.rs:1181).
  *
  * Measured shared_suffix_ratio (production grammars):
- *   calculator depth1=0.60 depth2=0.19 | rhocalc depth1=0.50 depth2=0.42
+ *   calculator depth1=0.60 depth2=0.19 | rholang depth1=0.50 depth2=0.42
  *   | Ambient depth2=0.57 | GuardedRho depth2=0
  *
  * The depth-1 ratio is degenerate (dominated by shared close delimiters such

@@ -1,5 +1,5 @@
 (*
- * SelfCollectionElementProgress: the two flip-proven roots of the rhocalc
+ * SelfCollectionElementProgress: the two flip-proven roots of the rholang
  * self-collection (PPar) parse failures, and the soundness of their fixes.
  *
  * GROUND TRUTH (agent investigation, 2026-06-10, all flip-proven at 82310a24):
@@ -113,7 +113,7 @@ Section DescriptorPosRefinement.
 
   (* ════════════════════════════════════════════════════════════════════════
      FLIP-DRIVEN REFINEMENT (2026-06-10, scientific ledger): keying pos
-     GLOBALLY regressed rhocalc basics (`x!(0)` failed; suite 0.6s→133s) —
+     GLOBALLY regressed rholang basics (`x!(0)` failed; suite 0.6s→133s) —
      the descriptor set serves a SECOND role beyond cycle defense: the
      cross-POSITION dispatch-suppression memo that keeps the cross-cat
      projection fan from re-firing at every input position. The sppf-restore

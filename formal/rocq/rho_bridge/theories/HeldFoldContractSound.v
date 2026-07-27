@@ -4,7 +4,7 @@
  * A "held fold" is a MeTTaIL-native width fold (e.g. `int( *(x), 8)`) whose operand
  * is bound by a COMM `receive`: it cannot pre-reduce in Dovetail (the operand is
  * free until the rendezvous fires) and has no Rholang primitive.  The lowering
- * LIFTS it (rholang-runtime/src/rhocalc_ast.rs `lower_body_lifting_folds`):
+ * LIFTS it (rholang-runtime/src/rholang_ast.rs `lower_body_lifting_folds`):
  *
  *     (@("c")?x).{ C[int( *(x), 8)] }
  *       ==>  (@("c")?x).{ new ret in { @"<fold>"!( *(x), ret)

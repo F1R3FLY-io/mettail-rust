@@ -127,7 +127,7 @@ Section CastLexForkCrossCatLhsGap.
 
   (* ── THE COMPLETENESS GAP (current system): no interpretation anywhere
         hosts d — the observed failure cluster (12 comparison_after_cast +
-        2 operator_chains + 2 string + 6 casterrfixed + 1 rhocalc). ── *)
+        2 operator_chains + 2 string + 6 casterrfixed + 1 rholang). ── *)
   Theorem current_completeness_gap :
     forall k i, In i (branches_current k) -> hosts_d i k = false.
   Proof.

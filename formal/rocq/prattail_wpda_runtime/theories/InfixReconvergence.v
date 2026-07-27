@@ -3,7 +3,7 @@
  * ISOLATION+COMBINE CODEGEN fix — the ROOT-2 `or`/PParInfix divide-and-conquer
  * linearization that the generated facade SHIPS (2026-07-06).
  *
- * THE DEFECT (measured; rhocalc `Proc` has 16 homogeneous `Proc×Proc→Proc`
+ * THE DEFECT (measured; rholang `Proc` has 16 homogeneous `Proc×Proc→Proc`
  * infix operators): a binary composition whose LEFT operand is a polyadic
  * persistent send with a division arg — `@Nil!!(true, @Nil!() / @Nil!()) or X` —
  * parsed MONOLITHICALLY dies ("no accepting branch reached end of input"): the

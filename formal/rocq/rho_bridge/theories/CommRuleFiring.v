@@ -3,7 +3,7 @@
  * as ONE non-linear AC COMM.
  *
  * SCOPE (D10): this theory models the ASYNCHRONOUS communication, whose reduct is the SINGLE
- * host-computed substitution. That is the shape RhoCalc / `CommDemo` declare and the shape the typed
+ * host-computed substitution. That is the shape Rholang / `CommDemo` declare and the shape the typed
  * COMM lane was first written for. The lane now admits a reduct of ARITY m >= 1 — one substitution
  * plus m-1 sigma-delivered elements — so that the GSLT omnibus's SYNCHRONOUS pi `Comm`
  * (omnibus.tex:1988-1989), whose output `n!m.q` carries a continuation, is realized too. The

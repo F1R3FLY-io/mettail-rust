@@ -9,11 +9,11 @@
  *   `str(Pathmap())` Symbol — with NO leading `str(` terminal child: the outer
  *   cast literal was fabricated, consuming ZERO input. The 1+4-pass
  *   `parse_structured` display fixpoint then re-synthesizes it every pass, so the
- *   `str` count grows +1/pass (1 -> 6) and overflows the stack on deep rhocalc
- *   Proc / InputBind terms (gen_rhocalc_prop::{proc,inputbind}_display).
+ *   `str` count grows +1/pass (1 -> 6) and overflows the stack on deep rholang
+ *   Proc / InputBind terms (gen_rholang_prop::{proc,inputbind}_display).
  *
  *   Empirically (children[0]-dump across all three cast/grouping dispositions):
- *     - rhocalc `ToStr`  (`"str" "(" p ")"`, same-cat):  sound children[0] = TriggerTerminal.
+ *     - rholang `ToStr`  (`"str" "(" p ")"`, same-cat):  sound children[0] = TriggerTerminal.
  *     - calc `StrToInt`  (`"int" "(" a ")"`, cross-cat):  sound children[0] = TriggerTerminal.
  *     - lambda `App`     (`"(" f "," a ")"`, grouping):   sound children[0] = TriggerTerminal.
  *     - the phantom `ToStr`:                              children[0] = Symbol (the operand).
@@ -24,7 +24,7 @@
  * WHY the count-based backstop (`min_terminal_span`) cannot do this:
  *   `min_terminal_span` rejects a packing whose realize-time slack
  *   (result-span - Sigma operand-spans) is below a per-rule threshold. But whether
- *   a rule's LEADING literal is consumed IN-span (rhocalc `str`) or OUT-OF-span
+ *   a rule's LEADING literal is consumed IN-span (rholang `str`) or OUT-OF-span
  *   as a `TriggerTerminal` (calc `int`, lambda `(`) is a RUNTIME parse property,
  *   not a grammar property — so the codegen threshold formula cannot see it. For
  *   an out-of-span-leading rule the sound slack EQUALS the phantom slack (the
@@ -164,7 +164,7 @@ Section LeadingLiteralPhantomGate.
   Section CountBasedWall.
 
     (* A LiteralLed cast `"t" "(" a ")"`. Its leading literal `t` is consumed
-       either IN-span (rhocalc `str`, matched within the result span) or
+       either IN-span (rholang `str`, matched within the result span) or
        OUT-OF-span as a `TriggerTerminal` (calc cross-cat `int`, lambda grouping
        `(`). This disposition is a RUNTIME parse property, NOT codegen-derivable. *)
     Inductive LeadDisposition : Type := InSpan | OutOfSpan.
@@ -188,7 +188,7 @@ Section LeadingLiteralPhantomGate.
     (* For IN-span leading rules a threshold DOES exist (T = 2): it rejects the
        phantom (slack 1 < 2) and keeps the sound parse (slack 2 >/< 2 → kept).
        This is why formula "J" — which counted the leading `(` as in-span — fixed
-       rhocalc and calc's IN-span casts. *)
+       rholang and calc's IN-span casts. *)
     Theorem count_gate_works_for_inspan :
       count_rejects 2 slack_phantom = true /\ count_rejects 2 (slack_sound InSpan) = false.
     Proof. split; reflexivity. Qed.

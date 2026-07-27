@@ -1,9 +1,9 @@
 (*
  * CollectionPrefixDispatchFork: FV-FIRST spec for ROOT-A — the shared-open
- * `{` prefix-dispatch fork that lets RhoCalc Map literals `{1:2}` parse while
+ * `{` prefix-dispatch fork that lets Rholang Map literals `{1:2}` parse while
  * preserving braced `{P|Q}` parallel (PPar).
  *
- * THE DEFECT (trace-evidenced; rhocalc Proc entry):
+ * THE DEFECT (trace-evidenced; rholang Proc entry):
  *   `Proc::parse("{1:2}")` FAILS but `Map::parse("{1:2}")` SUCCEEDS. At Proc
  *   entry the open `{` is a single (non-lex-ambiguous) token, so the lex-fork
  *   is SKIPPED and the braced PPar arm (collection.rs `emit_collection_prefix_

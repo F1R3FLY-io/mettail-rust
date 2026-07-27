@@ -15,7 +15,7 @@
  *   the ★ HONESTY RELABEL at `gate_removes_cast_fanout_factor` and
  *   DESCRIPTOR_WORKLIST_DESIGN.md § Stage-0 verdict.
  *
- * GROUND TRUTH (offline-classifier-proven + trace-proven, rhocalc `@a <- c`):
+ * GROUND TRUTH (offline-classifier-proven + trace-proven, rholang `@a <- c`):
  *   The result category `Proc` PrefixDispatch on a bare `Ident` token emits a
  *   Fork whose branches (measured directly in generated wpda.rs:26535, 18
  *   branches) are:
@@ -356,7 +356,7 @@ Section CrossCatLexCompatGate.
   (* ═══════════ T-LinearFrontier ═══════════ *)
   (* The N-ary cast fan-out: at an ungated VarOnlyIdent dispatch the concrete
      fork has (2 + n) branches — the 2 fixed {BCrossCatLhs, BHomeVar} plus n
-     cast projections (n = 16 for rhocalc Proc). The gate drops all n cast
+     cast projections (n = 16 for rholang Proc). The gate drops all n cast
      projections, leaving the 2 fixed branches. This N-ary count refines the
      3-kind abstraction above (where the n casts collapse to one BProj kind). *)
   Definition bcount_ungated_nary (n : nat) : nat := 2 + n.
@@ -375,7 +375,7 @@ Section CrossCatLexCompatGate.
      that it removes the CAST contribution `n` from the base (176 → the residual
      regime, a 153× peak reduction), NOT that it makes the base constant nor
      linear. We keep the TRUE arithmetic identity and quantify over the residual
-     base `b` (measured b ≈ 9.5 for rhocalc Proc) instead of hardcoding a false
+     base `b` (measured b ≈ 9.5 for rholang Proc) instead of hardcoding a false
      constant. *)
 
   (* Cursor-path multiplier of a homogeneous k-segment `.*sep` chain: the product
@@ -434,7 +434,7 @@ Section CrossCatLexCompatGate.
      cast-driven fork explosion factor, yielding a smaller EXPONENTIAL base (a
      constant-factor latency win), NOT linearity. The hypothesis `b < 2 + n` names
      precisely the regime where the cast contribution dominates the residual
-     CrossCatLhs base (measured true for rhocalc Proc: b ≈ 9.5 < 2 + 16 = 18). *)
+     CrossCatLhs base (measured true for rholang Proc: b ≈ 9.5 < 2 + 16 = 18). *)
   Theorem gate_base_strictly_below_ungated :
     forall (b : nat) (k : nat) (n : nat),
       1 <= k -> b < 2 + n ->

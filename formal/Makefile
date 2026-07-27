@@ -187,7 +187,7 @@ rocq-rho-bridge-lowering-boundary: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoParWellFormedness.vo
 	$(MAKE) -C rocq/rho_bridge theories/RhoArtifactBoundary.vo
 	$(MAKE) -C rocq/rho_bridge theories/RhoAstSendBoundary.vo
-	$(MAKE) -C rocq/rho_bridge theories/RhocalcAstLowering.vo
+	$(MAKE) -C rocq/rho_bridge theories/RholangAstLowering.vo
 
 rocq-rho-bridge-schedule-family: require-capped
 	$(MAKE) -C rocq/rho_bridge theories/RhoCommScheduleFamily.vo

@@ -30,7 +30,7 @@ theories/RhoHostObligationBoundary.v
 theories/RhoParWellFormedness.v
 theories/RhoArtifactBoundary.v
 theories/RhoAstSendBoundary.v
-theories/RhocalcAstLowering.v
+theories/RholangAstLowering.v
 theories/RuntimeBackendDispatch.v
 theories/SimulationReportBoundary.v
 theories/CommReductionCorrespondence.v

@@ -325,20 +325,20 @@ Proof.
 Qed.
 
 (* ═══════════════════════════════════════════════════════════════════════
-   INSTANCE PINS — the rhocalc InputBind@ accept fork (the only real
+   INSTANCE PINS — the rholang InputBind@ accept fork (the only real
    cohort; item codes and members from TrieLeafBijectionAccept).
    ═══════════════════════════════════════════════════════════════════════ *)
 
 (* The root divergence (depth 1, after the shared P(Proc) operand): the
    `<-`-vs-`<=` split routes {r2, r3} against {r6}, no accepts yet. *)
-Theorem rhocalc_inputbind_root_divergence :
+Theorem rholang_inputbind_root_divergence :
   partition_left_m 1 [ib_query; ib_quoted; ib_persistent] [] []
   = ([(1, [ib_query; ib_quoted]); (6, [ib_persistent])], []).
 Proof. vm_compute. reflexivity. Qed.
 
 (* THE ACCEPT FORK (depth 3, at the P(Name) edge): r3 exhausts — it drains
    to the accepts — while r2 continues under its `!` item. *)
-Theorem rhocalc_inputbind_accept_divergence :
+Theorem rholang_inputbind_accept_divergence :
   partition_left_m 3 [ib_query; ib_quoted] [] []
   = ([(3, [ib_query])], [ib_quoted]).
 Proof. vm_compute. reflexivity. Qed.
@@ -347,17 +347,17 @@ Proof. vm_compute. reflexivity. Qed.
    FIRST (★A1), the r3 accept leaf LAST, BOTH carrying the P(Name) = 2
    edge item — the two-branch fork whose fan (2) equals OFF's own two
    CategoryEntry(Name) pushes at this edge (the plan §2.3 cost parity). *)
-Theorem rhocalc_inputbind_accept_fork_shape :
+Theorem rholang_inputbind_accept_fork_shape :
   build_node_a 30 3 2 [ib_query; ib_quoted]
   = Some [TInterior 2 [TLeaf 3 ib_query 4]; TLeaf 2 ib_quoted 3].
 Proof. vm_compute. reflexivity. Qed.
 
-Theorem rhocalc_inputbind_accept_fork_fan :
+Theorem rholang_inputbind_accept_fork_fan :
   length [TInterior 2 [TLeaf 3 ib_query 4]; TLeaf 2 ib_quoted 3] = 2.
 Proof. reflexivity. Qed.
 
 (* The generic fork-shape theorem instantiated on the real cohort. *)
-Theorem rhocalc_inputbind_accept_fork_emits_both :
+Theorem rholang_inputbind_accept_fork_emits_both :
   exists cs accs,
     [TInterior 2 [TLeaf 3 ib_query 4]; TLeaf 2 ib_quoted 3]
     = TInterior 2 cs :: map (fun m => TLeaf 2 m 3) accs
@@ -367,7 +367,7 @@ Theorem rhocalc_inputbind_accept_fork_emits_both :
 Proof.
   eapply (accept_fork_emits_both 29 3 2 [ib_query; ib_quoted]
             _ ib_quoted ib_query).
-  - exact rhocalc_inputbind_accept_fork_shape.
+  - exact rholang_inputbind_accept_fork_shape.
   - right. left. reflexivity.
   - reflexivity.
   - left. reflexivity.
@@ -377,13 +377,13 @@ Qed.
 (* Both-survive at the accept edge: r3 (the accept) and r2 (the
    continuation) each carry P(Name) = 2 as their depth-2 item — a guard
    death anywhere else never separates them before the fork. *)
-Theorem rhocalc_inputbind_both_survive_name_edge :
+Theorem rholang_inputbind_both_survive_name_edge :
   nth_error (m_items ib_quoted) 2 = Some 2
   /\ nth_error (m_items ib_query) 2 = Some 2.
 Proof. vm_compute. split; reflexivity. Qed.
 
 (* The ε member-tail receipts for the r3 accept. *)
-Theorem rhocalc_inputbind_accept_concatenation :
+Theorem rholang_inputbind_accept_concatenation :
   firstn 3 (m_items ib_quoted) ++ skipn 3 (m_items ib_quoted)
   = m_items ib_quoted
   /\ skipn 3 (m_items ib_quoted) = [].
@@ -404,10 +404,10 @@ Print Assumptions accept_and_continuation_both_survive.
 Print Assumptions accept_fork_emits_both.
 Print Assumptions accept_fold_count.
 Print Assumptions accept_fold_count_positions.
-Print Assumptions rhocalc_inputbind_root_divergence.
-Print Assumptions rhocalc_inputbind_accept_divergence.
-Print Assumptions rhocalc_inputbind_accept_fork_shape.
-Print Assumptions rhocalc_inputbind_accept_fork_fan.
-Print Assumptions rhocalc_inputbind_accept_fork_emits_both.
-Print Assumptions rhocalc_inputbind_both_survive_name_edge.
-Print Assumptions rhocalc_inputbind_accept_concatenation.
+Print Assumptions rholang_inputbind_root_divergence.
+Print Assumptions rholang_inputbind_accept_divergence.
+Print Assumptions rholang_inputbind_accept_fork_shape.
+Print Assumptions rholang_inputbind_accept_fork_fan.
+Print Assumptions rholang_inputbind_accept_fork_emits_both.
+Print Assumptions rholang_inputbind_both_survive_name_edge.
+Print Assumptions rholang_inputbind_accept_concatenation.

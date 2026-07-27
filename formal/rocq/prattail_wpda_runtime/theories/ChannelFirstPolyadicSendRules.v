@@ -17,7 +17,7 @@
  *   immediately — it also dies on an operand. So NO `@`-channel `!(a,b)` parsed
  *   before these five rules were added (measured: all `@`-channels ERR on the
  *   OFF baseline; the channel-first POutput2Plus / PPersistOutput2Plus at
- *   rhocalc.rs:138-158 accept ONLY an Ident channel `n:Name`). This is a
+ *   rholang.rs:138-158 accept ONLY an Ident channel `n:Name`). This is a
  *   feedback_never_disambiguate_early violation localized to the `@`-prefix
  *   polyadic case — the scalar/empty rules over-committed and shadowed the
  *   polyadic path.

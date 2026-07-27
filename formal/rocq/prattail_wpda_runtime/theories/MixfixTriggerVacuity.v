@@ -10,7 +10,7 @@
  *       gains the two mixfix rows ((Proc, 4/6/8) -> 0xF803,
  *       (Proc, 5/7/9) -> 0xF804; factoring.rs: mixfix rows join the
  *       owner/members streams — emitted for table symmetry although
- *       unreachable at the gate). The enlarged rhocalc Proc partition
+ *       unreachable at the gate). The enlarged rholang Proc partition
  *       (3 prefix groups + 2 mixfix cohorts) is well-formed, owner-row
  *       injectivity holds over it (each member maps to EXACTLY its own
  *       cohort's spine id), the shipped non-theft theorems transport,

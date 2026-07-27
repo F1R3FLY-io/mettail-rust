@@ -1,6 +1,6 @@
 (*
  * MixfixSpineCommit: S1-FACTORING F5-2 FV extension (FV-1'' + FV-2'' +
- * FV-3b(b)/(c)'' on the MIXFIX surface) — the rhocalc Name-led send fan's
+ * FV-3b(b)/(c)'' on the MIXFIX surface) — the rholang Name-led send fan's
  * factored spine (plan f5_mixfix_cohorts_plan.md §1.3/§2.2/§5, red-team
  * amendments A-M1..A-M5 folded; ledger s2_stageA_ledger.md §"S1 F5-2"),
  * over the SHIPPED models (imported verbatim, never restated):
@@ -94,7 +94,7 @@
  *   `CMixfixRun`                ↔ `MemberCommit::MixfixRun { rule_idx, kind,
  *                                 completed_idx, sub_pos }` (@205-210)
  *   cohort members              ↔ the committed P1 pin
- *                                 `rhocalc_mixfix_send_cohorts_pin_two_groups`
+ *                                 `rholang_mixfix_send_cohorts_pin_two_groups`
  *                                 (@4908-4998): `!` slice
  *                                 [(2,0,4),(6,0,6),(10,0,8)], spine
  *                                 SPINE_RULE_BASE+3 = 0xF803 = 63491
@@ -407,7 +407,7 @@ Qed.
 
 (* ═══════════════════════════════════════════════════════════════════════
    (2) THE !/!! COHORT TRIES — census members (committed P1 pin
-   `rhocalc_mixfix_send_cohorts_pin_two_groups`, factoring.rs @4908-4998).
+   `rholang_mixfix_send_cohorts_pin_two_groups`, factoring.rs @4908-4998).
    Item codes: 0 = L"(" · 1 = P(Proc,0) · 2 = L")" · 3 = L",".
    Slice order mirrors `mixfix_bp_name`: `!` = [r4, r6, r8],
    `!!` = [r5, r7, r9]. Rule 8/9 items are CUT at the `*sep` repetition
@@ -1176,7 +1176,7 @@ Proof.
     specialize (Hf l Hin'). lia.
 Qed.
 
-(* The rhocalc floors: `!` l_bps [2; 6; 10] (min 2 = the emitted
+(* The rholang floors: `!` l_bps [2; 6; 10] (min 2 = the emitted
    min_l_bp), `!!` [4; 8; 12] (min 4) — the committed P1 pins. *)
 Theorem bang_min_l_bp : fold_min 2 [6; 10] = 2.
 Proof. vm_compute. reflexivity. Qed.
@@ -1348,7 +1348,7 @@ Proof.
   contradiction.
 Qed.
 
-(* The concrete rhocalc instance of the delta: the `!` cohort's nullary
+(* The concrete rholang instance of the delta: the `!` cohort's nullary
    member (rule 6) folds to stamp Some 4 (the min member) under ON where
    OFF folds to Some 6 — cost equal either way (the `bitnot (a)!()`
    sign-off row's exact shape; 20 here stands for the 0.20 tier cost). *)

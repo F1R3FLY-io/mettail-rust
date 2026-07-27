@@ -6,7 +6,7 @@
  * THE DEFECT (measurement-evidenced; runtime category order Proc=0, Name=1,
  *   InputBind=2, ForRow=3):
  *
- *   The rhocalc grammar (languages/src/rhocalc.rs) declares SIX persistent-
+ *   The rholang grammar (languages/src/rholang.rs) declares SIX persistent-
  *   SPECIFIC ForRow rules whose LHS is a bare `Name "<=" n` head:
  *     ForRowPersistentWhere            lhs "<=" n "&" bs.*sep("&") "where" cond
  *     ForRowPersistentNoWhere          lhs "<=" n "&" bs.*sep("&")
@@ -16,7 +16,7 @@
  *     ForRowSingleEmptyPersistentNoWhere "<=" n
  *   Each DUPLICATES a reading already expressible by the GENERAL ForRow rules
  *   (ForRow{Where,NoWhere,SingleWhere,SingleNoWhere}) over a persistent
- *   InputBind (InputBindPersistent `lhs "<=" n : InputBind`, rhocalc.rs:300 /
+ *   InputBind (InputBindPersistent `lhs "<=" n : InputBind`, rholang.rs:300 /
  *   InputBindEmptyPersistent `"<=" n : InputBind`, :311). Because `a <= b`
  *   thereby matches BOTH `ForRowSinglePersistentNoWhere` AND
  *   `ForRowSingleNoWhere(InputBindPersistent(a,b))`, EVERY `<=` element of a
@@ -31,13 +31,13 @@
  * THE FIX (Layer F): DELETE the six persistent-specific ForRow rules. Every
  *   surface they accepted is still accepted via the retained
  *   InputBindPersistent / InputBindEmptyPersistent → general-ForRow path, and
- *   the desugar (`languages/src/rhocalc/receive.rs`) is byte-identical:
+ *   the desugar (`languages/src/rholang/receive.rs`) is byte-identical:
  *     ForRowPersistentNoWhere(lhs,n,bs)
  *       -> try_comm_join(InputBindPersistent(lhs,n), bs, true, …)   [:794-800]
  *     ForRowNoWhere(b,bs) with b = InputBindPersistent(lhs,n)
  *       -> try_comm_join(b, bs, true, …)                            [:790-792]
  *   are the SAME call. Likewise for the Where / Single / SingleEmpty forms
- *   (receive.rs:762-811, rholang-runtime/src/rhocalc_ast.rs:1300-1325). The
+ *   (receive.rs:762-811, rholang-runtime/src/rholang_ast.rs:1300-1325). The
  *   ForRow enum variants (which the `language!` macro generates 1:1 from the
  *   grammar rules) and their now-parse-unreachable match arms are removed
  *   together with the rules (the design's "gate dead-variant removal
@@ -75,7 +75,7 @@ Import ListNotations.
 Section ForRowPersistentRuleRedundancy.
 
   (* ── Semantic domain of the desugar. A ForRow desugars (receive.rs
-     `try_comm_on_pfor_user` + rhocalc_ast.rs `row_binds_persistent_cond`) to a
+     `try_comm_on_pfor_user` + rholang_ast.rs `row_binds_persistent_cond`) to a
      triple: the ordered bind list, the persistence flag, and the optional
      where-guard. We model a bind as a natural (the InputBind's canonical id)
      and the guard as an option-nat (None = no `where`, i.e. the implicit

@@ -40,7 +40,7 @@
  *        prefix-wash law covers accept lineages with no modification
  *        (`accept_precommit_segment_washes`).
  *
- * The concrete INSTANCE is the rhocalc InputBind@ table (plan §2.2 node
+ * The concrete INSTANCE is the rholang InputBind@ table (plan §2.2 node
  * ids, matching flatten_forest's preorder: pre-root 1, root 2, L"<-" 3,
  * P(Name)-interior 4; the accept fork at arm 3):
  *   spine:  1→2 (P(Proc) operand), 2→3 (L"<-"), 3→4 (P(Name), the
@@ -319,7 +319,7 @@ Proof.
 Qed.
 
 (* ═══════════════════════════════════════════════════════════════════════
-   INSTANCE — the rhocalc InputBind@ table (plan §2.2 / flatten_forest
+   INSTANCE — the rholang InputBind@ table (plan §2.2 / flatten_forest
    preorder ids; member rules 2, 3, 6 = the FV-1′ ib forest's leaves).
    ═══════════════════════════════════════════════════════════════════════ *)
 
@@ -413,7 +413,7 @@ Proof.
   unfold table_commits_in_forest.
   intros n r p H.
   unfold ib_table in H; cbn in H; unfold ib_commit_edge in H.
-  rewrite rhocalc_inputbind_leaves.
+  rewrite rholang_inputbind_leaves.
   apply orb_true_iff in H; destruct H as [H | H];
     [apply orb_true_iff in H; destruct H as [H | H] |].
   - apply andb_true_iff in H; destruct H as [H Hp].
@@ -433,7 +433,7 @@ Qed.
 Theorem ib_table_wf_via_forest : wf_table ib_table.
 Proof.
   eapply forest_table_wf.
-  - exact rhocalc_inputbind_forest.
+  - exact rholang_inputbind_forest.
   - intros m Hin.
     destruct Hin as [Hm | [Hm | [Hm | []]]]; subst m;
       apply Nat.ltb_lt; vm_compute; reflexivity.
