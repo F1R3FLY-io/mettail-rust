@@ -186,11 +186,7 @@ async fn explore_with(program: Par, mode: TraceMode, lookahead: Lookahead) -> Ex
     sandbox.fund_from(&host_budget(HOST_UNITS));
     let mut explorer = Explorer::with_mode(&sandbox, mode);
     let exploration = explorer
-        .explore(
-            program,
-            Blake2b512Random::create_from_length(128),
-            lookahead,
-        )
+        .explore(program, Blake2b512Random::create_from_length(128), lookahead)
         .await
         .expect("the exploration must not fail at the infrastructure level");
     exploration
@@ -237,8 +233,7 @@ fn outcomes(exploration: &Exploration) -> Vec<Vec<String>> {
 /// confluent guest.
 #[tokio::test]
 async fn one_receive_two_data_returns_two() {
-    let exploration =
-        explore(send("c", 1).append(send("c", 2)).append(forward("c", OUT))).await;
+    let exploration = explore(send("c", 1).append(send("c", 2)).append(forward("c", OUT))).await;
     let found = outcomes(&exploration);
     eprintln!("[1-recv-2-data] {:?} stats={:?}", found, exploration.stats);
 
@@ -262,11 +257,7 @@ async fn one_receive_two_data_returns_two() {
         exploration.stats
     );
     // And the traces differ, so the two leaves are keyed apart.
-    assert_eq!(
-        exploration.success.len(),
-        2,
-        "two branches, two entries"
-    );
+    assert_eq!(exploration.success.len(), 2, "two branches, two entries");
     assert_ne!(
         exploration.success[0].trace, exploration.success[1].trace,
         "the two branches named DIFFERENT selections"
@@ -316,27 +307,21 @@ async fn two_independent_comms_return_one() {
     let found = outcomes(&exploration);
     eprintln!("[independent] {found:?} stats={:?}", exploration.stats);
     assert_eq!(found.len(), 1, "independent COMMs are not alternatives: {found:?}");
-    assert_eq!(
-        found[0],
-        vec!["Int(1)".to_string(), "Int(2)".to_string()],
-        "and BOTH happen"
-    );
-    assert_eq!(
-        exploration.stats.max_out_degree, 2,
-        "both were enabled at once"
-    );
-    assert_eq!(
-        exploration.stats.max_conflict_class, 1,
-        "…and neither was a choice"
-    );
+    assert_eq!(found[0], vec!["Int(1)".to_string(), "Int(2)".to_string()], "and BOTH happen");
+    assert_eq!(exploration.stats.max_out_degree, 2, "both were enabled at once");
+    assert_eq!(exploration.stats.max_conflict_class, 1, "…and neither was a choice");
 }
 
 /// A chain forces its own order: one outcome, and every conflict class is a
 /// singleton.
 #[tokio::test]
 async fn a_sequential_chain_returns_one() {
-    let exploration =
-        explore(send("c", 1).append(forward("c", "d")).append(forward("d", OUT))).await;
+    let exploration = explore(
+        send("c", 1)
+            .append(forward("c", "d"))
+            .append(forward("d", OUT)),
+    )
+    .await;
     let found = outcomes(&exploration);
     eprintln!("[chain] {found:?} stats={:?}", exploration.stats);
     assert_eq!(found.len(), 1);
@@ -427,9 +412,12 @@ async fn the_reduction_agrees_with_the_unreduced_search() {
 #[tokio::test]
 async fn every_trace_mode_sees_the_interleavings_the_others_merge() {
     for cell in corpus() {
-        let reduced =
-            explore_with(cell.program.clone(), TraceMode::IndependenceReduced, Lookahead::Unbounded)
-                .await;
+        let reduced = explore_with(
+            cell.program.clone(),
+            TraceMode::IndependenceReduced,
+            Lookahead::Unbounded,
+        )
+        .await;
         let merged = explore_with(
             cell.program.clone(),
             TraceMode::DistinctConfigurations,
@@ -538,11 +526,7 @@ async fn a_truncated_branch_resumes_to_the_unbroken_result() {
     sandbox.fund_from(&host_budget(HOST_UNITS));
     let mut explorer = Explorer::new(&sandbox);
     let cut = explorer
-        .explore(
-            program,
-            Blake2b512Random::create_from_length(128),
-            Lookahead::Steps(1),
-        )
+        .explore(program, Blake2b512Random::create_from_length(128), Lookahead::Steps(1))
         .await
         .expect("the bounded exploration must run");
     assert_eq!(cut.truncated.len(), 1, "the chain is cut mid-way");
@@ -551,10 +535,7 @@ async fn a_truncated_branch_resumes_to_the_unbroken_result() {
         .resume(&cut.handles(), Lookahead::Unbounded)
         .await
         .expect("the handle must resume");
-    eprintln!(
-        "[resume] unbroken={unbroken_outcomes:?} resumed={:?}",
-        outcomes(&resumed)
-    );
+    eprintln!("[resume] unbroken={unbroken_outcomes:?} resumed={:?}", outcomes(&resumed));
     assert_eq!(
         outcomes(&resumed),
         unbroken_outcomes,
@@ -574,33 +555,21 @@ async fn two_bounded_rounds_equal_one_double_bounded_round() {
     let program = send("c", 1)
         .append(forward("c", "d"))
         .append(forward("d", OUT));
-    let direct = explore_with(
-        program.clone(),
-        TraceMode::IndependenceReduced,
-        Lookahead::Steps(2),
-    )
-    .await;
+    let direct =
+        explore_with(program.clone(), TraceMode::IndependenceReduced, Lookahead::Steps(2)).await;
 
     let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
     sandbox.fund_from(&host_budget(HOST_UNITS));
     let mut explorer = Explorer::new(&sandbox);
     let first = explorer
-        .explore(
-            program,
-            Blake2b512Random::create_from_length(128),
-            Lookahead::Steps(1),
-        )
+        .explore(program, Blake2b512Random::create_from_length(128), Lookahead::Steps(1))
         .await
         .expect("round one");
     let second = explorer
         .resume(&first.handles(), Lookahead::Steps(1))
         .await
         .expect("round two");
-    eprintln!(
-        "[beam] direct={:?} staged={:?}",
-        outcomes(&direct),
-        outcomes(&second)
-    );
+    eprintln!("[beam] direct={:?} staged={:?}", outcomes(&direct), outcomes(&second));
     assert_eq!(
         outcomes(&second),
         outcomes(&direct),
@@ -675,10 +644,7 @@ async fn an_unfunded_sandbox_refuses() {
     assert!(exploration.success.is_empty(), "an unfunded sandbox computes nothing");
     assert_eq!(exploration.failure.len(), 1);
     assert_eq!(exploration.failure[0].code, ErrorCode::OutOfPhlogistons);
-    assert!(
-        exploration.failure[0].trace.is_empty(),
-        "it refused before any COMM"
-    );
+    assert!(exploration.failure[0].trace.is_empty(), "it refused before any COMM");
 }
 
 /// ★ The charge-back is `consumed()` CALLS to `reserve_comm`, not one call
@@ -708,11 +674,7 @@ async fn the_host_is_charged_one_per_comm() {
     let after = host.remaining().value;
     eprintln!("[charge] owed={owed} charged={charged} Δhost={}", before - after);
     assert_eq!(charged as i64, owed, "one call per COMM");
-    assert_eq!(
-        before - after,
-        owed,
-        "a single call passing consumed() would have charged 1"
-    );
+    assert_eq!(before - after, owed, "a single call passing consumed() would have charged 1");
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -758,23 +720,35 @@ fn set_len(collection: &Par) -> usize {
 /// branches.
 #[tokio::test]
 async fn a_leaf_reifies_to_a_process_and_the_two_differ() {
-    let exploration =
-        explore(send("c", 1).append(send("c", 2)).append(forward("c", OUT))).await;
+    let exploration = explore(send("c", 1).append(send("c", 2)).append(forward("c", OUT))).await;
     assert_eq!(exploration.success.len(), 2);
     let first = reify(&exploration.success[0].state).expect("leaf 0 reifies");
     let second = reify(&exploration.success[1].state).expect("leaf 1 reifies");
-    assert!(
-        !first.sends.is_empty(),
-        "a configuration with resting data reifies to sends"
-    );
+    assert!(!first.sends.is_empty(), "a configuration with resting data reifies to sends");
     assert_ne!(first, second, "two configurations, two processes");
 }
 
 /// A truncated leaf's reified configuration still contains the work that was
 /// not done — the receive and both data are all still there — which is what
 /// makes the handle resumable and what a beam-search ranker inspects.
+///
+/// ## ★ …and the two sends come out in a CONTENT order, not the store's
+///
+/// This cell used to assert `process.sends.len() == 2` and stop. A count passes under either
+/// order, and this leaf is the one shape in the whole suite that puts **two data on one
+/// channel** — so it was the single place in the suite where `reify`'s within-channel
+/// ordering was observable at all, and it observed nothing.
+///
+/// A channel's `Vec` is *reverse-arrival* order: `HotStore::put_datum` prepends, and every
+/// branch of a `|` is a detached `tokio::spawn`. So the second half of this cell permutes the
+/// retained configuration's data — which is what a differently-scheduled node would hand back
+/// — and requires the reified bytes not to move. The two data carry different `random_state`s
+/// and therefore different `Produce` hashes, so they are genuinely distinguishable and the
+/// assertion can fail.
 #[tokio::test]
 async fn a_truncated_leaf_reifies_the_work_that_remains() {
+    use prost::Message;
+
     let exploration = explore_with(
         send("c", 1).append(send("c", 2)).append(forward("c", OUT)),
         TraceMode::IndependenceReduced,
@@ -785,4 +759,30 @@ async fn a_truncated_leaf_reifies_the_work_that_remains() {
     let process = reify(&leaf.branch.state).expect("the retained configuration reifies");
     assert_eq!(process.sends.len(), 2, "both data are still resting");
     assert_eq!(process.receives.len(), 1, "and the receive is still waiting");
+
+    // The premise the assertion below rests on: the two data really are distinguishable.
+    let mut sources: Vec<Vec<u8>> = leaf
+        .branch
+        .state
+        .data
+        .values()
+        .flat_map(|data| data.iter().map(|datum| datum.source.hash.bytes()))
+        .collect();
+    sources.sort();
+    sources.dedup();
+    assert_eq!(sources.len(), 2, "the two staged data must have distinct Produce hashes");
+
+    let mut permuted = leaf.branch.state.clone();
+    for data in permuted.data.values_mut() {
+        data.reverse();
+    }
+    assert_eq!(
+        reify(&permuted)
+            .expect("the permuted configuration reifies")
+            .encode_to_vec(),
+        process.encode_to_vec(),
+        "★ reversing the order of the two data ON ONE CHANNEL changed the reified bytes. That \
+         order is the scheduler's — `HotStore` prepends — and this process is published inside \
+         `^spec-truncated` and the FIPS `truncated` collection."
+    );
 }
