@@ -345,6 +345,214 @@ pub(crate) fn literal_boundary_sets(
     out
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// ★ THE SIBLING COMPUTATION: RULE-inert's INERT SPANS, derived from the same
+// `language.token_defs`.
+//
+// `ext`/`pre` above answer *"can a longer token cover this position?"*. RULE-inert
+// answers a question that is ORTHOGONAL to both and was, until this module, implemented
+// at exactly one site in the whole emitter (`__in_str`, the infix facade's string state):
+//
+//     A scan over RAW SOURCE may only inspect bytes the lexer would place on the
+//     DEFAULT channel. Bytes inside a string literal, or inside `-> COMMENTS` trivia,
+//     are NOT CODE.
+//
+// The measured consequence of the missing half, on the shipped `rhocalc` binary:
+//
+// ```text
+//     @"OUT"!(1) // z|@"OUT"!(2)          ⇒  @"OUT" observations (2): Int(1), Int(2)
+//     | Nil                                   ← the COMMENTED-OUT send RAN
+//
+//     @"OUT"!(1) // z@"OUT"!(2)           ⇒  @"OUT" observations (1): Int(1)
+//     | Nil                                   ← same comment, no depth-0 `|` in it
+// ```
+//
+// The single controlled variable is the `|` inside the comment: the infix `__OPS` scan
+// sees it at depth 0, elects it as the `Par` root, and splits the source there — so the
+// text to its right, which the lexer had already routed to the COMMENTS channel, is
+// handed to a sub-parser as code.
+//
+// RhoCalc's comments are LEXED, NOT STRIPPED (`languages/src/rhocalc.rs`
+// `LineComment = "//[^\n]*" -> COMMENTS`), which is what puts raw comment bytes in front
+// of every string facade in the first place.
+//
+// SAFETY DIRECTION. Skipping inert spans can only make a scan see FEWER candidate
+// positions ⇒ more declines ⇒ fall-through to the monolithic walker, which lexes
+// correctly. Same argument as `ProjectionIsolation.v` `T7_fallthrough_is_monolithic`.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/// The token patterns whose spans are INERT for a raw-source scan.
+///
+/// Two sources, both derived — no hardcoded `//`, no hardcoded `"`:
+///
+/// 1. **Off-DEFAULT-channel tokens.** Every `TokenDef` routed to a named stream other
+///    than `main` (`-> COMMENTS`). The predicate mirrors the lexer's own, verbatim from
+///    `prattail/src/lexer.rs`: `spec.stream.as_deref().filter(|s| *s != "main")`.
+/// 2. **The string family.** A string literal is on the DEFAULT channel, but its
+///    INTERIOR is not code — which is precisely what the hand-written `__in_str` state
+///    has always encoded. Taken from [`LiteralPatterns::default()`], unioned in
+///    unconditionally for the same reason source (2) of `ext` is: a union can only widen
+///    the inert set, i.e. decline more, which is the safe direction.
+///
+/// A language with no comments and no string family yields an EMPTY vector, for which
+/// [`emit_inert_skipper`] emits nothing at all and the generated code is byte-identical.
+pub(crate) fn inert_token_patterns(language: &LanguageDef) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(language.token_defs.len() + 1);
+    for td in &language.token_defs {
+        // The lexer's own off-DEFAULT predicate (`prattail/src/lexer.rs`).
+        let off_default =
+            td.stream.as_ref().map(|s| s.to_string()).filter(|s| s != "main").is_some();
+        if off_default && !td.pattern.is_empty() {
+            out.push(td.pattern.clone());
+        }
+    }
+    let string_family = LiteralPatterns::default().string;
+    if !string_family.is_empty() {
+        out.push(string_family);
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Emit the per-language `__inert_skip` helper: given `bytes` and an index `i`, return
+/// the index just past the inert span starting at `i`, or `i` when no inert span starts
+/// there.
+///
+/// # The algorithm, and why it is maximal munch
+///
+/// The helper runs the union DFA of [`inert_token_patterns`] from `i` and returns the
+/// LAST accepting position — the same maximal munch the lexer performs, so
+/// `// a // b` is one comment (as the lexer says) rather than two.
+///
+/// ```text
+///     __inert_skip(bytes, i):
+///       s ← start;  last ← i;  j ← i
+///       while j < |bytes| and δ(s, bytes[j]) ≠ ⊥:
+///           s ← δ(s, bytes[j]);  j ← j + 1
+///           if s ∈ F then last ← j
+///       if last = i and j > i and s ≠ ⊥ then return |bytes|      ⟵ unterminated
+///       return last
+/// ```
+///
+/// # The unterminated-span clause
+///
+/// If the run consumed at least one byte and ran out of input while still LIVE, the span
+/// is an *unterminated* comment or string. The helper then reports the whole remainder as
+/// inert. That is deliberate and it is the conservative choice on two counts: it
+/// reproduces exactly what the hand-written `__in_str` toggle did (an unmatched `"`
+/// makes the rest of the span content), and it errs toward MORE inert bytes, i.e. fewer
+/// split candidates, i.e. a decline — the direction that falls through to the walker.
+///
+/// Returning `i` instead would treat the opener as code and let the scan split inside an
+/// unterminated literal, which is the direction that loses readings.
+pub(crate) fn emit_inert_skipper(language: &LanguageDef) -> proc_macro2::TokenStream {
+    use quote::quote;
+
+    if !super::scan_site::INERT_SPAN_SKIP {
+        // CONTROL LEG: nothing emitted ⇒ byte-identical to the pre-Stage-B artifact.
+        return quote! {};
+    }
+    let patterns = inert_token_patterns(language);
+    if patterns.is_empty() {
+        // A language with no comments and no string family: the identity skipper is
+        // never called because no site can skip anything. Emit nothing.
+        return quote! {};
+    }
+
+    let mut nfa = Nfa::new();
+    let mut any = false;
+    for pattern in &patterns {
+        if let Ok(frag) = compile_regex(pattern, &mut nfa, TokenKind::StringLit) {
+            let start = nfa.start;
+            nfa.add_epsilon(start, frag.start);
+            any = true;
+        }
+    }
+    if !any {
+        return quote! {};
+    }
+    let partition = compute_equivalence_classes(&nfa);
+    let dfa = subset_construction(&nfa, &partition);
+
+    let num_classes = dfa.num_classes;
+    // Byte → equivalence class, so the emitted transition table is class-compressed
+    // (`num_states × num_classes`) rather than `num_states × 256`.
+    let class_of: Vec<u8> = (0u16..=255).map(|b| partition.classify(b as u8)).collect();
+    // `DEAD_STATE` is `u32::MAX`; the emitted table uses `u32::MAX` as its own sentinel so
+    // no state index can collide with it.
+    let mut trans: Vec<u32> = Vec::with_capacity(dfa.states.len() * num_classes);
+    for s in 0..dfa.states.len() {
+        for c in 0..num_classes {
+            trans.push(dfa.transition(s as StateId, c as u8));
+        }
+    }
+    let accept: Vec<bool> = dfa.states.iter().map(|s| s.accept.is_some()).collect();
+    let start = dfa.start;
+    let n_classes_lit = num_classes;
+    let pattern_doc = format!(
+        " Derived from {} inert token pattern(s): {}",
+        patterns.len(),
+        patterns.join(" · ")
+    );
+
+    quote! {
+        /// ★ RULE-inert — the INERT-SPAN SKIPPER.
+        ///
+        /// Byte → alphabet-equivalence-class map for the inert-token DFA.
+        #[allow(dead_code)]
+        const __INERT_CLASS: [u8; 256] = [ #(#class_of),* ];
+        /// Class-compressed transition table, `state * __INERT_CLASSES + class`.
+        /// `u32::MAX` is the dead state.
+        #[allow(dead_code)]
+        const __INERT_TRANS: &[u32] = &[ #(#trans),* ];
+        /// Accepting states of the inert-token DFA.
+        #[allow(dead_code)]
+        const __INERT_ACCEPT: &[bool] = &[ #(#accept),* ];
+        #[allow(dead_code)]
+        const __INERT_CLASSES: usize = #n_classes_lit;
+        #[allow(dead_code)]
+        const __INERT_START: u32 = #start;
+
+        #[doc = #pattern_doc]
+        ///
+        /// Return the index just past the inert span (string literal or `-> COMMENTS`
+        /// trivia) beginning at `i`, or `i` when no inert span begins there.
+        ///
+        /// Maximal munch, exactly as the lexer performs it. An UNTERMINATED span (the run
+        /// stays live to end-of-input without accepting) reports the whole remainder as
+        /// inert — the conservative direction, and the behaviour the hand-written
+        /// `__in_str` toggle it replaces already had.
+        #[allow(dead_code)]
+        fn __inert_skip(bytes: &[u8], i: usize) -> usize {
+            let n = bytes.len();
+            if i >= n {
+                return i;
+            }
+            let mut state: u32 = __INERT_START;
+            let mut last = i;
+            let mut j = i;
+            while j < n {
+                let class = __INERT_CLASS[bytes[j] as usize] as usize;
+                let next = __INERT_TRANS[state as usize * __INERT_CLASSES + class];
+                if next == u32::MAX {
+                    break;
+                }
+                state = next;
+                j += 1;
+                if __INERT_ACCEPT[state as usize] {
+                    last = j;
+                }
+            }
+            if last == i && j > i && j == n {
+                // Unterminated comment / string: the remainder is not code.
+                return n;
+            }
+            last
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

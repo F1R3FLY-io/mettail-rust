@@ -32,6 +32,10 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use super::lit_boundary;
+/// ★ THE SCAN-SITE REGISTRY. Every raw-source byte scan below obtains its conditions
+/// from a registered [`scan_site::ScanSite`]; a scan with an undeclared obligation emits
+/// `compile_error!` into the generated artifact.
+use super::scan_site;
 
 /// Emit the generated-module-scope `__MettailWpdaSemanticKeyHasher` ONCE
 /// (2026-06-28, SPPF-realize observational-dedup).
@@ -179,6 +183,22 @@ pub(crate) struct SepCombineShape {
     /// Labeled variants, ordered most-specific first (more operand-groups first),
     /// so the scan elects the suffix variant when its lead literal is present.
     variants: Vec<SepVariant>,
+    /// ★ THE TOKEN-BOUNDARY ALPHABET for the SUFFIX LEADS (scan site `sep.lead`).
+    ///
+    /// The lead scan matches a literal (`where`) in RAW DOMAIN TEXT and neither of its
+    /// neighbours is submitted to a whole-input parse at the moment the boundary is
+    /// chosen — the domain to its LEFT is split further first, and the suffix to its
+    /// RIGHT is submitted only *after* this scan has already committed. So under the
+    /// obligation criterion (see [`super::scan_site`]) neither side discharges
+    /// **(a) EVIDENCE**, and both must therefore carry **(b) BOUNDARY**.
+    ///
+    /// Until this field existed the site was inert only by accident: `where` is
+    /// word-shaped, so the retained ident-run test happened to cover it. A `.*sep` lead
+    /// spelled with punctuation — or one that is a proper prefix of a longer token —
+    /// had no protection at all. The sets are empty for every bundled grammar's leads,
+    /// so the emitted code is byte-identical; what changes is that the obligation is
+    /// discharged **by construction** for the next grammar rather than by spelling.
+    lead_boundaries: std::collections::BTreeMap<String, lit_boundary::LitBoundary>,
 }
 
 /// Extract a base category name from a `TypeExpr::Base`.
@@ -397,7 +417,30 @@ fn derive_sep_combine_shape(
     // Order variants most-specific first (more operand-groups first).
     variants.sort_by(|a, b| b.operand_groups.len().cmp(&a.operand_groups.len()));
 
-    Some(SepCombineShape { element_category, separator, result_src_idx, variants })
+    // ★ SCAN SITE `sep.lead` — discharge RULE-ext/RULE-pre by construction.
+    // Every suffix lead is a TOKEN of this language, so it may only match where the
+    // lexer would end that token. Derived from the SAME `language.token_defs` the
+    // projection skeletons' boundaries come from, so the two cannot drift apart.
+    let lead_texts: std::collections::BTreeSet<String> = variants
+        .iter()
+        .flat_map(|v| v.operand_groups.iter())
+        .map(|g| g.lead.clone())
+        .collect();
+    let lead_boundaries = if scan_site::SEP_LEAD_TOKEN_BOUNDARY {
+        lit_boundary::literal_boundary_sets(language, &lead_texts)
+    } else {
+        // CONTROL LEG: no lead gets an alphabet ⇒ every conjunct is elided ⇒ the emitted
+        // matcher makes exactly the decisions it made before this site was registered.
+        std::collections::BTreeMap::new()
+    };
+
+    Some(SepCombineShape {
+        element_category,
+        separator,
+        result_src_idx,
+        variants,
+        lead_boundaries,
+    })
 }
 
 /// The module-scope identifier of the isolation helper for `cat_name`.
@@ -769,12 +812,44 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
                     )
                 }
             };
-            // Depth-0 word-bounded lead detection over the raw bytes.
+            // ★ SCAN SITE `sep.lead` — depth-0 lead detection over the raw bytes.
+            //
+            // TWO conjuncts, one per direction, because NEITHER neighbour discharges
+            // EVIDENCE at the moment this boundary is chosen (see
+            // `SepCombineShape::lead_boundaries`): the retained ident-run test, and the
+            // general `pre`/`ext` alphabet that generalizes it from ident-shaped
+            // literals to ALL of them. Both sets are empty for every bundled grammar's
+            // leads, so `__sep_lead_boundary_ok` is vacuously true and the emitted
+            // decisions are unchanged — the obligation is now discharged by
+            // CONSTRUCTION rather than by `where` happening to be word-shaped.
+            // SUBSUMPTION, exactly as `lit_boundary` documents it: a lead whose boundary
+            // sets are EMPTY (or wholly covered by the retained ident-run test) imposes no
+            // condition, so NO conjunct is emitted and the generated matcher is
+            // byte-identical. `where`/`&` are in that class in every bundled grammar —
+            // which is why this site was inert by accident for so long.
+            let lb = shape.lead_boundaries.get(lead).cloned().unwrap_or_default();
+            let lead_boundary_conjunct = if lb.is_vacuous() {
+                quote! {}
+            } else {
+                let pre_bytes = lb.pre.clone();
+                let ext_bytes = lb.ext.clone();
+                quote! {
+                    && __sep_lead_boundary_ok(
+                        __bytes,
+                        __n,
+                        __i,
+                        #lead_len,
+                        &[ #(#pre_bytes),* ],
+                        &[ #(#ext_bytes),* ],
+                    )
+                }
+            };
             lead_checks.push(quote! {
                 if __i + #lead_len <= __n
                     && &__bytes[__i..__i + #lead_len] == #lead.as_bytes()
                     && (__i == 0 || !__is_word(__bytes[__i - 1]))
                     && (__i + #lead_len == __n || !__is_word(__bytes[__i + #lead_len]))
+                    #lead_boundary_conjunct
                 {
                     __variant = #vi_lit;
                     __domain_end = __i;
@@ -858,10 +933,69 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
     };
     let allow_single_expr = quote! { ((#suffix_allow_expr) || (#bare_allow_expr)) };
 
+    // ★ SCAN-SITE REGISTRY (Stage A). The three raw-source scans this helper emits
+    // obtain their conditions here; a scan that is not registered cannot get them.
+    let site_lead = &scan_site::SEP_LEAD;
+    let site_lead_depth = &scan_site::SEP_LEAD_DEPTH;
+    let site_split = &scan_site::SEP_SPLIT;
+    let guards = {
+        let mut g = TokenStream::new();
+        g.extend(site_lead.guard());
+        g.extend(site_lead_depth.guard());
+        g.extend(site_split.guard());
+        g
+    };
+    let ann_lead = site_lead.annotation();
+    let ann_lead_depth = site_lead_depth.annotation();
+    let ann_split = site_split.annotation();
+    let bytes_ident = format_ident!("__bytes");
+    let idx_ident = format_ident!("__i");
+    let inert_lead = site_lead_depth.inert_step(&bytes_ident, &idx_ident);
+    let inert_split = site_split.inert_step(&bytes_ident, &idx_ident);
+    // ★ SCAN SITE `sep.lead` — emit the boundary predicate ONLY when some lead actually
+    // carries a non-vacuous alphabet. Every bundled grammar's leads are vacuous, so
+    // nothing is emitted and the artifact is byte-identical; the obligation is still
+    // discharged BY CONSTRUCTION, because a future lead with a real alphabet gets the
+    // conjunct automatically rather than by someone remembering.
+    let sep_lead_boundary_fn = if shape.lead_boundaries.values().any(|b| !b.is_vacuous()) {
+        quote! {
+            /// ★ SCAN SITE `sep.lead` — the GENERAL half of the token-boundary rule for a
+            /// `.*sep` suffix lead, alongside the retained ident-run test.
+            ///
+            /// `pre` = bytes that, immediately before the lead, mean a token starting
+            /// there runs INTO it; `ext` = bytes that, immediately after it, extend it
+            /// into a strictly longer token starting at the same position. Both are
+            /// derived from this language's own token patterns at macro time.
+            fn __sep_lead_boundary_ok(
+                bytes: &[u8],
+                n: usize,
+                p: usize,
+                len: usize,
+                pre: &[u8],
+                ext: &[u8],
+            ) -> bool {
+                if p > 0 && !pre.is_empty() && pre.contains(&bytes[p - 1]) {
+                    return false;
+                }
+                let after = p + len;
+                if after < n && !ext.is_empty() && ext.contains(&bytes[after]) {
+                    return false;
+                }
+                true
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
+        #guards
         /// P2 ISOLATION+COMBINE (Plan a7986200): STRING-level divide-and-conquer
         /// `.*sep` linearizer for the `#cat_ident` category. See
         /// `emit_sep_isolation` in the macro for the full rationale.
+        #ann_lead
+        #ann_lead_depth
+        #ann_split
         #[allow(
             non_snake_case,
             unused_assignments,
@@ -882,6 +1016,7 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
             fn __is_word(c: u8) -> bool {
                 c.is_ascii_alphanumeric() || c == b'_'
             }
+            #sep_lead_boundary_fn
             let __bytes = input.as_bytes();
             let __n = __bytes.len();
             if __n == 0 {
@@ -893,6 +1028,11 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
             //     track depth; multi-char collection delimiters (`#{`/`{|`/…)
             //     balance via their `{`/`}` component (Stage-0-validated). This
             //     is the char-level analogue of the probe `split_amp_depth0`.
+            //
+            //     ★ RULE-inert: `__inert_skip` steps the cursor over string-literal
+            //     and `-> COMMENTS` bytes, so a bracket inside a comment cannot
+            //     corrupt the depth counter for the remainder of the scan and a lead
+            //     spelled inside a comment is never elected.
             let mut __variant: usize = #bare_variant_idx_lit;
             let mut __domain_end: usize = __n;
             #[allow(unused_assignments)]
@@ -901,6 +1041,7 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
                 let mut __depth: i32 = 0;
                 let mut __i = 0usize;
                 'scan: while __i < __n {
+                    #inert_lead
                     match __bytes[__i] {
                         b'(' | b'[' | b'{' => __depth += 1,
                         b')' | b']' | b'}' => __depth -= 1,
@@ -915,12 +1056,20 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
             }
 
             // (2) SPLIT the domain `[0, __domain_end)` at depth-0 separator bytes.
+            //
+            //     ★ RULE-inert: a separator spelled inside a string literal or a
+            //     comment is CONTENT, not a split. Both operand spans of this site DO
+            //     discharge EVIDENCE (each segment is submitted whole to the element
+            //     category's own string entry), which is why it needs no `pre`/`ext`;
+            //     evidence says nothing about whether the byte was code in the first
+            //     place, which is why it still needs this.
             let mut __seg_ranges: Vec<(usize, usize)> = Vec::new();
             {
                 let mut __depth: i32 = 0;
                 let mut __start = 0usize;
                 let mut __i = 0usize;
                 while __i < __domain_end {
+                    #inert_split
                     match __bytes[__i] {
                         b'(' | b'[' | b'{' => __depth += 1,
                         b')' | b']' | b'}' => __depth -= 1,
@@ -2398,6 +2547,13 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
     // returns ALL whole-input operand tilings, branching at ambiguous-δ operand
     // slots (`amb[k]`) over run-anchor-passing depth-0 boundaries (the operand can
     // itself contain δ — a nested send `@Nil!(…)`).
+    // ★ SCAN SITE `proj.operand_delim` — RULE-inert. The matcher's locals are `bytes`
+    // and `j` (not `__bytes`/`__i`), so the registry's step is built against those.
+    let inert_operand_delim = {
+        let b = format_ident!("bytes");
+        let j = format_ident!("j");
+        scan_site::PROJ_OPERAND_DELIM.inert_step(&b, &j)
+    };
     let (matchall_recv_param, matchall_lgl_arg): (TokenStream, TokenStream) = if has_method {
         (quote! { leading_greedy_last: bool, }, quote! { leading_greedy_last })
     } else {
@@ -2495,6 +2651,11 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                                 let mut depth: i32 = 0;
                                 let mut j = start;
                                 while j < n {
+                                    // ★ SCAN SITE `proj.operand_delim` / RULE-inert: an
+                                    // operand's right delimiter may not be found inside a
+                                    // string literal or a comment, and a bracket in inert
+                                    // text may not move `depth`.
+                                    #inert_operand_delim
                                     let c = bytes[j];
                                     if depth == 0
                                         && j + lb.len() <= n
@@ -2561,6 +2722,23 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
     };
     let matcher_def: TokenStream = matcher_on;
 
+    // ★ SCAN-SITE REGISTRY (Stage A) for the projection helper's scans.
+    let ann_proj = {
+        let mut a = TokenStream::new();
+        for s in [
+            &scan_site::PROJ_RECEIVER_GATE,
+            &scan_site::PROJ_SEP_REGION,
+            &scan_site::PROJ_LIT_RUN,
+            &scan_site::PROJ_LIT,
+            &scan_site::PROJ_OPERAND_DELIM,
+            &scan_site::PROJ_SIGIL_REJECT,
+        ] {
+            a.extend(s.guard());
+            a.extend(s.annotation());
+        }
+        a
+    };
+
     // ── ROOT-1 AUTHORITATIVE-REJECT (design a9fbeefe) ──
     // The two runtime bookkeeping locals + the reject-aware decline.
     // Grammar-derived DISTINCT first-bytes of the σ-led variants' leading literal
@@ -2624,6 +2802,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
         /// divide-and-conquer `@`-projection linearizer for the `#cat_ident`
         /// category. See `emit_projection_isolation` in the macro for the
         /// full rationale.
+        #ann_proj
         #[allow(
             non_snake_case,
             unused_assignments,
@@ -2799,6 +2978,20 @@ pub(crate) struct InfixIsoShape {
     /// The admitted operators, in ORIGINAL binding-power (declaration) order — the
     /// index into this vec is the stable `op_idx` the ctor `match` dispatches on.
     ops: Vec<InfixOp>,
+    /// ★ THE TOKEN-BOUNDARY ALPHABET for the operator terminals (scan site
+    /// `infix.ops`), emitted **only** when [`scan_site::INFIX_TOKEN_BOUNDARY`] is on.
+    ///
+    /// This site is the one place in the registry that is *derivably exempt* from the
+    /// BOUNDARY obligation: both spans are submitted whole to the category's own string
+    /// entry, and `__left_is_operand` additionally requires a complete operand terminal
+    /// at `p-1`. The evidence obligation is FEASIBILITY-AWARE (`Int(1) Int(-7)` is two
+    /// adjacent processes, which no single `Proc` admits), whereas `pre`/`ext` are
+    /// feasibility-BLIND local over-approximations — so where evidence is discharged,
+    /// the boundary test can only subtract correct answers.
+    ///
+    /// The sets are computed regardless so the `true` leg can be MEASURED rather than
+    /// argued about; the shipped value is `false` and the map is then empty.
+    op_boundaries: std::collections::BTreeMap<String, lit_boundary::LitBoundary>,
 }
 
 /// Derive the [`InfixIsoShape`] for `cat_name`, or `None` when the category has no
@@ -2841,7 +3034,18 @@ fn derive_infix_iso_shape(
     if ops.is_empty() {
         return None;
     }
-    Some(InfixIsoShape { result_src_idx, ops })
+    // ★ SCAN SITE `infix.ops` — the boundary sets for the MEASUREMENT leg (X3). Empty
+    // (⇒ every emitted conjunct vacuous ⇒ byte-identical) unless
+    // `scan_site::INFIX_TOKEN_BOUNDARY` is flipped on to measure the cost of the
+    // exemption. See the field's documentation for why the exemption is sound.
+    let op_boundaries = if scan_site::INFIX_TOKEN_BOUNDARY {
+        let terms: std::collections::BTreeSet<String> =
+            ops.iter().map(|o| o.terminal.clone()).collect();
+        lit_boundary::literal_boundary_sets(language, &terms)
+    } else {
+        std::collections::BTreeMap::new()
+    };
+    Some(InfixIsoShape { result_src_idx, ops, op_boundaries })
 }
 
 /// The module-scope identifier of the binary-infix isolation helper for `cat_name`.
@@ -2950,10 +3154,147 @@ fn emit_infix_isolation(cat_ident: &proc_macro2::Ident, shape: &InfixIsoShape) -
         })
         .collect();
 
+    // ★ SCAN-SITE REGISTRY (Stage A) for the two scans this helper emits.
+    let site_ops = &scan_site::INFIX_OPS;
+    let site_str = &scan_site::INFIX_STRING_STATE;
+    let guards = {
+        let mut g = TokenStream::new();
+        g.extend(site_ops.guard());
+        g.extend(site_str.guard());
+        g
+    };
+    let ann_ops = site_ops.annotation();
+    let ann_str = site_str.annotation();
+    let bytes_ident = format_ident!("__bytes");
+    let idx_ident = format_ident!("__i");
+
+    // ★ RULE-inert. When the derived skipper is on it SUBSUMES the hand-written
+    // `__in_str` state — which was, until Stage B, the ONLY implementation anywhere in
+    // the emitter of the rule *"bytes inside a literal are content, not splits"*, and
+    // which knew nothing about comments. When the lever is off, the original toggle is
+    // emitted verbatim and the artifact is byte-identical.
+    let (inert_state_decl, inert_ops_step, inert_str_toggle) = if site_ops.skips_inert() {
+        (
+            quote! {},
+            site_ops.inert_step(&bytes_ident, &idx_ident),
+            quote! {},
+        )
+    } else {
+        (
+            quote! {
+                // STRING-LITERAL state: operator terminals inside a `"…"` string
+                // literal (e.g. a `CastStr("a or b")` operand) are CONTENT, NOT
+                // splits — skip them. A `"` toggles the state UNLESS escaped (an ODD
+                // run of immediately-preceding backslashes; the display escapes an
+                // inner `"` as `\"`). Brackets are also inert inside a string.
+                let mut __in_str = false;
+            },
+            quote! {},
+            quote! {
+                if __c == b'"' {
+                    let mut __bs = 0usize;
+                    while __bs < __i && __bytes[__i - 1 - __bs] == b'\\' {
+                        __bs += 1;
+                    }
+                    if __bs % 2 == 0 {
+                        __in_str = !__in_str;
+                    }
+                    __i += 1;
+                    continue;
+                }
+                if __in_str {
+                    __i += 1;
+                    continue;
+                }
+            },
+        )
+    };
+
+    // ★ THE MEASUREMENT LEG (X3, `scan_site::INFIX_TOKEN_BOUNDARY`). Shipped `false`:
+    // nothing is emitted and the artifact is byte-identical. Flipped `true`, the
+    // operator election also demands a genuine token boundary, so the COST of the
+    // exemption can be measured instead of asserted.
+    // ★ THE MEASUREMENT LEG (X3). The WHOLE election loop is emitted per-leg, because a
+    // `quote!` fragment must carry balanced delimiters — so the shipped artifact keeps
+    // the original `for &(…) in __OPS` loop byte-for-byte, and the measurement leg emits
+    // an indexed loop that also demands a genuine token boundary.
+    let infix_election_loop = if scan_site::INFIX_TOKEN_BOUNDARY {
+        let bound_rows: Vec<TokenStream> = ordered
+            .iter()
+            .map(|(_, op)| {
+                let lb = shape.op_boundaries.get(&op.terminal).cloned().unwrap_or_default();
+                let pre = lb.pre.clone();
+                let ext = lb.ext.clone();
+                quote! { (&[ #(#pre),* ], &[ #(#ext),* ]) }
+            })
+            .collect();
+        quote! {
+            /// Per-`__OPS`-slot `(pre, ext)` token-boundary alphabets, in the same
+            /// maximal-munch order as `__OPS`.
+            const __OPS_BOUNDS: &[(&[u8], &[u8])] = &[ #(#bound_rows),* ];
+            #[allow(unused_variables)]
+            for (__slot, &(__term, __prec, __assoc_right, __op_idx)) in
+                __OPS.iter().enumerate()
+            {
+                let __tb = __term.as_bytes();
+                if __i + __tb.len() > __n || &__bytes[__i..__i + __tb.len()] != __tb {
+                    continue;
+                }
+                // Word-boundary for identifier-shaped terminals (`or`, `and`,
+                // `bitor`) so `or` does not match inside `error`/`for`.
+                if __tb.iter().all(|&c| __is_word(c)) {
+                    let __before_ok = __i == 0 || !__is_word(__bytes[__i - 1]);
+                    let __after_ok = __i + __tb.len() == __n
+                        || !__is_word(__bytes[__i + __tb.len()]);
+                    if !(__before_ok && __after_ok) {
+                        continue;
+                    }
+                }
+                // ★ THE MEASURED CONJUNCT — the (b) BOUNDARY test this site is
+                // derivably EXEMPT from, emitted so its cost can be measured.
+                let (__pre, __ext) = __OPS_BOUNDS[__slot];
+                let __after = __i + __tb.len();
+                let __pre_ok =
+                    __i == 0 || __pre.is_empty() || !__pre.contains(&__bytes[__i - 1]);
+                let __ext_ok =
+                    __after >= __n || __ext.is_empty() || !__ext.contains(&__bytes[__after]);
+                if !(__pre_ok && __ext_ok) {
+                    continue;
+                }
+                __matched = Some((__tb.len(), __prec, __assoc_right, __op_idx));
+                break; // maximal munch: longest terminal first
+            }
+        }
+    } else {
+        quote! {
+            for &(__term, __prec, __assoc_right, __op_idx) in __OPS {
+                let __tb = __term.as_bytes();
+                if __i + __tb.len() > __n || &__bytes[__i..__i + __tb.len()] != __tb {
+                    continue;
+                }
+                // Word-boundary for identifier-shaped terminals (`or`, `and`,
+                // `bitor`) so `or` does not match inside `error`/`for`.
+                if __tb.iter().all(|&c| __is_word(c)) {
+                    let __before_ok = __i == 0 || !__is_word(__bytes[__i - 1]);
+                    let __after_ok = __i + __tb.len() == __n
+                        || !__is_word(__bytes[__i + __tb.len()]);
+                    if !(__before_ok && __after_ok) {
+                        continue;
+                    }
+                }
+                __matched = Some((__tb.len(), __prec, __assoc_right, __op_idx));
+                break; // maximal munch: longest terminal first
+            }
+        }
+    };
+
     quote! {
+        #guards
         /// P3 PRECEDENCE-AWARE BINARY-INFIX ISOLATION+COMBINE (ROOT-2 `or`):
         /// STRING-level divide-and-conquer infix linearizer for the `#cat_ident`
         /// category. See `emit_infix_isolation` in the macro for the full rationale.
+        #ann_ops
+        #ann_str
         #[allow(
             non_snake_case,
             unused_assignments,
@@ -2996,30 +3337,12 @@ fn emit_infix_isolation(cat_ident: &proc_macro2::Ident, shape: &InfixIsoShape) -
             let mut __best: Option<(u8, usize, usize, usize)> = None; // (prec, start, end, op_idx)
             {
                 let mut __depth: i32 = 0;
-                // STRING-LITERAL state: operator terminals inside a `"…"` string
-                // literal (e.g. a `CastStr("a or b")` operand) are CONTENT, NOT
-                // splits — skip them. A `"` toggles the state UNLESS escaped (an ODD
-                // run of immediately-preceding backslashes; the display escapes an
-                // inner `"` as `\"`). Brackets are also inert inside a string.
-                let mut __in_str = false;
+                #inert_state_decl
                 let mut __i = 0usize;
                 while __i < __n {
+                    #inert_ops_step
                     let __c = __bytes[__i];
-                    if __c == b'"' {
-                        let mut __bs = 0usize;
-                        while __bs < __i && __bytes[__i - 1 - __bs] == b'\\' {
-                            __bs += 1;
-                        }
-                        if __bs % 2 == 0 {
-                            __in_str = !__in_str;
-                        }
-                        __i += 1;
-                        continue;
-                    }
-                    if __in_str {
-                        __i += 1;
-                        continue;
-                    }
+                    #inert_str_toggle
                     match __c {
                         b'(' | b'[' | b'{' => {
                             __depth += 1;
@@ -3035,24 +3358,7 @@ fn emit_infix_isolation(cat_ident: &proc_macro2::Ident, shape: &InfixIsoShape) -
                     }
                     if __depth == 0 {
                         let mut __matched: Option<(usize, u8, bool, usize)> = None; // (oplen, prec, assoc_right, op_idx)
-                        for &(__term, __prec, __assoc_right, __op_idx) in __OPS {
-                            let __tb = __term.as_bytes();
-                            if __i + __tb.len() > __n || &__bytes[__i..__i + __tb.len()] != __tb {
-                                continue;
-                            }
-                            // Word-boundary for identifier-shaped terminals (`or`, `and`,
-                            // `bitor`) so `or` does not match inside `error`/`for`.
-                            if __tb.iter().all(|&c| __is_word(c)) {
-                                let __before_ok = __i == 0 || !__is_word(__bytes[__i - 1]);
-                                let __after_ok = __i + __tb.len() == __n
-                                    || !__is_word(__bytes[__i + __tb.len()]);
-                                if !(__before_ok && __after_ok) {
-                                    continue;
-                                }
-                            }
-                            __matched = Some((__tb.len(), __prec, __assoc_right, __op_idx));
-                            break; // maximal munch: longest terminal first
-                        }
+                        #infix_election_loop
                         if let Some((__oplen, __prec, __assoc_right, __op_idx)) = __matched {
                             let __left = input[..__i].trim();
                             let __right = input[__i + __oplen..].trim();
@@ -4807,7 +5113,35 @@ pub(crate) fn emit_parse_fns(
     } else {
         quote! {}
     };
+    // ── ★ RULE-inert: the DERIVED INERT-SPAN SKIPPER + the SCAN-SITE REGISTRY table ──
+    // `__inert_skip` is emitted ONCE per language module and shared by every registered
+    // raw-source scan, so the rule *"a scan may only inspect DEFAULT-channel bytes"* has
+    // exactly one implementation instead of the one-site-only `__in_str` it replaces.
+    // Gated on there being an isolation helper at all; a language with no comments and no
+    // string family derives an EMPTY inert pattern set and emits nothing (byte-identical).
+    let inert_skipper = if any_iso_eligible {
+        super::lit_boundary::emit_inert_skipper(language)
+    } else {
+        quote! {}
+    };
+    // The registry as DATA, so the enumerating gate (Stage C) iterates the same rows the
+    // emitter obtained its conditions from — a site cannot be in the code and absent from
+    // the gate.
+    // Gated by the SAME artifact lever as the annotations: the table is registry
+    // SURFACE, consumed only by the generated Stage-C gate, so turning the lever off
+    // recovers a byte-identical artifact.
+    let scan_site_table = if any_iso_eligible && super::scan_site::SCAN_SITE_ANNOTATE_ARTIFACT {
+        super::scan_site::emit_registry_table()
+    } else {
+        quote! {}
+    };
     quote! {
+        // ★ RULE-inert (Stage B): the language-derived inert-span skipper, shared by
+        // every registered scan. Empty when no isolation helper is emitted, or when the
+        // language declares neither comments nor a string family (byte-identical).
+        #inert_skipper
+        // ★ The SCAN-SITE REGISTRY, as data, for the generated conformance gate.
+        #scan_site_table
         // ROOT-P MEMOIZED BEST-PARSE (design af7680e2): shared epoch/depth
         // thread-local preamble + `__ProjMemoGuard`. Empty when OFF / no
         // iso-eligible category (byte-identical).

@@ -96,6 +96,14 @@ pub mod parikh_tables;
 pub mod prefix;
 pub mod recovery;
 pub mod refinement;
+/// ★ THE SCAN-SITE REGISTRY — every raw-source byte scan the emitter can produce, with
+/// each side's obligation named and discharged by EVIDENCE, by BOUNDARY, or by a
+/// recorded justification that is emitted into the generated artifact.
+///
+/// Four defects in one week shared one shape: a rule this repository had written down
+/// was implemented over a proper subset of its scope. A scan that cannot obtain its
+/// conditions without declaring its obligations cannot repeat that.
+pub mod scan_site;
 pub mod semantic_actions;
 pub mod synthetic;
 pub mod tables;
