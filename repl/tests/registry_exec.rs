@@ -49,11 +49,27 @@ const A_S6_DEMOS: [&str; 0] = [
     // "NativeFoldDemo",  // de-productionized 2026-07-26 (test-hosted)
 ];
 
+/// Task #22 (USER ruling 2026-07-27): the four GSLT omnibus conformance specs. `e1bfcd38`
+/// promoted them out of their own test binaries into `languages/src/`, but the shipped
+/// registry was still `{lambda, ambient, rhocalc, calculator}` — so a language that had
+/// become a production spec was reachable from nothing but one test binary. Unlike
+/// [`A_S6_DEMOS`], this list is NOT expected to be empty: emptying it would silently undo
+/// the ruling.
+const OMNIBUS_SPECS: [&str; 4] = ["Json", "Monoid", "Pi", "Turing"];
+
 #[test]
 fn every_bundled_language_advertises_a_default_runtime_backend() {
     let by_name = default_backends();
     for expected in ["Rholang", "Calculator", "Lambda", "Ambient"] {
         assert!(by_name.contains_key(expected), "registry must contain {expected}");
+    }
+    // Task #22: the four omnibus specs are registry members, and building the registry at all
+    // exercises each one's `planned_rho_backend_for` + install (fingerprint + plan gate).
+    for expected in OMNIBUS_SPECS {
+        assert!(
+            by_name.contains_key(expected),
+            "registry must contain the omnibus spec {expected} (task #22 USER ruling)"
+        );
     }
     // A-S6: the demo languages are registry members too (the runtime mandate is universal).
     for expected in A_S6_DEMOS {
@@ -105,6 +121,73 @@ fn default_backends_are_capability_based() {
             Some(&Some(RuntimeBackend::RhoMachine)),
             "{demo} defaults to the two-stage Dovetail+Rholang backend (in-Rho set-automaton \
              match)"
+        );
+    }
+    // Task #22: same shape for the four omnibus specs — none is drive-opted, so each defaults
+    // to the in-Rho set-automaton match, not to a host Dovetail path.
+    for spec in OMNIBUS_SPECS {
+        assert_eq!(
+            by_name.get(spec),
+            Some(&Some(RuntimeBackend::RhoMachine)),
+            "{spec} defaults to the two-stage Dovetail+Rholang backend (in-Rho set-automaton \
+             match)"
+        );
+    }
+}
+
+/// Task #22 — REACHABILITY, not mere constructibility.
+///
+/// `build_registry` succeeding proves the four wrappers INSTALL. It does not prove a user can
+/// get at them: [`LanguageRegistry::get`] keys on `language.name().to_lowercase()`, so what a
+/// person types at the prompt (`lang json`) has to resolve through that map. This asserts the
+/// lookup key each language actually answers to, in every case form the REPL accepts, and then
+/// asserts each one PARSES a representative program of its own surface — the first thing a
+/// user does after `lang <name>`.
+#[test]
+fn each_omnibus_spec_is_reachable_by_its_repl_key_and_parses() {
+    let registry =
+        build_registry().expect("build_registry must construct + install every production backend");
+
+    // One representative program per language, in that language's own concrete syntax.
+    let subjects: [(&str, &str); 4] = [
+        ("json", r#"{"a": 1}"#),
+        ("monoid", "(e * a)"),
+        ("pi", "{ in(c,y).0 | c!c.0 }"),
+        ("turing", "(q0 , <[] | 0 | [0,1]>)"),
+    ];
+
+    for (key, source) in subjects {
+        // The exact string a user types, plus the case forms `get`/`contains` promise.
+        for form in [key.to_string(), key.to_uppercase(), {
+            let mut c = key.chars();
+            match c.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        }] {
+            assert!(
+                registry.contains(&form),
+                "`lang {form}` must resolve — the REPL keys the registry on \
+                 name().to_lowercase()"
+            );
+            let language = registry
+                .get(&form)
+                .unwrap_or_else(|err| panic!("registry.get({form:?}) failed: {err}"));
+            assert_eq!(
+                language.name().to_lowercase(),
+                key,
+                "the value behind key {form:?} must be the language that key names"
+            );
+        }
+
+        let language = registry.get(key).expect("resolved above");
+        let term = language
+            .parse_term(source)
+            .unwrap_or_else(|err| panic!("`lang {key}` then {source:?} must parse: {err}"));
+        assert!(
+            !language.format_term(term.as_ref()).is_empty(),
+            "{key} must render the term it parsed — a registered language with no rendering \
+             surface is not usable interactively"
         );
     }
 }

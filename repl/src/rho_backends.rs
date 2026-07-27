@@ -10,7 +10,11 @@
 //! | Ambient    | Dovetail + Rholang (two-stage)  | A-S5.6: the in-Rho QUIESCENCE DRIVER fires the guarded AC mobility trio (In/Out/Open) to quiescence on the Rho machine |
 //! | Rholang    | Dovetail + Rholang (two-stage)  | COMM / observed pure values → Rho machine; mixed → pre-fold then Rho |
 //! | Calculator | Dovetail + Rholang (two-stage)  | scalar expr tree → Rho dataflow (E3); non-scalar → rejected at Rho-default boundary; partial arithmetic → semantic predicate |
-//! | SwapDemo + the 12 rho_net demos | Dovetail + Rholang (two-stage) | A-S6: the in-Rho set-automaton MATCH (single-shot locate-and-fire) is the default exec path; the D-stage runs only on typed deferrals |
+//! | Json       | Dovetail + Rholang (two-stage)  | A-S6: pure DATA (no equations, no rewrites) — an admitted exec injects the parsed value in-Rho and rests it; no firing |
+//! | Monoid     | Dovetail + Rholang (two-stage)  | A-S6: the in-Rho set-automaton MATCH admits its subjects on the report-free path (unit/assoc quotient in the e-graph) |
+//! | Pi         | Dovetail + Rholang (two-stage)  | A-S6: `Comm`/`CommAsync` fire through the σ-replay driver on the by-design deferral (`PIn` is a pre-scope binder the match path does not reflect) |
+//! | Turing     | Dovetail + Rholang (two-stage)  | A-S6: `Tp` has no positional ground image, so exec fails CLOSED with a typed deferral error; parse/introspection/`step` work |
+//! | SwapDemo + the 12 rho_net demos | (de-productionized) | Task #11: NOT registry members — their in-Rho firing is covered by `rholang-runtime/tests/rho_net_*_firing.rs` instead |
 //!
 //! A-S2 (D-stage demotion): the two-stage languages install the LAZY wrapper
 //! (`install_dovetail_rho_runtime_backend_lazy`) — the report-free F2 compile is the default exec
@@ -80,7 +84,14 @@ mod dovetail_only {
     // use mettail_languages::commdemo::CommDemoLanguage;
     // use mettail_languages::ctxdemo::CtxDemoLanguage;
     // use mettail_languages::inoutdemo::InOutDemoLanguage;
+    // GSLT omnibus conformance specs (`Json` L1, `Monoid` L2, `Turing` L9, `Pi` L11),
+    // promoted into `languages/src/` by `e1bfcd38` and onto REPL backends by task #22
+    // (USER ruling). These are PRODUCTION specs, so — unlike the demonstration grammars
+    // above — they are imported and registered rather than commented out.
+    use mettail_languages::json::JsonLanguage;
     use mettail_languages::lambda::LambdaLanguage;
+    use mettail_languages::monoid::MonoidLanguage;
+    use mettail_languages::pi::PiLanguage;
     // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
     // want REPL integration for the non-production grammars!" SwapDemo and the eleven
     // rho_net DEMONSTRATION grammars left the registry, so nothing here names them any
@@ -91,6 +102,7 @@ mod dovetail_only {
     // use mettail_languages::nativedemo::NativeDemoLanguage;
     // use mettail_languages::nlacdemo::NlAcDemoLanguage;
     // use mettail_languages::swapdemo::SwapDemoLanguage;
+    use mettail_languages::turing::TuringLanguage;
     use mettail_runtime::{
         AscentResults, Language, LanguageMetadata, RuntimeBackend, RuntimeBackendCapability,
         RuntimeBackendReport, Term, TermType, VarTypeInfo,
@@ -100,7 +112,8 @@ mod dovetail_only {
     /// (Lambda/Ambient — A-S5.6).
     const QUIESCENCE_DRIVER: &str = "the in-Rho quiescence driver";
     /// The production in-Rho execution mechanism of every non-drive-opted wrapped
-    /// language (SwapDemo + the 12 rho_net demos — A-S6).
+    /// language (A-S6; today `Json`/`Monoid`/`Pi`/`Turing`, and historically SwapDemo +
+    /// the 12 rho_net demos before they were de-productionized).
     const SET_AUTOMATON_MATCH: &str = "the in-Rho set-automaton match";
 
     /// The typed decision-(4) exec error for one language, naming its production in-Rho
@@ -243,10 +256,18 @@ mod dovetail_only {
         }))
     }
 
-    /// Expands one A-S6 fail-closed demo wrapper for the Dovetail-only profile:
+    /// Expands one A-S6 fail-closed wrapper for the Dovetail-only profile:
     /// parse/introspection delegate; exec fails closed pointing at the rho build
     /// (decision (4), universal since the demo flip).
-    macro_rules! demo_fail_closed {
+    ///
+    /// Task #22 renamed this macro (it used to be called after the demo grammars that were
+    /// its only users). The expansion is unchanged and was
+    /// already exactly right for a non-drive-opted language; only the NAME was wrong once
+    /// its users stopped being demonstration grammars. It now expands the wrapper for the
+    /// four PRODUCTION omnibus specs (`Json`/`Monoid`/`Pi`/`Turing`), and the retained
+    /// commented-out demo invocations below are renamed with it so they stay expandable if
+    /// a demo is ever re-productionized.
+    macro_rules! set_automaton_match_fail_closed {
         ($(#[$doc:meta])* $fn_name:ident, $lang:path) => {
             $(#[$doc])*
             pub fn $fn_name() -> Result<Box<dyn Language>> {
@@ -258,64 +279,97 @@ mod dovetail_only {
         };
     }
 
+    // ── Task #22: the four GSLT omnibus specs, Dovetail-only profile ────────────────────
+    //
+    // `Json`, `Monoid`, `Pi` and `Turing` are not drive-opted (`DRIVE_OPT_IN` remains
+    // exactly {Lambda, Ambient}), so their production mechanism is the in-Rho
+    // set-automaton match and this profile fails their exec CLOSED, exactly like every
+    // other machine-defaulted language. Parse, introspection and env still work here.
+    //
+    // The `set_automaton_match_fail_closed!` expansion is the right shape for them
+    // unchanged — that judgement is why the macro was renamed rather than duplicated: its
+    // body never said anything about demonstration grammars, only about a language whose
+    // production mechanism is the match.
+
+    set_automaton_match_fail_closed!(
+        /// `Json` in the Dovetail-only profile (fail-closed, A-S6).
+        json_backed,
+        JsonLanguage
+    );
+    set_automaton_match_fail_closed!(
+        /// `Monoid` in the Dovetail-only profile (fail-closed, A-S6).
+        monoid_backed,
+        MonoidLanguage
+    );
+    set_automaton_match_fail_closed!(
+        /// `Pi` in the Dovetail-only profile (fail-closed, A-S6).
+        pi_backed,
+        PiLanguage
+    );
+    set_automaton_match_fail_closed!(
+        /// `Turing` in the Dovetail-only profile (fail-closed, A-S6).
+        turing_backed,
+        TuringLanguage
+    );
+
     // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
     // want REPL integration for the non-production grammars!" Every wrapper below is
     // commented out rather than deleted so the A-S6 registry shape stays legible. The
     // in-Rho firing each one exposed interactively remains covered end-to-end by the
     // corresponding `rholang-runtime/tests/rho_net_*_firing.rs`, which drives the same
     // machine path directly — REPL-unreachability is the intended outcome, not a gap.
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// SwapDemo in the Dovetail-only profile (fail-closed, A-S6).
     // swapdemo_backed, SwapDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// AcDemo in the Dovetail-only profile (fail-closed, A-S6).
     // acdemo_backed, AcDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// AcBagDemo in the Dovetail-only profile (fail-closed, A-S6).
     // acbagdemo_backed, AcBagDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// NlAcDemo in the Dovetail-only profile (fail-closed, A-S6).
     // nlacdemo_backed, NlAcDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// AmbDemo in the Dovetail-only profile (fail-closed, A-S6).
     // ambdemo_backed, AmbDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// AmbNewDemo in the Dovetail-only profile (fail-closed, A-S6).
     // ambnewdemo_backed, AmbNewDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// InOutDemo in the Dovetail-only profile (fail-closed, A-S6).
     // inoutdemo_backed, InOutDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// CommDemo in the Dovetail-only profile (fail-closed, A-S6).
     // commdemo_backed, CommDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// CtxDemo in the Dovetail-only profile (fail-closed, A-S6).
     // ctxdemo_backed, CtxDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// BiCongDemo in the Dovetail-only profile (fail-closed, A-S6).
     // bicongdemo_backed, BiCongDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// LambdaDemo in the Dovetail-only profile (fail-closed, A-S6).
     // lambdademo_backed, LambdaDemoLanguage
     // );
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     // /// NativeDemo in the Dovetail-only profile (fail-closed, A-S6).
     // nativedemo_backed, NativeDemoLanguage
     // );
     // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED alongside the `rho` profile's
     // `nativefolddemo_backed` (see the rationale there). Commented out, not deleted.
     //
-    // demo_fail_closed!(
+    // set_automaton_match_fail_closed!(
     //     /// NativeFoldDemo in the Dovetail-only profile (fail-closed, A-S6).
     //     nativefolddemo_backed, NativeFoldDemoLanguage
     // );
@@ -325,7 +379,9 @@ mod dovetail_only {
 // twelve DEMONSTRATION wrappers are de-productionized (USER: "I don't want REPL integration
 // for the non-production grammars!"), so there is nothing left to name.
 #[cfg(not(feature = "rho-languages"))]
-pub use dovetail_only::{ambient_backed, lambda_backed};
+pub use dovetail_only::{
+    ambient_backed, json_backed, lambda_backed, monoid_backed, pi_backed, turing_backed,
+};
 
 #[cfg(feature = "rho-languages")]
 mod rho {
@@ -359,7 +415,14 @@ mod rho {
     // use mettail_languages::commdemo::CommDemoLanguage;
     // use mettail_languages::ctxdemo::CtxDemoLanguage;
     // use mettail_languages::inoutdemo::InOutDemoLanguage;
+    // GSLT omnibus conformance specs (`Json` L1, `Monoid` L2, `Turing` L9, `Pi` L11),
+    // promoted into `languages/src/` by `e1bfcd38` and onto REPL backends by task #22
+    // (USER ruling). These are PRODUCTION specs, so — unlike the demonstration grammars
+    // above — they are imported and registered rather than commented out.
+    use mettail_languages::json::JsonLanguage;
     use mettail_languages::lambda::LambdaLanguage;
+    use mettail_languages::monoid::MonoidLanguage;
+    use mettail_languages::pi::PiLanguage;
     // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
     // want REPL integration for the non-production grammars!" SwapDemo and the eleven
     // rho_net DEMONSTRATION grammars left the registry, so nothing here names them any
@@ -370,6 +433,7 @@ mod rho {
     // use mettail_languages::nativedemo::NativeDemoLanguage;
     // use mettail_languages::nlacdemo::NlAcDemoLanguage;
     // use mettail_languages::swapdemo::SwapDemoLanguage;
+    use mettail_languages::turing::TuringLanguage;
     use mettail_runtime::{Language, RuntimeDovetailRunReport, Term};
 
     use mettail_rholang_codegen::{
@@ -528,7 +592,7 @@ mod rho {
     // the D-stage report producer, the report-carrying σ-replay fallback compiler, the
     // report-FREE in-Rho set-automaton match (the A-S2 default exec path) and the lazy
     // two-stage installer — leaves the REPL with it. Commented out rather than deleted: this
-    // block is the reference shape every `demo_rho_backed!` wrapper was factored out of, and
+    // block is the reference shape every `rho_match_backed!` wrapper was factored out of, and
     // it stays legible here. The path itself is unaffected and is still driven end-to-end by
     // `rholang-runtime/tests/rho_net_equivalence.rs` (report-free match vs. σ-replay
     // differential) and `rho_net_naive_equivalence.rs`.
@@ -800,7 +864,7 @@ mod rho {
     /// graph for typed-path demos, the D-stage report (derivation graph — the SwapDemo
     /// pattern) for untyped demos. Reached only via REPL `step` routing
     /// (`Language::run_step_backend_report`); production `exec` never calls it.
-    macro_rules! demo_step_slot {
+    macro_rules! match_step_slot {
         ($lang:path, typed_step_graph) => {
             |term: &dyn Term| <$lang>::dovetail_step_graph(term, MAX_ITERS, MAX_NODES)
         };
@@ -814,7 +878,7 @@ mod rho {
     /// the host-matched σ-replay driver); `match_then_typed_error` = the Lambda/F16 shape
     /// (report-driven match, else a TYPED error — the σ-replay driver has no substitution
     /// arm for the language's firing family, so replaying would double-substitute).
-    macro_rules! demo_fallback_slot {
+    macro_rules! match_fallback_slot {
         ($lang:path, $name:literal, match_then_replay) => {
             |term: &dyn Term, report: &RuntimeDovetailRunReport| {
                 match <$lang>::rho_net_match_invocation_from_dovetail_to(term, report, OUT) {
@@ -849,12 +913,20 @@ mod rho {
         };
     }
 
-    /// Expands one A-S6 demo-language production wrapper: the two-stage LAZY
+    /// Expands one A-S6 production wrapper for a language whose in-Rho mechanism is the
+    /// set-automaton MATCH (i.e. anything not in `DRIVE_OPT_IN`): the two-stage LAZY
     /// Dovetail+Rholang backend on the `swapdemo_backed` shape — the report-free
     /// `rho_net_match_invocation_to` is the default exec path (in-Rho locate-all match,
     /// ZERO Dovetail work when admitted); the D-stage runs only on a typed deferral,
     /// resolved by the selected fallback shape.
-    macro_rules! demo_rho_backed {
+    ///
+    /// Task #22 renamed this family (`demo_rho_backed!`/`demo_step_slot!`/
+    /// `demo_fallback_slot!`) because its users are no longer demonstration grammars: the
+    /// four GSLT omnibus specs below are PRODUCTION languages. Not one line of any
+    /// expansion changed — the shape was always about the mechanism, never about the
+    /// status of the grammar — and the retained commented-out demo invocations are renamed
+    /// with it so they stay expandable if a demo is ever re-productionized.
+    macro_rules! rho_match_backed {
         (
             $(#[$doc:meta])*
             $fn_name:ident, $lang:path, $name:literal,
@@ -870,14 +942,14 @@ mod rho {
                     $lang,
                     backend,
                     |term: &dyn Term| <$lang>::dovetail_report_for(term, MAX_ITERS, MAX_NODES),
-                    demo_step_slot!($lang, $step_kind),
+                    match_step_slot!($lang, $step_kind),
                     |term: &dyn Term| match <$lang>::rho_net_match_invocation_to(term, OUT) {
                         Ok(invocation) => Ok(RhoBackendInvocation::from(
                             build_rho_net_injection_invocation_from_contract(invocation),
                         )),
                         Err(detail) => Err(RhoInvocationDeferral::GateReject { detail }),
                     },
-                    demo_fallback_slot!($lang, $name, $fallback_kind),
+                    match_fallback_slot!($lang, $name, $fallback_kind),
                 )
                 .map_err(|err| {
                     anyhow!("{} Dovetail+Rho backend install failed: {err:?}", $name)
@@ -887,13 +959,112 @@ mod rho {
         };
     }
 
+    // ── Task #22: the four GSLT omnibus specs join the registry ─────────────────────────
+    //
+    // USER ruling (2026-07-27): `Json` (L1), `Monoid` (L2), `Turing` (L9) and `Pi` (L11)
+    // are PRODUCTION specs — `e1bfcd38` moved them from their own test binaries into
+    // `languages/src/`, and the shipped registry `{lambda, ambient, rhocalc, calculator}`
+    // had not caught up. None is drive-opted (`DRIVE_OPT_IN` stays exactly
+    // {Lambda, Ambient}), so all four take the set-automaton MATCH shape above.
+    //
+    // ★ The `step:`/`fallback:` selections below are MEASURED, not assumed. Each language
+    // was probed on representative subjects before its shape was chosen:
+    //
+    // | language | `dovetail_step_graph` | report-free `..._match_invocation_to`         | σ-replay |
+    // |----------|-----------------------|----------------------------------------------|----------|
+    // | Json     | not generated         | admits `true` / `{"a": 1}`; `JArr` rejects   | n/a      |
+    // | Monoid   | not generated         | ADMITS `(e * a)` and `((a * b) * c)`         | Ok       |
+    // | Pi       | generated             | rejects (`PIn` pre-scope binder fields)      | Ok       |
+    // | Turing   | generated             | rejects (`Tp` non-structural field)          | REJECTS  |
+    //
+    // Reading the table into the two knobs:
+    //
+    // * `step:` is `typed_step_graph` exactly where the generated
+    //   `dovetail_step_graph` EXISTS (Pi, Turing — both are typed-path). `Json` and
+    //   `Monoid` have no such function, so they take `report_as_step` (the D-stage report
+    //   as a derivation graph — the SwapDemo/Ambient pattern; REPL `step` then falls
+    //   through to the Layer-2 live trace).
+    // * `fallback:` is `match_then_replay` only where the σ-replay driver was OBSERVED to
+    //   accept (Monoid, Pi). `Pi` reproduces exactly the CommDemo situation documented
+    //   above — its `PIn` carries pre-scope Name fields the match-path reflection does not
+    //   model, so Pi's exec rides the by-design deferral and the replay driver fires
+    //   `Comm`/`CommAsync` through their comm arms.
+    // * `Turing` gets `match_then_typed_error` because its σ-replay was observed to
+    //   REJECT: routing it into a replay that cannot fire would bury the real reason under
+    //   the replay driver's message. `Json` gets the same for a structural reason — it
+    //   declares `equations { }` and `rewrites { }`, so there is no firing to replay at
+    //   all. Both therefore fail CLOSED with a typed error naming the deferral, which is
+    //   the sanctioned outcome under the universal runtime mandate: no dual host path.
+
+    rho_match_backed!(
+        /// `Json` (GSLT L1) → two-stage lazy Dovetail+Rholang backend. `Json` is a pure
+        /// DATA language (`equations { }`, `rewrites { }`), so an admitted exec is the
+        /// in-Rho injection of the parsed value with no firing; the D-stage exists only to
+        /// name a deferral.
+        ///
+        /// ⚠ Known limitation, measured not assumed: `Json`'s generated Dovetail compiler
+        /// currently fails to build a report at all — "rewrite `NormCastBoolToBigRatInValue`
+        /// LHS: constructor `CastBool` has no category", from the auto-injected numeric-cast
+        /// normalization family. That is a CODEGEN defect in the auto-injection for a
+        /// grammar with no cast category, not a property of this wrapper; it means a `JArr`
+        /// exec (the one subject whose report-free match rejects) surfaces that message
+        /// rather than a match-shaped one. Logged for repair; the wrapper stays fail-closed
+        /// either way.
+        json_backed,
+        JsonLanguage,
+        "Json",
+        step: report_as_step,
+        fallback: match_then_typed_error
+    );
+
+    rho_match_backed!(
+        /// `Monoid` (GSLT L2) → two-stage lazy Dovetail+Rholang backend. The unit and
+        /// associativity EQUATIONS quotient in the e-graph; the report-free match admits
+        /// its representative subjects directly, so an admitted exec does zero D-stage
+        /// work, and the σ-replay fallback is available for the deferral path.
+        monoid_backed,
+        MonoidLanguage,
+        "Monoid",
+        step: report_as_step,
+        fallback: match_then_replay
+    );
+
+    rho_match_backed!(
+        /// `Pi` (GSLT L11) → two-stage lazy Dovetail+Rholang backend. Pi's `Comm`/
+        /// `CommAsync` fire through the σ-replay driver on the by-design deferral: `PIn` is
+        /// a binder node with pre-scope `Name` fields, which the report-free match path's
+        /// reflection does not model ("no single-child `^lambda` ground image in this
+        /// slice") — the same shape CommDemo has. Typed-path, so REPL `step` gets the
+        /// generated one-step rewrite graph.
+        pi_backed,
+        PiLanguage,
+        "Pi",
+        step: typed_step_graph,
+        fallback: match_then_replay
+    );
+
+    rho_match_backed!(
+        /// `Turing` (GSLT L9) → two-stage lazy Dovetail+Rholang backend. The tape
+        /// constructor `Tp` carries a non-structural field with no positional ground
+        /// image, so neither the report-free nor the report-driven match reflects it, and
+        /// the σ-replay driver rejects it too; `exec` therefore fails CLOSED with a typed
+        /// error naming the deferral. Parse, introspection, env and — since `Turing` is
+        /// typed-path — the generated one-step rewrite graph behind REPL `step` all work,
+        /// and the machine-side dynamics stay covered by `languages/tests/turing.rs`.
+        turing_backed,
+        TuringLanguage,
+        "Turing",
+        step: typed_step_graph,
+        fallback: match_then_typed_error
+    );
+
     // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
     // want REPL integration for the non-production grammars!" Every wrapper below is
     // commented out rather than deleted so the A-S6 registry shape stays legible. The
     // in-Rho firing each one exposed interactively remains covered end-to-end by the
     // corresponding `rholang-runtime/tests/rho_net_*_firing.rs`, which drives the same
     // machine path directly — REPL-unreachability is the intended outcome, not a gap.
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// AcDemo (flat HashBag AC rewrite `{x, ...rest} ~> wrap(x)`) → two-stage lazy
     // /// Dovetail+Rholang backend (A-S6). Untyped path: the step slot serves the
     // /// D-stage derivation report (Layer-2 fall-through in REPL `step`).
@@ -901,7 +1072,7 @@ mod rho {
     // step: report_as_step, fallback: match_then_replay
     // );
 
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// AcBagDemo (bag-TRANSFORMING AC rewrite `{x, ...rest} ~> {mark(x), ...rest}` +
     // /// the `MarkIdem` equation) → two-stage lazy Dovetail+Rholang backend (A-S6).
     // /// Probed: the equation does NOT gate the match path — the bag-valued RHS
@@ -910,7 +1081,7 @@ mod rho {
     // step: report_as_step, fallback: match_then_replay
     // );
 
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// NlAcDemo (non-linear `{x, x, ...rest}` bare-var AC rewrite) → two-stage lazy
     // /// Dovetail+Rholang backend (A-S6). The reducer enforces the non-linear
     // /// consistency guard over the subject spread.
@@ -918,7 +1089,7 @@ mod rho {
     // step: report_as_step, fallback: match_then_replay
     // );
 
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// AmbDemo (the Ambient-calculus `OpenRule` STRUCTURAL non-linear AC family) →
     // /// two-stage lazy Dovetail+Rholang backend (A-S6). Typed path (structural-AC,
     // /// binder-free): the step slot is the generated `dovetail_step_graph`.
@@ -926,7 +1097,7 @@ mod rho {
     // step: typed_step_graph, fallback: match_then_replay
     // );
 
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// AmbNewDemo (`OpenRule` + the `PNew` binder CONSTRUCTOR, no binder rewrites) →
     // /// two-stage lazy Dovetail+Rholang backend (A-S6). Probed: redexes under
     // /// `new(x, …)` locate and fire in Rho too.
@@ -934,14 +1105,14 @@ mod rho {
     // step: typed_step_graph, fallback: match_then_replay
     // );
 
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// InOutDemo (the DEPTH-2 NESTED structural non-linear AC family — Ambient
     // /// `InRule`/`OutRule`) → two-stage lazy Dovetail+Rholang backend (A-S6).
     // inoutdemo_backed, InOutDemoLanguage, "InOutDemo",
     // step: typed_step_graph, fallback: match_then_replay
     // );
 
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// CommDemo (the canonical single-receive communication rewrite with an `eval`
     // /// substitution RHS) → two-stage lazy Dovetail+Rholang backend (A-S6). Probed
     // /// reality: the report-free match DEFERS — `PFor` is a binder node with a
@@ -953,7 +1124,7 @@ mod rho {
     // step: typed_step_graph, fallback: match_then_replay
     // );
 
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// CtxDemo (the unary-congruence contextual family: `Flip` under `WrapCong`) →
     // /// two-stage lazy Dovetail+Rholang backend (A-S6). The congruence-only
     // /// `WrapCong` is statically exempt (A-S5.1); `Flip` locates and fires in Rho at
@@ -962,7 +1133,7 @@ mod rho {
     // step: report_as_step, fallback: match_then_replay
     // );
 
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// BiCongDemo (the 2-ary-congruence n-hole contextual family: `Flip` under
     // /// `NodeCong`) → two-stage lazy Dovetail+Rholang backend (A-S6). Both holes'
     // /// redexes locate and fire in Rho. Untyped path (like CtxDemo): the step slot
@@ -971,7 +1142,7 @@ mod rho {
     // step: report_as_step, fallback: match_then_replay
     // );
 
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// LambdaDemo (the untyped λ-calculus binder/β-substitution demonstration) →
     // /// two-stage lazy Dovetail+Rholang backend (A-S6). β fires in-Rho through the
     // /// TRS seed on the match path. The fallback is the Lambda/F16 shape: the
@@ -981,7 +1152,7 @@ mod rho {
     // step: typed_step_graph, fallback: match_then_typed_error
     // );
 
-    // demo_rho_backed!(
+    // rho_match_backed!(
     // /// NativeDemo (the native-system-process `PowInt` `![…] fold` demonstration) →
     // /// two-stage lazy Dovetail+Rholang backend (A-S6). A located native site ADMITS
     // /// (A-S3): the wrapper's clear/drain bracket registers the rule's machine-side
@@ -1000,7 +1171,7 @@ mod rho {
     // `rholang-runtime/tests/rho_net_native_fold_firing.rs`, which `#[path]`-includes the
     // definition directly. Commented out rather than deleted so the A-S6 shape stays legible.
     //
-    // demo_rho_backed!(
+    // rho_match_backed!(
     //     /// NativeFoldDemo (the native scalar-fold `AddInt` demonstration) → two-stage
     //     /// lazy Dovetail+Rholang backend (A-S6). Multi-site subjects admit — each
     //     /// located site drives its own machine-side handler invocation.
@@ -1012,4 +1183,7 @@ mod rho {
 // Task #11 (extended 2026-07-26): only the PRODUCTION languages are re-exported now — see the
 // note on the Dovetail-only list above.
 #[cfg(feature = "rho-languages")]
-pub use rho::{ambient_backed, calculator_backed, lambda_backed, rholang_backed};
+pub use rho::{
+    ambient_backed, calculator_backed, json_backed, lambda_backed, monoid_backed, pi_backed,
+    rholang_backed, turing_backed,
+};

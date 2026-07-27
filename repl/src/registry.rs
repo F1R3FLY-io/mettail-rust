@@ -208,9 +208,9 @@ impl<'a> FltResolver<'a> {
 pub fn build_registry() -> Result<LanguageRegistry> {
     // Default build: every bundled language wrapped in its production two-stage
     // Dovetail+Rholang backend (A-S5.6: Lambda/Ambient exec on the in-Rho quiescence driver;
-    // Rholang/Calculator on COMM / scalar dataflow; A-S6: SwapDemo AND every rho_net demo on
-    // the in-Rho locate-all set-automaton match — the runtime mandate is registry-wide, so at
-    // runtime Dovetail handles only semantic predicates, labeled step introspection, and lazy
+    // Rholang/Calculator on COMM / scalar dataflow; A-S6: Json/Monoid/Pi/Turing on the in-Rho
+    // locate-all set-automaton match — the runtime mandate is registry-wide, so at runtime
+    // Dovetail handles only semantic predicates, labeled step introspection, and lazy
     // deferral reports).
     #[cfg(feature = "rho-languages")]
     {
@@ -219,6 +219,18 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         registry.register(crate::rho_backends::ambient_backed()?);
         registry.register(crate::rho_backends::rholang_backed()?);
         registry.register(crate::rho_backends::calculator_backed()?);
+        // Task #22 (USER ruling 2026-07-27): the four GSLT omnibus conformance specs are
+        // PRODUCTION languages — `e1bfcd38` moved `Json` (L1), `Monoid` (L2), `Turing` (L9)
+        // and `Pi` (L11) out of their own test binaries and into `languages/src/`, but the
+        // shipped registry was still `{lambda, ambient, rhocalc, calculator}`, so nothing but
+        // one test binary could reach them. Registering them here is what makes them
+        // REACHABLE: `LanguageRegistry::register` keys on `language.name().to_lowercase()`,
+        // so this is exactly what makes `lang json` / `lang monoid` / `lang pi` /
+        // `lang turing` resolve at the REPL prompt.
+        registry.register(crate::rho_backends::json_backed()?);
+        registry.register(crate::rho_backends::monoid_backed()?);
+        registry.register(crate::rho_backends::pi_backed()?);
+        registry.register(crate::rho_backends::turing_backed()?);
         // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
         // want REPL integration for the non-production grammars!" SwapDemo and the eleven
         // rho_net demonstration grammars are NOT production languages, so they are no longer
@@ -249,11 +261,12 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         Ok(registry)
     }
 
-    // Dovetail-only build (no f1r3node): Lambda/Ambient (A-S5.6) and SwapDemo + the 12 rho_net
-    // demos (A-S6) register through the decision-(4) fail-closed wrapper (parse/introspection
-    // work; exec errors pointing at the rho build — their production semantics run ONLY on the
-    // Rho machine, no dual runtime path remains); Rholang/Calculator (whose production default
-    // is the Rho machine but which keep a raw parse/introspection surface here) register raw.
+    // Dovetail-only build (no f1r3node): Lambda/Ambient (A-S5.6) and Json/Monoid/Pi/Turing
+    // (A-S6, task #22) register through the decision-(4) fail-closed wrapper
+    // (parse/introspection work; exec errors pointing at the rho build — their production
+    // semantics run ONLY on the Rho machine, no dual runtime path remains); Rholang/Calculator
+    // (whose production default is the Rho machine but which keep a raw parse/introspection
+    // surface here) register raw.
     #[cfg(all(feature = "bundled-languages", not(feature = "rho-languages")))]
     {
         let mut registry = LanguageRegistry::new();
@@ -261,6 +274,12 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         registry.register(crate::rho_backends::ambient_backed()?);
         registry.register(Box::new(CalculatorLanguage));
         registry.register(Box::new(RholangLanguage));
+        // Task #22: the four GSLT omnibus specs are registry members in BOTH profiles, so a
+        // Dovetail-only build can still parse and introspect them; only `exec` fails closed.
+        registry.register(crate::rho_backends::json_backed()?);
+        registry.register(crate::rho_backends::monoid_backed()?);
+        registry.register(crate::rho_backends::pi_backed()?);
+        registry.register(crate::rho_backends::turing_backed()?);
         // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
         // want REPL integration for the non-production grammars!" SwapDemo and the eleven
         // rho_net demonstration grammars are NOT production languages, so they are no longer
