@@ -970,7 +970,11 @@ pub fn adaptive_dispatch_analysis(
             n => {
                 // Check if Counting analysis can narrow it down
                 let poststar = crate::wpds::poststar(&count_wpds);
-                let paths = poststar.symbol_weight(entry);
+                // Liveness of the category entry, not membership of the one-symbol
+                // configuration ⟨p, entry⟩: an entry called from another category is
+                // pushed, so it heads a longer stack. `symbol_weight` requires an
+                // ACCEPTING target and would classify every called entry as Dead.
+                let paths = poststar.stack_top_weight(entry);
                 if paths.is_zero() {
                     DispatchClassification::Dead
                 } else {

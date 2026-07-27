@@ -474,7 +474,9 @@ pub fn stringsum<W: Semiring>(
     for rule in &spec.rules {
         if let Some(SyntaxItemSpec::Terminal(ref tok)) = rule.syntax.first() {
             let sym = StackSymbol::category_entry(&rule.category);
-            let sym_weight = post_automaton.symbol_weight(&sym);
+            // Liveness of the category entry anywhere on a reachable stack — a
+            // called category is PUSHED, so it is not a one-symbol configuration.
+            let sym_weight = post_automaton.stack_top_weight(&sym);
             if !sym_weight.is_zero() {
                 rules_by_first_terminal
                     .entry(tok.as_str())
@@ -498,7 +500,8 @@ pub fn stringsum<W: Semiring>(
         for rule in &spec.rules {
             if rule.is_var || rule.is_literal {
                 let sym = StackSymbol::category_entry(&rule.category);
-                let sym_weight = post_automaton.symbol_weight(&sym);
+                // Liveness (see above): pushed category entries are stack tops.
+                let sym_weight = post_automaton.stack_top_weight(&sym);
                 if !sym_weight.is_zero() {
                     // Check if this token could match a variable/literal pattern
                     let matches = match token.as_str() {

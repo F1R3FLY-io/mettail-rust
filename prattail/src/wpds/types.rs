@@ -326,12 +326,68 @@ impl<W: Semiring> PAutomaton<W> {
         self.symbols_present.contains(symbol)
     }
 
-    /// Get the weight for a stack symbol across all reachable configurations.
+    /// Weight of the ONE-SYMBOL configuration `⟨p, symbol⟩` in the accepted set.
     ///
-    /// Returns the semiring sum of weights on all transitions `(initial, symbol, q)`
-    /// for any state `q` (not just final states). For dead-rule detection, a zero
-    /// weight means the symbol never appears in any reachable configuration.
+    /// Returns the semiring sum of the weights on transitions `(initial, symbol, q)`
+    /// **whose target `q` is a final state**. That is the acceptance condition of
+    /// Reps et al. (2007) Definition 3 for the stack word `u = symbol`: a path from
+    /// `p` reading `u` that ENDS IN A FINAL STATE. It is the weighted counterpart of
+    /// [`is_symbol_accepted`](Self::is_symbol_accepted), which decides the same
+    /// membership question, and it agrees with `cegar::abstract_check`'s
+    /// `accepts_initial_config`, the sibling implementation of the same query.
+    ///
+    /// # Why the target has to be checked
+    ///
+    /// Saturation adds transitions that lead nowhere accepting. `prestar`'s Phase 1
+    /// seeds `(p, γ, p)` for every Pop rule — a SELF-LOOP on the initial state — and
+    /// the Replace pass then propagates it onto other symbols. Summing every
+    /// out-transition regardless of target counts those self-loops as membership, so
+    /// a WPDS with rules came back non-zero against a bad set with NO transitions at
+    /// all, i.e. against the empty set of configurations. `check_safety` read exactly
+    /// this weight, so it reported `safe = false` with a witness for a property that
+    /// nothing could violate (`verify::tests::test_empty_bad_states_is_safe`).
+    ///
+    /// # Not the query for "does this symbol occur anywhere?"
+    ///
+    /// A symbol can be live without being a one-symbol configuration: in a `poststar`
+    /// automaton a pushed symbol `γ_top` sits on `(p, γ_top, q_r)` where `q_r` is the
+    /// fresh intermediate state carrying the continuation, so `⟨p, γ_top γ_bottom⟩`
+    /// is accepted while `⟨p, γ_top⟩` is not. Liveness questions of that shape —
+    /// dead-rule detection, dispatch classification, EWPDS merge gating — want
+    /// [`stack_top_weight`](Self::stack_top_weight) instead.
     pub fn symbol_weight(&self, symbol: &StackSymbol) -> W {
+        let mut total = W::zero();
+        if let Some(trans_indices) = self.transitions_by_source.get(&self.initial_state) {
+            for &idx in trans_indices {
+                let t = &self.transitions[idx];
+                if t.symbol == *symbol && self.final_states.contains(&t.to) {
+                    total = total.plus(&t.weight);
+                }
+            }
+        }
+        total
+    }
+
+    /// Weight of `symbol` appearing at the TOP of a reachable stack, at any depth.
+    ///
+    /// Returns the semiring sum of the weights on all transitions
+    /// `(initial, symbol, q)` for any `q`, final or not — the weighted counterpart of
+    /// [`is_symbol_reachable`](Self::is_symbol_reachable). In a `poststar` automaton
+    /// the stack word continues from `q`, so a non-final target means the symbol is
+    /// the top of a LONGER accepted configuration rather than a one-symbol one.
+    ///
+    /// # Direction of the approximation
+    ///
+    /// This OVER-approximates liveness: it also counts a target from which no final
+    /// state is reachable, and such a target contributes to no accepted configuration.
+    /// Every caller uses the result as `is_zero()` ⇒ "nothing here", so over-counting
+    /// can only suppress a diagnostic, never invent one — no rule is called dead, no
+    /// dispatch is called dead, and no first-token candidate is dropped on the
+    /// strength of a transition that leads nowhere. Do NOT use it to decide
+    /// membership of a configuration in the accepted set; that is
+    /// [`symbol_weight`](Self::symbol_weight), and reading the two as
+    /// interchangeable is what made `check_safety` unsound.
+    pub fn stack_top_weight(&self, symbol: &StackSymbol) -> W {
         let mut total = W::zero();
         if let Some(trans_indices) = self.transitions_by_source.get(&self.initial_state) {
             for &idx in trans_indices {

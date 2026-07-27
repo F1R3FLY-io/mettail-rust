@@ -197,8 +197,12 @@ pub fn ewpds_poststar<W: Semiring>(ewpds: &Ewpds<W>) -> PAutomaton<W> {
     // Apply merge functions for extended push rules.
     // For each push rule with a non-default merge, adjust the return-site weight.
     for rule in &ewpds.extended_push_rules {
-        let caller_weight = result.symbol_weight(&rule.from_gamma);
-        let callee_weight = result.symbol_weight(&rule.to_gamma_top);
+        // Liveness at the call boundary: `to_gamma_top` is the symbol this very rule
+        // PUSHES, so poststar files it under a fresh intermediate state and it is
+        // never a one-symbol configuration. Gating on `symbol_weight` (acceptance)
+        // would make every merge function unreachable.
+        let caller_weight = result.stack_top_weight(&rule.from_gamma);
+        let callee_weight = result.stack_top_weight(&rule.to_gamma_top);
 
         if !caller_weight.is_zero() && !callee_weight.is_zero() {
             let merged = rule.merge_fn.merge(&caller_weight, &callee_weight);

@@ -395,7 +395,7 @@ fn test_poststar_calculator_reachability() {
     // Expr entry should be reachable (it's the initial symbol)
     let expr_sym = StackSymbol::category_entry("Expr");
     assert!(
-        !post.symbol_weight(&expr_sym).is_zero(),
+        !post.stack_top_weight(&expr_sym).is_zero(),
         "Expr entry should be reachable via poststar"
     );
 }
@@ -412,9 +412,9 @@ fn test_poststar_cross_category_reachability() {
     let expr_sym = StackSymbol::category_entry("Expr");
     let type_sym = StackSymbol::category_entry("Type");
 
-    assert!(!post.symbol_weight(&expr_sym).is_zero(), "Expr should be reachable");
+    assert!(!post.stack_top_weight(&expr_sym).is_zero(), "Expr should be reachable");
     assert!(
-        !post.symbol_weight(&type_sym).is_zero(),
+        !post.stack_top_weight(&type_sym).is_zero(),
         "Type should be reachable (called by Cast rule in Expr)"
     );
 }
@@ -429,12 +429,12 @@ fn test_poststar_orphan_unreachable() {
 
     // Expr should be reachable
     let expr_sym = StackSymbol::category_entry("Expr");
-    assert!(!post.symbol_weight(&expr_sym).is_zero(), "Expr should be reachable");
+    assert!(!post.stack_top_weight(&expr_sym).is_zero(), "Expr should be reachable");
 
     // Orphan should NOT be reachable (no rule calls it)
     let orphan_sym = StackSymbol::category_entry("Orphan");
     assert!(
-        post.symbol_weight(&orphan_sym).is_zero(),
+        post.stack_top_weight(&orphan_sym).is_zero(),
         "Orphan should be unreachable via poststar"
     );
 }
@@ -449,7 +449,7 @@ fn test_poststar_tropical_weights() {
 
     // Expr should have finite weight
     let expr_sym = StackSymbol::category_entry("Expr");
-    let w = post.symbol_weight(&expr_sym);
+    let w = post.stack_top_weight(&expr_sym);
     assert!(!w.is_zero(), "Expr should have non-zero tropical weight");
 }
 
@@ -463,7 +463,7 @@ fn test_poststar_counting_weight() {
 
     // Expr should have counting weight >= 1 (at least one derivation path)
     let expr_sym = StackSymbol::category_entry("Expr");
-    let w = post.symbol_weight(&expr_sym);
+    let w = post.stack_top_weight(&expr_sym);
     assert!(!w.is_zero(), "Expr should have non-zero counting weight, got {:?}", w);
 }
 
@@ -623,6 +623,45 @@ fn test_p_automaton_no_accept() {
     let sym = StackSymbol::category_entry("Expr");
     assert!(!pa.is_symbol_accepted(&sym));
     assert!(pa.symbol_weight(&sym).is_zero());
+}
+
+/// A transition to a NON-final state separates the two queries.
+///
+/// This is the configuration in which acceptance and liveness disagree, and the one
+/// `symbol_weight` used to get wrong: `⟨p, γ⟩` is NOT accepted (the run ends outside
+/// `F`) while `γ` is still live (a longer stack continues from `q`). The
+/// poststar/prestar saturation loops manufacture exactly such transitions — prestar's
+/// Pop phase seeds `(p, γ, p)` and poststar's Push case seeds `(p, γ_top, q_r)` — so
+/// without this case the accessors could be interchanged and every test would pass.
+#[test]
+fn test_p_automaton_non_final_target_is_live_but_not_accepted() {
+    let mut pa = PAutomaton::<BooleanWeight>::new(0);
+    let q_final = pa.add_state();
+    pa.mark_final(q_final);
+    let q_middle = pa.add_state();
+
+    let accepted = StackSymbol::category_entry("Expr");
+    let live_only = StackSymbol::category_entry("Type");
+    pa.add_transition(0, accepted.clone(), q_final, BooleanWeight::one());
+    pa.add_transition(0, live_only.clone(), q_middle, BooleanWeight::one());
+
+    // Accepted as a one-symbol configuration.
+    assert!(pa.is_symbol_accepted(&accepted));
+    assert!(!pa.symbol_weight(&accepted).is_zero());
+    assert!(!pa.stack_top_weight(&accepted).is_zero());
+
+    // Live, but NOT a one-symbol configuration.
+    assert!(!pa.is_symbol_accepted(&live_only), "the run ends outside the final states");
+    assert!(
+        pa.symbol_weight(&live_only).is_zero(),
+        "acceptance requires a final target; summing every out-transition regardless \
+         of target is the over-count that made `check_safety` unsound"
+    );
+    assert!(
+        !pa.stack_top_weight(&live_only).is_zero(),
+        "liveness counts the symbol wherever it heads a stack"
+    );
+    assert!(pa.is_symbol_reachable(&live_only), "the boolean twin of stack_top_weight");
 }
 
 // ── G33: Call graph extraction ──

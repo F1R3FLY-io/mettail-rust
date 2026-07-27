@@ -408,7 +408,11 @@ pub fn analyze_wpds(
     let mut unreachable_rules = Vec::new();
     for rule in &spec.rules {
         let rule_entry = StackSymbol::rule_position(&rule.category, &rule.label, 0);
-        let rule_weight = post.symbol_weight(&rule_entry);
+        // Liveness, not one-symbol acceptance: a rule entry reached by a
+        // cross-category PUSH sits on a transition into poststar's fresh
+        // intermediate state, so `symbol_weight` (which requires an ACCEPTING
+        // target) is zero for it and would call the rule dead.
+        let rule_weight = post.stack_top_weight(&rule_entry);
 
         if rule_weight.is_zero() && !reachable_categories.contains(&rule.category) {
             // Find which calling contexts are missing
@@ -432,7 +436,9 @@ pub fn analyze_wpds(
     let mut category_weights = HashMap::new();
     for cat in &spec.types {
         let sym = StackSymbol::category_entry(&cat.name);
-        let w = trop_post.symbol_weight(&sym);
+        // Liveness: a called category is pushed, so its entry is the top of a
+        // longer stack rather than a one-symbol configuration.
+        let w = trop_post.stack_top_weight(&sym);
         if !w.is_zero() {
             category_weights.insert(cat.name.clone(), w.value());
         }

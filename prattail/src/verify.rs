@@ -45,24 +45,30 @@ pub struct SafetyResult<W: Semiring> {
 /// The `bad_states` P-automaton encodes the set of configurations that violate the
 /// safety property. Returns `SafetyResult` with `safe = true` if none are reachable.
 ///
-/// # Known limitation — the verdict is not yet sound for a WPDS with rules
+/// # How the verdict is read
 ///
-/// The verdict is read out of the prestar automaton by
-/// [`PAutomaton::symbol_weight`](crate::wpds::PAutomaton::symbol_weight), which sums
-/// the transitions leaving the initial state that carry the queried symbol **without
-/// requiring their target to be an accepting state**. Acceptance of a one-symbol stack
-/// word additionally requires ending in a final state, so saturation transitions that
-/// lead nowhere accepting are still counted as reachability.
+/// The initial configuration is the one-symbol stack `⟨p, γ₀⟩`, so membership in
+/// `pre*(bad)` is the acceptance of the stack word `γ₀` by the prestar automaton:
+/// a path from `p` reading `γ₀` that **ends in a final state** (Reps et al. 2007,
+/// Definition 3). [`PAutomaton::symbol_weight`](crate::wpds::PAutomaton::symbol_weight)
+/// asks exactly that, and `cegar::abstract_check` asks it independently via
+/// `accepts_initial_config`.
 ///
-/// Consequence: `safe` can come back `false` even when `bad_states` encodes the EMPTY
-/// set of configurations. The example below exercises exactly that case — the label
-/// `"BadState"` matches no stack symbol, so `bad` has zero transitions — and the
-/// verdict is nevertheless `false`. The sibling unit test `test_empty_bad_states_is_safe`
-/// asserts the opposite and passes only because the WPDS it builds has no rules at all.
-/// Until this is repaired, treat an unsafe verdict as "not proven safe" rather than as
-/// a witnessed violation.
+/// The target check is load-bearing. Saturation adds transitions that lead nowhere
+/// accepting — prestar's Pop phase seeds the self-loop `(p, γ, p)` for every Pop rule,
+/// and the Replace pass propagates it onto other symbols — so a weight that summed
+/// every out-transition regardless of target reported `safe = false`, with a witness,
+/// for a WPDS with rules checked against a bad set containing NO configurations at
+/// all. `verify::tests::test_empty_bad_states_is_safe` pins the repaired behaviour on
+/// a WPDS carrying all three rule kinds, and
+/// `verify::tests::test_reachable_bad_state_is_reported_unsafe` pins the converse so
+/// the verdict cannot degenerate into a blanket "safe".
 ///
 /// # Example (Boolean reachability)
+///
+/// The label `"BadState"` matches no stack symbol of this grammar, so `bad` encodes
+/// the EMPTY set of configurations — and nothing is reachable from a WPDS into a set
+/// with no members, however many rules the WPDS has.
 ///
 /// ```
 /// # use std::collections::HashMap;
@@ -94,10 +100,17 @@ pub struct SafetyResult<W: Semiring> {
 /// # );
 /// # let wfsts = HashMap::new();
 /// let wpds = build_wpds::<BooleanWeight>(&spec, &wfsts, |_| BooleanWeight::new(true));
+/// // The grammar really does generate rules — the verdict below is not vacuous.
+/// assert!(!wpds.rules.is_empty());
+///
 /// let bad = build_bad_state_automaton(&wpds, &["BadState"]);
+/// assert!(bad.transitions.is_empty(), "no stack symbol is labelled `BadState`");
+///
 /// let result = check_safety(&wpds, &bad);
+/// assert!(result.safe, "nothing is reachable into the empty set of configurations");
 /// // Verdict and witness always agree: a safe verdict carries no trace,
 /// // an unsafe one names the symbols along the path to the bad state.
+/// assert!(result.witness_trace.is_empty());
 /// assert_eq!(result.safe, result.witness_trace.is_empty());
 /// ```
 pub fn check_safety<W: Semiring>(wpds: &Wpds<W>, bad_states: &PAutomaton<W>) -> SafetyResult<W> {
@@ -473,27 +486,123 @@ mod tests {
         assert_eq!(Verdict::Unknown.to_string(), "UNKNOWN");
     }
 
-    #[test]
-    fn test_empty_bad_states_is_safe() {
-        // Build a trivial WPDS with no rules.
-        let wpds: Wpds<BooleanWeight> = Wpds {
-            stack_symbols: vec![StackSymbol::category_entry("Expr")],
-            symbol_index: {
-                let mut m = std::collections::HashMap::new();
-                m.insert(StackSymbol::category_entry("Expr"), 0);
-                m
-            },
+    /// A WPDS whose rules are the three kinds a real grammar produces.
+    ///
+    /// Shape — the smallest grammar that dispatches, recurses, and returns:
+    ///
+    /// ```text
+    ///   ⟨p, Expr⟩     ↪ ⟨p, NumLit@0⟩        Replace  (dispatch to the leaf rule)
+    ///   ⟨p, NumLit@0⟩ ↪ ⟨p, ε⟩               Pop      (leaf consumes its token, returns)
+    ///   ⟨p, Expr⟩     ↪ ⟨p, Add@0⟩           Replace  (dispatch to the binary rule)
+    ///   ⟨p, Add@0⟩    ↪ ⟨p, Add@1 Expr⟩      Push     (call Expr; Add@1 is the return site)
+    ///   ⟨p, Add@1⟩    ↪ ⟨p, ε⟩               Pop      (binary rule returns)
+    /// ```
+    ///
+    /// Every rule kind matters to the invariant below. `Pop` is what makes prestar's
+    /// Phase 1 seed `(p, γ, p)` — a transition BACK to the non-accepting initial
+    /// state — and `Replace` is what propagates that self-loop onto the initial
+    /// symbol. A WPDS with `rules: Vec::new()` has neither, which is exactly why the
+    /// previous form of `test_empty_bad_states_is_safe` could not fail: it was
+    /// quantified over the one case in which the defect cannot arise.
+    fn wpds_with_rules_of_every_kind() -> Wpds<BooleanWeight> {
+        use crate::wpds::WpdsRule;
+
+        let expr = StackSymbol::category_entry("Expr");
+        let numlit = StackSymbol::rule_position("Expr", "NumLit", 0);
+        let add0 = StackSymbol::rule_position("Expr", "Add", 0);
+        let add1 = StackSymbol::rule_position("Expr", "Add", 1);
+
+        let mut wpds: Wpds<BooleanWeight> = Wpds {
+            stack_symbols: Vec::new(),
+            symbol_index: std::collections::HashMap::new(),
             rules: Vec::new(),
             rules_by_source: std::collections::HashMap::new(),
-            initial_symbol: StackSymbol::category_entry("Expr"),
-            grammar_name: "test".to_string(),
+            initial_symbol: expr.clone(),
+            grammar_name: "empty_bad_set_invariant".to_string(),
         };
+        for sym in [&expr, &numlit, &add0, &add1] {
+            wpds.ensure_symbol(sym.clone());
+        }
 
-        // No bad states → trivially safe.
+        wpds.add_rule(WpdsRule::Replace {
+            from_gamma: expr.clone(),
+            to_gamma: numlit.clone(),
+            weight: BooleanWeight::one(),
+        });
+        wpds.add_rule(WpdsRule::Pop {
+            from_gamma: numlit,
+            weight: BooleanWeight::one(),
+        });
+        wpds.add_rule(WpdsRule::Replace {
+            from_gamma: expr.clone(),
+            to_gamma: add0.clone(),
+            weight: BooleanWeight::one(),
+        });
+        wpds.add_rule(WpdsRule::Push {
+            from_gamma: add0,
+            to_gamma_bottom: add1.clone(),
+            to_gamma_top: expr,
+            weight: BooleanWeight::one(),
+        });
+        wpds.add_rule(WpdsRule::Pop {
+            from_gamma: add1,
+            weight: BooleanWeight::one(),
+        });
+
+        wpds
+    }
+
+    /// `pre*(∅) = ∅`, so a WPDS **with rules** is safe against an empty bad set.
+    ///
+    /// The verdict is a set-membership question: is the initial configuration in the
+    /// set of configurations from which a bad one is reachable? When the bad set is
+    /// empty that set is empty too, whatever the rules do — no saturation step can
+    /// place a configuration in the pre-image of nothing.
+    #[test]
+    fn test_empty_bad_states_is_safe() {
+        let wpds = wpds_with_rules_of_every_kind();
+
+        // The precondition the previous form of this test lacked. Without rules there
+        // is no saturation, so no over-counted transition can exist to be miscounted.
+        assert_eq!(wpds.rules.len(), 5, "the invariant is only non-trivial for a WPDS WITH rules");
+
         let bad = build_bad_state_automaton(&wpds, &[]);
+        assert!(
+            bad.transitions.is_empty(),
+            "an empty label list must encode the EMPTY configuration set"
+        );
+
         let result = check_safety(&wpds, &bad);
-        assert!(result.safe);
+        assert!(
+            result.safe,
+            "pre*(∅) is empty, so no initial configuration can be in it; got unsafe with \
+             witness {:?}",
+            result.witness_trace
+        );
         assert!(result.witness_trace.is_empty());
+    }
+
+    /// The converse, so the fix above cannot be a blanket "always safe".
+    ///
+    /// `⟨p, Expr⟩ ↪ ⟨p, Add@0⟩` puts a bad configuration one step from the initial one,
+    /// so the verdict must be UNSAFE and must carry a witness. A `symbol_weight` that
+    /// returned zero unconditionally would satisfy the empty-bad-set test and fail this.
+    #[test]
+    fn test_reachable_bad_state_is_reported_unsafe() {
+        let wpds = wpds_with_rules_of_every_kind();
+
+        let bad = build_bad_state_automaton(&wpds, &["Add"]);
+        assert!(
+            !bad.transitions.is_empty(),
+            "the label `Add` matches the Add@0/Add@1 rule positions"
+        );
+
+        let result = check_safety(&wpds, &bad);
+        assert!(!result.safe, "⟨p, Expr⟩ ↪ ⟨p, Add@0⟩ reaches the bad set in one step");
+        assert!(
+            !result.witness_trace.is_empty(),
+            "an unsafe verdict must name the path it found"
+        );
     }
 
     #[test]
