@@ -3,19 +3,72 @@
 // `02-the-desk.rho` selected by SHAPE: the pattern required the body to be an application of
 // the outer binder, which admits Church numerals and refuses Church booleans.
 //
-// This program keeps the same pool and asks a SEMANTIC question instead. The pattern binds
-// the whole computed term; the `where` clause is a predicate decided by the substrate, and
-// it selects the one result that IS the Church boolean FALSE.
+// This program keeps the same pool and asks a SEMANTIC question instead. The pattern binds the
+// whole computed term; the `where` clause is a predicate the substrate decides.
 //
-//   plus 2 3      ⟶β  Church 5   — refused by the predicate
-//   mult 2 3      ⟶β  Church 6   — refused by the predicate
-//   not true      ⟶β  FALSE      — ACCEPTED
-//   and true true ⟶β  TRUE       — refused by the predicate
+//
+// THE FOUR INPUTS, AND WHAT EACH REDUCES TO
+// ─────────────────────────────────────────
+// Each was also run on its own to confirm the reduction (`rhocalc` on the bare term):
+//
+//   #   source                              is              reduces to             β steps
+//   ──  ──────────────────────────────────  ──────────────  ─────────────────────  ───────
+//   1   ((λm.λn.λf.λx.(m f)((n f) x)) 2) 3  plus 2 3        ⟦λ.λ.(1(1(1(1(1 0)))))⟧      6
+//                                                            = Church numeral 5
+//   2   ((λm.λn.λf. m (n f)) 2) 3           mult 2 3        ⟦λ.λ.(1(1(1(1(1(1 0))))))⟧   7
+//                                                            = Church numeral 6
+//   3   (λb. b FALSE TRUE) TRUE             not true        ⟦λ.λ.0⟧  = FALSE             3
+//   4   ((λp.λq. (p q) p) TRUE) TRUE        and true true   ⟦λ.λ.1⟧  = TRUE              4
+//
+//
+// HOW #3 DERIVES — the one the predicate accepts
+// ──────────────────────────────────────────────
+//   NOT ≡ λb. b FALSE TRUE          TRUE ≡ λt.λf. t          FALSE ≡ λt.λf. f
+//
+//       (λb. b FALSE TRUE) TRUE
+//   ⟶β  TRUE FALSE TRUE                 substitute TRUE for b
+//    =  (λt.λf. t) FALSE TRUE
+//   ⟶β  (λf. FALSE) TRUE                TRUE selects its FIRST argument
+//   ⟶β  FALSE
+//
+//   Three β steps — matching the `^fired` ledger when this term is run alone.
+//
+//
+// READING THE OUTPUT — de Bruijn indices, 0 = INNERMOST binder
+// ───────────────────────────────────────────────────────────
+//   λt.λf. f   body names the INNER binder  → index 0 → ⟦λ.λ.0⟧ = FALSE
+//   λt.λf. t   body names the OUTER binder, one binder out
+//                                          → index 1 → ⟦λ.λ.1⟧ = TRUE
+//
+//   The two Church booleans are distinguished ONLY by which binder the body names. Same arity,
+//   same structure, one index apart.
+//
+//
+// WHY THE FILTER IS DOING REAL WORK
+// ─────────────────────────────────
+// The guard asks `== lam t. lam f. f`, i.e. FALSE. Of the four computed results exactly one
+// satisfies it:
+//
+//   #1 Church 5  REFUSED — wrong shape entirely (body is an application, not a variable)
+//   #2 Church 6  REFUSED — likewise
+//   #3 FALSE     ★ ACCEPTED — published to @"OUT" as ⟦λ.λ.0⟧
+//   #4 TRUE      REFUSED — ⟦λ.λ.1⟧ vs ⟦λ.λ.0⟧: ONE INDEX APART
+//
+// #4 is the sharpest rejection in the set. It has the same arity and the same structure as the
+// accepted term and differs only in which binder its body names — and the decision is made on
+// the COMPUTED value, since nothing in this file spells either boolean's normal form.
 //
 // The refused three are not consumed and not destroyed; they are still resting on @"results"
-// when the program comes to rest. Change the predicate and a different one settles.
+// when the program comes to rest. Change the predicate to `lam t. lam f. t` and #4 settles
+// instead — same pool, same computation, different answer.
 //
-// Nothing below spells an answer. Every payload arrives because `[*]` explored the program.
+//
+// HOW TO RUN
+// ──────────
+//   RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-lookahead/03-predicate.rho
+//
+// EXPECT: @"OUT" carries ⟦λ.λ.0⟧ and the run reports `lookahead: 4 request(s) served`,
+// `^spec-failure: 0`, `^spec-truncated: 0`.
 
 @"results"!(lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
 @"results"!(lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
