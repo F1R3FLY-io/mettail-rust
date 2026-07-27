@@ -363,17 +363,26 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             } else {
                 quote! {}
             };
-            // The authoritative-reject FIRE: when a σ-frame send skeleton matched the
+            // The authoritative-reject FIRE: when a CLOSED σ-led skeleton matched the
             // whole input, enumeration was COMPLETE, and NO tiling parsed,
-            // `__proj_sigil_reject` is set and turned into `Err` here. OFF ⇒ empty
-            // (byte-identical).
+            // `__proj_sigil_reject` carries that frame's wording and is turned into `Err`
+            // here. OFF ⇒ empty (byte-identical).
+            //
+            // ★ R4 (2026-07-26) — THE WORDING IS THE MATCHED FRAME'S, NOT A FIXED
+            // SENTENCE. The pre-R4 message asserted *"a projection-sigil-led SEND frame"*
+            // with the hint *"an `@`-led span …"*, but the trigger is `sigil_led` — *slot
+            // 0 is a non-ident literal* — which is a strictly larger set than "send": it
+            // admits `NQuote`'s `@ ( p )` (a quotation) and, before R2, admitted
+            // `NegProc`'s `- a` and `PDrop`'s `* n` (unary prefix operators). A `-`-led
+            // span was told it was a malformed `@`-send. Both strings now come from
+            // `facade::proj_reject_wording`, computed from the variant's own label,
+            // category and skeleton, and travel WITH the evidence — so the two can never
+            // drift apart again.
             let proj_reject_fire = if sigil_reject_on {
                 quote! {
-                    if __proj_sigil_reject {
+                    if let Some((__expected, __hint)) = __proj_sigil_reject {
                         return Err(ParseError::UnexpectedToken {
-                            expected: Cow::Borrowed(
-                                "no valid parse: a projection-sigil-led send frame whose operands do not parse",
-                            ),
+                            expected: Cow::Borrowed(__expected),
                             found: input
                                 .trim_start()
                                 .chars()
@@ -381,9 +390,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 .map(|__c| __c.to_string())
                                 .unwrap_or_else(|| "end of input".to_string()),
                             range: Range::from_byte_offsets(input, 0, input.len()),
-                            hint: Some(Cow::Borrowed(
-                                "an `@`-led span that is not a well-formed send (or infix of sends) is not a valid term",
-                            )),
+                            hint: Some(Cow::Borrowed(__hint)),
                         });
                     }
                 }

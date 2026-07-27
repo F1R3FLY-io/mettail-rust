@@ -189,10 +189,32 @@ fn calculator_guard_tiers() {
 /// congruence premise — all three are queries over an already-reduced zipper
 /// and none participates in the reduction relation. T3/T4 stay 0 and `worst`
 /// stays T2.
+///
+/// ★ Speculation-lookahead surface (2026-07-26, RE-DERIVED not relaxed). `a5a93a23`
+/// added the `[*]` / `[n]` lookahead SURFACE
+///
+/// ```text
+///     PLookahead    . p:Proc, n:Proc |- p "[" n "]" : Proc;
+///     PLookaheadAll . p:Proc         |- p "[" "*" "]" : Proc;
+/// ```
+///
+/// — **2 + 1 = 3** more structural fields ⇒ T1 236 → 239, total 519 → 522. T2 is
+/// unchanged (283): both are PLAIN rules — no `![…]` action, no `fold`/`step` mode, no
+/// binder field, no freshness condition and no congruence premise — so neither adds a
+/// relational atom over the reduction relation. Every field is a `Proc` position, i.e. a
+/// non-scalar category decided by the structural classifier on the `True` skeleton ⇒ T1.
+/// T3/T4 stay 0 and `worst` stays T2.
+///
+/// ⚠ This golden was STALE for twelve commits: `a5a93a23` landed the rules and did not
+/// re-derive the tuple, so the test had been failing on `(522, 239, …)` vs `(519, 236, …)`
+/// since then, INDEPENDENTLY of the half-rule-family work that noticed it. The number is
+/// re-derived from the two rule declarations above, not fitted to the observed output —
+/// the cross-check inside `assert_tier_tuple` re-counts the structural fields from the raw
+/// metadata and would reject a fitted number.
 #[test]
 fn rhocalc_guard_tiers() {
     let meta = mettail_languages::rhocalc::RhoCalcLanguage.metadata();
-    assert_tier_tuple(meta, 519, 236, 283, 0, 0, T2);
+    assert_tier_tuple(meta, 522, 239, 283, 0, 0, T2);
 }
 
 /// **Ambient** — mobile ambients over `Proc`/`Name` (both non-scalar; no native

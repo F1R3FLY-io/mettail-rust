@@ -94,6 +94,25 @@
 //! down to the byte — which is why the two goldens `43ef99aa` named cannot move, and measurably
 //! did not.
 //!
+//! * **(C) an OPEN-ENDED sigil frame ignored declared binding power — ✅ CLOSED 2026-07-26.**
+//!   (A) and (B) both concern the ABUTTED spelling, where the sign is inside the numeral's token.
+//!   The NON-abutted spelling has a genuine `-` token at byte 0, so `NegProc . a:Proc |- "-" a`'s
+//!   skeleton `[Lit("-"), Op]` DOES match — and its trailing `Op` slot has no following literal
+//!   to stop at, so `__proj_skeleton_match_all` gives it `(start, n)`: **the whole remaining
+//!   span, one tiling, unconditionally**. `rhocalc.rs` declares the opposite (*"`NegProc` is
+//!   declared after `/` and `%` so `-` binds tighter than division"*), and the frame honoured
+//!   none of it. Measured on the shipped interpreter with the committed kill switch as the single
+//!   controlled variable:
+//!
+//!   ```text
+//!     - 7 + 1     facade ON → ⟦Int(-8)⟧     facade OFF → ⟦Int(-6)⟧     f1r3node → -6
+//!   ```
+//!
+//!   A WRONG VALUE. The repair gives that slot the SAME AST decline gate the ROOT-D method-frame
+//!   receiver already had (`compute_receiver_decline_labels`): an operand whose top constructor is
+//!   a binary infix or a unary prefix of its category is not the operand, so the frame declines
+//!   and the authoritative walker — which does honour the declared powers — decides. See §2b.
+//!
 //! # ⚠ Why a lowering-time fold is the WRONG fix
 //!
 //! Folding `NegProc(<ground literal>)` inside `rhocalc_ast.rs` looks like a one-line repair and is
@@ -153,6 +172,53 @@ fn positions(literal: &str) -> [String; 3] {
         literal.to_string(),
         format!(r#"@"OUT"!({literal})"#),
         format!(r#"for(@{literal} <- @"c") {{ @"OUT"!("Z") }}"#),
+    ]
+}
+
+/// ★★★ THE THIRD AXIS (2026-07-26) — the ENCLOSING OPERATOR, and why its absence hid a wrong
+/// answer for as long as it did.
+///
+/// Until this axis existed the suite was a two-dimensional grid, `spelling × position`. Every
+/// cell of it submits the numeral as a span that is a numeral END TO END: `-7n`, `@"OUT"!(-7n)`,
+/// `for(@-7n <- …)`. A framing defect that swallows *the rest of the span* is invisible on such a
+/// grid, because there is no rest of the span to swallow — which is exactly why
+/// [`a_signed_numeral_is_an_operand_not_a_negated_expression`] had to be added by hand, one row
+/// at a time, after the fact.
+///
+/// The open-ended sigil frame `[Lit("-"), Op]` is precisely that defect: its trailing operand
+/// slot has no following literal to stop at, so `__proj_skeleton_match_all` gives it
+/// `(start, n)` — everything to the end of input, unconditionally, with no regard for the
+/// binding power `rhocalc.rs` declares (*"`NegProc` is declared after `/` and `%` so `-` binds
+/// tighter than division"*). The measured consequence, on the shipped interpreter, with the
+/// facade kill switch as the single controlled variable:
+///
+/// ```text
+///   - 7 + 1     facade ON → ⟦Int(-8)⟧     facade OFF → ⟦Int(-6)⟧     f1r3node → -6
+/// ```
+///
+/// A WRONG VALUE, not a different node — and none of the 24 `spelling × position` cells of the
+/// non-abutted spelling `- 7` could see it, because none of them puts an operator next to the
+/// numeral. So the axis is not a nicety: it is the coordinate the defect lived on.
+///
+/// Every enclosing operator here is a REAL binary operator of the language whose declared
+/// precedence relative to unary `-` is stated in `rhocalc.rs`, and both sides of the operator are
+/// exercised (`X + 1` and `1 + X`) so a left-swallowing frame and a right-swallowing one are both
+/// covered.
+fn enclosings(literal: &str) -> [String; 5] {
+    [
+        // The degenerate enclosing — the pre-2026-07-26 axis, kept as the control column.
+        literal.to_string(),
+        // `+` / `-` are the LOOSEST arithmetic operators, so a frame that ignores binding power
+        // swallows them and the negation becomes the root: `- ⟨7 + 1⟩` = −8 instead of −6.
+        format!("{literal} + 1"),
+        format!("{literal} - 1"),
+        // `*` binds TIGHTER than `+` but still looser than the declared unary `-`; it is the row
+        // that separates "the frame ignores precedence entirely" from "the frame gets `+` wrong".
+        format!("{literal} * 2"),
+        // The numeral on the RIGHT of the operator. A leading-sigil frame cannot match here at
+        // all (byte 0 is `1`), so this column is the negative control for the whole axis: it must
+        // agree both before and after the repair.
+        format!("1 + {literal}"),
     ]
 }
 
@@ -439,6 +505,148 @@ fn a_signed_numeral_is_an_operand_not_a_negated_expression() {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+//  2b — THE THIRD AXIS: spelling × position × ENCLOSING OPERATOR (2026-07-26).
+//
+//  The row above is the four hand-picked cells of this grid that were noticed one at a time. The
+//  grid below is the axis they were cells of, enumerated instead of remembered — the same
+//  discipline the scan-site registry applies to raw-source scans.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// The spellings the ENCLOSING-OPERATOR axis is crossed with: the abutted forms (the sign is
+/// inside the token on both sides) AND the non-abutted forms (a real `ENeg` on both sides). Both
+/// halves matter, and for opposite reasons:
+///
+/// * an ABUTTED spelling must keep the sign in the numeral and let the enclosing operator be the
+///   root — `-7 + 1` is `EPlus(GInt(-7), GInt(1))`;
+/// * a NON-ABUTTED spelling must build the `ENeg` and STILL let the enclosing operator be the
+///   root, because the declared binding power of unary `-` is tighter than `+`, `-` and `*` —
+///   `- 7 + 1` is `EPlus(ENeg(GInt(7)), GInt(1))`.
+///
+/// It was the SECOND half that carried the live defect. The first half is closed by the token
+/// boundary (`lit_boundary.rs`, the `-7n` repair): with the sign inside the token the `-`-led
+/// frame never matches at all. The second half has a genuine `-` token at byte 0, so the frame
+/// DOES match, and only the binding-power gate stops it swallowing the operator.
+const ENCLOSED_SPELLINGS: [&str; 8] =
+    ["-7", "- 7", "-(7)", "-7n", "- 7n", "-(7n)", "-1.5f64", "- 1.5f64"];
+
+/// ★★★ THE FULL GRID — 8 spellings × 5 enclosings × 3 positions = 120 artifact comparisons.
+///
+/// Measured 2026-07-26 immediately after the open-ended-frame repair: **120 AGREE, 0 DIVERGE, 0
+/// front-end errors on either side**. Before the repair the `- 7`-family rows in the four
+/// non-degenerate enclosing columns carried MeTTaIL's `ENeg` over the whole expression against
+/// f1r3node's operator-rooted tree.
+///
+/// The grid is enumerated rather than listed so that adding a spelling or an enclosing operator
+/// automatically covers every position, and so that no future cell can be "the one nobody
+/// thought to write down" — which is exactly what `- 7 + 1` was.
+#[test]
+fn the_enclosing_operator_axis_conforms_in_every_cell() {
+    let mut diverged: Vec<String> = Vec::new();
+    for spelling in ENCLOSED_SPELLINGS {
+        for expression in enclosings(spelling) {
+            for source in positions(&expression) {
+                if !agrees(&source) {
+                    diverged.push(format!(
+                        "  `{source}`\n      f1r3node: {}\n      mettail : {}",
+                        render(&f1r3node_par(&source)),
+                        render(&mettail_par(&source)),
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        diverged.is_empty(),
+        "★ {} of 120 (spelling × enclosing-operator × position) cells no longer emit f1r3node's \
+         artifact. The enclosing operator is the axis whose absence hid `- 7 + 1` = −8:\n{}",
+        diverged.len(),
+        diverged.join("\n"),
+    );
+}
+
+/// ★ THE FOUR CELLS THE REPAIR WAS DIAGNOSED ON, named individually so a regression reports the
+/// input rather than a count. Each is `NON-abutted sign + enclosing operator` — the intersection
+/// the two-dimensional grid could not reach.
+///
+/// `- 7 + 1` is the headline: the frame `[Lit("-"), Op]` took the whole remaining span as its
+/// operand and produced `ENeg(EPlus(7, 1))` = **−8**, against f1r3node's
+/// `EPlus(ENeg(GInt(7)), GInt(1))` = **−6**.
+#[test]
+fn a_non_abutted_sign_binds_tighter_than_the_enclosing_operator() {
+    for source in ["- 7 + 1", "-(7) + 1", "- 7 * 2", "-(7n) + 1"] {
+        assert!(
+            agrees(source),
+            "★ `{source}`: unary `-` is declared to bind TIGHTER than `+`/`-`/`*` \
+             (`rhocalc.rs`: *\"`NegProc` is declared after `/` and `%`\"*), so the ENCLOSING \
+             operator is the root and the negation is its left operand. A frame that takes the \
+             whole remaining span as `-`'s operand makes the negation the root and changes the \
+             VALUE.\n  f1r3node: {}\n  mettail : {}",
+            render(&f1r3node_par(source)),
+            render(&mettail_par(source)),
+        );
+    }
+}
+
+/// ★★ THE ERROR **SHAPE** — the other half of the open-ended frame's damage, and the half no
+/// artifact comparison can see.
+///
+/// A `-`-led span that does not parse used to be rejected by the ROOT-1 AUTHORITATIVE REJECT with
+///
+/// ```text
+///   1:1: expected no valid parse: a projection-sigil-led send frame whose operands do not parse,
+///        found -
+///      = hint: an `@`-led span that is not a well-formed send (or infix of sends) is not a valid
+///        term
+/// ```
+///
+/// Two things are wrong with that, and they are independent:
+///
+/// 1. **The premise.** The reject's licence is *"a frame matched the whole input, and no tiling of
+///    its operands parses, therefore the span is provably not that frame"*. For `[Lit("-"), Op]`
+///    the match asserts only *"byte 0 is `-`"* — the same thing the reject's own leading-sigil
+///    guard already tests — so it witnesses nothing and the licence does not hold.
+/// 2. **The wording.** The trigger is *slot 0 is a non-ident literal*, not *this is a send*.
+///    `NegProc` is a unary prefix operator; it was reported as a malformed `@`-send.
+///
+/// With the frame no longer able to raise the reject, the span falls through to the authoritative
+/// walker, which reports the REAL defect — the unclosed parenthesis — at the position of the
+/// offending token. This test pins that the diagnosis is the walker's *and* that it names the
+/// same defect **f1r3node's own front end names**, which is the only external check available on
+/// an error message.
+#[test]
+fn an_unparseable_negated_span_reports_the_walkers_diagnosis_not_a_send_frame_reject() {
+    for source in ["-(1 | (@Nil)!(Nil))", "-(", "-(1 |"] {
+        let mettail = Proc::parse_via_wpda(source)
+            .err()
+            .unwrap_or_else(|| panic!("`{source}` must not parse"));
+        let message = format!("{mettail:?}");
+        assert!(
+            !message.contains("send frame"),
+            "★ `{source}` is a `-`-led span — a UNARY PREFIX operator, not a send. The reject \
+             wording must be derived from the frame that matched, and no `-`-led frame may raise \
+             the authoritative reject at all.\n  mettail: {message}"
+        );
+        assert!(
+            message.contains("no accepting branch reached end of input"),
+            "★ `{source}` must carry the monolithic walker's own diagnosis: the open-ended frame \
+             declines, and `ProjectionIsolation.v` `T7_fallthrough_is_monolithic` makes the \
+             walker's answer the facade's answer.\n  mettail: {message}"
+        );
+        // f1r3node rejects the same source, and for the same reason — the parenthesis is never
+        // closed. That is the external corroboration that the walker's diagnosis is the right
+        // one and the frame's was not.
+        let spec = f1r3node_par(source)
+            .err()
+            .unwrap_or_else(|| panic!("f1r3node must also reject `{source}`"));
+        assert!(
+            spec.contains("MissingToken") || spec.contains("SyntaxError"),
+            "f1r3node's rejection of `{source}` changed shape; re-derive this row.\n  \
+             f1r3node: {spec}"
+        );
+    }
+}
+
 /// ★ WHY BEHAVIOURAL TESTS ARE NOT ENOUGH — kept, with a LIVE witness, after its original witness
 /// was repaired.
 ///
@@ -478,7 +686,10 @@ fn a_firing_comm_does_not_witness_artifact_conformance() {
 
     // And the oracle says which of the two is f1r3node's reading of `-7n`.
     let spec = f1r3node_par("-7n").expect("f1r3node normalizes `-7n`");
-    assert_eq!(abutted, spec, "the abutted spelling must carry f1r3node's signed-literal artifact");
+    assert_eq!(
+        abutted, spec,
+        "the abutted spelling must carry f1r3node's signed-literal artifact"
+    );
     assert_ne!(
         spaced, spec,
         "the spaced spelling must NOT carry it — it is a genuine `ENeg` in both implementations"

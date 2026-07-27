@@ -1017,6 +1017,14 @@ fn emit_sep_isolation(cat_ident: &proc_macro2::Ident, shape: &SepCombineShape) -
                 c.is_ascii_alphanumeric() || c == b'_'
             }
             #sep_lead_boundary_fn
+            // ★ O3 SEP-ISOLATION KILL SWITCH (2026-07-26): decline BEFORE any work when
+            // `PRATTAIL_NO_SEP_ISOLATION` is set, so the facade runs the UNMODIFIED monolithic
+            // body. Same fall-through contract and same caveat as the proj switch; the A/B gate
+            // `languages/tests/seam_monotonicity_ab.rs` measures the ON/OFF reading sets rather
+            // than assuming the facade only adds.
+            if __sep_iso_disabled() {
+                return None;
+            }
             let __bytes = input.as_bytes();
             let __n = __bytes.len();
             if __n == 0 {
@@ -1302,6 +1310,50 @@ struct ProjVariant {
     /// and method-frame (slot 0 = receiver operand) variants — those are never the
     /// authoritative-reject trigger (their decline stays `None` → walker/monolithic).
     sigil_led: bool,
+    /// ★ THE OPEN-ENDED SIGIL FRAME (2026-07-26, R1). TRUE iff the skeleton is
+    /// `[Lit(σ), Op]` — the LAST slot is an operand AND σ is the skeleton's ONLY literal.
+    /// That is the shape of a UNARY PREFIX operator (`PDrop . n:Name |- "*" n`,
+    /// `NQuoteShort . p:Proc |- "@" p`, `InputBindEmpty . n:Name |- "<-" n`) rather than
+    /// of a bracketed frame (`POutputShort`'s `"@" p "!" "(" q ")"`, `NQuote`'s
+    /// `"@" "(" p ")"`) or of a multi-literal frame with a trailing operand
+    /// (`InputBindQuoted`'s `"@" lhs "<-" n`, whose interior `<-` must be found at depth 0
+    /// and is therefore real evidence).
+    ///
+    /// ★ WHY THIS EXACT CRITERION, and why it is not a heuristic. `__proj_skeleton_match_all`'s
+    /// `Op` arm takes `next_lit == None ⟹ (start, n)` — the whole remaining span, ONE
+    /// tiling, UNCONDITIONALLY. So for this shape the predicate *"the skeleton matched the
+    /// whole input"* reduces EXACTLY to *"byte 0 begins the literal σ (with σ's token
+    /// boundary honoured)"*, and nothing whatsoever is asserted about the bytes after σ.
+    /// The authoritative-reject's own guard already tests `__bytes.first() ∈ σ-lead-bytes`,
+    /// so a matched OPEN-ENDED frame contributes NO EVIDENCE BEYOND THE GUARD ITSELF: the
+    /// conjunct `__sigil_frame_matched` is implied by its neighbour and the reject's premise
+    /// (*"a frame matched, therefore the span really is of that shape"*) is vacuous. For a
+    /// CLOSED frame the same predicate is substantive — the trailing literals (`!`, `(`,
+    /// `)`) must all be present at real token boundaries, which genuinely pins the shape.
+    ///
+    /// Two consequences, both derived from that one fact:
+    ///
+    /// * **R2** — an open-ended frame may NOT set `__sigil_frame_matched` (see
+    ///   `emit_proj_variant_arm`). Strictly a NARROWING: fewer rejects ⇒ more fall-through
+    ///   to the authoritative walker (`ProjectionIsolation.v` `T7_fallthrough_is_monolithic`).
+    /// * **R3** — the open-ended `Op` slot must honour the operator's DECLARED BINDING
+    ///   POWER instead of swallowing the whole remaining span; see
+    ///   [`ProjVariant::open_ended_decline_labels`].
+    open_ended: bool,
+    /// R3 — the DECLARE-BINDING-POWER decline set for the open-ended trailing operand
+    /// (empty unless [`ProjVariant::open_ended`]). Computed by the SAME
+    /// [`compute_receiver_decline_labels`] the ROOT-D method-frame receiver gate uses: the
+    /// labels of rules producing the operand's category whose syntax pattern is a BINARY
+    /// INFIX (`[Param, Literal, Param]`) or a UNARY PREFIX (`[Literal, Param]`).
+    ///
+    /// The reading is the same in both places, because it is the same fact: a prefix
+    /// operator binds TIGHTER than every infix operator of its category (RhoCalc declares
+    /// `NegProc` after `/` and `%` exactly so, and `NQuoteShort`/`POutputShort` carry an
+    /// explicit `prefix(220)`), so an operand whose own top constructor is an infix — or a
+    /// looser prefix — is NOT the operand: the frame stopped in the wrong place. `- 7 + 1`
+    /// sub-parses `7 + 1` to `Add(..)`, which is in this set, so the frame declines and the
+    /// walker resolves the input under the declared powers as `Add(NegProc(7), 1)`.
+    open_ended_decline_labels: Vec<String>,
 }
 
 /// Grammar-derived shape of an `@`-projection category: the σ-led frame-variants.
@@ -1323,16 +1375,24 @@ pub(crate) struct ProjIsoShape {
     lit_boundaries: std::collections::BTreeMap<String, lit_boundary::LitBoundary>,
 }
 
-/// Grammar-derived DISTINCT first-bytes of a projection shape's σ-led variants'
-/// leading literal (`@`/`*`/`-`/`(` …) — the projection sigils the category admits.
-/// SINGLE SOURCE OF TRUTH for the authoritative-reject `starts_with_sigil`
-/// gate (`emit_projection_isolation`). No
-/// token hardcode — the bytes come straight from the grammar's leading literals.
+/// Grammar-derived DISTINCT first-bytes of a projection shape's REJECT-ELIGIBLE σ-led
+/// variants' leading literal (`@`/`(` …) — the projection sigils whose frames can raise
+/// the ROOT-1 authoritative reject. SINGLE SOURCE OF TRUTH for that reject's
+/// `starts_with_sigil` gate (`emit_projection_isolation`). No token hardcode — the bytes
+/// come straight from the grammar's leading literals.
+///
+/// ★ R2 (2026-07-26): OPEN-ENDED variants are EXCLUDED. They cannot set
+/// `__sigil_frame_matched` (see [`ProjVariant::open_ended`]), so including their sigil
+/// here would leave a byte in the gate that no evidence can ever accompany — the guard
+/// and the flag would disagree about which frames the reject speaks for. With the
+/// exclusion, `__sigil_frame_matched.is_some() ⟹ starts_with_sigil` holds by
+/// construction: the flag is set only by a variant whose leading literal matched at byte
+/// 0, and that literal's first byte is in this set.
 fn proj_sigil_lead_bytes(shape: &ProjIsoShape) -> Vec<u8> {
     let mut bs: Vec<u8> = shape
         .variants
         .iter()
-        .filter(|v| v.sigil_led)
+        .filter(|v| v.sigil_led && !v.open_ended)
         .filter_map(|v| match v.slots.first() {
             Some(ProjSlot::Lit(l)) => l.as_bytes().first().copied(),
             _ => None,
@@ -1341,6 +1401,67 @@ fn proj_sigil_lead_bytes(shape: &ProjIsoShape) -> Vec<u8> {
     bs.sort_unstable();
     bs.dedup();
     bs
+}
+
+/// ★ R4 (2026-07-26) — the AUTHORITATIVE-REJECT WORDING, derived from the variant that
+/// actually matched rather than asserted.
+///
+/// Returns `(expected, hint)` for the `ParseError::UnexpectedToken` the ROOT-1
+/// authoritative reject raises. Both strings are built at CODEGEN time from three
+/// grammar facts and nothing else: the variant's LABEL, its RESULT CATEGORY, and its
+/// SKELETON rendered back to surface shape (`@ ⟨Proc⟩ ! ( ⟨Proc⟩ )`).
+///
+/// ★ WHY IT IS DERIVED. The pre-2026-07-26 wording was the fixed sentence *"a
+/// projection-sigil-led SEND frame whose operands do not parse"*, with the hint *"an
+/// `@`-led span …"*. Neither is a property of the trigger: the trigger is
+/// [`ProjVariant::sigil_led`] — *slot 0 is a non-ident literal* — which admits
+/// `NQuote . p:Proc |- "@" "(" p ")" : Name` (a quotation, not a send) and, before R2,
+/// admitted `NegProc . a:Proc |- "-" a : Proc` and `PDrop . n:Name |- "*" n : Proc`
+/// (unary prefix operators, not sends at all). A `-`-led span that failed was told it
+/// was a malformed `@`-send. The wording now cannot drift from the trigger, because it
+/// is computed from the same `ProjVariant` the trigger fires on.
+fn proj_reject_wording(
+    cat_ident: &proc_macro2::Ident,
+    variant: &ProjVariant,
+) -> (String, String) {
+    let cat = cat_ident.to_string();
+    let label = &variant.label;
+    // The skeleton, rendered back to the surface shape the grammar declares.
+    let shape: Vec<String> = variant
+        .slots
+        .iter()
+        .map(|s| match s {
+            ProjSlot::Lit(l) => l.clone(),
+            ProjSlot::Operand { category } => format!("⟨{category}⟩"),
+            ProjSlot::SepList { element_category, separator } => {
+                format!("⟨{element_category}⟩.*sep({separator:?})")
+            },
+        })
+        .collect();
+    let shape = shape.join(" ");
+    // The leading literal — present for every `sigil_led` variant by construction, and
+    // the only reason this is an `Option` at all is that the same function must stay
+    // total over a hypothetical non-sigil caller.
+    let sigil = match variant.slots.first() {
+        Some(ProjSlot::Lit(l)) => l.clone(),
+        _ => String::new(),
+    };
+    let expected = format!(
+        "no valid parse: the `{label}` frame `{shape}` matched this `{cat}` span, but none \
+         of its operand tilings parse"
+    );
+    let hint = if sigil.is_empty() {
+        format!(
+            "a `{cat}` span that matches the `{label}` frame `{shape}` but whose operands are \
+             not well-formed is not a valid `{cat}`"
+        )
+    } else {
+        format!(
+            "a `{sigil}`-led `{cat}` span that matches the `{label}` frame `{shape}` but whose \
+             operands are not well-formed is not a valid `{cat}`"
+        )
+    };
+    (expected, hint)
 }
 
 /// ROOT-D: is `cat` LEFT-RECURSIVE via the literal `delim`? I.e. does the grammar
@@ -1678,6 +1799,38 @@ fn derive_projection_iso_shape(
                 }
             })
             .collect();
+        // ★ R1 — THE OPEN-ENDED SIGIL FRAME, classified from the skeleton alone. See
+        // `ProjVariant::open_ended` for the full statement of why this exact criterion
+        // is the one that makes `__sigil_frame_matched` carry zero evidence. Derived,
+        // no label hardcode.
+        //
+        // "EXACTLY ONE LEADING `Lit`" is read as *exactly one `Lit` in the whole
+        // skeleton, and it leads* — equivalently, every slot after slot 0 is an `Op`.
+        // That is the reading the justification requires and it is measurably NOT the
+        // same as *the leading run of `Lit`s has length one*: RhoCalc's
+        // `InputBindQuoted . lhs:Proc, n:Name |- "@" lhs "<-" n : InputBind` is
+        // `[Lit("@"), Op, Lit("<-"), Op]`, whose leading run is also one, and whose
+        // whole-input match requires a depth-0 `<-` at a real token boundary — genuine
+        // evidence, and a genuine frame rather than a prefix operator. Only a skeleton
+        // with NO interior literal degenerates to *"the input starts with σ"*.
+        let lit_count = slots.iter().filter(|s| matches!(s, ProjSlot::Lit(_))).count();
+        let open_ended = lit_count == 1
+            && matches!(slots.first(), Some(ProjSlot::Lit(_)))
+            && matches!(
+                slots.last(),
+                Some(ProjSlot::Operand { .. }) | Some(ProjSlot::SepList { .. })
+            );
+        // R3 — the declared-binding-power decline set for that trailing operand, from the
+        // SAME grammar-shape computation the ROOT-D receiver gate uses.
+        let open_ended_decline_labels = match (open_ended, slots.last()) {
+            (true, Some(ProjSlot::Operand { category })) => {
+                compute_receiver_decline_labels(language, category)
+            },
+            // A trailing `.*sep` LIST is element-wise: its elements are separator-delimited,
+            // so no single element swallows the remaining span and the binding-power hazard
+            // does not arise. Left empty ⇒ the gate is not emitted ⇒ byte-identical there.
+            _ => Vec::new(),
+        };
         variants.push(ProjVariant {
             label: normalized.label.to_string(),
             slots,
@@ -1687,6 +1840,8 @@ fn derive_projection_iso_shape(
             // ROOT-1: carry the already-computed `sigil_led` (slot-0 non-ident
             // literal) so the arm/helper can mark `__sigil_frame_matched`.
             sigil_led,
+            open_ended,
+            open_ended_decline_labels,
         });
     }
 
@@ -1982,14 +2137,34 @@ fn emit_proj_variant_arm(
 
     // ROOT-1 (design a9fbeefe): the authoritative-reject machinery. The
     // materialization caps also set `__cap_hit` (so an INCOMPLETE enumeration never
-    // triggers a reject) and a matched `sigil_led` variant sets `__sigil_frame_matched`.
+    // triggers a reject) and a matched `sigil_led` variant records itself in
+    // `__sigil_frame_matched`.
     let set_cap_hit: TokenStream = quote! { __cap_hit = true; };
-    // Emitted only for `sigil_led` variants: mark that a σ-led send skeleton matched
-    // the WHOLE input (≥1 tiling). The decline site turns this into a reject.
-    let set_sigil_matched: TokenStream = if variant.sigil_led {
+    // ★ R2 (2026-07-26) — emitted only for `sigil_led` variants that are NOT
+    // OPEN-ENDED. An open-ended frame (`[Lit(σ), Op]`) matches the whole input for
+    // EVERY string beginning with σ — `__proj_skeleton_match_all`'s `Op` arm takes
+    // `next_lit == None ⟹ (start, n)` unconditionally — so "the frame matched" is
+    // implied by the reject's own `starts_with_sigil` guard and carries no independent
+    // evidence. Its premise ("the span really is a frame of this shape, and no tiling
+    // parsed, therefore the span is provably not one") does not hold, and the resulting
+    // `Err` pre-empts the walker's real diagnosis. See `ProjVariant::open_ended`.
+    //
+    // ★ SOUNDNESS — this is a NARROWING, not a trade. It can only make the helper set
+    // the flag LESS often ⇒ fire the authoritative reject LESS often ⇒ fall through to
+    // the monolithic walker MORE often. Fall-through is `ProjectionIsolation.v`
+    // `T7_fallthrough_is_monolithic`: the facade's value becomes the walker's value.
+    // No input that rejected for a legitimate reason stops rejecting — a CLOSED frame
+    // (`@ p ! ( q )`) still pins its literals and still rejects.
+    //
+    // R4: the payload is the DERIVED wording of the frame, not a bare `true`, so the
+    // error names the variant that actually matched instead of asserting "send".
+    let set_sigil_matched: TokenStream = if variant.sigil_led && !variant.open_ended {
+        let (expected_msg, hint_msg) = proj_reject_wording(cat_ident, variant);
         quote! {
-            if !__assignments.is_empty() {
-                __sigil_frame_matched = true;
+            if !__assignments.is_empty() && __sigil_frame_matched.is_none() {
+                // Variants are ordered MOST-SPECIFIC-FIRST, so the first frame to match
+                // is the one the reader's eye reads the span as; keep it.
+                __sigil_frame_matched = Some((#expected_msg, #hint_msg));
             }
         }
     } else {
@@ -2023,6 +2198,61 @@ fn emit_proj_variant_arm(
         } else {
             None
         };
+
+    // ★ R3 (2026-07-26) — THE DECLARED-BINDING-POWER GATE AT THE OPEN-ENDED SLOT.
+    //
+    // An open-ended frame's trailing `Op` slot takes `(start, n)` — the WHOLE remaining
+    // span — because `__proj_skeleton_match_all` has no following literal to stop at.
+    // That is the matcher discarding a fact the grammar states: a unary prefix operator
+    // binds TIGHTER than the infix operators of its category. `rhocalc.rs` says it in
+    // prose for `NegProc` (*"declared after `/` and `%` so `-` binds tighter than
+    // division"*) and in an annotation for `NQuoteShort` / `POutputShort`
+    // (`prefix(220)`, *"well above any Proc-level infix BP"*). The frame honoured
+    // neither, so `- 7 + 1` was framed as `- ⟨7 + 1⟩` = `NegProc(Add(7, 1))` = −8, where
+    // the declared powers give `Add(NegProc(7), 1)` = −6 (and f1r3node agrees on −6).
+    //
+    // The condition is EXACTLY the one the ROOT-D method-frame receiver already uses, so
+    // it is expressed with the SAME `compute_receiver_decline_labels` computation rather
+    // than a second, parallel notion: a sub-parsed operand whose TOP CONSTRUCTOR is a
+    // binary infix (`[Param, Literal, Param]`) or a unary prefix (`[Literal, Param]`) of
+    // that category is not the operand — the frame stopped in the wrong place, and the
+    // reading belongs to the operator, not to the sigil.
+    //
+    // ★ SOUNDNESS. Dropping such readings can only EMPTY the frame's candidate set, which
+    // `break '__variant`s to the next variant and ultimately declines the helper — the
+    // `combine_run = None` fall-through of `ProjectionIsolation.v`
+    // `T7_fallthrough_is_monolithic`, where the AUTHORITATIVE walker (which does honour
+    // the declared powers, via the Pratt loop) decides. It cannot fabricate a reading and
+    // it cannot change any reading the walker would not itself have produced.
+    //
+    // ★ `#set_cap_hit` accompanies the decline for the same reason it accompanies the two
+    // ROOT-D gates: this is a STRUCTURAL decline (a binding-power fact), not a genuine
+    // operand parse error, so the enumeration is not "provably complete" and the
+    // authoritative reject must not escalate it to `Err`. `__cap_hit` can only SUPPRESS a
+    // reject, never fabricate one.
+    let open_ended_decline_pat: Option<TokenStream> = match (
+        variant.open_ended,
+        variant.open_ended_decline_labels.is_empty(),
+        variant.slots.last(),
+    ) {
+        (true, false, Some(ProjSlot::Operand { category })) => {
+            let ocat = format_ident!("{}", category);
+            let arms: Vec<TokenStream> = variant
+                .open_ended_decline_labels
+                .iter()
+                .map(|lbl| {
+                    let l = format_ident!("{}", lbl);
+                    quote! { #ocat::#l(..) }
+                })
+                .collect();
+            Some(quote! { #(#arms)|* })
+        },
+        _ => None,
+    };
+    // The operand index of that trailing slot: it is the LAST operand-bearing slot, and
+    // an open-ended variant's last slot IS operand-bearing, so it is `n_ops - 1`.
+    let open_ended_op_index: Option<usize> =
+        open_ended_decline_pat.as_ref().map(|_| n_ops - 1);
 
     // Bind each operand: a `Scalar` sub-parses the whole region; a `Sep` splits
     // the region at the depth-0 separator, sub-parses each element, and cartesian-
@@ -2074,27 +2304,46 @@ fn emit_proj_variant_arm(
                 } else {
                     quote! {}
                 };
-                // ROOT-D receiver AST gate: drop sub-parsed receiver readings whose
-                // top ctor is a binary-infix / prefix (NOT the whole receiver —
-                // e.g. `-Nil` → `NegProc`). If none survive ⇒ decline the frame.
-                let recv_ast_filter: TokenStream = match (is_gated_receiver, &decline_pat) {
-                    (true, Some(pat)) => quote! {
+                // THE AST GATE, in its two instances. Both drop sub-parsed operand
+                // readings whose TOP CONSTRUCTOR is a binary infix or a unary prefix of
+                // the operand's category — the shape that proves the frame did not stop
+                // where the declared binding powers put the operand's edge. If none
+                // survive ⇒ decline the frame ⇒ fall through to the walker.
+                //
+                //   * ROOT-D (2026-07-06), at the LEADING RECEIVER of a method frame:
+                //     `Map() % @X . concat` is `Mod`, so `Map() % @X` is not the receiver.
+                //   * R3 (2026-07-26), at the TRAILING OPERAND of an OPEN-ENDED sigil
+                //     frame: `- 7 + 1` sub-parses `7 + 1` to `Add`, so `7 + 1` is not the
+                //     operand of `-`.
+                //
+                // They are MUTUALLY EXCLUSIVE by construction — a method frame's slot 0 is
+                // an operand, so its leading-`Lit` run is 0 and it can never be
+                // `open_ended` — which is why one `__pairs` binding serves both.
+                let is_open_ended_operand = open_ended_op_index == Some(oi);
+                let gate_pat: Option<&TokenStream> = match (is_gated_receiver, is_open_ended_operand)
+                {
+                    (true, _) => decline_pat.as_ref(),
+                    (_, true) => open_ended_decline_pat.as_ref(),
+                    _ => None,
+                };
+                let recv_ast_filter: TokenStream = match gate_pat {
+                    Some(pat) => quote! {
                         let __pairs: Vec<(#ocat, __W)> = __t
                             .into_iter()
                             .zip(__w.into_iter())
                             .filter(|(__r, _)| !matches!(__r, #pat))
                             .collect();
                         if __pairs.is_empty() {
-                            // ROOT-1 (a9fbeefe): STRUCTURAL AST gate (every receiver
-                            // reading top-ctor'd to a binary-infix/prefix ⇒ not the
-                            // whole receiver), NOT a genuine parse-Err. Mark incomplete
-                            // so the authoritative-reject falls to the walker.
+                            // ROOT-1 (a9fbeefe): a STRUCTURAL AST gate (every reading
+                            // top-ctor'd to a binary-infix/prefix ⇒ the frame's edge is in
+                            // the wrong place), NOT a genuine parse-Err. Mark incomplete so
+                            // the authoritative-reject falls to the walker.
                             #set_cap_hit
                             break '__variant;
                         }
                         __pairs
                     },
-                    _ => quote! { __t.into_iter().zip(__w.into_iter()).collect() },
+                    None => quote! { __t.into_iter().zip(__w.into_iter()).collect() },
                 };
                 parse_binds.push(quote! {
                     let #pairs_id: Vec<(#ocat, __W)> = {
@@ -2745,11 +2994,13 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
     // (`@`/`*`/`-`/`(` …) — the projection sigils this category admits. No hardcode.
     let sigil_lead_bytes: Vec<u8> = proj_sigil_lead_bytes(shape);
     // The cap sites reference `__cap_hit` regardless of shape; `__sigil_frame_matched`
-    // stays false for a category with no σ-led variant ⇒ that category never rejects.
-    // `#[allow(unused_assignments)]` on the helper covers the never-read case.
+    // stays `None` for a category with no reject-eligible σ-led variant ⇒ that category
+    // never rejects. `#[allow(unused_assignments)]` on the helper covers the never-read
+    // case. R4: the payload is the matched variant's DERIVED `(expected, hint)` wording,
+    // so the reject can name the frame it actually matched (`proj_reject_wording`).
     let reject_locals: TokenStream = quote! {
         // ROOT-1 authoritative-reject bookkeeping.
-        let mut __sigil_frame_matched = false;
+        let mut __sigil_frame_matched: Option<(&'static str, &'static str)> = None;
         let mut __cap_hit = false;
     };
     // The reject-aware decline is emitted ONLY for a category that actually has σ-led
@@ -2764,20 +3015,30 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             quote! { matches!(__bytes.first(), Some(#(#byte_lits)|*)) };
         quote! {
             if __candidates.is_empty() {
-                // ROOT-1 AUTHORITATIVE-REJECT: a σ-led send skeleton matched the whole
+                // ROOT-1 AUTHORITATIVE-REJECT: a CLOSED σ-led skeleton matched the whole
                 // input (`__sigil_frame_matched`), enumeration was COMPLETE (`!__cap_hit`),
-                // the trimmed input starts with a projection sigil, and NO tiling parsed
-                // ⇒ the span is provably not a send. Signal a definitive reject (the
-                // prologue turns it into `Err` — but only AFTER the infix prologue also
-                // declines, so an infix-of-sends like `@Nil!(0) or @Nil!(0)` is still
-                // recovered) instead of falling to the fork-exploding walker. SINGLE
-                // seam only.
+                // the trimmed input starts with a reject-eligible projection sigil, and NO
+                // tiling parsed ⇒ the span is provably not that frame. Signal a definitive
+                // reject (the prologue turns it into `Err` — but only AFTER the infix
+                // prologue also declines, so an infix-of-sends like `@Nil!(0) or @Nil!(0)`
+                // is still recovered) instead of falling to the fork-exploding walker.
+                // SINGLE seam only.
+                //
+                // ★ R2 (2026-07-26): OPEN-ENDED frames (`[Lit(σ), Op]`) never set
+                // `__sigil_frame_matched`, so `-`/`*`-led prefix operators no longer reach
+                // this site at all — their decline falls to the walker, whose diagnosis is
+                // the real one. `#starts_with_sigil` is derived over the SAME
+                // reject-eligible variants, which makes it a provable consequence of the
+                // flag rather than an independent (and now stale) test.
                 if __single_winner
-                    && __sigil_frame_matched
                     && !__cap_hit
                     && #starts_with_sigil
                 {
-                    __proj_sigil_reject_set();
+                    if let Some((__expected, __hint)) = __sigil_frame_matched {
+                        // R4: the wording travels WITH the evidence, derived at codegen
+                        // time from the matched variant's label, category and skeleton.
+                        __proj_sigil_reject_set(__expected, __hint);
+                    }
                 }
                 return None;
             }
@@ -3319,6 +3580,17 @@ fn emit_infix_isolation(cat_ident: &proc_macro2::Ident, shape: &InfixIsoShape) -
                 c.is_ascii_alphanumeric() || c == b'_'
             }
 
+            // ★ O3 INFIX-ISOLATION KILL SWITCH (2026-07-26): decline BEFORE any work when
+            // `PRATTAIL_NO_INFIX_ISOLATION` is set, so the facade runs the UNMODIFIED
+            // monolithic body. Same fall-through contract as the proj switch
+            // (`ProjectionIsolation.v` `T7_fallthrough_is_monolithic`), and the same caveat
+            // (`T13_fallthrough_is_not_completeness`): OFF is the WALKER-ONLY reading set,
+            // which may be strictly SMALLER than ON — which is exactly what the A/B gate
+            // `languages/tests/seam_monotonicity_ab.rs` measures rather than assumes.
+            if __infix_iso_disabled() {
+                return None;
+            }
+
             let input = input.trim();
             let __bytes = input.as_bytes();
             let __n = __bytes.len();
@@ -3569,6 +3841,21 @@ fn emit_proj_memo_preamble() -> TokenStream {
 /// states the same fact in Rocq; this switch is the executable half of it.
 pub(crate) const PROJ_ISO_KILL_SWITCH_ENV: &str = "PRATTAIL_NO_PROJ_ISOLATION";
 
+/// ★ O3 (2026-07-26) — the SEP and INFIX kill switches, the siblings the proj switch lacked.
+///
+/// The proj switch has existed since 2026-07-25 and its absence before then is what let the G1
+/// degenerate-tail defect be *reasoned about incorrectly* for a week. The sep and infix facades
+/// had no such seam at all, so their ON/OFF reading sets had never been compared: an infix
+/// facade that LOST a reading looked exactly like a language that never had it. That is instance
+/// 4 of the half-rule family, and this is the seam that turns it into a test failure.
+///
+/// Same contract as the proj switch in every respect — read ONCE per process into a `OnceLock`
+/// (the helpers are on the parse hot path and the `__PROJ_MEMO_<Cat>` best-parse memo must stay
+/// coherent), so an A/B harness runs the OFF leg in a SUBPROCESS.
+pub(crate) const SEP_ISO_KILL_SWITCH_ENV: &str = "PRATTAIL_NO_SEP_ISOLATION";
+/// See [`SEP_ISO_KILL_SWITCH_ENV`].
+pub(crate) const INFIX_ISO_KILL_SWITCH_ENV: &str = "PRATTAIL_NO_INFIX_ISOLATION";
+
 /// `@`-PROJECTION ISOLATION KILL-SWITCH (2026-07-25) — the module-scope
 /// `__proj_iso_disabled()` predicate emitted ONCE per language module (in
 /// [`emit_parse_fns`]), gated by ≥1 `@`-projection-eligible category, exactly
@@ -3586,6 +3873,8 @@ pub(crate) const PROJ_ISO_KILL_SWITCH_ENV: &str = "PRATTAIL_NO_PROJ_ISOLATION";
 /// it exercises the real end-to-end binary rather than a re-entrant flag flip.
 fn emit_proj_iso_kill_switch_preamble() -> TokenStream {
     let env_name = PROJ_ISO_KILL_SWITCH_ENV;
+    let sep_env_name = SEP_ISO_KILL_SWITCH_ENV;
+    let infix_env_name = INFIX_ISO_KILL_SWITCH_ENV;
     quote! {
         /// Process-wide `@`-projection-isolation kill switch, read ONCE from
         /// `PRATTAIL_NO_PROJ_ISOLATION`. `true` ⇒ every projection-isolation
@@ -3604,6 +3893,24 @@ fn emit_proj_iso_kill_switch_preamble() -> TokenStream {
             *__PROJ_ISO_DISABLED
                 .get_or_init(|| std::env::var_os(#env_name).is_some())
         }
+        /// ★ O3: the SEP facade's kill switch. Same contract as `__proj_iso_disabled`.
+        #[inline]
+        #[allow(dead_code)]
+        fn __sep_iso_disabled() -> bool {
+            static __SEP_ISO_DISABLED: std::sync::OnceLock<bool> =
+                std::sync::OnceLock::new();
+            *__SEP_ISO_DISABLED
+                .get_or_init(|| std::env::var_os(#sep_env_name).is_some())
+        }
+        /// ★ O3: the INFIX facade's kill switch. Same contract as `__proj_iso_disabled`.
+        #[inline]
+        #[allow(dead_code)]
+        fn __infix_iso_disabled() -> bool {
+            static __INFIX_ISO_DISABLED: std::sync::OnceLock<bool> =
+                std::sync::OnceLock::new();
+            *__INFIX_ISO_DISABLED
+                .get_or_init(|| std::env::var_os(#infix_env_name).is_some())
+        }
     }
 }
 
@@ -3612,37 +3919,49 @@ fn emit_proj_iso_kill_switch_preamble() -> TokenStream {
 /// [`emit_parse_fns`]), gated by the presence of ≥1 `@`-projection-eligible
 /// category. No eligible category ⇒ not emitted ⇒ byte-identical.
 ///
-/// The isolation helper calls `__proj_sigil_reject_set()` at its decline when it
-/// matched a whole-input σ-led send skeleton, enumeration was complete, and NO
+/// The isolation helper calls `__proj_sigil_reject_set(expected, hint)` at its decline
+/// when a CLOSED σ-led skeleton matched the whole input, enumeration was complete, and NO
 /// tiling parsed (single-winner seam only). The `parse_via_wpda_uncached` prologue
 /// calls `__proj_sigil_reject_take()` the statement AFTER the proj prologue declines
-/// — it reads AND clears, so a nested operand sub-parse's flag is consumed by its
-/// OWN prologue (never leaking to an enclosing frame). If the take returns `true`
+/// — it reads AND clears, so a nested operand sub-parse's signal is consumed by its
+/// OWN prologue (never leaking to an enclosing frame). If the take returns `Some`
 /// AND the infix prologue then also declines, the prologue returns `Err` instead of
 /// running the fork-exploding walker. Referenced UNQUALIFIED from the `impl Cat`
 /// methods (`gen/mod.rs`) and the helper fns, which share this module's flat include
 /// scope (mirrors `emit_proj_memo_preamble`).
+///
+/// ★ R4 (2026-07-26) — the payload is the WORDING, not a bare `bool`. Both strings are
+/// derived at codegen time by [`proj_reject_wording`] from the matched variant's label,
+/// category and skeleton, and they travel with the evidence, so the error can never say
+/// "send" about a frame that is not one. `(&'static str, &'static str)` is `Copy`, so the
+/// `Cell` keeps its lock-free read-and-replace.
 fn emit_proj_sigil_reject_preamble() -> TokenStream {
     quote! {
         thread_local! {
-            /// Set true by an isolation helper that AUTHORITATIVELY rejects a σ-led
-            /// send frame; taken (read + cleared) by the prologue right after the
-            /// proj prologue declines. Consume-once semantics keep nested sub-parse
-            /// signals from leaking across frames.
-            static __PROJ_SIGIL_REJECT: std::cell::Cell<bool> =
-                const { std::cell::Cell::new(false) };
+            /// Set by an isolation helper that AUTHORITATIVELY rejects a CLOSED σ-led
+            /// frame, carrying that frame's derived `(expected, hint)` wording; taken
+            /// (read + cleared) by the prologue right after the proj prologue declines.
+            /// Consume-once semantics keep nested sub-parse signals from leaking across
+            /// frames.
+            static __PROJ_SIGIL_REJECT:
+                std::cell::Cell<Option<(&'static str, &'static str)>> =
+                const { std::cell::Cell::new(None) };
         }
-        /// Mark that the current isolation-helper call authoritatively rejects.
+        /// Mark that the current isolation-helper call authoritatively rejects, with the
+        /// wording derived from the frame that matched.
         #[inline]
         #[allow(dead_code)]
-        fn __proj_sigil_reject_set() {
-            __PROJ_SIGIL_REJECT.with(|__c| __c.set(true));
+        fn __proj_sigil_reject_set(
+            __expected: &'static str,
+            __hint: &'static str,
+        ) {
+            __PROJ_SIGIL_REJECT.with(|__c| __c.set(Some((__expected, __hint))));
         }
-        /// Read AND clear the reject flag (consume-once).
+        /// Read AND clear the reject signal (consume-once).
         #[inline]
         #[allow(dead_code)]
-        fn __proj_sigil_reject_take() -> bool {
-            __PROJ_SIGIL_REJECT.with(|__c| __c.replace(false))
+        fn __proj_sigil_reject_take() -> Option<(&'static str, &'static str)> {
+            __PROJ_SIGIL_REJECT.with(|__c| __c.replace(None))
         }
     }
 }
@@ -5200,7 +5519,11 @@ pub(crate) fn emit_parse_fns(
     // The `__proj_iso_disabled()` process-constant predicate, emitted ONCE per
     // module under the SAME gate as the reject preamble. No proj-eligible category
     // ⇒ empty ⇒ byte-identical.
-    let proj_iso_kill_switch_preamble = if any_proj_eligible {
+    // ★ O3 (2026-07-26): this preamble now carries the SEP and INFIX switches too, so it is
+    // gated on ANY isolation-eligible category rather than on a proj-eligible one. A language
+    // with a sep or infix facade and no projection would otherwise reference an undefined
+    // `__sep_iso_disabled` / `__infix_iso_disabled`.
+    let proj_iso_kill_switch_preamble = if any_iso_eligible {
         emit_proj_iso_kill_switch_preamble()
     } else {
         quote! {}

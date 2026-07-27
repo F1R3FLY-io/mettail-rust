@@ -478,11 +478,18 @@ pub(crate) const PROJ_SIGIL_REJECT: ScanSite = ScanSite {
     what: "ROOT-1 authoritative-reject leading-sigil test",
     literals: LiteralSource::ProjSkeletonLits,
     left: Discharge::NoSpan { why: "the test reads `__bytes.first()`, so `p == 0` and there is no left span" },
-    // The reject fires only when a σ-led frame matched the WHOLE input, and that match
-    // ran through `proj.lit` — which carries the boundary test. The reject adds no new
-    // literal match of its own.
+    // The reject fires only when a CLOSED σ-led frame matched the WHOLE input, and that
+    // match ran through `proj.lit` — which carries the boundary test. The reject adds no
+    // new literal match of its own.
+    //
+    // ★ R2 (2026-07-26) — "CLOSED" is load-bearing. An OPEN-ENDED frame (`[Lit(σ), Op]`,
+    // e.g. `NegProc . a:Proc |- "-" a`) matches every string beginning with σ, because the
+    // matcher's `Op` arm takes `next_lit == None ⟹ (start, n)` unconditionally. Its match
+    // is therefore implied by this site's OWN leading-sigil test and witnesses nothing, so
+    // such a frame no longer sets `__sigil_frame_matched` at all and this site's evidence
+    // is genuinely independent of the byte it reads. See `facade::ProjVariant::open_ended`.
     right: Discharge::Evidence {
-        witness: "`__sigil_frame_matched`, set only by a whole-input `proj.lit` skeleton match",
+        witness: "`__sigil_frame_matched`, set only by a whole-input CLOSED `proj.lit` skeleton match",
     },
     inert: InertPolicy::RawBytesJustified(
         "reads only `__bytes.first()` of an already-trimmed span; byte 0 of a span cannot be \
