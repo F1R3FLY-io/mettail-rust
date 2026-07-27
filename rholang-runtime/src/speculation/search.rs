@@ -425,6 +425,14 @@ pub struct AbortedLeaf {
     pub code: ErrorCode,
     /// The FIPS message — f1r3node's own rendering of the error, never a
     /// re-worded one, so a reader can find the raising site.
+    ///
+    /// ★ **`Display`, and budgeted.** This field is published verbatim: it becomes the
+    /// `GString` of a `^spec-failure` datum ([`super::service`]'s `failure_datum`) and of the
+    /// `failure` collection on `^spec-delivery` ([`super::delivery::failure_entry`]). It is
+    /// therefore built by [`AbortedLeaf::of`] from the error's **hand-written `Display`** — not
+    /// its derived `Debug`, which is a build artifact — and passed through
+    /// [`super::budgeted_message`], because f1r3node's own error strings interpolate `{:?}` of
+    /// a `Par` and are otherwise unbounded.
     pub message: String,
 }
 
@@ -544,11 +552,16 @@ impl ErrorCode {
 impl AbortedLeaf {
     /// Build the FIPS `failure` leaf from a raised error, keeping f1r3node's
     /// own message.
+    ///
+    /// `error.to_string()` is [`SpeculationError`]'s `Display`, which delegates to the
+    /// hand-written `Display` of `InterpreterError` / `RSpaceError`;
+    /// [`super::budgeted_message`] then bounds the result. See [`AbortedLeaf::message`] for why
+    /// both halves are load-bearing rather than cosmetic.
     pub fn of(trace: Vec<RendezvousName>, error: &SpeculationError) -> Self {
         AbortedLeaf {
             trace,
             code: ErrorCode::of(error),
-            message: error.to_string(),
+            message: super::budgeted_message(&error.to_string()),
         }
     }
 }

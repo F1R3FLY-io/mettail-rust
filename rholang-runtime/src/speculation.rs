@@ -368,11 +368,34 @@ pub enum SpeculationError {
     Bootstrap(String),
 }
 
+/// ## ★ `{error}`, never `{error:?}` — this text becomes a published datum
+///
+/// [`AbortedLeaf::of`](search::AbortedLeaf::of) is `error.to_string()`, and that string is the
+/// `message` of a FIPS `failure` leaf: it reaches `^spec-failure` and the `failure` collection
+/// on `^spec-delivery`, both of which `Publisher::publish` `produce`s into the **live** deploy's
+/// RSpace. So it is part of the post-deploy state and therefore of the checkpoint root.
+///
+/// Both arms used to render `{error:?}`, i.e. the **derived** `Debug` of `InterpreterError` /
+/// `RSpaceError`. A derived `Debug` is generated code: a `thiserror` or `prost` bump that
+/// re-spells it silently changes those bytes, and a node built against the new derive can no
+/// longer replay a block produced by the old one. That is the hazard
+/// [`ErrorCode`](search::ErrorCode) writes its discriminants out longhand to prevent, and it is
+/// the same class `guest_evaluator_failures` and `parse_request` were cleared of; this site was
+/// missed because nothing renders a `SpeculationError` in a transcript.
+///
+/// Both types have a **hand-written** `Display` — `rspace++/src/rspace/errors.rs:15-26` and
+/// `rholang/src/rust/interpreter/errors.rs:131` — so `{error}` is source text in a repository,
+/// which is the property wanted, and it is also an order of magnitude shorter.
+///
+/// ⚠ `Display` alone does not make it *bounded*: f1r3node's own error payloads embed `{:?}` of
+/// `Par`s (`reduce.rs:1574, 1746, 2370, 3849`) inside the `String` the hand-written `Display`
+/// prints. The budget is therefore applied where the text becomes a datum, by
+/// [`budgeted_message`] — see its header.
 impl std::fmt::Display for SpeculationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SpeculationError::Space(error) => write!(formatter, "tuplespace: {error:?}"),
-            SpeculationError::Interpreter(error) => write!(formatter, "reducer: {error:?}"),
+            SpeculationError::Space(error) => write!(formatter, "tuplespace: {error}"),
+            SpeculationError::Interpreter(error) => write!(formatter, "reducer: {error}"),
             SpeculationError::NotFired => write!(
                 formatter,
                 "the named rendezvous did not fire: its store indices do not address this state"
@@ -382,6 +405,49 @@ impl std::fmt::Display for SpeculationError {
             },
         }
     }
+}
+
+/// **The character budget every consensus-visible free-text message passes through.**
+///
+/// `[*]` publishes exactly four kinds of `GString` message — a branch failure
+/// ([`AbortedLeaf::of`](search::AbortedLeaf::of)), a request-level refusal
+/// (`server::request_error_datum`, `service::request_error`), and a guest-evaluator diagnostic
+/// (`server::guest_evaluator_failures`) — and every one of them is `produce`d into the live
+/// deploy's RSpace. A message with no upper bound is an unbounded consensus-visible field.
+///
+/// It is not hypothetical: the reducer's own errors interpolate `{:?}` of a `Par`
+/// (`reduce.rs:1574 "Undefined term: {:?}"`, `:2370 "Unimplemented expression: {:?}"`), so a
+/// program that reaches one of those arms with a large term decides how many bytes land in the
+/// tuplespace. [`crate::observation::render_par_text`] already closed exactly this on the two
+/// messages that embed a `Par` *deliberately*; this closes it on the ones that inherit a `Par`
+/// from a foreign error type by accident.
+///
+/// | input | image |
+/// |---|---|
+/// | within budget | the message, verbatim |
+/// | over budget | the first [`RENDER_BUDGET_CHARS`](crate::observation::RENDER_BUDGET_CHARS) characters, then `… (elided, N chars, blake2b256:…)` |
+///
+/// **Total, deterministic, bounded**, the same three properties
+/// [`render_par_text`](crate::observation::render_par_text) is built on, and it shares that
+/// function's budget constant so there is one number in the tree rather than two that drift.
+/// The elision carries a digest of the *whole* message, so two branches that failed differently
+/// past the cut are still distinguishable — the same argument the opaque arm of
+/// `render_par_text` makes.
+///
+/// ★ Truncation is on a **character** boundary. These messages contain `⟦`, `…` and `λ` (a
+/// reducer error that interpolated a rendered term brings them along), so a byte index would
+/// split a code point and panic — turning a diagnostic into an abort.
+pub fn budgeted_message(message: &str) -> String {
+    let count = message.chars().count();
+    if count <= crate::observation::RENDER_BUDGET_CHARS {
+        return message.to_string();
+    }
+    let head: String = message
+        .chars()
+        .take(crate::observation::RENDER_BUDGET_CHARS)
+        .collect();
+    let digest = Blake2b256Hash::new(message.as_bytes());
+    format!("{head}… (elided, {count} chars, blake2b256:{})", hex(&digest.bytes()))
 }
 
 impl std::error::Error for SpeculationError {}
@@ -642,11 +708,9 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for StagedS
         RSpaceError,
     > {
         let source = Produce::create(&channel, &data, persist);
-        self.inner.get_store().put_datum(&channel, Datum {
-            a: Arc::new(data),
-            persist,
-            source,
-        });
+        self.inner
+            .get_store()
+            .put_datum(&channel, Datum { a: Arc::new(data), persist, source });
         self.staged_produces.fetch_add(1, AtomicOrdering::Relaxed);
         Ok(None)
     }
@@ -805,12 +869,17 @@ impl SpeculativeSandbox {
         mut definitions: Vec<Definition>,
     ) -> Result<Self, SpeculationError> {
         let mut manager = InMemoryStoreManager::new();
+        // `{error}`, not `{error:?}`: a `Bootstrap` detail is carried into
+        // `SpeculationError::Display`, which `AbortedLeaf::of` publishes as a `^spec-failure`
+        // message and `LookaheadEngine` publishes as a `^spec-err` one. A derived `Debug` in a
+        // published byte string is the build-artifact hazard the `Display` impl's header
+        // documents; both foreign types have hand-written `Display`s.
         let store = manager
             .r_space_stores()
             .await
-            .map_err(|error| SpeculationError::Bootstrap(format!("in-memory stores: {error:?}")))?;
+            .map_err(|error| SpeculationError::Bootstrap(format!("in-memory stores: {error}")))?;
         let inner = Space::create(store, Arc::new(Box::new(SubstrateGuardMatcher::new())))
-            .map_err(|error| SpeculationError::Bootstrap(format!("rspace: {error:?}")))?;
+            .map_err(|error| SpeculationError::Bootstrap(format!("rspace: {error}")))?;
         let staged = StagedSpace::new(inner.clone());
 
         let runtime = create_rho_runtime(
@@ -836,12 +905,7 @@ impl SpeculativeSandbox {
         // continuations are in every state this sandbox ever loads.
         let baseline = inner.get_store().snapshot();
 
-        Ok(SpeculativeSandbox {
-            inner,
-            staged,
-            runtime,
-            baseline,
-        })
+        Ok(SpeculativeSandbox { inner, staged, runtime, baseline })
     }
 
     /// **Fund the sandbox from the host deploy's remaining phlogiston.** The
@@ -864,10 +928,9 @@ impl SpeculativeSandbox {
     /// charge-back without reading the host twice.
     pub fn fund_from(&self, host: &RuntimeBudget) -> Cost {
         let available = host.remaining();
-        self.runtime.cost().reset_from_token(&Token::coalesced(
-            host.signature(),
-            available.value.max(0) as u64,
-        ));
+        self.runtime
+            .cost()
+            .reset_from_token(&Token::coalesced(host.signature(), available.value.max(0) as u64));
         available
     }
 
@@ -971,11 +1034,7 @@ impl SpeculativeSandbox {
     /// `Reduce::eval_par` computes `split(index, …)` eagerly, before any future
     /// is polled, and five runs of a 16-wide `new` fan on eight worker threads
     /// are byte-identical — `x1_stratified_monotonicity.rs::r1`.)
-    pub async fn saturate(
-        &self,
-        par: Par,
-        rand: Blake2b512Random,
-    ) -> Result<(), SpeculationError> {
+    pub async fn saturate(&self, par: Par, rand: Blake2b512Random) -> Result<(), SpeculationError> {
         self.runtime.inj(par, Env::new(), rand).await?;
         Ok(())
     }
@@ -1106,17 +1165,11 @@ impl SpeculativeSandbox {
         for _ in 0..steps {
             let enabled = self.enabled();
             if enabled.is_empty() {
-                return BranchOutcome::Quiescent {
-                    state: self.snapshot(),
-                    trace,
-                };
+                return BranchOutcome::Quiescent { state: self.snapshot(), trace };
             }
             let index = choose(&enabled);
             if index >= enabled.len() {
-                return BranchOutcome::Aborted {
-                    trace,
-                    error: SpeculationError::NotFired,
-                };
+                return BranchOutcome::Aborted { trace, error: SpeculationError::NotFired };
             }
             match self.fire(enabled[index].clone()).await {
                 Ok(step) => trace.push(step.name),
@@ -1132,11 +1185,7 @@ impl SpeculativeSandbox {
         let state = self.snapshot();
         match frontier {
             0 => BranchOutcome::Quiescent { state, trace },
-            _ => BranchOutcome::Truncated(ResumableBranch {
-                state,
-                trace,
-                frontier,
-            }),
+            _ => BranchOutcome::Truncated(ResumableBranch { state, trace, frontier }),
         }
     }
 
@@ -1161,11 +1210,7 @@ impl SpeculativeSandbox {
         let mut restored = 0usize;
         for result in results.iter().filter(|result| !result.persistent) {
             self.staged
-                .produce(
-                    result.channel.clone(),
-                    result.removed_datum.clone(),
-                    false,
-                )
+                .produce(result.channel.clone(), result.removed_datum.clone(), false)
                 .await?;
             restored += 1;
         }
@@ -1199,7 +1244,7 @@ impl SpeculativeSandbox {
                     .eval(body, &environment, Blake2b512Random::merge(randoms))
                     .await?;
                 Ok(false)
-            }
+            },
             Some(TaggedCont::ScalaBodyRef(_)) => {
                 // A system process. The dispatch table's functions are plain
                 // async fns — they do not spawn onto a completion driver — so
@@ -1223,7 +1268,7 @@ impl SpeculativeSandbox {
                     )
                     .await?;
                 Ok(true)
-            }
+            },
             // `TaggedContinuation { tagged_cont: None }` is `dispatch`'s `Skip`.
             None => Ok(false),
         }
@@ -1269,7 +1314,9 @@ pub fn canonicalize(state: &SpeculativeState) -> SpeculativeState {
             canonical.joins.insert(channel.clone(), joins.clone());
         }
     }
-    canonical.installed_joins.reserve(state.installed_joins.len());
+    canonical
+        .installed_joins
+        .reserve(state.installed_joins.len());
     for (channel, joins) in state.installed_joins.iter() {
         if !joins.is_empty() {
             canonical
@@ -1342,11 +1389,7 @@ pub fn content_fingerprint(state: &SpeculativeState) -> Vec<String> {
                 .iter()
                 .map(|channel| hex(&Blake2b256Hash::new(&prost_bytes(channel)).bytes())),
         );
-        lines.push(format!(
-            "cont [{}] => [{}]",
-            group.join(" & "),
-            sources.join(", ")
-        ));
+        lines.push(format!("cont [{}] => [{}]", group.join(" & "), sources.join(", ")));
     }
 
     lines.sort();
@@ -1364,4 +1407,154 @@ fn hex(bytes: &[u8]) -> String {
         rendered.push_str(&format!("{byte:02x}"));
     }
     rendered
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// The consensus-visible free-text contract
+// ══════════════════════════════════════════════════════════════════════════
+
+/// What a published `GString` message is allowed to be: **source text, and bounded**.
+///
+/// The two halves are independent failures and each has its own cells here. Rendering a derived
+/// `Debug` makes the bytes a function of the *compiler and dependency versions* rather than of
+/// the program; leaving them unbounded makes their length a function of a program-controlled
+/// term. Both are values two validators can disagree on without either being wrong.
+#[cfg(test)]
+mod published_message_tests {
+    use super::*;
+    use crate::observation::RENDER_BUDGET_CHARS;
+    use crate::speculation::search::AbortedLeaf;
+
+    /// A reducer error whose payload is `text` — the shape f1r3node itself produces when it
+    /// interpolates `{:?}` of a `Par` (`reduce.rs:1574`, `:2370`).
+    fn reducer_error(text: &str) -> SpeculationError {
+        SpeculationError::Interpreter(InterpreterError::ReduceError(text.to_string()))
+    }
+
+    /// ★ [`SpeculationError`]'s `Display` renders the wrapped error's **hand-written**
+    /// `Display`, never its derived `Debug`.
+    ///
+    /// The discriminator is exact rather than a smell test: `InterpreterError`'s hand-written
+    /// `Display` writes `"Reduce error: …"` (`errors.rs:204`), while its derived `Debug` writes
+    /// the *variant constructor*, `ReduceError("…")`. Asserting the presence of one and the
+    /// absence of the other pins the choice in both directions, so neither a revert nor a
+    /// "helpful" `{error:?} ({error})` composition can pass.
+    #[test]
+    fn the_display_is_source_text_not_a_derive() {
+        let rendered = reducer_error("the payload").to_string();
+        assert_eq!(
+            rendered, "reducer: Reduce error: the payload",
+            "★ the wrapped error must render through its hand-written Display"
+        );
+        assert!(
+            !rendered.contains("ReduceError("),
+            "★ `ReduceError(` is the DERIVED `Debug` spelling — generated code in a byte string \
+             that `Publisher::publish` produces into the live tuplespace: {rendered}"
+        );
+    }
+
+    /// …and the tuplespace arm too, which has its own hand-written `Display`
+    /// (`rspace++/src/rspace/errors.rs:15-26`).
+    #[test]
+    fn the_tuplespace_arm_is_source_text_too() {
+        let rendered =
+            SpeculationError::Space(RSpaceError::BugFoundError("the payload".to_string()))
+                .to_string();
+        assert_eq!(rendered, "tuplespace: RSpace Bug Found Error: the payload");
+        assert!(!rendered.contains("BugFoundError("), "the derived Debug spelling: {rendered}");
+    }
+
+    /// A message inside the budget passes through **verbatim** — the budget must not tax the
+    /// ordinary case, or every diagnostic would carry an elision marker nobody needs.
+    #[test]
+    fn a_message_within_budget_is_untouched() {
+        let message = "the named rendezvous did not fire";
+        assert_eq!(budgeted_message(message), message);
+    }
+
+    /// ★ THE CLASS ASSERTION: no input, however large, puts an unbounded string into a datum.
+    #[test]
+    fn an_oversized_message_is_elided_within_the_budget() {
+        let huge = "x".repeat(RENDER_BUDGET_CHARS * 40);
+        let bounded = budgeted_message(&huge);
+        assert!(bounded.contains("(elided,"), "an over-budget message must say so");
+        assert!(
+            bounded.chars().count() <= RENDER_BUDGET_CHARS + 128,
+            "the elided image must stay within the budget plus its marker, got {} chars",
+            bounded.chars().count()
+        );
+    }
+
+    /// Truncation lands on a **character** boundary. The budget'th character here is the
+    /// multi-byte `⟦`, so a byte index would split a code point and panic — turning a
+    /// diagnostic into an abort, which is strictly worse than the defect being fixed.
+    #[test]
+    fn truncation_respects_character_boundaries() {
+        let bounded = budgeted_message(&"⟦λ⟧".repeat(RENDER_BUDGET_CHARS));
+        assert!(bounded.contains('⟦'), "the head must survive intact");
+        assert!(bounded.contains("(elided,"));
+    }
+
+    /// Two different over-budget messages that share a prefix stay **distinguishable**, because
+    /// the marker carries a digest of the whole message.
+    ///
+    /// ★ This is the cell that stops the elision from becoming the silence
+    /// [`ErrorCode::GuestEvaluatorRefused`](search::ErrorCode::GuestEvaluatorRefused) exists to
+    /// prevent: a plain truncation would map every long failure on one code path to one string,
+    /// so a consumer could not tell two dead branches apart.
+    #[test]
+    fn two_over_budget_messages_stay_distinguishable() {
+        let prefix = "y".repeat(RENDER_BUDGET_CHARS * 2);
+        let left = budgeted_message(&format!("{prefix}: the first tail"));
+        let right = budgeted_message(&format!("{prefix}: the second tail"));
+        assert_ne!(
+            left, right,
+            "★ two branches that failed differently past the cut must not collapse to one \
+             published string"
+        );
+    }
+
+    /// ★★ **The two halves, composed at the site that actually mints the datum.**
+    ///
+    /// [`AbortedLeaf::of`] is what `^spec-failure` and the `failure` collection on
+    /// `^spec-delivery` carry, so this is the cell that would go red for a real deploy. The
+    /// input is the shape f1r3node produces on its own: a `ReduceError` whose payload is a
+    /// `{:?}` dump of a large term.
+    #[test]
+    fn an_aborted_leaf_publishes_bounded_source_text() {
+        // ~20 KB, the order of magnitude a prost `Debug` of a reflected redex reaches.
+        let dump = "Par { sends: [], receives: [], ".repeat(700);
+        let leaf = AbortedLeaf::of(Vec::new(), &reducer_error(&dump));
+
+        assert!(
+            leaf.message
+                .starts_with("reducer: Reduce error: Par { sends"),
+            "the message must still SAY what happened: {}",
+            &leaf.message[..leaf.message.len().min(120)]
+        );
+        assert!(
+            leaf.message.chars().count() <= RENDER_BUDGET_CHARS + 128,
+            "★ a {}-character reducer error became a {}-character consensus-visible datum",
+            dump.chars().count(),
+            leaf.message.chars().count()
+        );
+        assert!(
+            !leaf.message.contains("ReduceError("),
+            "★ and it is Display, not the derive: {}",
+            &leaf.message[..leaf.message.len().min(120)]
+        );
+    }
+
+    /// The budget is **shared** with [`crate::observation::render_par_text`] rather than
+    /// re-chosen here, so widening one cannot silently leave the other behind.
+    #[test]
+    fn the_budget_is_the_one_the_renderer_uses() {
+        let over = "z".repeat(RENDER_BUDGET_CHARS + 1);
+        assert!(budgeted_message(&over).contains("(elided,"));
+        assert_eq!(
+            budgeted_message(&"z".repeat(RENDER_BUDGET_CHARS)),
+            "z".repeat(RENDER_BUDGET_CHARS),
+            "exactly at the budget is inside it"
+        );
+    }
 }

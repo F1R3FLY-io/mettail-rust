@@ -58,8 +58,8 @@
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::rhoapi::Par;
-use models::rust::utils::{new_elist_par, new_gbytearray_par, new_gint_par, new_gstring_par};
 use models::rhoapi::Var;
+use models::rust::utils::{new_elist_par, new_gbytearray_par, new_gint_par, new_gstring_par};
 use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::RuntimeBudget;
 use rholang::rust::interpreter::system_processes::Definition;
@@ -97,10 +97,7 @@ impl LeafProjection {
     }
 
     /// Apply the projection to one configuration.
-    fn apply(
-        &self,
-        state: &super::SpeculativeState,
-    ) -> Result<Vec<Par>, ReificationError> {
+    fn apply(&self, state: &super::SpeculativeState) -> Result<Vec<Par>, ReificationError> {
         match self {
             LeafProjection::RestingOn(channel) => Ok(resting_on(state, channel)),
             LeafProjection::Configuration => Ok(vec![reify(state)?]),
@@ -436,9 +433,80 @@ fn failure_datum(leaf: &AbortedLeaf) -> Par {
 
 /// `[code, message]` for a REQUEST-level refusal — the request was not served,
 /// as opposed to a path that died.
+///
+/// The message goes through [`super::budgeted_message`]: this datum is published on
+/// `^spec-err`, so its free-text field is consensus-visible and must be bounded.
 fn request_error(code: ErrorCode, message: &str) -> Par {
     ground_list(vec![
         new_gint_par(code.as_i64(), Vec::new(), false),
-        new_gstring_par(message.to_string(), Vec::new(), false),
+        new_gstring_par(super::budgeted_message(message), Vec::new(), false),
     ])
+}
+
+#[cfg(test)]
+mod wire_shape_tests {
+    use super::*;
+    use crate::observation::RENDER_BUDGET_CHARS;
+    use models::rhoapi::expr::ExprInstance;
+    use prost::Message;
+    use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
+
+    fn name(consume: u8, datum: u8, cont_index: i32, datum_index: i32) -> RendezvousName {
+        RendezvousName {
+            consume: Blake2b256Hash::new(&[consume]),
+            data: vec![Blake2b256Hash::new(&[datum])],
+            continuation_index: cont_index,
+            datum_indices: vec![datum_index],
+        }
+    }
+
+    /// ★ LAYER 4, on this module's own wire shape. [`trace_list`] is what every
+    /// `^spec-success` / `^spec-truncated` / `^spec-failure` datum carries as its first
+    /// element, and it folds [`step_digest`] — so it inherits the index-freedom only if
+    /// nothing here re-adds a position. Nothing does, and this says so rather than assuming it.
+    #[test]
+    fn the_wire_trace_list_does_not_carry_a_store_index() {
+        let indexed = vec![name(1, 2, 0, 0), name(3, 4, 5, 6)];
+        let renumbered = vec![name(1, 2, 9, 9), name(3, 4, 0, 1)];
+        assert_eq!(
+            trace_list(&indexed).encode_to_vec(),
+            trace_list(&renumbered).encode_to_vec(),
+            "★ a published trace keyed by store position is keyed by task-arrival order"
+        );
+        // …and it still separates traces that differ in content or order.
+        assert_ne!(
+            trace_list(&indexed).encode_to_vec(),
+            trace_list(&[indexed[1].clone(), indexed[0].clone()]).encode_to_vec(),
+            "the ORDER of the steps is the branch's identity and must survive"
+        );
+    }
+
+    /// The request-refusal datum's free text is bounded — the `^spec-err` half of the contract
+    /// [`super::budgeted_message`] states, asserted where the datum is actually built.
+    #[test]
+    fn a_request_refusal_publishes_a_bounded_message() {
+        let huge = "q".repeat(RENDER_BUDGET_CHARS * 10);
+        let datum = request_error(ErrorCode::Bootstrap, &huge);
+        let Some(ExprInstance::EListBody(list)) = datum
+            .exprs
+            .first()
+            .and_then(|expr| expr.expr_instance.as_ref())
+        else {
+            panic!("a request refusal is an EList, got {datum:?}");
+        };
+        let Some(ExprInstance::GString(message)) = list.ps[1]
+            .exprs
+            .first()
+            .and_then(|expr| expr.expr_instance.as_ref())
+        else {
+            panic!("its second element is the message");
+        };
+        assert!(
+            message.chars().count() <= RENDER_BUDGET_CHARS + 128,
+            "★ a {}-character refusal became a {}-character consensus-visible datum",
+            huge.chars().count(),
+            message.chars().count()
+        );
+        assert!(message.contains("(elided,"), "and it says it was cut: {message}");
+    }
 }

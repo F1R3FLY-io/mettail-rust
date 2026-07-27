@@ -491,13 +491,18 @@ impl LookaheadEngine {
         // ── which guest, if any ──────────────────────────────────────────
         let guest = match self.guest_for(&subject) {
             Ok(guest) => guest,
-            Err(message) => {
+            Err(refusal) => {
+                // ★ The DATUM names only the refused fingerprint. The engine's guest list —
+                // which languages this binary was built with, in the order they were
+                // registered — is node configuration, and goes to the operator's log instead.
+                // See [`GuestRefusal`].
                 publisher
                     .publish(
-                        request_error_datum(ErrorCode::Bootstrap, &message),
+                        request_error_datum(ErrorCode::Bootstrap, &refusal.published()),
                         &spec(SPEC_ERR_CHANNEL),
                     )
                     .await?;
+                tracing::warn!("lookahead: {refusal}");
                 return Ok(Vec::new());
             },
         };
@@ -537,11 +542,15 @@ impl LookaheadEngine {
         if let Err((charged, error)) =
             charge_host_comms(host, consumed.clone(), speculation_weight())
         {
+            // `{error}`, not `{error:?}`: this string becomes a `^spec-err` datum, and
+            // `InterpreterError`'s derived `Debug` is generated code — the same
+            // build-artifact-in-consensus-bytes hazard `SpeculationError`'s `Display` header
+            // spells out. `InterpreterError` has a hand-written `Display`.
             let datum = request_error_datum(
                 ErrorCode::OutOfPhlogistons,
                 &format!(
                     "the exploration committed {} COMM(s) the host could not pay for: \
-                     {charged} charged before {error:?}",
+                     {charged} charged before {error}",
                     consumed.value
                 ),
             );
@@ -631,7 +640,10 @@ impl LookaheadEngine {
     /// `Ok(None)` is *"this is not a reflected foreign term at all"* — an ordinary process,
     /// explored as itself. `Err` is *"this IS a foreign term and no evaluator is
     /// registered"*, which must never be silently explored as an inert value.
-    fn guest_for(&self, subject: &Par) -> Result<Option<&SpeculationGuest>, String> {
+    ///
+    /// The `Err` is a [`GuestRefusal`] rather than a `String` because the refusal has **two
+    /// audiences with different rules**: see that type's header.
+    fn guest_for(&self, subject: &Par) -> Result<Option<&SpeculationGuest>, GuestRefusal> {
         let Some(fingerprint) = reflected_fingerprint(subject) else {
             return Ok(None);
         };
@@ -641,21 +653,85 @@ impl LookaheadEngine {
             .find(|guest| guest.fingerprint == fingerprint)
         {
             Some(guest) => Ok(Some(guest)),
-            None => {
-                let registered: Vec<&str> = self
+            None => Err(GuestRefusal {
+                fingerprint,
+                registered: self
                     .guests
                     .iter()
-                    .map(|guest| guest.fingerprint.as_str())
-                    .collect();
-                Err(format!(
-                    "the subject is a reflected term of language {fingerprint:?}, for which no \
-                     evaluator is registered with the lookahead engine (registered: \
-                     {registered:?}). A reflected term is INERT without its guest's installed \
-                     program, so exploring it would find one leaf and hand back the subject \
-                     itself as though it were a normal form. Refusing instead."
-                ))
-            },
+                    .map(|guest| guest.fingerprint.clone())
+                    .collect(),
+            }),
         }
+    }
+}
+
+/// **A refused subject, split by audience.** The whole type exists because the two audiences
+/// obey different rules, and rendering one string for both put node configuration on chain.
+///
+/// The refusal used to be one `String` embedding `{registered:?}` — the engine's guest list,
+/// built by iterating `self.guests` in `with_guest` **registration order** — and that string
+/// became a `^spec-err` datum, which `Publisher::publish` `produce`s into the live deploy's
+/// RSpace.
+///
+/// Both halves of it are node configuration rather than a function of the program:
+///
+/// | what | why it is not a property of the deploy |
+/// |---|---|
+/// | the **contents** | which languages this binary was built with — a `--features` decision, and for a host embedding the engine, a decision made in that host's `main` |
+/// | the **order** | the sequence of [`LookaheadEngine::with_guest`] calls, which no deploy can observe or reproduce |
+///
+/// ★ It is the one member of this defect class that **no deploy-derived seed could ever
+/// repair**: `step_digest`'s store indices and `reify`'s map order are at least computed from
+/// the configuration, so canonicalising them recovers a function of the program. A list of what
+/// some other binary was compiled with is not in the program at all. Two validators built from
+/// the same source with different feature sets would publish different bytes for the same
+/// refusal — and *neither would be wrong*.
+///
+/// So the datum names only the **refused fingerprint**, which is read off the subject and is
+/// therefore program-derived; the engine's inventory goes to the operator through
+/// [`Display`](std::fmt::Display) and `tracing`, where it is a diagnostic and not a value
+/// anybody has to agree on.
+///
+/// ⚠ The two renderings must stay different. `the_refusal_datum_carries_no_node_configuration`
+/// asserts exactly that: the published text names the fingerprint and no registered guest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct GuestRefusal {
+    /// The language fingerprint carried by the refused subject. **Program-derived** — read off
+    /// the reflected term's own ABI head — so it is safe to publish.
+    fingerprint: String,
+    /// The fingerprints registered with this engine, in registration order. **Node
+    /// configuration**, host-side only, never a datum.
+    registered: Vec<String>,
+}
+
+impl GuestRefusal {
+    /// The text that becomes the `^spec-err` datum: the refused fingerprint and the reason,
+    /// and nothing about this node.
+    ///
+    /// It still says *"no evaluator is registered"* — the phrase a consumer greps and
+    /// `x7_lookahead_end_to_end::an_unregistered_guest_is_refused_loudly` asserts — because the
+    /// fix is to stop publishing the **inventory**, not to stop publishing the **fact**.
+    fn published(&self) -> String {
+        format!(
+            "the subject is a reflected term of language {:?}, for which no evaluator is \
+             registered with the lookahead engine. A reflected term is INERT without its \
+             guest's installed program, so exploring it would find one leaf and hand back the \
+             subject itself as though it were a normal form. Refusing instead.",
+            self.fingerprint
+        )
+    }
+}
+
+/// The **host-side** rendering: the published text plus the engine's inventory, for an operator
+/// who has to work out which feature or which `with_guest` call is missing. Never published.
+impl std::fmt::Display for GuestRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} Registered with this engine, in registration order: {:?}.",
+            self.published(),
+            self.registered
+        )
     }
 }
 
@@ -802,10 +878,14 @@ fn ground_list(elements: Vec<Par>) -> Par {
 
 /// `[code, message]` — a REQUEST-level refusal, the same shape
 /// [`super::service`] uses. The request was not served, as opposed to a path that died.
+///
+/// The message goes through [`super::budgeted_message`]: this datum is published on
+/// `^spec-err`, so its free-text field is consensus-visible and must be bounded. Two of the
+/// callers interpolate a foreign error whose own `Display` may embed a `Par`.
 fn request_error_datum(code: ErrorCode, message: &str) -> Par {
     ground_list(vec![
         new_gint_par(code.as_i64(), Vec::new(), false),
-        new_gstring_par(message.to_string(), Vec::new(), false),
+        new_gstring_par(super::budgeted_message(message), Vec::new(), false),
     ])
 }
 
@@ -841,10 +921,13 @@ fn guest_evaluator_failures(guest: &SpeculationGuest, leaf: &QuiescentLeaf) -> V
                 ground_list(vec![
                     new_gint_par(code.as_i64(), Vec::new(), false),
                     new_gstring_par(
-                        format!(
+                        // `render_par_text` bounds the redex; `budgeted_message` bounds the
+                        // whole line, so the ONE contract holds at the datum rather than at
+                        // one of its two ingredients.
+                        super::budgeted_message(&format!(
                             "the guest evaluator rested on {channel}: the stuck redex is {}",
                             render_par_text(&stuck),
-                        ),
+                        )),
                         Vec::new(),
                         false,
                     ),
@@ -1005,10 +1088,10 @@ mod tests {
             Some("mettail-langdef-v1:unregistered"),
             "the subject carries its own language fingerprint"
         );
-        let error = LookaheadEngine::new()
+        let refusal = LookaheadEngine::new()
             .guest_for(&term)
             .expect_err("no evaluator is registered, so this must be a refusal");
-        assert!(error.contains("unregistered"), "{error}");
+        assert!(refusal.published().contains("unregistered"), "{refusal}");
 
         // …and registering the guest resolves it.
         let engine = LookaheadEngine::new().with_guest(SpeculationGuest::driven(
@@ -1019,6 +1102,94 @@ mod tests {
             .guest_for(&term)
             .expect("the registered guest resolves")
             .is_some());
+    }
+
+    /// ★★ **The refusal DATUM carries nothing about this node.** (D5.)
+    ///
+    /// The published message used to embed `{registered:?}` — the engine's guest list, built by
+    /// iterating `self.guests` in `with_guest` registration order. Both the contents (which
+    /// languages this binary was built with) and the order (the sequence of builder calls) are
+    /// node configuration, and the message is `produce`d into the live deploy's RSpace by
+    /// `Publisher::publish`.
+    ///
+    /// The cell is written as a **differential between two engines** rather than as a grep for
+    /// a phrase: two engines with different, non-empty, differently-ordered guest lists must
+    /// publish the *same bytes* for the same refused subject. That is the property — a grep
+    /// only rules out the spellings someone thought of.
+    #[test]
+    fn the_refusal_datum_carries_no_node_configuration() {
+        let term = mettail_rholang_codegen::reflect_ground_term_par(
+            &mettail_rholang_codegen::GroundTerm::nullary("PZero"),
+            "mettail-langdef-v1:absent",
+        );
+        let refuse = |guests: &[&str]| -> GuestRefusal {
+            let mut engine = LookaheadEngine::new();
+            for guest in guests {
+                engine = engine.with_guest(SpeculationGuest::driven(*guest, Par::default()));
+            }
+            engine
+                .guest_for(&term)
+                .expect_err("none of these engines can serve the subject")
+        };
+
+        let lean = refuse(&["mettail-langdef-v1:lambda"]);
+        // A different feature set, in a different registration order.
+        let rich = refuse(&[
+            "mettail-langdef-v1:ambient",
+            "mettail-langdef-v1:calculator",
+            "mettail-langdef-v1:lambda",
+        ]);
+        let bare = refuse(&[]);
+
+        assert_eq!(
+            lean.published(),
+            rich.published(),
+            "★ two nodes built with different guest sets published different refusals for one \
+             program. No deploy-derived seed can repair that: the guest list is not in the \
+             deploy at all."
+        );
+        assert_eq!(
+            bare.published(),
+            rich.published(),
+            "★ …and a node with NO guests must publish the same bytes as a node with three"
+        );
+
+        // The fact still reaches the reader — this is not a fix by deletion.
+        assert!(
+            rich.published().contains("no evaluator is registered"),
+            "the refusal must still SAY it is a refusal: {}",
+            rich.published()
+        );
+        assert!(
+            rich.published().contains("absent"),
+            "…and must name the refused fingerprint, which is read off the SUBJECT and is \
+             therefore program-derived: {}",
+            rich.published()
+        );
+        for guest in ["ambient", "calculator", "lambda"] {
+            assert!(
+                !rich.published().contains(guest),
+                "★ {guest:?} is this node's build configuration and must not be in a datum: {}",
+                rich.published()
+            );
+        }
+
+        // …and the operator still gets the inventory, on the HOST-side rendering, which is
+        // what `tracing::warn!` prints and what nothing publishes.
+        let host_side = format!("{rich}");
+        for guest in ["ambient", "calculator", "lambda"] {
+            assert!(
+                host_side.contains(guest),
+                "the host-side rendering must keep the hint that was dropped from the datum: \
+                 {host_side}"
+            );
+        }
+        assert_ne!(
+            host_side,
+            format!("{lean}"),
+            "★ …and it is the rendering that DOES vary with node configuration, which is the \
+             whole reason the two are separate"
+        );
     }
 
     /// An engine with no bound host budget has not been made live; the handler's refusal
