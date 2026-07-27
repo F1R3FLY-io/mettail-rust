@@ -17,8 +17,8 @@ reflects the same top-cat as the builder at these sites.
 
 ## Empirical evidence
 
-Diagnostic over the rhocalc cross-cat cast suite
-(`cross_cat_rhocalc_castop_add_castfixed_smoke`, 2026-05-18):
+Diagnostic over the rholang cross-cat cast suite
+(`cross_cat_rholang_castop_add_castfixed_smoke`, 2026-05-18):
 
 ```text
 [F.3-DIAG] D8 divergence: bs=Some(0) (type_name=Some("...::Proc"))

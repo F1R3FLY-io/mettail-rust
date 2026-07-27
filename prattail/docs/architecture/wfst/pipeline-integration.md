@@ -281,7 +281,7 @@ Detection runs through the unified lint layer: `lint_w01_dead_rule()` in
 `lint.rs:786–832` wraps `detect_dead_rules()` into `LintDiagnostic`
 entries with variant-specific hints. Known dead rules in the calculator
 grammar: FloatToStr, FloatToBool, StrToBool, IntId, FloatId, BoolId,
-StrId, POutput (8 total). RhoCalc has 36 dead rules.
+StrId, POutput (8 total). Rholang has 36 dead rules.
 
 ### Step 5g — NFA spillover detection
 

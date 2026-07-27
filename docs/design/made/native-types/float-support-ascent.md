@@ -7,7 +7,7 @@
 
 - **Runtime:** `runtime/src/canonical_float.rs` defines `CanonicalFloat64` and `CanonicalFloat32` with canonicalization (NaN → single pattern, -0 → +0), `Eq`/`Hash`/`Ord`, `BoundTerm`, and arithmetic ops. Re-exported from `runtime/src/lib.rs`.
 - **Macros:** In `macros/src/gen/types/enums.rs`, float categories use the canonical type as the literal payload and derive full `Eq`/`Hash`/`Ord`; `literal_payload_type` and `type_expr_to_field_type` return the wrapper for FloatLiteral. The PraTTaIL bridge in `macros/src/gen/syntax/parser/prattail_bridge.rs` maps native float categories and literal eval hooks (there is no `lalrpop.rs` in this pipeline). Display, term_gen/random, and native/eval use the wrapper; eval return type for float categories is the wrapper.
-- **Languages:** Float is enabled in `languages/src/calculator.rs` and `languages/src/rhocalc.rs` with `![f64] as Float` and float operations / casts as defined in each language. Integration coverage includes `languages/tests/calculator.rs` (e.g. `test_float_literal_parse`) and RhoCalc tests where floats participate in `Proc`.
+- **Languages:** Float is enabled in `languages/src/calculator.rs` and `languages/src/rholang.rs` with `![f64] as Float` and float operations / casts as defined in each language. Integration coverage includes `languages/tests/calculator.rs` (e.g. `test_float_literal_parse`) and Rholang tests where floats participate in `Proc`.
 
 The options and rationale below are preserved for reference.
 
@@ -24,7 +24,7 @@ Consequences in this codebase:
 
 - **Per-category enums** (e.g. `Float`) already skip `Eq`/`Ord`/`Hash` for float native types in `macros/src/gen/types/enums.rs`, so a Float category enum can be generated, but:
 - **Ascent relations** that mention Float (e.g. `relation eq_float(Float, Float)`, `relation float(Float)`, or custom `relation rw_weight(Proc, Int, Proc)` if we had `relation foo(Proc, Float)`) are generated for every category; Ascent’s expansion requires each relation’s tuple type to be `Eq + Hash`.
-- **Multi-category inner enum** (`RhoCalcTermInner`, etc.) is derived with `Clone, PartialEq, Eq, Hash`. If one variant is `Float(Float)` and `Float` does not implement `Eq`/`Hash`, the inner enum no longer compiles.
+- **Multi-category inner enum** (`RholangTermInner`, etc.) is derived with `Clone, PartialEq, Eq, Hash`. If one variant is `Float(Float)` and `Float` does not implement `Eq`/`Hash`, the inner enum no longer compiles.
 - **Term trait** and **term_id** use `Hash` and `PartialEq`/`Eq` on the wrapped value; single-category `Term` and multi-category inner enum both require the stored type to support these traits.
 - **HashBag** and any collection type used in term parameters require element type `Clone + Hash + Eq`; a constructor like `PPar(HashBag(Proc))` does not put Float in a bag, but a hypothetical `SomeBag(Float)` would.
 

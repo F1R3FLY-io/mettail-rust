@@ -90,7 +90,7 @@ the regression net). Welch-neutral: §2a behind non-empty-seed guard; §2b hook 
   (`cross_cat_dispatch_chaining`, `cross_cat_with_floats`, `test_nested_int_int`) MUST stay GREEN.** `B3_DISABLE=1` ⇒ EXACTLY
   Blocker-2's 8/9. Calc 213/4. If any sentinel regresses → STOP+report.
 - **M4.2** — gauntlet 4220/0; C-bis 0-fail; op-suites ≥1331/532; soundness + `-3!` (229/0 + 23/0) + parity 16/0 + cross_cat
-  2/0; rhocalc pre-existing ≤8.
+  2/0; rholang pre-existing ≤8.
 - **M4.3** — TERMINATION test (`int(y!=z>x<"qua")` + synthetic 5-op + 6-op parse AND RETURN; `crosswrap_splices_total` ≤
   static bound; instrument + assert §2b hook-`continue`s ≤ `crosswrap_drained.len()`) + **interleaved Welch chain panel N≥51
   + chain_1000/2000 RSS +5% max** (control `B2_DISABLE=1`; predict NEUTRAL/WIN — hook never fires on cast-free chains) +

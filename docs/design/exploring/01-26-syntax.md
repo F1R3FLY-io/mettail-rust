@@ -794,13 +794,13 @@ NewComm . P:Proc, Q:Proc | x # Q |- ... = ...
 
 ---
 
-## 8. Examples: RhoCalc in Unified Syntax
+## 8. Examples: Rholang in Unified Syntax
 
 ### 8.1 Current Syntax
 
 ```rust
 language! {
-    name: RhoCalc,
+    name: Rholang,
     
     types { Proc; Name; },
     
@@ -831,7 +831,7 @@ language! {
 
 ```rust
 language! {
-    name: RhoCalc,
+    name: Rholang,
     
     types { Proc; Name; },
     

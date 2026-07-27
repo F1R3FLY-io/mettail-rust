@@ -9,7 +9,7 @@ Last updated: 2026-06-23
 > **downstream** `cdc81c89`. Verified: `dataflow` unit 6/6 · `run_dataflow` (real RhoRuntime) 5/5
 > (`(2+3)*(4-1)`→15, `==`→true, `++`→"abc", literal, deep chain) · `rho_dataflow_walk` 2/2 ·
 > `lambda_dovetail` 6/6 · `lambda_dovetail_synthetic` 3/3 · `dovetail_normal_term` 4/4 ·
-> `rho_rhocalc_ast` 17/0 · `registry_exec` 2/2 · macros lib 221 · `gen_appsubst_*` 73/0 · **manual REPL
+> `rho_rholang_ast` 17/0 · `registry_exec` 2/2 · macros lib 221 · `gen_appsubst_*` 73/0 · **manual REPL
 > session 6/6** (pure-COMM→`OUT:[p]`, mixed `@("OUT")!(int(1+2,8))`→`OUT:[3]`, `int(1+2,8)`→Dovetail,
 > `1+2`→`OUT:[3]`, `(2+3)*(4-1)`→`OUT:[15]`, `(lam x.x, y)`→`y`). E3's authoritative spec (with the
 > red-team NO-GO→corrected architecture) is `01-e3-dataflow-design.md`.
@@ -51,7 +51,7 @@ binder reconstruction; E3 needs E2's `dovetail_normal_term`).
   superseded by `DeferToDovetailSemanticPredicate` (semantic-predicate blocks) plus
   `RhoFoldDataflowDisposition::Defer` for non-Rho-lowerable folds (`dataflow.rs:103`); folds otherwise
   fold-normalize (E2) and run on Rho (see doc 12 + rho-native-integration doc 09).
-- AC-collection metapattern LHS rejected on typed path (`dovetail_report.rs:415-420`) → RhoCalc
+- AC-collection metapattern LHS rejected on typed path (`dovetail_report.rs:415-420`) → Rholang
   `Comm` stays inert.
 
 ---
@@ -94,7 +94,7 @@ Fail-closed `Err` on `None`/`BoundedByCycleCut`/non-`Converged`.
 ONLY: RHS is exactly `MultiSubst{scope:Var, replacements:[Var|plain-ground-term]}` (or single
 `Subst`), single binder, replacements not Map/Zip/Collection, RHS not nested in AcApp/Collection/
 Apply, LHS not AC-collection-nested, premises congruence-only, scope_var bound by a Binder/MultiBinder
-in LHS. **Verifies RhoCalc `Comm` is NOT detected** (its replacement is a `Map`, nested in AC `PPar`).
+in LHS. **Verifies Rholang `Comm` is NOT detected** (its replacement is a `Map`, nested in AC `PPar`).
 `SubstRewrite` carries label, LHS pattern, scope_var, repl_vars, and (from the matched
 `VariantKind::Binder`) `binder_label`/`binder_cat`/`body_cat`.
 
@@ -140,8 +140,8 @@ Rholang `EDiv`/`EMod`.
 
 **E3.4 wrapper:** `DovetailRhoRuntimeBackedLanguage` invocation compiler `F` (`backend.rs:1386/1462`)
 for fold-bearing langs: `dovetail_normal_term` → `lower_fold_expr_to_dataflow` on the residual →
-`RunWithCallAndObserve*` or `RhoFoldDataflowDisposition::Defer`. Fingerprint/install path unchanged. RhoCalc
-structural `Proc` lowering (`rhocalc_ast.rs`) stays hand-written (generalizing *structural process*
+`RunWithCallAndObserve*` or `RhoFoldDataflowDisposition::Defer`. Fingerprint/install path unchanged. Rholang
+structural `Proc` lowering (`rholang_ast.rs`) stays hand-written (generalizing *structural process*
 lowering is out of scope).
 
 ---
@@ -150,7 +150,7 @@ lowering is out of scope).
 - **E2:** `dovetail_normal_term` on `@("OUT")!(int(1+2,8))`→`@("OUT")!(3)`; `{ @("OUT")!(int(1+2,8)) }`
   (PPar); `{ int(1,8) | int(1,8) }` (multiplicity 2); a `PNew`/`PInputs` term (≡α); a `Vec`-field NF → `Err`.
 - **E1:** Lambda `(lam x. x, y)`→`Complete`/`y`; `(lam x.(x,x), w)`→`(w,w)` (MF1); nested; Ω→`Err`
-  (MF5); **MF4 negative:** RhoCalc `Comm` not detected; synthetic `AppSubst` + cross-cat `[Name->Proc]`
+  (MF5); **MF4 negative:** Rholang `Comm` not detected; synthetic `AppSubst` + cross-cat `[Name->Proc]`
   binder languages reduce (generality).
 - **E3:** `(2+3)*(4-1)`→`15` on RhoRuntime; `((10-4)+1)==7`→`true`; `"a"++"b"++"c"`→`"abc"`; BigInt →
   `Defer`; `int(1/0,8)` → `Defer` (MF6).
@@ -163,16 +163,16 @@ lowering is out of scope).
   binders α-faithful (fresh binder, positional de-Bruijn). Iterative-hardening = noted follow-up.
 - [x] **E2.2** `dovetail_normal_term` + `needs_normal_term` gating (substitution ∨ typed-structural
   ∨ Rho-backend). Verified: `languages/tests/dovetail_normal_term.rs` 4/4 (PPar collection,
-  multiplicity-2, fold-in-POutput, PNew α-equiv); rhocalc_dovetail_fold 6/6, ambient_dovetail_flip 3/3.
+  multiplicity-2, fold-in-POutput, PNew α-equiv); rholang_dovetail_fold 6/6, ambient_dovetail_flip 3/3.
   NOTE: a pre-existing `unreachable_patterns` warning in `rho_scalar_invocation.rs` (MixedMath, NOT E2)
   to be fixed during E3.
 - [x] **E1.1–E1.5** routing (`needs_typed_dovetail_path`), shape-guarded detector
-  (`is_substitution_rewrite` — RhoCalc `Comm` double-rejected via Map-replacement + AC-LHS guards),
+  (`is_substitution_rewrite` — Rholang `Comm` double-rejected via Map-replacement + AC-LHS guards),
   op_id after `folds.len()` (MF2), dispatch arm (MF5: build→unbind→`substitute_<cat>`→re-add), and
   progress weights (MF1: redex-head set = folds ∪ subst LHS heads). Verified: `lambda_dovetail.rs`
   6/6 (incl. Ω fixed-point, gate-4 corrected — round-trip is unsound for bound-var bodies under
   fresh-binder `_` rendering), `lambda_dovetail_synthetic.rs` 3/3 (synthetic `AppSubst` β-reduces ⇒
-  generality proven, not Lambda-name-keyed). No regressions (rhocalc_dovetail_fold/host_routed,
+  generality proven, not Lambda-name-keyed). No regressions (rholang_dovetail_fold/host_routed,
   ambient_dovetail_flip, dovetail_normal_term, macros lib 221). NOTE: `_`-unnamed-binder rendering
   is α-correct but lossy on re-parse (display polish; tracked as a refinement, not a soundness issue).
 - [ ] **E3.2–E3.4** dataflow lowering, `/0` policy, wrapper wiring.
@@ -181,5 +181,5 @@ lowering is out of scope).
 - [ ] Full build + workspace tests + manual REPL session (plan verification table).
 
 ## Scratch probes (remove before final)
-`languages/tests/zz_probe_rhocalc_fold_normalize.rs`, `languages/tests/zz_probe_dovetail_backends.rs`
+`languages/tests/zz_probe_rholang_fold_normalize.rs`, `languages/tests/zz_probe_dovetail_backends.rs`
 — investigation aids; keep until E1/E2 verified, then delete.

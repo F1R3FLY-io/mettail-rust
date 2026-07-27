@@ -233,7 +233,7 @@ enum NormTask<'a> {
 cargo test -p languages
 # All tests pass, specifically:
 cargo test -p languages --test calculator -- test_bool_from_list_elem
-# and rhocalc/ambient/lambda HOL-heavy tests (see .rs files in languages/tests/).
+# and rholang/ambient/lambda HOL-heavy tests (see .rs files in languages/tests/).
 ```
 
 ### 3.3 Task #61 — compile_error! on unclassifiable rules (final cleanup)
@@ -269,7 +269,7 @@ After all tests green on default stack:
 ```
 cargo test --workspace  # must pass
 cargo run -p repl -- calculator-casting.txt
-cargo run -p repl -- rhocalc-casting.txt
+cargo run -p repl -- rholang-casting.txt
 # Plus any feature-branch-added examples.
 
 # Stage + commit
@@ -305,7 +305,7 @@ As of the last full-suite run (test 19 + test 20 after #56 landed):
 | `test_map_keys` | HashMap non-deterministic iteration | #58 |
 | `test_map_values` | Same | #58 |
 
-All other calc tests pass. Rhocalc / ambient / lambda / guarded_rho test suites NOT yet re-verified post-PDA (run `cargo test --workspace` after #62+#63 land).
+All other calc tests pass. Rholang / ambient / lambda / guarded_rho test suites NOT yet re-verified post-PDA (run `cargo test --workspace` after #62+#63 land).
 
 ---
 
@@ -406,7 +406,7 @@ To measure post-completion:
 ```
 # Native 2MB stack — must pass without RUST_MIN_STACK override:
 cargo test -p languages --test calculator
-cargo test -p languages --test rhocalc
+cargo test -p languages --test rholang
 cargo test -p languages --test ambient
 cargo test -p languages --test lambda
 cargo test -p languages --test guarded_rho

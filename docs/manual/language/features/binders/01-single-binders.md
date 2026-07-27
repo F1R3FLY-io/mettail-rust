@@ -1,7 +1,7 @@
 # Single Binders — Full Pipeline Trace
 
 This document traces a single-binder rule through every stage of the
-MeTTaIL/PraTTaIL pipeline, using the RhoCalc `PNew` constructor as the running
+MeTTaIL/PraTTaIL pipeline, using the Rholang `PNew` constructor as the running
 example.
 
 ## 1. DSL Definition
@@ -428,4 +428,4 @@ The fixpoint engine propagates these facts until no new rewrites are discovered.
 - [00-overview.md](00-overview.md) — Binder overview and key types
 - [02-multi-binders.md](02-multi-binders.md) — Multi-binder pipeline trace (PInputs)
 - [../collections/01-hashbag.md](../collections/01-hashbag.md) — HashBag pipeline (PPar body)
-- [../../examples/rhocalc/](../../examples/rhocalc/) — Full RhoCalc pipeline documentation
+- [../../examples/rholang/](../../examples/rholang/) — Full Rholang pipeline documentation

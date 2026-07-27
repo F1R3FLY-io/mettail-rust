@@ -664,7 +664,7 @@ rw_expr(s, t) <--
 
 ### Phase 4: Integration & Testing (Week 4)
 
-**Goal:** Test with full theories (Ambient, RhoCalc).
+**Goal:** Test with full theories (Ambient, Rholang).
 
 **Tasks:**
 - [ ] Enable congruence rules in theory definitions (uncomment in examples)
@@ -678,7 +678,7 @@ rw_expr(s, t) <--
 **Success Criteria:**
 - Generated Ascent code compiles
 - Produces same rewrite paths as hand-written code
-- Examples (ambient.rs, rhocalc.rs) work with 100% generated code
+- Examples (ambient.rs, rholang.rs) work with 100% generated code
 - No hand-written Ascent code needed
 
 ---
@@ -942,7 +942,7 @@ pub fn theory(input: TokenStream) -> TokenStream {
 
 ### Final Success Criteria:
 - [ ] Zero hand-written Ascent code needed
-- [ ] Examples (ambient.rs, rhocalc.rs) use 100% generated code
+- [ ] Examples (ambient.rs, rholang.rs) use 100% generated code
 - [ ] Docs/examples updated
 - [ ] All tests pass
 - [ ] Generated code is readable and well-commented

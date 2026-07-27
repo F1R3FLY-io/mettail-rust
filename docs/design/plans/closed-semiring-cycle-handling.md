@@ -275,7 +275,7 @@ Auditing production grammars (full enumeration):
 |---------|----------------------------|
 | `calculator.rs` | `Or`, `And`, `Plus`, `Times`, `BitOr`, `BitAnd`, `BitXor`, `Mul`, `Div`, `Mod`, `Pow` |
 | `ambient.rs`    | `PPar` (variadic), `PNew` (binder + body both Proc) |
-| `rhocalc.rs`    | Dozens of `a:Proc, b:Proc → Proc` rules |
+| `rholang.rs`    | Dozens of `a:Proc, b:Proc → Proc` rules |
 | `ledtest.rs`    | `Plus`, `Times`, `Pow` |
 | `class2multi.rs`, `class3multi.rs` | Multiple collection-bearing constructors |
 

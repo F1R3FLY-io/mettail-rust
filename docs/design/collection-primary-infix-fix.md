@@ -5,7 +5,7 @@
 
 ## The bug (general class)
 
-`Proc::parse("str({a} <= {a})")` (rhocalc) returns ERR `1:5 no accepting branch … found Fixed({)`,
+`Proc::parse("str({a} <= {a})")` (rholang) returns ERR `1:5 no accepting branch … found Fixed({)`,
 while `str(1 <= 2)` parses OK. This is **general**: any collection primary that is **not at the
 parse root** (cast argument, list element, any mid-parse frame) cannot attach **any** infix operator
 (`<=`,`<`,`==`,`!=`,`+`,`or`,`and`), for any collection type (`{}`/PPar, `[]`/List), any nesting
@@ -26,7 +26,7 @@ Collection primaries never feed the enclosing Pratt `InfixLoop`:
   `Unwinding` ⇒ `<=` never attaches. At top level `{a} <= {a}` works only because the predecessor
   is the root (`GSS_NODE_NONE`).
 
-Unrelated to RC-A/RC-B: rhocalc `LtEq`/`ToStr` are **same-category** (`Proc→Proc`), invisible to the
+Unrelated to RC-A/RC-B: rholang `LtEq`/`ToStr` are **same-category** (`Proc→Proc`), invisible to the
 cross-cat-LHS / `prefix_cast_into` machinery (`semantic_actions.rs:339` skips same-category casts).
 
 ## Control-flow fact (carrier rationale)
@@ -134,15 +134,15 @@ Build (full suite): `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-pratt
 
 ## Regression
 
-New tests (`languages/tests/rhocalc_tests.rs`, `mod collection_primary_infix`): `ppar_lteq_in_cast`
+New tests (`languages/tests/rholang_tests.rs`, `mod collection_primary_infix`): `ppar_lteq_in_cast`
 (`str({a} <= {a})` ⇒ `ToStr(LtEq(..))`), `collection_comparison_as_list_element` (`[{a} <= {a}]` ⇒
 `CastList`), `precedence_lock_collection_in_add_rhs` (`1 + {a} <= {b}` ⇒ `LtEq(Add(..),..)`),
 `precedence_lock_inside_cast` (`str({a} + {b} <= {c})` ⇒ `str(LtEq(Add(..),..))`). All 4 pass.
 
 Verified vs the complete pre-str-cast baseline (`agent-a7430` worktree = `9e547da2` + the lazy lexer,
 i.e. main minus the str-cast edits): **zero new failures**. `prattail --lib` 3766/0 (the
-`stack_symbol_v2_size_is_compact` assertion was updated `≤8`→`≤10`), `rhocalc_tests` 10→14 (+4 new),
-`calculator` 100/0 (RC-A/RC-B intact), `gen_calculator_unit` 169, `gen_rhocalc_unit` 86,
+`stack_symbol_v2_size_is_compact` assertion was updated `≤8`→`≤10`), `rholang_tests` 10→14 (+4 new),
+`calculator` 100/0 (RC-A/RC-B intact), `gen_calculator_unit` 169, `gen_rholang_unit` 86,
 `collection_ghost_regression` 5, `wpda_parity_*` green.
 
 ## Pre-existing failures (NOT regressions — present at the baseline)

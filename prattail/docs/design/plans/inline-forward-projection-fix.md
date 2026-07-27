@@ -103,7 +103,7 @@ The admitted worker: (1) parses the inner FloatBin `[4,8]` (its `inner_state` is
 - `int(int)/int(float)` (`test_nested_int_int`/`test_nested_int_float`): Int's rich route covers → **C4 FALSE**; nominal same-cat ProcInt is deduped by `register()` (§4 T1).
 - Bool win `int(y != true > x < "qua")`: comparison chain from bare `y`, no cast-fold trigger → **C2 FALSE** (span-anchored revival path untouched).
 - `float(float(3))`/nested UNARY (`test_float_float_nested`): unary cast (single `ParamParse`), not a 2-arg fold → **C2 FALSE**. *(Also why the FLIP couldn't ship by deletion — deleting unaries broke this; IFP leaves unaries alone.)*
-- `str(3)`/`bool(0)`/`float(10.5)`/`int(true)` standalone; chains/operators/collections/rhocalc/all non-calculator: no cast-fold operand → **C2/C1 FALSE** → O(1) short-circuit.
+- `str(3)`/`bool(0)`/`float(10.5)`/`int(true)` standalone; chains/operators/collections/rholang/all non-calculator: no cast-fold operand → **C2/C1 FALSE** → O(1) short-circuit.
 
 ### §3.3 The positive set (where IFP fires)
 ONLY a `float`/`int`/`uint`/`fixed`-FOLD operand whose result cat has NO distinct-cat lossless-then-Proc route (Float + any future sparse cast cat): `float(float(…),…)`, `float(int(…),…)` (the OUTER float fold's top-level ProcFloat is starving), recursively `float(float(float(…)))`. Matches the discriminator "failure ⟺ the OUTER is a float-FOLD whose first operand is itself a 2-arg cast fold."

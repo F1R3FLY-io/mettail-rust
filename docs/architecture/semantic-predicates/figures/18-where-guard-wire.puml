@@ -34,7 +34,7 @@ title <b>THE `where`-GUARD WIRE</b>\n<i>one guard · two encoders · one substra
 rectangle "SURFACE\n<b>for (x <- c where φ)</b>\n<size:11>the guard is an ordinary `Proc`</size>" as SRC <<surface>>
 
 package "ENCODERS — two representations, one target" {
-  rectangle "<b>Proc → GuardFormula</b>\nrhocalc::guard_substrate\n<size:11>surface half</size>" as ENCP <<surface>>
+  rectangle "<b>Proc → GuardFormula</b>\nrholang::guard_substrate\n<size:11>surface half</size>" as ENCP <<surface>>
   rectangle "<b>Par → GuardFormula</b>\nrholang-runtime::guard_par_substrate\n<size:11>lowered half</size>" as ENCR <<surface>>
 }
 

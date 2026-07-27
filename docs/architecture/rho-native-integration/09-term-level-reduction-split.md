@@ -3,7 +3,7 @@
 Last updated: 2026-07-20
 
 > **A-S6 universal-mandate note (2026-07-20).** This document's term-level
-> split concerns the fold-bearing languages (RhoCalc / Rholang). Registry-wide,
+> split concerns the fold-bearing languages (Rholang / Rholang). Registry-wide,
 > the runtime mandate is now **universal**: every registered language's admitted
 > `exec` runs on the Rho machine — Lambda and Ambient on the in-Rho
 > quiescence-driver seed (A-S5.6,
@@ -41,8 +41,8 @@ backend-routing types are defined in
 
 ## 1. Terms, folds, and COMM
 
-A RhoCalc term `T` is a tree built from three kinds of node (grammar:
-`languages/src/rhocalc.rs`):
+A Rholang term `T` is a tree built from three kinds of node (grammar:
+`languages/src/rholang.rs`):
 
 | Node kind | Constructors | Reduced by |
 |---|---|---|
@@ -97,7 +97,7 @@ The split rides on the two-stage runtime wrapper
 For one input term `T`:
 
 1. **D stage — Dovetail fold reduction.**
-   `D(T)` runs `RhoCalcLanguage::dovetail_report_for` → `saturate_with_native`
+   `D(T)` runs `RholangLanguage::dovetail_report_for` → `saturate_with_native`
    (`dovetail/src/rules.rs`). Every fold redex fires; COMM/`new` nodes carry no
    fold body, match no fold LHS, and stay intact (host-routed, *non-fatal* — see
    [Dovetail 12 §4](../dovetail/12-native-fold-reduction.md)). The report is
@@ -108,7 +108,7 @@ For one input term `T`:
 2. **F stage — lower the whole term and run it on the Rho machine.**
    `F(T, report)` lowers `T` for RSpace execution — *every lowerable term runs on Rho*
    (extension E2); there is no off-Rho fold disposition:
-   - **lower the original term first** (`lower_rhocalc_term`): the AST mapper handles
+   - **lower the original term first** (`lower_rholang_term`): the AST mapper handles
      COMM (`POutput`/`PInputs`/`PNew`) directly and reduces `int(..)`-cast embedded
      folds via `try_eval`, so e.g. `@("OUT")!(int(1+2,8))` lowers to `@("OUT")!(3)`.
    - **only if the original cannot lower** (an un-reduced Proc-level fold) does F
@@ -129,10 +129,10 @@ For one input term `T`:
    (`run.rs`), the COMM fires, and the resting data is read back as
    `RuntimeBackendOutput::Observations`.
 
-Why fold-normalization is required before lowering: `lower_rhocalc_proc`
-(`rholang-runtime/src/rhocalc_ast.rs`) lowers a `Cast*` over a ground literal but
+Why fold-normalization is required before lowering: `lower_rholang_proc`
+(`rholang-runtime/src/rholang_ast.rs`) lowers a `Cast*` over a ground literal but
 has **no arm** for a fold node such as `Add`/`IntBinProc`; an unreduced fold falls
-to `UnsupportedProc("computed rhocalc expression")`. The D stage is exactly what
+to `UnsupportedProc("computed rholang expression")`. The D stage is exactly what
 turns those fold nodes into the literals the lowerer accepts.
 
 This is a one-way composition: `T → D(T) → lower → Rho → observe`. No step calls
@@ -146,14 +146,14 @@ D stage saturates: the inner `Add(1,2)` fires (`1+2 → 3`), then the `int`
 cast fires (`int(3,8) → 3`). `T` has no COMM, so F lowers the fold to the literal
 `3`, wraps it as `@"OUT"!(3)` (a pure value with no Rho effects), and runs it on the
 Rho machine — `3` is read back from RSpace as the observation. (Proven:
-`languages/tests/rhocalc_dovetail_fold.rs::nested_int_cast_folds_via_saturation`.)
+`languages/tests/rholang_dovetail_fold.rs::nested_int_cast_folds_via_saturation`.)
 
 ### 4.2 Pure COMM — `{ (@("c")?x).{*(x)} | @("c")!(@("OUT")!("p")) }`
 
 No fold redex, so the D-stage report is the term itself (Complete). F sees COMM
 and lowers directly: the receiver `(@("c")?x).{*(x)}` and the sender
 `@("c")!(@("OUT")!("p"))` rendezvous, `*(x)` runs the received process, and `"p"`
-rests on `OUT`. (Proven: `rholang-runtime/tests/rho_rhocalc_ast.rs`.) Dovetail
+rests on `OUT`. (Proven: `rholang-runtime/tests/rho_rholang_ast.rs`.) Dovetail
 contributes nothing.
 
 ### 4.3 Mixed — `@("OUT")!(int(1+2,8))`
@@ -230,10 +230,10 @@ It is deliberately **rejected**:
   `HostRhoMachineReuse.v`.
 - Dovetail fold reduction: `dovetail/src/rules.rs::saturate_with_native`;
   [Dovetail 12 — Native-Fold Reduction](../dovetail/12-native-fold-reduction.md);
-  `languages/tests/rhocalc_dovetail_fold.rs`.
+  `languages/tests/rholang_dovetail_fold.rs`.
 - COMM on the host: `rholang-runtime/src/run.rs`;
-  `rholang-runtime/tests/rho_rhocalc_ast.rs`;
-  `LinearCommCorrespondence.v`, `RhocalcAstLowering.v`.
+  `rholang-runtime/tests/rho_rholang_ast.rs`;
+  `LinearCommCorrespondence.v`, `RholangAstLowering.v`.
 - Term routing: `rholang-runtime/src/backend.rs`
   (`DovetailRhoRuntimeBackedLanguage`, `RhoBackendInvocation::RhoMachine`; only
   semantic predicates use `DeferToDovetailSemanticPredicate`);

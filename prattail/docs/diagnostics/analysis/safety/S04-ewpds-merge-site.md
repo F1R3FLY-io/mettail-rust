@@ -79,7 +79,7 @@ The lint is silent when:
 
 ```
 language! {
-    name: RhoCalc;
+    name: Rholang;
     primary: Proc;
 
     category Proc {
@@ -103,7 +103,7 @@ two merge sites.
 ### Output
 
 ```
-note[S04] (RhoCalc): identified 2 merge function site(s): Proc.PNew, Proc.PRecv
+note[S04] (Rholang): identified 2 merge function site(s): Proc.PNew, Proc.PRecv
 ```
 
 ## Resolution

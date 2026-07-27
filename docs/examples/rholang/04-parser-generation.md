@@ -44,7 +44,7 @@ The parser generation pipeline runs inside `pipeline::run_pipeline()`:
 
 FIRST(Cat) is the set of tokens that can begin a parse of category Cat.
 
-For RhoCalc:
+For Rholang:
 
 | Category | FIRST set                                                                                                                                            |
 |----------|------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -92,7 +92,7 @@ resynchronization points after errors.
 **Source:** `prattail/src/classify.rs`
 
 Every rule is classified when `LanguageSpec::with_options()` constructs the
-spec.  Here is how key RhoCalc rules are classified:
+spec.  Here is how key Rholang rules are classified:
 
 | Rule      | Pattern                                                                                         | Classification                            |
 |-----------|-------------------------------------------------------------------------------------------------|-------------------------------------------|
@@ -115,7 +115,7 @@ spec.  Here is how key RhoCalc rules are classified:
 `analyze_binding_powers()` examines all infix rules in a category and assigns
 binding power pairs `(left_bp, right_bp)`:
 
-For RhoCalc `Proc` category:
+For Rholang `Proc` category:
 
 | Operator          | left_bp | right_bp | Associativity | Notes                          |
 |-------------------|---------|----------|---------------|--------------------------------|
@@ -243,7 +243,7 @@ trampoline.rs decide the routing.
 When a rule in category A needs to parse a sub-expression of category B,
 cross-category dispatch is needed.
 
-For RhoCalc: `POutput` is in `Proc` but has a `Name` parameter.  The parser
+For Rholang: `POutput` is in `Proc` but has a `Name` parameter.  The parser
 for `Proc` must be able to call the parser for `Name`.
 
 Cast rules generate dispatch wrappers: `parse_proc` can call `parse_name`
@@ -251,7 +251,7 @@ when it sees a token in FIRST(Name).  The wrapper parses the `Name` value
 and wraps it in a cast constructor (e.g., `Proc::CastName` if such existed, but
 for `NQuote` the prefix handler in `Name` is invoked directly).
 
-Cross-category infix rules (not present in RhoCalc but supported) generate
+Cross-category infix rules (not present in Rholang but supported) generate
 dispatch wrappers that parse the left operand in one category and produce a
 result in another.
 

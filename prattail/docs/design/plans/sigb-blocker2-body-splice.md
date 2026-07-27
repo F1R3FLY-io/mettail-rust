@@ -94,7 +94,7 @@ resolved, extend the `Resolved`-arm of `pause_cohort_member:865` to emit a `Cros
 
 ## 5. GATES (experiment #9 acceptance)
 5 Sig-B + `cross_cat_with_parens` green; 16 M4-fixed + 4 realize-fixed + `_ge`/`_ne`/`_in_expression` stay; gauntlet
-4220/0; C-bis cycle/newton/tarjan/star/scc/self_loop 0-fail; op-suites gen_calculator_op≥1331/gen_rhocalc_op 532;
+4220/0; C-bis cycle/newton/tarjan/star/scc/self_loop 0-fail; op-suites gen_calculator_op≥1331/gen_rholang_op 532;
 soundness + `-3!` + `wpda_parity_calculator`; **interleaved Welch chain panel N≥51 + chain_1000/2000 RSS +5% max**
 (cross-wrap drain is empty on single-wrap chain steps → byte-identical → NEUTRAL; load-bearing guard); ambiguity-preservation.
 

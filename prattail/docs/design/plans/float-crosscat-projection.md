@@ -117,14 +117,14 @@ The root sub-defect is narrow: the inner Float fold resolves as a same-cat Float
 - `B4_PROJ_DRAIN_DISABLE=1` ⇒ both Float targets ERR (base restored); unset ⇒ GREEN. `B3_SPAN_DISABLE=1` Bool unchanged; `B2_DISABLE` flips forward-drain.
 - calc **215/1** (213 + 2 Float; remaining 1 = pre-existing `test_bool_from_list_elem`), gauntlet **4221/0**.
 
-**M*.2 — Full sweep + Welch + soundness + ambiguity preservation.** op-suites `gen_calculator_op` ≥1331 / `gen_rhocalc_op` 532; `-3!` ladder + `wpda_parity_calculator`; soundness/parity; C-bis; **chain Welch N≥51 (p<0.05, quiet) Welch-neutral**; the M7.3 tests still pass. ADD: (i) a Float-family termination test mirroring `sigb_b3_span_anchored_termination_bool`; (ii) an **ambiguity-preservation** test asserting `float(float(3))` still surfaces both readings (splice ADDS, not replaces); (iii) a **generality** assertion that the same drain fires for ≥1 non-`float` `cat→Proc` projection of a resolved body. Final SPLIT→**UNIFIED** verdict (Bool + Float both CLOSED). Save FINAL patch + delta; commit + tag.
+**M*.2 — Full sweep + Welch + soundness + ambiguity preservation.** op-suites `gen_calculator_op` ≥1331 / `gen_rholang_op` 532; `-3!` ladder + `wpda_parity_calculator`; soundness/parity; C-bis; **chain Welch N≥51 (p<0.05, quiet) Welch-neutral**; the M7.3 tests still pass. ADD: (i) a Float-family termination test mirroring `sigb_b3_span_anchored_termination_bool`; (ii) an **ambiguity-preservation** test asserting `float(float(3))` still surfaces both readings (splice ADDS, not replaces); (iii) a **generality** assertion that the same drain fires for ≥1 non-`float` `cat→Proc` projection of a resolved body. Final SPLIT→**UNIFIED** verdict (Bool + Float both CLOSED). Save FINAL patch + delta; commit + tag.
 
 ---
 
 ## §6 Gates (every milestone)
 - gauntlet `-p prattail --lib` → **4221/0**.
 - calc full → **215/1** at M*.1+ (213/3 at M*.0).
-- op-suites: `gen_calculator_op` **≥1331**, `gen_rhocalc_op` **532/0**.
+- op-suites: `gen_calculator_op` **≥1331**, `gen_rholang_op` **532/0**.
 - disambiguation: `-3!` ladder + `wpda_parity_calculator`.
 - Welch (chain bench, N≥51, p<0.05, quiet) — **only at M*.2**.
 - A/B: `B4_PROJ_DRAIN_DISABLE` flips the 2 Float targets; `B3_DISABLE`/`B3_SPAN_DISABLE` flip Bool; `B2_DISABLE` flips forward-drain.

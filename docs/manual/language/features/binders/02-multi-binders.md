@@ -1,7 +1,7 @@
 # Multi-Binders — Full Pipeline Trace
 
 This document traces a multi-binder rule through every stage of the
-MeTTaIL/PraTTaIL pipeline, using the RhoCalc `PInputs` constructor.  PInputs
+MeTTaIL/PraTTaIL pipeline, using the Rholang `PInputs` constructor.  PInputs
 combines multi-binders with [ZipMapSep](../ZipMapSep/00-overview.md) — a
 three-stage metasyntax for parsing pairwise-structured patterns.
 

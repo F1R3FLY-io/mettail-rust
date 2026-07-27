@@ -12,7 +12,7 @@ This document catalogs all optimization items from the WFST-Informed Ascent Opti
 - **Pipeline position**: After dependency group analysis (Sprint 6d), during Ascent struct generation (language.rs). Between pre-stratum (Sprint 5) and main fixpoint.
 - **Status**: Deferred
 - **Tier**: D
-- **Reasoning**: Each additional `ascent!` struct adds ~5-10s compilation time (from Ascent's macro expansion + monomorphization). Current grammars have mostly single-rule independent groups (RhoCalc: 25/66 groups are singletons). The compilation overhead exceeds runtime savings at current grammar scale.
+- **Reasoning**: Each additional `ascent!` struct adds ~5-10s compilation time (from Ascent's macro expansion + monomorphization). Current grammars have mostly single-rule independent groups (Rholang: 25/66 groups are singletons). The compilation overhead exceeds runtime savings at current grammar scale.
 - **Infrastructure readiness**: 95% — `compute_fine_dependency_groups()`, `group_categories()`, and `CategoryFilter` all exist. Missing: per-group Ascent struct generation and chaining in language.rs (~200 LOC).
 - **Activation condition**: When a grammar has ≥2 independent groups with ≥5 rules each, the compilation cost is amortized by the reduced SCC iteration count. Profile with `perf` to verify runtime savings exceed +10s compile cost.
 

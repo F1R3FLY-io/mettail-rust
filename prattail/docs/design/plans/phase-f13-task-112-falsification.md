@@ -11,7 +11,7 @@ by Phase F.3c.4's deletion of `cursor.builder`):**
 
 > Replacing `Box<#cat>` with `Arc<#cat>` in the generated AST enum will
 > reduce wall-clock time of `Language::run_ascent_typed` on rewrite-
-> heavy inputs (e.g., `rhocalc_bench::replication/basic`) by ≥ 5 %.
+> heavy inputs (e.g., `rholang_bench::replication/basic`) by ≥ 5 %.
 > Mechanism: every cloned subtree in a rule body becomes a refcount bump
 > (8-byte atomic increment) instead of a full recursive deep clone via
 > the trampolined `iterative_clone` engine. The `DualIndexedRel`
@@ -22,7 +22,7 @@ by Phase F.3c.4's deletion of `cursor.builder`):**
 Per the Plan agent's recommended 2-stage gate (`memory/f13-stage-2-3-
 semantic-hash.md` and feedback-optimization-t-test discipline):
 
-1. **Stage 1 (~1 hour, cheap):** profile `rhocalc_bench::replication/basic`
+1. **Stage 1 (~1 hour, cheap):** profile `rholang_bench::replication/basic`
    at HEAD with `perf record --call-graph fp -F 999`. Decision rule:
    - AST clone consumes **≥ 20 %** of total time → motivated; proceed to
      Stage 2 (15-18 hour Box→Arc edit + Welch's t-test).
@@ -32,12 +32,12 @@ semantic-hash.md` and feedback-optimization-t-test discipline):
 
 2. **Stage 2 (15-18 hours, contingent on Stage 1):** full Box→Arc swap
    per `phase-f13-task-112-plan-agent-design`. Welch's t-test on
-   `rhocalc_bench::replication/basic` N=15 baseline vs N=15 treatment;
+   `rholang_bench::replication/basic` N=15 baseline vs N=15 treatment;
    ACCEPT iff p < 0.05 AND treatment_mean < baseline_mean.
 
 ## Stage 1 measurement
 
-Workload: `rhocalc_bench --bench replication/basic --measurement-time 5
+Workload: `rholang_bench --bench replication/basic --measurement-time 5
 --warm-up-time 1 --sample-size 10` (criterion's internal sampling) under
 `taskset -c 4` on AMD Ryzen Threadripper PRO 5975WX. `perf record` with
 frame-pointer call-graph (DWARF rejected by kernel for BRS on this CPU,
@@ -47,11 +47,11 @@ per `[[f13-baseline-2026-05-20]]`). Total samples: 13 932.
 
 | Function | % of total |
 |----------|-----------:|
-| `rhocalc::clone_iterative` (trampolined AST clone engine) | 0.29 % |
-| `rhocalc::clone_handle_proc` | 0.19 % |
-| `core::ptr::drop_in_place::<rhocalc::Proc>` | 0.12 % |
-| `rhocalc::clone_handle_name` | 0.09 % |
-| `rhocalc::Proc::clone` (entry-point dispatch) | 0.09 % |
+| `rholang::clone_iterative` (trampolined AST clone engine) | 0.29 % |
+| `rholang::clone_handle_proc` | 0.19 % |
+| `core::ptr::drop_in_place::<rholang::Proc>` | 0.12 % |
+| `rholang::clone_handle_name` | 0.09 % |
+| `rholang::Proc::clone` (entry-point dispatch) | 0.09 % |
 | **Total AST clone + drop** | **≈ 0.78 %** |
 
 **For comparison, the actual hot functions:**
@@ -80,7 +80,7 @@ indistinguishable from noise. Welch's t-test on N=15+15 would not be
 able to detect it.
 
 The hypothesis is therefore not just unmotivated; it is **not testable**
-on the rhocalc workload. Running Stage 2 would consume 15-18 hours of
+on the rholang workload. Running Stage 2 would consume 15-18 hours of
 implementation work and produce a null t-test result — wasting both the
 implementation budget and the gauntlet's signal-to-noise capacity.
 

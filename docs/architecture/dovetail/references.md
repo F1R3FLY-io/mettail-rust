@@ -49,9 +49,9 @@ files that are versioned with the implementation and formal artifacts.
 - `languages/tests/ambient_binder_handler.rs` (binder float capture-safety)
 - `languages/tests/ambient_dovetail_flip.rs` (the Ambient flip: Complete reports)
 - `languages/tests/fix_a_alpha_canonical_semantic_key.rs` (FIX-A α-canonical keys)
-- `languages/tests/rhocalc_dovetail_host_routed.rs` (gate excludes host-routed rhocalc)
-- `languages/tests/rhocalc_dovetail_fold.rs` (native-fold reduction: the worked-examples matrix — `int(1+2,8)→3`, var-defer, bad-cast→`Err`, host-guard)
-- `languages/tests/rhocalc_dovetail_op_enum.rs` (typed op-enum exact-key `SemanticHash` distinctness + `Display`)
+- `languages/tests/rholang_dovetail_host_routed.rs` (gate excludes host-routed rholang)
+- `languages/tests/rholang_dovetail_fold.rs` (native-fold reduction: the worked-examples matrix — `int(1+2,8)→3`, var-defer, bad-cast→`Err`, host-guard)
+- `languages/tests/rholang_dovetail_op_enum.rs` (typed op-enum exact-key `SemanticHash` distinctness + `Display`)
 - `runtime/tests/canonical_to_bytes.rs` (canonical numeric `to_canonical_bytes` — deterministic, `Eq`-agreeing content-key bytes)
 
 ## Formal Artifacts

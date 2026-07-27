@@ -34,7 +34,7 @@ The verification pass **materially reshaped** this plan. Four facts dominate:
    `eg.saturate`, `dovetail_report.rs:725`); (ii) **Calculator native-folds** via
    `saturate_with_native` (`rules.rs:548`), where a `NativeRule` computes one result
    e-class per matched redex and only *adds* `redex == result` (`rules.rs:169-184,
-   533-545`). RhoCalc/GuardedRho remain host-routed (no saturation). So the eval-side
+   533-545`). Rholang/GuardedRho remain host-routed (no saturation). So the eval-side
    pruning corpus is **{Ambient AC, Calculator native-folds}** — but see headline #6:
    each path's waste is already gated, so the corpus expanding does *not* reopen DV-1.
 2. **DV-0's 93–96%/82–84% numbers were measured on a SYNTHETIC arithmetic
@@ -172,7 +172,7 @@ The caveat was that DV-0 ran when *"dovetail has no live eval caller."* P5b + th
 native-fold refinement changed that — but **not the way DV-0 assumed.** `[VERIFIED
 2026-06-17]`: there are now **two** live saturating paths — **Ambient structural AC**
 (generated `dovetail_report_for`, plain `eg.saturate`, `dovetail_report.rs:725`) and
-**Calculator native-folds** (`saturate_with_native`, `rules.rs:548`). RhoCalc/GuardedRho
+**Calculator native-folds** (`saturate_with_native`, `rules.rs:548`). Rholang/GuardedRho
 host-route to RhoRuntime and never saturate. **DV-1's live corpus is therefore
 {Ambient AC, Calculator native-folds}** — and DV-0's 93–96%/82–84% numbers came from a
 *synthetic* commutativity+expander probe (`rules.rs:649-684`), neither of them. **DV-0′
@@ -410,7 +410,7 @@ architecture what the new one dissolves").
 
 | Residual | Where | Verified verdict | Disposition |
 |---|---|---|---|
-| ROOT-F proper: `{p\|q}`→spurious `{p}` on the primary `Proc::parse` path | realize seam (`sppf_realize.rs` + 5B splice) | **ALREADY FIXED** `[VERIFIED round-2]` @ `38dcd485` ("gated collection forks") + `9fdaed68`, both ancestors of HEAD; rhocalc 126/0 | **Not actionable** — re-fixing a closed bug. Removed from the actionable list. |
+| ROOT-F proper: `{p\|q}`→spurious `{p}` on the primary `Proc::parse` path | realize seam (`sppf_realize.rs` + 5B splice) | **ALREADY FIXED** `[VERIFIED round-2]` @ `38dcd485` ("gated collection forks") + `9fdaed68`, both ancestors of HEAD; rholang 126/0 | **Not actionable** — re-fixing a closed bug. Removed from the actionable list. |
 | **shorter-Ambiguous prefix-sub-multiset ghost: `{0\|1}` ALSO listed as `{0}` via the LANGUAGE-TRAIT path only** (`parse_{cat}_via_wpda_all` / `all_alts()`); `Proc::parse` clean | **`macros/src/gen/mod.rs`** language-trait emission, consumed at `dovetail_report.rs:415` (`all_alts()`→roots) | **LIVE + the one actionable bug** `[VERIFIED round-2]`. Distinct `ContentKey`s ⇒ extra `EClassId` roots that survive `dovetail_report.rs:430-431` `dedup()` ⇒ each ghost is an extra root the all-classes `search()` traverses (amplifies saturation). `38dcd485`'s own message classifies the prefix-sub-multiset-surviving-EOI as a **token-soundness violation = legal definite kill** | **Parser-side definite kill** at the `all_alts()` emission, instantiating the `EvidenceComplete` definite-refutation template. The `#313` ghost substrate (`ac88faeb`) is the deferred-*enforcement* counterpart — the residual is the enforcement, not new substrate. **✅ UNBLOCKED: P6 landed (`d62fc454`); the `macros/` surface is settled. Rebaseline against HEAD `75d7c6df` first. TR-0 must re-confirm the ghost still reproduces post-`316c34e1` (the RC-A/RC-B realize/cohort changes touched `sppf.rs`/`wpda_walker.rs`).** |
 | `{(1) \| 2}` 867k-step subparse spin (13-subparse hang family) | recognizer | Distinct — a recognizer blowup, not a realize-seam ghost | TR-0 re-measure under `PRATTAIL_EP_P1=On`; if P1's parking bounded it, record dissolved; else its own deep-dive |
 
@@ -432,7 +432,7 @@ languages — both prune extraction roots, RC by Rho-rejection, TR by token-unso
   `wpda_runtime.rs::LazyLatticeTokenSource`, `automata/codegen.rs::lex_dag_lazy`), proven
   lazy ≡ eager (`lazy_lex_equivalence.rs` 7/7), accepted by rigorous pgmcp Welch
   (calc full-parse −4.6% p=5.5e-21 d=2.39; early-failure −72…−79% time + 90–97% fewer
-  nodes; rhocalc full-to-EOI +1% caveat). A prior coarse probe STOP'd this as a
+  nodes; rholang full-to-EOI +1% caveat). A prior coarse probe STOP'd this as a
   "0.16% non-goal" — that probe measured only the full-parse path and missed the
   early-failure win; experiment 69 refuted it. See `02-program-ledger.md` §2L.
 - **STOP re-confirmation (cheap, 1 probe):** P2 (Parikh) and P3 (pre*) STOP'd on the

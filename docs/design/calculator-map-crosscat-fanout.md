@@ -11,13 +11,13 @@ ON/OFF differential + timing results recorded in §8.6.
 grammar / regex / spec change. No change to the multi-result (`_all`/`_prefix`) path. No revert of any
 committed fix.**
 
-**Companion document.** `docs/design/rhocalc-collection-fork-explosion.md` covers the *lexical* sibling case
-(rhocalc `{0|1|…|19}`), where the redundant axis was a **false divergence** (the `sppf_collection_arena`
+**Companion document.** `docs/design/rholang-collection-fork-explosion.md` covers the *lexical* sibling case
+(rholang `{0|1|…|19}`), where the redundant axis was a **false divergence** (the `sppf_collection_arena`
 `Arc` pointer + the `lex_fork_path` sidecar) curable by a global content-equality relaxation. **This case is
 different**: the probe proves there is **no false-divergence axis** to relax here — the dominant blocker is the
 **`LexicographicWeight` provenance triple**, which is *genuine* multi-result evidence. The two documents
 therefore reach *different* conclusions by the *same* method (probe → pinpoint → soundness). §8.2 of the
-rhocalc document explicitly named the weight triple as the residual `O(N²)` it left out of scope "because it
+rholang document explicitly named the weight triple as the residual `O(N²)` it left out of scope "because it
 touches the weight provenance the `30acf6de` series relies on" — that residual is precisely the *primary*
 driver here, and this document shows how to neutralise it **soundly for the single-result path** without
 touching the multi-result evidence.
@@ -31,7 +31,7 @@ The calculator property test
 **times out (> 180 s)** on HEAD. The baseline `b781d754` ran the same test in ~127 s (it PASSED). The
 regression is a **super-linear blow-up of the WPDA cursor frontier** when parsing the *nested function-call*
 map terms that `arb_map` generates (`put(m,k,v)`, `get(m,k)`, `merge(a,b)`, `delete(m,k)`, `map()`), **not**
-the `{k:v}` collection-literal surface that the rhocalc case exercises.
+the `{k:v}` collection-literal surface that the rholang case exercises.
 
 ### 1.1 Symbol glossary (defined before use)
 
@@ -69,9 +69,9 @@ merge(<map>, <map>)            MergeMap : a:Map, b:Map          |- "merge" "(" a
 delete(<map>, <proc>)          DeleteMap: m:Map, k:Proc         |- "delete" "(" m "," k ")"      : Map
 ```
 
-It does **not** emit `{k:v}` map literals. Therefore `emit_splice_into_collection` (the rhocalc hot path) is
+It does **not** emit `{k:v}` map literals. Therefore `emit_splice_into_collection` (the rholang hot path) is
 **never on the hot path here.** The slowness is *not* the lexical collection cross-product fixed in
-`docs/design/rhocalc-collection-fork-explosion.md`.
+`docs/design/rholang-collection-fork-explosion.md`.
 
 ### 1.3 The cross-category ambiguity (the multiplier)
 
@@ -179,15 +179,15 @@ any existing arc**, which axis differed. For the **VAR depth 3** control (`put(p
 >    The GSS-pushed fork frames *do* push a `CrossCatProjection` edge per arm, but `EdgeStackId` is
 >    arena-interned (hash-consed by `PathTreeArena`), so sibling arms that push the *same* edge sequence get
 >    the *same* `incoming_edge_stack_id`. There is **no false `Arc` divergence on the return-lineage edge
->    stack** to relax. (This is the opposite of the rhocalc case, where the `sppf_collection_arena` `Arc`
+>    stack** to relax. (This is the opposite of the rholang case, where the `sppf_collection_arena` `Arc`
 >    *was* a 100 % false divergence.)
 > 2. **The only false-divergence axes are the scope-mark `Arc` pointers** (`binder_scope_marks`,
 >    `optional_scope_marks`): they differ by pointer in 100 % of no-merges but are *content-identical* in 100 %
->    of cases. Relaxing them to content-equality is independently sound (cf. rhocalc Change A) **but is inert
+>    of cases. Relaxing them to content-equality is independently sound (cf. rholang Change A) **but is inert
 >    here**: even with content-equality, only **1.1 %** of no-merges would merge (`content_merge_available =
 >    1338 / 120 118`), because the **weight triple still differs**.
 > 3. **The dominant *genuine* blocker is the `LexicographicWeight` provenance triple** (`weight_rule_idx`
->    differs in 95.6 %). This is exactly the residual that `rhocalc-collection-fork-explosion.md` §8.2 left
+>    differs in 95.6 %). This is exactly the residual that `rholang-collection-fork-explosion.md` §8.2 left
 >    out of scope. It is **not** a false divergence: the triple is the lex-min tiebreak evidence that selects
 >    the winning derivation, left-projected (sticky) along each fork lineage by `⊗` (`lex_weight.rs:418`).
 
@@ -409,14 +409,14 @@ corroborates the orthogonality from the other side: on the calculator fn-call pa
 restored by a splice — it differs in 23 % of no-merges and is a *kept* axis here; the only arcs collapsed are
 those that share it.) Single-result `Cat::parse` still selects the min-weight chained reading exactly as today.
 
-**(S2) rhocalc comm / cross-cat correctness is preserved.** rhocalc `parse` for process/binder/guarded
+**(S2) rholang comm / cross-cat correctness is preserved.** rholang `parse` for process/binder/guarded
 categories is single-result, so it would *use* the subsumption — but every distinction those parses rely on
 (`sppf_stack_id`, `incoming_edge_stack`, `cohort_origin`, `visited_proj_descriptors`, `lex_fork_last`,
 content of `binder_scope_marks`) is **in `ConfigKey`** and therefore preserved. The subsumption only collapses
 weight-separated cursors at the *identical* config; by L1/L2 the realized term (e.g. the lex-min comm/extrusion
-derivation) is unchanged. Gate: `rhocalc_tests` + `gen_rhocalc_*` + `wpda_parity_rhocalc_collections` (§6.2).
+derivation) is unchanged. Gate: `rholang_tests` + `gen_rholang_*` + `wpda_parity_rholang_collections` (§6.2).
 
-**(S3) The committed rhocalc Cluster-D collection fix stays intact.** That fix (arena content-equality at
+**(S3) The committed rholang Cluster-D collection fix stays intact.** That fix (arena content-equality at
 `tomita_frontier.rs:739` + `lex_fork_path` clear in `emit_splice_into_collection`) operates on the
 **merge gate** for collection-element lexical siblings and is **orthogonal** to this design, which adds a
 **separate demand-gated pruning pass** and touches neither `register_arc_with_aggregation` nor
@@ -507,9 +507,9 @@ worse than baseline's. (See §6.1 for the empirical acceptance gate.)
 
 **Proposal.** Find a redundant *return-lineage* axis on the GSS-pushed fork frame
 (`parent_frame_with_pushed_fork_branch`) that the baseline's metadata frame did not carry, and design a sound
-global merge/dedup of it — the analog of the rhocalc Change-A/B — without reverting the `30acf6de` fan-out.
+global merge/dedup of it — the analog of the rholang Change-A/B — without reverting the `30acf6de` fan-out.
 
-**Why it was investigated.** The rhocalc case was fixed *exactly* this way: a 100 %-false-divergence
+**Why it was investigated.** The rholang case was fixed *exactly* this way: a 100 %-false-divergence
 `sppf_collection_arena` `Arc` pointer was relaxed to content-equality (Change A), and a redundant
 `lex_fork_path` sidecar was cleared at splice (Change B). The brief hypothesised the analog here would be the
 `incoming_edge_stack` (the GSS push per arm).
@@ -524,19 +524,19 @@ global merge/dedup of it — the analog of the rhocalc Change-A/B — without re
    `optional_scope_marks`) *are* 100 % false divergences (content-identical), and relaxing them to
    content-equality is independently sound — **but it merges only 1.1 %** of no-merges
    (`content_merge_available = 1338 / 120 118`), because the weight triple still blocks. Change A alone would
-   be *inert* here, exactly as it was reported inert-alone in the rhocalc case (§8.3 of that doc).
+   be *inert* here, exactly as it was reported inert-alone in the rholang case (§8.3 of that doc).
 3. **The load-bearing axis is genuine, not relaxable for all callers.** The dominant blocker is the
    `LexicographicWeight` provenance triple (95.6 %). Merging on it for *all* callers is precisely the
    ambiguity collapse the mandate forbids — it would discard, from the `_all`/`_prefix` results, derivations
-   that differ only by their lex-min tiebreak provenance, which is genuine multi-result evidence. The rhocalc
+   that differ only by their lex-min tiebreak provenance, which is genuine multi-result evidence. The rholang
    document itself drew this exact line (§8.2: the weight triple is "out of scope … it touches the weight
    provenance the `30acf6de` series relies on").
-4. **Reverting the fan-out wholesale is also rejected** (the rhocalc §4 verdict applies verbatim): it would
+4. **Reverting the fan-out wholesale is also rejected** (the rholang §4 verdict applies verbatim): it would
    undo the `30acf6de` soundness commits (`db53e83a`, `ea1dcb6b`, `ddfafc9f` — projection evidence, prefix
    ambiguity, demand-sensitivity) and the design constraint forbids touching them.
 
 **Verdict: reject Direction 1.** There is no sound *global* (all-caller) merge of the load-bearing axis here,
-because that axis is genuine multi-result evidence — unlike the rhocalc false-divergence. The redundancy is
+because that axis is genuine multi-result evidence — unlike the rholang false-divergence. The redundancy is
 real but is only *prune-able under the single-result demand*, which is Direction 2.
 
 > **A note on combination.** The scope-mark content-equality (a real, if inert-alone, false divergence) could
@@ -567,10 +567,10 @@ Iterate with the *small-depth probe* (depths 3–5), **never** the 180 s proptes
 |---|---|---|
 | `prattail` lib (**3 789** tests, incl. the merge invariants `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` `:1150`, `arc_merge_disambiguator_distinguishes_*` `:1087`–`:1131`) | the merge gate is **untouched** (S5) | `cargo nextest run -p prattail` |
 | `gen_calculator_*` (unit / analytical / rewrite / prop) + `calculator_display_projection_tests` + `display_roundtrip_regression_tests` + dangling-else / ternary | calculator parse/eval/roundtrip correctness | `cargo test -p languages --test gen_calculator_unit` (+ the rest) |
-| `rhocalc_tests` + `gen_rhocalc_{unit,analytical,rewrite,prop}` | rhocalc comm / cross-cat (S2) | `cargo test -p languages --test rhocalc_tests` (+ the `gen_rhocalc_*`) |
-| `wpda_parity_rhocalc_collections` | `{}`, `{error}`, `{error\|error}`, `{error\|error\|error}` collection shapes | `cargo test -p languages --test wpda_parity_rhocalc_collections` |
+| `rholang_tests` + `gen_rholang_{unit,analytical,rewrite,prop}` | rholang comm / cross-cat (S2) | `cargo test -p languages --test rholang_tests` (+ the `gen_rholang_*`) |
+| `wpda_parity_rholang_collections` | `{}`, `{error}`, `{error\|error}`, `{error\|error\|error}` collection shapes | `cargo test -p languages --test wpda_parity_rholang_collections` |
 | `gen_guardedrho_*` (unit / analytical / prop), incl. chained output `@a!(Nil)!(Nil)` (S1) | the `sppf_stack_id` chained-output distinction | `cargo test -p languages --test gen_guardedrho_unit` |
-| `lazy_lex_equivalence` (full corpus, incl. `rho_full_parse_lazy_eq_eager`, `report_nodes_materialized`) | the committed rhocalc Cluster-D fix (S3); lazy ≡ eager | `cargo test -p languages --test lazy_lex_equivalence` — **must stay < 10 s** |
+| `lazy_lex_equivalence` (full corpus, incl. `rho_full_parse_lazy_eq_eager`, `report_nodes_materialized`) | the committed rholang Cluster-D fix (S3); lazy ≡ eager | `cargo test -p languages --test lazy_lex_equivalence` — **must stay < 10 s** |
 | full gauntlet (calc-op, edge_case_tests, ledtest, ambient, recovery_accumulation, led_delegation_tests) | no cross-language / committed-fix regression | the standard battery |
 
 ### 6.3 New tests to add
@@ -601,7 +601,7 @@ lemma **`single_result_dominance_preserves_min`**: under `LexicographicWeight` (
 `⊗` = tropical-primary + left-projection), if `ConfigKey(s) = ConfigKey(c)` and `s.weight ≤ c.weight`, then for
 every common continuation `p`, `s ⊗ p ≤ c ⊗ p`, and the SPPF `weight_sum` is invariant under dropping `c`
 (L1 + L2 of §4.2). Zero-admission. This is the machine-checked form of the core soundness lemma and the exact
-counterpart the rhocalc fix deferred in its §8.2.
+counterpart the rholang fix deferred in its §8.2.
 
 ---
 
@@ -623,7 +623,7 @@ The only artifact of this work is this design document. (The repo working tree s
 
 ## 8. Summary
 
-- **Confirmed root cause:** a GLR cursor-frontier sharing leak — but, unlike the rhocalc lexical case, the
+- **Confirmed root cause:** a GLR cursor-frontier sharing leak — but, unlike the rholang lexical case, the
   redundant axis is the **genuine `LexicographicWeight` provenance triple**, not a false-divergence `Arc`.
   The `30acf6de` switch to GSS-pushed cross-cat fork frames keeps each cross-cat arm's weight triple separated
   through the cohort revive, so the per-`Proc`-argument cohort never re-converges and the per-level fan
@@ -644,8 +644,8 @@ The only artifact of this work is this design document. (The repo working tree s
   demand* (which `feedback_never_disambiguate_early` permits), the multi-result `_all`/`_prefix` path is
   **byte-identical** (it uses the non-demand driver, so the flag is never set), and the `merge_disambiguator`
   / `register_arc_with_aggregation` gate is **untouched** (the §6.2 invariant tests pass unchanged).
-- **Preserves the committed fixes:** `@a!(Nil)!(Nil)` (S1, `sppf_stack_id` is a kept axis), rhocalc comm /
-  cross-cat (S2), the rhocalc Cluster-D collection fix (S3, orthogonal merge-gate change), the deep-nesting
+- **Preserves the committed fixes:** `@a!(Nil)!(Nil)` (S1, `sppf_stack_id` is a kept axis), rholang comm /
+  cross-cat (S2), the rholang Cluster-D collection fix (S3, orthogonal merge-gate change), the deep-nesting
   linear-time fix (S4, edge stack is a kept axis), and the ambiguity-preservation invariants (S5/S7).
 - **Rejected (Direction 1):** general fan-out re-convergence — probe-refuted: the hypothesised redundant axis
   (`incoming_edge_stack`) carries no divergence, the only false-divergence axes are inert, and the
@@ -788,7 +788,7 @@ pass/fail counts, zero failures) on every required suite:
 | Suite | ON | OFF | Result |
 |---|---|---|---|
 | `prattail` (lib, incl. the §6.2 merge-invariant tests + the 6 new subsumption tests) | 3795 passed / 0 failed | 3795 passed / 0 failed | **identical** |
-| `languages` differential set (`gen_calculator_{unit,analytical,rewrite}`, `rhocalc_tests`, `gen_rhocalc_{unit,analytical,rewrite}`, `wpda_parity_rhocalc_collections`, `lazy_lex_equivalence`, `calculator`, `calculator_display_projection_tests`, `display_roundtrip_regression_tests`, `led_delegation_tests`, `edge_case_tests`, `recovery_accumulation`, `roundtrip_tests`, `gen_guardedrho_unit`, `test_deep_parens_100000`, `test_deep_unary_neg_10000`) | 1010 passed / 0 failed | 1010 passed / 0 failed | **identical** |
+| `languages` differential set (`gen_calculator_{unit,analytical,rewrite}`, `rholang_tests`, `gen_rholang_{unit,analytical,rewrite}`, `wpda_parity_rholang_collections`, `lazy_lex_equivalence`, `calculator`, `calculator_display_projection_tests`, `display_roundtrip_regression_tests`, `led_delegation_tests`, `edge_case_tests`, `recovery_accumulation`, `roundtrip_tests`, `gen_guardedrho_unit`, `test_deep_parens_100000`, `test_deep_unary_neg_10000`) | 1010 passed / 0 failed | 1010 passed / 0 failed | **identical** |
 
 No ON/OFF divergence on any non-map test ⇒ no soundness regression (the mandate: any such divergence would be
 a soundness bug). The multi-result `_all` path is byte-identical ON vs OFF (gate disjointness, S7 — confirmed

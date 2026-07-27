@@ -170,9 +170,9 @@ fn compute_action_weight(
 }
 ```
 
-### Weight distribution in the RhoCalc grammar
+### Weight distribution in the Rholang grammar
 
-The RhoCalc grammar has 4 categories: `Proc`, `Name`, `Int`, `Bool`.  The
+The Rholang grammar has 4 categories: `Proc`, `Name`, `Int`, `Bool`.  The
 dispatch weight distribution for category `Bool` (which has cross-category
 comparison rules from `Int`):
 

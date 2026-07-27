@@ -51,7 +51,7 @@ There are two important entry points:
    Dovetail-report-shaped, or Rho-observation-shaped.
 
 2. **Ascent reference/oracle path** (`Language::run_ascent()`): Rust code can
-   call `RhoCalcLanguage.run_ascent(term)` directly when it specifically needs
+   call `RholangLanguage.run_ascent(term)` directly when it specifically needs
    an Ascent rewrite graph for graph navigation, regression comparison, or an
    oracle during Dovetail/Rho rollout.
 
@@ -160,10 +160,10 @@ The parsed (and normalized) AST is seeded into the Ascent struct:
 ```rust
 // Generated code (simplified)
 fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String> {
-    let term = term.as_any().downcast_ref::<RhoCalcTerm>()
+    let term = term.as_any().downcast_ref::<RholangTerm>()
         .expect("wrong term type").0.clone();
 
-    let mut ascent = RhoCalcAscent::default();
+    let mut ascent = RholangAscent::default();
 
     // Seed the primary category relation
     ascent.proc.push((term.clone(),));

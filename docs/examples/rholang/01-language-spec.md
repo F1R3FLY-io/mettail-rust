@@ -1,6 +1,6 @@
-# The `language!` DSL — RhoCalc Definition
+# The `language!` DSL — Rholang Definition
 
-**Source file:** `languages/src/rhocalc.rs`
+**Source file:** `languages/src/rholang.rs`
 
 The `language!` macro is the single entry point for defining a MeTTaIL
 language.  It declares types, concrete syntax, structural equations, directed
@@ -11,7 +11,7 @@ place.
 
 ```
 language! {
-    name: RhoCalc,          ← 1. Language name
+    name: Rholang,          ← 1. Language name
     types { ... },          ← 2. Category declarations
     terms { ... },          ← 3. Term definitions (syntax + semantics)
     equations { ... },      ← 4. Structural equivalences
@@ -24,17 +24,17 @@ Each section is parsed by `macros/src/ast/language.rs` into a `LanguageDef` AST.
 
 ---
 
-## 1. `name: RhoCalc`
+## 1. `name: Rholang`
 
 The language name drives generated identifiers:
 
 | Generated name        | Example                |
 |-----------------------|------------------------|
 | AST enums             | `Proc`, `Name`, `Int`  |
-| Language struct       | `RhoCalcLanguage`      |
-| Term wrapper          | `RhoCalcTerm`          |
-| Ascent struct         | `RhoCalcAscent`        |
-| REPL registration     | `"rhocalc"`            |
+| Language struct       | `RholangLanguage`      |
+| Term wrapper          | `RholangTerm`          |
+| Ascent struct         | `RholangAscent`        |
+| REPL registration     | `"rholang"`            |
 
 ## 2. `types { ... }` — Category Declarations
 
@@ -82,7 +82,7 @@ No parameters.  The syntax is the keyword terminal `"Nil"` — the
 generates `Proc::PZero` with no fields and a prefix parse handler matching
 `Token::Nil`.  (Historically the rule was `"{}"`, but `{}` is now reserved for
 the empty `Map` literal; see
-[exploring/rhocalc-rholang-style-syntax.md](../../design/exploring/rhocalc-rholang-style-syntax.md).)
+[exploring/rholang-rholang-style-syntax.md](../../design/exploring/rholang-rholang-style-syntax.md).)
 
 ### 3.2 Prefix Terms
 
@@ -99,7 +99,7 @@ terminal tokens, not a nonterminal.
 
 ```rust
 PParInfix . a:Proc, b:Proc |- a "|" b : Proc ![{
-    crate::rhocalc::runtime::merge_pp_parallel(a.clone(), b.clone())
+    crate::rholang::runtime::merge_pp_parallel(a.clone(), b.clone())
 }] fold;
 
 // Internal AST constructor — matched by equations / rewrites, never input by
@@ -114,7 +114,7 @@ variant available for equation/rewrite matching but is reserved for internal
 use (never appears in user input). The earlier braced surface
 `{ a | b | c }` was retired so that `{` `}` could be repurposed for the
 Rholang-style empty `Map` literal — see
-[exploring/rhocalc-rholang-style-syntax.md](../../design/exploring/rhocalc-rholang-style-syntax.md).
+[exploring/rholang-rholang-style-syntax.md](../../design/exploring/rholang-rholang-style-syntax.md).
 
 The `*sep(delim)` operator is a collection operation.  Available collection
 types are `Vec(T)`, `HashBag(T)`, and `HashSet(T)`.
@@ -203,7 +203,7 @@ PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
 |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
 ```
 
-This is the most complex term in RhoCalc.  It demonstrates:
+This is the most complex term in Rholang.  It demonstrates:
 
 - **Multi-binder**: `^[xs].p` binds a *list* of names `xs` in the body `p`.
   The type `[Name* -> Proc]` means "a function from zero-or-more Names to Proc".
@@ -260,17 +260,17 @@ same pattern (Sub, Mul, Div, Eq, Ne, Gt, Lt, ...).
 ### 3.5.1 Collection equality (`==` / `!=`)
 
 `Eq` and `Ne` fold collection casts injected into `Proc` to `CastBool` using
-`compare_collection_equality` in `languages/src/rhocalc/runtime.rs`. List
+`compare_collection_equality` in `languages/src/rholang/runtime.rs`. List
 comparison is ordered and duplicate-sensitive; bag comparison is multiset
 (count-based) after `normalize_bag_elements`; map and set comparison are
 order-independent on keys/members. Cross-type collection pairs (for example
 `[1, 2] == Set(1, 2)`) fold to `false` / `true` for `!=`. Non-literal
 collection operands yield `Proc::Err`, matching scalar `Eq` on non-literal
 casts. `where` guards use the same helper via `eval_guard_bool` in
-`languages/src/rhocalc/receive.rs`. Ascent `eq_list` / `eq_bag` / `eq_map` /
+`languages/src/rholang/receive.rs`. Ascent `eq_list` / `eq_bag` / `eq_map` /
 `eq_set` remain equational relations, separate from surface boolean
 comparison. See
-[rhocalc-collection-equality.md](../../design/made/rhocalc-collection-equality.md).
+[rholang-collection-equality.md](../../design/made/rholang-collection-equality.md).
 
 ### 3.5.2 Collection wire (`toByteArray()`)
 
@@ -279,11 +279,11 @@ constructor** — it carries no `![{…}]` fold body — and lowers to Rholang's
 `EMethod("toByteArray")`, so the bytes are produced by the f1r3node reducer
 (`reduce.rs:4137-4160`) and returned as a real `GByteArray`. Set/map members are
 canonicalized by the machine's `SortedParHashSet`, and a bag rides its
-`mettail.rhocalc.bag.v1` ABI tag.
+`mettail.rholang.bag.v1` ABI tag.
 
 Before 2026-07-25 it folded host-side to a hex `GString` through a forked copy of
 f1r3node's `rhoapi` protobuf schema; that fork is retired. See
-[rhocalc-collection-wire.md](../../design/made/rhocalc-collection-wire.md) §7 for
+[rholang-collection-wire.md](../../design/made/rholang-collection-wire.md) §7 for
 the three defects that made the fork unsalvageable.
 
 ### 3.6 Unary Prefix with Fold
@@ -521,7 +521,7 @@ logic {
 ```
 
 The `logic { ... }` block contains raw Ascent syntax that is injected verbatim
-into the generated Ascent struct.  RhoCalc uses it to:
+into the generated Ascent struct.  Rholang uses it to:
 
 1. **Seed context processes** — lambda terms that model evaluation contexts
 2. **Apply contexts** — apply `LamProc` contexts to the `step_term` and normalize

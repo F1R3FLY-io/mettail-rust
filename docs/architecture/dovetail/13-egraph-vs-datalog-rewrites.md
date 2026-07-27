@@ -158,7 +158,7 @@ So AC matching in the Datalog model is *more* materialized relations
 Graphviz source: [figures/13-class-explosion.dot](figures/13-class-explosion.dot).
 
 The three relations do not just grow — they *amplify each other*. The measured
-growth on the RhoCalc 7-process / 3-communication test case (quoted from
+growth on the Rholang 7-process / 3-communication test case (quoted from
 `docs/design/exploring/performance.md`) was:
 
 | Stage | Relation | Count produced |

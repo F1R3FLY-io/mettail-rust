@@ -249,7 +249,7 @@ conjunction:
 
 `A(x) ∧ B(x, y)` is available only when both conjuncts are available.
 
-## Example: rhocalc COMM
+## Example: rholang COMM
 
 Source term:
 
@@ -273,14 +273,14 @@ new out in {
 RSpace performs the communication when both sides are present. This is not a
 simulation of COMM; it is COMM delegated to the host Rho machine.
 
-### AST-First rhocalc Bridge
+### AST-First rholang Bridge
 
-The executable rhocalc bridge is a transport-pure Rho-machine bridge:
+The executable rholang bridge is a transport-pure Rho-machine bridge:
 
-`rhocalc source → MeTTaIL/WPDA Proc AST → normalized rhoapi::Par → RhoRuntime::inj`
+`rholang source → MeTTaIL/WPDA Proc AST → normalized rhoapi::Par → RhoRuntime::inj`
 
-The bridge is implemented by `rholang-runtime::lower_rhocalc_proc`,
-`lower_rhocalc_name`, and the generated-term boundary `lower_rhocalc_term`. It
+The bridge is implemented by `rholang-runtime::lower_rholang_proc`,
+`lower_rholang_name`, and the generated-term boundary `lower_rholang_term`. It
 does not generate Rholang source text. Reader-facing documents may display an
 equivalent Rholang rendering, but the generated value is the Rholang AST form
 consumed by the interpreter. This keeps the path aligned with the
@@ -289,14 +289,14 @@ forward-looking bytecode plan: bytecode can become another artifact kind after
 execution dependency.
 
 This direct bridge is intentionally narrower than the general production
-runtime-backend path. It is valid for the rhocalc fragment whose source AST
+runtime-backend path. It is valid for the rholang fragment whose source AST
 already is a Rho-calculus process representation. For arbitrary
 MeTTaIL-modeled languages, the Rho backend consumes checked Dovetail evidence
 first:
 
 `typed term + LanguageMetadata → DovetailRunReport → RhoNet plan → rhoapi::Par`
 
-Thus direct rhocalc lowering is not a replacement for the Dovetail report
+Thus direct rholang lowering is not a replacement for the Dovetail report
 boundary. It is the native fast path for a language whose semantic domain is
 already Rho-shaped, and it supplies evidence for how a covered Rho fragment is
 injected into the host interpreter without a source-text round trip.
@@ -304,7 +304,7 @@ injected into the host interpreter without a source-text round trip.
 ### Generic Call-By-Need Thunk Boundary
 
 Not every MeTTaIL-modeled language has a direct Rho process interpretation like
-rhocalc. The generic bridge for those computations is call-by-need: a source
+rholang. The generic bridge for those computations is call-by-need: a source
 computation is represented as a private Rho thunk, and forcing the thunk sends
 its result to a continuation while memoizing the first result.
 
@@ -410,10 +410,10 @@ and accepted for execution only after
 `CallByNeedThunkPlan`. Non-audited need plans may support codegen/model tests,
 but `PlannedCallByNeedThunk` rejects them before runtime execution.
 
-The supported transport-pure rhocalc core maps directly onto host Rho-machine
+The supported transport-pure rholang core maps directly onto host Rho-machine
 constructs:
 
-| rhocalc form | Lowered Rho AST shape | Scheduling consequence |
+| rholang form | Lowered Rho AST shape | Scheduling consequence |
 |---|---|---|
 | `PZero` | empty `Par` | no work |
 | `PPar(p, q)` | parallel `Par::append(lower(p), lower(q))` | independent subprocesses are scheduled by RhoRuntime |
@@ -424,7 +424,7 @@ constructs:
 | `PNew(^[x̄].p)` | `New(|x̄|, lower(p))` | private names are allocated by the host reducer |
 | ground `Int`, `UInt32`, `BigInt`, `BigRat`, `Fixed`, `Float`, `Bool`, `Str` | native Rho ground expressions | payloads use host scalar representation |
 
-At the `RhoCalcTerm` boundary, ambiguity is explicit. If the generated term is
+At the `RholangTerm` boundary, ambiguity is explicit. If the generated term is
 `Ambiguous([Proc p₁, ..., Proc pₙ])`, the bridge derives exact semantic keys for
 the `Proc` alternatives, deduplicates exact duplicates, lowers every remaining
 branch, and appends the resulting `Par` values. A cross-category ambiguous
@@ -543,10 +543,10 @@ data in receive-bind order.
 Literate lowering sketch:
 
 ```pseudocode
-Algorithm: Lower a rhocalc process to normalized Rho AST
+Algorithm: Lower a rholang process to normalized Rho AST
 
 Given:
-  rhocalc process p, or a generated RhoCalcTerm containing Proc alternatives
+  rholang process p, or a generated RholangTerm containing Proc alternatives
   bound-name environment Γ mapping free variables to de Bruijn indices
 
 Produce:
@@ -586,15 +586,15 @@ Steps:
 
 Correctness statement:
 
-`run_Rho(lower_rhocalc(p)) ≈ obs_rhocalc(p)`
+`run_Rho(lower_rholang(p)) ≈ obs_rholang(p)`
 
 for the transport-pure COMM subset, where `≈` is the documented observation
 quotient over public resting facts. The mechanized bridge proof
-`formal/rocq/rho_bridge/theories/RhocalcAstLowering.v` proves the AST-only
+`formal/rocq/rho_bridge/theories/RholangAstLowering.v` proves the AST-only
 artifact boundary, quote/drop preservation, one-input COMM correspondence,
 two-input atomic-join correspondence, de Bruijn binder ordering, and
 two-branch ambiguous-term preservation. The runtime test
-`rholang-runtime/tests/rho_rhocalc_ast.rs` exercises the same path with
+`rholang-runtime/tests/rho_rholang_ast.rs` exercises the same path with
 WPDA parsing, direct `Par` lowering, exact-key ambiguous-branch preservation,
 exact duplicate deduplication, RhoRuntime injection, received-name channel
 reuse, and private-name non-leakage.
@@ -736,7 +736,7 @@ The expression above is reader notation. The generated value is
 `models::rhoapi::Par`, constructed by `mettail_rholang_codegen::RhoAstSend`; it is
 not Rholang source text. `RhoAstSend` accepts structured `RhoAstLiteral`
 payloads, so the same AST-first boundary carries scalar calls, ambiguity
-witness strings, collection payloads, unforgeable names, and rhocalc bags.
+witness strings, collection payloads, unforgeable names, and rholang bags.
 Runtime observation reads the resting ambiguity datum as the tuple
 `("exact-key", "payload")`, then the adapter inserts it into
 `AmbiguityWitnessSet`. Exact duplicate tuples are idempotent, while the same

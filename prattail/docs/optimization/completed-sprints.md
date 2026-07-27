@@ -197,7 +197,7 @@ Only Tiers 1 and 2 are used for codegen DCE to avoid false-positive risk.
 
 ### Test counts
 
-Covered by existing language tests (calculator, lambda, RhoCalc, ambient).  Dead
+Covered by existing language tests (calculator, lambda, Rholang, ambient).  Dead
 rules are correctly omitted without affecting passing test behavior.
 
 ---
@@ -528,7 +528,7 @@ detection enables Sprint A's equation elimination.
 6. Subsumption warnings emitted to stderr during compilation
 
 Sprints 6g/6h (multi-stratum evaluation via per-group Ascent structs) deferred
-due to insufficient group sizes in current grammars (25/66 groups in RhoCalc
+due to insufficient group sizes in current grammars (25/66 groups in Rholang
 are singletons).
 
 ### Key files

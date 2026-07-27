@@ -225,7 +225,7 @@ Use category-specific names (`env_var_int`, `env_var_proc`) to:
 
 Environments are per-category:
 - `CalculatorIntEnv` for `Int` category
-- `RhoCalcProcEnv` for `Proc` category
+- `RholangProcEnv` for `Proc` category
 - This matches how Datalog relations work
 
 ### 4. Native vs Custom Type Handling

@@ -671,7 +671,7 @@ function ensures that the same variable name always produces the same
 
 ## 8. Worked Example: PInputs Rule
 
-The most complex rule in RhoCalc is `PInputs`:
+The most complex rule in Rholang is `PInputs`:
 
 ```
 PInputs . ns:Vec(Name), ^[xs].p:[Name* → Proc]
@@ -821,7 +821,7 @@ Input tokens: [LParen, Ident("n"), Question, Ident("x"), Comma,
 ```
 
 This demonstrates how the RD generator handles the most complex rule in
-the RhoCalc grammar: multi-binder zip+map+sep with delimiters and a
+the Rholang grammar: multi-binder zip+map+sep with delimiters and a
 recursive body parse.
 
 ---

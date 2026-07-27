@@ -111,7 +111,7 @@ and "the answer is zero."
 
 ### 1.4 Contrast with Non-Native Types
 
-The RhoCalc language (`languages/src/rhocalc.rs`) does NOT suffer from this
+The Rholang language (`languages/src/rholang.rs`) does NOT suffer from this
 problem. Its `Proc` category is non-native (no `![i64] as Proc`), and the
 language specification explicitly includes an `Err` variant:
 
@@ -119,7 +119,7 @@ language specification explicitly includes an `Err` variant:
 Err . |- "error" : Proc;
 ```
 
-The HOL blocks for RhoCalc return full `Proc` enum values including `Proc::Err`
+The HOL blocks for Rholang return full `Proc` enum values including `Proc::Err`
 for failure cases:
 
 ```
@@ -371,7 +371,7 @@ procedure AUTO_GENERATE_ERR(category, language):
 Without an `Err` variant, there is no term to represent failure. The auto-
 generation ensures that every category *can* represent errors, even if the
 language author did not anticipate them. The display representation `"error"` is
-chosen for consistency with RhoCalc's explicit `Err . |- "error" : Proc;`.
+chosen for consistency with Rholang's explicit `Err . |- "error" : Proc;`.
 
 #### How Does It Work?
 
@@ -719,7 +719,7 @@ sometimes useful, this approach:
 1. Pollutes the term space with error terms.
 2. Makes it harder to identify the *source* of an error (every enclosing
    context also becomes an error).
-3. Conflicts with the existing non-native filter_err convention in RhoCalc.
+3. Conflicts with the existing non-native filter_err convention in Rholang.
 
 By filtering errors at the fold level, we preserve the invariant that
 `fold_cat(s, t)` implies `t` is a valid, non-error value.
@@ -787,7 +787,7 @@ error handling), the macro generates the new Result-aware compilation with
 
 Backward compatibility is essential because:
 
-1. All existing language specifications (`calculator.rs`, `rhocalc.rs`,
+1. All existing language specifications (`calculator.rs`, `rholang.rs`,
    `basemath.rs`, `extmath.rs`, `lambda.rs`, etc.) must continue working.
 2. The change is opt-in: language authors adopt Result-based errors at their
    own pace.
@@ -1173,11 +1173,11 @@ Campaign: Calculator random arithmetic expressions
 The simulation correctly detects division by zero as a failure, rather than
 silently accepting `0` as the result.
 
-### 6.2 RhoCalc: Before and After
+### 6.2 Rholang: Before and After
 
 #### Before (Current)
 
-The RhoCalc specification uses explicit `Proc::Err` returns:
+The Rholang specification uses explicit `Proc::Err` returns:
 
 ```
 Add . a:Proc, b:Proc |- a "+" b : Proc ![
@@ -1406,7 +1406,7 @@ The language author replaces `.unwrap_or(default)` with
 ### 8.3 Phase 3: Migrate Non-Native Types (Opt-In)
 
 For non-native types that already use explicit `Cat::Err` returns (like
-RhoCalc), optionally migrate to `Result<Cat, String>`:
+Rholang), optionally migrate to `Result<Cat, String>`:
 
 | Before                             | After                                  |
 |------------------------------------|----------------------------------------|
@@ -1475,9 +1475,9 @@ infrastructure and language specifications are updated.
 | `macros/src/logic/mod.rs` | Ascent Datalog generation (fold rules, step rules, relations) |
 | `macros/src/gen/types/enums.rs` | AST enum generation (variants, auto-generated constructors) |
 | `languages/src/calculator.rs` | Calculator language specification (native-only HOL blocks) |
-| `languages/src/rhocalc.rs` | RhoCalc language specification (non-native HOL with Err) |
+| `languages/src/rholang.rs` | Rholang language specification (non-native HOL with Err) |
 | `simulation/src/runner.rs` | Simulation runner (campaign orchestration, invariant checking) |
 | `simulation/src/morphology.rs` | Term morphology tracking (structural metrics) |
 | `simulation/src/invariant.rs` | Invariant trait and built-in invariants |
 | `languages/src/generated/calculator-datalog.rs` | Generated Ascent code for Calculator |
-| `languages/src/generated/rhocalc-datalog.rs` | Generated Ascent code for RhoCalc |
+| `languages/src/generated/rholang-datalog.rs` | Generated Ascent code for Rholang |

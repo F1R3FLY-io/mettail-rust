@@ -63,7 +63,7 @@ One diagnostic is emitted per unique (constructor, category) pair.
 
 ```rust
 language! {
-    name: RhoCalc,
+    name: Rholang,
     types {
         Proc,
         Name
@@ -79,14 +79,14 @@ language! {
 ### Output
 
 ```
-warning[C-AP05] (RhoCalc): clone storm: constructor `PPar` (category `Proc`) has a `HashBag(Proc)` collection field -- congruence rules will clone the entire collection on every rule firing
+warning[C-AP05] (Rholang): clone storm: constructor `PPar` (category `Proc`) has a `HashBag(Proc)` collection field -- congruence rules will clone the entire collection on every rule firing
   = hint: consider wrapping the collection field in `Rc<HashBag<Proc>>` or `Arc<HashBag<Proc>>` to reduce clone overhead in congruence rules
 ```
 
 When multiple constructors are affected, grouping consolidates:
 
 ```
-warning[C-AP05] (RhoCalc): 2 constructors have collection fields (clone storm risk): PPar(Proc), NSend(Name)
+warning[C-AP05] (Rholang): 2 constructors have collection fields (clone storm risk): PPar(Proc), NSend(Name)
   = hint: consider wrapping the collection field in `Rc<HashBag<Proc>>` or `Arc<HashBag<Proc>>` to reduce clone overhead in congruence rules
 ```
 

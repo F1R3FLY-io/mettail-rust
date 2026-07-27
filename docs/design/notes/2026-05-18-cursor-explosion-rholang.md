@@ -1,4 +1,4 @@
-# Cursor-explosion diagnosis — rhocalc grammar (2026-05-18)
+# Cursor-explosion diagnosis — rholang grammar (2026-05-18)
 
 ## Hypothesis selection
 
@@ -20,7 +20,7 @@ exactly once, then (presumably) cycles indefinitely.
 Method: temporary `eprintln!` at `step_fanout` entry in
 `prattail/src/wpda_walker.rs:6085` printing cursor count + per-cursor
 ConfigKey breakdown. Run on the shortest failing test
-(`languages::rhocalc_tests native_ops::boolean::and_tt`
+(`languages::rholang_tests native_ops::boolean::and_tt`
 parsing `{true and true}`, 14 bytes).
 
 Captured to `/tmp/cursor-trace2.log` — 1662 lines covering ~140
@@ -150,12 +150,12 @@ config is the GLL descriptor-uniqueness termination argument
 ## Continued investigation (2026-05-18, post-walker-fix)
 
 The walker fix above resolved one cycle pathology but the
-`rhocalc native_ops::boolean::*` tests STILL hang past 120 s after the
+`rholang native_ops::boolean::*` tests STILL hang past 120 s after the
 walker fix. Deeper investigation in `macros/src/gen/runtime/language.rs`
 and `macros/src/gen/runtime/wpda_codegen/facade.rs` revealed a SECOND
 pathology: the parser produces 9 structurally-distinct derivations of
 the input `{true and true}` (via lex-ambiguity between keyword and
-identifier interpretations of `true`/`and`), and the rhocalc `PPar`
+identifier interpretations of `true`/`and`), and the rholang `PPar`
 rule's HashBag accumulates each as a hash-distinct entry rather than
 collapsing them to a single `(entry, count=9)` pair as the multiset
 semantics intend.
@@ -263,9 +263,9 @@ nested-Fork branches).
 - `cargo test --lib -p prattail`: **4047/4047 ✓**
 - `cargo test --test gen_calculator_op -p languages`:
   **1321 passed / 10 pre-existing R1 failures** (no regression).
-- `cargo test --test gen_rhocalc_op -p languages`:
+- `cargo test --test gen_rholang_op -p languages`:
   **532/532 ✓**.
-- Individual rhocalc `native_ops::boolean::and_tt` test was traced
+- Individual rholang `native_ops::boolean::and_tt` test was traced
   empirically to confirm the fixed-point detector now fires twice
   during the parse (`/tmp/cursor-trace6.log:67, /tmp/cursor-trace6.log:135`).
 
@@ -284,12 +284,12 @@ The remaining ~120s+ test wall-clock is dominated by the outer
 neither of which is in the walker's `step_fanout` cursor-management
 path. That hang is a separate pathology (likely in
 `parse_preserving_vars` / `decompose_into_cek` / `run_ascent` flow
-for cross-cat rhocalc cast paths), outside this principled walker
+for cross-cat rholang cast paths), outside this principled walker
 fix's scope.
 
 The walker fix DOES reduce per-parse memory consumption (each
 sub-parse now terminates cleanly via FIXPOINT instead of looping
 through the full `MAX_STEPS = 1_000_000` budget). Under `cargo
 nextest run --workspace`, this should reduce peak-RSS pressure
-on the parallel test execution even where individual rhocalc tests
+on the parallel test execution even where individual rholang tests
 still exceed their previous wall-clock budget.

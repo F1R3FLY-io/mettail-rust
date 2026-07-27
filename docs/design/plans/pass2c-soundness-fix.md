@@ -49,16 +49,16 @@ structured ParseError (correctness improvement, flag to user).
 ## §6 — compose with M4
 Land §3 FIRST, then re-land M4 (DispatchKey/PackedDispatchConfig rule/source discriminator, keep `EquivKey` narrow).
 With Pass-2c non-fabricating, M4's un-conflation surfaces only SOUND distinct cast injections → M4 ships →
-calc cast 0/12→8/12 + rhocalc casts parse → ~13/17 cast family closes. The 2 doubly-nested = separate Exp-15.
+calc cast 0/12→8/12 + rholang casts parse → ~13/17 cast family closes. The 2 doubly-nested = separate Exp-15.
 §3a (codegen prefix) and M4 (walker cohort keying) touch disjoint code → compose cleanly.
 
 ## Gates (in order)
 soundness probe; `unit_calculator_bool_inttobool`; edge_case 229/229; op-suites (gen_calculator_op ≥1331/0,
-gen_rhocalc_op 532/0); gauntlet 4220/0; `wpda_parity_*` + `-3!` ladder; sanctioned 3-test expectation updates;
+gen_rholang_op 532/0); gauntlet 4220/0; `wpda_parity_*` + `-3!` ladder; sanctioned 3-test expectation updates;
 (with M4) interleaved Welch chain panel + chain_1000/2000 RSS +5%.
 
 ## Risks
 R1 bootstrap-vs-wrap separation (model on CrossCatLhs; verify each sound input individually). R2 the 3 unsound
 inputs flip pass→fail (correct; sign-off). R3 bucket first-match shadowing (emit bootstrap into same bucket;
 diff generated wpda.rs). R4 backstop terminal-count (count only Literal; debug_assert first). R5 M4 perf (separate
-commit; Welch). R6 rhocalc analogous casts (grammar-agnostic; gen_rhocalc_op 532/0).
+commit; Welch). R6 rholang analogous casts (grammar-agnostic; gen_rholang_op 532/0).

@@ -567,7 +567,7 @@ All 1,331 tests pass after N10 subsumption elimination:
 | led-test         |   229 | Pass   |
 
 No new tests were required because the existing grammar test suites (calculator,
-lambda calculus, basemath, ambient, rhocalc) exercise the subsumption detection
+lambda calculus, basemath, ambient, rholang) exercise the subsumption detection
 path implicitly. The elimination is invisible to the test harness -- the same
 `eq_cat` facts are derived with or without the subsumed equations, confirming
 the fixpoint-preservation property.

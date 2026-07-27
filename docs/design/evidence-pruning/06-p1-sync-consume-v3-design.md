@@ -159,7 +159,7 @@ unresolved CrossCatLhs worker).
 figures are stale — CrossCatLhs-only memo; 149,685 observed under Measure). The gate is
 ≤40% of the re-baselined OFF figure. Without Step-0 the On drop is a rename artifact.
 
-Then: battery OFF + ON byte-identical (9 suites; rhocalc_tests 126/0 BOTH states; -3!
+Then: battery OFF + ON byte-identical (9 suites; rholang_tests 126/0 BOTH states; -3!
 canary; chain neutrality); the NEW cast-then-compare AmbiguityBudget test **targeting the
 mid-park frontier dip** (k near Off's peak where On's parking would hide an overflow Off
 reports — byte-identical or a recorded justified delta) (R7-10); the multi-body seed input
@@ -176,4 +176,4 @@ flip the env default.
 | 2 | The late-body seed input reveals consume-vs-quiescence ordering bugs | the seeded input IS the test (R7-9) |
 | 3 | Budget semantics at the mid-park dip | the R7-10 test |
 | 4 | Fork-path consume (corpus-cold) | seeded fork-path input |
-| 5 | The Return-pop D-strings re-sync reading the consumed cursor's fields | the pred=CollectionMarker + `{c!(p)}` family tests; rhocalc_tests both states |
+| 5 | The Return-pop D-strings re-sync reading the consumed cursor's fields | the pred=CollectionMarker + `{c!(p)}` family tests; rholang_tests both states |

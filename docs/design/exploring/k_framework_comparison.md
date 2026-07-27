@@ -46,7 +46,7 @@ endmodule
 **MeTTaIL:**
 ```rust
 theory! {
-    name: RhoCalc,
+    name: Rholang,
     exports { Proc, Name }
 
     terms {

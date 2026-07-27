@@ -83,7 +83,7 @@ warning[A04] (RichArith): constructor `Add` appears in 3 equation/rewrite groups
 When multiple constructors are flagged, the grouper consolidates them:
 
 ```
-warning[A04] (RhoCalc): 3 constructors appear in 3+ equation/rewrite groups (risk of equivalence class explosion): Name(NQuote), Proc(PPar, PNew)
+warning[A04] (Rholang): 3 constructors appear in 3+ equation/rewrite groups (risk of equivalence class explosion): Name(NQuote), Proc(PPar, PNew)
 ```
 
 ## Resolution

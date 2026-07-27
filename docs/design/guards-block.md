@@ -1285,7 +1285,7 @@ equations and rewrites in closed-world mode.
 
 ```rust
 language! {
-    name: RhoCalc,
+    name: Rholang,
     types { Proc, Name, ![i64] as Int },
 
     tokens {

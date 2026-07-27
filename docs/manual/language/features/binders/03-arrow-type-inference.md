@@ -65,7 +65,7 @@ for domain_lang_type in &language.types {
 }
 ```
 
-### Concrete Example: RhoCalc (`{Proc, Name}`)
+### Concrete Example: Rholang (`{Proc, Name}`)
 
 | Category | Generated Variants                                                    |
 |----------|-----------------------------------------------------------------------|

@@ -834,7 +834,7 @@ design: NFA-style multi-category parsing, the `Ambiguous` variant, deep
 `is_ground()` checking, and the three-stage resolution pipeline.
 
 **Layer 1 → Layer 6 direct interaction (lexer probe):** In languages with
-non-native categories (e.g. rhocalc's `Proc` and `Name`), Layer 6 now uses a
+non-native categories (e.g. rholang's `Proc` and `Name`), Layer 6 now uses a
 single-token **lexer probe** from Layer 1's `lex()` to pre-filter category
 parsers before NFA-style multi-category parsing begins. If the first token is
 `Token::Ident`, native-only categories (Float, Int, Bool, Str) are skipped

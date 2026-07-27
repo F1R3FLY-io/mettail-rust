@@ -1,4 +1,4 @@
-# RhoCalc Performance Analysis
+# Rholang Performance Analysis
 
 **Date**: November 9, 2025
 **Execution Time**: 18.5 seconds
@@ -124,7 +124,7 @@ pinput_proj_r0_p0(parent, chan, x, p, elem) <--
 
 ### 5. 🟡 Path Computation (MEDIUM)
 
-**Lines 88-91 in rhocalc.rs**:
+**Lines 88-91 in rholang.rs**:
 ```rust
 path(redex, redex) <-- for _ in [()];
 path(redex, q) <-- redex_eq(q);
@@ -339,7 +339,7 @@ path_depth(p, r, d+1) <-- path_depth(p, q, d), rw_proc(q, r), if d < 10;
 After removing eager deconstruction:
 
 ```bash
-cargo run --bin rhocalc
+cargo run --bin rholang
 ```
 
 **Check**:

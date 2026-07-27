@@ -1,4 +1,4 @@
-# RhoCalc Collection Fork Explosion — Lexical-Ambiguity Cursor Cross-Product
+# Rholang Collection Fork Explosion — Lexical-Ambiguity Cursor Cross-Product
 
 **Target:** branch `feature/wfst-architecture`, baseline HEAD `d84b4df4`.
 **Status:** IMPLEMENTED + verified (2026-06-20). Root-cause confirmed by probe; design red-teamed to convergence; the clear-all variant of Change B was implemented (not the watermark stack — see §8). See §8 for the convergence outcome, the corrected `O(N²)` complexity, and verification results.
@@ -8,7 +8,7 @@
 
 ## 1. Problem
 
-Parsing the rhocalc parallel-composition collection `{0 | 1 | … | 19}` (20 numeric elements) is
+Parsing the rholang parallel-composition collection `{0 | 1 | … | 19}` (20 numeric elements) is
 catastrophically slow on HEAD `d84b4df4`. The lazy/eager equivalence gate
 (`languages/tests/lazy_lex_equivalence.rs::rho_full_parse_lazy_eq_eager` and `report_nodes_materialized`,
 whose `RHO_FULL` corpus contains exactly this input) does not complete inside its 180 s test budget
@@ -37,13 +37,13 @@ and the per-cursor work (`apply_action` calls) scales as `~O(N⁶)`.
 
 ### 1.2 The lexical ambiguity (the multiplier)
 
-The rhocalc grammar (`languages/src/rhocalc.rs:30-64`) lexes a bare numeral such as `0` **three ways**,
+The rholang grammar (`languages/src/rholang.rs:30-64`) lexes a bare numeral such as `0` **three ways**,
 because three literal patterns all match the digit `0` with no required suffix:
 
 ```
-Int     : r"-?(… | [0-9](_?[0-9])*)(i64)?"      → CastInt   (k:Int   |- k : Proc)   rhocalc.rs:37, 98
-BigInt  : r"-?(… | [0-9](_?[0-9])*)n?"          → CastBigInt(n:BigInt|- n : Proc)   rhocalc.rs:44, 96
-BigRat  : r"-?(… | [0-9](_?[0-9])*)r?"          → CastBigRat(r:BigRat|- r : Proc)   rhocalc.rs:50, 93
+Int     : r"-?(… | [0-9](_?[0-9])*)(i64)?"      → CastInt   (k:Int   |- k : Proc)   rholang.rs:37, 98
+BigInt  : r"-?(… | [0-9](_?[0-9])*)n?"          → CastBigInt(n:BigInt|- n : Proc)   rholang.rs:44, 96
+BigRat  : r"-?(… | [0-9](_?[0-9])*)r?"          → CastBigRat(r:BigRat|- r : Proc)   rholang.rs:50, 93
 ```
 
 The eager lex DAG dump for `0` is `node: kind=Integer alt_kinds=["BigRat","BigInt"]` — one primary
@@ -376,8 +376,8 @@ element sub-parse, strictly **before** `emit_splice_into_collection` truncates �
 pause mid-element with different live lexical readings still bucket into distinct cohort members. The
 truncation removes a stamp only once its element is sealed into the SPPF, i.e. after any pause/resume
 for that element has completed. Live forks are distinguished; sealed forks are not. This is the same
-"input to the gate, not the gate" separation, applied to the cohort path. Gate: `gen_rhocalc_prop` +
-`rhocalc_tests` exercise paused-cohort collection parses and must stay green (§6.2).
+"input to the gate, not the gate" separation, applied to the cohort path. Gate: `gen_rholang_prop` +
+`rholang_tests` exercise paused-cohort collection parses and must stay green (§6.2).
 
 **(S5) Tomita ambiguity (`realize_tomita_ambiguous_expression_yields_two`, `sppf_realize.rs:428`).**
 Genuine top-level ambiguity (two full parses of the whole input) is represented by two packings under
@@ -482,8 +482,8 @@ gate regresses, without reverting the carrier plumbing.
 | Suite | What it guards | Command |
 |---|---|---|
 | `prattail` lib (≈ 3789 tests, incl. `tomita_frontier` unit tests) | the merge invariants, incl. `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` (`tomita_frontier.rs:1132`) and `arc_merge_disambiguator_distinguishes_lex_fork_stamp` (`:1113`) | `cargo test -p prattail` |
-| `rhocalc_tests` + `gen_rhocalc_{unit,analytical,rewrite,prop}` | rhocalc parse/eval correctness | `cargo test -p languages --test rhocalc_tests` (+ the `gen_rhocalc_*`) |
-| `wpda_parity_rhocalc_collections` | `{error}`, `{error\|error}`, `{error\|error\|error}`, `{}` collection shapes (`tests/wpda_parity_rhocalc_collections.rs`) | `cargo test -p languages --test wpda_parity_rhocalc_collections` |
+| `rholang_tests` + `gen_rholang_{unit,analytical,rewrite,prop}` | rholang parse/eval correctness | `cargo test -p languages --test rholang_tests` (+ the `gen_rholang_*`) |
+| `wpda_parity_rholang_collections` | `{error}`, `{error\|error}`, `{error\|error\|error}`, `{}` collection shapes (`tests/wpda_parity_rholang_collections.rs`) | `cargo test -p languages --test wpda_parity_rholang_collections` |
 | `gen_guardedrho_*` proc display, incl. chained output `@a!(Nil)!(Nil)` (S3) | the `sppf_stack_id` chained-output distinction | `cargo test -p languages --test gen_guardedrho_unit` (+ analytical/prop) |
 | `lazy_lex_equivalence` full corpus | lazy ≡ eager *and* parse-result equality on `{0\|1\|2}`, `{0..19}`, `new x, y in {…}` | `cargo test -p languages --test lazy_lex_equivalence` |
 | full gauntlet (calc-op, edge, ledtest, ambient) | no cross-language regression | the standard battery |
@@ -579,4 +579,4 @@ content-equality is an independently-sound merge condition and removes a real fa
 ### 8.4 Verification results (implemented, HEAD after this commit)
 - `lazy_lex_equivalence::rho_full_parse_lazy_eq_eager`: **4.2 s** (was ~250 s timeout); `report_nodes_materialized`: **4.4 s**. Both well under the 10 s target (~60× speedup). All 7 lazy≡eager equivalence checks pass.
 - `cargo nextest run -p prattail`: **3789/3789**, including the S4 guards `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` and `arc_merge_disambiguator_distinguishes_lex_fork_stamp` (both pass unchanged — the fix changes the gate's *input*, not its comparison).
-- 292-test soundness sweep (gen_guardedrho_unit incl. `@a!(Nil)!(Nil)` chained output, calculator incl. dangling-else/ternary, rhocalc_tests, wpda_parity_rhocalc_collections, edge_case_tests, recovery_accumulation, calculator_display_projection_tests, display_roundtrip_regression_tests, led_delegation_tests, and the prior cluster fixes): **292/292**, zero regressions.
+- 292-test soundness sweep (gen_guardedrho_unit incl. `@a!(Nil)!(Nil)` chained output, calculator incl. dangling-else/ternary, rholang_tests, wpda_parity_rholang_collections, edge_case_tests, recovery_accumulation, calculator_display_projection_tests, display_roundtrip_regression_tests, led_delegation_tests, and the prior cluster fixes): **292/292**, zero regressions.

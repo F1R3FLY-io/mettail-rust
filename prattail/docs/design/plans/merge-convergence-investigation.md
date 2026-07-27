@@ -200,7 +200,7 @@ number has never been measured.**
    `HAS_CROSS_CAT_DISPATCH: bool`, `HAS_COLLECTIONS: bool`. Merge code
    branches into narrowed ConfigKey omitting proven-vacuous fields.
    Calculator's pure-arithmetic chains hit narrow path; `-3!` and
-   rhocalc hit wide path. **Complementary to Lead #1, not redundant.**
+   rholang hit wide path. **Complementary to Lead #1, not redundant.**
 
 ---
 
@@ -287,7 +287,7 @@ preserved.
   only. The `-3!` falsification was about `lex_alt_idx=0` vs
   `lex_alt_idx=2` reaching identical `(state, node, pos, edge, depth,
   sppf_top)` — orthogonal to the edge projection.
-- rhocalc / lambda binders: `EdgeKind::Generic` retains identity-
+- rholang / lambda binders: `EdgeKind::Generic` retains identity-
   strict comparison via `Identity(eid)`. Two `Generic`-kinded edges
   from the same predecessor were previously assumed divergent (gss.rs:393).
   Falling back to identity preserves Stage 3.12.6's divergence guard.
@@ -304,7 +304,7 @@ Per `[[feedback-optimization-t-test]]`:
 | chain_1000 | same | same | same |
 | chain_10000 | OOMs at baseline | post-Stage-B | operational: completes <60s with <500 MB peak RSS |
 
-Plus narrow gauntlet: `prattail lib 4059 + gen_calc_op 1331 + gen_rhocalc_op 532 + edge_case 229 + wpda_parity_calc 16 + wpda_parity_lambda 2 + recovery_cohort 5 = 6174/0`.
+Plus narrow gauntlet: `prattail lib 4059 + gen_calc_op 1331 + gen_rholang_op 532 + edge_case 229 + wpda_parity_calc 16 + wpda_parity_lambda 2 + recovery_cohort 5 = 6174/0`.
 
 ### Stage D (contingent, 8-12 h): Lead #3 grammar-static elision
 
@@ -317,7 +317,7 @@ Only if Stage B alone doesn't clear the chain_10000 operational gate.
 | Risk | Probability | Mitigation |
 |------|-------------|------------|
 | Breaks `-3!` | LOW | `lex_alt_idx`/`weight_src_idx`/`weight_rule_idx`/`lex_fork_stamp` STAY. Verify with explicit test. |
-| Breaks rhocalc (binders + cross-cat heavy) | MEDIUM | `Generic`-fallback Identity preserves divergence guard. Update `from_symbol` mapping (gss.rs:494) to keep `ReturnFrame` on Identity arm. Verify with `gen_rhocalc_op 532/0`. |
+| Breaks rholang (binders + cross-cat heavy) | MEDIUM | `Generic`-fallback Identity preserves divergence guard. Update `from_symbol` mapping (gss.rs:494) to keep `ReturnFrame` on Identity arm. Verify with `gen_rholang_op 532/0`. |
 | Lambda-calc binder shadowing | LOW | Lambda binder edges → `Generic` → Identity arm → no merge change. |
 | Cohort revive cursors merge wrong | LOW | `cohort_origin` STAYS in ConfigKey. Lead #1 orthogonal. |
 | H13's 0.6% number applies | NONE | H13 measured kind-only. Lead #1 is `(pred, kind)` — strictly finer, expected coverage TBD by Stage A's `pred_edge_class_equivalent` counter. |

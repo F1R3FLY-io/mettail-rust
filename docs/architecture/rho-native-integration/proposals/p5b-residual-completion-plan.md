@@ -1,7 +1,7 @@
 # P5b Residual Completion Plan (survey + design)
 
 > **Status (reconciled post-P6):** executed. All four P5b target languages were
-> flipped (Calculator, RhoCalc, Ambient, GuardedRho), and P6 then retired the
+> flipped (Calculator, Rholang, Ambient, GuardedRho), and P6 then retired the
 > Ascent/CESK paths. Two artifacts this 2026-06-16 survey references as live were
 > subsequently removed in P6 and now read as historical: the `rho_vs_ascent.rs`
 > differential test (deleted with the `oracle-ascent` feature, `c9cea652`) and the
@@ -10,7 +10,7 @@
 
 Original survey status (2026-06-16): working plan. Produced by a code-grounded survey
 after CAMP-0 verified the M-RHO bridge green against the now-building f1r3node-rust. The four P5b
-target languages are **Calculator, RhoCalc, Ambient, GuardedRho** (MiniRho is a doc
+target languages are **Calculator, Rholang, Ambient, GuardedRho** (MiniRho is a doc
 example, not a generated language; lambda/led_test/class2*/optsmoke are not Rho-flip
 targets).
 
@@ -19,8 +19,8 @@ targets).
 - **Calculator** — COMPLETE. Scalar lowering + native-fold dispositions; executes on
   RhoRuntime (`lowered_calculator_{int,bool,string}_ops_compute_correctly_on_rho_runtime`);
   differential vs Ascent (`rho_vs_ascent.rs:86`).
-- **RhoCalc** — COMPLETE. Host COMM lowering (`rhocalc_ast.rs`); executes parsed
-  processes as AST calls (`rho_rhocalc_ast.rs`, 17 tests); COMM oracle (`rho_comm_oracle`, 8).
+- **Rholang** — COMPLETE. Host COMM lowering (`rholang_ast.rs`); executes parsed
+  processes as AST calls (`rho_rholang_ast.rs`, 17 tests); COMM oracle (`rho_comm_oracle`, 8).
 - **Ambient** — COMPLETE (in-engine). Flips to `RuntimeBackend::Dovetail` (host-less AC),
   Complete reports (`ambient_dovetail_flip.rs`).
 - **GuardedRho** — plans end-to-end through the guard-quality gate
@@ -33,7 +33,7 @@ targets).
   a sound generated-AST guarded-receive lowering is impossible.** The resolution is a
   derivation, not a preference:
   - `rhoapi::ReceiveBind` has EXACTLY `{patterns, source, remainder, free_count}` — no guard
-    field (proven by the struct literal at `rholang-runtime/src/rhocalc_ast.rs:413-418`,
+    field (proven by the struct literal at `rholang-runtime/src/rholang_ast.rs:413-418`,
     which specifies all fields with no `..default`). RSpace matching is purely structural.
   - GuardedRho's `?guard` is a `BehavioralPred::RelationQuery` over the **external relations**
     `halts`/`safe`, "populated by user code" (`languages/tests/definitions/guarded_rho.rs:33-34,92-95`).
@@ -52,7 +52,7 @@ targets).
     semantics execute on the host RSpace (`rho_guard_oracle`). The behavioral guard being
     host-routed is a gate working as designed, not a deferral. Doc-07 cell `→` ✅ host-routed.
   - (A generated-AST wrapper could lower GuardedRho's *guard-free* structural fragment
-    — `POutput`/`PPar`/`NQuote`/`PDrop`/`CastInt` — like RhoCalc, but that fragment excludes
+    — `POutput`/`PPar`/`NQuote`/`PDrop`/`CastInt` — like Rholang, but that fragment excludes
     the language's defining `PGuardedInput`, so it adds no real coverage. Not built.)
 - **B2 — MiniRho/stale-note doc reconciliation** (decision-free, done first):
   remove/relabel the `◐ MiniRho` row (not a generated language) and the now-false
@@ -69,12 +69,12 @@ targets).
 ## Plan-defined skips (gates working as designed — do NOT chase)
 
 - **C1** Ambient flips to Dovetail, not RhoMachine (in-engine, host-less, by the discharge rule).
-- **C2 (load-bearing)** No differential-vs-Ascent for RhoCalc/Ambient/GuardedRho — Ascent is
+- **C2 (load-bearing)** No differential-vs-Ascent for Rholang/Ambient/GuardedRho — Ascent is
   an INVALID oracle for them: capture-unsound on Ambient binders (proven,
   `ambient_binder_handler.rs`), and no model for host COMM or external guard relations. The
-  COMM oracle (RhoCalc) and guard oracle (GuardedRho) ARE the correct differentials; step-9
+  COMM oracle (Rholang) and guard oracle (GuardedRho) ARE the correct differentials; step-9
   "differential-vs-Ascent" is a Calculator-specific scalar-fold gate.
-- **C3** `castbigrat` (RhoCalc) is a pre-existing big-rational cast smoke residual, not a
+- **C3** `castbigrat` (Rholang) is a pre-existing big-rational cast smoke residual, not a
   flip blocker; `@1!(Nil)` (GuardedRho) actually passes now (stale note).
 - **C4** `rho_guard_oracle` being `source-oracle`-gated is the sanctioned guard-regression
   oracle (doc-08 source boundary), not a stub.
@@ -93,9 +93,9 @@ explicit user approval; git history is the archive.
 - **R-patch** — the build depends on the temporary `rholang_parser` `[patch]` to the
   cost-accounting worktree (`Cargo.toml`, held local). B1-A's `Receive`/`where` lowering
   inherits that WIP `rholang` `Par`/`ReceiveBind` surface; pin construction to `rhoapi`
-  types (as `rhocalc_ast.rs` does) and re-run CAMP-0 after B1. Remove the patch once
+  types (as `rholang_ast.rs` does) and re-run CAMP-0 after B1. Remove the patch once
   cost-accounting merges to rholang-rs master.
-- **R-Ascent-oracle-invalidity** — see C2; do not build Ambient/RhoCalc/GuardedRho-vs-Ascent
+- **R-Ascent-oracle-invalidity** — see C2; do not build Ambient/Rholang/GuardedRho-vs-Ascent
   oracles.
 - **R-doc-status-overclaim** — declaring P5b complete requires B2/B3 in the same pass, else
   the matrix claims both "complete" and "in rollout."

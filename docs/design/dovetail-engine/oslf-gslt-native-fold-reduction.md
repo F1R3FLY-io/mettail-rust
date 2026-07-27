@@ -69,8 +69,8 @@ semantics** (epic `dovetail-gslt-reduction-engine-f1r3node-target`). The Ascent 
 as the one reduction class still evaluated outside Dovetail.
 
 A **fold** rule computes its result by recursively reducing its children to normal form, then
-running a Rust body. RhoCalc's numeric casts are the canonical example
-(`languages/src/rhocalc.rs`):
+running a Rust body. Rholang's numeric casts are the canonical example
+(`languages/src/rholang.rs`):
 
 ```text
 IntBinProc . a:Proc, w:Int |- "int" "(" a "," w ")" : Proc ![{ rho_proc_int_bin(&a, w) }] fold;
@@ -81,13 +81,13 @@ We distinguish, crucially:
 - a **native-output fold** — result category is a primitive native type (e.g. `… : Int`).
   These still reduce, via the generated `try_eval`/`try_fold_to_literal` methods.
 - a **non-native-output fold** — result category is an object-language category, `Proc`.
-  RhoCalc's casts/arith/comparisons/collection-ops are all `… : Proc`. Their `![{…}]` bodies
+  Rholang's casts/arith/comparisons/collection-ops are all `… : Proc`. Their `![{…}]` bodies
   (`numeric_dispatch.rs::rho_proc_*`, `calc_*`) were emitted **only** into Ascent's `fold_proc`
   relation. After P6, those bodies are **dead** and these terms reduce **nowhere**: the
   generated Dovetail compiler lowers only `equations` + `rewrites`, never folds, and
   `try_direct_eval` is empty for a language whose primary type (`Proc`) has no native type.
 
-**Ground truth** (the retired relation, preserved in `target/generated/rhocalc/rhocalc-datalog.rs`):
+**Ground truth** (the retired relation, preserved in `target/generated/rholang/rholang-datalog.rs`):
 - *Base case* — a literal / already-`Cast*` / structural `Proc` folds to **itself**.
 - *Recursive redex* — `fold_proc(IntBinProc(l,w)) ⇐ fold_proc(l, lv) ∧ fold_int(w, rv) ∧
   rho_proc_int_bin(&lv, rv)`: **each child is folded first**; a variable/stuck child has no

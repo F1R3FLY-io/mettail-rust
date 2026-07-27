@@ -174,4 +174,4 @@ The crossbeam queue dependency is a normal manifest entry on `rholang-runtime`.
 - Tier-3 trampoline traced for free:
   [10 — Adaptive Evaluation Model](10-adaptive-evaluation-model.md);
   `formal/rocq/rho_bridge/theories/HeldFoldContractSound.v`.
-- COMM correspondence: `LinearCommCorrespondence.v`; `RhocalcAstLowering.v`.
+- COMM correspondence: `LinearCommCorrespondence.v`; `RholangAstLowering.v`.

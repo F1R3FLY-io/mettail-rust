@@ -1,6 +1,6 @@
 # Map Type Design
 
-**Status:** Implemented (Calculator and RhoCalc)  
+**Status:** Implemented (Calculator and Rholang)  
 **Context:** MeTTaIL collection types; List and Bag are implemented with configurable delimiters (defaults `list(…)`, `bag(…)`; see [lists-and-bags-support.md](./lists-and-bags-support.md)).
 
 ---
@@ -21,7 +21,7 @@
 
 **Rationale:** List and Bag use a single element type (`Proc`). Map is fixed to **Proc–Proc** entries for the current languages.
 
-**Effective type:** `mettail_runtime::HashMapLit<Proc, Proc>` in generated code (wrapper around `HashMap` with a stable hasher). Key and value categories are `Proc` for literal parsing and for Calculator / RhoCalc map operations.
+**Effective type:** `mettail_runtime::HashMapLit<Proc, Proc>` in generated code (wrapper around `HashMap` with a stable hasher). Key and value categories are `Proc` for literal parsing and for Calculator / Rholang map operations.
 
 | Option | Syntax | Pros | Cons |
 |--------|--------|------|------|
@@ -49,10 +49,10 @@ Collections are disambiguated by keyword-prefixed delimiters. Defaults:
 
 Examples: `list()`, `bag(1, 1, 2)`, `map(a:1, b:2)` (empty and non-empty).
 
-#### 3.1.1 RhoCalc Rholang-style Override
+#### 3.1.1 Rholang Rholang-style Override
 
-To align rhocalc's surface syntax with [Rholang](https://rholang.io), the
-`Map` type declaration in `languages/src/rhocalc.rs` overrides the default
+To align rholang's surface syntax with [Rholang](https://rholang.io), the
+`Map` type declaration in `languages/src/rholang.rs` overrides the default
 delimiters via a braced dictionary (`open_parts`, `close_parts`, `sep`, `key_val_sep`):
 
 ```rust
@@ -68,14 +68,14 @@ Resulting literal forms: `{}` (empty), `{k: v}`, `{k₁: v₁, k₂: v₂}`. An
 explicit `Map()` alias is provided for chained method calls
 (`Map().set("a", 1).set("b", 2)`).
 
-This override is possible because the rhocalc grammar reserves `{` `}` for
+This override is possible because the rholang grammar reserves `{` `}` for
 the empty `Map` literal at expression position; the body braces of
 `for(…) { P }` and `new … in { P }` are absorbed by those keyword-prefixed
 rules and never participate in the expression-level `{` dispatch. The
 previously-existing braced parallel-composition rule `{ P | Q }` was
 **removed**; bare infix `P | Q` (`PParInfix`, folding into `Proc::PPar`) is
 the canonical Rholang-style form. See
-[exploring/rhocalc-rholang-style-syntax.md](../../exploring/rhocalc-rholang-style-syntax.md).
+[exploring/rholang-rholang-style-syntax.md](../../exploring/rholang-rholang-style-syntax.md).
 
 ### 3.2 Delimiter Model
 
@@ -166,7 +166,7 @@ Category **Map** uses the wrapper **`HashMapLit<Proc, Proc>`** from `runtime` (`
 
 ### 6.2 Enum variant
 
-Generated languages use a **Map** enum with **`MapLit`** payload (e.g. `Map::MapLit` holding `HashMapLit<Proc, Proc>`). Calculator injects maps into **Proc** via **`ProcMap`**; RhoCalc uses **`CastMap`** for `Proc`-level map values.
+Generated languages use a **Map** enum with **`MapLit`** payload (e.g. `Map::MapLit` holding `HashMapLit<Proc, Proc>`). Calculator injects maps into **Proc** via **`ProcMap`**; Rholang uses **`CastMap`** for `Proc`-level map values.
 
 ### 6.3 Congruence and Substitution
 
@@ -177,7 +177,7 @@ Generated languages use a **Map** enum with **`MapLit`** payload (e.g. `Map::Map
 
 ## 7. Delimiter Conflicts
 
-With keyword-prefixed defaults (`list(`, `bag(`, `map(`), collections are lexically distinct. No conflict with PPar (`{`, `}`) or other constructs. Languages may override defaults via a braced delimiter dictionary in the type declaration (see RhoCalc `Bag` / `Map` / `List` in `languages/src/rhocalc.rs`).
+With keyword-prefixed defaults (`list(`, `bag(`, `map(`), collections are lexically distinct. No conflict with PPar (`{`, `}`) or other constructs. Languages may override defaults via a braced delimiter dictionary in the type declaration (see Rholang `Bag` / `Map` / `List` in `languages/src/rholang.rs`).
 
 ---
 
@@ -185,16 +185,16 @@ With keyword-prefixed defaults (`list(`, `bag(`, `map(`), collections are lexica
 
 **Done — foundation & parser:** `CollectionCategory::Map`, `CollectionType::HashMap`, `key_val_sep` on `CollectionDelimiters`, `![HashMap] as Map` / `![HashMap<Proc, Proc>] as Map`, default `map(…)` literals, `CollectionKind::HashMap` and trampoline support in PraTTaIL, `MapLit` / `HashMapLit` in generated code.
 
-**Done — operations (at least Calculator):** `get`, `put`, `delete`, `merge`, `has`, `keys`, `values`, `maplength`, plus congruence rules — see `languages/src/calculator.rs`. RhoCalc exposes map operations on **`CastMap`** / `Map::MapLit` in `languages/src/rhocalc.rs`.
+**Done — operations (at least Calculator):** `get`, `put`, `delete`, `merge`, `has`, `keys`, `values`, `maplength`, plus congruence rules — see `languages/src/calculator.rs`. Rholang exposes map operations on **`CastMap`** / `Map::MapLit` in `languages/src/rholang.rs`.
 
-**Done — RhoCalc surface alignment with Rholang (May 2026):** brace-delimited
+**Done — Rholang surface alignment with Rholang (May 2026):** brace-delimited
 Map literals (`{k: v}`), `Map()` alias, eight-method method-call sugar
 (`m.get(k)`, `m.set(k, v)`, `m.contains(k)`, `m.delete(k)`, `m.union(n)`,
 `m.size()`, `m.keys()`, `m.values()`), plus `Nil` (replacing `{}` for
 `PZero`) and removal of braced `PPar`. Unary methods are implemented via the
 extended mixfix detector (1-NT/3+T shape, dispatched inline without a frame
 push). See
-[exploring/rhocalc-rholang-style-syntax.md](../../exploring/rhocalc-rholang-style-syntax.md).
+[exploring/rholang-rholang-style-syntax.md](../../exploring/rholang-rholang-style-syntax.md).
 
 **Optional later:** extra delimiter overrides per language beyond defaults; pattern matching on maps in rewrite rules (still out of scope for many use cases).
 
@@ -224,15 +224,15 @@ push). See
 4. **Resolved (May 2026):** Disambiguation between `{}` for PZero and the Map
    literal was resolved by renaming PZero to `Nil`, removing braced `PPar`, and
    reserving `{`...`}` at expression position exclusively for Map literals. See
-   [exploring/rhocalc-rholang-style-syntax.md](../../exploring/rhocalc-rholang-style-syntax.md).
+   [exploring/rholang-rholang-style-syntax.md](../../exploring/rholang-rholang-style-syntax.md).
 
 ---
 
 ## 11. References
 
 - [lists-and-bags-support.md](./lists-and-bags-support.md) — List/Bag design
-- [exploring/rhocalc-rholang-style-syntax.md](../../exploring/rhocalc-rholang-style-syntax.md) — RhoCalc Rholang-style syntax (Phase 1: Map)
+- [exploring/rholang-rholang-style-syntax.md](../../exploring/rholang-rholang-style-syntax.md) — Rholang Rholang-style syntax (Phase 1: Map)
 - `docs/manual/language/features/collections/00-overview.md` — Collection pipeline
 - `macros/src/ast/language.rs` — `CollectionCategory`, `LangType`, `map_defaults`
 - `prattail` — `CollectionKind::HashMap`, collection / map entry parsing in the trampoline
-- `languages/src/calculator.rs`, `languages/src/rhocalc.rs` — concrete Map terms and `Proc` injection
+- `languages/src/calculator.rs`, `languages/src/rholang.rs` — concrete Map terms and `Proc` injection

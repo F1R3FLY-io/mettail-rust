@@ -18,9 +18,9 @@ against THIS commit (the unsourced pre-ROOT-A "342,699" figure is retired; see r
 |---|---|---|
 | `gen_ledtest_op` | **220/0** | SENTINEL — any failure aborts the active stage |
 | `gen_calculator_op` | 1330/0 | |
-| `gen_rhocalc_op` | 530/1 | pre-existing `castbigrat` (tracked separately) |
+| `gen_rholang_op` | 530/1 | pre-existing `castbigrat` (tracked separately) |
 | `edge_case_tests` | 229/0 | the historical ambient pair fixed @ 38dcd485 |
-| `rhocalc_tests` | **126/0** | first-ever full green @ f1ea267c |
+| `rholang_tests` | **126/0** | first-ever full green @ f1ea267c |
 | `gen_ambient_analytical` | 52/0 (1 ignored) | |
 | `gen_ambient_rewrite` | 13/0 | |
 | `gen_ambient_prop` | 17/0 | |
@@ -44,7 +44,7 @@ Model commits already landed (M-commits, zero-admission, `Print Assumptions` cle
 | P-series conventions section in walker_stats.rs (`PRATTAIL_EP_<STAGE>=off\|shadow\|on`; `<stage>_shadow_{would_refute_total, refuted_then_accepted, steps_after_would_refute}` partitioned by WpdaState-class × recovery_enabled; non-zero-slot printing) | ✅ this commit |
 | `languages/examples/cast_tower_bench.rs` (the P1/P2 Welch panel; kill-switch arms; **tiered** — see smoke findings) | ✅ this commit |
 | `recovery_cohort_bench` zero-innovation extension + `PRATTAIL_EP_P4_DEMOTE` arm | ✅ this commit |
-| Battery identical (P0 is behavior-neutral) | ✅ **PASSED** — ledtest 220/0 SENTINEL, calc 1330/0, rhocalc_op 530/1 (pre-existing castbigrat), edge 229/0, **rhocalc_tests 126/0**, ambient 52/0+13/0+17/0, prattail-lib 3980/0, BOTH cfg builds green (default + `--features walker-stats`), bench smoke exit-0 with well-formed CSV |
+| Battery identical (P0 is behavior-neutral) | ✅ **PASSED** — ledtest 220/0 SENTINEL, calc 1330/0, rholang_op 530/1 (pre-existing castbigrat), edge 229/0, **rholang_tests 126/0**, ambient 52/0+13/0+17/0, prattail-lib 3980/0, BOTH cfg builds green (default + `--features walker-stats`), bench smoke exit-0 with well-formed CSV |
 
 ### P0 smoke findings (2026-06-11 @ f1ea267c, debug profile)
 
@@ -210,7 +210,7 @@ critical path** — M-1) → gates (refuted_then_accepted == 0 HARD everywhere;
 steps-after-would-refute ≥ 20% of apply_action_calls ⇒ enforce, < 5% ⇒ STOP) → I (enforcement
 at the two sites + the O(1) mask test replacing the trigger-ahead rescan as a separately
 flippable sub-commit) → L (Welch). Corpus: the cast probes (incl. the idx4 ON residue of
-11,962 attributed steps), ProcX root-fan, post-ROOT-A rhocalc send/receive, + the adversarial
+11,962 attributed steps), ProcX root-fan, post-ROOT-A rholang send/receive, + the adversarial
 INSERT/SUBSTITUTE/Optional-skip/multi-length-lex probes. Kill switch PRATTAIL_EP_P2
 (off|shadow|on per the P0 convention).
 
@@ -224,7 +224,7 @@ EpP2Mode{Off,Shadow} + the three check sites + the D-4 lineage tripwire
 (`BranchCursor::ep_shadow_refuted`, OR-merged, FrontierArc round-trip).
 
 **MEASURED: would_refute = 0 across the ENTIRE corpus** (cast probes both ep_p1 states,
-rhocalc_tests, ledtest_op, rhocalc_op); refuted_then_accepted = 0 (the tripwire never fired).
+rholang_tests, ledtest_op, rholang_op); refuted_then_accepted = 0 (the tripwire never fired).
 **The zero deep-dived to mechanism (D-5, not a bug):** the only trigger-bearing must entries
 belong to INFIX comparison rules consumed via InfixLoop/InfixContinuation — the runtime never
 pushes a RuleAt frame at the operator position; every frame that DOES surface carries ∅ or
@@ -330,7 +330,7 @@ dispatch architecture: `decide_rho_flip` (`flip.rs:56-64`) raises
 backend when it has **zero** rejected rules; the rejected-rule ops (BigInt/BigRat/Float/
 cast/collection/ternary/binder/guard) are routed to **Dovetail-direct / native-fold**
 (in-engine), where there is no extract-then-reject-on-Rho step. Host-routed langs
-(RhoCalc/GuardedRho) have no extraction-pruning surface at all. ⇒ there is never a
+(Rholang/GuardedRho) have no extraction-pruning surface at all. ⇒ there is never a
 "rejected-rooted extraction root on a Rho-backed extraction path" to prune. **NON-GOAL,
 recorded first-class**; the design is banked for a future language that both flips to Rho
 AND routes terms through a Dovetail report containing rejected-rooted roots (none today).
@@ -347,12 +347,12 @@ cursor when the spliced top Symbol's `non_terminal_tag` ≠ the rule's element c
 lookup keys maps on slot 0 and key/value cats may differ). The faithful post-wrap
 Symbol is spliced by a sibling lineage ⇒ no-loss. **GHOSTS GONE** (tr0_ghost_probe:
 `{0|1}`/`{0|1|2}`/`{(1)|2}` all 1 term, was 2/3/2; Proc::parse clean). Battery green:
-rhocalc_tests 10/0, wpda_parity_rhocalc_collections 4/0, edge_case 66/0, prattail lib
-3766/0, gen_rhocalc_{unit 86,rewrite 126,analytical 52}/0, gen_ledtest_{unit 17,
+rholang_tests 10/0, wpda_parity_rholang_collections 4/0, edge_case 66/0, prattail lib
+3766/0, gen_rholang_{unit 86,rewrite 126,analytical 52}/0, gen_ledtest_{unit 17,
 rewrite 20}/0, gen_calculator_unit 169/0, gen_ambient_{unit 10,rewrite 13}/0,
 gen_class2hashmapsmoke_unit 5/0, gen_class3multi_unit 6/0. (Post-P6 baselines: op-suites
-deleted, counts shifted — rhocalc_tests 126→10, edge 227→66, prattail 3980→3766.)
-ONE prop failure CONFIRMED PRE-EXISTING (A/B): `gen_rhocalc_prop::proc_display_parse_roundtrip`
+deleted, counts shifted — rholang_tests 126→10, edge 227→66, prattail 3980→3766.)
+ONE prop failure CONFIRMED PRE-EXISTING (A/B): `gen_rholang_prop::proc_display_parse_roundtrip`
 — `arb_proc` emitted `str({a} <= {a})`, Proc::parse Err "1:5 found Fixed({)" IDENTICALLY with
 the gate on AND off (the error is at the OPENING `{`, upstream of the splice gate) ⇒ a
 pre-existing generator/grammar mismatch (str-cast arg can't be a collection), NOT this fix.
@@ -402,7 +402,7 @@ the post-wrap Proc Symbol is always spliced by a sibling lineage, so the faithfu
 survives; prevented cursor is out-of-language (`into_term::<element_cat>()` = ∅). FV:
 extend `CollectionForkEvidence.v::gated_run_iff_loop_lang` with an element-category-
 soundness lemma. NEXT: implement (trait default + codegen override + walker gate) →
-full battery (rhocalc 126/0, edge, calc/ledtest op List/Bag/Map, prattail gauntlet) →
+full battery (rholang 126/0, edge, calc/ledtest op List/Bag/Map, prattail gauntlet) →
 FV → commit.
 
 ## EP POST-FLIP — TR FIX REDIRECTED (2026-06-17, USER DIRECTIVE): root-cause + PREVENT at source, NO kill site
@@ -450,7 +450,7 @@ as a STOP; the rigorous pgmcp experiment 69 (Welch t, pre-registered, n=60/arm)
 when the parser first reads a position), and `automata/codegen.rs::lex_dag_lazy`
 (emits a boxed `NodeExpander`). Proven equivalent to eager by `lazy_lex_equivalence.rs`
 (7/7 lazy ≡ eager); zero regression (prattail lib 3766, gen_calculator_unit 169,
-gen_rhocalc_unit 86, collection_ghost_regression 5).
+gen_rholang_unit 86, collection_ghost_regression 5).
 
 ### Experiment 69 result (the binding verdict)
 
@@ -462,14 +462,14 @@ cherry-picking):
 |---|---|---|---|
 | calculator full-parse (all 8 inputs) | — | **−4.3…−5.0%** | t=−13.09, p=5.5e-21, d=2.39 → ACCEPT |
 | early-failure `}}}` / `* 1 +` | 37.5µs → 10.2µs | **−72.7…−79.3%** | + 97% fewer nodes (37→1) |
-| rhocalc early-failure | — | **−9…−71.7%** | + 90% fewer nodes |
-| rhocalc full-to-EOI (CAVEAT) | 7.97ms → 8.05ms | **+1.0%** | OnceLock overhead when all tokens consumed |
+| rholang early-failure | — | **−9…−71.7%** | + 90% fewer nodes |
+| rholang full-to-EOI (CAVEAT) | 7.97ms → 8.05ms | **+1.0%** | OnceLock overhead when all tokens consumed |
 
 Space (`lex_nodes_materialized`, deterministic): **0% saved on full-parse** (correct —
 every token is needed), **90–97% saved on early-failure** (unreached positions never
 lexed). Non-parametric robustness on the primary: Mann-Whitney p=6.2e-14, Cliff's
 δ=−0.79 ("large"). Net: lazy is a real win concentrated on early-failure/malformed
-inputs and small full parses; neutral-to-+1% only on large rhocalc full-to-EOI parses.
+inputs and small full parses; neutral-to-+1% only on large rholang full-to-EOI parses.
 
 ### Why the prior STOP was wrong (superseded, retained for the record)
 
@@ -502,7 +502,7 @@ measurement surface is exactly CD02/CD05/CD06/CD07):
   (one rule per leading literal). There is no residual PARSE-work to save by dedup.
 - **CD05 prefix CSE** (`detect_shared_nonterminal_prefixes:1059`) + **CD06 suffix
   factoring** (`measure_shared_nonterminal_suffixes:1195`): both measured (CD06 I17:
-  calc d2=0.19, rhocalc d2=0.42, Ambient d2=0.57) and both reached **diagnostic-only /
+  calc d2=0.19, rholang d2=0.42, Ambient d2=0.57) and both reached **diagnostic-only /
   STOP** — the depth-2 buckets are leading-literal-disjoint under CD02, so factoring is
   code-size-only (zero parse-work savings) and not worth the fresh-nonterminal grammar
   churn (`CD06_SuffixFactor.v` proves the transform sound for any future non-disjoint
@@ -660,8 +660,8 @@ inertness is structural: zero code change to the walker/codegen).
 ### Verification (the accept criteria)
 
 **Battery PASS/FAIL byte-identical both demote states** (order-only): SENTINEL `gen_ledtest_op` 220/0,
-`gen_calculator_op` 1330/0, `gen_rhocalc_op` 530/1 (pre-existing `castbigrat`), `edge_case_tests`
-229/0, `rhocalc_tests` 126/0, `gen_ambient_{analytical,rewrite,prop}` 52/0+13/0+17/0, `prattail
+`gen_calculator_op` 1330/0, `gen_rholang_op` 530/1 (pre-existing `castbigrat`), `edge_case_tests`
+229/0, `rholang_tests` 126/0, `gen_ambient_{analytical,rewrite,prop}` 52/0+13/0+17/0, `prattail
 --lib` 3989/0 (default OFF, default ON, AND `--features walker-stats` OFF — all three), `macros`
 367/0. `ForwardOrderOnly.v` recompiles clean; the 4 P4 theorems all `Closed under the global context`.
 
@@ -679,7 +679,7 @@ structured `frontier_ess_x1000=5000` (end-to-end sentinel → result → error �
 |---|---|
 | `recovery_cohort_bench` (N=20/arm, interleaved) | off=10.0ms on=10.0ms (sd=0) → **NEUTRAL** (uninformative: 10ms granularity, calc recovery inputs don't trigger the cast equal-weight ambiguity that engages the demotion) |
 | `cast_tower_bench` (N=30 light + N=8 heavy incl idx4) | **ALL NEUTRAL** (deltas ±1%, all p>0.05). PARSE-ONLY ⇒ demotion-neutral (the demotion does NOT change parse WORK: `map_put` probe `apply_action_calls=1422`/`step_fanout_calls=70` IDENTICAL OFF vs ON) |
-| ★ `rhocalc_tests` `native_ops::map::map_put` (parse+EVAL) | OFF 0.5s → ON **156.86s (313×)**. The demotion perturbs the 10-way-ambiguous cast WINNER (`CastBigInt` OFF → `CastUInt32` ON; AST flip proven), and UInt32-keyed map eval is pathological. `native_ops` module OFF 2.66s → ON 159.44s. The parse-only benches cannot see this (they don't eval). |
+| ★ `rholang_tests` `native_ops::map::map_put` (parse+EVAL) | OFF 0.5s → ON **156.86s (313×)**. The demotion perturbs the 10-way-ambiguous cast WINNER (`CastBigInt` OFF → `CastUInt32` ON; AST flip proven), and UInt32-keyed map eval is pathological. `native_ops` module OFF 2.66s → ON 159.44s. The parse-only benches cannot see this (they don't eval). |
 
 ### Verdict (plan §P4 accept criteria; L-decision input — parent decides)
 
@@ -700,7 +700,7 @@ switch `PRATTAIL_EP_P4_DEMOTE=on`) — NOT self-reverted; the default (OFF) is b
   tripwire. Battery byte-identical both states; tripwire 0 everywhere; ESS surfacing confirmed
   end-to-end; `ForwardOrderOnly.v` 4 thms `Closed under the global context`.
 - 2026-06-12 P4 L-commit (Welch + verdict): cast_tower_bench + recovery_cohort_bench parse-only
-  panels NEUTRAL; the DECISIVE eval-inclusive datum (rhocalc map_put 313× under ON, via a perturbed
+  panels NEUTRAL; the DECISIVE eval-inclusive datum (rholang map_put 313× under ON, via a perturbed
   cast winner — AST `CastBigInt`→`CastUInt32` proven by flip) ⇒ **KEEP ESS, RECOMMEND REVERT
   DEMOTION** (recorded STOP; demotion left OFF-by-default, parent decides the L-flip).
 
@@ -726,9 +726,9 @@ the deterministic fast-path bypasses it; classifies each cursor via the SAME `is
 | Corpus | parses | apply_action | EOI examined (dead) | dead[own/lin] | residual_dead% | pre_eoi_lost% |
 |---|---:|---:|---:|---|---:|---:|
 | cast_probe 0/3/4/5/7/8 | 6 | 7,363 | 6 (0) | 0/0 | 0.0000 | 98.87 |
-| `rhocalc_tests` (126/0) | 2,137 | 204,004 | 4,891 (1,706) | 0/0 | 0.0000 | 76.75 |
+| `rholang_tests` (126/0) | 2,137 | 204,004 | 4,891 (1,706) | 0/0 | 0.0000 | 76.75 |
 | `gen_ledtest_op` SENTINEL (220/0) | 708 | 45,373 | 1,224 (0) | 0/0 | 0.0000 | 49.85 |
-| `gen_rhocalc_op` (530/1 castbigrat) | 8,242 | 388,399 | 20,444 (2,254) | 0/0 | 0.0000 | 37.92 |
+| `gen_rholang_op` (530/1 castbigrat) | 8,242 | 388,399 | 20,444 (2,254) | 0/0 | 0.0000 | 37.92 |
 | **CORPUS-AGGREGATE** | **11,093** | **645,139** | **26,565 (3,960)** | **0/0** | **0.0000** | — |
 
 ### P5 entry-gate verdict (2026-06-12): **STOP — recorded, first-class (H13/CD06/P2/P3 precedent)**
@@ -754,7 +754,7 @@ the EOI-death class; the faithful §P5 quantity is 0.
 
 **Verification (measurement-only, no behavior change):** SENTINEL `gen_ledtest_op` 220/0; prattail-lib
 **3989/0 BOTH cfgs** (default + `--features walker-stats`); `edge_case_tests` 229/0 (FRESH-built
-default cfg — the non-cfg counter + fork/merge SUM/MAX paths are inert); `gen_rhocalc_op` 530/1
+default cfg — the non-cfg counter + fork/merge SUM/MAX paths are inert); `gen_rholang_op` 530/1
 (pre-existing `castbigrat`); both cfg builds green. Full record: `/tmp/p5_gate/findings.md`.
 
 ### P5 stage log

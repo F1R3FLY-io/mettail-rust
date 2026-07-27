@@ -401,7 +401,7 @@ The `options { }` block in `language!` already accepts key-value pairs (`HashMap
 
 ```
 language! {
-    name: RhoCalc,
+    name: Rholang,
     options {
         // TRS check behavior: "error" (default) | "warn" | "disable"
         confluence_check: "error",    // default: hard error on non-confluence
@@ -845,7 +845,7 @@ The current testkit design provides these hooks for future predicated type integ
 
 ## 5B. Application-Level Testing — Programs Written in MeTTaIL Languages
 
-Beyond testing language specifications, the framework auto-generates tests for **applications** (programs) written in MeTTaIL-defined languages. A user writes a program in e.g. RhoCalc or Calculator, and the framework generates tests for that program using the language's semantics.
+Beyond testing language specifications, the framework auto-generates tests for **applications** (programs) written in MeTTaIL-defined languages. A user writes a program in e.g. Rholang or Calculator, and the framework generates tests for that program using the language's semantics.
 
 ### 5B.1 Architecture
 
@@ -859,7 +859,7 @@ Two modes:
 
 ```
 language! {
-    name: RhoCalc,
+    name: Rholang,
     // ...
     tests {
         // Spec-level tests (existing)
@@ -888,11 +888,11 @@ language! {
 ```rust
 // In a test file:
 use mettail_testkit::program::ProgramTestSuite;
-use mettail_languages::rhocalc::RhoCalcLanguage;
+use mettail_languages::rholang::RholangLanguage;
 
 #[test]
 fn test_echo_program() {
-    let suite = ProgramTestSuite::new(&RhoCalcLanguage)
+    let suite = ProgramTestSuite::new(&RholangLanguage)
         .source("for(x <- chan){chan!(*x)}")
         .expect_parses()
         .expect_terminates(1000)           // bounded step count
@@ -925,7 +925,7 @@ Given a program `P` in language `L`, automatically generate:
 - Rewrite to normal form → verify it's actually in normal form (no further rewrites)
 - If multiple rewrite paths exist: verify confluence (same normal form)
 
-**Concurrency** (for process calculi like RhoCalc):
+**Concurrency** (for process calculi like Rholang):
 - Petri net deadlock analysis → hard error if deadlock detected
 - Multi-tape synchronization → verify all channels can communicate
 - Green thread interleaving → verify all scheduling orders produce same normal form
@@ -983,7 +983,7 @@ When predicated types are implemented, application testing gains:
 Application-level tests from the `tests { program ... }` block are generated as `#[test]` functions in the same generated test file:
 
 ```rust
-// Generated in languages/tests/generated/rhocalc_tests.rs
+// Generated in languages/tests/generated/rholang_tests.rs
 
 mod program_echo {
     use super::*;
@@ -1115,7 +1115,7 @@ fn unit_deadrule_roundtrip() { ... }
 | `macros/src/gen/test_gen/program_tests.rs` | Application-level `program {}` block codegen |
 | `languages/tests/generated/calculator_tests.rs` | Auto-generated test file for Calculator |
 | `languages/tests/generated/lambda_tests.rs` | Auto-generated test file for Lambda |
-| `languages/tests/generated/rhocalc_tests.rs` | Auto-generated test file for RhoCalc |
+| `languages/tests/generated/rholang_tests.rs` | Auto-generated test file for Rholang |
 | `languages/tests/generated/ambient_tests.rs` | Auto-generated test file for Ambient |
 | `docs/design/test_framework.md` | Design documentation |
 
@@ -1224,7 +1224,7 @@ full-analysis = ["trs-analysis", "cek-runtime", "structure-analysis", "process-a
 ### Phase 5: `tests { }` Block
 - Add `TestBlock` to `LanguageDef`, parse `tests { }` in `language.rs`
 - Implement user test codegen
-- Add example `tests { }` blocks to Calculator and RhoCalc
+- Add example `tests { }` blocks to Calculator and Rholang
 - **Verify**: `cargo test -p languages user_` runs user-specified tests
 
 ### Phase 6: Tier 0 — Always-Active Analytics
@@ -1282,7 +1282,7 @@ full-analysis = ["trs-analysis", "cek-runtime", "structure-analysis", "process-a
 - Implement `macros/src/gen/test_gen/program_tests.rs` codegen
 - Auto-generate structural/semantic/rewrite tests from program source
 - Integrate with Petri net (deadlock), LTL/Büchi (temporal), CESK (reachability)
-- Add example `program {}` blocks to RhoCalc and Calculator `tests {}`
+- Add example `program {}` blocks to Rholang and Calculator `tests {}`
 - **Verify**: `cargo test -p languages program_` runs application-level tests
 
 ### Phase 14: New Automata

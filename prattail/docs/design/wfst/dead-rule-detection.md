@@ -551,7 +551,7 @@ property independent of other rules.
 | Language   | Dead Rules | Tier 1 | Tier 2 | Tier 3 | Tier 5 |
 |------------|------------|--------|--------|--------|--------|
 | Calculator | 8          | 0      | 0      | 8      | 0      |
-| RhoCalc    | 36         | 0      | 0      | 36     | 0      |
+| Rholang    | 36         | 0      | 0      | 36     | 0      |
 
 ### Calculator dead rules (8)
 
@@ -566,9 +566,9 @@ property independent of other rules.
 | StrId       | Str      | 3    | Identity rule shadowed by direct parse        |
 | POutput     | Proc     | 3    | Output rule unreachable via prefix dispatch   |
 
-### RhoCalc dead rules (36)
+### Rholang dead rules (36)
 
-The RhoCalc grammar has 36 dead rules, all detected by Tier 3.  These
+The Rholang grammar has 36 dead rules, all detected by Tier 3.  These
 arise from cross-category comparison operators (e.g., `IntGt`, `FloatGt`,
 `IntEq`, etc.) and cast rules where higher-priority direct alternatives
 shadow the cross-category path.
@@ -617,7 +617,7 @@ construction itself: the prediction WFST build involves DFA subset
 construction and Hopcroft minimization, both of which are significantly
 more expensive than the linear scans in dead-rule detection.
 
-**Empirical**: For the RhoCalc grammar (~120 rules, ~10 categories),
+**Empirical**: For the Rholang grammar (~120 rules, ~10 categories),
 dead-rule detection completes in under 1 ms, compared to ~50 ms for WFST
 construction.
 

@@ -305,7 +305,7 @@ Beyond concrete test cases, generate proptest properties:
 1. `cargo test -p languages` — all existing 482 tests + new operational tests pass
 2. Deliberately break a HOL `![...]` block → verify new test catches it
 3. Verify Calculator gets eval tests for every arithmetic op
-4. Verify RhoCalc gets cross-category cast tests
+4. Verify Rholang gets cross-category cast tests
 5. Verify precedence tests catch `2 + 3 * 4 = 14`
 6. Verify edge case tests cover division by zero, empty string length, etc.
 
@@ -336,7 +336,7 @@ Beyond concrete test cases, generate proptest properties:
 - `macros/src/gen/term_ops/subst.rs` — `collect_category_variants()`, `VariantKind`
 - `languages/tests/calculator.rs` — hand-written eval tests (reference pattern)
 - `languages/src/calculator.rs` — Calculator spec
-- `languages/src/rhocalc.rs` — RhoCalc spec
+- `languages/src/rholang.rs` — Rholang spec
 - `prattail/src/wpds.rs` — WPDS infrastructure
 - `prattail/src/wfst.rs` — WFST prediction
 - `prattail/src/tree_automaton.rs` — tree automaton

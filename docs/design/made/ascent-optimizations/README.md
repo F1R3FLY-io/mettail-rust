@@ -70,7 +70,7 @@ Each abstract theorem is instantiated for two concrete languages (`ConcreteInsta
 - Dead rule pruning is vacuously correct (no cross-category rules)
 - Demonstrates: `calc_pool_equiv` (Opt 2), `calc_no_dead_rules` (Opt 3), `calc_ordvar_total_order` (Opt 4)
 
-**RhoCalc** (6 categories):
+**Rholang** (6 categories):
 - Categories: `Proc` (primary), `Name`, `Expr`, `Chan`, `Ground`, `Float`
 - **Core = {Proc, Name}** — bidirectionally reachable:
   - `Proc → Name` via `edge_Proc_Name` (e.g., `POutput` has Name field)

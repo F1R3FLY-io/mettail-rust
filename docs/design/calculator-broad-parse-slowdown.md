@@ -4,7 +4,7 @@
 **Status:** IMPLEMENTED + verified (2026-06-21; uncommitted on `feature/wfst-architecture`). Root cause
 confirmed by throwaway probe (this document, §3); the divergence-axis pinpoint is established for the broad
 bigint / bigrat / sim surfaces (§3.3–§3.5); the implemented direction is **seal-local `lex_fork_path`
-truncation at the infix-loop operand boundary** (the infix twin of the committed rhocalc collection-splice
+truncation at the infix-loop operand boundary** (the infix twin of the committed rholang collection-splice
 fix `cc91d291`), with a rigorous soundness argument (§4); the rejected alternatives are recorded (§5); a
 verification plan with timing targets is given (§6); and the implemented form, the **clear-all-vs-watermark
 decision** (clear-all chosen — empirically term-identical, §9), the ON/OFF differential, and the
@@ -27,9 +27,9 @@ method (probe → axis pinpoint → soundness):
 
 | Document | Surface | Dominant redundant axis | Verdict |
 |---|---|---|---|
-| `docs/design/rhocalc-collection-fork-explosion.md` | rhocalc `{0\|1\|…\|N}` collection literals | `lex_fork_path` + `sppf_collection_arena` `Arc` | **false divergence** — collection-local `lex_fork_path` clear at splice (Change B) + global arena content-eq (Change A). **Committed** `cc91d291`. |
+| `docs/design/rholang-collection-fork-explosion.md` | rholang `{0\|1\|…\|N}` collection literals | `lex_fork_path` + `sppf_collection_arena` `Arc` | **false divergence** — collection-local `lex_fork_path` clear at splice (Change B) + global arena content-eq (Change A). **Committed** `cc91d291`. |
 | `docs/design/calculator-map-crosscat-fanout.md` | calculator `put/get/merge` nested function calls | `LexicographicWeight` provenance triple | **genuine multi-result evidence** — single-result demand-mode weight-dominance subsumption. **Committed** `c45bdea2`. |
-| **this document** | calculator **infix** arithmetic `a + b - c bitand …` (bigint / bigrat / bare-int / `sim`) | **`lex_fork_path` (the `LexForkStamp` sidecar)** | **false divergence**, but the merge gate may NOT be globally relaxed (live-fork invariant) ⇒ **seal-local truncation at the infix operand boundary** (the infix twin of rhocalc Change B). |
+| **this document** | calculator **infix** arithmetic `a + b - c bitand …` (bigint / bigrat / bare-int / `sim`) | **`lex_fork_path` (the `LexForkStamp` sidecar)** | **false divergence**, but the merge gate may NOT be globally relaxed (live-fork invariant) ⇒ **seal-local truncation at the infix operand boundary** (the infix twin of rholang Change B). |
 
 > **Why a third document.** The committed map fix (`c45bdea2`) collapses cursors that differ **only in the
 > weight triple**. The probe (§3.3) shows the broad infix surface is kept apart by a **different** axis —
@@ -273,7 +273,7 @@ unchanged** (`Int::parse_via_wpda_all("-3!")` returned the **same 3 alternatives
 > (`wpda_walker.rs:3528`) names the `-3!` falsification: Branch A (`NumLit "-3" → Fact`) and Branch B
 > (`Minus "-" → Neg`) reach the same configuration and **must** bucket separately so both reach their outer
 > reduce. **Therefore the fix must NOT weaken the merge gate; it must remove the *sealed-operand* stamps
-> UPSTREAM, exactly as the committed rhocalc collection fix does — leaving genuinely-live forks distinct.**
+> UPSTREAM, exactly as the committed rholang collection fix does — leaving genuinely-live forks distinct.**
 
 The residual `304` (vs baseline `20`) after the `lex_fork` drop is the `genuine_config_distinct` axis: the
 re-run breakdown shows `diff_visited_proj = 70.7 %` of the *residual* no-merges. This `visited_proj_descriptors`
@@ -316,7 +316,7 @@ The stamp is then a **redundant** parallel record. Dropping the operand's stamps
 sealed** lets the sibling lexical readings of the *next* operator re-converge in the frontier merge —
 **without ever weakening the merge gate** (so genuinely-live forks, e.g. `-3!`, stay distinct).
 
-This is the **direct infix twin of the committed rhocalc Change B** (`emit_splice_into_collection`,
+This is the **direct infix twin of the committed rholang Change B** (`emit_splice_into_collection`,
 `wpda_walker.rs:20050`), which clears `lex_fork_path` when a *collection element* is spliced (sealed). The
 collection seal point is the splice; the infix seal point is the **operand reduce that returns the cursor to
 `InfixLoop`**.
@@ -338,9 +338,9 @@ the infix loop's right-operand dispatch / the prefix dispatch that begins the op
 `lex_fork_path` back to the watermark. The stamps appended *within* the operand are removed (now redundant SPPF
 packings); any stamp appended *at the infix-loop level itself* (above the watermark of the operand) is kept.
 
-> **Why a watermark stack, not a blanket clear.** The committed rhocalc fix could use a blanket
+> **Why a watermark stack, not a blanket clear.** The committed rholang fix could use a blanket
 > `clear()` at the splice because a collection element sub-parse fully *destroys and rebuilds* `CollectionLoop`
-> from the persistent marker, so no enclosing live stamp survives the element (`rhocalc-collection-fork-
+> from the persistent marker, so no enclosing live stamp survives the element (`rholang-collection-fork-
 > explosion.md` §3.1 implementation note). The infix spine is **left-associative and continuous**: after sealing
 > operand `k`, the cursor is still mid-parse of the *outer* expression, and the **operator-level** lex-fork
 > stamps (e.g. the `-3!`-style top-level `Minus` vs `NumLit "-3"` choice) must survive. A blanket clear at the
@@ -396,7 +396,7 @@ and `arc_merge_disambiguator_distinguishes_lex_fork_stamp` (which construct arcs
 assert they stay distinct) **pass unchanged**. What changes is *upstream*: by the time two sibling arcs reach
 the merge gate, the **within-operand** stamps have been truncated from the cursor, so their `lex_fork_path`s are
 equal *for the sealed operand* — but any **still-live** stamp (above the operand watermark) remains and still
-keeps genuinely-distinct forks apart. This is the exact rhocalc S4 argument (`rhocalc-collection-fork-
+keeps genuinely-distinct forks apart. This is the exact rholang S4 argument (`rholang-collection-fork-
 explosion.md` §3.3 S4): the invariant is about forks *still live on the cursor*; the fix removes only stamps
 that have *already been sealed into SPPF packings*.
 
@@ -418,10 +418,10 @@ single-result term is unchanged. Gate: `dangling_else` / ternary / `-3!`-family 
 SPPF distinguishes by **span/structure** and the frontier keeps apart by **`sppf_stack_id`** (the GLL `w`
 discriminant). The fix touches **only** `lex_fork_path`; `sppf_stack_id` is untouched and remains a full
 `merge_disambiguator` / `ConfigKey` / `SubsumeConfigKey` axis. The two readings differ on `sppf_stack`, not on
-`lex_fork`, so they never collapse. (This is the same orthogonality the rhocalc fix relied on, S3 there.)
+`lex_fork`, so they never collapse. (This is the same orthogonality the rholang fix relied on, S3 there.)
 Gate: `gen_guardedrho_*`.
 
-**(S3) The committed rhocalc Cluster-D collection fix stays intact and consistent.** That fix clears
+**(S3) The committed rholang Cluster-D collection fix stays intact and consistent.** That fix clears
 `lex_fork_path` at the *collection splice*; this fix truncates `lex_fork_path` at the *infix operand seal*. They
 operate at **disjoint** seal points and use the **same** principle (drop a stamp once its choice is an SPPF
 packing). They compose: a collection element that *contains* an infix expression gets its inner-operand stamps
@@ -447,7 +447,7 @@ change which inputs are accepted (L1) or which packings exist (L2).
 **(S7) Multi-result paths are preserved.** Unlike the committed subsumption (which is demand-gated), this fix
 is **not** demand-gated — but it is sound for *all* callers because (L1) `lex_fork` is non-semantic and (L2)
 the truncated stamps are already SPPF packings, so the multi-result `_all` packing set is invariant (§3.5
-confirms `_all("-3!")` unchanged). The fix is the upstream analog of rhocalc Change B, which is likewise global
+confirms `_all("-3!")` unchanged). The fix is the upstream analog of rholang Change B, which is likewise global
 (not demand-gated) for the same reason.
 
 ### 4.5 Mechanism + exact code locations
@@ -456,7 +456,7 @@ confirms `_all("-3!")` unchanged). The fix is the upstream analog of rhocalc Cha
 (mirroring `optional_scope_marks`, `wpda_walker.rs:2698`-region) and to `FrontierArc` /
 `materialize_branch_cursor_from_arc` / `CohortShell` (the three round-trip carriers, exactly like
 `optional_scope_marks`). It must ride on the cursor (not transient state) because the operand sub-parse rebuilds
-the infix loop from persistent stack state — the same carrier argument the rhocalc implementation note makes.
+the infix loop from persistent stack state — the same carrier argument the rholang implementation note makes.
 
 | Edit | File | Change |
 |---|---|---|
@@ -516,7 +516,7 @@ defense soundness argument the lex-fork case does not.)
 ### 5.1 Reject — global `lex_fork` merge-gate relaxation (probe-refuted)
 
 **Proposal.** Drop `lex_fork_path.last()` from `merge_disambiguator` (and the strict `ConfigKey` /
-`SubsumeConfigKey`) globally — the analog of the rhocalc *Change A* arena content-equality (a global merge-gate
+`SubsumeConfigKey`) globally — the analog of the rholang *Change A* arena content-equality (a global merge-gate
 relaxation).
 
 **Why rejected.** §3.5 implemented exactly this behind `PROBE_DROP_LEXFORK` and showed it **breaks the
@@ -525,9 +525,9 @@ live-fork invariant unit tests** `aggregation_keeps_distinct_lex_fork_stamps_as_
 distinct live* stamps (the `-3!` Branch-A/Branch-B case the strict `ConfigKey` docstring names at
 `wpda_walker.rs:3528`), which is unsound for the multi-result mandate even though it happened to preserve the
 *specific* `-3!` `_all` count in the tested battery (because the weight triple coincidentally also separated
-them there — not a guarantee). The rhocalc document made the same distinction: arena content-equality is a
+them there — not a guarantee). The rholang document made the same distinction: arena content-equality is a
 sound *global* relaxation (the content is the only observable), but `lex_fork` is **not** globally relaxable —
-the rhocalc fix put `lex_fork` behind the *collection-local* seal (Change B), never a global merge relaxation.
+the rholang fix put `lex_fork` behind the *collection-local* seal (Change B), never a global merge relaxation.
 **The seal-local truncation (§4) is the sound form; the global relaxation is not.**
 
 ### 5.2 Reject — extend the committed single-result subsumption to drop `lex_fork` from `SubsumeConfigKey`
@@ -548,7 +548,7 @@ live-fork hazard.
 
 ### 5.3 Reject — revert the `30acf6de` fan-out wholesale
 
-The rhocalc §4 verdict applies verbatim: reverting the GSS-pushing cross-cat fork frames would undo the
+The rholang §4 verdict applies verbatim: reverting the GSS-pushing cross-cat fork frames would undo the
 `30acf6de` soundness commits (`db53e83a`, `ea1dcb6b`, `ddfafc9f` — projection evidence, prefix ambiguity,
 demand-sensitivity), which the design constraint forbids. The redundancy is real but is fixable *without*
 touching the fan-out, by removing the redundant *sidecar* record at the seal point.
@@ -589,9 +589,9 @@ Run each suite with the fix default-ON and with `PRATTAIL_INFIX_LEXFORK_SEAL=0` 
 |---|---|---|
 | `prattail` lib (incl. `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs` `:1250`, `arc_merge_disambiguator_distinguishes_lex_fork_stamp` `:1231`, and the other `arc_merge_disambiguator_distinguishes_*`) | the merge gate is **untouched** (S1/§4.3) | `cargo nextest run -p prattail` |
 | `gen_calculator_*` (unit / analytical / rewrite / prop) + `calculator` + `calculator_display_projection_tests` + `display_roundtrip_regression_tests` + dangling-else / ternary / `-3!`-family | calculator parse/eval/roundtrip + the `-3!` lex-fork falsification (S1) | `cargo test -p languages --test gen_calculator_unit` (+ the rest) |
-| `rhocalc_tests` + `gen_rhocalc_{unit,analytical,rewrite,prop}` + `wpda_parity_rhocalc_collections` | rhocalc comm / cross-cat + the committed Change-B composition (S3) | `cargo test -p languages --test rhocalc_tests` (+ the rest) |
+| `rholang_tests` + `gen_rholang_{unit,analytical,rewrite,prop}` + `wpda_parity_rholang_collections` | rholang comm / cross-cat + the committed Change-B composition (S3) | `cargo test -p languages --test rholang_tests` (+ the rest) |
 | `gen_guardedrho_*` (incl. chained output `@a!(Nil)!(Nil)`, S2) | the `sppf_stack_id` chained-output distinction | `cargo test -p languages --test gen_guardedrho_unit` |
-| `lazy_lex_equivalence` (full corpus) — **must stay < 10 s** | the committed rhocalc Cluster-D fix (S3); lazy ≡ eager | `cargo test -p languages --test lazy_lex_equivalence` |
+| `lazy_lex_equivalence` (full corpus) — **must stay < 10 s** | the committed rholang Cluster-D fix (S3); lazy ≡ eager | `cargo test -p languages --test lazy_lex_equivalence` |
 | full gauntlet (calc-op, edge_case_tests, ledtest, ambient, recovery_accumulation, led_delegation_tests, `test_deep_parens_100000`, `test_deep_unary_neg_10000`) | no cross-language / committed-fix / deep-nesting regression (S4/S5) | the standard battery |
 
 ### 6.3 New tests to add
@@ -618,12 +618,12 @@ result, now as a regression test). This is the empirical form of L1 + L2 + S7.
 
 ### 6.5 Formal note (optional, recommended)
 
-Extend the evidence-pruning proof family (`CollectionForkEvidence.v` / the rhocalc Change-B lemma) with an
+Extend the evidence-pruning proof family (`CollectionForkEvidence.v` / the rholang Change-B lemma) with an
 **`infix_operand_seal_preserves_parse`** lemma: under the `LexicographicWeight` semiring, truncating
 `lex_fork_path` to the operand-open watermark at the operand seal (a) preserves the SPPF (the operand's lexical
 choice is interned as a packing strictly before the seal — L2), and (b) preserves the merge gate's behaviour on
 live (above-watermark) stamps (S1/§4.3). Zero-admission. This is the machine-checked counterpart of the
-committed rhocalc collection-seal lemma, lifted from the collection splice to the infix operand boundary.
+committed rholang collection-seal lemma, lifted from the collection splice to the infix operand boundary.
 
 ---
 
@@ -664,7 +664,7 @@ The only artifact of this work is this design document. The repo working tree sh
   **seal-local**.
 - **Classification:** **false divergence**, but the merge gate may **not** be globally relaxed (the live-fork
   `-3!` invariant) ⇒ the fix removes the redundant stamps **upstream**, at the seal point — the infix twin of
-  the committed rhocalc Change B.
+  the committed rholang Change B.
 - **Recommended fix:** **seal-local `lex_fork_path` truncation at the infix operand boundary** — a per-operand
   watermark (`lex_fork_marks`, mirroring `optional_scope_marks`) pushed at operand-open and truncated at the
   operand seal (`BranchResolved` / transparent-reentry / `apply_pop_body_to_cursor` InfixLoop-return). Result-
@@ -672,7 +672,7 @@ The only artifact of this work is this design document. The repo working tree sh
   are already SPPF packings at the seal). Behind the `PRATTAIL_INFIX_LEXFORK_SEAL` kill switch.
 - **Soundness / compatibility:** the merge gate (`merge_disambiguator` / `register_arc_with_aggregation`) is
   **untouched** (the invariant tests pass), `-3!` and `@a!(Nil)!(Nil)` are preserved (S1/S2 — their forks are
-  top-level / `sppf_stack`-borne, not within-operand), the committed rhocalc collection fix (S3) and single-
+  top-level / `sppf_stack`-borne, not within-operand), the committed rholang collection fix (S3) and single-
   result subsumption (S4) compose additively, and the deep-nesting fix (S5) is orthogonal. Sound for **all**
   callers (S7), unlike the demand-gated subsumption.
 - **Rejected:** global `lex_fork` merge relaxation (breaks the live-fork invariant — probe-refuted §5.1);
@@ -714,13 +714,13 @@ the current tree corrected this:
   canonical operand-seal-into-the-infix-loop** point. Clearing there (gated on `resolved_new_state ==
   InfixLoop`) covers every operand reduce that returns the cursor to the infix loop, including the
   transparent-reentry and cross-cat-LHS-reentry cases (they all funnel through this write). This is the exact
-  structural mirror of the rhocalc `emit_splice_into_collection` clear, lifted from the collection splice to
+  structural mirror of the rholang `emit_splice_into_collection` clear, lifted from the collection splice to
   the infix operand boundary.
 
 ### 9.2 Clear-all vs watermark — decided empirically (clear-all)
 
 The §4.1 design recommended a per-operand **watermark** (to keep enclosing-operator stamps live, since the
-infix spine is left-associative/continuous, unlike the rhocalc collection that rebuilds `CollectionLoop` from
+infix spine is left-associative/continuous, unlike the rholang collection that rebuilds `CollectionLoop` from
 a marker). A throwaway probe implemented **both** `Clear` and `Watermark` behind `PRATTAIL_INFIX_LEXCLEAR` and
 compared realized terms across a battery of left-nested infix chains (bigint / bigrat / bare-int, `n ∈ 1..8`),
 **precedence-climbing** surfaces (`a + b*c …` — the exact hazard where an outer operator's stamp is live while
@@ -735,7 +735,7 @@ under `Clear` changes no realized term, because the genuine cross-cat-arm distin
 `LexicographicWeight` provenance triple (`lex_alt_idx, weight_src_idx, weight_rule_idx`) **and** `sppf_stack_id`
 — both UNTOUCHED by this fix and both KEPT in `ConfigKey` / `merge_disambiguator`. The `lex_fork` axis the
 clear removes is, at the seal, redundant with those surviving axes. This is the same outcome the committed
-rhocalc red-team reached for the collection splice (`rhocalc-collection-fork-explosion.md` §8.1: watermark and
+rholang red-team reached for the collection splice (`rholang-collection-fork-explosion.md` §8.1: watermark and
 clear-all bit-identical; clear-all chosen because it is stack-free, cannot underflow, and needs no cohort-shell
 carrier). **`Clear` is therefore the production default**; `Watermark` is retained only as an A/B lever.
 Choosing `Clear` also avoided the §4.5-M1 ~40-site `lex_fork_marks` carrier plumbing across every
@@ -749,8 +749,8 @@ Run with the fix default-ON (`Clear`) and with `PRATTAIL_INFIX_LEXCLEAR=0` (OFF)
 | Suite | tests | ON vs OFF |
 |---|---:|---|
 | `prattail` lib (incl. both live-fork invariants `aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs`, `arc_merge_disambiguator_distinguishes_lex_fork_stamp`) | 3795 | **BYTE-IDENTICAL**, all PASS |
-| `gen_calculator_{unit,analytical,rewrite}` + `calculator` + `calculator_display_projection_tests` + `display_roundtrip_regression_tests` + `rhocalc_tests` + `gen_rhocalc_unit` + `wpda_parity_rhocalc_collections` + `lazy_lex_equivalence` + `led_delegation_tests` + `edge_case_tests` + `recovery_accumulation` + `roundtrip_tests` + `gen_guardedrho_unit` + `test_deep_parens_100000` | 831 | **BYTE-IDENTICAL**, all PASS |
-| full languages non-`*_prop` gauntlet (ALL languages: ambient, basemath, extmath, guardedrho, importedmath, rhocalc, mixedmath, all class2/class3 collection variants, calculator, led_test, composition, consolidation, `collection_ghost_regression`, …) | 2332 | **BYTE-IDENTICAL**, all PASS |
+| `gen_calculator_{unit,analytical,rewrite}` + `calculator` + `calculator_display_projection_tests` + `display_roundtrip_regression_tests` + `rholang_tests` + `gen_rholang_unit` + `wpda_parity_rholang_collections` + `lazy_lex_equivalence` + `led_delegation_tests` + `edge_case_tests` + `recovery_accumulation` + `roundtrip_tests` + `gen_guardedrho_unit` + `test_deep_parens_100000` | 831 | **BYTE-IDENTICAL**, all PASS |
+| full languages non-`*_prop` gauntlet (ALL languages: ambient, basemath, extmath, guardedrho, importedmath, rholang, mixedmath, all class2/class3 collection variants, calculator, led_test, composition, consolidation, `collection_ghost_regression`, …) | 2332 | **BYTE-IDENTICAL**, all PASS |
 
 The merge gate (`merge_disambiguator` / `register_arc_with_aggregation`) is untouched, so the two live-fork
 invariant unit tests — which construct `FrontierArc`s by hand and assert the gate keeps distinct-stamp arcs

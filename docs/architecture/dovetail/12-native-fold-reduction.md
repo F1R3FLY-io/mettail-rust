@@ -14,7 +14,7 @@ Every symbol/term is defined or glossary-linked before use. **[G]** = defined in
 
 | Term | Definition |
 |---|---|
-| fold rule | A term-constructor rule (`eval_mode = Fold`) whose body `![{ … }]` computes a result by running a Rust expression on its reduced children (e.g. RhoCalc `int(a,w) : Proc`, Calculator `concat(a,b) : List`). |
+| fold rule | A term-constructor rule (`eval_mode = Fold`) whose body `![{ … }]` computes a result by running a Rust expression on its reduced children (e.g. Rholang `int(a,w) : Proc`, Calculator `concat(a,b) : List`). |
 | native-output vs non-native-output fold | A fold whose result category has a native type (`Int`, …) vs an object/collection category (`Proc`/`List`/`Map`/`Bag`). |
 | the cast-eval gap | After the Ascent retirement, non-native-output fold bodies (`numeric_dispatch::rho_proc_*`/`calc_*`) reduced **nowhere** — their RHS was emitted only into the retired Datalog backend. |
 | typed op-enum `L` | The generated per-language `<Lang>DovetailOp` enum the e-graph carries on the fold path: one variant per `(category, constructor)`, literal/var payloads inline (lossless). |
@@ -103,10 +103,10 @@ For a fold-bearing language the report gate is **three-way** rather than binder-
 | gate | language | behavior |
 |---|---|---|
 | binder-handler | Ambient | float `new`s outward, then in-engine AC ([11](11-binder-congruence-handler.md)) |
-| **fold (non-fatal)** | RhoCalc, Calculator, … | drop the native-eval short-circuit; residual host-routed `unsupported` rules (`Comm`, `Extrude`) are **not fatal** — they carry no fold body, match no fold LHS, and stay unreduced, correct |
+| **fold (non-fatal)** | Rholang, Calculator, … | drop the native-eval short-circuit; residual host-routed `unsupported` rules (`Comm`, `Extrude`) are **not fatal** — they carry no fold body, match no fold LHS, and stay unreduced, correct |
 | plain (fail-closed) | Lambda, BaseMath, … | the existing fail-closed gate is preserved (an unlowered binder/substitution rule still errors) |
 
-The non-fatal fold gate is essential: RhoCalc's generated report carries a non-empty
+The non-fatal fold gate is essential: Rholang's generated report carries a non-empty
 `unsupported` set (the host-routed COMM/scope-extrusion rules), so the old fail-closed gate would
 have errored *before any fold ran*. Lambda still fails closed because it has no object-input
 fold — the predicate that selects the non-fatal path is structural, never a per-language name.
@@ -123,7 +123,7 @@ fold — the predicate that selects the non-fatal path is structural, never a pe
 3. extraction — the funded 1-best of the root class surfaces `CastInt(NumLit 3)`, the normal
    form, because the value op weighs below the `IntBinProc` redex.
 
-The disposition matrix (`languages/tests/rhocalc_dovetail_fold.rs`, 6/6) pins every case:
+The disposition matrix (`languages/tests/rholang_dovetail_fold.rs`, 6/6) pins every case:
 fire-recurse (above), fire-once (`int(7, 64)`), defer-on-var (`int(x, 8)` stays unreduced),
 fire-to-`Err` (`int("abc", 8)` — a string *value* the body rejects), and no-match (`0`).
 

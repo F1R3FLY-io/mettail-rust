@@ -1,6 +1,6 @@
 # Signed BigRat (arbitrary-precision rationals) — design options
 
-**As implemented today:** `num-rational`’s `Ratio<BigInt>` behind a **`Copy`** handle **`CanonicalBigRat`** (`runtime/src/canonical_bigrat.rs`); rational **literals** `…r` and `…r/…r` via **`RationalLit`** and `parse_rational_lit` (`prattail/src/rational_lit.rs`, `TokenKind::RationalLit`); per-language **`BigRat`** literal patterns in `languages/src/calculator.rs` and `languages/src/rhocalc.rs`. **Constructor** `fraction`: on **Calculator** it builds `BigRat` from two **BigInt** terms; on **RhoCalc** it is **`FractionProc`** with two **Proc** arguments (typically `CastBigInt`), evaluated with **`fold`** so Ascent emits `fold_proc` / `rw_proc` (see `languages/src/rhocalc.rs`).
+**As implemented today:** `num-rational`’s `Ratio<BigInt>` behind a **`Copy`** handle **`CanonicalBigRat`** (`runtime/src/canonical_bigrat.rs`); rational **literals** `…r` and `…r/…r` via **`RationalLit`** and `parse_rational_lit` (`prattail/src/rational_lit.rs`, `TokenKind::RationalLit`); per-language **`BigRat`** literal patterns in `languages/src/calculator.rs` and `languages/src/rholang.rs`. **Constructor** `fraction`: on **Calculator** it builds `BigRat` from two **BigInt** terms; on **Rholang** it is **`FractionProc`** with two **Proc** arguments (typically `CastBigInt`), evaluated with **`fold`** so Ascent emits `fold_proc` / `rw_proc` (see `languages/src/rholang.rs`).
 
 The remainder of this document records **target semantics**, **library options**, and **still-language-defined** behavior (`%`, bitwise, two’s complement on general rationals). It mixes historical decisions with the current codebase.
 
@@ -33,9 +33,9 @@ The following constraints go beyond “plain `Ratio<BigInt>` in ℚ” and shoul
 
 ### Constructing rationals (constructor + literals)
 
-- **Constructor**: language-defined `fraction` (name fixed per language). **Calculator:** `fraction(a, b)` with `a`, `b` : **BigInt**. **RhoCalc:** `fraction(a, b)` with `a`, `b` : **Proc** (semantic code expects `CastBigInt` / literals `…n`).
+- **Constructor**: language-defined `fraction` (name fixed per language). **Calculator:** `fraction(a, b)` with `a`, `b` : **BigInt**. **Rholang:** `fraction(a, b)` with `a`, `b` : **Proc** (semantic code expects `CastBigInt` / literals `…n`).
 - **Literals**: patterns such as `<digits>r` and `<digits>r/<digits>r` with per-language regex + `parse_rational_lit`; values stored as **`CanonicalBigRat`** in the **BigRat** category.
-- **Typing**: languages keep rationals in **`BigRat`** / **`CastBigRat`** (RhoCalc) and define explicit casts and homogeneous `+ - * /` on those forms; no implicit mix with fixed-width ints without rules.
+- **Typing**: languages keep rationals in **`BigRat`** / **`CastBigRat`** (Rholang) and define explicit casts and homogeneous `+ - * /` on those forms; no implicit mix with fixed-width ints without rules.
 
 ### Division (`/`)
 
@@ -84,7 +84,7 @@ The following constraints go beyond “plain `Ratio<BigInt>` in ℚ” and shoul
 
 ### Phase 1 — **Constructor-style**
 
-Rationals are formed by a **language-defined constructor** (e.g. **`fraction`**), taking two arguments typed per language (**BigInt** in Calculator; **Proc** with `CastBigInt` operands in RhoCalc).
+Rationals are formed by a **language-defined constructor** (e.g. **`fraction`**), taking two arguments typed per language (**BigInt** in Calculator; **Proc** with `CastBigInt` operands in Rholang).
 
 **Examples:**
 
@@ -109,7 +109,7 @@ Rationals are formed by a **language-defined constructor** (e.g. **`fraction`**)
 **Implementation notes:**
 
 - The constructor is declared in each language’s **`terms`** section (and types for categories), not hard-coded by the framework.
-- **Nested rationals as arguments** are ill-typed where arguments must be **BigInt** / `CastBigInt` (Calculator / RhoCalc).
+- **Nested rationals as arguments** are ill-typed where arguments must be **BigInt** / `CastBigInt` (Calculator / Rholang).
 
 ### Phase 2 — **`r`-suffix rational literals** (implemented)
 
@@ -226,10 +226,10 @@ The stakeholder section gives **optional reference** semantics (e.g. **(0, 1)** 
 
 1. **Done — backend:** `num-rational` + **`CanonicalBigRat`** in `runtime`; reduction via `Ratio::new` at construction.
 2. **Done — literals:** **`RationalLit`** / **`parse_rational_lit`** in PraTTaIL; per-language **`BigRat`** literal blocks; **`TokenKind::RationalLit`** in the lexer.
-3. **Done — constructors:** **Calculator** `fraction` on **BigInt**; **RhoCalc** **`FractionProc`** on **Proc** with **`fold`** (not `step`) so non-native **Proc** gets **`fold_proc`** rules.
-4. **Done — core ℚ on languages:** Calculator and RhoCalc define rational **`+ - * /`**, comparisons, and casts as needed; tests in `languages/tests/`.
+3. **Done — constructors:** **Calculator** `fraction` on **BigInt**; **Rholang** **`FractionProc`** on **Proc** with **`fold`** (not `step`) so non-native **Proc** gets **`fold_proc`** rules.
+4. **Done — core ℚ on languages:** Calculator and Rholang define rational **`+ - * /`**, comparisons, and casts as needed; tests in `languages/tests/`.
 5. **Open / per language:** `%`, bitwise, and strict **two’s complement** stories on full **`BigRat`** (see stakeholder sections above); formal write-ups only where a language adopts them.
-6. **Tests ongoing:** constructor eval, `…r` lexer tests (`prattail/src/rational_lit.rs`), integration tests (`languages/tests/calculator.rs`, `languages/tests/rhocalc_tests.rs`).
+6. **Tests ongoing:** constructor eval, `…r` lexer tests (`prattail/src/rational_lit.rs`), integration tests (`languages/tests/calculator.rs`, `languages/tests/rholang_tests.rs`).
 
 ---
 
@@ -243,7 +243,7 @@ The stakeholder section gives **optional reference** semantics (e.g. **(0, 1)** 
 | 3   | Unary minus on rational literal (`-3r/4r`)?                | **Not** part of the literal token; use unary `-` on the expression (or `-fraction(3, 4)` where the language provides it).                                                                                                                                             |
 | 4   | **BigRational** / **CanonicalBigRat** placement?            | **`CanonicalBigRat`** in **runtime** next to **`CanonicalBigInt`** (**implemented**).                                                                                                                                                             |
 | 7   | `%` always zero on `BigRat`?                                | **Language-defined**; the framework does not impose `%` semantics globally.                                                                                                                                                                 |
-| 8   | Constructor name; nested `fraction(fraction(a,b), c)`?      | Constructor is declared in each language’s **`terms`** (and categories in **`types`**). **Nested** `fraction` where an argument is **BigRat** / wrong type is **ill-typed** in Calculator / RhoCalc (bigint / `CastBigInt` arguments only). |
+| 8   | Constructor name; nested `fraction(fraction(a,b), c)`?      | Constructor is declared in each language’s **`terms`** (and categories in **`types`**). **Nested** `fraction` where an argument is **BigRat** / wrong type is **ill-typed** in Calculator / Rholang (bigint / `CastBigInt` arguments only). |
 
 
 ### `CanonicalBigRat` — recommendation (Q4)
@@ -282,5 +282,5 @@ The stakeholder section gives **optional reference** semantics (e.g. **(0, 1)** 
 ## Related documents
 
 - [Signed BigInt library selection](./signed-bigint-library-selection.md) — bigint backend choice and ecosystem constraints.
-- Code: `prattail/src/rational_lit.rs` (**`RationalLit`**), `prattail/src/int_lit.rs` (integers only), `runtime/src/canonical_bigrat.rs`, `macros/src/gen/syntax/parser/prattail_bridge.rs` (native category / literal eval wiring), `languages/src/calculator.rs`, `languages/src/rhocalc.rs` (**`FractionProc`**, **`fold`**).
+- Code: `prattail/src/rational_lit.rs` (**`RationalLit`**), `prattail/src/int_lit.rs` (integers only), `runtime/src/canonical_bigrat.rs`, `macros/src/gen/syntax/parser/prattail_bridge.rs` (native category / literal eval wiring), `languages/src/calculator.rs`, `languages/src/rholang.rs` (**`FractionProc`**, **`fold`**).
 

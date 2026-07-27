@@ -1,6 +1,6 @@
 # Macro Expansion: `LanguageDef` → `LanguageSpec`
 
-The `language!` invocation in `languages/src/rhocalc.rs` is processed in two
+The `language!` invocation in `languages/src/rholang.rs` is processed in two
 phases inside the proc-macro.  Phase 1 parses the DSL token stream into a rich
 `LanguageDef` AST.  Phase 2 projects the grammar-relevant subset into a
 `LanguageSpec` that PraTTaIL uses for code generation.
@@ -12,7 +12,7 @@ phases inside the proc-macro.  Phase 1 parses the DSL token stream into a rich
 The `syn` parser walks the token stream section by section:
 
 ```
-language! { name: RhoCalc, types { ... }, terms { ... }, equations { ... },
+language! { name: Rholang, types { ... }, terms { ... }, equations { ... },
             rewrites { ... }, logic { ... } }
 ```
 
@@ -21,8 +21,8 @@ delegated to a section parser.  The result is:
 
 ```rust
 pub struct LanguageDef {
-    pub name: Ident,                            // RhoCalc
-    pub options: HashMap<String, AttributeValue>, // (empty for RhoCalc)
+    pub name: Ident,                            // Rholang
+    pub options: HashMap<String, AttributeValue>, // (empty for Rholang)
     pub types: Vec<LangType>,                    // [Proc, Name, Int, ...]
     pub terms: Vec<GrammarRule>,                 // [PZero, PDrop, PPar, ...]
     pub equations: Vec<Equation>,                // [QuoteDrop]
@@ -234,7 +234,7 @@ The bridge also maps DSL options to PraTTaIL configuration:
 | `dispatch: weighted`             | `dispatch_strategy: Weighted`        | `Static`   |
 | `log_semiring_model_path: "..."` | `log_semiring_model_path: Some(...)` | `None`     |
 
-RhoCalc uses no options block, so all defaults apply.
+Rholang uses no options block, so all defaults apply.
 
 ---
 

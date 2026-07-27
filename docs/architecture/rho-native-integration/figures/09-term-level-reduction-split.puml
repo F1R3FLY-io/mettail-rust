@@ -54,7 +54,7 @@ else (yes — COMM or mixed)
   **fold-normal** term
   (folds already reduced,
   COMM preserved);
-  :lower_rhocalc_term -> rhoapi::Par
+  :lower_rholang_term -> rhoapi::Par
   (succeeds: folds are literals);
   note right
     `@("OUT")!(int(1+2,8))`

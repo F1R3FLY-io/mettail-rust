@@ -17,7 +17,7 @@
 
 ## Problem
 
-When switching from `ascent_run!` to `ascent_run_par!` in `examples/rhocalc.rs`, we get type errors:
+When switching from `ascent_run!` to `ascent_run_par!` in `examples/rholang.rs`, we get type errors:
 
 ```
 mismatched types
@@ -207,7 +207,7 @@ For now, document that parallel execution requires manual adjustments and stick 
 **Keep using `ascent_run!` (serial mode)**:
 
 ```rust
-// In examples/rhocalc.rs and examples/ambient.rs
+// In examples/rholang.rs and examples/ambient.rs
 let mut prog = ascent_run! {
     // NOT ascent_run_par!
     ...

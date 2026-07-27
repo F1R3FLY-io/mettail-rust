@@ -96,7 +96,7 @@ are gone. **Cost: ~600-1000 LoC**, can up to DOUBLE grammar size. **Skip.**
 ### 3c. EarleyFSA-style WFSA grammar encoding (paper §7)
 
 Shares structure across productions with common prefixes. Beneficial for
-50k-production NLP grammars; **not for PraTTaIL grammars** (rhocalc, calc,
+50k-production NLP grammars; **not for PraTTaIL grammars** (rholang, calc,
 ambient: 10-50 productions). **Skip.**
 
 ---

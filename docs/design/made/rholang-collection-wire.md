@@ -1,9 +1,9 @@
-# Rhocalc Collection Wire / `toByteArray()`
+# Rholang Collection Wire / `toByteArray()`
 
 **Status:** ★ **SUPERSEDED (2026-07-25) — the host-side encoder and its forked schema are retired.**
 `.toByteArray()` is now evaluated by f1r3node's own reducer. See §7 for what replaced it and why.
 
-**Context:** Surface `toByteArray()` on `CastList`, `CastBag`, `CastMap`, and `CastSet`; see [rhocalc-collection-equality.md](./rhocalc-collection-equality.md), [map-type-design.md](./native-types/map-type-design.md), [set-type-design.md](./native-types/set-type-design.md), and [lists-and-bags-support.md](./native-types/lists-and-bags-support.md).
+**Context:** Surface `toByteArray()` on `CastList`, `CastBag`, `CastMap`, and `CastSet`; see [rholang-collection-equality.md](./rholang-collection-equality.md), [map-type-design.md](./native-types/map-type-design.md), [set-type-design.md](./native-types/set-type-design.md), and [lists-and-bags-support.md](./native-types/lists-and-bags-support.md).
 
 **References:** [Rholang data structures](https://rholang.org/tutorials/data-structures/), [f1r3node `03-data-types`](https://github.com/F1R3FLY-io/f1r3node/blob/rust/dev/docs/rholang/03-data-types.md), [f1r3node `06-collections`](https://github.com/F1R3FLY-io/f1r3node/blob/rust/dev/docs/rholang/06-collections.md).
 
@@ -11,11 +11,11 @@
 
 ## 1. Goal and Scope
 
-**Goal (historical):** Fold-time `.toByteArray()` on Rhocalc collection values injected into `Proc`, returning a `CastBytes` payload whose bytes match f1r3node `Par` protobuf encoding for the corresponding Rholang collection kind.
+**Goal (historical):** Fold-time `.toByteArray()` on Rholang collection values injected into `Proc`, returning a `CastBytes` payload whose bytes match f1r3node `Par` protobuf encoding for the corresponding Rholang collection kind.
 
 **Goal (current):** `.toByteArray()` returns exactly what Rholang's `toByteArray` returns, because it *is* Rholang's `toByteArray` — a real `GByteArray`, produced by the consensus reducer.
 
-**Scope (current):** `MToByteArray` in [`languages/src/rhocalc.rs`](../../../languages/src/rhocalc.rs) (a pure constructor — no fold body), `lower_method` in [`rholang-runtime/src/rhocalc_ast.rs`](../../../rholang-runtime/src/rhocalc_ast.rs), and the conformance tests in [`rholang-runtime/tests/rho_rhocalc_conformance.rs`](../../../rholang-runtime/tests/rho_rhocalc_conformance.rs).
+**Scope (current):** `MToByteArray` in [`languages/src/rholang.rs`](../../../languages/src/rholang.rs) (a pure constructor — no fold body), `lower_method` in [`rholang-runtime/src/rholang_ast.rs`](../../../rholang-runtime/src/rholang_ast.rs), and the conformance tests in [`rholang-runtime/tests/rho_rholang_conformance.rs`](../../../rholang-runtime/tests/rho_rholang_conformance.rs).
 
 **Non-goals:** decode / `fromByteArray`; string `hexToBytes` / `toUtf8Bytes`; byte-array `slice` / `nth` / `length`; Calculator.
 
@@ -28,7 +28,7 @@
 | List | `[1, 2, 3]` | `EMethod("toByteArray")` over the lowered `EList` |
 | Set | `Set(1, 2, 3)` | over the lowered `ESet`; members canonicalized by the machine's `SortedParHashSet` |
 | Map | `{1: 10, 2: 20}` | over the lowered `EMap`; keys canonicalized likewise |
-| Bag | `#{1 \| 2 \| 2}#` | over the lowered `EList` tagged `mettail.rhocalc.bag.v1` (`RHOCALC_BAG_ABI_TAG`), carrying `(element, count)` pairs |
+| Bag | `#{1 \| 2 \| 2}#` | over the lowered `EList` tagged `mettail.rholang.bag.v1` (`RHOLANG_BAG_ABI_TAG`), carrying `(element, count)` pairs |
 
 The result is a **`GByteArray`** — the same carrier Rholang uses — not a hex `GString`.
 
@@ -37,7 +37,7 @@ The result is a **`GByteArray`** — the same carrier Rholang uses — not a hex
 ## 3. Pipeline
 
 ```
-  RhoCalc source                lowering (rhocalc_ast.rs)              f1r3node reducer
+  Rholang source                lowering (rholang_ast.rs)              f1r3node reducer
   ──────────────                ───────────────────────                ────────────────
   m.toByteArray()   ─────▶   EMethod { method_name: "toByteArray",  ─▶  method_table["toByteArray"]
                                target: ⟦m⟧, arguments: [] }              ▸ eval_expr(target)
@@ -53,7 +53,7 @@ There is no host-side encoder and no second schema. Canonical ordering is whatev
 
 ## 4. Golden Vectors
 
-Pinned in `rholang-runtime/tests/rho_rhocalc_conformance.rs`
+Pinned in `rholang-runtime/tests/rho_rholang_conformance.rs`
 (`c2_closed_to_byte_array_is_the_reducers_own_encoding`,
 `c2_closed_to_byte_array_uses_the_machines_canonical_order`,
 `c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag`) against the real reducer.
@@ -70,22 +70,22 @@ Pinned in `rholang-runtime/tests/rho_rhocalc_conformance.rs`
 Reading the list vector: `2a 1b` is `Par.exprs` (field 5) length 27; `a2 01 18` is
 `ExprInstance.e_list_body` (field 20) length 24; each `0a 06 2a 04 9a 02 01 0N` is one element
 `Par` whose single expr is a **`GBigInt`** (`9a 02`) leaf. `GBigInt` — not `GInt` — because a plain
-RhoCalc integer literal is arbitrary-precision (Rholang 1.4's default).
+Rholang integer literal is arbitrary-precision (Rholang 1.4's default).
 
 ---
 
 ## 5. Tests
 
-- `rholang-runtime/tests/rho_rhocalc_conformance.rs` — the golden vectors above, asserted with
+- `rholang-runtime/tests/rho_rholang_conformance.rs` — the golden vectors above, asserted with
   `assert_eq!` against the real reducer's output.
-- `languages/tests/rhocalc_tests.rs` — only `native_ops::collection_wire::unsupported_receiver_errors`
+- `languages/tests/rholang_tests.rs` — only `native_ops::collection_wire::unsupported_receiver_errors`
   remains (it uses `assert_never_reaches`, an exact-display comparison).
 
 ---
 
 ## 6. Examples
 
-```rhocalc
+```rholang
 [1, 2, 3].toByteArray()
 Set(3, 2, 1).toByteArray()
 {2: 20, 1: 10}.toByteArray()
@@ -99,21 +99,21 @@ Each lowers to `EMethod("toByteArray")` and is evaluated by the reducer, yieldin
 ## 7. ★ Why the original design was retired
 
 The v1 design compiled a hand-mirrored **fork** of f1r3node's `rhoapi` schema
-(`languages/proto/rhocalc_wire.proto`, 7 of `RhoTypes.proto`'s 62 messages) via
+(`languages/proto/rholang_wire.proto`, 7 of `RhoTypes.proto`'s 62 messages) via
 `languages/build.rs` into a *second* `rhoapi::Par` type inside the same workspace, and encoded
-against it in `languages/src/rhocalc/wire.rs`. It is retired under the "different carriers, ONE
+against it in `languages/src/rholang/wire.rs`. It is retired under the "different carriers, ONE
 evaluator" convergence. Three independent defects, all measured on 2026-07-25:
 
 | # | Defect | Evidence | Consequence |
 |---|---|---|---|
 | 1 | the fork's `.proto` had **no `g_big_int` field**, and `proc_to_par` matched only `Proc::CastInt(Int::NumLit(_))` | `[1, 2]` parses/folds to `CastList(ListLit([CastBigInt(NumLit(1)), CastBigInt(NumLit(2))]))` | `.toByteArray()` folded to `error` for every collection the grammar produces — the encoder was unreachable from source |
 | 2 | set/map members sorted by raw **protobuf byte order** (`wire.rs:19-25`) | Rholang sorts by `ScoredTerm` **value** order (`models/src/rust/sorted_par_hash_set.rs:22`) | two canonical orders for one conceptual sorted set; they disagree on negative integers |
-| 3 | the result was a **hex `GString`** (`wire.rs:136-139`) | Rholang's `toByteArray` returns a `GByteArray` (`reduce.rs:4137-4160`) | the wrong carrier; RhoCalc also skipped the reducer's `substitute` step |
-| 4 | bag encoding **expanded the multiset** into a bare `EList` | the real lowering tags it `mettail.rhocalc.bag.v1` with `(element, count)` pairs | the bytes decoded back to a list, not a bag |
+| 3 | the result was a **hex `GString`** (`wire.rs:136-139`) | Rholang's `toByteArray` returns a `GByteArray` (`reduce.rs:4137-4160`) | the wrong carrier; Rholang also skipped the reducer's `substitute` step |
+| 4 | bag encoding **expanded the multiset** into a bare `EList` | the real lowering tags it `mettail.rholang.bag.v1` with `(element, count)` pairs | the bytes decoded back to a list, not a bag |
 
 The old goldens (e.g. `2a15a201120a042a0210020a042a0210040a042a021006` for `[1,2,3]`) are not merely
 stale: they encode a **different Rholang term** — `GInt` elements (`sint64` zigzag `02 04 06`)
-where RhoCalc means `GBigInt`.
+where Rholang means `GBigInt`.
 
 Additionally, the goldens' `collection_wire` integration tests were **vacuous**.
 `assert_reduces_to` reaches its verdict through a disjunction ending in `bag_multiset_eq`, which

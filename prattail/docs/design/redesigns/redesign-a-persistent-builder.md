@@ -353,7 +353,7 @@ A future Phase 5.7+ could:
    accessor sites and the hang-dump snapshot path. Plan §3.1 estimates
    −200 LoC.
 2. Benchmark the cumulative Phase 5 + 5.6-tail throughput vs the
-   pre-Phase-5 tip (`286813e`) on `bench_rhocalc`. No regression
+   pre-Phase-5 tip (`286813e`) on `bench_rholang`. No regression
    expected (in fact a speedup on nondeterministic-mode parses since journal+replay
    is gone), but should be measured.
 3. T4 SIGUSR1 hang-dump (~396 LoC, pre-existing pending).
@@ -362,7 +362,7 @@ A future Phase 5.7+ could:
 
 At every sub-phase commit:
 
-- `cargo nextest run -p languages --test gen_calculator_op --test gen_rhocalc_op --test class2_binder_with_collection_smoke --test wpds_via_str_smoke --test gen_calculator_unit --test gen_rhocalc_unit --test class2_multi_collection_smoke --test class3_multi_collection_smoke --test class2_opt_collection_smoke --test class3_opt_smoke --test class2hashmapsmoke` → 2160-2161/2160-2161 PASS (count varies with gen_*.rs non-determinism).
+- `cargo nextest run -p languages --test gen_calculator_op --test gen_rholang_op --test class2_binder_with_collection_smoke --test wpds_via_str_smoke --test gen_calculator_unit --test gen_rholang_unit --test class2_multi_collection_smoke --test class3_multi_collection_smoke --test class2_opt_collection_smoke --test class3_opt_smoke --test class2hashmapsmoke` → 2160-2161/2160-2161 PASS (count varies with gen_*.rs non-determinism).
 - `cargo test -p prattail --lib` → 3969/3969 PASS.
 - `cargo nextest run -p languages --test edge_case_tests --no-fail-fast` → 228/229 PASS (1 pre-existing `postfix_binds_tighter_than_unary` failure unrelated to Phase 5).
 
@@ -374,7 +374,7 @@ The `im::Vector` HAMT has `O(log N)` per-operation cost vs `Vec`'s `O(1)`. For s
 - Nondeterministic-mode parses no longer journal+replay 14 BuilderDelta variant types — the action / splice / push runs ONCE on cursor.builder, not twice (once at log, once at replay).
 - Recovery-only journal is bounded by recovery_depth (default 5).
 
-No benchmarks landed with Phase 5. A follow-up benchmark commit should measure the steady-state parse throughput against the pre-5.0 tip (`286813e`) on the `bench_rhocalc` suite.
+No benchmarks landed with Phase 5. A follow-up benchmark commit should measure the steady-state parse throughput against the pre-5.0 tip (`286813e`) on the `bench_rholang` suite.
 
 ## Acknowledgments
 

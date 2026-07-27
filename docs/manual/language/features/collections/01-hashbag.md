@@ -1,7 +1,7 @@
 # HashBag — Full Pipeline Trace
 
 This document traces the `HashBag(T)` collection type through every stage of
-the MeTTaIL/PraTTaIL pipeline, using the RhoCalc `PPar` constructor (parallel
+the MeTTaIL/PraTTaIL pipeline, using the Rholang `PPar` constructor (parallel
 composition) as the running example.
 
 ## 1. DSL Definition

@@ -1,14 +1,14 @@
 # Numeric casting — design
 
-**Status:** Implemented in `runtime` + Calculator + RhoCalc (details below).  
+**Status:** Implemented in `runtime` + Calculator + Rholang (details below).  
 **Related:** [IEEE 754 / fixed-point exploration](../exploring/ieee754-fixed-point.md), [Signed BigRat](./signed-bigrat-design.md), [Float support in Ascent](./float-support-ascent.md), `language!` native types (`languages/src/*.rs`), shared cast dispatch (`runtime/src/numeric_cast_dispatch.rs`, `languages/numeric_dispatch.rs`)
 
 ### Implementation status (codebase)
 
 - **Runtime (`runtime`):** `numeric_cast` (`runtime/src/numeric_cast.rs`) — width validation (`int`/`uint`: `m = 2^n`, `n ≥ 3`; `float`: **32 and 64** only; **80 / 128 / 256** → `CastError::UnsupportedFloatWidth`), `fixed` place count with a documented cap, floor/modular/interval rules, and unit tests. Language-agnostic cast pipelines (**no `Proc`**) live in **`numeric_cast_dispatch`** (`runtime/src/numeric_cast_dispatch.rs`): they take `NumericInput` and width parameters only; language layers should delegate here rather than duplicating conversion logic.
-- **Languages crate glue:** Per-language **`Proc` → `NumericInput`** (list peeling, tag mapping) and thin wrappers around the runtime pipelines are in **`languages/numeric_dispatch.rs`** (next to `languages/src/`, not under it, so `src/` stays for `language!` definitions). Calculator and RhoCalc builtins import from `crate::numeric_dispatch`.
+- **Languages crate glue:** Per-language **`Proc` → `NumericInput`** (list peeling, tag mapping) and thin wrappers around the runtime pipelines are in **`languages/numeric_dispatch.rs`** (next to `languages/src/`, not under it, so `src/` stays for `language!` definitions). Calculator and Rholang builtins import from `crate::numeric_dispatch`.
 - **Calculator:** Binary **`int`**, **`uint`**, **`float`**, **`fixed`** (second argument is width / place count), unary **`bigint`**, **`bigrat`**. There is **no** unary `int(proc)` or `float(proc)`; use **`int(p, m)`** / **`float(p, m)`** (and `Proc` projections **`bool`**, **`str`** where needed). Invalid casts reduce to per-category nullary errors (`cast_error_int`, …) where applicable.
-- **RhoCalc:** Same builtins at **`Proc`** level (`int(arg, w)`, … inside `{ … }` blocks). Failures map to **`Proc::Err`** (display **`error`**). Ascent fold rules for these casts allow a final **`Proc::Err`** (unlike most `Proc` folds that suppress `Err` until subterms are ready).
+- **Rholang:** Same builtins at **`Proc`** level (`int(arg, w)`, … inside `{ … }` blocks). Failures map to **`Proc::Err`** (display **`error`**). Ascent fold rules for these casts allow a final **`Proc::Err`** (unlike most `Proc` folds that suppress `Err` until subterms are ready).
 - **Float storage:** `float(arg, 32)` rounds to **binary32** then uses the language float carrier (`CanonicalFloat64` / `f64`); tie-breaking and overflow (`±Inf`) follow the runtime helpers and tests.
 - **Large integer widths:** Targets that do not fit existing `Int` / `UInt32` / `BigInt` carriers follow language-specific rejection; very wide `m` may require `BigInt` in the surface.
 - **Surface literals:** `…n` (`BigInt`) tokens **may** use a leading `-` (e.g. **`-1n`**). You can still use **`Int`** −1 in **`uint(-1, 8)`**, **`bitnot 0`**, etc.; semantics for signed sources follow §4.
@@ -23,7 +23,7 @@ Conversion between numeric types is **explicit**. The language exposes **builtin
 
 All width or precision parameters named `m` below are **signed 64-bit integers** at the language level (same class as other integer parameters); implementations validate ranges before applying semantics.
 
-**Concrete syntax (implemented):** Calculator and RhoCalc use **`int(arg, m)`**, **`uint(arg, m)`**, **`float(arg, m)`**, and **`fixed(arg, m)`** for width-bearing casts (RhoCalc: inside **`{ … }`** expression blocks). Unary **`bigint`** and **`bigrat`** match the names below. The subsections use the same names for semantics.
+**Concrete syntax (implemented):** Calculator and Rholang use **`int(arg, m)`**, **`uint(arg, m)`**, **`float(arg, m)`**, and **`fixed(arg, m)`** for width-bearing casts (Rholang: inside **`{ … }`** expression blocks). Unary **`bigint`** and **`bigrat`** match the names below. The subsections use the same names for semantics.
 
 ### 2.1 `int(arg, m)`
 
@@ -78,7 +78,7 @@ All width or precision parameters named `m` below are **signed 64-bit integers**
 ## 4. Integer narrowing, widening, and signed ↔ unsigned
 
 - **Larger integer → smaller integer (same signedness family):** **modular** arithmetic in the target width. Example: `uint(257u16, 8) == 1u8`.
-- **Signed integer → unsigned integer of width `m`:** preserve **two’s complement bit pattern** modulo `2^m`. Example: value **−1** maps to **255** in 8 bits (e.g. **`uint(-1, 8)`** in Calculator, **`{uint(bitnot 0, 8)}`** in RhoCalc). **`BigInt`** −1 behaves the same; literals may be **`-1n`**.
+- **Signed integer → unsigned integer of width `m`:** preserve **two’s complement bit pattern** modulo `2^m`. Example: value **−1** maps to **255** in 8 bits (e.g. **`uint(-1, 8)`** in Calculator, **`{uint(bitnot 0, 8)}`** in Rholang). **`BigInt`** −1 behaves the same; literals may be **`-1n`**.
 - **Unsigned → signed:** language must specify whether high bit set is **preserved as negative** (standard two’s complement reinterpretation) or **rejected**; the table in §3 assumes **reinterpretation** unless a given language adds stricter checks.
 
 These rules apply **after** any floor/clamp steps defined for `int`/`uint` from non-integers (e.g. `uint` clamps negatives to 0 **before** modular reduction into the unsigned width).
@@ -111,7 +111,7 @@ These rules apply **after** any floor/clamp steps defined for `int`/`uint` from 
 2. **Strict:** Require **explicit** `float(x, 64)` / `uint(x, 64)` before mixing with a suffixed literal — maximally predictable, noisier at call sites.
 3. **Channel / process typing:** For `for (@x <- chan) { y!(x / 4) }`, treat `x` as **value-dynamic**; define `/` only on pairs where runtime tags are known, or define a **default** (e.g. all unknowns as `BigRat` or as `f64`) — this is a **per-language** policy, not fixed by the MeTTaIL framework.
 
-**Recommendation for documentation:** Separate **(a)** **static** explicit casts (§2) from **(b)** **runtime dispatch** rules in each language’s reduction semantics. Default promotion should be **documented per language** (Calculator vs RhoCalc already differ in how `Proc`-level arithmetic is folded).
+**Recommendation for documentation:** Separate **(a)** **static** explicit casts (§2) from **(b)** **runtime dispatch** rules in each language’s reduction semantics. Default promotion should be **documented per language** (Calculator vs Rholang already differ in how `Proc`-level arithmetic is folded).
 
 ---
 

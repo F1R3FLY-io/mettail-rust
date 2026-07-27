@@ -17,7 +17,7 @@ rectangle "COMPILE-TIME ELIGIBILITY GATE\ndecide_rho_flip(coverage, artifact,\nd
 rectangle "WIRING\nper-language wrapper overrides\nruntime_backend_capabilities()" as WIRE #FEF3C7
 
 rectangle "PURE DOVETAIL\nLambda, Ambient\n(Dovetail capability only)" as DOVE #DBEAFE
-rectangle "HYBRID\nCalculator, RhoCalc\n(RhoMachine default + Dovetail)" as HYBRID #DCFCE7
+rectangle "HYBRID\nCalculator, Rholang\n(RhoMachine default + Dovetail)" as HYBRID #DCFCE7
 rectangle "HOST-ROUTED\nGuardedRho\n(RhoMachine + RhoNativeJoin)" as HOST #DCFCE7
 
 rectangle "PER-TERM ROUTE   run_backend_report(RhoMachine, t)\nD-stage Dovetail report  ->  build RhoBackendInvocation" as ROUTE #F3F4F6

@@ -20,7 +20,7 @@ grammar into a direct-coded, zero-copy lexer function.  The pipeline is:
 PraTTaIL walks every `SyntaxItemSpec` in every rule and collects:
 
 1. **Literal terminals** — every `Terminal(s)` yields the string `s`
-   - RhoCalc examples: `"+"`, `"-"`, `"*"`, `"/"`, `"("`, `")"`, `"{"`, `"}"`,
+   - Rholang examples: `"+"`, `"-"`, `"*"`, `"/"`, `"("`, `")"`, `"{"`, `"}"`,
      `"{}"`, `"!"`, `"?"`, `"."`, `","`, `"|"`, `"@"`, `"=="`, `"!="`, `">"`,
      `"<"`, `">="`, `"<="`, `"not"`, `"and"`, `"or"`, `"new"`, `"error"`,
      `"concat"`, `"len"`, `"int"`, `"float"`, `"bool"`, `"str"`
@@ -102,7 +102,7 @@ This implements maximal-munch with keyword priority.
 
 Before subset construction, the byte alphabet (0..255) is partitioned into
 *equivalence classes* — groups of bytes that behave identically across all NFA
-transitions.  For RhoCalc:
+transitions.  For Rholang:
 
 | Class | Bytes                | Reason                     |
 |-------|----------------------|----------------------------|
@@ -153,7 +153,7 @@ Hopcroft's algorithm reduces the DFA to its minimal equivalent:
 3. Repeat until no more splits are possible
 4. Each partition becomes a single state in the minimal DFA
 
-For RhoCalc, a typical DFA of ~40-60 states minimizes to ~15-25 states.
+For Rholang, a typical DFA of ~40-60 states minimizes to ~15-25 states.
 
 After minimization, BFS canonical reordering ensures deterministic state
 numbering (start state = 0).
@@ -253,7 +253,7 @@ When the number of equivalence classes is ≤ 32, the code generator can use
 popcount replace sparse match tables.  This reduces code size for grammars with
 many similar-length keywords.
 
-## Lexing a RhoCalc Expression
+## Lexing a Rholang Expression
 
 Tracing `3 + 4` through the generated lexer:
 

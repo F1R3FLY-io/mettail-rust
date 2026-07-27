@@ -32,7 +32,7 @@ BODY (already alpha-canonical: bound=BoundVar de-Bruijn, free=stable ids) + bind
 binder's FreeVar identity, across (c) `semantic_hash` PNew arm [generated/macro], (d) e-graph binder label
 [generated/macro], (a) `Scope::cmp`/Ord + `OrdVar::cmp` [runtime binding.rs]. This ALIGNS identity with
 moniker `term_eq` (which already ignores binder names) — a genuine correctness fix, partly pre-existing.
-Only Ambient exercises binder hashing today (Calculator has no binders; rhocalc routes binders to host) `⇒`
+Only Ambient exercises binder hashing today (Calculator has no binders; rholang routes binders to host) `⇒`
 no regression risk to flipped langs.
 
 ### #1 — InNew/OutNew/OpenNew/AmbNew under-guarded (`x # P` only, missing `x # N`)

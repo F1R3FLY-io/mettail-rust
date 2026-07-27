@@ -176,12 +176,12 @@ calc with all 3 M7.3 tests = **214/6** (211 + 3 new B3 tests; 6 unchanged = 2 Fl
 
 - gauntlet `cargo test --release -p prattail --lib` = **4220/0** (`b3-span-m74-gauntlet.log`).
 - C-bis cycle/newton/tarjan/star/scc/self_loop = **0 failures** (83 such tests pass, within the gauntlet).
-- op-suites: `gen_calculator_op` **1331/0** (≥1331 ✓); `gen_rhocalc_op` **532/0** (=532 ✓).
+- op-suites: `gen_calculator_op` **1331/0** (≥1331 ✓); `gen_rholang_op` **532/0** (=532 ✓).
 - `edge_case_tests` **229/0** (the `-3!` regression ✓); `probe_neg_zero` **23/0** ✓.
 - `wpda_parity_calculator` **16/0** (incl. `wpds_parse_rejects_bare_bool_in_int_slot_token_unsound` ✓);
   `wpda_parity_calculator_cross_cat` **2/0** ✓.
 - `pass2c_token_soundness_probe` green (extended with the 2 var-first Bool casts).
-- rhocalc pre-existing-fail = **0** (gen_rhocalc_op 532/0, gen_rhocalc_unit 126/0, gen_rhocalc_rewrite 86/0; ≤8 ✓).
+- rholang pre-existing-fail = **0** (gen_rholang_op 532/0, gen_rholang_unit 126/0, gen_rholang_rewrite 86/0; ≤8 ✓).
 - gen_calculator_unit 2/0, gen_calculator_analytical 169/0 — no regression.
 - calc full suite = **214/6** (211 base-pass + 3 new B3 tests; 6 = `test_nested_float_float_int` +
   `test_triple_nested_float` [Float STOP] + 4 pre-existing eval-ambiguity).

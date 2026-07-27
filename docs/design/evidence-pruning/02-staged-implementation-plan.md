@@ -83,8 +83,8 @@ inspiration is realized in exactly two legal forms:
   `languages/tests/trampoline_tests.rs`) must be Welch-neutral or byte-identical hot path (the R4
   guard). Record each as a pgmcp experiment.
 - **I6 (battery):** every commit that can change behavior runs: `gen_ledtest_op` **220/0 (SENTINEL —
-  any failure aborts the stage)**, `gen_calculator_op` 1330/0, `gen_rhocalc_op` 530/1,
-  `edge_case_tests` 227/2, `rhocalc_tests` 118/8, prattail lib 3980/0, plus the `-3!` canary
+  any failure aborts the stage)**, `gen_calculator_op` 1330/0, `gen_rholang_op` 530/1,
+  `edge_case_tests` 227/2, `rholang_tests` 118/8, prattail lib 3980/0, plus the `-3!` canary
   (`postfix_binds_tighter_than_unary`), the cast probe set (`int(3)==3`, `float(3)>=3.0`,
   `cast_error_fixed != 0.0`, `int(float(int(3.14)))` nested tower), and `rocq-prattail-wpda` green.
   Baselines are pinned BY COMMIT HASH at each stage start (see §8 — they shift when #307 ROOT-F
@@ -357,7 +357,7 @@ configurations, precomputed mask.
   `children.push` sites in `apply_action_to_cursor` (:7825+ Fork arm).
 
 **Accept/STOP gates:** `parikh_shadow_steps_after_would_refute ≥ 20%` of `apply_action_calls` on
-the pathological corpus (cast probes + ProcX root-fan inputs + post-ROOT-A rhocalc send/receive
+the pathological corpus (cast probes + ProcX root-fan inputs + post-ROOT-A rholang send/receive
 corpus) → implement enforcement; `< 5%` → STOP (record; proceed to P3 diagnostics anyway, A and B
 kill different classes). `parikh_shadow_refuted_then_accepted > 0` anywhere → hard stop, fix the
 model/transcription first.
@@ -382,7 +382,7 @@ commit, the DAG-node mask table ships in the diagnostic commit, and shadow valid
 lattice inputs from day one; enforcement arms on BOTH source kinds once shadow is clean. Kill
 switch `PRATTAIL_EP_P2=off|shadow|on`.
 
-**Flip experiment (commit 4):** Welch N=15 cast-probe + rhocalc corpus panels; N=51 chain panels for
+**Flip experiment (commit 4):** Welch N=15 cast-probe + rholang corpus panels; N=51 chain panels for
 R4 neutrality; battery per I6; ledger + experiment record.
 
 ---
@@ -589,7 +589,7 @@ Saturation (`dovetail/src/rules.rs`) reports `Converged`, `NodeLimit`, or `Itera
 explicitly (`DovetailSaturation.v`) and prunes nothing.
 
 - **DV-0 (probe, 1 commit):** counters `enodes_added_total` vs `enodes_in_extracted_derivations`
-  (mark during extraction over the rhocalc eval corpus) + saturation share of eval wall-time.
+  (mark during extraction over the rholang eval corpus) + saturation share of eval wall-time.
   **Gate:** untouched-share ≥ 50% AND saturation ≥ 20% of eval wall-time → DV-1; else record
   non-goal.
 - **DV-1 (only on gate pass):** demand-gated rule application — the magic-sets/demand
@@ -612,7 +612,7 @@ Parse-side refutations already never reach eval (refuted cursors never realize) 
 seam is sound today; P1-P3 shrink its volume.
 
 - **EV-0 (probe, 1 commit):** per-relation Ascent fact counts vs facts reachable backward from
-  extracted normal forms, on the post-ROOT-A rhocalc comm corpus (the newly non-vacuous tests are
+  extracted normal forms, on the post-ROOT-A rholang comm corpus (the newly non-vacuous tests are
   exactly where eval waste would first appear). **Gate:** undemanded-fact share ≥ 50% AND eval ≥ 20%
   of test wall-time → EV-1 (demand/magic-set transformation of the generated Ascent rules, with a
   `DemandTransformEquivalence.v` query-equivalence model); else non-goal.
@@ -649,7 +649,7 @@ seam is sound today; P1-P3 shrink its volume.
   definite gate or quotient and should instantiate the same
   `EvidenceComplete.{no_valid_alternative_dropped, evidence_only_removal}` template and the
   I3/I4/I5 ladder; (2) `walker_stats`/`PRATTAIL_WALKER_STATS` reporting; (3) **baseline coupling:**
-  `rhocalc_tests` 118/8 and `edge_case` 227/2 contain ROOT-F failures — every P-stage pins its
+  `rholang_tests` 118/8 and `edge_case` 227/2 contain ROOT-F failures — every P-stage pins its
   baseline hash, and a ROOT-F landing triggers a one-commit rebaseline of the ledger (never
   silently absorb diffs).
 - **Phase 2 realizer:** no file overlap with P1-P5. **Shared substrate:** the realized-term

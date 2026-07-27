@@ -81,7 +81,7 @@ note[A08] (ReduceLang): constructor `Add` appears in 2 dependency groups — an 
 When grouped:
 
 ```
-note[A08] (RhoCalc): 3 constructors may have equation-subsumed rewrites: Name(NQuote), Proc(PPar, PNew)
+note[A08] (Rholang): 3 constructors may have equation-subsumed rewrites: Name(NQuote), Proc(PPar, PNew)
 ```
 
 ## Resolution

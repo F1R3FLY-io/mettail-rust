@@ -93,7 +93,7 @@ Full audit of in-tree grammars (`languages/src/`):
 |--------------|--------------------------|
 | `calculator.rs` | `Or`, `And`, `Plus`, `Times`, `BitOr`, `BitAnd`, `BitXor`, `Mul`, `Div`, `Mod`, `Pow` (all `a:Proc, b:Proc → Proc`) |
 | `ambient.rs` | `PPar . Proc ::= HashBag(Proc) sep "|"` (variadic), `PNew` (binder + body both Proc) |
-| `rhocalc.rs` | Dozens of `a:Proc, b:Proc → Proc` rules (Or, And, BitOr, BitAnd, BitXor, Plus, Times, Mul, Div, Mod, Pow, BoolBoolBin, ...) |
+| `rholang.rs` | Dozens of `a:Proc, b:Proc → Proc` rules (Or, And, BitOr, BitAnd, BitXor, Plus, Times, Mul, Div, Mod, Pow, BoolBoolBin, ...) |
 | `ledtest.rs` | `Plus`, `Times`, `Pow` |
 | `class2multi.rs` | Multiple collection-bearing constructors |
 | `class3multi.rs` | Multiple collection-bearing constructors |

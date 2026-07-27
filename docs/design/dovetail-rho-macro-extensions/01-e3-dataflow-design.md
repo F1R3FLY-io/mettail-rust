@@ -29,7 +29,7 @@ the dependency (do NOT widen the MF7 gate).
    `rule_label`. NO `dovetail_normal_term`, NO MF7 dependency.
 2. **`rholang-codegen/src/dataflow.rs`** (deps `models`+`ast` only — verified) assembles the closed call
    `Par` via the **multi-bind JOIN** `for(c0<- … & c1<- …){…}` (MED-7: runtime-supported per `PInputs`
-   `rhocalc_ast.rs:391-433`; de-Bruijn-simpler — sources at for-depth 0, one uniform `extend_env` shift),
+   `rholang_ast.rs:391-433`; de-Bruijn-simpler — sources at for-depth 0, one uniform `extend_env` shift),
    with **hard `Result` structural validation** (HIGH-4: closed term / all sources `new`-bound / each `for`
    `free_count==1` / root→`@"OUT"`; `debug_assert!` is compiled out in release). `RhoAstValidationProfile::
    FoldDataflow` is the durable future home (the enum is `#[non_exhaustive]`).
@@ -67,8 +67,8 @@ Any fold-bearing `language!` language EXECUTES its native-fold expression trees 
 expressions (`(2+3)*(4-1)`→15, `((10-4)+1)==7`→true, `"a"++"b"++"c"`→"abc") — on the real f1r3node
 Rholang `RhoRuntime`, by lowering the expression to a Rholang dataflow of scalar-op contract calls.
 "Fully generalized" is a hard requirement: everything derives from `LanguageDef` — NO per-language
-hardcoding. (E3 is NOT needed for the RhoCalc bug or RhoCalc mixed COMM+fold — that path is E2's
-`dovetail_normal_term` + `lower_rhocalc_term`. E3 is the GENERIC scalar-fold→Rho-contract dataflow.)
+hardcoding. (E3 is NOT needed for the Rholang bug or Rholang mixed COMM+fold — that path is E2's
+`dovetail_normal_term` + `lower_rholang_term`. E3 is the GENERIC scalar-fold→Rho-contract dataflow.)
 
 ## 1. Mechanism decision — a NEW per-language macro emitter (option a)
 
@@ -105,7 +105,7 @@ existing single-op emitter `macros/src/gen/runtime/rho_invocation.rs` ("one cont
   | Node(usize)` (index into a post-order `Vec`); `build_dataflow_call_par(nodes, out_channel) -> Result<Par,
   RhoDataflowError>` (ITERATIVE post-order Par assembler — uses `models::rust::utils`
   `new_new_par`/`new_receive_par`/`new_send_par`/`new_boundvar_par`/`new_freevar_par`/`new_g*_par`, reusing
-  the de-Bruijn discipline from `rhocalc_ast.rs`); `scalar_abi_by_label(lowering) -> BTreeMap<String,
+  the de-Bruijn discipline from `rholang_ast.rs`); `scalar_abi_by_label(lowering) -> BTreeMap<String,
   &RhoScalarContractAbi>`. Par assembler lives HERE (not the macro) because `rho_binop`/`RhoBinaryOp` are
   module-private in `lower.rs` — but the dataflow only emits CALLS to the persistent `@"<Label>"`
   contracts, so it never needs `RhoBinaryOp`; value-level keeps it unit-testable.
@@ -130,14 +130,14 @@ Target `(2+3)*(4-1)` (`@"AddInt"`/`@"SubInt"`/`@"MulInt"` pre-installed):
 - One fresh name per internal node whose result is consumed by a parent → wrap the whole call in a single
   `new c0,…,c_{k-1} in {…}` (`new_new_par(k, body, …)`); the k result channels are de-Bruijn-bound `0..k-1`.
 - Two-layer index arithmetic: a received operand `l`/`r` introduces a `for`-binder that shifts all enclosing
-  `new`-bound channel indices up by 1 (`extend_env` `index+width`, `rhocalc_ast.rs:655`). Received values:
+  `new`-bound channel indices up by 1 (`extend_env` `index+width`, `rholang_ast.rs:655`). Received values:
   innermost = `new_boundvar_par(0)`, next-out = `new_boundvar_par(1)` (outward count, matching nested
   `PInputs`).
 - Bound vs ground: leaf literals → ground `RhoAstLiteral` directly in the producer send; internal-node
   results → dereferenced received var `*l` inside the consumer `for` body; return channel = own `*c_i`
   (bound, non-root) or `@"OUT"` (ground gstring, root).
 - Each `for(x<-c)`: `ReceiveBind{patterns:[new_freevar_par(0,…)], source:chan, remainder:None, free_count:1}`,
-  `bind_count:1` (= `rhocalc_ast.rs:411`). Nesting (one bind each) over a multi-bind join — simpler index
+  `bind_count:1` (= `rholang_ast.rs:411`). Nesting (one bind each) over a multi-bind join — simpler index
   bookkeeping; join is a deferred optimization.
 - `locally_free`: sends via `send_par` union (`:665`); receives via `receive_locally_free` (`:682`) +
   `filter_and_adjust_bitset` (`:690`); outer `new` via `filter_and_adjust_bitset(body.locally_free, k)`

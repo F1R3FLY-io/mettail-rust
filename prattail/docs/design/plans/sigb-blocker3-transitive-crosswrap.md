@@ -78,7 +78,7 @@ falls back to Blocker-2's one-level relay, for A/B).
   stay + gauntlet 4220/0. With `B3_DISABLE=1`: reproduces Blocker-2's 8/9 (residual returns) — proves transitivity is
   the sole new lever.
 - **M3.2** — full sweep: gauntlet 4220/0; C-bis cycle/newton/tarjan/star/scc/self_loop 0-fail; op-suites ≥1331/532;
-  soundness + `-3!` (edge_case 229/0 + probe_neg_zero 23/0) + parity 16/0 + cross_cat 2/0; rhocalc pre-existing-fail ≤8.
+  soundness + `-3!` (edge_case 229/0 + probe_neg_zero 23/0) + parity 16/0 + cross_cat 2/0; rholang pre-existing-fail ≤8.
 - **M3.3** — TERMINATION test (`int(y!=z>x<"qua")` + synthetic 5-op + deeper 6-op all parse + RETURN; `crosswrap_splices_total`
   ≤ static bound) + **interleaved Welch chain panel N≥51 + chain_1000/2000 RSS +5% max** (control `B2_DISABLE=1`; predict
   NEUTRAL/WIN) + ambiguity probe.

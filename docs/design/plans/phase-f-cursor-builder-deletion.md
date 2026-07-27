@@ -170,7 +170,7 @@ accessors. If unused by codegen facades, delete in a separate follow-up.
   at every `merge_equivalent_cursors` entry.
 
 - **TEST GAUNTLET**: prattail lib (4029 tests), macros, calc_op (1321),
-  rhocalc_op (532), edge_case_tests (223), recovery_integration_tests
+  rholang_op (532), edge_case_tests (223), recovery_integration_tests
   (test_calc_recovery_trailing_* exercise EOI/optional/recovery
   interactions heavily), optional_group_smoke (kept the L4 dangling-else
   invariants alive), wpda_trace_dump (snapshot consumers). HashMap-

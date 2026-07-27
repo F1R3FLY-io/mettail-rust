@@ -498,7 +498,7 @@ theory! {
 ```rust
 theory! {
     name: Rholang,
-    params: (nr: NewReplCalc, rc: RhoCalc),
+    params: (nr: NewReplCalc, rc: Rholang),
     extends: nr \/ rc,  // Disjunction
 }
 ```

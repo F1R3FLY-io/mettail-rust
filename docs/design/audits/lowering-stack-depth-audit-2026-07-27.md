@@ -1,4 +1,4 @@
-# The RhoCalc Lowering's Native-Stack Profile — Audit, Measurement, and Conversion Standard (2026-07-27)
+# The Rholang Lowering's Native-Stack Profile — Audit, Measurement, and Conversion Standard (2026-07-27)
 
 **Status.** Measurement-derived audit. Every quantitative claim below was **measured on this
 tree, on this machine, on 2026-07-27**, with the harnesses named alongside each table
@@ -6,7 +6,7 @@ tree, on this machine, on 2026-07-27**, with the harnesses named alongside each 
 Appendix A). Numbers reproduced from an earlier report rather than re-measured are labelled
 *reported*.
 
-**Scope.** `rholang-runtime/src/rhocalc_ast.rs` — the translation from MeTTaIL's `rhocalc`
+**Scope.** `rholang-runtime/src/rholang_ast.rs` — the translation from MeTTaIL's `rholang`
 AST (`Proc`, `Name`, …) to a normalized `rhoapi::Par`. This is the **lowering**. It is not the
 parser (measured here, and clean — §6) and it is not the f1r3node reducer (a separate,
 independently-measured family — §2).
@@ -20,7 +20,7 @@ it walks** turns a small input into a process abort. A stack overflow is a `SIGS
 on the guard page: it is neither a panic nor unwindable, so it takes down the whole process
 rather than failing one deploy.
 
-The reported reproducer is 30 bytes of RhoCalc:
+The reported reproducer is 30 bytes of Rholang:
 
 ```
 @"OUT"!([[[[[[ … [1] … ]]]]]])
@@ -29,14 +29,14 @@ The reported reproducer is 30 bytes of RhoCalc:
 Located under `gdb`:
 
 ```text
-Thread 1 "rhocalc" received signal SIGSEGV, Segmentation fault.
-mettail_rholang_runtime::rhocalc_ast::lower_proc () at rholang-runtime/src/rhocalc_ast.rs:931
+Thread 1 "rholang" received signal SIGSEGV, Segmentation fault.
+mettail_rholang_runtime::rholang_ast::lower_proc () at rholang-runtime/src/rholang_ast.rs:931
 Backtrace stopped: Cannot access memory        ← the guard page
 ```
 
 ### 1.1 ★ Why `RUST_MIN_STACK` is inert on this path
 
-`rholang-runtime/src/bin/rhocalc.rs` is `#[tokio::main] async fn main`, so **parsing and
+`rholang-runtime/src/bin/rholang.rs` is `#[tokio::main] async fn main`, so **parsing and
 lowering run on the process's main thread**. `RUST_MIN_STACK` is consulted only by
 `std::thread`'s spawn path; it cannot resize a main thread, whose size is fixed by
 `ulimit -s` before `main` is entered.
@@ -50,7 +50,7 @@ main-thread half of the pipeline.
 
 ## 2. ★ There are TWO independent overflow sites, and they are easy to confuse
 
-Measured on `target/debug/rhocalc` with the shared probe of Appendix A:
+Measured on `target/debug/rholang` with the shared probe of Appendix A:
 
 | depth | `ulimit -s` | `RUST_MIN_STACK` | faulting thread |
 |---|---|---|---|
@@ -60,13 +60,13 @@ Measured on `target/debug/rhocalc` with the shared probe of Appendix A:
 | 170 | 8,192 KiB | 1 GiB | **`main`** |
 
 ```
-  ┌──────────────────────── one `rhocalc` process ────────────────────────┐
+  ┌──────────────────────── one `rholang` process ────────────────────────┐
   │                                                                       │
   │   main thread                          tokio-rt-worker                │
   │   ┌───────────────────────┐            ┌────────────────────────────┐ │
   │   │ Proc::parse_via_wpda  │            │ f1r3node reducer /         │ │
   │   │        ▼              │            │ normalizer / sorter        │ │
-  │   │ rhocalc_ast::         │  lowered   │                            │ │
+  │   │ rholang_ast::         │  lowered   │                            │ │
   │   │   lower_proc  ────────┼───Par─────▶│  substitute · sort_match · │ │
   │   │                       │            │  pretty · clone            │ │
   │   └───────────────────────┘            └────────────────────────────┘ │
@@ -134,7 +134,7 @@ Two independent prior measurements agree: 48,640 B/level (0.5%) and 48,417 B/lev
 ## 4. Attribution: why the constant was so large
 
 `lower_proc` was a single function containing a **89-arm `match`** over `Proc`
-(`rhocalc_ast.rs:939-1491`), with self-recursive calls in many arms.
+(`rholang_ast.rs:939-1491`), with self-recursive calls in many arms.
 
 At `-O0`, `rustc` does not overlay the stack slots of mutually exclusive match arms. A
 function carrying `A` arms therefore reserves, in one frame, the sum of every arm's locals:
@@ -163,8 +163,8 @@ lower_proc ▸ CastList arm ▸ lower_list ▸ lower_proc ▸ CastList arm ▸ l
 It recurses through a **helper**. Converting only `lower_proc`'s direct self-calls would leave
 the reported reproducer exactly as it is.
 
-A Tarjan strongly-connected-component decomposition of the call graph of `rhocalc_ast.rs` and
-`rhocalc_formula.rs` puts **19 functions** in one component with `lower_proc`:
+A Tarjan strongly-connected-component decomposition of the call graph of `rholang_ast.rs` and
+`rholang_formula.rs` puts **19 functions** in one component with `lower_proc`:
 
 | member | line | reachable by |
 |---|---|---|
@@ -186,7 +186,7 @@ A Tarjan strongly-connected-component decomposition of the call graph of `rhocal
 | `lower_body_lifting_folds` | 2261 | `new` / receive bodies |
 | `lower_lookahead_operand` | 2950 | `x!(P)[*]` |
 | `lower_pattern_proc` | 2807 | receive patterns |
-| `lower_formula_in_env` | `rhocalc_formula.rs:102` | `t matches φ` |
+| `lower_formula_in_env` | `rholang_formula.rs:102` | `t matches φ` |
 
 Every edge in this component is traversable an unbounded number of times by a program, so
 **the whole component must be driven by one machine**. A conversion covering a proper subset
@@ -218,12 +218,12 @@ type information. It is stated in full rather than cited, because the *only* thi
 
 ```
 INPUT   the translation units that form the lowering:
-        rholang-runtime/src/rhocalc_ast.rs, rholang-runtime/src/rhocalc_formula.rs
+        rholang-runtime/src/rholang_ast.rs, rholang-runtime/src/rholang_formula.rs
 
 1  ERASE NOISE.  Replace every line comment, block comment, string literal, raw string
    literal and char literal by an equal number of spaces (newlines preserved, so byte
    offsets and line numbers survive).  Rationale: an identifier inside a doc comment or a
-   diagnostic message must not be mistaken for a call site — `rhocalc_ast.rs` documents
+   diagnostic message must not be mistaken for a call site — `rholang_ast.rs` documents
    `lower_list` dozens of times in prose.
 
 2  LOCATE DEFINITIONS.  For each match of /^(pub )?(pub\(crate\) )?fn NAME/ in the erased
@@ -329,7 +329,7 @@ build never paid**.
 Two consequences, and both matter more than the headline factor:
 
 1. **The win is not worthless — debug is where this code is exercised.** The gate runs debug, CI
-   runs debug, and every demo run sheet drives `target/debug/rhocalc`. Depth 169 → 542 in the
+   runs debug, and every demo run sheet drives `target/debug/rholang`. Depth 169 → 542 in the
    profile a presenter actually uses is a real improvement, and it is what let the run-sheet
    prefixes come off (§7).
 2. **★ Release is where the STRUCTURAL cost is visible, and it is 7,266 B/level — essentially
@@ -349,7 +349,7 @@ them would make M-2 look like a bigger win than it is. Release profile, B/level:
 | gate `lower_depth` | the lowering, alone | 2,157 |
 | gate `parse_depth` | the parser, alone | 304 |
 | gate `reproducer` | parse + lower + **iterative** teardown | 2,128 |
-| `bisect_ulimit` on `target/release/rhocalc` | **everything on the main thread** | **7,266** |
+| `bisect_ulimit` on `target/release/rholang` | **everything on the main thread** | **7,266** |
 
 `reproducer` ≈ `lower_depth`, so parsing and lowering do not sum — the deeper of the two
 dominates. But the binary costs **~5,100 B/level more than parse + lower together**, and that
@@ -361,7 +361,7 @@ the deep `Par`** (every gate subject avoids the latter via
 ★ **Consequence, stated before it surprises anyone: M-2 will take the gate's lowering subjects
 to zero without taking the binary to zero.** Converting the SCC removes its ~2,100 B/level; the
 renderer and the `Par` teardown are separate traversals, also on the main thread, and each needs
-its own conversion and its own gate subject. "The lowering is fixed" and "`rhocalc` is
+its own conversion and its own gate subject. "The lowering is fixed" and "`rholang` is
 depth-independent" are different claims, and only the first is M-2's.
 
 ---
@@ -566,8 +566,8 @@ nothing more.
 
 #### The "ambiguity nesting" axis — bounded by 2, and therefore not an axis
 
-`collect_proc_alternatives` (`rhocalc_ast.rs`) recurses over
-`RhoCalcTermInner::Ambiguous(Vec<RhoCalcTermInner>)`, which *looks* like a third growth axis
+`collect_proc_alternatives` (`rholang_ast.rs`) recurses over
+`RholangTermInner::Ambiguous(Vec<RholangTermInner>)`, which *looks* like a third growth axis
 alongside depth and width. It is not: on any parser-produced term its recursion depth is
 **bounded by 2**, because `Ambiguous` is flat by construction. Three independent mechanisms
 enforce that, and all three were read rather than assumed:
@@ -575,7 +575,7 @@ enforce that, and all three were read rather than assumed:
 | # | mechanism | location |
 |---|---|---|
 | 1 | **construction flattens one level** — `from_alternatives` opens with `alts.into_iter().flat_map(\|a\| match a { Self::Ambiguous(inner) => inner, other => vec![other] })`, which maintains flatness inductively | `macros/src/gen/runtime/language.rs:659` |
-| 2 | **the generated type declares it** — *"Multiple parse alternatives (2+, flat — no nested Ambiguous)"* | `target/generated/rhocalc/term_wrapper.rs:31` |
+| 2 | **the generated type declares it** — *"Multiple parse alternatives (2+, flat — no nested Ambiguous)"* | `target/generated/rholang/term_wrapper.rs:31` |
 | 3 | **four `unreachable!` guards assert it** at the `all_alts()` seams — *"all_alts() returns flat alternatives, not nested Ambiguous"* | `macros/src/gen/runtime/dovetail_report.rs`, `dovetail_report/typed_report.rs` |
 
 So no gate subject was built for it and no ladder was measured: there is no slope to find, and
@@ -604,9 +604,9 @@ different visit order could retain a different representative.
 ## 9. ★ M-2 — LANDED, and what it did and did not move
 
 Commit `3c0c3585`. The whole 87-member component of §4.1.1 is driven by one explicit
-`Job`/`Kont` worklist (`rhocalc_ast::drive`), in the idiom of `prattail/src/sppf_realize.rs:164`.
+`Job`/`Kont` worklist (`rholang_ast::drive`), in the idiom of `prattail/src/sppf_realize.rs:164`.
 The recursive form is retained VERBATIM under `cfg(test)` in
-`rholang-runtime/src/rhocalc_ast/recursive_oracle.rs` and compared against the driver by five
+`rholang-runtime/src/rholang_ast/recursive_oracle.rs` and compared against the driver by five
 differentials (byte-identical encoded `Par`, identical typed errors, identical side registers,
 over 97 surface-syntax entries plus a depth-400 term, with all 31 continuations asserted reached).
 
@@ -692,7 +692,7 @@ recursive pair in another crate.
 
 ### 9.5 ★ The whole binary — and a superseded attribution
 
-`ulimit -s` bisection of `rhocalc` on a `nest-d.rho` ladder at `d` = 100 and 400,
+`ulimit -s` bisection of `rholang` on a `nest-d.rho` ladder at `d` = 100 and 400,
 `RUST_MIN_STACK` pinned to 1 GiB so only the main thread binds:
 
 | profile | before (M-1) | after (M-2) | factor |
@@ -731,7 +731,7 @@ The probe program, at nesting depth `d`:
 Minimum viable `ulimit -s` at a fixed depth (exponential probe, then bisect to 4 KiB):
 
 ```bash
-runs() { ( ulimit -c 0; ulimit -s "$1"; exec target/debug/rhocalc "$2" >/dev/null 2>&1 ); }
+runs() { ( ulimit -c 0; ulimit -s "$1"; exec target/debug/rholang "$2" >/dev/null 2>&1 ); }
 ```
 
 ⚠ Two hygiene rules, both learned the hard way:
@@ -748,7 +748,7 @@ that binds regardless of how the code is reached in production — and bisects. 
 `report_slopes` test is the measurement instrument:
 
 ```bash
-cargo test -p rholang-runtime --features "rhocalc-runtime lambda-runtime calculator-runtime" \
+cargo test -p rholang-runtime --features "rholang-runtime lambda-runtime calculator-runtime" \
   --test stack_depth_gate -- --ignored --exact report_slopes --nocapture
 ```
 

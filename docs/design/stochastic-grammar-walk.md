@@ -14,7 +14,7 @@ re-parse. For any value class the grammar's lexer does not admit —
 the canonical example is `NumLit(-5)` in a language whose Integer
 token is `[0-9]+` (no leading sign) and which has no `Neg` rule —
 the Display step emits text the lexer cannot tokenize. Running
-`simulate_rhocalc` would then report terms as failing with parse
+`simulate_rholang` would then report terms as failing with parse
 errors like `1:1: expected Proc expression, found '-'`, and the
 strategy harness at `strategies.rs:1131` silently skipped those
 failures — polluting pass counts with out-of-grammar garbage.
@@ -215,20 +215,20 @@ architecture per se:
 |               |                  | negatives arise via `Neg(NumLit(v))` through    |
 |               |                  | the AST builder, displays correctly.            |
 | led_test      | None             | Has `NegNum`; same as calculator.               |
-| rhocalc       | None             | No `Neg` rule. Classifier → `Integer`. Negative |
+| rholang       | None             | No `Neg` rule. Classifier → `Integer`. Negative |
 |               |                  | i64 tape values project to non-negative. To     |
 |               |                  | unlock negative-value coverage, user adds one   |
 |               |                  | of:                                             |
 |               |                  | — `Neg . k:Int ... fold;` grammar rule          |
 |               |                  | — `tokens { Integer = /-?[0-9]+/; }` override   |
-| mixedmath, … | None             | Same as rhocalc.                                |
+| mixedmath, … | None             | Same as rholang.                                |
 
 No per-language configuration is required; the classifier reads each
 language's effective lexer pattern.
 
 ## Verification
 
-- `simulate_rhocalc --steps 10000 --cases 1000 --morphology`:
+- `simulate_rholang --steps 10000 --cases 1000 --morphology`:
   previously aborted with SIGABRT; now exits 0 with 1000/1000 cases
   passing.
 - All 9 `simulate_*` binaries run to exit 0 at the plan-level scale

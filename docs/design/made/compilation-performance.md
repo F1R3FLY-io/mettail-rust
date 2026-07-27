@@ -55,7 +55,7 @@ struct that was fully monomorphized in isolation.
 | Language | Categories | `ascent_run!` Invocations | Ascent Source Lines |
 |----------|-----------|--------------------------|---------------------|
 | Calculator | Int, Float, Bool, Str | 4 | 1,884 |
-| RhoCalc | Proc, Name, Int, Float, Bool, Str | 6 | 1,687 |
+| Rholang | Proc, Name, Int, Float, Bool, Str | 6 | 1,687 |
 | Ambient | Proc, Name | 2 | 449 |
 | Lambda | Term | 1 | 112 |
 | **Total** | | **13** | **4,132** |
@@ -74,18 +74,18 @@ Top contributors by LLVM IR lines:
 
 | Function | Lines | % | Copies |
 |----------|-------|---|--------|
-| `rhocalc::run_ascent_typed::{{closure}}` | 345,373 | 7.5% | 1,754 |
+| `rholang::run_ascent_typed::{{closure}}` | 345,373 | 7.5% | 1,754 |
 | `core::slice::iter::Iter::fold` | 266,120 | 5.8% | 3,008 |
-| `rhocalc::run_ascent_typed::{{closure}}^2` | 254,166 | 5.5% | 798 |
+| `rholang::run_ascent_typed::{{closure}}^2` | 254,166 | 5.5% | 798 |
 | `calculator::run_ascent_typed::{{closure}}` | 238,361 | 5.2% | 1,166 |
 | `core::slice::iter::Iter::for_each` | 224,200 | 4.9% | 4,484 |
-| `rhocalc::run_ascent_typed::{{closure}}^3` | 208,452 | 4.5% | 1,428 |
+| `rholang::run_ascent_typed::{{closure}}^3` | 208,452 | 4.5% | 1,428 |
 | `FlattenCompat::iter_fold` | 204,020 | 4.4% | 2,020 |
 | `Iterator::fold` | 199,757 | 4.3% | 3,736 |
 | `calculator::run_ascent_typed::{{closure}}^2` | 155,720 | 3.4% | 472 |
 | `hashbrown::raw::RawIterRange::fold_impl` | 151,992 | 3.3% | 944 |
 
-The top two language-specific entry points alone (`rhocalc` + `calculator` closures)
+The top two language-specific entry points alone (`rholang` + `calculator` closures)
 accounted for 583,734 lines (12.7%) of total LLVM IR.
 
 ### Secondary Root Cause: LLVM Code Generation
@@ -142,7 +142,7 @@ now defines one named struct that contains all relations and rules.
 | Language | Before (`ascent_run!`) | After (`ascent!`) | Reduction |
 |----------|----------------------|-----------------|-----------|
 | Calculator | 4 | 1 | 75% |
-| RhoCalc | 6 | 1 | 83% |
+| Rholang | 6 | 1 | 83% |
 | Ambient | 2 | 1 | 50% |
 | Lambda | 1 | 1 | 0% |
 | **Total** | **13** | **4** | **69%** |
@@ -344,7 +344,7 @@ The `RUSTFLAGS` environment variable overrides `rustflags` in `.cargo/config.tom
 | `error[E0463]: can't find crate for 'cranelift'` | cranelift component missing | Run `rustup component add rustc-codegen-cranelift-preview` |
 | `Gxhash requires aes and neon intrinsics` (Linux aarch64) | `pathmap` → `gxhash` needs compile-time `target-feature` flags; `.cargo/config.toml` had no `[target.aarch64-unknown-linux-gnu]` section | Pull latest config (adds `+aes,+neon`) or set `RUSTFLAGS="-C target-feature=+aes,+neon"`; avoid `target-cpu=native` in shared setups |
 | `invalid linker name in argument '-fuse-ld=mold'` (Linux aarch64) | mold/clang not installed but config requested them | Use latest `.cargo/config.toml` (aarch64 uses default linker); or `sudo apt install mold clang` and uncomment optional mold lines |
-| `thread '…' has overflowed its stack` during `cargo test` | Ascent/rhocalc on default 2 MiB test stacks; worse on aarch64 or low-RAM hosts | Pull latest config (`RUST_MIN_STACK` in `.cargo/config.toml`); or `RUST_MIN_STACK=8388608 cargo test -- --test-threads=1` |
+| `thread '…' has overflowed its stack` during `cargo test` | Ascent/rholang on default 2 MiB test stacks; worse on aarch64 or low-RAM hosts | Pull latest config (`RUST_MIN_STACK` in `.cargo/config.toml`); or `RUST_MIN_STACK=8388608 cargo test -- --test-threads=1` |
 | `No such file or directory` during codegen | Concurrent cargo builds sharing target dir | Kill stray `cargo`/`rustc` processes |
 
 ---

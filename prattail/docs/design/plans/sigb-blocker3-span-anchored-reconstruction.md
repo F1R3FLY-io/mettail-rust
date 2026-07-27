@@ -171,7 +171,7 @@ Float-family d-ii (forward projection fire) adds NO new drain — it fires inlin
 
 - **M7.3 — TERMINATION + Welch + ambiguity.** TERMINATION test (`int(y != true > x < "qua")` + `int(y and b == y < "x")` + `float(float(float(10,64),64),64)` + synthetic 5-op/6-op var-first Int→Str-tail chains + synthetic quad-nested float — ALL parse AND RETURN; instrument + assert retention-fires ≤ `crosswrap_drained.len()` AND `crosswrap_splices_total` ≤ static product AND **splice-count ≪ M5.1's 16251 per input**) + interleaved Welch chain panel N≥51 (control `B2_DISABLE=1`; predict NEUTRAL/WIN) + chain_1000/2000 RSS +5% max + ambiguity-preservation probe (an input with two span+category-aligned bodies surfaces BOTH derivations).
 
-- **M7.4 — full sweep.** gauntlet 4220/0; C-bis cycle/newton/tarjan/star/scc/self_loop 0-fail; op-suites `gen_calculator_op` ≥1331 / `gen_rhocalc_op` 532; soundness + `-3!` (edge_case 229/0 + probe_neg_zero 23/0) + parity 16/0 + cross_cat 2/0; `pass2c_token_soundness_probe` + `wpds_parse_rejects_bare_bool_in_int_slot_token_unsound` green; rhocalc pre-existing-fail ≤8. Save `git diff > /var/tmp/suite-green/sigb-cast-family-FINAL.patch` + a `b3-span-…` M7.k delta diff (pure additions).
+- **M7.4 — full sweep.** gauntlet 4220/0; C-bis cycle/newton/tarjan/star/scc/self_loop 0-fail; op-suites `gen_calculator_op` ≥1331 / `gen_rholang_op` 532; soundness + `-3!` (edge_case 229/0 + probe_neg_zero 23/0) + parity 16/0 + cross_cat 2/0; `pass2c_token_soundness_probe` + `wpds_parse_rejects_bare_bool_in_int_slot_token_unsound` green; rholang pre-existing-fail ≤8. Save `git diff > /var/tmp/suite-green/sigb-cast-family-FINAL.patch` + a `b3-span-…` M7.k delta diff (pure additions).
 
 ---
 

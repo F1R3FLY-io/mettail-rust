@@ -55,7 +55,7 @@ pub struct ContextWeight(u128);
 **Design rationale**:
 
 - **128-bit capacity**: Supports up to 128 distinct rule labels per category.
-  Real-world grammars (including rhocalc with 36+ rules across categories)
+  Real-world grammars (including rholang with 36+ rules across categories)
   are well within this limit.
 - **Copy semantics**: `u128` is `Copy`, so ContextWeight passes by value with
   no heap allocation, no reference counting, and no lifetime entanglement.

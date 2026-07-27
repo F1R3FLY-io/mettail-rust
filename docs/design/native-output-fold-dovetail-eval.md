@@ -7,7 +7,7 @@ folds (Calculator arithmetic `AddInt(1,2)→3`, etc.) stopped evaluating after A
 ## Principle (user directive)
 
 Dovetail completes all the rewrites it can — native-output folds (arithmetic), non-native-output
-casts (already working for rhocalc), structural rewrites. The Rho machine (f1r3node `RhoRuntime`/
+casts (already working for rholang), structural rewrites. The Rho machine (f1r3node `RhoRuntime`/
 `DebruijnInterpreter` + RSpace, via `rholang-runtime`) is dispatched **only when Rho-process
 semantics are needed** (COMM/channels). Per-language `selected_default_runtime_backend` is the
 dispatch seam: rewrite-only languages (Calculator) advertise Dovetail; Rho languages advertise the
@@ -68,18 +68,18 @@ sound). Build: `make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-dovetail`.
 
 ## §4 — Regression (exact)
 
-rhocalc_dovetail_fold (MUST stay 6/6), rhocalc_dovetail_{op_enum,host_routed}, ambient_dovetail_flip,
+rholang_dovetail_fold (MUST stay 6/6), rholang_dovetail_{op_enum,host_routed}, ambient_dovetail_flip,
 ambient_binder_handler, simulation_integration + probe_neg_zero (target → green), gen_calculator_{unit,
 rewrite,analytical,prop} + calculator, gen_{basemath,extmath,mixedmath,importedmath,ledtest}_* (§1d guard),
 macros, dovetail crate, prattail --lib, simulation, formal rocq-dovetail.
-(`dovetail-codegen` now in default; pass `--features rhocalc` for rhocalc-cfg'd tests.)
+(`dovetail-codegen` now in default; pass `--features rholang` for rholang-cfg'd tests.)
 
 ## §5 — Risks
 
 Termination/budget for arithmetic saturation (folds COLLAPSE redices → fewer nodes; confirm nested +
 campaign converge); cross-cat cast blow-up (extraction picks one integer literal deterministically);
 extraction must actually find `NumLit(3)` (PRIMARY gate — validate codegen fires BEFORE runner edit);
-do not regress rhocalc (object-param casts unchanged; only its pure-scalar `NegInt` newly fires);
+do not regress rholang (object-param casts unchanged; only its pure-scalar `NegInt` newly fires);
 `needs_typed_fold_path` broad-widen side effects (math langs — §4-F); try_eval defer for non-literal
 children (converges Complete); overflow without safeify (CRITICAL — §1b mandatory).
 

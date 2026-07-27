@@ -452,7 +452,7 @@ All 1,339 tests pass after adding the 8 new G24 tests.
 
 ### 10.2 Existing Grammars
 
-The four existing PraTTaIL grammars (Calculator, BaseMath, Lambda, RhoCalc)
+The four existing PraTTaIL grammars (Calculator, BaseMath, Lambda, Rholang)
 produce no G24 diagnostics -- their rules are either already caught by G07 or
 are genuinely structurally distinct. This confirms that G24 does not introduce
 noise for well-designed grammars.

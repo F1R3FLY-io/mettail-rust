@@ -7,7 +7,7 @@
 //    • a child edge points from an e-node INTO the e-class of its argument.
 //
 //  This figure makes two facts from `03-dovetail-rewrite-semantics.md` visual,
-//  using rhocalc's signature reduction — COMM:
+//  using rholang's signature reduction — COMM:
 //
 //    redex  t = par⟦ for(x ← c).P , c!(Q) ⟧      ⤳   contractum  u = P{Q ∕ x}
 //

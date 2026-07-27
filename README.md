@@ -7,7 +7,7 @@ This package enables you to specify a formal language in a macro, which generate
 For example, the rho-calculus is the concurrent language of [f1r3fly](https://github.com/F1R3FLY-io).
 ```rust
 language! {
-    name: RhoCalc,
+    name: Rholang,
 
     types {
         Proc
@@ -69,13 +69,13 @@ The interactive REPL supports term exploration, step-by-step rewriting, and high
 
 ```
 $ cargo run
-mettail> lang rhocalc
-Loading language: rhocalc
-  [8 definitions from repl/src/examples/rhocalc.txt]
+mettail> lang rholang
+Loading language: rholang
+  [8 definitions from repl/src/examples/rholang.txt]
 ✓ Language loaded successfully!
 Use 'exec <term>' to execute a program.
 
-RhoCalc> env
+Rholang> env
 
 Environment:
   dup = ^l.{l?x.{{l!(*(x)) | *(x)}}}
@@ -87,7 +87,7 @@ Environment:
   read = ^loc.{^ret.{loc?x.{{ret!(*(x)) | loc!(*(x))}}}}
   write = ^loc.{^val.{loc?x.{loc!(val)}}}
 
-RhoCalc> exec { server!(request) | $proc($name($name(rep, location), server), id) }
+Rholang> exec { server!(request) | $proc($name($name(rep, location), server), id) }
 
 Parsing... ✓
 Substituting environment... ✓
@@ -103,7 +103,7 @@ Current term:
 { $proc($name($name(^n. { ^a. { ^cont. {  { n!(a?y. {  { $name(cont, y) | $name(^l. { l?x. {  { l!(*(x)) | *(x) } } }, n) } }) | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, n) } } } }, location), server), ^z. { *(z) }) 
 | server!(request) }
 
-RhoCalc> rewrites
+Rholang> rewrites
 
 Rewrites available from current term:
 
@@ -112,7 +112,7 @@ Rewrites available from current term:
      | server!(request) }
 
 
-RhoCalc> apply 0
+Rholang> apply 0
 
 Applied rewrite →
   { $proc($name(^a. { ^cont. {  { location!(a?y. {  { $name(cont, y) | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, location) } }) | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, location) } } }, server), ^z. { *(z) }) 
@@ -120,7 +120,7 @@ Applied rewrite →
 
 ...
 
-RhoCalc> apply 0
+Rholang> apply 0
 
 Applied rewrite →
   { location!(*(@(server?y. {  { $name(^z. { *(z) }, y) | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, location) } }))) 

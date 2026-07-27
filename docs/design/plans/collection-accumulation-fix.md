@@ -18,7 +18,7 @@ The defect is **realize-time cursor mis-attribution**:
   accessor `:10923`) — usually NOT the cursor whose derivation is being realized → truncated/empty collection.
 - Symptoms: map keeps the LAST pair (committed winner's arena holds a subset); PInputs `ns` empties → comm
   `multi_substitute_name([x],[])` → `subst.rs:6747` OOB. List literals pass by accident (single dominant cursor
-  becomes `branch_cursors[0]`). Single-binder rhocalc fails / multi-binder passes due to dedup+terminal-check interaction.
+  becomes `branch_cursors[0]`). Single-binder rholang fails / multi-binder passes due to dedup+terminal-check interaction.
 
 ## Fix (one fix, 3 files) — make collection elements derivation-local in the SPPF
 - **Change A — `prattail/src/sppf.rs`:** `CollectionId { id: u32, items: Vec<SppfId> }`; `intern_collection_id(id, items)`;
@@ -44,8 +44,8 @@ The defect is **realize-time cursor mis-attribution**:
 
 ## Verify
 gauntlet `cargo test --release -p prattail --lib` (4206/0; update SPPF-shape unit tests to new node shape);
-op-suites (gen_calculator_op ≥1321, gen_rhocalc_op 532/0); 20 targets (comm::*, new_and_extrusion::*,
-parsing::multi_input/receive/new_single, rhocalc_cast_under_send_reduces_via_comm; test_map_get/keys/values/merge +
+op-suites (gen_calculator_op ≥1321, gen_rholang_op 532/0); 20 targets (comm::*, new_and_extrusion::*,
+parsing::multi_input/receive/new_single, rholang_cast_under_send_reduces_via_comm; test_map_get/keys/values/merge +
 map-NF); class2/3 + wpda_parity collection smokes; Welch panel (release, quiet, N≥15).
 
 ## Risks

@@ -398,7 +398,7 @@ parallel drain set), with EdgeKind::CrossCatLhs widened to carry (wrap_cat, wrap
   gss.rs:540-550) and DOES coalesce in add_edge_kind (gss.rs:649; proven by
   test_wpds_gss_edge_identity_includes_edge_kind gss.rs:1144-1152). Widening the COMPARED
   payload can split previously-coalesced edges with the switch OFF. It happens to be inert on
-  the SHIPPED grammars (every CrossCatLhs source has exactly one host: calc host=7, rhocalc
+  the SHIPPED grammars (every CrossCatLhs source has exactly one host: calc host=7, rholang
   host=0 — verified in target/generated/*/wpda.rs) but that is grammar-conditional, not
   structural. Correction: carry wrap as a READ-NOT-COMPARED side payload (GssEdgeId-keyed side
   table, or manual Eq/Hash ignoring wrap fields). Also 3 exact-bind compile sites misclassified

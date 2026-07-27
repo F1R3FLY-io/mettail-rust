@@ -67,7 +67,7 @@ same source name `→` NO float) is the required catch; Rocq T1' makes it machin
   disposition-gated `try_direct_eval` override calling `#primary_type::binder_congruence_nf_term(&typed.0)`
   → `Some(Box::new(Term(progressed)))` or `None` (fail-closed preserved).
 - Gate helpers (macro): `has_binder_equations(def)` = any equation pattern carries a Lambda/binder
-  constructor; `has_no_host_disposition(def)` = no `RhoNativeJoin` obligation (Ambient: none; rhocalc Extrude:
+  constructor; `has_no_host_disposition(def)` = no `RhoNativeJoin` obligation (Ambient: none; rholang Extrude:
   yes ⇒ NOT emitted). Use/expose `rholang-codegen::backend` (`collect_guard_obligations` /
   `rho_native_join_present`). Keep `premise_supported(Freshness)=>false` UNCHANGED.
 - Alt-preserving wrapper `binder_congruence_nf_term(inner)`: map over `Ambiguous(alts)` (mirror
@@ -93,7 +93,7 @@ moniker-faithful `open`/`close` (close incr scope-offset under EBind, mirroring 
 4. FIX-B BLOCKED: `open(x,new(x,0))` (same source name) → try_direct_eval None (no float); contrast
    `open(a,new(x,0))` → floats. + ScopeExtrusion blocked symmetric case.
 5. Gold-moniker-reference equality over ~8-term corpus (each equation; hand-written `moniker_ref_float`).
-6. rhocalc handler NOT emitted (try_direct_eval None for a rhocalc new/extrude term); determinism (twice `⇒`
+6. rholang handler NOT emitted (try_direct_eval None for a rholang new/extrude term); determinism (twice `⇒`
    identical exact_key).
 
 ## Critical files

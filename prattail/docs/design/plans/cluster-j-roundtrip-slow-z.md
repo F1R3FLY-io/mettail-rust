@@ -36,11 +36,11 @@ Extracted from `/var/tmp/nextest.log`. Grouped by the **inner** parser error (th
 - `gen_calculator_prop str_display_parse_roundtrip` — `str(… > int(a , cast_error_int))` → `found ( at 1:4`.
 - These are the "555-fork explosion, NO absorb" class. The B3 baseline confirms multi-level casts (`float(float(float(...)))`) were the explicit B3 target — so whether these are green now depends entirely on how far B3 transitive cross-wrap splicing landed. **Re-run decides.** (Note: some show a SECOND arg, e.g. `int(str(...) , (...))`; the calculator `int(a)` cast is single-arg; a two-arg `int(x, y)` surface suggests these inputs interleave a comparison/`count`-like form; this is exactly where re-run + the per-input trace is needed before any edit.)
 
-**Sub-cluster J-C — rhocalc / binder-heavy Name·Proc cross-cat (NOT chain-absorbable).** Predicted **MAY partially cascade (B completed bare-var Proc/Name parses); likely some residual**:
-- `gen_rhocalc_prop int_display_parse_roundtrip` — `count(a!(error) , -a - ().{error})` → `found identifier a at 1:7`.
-- `gen_rhocalc_prop name_display_parse_roundtrip` — `@(a!(error))` → `found identifier a at 1:3`.
-- `gen_rhocalc_prop proc_display_parse_roundtrip` — `len(a!(error))` → `found identifier a at 1:5`.
-- These exercise `POutput (n "!" "(" q ")")`, `NQuote (@ "(" p ")")`, `Len`, `CountBag` (`languages/src/rhocalc.rs:70-84,756,659`) — Name-category dispatch nested in Proc prefix forms. The master plan's Phase 6.3 constraint says binder-heavy non-canonical-chain grammars are NOT rescued by chain absorption; their tractability comes from (1) the B-completion fix, (2) `semantic_hash`/eqrel dedup, (3) input-bounding. So expect a residual here even after B.
+**Sub-cluster J-C — rholang / binder-heavy Name·Proc cross-cat (NOT chain-absorbable).** Predicted **MAY partially cascade (B completed bare-var Proc/Name parses); likely some residual**:
+- `gen_rholang_prop int_display_parse_roundtrip` — `count(a!(error) , -a - ().{error})` → `found identifier a at 1:7`.
+- `gen_rholang_prop name_display_parse_roundtrip` — `@(a!(error))` → `found identifier a at 1:3`.
+- `gen_rholang_prop proc_display_parse_roundtrip` — `len(a!(error))` → `found identifier a at 1:5`.
+- These exercise `POutput (n "!" "(" q ")")`, `NQuote (@ "(" p ")")`, `Len`, `CountBag` (`languages/src/rholang.rs:70-84,756,659`) — Name-category dispatch nested in Proc prefix forms. The master plan's Phase 6.3 constraint says binder-heavy non-canonical-chain grammars are NOT rescued by chain absorption; their tractability comes from (1) the B-completion fix, (2) `semantic_hash`/eqrel dedup, (3) input-bounding. So expect a residual here even after B.
 
 **Sub-cluster J-D — class* smoke grammars (`choose`/`chooseMap` prefix, opt/multi).** Predicted **cascade-mixed; some are genuine Display-vs-grammar (see J-E)**:
 - `gen_class2hashmapsmoke_prop proc_display_parse_roundtrip` — `chooseMap a(chooseMap 0(…))` → `found chooseMap at 1:13`.
@@ -52,7 +52,7 @@ Extracted from `/var/tmp/nextest.log`. Grouped by the **inner** parser error (th
 
 These use `if let Ok(parsed)` in the template (Tests 5/6) or the idempotence assert in Test 4, so they are **NOT parse failures** — the parse succeeds and the term canonicalizes differently. **These DO NOT cascade from B** (B is about parse completion, not canonicalization). They are a distinct root cause (§1.2):
 - `gen_ambient_prop proc_strong_roundtrip_via_display` — `{a | a | a}` → `{a | a}` (HashBag multiset count 3 → 2).
-- `gen_rhocalc_prop proc_strong_roundtrip_via_display` — prior-session evidence: `bitnot {}` → `{}` (minimal input `BitNot(PZero)`); also `{a | a | error}` → variant.
+- `gen_rholang_prop proc_strong_roundtrip_via_display` — prior-session evidence: `bitnot {}` → `{}` (minimal input `BitNot(PZero)`); also `{a | a | error}` → variant.
 - `gen_class2optsmoke_prop proc_strong_roundtrip` — `choose 0` → `0` (the `Choose` injection wrapper is dropped).
 - `gen_guardedrho_prop name_strong_roundtrip` — `@a` → `a`; and `proc_display_parse_roundtrip` idempotence `{{a}}` → `{a}` (singleton-PPar flattening).
 - `gen_class2smoke_prop proc_display_parse_roundtrip` idempotence — `choose…(a | a | …)` → fewer elements (`choose choose 0()()` collapse).
@@ -66,7 +66,7 @@ These use `if let Ok(parsed)` in the template (Tests 5/6) or the idempotence ass
 From `/var/tmp/nextest.log` lines 15332-15434:
 - `gen_calculator_prop sim_calculator_proptest_campaign` — **PASSED at 1391.9 s** (known-good; NOT a hang). Within the existing 1800 s ci-override cap.
 - `gen_ambient_prop proc_display_parse_roundtrip` — HUNG, last seen `>1980 s`, never completed.
-- `gen_rhocalc_prop sim_rhocalc_proptest_campaign` — HUNG, last seen `>1980 s`, never completed.
+- `gen_rholang_prop sim_rholang_proptest_campaign` — HUNG, last seen `>1980 s`, never completed.
 
 **Critical correction to the master-plan premise:** `.config/nextest.toml` **already exists** (committed in `380cc94`, dated 2026-05-29) with the bounded profile: `default` 60 s×3 = 180 s; `ci` 120 s×5 = 600 s general, with a `proptest_campaign|display_parse_roundtrip` override at 180 s×10 = **1800 s cap**. So Phase 6.1 (infra) is DONE. The two hangs exceed 1800 s → they now FAIL LOUDLY (terminated) rather than stalling the suite. The slow-Z work is therefore purely **root-cause + input-bounding** so they complete within cap, not infra.
 
@@ -79,7 +79,7 @@ The `*_display_parse_roundtrip` template (Test 4, `macros/src/gen/test_gen/strat
 
 ### 1.2 J roundtrip-mismatches (§0.3) — genuine grammar canonicalization, NOT a parser defect
 The mismatches are all **observational-equivalence collapses that the grammar legitimately performs**:
-- **HashBag multiset**: `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}"` (`rhocalc.rs:72`, `ambient.rs:27`). `HashBag` is a **multiset** (`runtime/src/hashbag.rs`: "tracks the count of each unique element… Equality is based on element counts"). `{a | a | a}` is count{a:3}; if the parser builds count{a:2}, that is a parser bug (a dropped duplicate). BUT if the language INTENDS parallel composition to be set-like at a given nesting, the collapse is correct and the TEST EXPECTATION is wrong. The `{{a}}`→`{a}` case is singleton-PPar flattening (a `PPar` of one element ≡ that element) — a deliberate canonicalization.
+- **HashBag multiset**: `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}"` (`rholang.rs:72`, `ambient.rs:27`). `HashBag` is a **multiset** (`runtime/src/hashbag.rs`: "tracks the count of each unique element… Equality is based on element counts"). `{a | a | a}` is count{a:3}; if the parser builds count{a:2}, that is a parser bug (a dropped duplicate). BUT if the language INTENDS parallel composition to be set-like at a given nesting, the collapse is correct and the TEST EXPECTATION is wrong. The `{{a}}`→`{a}` case is singleton-PPar flattening (a `PPar` of one element ≡ that element) — a deliberate canonicalization.
 - **Injection/prefix wrappers**: `choose 0`→`0`, `@a`→`a`, `bitnot {}`→`{}`. These are AST injection constructors (`Choose`, `NQuote`, `BitNot` on `PZero`) whose Display emits a prefix that the parser canonicalizes away (or whose Display should not have emitted the wrapper for that operand). `BitNot(PZero)` at depth-1 displaying `bitnot {}` but reparsing to `{}` means either Display emits `bitnot` where the grammar can't reattach it to `{}`, or the parser drops it.
 
 **The discriminator (decided per case at implementation M2/M3, NOT now):** for each mismatch, compute `semantic_hash(left)` vs `semantic_hash(right)` (the existing observational-equivalence key, per `f13-stage-2-3-semantic-hash.md`).
@@ -89,12 +89,12 @@ The mismatches are all **observational-equivalence collapses that the grammar le
 These mismatches are a **small, bounded set** (~5-7 generated tests + 1 unit test) and are independent of B; they are the genuine residual the master plan's Phase 7.1 option (a)/(b) anticipated.
 
 ### 1.3 Slow-Z hangs — binder-heavy proptest blow-up, NOT a B parse cascade
-- `gen_rhocalc_prop sim_rhocalc_proptest_campaign` (`macros/src/gen/test_gen/simulation_tests.rs:315-372`, `with_cases(50)`, `arb_proc(3u32)`). The campaign wraps the run in `catch_unwind` and tolerates ALL outcomes except `InvariantViolation` — so it does NOT hang on parse failures (those are caught). The hang is the **rewrite engine / Ascent eqrel-closure** on deep random rhocalc terms (`run_to_normal_form`), and/or the `BoundedSize{max_nodes:10000}`/`BoundedDepth{max_depth:50}` exploration cost across 50 cases. Per Phase 6.3 + the F.13 standing result, rhocalc is non-canonical-chain/binder-heavy, so chain absorption does NOT help; tractability comes from `semantic_hash`/eqrel dedup at the rhocalc boundary and from clamping the input magnitude/depth.
+- `gen_rholang_prop sim_rholang_proptest_campaign` (`macros/src/gen/test_gen/simulation_tests.rs:315-372`, `with_cases(50)`, `arb_proc(3u32)`). The campaign wraps the run in `catch_unwind` and tolerates ALL outcomes except `InvariantViolation` — so it does NOT hang on parse failures (those are caught). The hang is the **rewrite engine / Ascent eqrel-closure** on deep random rholang terms (`run_to_normal_form`), and/or the `BoundedSize{max_nodes:10000}`/`BoundedDepth{max_depth:50}` exploration cost across 50 cases. Per Phase 6.3 + the F.13 standing result, rholang is non-canonical-chain/binder-heavy, so chain absorption does NOT help; tractability comes from `semantic_hash`/eqrel dedup at the rholang boundary and from clamping the input magnitude/depth.
 - `gen_ambient_prop proc_display_parse_roundtrip` (`strategies.rs:1402`, `with_cases(100)`, `arb_proc(3)`). This is a roundtrip test, but it HANGS rather than failing — meaning a *specific generated ambient term* drives the PARSER (`Proc::parse`) into a blow-up (cursor/SPPF explosion on a deeply-nested `PPar`/`PAmb`/`PNew` term), OR Display itself is super-linear. The B gate fix may reduce this (fewer spurious cursors); whether it now completes within 1800 s is unknown. The candidate root is parser cursor explosion on nested HashBag-PPar (the `*sep("|")` collection inside `*sep` ambient nesting), which the `hang-dump` feature (`PRATTAIL_HANG_DUMP=1` + `--features hang-dump`, SIGUSR1) is designed to diagnose.
 
 Two orthogonal mitigations, both honoring the invariant (neither drops an alternate):
 - **(a) Input-bounding** (`strategies.rs` `arb_*` / tape projection + `with_cases`): clamp generated term depth/magnitude and thread `PROPTEST_CASES` so the campaign's intrinsic cost is bounded. This is a TEST-INPUT change, no product behavior, no Welch.
-- **(b) Root-cause dedup**: if the trace shows Ascent eqrel-closure divergence (rhocalc) or cursor explosion (ambient), apply the existing `semantic_hash` + outer-discriminant dedup at the rhocalc normal-form boundary / parser cohort — dedup ONLY observationally-equivalent states (never plain Display-dedup; the `-3!` lesson). This is a runtime-behavioral change → Welch + op-suites + disambiguation gate required.
+- **(b) Root-cause dedup**: if the trace shows Ascent eqrel-closure divergence (rholang) or cursor explosion (ambient), apply the existing `semantic_hash` + outer-discriminant dedup at the rholang normal-form boundary / parser cohort — dedup ONLY observationally-equivalent states (never plain Display-dedup; the `-3!` lesson). This is a runtime-behavioral change → Welch + op-suites + disambiguation gate required.
 
 ---
 
@@ -118,7 +118,7 @@ Two orthogonal mitigations, both honoring the invariant (neither drops an altern
 ### Fix 3 — Slow-Z: bound inputs, then root-cause if still over cap (§1.3)
 - **3a (infra, already partly done):** `.config/nextest.toml` exists with the 1800 s cap. Thread `PROPTEST_CASES` into the generated `with_cases(N)` so triage can run reduced (e.g. `PROPTEST_CASES=8`) while CI keeps full coverage. Sites: `macros/src/gen/test_gen/strategies.rs:1366` (`with_cases(100)` for the roundtrip block) and `macros/src/gen/test_gen/simulation_tests.rs:317` (`with_cases(50)` for the campaign). Implement as `ProptestConfig::with_cases(std::env::var("PROPTEST_CASES").ok().and_then(|s| s.parse().ok()).unwrap_or(100))` (resp. 50). Test-codegen only, no product behavior, no Welch. Regenerates all `gen_*` files → op-suite gate.
 - **3b (input magnitude/depth clamp):** in `strategies.rs` `arb_*` (the tape size at `:1350`, `max_tape = (10*(max_depth+1)).max(20)`) and the literal projection (`generate_literal_build_code`, `:485-576`), clamp generated bignum magnitude/exponent and term depth so the rewrite engine's intermediates stay bounded. Test-input fix, no Welch.
-- **3c (root-cause, only if still over cap after 3a/3b):** run the offending campaign under reduced `PROPTEST_CASES` with `walker-stats` (ambient parser path) or rhocalc eval instrumentation; for a hang, `PRATTAIL_HANG_DUMP=1 --features hang-dump` then SIGUSR1 (never SIGUSR1 without the feature). If ambient shows parser cursor explosion → the residual is a B-completion / cohort-dedup issue: apply `semantic_hash` + outer-discriminant dedup at the cohort boundary (dedup only observationally-equal cursors). If rhocalc shows Ascent eqrel-closure divergence → apply `semantic_hash` dedup at the `normal_forms()` boundary (`runtime/src/language.rs:402`). Both are runtime-behavioral → Welch + op-suites + disambiguation gate. Per Phase 6.3, do NOT expect chain absorption to help these; closing the general WPDS exponent is explicitly OUT OF SCOPE.
+- **3c (root-cause, only if still over cap after 3a/3b):** run the offending campaign under reduced `PROPTEST_CASES` with `walker-stats` (ambient parser path) or rholang eval instrumentation; for a hang, `PRATTAIL_HANG_DUMP=1 --features hang-dump` then SIGUSR1 (never SIGUSR1 without the feature). If ambient shows parser cursor explosion → the residual is a B-completion / cohort-dedup issue: apply `semantic_hash` + outer-discriminant dedup at the cohort boundary (dedup only observationally-equal cursors). If rholang shows Ascent eqrel-closure divergence → apply `semantic_hash` dedup at the `normal_forms()` boundary (`runtime/src/language.rs:402`). Both are runtime-behavioral → Welch + op-suites + disambiguation gate. Per Phase 6.3, do NOT expect chain absorption to help these; closing the general WPDS exponent is explicitly OUT OF SCOPE.
 
 ---
 
@@ -126,7 +126,7 @@ Two orthogonal mitigations, both honoring the invariant (neither drops an altern
 
 **Universal per-change gate (run after each milestone that changes any file):**
 1. Gauntlet: `cargo test --release -p prattail --lib` → expect 4220/0 (HEAD baseline per b3 logs; the master plan's "4206" predates cast-family).
-2. Op-suites: `cargo nextest run -p languages --test gen_calculator_op --test gen_rhocalc_op --test gen_calculator_unit --test gen_rhocalc_unit` → no NEW fails (gen_rhocalc_op 532/0; gen_calculator_op ≥1331 per b2 final).
+2. Op-suites: `cargo nextest run -p languages --test gen_calculator_op --test gen_rholang_op --test gen_calculator_unit --test gen_rholang_unit` → no NEW fails (gen_rholang_op 532/0; gen_calculator_op ≥1331 per b2 final).
 3. Disambiguation-preservation: `-3!` ambiguity-ladder (`edge_case_tests` + `probe_neg_zero` 23/0) + `wpda_parity_calculator` / `wpda_parity_calculator_cross_cat` / `wpda_parity_lambda` stay green.
 4. Welch (p<0.05, QUIET, N≥15, release) ONLY for runtime-behavioral changes (Fix 2-differs, Fix 3c). Not for test-template/test-input/test-expectation changes.
 
@@ -137,7 +137,7 @@ All builds: serial foreground, `systemd-run --user --scope -p MemoryMax=32G` (16
   `cargo nextest run -p languages -E 'test(/_display_parse_roundtrip/) | test(/_strong_roundtrip/) | test(/_parse_determinism/)' --profile ci 2>&1 | tee /var/tmp/suite-green/cjz-m0-jsuite.log`.
 - **M0.1** Classify the residual against §0.2/§0.3: mark each of the 24 parse-failures + 5-7 mismatches as {cascade-green / residual-parse / residual-mismatch / reclassified-C-or-B-or-F}. Confirm `gen_class3multi_prop proc_parse_determinism` is Cluster C (or green if Phase 2 landed).
 - **M0.2** Slow-Z probe (bounded): run the 2 hangs ALONE under the ci profile with the 1800 s cap, capped at 8 G:
-  `cargo nextest run -p languages -E 'test(gen_ambient_prop::proc_display_parse_roundtrip) | test(gen_rhocalc_prop::sim_rhocalc_proptest_campaign)' --profile ci 2>&1 | tee /var/tmp/suite-green/cjz-m0-slowz.log`. Record: complete-within-cap vs terminated; capture timing.
+  `cargo nextest run -p languages -E 'test(gen_ambient_prop::proc_display_parse_roundtrip) | test(gen_rholang_prop::sim_rholang_proptest_campaign)' --profile ci 2>&1 | tee /var/tmp/suite-green/cjz-m0-slowz.log`. Record: complete-within-cap vs terminated; capture timing.
 - **Gate:** record the residual table in the ledger. **No fix milestone (M1-M3) starts for a sub-cluster until M0.1 confirms it has a residual.** If M0 is fully green for a sub-cluster, that sub-cluster's milestone is a documented no-op (cascade win).
 
 ### M1 — J parse-failure residual (only if M0.1 shows residual) — Fix 1
@@ -156,7 +156,7 @@ All builds: serial foreground, `systemd-run --user --scope -p MemoryMax=32G` (16
 - **M3.0** From M0.2: if both campaigns already complete within the 1800 s cap, M3 reduces to wiring `PROPTEST_CASES` (defense-in-depth) only.
 - **M3.1 (infra):** thread `PROPTEST_CASES` into `with_cases` at `strategies.rs:1366` and `simulation_tests.rs:317`. Regenerate-all → op-suite gate. No Welch.
 - **M3.2 (input clamp):** clamp bignum magnitude/exponent + term depth in `strategies.rs` `arb_*`/`generate_literal_build_code`/tape sizing (`:1350`, `:485-576`). Re-run the 2 campaigns under the cap. No Welch (test-input).
-- **M3.3 (conditional root-cause):** ONLY if still over cap after M3.1/M3.2. Trace with `walker-stats` (ambient) / hang-dump and apply `semantic_hash` + outer-discriminant dedup at the cohort boundary (ambient parser) or `normal_forms()` boundary (rhocalc, `runtime/src/language.rs:402`) — observational equivalence only.
+- **M3.3 (conditional root-cause):** ONLY if still over cap after M3.1/M3.2. Trace with `walker-stats` (ambient) / hang-dump and apply `semantic_hash` + outer-discriminant dedup at the cohort boundary (ambient parser) or `normal_forms()` boundary (rholang, `runtime/src/language.rs:402`) — observational equivalence only.
 - **Gate:** M3.1/M3.2 test-only. M3.3 runtime-behavioral → Welch + op-suites + disambiguation gate.
 
 ### M4 — Consolidate + full-suite confirmation
@@ -207,9 +207,9 @@ All builds: serial foreground, `systemd-run --user --scope -p MemoryMax=32G` (16
 
 **Display + grammar (J mismatch + slow-Z ambient):**
 - `macros/src/gen/syntax/display.rs` — trampolined Display + prefix/infix BP (`DisplayBpInfo`/`DisplayPrefixBpInfo` `:36-173`); prefix-operator parenthesization (mismatch root for `bitnot`/`@`/`choose`).
-- `languages/src/rhocalc.rs` (`PPar` HashBag `:72`, `POutput`/`NQuote`/`PDrop`/`Len`/`CountBag` `:70-84,756,659`, `BitNot` `:221`), `languages/src/ambient.rs` (`PPar` HashBag `:27`), `languages/src/calculator.rs` (error/cast sentinels `:114-123`, casts `:230-245`) — the grammars whose canonicalization (multiset, singleton-flatten, injection) defines the correct M2 expectation.
+- `languages/src/rholang.rs` (`PPar` HashBag `:72`, `POutput`/`NQuote`/`PDrop`/`Len`/`CountBag` `:70-84,756,659`, `BitNot` `:221`), `languages/src/ambient.rs` (`PPar` HashBag `:27`), `languages/src/calculator.rs` (error/cast sentinels `:114-123`, casts `:230-245`) — the grammars whose canonicalization (multiset, singleton-flatten, injection) defines the correct M2 expectation.
 - `runtime/src/hashbag.rs` — multiset semantics (count-based equality); the authority for the `{a|a|a}` vs `{a|a}` decision.
 
 **Infra + dedup:**
 - `.config/nextest.toml` — ALREADY EXISTS (1800 s campaign cap); slow-Z infra is done.
-- `runtime/src/language.rs:402` — `normal_forms()` boundary (rhocalc M3.3 semantic_hash dedup site); `Ambiguous` union (`:36-103`).
+- `runtime/src/language.rs:402` — `normal_forms()` boundary (rholang M3.3 semantic_hash dedup site); `Ambiguous` union (`:36-103`).

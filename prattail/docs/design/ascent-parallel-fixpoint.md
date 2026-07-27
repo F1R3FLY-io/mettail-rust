@@ -101,7 +101,7 @@ The `#[cfg(feature = "ascent-parallel")]` attribute is evaluated in the **expans
 
 ```text
 language! {                                 Cargo.toml:
-    name = "RhoCalc";                       [features]
+    name = "Rholang";                       [features]
     Proc { ... }                            ascent-parallel = ["prattail/ascent-parallel"]
     Name { ... }
 }
@@ -118,16 +118,16 @@ language! {                                 Cargo.toml:
 ┌──────────────────────────────────────────────────────────┐
 │ F2: cfg-gated macro switch                               │
 │     #[cfg(not(feature = "ascent-parallel"))]             │
-│     ascent! { struct RhoCalc; ... }                      │
+│     ascent! { struct Rholang; ... }                      │
 │                                                          │
 │     #[cfg(feature = "ascent-parallel")]                  │
-│     ascent_par! { struct RhoCalc; ... }                  │
+│     ascent_par! { struct Rholang; ... }                  │
 │     Applied in: macros/src/gen/runtime/language.rs       │
 └──────────────────────────────────────────────────────────┘
                         │
                         ▼
 ┌──────────────────────────────────────────────────────────┐
-│ Generated struct: RhoCalc                                │
+│ Generated struct: Rholang                                │
 │   Serial: single-threaded semi-naive iteration           │
 │   Parallel: Rayon par_iter semi-naive iteration          │
 └──────────────────────────────────────────────────────────┘
@@ -225,10 +225,10 @@ Compare `exec add` latency for the Rholang grammar (66 rules, 6 categories) unde
 
 ```sh
 # Serial baseline
-cargo bench --bench bench_languages -- "rhocalc/exec_add"
+cargo bench --bench bench_languages -- "rholang/exec_add"
 
 # Parallel
-cargo bench --bench bench_languages --features ascent-parallel -- "rhocalc/exec_add"
+cargo bench --bench bench_languages --features ascent-parallel -- "rholang/exec_add"
 ```
 
 Expected: 2-4x speedup on machines with 4+ cores, depending on the number of independent strata and the size of the delta relations.

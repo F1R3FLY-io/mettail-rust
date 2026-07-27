@@ -1,4 +1,4 @@
-# RhoCalc Rholang-Style Surface Syntax (Phases 1–2: Map, List, Bag)
+# Rholang Rholang-Style Surface Syntax (Phases 1–2: Map, List, Bag)
 
 **Status:** Implemented
 **Date:** May 2026
@@ -7,16 +7,16 @@
 Cross-links:
 
 - [docs/design/made/native-types/map-type-design.md](../made/native-types/map-type-design.md) — base Map design
-- [docs/examples/rhocalc/01-language-spec.md](../../examples/rhocalc/01-language-spec.md) — surface-syntax reference
+- [docs/examples/rholang/01-language-spec.md](../../examples/rholang/01-language-spec.md) — surface-syntax reference
 - [docs/manual/language/features/collections/00-overview.md](../../manual/language/features/collections/00-overview.md) — collection overview
-- [docs/design/made/rhocalc-collection-equality.md](../made/rhocalc-collection-equality.md) — `==` / `!=` on collection casts at fold and in `where` guards
-- [docs/design/made/rhocalc-collection-wire.md](../made/rhocalc-collection-wire.md) — `.toByteArray()` protobuf wire encoding for collection casts
+- [docs/design/made/rholang-collection-equality.md](../made/rholang-collection-equality.md) — `==` / `!=` on collection casts at fold and in `where` guards
+- [docs/design/made/rholang-collection-wire.md](../made/rholang-collection-wire.md) — `.toByteArray()` protobuf wire encoding for collection casts
 
 ---
 
 ## 1. Goal & Scope
 
-Align the rhocalc surface syntax with [Rholang](https://rholang.io)'s syntax for
+Align the rholang surface syntax with [Rholang](https://rholang.io)'s syntax for
 process/data terms so that programs written for either language read
 identically at the source level.
 
@@ -36,9 +36,9 @@ constructor and carries its own `fold` semantics inline.
 
 ## 2. Background
 
-Prior to this change, rhocalc used:
+Prior to this change, rholang used:
 
-| Construct | Old rhocalc surface | Rholang |
+| Construct | Old rholang surface | Rholang |
 |-----------|---------------------|---------|
 | Zero process | `{}` | `Nil` |
 | Parallel composition | `{ P \| Q }` (braced) or `P \| Q` (bare infix) | `P \| Q` |
@@ -78,7 +78,7 @@ is **removed** from the user-facing grammar. The infix rule
 
 ```rust
 PParInfix . a:Proc, b:Proc |- a "|" b : Proc ![{
-    crate::rhocalc::runtime::merge_pp_parallel(a.clone(), b.clone())
+    crate::rholang::runtime::merge_pp_parallel(a.clone(), b.clone())
 }] fold;
 ```
 
@@ -148,7 +148,7 @@ shape (≥2 NTs with ≥2 terminals) and the zero-operand-after-trigger shape
 
 `for`-receive patterns now use the new literal form:
 
-```rhocalc
+```rholang
 for(@{1:x, 3:4} <- c) { x }
 ```
 
@@ -158,7 +158,7 @@ instead of the old `for(@map(1:x, 3:4) <- c)`.
 
 `List` already uses the Rholang-style `[a, b, c]` literal (via the
 collection-delimiter override using a braced dictionary (`open_parts`, `close_parts`, `sep`, and for Map `key_val_sep`); no
-literal change is needed in Phase 2. `Bag` keeps its rhocalc-only `#{a|b|…}#`
+literal change is needed in Phase 2. `Bag` keeps its rholang-only `#{a|b|…}#`
 spelling — Rholang has no bag type — but gains a method-call surface for
 consistency with `Map`/`List`.
 
@@ -420,7 +420,7 @@ corresponding prefix-form calls.
 
 ## 6. Migration Checklist
 
-- [x] `languages/src/rhocalc.rs` — `PZero`, `Map` delimiter override, `Map()`
+- [x] `languages/src/rholang.rs` — `PZero`, `Map` delimiter override, `Map()`
   alias, removed braced `PPar`, internal `__ppar` rule, eight Map method-call
   sugars, three List method sugars (`LLength`, `LNth`, `LConcat`), three
   bag-specific Bag method sugars (`BCount`, `BDiff`, `BRemove`),
@@ -429,7 +429,7 @@ corresponding prefix-form calls.
   sugars, generalised `NQuoteShort` Name shorthand and
   `POutputShort` / `PPersistOutputShort` send sugars for arbitrary
   `P:Proc`.
-- [x] `languages/tests/rhocalc_tests.rs` — strip outer `{…}` wraps in test
+- [x] `languages/tests/rholang_tests.rs` — strip outer `{…}` wraps in test
   inputs, switch `map(…)` literals to `{…}` form, switch `mod map` to method
   syntax + brace literals, refit `assert_never_reaches` helper for the new
   display, regression tests for `@Nil` (`*@Nil → Nil`,
@@ -440,10 +440,10 @@ corresponding prefix-form calls.
   sub-modules covering `.length()`, `.nth(i)`, `.concat(r)`, `.size()`
   (via extended `Len`), `.count(e)`, `.diff(b)`, `.remove(e)`, and
   polymorphic `.union`.
-- [x] `repl/src/examples/rhocalc.rs` — strip outer braces from process
+- [x] `repl/src/examples/rholang.rs` — strip outer braces from process
   examples; `{}` empty processes become `Nil`.
-- [x] `repl/src/examples/rhocalc-patterns.txt`,
-  `repl/src/examples/rhocalc-casting.txt` — replace `{ P | Q }` wrappers with
+- [x] `repl/src/examples/rholang-patterns.txt`,
+  `repl/src/examples/rholang-casting.txt` — replace `{ P | Q }` wrappers with
   bare infix.
 - [x] `prattail` — `InfixOperator.leading_terminals` and `write_mixfix_led`
   grouping by trigger to support method-call dispatch; mixfix detection
@@ -457,12 +457,12 @@ corresponding prefix-form calls.
   `is_unary_prefix`, so the DSL `prefix(N)` annotation is now honoured on
   cross-category prefix rules without entering the same-category
   unary-prefix dispatch (see §4.3).
-- [x] `docs/design/made/native-types/map-type-design.md` — note rhocalc
+- [x] `docs/design/made/native-types/map-type-design.md` — note rholang
   override and method-call sugar layer.
 - [x] `docs/manual/language/features/collections/00-overview.md` — refresh
   Map subsection.
-- [x] `docs/examples/rhocalc/01-language-spec.md`,
-  `docs/examples/rhocalc/06-runtime-evaluation.md` — refresh surface
+- [x] `docs/examples/rholang/01-language-spec.md`,
+  `docs/examples/rholang/06-runtime-evaluation.md` — refresh surface
   examples.
 
 ---
@@ -483,6 +483,6 @@ corresponding prefix-form calls.
 ## 8. Status
 
 **Implemented** (May 2026). Tests pass under
-`cargo test -p mettail-languages --test rhocalc_tests`. Once the design doc
+`cargo test -p mettail-languages --test rholang_tests`. Once the design doc
 review is complete this document moves to
 `docs/design/made/native-types/`.

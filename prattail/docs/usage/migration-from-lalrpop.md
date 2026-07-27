@@ -229,7 +229,7 @@ Remove from `[workspace.dependencies]`:
 The `.lalrpop` files in `languages/src/generated/` are no longer needed:
 
 ```
-languages/src/generated/rhocalc.lalrpop      ← remove
+languages/src/generated/rholang.lalrpop      ← remove
 languages/src/generated/calculator.lalrpop   ← remove
 languages/src/generated/lambda.lalrpop       ← remove
 languages/src/generated/ambient.lalrpop      ← remove
@@ -240,7 +240,7 @@ still used.
 
 ### Step 6: Update Language Source Files
 
-The `.rs` files under `languages/src/` (e.g., `rhocalc.rs`, `calculator.rs`) should
+The `.rs` files under `languages/src/` (e.g., `rholang.rs`, `calculator.rs`) should
 **not need changes** -- the `language!` macro interface is unchanged.
 
 However, verify that any imports of LALRPOP-generated modules are removed:
@@ -248,7 +248,7 @@ However, verify that any imports of LALRPOP-generated modules are removed:
 Before:
 ```rust
 // In languages/src/lib.rs (if it existed)
-lalrpop_mod!(pub rhocalc, "/generated/rhocalc.rs");
+lalrpop_mod!(pub rholang, "/generated/rholang.rs");
 ```
 
 After:

@@ -424,9 +424,9 @@ cannot trigger F2 (the condition requires exactly 0.0) but benefit
 from it when they appear after a weight-0.0 first alternative -- they
 are the ones being skipped.
 
-### Worked example: rhocalc `Proc` category
+### Worked example: rholang `Proc` category
 
-In the rhocalc grammar, the `Proc` category dispatches `Token::LParen`
+In the rholang grammar, the `Proc` category dispatches `Token::LParen`
 to three rules:
 
 | Alternative | Rule        | Action   | Weight |

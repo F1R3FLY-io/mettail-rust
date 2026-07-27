@@ -1,13 +1,13 @@
 # Design: IEEE 754 suffixed literals, float restrictions, and fixed-point numbers
 
-**Status:** Implemented in Calculator and RhoCalc (see below)  
+**Status:** Implemented in Calculator and Rholang (see below)  
 **Date:** March 2025  
-**Related:** [Float support in Ascent](../made/native-types/float-support-ascent.md), [String / float / bool methods](../made/native-types/string_float_bool_methods.md), `runtime/src/canonical_float.rs`, `runtime/src/canonical_fixed_point.rs`, `prattail/src/float_lit.rs`, `prattail/src/fixed_lit.rs`, `languages/src/calculator.rs`, `languages/src/rhocalc.rs`
+**Related:** [Float support in Ascent](../made/native-types/float-support-ascent.md), [String / float / bool methods](../made/native-types/string_float_bool_methods.md), `runtime/src/canonical_float.rs`, `runtime/src/canonical_fixed_point.rs`, `prattail/src/float_lit.rs`, `prattail/src/fixed_lit.rs`, `languages/src/calculator.rs`, `languages/src/rholang.rs`
 
 ### Implemented behavior (summary)
 
-- **Float literals:** `mettail_prattail::parse_float_lit` accepts unsuffixed, `f32`, or `f64` (reject `f128` / `f256`); `f32` is widened to `f64` for `CanonicalFloat64`. **Calculator and RhoCalc** only include optional `f64` in their float **lexer** pattern (no `f32` token in surface syntax, since neither language exposes `f32` as a type).
-- **Fixed-point:** `mettail_runtime::CanonicalFixedPoint` (`unscaled` / `places`, value `unscaled / 10^places`). Literals use `…p…` forms parsed by `parse_fixed_lit`. Lexer uses `fixed_by_category` parallel to rationals. Calculator has `Fixed` terms and `ProcFixed`; RhoCalc uses `CastFixed` on `Proc` with `+` / `-` / `*` / `/` / `%` and `bitand` / `bitor` / `bitxor` on fixed values only.
+- **Float literals:** `mettail_prattail::parse_float_lit` accepts unsuffixed, `f32`, or `f64` (reject `f128` / `f256`); `f32` is widened to `f64` for `CanonicalFloat64`. **Calculator and Rholang** only include optional `f64` in their float **lexer** pattern (no `f32` token in surface syntax, since neither language exposes `f32` as a type).
+- **Fixed-point:** `mettail_runtime::CanonicalFixedPoint` (`unscaled` / `places`, value `unscaled / 10^places`). Literals use `…p…` forms parsed by `parse_fixed_lit`. Lexer uses `fixed_by_category` parallel to rationals. Calculator has `Fixed` terms and `ProcFixed`; Rholang uses `CastFixed` on `Proc` with `+` / `-` / `*` / `/` / `%` and `bitand` / `bitor` / `bitxor` on fixed values only.
 - **Float restrictions:** No `%` or bitwise operators on `Float` in these languages (only on `Fixed` / integers as before).
 
 ---
@@ -16,13 +16,13 @@
 
 ### 1.1 Concrete languages and the `language!` macro
 
-Operations are **not** defined by a single global semantics DSL. Each language (`Calculator`, `RhoCalc`, …) declares:
+Operations are **not** defined by a single global semantics DSL. Each language (`Calculator`, `Rholang`, …) declares:
 
 - **Types** with native Rust payloads, e.g. `![i32] as Int`, `![f64] as Float`, `![mettail_runtime::CanonicalBigInt] as BigInt`.
 - **Literals** with a lexer regex and an `eval` block (often calling `mettail_prattail`).
 - **Terms** with HOL blocks `![{ … }]` implementing reduction for literals (and `fold` / `step` as needed).
 
-Integer-style arithmetic in **RhoCalc** is folded on `Proc` by dispatching on `CastInt`, `CastBigInt`, `CastBigRat`, `CastFloat`, etc. (see `Add`, `Sub`, `Mul`, `Div` in `languages/src/rhocalc.rs`). **Calculator** uses separate term rules per type (`AddInt`, `AddFloat`, …).
+Integer-style arithmetic in **Rholang** is folded on `Proc` by dispatching on `CastInt`, `CastBigInt`, `CastBigRat`, `CastFloat`, etc. (see `Add`, `Sub`, `Mul`, `Div` in `languages/src/rholang.rs`). **Calculator** uses separate term rules per type (`AddInt`, `AddFloat`, …).
 
 Any new numeric kind should follow the same pattern: **define parsing + operations inside each language** that should expose it.
 
@@ -30,14 +30,14 @@ Any new numeric kind should follow the same pattern: **define parsing + operatio
 
 - Ascent / term enums require `Eq + Hash`. Raw `f32`/`f64` are wrapped as **`CanonicalFloat32` / `CanonicalFloat64`** (`runtime/src/canonical_float.rs`): canonical NaN, `-0` → `+0`, total `Ord`, `BoundTerm`.
 - The `language!` macro maps `![f32]` → `CanonicalFloat32` and `![f64]` → `CanonicalFloat64` (`macros/src/gen/types/enums.rs`).
-- **Literals** today: a single regex in `calculator.rs` / `rhocalc.rs` that matches decimal / exponent forms **without** a `f32`/`f64` suffix; `eval` strips `_` and uses `parse::<f64>()` only — so everything is effectively **double precision** in the surface syntax even when the category is `Float` backed by `CanonicalFloat64`.
+- **Literals** today: a single regex in `calculator.rs` / `rholang.rs` that matches decimal / exponent forms **without** a `f32`/`f64` suffix; `eval` strips `_` and uses `parse::<f64>()` only — so everything is effectively **double precision** in the surface syntax even when the category is `Float` backed by `CanonicalFloat64`.
 - `CanonicalFloat64` currently implements **`Rem`** (Rust `%`). The desired language semantics say **floating-point must not** use modulus (or bitwise operators) at all; see §3.
 
 ### 1.3 What does not exist yet
 
 - Suffixed IEEE literals (`-1.234e5f32`, `f64`, and optionally `f128` / `f256`).
 - A **fixed-point** numeric type: syntax `<digits>p<digits>`, division/modulo semantics, bitwise semantics.
-- **RhoCalc** has no `%` on `Proc` for integers in the same style as `+` (Calculator has `ModInt` for `Int` only).
+- **Rholang** has no `%` on `Proc` for integers in the same style as `+` (Calculator has `ModInt` for `Int` only).
 
 ---
 
@@ -63,7 +63,7 @@ Target grammar (after `_` removal inside digit runs, consistent with existing in
 1. **Language-defined default:** e.g. require `f32` or `f64` always (strict C99-like).
 2. **Default to `f64`:** extend the current regex with an optional `(f32|f64)?`; absent suffix → `f64` (backward compatible for existing tests and snippets).
 
-Recommendation: **(2)** for Calculator/RhoCalc: optional suffix, default to what defined in the `literals` section.
+Recommendation: **(2)** for Calculator/Rholang: optional suffix, default to what defined in the `literals` section.
 
 ### 2.2 Lexer / parser work
 
@@ -77,7 +77,7 @@ Recommendation: **(2)** for Calculator/RhoCalc: optional suffix, default to what
 - **Option B — two categories (recommended):** `![f32] as Float32`, `![f64] as Float64` (names illustrative), each with literals that only accept the matching suffix (or default `f64` for `Float64` and `f32` for `Float32` if you want strictness).
 - **Option C — one AST category, two variants:** One Rust enum `FloatWidth { F32(CanonicalFloat32), F64(CanonicalFloat64) }` as the native type in `language!` — only if the macro pipeline can be extended cleanly; today the idiomatic path is separate categories or a single canonical width.
 
-**Calculator / RhoCalc:** Mirror the pattern used for integers (multiple concrete types vs one `Proc` dispatch). RhoCalc would add `CastFloat32` / `CastFloat64` or generalize `CastFloat` once widths exist.
+**Calculator / Rholang:** Mirror the pattern used for integers (multiple concrete types vs one `Proc` dispatch). Rholang would add `CastFloat32` / `CastFloat64` or generalize `CastFloat` once widths exist.
 
 ### 2.4 “SIMD-like” numeric type (optional note)
 
@@ -188,7 +188,7 @@ For binary `+`, `-`, `*`, `/`, `%`:
    (integer arithmetic arranged so the result is exact in fixed point at place `P`).  
    Example: `10p1 % 3p1` → `0.1p1`. ✓
 
-Document **division by zero** as `Proc::Err` / language error, consistent with `Div` on `BigRat` / integers in RhoCalc.
+Document **division by zero** as `Proc::Err` / language error, consistent with `Div` on `BigRat` / integers in Rholang.
 
 **Mixed-scale examples** should be added as unit tests in `languages/tests/` once implemented.
 
@@ -219,7 +219,7 @@ This is **equivalent** to “do bitwise on the unscaled numerators after alignin
 1. New type: `![mettail_runtime::CanonicalFixedPoint] as Fixed` (name TBD).
 2. New literal block with regex + `parse_fixed_lit` in `prattail`.
 3. In **Calculator**: term rules `AddFixed`, `DivFixed`, … mirroring `AddInt` / `AddBigRat`.
-4. In **RhoCalc**: extend `Add` / `Sub` / `Mul` / `Div` / future `Mod` dispatch with `CastFixed` arms, same style as `CastBigRat`.
+4. In **Rholang**: extend `Add` / `Sub` / `Mul` / `Div` / future `Mod` dispatch with `CastFixed` arms, same style as `CastBigRat`.
 5. **Congruence / rewrite rules:** Generated from terms; add congruence rules for each new constructor (pattern matches existing `AddIntCongL` style in `calculator.rs`).
 
 ---
@@ -231,8 +231,8 @@ This is **equivalent** to “do bitwise on the unscaled numerators after alignin
 3. **Runtime:** `CanonicalFixedPoint` with `Eq`/`Hash`/`Ord`/`BoundTerm` and arithmetic helpers (div/mod as specified).
 4. **Macros:** No change expected if using existing `![Type] as Name` paths; confirm literal payload generation for the new type (mirror `BigRat`).
 5. **Languages:** Update `Float` literal regex + eval; add `Float32` category or split literals as decided in §2.3.
-6. **Languages:** Add `Fixed` to Calculator and RhoCalc with operations defined in HOL blocks.
-7. **Tests:** `languages/tests/calculator.rs`, `rhocalc_tests.rs`: float suffixes, fixed div/mod identity, fixed bitwise vs aligned-bigint reference.
+6. **Languages:** Add `Fixed` to Calculator and Rholang with operations defined in HOL blocks.
+7. **Tests:** `languages/tests/calculator.rs`, `rholang_tests.rs`: float suffixes, fixed div/mod identity, fixed bitwise vs aligned-bigint reference.
 8. **Docs:** Update manual / EBNF dump (`prattail/docs/usage/ebnf-dump.md`) when grammar tokens stabilize.
 
 ---
@@ -243,7 +243,7 @@ This is **equivalent** to “do bitwise on the unscaled numerators after alignin
 2. **f128/f256:** Reject at parse time vs feature-gated software implementation.
 3. **Fixed vs `BigInt` literal collision:** e.g. is `10p1` ever ambiguous with a hypothetical `p` suffix on integers? (Current codebase has no `p` suffix for ints — low risk.)
 4. **Bitwise spec:** Confirm with theory owners that “align scales then integer bitwise” matches the intent of `bigrat(x) op bigrat(y)`.
-5. **RhoCalc `%` on integers:** If parity with C99 fixed-point mod identity is desired for `Int`, that is separate from this doc but may be added alongside `Mod` on `Proc` for `CastFixed`.
+5. **Rholang `%` on integers:** If parity with C99 fixed-point mod identity is desired for `Int`, that is separate from this doc but may be added alongside `Mod` on `Proc` for `CastFixed`.
 
 ---
 
@@ -254,6 +254,6 @@ This is **equivalent** to “do bitwise on the unscaled numerators after alignin
 | Float literals | Unsuffixed, `f64` parse only | Optional `f32`/`f64` suffixes; typed widths |
 | Float `%` / bitwise | Not in grammar; `Rem` exists on canonical type | Forbid in grammar and HOL; optional trait cleanup |
 | Fixed point | Absent | `…p…` syntax, `CanonicalFixedPoint`, div/mod as specified, bitwise via aligned unscaled integers |
-| Where semantics live | Per-language `language!` terms | Same: implement in Calculator, RhoCalc, and any other front-end that needs these types |
+| Where semantics live | Per-language `language!` terms | Same: implement in Calculator, Rholang, and any other front-end that needs these types |
 
 This keeps the same architecture as integers and rationals: **concrete languages own the operation tables**; runtime provides canonical, Ascent-friendly value types; prattail provides parsing.

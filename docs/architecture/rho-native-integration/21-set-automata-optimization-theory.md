@@ -387,7 +387,7 @@ This is not a claim — it is a locked regression invariant
   $`\#\text{states}\le\#\text{raw nodes}`$ (the quotient never grows the DAG),
   $`\#\text{states}\le\text{pin}`$ (no bloat), and
   $`\#\text{states}\le\tfrac{3}{2}\,\#\text{entries}+8`$ (near-linear; measured
-  slope $`\approx 1.05`$). Measured baselines: RhoCalc $`124`$ states /
+  slope $`\approx 1.05`$). Measured baselines: Rholang $`124`$ states /
   $`117`$ entries / $`314`$ raw nodes; Calculator $`72/70/188`$; every
   demo language $`\le 4`$ states.
 - **`diagonal_discrimination_set_is_linear_not_quadratic`** locks the textbook

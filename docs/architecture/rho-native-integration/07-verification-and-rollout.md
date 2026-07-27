@@ -38,7 +38,7 @@ The current proof and coverage sources are
 | rejected-rule coverage | `RhoRejectedCoverage.v` | proved `AllRulesLowered` accepts only an empty rejected set; `CoveredRejectedRules` must name exactly the rejected rule set; omitted, stale, duplicate, or blank-rule dispositions block the default-backend gate; advisory rejected-rule classifications preserve rule identity and still require explicit disposition before becoming accepted coverage |
 | normalized Rholang AST boundary | `RhoParWellFormedness.v`, `RhoArtifactBoundary.v`, `RhoAstSendBoundary.v` | proved scalar-contract `Par` shape, positive bind counts, bind-count agreement, return-channel convention, validation soundness/completeness, generated-backend rejection of source-text artifacts, and dynamic call/witness sends as AST artifacts rather than source text; checked scalar-contract invocation preserves ABI payloads, rejects arity mismatches, selects the observation report shape from the ABI result type, structured dynamic payloads preserve list, map, and bag literals across the AST boundary, and the codegen-owned `RhoScalarContractInvocation` payload normalizes to the same AST call without becoming source text |
 | type-sensitive scalar operator lowering and generated scalar ABI | `RhoScalarOperatorTyping.v`, `rholang-codegen::{lower,plan_scalar_invocations,RhoScalarContractInvocation}`, generated `rho-codegen` helpers | proved and tested that native scalar operators are selected from terminal plus operand/result types; `Int + Int → Int` lowers to Rholang integer addition, `Str + Str → Str` and `Str ++ Str → Str` lower to Rholang string concatenation, unary `not` and unary integer negation lower only at their matching scalar types, ill-typed or mixed scalar operators are rejected, every accepted scalar rule yields a generated `RhoScalarContractAbi` with operands first and the return channel last, ABI-derived invocation plans preserve constructor label, operand order, and result family, and generated language crates emit codegen-owned invocation payloads instead of linking directly to `rholang-runtime` |
-| rhocalc AST-first lowering | `RhocalcAstLowering.v`, `rholang-runtime::{lower_rhocalc_proc,lower_rhocalc_term}`, `rholang-runtime/tests/rho_rhocalc_ast.rs` | proved accepted rhocalc lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, ambiguous two-Proc terms preserve both branches, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, preserve every exact-key-distinct ambiguous Proc branch, deduplicate exact duplicates, reject cross-category ambiguity instead of dropping it, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
+| rholang AST-first lowering | `RholangAstLowering.v`, `rholang-runtime::{lower_rholang_proc,lower_rholang_term}`, `rholang-runtime/tests/rho_rholang_ast.rs` | proved accepted rholang lowerings are AST artifacts, quote/drop lowering preserves the body, list order is preserved, map key/value pairs are preserved, bag multiplicities are preserved, ambiguous two-Proc terms preserve both branches, one-input COMM fires the payload, two-input COMM preserves syntactic binder order under f1r3node's de Bruijn convention, and bound-bit filtering removes receive-local variables; runtime tests parse with WPDA, lower to `Par`, preserve every exact-key-distinct ambiguous Proc branch, deduplicate exact duplicates, reject cross-category ambiguity instead of dropping it, inspect list/map/bag AST shape, inject into RhoRuntime, and observe COMM results |
 | RhoNet/COMM correspondence | `CommReductionCorrespondence.v` | proved lowered pure-rule traces match Dovetail traces |
 | linear COMM correspondence | `LinearCommCorrespondence.v` | proved one-shot COMM consumes the matched send and receive, with sound/complete lowering correspondence |
 | Rho name grounding | `RhoGroundingAndNames.v` | proved fresh private names avoid capture of grounded facts |
@@ -96,12 +96,12 @@ the generated language and the planned backend before `RhoMachine` can become
 the selected default. Dynamic contract calls and ambiguity witnesses are
 constructed with `mettail_rholang_codegen::RhoAstSend`. Its
 `RhoAstLiteral` payloads lower scalar values, collections, unforgeable names,
-and rhocalc bags directly to normalized `Par`; the rhocalc bag ABI tag is owned
+and rholang bags directly to normalized `Par`; the rholang bag ABI tag is owned
 by `rholang-codegen` and re-exported by `rholang-runtime` so send-side
-encoding and runtime observation decoding cannot drift. The rhocalc process
-bridge lowers MeTTaIL/WPDA `Proc` and `Name` values with `lower_rhocalc_proc`
-and `lower_rhocalc_name`, and lowers generated `RhoCalcTerm` values with
-`lower_rhocalc_term`, so both dynamic calls and transport-pure rhocalc
+encoding and runtime observation decoding cannot drift. The rholang process
+bridge lowers MeTTaIL/WPDA `Proc` and `Name` values with `lower_rholang_proc`
+and `lower_rholang_name`, and lowers generated `RholangTerm` values with
+`lower_rholang_term`, so both dynamic calls and transport-pure rholang
 programs cross the runtime boundary as normalized `Par` values. Ambiguous
 `Proc` terms cross as exact-key-deduplicated parallel branches, while
 cross-category ambiguity fails closed rather than choosing one branch. Their
@@ -124,7 +124,7 @@ kind, and channel observations so callers can select
 The current planned Rho backend observes lowered native scalar and collection
 payloads through `RuntimeObservationValue`: `Int`, `Bool`, and `Str` become
 `Int`, `Bool`, and `Text`; byte, URI, bit-exact numeric, unforgeable-name, list,
-tuple, set, map, and tagged rhocalc-bag payloads retain their own runtime value
+tuple, set, map, and tagged rholang-bag payloads retain their own runtime value
 tags. `RhoRuntimeBackendReportBridge.v` names the tag-preservation contract.
 The generic call-by-need path now uses the same value domain: a
 `CallByNeedThunkSpec` carries its computed payload as a closed `RhoAstLiteral`,
@@ -143,8 +143,8 @@ memoized computed value (a force-miss computes and memoizes; a memo-hit observes
 the value without re-computing). The former scalar-matrix comparison against
 `CalculatorLanguage::run_ascent` normal forms was retired with the Ascent
 reference in P6.
-`rholang-runtime/tests/rho_rhocalc_ast.rs` exercises the structured path by
-lowering rhocalc list, map, and bag typed AST payloads directly to `rhoapi::Par`
+`rholang-runtime/tests/rho_rholang_ast.rs` exercises the structured path by
+lowering rholang list, map, and bag typed AST payloads directly to `rhoapi::Par`
 and observing recursive runtime values from RSpace.
 The string-valued check is deliberately end-to-end at the wrapper boundary:
 the Calculator snippets `"rho" ++ "net"` and `"rho" + "net"` are parsed by the
@@ -253,11 +253,11 @@ Per-language production flips still require the runtime gates listed below.
 PlantUML source:
 [figures/07-verification-and-rollout.puml](figures/07-verification-and-rollout.puml).
 
-## M-RHO.1: rhocalc COMM Fast Path
+## M-RHO.1: rholang COMM Fast Path
 
 Verified statement:
 
-`rhocalc Comm → RSpace COMM`
+`rholang Comm → RSpace COMM`
 
 Mechanized coverage:
 
@@ -268,7 +268,7 @@ Mechanized coverage:
   completeness, quote/drop name canonicalization, grounding/COMM commutation,
   send-arrival permutation coverage for one-bind races, and statement-only
   fences for strong-bisimulation/full-abstraction non-claims.
-- `RhocalcAstLowering.v` proves the concrete AST-first rhocalc bridge model:
+- `RholangAstLowering.v` proves the concrete AST-first rholang bridge model:
   accepted lowerings produce AST artifacts rather than source text, quote/drop
   lowers to the quoted body, ambiguous two-branch Proc terms preserve both
   branches, one-input COMM fires the lowered payload, two-input COMM is one
@@ -298,7 +298,7 @@ Runtime corpus:
 - received-name sends;
 - process-valued payloads;
 - `new` smoke behavior;
-- WPDA rhocalc source parsing followed by direct normalized-`Par` lowering;
+- WPDA rholang source parsing followed by direct normalized-`Par` lowering;
 - generated-term ambiguity followed by exact-key branch preservation, exact
   duplicate deduplication, and fail-closed cross-category ambiguity rejection;
 - received-name channel reuse through the AST path;
@@ -487,7 +487,7 @@ Rust adapter evidence:
 
 - `mettail_rholang_codegen::RhoAstSend`
 - `mettail_rholang_codegen::RhoAstLiteral`, including scalar, collection,
-  unforgeable-name, and tagged rhocalc-bag payloads
+  unforgeable-name, and tagged rholang-bag payloads
 - `mettail_rholang_adapter::DeltaOneCandidate`
 - `mettail_rholang_adapter::DeltaOneMatchEdge`
 - `mettail_rholang_adapter::DeltaOneMatching`
@@ -589,16 +589,16 @@ Flip condition for language `L`:
 
 The rollout proceeds one language at a time; the gate keeps an under-covered
 language un-flipped (fail-closed) rather than mis-flipped. **All four target
-languages are now flipped** (Calculator, RhoCalc, Ambient, GuardedRho); legend
+languages are now flipped** (Calculator, Rholang, Ambient, GuardedRho); legend
 (✅ flipped with passing tests · OOS = a known out-of-scope pre-existing residual,
 not a flip blocker · *in-engine* = flips to the Dovetail backend by the discharge
 rule, not RhoMachine):
 
 | Language | Default backend | How it executes | Status / evidence |
 |---|---|---|---|
-| `CalculatorLanguage` | RhoMachine (scalars) + Dovetail (folds) | scalar ops lower to `rhoapi::Par` and run on RhoRuntime; non-native-output folds (collections, casts) reduce **in-engine** in the Dovetail report, then the fold-normal value lowers and runs on Rho (extension E2), via the typed-`L` native-fold path (cast-eval gap closed); native-output big-numeric folds surface as native-handler reports | ✅ scalars `lowered_calculator_{int,bool,string}_ops_compute_correctly_on_rho_runtime` (real-vs-real on a live RhoRuntime, `run_calculator.rs`); native-fold path `languages/tests/{rhocalc_dovetail_fold,rhocalc_dovetail_op_enum}.rs`, Dovetail [12](../dovetail/12-native-fold-reduction.md) |
+| `CalculatorLanguage` | RhoMachine (scalars) + Dovetail (folds) | scalar ops lower to `rhoapi::Par` and run on RhoRuntime; non-native-output folds (collections, casts) reduce **in-engine** in the Dovetail report, then the fold-normal value lowers and runs on Rho (extension E2), via the typed-`L` native-fold path (cast-eval gap closed); native-output big-numeric folds surface as native-handler reports | ✅ scalars `lowered_calculator_{int,bool,string}_ops_compute_correctly_on_rho_runtime` (real-vs-real on a live RhoRuntime, `run_calculator.rs`); native-fold path `languages/tests/{rholang_dovetail_fold,rholang_dovetail_op_enum}.rs`, Dovetail [12](../dovetail/12-native-fold-reduction.md) |
 | `Ambient` | Dovetail (in-engine; host-less) | binder-congruence handler floats `new`s, then AC rules (`In`/`Out`/`OpenRule`) reduce the soup in-engine | ✅ `ambient_dovetail_flip.rs` (Complete reports); `ambient_binder_handler.rs` |
-| `RhoCalc` | RhoMachine (host RSpace) + Dovetail (folds) | process terms execute as `rhoapi::Par` AST calls; COMM/binders host-routed via `RhoNativeJoin`; observations preserve list/map/bag; non-native-output folds (`int(a,w)→Proc` casts) reduce **in-engine** via the typed-`L` native-fold path (cast-eval gap closed) | ✅ `rhocalc_language_default_report_{observes_runtime_values,executes_parsed_process_as_ast_call}`; native-fold reduction `languages/tests/rhocalc_dovetail_fold.rs` (6/6) + `…_op_enum.rs` (4/4); OOS: one `castbigrat` residual |
+| `Rholang` | RhoMachine (host RSpace) + Dovetail (folds) | process terms execute as `rhoapi::Par` AST calls; COMM/binders host-routed via `RhoNativeJoin`; observations preserve list/map/bag; non-native-output folds (`int(a,w)→Proc` casts) reduce **in-engine** via the typed-`L` native-fold path (cast-eval gap closed) | ✅ `rholang_language_default_report_{observes_runtime_values,executes_parsed_process_as_ast_call}`; native-fold reduction `languages/tests/rholang_dovetail_fold.rs` (6/6) + `…_op_enum.rs` (4/4); OOS: one `castbigrat` residual |
 | `GuardedRho` | RhoMachine (host RSpace) + guard dispositions | guarded receive host-routed (`RhoNativeJoin`); the behavioral guard over external relations `halts`/`safe` is `RejectSafeApprox` — not `rhoapi::Par`-representable (no guard field on `ReceiveBind`; external relations are not Rholang-computable), so host-routing is *derived-required*, see [proposal](proposals/p5b-residual-completion-plan.md) | ✅ host-routed: plans end-to-end (`guarded_rho_rho_backend.rs`); guarded-receive semantics (non-consuming on failed guard) execute on host RSpace (`rho_guard_oracle`) |
 | `MiniRhoFor` *(doc example — not a generated language)* | — | the end-to-end report→backend **worked example** ([dovetail 10](../dovetail/10-runtime-facing-reports.md#minirhofor-report-example)); there is no `languages/src` crate for it | n/a — illustrative only, not a flip target |
 
@@ -796,7 +796,7 @@ Required tests:
 cargo test -p rholang-codegen
 cargo test -p rholang-adapter
 cargo test -p rholang-runtime
-cargo test -p languages --no-default-features --features rhocalc --test rhocalc_tests
+cargo test -p languages --no-default-features --features rholang --test rholang_tests
 ```
 
 M-RHO.1 Rho machine COMM oracle:
@@ -817,7 +817,7 @@ Ascent reference no longer exists in the live tree, so there is no differential
 gate to run. A flipped language is now gated directly against the live backends:
 the `rholang-{codegen,adapter,runtime}` and `dovetail-runtime` test
 suites, the COMM/guard oracles above, and — for fold-bearing languages — the
-in-engine native-fold reduction tests (`languages/tests/rhocalc_dovetail_fold.rs`,
+in-engine native-fold reduction tests (`languages/tests/rholang_dovetail_fold.rs`,
 see Dovetail [12 - Native-Fold Reduction](../dovetail/12-native-fold-reduction.md)).
 
 ## pgmcp Evidence

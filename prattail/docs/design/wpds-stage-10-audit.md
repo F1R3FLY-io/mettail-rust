@@ -58,8 +58,8 @@ Stage 10 unblocks when **all** of the following land:
 
 - **Stage 6.1** — WPDS engine emits per-rule `Push`/`Replace`/`Pop`
   actions for every grammar rule in every shipped language (Calculator,
-  RhoCalc, Lambda, Ambient, LedTest, BaseMath, ExtMath, MixedMath,
-  ImportedMath, RhoCalc-casting, Calculator-casting).
+  Rholang, Lambda, Ambient, LedTest, BaseMath, ExtMath, MixedMath,
+  ImportedMath, Rholang-casting, Calculator-casting).
 - **Stage 6.2** — Parity tests (W7 Stage 8 Model A) confirm WPDS
   output matches trampoline output across the full
   `languages/tests/` corpus.

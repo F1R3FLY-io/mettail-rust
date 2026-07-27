@@ -556,7 +556,7 @@ literal, a resting result — is carried by the reflected ABI, routed by collect
 - `Zip` — not a `CollectionType` at all but a correlated pattern form (`Pattern::Zip`),
   with no carrier: it fails closed as `UnsupportedFamily::ZipAc` (§8).
 
-A plain inert bag value uses the separate `RHOCALC_BAG_ABI_TAG` (`lib.rs:55`), and every
+A plain inert bag value uses the separate `RHOLANG_BAG_ABI_TAG` (`lib.rs:55`), and every
 structural tag is the unforgeable `GPrivate` of §3 — collision-free with any user
 `GString`. Mechanism:
 [27 §9](27-oslf-language-to-rholang-compilation.md#9-rhs-lowering-and-the-reflected-elist-abi).

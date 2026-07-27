@@ -88,10 +88,10 @@ ones specific to this coverage tier.
 | **spread** | The lowering of a subject term into per-location channel sends (`spread_term_par` / `reflect_ground_term_par`) that the automaton consumes; the in-Rho source of $`\sigma'`$. |
 | **M-reflect** | The structural reflection of the *whole subject* term into the reflected-`EList` ABI (`reflect_category_fn`) that the spread carries — as opposed to reading the substitution from the report. |
 | **$`\sigma`$-receiver** | The persistent Rholang receiver a rewrite lowers to; on accept it binds the matched sub-terms and emits the reflected right-hand side `⟦R⟧σ`. |
-| **contractum** | The reduct field the Dovetail report carries for a firing — the *retired host reduct*. In-Rho families re-source the reduct from the spread instead; only the delegated-value boundary (native, RhoCalc Comm) still consumes it. |
+| **contractum** | The reduct field the Dovetail report carries for a firing — the *retired host reduct*. In-Rho families re-source the reduct from the spread instead; only the delegated-value boundary (native, Rholang Comm) still consumes it. |
 | **gate fields** | The two report fields the in-Rho MATCH path reads: the fired `rule_label` and the completeness flag (`is_complete`). They admit or reject the path; they are not the reduct source. |
 | **corrupted-$`\sigma`$ probe** | A runtime test that overwrites the report's $`\sigma`$ (and, for $`\beta`$, the `contractum`) with nonsense, leaves only the gate fields valid, runs the MATCH path, and asserts a still-correct `OUT`. Decisive evidence the reduct is a **replacement**, not a report **duplicate**. |
-| **delegated-value boundary** | A family whose structural *dispatch* moved into Rho but whose *value* is supplied by a trusted host handler (native arithmetic) or the host contractum (RhoCalc Comm substitution). Off-machine **by construction**, not by omission. |
+| **delegated-value boundary** | A family whose structural *dispatch* moved into Rho but whose *value* is supplied by a trusted host handler (native arithmetic) or the host contractum (Rholang Comm substitution). Off-machine **by construction**, not by omission. |
 | **executable floor** | A finite or symbolic model (Sage, Wolfram, mCRL2, Maude, TLA+) that checks a bounded instance of a property an unbounded Rocq theorem proves in general — an independent, runnable lower bound under each theorem. |
 | **non-vacuity** | The property that a positive `OUT` observation could not have arisen trivially: the input differs from the asserted reduct (e.g. `Swap(A, B)` is not `Pair(B, A)`), so a correct `OUT` genuinely witnesses the firing. |
 | **opcorr** | Operational correspondence: a labelled-transition relation (here weak barbed, up to $`\tau`$) between the source rewrite semantics and the in-Rho execution. Owned by [22](22-end-to-end-formal-verification.md). |
@@ -152,7 +152,7 @@ Rho machine. The corrupted-$`\sigma`$ methodology is §4.
 | **native** | `rho_net_native_firing.rs`: `nativedemo_native_system_process_fires_as_a_comm_on_the_reducer` (`:84`) | `s_native_location_is_produced_by_the_automaton_not_the_report` (`rho_net_native_firing.rs:204`) — location in-Rho, value delegated |
 
 **Supplementary families (complete, close variants).** Three further families fire in
-Rho and are covered by the same machinery but are not separate matrix rows: **RhoCalc
+Rho and are covered by the same machinery but are not separate matrix rows: **Rholang
 Comm** (`rho_net_comm_firing.rs`: `commdemo_communication_fires_as_a_comm_on_the_reducer:193`,
 theory `CommRuleFiring.v`) — a delegated-value boundary whose channel match is in Rho
 but whose substitution reduct is the host contractum (§7); **n-ary contextual**
@@ -302,7 +302,7 @@ in the stated claim; each marks the edge of what the matrix asserts.
 1. **Delegated values are trusted, not animated.** For **native** system processes
    (`PowInt`, factorial, BigInt), the automaton locates the App head in Rho, but the
    *value* is the trusted host handler's payload — arithmetic outside Rho's own
-   reduction. For **RhoCalc Comm**, the channel match is in Rho but the substitution
+   reduction. For **Rholang Comm**, the channel match is in Rho but the substitution
    reduct `cont[Q/y]` is the host-computed contractum. These are correct by the
    handler/contractum contract, not by an in-Rho reduction. binder-$`\beta`$ is
    the deliberate contrast: its substitution *is* animated in Rho, which is why its
@@ -334,7 +334,7 @@ The boundary between what the matrix covers and what it does not is drawn in
 Figure 23-3. Two categories sit outside the "matches AND fires in Rho" claim.
 
 **Delegated-value boundary (dispatch in Rho, value off-machine by construction).**
-native and RhoCalc Comm, as in §6.1. The dispatch is genuinely in Rho and is proved
+native and Rholang Comm, as in §6.1. The dispatch is genuinely in Rho and is proved
 report-independent (the native probe), but the value is delegated. This is off-machine
 *by construction* — BigInt arithmetic and the host substitution are the trusted host's
 job — not an unfinished in-Rho realization.

@@ -839,7 +839,7 @@ of the host calculus.
 semantics.** The CBN encoding is a decision about *how CESK
 configurations are represented as ρ-processes*. The CESK machine
 itself still implements whatever evaluation strategy the object
-language specifies. For a CBV language (Calculator, RhoCalc, Ambient,
+language specifies. For a CBV language (Calculator, Rholang, Ambient,
 most mettail targets), the `ar`/`fn` frames of CESK impose a CBV
 discipline, and the emitted ρ-processes mechanically enact that
 discipline on top of a CBN meta-substrate. There is no conflict: a
@@ -1366,7 +1366,7 @@ green thread for each side of the composition).
 ### 10.1. Object-language parallelism emits `Par`, not fork
 
 When an object language has a parallel-composition construct —
-RhoCalc's `P | Q`, Ambient's `n[P] | m[Q]`, GuardedRho's `for … | for
+Rholang's `P | Q`, Ambient's `n[P] | m[Q]`, GuardedRho's `for … | for
 …`, MeTTaIL's nondeterministic `!` — the generator emits a Rholang
 `Par { ps: [⟦P⟧, ⟦Q⟧] }` directly. It does *not* emit a call to
 `GreenThreadRegistry::spawn_child`. Object-level concurrency runs on
@@ -1671,7 +1671,7 @@ code.
 ### 14.3. Phase 3 — Migrate all languages simultaneously
 
 Languages: `calculator`, `ambient`, `guardedrho`, `lambda`, `basemath`,
-`extmath`, `importedmath`, `mixedmath`, `ledtest`, `rhocalc`.
+`extmath`, `importedmath`, `mixedmath`, `ledtest`, `rholang`.
 
 **Pre-archival golden snapshot** (required BEFORE archiving the CESK
 backend): for each language, run `cargo run --bin simulate_<lang> --
@@ -1975,7 +1975,7 @@ shaded and tagged `<<term>>`; both route to `[*]` and the session is
 removed from the scheduler's bookkeeping.
 
 **Why `Forked` is rare.** Per §10.1–10.2 the migration delegates
-object-language parallelism (RhoCalc `P | Q`, Ambient `n[P] | m[Q]`,
+object-language parallelism (Rholang `P | Q`, Ambient `n[P] | m[Q]`,
 MeTTaIL `!`, etc.) directly to Rholang's native `Par` constructor,
 which is handled *inside* the `DebruijnInterpreter` and never
 surfaces to this FSM. A session enters `Forked` only when its *own*

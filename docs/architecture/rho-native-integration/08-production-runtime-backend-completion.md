@@ -59,7 +59,7 @@ true before a language can select Dovetail/Rho as its production runtime path.
 | `dovetail` core | exact keys, checked extraction reports, bounded-cycle completeness, saturation outcomes, Rocq/Why3/Creusot gates | every MeTTaIL runtime rewrite requirement has a Dovetail-core proof or an explicit external contract |
 | `dovetail-runtime` | one-way projection from checked Dovetail reports into `RuntimeDovetailRunReport`, structural report validation, `RuntimeBackendOutput::Dovetail`, direct Dovetail default wrapper, native-handler report helper for generated direct evaluation/normalization, generated `dovetail-codegen` report producer hook, fingerprint-checked `DovetailCompilerStage`, REPL/simulation/testkit report handling, Rocq wrapper model | generated languages can select Dovetail as the production rewrite backend only when the report producer was derived from the same macro-expanded `LanguageDef`, and without fabricating Ascent-shaped graphs, accepting malformed report tables, accepting native-handler output without exact semantic keys, accepting unsupported generated lowering families as complete, or accepting incomplete cycle-bounded reports as exhaustive |
 | `rholang-codegen` | flip-gated `PlannedRhoBackend`, artifact validation, no source-text generated-backend artifacts | every supported RhoNet rule emits validated `rhoapi::Par` and every rejected rule is exactly listed |
-| `rholang-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rhocalc AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, fingerprint-checked `RhoInvocationCompilerStage`, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, installing a direct Rho invocation compiler derived from a different macro-expanded `LanguageDef`, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
+| `rholang-runtime` | host RhoRuntime injection, observation reports, COMM oracle, direct rholang AST lowering, checked observation-shaped `RuntimeBackendReport` conversion, fingerprint-checked `RhoInvocationCompilerStage`, `RhoRuntimeBackedLanguage` wrapper, composed `DovetailRhoRuntimeBackedLanguage` wrapper | every runtime execution surface consumes validated `Par` plans and reports typed observations through `RuntimeBackendReport` without requiring generated language crates to depend on the Rho runtime, allowing observation-shaped output under non-Rho backend/artifact identities, installing a direct Rho invocation compiler derived from a different macro-expanded `LanguageDef`, or constructing a Rho invocation before the Dovetail report is complete and structurally valid |
 | `rholang-adapter` | report handoff proofs and adapter smoke coverage | complete Dovetail reports enter the Rho backend without Ascent-shaped success values |
 | Ascent/CESK path | former oracle and regression baseline | retired from the live production runtime path in P6 once the Dovetail/Rho gates and replacement tests passed; git history remains the archive |
 | CESK runtime path | legacy runtime backend; the public `Language::decompose_into_cek` bridge and `runtime` CEK/CESK re-exports have been removed from the production runtime API; prattail/testkit CESK evaluator, store, GC, and green-thread scheduler modules require explicit `legacy-cesk-runtime` opt-in features | unavailable as the selected production backend once the Rho gate is satisfied for a language; no generated `Language` implementation emits a CEK decomposition hook, and default prattail/testkit APIs expose no legacy CESK runtime surface |
@@ -137,7 +137,7 @@ oracle. Those source-oracle helpers are isolated behind the
 and execute validated AST artifacts without exposing source-text execution as
 the default crate surface.
 
-| MeTTaIL/rhocalc construct | Rho artifact |
+| MeTTaIL/rholang construct | Rho artifact |
 |---|---|
 | `PZero` | empty `Par` |
 | parallel process bag `PPar` | `Par::append` over members |
@@ -160,8 +160,8 @@ Dynamic calls and witness facts use the same AST discipline. The generated
 builder `mettail_rholang_codegen::RhoAstSend` takes `RhoAstLiteral` payloads and
 constructs `Par` directly; it does not emit text for the Rholang parser to
 recover. `RhoAstLiteral` covers scalar payloads, byte/URI/numeric payloads,
-unforgeable names, closed list/tuple/set/map payloads, and rhocalc bags. The
-bag tag constant `RHOCALC_BAG_ABI_TAG` is defined in `rholang-codegen` and
+unforgeable names, closed list/tuple/set/map payloads, and rholang bags. The
+bag tag constant `RHOLANG_BAG_ABI_TAG` is defined in `rholang-codegen` and
 re-exported by `rholang-runtime`, so the producer and observer share one
 nominal ABI.
 
@@ -218,13 +218,13 @@ expression bodies as non-ground observations.
 | `GBigRat(n,d)` | `RuntimeObservationValue::BigRationalBytes { numerator: n, denominator: d }` | exact rational payloads |
 | `GFixedPoint(unscaled, scale)` | `RuntimeObservationValue::FixedPointBytes { unscaled, scale }` | fixed-point decimal payloads |
 | unforgeable private/deploy/deployer/sysauth names | `PrivateName`, `DeployId`, `DeployerId`, or `SysAuthToken` | private channels, ABI tags, and host authority names |
-| closed `EList`, `ETuple`, `ESet`, `EMap` | recursive `List`, `Tuple`, `Set`, or `Map` values | rhocalc and future language collection payloads |
-| rhocalc tagged bag ABI | `RuntimeObservationValue::Bag([(value,count),...])` | `Bag::BagLit` without losing multiplicity |
+| closed `EList`, `ETuple`, `ESet`, `EMap` | recursive `List`, `Tuple`, `Set`, or `Map` values | rholang and future language collection payloads |
+| rholang tagged bag ABI | `RuntimeObservationValue::Bag([(value,count),...])` | `Bag::BagLit` without losing multiplicity |
 
 A production flip must still prove coverage for the actual observed payload
 domain of the language being flipped. The envelope being wider than one
 language's current needs is not, by itself, a coverage proof. The current
-rhocalc gate exercises the structured path in two directions: direct rhocalc
+rholang gate exercises the structured path in two directions: direct rholang
 process lowering emits list, map, and bag typed AST payloads to `rhoapi::Par`,
 and `RhoAstSend` emits structured dynamic send payloads for list, map, bag,
 URI, byte, and private-name values. Both paths execute on the host RhoRuntime
@@ -462,7 +462,7 @@ default, so a normal `rholang-runtime` dependency exposes the direct
 production wrapper `DovetailRhoRuntimeBackedLanguage<L, D, F>` when a language
 has passed both the Dovetail rewrite-coverage gate and the Rho flip gate. That
 default does not pull in generated language crates, the retired Ascent
-reference surface, `rhocalc-runtime`, or hand-authored source-oracle execution. The direct wrapper
+reference surface, `rholang-runtime`, or hand-authored source-oracle execution. The direct wrapper
 is useful for Rho-native fragments and transition tests, but it is not a
 shortcut around identity: `F` is installed as a `RhoInvocationCompilerStage`
 and must carry the same macro-expanded `LanguageDef` fingerprint as `L` and
@@ -564,7 +564,7 @@ partial scalar fragment from being installed as the production runtime for a
 larger generated language merely because the names match. Such fragments remain
 useful as oracle tests, and they may become production surfaces only when they
 have an explicit adapter whose metadata fingerprint is derived from the same
-fragment. The RhoCalc AST runtime helper below is exactly that kind of
+fragment. The Rholang AST runtime helper below is exactly that kind of
 specialized adapter. The general generated-language production path still
 requires full-definition identity across generated metadata, Dovetail
 compilation, and Rho invocation compilation.
@@ -646,34 +646,34 @@ for that wrapped value. The Rocq model
 runtime capability list supports exactly the backends reported by the wrapper
 and that inherited Ascent capability is not exposed after wrapping.
 
-For the RhoCalc process path, the reusable mappers include
-`mettail_rholang_runtime::rhocalc_observe_values_invocation` for closed Rho ground
+For the Rholang process path, the reusable mappers include
+`mettail_rholang_runtime::rholang_observe_values_invocation` for closed Rho ground
 values plus the narrower scalar helpers
-`rhocalc_observe_strings_invocation` and `rhocalc_observe_ints_invocation`.
-The convenience wrappers are `rho_runtime_backed_rhocalc_values`,
-`rho_runtime_backed_rhocalc_strings`, and `rho_runtime_backed_rhocalc_ints`.
-They wrap `RhocalcAstRuntimeLanguage`, a small runtime adapter whose metadata
+`rholang_observe_strings_invocation` and `rholang_observe_ints_invocation`.
+The convenience wrappers are `rho_runtime_backed_rholang_values`,
+`rho_runtime_backed_rholang_strings`, and `rho_runtime_backed_rholang_ints`.
+They wrap `RholangAstRuntimeLanguage`, a small runtime adapter whose metadata
 fingerprint is computed from the explicit dynamic AST fragment:
 
 ```text
-name: RhoCalc,
+name: Rholang,
 types { Proc }
 terms {}
 ```
 
 The adapter delegates parsing, environment handling, normalization, formatting,
-and type inference to the generated `RhoCalcLanguage`, but it does not claim the
-full generated `RhoCalcLanguage` definition identity and it does not forward the
+and type inference to the generated `RholangLanguage`, but it does not claim the
+full generated `RholangLanguage` definition identity and it does not forward the
 generated Ascent oracle. The public helper therefore installs only a
 `PlannedRhoBackend` derived from this AST-runtime fragment; a plan for another
 language name or another definition fingerprint is rejected. At execution time
-the helper accepts the generated `RhoCalcLanguage` term returned by the retained
+the helper accepts the generated `RholangLanguage` term returned by the retained
 MeTTaIL/WPDA parser, downcasts it to a typed `Proc` alternative, lowers that
 process directly to `rhoapi::Par`, and executes it as a dynamic call against
 the flip-gated backend. The Rholang text shown in examples remains reader
 annotation; the runtime value is the AST.
 
-This convenience path is scoped to the RhoCalc/Rho-shaped fragment. It is the
+This convenience path is scoped to the Rholang/Rho-shaped fragment. It is the
 native fast path where the parsed MeTTaIL term is already a process-calculus
 term whose host execution meaning is RhoRuntime execution. The general
 production path for other modeled languages remains report-first:
@@ -688,7 +688,7 @@ typed language AST
 ```
 
 The flip gate must therefore record which path a language is using. A direct
-RhoCalc mapper must prove the parsed process AST is in the covered Rho
+Rholang mapper must prove the parsed process AST is in the covered Rho
 fragment. A generic language mapper must prove that the Rho artifact is derived
 from a complete Dovetail report and a covered RhoNet plan.
 

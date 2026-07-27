@@ -66,12 +66,12 @@ existing `binder_arm` (`dovetail_report.rs:198-249`) stays as-is and is INERT (n
 leaf; `instantiate` rebuilds whole op-nodes). Strictly LESS proof than v2; removes the `new(x,z)≢new(x,w)`
 blanket-erasure hazard. No other language depends on the cut change (never shipped).
 
-## E. Disposition-gating (rhocalc stays host-routed; NO generic premise flip)
+## E. Disposition-gating (rholang stays host-routed; NO generic premise flip)
 Keep `premise_supported Freshness => false` (`dovetail_report.rs:404`) AND Rocq `GPremFreshness => false`
 (`GeneratedReportCompiler.v:90`) UNCHANGED. Native handler gated at codegen by
-`has_binder_equations && has_no_host_disposition`: Ambient (no host) ⇒ emitted; rhocalc (Extrude
+`has_binder_equations && has_no_host_disposition`: Ambient (no host) ⇒ emitted; rholang (Extrude
 dispositioned `RhoNativeJoin`, `backend.rs:23-46`, `guard_quality.rs:131`) ⇒ NOT emitted, stays host-
-routed, fails closed on an Extrude redex. NEW regression `rhocalc_dovetail_report_stays_host_routed_for_
+routed, fails closed on an Extrude redex. NEW regression `rholang_dovetail_report_stays_host_routed_for_
 extrude` (does not exist today — `dovetail_codegen_report.rs` covers only BaseMath + Lambda).
 
 ## F. Zero-admission Rocq — new `AmbientBinderHandler.v` (imports Stdlib + MeTTaILRewriteCoverage only)
@@ -81,7 +81,7 @@ close∘open round-trip) + `from_parts_unsafe_captures` (PROVES run_ascent unsou
 (2) `fresh`=free_vars-absence, `free_vars_no_bound_leak`, `fresh_bag_complement` (⊇/multiset; NO
 filter_adjust); (3) `bound_leaf_inert_outside_binder` + `no_rewrite_selects_bound_leaf` (the CUT's
 inertness); (4) coverage reuse `apply every_requirement_constructor_is_covered` (no new constructors);
-(5) disposition routing `rhocalc_stays_host_routed`/`ambient_native_handler_emitted` + keeps
+(5) disposition routing `rholang_stays_host_routed`/`ambient_native_handler_emitted` + keeps
 `GPremFreshness=false` so the existing `supported_premises_are_only_congruence` proof is untouched.
 Honest `report_complete_iff_both_converge` + `binder_nf_idempotent` (true-fixpoint).
 
@@ -90,7 +90,7 @@ Honest `report_complete_iff_both_converge` + `binder_nf_idempotent` (true-fixpoi
 1. NativeHandler InNew/Out/Open/Amb + NewComm float (no AC) — Rocq Thm 1,2,4; capture witnesses don't capture.
 2. Compose float↔AC fixpoint + honest completeness — Rocq Thm 3 + idempotent/complete; re-float converges;
    non-terminating term `⇒` BoundedByCycleCut; ambiguity ≥2 roots across seam.
-3. Disposition gate + rhocalc pin + flip `ambient_dovetail_flip.rs` expect_err→expect — Rocq Thm 5.
+3. Disposition gate + rholang pin + flip `ambient_dovetail_flip.rs` expect_err→expect — Rocq Thm 5.
 4. Differential oracle on NON-capturing corpus + clear var-cache once.
 
 ## H. Biggest threat: float↔AC fixpoint non-confluent/non-deterministic `⇒` ill-defined NF `⇒` exact_key

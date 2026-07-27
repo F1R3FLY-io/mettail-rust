@@ -310,7 +310,7 @@ LTL `F(normal_form)` is available for more complex temporal assertions (e.g., "e
 - Normal form reachability verified for all languages with rewrite rules
 - LTL temporal properties verified across all languages
 - Morphology tracker detects complexity explosion on intentionally-divergent rewrites
-- Stochastic Petri net simulation runs for concurrent languages (RhoCalc, Ambient)
+- Stochastic Petri net simulation runs for concurrent languages (Rholang, Ambient)
 
 ## Documentation
 

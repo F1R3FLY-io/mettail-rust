@@ -51,7 +51,7 @@ resolution.
 When multiple W12 diagnostics are emitted, the grouper consolidates them:
 
 ```
-note[W12] (RhoCalc): 2 categories have high dispatch entropy: Proc(3.21 bits), Name(2.85 bits)
+note[W12] (Rholang): 2 categories have high dispatch entropy: Proc(3.21 bits), Name(2.85 bits)
 ```
 
 ## Trigger Conditions
@@ -71,7 +71,7 @@ One diagnostic is emitted per high-entropy category.
 ```rust
 // Feature: wfst-log enabled
 language! {
-    name: RhoCalc,
+    name: Rholang,
     types { ![String] as Proc, ![String] as Name },
     terms {
         PNew     . |- "new" Name "in" Proc  : Proc;
@@ -87,7 +87,7 @@ language! {
 ### Output
 
 ```
-note[W12] (RhoCalc): category `Proc` has high dispatch entropy (3.21 bits, 2.22 nats) across 10 actions — WFST weight training would likely improve disambiguation quality
+note[W12] (Rholang): category `Proc` has high dispatch entropy (3.21 bits, 2.22 nats) across 10 actions — WFST weight training would likely improve disambiguation quality
   = hint: use `SpilloverTrainer` or `train_from_corrections()` to learn better weights from parse examples
 ```
 

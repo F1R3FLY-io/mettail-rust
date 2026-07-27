@@ -14,7 +14,7 @@
 6. [Subset Construction (NFA to DFA)](#6-subset-construction-nfa-to-dfa)
 7. [Hopcroft's DFA Minimization](#7-hopcrofts-dfa-minimization)
 8. [Code Generation: String-Based, Direct-Coded vs Table-Driven](#8-code-generation-string-based-direct-coded-vs-table-driven)
-9. [Worked Example: RhoCalc Terminal Set](#9-worked-example-rhocalc-terminal-set)
+9. [Worked Example: Rholang Terminal Set](#9-worked-example-rholang-terminal-set)
 
 ---
 
@@ -386,7 +386,7 @@ The trie significantly reduces NFA state count by sharing prefix states:
 | Grammar    | Terminals | Old NFA States | Trie NFA States | Reduction |
 |------------|-----------|----------------|-----------------|-----------|
 | Calculator | ~15       | ~37            | ~22             | **~42%**  |
-| RhoCalc    | ~18       | ~50            | ~35             | **~30%**  |
+| Rholang    | ~18       | ~50            | ~35             | **~30%**  |
 | Ambient    | ~14       | ~35            | ~21             | **~40%**  |
 
 Fewer NFA states mean fewer epsilon closures during subset construction,
@@ -497,7 +497,7 @@ The benefit comes from shared **non-accepting intermediate states**
 
 This is validated by 4 identity tests that verify DAFSA produces
 byte-identical DFA codegen compared to prefix-only trie construction
-for all 4 grammars (Calculator, Ambient, RhoCalc, and the minimal spec).
+for all 4 grammars (Calculator, Ambient, Rholang, and the minimal spec).
 
 #### Legacy build_keyword_trie_prefix_only()
 
@@ -529,7 +529,7 @@ transitions in every NFA state. The algorithm:
 2. Group bytes with identical signatures into equivalence classes.
 
 ```
-Example (RhoCalc with +, *, !, ?, @, ., identifiers, integers):
+Example (Rholang with +, *, !, ?, @, ., identifiers, integers):
 
   ┌─────────────┬───────────────────────────────────────┬───────┐
   │ Byte        │ NFA behavior                          │ Class │
@@ -677,7 +677,7 @@ effectively O(n log n).
 
 ### Typical Reduction
 
-For the RhoCalc terminal set (~18 terminals + identifiers + integers):
+For the Rholang terminal set (~18 terminals + identifiers + integers):
 
 ```
 ┌──────────────────────┬────────┐
@@ -1068,9 +1068,9 @@ but may be useful for debugging or comparison.
 
 ---
 
-## 9. Worked Example: RhoCalc Terminal Set
+## 9. Worked Example: Rholang Terminal Set
 
-The RhoCalc language has the following terminal set:
+The Rholang language has the following terminal set:
 
 ```
 Fixed terminals:  +  *  !  ?  @  .  ,  |  (  )  {  }  [  ]  {}  error
@@ -1283,7 +1283,7 @@ fn accept_token(state: u32, text: &str) -> Option<Token> {
 }
 ```
 
-### Summary Statistics for RhoCalc
+### Summary Statistics for Rholang
 
 ```
 ┌────────────────────────────┬─────────┐
@@ -1395,14 +1395,14 @@ reaches the parser or a running program. `COMMENTS` carries no engine-level priv
 it is an ordinary channel name a language conventionally uses for comments, treated
 identically to `PRAGMAS`, `DOCTESTS`, or any other name.
 
-*Worked instance*: RhoCalc (`languages/src/rhocalc.rs`) declares
+*Worked instance*: Rholang (`languages/src/rholang.rs`) declares
 `LineComment = "//[^\n]*" -> COMMENTS ;` and
 `BlockComment = "/\*([^*]|\*+[^*/])*\*+/" -> COMMENTS ;`. Maximal munch settles `//`
 against the one-byte `Div` terminal `"/"`; a marker inside a `"…"` string literal is
 never at a token-start position (the literal is one maximal-munch span); and because
 the comment tokens are declared only in the default mode, a marker inside a RAW FLT
 guest body is verbatim guest text. This replaced a pre-parse string strip in the
-`rhocalc` interpreter binary.
+`rholang` interpreter binary.
 
 ### 10.4 VPA Delimiter Grouping (feature = "vpa")
 

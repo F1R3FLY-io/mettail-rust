@@ -65,7 +65,7 @@ equality checks is:
 
     N^2 x K x d
 
-For a RhoCalc program with 200 terms, 10 iterations, and average depth 4, this
+For a Rholang program with 200 terms, 10 iterations, and average depth 4, this
 amounts to roughly 1.6 million binder-freshening operations. The cache reduces
 this to at most N^2 unique computations (the cold misses), with all subsequent
 K-1 iterations hitting the cache.

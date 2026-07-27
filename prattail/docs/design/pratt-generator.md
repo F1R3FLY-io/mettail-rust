@@ -13,7 +13,7 @@
 5. [Generated Code Structure](#5-generated-code-structure)
 6. [The make_infix Dispatch Table](#6-the-make_infix-dispatch-table)
 7. [Interaction Between Pratt Loop and Prediction Engine](#7-interaction-between-pratt-loop-and-prediction-engine)
-8. [Worked Example: RhoCalc Proc Parsing](#8-worked-example-rhocalc-proc-parsing)
+8. [Worked Example: Rholang Proc Parsing](#8-worked-example-rholang-proc-parsing)
 
 ---
 
@@ -490,7 +490,7 @@ handles cross-category dispatch before delegating to the Pratt parser.
 
 ---
 
-## 8. Worked Example: RhoCalc Proc Parsing
+## 8. Worked Example: Rholang Proc Parsing
 
 ### Grammar (Proc category, infix only)
 

@@ -701,7 +701,7 @@ pipeline stops over-activating channel-related modules.
 
 ```rust
 language! {
-    name: RhoCalc,
+    name: Rholang,
     types { Proc, Name, ![i64] as Int },
     guards {
         theories {
@@ -852,7 +852,7 @@ is a planned enhancement.)
 ## 10. Migration Guide
 
 The cleanup is **fully backward compatible**. Every existing language
-definition in `languages/src/` (rhocalc, calculator, lambda, ambient,
+definition in `languages/src/` (rholang, calculator, lambda, ambient,
 led_test, basemath, extmath, mixedmath, importedmath) compiles and
 passes its full test suite **unchanged**.
 

@@ -39,7 +39,7 @@ ctors/clones (`:1498,1806,1910,1982,3611,5691` + Fork-child arms `:6871,6971,704
 survives to EOI/cohort/Step-A. No heuristic; EquivKey untouched; Ambiguous first-class; genuine cycles still caught
 (true re-projection reproduces StackId — LedTest Pred↔Num projection-cycle tests `:6651` must stay green).
 **Rejected (b) delete+delegate-to-cohort:** the cohort is keyed on the dispatch SITE not the descriptor's progress,
-is not a cycle oracle, and would re-expose the rhocalc `and_tt` live-lock on non-cross-cat paths.
+is not a cycle oracle, and would re-expose the rholang `and_tt` live-lock on non-cross-cat paths.
 
 ## 2. Blocker 2 — cohort revive/splice = EquivKey-quotiented cross-revive
 **Root cause** (`int(a<b<=0.5)`): the outer cast enters `BinderRule{Int,cast}` awaiting its Bool body. M4 widens
@@ -73,7 +73,7 @@ chains → `im::OrdSet::clone()` of empty = O(1) Arc-bump → zero chain RSS (We
 ## 4. Milestones (ONE worktree, serial foreground --wait builds; main tree NEVER modified)
 - **M0** — descriptor primitive + plumb (INERT; keep old checks live in parallel). Gate: gauntlet 4220/0; chain Welch NEUTRAL.
 - **M1** — Blocker 1: switch the 5 sites to the descriptor; remove dead cross-cat `visited_dispatch` use. Gate:
-  `cross_cat_with_parens` GREEN + `cross_cat_dispatch_chaining` GREEN + LedTest projection-cycle 0-fail + rhocalc
+  `cross_cat_with_parens` GREEN + `cross_cat_dispatch_chaining` GREEN + LedTest projection-cycle 0-fail + rholang
   `and_tt` live-lock bounded + gauntlet 4220/0.
 - **M2** — Blocker 2: `take_pending_for_drain_equiv` + resolve-site EquivKey drain trigger + drain-loop revive.
   Trace-checkpoint: confirm `K_resolve.equiv()==K_pause.equiv()` for `int(a<b<=0.5)`. Gate: ALL 5 Sig-B GREEN +
@@ -84,7 +84,7 @@ chains → `im::OrdSet::clone()` of empty = O(1) Arc-bump → zero chain RSS (We
 5 Sig-B green (`parse_int_cross_cat_comparison_le`, `simulator_regression_{original_6,cross_cat_dispatch_chaining,cross_cat_with_floats,bool_prefix_tokens}`)
 + `simulator_regression_cross_cat_with_parens` green; 16 M4-fixed + 4 realize-fixed + `_ge`/`_ne`/`_in_expression` stay;
 gauntlet `cargo test --release -p prattail --lib`=4220/0; C-bis cycle/newton/tarjan/star/scc/self_loop 0-fail
-(Blocker 1 must NOT weaken genuine-cycle detection); op-suites gen_calculator_op≥1331/gen_rhocalc_op 532; soundness probe
+(Blocker 1 must NOT weaken genuine-cycle detection); op-suites gen_calculator_op≥1331/gen_rholang_op 532; soundness probe
 + `-3!` + `wpda_parity_calculator`; **MANDATORY interleaved Welch chain panel N≥51 + chain_1000/2000 RSS +5% max**
 (Option A predicts NEUTRAL — load-bearing guard); ambiguity-preservation (genuinely-ambiguous cross-cat still `Ambiguous`).
 

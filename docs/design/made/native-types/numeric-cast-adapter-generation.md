@@ -6,7 +6,7 @@
 
 ## 1. Motivation
 
-The native-fold campaign (cast-eval gap closure) reduces numeric casts — RhoCalc
+The native-fold campaign (cast-eval gap closure) reduces numeric casts — Rholang
 `int(a, w) : Proc`, Calculator `int(a, w) : Int`, etc. — by calling a small per-language
 **adapter** that translates the language's concrete `Proc` AST to/from the
 language-agnostic numeric pipeline in `mettail_runtime::numeric_cast_dispatch`.
@@ -59,7 +59,7 @@ pub trait ProcToNumericInput {
 }
 
 /// Build an OBJECT-output result `Proc` (or the language's Err). Implemented ONLY for
-/// non-native-output languages (RhoCalc). Native-output languages (Calculator) never
+/// non-native-output languages (Rholang). Native-output languages (Calculator) never
 /// implement this — their reductions return the native scalar and DEFER (None) on failure.
 pub trait CastResult: Sized {
     fn err() -> Self;
@@ -76,21 +76,21 @@ Fixed(&CanonicalFixedPoint) | F64(f64)`.
 ## 4. Generic reductions — two families (the defer-vs-Err split is load-bearing)
 
 Calculator casts are **native-output** (`: Int`/`: BigInt`/…): the body returns
-`Option<scalar>`; `None` ⇒ the redex **defers** (stays unreduced). RhoCalc casts are
+`Option<scalar>`; `None` ⇒ the redex **defers** (stays unreduced). Rholang casts are
 **object-output** (`: Proc`): the body returns `Proc`, with `Proc::Err` on a bad cast.
 These are TWO families that share the math layer but differ in failure model and width:
 
 ```rust
 // ── native-output (Option, defer-on-None). Calculator Int = i32, so it uses *_i32. ──
 pub fn numeric_int_bin_i32<P: ProcToNumericInput, W: CastWidth>(a: &P, w: W) -> Option<i32>;
-pub fn numeric_int_bin_i64<P: ProcToNumericInput, W: CastWidth>(a: &P, w: W) -> Option<i64>; // RhoCalc Int = i64 (used by proc_int_bin)
+pub fn numeric_int_bin_i64<P: ProcToNumericInput, W: CastWidth>(a: &P, w: W) -> Option<i64>; // Rholang Int = i64 (used by proc_int_bin)
 pub fn numeric_uint_bin_u32<P: ProcToNumericInput, W: CastWidth>(a: &P, w: W) -> Option<u32>;
 pub fn numeric_float_bin<P: ProcToNumericInput, W: CastWidth>(a: &P, w: W) -> Option<CanonicalFloat64>;
 pub fn numeric_fixed_bin<P: ProcToNumericInput, W: CastWidth>(a: &P, w: W) -> Option<CanonicalFixedPoint>;
 pub fn numeric_bigint_unary<P: ProcToNumericInput>(a: &P) -> Option<CanonicalBigInt>;
 pub fn numeric_bigrat_unary<P: ProcToNumericInput>(a: &P) -> Option<CanonicalBigRat>;
 
-// ── object-output (Proc, Err-on-failure). RhoCalc only; needs CastResult. ──
+// ── object-output (Proc, Err-on-failure). Rholang only; needs CastResult. ──
 pub fn proc_int_bin<P: ProcToNumericInput + CastResult, W: CastWidth>(a: &P, w: W) -> P
     { numeric_int_bin_i64(a, w).map_or_else(P::err, P::from_int) }
 pub fn proc_uint_bin<P,W>(a:&P,w:W)->P  { numeric_uint_bin_u32(a,w).map_or_else(P::err,P::from_uint) }
@@ -151,8 +151,8 @@ emit `L`'s adapter impls (and `CastResult`) **ungated** iff `L` has at least one
 native-handler path in the default build); emit them under `#[cfg(feature =
 "dovetail-codegen")]` iff **all** of `L`'s numeric casts are **object-output** (consumed
 only by the typed dispatcher, which is itself `dovetail-codegen`-gated). ⇒ Calculator:
-ungated, no `CastResult`. RhoCalc: `dovetail-codegen`-gated, with `CastResult`. This
-supersedes the interim hand-gate `#[cfg(all(rhocalc, dovetail-codegen))]`.
+ungated, no `CastResult`. Rholang: `dovetail-codegen`-gated, with `CastResult`. This
+supersedes the interim hand-gate `#[cfg(all(rholang, dovetail-codegen))]`.
 
 ## 6. The one classifier patch (the flagged hazard — red-team blocker 1)
 
@@ -173,9 +173,9 @@ dead `match_arm` content (gate-only, never emitted) and the PDA `try_eval` path 
 Every generated item is gated by the cfg under which its unique consumer compiles:
 - runtime generic fns are `pub` library API ⇒ never dead-code-linted.
 - **default** (`all-languages`, no dovetail-codegen): Calculator adapter ungated + consumed
-  by `eval.rs`; RhoCalc adapter gated out (its Proc fold bodies are not emitted on the
+  by `eval.rs`; Rholang adapter gated out (its Proc fold bodies are not emitted on the
   `EGraph<String>`/default path — verified: that path never references `f.body`).
-- **+dovetail-codegen**: RhoCalc adapter compiles + consumed by the typed dispatcher;
+- **+dovetail-codegen**: Rholang adapter compiles + consumed by the typed dispatcher;
   Calculator adapter still consumed by both `eval.rs` and the typed path.
 - single-language combos: symmetric. All five combos build with `-D warnings` (Phase 3 gate).
 
@@ -192,8 +192,8 @@ No `.v` change; zero-admission preserved (re-verified in Phase 5).
 
 ## 9. Test plan
 
-- Unchanged-but-must-stay-green: `languages/tests/rhocalc_dovetail_fold.rs` (6, incl.
-  `free_var_arg_defers`, `bad_cast_folds_to_err`), `rhocalc_dovetail_op_enum.rs`, Calculator
+- Unchanged-but-must-stay-green: `languages/tests/rholang_dovetail_fold.rs` (6, incl.
+  `free_var_arg_defers`, `bad_cast_folds_to_err`), `rholang_dovetail_op_enum.rs`, Calculator
   cast suites, `runtime` numeric_cast tests.
 - New: `runtime/src/numeric_cast_adapter.rs` unit tests over an in-test `FakeProc`
   implementing the three traits (proves the generics work over an arbitrary `Proc` with no
@@ -226,7 +226,7 @@ No `.v` change; zero-admission preserved (re-verified in Phase 5).
   (`macros/src/gen/runtime/language.rs`), gate per §5. Old file still present (no collision
   — new trait impls vs old free fns). *Verify:* default + `--features dovetail-codegen`
   builds; macro token test.
-- **P3** Migrate fold bodies (`rhocalc.rs`→`proc_*`, `calculator.rs`→`numeric_*`); **delete**
+- **P3** Migrate fold bodies (`rholang.rs`→`proc_*`, `calculator.rs`→`numeric_*`); **delete**
   `languages/numeric_dispatch.rs` + its `mod` block (`lib.rs`); relocate `CastWidth`.
   *Verify:* all 5 feature combos build with `RUSTFLAGS="-D warnings"`.
 - **P4** Behavior tests + the third-language fixture. *Verify:* `cargo test -p

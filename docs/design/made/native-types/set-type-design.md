@@ -1,17 +1,17 @@
 # Set Type Design
 
-**Status:** Implemented (RhoCalc)  
+**Status:** Implemented (Rholang)  
 **Context:** MeTTaIL collection types; see [map-type-design.md](./map-type-design.md) and [lists-and-bags-support.md](./lists-and-bags-support.md). Rholang reference: [Sets](https://rholang.org/tutorials/data-structures/#sets).
 
 ---
 
 ## 1. Goal and Scope
 
-**Goal:** First-class **Set** category in RhoCalc with Rholang-style surface syntax and method sugar.
+**Goal:** First-class **Set** category in Rholang with Rholang-style surface syntax and method sugar.
 
-**Scope:** `![mettail_runtime::HashSetLit<Proc>] as Set` in `language! { types { … } }`. Default literal delimiters are `Set` + `(`, `)`, `,` (`CollectionCategory::set_defaults()` as `open_parts` / `close_parts`). `Set()` is the empty set literal via the same `SetLit` rule as nonempty sets. Rhocalc **Bag** (`#{…}#`) remains the multiset / parallel-composition surface with no Rholang counterpart.
+**Scope:** `![mettail_runtime::HashSetLit<Proc>] as Set` in `language! { types { … } }`. Default literal delimiters are `Set` + `(`, `)`, `,` (`CollectionCategory::set_defaults()` as `open_parts` / `close_parts`). `Set()` is the empty set literal via the same `SetLit` rule as nonempty sets. Rholang **Bag** (`#{…}#`) remains the multiset / parallel-composition surface with no Rholang counterpart.
 
-**Non-goals:** partial collection patterns, changing Bag syntax to Rholang `Set`. Surface `.toByteArray()` is specified in [rhocalc-collection-wire.md](./rhocalc-collection-wire.md).
+**Non-goals:** partial collection patterns, changing Bag syntax to Rholang `Set`. Surface `.toByteArray()` is specified in [rholang-collection-wire.md](./rholang-collection-wire.md).
 
 ---
 
@@ -35,7 +35,7 @@
 
 ## 4. Operations and Method Sugar
 
-Prefix builtins fold from method sugar in `languages/src/rhocalc.rs`:
+Prefix builtins fold from method sugar in `languages/src/rholang.rs`:
 
 | Rholang method | Lowering |
 |----------------|----------|
@@ -56,11 +56,11 @@ Quoted-name operands in `contains` / `delete` use the same element normalization
 
 - Unordered membership; parse-time deduplication on literal construction
 - Deterministic printing for tests and REPL (`Set(1, 2, 3)` with sorted elements)
-- Receive patterns match `CastSet` / `SetLit` with strict cardinality (see `languages/src/rhocalc/receive.rs`)
+- Receive patterns match `CastSet` / `SetLit` with strict cardinality (see `languages/src/rholang/receive.rs`)
 
 ---
 
 ## 6. Tests and Examples
 
-- `languages/tests/rhocalc_tests.rs` — `native_ops::set`, pattern matching, `map.keys()` returning a set
-- `repl/src/examples/rhocalc.txt` — set literals and method chains
+- `languages/tests/rholang_tests.rs` — `native_ops::set`, pattern matching, `map.keys()` returning a set
+- `repl/src/examples/rholang.txt` — set literals and method chains

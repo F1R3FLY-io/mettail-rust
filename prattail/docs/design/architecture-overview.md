@@ -677,7 +677,7 @@ sub-languages:
 ```rust
 compose_languages! {
     name: Combined,
-    languages: [calculator::Calculator, rhocalc::RhoCalc],
+    languages: [calculator::Calculator, rholang::Rholang],
 }
 ```
 

@@ -7,7 +7,7 @@
 **Working tree shows only:** `prattail/src/wpda_walker.rs`, `prattail/src/gss.rs`, and this document.
 
 This is the **fourth** document in the `30acf6de` "preserve ambiguity and runtime evidence" cursor-frontier
-fan-out family (the prior three: `rhocalc-collection-fork-explosion.md`, `calculator-map-crosscat-fanout.md`,
+fan-out family (the prior three: `rholang-collection-fork-explosion.md`, `calculator-map-crosscat-fanout.md`,
 `calculator-broad-parse-slowdown.md`). It **corrects an incorrect measurement** in
 `calculator-broad-parse-slowdown.md` §9.5 and root-causes a **distinct** regression that all three priors
 missed.
@@ -248,7 +248,7 @@ sidecar like `lex_fork_path`. Its own field doc (`wpda_walker.rs:2752`) and `ext
    at every input position."
 
 Crucially, keying `pos` GLOBALLY into the descriptor (removing role 2) was already tried and **re-exploded the
-fan**: rhocalc `x!(0)` regressed and the suite went **0.6 s → 133 s** (`wpda_walker.rs:4590-4609`). Truncating
+fan**: rholang `x!(0)` regressed and the suite went **0.6 s → 133 s** (`wpda_walker.rs:4590-4609`). Truncating
 the set at the infix-operand seal (the §4.6 hypothesis) removes the suppression for positions inside a sealed
 operand, which — because the key is intentionally pos-less to match the SAME descriptor at *different*
 positions — would let the projection fan **re-fire downstream**, the very 0.6 s → 133 s pathology. Unlike the
@@ -284,7 +284,7 @@ quadratic (which all three prior fan-out documents missed); it is fixed soundly 
 | `cargo nextest run -p prattail` | **3795 / 3795** passed (target ≥ 3795). |
 | `cargo nextest run -p simulation` | **141 / 141** passed. |
 | `cargo nextest run -p dovetail` | **92 / 92** passed. (NB: the package is `dovetail`, not `mettail-dovetail`.) |
-| `cargo nextest run -p languages -E 'binary(rhocalc_tests) \| binary(rhocalc_dovetail_fold) \| binary(simulation_integration) \| binary(gen_calculator_unit) \| binary(gen_rhocalc_unit) \| binary(lazy_lex_equivalence) \| binary(calculator)'` | **400 / 400** passed (1 skipped). |
+| `cargo nextest run -p languages -E 'binary(rholang_tests) \| binary(rholang_dovetail_fold) \| binary(simulation_integration) \| binary(gen_calculator_unit) \| binary(gen_rholang_unit) \| binary(lazy_lex_equivalence) \| binary(calculator)'` | **400 / 400** passed (1 skipped). |
 | `lazy_lex_equivalence` slowest test | 1.47 s (binary ≪ 10 s; `lazy ≡ eager` holds). |
 | `gen_calculator_prop` (full binary) | **98 / 98** passed — incl. `map_display_parse_roundtrip` 28.6 s, `bigrat_display_parse_roundtrip` 21.5 s, `bigrat_strong_roundtrip` 0.6 s, `test_deep_parens_100000` 2.2 s (deep-nesting / map / bigrat fixes hold). |
 | ON/OFF byte-identical differential (`PRATTAIL_PREFIX_CAST_STAGE_MEMO`) | 52 inputs, **0 mismatches**. |

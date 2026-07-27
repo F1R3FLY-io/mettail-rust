@@ -25,14 +25,14 @@ An **interactive REPL** for exploring rewrite systems defined in MeTTaIL. Users 
 ### Startup
 
 ```bash
-$ mettail repl rhocalc
+$ mettail repl rholang
 
 ╔════════════════════════════════════════════════════════════╗
 ║                   MeTTaIL Term Explorer                     ║
 ║                    Version 0.2.0                            ║
 ╚════════════════════════════════════════════════════════════╝
 
-Loading theory: rhocalc
+Loading theory: rholang
   ✓ 2 categories (Proc, Name)
   ✓ 8 constructors
   ✓ 3 equations
@@ -40,13 +40,13 @@ Loading theory: rhocalc
 
 Type 'help' for available commands.
 
-rhocalc>
+rholang>
 ```
 
 ### Term Input
 
 ```
-rhocalc> term: {a!(0), for(a->x0){*x0}}
+rholang> term: {a!(0), for(a->x0){*x0}}
 
 Parsing... ✓
 Running Ascent... ████████████████████ Done. (127ms)
@@ -58,13 +58,13 @@ Computed:
 
 Current term: {a!(0), for(a->x0){*x0}}
 
-rhocalc>
+rholang>
 ```
 
 ### Querying Rewrites
 
 ```
-rhocalc> next
+rholang> next
 
 Available rewrites from {a!(0), for(a->x0){*x0}}:
 
@@ -74,19 +74,19 @@ Available rewrites from {a!(0), for(a->x0){*x0}}:
 
 Select [1] or 'back' to return.
 
-rhocalc> 1
+rholang> 1
 
 Stepping to: {*@(0)}
 
 Current term: {*@(0)}  [Normal form ✓]
 
-rhocalc>
+rholang>
 ```
 
 ### Exploring the Graph
 
 ```
-rhocalc> graph
+rholang> graph
 
 Rewrite graph for initial term {a!(0), for(a->x0){*x0}}:
 
@@ -96,13 +96,13 @@ Rewrite graph for initial term {a!(0), for(a->x0){*x0}}:
 Paths to normal forms: 1
 Total reachable terms: 2
 
-rhocalc>
+rholang>
 ```
 
 ### Generating Terms
 
 ```
-rhocalc> generate random 5
+rholang> generate random 5
 
 Generated term at depth 5:
 {for(a->x1){x1!(0)}, b!(for(a->x2){*x2}), for(@(0)->y0){*y0}}
@@ -112,13 +112,13 @@ Running Ascent... Done. (89ms)
   - 412 rewrites
   - 17 normal forms
 
-rhocalc>
+rholang>
 ```
 
 ### Viewing Normal Forms
 
 ```
-rhocalc> normals
+rholang> normals
 
 Normal forms (11 found):
 
@@ -131,19 +131,19 @@ Normal forms (11 found):
 
 Select [1-11] to jump to that term, or 'all' to see full list.
 
-rhocalc> 1
+rholang> 1
 
 Jumping to: *@(0)
 
 Current term: *@(0)  [Normal form ✓]
 
-rhocalc>
+rholang>
 ```
 
 ### History and Navigation
 
 ```
-rhocalc> history
+rholang> history
 
 Session history:
 
@@ -152,19 +152,19 @@ Session history:
 
 Type 'back' or 'goto <n>' to navigate.
 
-rhocalc> back
+rholang> back
 
 Returning to: {a!(0), for(a->x0){*x0}}
 
 Current term: {a!(0), for(a->x0){*x0}}
 
-rhocalc>
+rholang>
 ```
 
 ### Equivalence Classes
 
 ```
-rhocalc> equiv
+rholang> equiv
 
 Equivalence class of {a!(0), for(a->x0){*x0}}:
 
@@ -174,13 +174,13 @@ Terms in this class (modulo equations):
 
 All terms in this class can rewrite to the same normal forms.
 
-rhocalc>
+rholang>
 ```
 
 ### Help System
 
 ```
-rhocalc> help
+rholang> help
 
 Available commands:
 
@@ -213,7 +213,7 @@ General:
   help               Show this help
   quit, exit         Exit REPL
 
-rhocalc>
+rholang>
 ```
 
 ---
@@ -304,7 +304,7 @@ trait Theory {
 // In mettail-examples/lib.rs:
 pub fn get_theory(name: &str) -> Option<Box<dyn Theory>> {
     match name {
-        "rhocalc" => Some(Box::new(RhoCalculusTheory)),
+        "rholang" => Some(Box::new(RhoCalculusTheory)),
         "ambient" => Some(Box::new(AmbientCalculusTheory)),
         _ => None
     }
@@ -401,16 +401,16 @@ Start with **CLI mode** for simplicity, add TUI later.
 2. Set up CLI with `rustyline`
 3. Implement theory registry in `mettail-examples`
 4. Add `Theory` trait with basic methods
-5. Implement theory loading for RhoCalc
+5. Implement theory loading for Rholang
 6. Parse terms and display them
 
-**Deliverable**: Can load RhoCalc and parse terms
+**Deliverable**: Can load Rholang and parse terms
 
 ```bash
-$ mettail repl rhocalc
-rhocalc> term: a!(0)
+$ mettail repl rholang
+rholang> term: a!(0)
 Parsed: a!(0)
-rhocalc>
+rholang>
 ```
 
 ### Phase 2: Ascent Integration (Week 1)
@@ -419,19 +419,19 @@ rhocalc>
 
 **Tasks**:
 1. Extend `Theory` trait with `run_ascent`
-2. Implement Ascent execution for RhoCalc
+2. Implement Ascent execution for Rholang
 3. Extract relations into `AscentResults`
 4. Add `stats` command to display results
 
 **Deliverable**: Can run Ascent and see statistics
 
 ```bash
-rhocalc> term: {a!(0), for(a->x0){*x0}}
+rholang> term: {a!(0), for(a->x0){*x0}}
 Running Ascent... Done.
   - 45 terms
   - 62 rewrites
   - 11 normal forms
-rhocalc> stats
+rholang> stats
 [displays detailed statistics]
 ```
 
@@ -449,10 +449,10 @@ rhocalc> stats
 **Deliverable**: Can query the rewrite graph
 
 ```bash
-rhocalc> next
+rholang> next
 Available rewrites:
   [1] {*@(0)} via Communication
-rhocalc> normals
+rholang> normals
 11 normal forms found
 ```
 
@@ -470,11 +470,11 @@ rhocalc> normals
 **Deliverable**: Can explore rewrite graph interactively
 
 ```bash
-rhocalc> next
+rholang> next
 [1] {*@(0)}
-rhocalc> step 1
+rholang> step 1
 Stepping to: {*@(0)}
-rhocalc> back
+rholang> back
 Returning to: {a!(0), for(a->x0){*x0}}
 ```
 
@@ -491,7 +491,7 @@ Returning to: {a!(0), for(a->x0){*x0}}
 **Deliverable**: Can generate and explore random terms
 
 ```bash
-rhocalc> generate random 4
+rholang> generate random 4
 Generated: {a!(0), b!(0)}
 Running Ascent... Done.
 ```
@@ -506,7 +506,7 @@ Running Ascent... Done.
 3. Add command completion (via `rustyline`)
 4. Write user documentation
 5. Add unit tests
-6. Test with all example theories (RhoCalc, Ambient)
+6. Test with all example theories (Rholang, Ambient)
 
 **Deliverable**: Production-ready REPL
 
@@ -599,7 +599,7 @@ This works because `ascent_run!` returns a struct with relation fields!
 Full terminal UI with panels:
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ Theory: RhoCalc                              [Ctrl+Q]   │
+│ Theory: Rholang                              [Ctrl+Q]   │
 ├────────────────────────┬────────────────────────────────┤
 │ Current Term:          │ Available Rewrites:            │
 │                        │                                │
@@ -626,7 +626,7 @@ ASCII art or export to GraphViz:
 
 Or export DOT:
 ```bash
-rhocalc> export graph.dot
+rholang> export graph.dot
 Exported rewrite graph to graph.dot
 $ dot -Tpng graph.dot -o graph.png
 ```
@@ -635,7 +635,7 @@ $ dot -Tpng graph.dot -o graph.png
 
 Show why two terms are equivalent:
 ```bash
-rhocalc> why-equal "{a!(0), b!(0)}" "{b!(0), a!(0)}"
+rholang> why-equal "{a!(0), b!(0)}" "{b!(0), a!(0)}"
 
 Terms are equal via:
   1. Commutativity of PPar (equation)
@@ -649,7 +649,7 @@ Proof tree:
 
 Per-rule performance:
 ```bash
-rhocalc> profile
+rholang> profile
 
 Rule execution times:
   Communication: 23ms (45 applications)
@@ -669,7 +669,7 @@ Total Ascent time: 127ms
 - ✅ Fast response times (< 200ms for queries)
 
 ### Completeness
-- ✅ All example theories work (RhoCalc, Ambient)
+- ✅ All example theories work (Rholang, Ambient)
 - ✅ Can handle 1000+ term graphs
 - ✅ Supports all query types (next, normals, equiv, graph)
 

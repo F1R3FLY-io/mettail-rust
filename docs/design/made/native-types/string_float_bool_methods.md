@@ -441,7 +441,7 @@ semantics {
 - `step`: Educational/debugging, see all intermediate steps
 - `both`: Default, flexible evaluation
 
-See [Ascent generation](../ascent_generation.md) and `macros/src/logic/mod.rs` for how `fold` vs `step` affects generated rules (including the constraint that **`step` HOL on non-native categories like `Proc` is not emitted** — use `fold` for `Proc`-valued rewrites such as `fraction` in RhoCalc).
+See [Ascent generation](../ascent_generation.md) and `macros/src/logic/mod.rs` for how `fold` vs `step` affects generated rules (including the constraint that **`step` HOL on non-native categories like `Proc` is not emitted** — use `fold` for `Proc`-valued rewrites such as `fraction` in Rholang).
 
 ---
 

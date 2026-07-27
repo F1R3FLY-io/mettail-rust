@@ -58,7 +58,7 @@
 
 The cast-then-compare family — `int(3) == 3`, `float(3) >= 3.0`, `cast_error_fixed != 0.0`, and the
 `comparison_after_cast_results::*` / `operator_chains_after_casts::*` / `string_edge_cases::*` /
-`gen_calculator_op` `*casterrfixed*` / `rhocalc int_of_float_add` cluster — fails because a
+`gen_calculator_op` `*casterrfixed*` / `rholang int_of_float_add` cluster — fails because a
 **category-changing infix** `op : c → d` (e.g. `EqInt : Int "==" Int → Bool`, `NeFixed : Fixed → Bool`)
 cannot attach to a **cast result** operand.
 
@@ -168,7 +168,7 @@ direction, generalized beyond casts.
    `merge_preserves_coverage`.
 5. **Verify**: `cast_probe` (`int(3)==3`, `float(3)>=3.0`, `cast_error_fixed != …`, nested casts for
    no-explosion); op-suite diff vs `prattail/docs/theory/formal-verification/baseline-cf03e571-failures.txt`
-   (217); `-3!` canary; prattail-lib gauntlet; `gen_calculator_op` + `gen_rhocalc_op` + `edge_case_tests`.
+   (217); `-3!` canary; prattail-lib gauntlet; `gen_calculator_op` + `gen_rholang_op` + `edge_case_tests`.
 
 ## 6. Open risks
 

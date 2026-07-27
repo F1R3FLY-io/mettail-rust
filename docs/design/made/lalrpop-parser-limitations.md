@@ -38,7 +38,7 @@ type categories** (e.g. `Proc`, `Name`, `Int`) that share the same identifier to
   │  }            │
   └───────────────┘
       DSL macro                   Generated file          Compiled parser
-  (e.g. rhocalc.rs)           (e.g. rhocalc.lalrpop)
+  (e.g. rholang.rs)           (e.g. rholang.lalrpop)
 ```
 
 This document catalogs the four main categories of issues encountered during integration,
@@ -212,10 +212,10 @@ use a different strategy described below.
 
 ### The `Name` Special Case
 
-The `Name` category in RhoCalc and similar two-type languages receives special treatment:
+The `Name` category in Rholang and similar two-type languages receives special treatment:
 it gets **both** the prefixed form (`"name" ":" Ident`) and a bare `Ident` fallback.
 
-From the generated `rhocalc.lalrpop`:
+From the generated `rholang.lalrpop`:
 
 ```lalrpop
 pub Name: Name = {
@@ -288,7 +288,7 @@ a binding for `x` does not replace the `x` inside `extra`.
 ### The Problem
 
 When a language has binary infix operators (like `+`, `-`, `^` in the Calculator, or `+`
-in RhoCalc), the naive grammar is ambiguous:
+in Rholang), the naive grammar is ambiguous:
 
 ```
 // Naive grammar (DOES NOT COMPILE)
@@ -595,8 +595,8 @@ fn is_var_terminal_rule(rule: &GrammarRule) -> bool {
 }
 ```
 
-The generated RhoCalc grammar shows this partitioning
-(`languages/src/generated/rhocalc.lalrpop`):
+The generated Rholang grammar shows this partitioning
+(`languages/src/generated/rholang.lalrpop`):
 
 ```lalrpop
 pub Proc: Proc = {
@@ -619,7 +619,7 @@ ProcAtom: Proc = {
 };
 ```
 
-Note: In the current RhoCalc grammar, `POutput` happens to be in `ProcAtom` rather than at
+Note: In the current Rholang grammar, `POutput` happens to be in `ProcAtom` rather than at
 the top level because `Name` is a separate non-terminal (not a bare `Var`). The top-level
 partitioning applies specifically to rules defined with the old BNFC-style `Var "=" Expr`
 pattern. For the current language definitions using the HOL-style judgement syntax
@@ -670,9 +670,9 @@ if nt == category {
 | File | Purpose |
 |---|---|
 | `macros/src/gen/syntax/parser/lalrpop.rs` | Core grammar generator (~2139 lines). Contains all workaround logic. |
-| `languages/src/rhocalc.rs` | RhoCalc language definition (3 types: `Proc`, `Name`, `Int`). |
+| `languages/src/rholang.rs` | Rholang language definition (3 types: `Proc`, `Name`, `Int`). |
 | `languages/src/calculator.rs` | Calculator language definition (3 types: `Int`, `Bool`, `Str`). |
-| `languages/src/generated/rhocalc.lalrpop` | Generated RhoCalc grammar. Shows `match {}` block, type prefixes, tiered `Proc` rules. |
+| `languages/src/generated/rholang.lalrpop` | Generated Rholang grammar. Shows `match {}` block, type prefixes, tiered `Proc` rules. |
 | `languages/src/generated/calculator.lalrpop` | Generated Calculator grammar. Shows `match {}` block, type prefixes, all three tiers for `Int`/`Bool`/`Str`. |
 | `languages/src/generated/lambda.lalrpop` | Generated Lambda calculus grammar (1 type). Shows simple single-tier grammar with no workarounds needed. |
 | `languages/src/generated/ambient.lalrpop` | Generated Ambient calculus grammar (2 types: `Proc`, `Name`). Shows bare `Ident` on both categories (2-type special case). |

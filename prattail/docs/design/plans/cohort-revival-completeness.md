@@ -85,7 +85,7 @@ no re-drive). **(b)/(c) NOT needed.** G2a (regs=0) → existing R2-codegen. Spur
 
 ## 4. Standing GATE (every milestone)
 gauntlet `cargo test --release -p prattail --lib`=**4220/0**; op-suites `gen_calculator_op≥1331/0`,
-`gen_rhocalc_op 532/0`; `-3!` + `wpda_parity_*` /0; soundness probe `pass2c_token_soundness_probe`; over-gen canaries
+`gen_rholang_op 532/0`; `-3!` + `wpda_parity_*` /0; soundness probe `pass2c_token_soundness_probe`; over-gen canaries
 `simulator_regression_{nested_casts,bool_prefix_tokens}` + `probe!` set (`bool(0)`,`int(int(3))`,…) GREEN; **16-FIXED
 stay fixed**; **9-REGRESSION return green**; **MANDATORY interleaved Welch chain panel `{left,right}_assoc_chain_{50,100,200}`
 + right_1000, N≥15, no arm LOSS p<0.05, + chain_1000/2000 RSS +5% max** (the prior Approach-P rejection was a chain

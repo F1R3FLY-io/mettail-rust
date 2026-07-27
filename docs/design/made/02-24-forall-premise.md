@@ -2,7 +2,7 @@
 
 ## Motivation
 
-RhoCalc's scope extrusion equation requires a universally quantified freshness condition:
+Rholang's scope extrusion equation requires a universally quantified freshness condition:
 
 ```
 Extrude . xs.*map(|x| x # ...rest)
@@ -86,7 +86,7 @@ This is a no-op when `eq` only has reflexive entries (the common case without us
 | `macros/src/logic/rules.rs` | `premise_to_condition` and `generate_forall_clause` |
 | `macros/src/logic/mod.rs` | Equation-rewrite closure rule generation |
 | `macros/src/ast/pattern.rs` | Collection-variable binder matching in `generate_clauses` and `to_ascent_rhs` |
-| `languages/src/rhocalc.rs` | `Extrude` equation added |
+| `languages/src/rholang.rs` | `Extrude` equation added |
 
 ## Example: scope extrusion in action
 

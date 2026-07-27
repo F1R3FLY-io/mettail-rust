@@ -100,7 +100,7 @@ Rewriting is closed over equivalence:
 This rule is why equation identity and rewrite reachability cannot be treated
 as unrelated subsystems.
 
-The whole story is easiest to see *on the e-graph itself*, using rhocalc's
+The whole story is easiest to see *on the e-graph itself*, using rholang's
 signature reduction — COMM. The directed rewrite `t ⤳ u` (a receive meeting a
 send on a shared channel) merges the redex and contractum into one e-class
 (one `EClassId`) while keeping both exact `ContentKey`s — nothing is pruned —

@@ -147,7 +147,7 @@ recorded here for traceability:
 - **Per-language `language!` integration of HM, letprop, `#[tier]`,
   multi-channel guards.** These features have parser/AST/codegen
   surface but no in-tree language uses them. Adding them is mechanical
-  follow-up — e.g., a future `RhoCalcWithJoin` language could exercise
+  follow-up — e.g., a future `RholangWithJoin` language could exercise
   Phase 8/9 multi-channel guard analysis end-to-end.
 - **AWA-based per-tier codegen.** Phase 5 unblocked the AWA route by
   implementing `to_weighted_automaton()`, but the per-tier codegen

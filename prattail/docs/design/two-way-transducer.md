@@ -113,7 +113,7 @@ pub struct WeightedTwoWayTransducer<W: Semiring> {
    move right)        move left!)        move right)
 ```
 
-### RhoCalc integration types
+### Rholang integration types
 
 ```rust
 pub struct ChannelConstraint<W: Semiring> {

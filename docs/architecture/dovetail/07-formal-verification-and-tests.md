@@ -42,8 +42,8 @@ Graphviz source: [figures/07-verification-dag.dot](figures/07-verification-dag.d
 | `corpus_replay.rs` | replay-shaped regression coverage |
 | `language_inventory.rs` | current language requirement inventory checked against Rocq coverage names |
 | `language_shape_parity.rs` | representative MeTTaIL rewrite shapes: native step, lambda beta, ambient open, Rho COMM |
-| `languages/tests/rhocalc_dovetail_fold.rs` | native-fold reduction matrix: saturation-recursion (`int(1+2,8)→3`), single-cast, bare arithmetic, var-defer, bad-cast→`Err`, host-guard literal |
-| `languages/tests/rhocalc_dovetail_op_enum.rs` | typed op-enum exact-key `SemanticHash`: framed-discriminant non-aliasing, payload distinctness/determinism, `Display` label form |
+| `languages/tests/rholang_dovetail_fold.rs` | native-fold reduction matrix: saturation-recursion (`int(1+2,8)→3`), single-cast, bare arithmetic, var-defer, bad-cast→`Err`, host-guard literal |
+| `languages/tests/rholang_dovetail_op_enum.rs` | typed op-enum exact-key `SemanticHash`: framed-discriminant non-aliasing, payload distinctness/determinism, `Display` label form |
 
 ## Required Commands
 

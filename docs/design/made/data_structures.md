@@ -173,7 +173,7 @@ pub enum DataStructureKind {
 
 ```rust
 theory! {
-    name: RhoCalc,
+    name: Rholang,
     exports { Proc, Name }
 
     terms {
@@ -930,7 +930,7 @@ PPar . Proc ::= "{|" (Proc ",")* "|}" ;
 **Before (v0.1):**
 ```rust
 theory! {
-    name: RhoCalc,
+    name: Rholang,
     terms {
         PPar . Proc ::= Proc "|" Proc ;
     }
@@ -945,7 +945,7 @@ theory! {
 **After (v0.2):**
 ```rust
 theory! {
-    name: RhoCalc,
+    name: Rholang,
     terms {
         PPar . Proc ::= multiset<Proc> ;
     }

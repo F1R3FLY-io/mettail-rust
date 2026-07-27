@@ -1,6 +1,6 @@
-# RhoCalc End-to-End Pipeline
+# Rholang End-to-End Pipeline
 
-This document set traces a single RhoCalc expression through every stage of the
+This document set traces a single Rholang expression through every stage of the
 MeTTaIL / PraTTaIL compilation and evaluation pipeline.  Each file is
 self-contained but cross-referenced; read them in order for the full picture.
 
@@ -8,7 +8,7 @@ self-contained but cross-referenced; read them in order for the full picture.
 
 ```
                           ┌─────────────────────────────┐
-                          │   language! { ... }  DSL    │  languages/src/rhocalc.rs
+                          │   language! { ... }  DSL    │  languages/src/rholang.rs
                           └──────────────┬──────────────┘
                                          │  proc-macro expansion
                                          ▼
@@ -62,7 +62,7 @@ self-contained but cross-referenced; read them in order for the full picture.
 | **macros**    | `macros/`    | `language!` proc-macro, DSL parsing (`ast/`), bridge to PraTTaIL, Ascent codegen (`logic/`), AST enum generation (`gen/`) |
 | **prattail**  | `prattail/`  | Lexer + parser generation engine: automata pipeline, FIRST/FOLLOW, Pratt BP, trampoline codegen                           |
 | **runtime**   | `runtime/`   | Runtime types: `Term`, `Language`, `AscentResults`, `HashBag`, bindings, `CanonicalFloat64`                               |
-| **languages** | `languages/` | Language definitions (`rhocalc.rs`, `calculator.rs`, ...) and generated code                                              |
+| **languages** | `languages/` | Language definitions (`rholang.rs`, `calculator.rs`, ...) and generated code                                              |
 | **repl**      | `repl/`      | Interactive evaluation loop, pretty printing, history, environment                                                        |
 | **query**     | `query/`     | Runtime query parsing and execution against `AscentResults`                                                               |
 
@@ -70,7 +70,7 @@ self-contained but cross-referenced; read them in order for the full picture.
 
 | File                                                 | Topic                      | Key Question Answered                                        |
 |------------------------------------------------------|----------------------------|--------------------------------------------------------------|
-| [01-language-spec.md](01-language-spec.md)           | The `language!` DSL        | How is RhoCalc **defined**?                                  |
+| [01-language-spec.md](01-language-spec.md)           | The `language!` DSL        | How is Rholang **defined**?                                  |
 | [02-macro-expansion.md](02-macro-expansion.md)       | LanguageDef → LanguageSpec | How does the DSL become data the code generator can consume? |
 | [03-lexer-generation.md](03-lexer-generation.md)     | Automata pipeline          | How are terminals turned into a fast lexer?                  |
 | [04-parser-generation.md](04-parser-generation.md)   | PraTTaIL parser            | How is the parser constructed from grammar rules?            |
@@ -85,10 +85,10 @@ Throughout these documents we trace several expressions:
 - **`{ @({}) ! ({}) | *(@({})) }`** — communication rule (Comm), the core rho-calculus reduction
 - **`@(*(@({})))`** — the QuoteDrop equation (structural equivalence)
 
-These are real RhoCalc programs that you can evaluate in the REPL:
+These are real Rholang programs that you can evaluate in the REPL:
 
 ```
 $ cargo run --bin repl
-> lang rhocalc
+> lang rholang
 > exec 3 + 4
 ```

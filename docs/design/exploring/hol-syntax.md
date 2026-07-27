@@ -1359,7 +1359,7 @@ Depends on Phase 3b (clean types) and 3c (LHS matching).
 
 ### Phase 5: Migration (1 week)
 
-- [ ] Migrate RhoCalc to new syntax (including multi-channel input)
+- [ ] Migrate Rholang to new syntax (including multi-channel input)
 - [ ] Migrate Ambient to new syntax
 - [ ] Migrate Calculator to new syntax
 - [ ] Validate multi-channel input works end-to-end

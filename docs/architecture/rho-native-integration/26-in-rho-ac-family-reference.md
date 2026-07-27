@@ -49,7 +49,7 @@
 
 A MeTTaIL `language! { … }` definition may declare an operator whose single argument is a
 **collection** — a bag, a set, or a map — that is matched **up to associativity and
-commutativity (AC)**: order and grouping of the elements do not matter. RhoCalc's parallel
+commutativity (AC)**: order and grouping of the elements do not matter. Rholang's parallel
 composition, Ambient congruence, and the `HashBag` / `HashSet` / `HashMap` collections are
 all of this shape. A rule over such an operator,
 

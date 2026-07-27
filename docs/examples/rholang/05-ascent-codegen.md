@@ -24,7 +24,7 @@ relations and rules needed to evaluate programs.
 
 **Source:** `macros/src/logic/relations.rs`
 
-For RhoCalc with categories `{Proc, Name, Int, Float, Bool, Str}`, the
+For Rholang with categories `{Proc, Name, Int, Float, Bool, Str}`, the
 following relations are generated:
 
 ### Category relations (one per type)
@@ -266,7 +266,7 @@ The content of the `logic { ... }` block is injected verbatim after all
 generated rules:
 
 ```ascent
-// From RhoCalc's logic block:
+// From Rholang's logic block:
 proc(p) <-- if let Ok(p) = Proc::parse("^x.{{ x | serv!(req) }}");
 proc(p) <-- if let Ok(p) = Proc::parse("^x.{x}");
 
@@ -292,7 +292,7 @@ The Ascent code is wrapped in a single named struct:
 
 ```rust
 ascent! {
-    struct RhoCalcAscent;
+    struct RholangAscent;
 
     // ... all relations ...
     // ... all rules ...

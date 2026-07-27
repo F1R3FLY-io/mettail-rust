@@ -174,7 +174,7 @@ struct CohortMember<W: SemiringRef> {
 - **Stage 1.2 (write-only path):** Wire the registration / promotion / write logic. On every cross-cat Fork-arm child, populate the cache in InFlight mode (first cursor only); record `Resolved` at the matching pop. Reads from cache still disabled. Add a walker-stats counter `dispatch_cohort_resolved_total` to observe how many entries get resolved per parse. **Gauntlet**: 6157/0 (writes are observation-only). Run `chain_50 --features walker-stats dispatch-cohort` to confirm ~50 resolved entries.
 - **Stage 1.3 (read path — minimum-viable cohort sharing):** Wire the resume path using approach 4b (re-push `CategoryEntry(S)` + Return on cohort members at resume, transition to Unwinding). Cohort registration on a `Resolved` cache entry replaces the per-cursor sub-parse with a synthetic singleton child. **Gauntlet must be 6157/0.** Run `chain_50` and verify wall-time drops from 17s to <1s. If ANY gauntlet test regresses, revert this stage; the diagnostic counters from 1.2 still ship.
 - **Stage 1.4 (cleanup — pop-time fast path 4a):** Replace approach 4b with the ghost-edge approach 4a (no extra GSS allocations on resume). Strict gauntlet re-run.
-- **Stage 1.5 (sub-cohort recursion + ambiguity handling):** Extend `DispatchCacheEntry::Resolved` to `Vec<(SppfId, hi_pos, W)>` for multi-result sub-parses; cohort resume produces one cursor per (cohort × result) pair. Run rhocalc edge_case gauntlet (heavier ambiguity exercise) and prattail proptest gauntlet.
+- **Stage 1.5 (sub-cohort recursion + ambiguity handling):** Extend `DispatchCacheEntry::Resolved` to `Vec<(SppfId, hi_pos, W)>` for multi-result sub-parses; cohort resume produces one cursor per (cohort × result) pair. Run rholang edge_case gauntlet (heavier ambiguity exercise) and prattail proptest gauntlet.
 - **Stage 1.6 (default-on):** Promote `dispatch-cohort` from cargo feature to default behavior (delete the feature gate). The feature gate provides per-commit safety net; default-on locks the win in.
 
 ---
@@ -352,7 +352,7 @@ match branch.action_kind {
 }
 ```
 
-**Gauntlet expectation:** 6157/0 (prattail lib 4051 + gen_calc_op 1331 + gen_rhocalc_op 532 + edge_case 229 + wpda_parity_calculator 16 + wpda_parity_lambda 2 + macros lib 333). chain_50 wall-time unchanged (~17.28s — this is purely a refactor).
+**Gauntlet expectation:** 6157/0 (prattail lib 4051 + gen_calc_op 1331 + gen_rholang_op 532 + edge_case 229 + wpda_parity_calculator 16 + wpda_parity_lambda 2 + macros lib 333). chain_50 wall-time unchanged (~17.28s — this is purely a refactor).
 
 If gauntlet is green, the user authorizes Stage 1.1 (cache scaffolding, dead code).
 

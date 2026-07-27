@@ -2,7 +2,7 @@
 
 ## Context: problem this work solves
 
-The team is formalizing **Rholang semantics** inside a logical framework (rhocalc / graph-structured lambda theory). The immediate goal is to define **unification premises** needed for **pattern-based COMM** (the communication reduction).
+The team is formalizing **Rholang semantics** inside a logical framework (rholang / graph-structured lambda theory). The immediate goal is to define **unification premises** needed for **pattern-based COMM** (the communication reduction).
 
 In Rholang, communication has the familiar shape:
 
@@ -34,9 +34,9 @@ The intent is to keep “does this match?” inside Ascent/Datalog fixpoint comp
 
 Pattern matching touches **two** syntactic worlds:
 
-- **Language authors** edit **`language! { … }`** in crates such as [`languages/src/rhocalc.rs`](../../../languages/src/rhocalc.rs): **`terms`**, **`rewrites`** (including **`unifies(pat, recv)`** premises and **`(apply_pattern …)`** on the RHS), **`equations`**, etc. This is **compile-time** macro input; it defines the theory and generated Ascent.
+- **Language authors** edit **`language! { … }`** in crates such as [`languages/src/rholang.rs`](../../../languages/src/rholang.rs): **`terms`**, **`rewrites`** (including **`unifies(pat, recv)`** premises and **`(apply_pattern …)`** on the RHS), **`equations`**, etc. This is **compile-time** macro input; it defines the theory and generated Ascent.
 
-- **End users** (REPL, tests, embeddings) write **object-language** **source** that parses as **`Proc`** (and friends)—for example the strings in [`repl/src/examples/rhocalc.rs`](../../../repl/src/examples/rhocalc.rs). They **do not** type judgement rules or **`unifies(…)`** at the prompt. They only write processes; COMM with unification is triggered **implicitly** when the engine applies the **`Comm`** rewrite produced from `rewrites { … }`.
+- **End users** (REPL, tests, embeddings) write **object-language** **source** that parses as **`Proc`** (and friends)—for example the strings in [`repl/src/examples/rholang.rs`](../../../repl/src/examples/rholang.rs). They **do not** type judgement rules or **`unifies(…)`** at the prompt. They only write processes; COMM with unification is triggered **implicitly** when the engine applies the **`Comm`** rewrite produced from `rewrites { … }`.
 
 **Implication:** unification **premises** are **author-facing**; **pattern syntax** (new **`Proc`** constructors and evolved receive forms) is **user-facing**. You cannot get meaningful pattern COMM in the REPL without extending **`terms { … }`** (and usually **`PInputs`**) so patterns and payloads are **shared `Proc`** ASTs that **`unifies_proc`** can relate. See [Concrete syntax proposal](#concrete-syntax-proposal) below.
 
@@ -61,15 +61,15 @@ Patterns are **`Proc`** values built from **constructors**. At minimum:
 | Construct | Proposed `language!` idea | Surface (user / REPL) | Notes |
 | --------- | ------------------------- | ---------------------- | ----- |
 | Pattern variable | **`PPatVar . x:Name`** | **`$`** **x** | **`$x`** is a **`Proc`** that behaves as a **pattern metavar** in the **first** argument of **`unifies_proc`** (directional matching only). **No** new category: stays **`Proc`**. |
-| Structured match (illustrative) | **`PPair . u:Proc, v:Proc`** | **`pair(`** **u** **`,`** **v** **`)`** | Example binary constructor so examples can use **`pair($u, $v)`** vs **`pair(1, 2)`**; rhocalc may instead reuse **`List`** or add a different product—**the point** is a **ground** shape to recurse under **`unifies_proc`**. |
+| Structured match (illustrative) | **`PPair . u:Proc, v:Proc`** | **`pair(`** **u** **`,`** **v** **`)`** | Example binary constructor so examples can use **`pair($u, $v)`** vs **`pair(1, 2)`**; rholang may instead reuse **`List`** or add a different product—**the point** is a **ground** shape to recurse under **`unifies_proc`**. |
 
-**Receive form (evolution of `PInputs`).** Today each arm is **`n "?" x`** with **`x`** a **`Name`** binder ([`PInputs` in rhocalc](../../../languages/src/rhocalc.rs)). **Target:** second position is a **`Proc` pattern** **p** (often **`$u`**, **`pair($u,$v)`**, …), with **`^[xs].body`** still abstracting the continuation; **`apply_pattern`** (or a small prelude of **`eval`** steps) connects pattern variables in **p** to occurrences in **body**. Exact **`language!`** typing of **`ps:Vec(Proc)`** vs **`Name* -> Proc`** for **`cont`** is an implementation detail—this doc assumes **aligned vectors** **`ns`**, **`pats`**, **`qs`** in the **`Comm`** LHS, same spirit as current **`ns`**, **`qs`**.
+**Receive form (evolution of `PInputs`).** Today each arm is **`n "?" x`** with **`x`** a **`Name`** binder ([`PInputs` in rholang](../../../languages/src/rholang.rs)). **Target:** second position is a **`Proc` pattern** **p** (often **`$u`**, **`pair($u,$v)`**, …), with **`^[xs].body`** still abstracting the continuation; **`apply_pattern`** (or a small prelude of **`eval`** steps) connects pattern variables in **p** to occurrences in **body**. Exact **`language!`** typing of **`ps:Vec(Proc)`** vs **`Name* -> Proc`** for **`cont`** is an implementation detail—this doc assumes **aligned vectors** **`ns`**, **`pats`**, **`qs`** in the **`Comm`** LHS, same spirit as current **`ns`**, **`qs`**.
 
 ### PraTT / REPL sugar
 
-REPL examples in this repo historically used **`for(channel -> value){ … }`** style strings (see [repl examples](../../../repl/src/examples/rhocalc.rs)). The target syntax here is **`for(pattern <- channel){ … }`**; extend the grammar so the left side can be a **`Proc` pattern** (e.g. **`for($x <- c){ … }`**, **`for(pair($u, $v) <- c){ … }`**), lowering to the same **`PInputs`**-like constructor as concrete **`( value <- channel, … ){ … }`** form.
+REPL examples in this repo historically used **`for(channel -> value){ … }`** style strings (see [repl examples](../../../repl/src/examples/rholang.rs)). The target syntax here is **`for(pattern <- channel){ … }`**; extend the grammar so the left side can be a **`Proc` pattern** (e.g. **`for($x <- c){ … }`**, **`for(pair($u, $v) <- c){ … }`**), lowering to the same **`PInputs`**-like constructor as concrete **`( value <- channel, … ){ … }`** form.
 
-End-to-end walkthroughs (**`rhocalc.rs` → user program → channel data → output**) are in [Worked examples (four-part layout)](#worked-examples-four-part-layout).
+End-to-end walkthroughs (**`rholang.rs` → user program → channel data → output**) are in [Worked examples (four-part layout)](#worked-examples-four-part-layout).
 
 ## Key design decision: explicit variables instead of implicit binding
 
@@ -105,7 +105,7 @@ subst(term, variable, replacement, result)
 
 Conceptually `subst(T, v, R) = T′`, but **encoded in the logic** so reductions and future behavioral predicates can reason about it uniformly.
 
-**Implementation note:** rhocalc already relies on Rust-side substitution utilities; the relational formulation is the **spec** those utilities should satisfy. Codegen may continue to call consolidated `subst`/`apply` helpers while the theory documents the intended relation.
+**Implementation note:** rholang already relies on Rust-side substitution utilities; the relational formulation is the **spec** those utilities should satisfy. Codegen may continue to call consolidated `subst`/`apply` helpers while the theory documents the intended relation.
 
 ## Formal COMM sketch (premises + conclusion)
 
@@ -231,7 +231,7 @@ The following steps track the **logical** dependencies; they align with but are 
 
 1. **Extend syntax** — explicit variable nodes (`Var` / analogous) so patterns share the same representation as matchable terms.
 2. **Define substitution** — specify (and implement against) capture-avoiding `subst`; keep binder-aware recursion consistent with the relational contract.
-3. **Pattern AST** — wildcards, variables, structured constructors, literals as required by rhocalc.
+3. **Pattern AST** — wildcards, variables, structured constructors, literals as required by rholang.
 4. **Unification** — structural rules + duplicate-variable consistency; in Ascent: generated `unifies_<cat>` plus premise lowering.
 5. **Environment** — in the staged design, bindings are produced inside `apply_pattern`; if moving to a 3-place `unify`, env becomes a relation argument.
 6. **Apply to continuation** — COMM RHS uses substitution / `apply_pattern` on the receive body.
@@ -239,7 +239,7 @@ The following steps track the **logical** dependencies; they align with but are 
 
 ## Design decisions and recommendations
 
-This section records **investigation-backed options** for four choices that were open during design. It is grounded in the current repo: how premises parse (`macros/src/ast/language.rs`), how COMM is written today (`languages/src/rhocalc.rs`), and how `eval` lowers to substitution (`PatternTerm::MultiSubst` in the pattern parser).
+This section records **investigation-backed options** for four choices that were open during design. It is grounded in the current repo: how premises parse (`macros/src/ast/language.rs`), how COMM is written today (`languages/src/rholang.rs`), and how `eval` lowers to substitution (`PatternTerm::MultiSubst` in the pattern parser).
 
 ### 1. Surface syntax for the unification premise
 
@@ -284,14 +284,14 @@ Optional: if category must be visible for disambiguation, reserve `unifies_proc`
 
 ### 3. Scope of the first pattern-based COMM (multiset / `PPar` inside pattern)
 
-**Baseline in rhocalc.** The existing **`Comm`** rule already matches a **parallel bag** with structured LHS syntax (`PPar`, `PInputs`, `#zip`/`*map` over outputs). The receive side is **`PInputs`** with **`^[xs].p`**: names per channel, not arbitrary **`Proc`** patterns in receive position.
+**Baseline in rholang.** The existing **`Comm`** rule already matches a **parallel bag** with structured LHS syntax (`PPar`, `PInputs`, `#zip`/`*map` over outputs). The receive side is **`PInputs`** with **`^[xs].p`**: names per channel, not arbitrary **`Proc`** patterns in receive position.
 
-```821:824:languages/src/rhocalc.rs
+```821:824:languages/src/rholang.rs
         Comm . |- (PPar {(PInputs ns cont), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest})
             ~> (PPar {(eval cont qs.*map(|q| (NQuote q))), ...rest});
 ```
 
-```76:77:languages/src/rhocalc.rs
+```76:77:languages/src/rholang.rs
         PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
         |- "(" *zip(xs,ns).*map(|x,n| x "<-" n).*sep(",") ")" "{" p "}" : Proc ;
 ```
@@ -310,7 +310,7 @@ Optional: if category must be visible for disambiguation, reserve `unifies_proc`
 
 ### 4. Explicit `Var` in `Proc` (vs other representations)
 
-**Current state.** Many native/nominal categories get generated **`Var`** variants and eval-time “must substitute first” behavior. **`Proc`** in rhocalc is a large fixed constructor set; receive variables today are **`Name`** slots in **`PInputs`**, not a general **`Proc::Var`**. For **structured receive patterns** (e.g. a pair of processes), variables must appear in **`Proc`** positions, not only in **`Name`**.
+**Current state.** Many native/nominal categories get generated **`Var`** variants and eval-time “must substitute first” behavior. **`Proc`** in rholang is a large fixed constructor set; receive variables today are **`Name`** slots in **`PInputs`**, not a general **`Proc::Var`**. For **structured receive patterns** (e.g. a pair of processes), variables must appear in **`Proc`** positions, not only in **`Name`**.
 
 **Options.**
 
@@ -336,7 +336,7 @@ Ship **keyword surface** `unifies(pat, val)` → **`Premise::Unification`**, **b
 | `macros/src/logic/unification.rs` (new) | Auto-generate structural unification rules per constructor (parallel to congruence generation style).          |
 | `macros/src/logic/rules.rs`             | Lower `Premise::Unification` to `Condition::EnvQuery`-like relation clause generation (new condition variant). |
 | `macros/src/gen/term_ops/`              | Add `apply_pattern` helper for binding extraction + multi-substitution.                                        |
-| `languages/src/rhocalc.rs`              | Add **`PPatVar`** / **`$x`**, evolve **`PInputs`** for **`Proc`** patterns, optional **`pair`** (or chosen product), and **`CommPat`** with **`unifies`** + **`apply_pattern`** (see [Concrete syntax proposal](#concrete-syntax-proposal)). |
+| `languages/src/rholang.rs`              | Add **`PPatVar`** / **`$x`**, evolve **`PInputs`** for **`Proc`** patterns, optional **`pair`** (or chosen product), and **`CommPat`** with **`unifies`** + **`apply_pattern`** (see [Concrete syntax proposal](#concrete-syntax-proposal)). |
 
 ## AST and Parsing
 
@@ -424,7 +424,7 @@ This yields equational pattern matching while preserving relation-based guards.
 
 COMM rule shape:
 
-1. LHS identifies a receive form (e.g. **`(PInputs … pattern body)`** in rhocalc; the doc sketch **`PFor n pattern body`** is equivalent intent) and **`(POutput n received)`** in parallel with `...rest`.
+1. LHS identifies a receive form (e.g. **`(PInputs … pattern body)`** in rholang; the doc sketch **`PFor n pattern body`** is equivalent intent) and **`(POutput n received)`** in parallel with `...rest`.
 2. Premise includes `unifies_proc(pattern, received)` (or the parsed equivalent).
 3. RHS applies deterministic runtime helper:
    - `apply_pattern(pattern, received, body)` → substituted body.
@@ -455,7 +455,7 @@ Using `Option` (or `Result`) avoids panic paths and keeps COMM RHS generation st
 
 Each scenario uses the same structure:
 
-1. **Changes in [`rhocalc.rs`](../../../languages/src/rhocalc.rs)** — what the language author adds or edits inside `language!` (**proposal** until merged).
+1. **Changes in [`rholang.rs`](../../../languages/src/rholang.rs)** — what the language author adds or edits inside `language!` (**proposal** until merged).
 2. **User’s program** — REPL / PraTT-style source the end user writes.
 3. **Data on the channel** — **message** (`Proc` crossing the channel) vs **pattern** on the receive arm; **`unifies_proc`** reasons about this pair (directional: pattern first, message second).
 4. **Output** — **residual process** after COMM (or why nothing reduced), with a short explanation.
@@ -464,16 +464,16 @@ Parsing / Ascent plumbing (**`Premise::Unification`**, **`generate_condition_cla
 
 ### Baseline — today’s COMM (name binders only)
 
-**1. Changes in `rhocalc.rs`** — already in tree; no **`unifies`** premise. Multi-channel **COMM** uses:
+**1. Changes in `rholang.rs`** — already in tree; no **`unifies`** premise. Multi-channel **COMM** uses:
 
-```821:824:languages/src/rhocalc.rs
+```821:824:languages/src/rholang.rs
         Comm . |- (PPar {(PInputs ns cont), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest})
             ~> (PPar {(eval cont qs.*map(|q| (NQuote q))), ...rest});
 ```
 
 Receive syntax binds **`Name`** parameters per channel, not arbitrary **`Proc`** patterns:
 
-```76:77:languages/src/rhocalc.rs
+```76:77:languages/src/rholang.rs
         PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
         |- "(" *zip(xs,ns).*map(|x,n| x "<-" n).*sep(",") ")" "{" p "}" : Proc ;
 ```
@@ -494,7 +494,7 @@ The matching send/receive pair is removed from **`PPar`**; **`cont`** is filled 
 
 ### Scenario A — pattern variable vs literal **(proposal)**
 
-**1. Changes in `rhocalc.rs`**
+**1. Changes in `rholang.rs`**
 
 ```text
 PPatVar . x:Name |- "$" x : Proc;
@@ -523,7 +523,7 @@ Remaining process includes **`int(7, 64)`** after send/receive on **`c`** are co
 
 ### Scenario B — structured **`pair`** **(proposal)**
 
-**1. Changes in `rhocalc.rs`**  
+**1. Changes in `rholang.rs`**  
 Scenario A, plus:
 
 ```text
@@ -546,7 +546,7 @@ Residual **`int(1, 64)`**. Changing the payload to **`pair(1, 9)`** still yields
 
 ### Scenario C — rigid pattern vs wrong-shaped message **(proposal)**
 
-**1. Changes in `rhocalc.rs`**  
+**1. Changes in `rholang.rs`**  
 Same as Scenario B.
 
 **2. User’s program**
@@ -565,7 +565,7 @@ Same as Scenario B.
 
 ### Scenario D — repeated metavar **`pair($x, $x)`** **(proposal)**
 
-**1. Changes in `rhocalc.rs`**  
+**1. Changes in `rholang.rs`**  
 Same as Scenario B.
 
 **Success — 2. User’s program**
@@ -596,7 +596,7 @@ Same as Scenario B.
 
 ### Scenario E — multi-channel pattern guards **(future sketch)**
 
-**1. Changes in `rhocalc.rs`**
+**1. Changes in `rholang.rs`**
 
 ```text
 Comm2 . | unifies(pat1, q1), unifies(pat2, q2)
@@ -693,7 +693,7 @@ This section highlights **what changes operationally** once pattern matching and
 - **Parsing:** the `language!` input gains new surface syntax (preferred: `unifies(pat, val)` in the propositional context; possible `Proc`/`PInputs` grammar changes for per-bind-site patterns). Expansion **fails fast** at compile time if premises or patterns are ill-formed—same class of errors as today for bad rewrite judgements.
 - **AST / lowering:** `Premise::Unification` and matching `Condition` variants feed `generate_condition_clauses` so COMM rules emit **extra Ascent guard literals** (calls into `unifies_<cat>(…)`), analogous to `rw_<cat>` for congruence.
 - **Generated logic:** `relations`-style emission declares **`unifies_<cat>`** for eligible categories; a **unification rule generator** (planned: `macros/src/logic/unification.rs`) adds many structurally recursive Ascent rules—**larger generated Datalog text** and slightly **longer macro expansion time** for big languages (`Proc` with many constructors). Phase 3 (multiset / `PPar`) increases rule bulk further.
-- **Generated Rust:** rhocalc’s generated term algebra picks up **`Proc`-level variables** and any new constructors; **`apply_pattern`** (or extended term ops) appears under `macros/src/gen/term_ops/` and is linked from generated `impl` blocks as needed.
+- **Generated Rust:** rholang’s generated term algebra picks up **`Proc`-level variables** and any new constructors; **`apply_pattern`** (or extended term ops) appears under `macros/src/gen/term_ops/` and is linked from generated `impl` blocks as needed.
 - **Downstream crates:** touching `macros` typically forces **rebuild of `languages`**, anything that `include!`s generated Ascent, and tests that diff codegen—**no new mandatory manual step** beyond a normal workspace `cargo build` / `cargo test`.
 
 **Net effect on build.** Incremental **compile time and artifact size** grow modestly with generated rule count; worst-case jumps appear when collection unification lands. CI should add or extend **macro-level tests** (premise parse → expected Ascent fragments) and **integration tests** (COMM match / no-match).
@@ -730,7 +730,7 @@ This section highlights **what changes operationally** once pattern matching and
 ### Phase 2: COMM + runtime bindings
 
 - Add `apply_pattern` runtime helper.
-- Introduce **`PPatVar`** / evolved **`PInputs`** (see [Concrete syntax proposal](#concrete-syntax-proposal)) in rhocalc.
+- Introduce **`PPatVar`** / evolved **`PInputs`** (see [Concrete syntax proposal](#concrete-syntax-proposal)) in rholang.
 - Implement COMM rewrite using unification premise and `apply_pattern`.
 - Add end-to-end tests for successful/failed communication matches.
 

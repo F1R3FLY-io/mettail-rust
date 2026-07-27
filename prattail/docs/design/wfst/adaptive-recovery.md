@@ -402,7 +402,7 @@ the degenerate case because:
 
 ## 7. Worked Example
 
-### 7.1 Grammar Fragment (RhoCalc)
+### 7.1 Grammar Fragment (Rholang)
 
 ```
 category Proc {

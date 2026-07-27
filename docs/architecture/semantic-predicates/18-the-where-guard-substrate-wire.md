@@ -30,11 +30,11 @@ interpreter in an `if`. There is no partition of expressions into "really predic
 
 ### 0.1 Why this document exists
 
-Before the wire, **zero** of RhoCalc's `where`-guard forms reached the substrate. Not partially:
+Before the wire, **zero** of Rholang's `where`-guard forms reached the substrate. Not partially:
 the substrate was not connected to the `where` surface at all. Two independent gaps produced that:
 
 1. **No obligation was induced.** `collect_guard_obligations` emitted a guard obligation only for
-   a `?name:Guard` term parameter. RhoCalc's guard parameter is `cond:Proc`, an ordinary
+   a `?name:Guard` term parameter. Rholang's guard parameter is `cond:Proc`, an ordinary
    category-typed parameter, which the collector explicitly skipped (§4).
 2. **No decision procedure was reached.** The compile-time decision re-used `rho_pure_eval` — the
    Rholang interpreter's own evaluator, run at compile time — and the run-time decision was a
@@ -296,7 +296,7 @@ from `Var | IntLit | StringLit`. That grammar has **no comparison operators, no 
 nesting inside arguments**. For a language whose guard sublanguage *is* its own expression
 language, retyping the slot is not a neutral change:
 
-| RhoCalc `where` | as a behavioral predicate |
+| Rholang `where` | as a behavioral predicate |
 |---|---|
 | `where x == 42` | only as a flat relation query |
 | `where x + y < 10` | not expressible |
@@ -322,7 +322,7 @@ mechanism that lived only in the macro would have to be redesigned when specs mo
 It does not. The measured round trip is
 `definition_source() → reconstruct_language_def → LanguageDef`, and the obligations induced from
 the reconstructed definition are exactly the declared ones
-(`languages/tests/rhocalc_guard_slot_obligations.rs`, which reads the *generated* language value
+(`languages/tests/rholang_guard_slot_obligations.rs`, which reads the *generated* language value
 rather than the macro input). The declaration is therefore spec-level data, as is the
 `?name:Guard` slot itself (`TermParam::GuardBody`, in the `ast` crate).
 
@@ -339,7 +339,7 @@ each induced obligation gets the substrate's own default disposition for its kin
 gate-compatible by construction. A language that induces no obligations yields an empty
 collection, so the derived form subsumes the asserted one rather than replacing it.
 
-> **Measured.** Declaring RhoCalc's two `where` slots while the four production planner sites
+> **Measured.** Declaring Rholang's two `where` slots while the four production planner sites
 > still asserted "no obligations" broke every consumer of the production language registry — the
 > flip gate failed coverage, and about eighty tests across five suites fell over at once. The
 > derived form is what makes the declaration composable with the gate.
@@ -488,13 +488,13 @@ obligation shape (§4).
 
 | property | where it is checked |
 |---|---|
-| every guard form is decided by the wire; the symbolic shortfall is exactly `matches`, `/`, `%` | `languages/tests/rhocalc_guard_substrate_wire.rs` |
+| every guard form is decided by the wire; the symbolic shortfall is exactly `matches`, `/`, `%` | `languages/tests/rholang_guard_substrate_wire.rs` |
 | the substrate-derived COMM decider agrees with the prior decider on the whole corpus | same file, the differential |
 | the constructors withhold the classical absorptions | `prattail/src/guard_formula.rs`, unit tests |
 | an unbound variable is `DontKnow`, never a default | same |
 | a spatial atom is decidable only through the resolver | same |
 | the consensus budget is fixed, and a different budget really does change verdicts | same |
-| both `where` surfaces induce a `BehavioralPredicate` obligation, indistinguishable in shape from a typed slot's | `languages/tests/rhocalc_guard_slot_obligations.rs` |
+| both `where` surfaces induce a `BehavioralPredicate` obligation, indistinguishable in shape from a typed slot's | `languages/tests/rholang_guard_slot_obligations.rs` |
 | no undeclared rule induces a term-guard obligation | same |
 | a static verdict carries the domain it was decided over | `prattail/src/guard_formula.rs`, unit tests |
 

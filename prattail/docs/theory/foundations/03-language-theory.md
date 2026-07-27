@@ -259,7 +259,7 @@ confluent, and by Newman's Lemma, confluent. QED
 
 **Concrete Grounding.** PraTTaIL's `CancellationPair` detection (in
 `macros/src/ast/pattern.rs`) scans equations at compile time for the pattern
-Outer(Inner(X)) = X. Two concrete instances arise in the RhoCalc language:
+Outer(Inner(X)) = X. Two concrete instances arise in the Rholang language:
 
 - **ExecEq**: `PDrop(NQuote(P)) = P` --- executing a quoted process cancels
   the quote.

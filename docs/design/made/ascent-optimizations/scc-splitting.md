@@ -2,7 +2,7 @@
 
 ## 1. Motivation
 
-Multi-category languages generate large Ascent structs with rules for every reachable `(src, tgt)` category pair. For example, RhoCalc with 6 categories generates rules for all reachable cross-category subterm extractions, congruence propagations, and rewrite expansions.
+Multi-category languages generate large Ascent structs with rules for every reachable `(src, tgt)` category pair. For example, Rholang with 6 categories generates rules for all reachable cross-category subterm extractions, congruence propagations, and rewrite expansions.
 
 However, common inputs — like a `Proc` term being rewritten — only ever populate `Proc` and `Name` relations. Categories like `Expr`, `Chan`, `Ground`, and `Float` remain empty throughout the fixpoint computation. The full struct still evaluates rules targeting these empty categories, wasting cycles.
 
@@ -268,7 +268,7 @@ db₀ ──[non_core_empty]──> db₁ ──[non_core_empty]──> db₂ �
 
 **Inductive step:** Each `full_iter` preserves the invariant by S1 (non-core targets derive nothing) and `merge_preserves_noncore_empty`.
 
-## 7. Example: RhoCalc SCC Analysis
+## 7. Example: Rholang SCC Analysis
 
 ### 7.1 Category Graph (annotated with core/non-core)
 
@@ -355,6 +355,6 @@ The invariant `non_core_empty` is the runtime analog of the compile-time reachab
 - **Files:**
   - `formal/rocq/ascent_optimizations/theories/GraphReachability.v` (156 lines) — graph model, reachability
   - `formal/rocq/ascent_optimizations/theories/SCCSplitting.v` (362 lines) — main theorems
-  - `formal/rocq/ascent_optimizations/theories/ConcreteInstantiations.v` (385 lines) — RhoCalc instance
+  - `formal/rocq/ascent_optimizations/theories/ConcreteInstantiations.v` (385 lines) — Rholang instance
 - **Dependencies:** `SCCSplitting.v` depends on `Prelude.v` and `GraphReachability.v`
 - **Key constructs:** `is_core`, `core_cats`, `non_core_empty`, `full_step`, `core_step`, `full_iter`, `core_iter`, `full_iter_n`, `core_iter_n`, `S1_non_core_derives_nothing`, `S2_core_derivations_equal`, `S3_step_equivalence`, `S3_iter_equivalence`, `S3_fixpoint_restriction`, `full_iter_preserves_invariant`, `full_iter_n_preserves_invariant`

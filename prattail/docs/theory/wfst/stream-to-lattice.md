@@ -455,7 +455,7 @@ ordered by expected parsing cost, and they compose additively under tropical
 dispatch path minimizes accumulated weight (see
 [Optimization Theory](../foundations/06-optimization-theory.md) §1).
 
-**Example.** In RhoCalc, the token `float` at the `Proc` dispatch point:
+**Example.** In Rholang, the token `float` at the `Proc` dispatch point:
 
 ```
     FloatCast:   DispatchAction::Direct { .. }    → w_action = 0.0
@@ -496,7 +496,7 @@ rather than 1.0 terminal, because `Ident` is a lexical wildcard that matches
 any identifier string — it provides less structural constraint than a fixed
 keyword but more than a full nonterminal category.
 
-**Example.** In RhoCalc:
+**Example.** In Rholang:
 
 ```
     FloatCast: float( Expr )
@@ -569,7 +569,7 @@ each dispatch action paired with the total number of alternatives.
 |   1   | Unambiguous dispatch                        | Deterministic arm       |
 |  > 1  | Ambiguous dispatch (NFA exploration needed) | Ambiguity warning (W05) |
 
-**Example.** In RhoCalc, the token `Ident` in category `Proc`:
+**Example.** In Rholang, the token `Ident` in category `Proc`:
 
 ```
     PInput:  Ident ∈ FIRST(PInput)   ✓
@@ -1027,7 +1027,7 @@ runtime methods (B1–B5) operate over those baked-in values; training methods
 
 ## 7. Worked Example: End-to-End
 
-Trace the input `float(1 == 1)` through the RhoCalc grammar, which has both
+Trace the input `float(1 == 1)` through the Rholang grammar, which has both
 a `float()` cast rule and function-call syntax.
 
 ### Step 1: Lexing (Conversion Point ②)

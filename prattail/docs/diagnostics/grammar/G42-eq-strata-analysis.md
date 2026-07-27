@@ -84,31 +84,31 @@ One diagnostic is emitted per analysis type per grammar.
 ### Equation Stratification Output
 
 ```
-note[G42] (RhoCalc): BCG06 equation stratification: 3 strata, 12 rules, max stratum depth 2
+note[G42] (Rholang): BCG06 equation stratification: 3 strata, 12 rules, max stratum depth 2
   = hint: stratum 0: [eq_refl_Proc, eq_refl_Name]; stratum 1: [eq_cong_PPar, eq_cong_PNew, eq_cong_NSend]; stratum 2: [eq_user_simplify]
 ```
 
 ### Rule Fusion Analysis Output
 
 ```
-note[G42] (RhoCalc): BCG02: 3 fusion candidate(s) detected (2 safe, 1 blocked); estimated tuple reduction: 4
+note[G42] (Rholang): BCG02: 3 fusion candidate(s) detected (2 safe, 1 blocked); estimated tuple reduction: 4
   = hint: safe candidates can be fused to eliminate intermediate tuple production; blocked candidates have multiple consumers of the intermediate relation
 ```
 
 ### Rule Fusion Codegen Output
 
 ```
-note[G42] (RhoCalc): BCG02: 2 fused rule(s) generated for safe deconstruction-rewrite chains
+note[G42] (Rholang): BCG02: 2 fused rule(s) generated for safe deconstruction-rewrite chains
   = hint: fused rules provide an alternative derivation path, eliminating intermediate tuples
 ```
 
 ### Per-Candidate Detail (verbose mode only)
 
 ```
-note[G42] (RhoCalc): BCG02 [SAFE]: deconstruction of PPar (Proc) -> rewrite rw_simplify_new (Name) matching PNew -- fusable
+note[G42] (Rholang): BCG02 [SAFE]: deconstruction of PPar (Proc) -> rewrite rw_simplify_new (Name) matching PNew -- fusable
   = in category `Proc`, rule `rw_simplify_new`
 
-note[G42] (RhoCalc): BCG02 [BLOCKED]: deconstruction of NSend (Name) -> rewrite rw_unfold (Proc) matching PFold -- blocked by: eq_cong_PFold, rw_inline
+note[G42] (Rholang): BCG02 [BLOCKED]: deconstruction of NSend (Name) -> rewrite rw_unfold (Proc) matching PFold -- blocked by: eq_cong_PFold, rw_inline
   = in category `Name`, rule `rw_unfold`
 ```
 

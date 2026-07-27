@@ -181,11 +181,11 @@ If you have only used `String` for variable names in interpreters, think of moni
 
 The shared **`runtime/`** crate defines:
 
-- **Term:** `dyn`-compatible trait (`clone_box`, `term_id`, `Display`, …) so the REPL can hold `Box<dyn Term>` without knowing `RhoCalc` vs `Calculator`.
+- **Term:** `dyn`-compatible trait (`clone_box`, `term_id`, `Display`, …) so the REPL can hold `Box<dyn Term>` without knowing `Rholang` vs `Calculator`.
 - **Language:** parse, normalize, `try_direct_eval`, `run_ascent`, environment APIs, type inference hooks—all implemented by **generated** `{Name}Language` in `macros/src/gen/runtime/language.rs`.
 - **AscentResults:** a **portable snapshot** (terms as display strings + IDs, rewrite edges, equivalence classes, custom relation tables) so Ascent internals do not leak into the REPL.
 
-**Why glue?** Without it, every tool would depend on every `languages::rhocalc::*` type. The traits make **one** REPL and **one** query engine possible; new languages register behind `Box<dyn Language>` (`repl/src/registry.rs`).
+**Why glue?** Without it, every tool would depend on every `languages::rholang::*` type. The traits make **one** REPL and **one** query engine possible; new languages register behind `Box<dyn Language>` (`repl/src/registry.rs`).
 
 **Deeper:** `term_id` is typically a hash of the term’s structure (see generated `impl Term`), so logically equal terms might get different IDs across runs if hashing includes allocation details—treat IDs as **session-local** handles into `AscentResults`. Multi-category languages wrap values in `{Name}TermInner` enums; `parse_term` picks the primary category or uses the language’s entry points as implemented in `generate_language_impl`.
 
@@ -237,7 +237,7 @@ Everything is concatenated into one `TokenStream` returned from the macro (excep
 
 Typical locations:
 
-- `languages/src/rhocalc.rs`
+- `languages/src/rholang.rs`
 - `languages/src/calculator.rs`
 - `languages/src/lambda.rs`
 - `languages/src/ambient.rs`
@@ -425,7 +425,7 @@ Exact names are determined by your `terms` declaration and type names.
 | CLI / binary               | Workspace root `Cargo.toml` — `default-run = "mettail"`, binary `repl/src/main.rs` |
 | Interactive loop, commands | `repl/src/repl.rs`                                                                 |
 | Which languages exist      | `repl/src/registry.rs` — `build_registry()`                                        |
-| Language modules           | `languages/src/lib.rs` exports `ambient`, `calculator`, `lambda`, `rhocalc`        |
+| Language modules           | `languages/src/lib.rs` exports `ambient`, `calculator`, `lambda`, `rholang`        |
 
 
 Run from workspace root:
@@ -440,7 +440,7 @@ The package `mettail-repl` also declares the `mettail` binary (`repl/Cargo.toml`
 In the REPL:
 
 ```text
-lang rhocalc
+lang rholang
 exec 3 + 4
 ```
 
@@ -695,7 +695,7 @@ RuleName . optional_type_context | optional_premises |- lhs_pattern = rhs_patter
 RuleName . optional_type_context | optional_premises |- lhs_pattern ~> rhs_pattern ;
 ```
 
-- **Congruence-style conditional rewrites:** premises may include **`S ~> T`** (if inner rewrites, outer can rewrite)—see `Premise::Congruence` and examples like `if S ~> T then (...)` in `README.md` / `rhocalc.rs`.
+- **Congruence-style conditional rewrites:** premises may include **`S ~> T`** (if inner rewrites, outer can rewrite)—see `Premise::Congruence` and examples like `if S ~> T then (...)` in `README.md` / `rholang.rs`.
 
 **Semantics:** **Directed** edges in **`rw_<category>`**. Congruence lifts rewrites under contexts (parsing / pattern shape determines which congruence rules are generated).
 
@@ -751,7 +751,7 @@ language! {
 }
 ```
 
-Grow this toward full examples: `languages/src/calculator.rs` (many sorts, `fold`/`step`, rationals) and `languages/src/rhocalc.rs` (binding, collections, rich rewrite/equation theory).
+Grow this toward full examples: `languages/src/calculator.rs` (many sorts, `fold`/`step`, rationals) and `languages/src/rholang.rs` (binding, collections, rich rewrite/equation theory).
 
 ---
 

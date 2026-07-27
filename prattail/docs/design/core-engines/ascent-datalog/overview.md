@@ -93,7 +93,7 @@ ascent_run! {
 
 // After (4 monomorphizations):
 ascent! {
-    struct RhoCalcTheory;
+    struct RholangTheory;
     relation proc(Proc);
     #[ds(crate::eqrel)]
     relation eq_proc(Proc, Proc);

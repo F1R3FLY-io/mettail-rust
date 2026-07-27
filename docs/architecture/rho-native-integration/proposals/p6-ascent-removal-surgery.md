@@ -45,16 +45,16 @@ overrides that call the engine**; every language then falls back to the fail-clo
 - CHECKPOINT: `cargo check --workspace`.
 
 **Stage 3 — delete oracle-only example/bench targets:**
-- `languages/Cargo.toml`: delete examples `demo_supply_chain`, `ev0_probe`, bench `rhocalc_bench` + their files.
+- `languages/Cargo.toml`: delete examples `demo_supply_chain`, `ev0_probe`, bench `rholang_bench` + their files.
 - `rholang-runtime/Cargo.toml`: delete `[[test]] rho_vs_ascent`, `[[test]] rho_language_backend_report`.
 - CHECKPOINT: `cargo check --workspace --all-targets`.
 
 **Stage 4 — delete the oracle-ascent test files + edit the partially-gated one:**
 - Delete 15 whole-file `#![cfg(oracle-ascent)]` tests in `languages/tests/` (ambient_tests, auto_inject_cong_propagation,
   calculator, casting_example_files, composition_tests, edge_case_tests, exec_empty_collection, h3_chain_correctness,
-  led_delegation_tests, numeric_bigint_cast_regressions, probe_neg_zero, recovery_bounded_dispatch, rhocalc_tests,
+  led_delegation_tests, numeric_bigint_cast_regressions, probe_neg_zero, recovery_bounded_dispatch, rholang_tests,
   run_ascent_dedup, trampoline_tests).
-- Delete 8 `gen_*_op.rs` artifacts (basemath, calculator, extmath, importedmath, ledtest, mixedmath, optsmoke, rhocalc).
+- Delete 8 `gen_*_op.rs` artifacts (basemath, calculator, extmath, importedmath, ledtest, mixedmath, optsmoke, rholang).
 - Delete `rholang-runtime/tests/{rho_vs_ascent,rho_language_backend_report}.rs`.
 - EDIT `languages/tests/runtime_backend_metadata.rs`: strip the two `#[cfg(not(oracle-ascent))]` attrs (keep as the permanent fail-closed proof).
 - FINAL CHECKPOINT: `cargo check --workspace --all-targets`; `cargo build --workspace`; `cargo tree -p languages | grep -i ascent` shows ONLY `ascent_syntax_export`.

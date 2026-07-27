@@ -31,7 +31,7 @@ alpha-canonical) + binder ARITY, EXCLUDING the binder's `FreeVar` identity:
 - (a) `Scope::cmp`/Ord + `OrdVar::cmp` (runtime `binding.rs:230-252,411-421`): compare the de-Bruijn body
   (+ arity), not the binder's FreeVar hash. Makes the NewComm float-prefix sort run-stable.
 WHY SAFE: aligns identity with moniker `term_eq` (which already ignores binder names); only Ambient
-exercises binder hashing today (Calculator: no binders; rhocalc: binders`→`host) `⇒` no flipped-lang
+exercises binder hashing today (Calculator: no binders; rholang: binders`→`host) `⇒` no flipped-lang
 regression. This is a genuine correctness fix (binder hashing currently OVER-distinguishes alpha-variants).
 RUST: bound occurrences stay de-Bruijn (`BoundVar`, name-free); free occurrences keep stable ids; the only
 transient id was the binder's, now excluded ⇒ `exact_key` is run-stable AND alpha-canonical.
@@ -101,14 +101,14 @@ Generated `try_direct_eval` override for Ambient (BEFORE the unsupported list,
 `target/generated/ambient/dovetail_report.rs:25-40`; seam `lib.rs:132-210`), alt-preserving (maps over
 `Ambiguous` like `normalize_term` `language_trait_impl.rs:109-124`), returns `Some(result, completeness)`
 iff progress else `None` (fail-closed preserved). New generator `macros/src/gen/runtime/binder_congruence.rs`.
-GATE at codegen by `has_binder_equations && has_no_host_disposition`: Ambient (no host) ⇒ emitted; rhocalc
+GATE at codegen by `has_binder_equations && has_no_host_disposition`: Ambient (no host) ⇒ emitted; rholang
 (`Extrude` dispositioned `RhoNativeJoin`, `backend.rs:23-46`, `guard_quality.rs:131`) ⇒ NOT emitted, stays
 host-routed. Keep `premise_supported(Freshness)=>false` (`dovetail_report.rs:404`) AND Rocq
 `GPremFreshness=>false` (`GeneratedReportCompiler.v:90`) UNCHANGED — the handler is gated by disposition,
-NOT by the generic premise switch. NEW regression `rhocalc_dovetail_report_stays_host_routed_for_extrude`.
+NOT by the generic premise switch. NEW regression `rholang_dovetail_report_stays_host_routed_for_extrude`.
 
 ## 4. Zero-admission Rocq — `dovetail/formal/rocq/theories/Lowering/AmbientBinderHandler.v`
-Imports Stdlib + `Requirements.MeTTaILRewriteCoverage` only (NO `RhocalcAstLowering.v`). Model
+Imports Stdlib + `Requirements.MeTTaILRewriteCoverage` only (NO `RholangAstLowering.v`). Model
 `eterm := EVarF nat | EVarB nat nat | EPrefix nat eterm | EBind eterm | EPar (list eterm)` with
 `open`/`close`/`free_vars` mirroring moniker.
 - T1 `float_preserves_denotation` (capture-safety, close∘open round-trip) + `from_parts_unsafe_captures`
@@ -120,7 +120,7 @@ Imports Stdlib + `Requirements.MeTTaILRewriteCoverage` only (NO `RhocalcAstLower
 - T3 `binder_key_alpha_canonical` (FIX-A): the (body+arity)-hash is invariant under binder renaming and
   injective on alpha-classes ⇒ `exact_key` run-stable; `binder_nf_idempotent`.
 - T4 coverage reuse `apply every_requirement_constructor_is_covered` (no new constructors).
-- T5 disposition routing `rhocalc_stays_host_routed` / `ambient_native_handler_emitted`; keeps
+- T5 disposition routing `rholang_stays_host_routed` / `ambient_native_handler_emitted`; keeps
   `GPremFreshness=false` so the existing `supported_premises_are_only_congruence` proof is untouched.
 - T6 `report_complete_iff_both_converge` (FIX-C/E honesty).
 
@@ -138,7 +138,7 @@ Imports Stdlib + `Requirements.MeTTaILRewriteCoverage` only (NO `RhocalcAstLower
   Tests: `{open(n,0)|n[0]}` reduces; an OpenRule that re-exposes a `new` re-floats and converges; a
   non-terminating term ⇒ `BoundedByCycleCut` (NOT `Complete`); a truncated inner AC ⇒ `BoundedByCycleCut`;
   ambiguity ≥2 roots across the seam; determinism (twice `⇒` identical root sets).
-- **Inc 3 — Disposition gate + rhocalc pin + flip the gate test.** Rocq T5. `rhocalc_dovetail_report_stays_
+- **Inc 3 — Disposition gate + rholang pin + flip the gate test.** Rocq T5. `rholang_dovetail_report_stays_
   host_routed_for_extrude`; flip `ambient_dovetail_flip.rs` `expect_err`→`expect`.
 - **Inc 4 — Differential oracle on the NON-capturing corpus** (gated `ambient+dovetail-codegen+oracle-
   ascent`), clear var-cache once; assert ContentKey sets equal; plus the negative pin from Inc 0.

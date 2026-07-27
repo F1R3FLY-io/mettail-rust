@@ -38,7 +38,7 @@ To verify everything works despite IDE errors:
 cargo build --workspace
 
 # Run examples
-cargo run --example rhocalc_demo
+cargo run --example rholang_demo
 cargo run --example ambient_demo
 
 # Run REPL
@@ -93,7 +93,7 @@ To verify your setup is working:
 
 ```bash
 cd /Users/cbwells/Documents/GitHub/mettail-rust
-cargo build --workspace && cargo run --example rhocalc_demo
+cargo build --workspace && cargo run --example rholang_demo
 ```
 
 If this succeeds, ignore the IDE errors! ✅

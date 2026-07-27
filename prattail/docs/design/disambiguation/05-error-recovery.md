@@ -125,7 +125,7 @@ Different grammars use different delimiters:
 | Grammar         | Uses `;`? | Uses `]`? | Uses `}`? |
 |-----------------|-----------|-----------|-----------|
 | Calculator      | No        | No        | No        |
-| RhoCalc         | Yes       | No        | Yes       |
+| Rholang         | Yes       | No        | Yes       |
 | Lambda calculus | No        | No        | No        |
 | Full Rholang    | Yes       | Yes       | Yes       |
 

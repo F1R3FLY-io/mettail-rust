@@ -9,8 +9,8 @@
 ## ★★ TRUE ROOT — PROVEN (2026-06-10, fresh-context re-investigation) — lex-fork drops keyword dispatch
 
 **The pre-compaction "cast/EqInt evidence" framing (H1–H4 below) chased the wrong layer.**
-Fresh reproduction at HEAD `65b40581`: `gen_rhocalc_op` = **33 fails** (30 ×
-`eval_rhocalc_*_err_err_smoke` → *"frontier of 17 cursors exceeds budget of 16"* + 3 ×
+Fresh reproduction at HEAD `65b40581`: `gen_rholang_op` = **33 fails** (30 ×
+`eval_rholang_*_err_err_smoke` → *"frontier of 17 cursors exceeds budget of 16"* + 3 ×
 map); `gen_calculator_op` = **156 fails**, dominated by collection ops (`at`/`delete`/
 `concat`/`length`/`get`/`keys`/`put`/`merge`/`union`/`remove`/`diff`/`count`) all
 `"unexpected Fixed(\"(\") after parsing"`. Same `"unexpected Fixed(\"==\")"` shape as the
@@ -42,12 +42,12 @@ multi-length `{Minus@1, Integer@2}` (`-3`) keeps forking: fall through to the no
 `prefix_primary_has_dispatch_rule(primary_src, primary_kind) && all alts same-length`.
 Keyword-reservation at a same-length lexical tie: the explicitly-declared keyword beats
 the auto-injected `Var` fallback. Probe: `languages/examples/lex_probe.rs` (DELETE after).
-Baselines: `/tmp/5a-rhocalc-op-baseline.txt`, `/tmp/5a-calc-op-baseline.txt`.
+Baselines: `/tmp/5a-rholang-op-baseline.txt`, `/tmp/5a-calc-op-baseline.txt`.
 
 **RESULT (VERIFIED, 2026-06-10):** one-line wiring in `forks.rs`
 (`emit_lex_fork_at_prefix_dispatch` fall-through) fixed **189 of the 217** baseline
 op-suite failures with **ZERO regressions** (exact failing-set diff, not just counts):
-`gen_calculator_op` 156→6, `gen_rhocalc_op` 33→1, `edge_case_tests` 28→21; prattail lib
+`gen_calculator_op` 156→6, `gen_rholang_op` 33→1, `edge_case_tests` 28→21; prattail lib
 stays 3979/0. FV: `LexForkKeywordReservation.v` (5 theorems, registered in `_CoqProject`,
 `make check-capped FORMAL_CAPPED_TARGET=rocq-prattail-wpda` green; `Print Assumptions` =
 "Closed under the global context" — zero-admission/zero-axiom). The remaining **28** are
@@ -446,7 +446,7 @@ changes on un-isolated roots.**
    emit cross-cat infix `CrossCatDelegate` forks for an operand's category, and
    (b) why the cast-result cursor lands at `bp:0`-unwind instead of InfixLoop at the
    operator. Keep `guard_category_changing_infix`. Canary: `-3!` tests; also re-run
-   gen_calculator_op/gen_rhocalc_op/edge_case baseline-relative (0 new failures).
+   gen_calculator_op/gen_rholang_op/edge_case baseline-relative (0 new failures).
 
 ## Process directives (this session)
 - **Boyscout rule** ([[feedback_boyscout_rule]]): fix discovered+localized issues NOW,

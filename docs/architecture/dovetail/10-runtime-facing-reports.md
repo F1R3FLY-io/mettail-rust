@@ -969,7 +969,7 @@ rhoapi::Par {
 For dynamic calls and witness facts, the implementation constructs that AST
 with `mettail_rholang_codegen::RhoAstSend` and structured `RhoAstLiteral` payloads.
 The payload builder covers simple scalar data and recursive ground data such as
-lists, maps, unforgeable names, and tagged rhocalc bags. That keeps the report
+lists, maps, unforgeable names, and tagged rholang bags. That keeps the report
 handoff AST-first even when examples use Rholang-looking text for readability.
 
 That AST can be injected into F1r3node's Rho runtime today, and the same
@@ -986,7 +986,7 @@ collection payload may later produce:
 |---|---|
 | `RuntimeObservationValue::List([Int(1), Text("two")])` | a closed Rholang list payload was left on the observed channel |
 | `RuntimeObservationValue::Map([(Text("key"), Int(7))])` | a closed Rholang map payload was observed without display-string comparison |
-| `RuntimeObservationValue::Bag([(Text("alpha"), 2), (Text("beta"), 1)])` | a rhocalc tagged bag ABI was decoded with multiplicity preserved |
+| `RuntimeObservationValue::Bag([(Text("alpha"), 2), (Text("beta"), 1)])` | a rholang tagged bag ABI was decoded with multiplicity preserved |
 
 Those values are runtime observations, not Dovetail report fields. The Dovetail
 report supplies the complete exact-keyed rewrite evidence that authorized the

@@ -172,7 +172,7 @@ the composition.
 
 ### The Comm Rule
 
-RhoCalc's communication rule (`Comm`) is the primary example of a rewrite rule
+Rholang's communication rule (`Comm`) is the primary example of a rewrite rule
 that pattern-matches *inside* a collection.
 
 **Informal rule:**

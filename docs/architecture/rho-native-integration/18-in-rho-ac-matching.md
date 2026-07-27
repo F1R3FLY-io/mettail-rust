@@ -1,7 +1,7 @@
 # 18 — In-Rho AC (Associative–Commutative) Matching
 
 > **Campaign.** The two set-automaton papers cover STRUCTURAL matching only; the
-> associative-commutative operands of the source languages (RhoCalc's parallel
+> associative-commutative operands of the source languages (Rholang's parallel
 > composition, Ambient congruence, HashBag/HashSet/HashMap collections) are Greg
 > Meredith's extension — matched ORDER-INDEPENDENTLY, ON the Rholang interpreter,
 > inside ONE atomic `RSpace` `consume`. This document records the verified in-Rho
@@ -58,7 +58,7 @@ that one helper, so they cannot disagree.
 > each declare an AC constructor named `PPar` therefore produced *structurally
 > indistinguishable* bags, so either language's `ac_bag_pattern("PPar", k)` would bind the
 > other's elements wherever a value crossed between them. `PPar` is the actual name used in
-> `rhocalc` and in every AC/Ambient demo, so two co-installed process calculi collided here
+> `rholang` and in every AC/Ambient demo, so two co-installed process calculi collided here
 > **by default** — no attacker required. See
 > [25 §2.1](25-in-rho-base-family-reference.md#21-inv-s6-the-channel-name-fingerprint-invariant)
 > for the invariant and the scoping ABI.

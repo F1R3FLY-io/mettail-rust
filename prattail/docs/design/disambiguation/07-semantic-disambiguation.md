@@ -205,7 +205,7 @@ in declaration order.
           └─────────────────────────────────────────────┘
 ```
 
-**rhocalc (has non-native categories, lexer probe active):** `"p"` triggers the
+**rholang (has non-native categories, lexer probe active):** `"p"` triggers the
 lexer probe; `first_tok = Ident("p")` → native categories are skipped, leaving
 only `Proc` and `Name`.
 
@@ -257,7 +257,7 @@ only `Proc` and `Name`.
 ### 2.3 Lexer-Guided Parse Filtering
 
 The NFA strategy of trying all category parsers works correctly but can be
-wasteful. In rhocalc (6 categories), a bare identifier like `"p"` would
+wasteful. In rholang (6 categories), a bare identifier like `"p"` would
 succeed under *all* categories — each has an auto-generated variable fallback
 (`Token::Ident → Cat::XVar`). The result is 6-way ambiguity that downstream
 stages must untangle, even though the lexer already knows that `"p"` is
@@ -276,7 +276,7 @@ alternatives that are always less informative than non-native parsers.
 | `Token::Ident`  | Native (Float, Int, Bool, Str) | **Skip**   |
 | Any other token | Any                            | Try parser |
 
-Here is the effect on `"p"` in rhocalc:
+Here is the effect on `"p"` in rholang:
 
 *Without lexer probe:*
 ```
@@ -317,7 +317,7 @@ redundant category parsers.
 The `type` REPL command calls `infer_term_type()`. For `Ambiguous` terms, this
 previously returned `"Ambiguous"`, which is unhelpful — the user typically
 expects the **primary category** (the first type in the language definition,
-e.g., `Proc` for rhocalc, `Int` for Calculator) as the default interpretation.
+e.g., `Proc` for rholang, `Int` for Calculator) as the default interpretation.
 
 When the `Ambiguous` alternatives include the primary category,
 `infer_term_type()` reports that category's type. Otherwise it falls back to
@@ -326,7 +326,7 @@ When the `Ambiguous` alternatives include the primary category,
 ```
 infer_term_type(Ambiguous(alts)):
   for alt in alts:
-    if alt is PrimaryCategory(_):       // e.g. Proc for rhocalc, Int for Calculator
+    if alt is PrimaryCategory(_):       // e.g. Proc for rholang, Int for Calculator
       return TermType::Base("Proc")     // primary category name
   return TermType::Base("Ambiguous")    // fallback if primary not present
 ```

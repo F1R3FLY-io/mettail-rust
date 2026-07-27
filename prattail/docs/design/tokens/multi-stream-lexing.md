@@ -402,13 +402,13 @@ retention entries are emitted only when at least one such arm exists.
 
 ---
 
-## 11. Worked Instance — RhoCalc comments (task #18, 2026-07-25)
+## 11. Worked Instance — Rholang comments (task #18, 2026-07-25)
 
-RhoCalc's comments were originally removed by a **pre-parse string strip** in the
-`rhocalc` interpreter binary — a hand-rolled `{Code, Str, Guest}` scanner that
+Rholang's comments were originally removed by a **pre-parse string strip** in the
+`rholang` interpreter binary — a hand-rolled `{Code, Str, Guest}` scanner that
 deleted the bytes before the lexer ran. That was lossy: columns shifted, the text
 was unrecoverable, and no consumer could observe a comment. It is now expressed
-in the mechanism this document describes (`languages/src/rhocalc.rs`):
+in the mechanism this document describes (`languages/src/rholang.rs`):
 
 ```
 tokens {

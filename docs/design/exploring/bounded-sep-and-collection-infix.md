@@ -147,9 +147,9 @@ The loop relies on the *next* token not being the separator as a signal to exit.
 
 `prattail/src/classify.rs:116–131`'s `classify_is_infix` requires the syntax to be `[NT(same_cat), Terminal, …]`. A rule whose *second* item is a `Sep` (not a `Terminal`) is therefore neither infix-eligible nor, with its empty deterministic FIRST set, usefully prefix-eligible. It falls through to the trampoline prefix path, which dispatches on the first concrete terminal — there is none, so the rule never fires.
 
-### 3.4 The RhoCalc `bitor` Workaround Confirms the Issue Is Real
+### 3.4 The Rholang `bitor` Workaround Confirms the Issue Is Real
 
-The closely related RhoCalc grammar (`languages/src/rhocalc.rs:168–169`) avoids `|` entirely and uses a `bitor` keyword for bitwise-or instead. That workaround exists precisely to sidestep the interaction between `|` and the brace-bracketed `PPar` production in sibling grammars. This is indirect evidence that the braces-requirement is an architectural pain point, not a cosmetic choice.
+The closely related Rholang grammar (`languages/src/rholang.rs:168–169`) avoids `|` entirely and uses a `bitor` keyword for bitwise-or instead. That workaround exists precisely to sidestep the interaction between `|` and the brace-bracketed `PPar` production in sibling grammars. This is indirect evidence that the braces-requirement is an architectural pain point, not a cosmetic choice.
 
 ---
 

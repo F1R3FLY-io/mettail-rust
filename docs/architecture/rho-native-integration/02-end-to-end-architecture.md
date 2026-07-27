@@ -338,7 +338,7 @@ The Rho backend consumes the Dovetail model and emits:
 - normalized Rholang AST (`models::rhoapi::Par`) for the supported fragment;
 - structured dynamic call and witness payloads as `RhoAstLiteral` values that
   lower directly to `Par`, including scalar, collection, unforgeable-name, and
-  rhocalc bag ABI payloads;
+  rholang bag ABI payloads;
 - Rholang-text annotations for readers, logs, and documentation;
 - native handler registrations for operations that cannot be rendered as pure
   Rholang expressions;
@@ -395,7 +395,7 @@ MeTTaIL-owned reducer, tuple space, matcher, or replay engine.
 
 ## Pedagogical Example: Communication
 
-Consider the source-level rhocalc communication pattern:
+Consider the source-level rholang communication pattern:
 
 ```text
 { (c?x).{*(x)} | c!(p) }
@@ -503,7 +503,7 @@ The AST generator must own and test:
 - bind-count conventions;
 - receive condition representation.
 - dynamic-send payload encoding for scalar values, collections,
-  unforgeable names, and tagged rhocalc bags.
+  unforgeable names, and tagged rholang bags.
 
 The current Rust gate checks these invariants on the generated contracts. The
 Rholang-looking examples in this document are annotations for readers; they are

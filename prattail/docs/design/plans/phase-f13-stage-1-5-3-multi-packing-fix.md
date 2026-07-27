@@ -19,7 +19,7 @@ Capture the worker's pre-dispatch weight per snapshot. At revive time, compute t
 | Attempt | Why it failed |
 |---|---|
 | `cursor.weight = member.weight_at_dispatch × snap.worker_pending_packing_weight` | At pop time, `worker_pending_packing_weight = W::one_ref()` after the LAST fire's `mem::replace`. Effective contribution = identity. |
-| `cursor.weight = snap.worker_weight` | Replaces cohort.pre's tiebreak with worker's tiebreak. Broke `rhocalc::int_of_float_add`. |
+| `cursor.weight = snap.worker_weight` | Replaces cohort.pre's tiebreak with worker's tiebreak. Broke `rholang::int_of_float_add`. |
 | `cursor.weight = member.weight_at_dispatch × sppf.symbol_weight_sum(symbol_id)` | Goodman aggregate. Loses per-packing distinction. CURRENT STATE. |
 | `witness_packing_id` + `sppf.packing_weight()` | Packing's stored weight = per-Fork-arm residual, not full path. |
 
@@ -156,7 +156,7 @@ Under LexicographicWeight semantics:
 - G1: `postfix_binds_tighter_than_unary` PASS.
 - G2: Full gauntlet ≥ 6161/0.
 - G3: `comparison_after_cast_results::float_cast_*` (6) PASS (regression check).
-- G4: `rhocalc::int_of_float_add` PASS (regression check).
+- G4: `rholang::int_of_float_add` PASS (regression check).
 - G5: chain_10000 within timeout.
 
 ### Performance gates (Welch's t-test, p < 0.05)

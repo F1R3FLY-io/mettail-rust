@@ -465,7 +465,7 @@ future optimization passes (B1, F3) when they are implemented.
 
 ### Grammar
 
-Consider a simplified rhocalc-like grammar with a `Proc` category and
+Consider a simplified rholang-like grammar with a `Proc` category and
 an `Int` category:
 
 ```

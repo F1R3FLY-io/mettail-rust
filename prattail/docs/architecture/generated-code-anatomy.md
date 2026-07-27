@@ -820,7 +820,7 @@ allocations during generation.
 ## Part 15: Lambda and Application Codegen
 
 Lambda and application handlers are generated for the **primary category** only.
-Using RhoCalc (primary category: `Proc`) as an example:
+Using Rholang (primary category: `Proc`) as an example:
 
 ### Single Lambda: `^x.{body}`
 
@@ -899,7 +899,7 @@ parenthesis is consumed as part of the token to avoid ambiguity with `$int`.
 
 ## Part 16: Binder and Scope Codegen
 
-Binder rules (e.g., PInputs in RhoCalc) use `moniker`'s `Scope`, `Binder`,
+Binder rules (e.g., PInputs in Rholang) use `moniker`'s `Scope`, `Binder`,
 and `FreeVar` types for proper name binding:
 
 ### Single-Binder Construction
@@ -927,7 +927,7 @@ let scope = mettail_runtime::Scope::new(binders, Box::new(body));
 
 ### Structural Binder Rules (PInputs)
 
-The RhoCalc `PInputs` rule `(n?x, m?y).{body}` generates a ZipMapSep
+The Rholang `PInputs` rule `(n?x, m?y).{body}` generates a ZipMapSep
 handler that constructs binders from the `?`-separated pairs:
 
 ```rust

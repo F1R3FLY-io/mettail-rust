@@ -199,7 +199,7 @@ only building the bridge crates (or `--workspace`) does.
 - **★ M-RHO.0 COMPLETE end-to-end** (tip `7629c828`, AST-first updated
   2026-06-13): LanguageDef `→` lowered normalized Rholang AST `→` direct f1r3node
   injection `→` differentially equals Ascent. Full ungated integration; 7
-  zero-admission `rocq-rho-bridge` proofs. **Next: M-RHO.1** (rhocalc native fast
+  zero-admission `rocq-rho-bridge` proofs. **Next: M-RHO.1** (rholang native fast
   path, `Comm`→RSpace COMM) and later per-language CESK runtime-backend flip
   gates. Parser FV remains a separate active-parser track, not part of this
   runtime-backend replacement.

@@ -287,7 +287,7 @@ The three operational categories, and where each bundled language lands:
 | Category | Languages | What it means |
 |---|---|---|
 | pure Dovetail | Lambda, Ambient | every redex reduced in-engine by `saturate_with_native`; no host |
-| hybrid | Calculator, RhoCalc | RhoMachine default; folds run on Rho via E2, only semantic predicates defer to Dovetail (`DeferToDovetailSemanticPredicate`) |
+| hybrid | Calculator, Rholang | RhoMachine default; folds run on Rho via E2, only semantic predicates defer to Dovetail (`DeferToDovetailSemanticPredicate`) |
 | host-routed | GuardedRho | a guard over external relations forces `RhoNativeJoin` (no `rhoapi::Par` form) |
 
 `RuntimeBackend::Ascent` is a fail-closed reference oracle only — never a production

@@ -2096,7 +2096,7 @@ identifiers by the default lexer.
 
 ```rust
 language! {
-    name: RhoCalc,
+    name: Rholang,
     types { Proc, Name, ![i64] as Int },
 
     tokens {
@@ -2300,7 +2300,7 @@ When `guards {}` is absent, the language gets the current behavior:
 | `theories` sub-block    | None registered → heuristic keyword dispatch fallback                                                                                       |
 | `channels` sub-block    | None → heuristic M8/M11 inference from grammar structure                                                                                    |
 
-Existing languages (`RhoCalc`, `Lambda`, `Ambient`, `Calculator`) work
+Existing languages (`Rholang`, `Lambda`, `Ambient`, `Calculator`) work
 unchanged. Languages without `?guard:Guard` in `terms {}` or `guard(...)` in
 premises pay zero cost — the block is entirely optional.
 
@@ -3655,7 +3655,7 @@ names (`unsafe_pattern`) are scope-introducing positions and are NEVER
 extracted into `MatchBindings`. See §5 "Iterative Work Stack Architecture"
 for the full algorithm.
 
-**MultiBinder.** The rhocalc `PNew . ^[xs].p:[Name* -> Proc]` generates
+**MultiBinder.** The rholang `PNew . ^[xs].p:[Name* -> Proc]` generates
 `PNew(Scope<Vec<Binder<String>>, Box<Proc>>)` — a single argument that is the
 scope itself, with no pre-scope fields. The matching algorithm first opens
 both scopes via `inner()` to access the raw `BoundVar`-encoded bodies, then
@@ -3880,7 +3880,7 @@ making the comparison alpha-invariant: `new x in { x!(P) }` and
 scope opening, so they match structurally. This is the standard
 alpha-equivalence check via De Bruijn representation (de Bruijn, 1972).
 
-**MultiBinder (canonical: rhocalc PNew).** The following trace shows the
+**MultiBinder (canonical: rholang PNew).** The following trace shows the
 step-by-step matching of two `PNew` terms. The arity check ensures both
 sides introduce the same number of bound variables — a `new(x, y)` pattern
 must not match a `new(z)` ground term. After the arity check, the body

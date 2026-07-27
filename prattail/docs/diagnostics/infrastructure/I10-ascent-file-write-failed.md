@@ -67,7 +67,7 @@ permissions.
 ### Output
 
 ```
-warning[I10] (RhoCalc): failed to write Ascent Datalog file: Permission denied (os error 13)
+warning[I10] (Rholang): failed to write Ascent Datalog file: Permission denied (os error 13)
   = hint: check directory permissions
 ```
 

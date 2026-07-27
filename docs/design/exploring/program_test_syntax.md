@@ -23,7 +23,7 @@ These scenarios cannot be expressed as single roundtrip or eval assertions.
 
 ```text
 language! {
-    name: RhoCalc,
+    name: Rholang,
     // ... types, terms, equations, rewrites ...
 
     tests {
@@ -137,7 +137,7 @@ and leverage the testkit's assertion infrastructure:
 ```rust
 #[test]
 fn program_basic_communication() {
-    let suite = mettail_testkit::program::ProgramTestSuite::new(RhoCalcLanguage);
+    let suite = mettail_testkit::program::ProgramTestSuite::new(RholangLanguage);
     suite
         .bind("x", "1 + 2", "Int")
         .assert_eq("x", "3")

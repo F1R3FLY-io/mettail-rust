@@ -24,7 +24,7 @@ generated code). The panic aborts the whole test (no `catch_unwind` around
 `prog.run()`).
 
 The fix is **NOT** to revert to single-cat extract (loses cross-cat results,
-regresses rhocalc_op tests and the new Phase-D capability), nor to add
+regresses rholang_op tests and the new Phase-D capability), nor to add
 `catch_unwind` (hides bugs, slows the hot path). The principled fix is to **make
 user-action codegen Var-safe by default** — exactly as `ProcToStr` already does
 (lines 5081-5103: uses `try_eval()` in every arm and falls through to
@@ -81,7 +81,7 @@ surfaces ALL cats' results without the regressions.
   performance penalty, doesn't compose with Ascent's iter borrows. RISK HIGH.
 - **First-alt-only with fallback**: Brittle heuristic ("empty" hard to define
   when partial results exist), violates P3 (disambiguation requires evidence).
-- **Revert to single-cat extract**: Regresses `rhocalc_op` tests where
+- **Revert to single-cat extract**: Regresses `rholang_op` tests where
   `bitnot 0` needs cross-cat Int→BigInt result surfacing.
 
 ---
@@ -114,7 +114,7 @@ surfaces ALL cats' results without the regressions.
    resolve via Layer 1+2).
 
 **Total**: ~50 LoC, RISK LOW-MED. Achieves zero regressions in `edge_case_tests`
-AND fixes `rhocalc_op` cross-cat tests AND respects preserve-all-derivations.
+AND fixes `rholang_op` cross-cat tests AND respects preserve-all-derivations.
 
 ---
 

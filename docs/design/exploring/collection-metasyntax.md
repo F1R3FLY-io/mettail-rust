@@ -581,9 +581,9 @@ Extend existing `generate_rhs_expr_code` to handle new combinators:
 
 ### Phase 6: Integration & Testing (2 days)
 
-**Files:** `theories/src/rhocalc.rs`, `theories/tests/rhocalc.rs`
+**Files:** `theories/src/rholang.rs`, `theories/tests/rholang.rs`
 
-- [ ] Enable `PInputs` constructor in rhocalc
+- [ ] Enable `PInputs` constructor in rholang
 - [ ] Add multi-communication rewrite rule
 - [ ] End-to-end test: parse multi-comm pattern
 - [ ] End-to-end test: execute multi-comm reduction
@@ -600,8 +600,8 @@ Extend existing `generate_rhs_expr_code` to handle new combinators:
 | `macros/src/ast/mod.rs` | Export comprehension module |
 | `macros/src/ascent/rewrites/patterns.rs` | LHS codegen for comprehensions |
 | `macros/src/ascent/rewrites/rhs.rs` | RHS codegen for new combinators |
-| `theories/src/rhocalc.rs` | Enable PInputs, add multi-comm rule |
-| `theories/tests/rhocalc.rs` | Integration tests |
+| `theories/src/rholang.rs` | Enable PInputs, add multi-comm rule |
+| `theories/tests/rholang.rs` | Integration tests |
 
 ---
 

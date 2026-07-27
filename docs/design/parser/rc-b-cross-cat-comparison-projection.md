@@ -212,8 +212,8 @@ repo convention).
   the ill-typed controls (`int(2 <= b >= 3)`) **stay failing**; the explicit-paren controls keep
   parsing.
 - **Zero regression** on the full gauntlet: `gen_calculator_{unit,analytical,rewrite}`
-  (52/224/169), `gen_rhocalc_{unit,analytical,rewrite}` (52/126/86), `gen_ambient_*`,
-  `edge_case_tests`, `wpda_parity_{calculator,calculator_cross_cat,rhocalc_collections}`,
+  (52/224/169), `gen_rholang_{unit,analytical,rewrite}` (52/126/86), `gen_ambient_*`,
+  `edge_case_tests`, `wpda_parity_{calculator,calculator_cross_cat,rholang_collections}`,
   `simulator_regression_cross_cat_with_strings`, prattail `--lib` (3766/0). (Pre-existing
   `roundtrip_tests::idempotent_int_display` on the pinned `Fact(Neg(NumLit(0)))` `-0`→0
   lexer-canonicalization case is *not* in scope — it must not be hidden, nor counted as a

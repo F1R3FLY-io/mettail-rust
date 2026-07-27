@@ -553,13 +553,13 @@ runtime backends are compiled. `mettail-languages` defaults to
 | Feature (crate) | Enables / deps | Default | Purpose |
 |-----------------|----------------|:------:|---------|
 | `all-languages` (`languages`) | the per-language set below | **on** | Umbrella over every bundled language. |
-| per-language (`languages`) | *(none, except `composition`)* | via `all-languages` | `ambient`, `appsubst`, `calculator`, `class2hashmapsmoke`, `class2multi`, `class2optsmoke`, `class2smoke`, `class3multi`, `class3opt`, `composition` (= `calculator` + `lambda`), `fortran_model`, `reserved_model`, `guarded-rho`, `lambda`, `led-test`, `optsmoke`, `refinementsmoke`, `rhocalc`. `guardoptsmoke` exists but is **not** in `all-languages` (opt-in site-2 smoke). |
+| per-language (`languages`) | *(none, except `composition`)* | via `all-languages` | `ambient`, `appsubst`, `calculator`, `class2hashmapsmoke`, `class2multi`, `class2optsmoke`, `class2smoke`, `class3multi`, `class3opt`, `composition` (= `calculator` + `lambda`), `fortran_model`, `reserved_model`, `guarded-rho`, `lambda`, `led-test`, `optsmoke`, `refinementsmoke`, `rholang`. `guardoptsmoke` exists but is **not** in `all-languages` (opt-in site-2 smoke). |
 | `rho-codegen` (`languages`) | `dep:mettail-rholang-codegen` | **on** | Macro-generated AST-first Rho scalar invocation descriptions. |
 | `dovetail-codegen` (`languages`) | `dep:dovetail`, `dep:mettail-dovetail-runtime`, `dep:rigail` | **on** | Macro-generated AST-first Dovetail report compiler (general-purpose runtime backend). |
 | `strategies` (`languages`) | `dep:proptest` | off | Public `arb_{cat}` proptest strategies; required by the `simulate_*` CLI binaries. |
 | `mimalloc` (`languages`) | `dep:mimalloc` | off | mimalloc global allocator for the `trampoline_tests` binary. |
-| `rho-languages` (`repl`) | `bundled-languages`, `dep:mettail-rholang-runtime`, `dep:mettail-rholang-codegen` | **on** | Full `exec` surface (RhoCalc/Calculator two-stage Dovetail+Rholang). A Dovetail-only REPL builds `--no-default-features --features bundled-languages`. |
-| `rhocalc-runtime` (`rholang-runtime`) | `runtime-report`, `dep:mettail-ast`, `dep:mettail-languages`, `dep:syn`, `mettail-languages/{rhocalc,dovetail-codegen}` | **on** | Production AST-first RhoCalc-to-Rho wrapper (values are `rhoapi::Par`, never reparsed source). |
+| `rho-languages` (`repl`) | `bundled-languages`, `dep:mettail-rholang-runtime`, `dep:mettail-rholang-codegen` | **on** | Full `exec` surface (Rholang/Calculator two-stage Dovetail+Rholang). A Dovetail-only REPL builds `--no-default-features --features bundled-languages`. |
+| `rholang-runtime` (`rholang-runtime`) | `runtime-report`, `dep:mettail-ast`, `dep:mettail-languages`, `dep:syn`, `mettail-languages/{rholang,dovetail-codegen}` | **on** | Production AST-first Rholang-to-Rho wrapper (values are `rhoapi::Par`, never reparsed source). |
 | `source-oracle` (`rholang-runtime`) | *(none)* | **on** | Hand-authored Rholang source-evaluation helpers used only by source-oracle regression tests. |
 
 ## Environment Variables

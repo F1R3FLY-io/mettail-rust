@@ -10,7 +10,7 @@
 2. [Complete Pseudocode](#2-complete-pseudocode)
 3. [Composition Diagram](#3-composition-diagram)
 4. [Rule Specificity Weight Assignment](#4-rule-specificity-weight-assignment)
-5. [Worked Example: RhoCalc `error` Keyword Ambiguity](#5-worked-example-rhocalc-error-keyword-ambiguity)
+5. [Worked Example: Rholang `error` Keyword Ambiguity](#5-worked-example-rholang-error-keyword-ambiguity)
 6. [Counting Semiring Pass (Ambiguity Detection)](#6-counting-semiring-pass-ambiguity-detection)
 7. [Semiring Polymorphism](#7-semiring-polymorphism)
 8. [Complexity Analysis](#8-complexity-analysis)
@@ -376,11 +376,11 @@ ranking, ensuring structural rules are always tried first.
 
 ---
 
-## 5. Worked Example: RhoCalc `error` Keyword Ambiguity
+## 5. Worked Example: Rholang `error` Keyword Ambiguity
 
 ### Grammar Context
 
-The RhoCalc grammar (defined in `languages/src/rhocalc.rs`) includes:
+The Rholang grammar (defined in `languages/src/rholang.rs`) includes:
 
 ```
 Err . |- "error" : Proc;       // "error" is a keyword for the Err rule
@@ -556,7 +556,7 @@ if entries.len() > 1:
 
 ### Example Warning Output
 
-For the RhoCalc `error` ambiguity at state 7:
+For the Rholang `error` ambiguity at state 7:
 
 ```
 warning: 2-way ambiguity at (Proc, DFA state 7):
@@ -728,7 +728,7 @@ In typical PraTTaIL grammars:
 | `\|A_max\|` | 2--3          | Usually keyword vs. identifier        |
 | `\|R_max\|` | 1--3          | Rules starting with the same token    |
 
-Total composed entries: typically < 100.  For the RhoCalc grammar with 4
+Total composed entries: typically < 100.  For the Rholang grammar with 4
 categories and 3 ambiguous states, the algorithm produces ~20 entries.
 
 ### Per-Phase Cost

@@ -217,7 +217,7 @@ The LALRPOP pipeline suffers from multiplicative code growth:
 ```
 ┌──────────────────┬─────────────────────┬──────────────────────────────────┐
 │ Component        │ Per-grammar cost    │ 5 grammars (Lambda, Ambient,     │
-│                  │                     │  RhoCalc, Calculator, Space)     │
+│                  │                     │  Rholang, Calculator, Space)     │
 ├──────────────────┼─────────────────────┼──────────────────────────────────┤
 │ .lalrpop file    │ ~70-140 lines       │ ~430 lines total                 │
 │ LALRPOP output   │ ~2,000-5,000 lines  │ ~10,000-25,000 lines             │

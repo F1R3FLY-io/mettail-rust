@@ -23,7 +23,7 @@ matching optimized by the set-automaton papers.
 | Concern | Files | Representative commits |
 |---|---|---|
 | Documentation | 18 | #2002, #2065, #2043, #2068 (+ tail), this audit |
-| Generated languages | 13 | SwapDemo (R-4/R-5), Calculator/RhoCalc runtime tests |
+| Generated languages | 13 | SwapDemo (R-4/R-5), Calculator/Rholang runtime tests |
 | Dovetail engine | 12 | O1 FxHash, O2/O3 extraction, set-automaton |
 | rholang-runtime | 10 | sigma-injection bridge, install boundary, F-stage |
 | Formal (Rocq/Sage/Wolfram) | 9 | Epic 8 FVs, #2049 models |

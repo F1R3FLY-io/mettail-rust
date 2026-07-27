@@ -336,7 +336,7 @@ If at L3 cohort_avg_member_count < 3, abort and re-plan. If L3's chain_1000 Welc
 | 1 | Cohort_avg_member_count = 1-2 in practice | LOW | HIGH | Stage L3 instrumentation BEFORE L4 commits |
 | 2 | (L2) discipline violation: ObsInvariant misclassification → silent ambiguity drop | MEDIUM | CATASTROPHIC | Property test enumerating all WpdaStepAction variants × 6 mutable fields |
 | 3 | Cycle-defense soundness: false-positive rejection from shared visited_dispatch | LOW | HIGH | Stage L4 inverse-coverage test |
-| 4 | Materialization storms in lex-Fork heavy grammars | MEDIUM | MEDIUM | rhocalc + lambda + -3! Welch gate every stage; if materialization rate > 50%, narrow to dispatch-key only |
+| 4 | Materialization storms in lex-Fork heavy grammars | MEDIUM | MEDIUM | rholang + lambda + -3! Welch gate every stage; if materialization rate > 50%, narrow to dispatch-key only |
 | 5 | Multi-packing snapshot count grows unbounded at L6 | LOW | MEDIUM | MAX_COHORT_FRAME_MEMBERS = 256 hard cap |
 | 6 | Engine.step purity violated by future grammar features | LOW | HIGH | Property test on all WpdaState variants under CrossCatDelegate |
 | 7 | Hybrid-merge (L5) stale-pointer bug | MEDIUM | HIGH | All shared Arcs immutable after cohort formation; writes go through materialization |

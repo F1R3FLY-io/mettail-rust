@@ -785,7 +785,7 @@ pattern:
 entries, key-sorted+deduped ⇒ key-uniqueness), and `Vec`/`PathMap` → the positional tagged `EList`
 (ordered ⇒ positional is correct). The ABI tag is `mettail.term.{fp}.{label}`
 (`REFLECTED_TERM_ABI_PREFIX`, `lib.rs:66`) carried by an unforgeable `GPrivate` (collision-free with
-any user `GString`); a plain (inert) bag value uses `RHOCALC_BAG_ABI_TAG = "mettail.rhocalc.bag.v1"`
+any user `GString`); a plain (inert) bag value uses `RHOLANG_BAG_ABI_TAG = "mettail.rholang.bag.v1"`
 (`lib.rs:54`).
 
 ## 10. The install gate and the two invocation paths

@@ -1,15 +1,15 @@
-# Rhocalc Collection Equality (`==` / `!=`)
+# Rholang Collection Equality (`==` / `!=`)
 
-**Status:** Implemented (RhoCalc)  
+**Status:** Implemented (Rholang)  
 **Context:** Program `==` / `!=` on `CastList`, `CastBag`, `CastMap`, and `CastSet`; see [map-type-design.md](./native-types/map-type-design.md), [set-type-design.md](./native-types/set-type-design.md), and [lists-and-bags-support.md](./native-types/lists-and-bags-support.md).
 
 ---
 
 ## 1. Goal and Scope
 
-**Goal:** Fold-time and guard-time `==` / `!=` on all Rhocalc collection values injected into `Proc`, producing `CastBool` literals with per-kind semantics aligned with `term_eq` and receive pattern matching.
+**Goal:** Fold-time and guard-time `==` / `!=` on all Rholang collection values injected into `Proc`, producing `CastBool` literals with per-kind semantics aligned with `term_eq` and receive pattern matching.
 
-**Scope:** `Eq` / `Ne` in `languages/src/rhocalc.rs`, shared helper `compare_collection_equality` in `languages/src/rhocalc/runtime.rs`, and `eval_guard_bool` in `languages/src/rhocalc/receive.rs`.
+**Scope:** `Eq` / `Ne` in `languages/src/rholang.rs`, shared helper `compare_collection_equality` in `languages/src/rholang/runtime.rs`, and `eval_guard_bool` in `languages/src/rholang/receive.rs`.
 
 **Non-goals:** tuples; `List(…)` constructor sugar; `++` and other missing collection operators; wire/binary serialization; equality on braced `PPar` process multisets (not `CastBag`).
 
@@ -34,10 +34,10 @@
 
 ## 3. Two different “equality” mechanisms
 
-Rhocalc has **two separate places** where “these things are equal” can be discussed. They are **not** the same code, and they are **not** meant to do the same job.
+Rholang has **two separate places** where “these things are equal” can be discussed. They are **not** the same code, and they are **not** meant to do the same job.
 
 **A) Equality in your running program (`==` and `!=`)**  
-When you write `a == b` in Rhocalc, the evaluator handles that as normal expression evaluation. For collections, it uses the collection rules described in this document (via `compare_collection_equality` during folding). This is what actually decides whether your program reduces to `true` or `false` (or an error in the cases described elsewhere).
+When you write `a == b` in Rholang, the evaluator handles that as normal expression evaluation. For collections, it uses the collection rules described in this document (via `compare_collection_equality` during folding). This is what actually decides whether your program reduces to `true` or `false` (or an error in the cases described elsewhere).
 
 **B) Equality inside the Ascent-generated rules (`eq_list`, `eq_bag`, …)**  
 The generated Datalog file also contains relations with names like `eq_list`, `eq_bag`, `eq_map`, and `eq_set`. Those exist to support **internal equational reasoning** (congruence-style reasoning over terms). They are **not** wired up as “when the user writes `==`, call these relations instead.”
@@ -56,14 +56,14 @@ The generated Datalog file also contains relations with names like `eq_list`, `e
 
 ## 5. Tests
 
-- `languages/tests/rhocalc_tests.rs` — per-kind fold tests, cross-type `false`, bag multiset order independence, and `where` guards on collection `==`.
+- `languages/tests/rholang_tests.rs` — per-kind fold tests, cross-type `false`, bag multiset order independence, and `where` guards on collection `==`.
 - `assert_reduces_to` / `multiset_eq`: only treat two displays as equal multisets when **both** parse as braced `PPar` (`{ a | b }`); `None == None` must not match.
 
 ---
 
 ## 6. Examples
 
-```rhocalc
+```rholang
 [1, 2] == [1, 2]          // true
 [1, 2] == [2, 1]          // false
 #{1 | 2 | 2}# == #{2 | 1 | 2}#  // true

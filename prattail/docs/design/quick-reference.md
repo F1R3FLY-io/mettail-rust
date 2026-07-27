@@ -85,7 +85,7 @@ parsed Ascent syntax for tooling.
 │  │            │  │          │  │          │  │  export          │  │
 │  │ Calculator │  │ bindings │  │ REPL +   │  │                  │  │
 │  │ Lambda     │  │ hash-cons│  │ registry │  │ build.rs parse   │  │
-│  │ RhoCalc    │  │ metadata │  │ pretty   │  │                  │  │
+│  │ Rholang    │  │ metadata │  │ pretty   │  │                  │  │
 │  │ Ambient    │  │          │  │          │  │                  │  │
 │  └────────────┘  └──────────┘  └──────────┘  └──────────────────┘  │
 │                                                                    │
@@ -1675,7 +1675,7 @@ over those baked-in values; training methods can update them via a feedback loop
 
 #### 5.5.6 Worked Example: `float` Dispatch
 
-Trace `float(1 == 1)` through weight computation (RhoCalc grammar):
+Trace `float(1 == 1)` through weight computation (Rholang grammar):
 
 ```
 ① lex_weighted_core():  Ident("float") → w_lex = 0.0  (no lexical ambiguity)

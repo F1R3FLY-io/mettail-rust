@@ -2,7 +2,7 @@
 
 This document traces the ZipMapSep metasyntax from the `language!` DSL through
 the macro parser and bridge to the `LanguageSpec` that PraTTaIL uses for
-codegen.  The running example is RhoCalc's `PInputs`.
+codegen.  The running example is Rholang's `PInputs`.
 
 ## 1. DSL Syntax
 

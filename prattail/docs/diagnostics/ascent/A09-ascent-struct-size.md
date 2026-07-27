@@ -54,7 +54,7 @@ At most one diagnostic is emitted per grammar.
 
 ```rust
 language! {
-    name: RhoCalc,
+    name: Rholang,
     // 20 categories, 60+ syntax entries
     types { ![...] as Proc, ... },
     terms {
@@ -67,7 +67,7 @@ language! {
 ### Output (Warning)
 
 ```
-warning[A09] (RhoCalc): estimated ~60 relations and ~120 Ascent rules — large struct may slow compilation
+warning[A09] (Rholang): estimated ~60 relations and ~120 Ascent rules — large struct may slow compilation
   = hint: consider splitting categories into independent modules or enabling demand-driven population
 ```
 

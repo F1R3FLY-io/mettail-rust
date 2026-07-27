@@ -1,6 +1,6 @@
 ---
 name: Map operators suggestion
-overview: Suggest a set of Map operators that mirror and extend the existing List and Bag operator patterns in Calculator and RhoCalc, so Map becomes as usable as List/Bag in language definitions.
+overview: Suggest a set of Map operators that mirror and extend the existing List and Bag operator patterns in Calculator and Rholang, so Map becomes as usable as List/Bag in language definitions.
 todos: []
 isProject: false
 ---
@@ -9,7 +9,7 @@ isProject: false
 
 ## Existing operators (reference)
 
-From [languages/src/calculator.rs](languages/src/calculator.rs) and [languages/src/rhocalc.rs](languages/src/rhocalc.rs):
+From [languages/src/calculator.rs](languages/src/calculator.rs) and [languages/src/rholang.rs](languages/src/rholang.rs):
 
 
 | Collection | Operator                             | Signature (conceptually) | Role                    |
@@ -92,10 +92,10 @@ Naming can follow existing style: e.g. `GetMap` / `ElemMap` (to mirror `ElemList
 
 ## Implementation notes
 
-- **Where to add:** In a language that already has `![HashMap] as Map` and `ProcMap` (e.g. Calculator or RhoCalc). Same pattern as List/Bag: term rules with `![...]` Rust blocks using `HashMapLit` (or the underlying map type).
+- **Where to add:** In a language that already has `![HashMap] as Map` and `ProcMap` (e.g. Calculator or Rholang). Same pattern as List/Bag: term rules with `![...]` Rust blocks using `HashMapLit` (or the underlying map type).
 - **Runtime:** `HashMapLit` in [runtime/src/hashmap_lit.rs](runtime/src/hashmap_lit.rs) wraps `HashMap`; operations are `get`, `insert`, `remove`, `len`, iteration. No new runtime type needed; only term (and congruence) rules in the language macro.
 - **Error handling:** For `get(m, k)` when `k` is missing, either (a) return `Proc::Err` so languages can test, or (b) panic to match `at(..., i)` out-of-bounds. Recommend (a) for Map so that “key absent” is a normal case.
-- **Congruence:** For each new term constructor (GetMap, PutMap, etc.), add congruence rules for all argument positions so that rewrites under contexts are supported, mirroring [rhocalc.rs](languages/src/rhocalc.rs) (e.g. `ElemListCongL`, `ElemListCongR`).
+- **Congruence:** For each new term constructor (GetMap, PutMap, etc.), add congruence rules for all argument positions so that rewrites under contexts are supported, mirroring [rholang.rs](languages/src/rholang.rs) (e.g. `ElemListCongL`, `ElemListCongR`).
 
 ---
 

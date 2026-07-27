@@ -137,7 +137,7 @@ When input could match both a custom literal (e.g. `yes`) and an **identifier**,
 5. **Parser integration**
   - In `prattail/src/trampoline.rs`, prefix handlers for `NumLit` and similar nodes convert from the token’s storage type to the native type declared in `types { ... }` (e.g. casting `i64` to `i32` for `Int`).
 6. **Tests**
-  - Integration tests in `prattail/src/tests/integration_tests.rs` exercise custom literal evals and verify backward compatibility when `literal_eval` is empty. Language-level tests (e.g. for Calculator and RhoCalc) can validate that hex/octal/binary, underscore separators, custom Bool keywords, and single-quoted strings behave as expected.
+  - Integration tests in `prattail/src/tests/integration_tests.rs` exercise custom literal evals and verify backward compatibility when `literal_eval` is empty. Language-level tests (e.g. for Calculator and Rholang) can validate that hex/octal/binary, underscore separators, custom Bool keywords, and single-quoted strings behave as expected.
 
 ### Backward compatibility
 

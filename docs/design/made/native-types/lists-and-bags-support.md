@@ -9,7 +9,7 @@
 
 **Goal:** First-class **List** and **Bag** categories so languages can have list/bag values (literals, operations, judgements, equations, rewrites).
 
-**Scope:** Only **List** and **Bag** with element type **Proc** (i.e. `Vec<Proc>` and `HashBag<Proc>`). No List(Int), Bag(Float), or other typed collections. Same **Proc** type across languages (Calculator, rhocalc). Grammar supports arbitrary Rholang processes and general constructors (user-defined names, delimiters).
+**Scope:** Only **List** and **Bag** with element type **Proc** (i.e. `Vec<Proc>` and `HashBag<Proc>`). No List(Int), Bag(Float), or other typed collections. Same **Proc** type across languages (Calculator, rholang). Grammar supports arbitrary Rholang processes and general constructors (user-defined names, delimiters).
 
 ---
 
@@ -20,13 +20,13 @@
 **Semantics:** List equality: same length and element-wise equality. Bag = multiset equality (element, count). Element bounds: Bag requires `Clone + Eq + Hash`; List elements in relations need `Eq + Hash`.
 
 **Type declaration (language macro):** In **types**, collection categories are declared as:
-- `![Vec<Proc>] as List` — List; **default** delimiters are `list(`, `)`, `,` (see `CollectionCategory::list_defaults()` in `macros/src/ast/language.rs`). Languages may override with a braced dictionary (`open_parts`, `close_parts`, `sep`), e.g. RhoCalc brace lists.
-- `![mettail_runtime::HashBag<Proc>] as Bag` — Bag; **default** delimiters are `bag(`, `)`, `,`. RhoCalc uses `open_parts: ["#", "{"]`, `close_parts: ["}", "#"]`, `sep: "|"` to avoid clashing with PPar `{ … }`.
+- `![Vec<Proc>] as List` — List; **default** delimiters are `list(`, `)`, `,` (see `CollectionCategory::list_defaults()` in `macros/src/ast/language.rs`). Languages may override with a braced dictionary (`open_parts`, `close_parts`, `sep`), e.g. Rholang brace lists.
+- `![mettail_runtime::HashBag<Proc>] as Bag` — Bag; **default** delimiters are `bag(`, `)`, `,`. Rholang uses `open_parts: ["#", "{"]`, `close_parts: ["}", "#"]`, `sep: "|"` to avoid clashing with PPar `{ … }`.
 - Optional 4-string bracket form for **Map**: open, close, entry separator, key/value separator (see map design doc).
 
 One parameterised PraTTaIL rule per collection kind; element category can differ from collection category (e.g. parse **Proc** into List/Bag via `ElemParse` and `pending_elem` in the trampoline).
 
-**Literals:** Elements separated by the language’s configured separators; empty collections use the declared open/close pair (e.g. `list()` / `bag()` with defaults, or `[]` / `#{ }#` on RhoCalc). With **default** delimiters: `list(a, b, c)`, `bag(1, 1, 2)` (repeated elements = multiplicity). Custom delimiters allow language-specific surface syntax (e.g. `[a, b, c]`, `#{ a | b }#`).
+**Literals:** Elements separated by the language’s configured separators; empty collections use the declared open/close pair (e.g. `list()` / `bag()` with defaults, or `[]` / `#{ }#` on Rholang). With **default** delimiters: `list(a, b, c)`, `bag(1, 1, 2)` (repeated elements = multiplicity). Custom delimiters allow language-specific surface syntax (e.g. `[a, b, c]`, `#{ a | b }#`).
 
 **Rewrites:** **Rewrites allowed everywhere** within list elements (single global policy; no per-list knob). Aligns with [f1r3node/rholang](https://github.com/F1R3FLY-io/f1r3node/tree/rust/dev/rholang) (element-wise normalization).
 
@@ -80,7 +80,7 @@ terms {
 
 **Chosen: Option A — All positions.** Congruence for every argument of every List/Bag/Proc constructor. Rewrites are allowed everywhere within list/bag elements.
 
-**Implementation.** The macro congruence generator branches on collection type: **Vec** (List) uses index-based iteration and replace-at-index rebuild; **HashBag** (Bag) uses iterate, remove one, reinsert. Auto-congruence rules are generated for every constructor and every argument position (simple, collection, binding) for List/Bag/Proc via `congruence::generate_auto_congruence_rules`, in addition to user-declared congruence rules. For languages that inject List/Bag into Proc (e.g. Calculator, rhocalc), congruence on **ProcList** and **ProcBag** (and on each list/bag term's arguments) gives rewrites in all positions. Fold and step rules pass collection payloads through (no literal unwrap for List/Bag in HOL step); collection categories use literal variants **ListLit** and **BagLit**.
+**Implementation.** The macro congruence generator branches on collection type: **Vec** (List) uses index-based iteration and replace-at-index rebuild; **HashBag** (Bag) uses iterate, remove one, reinsert. Auto-congruence rules are generated for every constructor and every argument position (simple, collection, binding) for List/Bag/Proc via `congruence::generate_auto_congruence_rules`, in addition to user-declared congruence rules. For languages that inject List/Bag into Proc (e.g. Calculator, rholang), congruence on **ProcList** and **ProcBag** (and on each list/bag term's arguments) gives rewrites in all positions. Fold and step rules pass collection payloads through (no literal unwrap for List/Bag in HOL step); collection categories use literal variants **ListLit** and **BagLit**.
 
 ---
 
@@ -99,6 +99,6 @@ terms {
 1. **Runtime:** List = `Vec<Proc>`, Bag = `HashBag<Proc>` (native types). `HashBag` extended with **union**, **remove_one**, **diff**. `Language` trait has optional **get_env_term** for exec (e.g. bound names like empty collections).
 2. **Macro/types:** `LangType` has optional **collection_kind** (`CollectionCategory::List(delimiters)` / `Bag(delimiters)`). List/Bag map to `Vec<Proc>` and `HashBag<Proc>`; generated enum variants **ListLit**, **BagLit** and relations (eq, rw, congruence). **Substitution** and **term_ops** traverse Vec/HashBag elements.
 3. **Parser (PraTTaIL):** One parameterised rule per collection kind (open, close, sep from types). **ElemParse** frame and **pending_elem** when element category ≠ collection category (e.g. Proc inside List/Bag). Empty collection handling (close immediately after open). Trampoline config **has_var** = false for List/Bag.
-4. **Languages:** Calculator and rhocalc have List/Bag types, literals, and operations (concat, length/len, at, delete, union, remove, diff, count). rhocalc uses Bag delimiters `#{`, `}#`, `|` and extends **len** to lists; **concat** for strings preserved.
-5. **Tests:** `exec_empty_collection.rs` (parse/exec empty list and bag, round-trip); calculator and rhocalc tests updated.
+4. **Languages:** Calculator and rholang have List/Bag types, literals, and operations (concat, length/len, at, delete, union, remove, diff, count). rholang uses Bag delimiters `#{`, `}#`, `|` and extends **len** to lists; **concat** for strings preserved.
+5. **Tests:** `exec_empty_collection.rs` (parse/exec empty list and bag, round-trip); calculator and rholang tests updated.
 

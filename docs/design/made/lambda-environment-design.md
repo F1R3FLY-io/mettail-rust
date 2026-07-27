@@ -281,7 +281,7 @@ Lambda variants use `VariantKind::Binder` - verify they're classified correctly 
 
 **Files**: `macros/src/codegen/subst.rs` (verify)
 
-## Example: RhoCalc
+## Example: Rholang
 
 For `exports { Proc, Name }`, we generate all category pairs:
 
@@ -333,21 +333,21 @@ enum Name {
 ## Workflow After Implementation
 
 ```
-rhocalc> dup = ^n.{n?x.{{ *(x) | n!(*(x)) }}}
+rholang> dup = ^n.{n?x.{{ *(x) | n!(*(x)) }}}
 ✓ dup added to environment
 
-rhocalc> env
+rholang> env
 Environment:
   dup = ^n.{n?x.{{ *(x) | n!(*(x)) }}}
 
-rhocalc> term: (subst dup @(0))
+rholang> term: (subst dup @(0))
 Parsing... ✓
 @(0)?x.{{ *(x) | @(0)!(*(x)) }}
 
-rhocalc> multi = ^[a,b].{a?x.{*(x)} | b!(0)}
+rholang> multi = ^[a,b].{a?x.{*(x)} | b!(0)}
 ✓ multi added to environment
 
-rhocalc> term: (subst multi n m)
+rholang> term: (subst multi n m)
 Parsing... ✓  
 {n?x.{*(x)} | m!(0)}
 ```
@@ -605,7 +605,7 @@ For `cont : [Name -> Proc]`:
 Show full types in environment listing:
 
 ```
-rhocalc> env
+rholang> env
 Environment:
   dup : [Name -> Proc] = ^n. { n?x. {  { *(x) | n!(*(x)) } } }
   rep : [Name -> [Name -> [[Name->Proc] -> Proc]]] = ^n.^a.^cont. { ... }

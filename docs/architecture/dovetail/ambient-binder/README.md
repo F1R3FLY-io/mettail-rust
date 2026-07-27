@@ -23,7 +23,7 @@ from scratch. The blow-by-blow red-team ledgers live alongside in this directory
 The generated Dovetail report compiler FAILS CLOSED on Ambient (`languages/tests/ambient_dovetail_flip.rs`):
 its structural-congruence EQUATIONS carry the `PNew ^x` binder (`NewComm`) and freshness side conditions
 (`ScopeExtrusion`, `InNew`/`OutNew`/`OpenNew`/`AmbNew`). Ambient's AC reduction RULES
-(`InRule`/`OutRule`/`OpenRule`) already lower in-engine (P4). Unlike a process calculus (rhocalc/guarded_rho,
+(`InRule`/`OutRule`/`OpenRule`) already lower in-engine (P4). Unlike a process calculus (rholang/guarded_rho,
 whose binders/COMM delegate to host RSpace via `RhoNativeJoin`), Ambient has NO host: its binders + freshness
 must be handled before it can flip. The six equations (`languages/src/ambient.rs:30-35`):
 
@@ -106,9 +106,9 @@ re-wrap, repeat until `term_eq` fixpoint OR a bound (`max_float_rounds`/`max_ite
 
 ## 5. Disposition gate
 The handler is generated for a language iff `has_binder_equations && has_no_host_disposition`. Ambient (no
-host) ⇒ emitted; rhocalc's `Extrude` (dispositioned `RhoNativeJoin`) ⇒ NOT emitted, stays host-routed.
+host) ⇒ emitted; rholang's `Extrude` (dispositioned `RhoNativeJoin`) ⇒ NOT emitted, stays host-routed.
 `premise_supported(Freshness)=>false` stays UNCHANGED (the handler is disposition-gated, not premise-gated).
-Regression: `rhocalc_dovetail_report_stays_host_routed_for_extrude`. Seam: the `try_direct_eval` override is
+Regression: `rholang_dovetail_report_stays_host_routed_for_extrude`. Seam: the `try_direct_eval` override is
 generated in the `Language`-trait generator (`macros/src/gen/runtime/language.rs:3651`).
 
 ## 6. Zero-admission Rocq — `dovetail/formal/rocq/theories/Lowering/AmbientBinderHandler.v`
@@ -124,12 +124,12 @@ constructors); T5 disposition routing (keeps `GPremFreshness=false` so the exist
 - **Inc 0** — FIX-A (alpha-canonical binder identity) + the run_ascent negative pin. Standalone correctness
   fix; sequenced first to isolate the blast radius. Tests: `new(x,x)≡new(y,y)` equal `exact_key`;
   `dovetail_report_for` twice ⇒ identical keys; `new(x,z)≢new(x,w)`. Gates: full op-suite across binder
-  languages (calculator/lambda/rhocalc/guarded_rho/ambient) + rho-bridge + formal.
+  languages (calculator/lambda/rholang/guarded_rho/ambient) + rho-bridge + formal.
 - **Inc 1** — NativeHandler float (FIX-B), no AC. Rocq T1/T1'/T2/T4. Capture witnesses do NOT capture;
   gold-moniker-reference equality.
 - **Inc 2** — bounded-honest composition (FIX-C) + completeness channel (FIX-E) + fanning (FIX-D). Rocq
   T6 + idempotence. Non-terminating term ⇒ `BoundedByCycleCut`; ambiguity ≥2 roots; determinism pin.
-- **Inc 3** — disposition gate + rhocalc host-routed pin + flip `ambient_dovetail_flip.rs`. Rocq T5.
+- **Inc 3** — disposition gate + rholang host-routed pin + flip `ambient_dovetail_flip.rs`. Rocq T5.
 - **Inc 4** — differential oracle on the NON-capturing corpus + the negative pin.
 
 ## 8. Honest scope

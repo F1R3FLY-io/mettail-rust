@@ -33,7 +33,7 @@ package "IN SCOPE — matches AND fires in Rho (the coverage claim of this doc)"
 
 package "BOUNDARY — structural DISPATCH in Rho, VALUE delegated (trusted, off-machine by construction)" #FEF3C7 {
   rectangle "<b>native system process</b>\n<size:10>PowInt / factorial / BigInt: the automaton LOCATES the App</size>\n<size:10>head in Rho; the trusted host handler supplies the VALUE</size>\n<size:10>(the contractum).  NativeSystemProcessBoundary.v</size>" as N #FDE68A
-  rectangle "<b>RhoCalc Comm reduct</b>\n<size:10>the channel match is in Rho; the substitution reduct</size>\n<size:10>cont[Q/y] is the host-computed contractum (CommRuleFiring.v).</size>\n<size:10>Contrast binder-<latex>\beta</latex>, whose substitution IS in Rho.</size>" as CM #FDE68A
+  rectangle "<b>Rholang Comm reduct</b>\n<size:10>the channel match is in Rho; the substitution reduct</size>\n<size:10>cont[Q/y] is the host-computed contractum (CommRuleFiring.v).</size>\n<size:10>Contrast binder-<latex>\beta</latex>, whose substitution IS in Rho.</size>" as CM #FDE68A
 }
 
 package "OUT OF SCOPE — NOT claimed" #FDE7E7 {

@@ -12,7 +12,7 @@ used standalone or in composition:
 
 ## Motivating Example
 
-RhoCalc's `PInputs` rule uses `Sep(Zip(Map(...)))` to parse channel-variable pairs:
+Rholang's `PInputs` rule uses `Sep(Zip(Map(...)))` to parse channel-variable pairs:
 
 ```text
 PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
@@ -118,7 +118,7 @@ The decomposition enables compositions that were not previously possible:
              check ","; } ...
             │
             ▼
-    AST: Proc::PInputs(                    languages/src/rhocalc.rs
+    AST: Proc::PInputs(                    languages/src/rholang.rs
       Vec<Name>,
       Scope<Vec<Binder<String>>,
             Box<Proc>>)

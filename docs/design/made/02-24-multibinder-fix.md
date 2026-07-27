@@ -2,7 +2,7 @@
 
 ## Context
 
-Adding `PNew . ^[xs].p:[Name* -> Proc] |- "new" xs.*sep(",") "in" "{" p "}" : Proc` to rhocalc triggered 15 compilation errors. PNew is the first term with a multi-abstraction binder (`^[xs].p`) and *no* other fields — previous multi-binder terms like PInputs always had regular fields alongside the binder.
+Adding `PNew . ^[xs].p:[Name* -> Proc] |- "new" xs.*sep(",") "in" "{" p "}" : Proc` to rholang triggered 15 compilation errors. PNew is the first term with a multi-abstraction binder (`^[xs].p`) and *no* other fields — previous multi-binder terms like PInputs always had regular fields alongside the binder.
 
 ## Root causes
 

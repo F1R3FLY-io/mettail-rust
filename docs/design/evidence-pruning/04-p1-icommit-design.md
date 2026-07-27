@@ -138,8 +138,8 @@ non-empty (empty on cast-free inputs -> byte-identical hot path; CrossCatDelegat
 
 Build gate both cfgs + languages ws examples. Battery with PRATTAIL_EP_P1 UNSET and =on:
 ledtest 220/0 SENTINEL; edge 229/0 byte-identical OFF/ON (comparison_after_cast_results +
-operator_chains_after_casts); rhocalc_tests 126/0 BOTH STATES (the {c!(p)} reentry family =
-most sensitive CrossCatLhs consumer); calc 1330/0; rhocalc_op 530/1; prattail-lib 3980/0;
+operator_chains_after_casts); rholang_tests 126/0 BOTH STATES (the {c!(p)} reentry family =
+most sensitive CrossCatLhs consumer); calc 1330/0; rholang_op 530/1; prattail-lib 3980/0;
 -3! canary; rocq-prattail-wpda green (M-commit already landed).
 SHADOW GATE before enabling: =shadow + walker-stats, full battery + corpus;
 ep_p1_shadow_share_divergent_total all-0 HARD; would_share_total ~3500 on idx4 (cross-check).
@@ -156,7 +156,7 @@ flip from_env default to On.
 ## 6. Risks
 
 1. Reentry-state fidelity (THE structural-difference risk): revived member must re-fire the
-   reentry semantics; falsify via edge clusters + rhocalc_tests both states; shadow divergent
+   reentry semantics; falsify via edge clusters + rholang_tests both states; shadow divergent
    counter must be 0 first.
 2. Wrap-discriminator under-population (M4 re-conflation): sentinel wrap_rule must never be
    LESS discriminating than per-(host,source)-arm; over-discrimination safe.

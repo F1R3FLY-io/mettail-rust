@@ -132,18 +132,18 @@ level, orthogonal to both).
 | `cast_probe` (13 cases incl. nested + `-3!` + controls) | 4 direct-cast FAIL | **13/13 OK** | ✓ flip |
 | `gen_calculator_op` | 1324/6 (`*casterrfixed*` ×6) | **1330/0** | ✓ 6 fixed |
 | `edge_case_tests` | 210/19 | **227/2** (`ambient` ×2 pre-existing) | ✓ 17 fixed |
-| `gen_rhocalc_op` | 530/1 (`castbigrat`) | **530/1** (same case) | ✓ neutral |
+| `gen_rholang_op` | 530/1 (`castbigrat`) | **530/1** (same case) | ✓ neutral |
 | prattail lib | 3979/0 | **3979/0** (2 overflow tests updated to consumed-distinct constructors) | ✓ |
 | `cargo test --lib egraph::` | 51/0 | **51/0** | ✓ mandate |
 | `rocq-prattail-wpda` | green | **green** (9 cast models, all zero-admission) | ✓ |
 
 **Net: 23 failures fixed, 0 new failures** (remaining 3 — `ambient_edge_cases::{nested_new,
-parallel_ambients}` + `cross_cat_rhocalc_castop_putmap_castbigrat_smoke` — are all in the original
+parallel_ambients}` + `cross_cat_rholang_castop_putmap_castbigrat_smoke` — are all in the original
 cf03e571 baseline and are different families). The fixed set includes every
 `comparison_after_cast_results` case (12), `operator_chains_after_casts` (2),
 `chained_casts_with_operators` regressors (4 — transient, introduced+fixed within this change),
 `nested_keyword_prefix_functions` (5 — transient), `string_edge_cases` (3), the no-arg
-`casterrfixed` family (6), and `rhocalc_edge_cases::int_of_float_add`.
+`casterrfixed` family (6), and `rholang_edge_cases::int_of_float_add`.
 
 **Perf — the falsified premise + the trigger-presence gate (the third component):** the model's
 original `fix_levels` premise ("inner cast levels are owner-context") was FALSIFIED empirically:

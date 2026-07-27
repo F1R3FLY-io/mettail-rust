@@ -104,7 +104,7 @@ Measure HashBag matching complexity.
 
 ### 7. Replication Pattern (Primary Target)
 
-The `rep` combinator from `rhocalc.txt`:
+The `rep` combinator from `rholang.txt`:
 ```
 dup = ^l.{l?x.{{*(x) | l!(*(x))}}}
 rep = ^n.{^a.{^cont.{{$name(dup,n)|n!(a?y.{{$name(cont,y)|$name(dup,n)}})}}}}
@@ -260,7 +260,7 @@ Primary optimization targets:
 ```
 languages/
   benches/
-    rhocalc_bench.rs      # Main benchmark file
+    rholang_bench.rs      # Main benchmark file
     generators.rs         # Test case generators
     metrics.rs            # Custom metric collection
   Cargo.toml              # Add criterion dependency
@@ -291,9 +291,9 @@ struct BenchResult {
 }
 
 fn run_and_measure(input: &str) -> BenchResult {
-    let term = RhoCalcLanguage::parse(input).unwrap();
+    let term = RholangLanguage::parse(input).unwrap();
     let start = Instant::now();
-    let results = RhoCalcLanguage::run_ascent_typed(&term);
+    let results = RholangLanguage::run_ascent_typed(&term);
     BenchResult {
         duration: start.elapsed(),
         term_count: results.all_terms.len(),
@@ -387,4 +387,4 @@ cargo bench -p languages
 
 - `docs/archive/phase-3/PERFORMANCE-ANALYSIS.md` - Previous analysis
 - `docs/design/exploring/performance.md` - Bottleneck identification
-- `repl/src/examples/rhocalc.rs` - Example patterns
+- `repl/src/examples/rholang.rs` - Example patterns

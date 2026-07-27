@@ -601,7 +601,7 @@ match w.len() {
 ```
 
 The `THRESHOLD` is grammar-dependent. For grammars where rule priorities are
-well-separated (e.g., rhocalc where priority gaps are >= 1.0), a threshold of
+well-separated (e.g., rholang where priority gaps are >= 1.0), a threshold of
 0.5 is sufficient. For grammars with fine-grained priorities, a lower threshold
 may be needed.
 

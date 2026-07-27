@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 //  The Datalog fact-explosion failure mode, with the e-graph contrast inset.
 //
-//  Source of the numbers: docs/design/exploring/performance.md (the RhoCalc
+//  Source of the numbers: docs/design/exploring/performance.md (the Rholang
 //  18.5 s case) and docs/archive/phase-3/SESSION-EQUATIONAL-REWRITE.md
 //  (60–80 s rewrites at term depth 6+). The retired Ascent backend materialized
 //  three interacting relations — `proc` (terms), `eq_proc` (equivalence), and

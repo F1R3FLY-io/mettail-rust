@@ -90,12 +90,12 @@ native handler).* Ambient's binder equations sit at a specific point of that rul
 | Calculus | Binder shape | Host? | Disposition |
 |---|---|---|---|
 | **Ambient** | single `new^x. P` (`PNew . ^x`) | **none** — Ambient is not a message-passing calculus with an RSpace | **NativeHandler** (this page): float in-engine, AC-reduce in-engine |
-| rhocalc / guarded_rho | multi-binder `new^[x̄]` + `for(…)`/COMM | **yes** — f1r3node RSpace | **RhoNativeJoin** (host-routed; binders/COMM run on the Rho machine) |
+| rholang / guarded_rho | multi-binder `new^[x̄]` + `for(…)`/COMM | **yes** — f1r3node RSpace | **RhoNativeJoin** (host-routed; binders/COMM run on the Rho machine) |
 
 Ambient has **no host** to delegate to, and its AC redexes (which `n[…]` an
 `open n` consumes) are genuinely ambiguous, so its binder congruence must be
-handled *inside* Dovetail. rhocalc's binders ride COMM, which the Rho machine
-already evaluates with ambiguity preserved at the RSpace layer — so rhocalc is
+handled *inside* Dovetail. rholang's binders ride COMM, which the Rho machine
+already evaluates with ambiguity preserved at the RSpace layer — so rholang is
 host-routed and must **not** get this handler.
 
 That distinction is enforced by a single generation-time gate
@@ -110,8 +110,8 @@ pub(crate) fn should_emit_binder_congruence(language: &LanguageDef) -> bool {
 ```
 
 The third conjunct is what separates Ambient (single binder `PNew . ^x` → emits the
-handler) from rhocalc (multi-binder `^[x̄]` + COMM → no single-binder label → no
-handler). The pin `rhocalc_dovetail_host_routed.rs` asserts rhocalc's
+handler) from rholang (multi-binder `^[x̄]` + COMM → no single-binder label → no
+handler). The pin `rholang_dovetail_host_routed.rs` asserts rholang's
 `try_direct_eval` returns `None` for a process term, guaranteeing the gate never
 flips a host-backed language onto the host-less binder path.
 
@@ -356,7 +356,7 @@ Rust tests:
 | `ambient_dovetail_reduces_an_in_rule_redex` | the `InRule` AC reduction fires in-engine |
 | `ambient_dovetail_flips_a_scope_extrusion_redex` | `new(x,·)` floats out of the parallel bag and the report compiles |
 | `alpha_equivalent_binders_share_semantic_key` (`fix_a_alpha_canonical_semantic_key.rs`) | FIX-A: `λx.x ≈ λy.y` share one key |
-| `rhocalc_try_direct_eval_has_no_in_engine_binder_handler` (`rhocalc_dovetail_host_routed.rs`) | the gate does **not** emit the handler for host-routed rhocalc |
+| `rholang_try_direct_eval_has_no_in_engine_binder_handler` (`rholang_dovetail_host_routed.rs`) | the gate does **not** emit the handler for host-routed rholang |
 
 Build the proof:
 

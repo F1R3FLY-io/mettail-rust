@@ -121,7 +121,7 @@ stays in the eager driver). **Byte-identical output verified** by the existing
 `pub fn lex_dag_lazy(input: &str) -> LazyLatticeTokenSource` that builds the
 boxed expander from the per-grammar `CHAR_CLASS` / `dfa_next` /
 `is_accepting_state` / `accept_alternatives` / `token_to_kind`. Available on
-every generated language (calculator, rhocalc, …).
+every generated language (calculator, rholang, …).
 
 ### 2.4 The one subtlety that broke equivalence — `len()`
 
@@ -146,7 +146,7 @@ space win while inputs that hit the cast scan do not.
 ## 3. Correctness — lazy ≡ eager
 
 `languages/tests/lazy_lex_equivalence.rs` (7 tests, all green) over both
-calculator and rhocalc, two layers:
+calculator and rholang, two layers:
 
 1. **Parse-result equivalence:** drive `parse_Proc_via_wpda_with_source` over an
    eager `LatticeTokenSource` and the lazy source; assert the realized term
@@ -162,7 +162,7 @@ calculator and rhocalc, two layers:
    **every** node id. This is the direct node-id-stability proof.
 
 Suites kept green with the unchanged eager path: `gen_calculator_unit` (169),
-`gen_rhocalc_unit` (86), `rhocalc_tests` (10), `wpda_parity_rhocalc_collections`
+`gen_rholang_unit` (86), `rholang_tests` (10), `wpda_parity_rholang_collections`
 (4), `wpda_parity_calculator` (52), `calculator` (100), `gen_calculator_analytical`
 (16); prattail lib (3766). Zero regressions.
 
@@ -185,10 +185,10 @@ one-sided H1: *lazy < eager*. Raw CSV + analysis in `docs/benchmarks/lazy-lex/`.
 | calculator / earlyfail  | `* 1 + …` (first-tok)|    49.9 µs |  10.4 µs  | **−79.3 %** | 6.3e-127 **WIN** |
 | calculator / earlyfail  | `1 + + + …`          |   462.7 µs | 465.9 µs  | +0.7 % | NS (len()-scan) |
 | calculator / earlyfail  | `int( …`             |   875.4 µs | 875.2 µs  | −0.0 % | NS (len()-scan) |
-| rhocalc / full          | every input (4/4)    |       —    |     —     | +0.1…+1.0 % | NS (lazy slightly slower) |
-| rhocalc / earlyfail     | `new new new…`       |    31.8 µs |   9.0 µs  | **−71.7 %** | 3.0e-128 **WIN** |
-| rhocalc / earlyfail     | `{0 \| \| \| …`      |   308.8 µs | 278.3 µs  | −9.9 % | 2.0e-89 **WIN** |
-| rhocalc / earlyfail     | `{ }}}…`             |    41.0 µs |  37.3 µs  | −9.0 % | 1.8e-68 **WIN** |
+| rholang / full          | every input (4/4)    |       —    |     —     | +0.1…+1.0 % | NS (lazy slightly slower) |
+| rholang / earlyfail     | `new new new…`       |    31.8 µs |   9.0 µs  | **−71.7 %** | 3.0e-128 **WIN** |
+| rholang / earlyfail     | `{0 \| \| \| …`      |   308.8 µs | 278.3 µs  | −9.9 % | 2.0e-89 **WIN** |
+| rholang / earlyfail     | `{ }}}…`             |    41.0 µs |  37.3 µs  | −9.0 % | 1.8e-68 **WIN** |
 
 ### SPACE (`lex_nodes_materialized`, eager vs lazy, same parse)
 
@@ -196,8 +196,8 @@ one-sided H1: *lazy < eager*. Raw CSV + analysis in `docs/benchmarks/lazy-lex/`.
 |------------------------|----------------:|-------------------|
 | calculator / full      | 0 % (95 = 95)   | lazy fully materializes (reaches EOF / len()-drain) |
 | calculator / earlyfail | 47.1 % (153→81) | `}}}…` 37→1 (97 %), `* 1+…` 37→1 (97 %); `1++`/`int(` 0 % |
-| rhocalc / full         | 0 % (77 = 77)   | — |
-| rhocalc / earlyfail    | 55.6 % (99→44)  | `new new…` 21→2 (90 %), `{0\|\|\|…` 40→4 (90 %); `{ }}}` 0 % |
+| rholang / full         | 0 % (77 = 77)   | — |
+| rholang / earlyfail    | 55.6 % (99→44)  | `new new…` 21→2 (90 %), `{0\|\|\|…` 40→4 (90 %); `{ }}}` 0 % |
 
 ---
 
@@ -211,7 +211,7 @@ one-sided H1: *lazy < eager*. Raw CSV + analysis in `docs/benchmarks/lazy-lex/`.
   - On **early-failure first-token-reject** inputs (both languages) lazy is
     **72–79 % faster, p<1e-70** — the walker dies after materializing 1–4 nodes
     instead of 21–40.
-  - On **full-parse rhocalc** lazy is **~1 % slower** (RefCell/OnceLock
+  - On **full-parse rholang** lazy is **~1 % slower** (RefCell/OnceLock
     indirection vs eager's flat `Vec`, not amortized away by the heavier parse).
   - On early-failure inputs that hit a `len()`-bounded look-ahead (`1 + + +`,
     `int(`) lazy is **neutral** (the cast/chain scan forces full materialization).

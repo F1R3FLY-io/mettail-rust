@@ -166,7 +166,7 @@ Histograms via `PRATTAIL_WALKER_STATS=1 ./trampoline_tests --exact test_right_as
 
 Same linear-scaling pattern as `incoming_edge_stack` (Exp 0.5). Gate criterion (max > 16 → proceed) triggers.
 
-**`visited_recovery_len_histogram`**: 100 % empty (max=0) on chain workloads. Useless to optimize for chain; matters only for recovery tests / rhocalc.
+**`visited_recovery_len_histogram`**: 100 % empty (max=0) on chain workloads. Useless to optimize for chain; matters only for recovery tests / rholang.
 
 ### Exp 5 SKIP-AFTER-DATA (2026-05-26)
 
@@ -275,7 +275,7 @@ Read-only instrumentation (`PairCounts: PairCounts` newtype + `merge_miss_pair_p
 
 **Verdict**: **ACCEPT** (instrumentation) + **GATE FIRES** for Exp 10 Substage 1. The (node, edge) co-divergence is structural: when node differs, edge ALWAYS differs (and vice versa, modulo 8+6 outliers). Both have sole-diff rates of 0.002 % — neither carries information the other lacks. Dropping ONE of {node, edge} from ConfigKey will let 383,429 currently-blocked merges proceed (100 % of node-or-edge multi-diff cases).
 
-**Caution**: node and edge being 100 % co-divergent on chain_1000 is **specific to chain workloads** where every cursor sits on a fresh GSS edge. On non-chain workloads (binders, cross-cat, recovery) the correlation may differ. Exp 10 Substage 1 will need a generalization-test gate (gauntlet 4102/0 plus rhocalc trampoline 15/0/2 ignored).
+**Caution**: node and edge being 100 % co-divergent on chain_1000 is **specific to chain workloads** where every cursor sits on a fresh GSS edge. On non-chain workloads (binders, cross-cat, recovery) the correlation may differ. Exp 10 Substage 1 will need a generalization-test gate (gauntlet 4102/0 plus rholang trampoline 15/0/2 ignored).
 
 **Mechanical recommendation** (subject to plan-agent review of Substage 1 design): drop `edge` since `node` carries more semantic weight (the GSS node identity is the more natural per-cursor discriminator; `edge` is the incoming-edge ID, which is derivable from `node` for chain workloads).
 
@@ -299,7 +299,7 @@ Read-only instrumentation (3 new `WalkerStats` fields: `binder_scope_marks_len_*
 
 **Gate does NOT fire** for chain workload. Like `recovery_deltas` (Exp 4 REJECT) and `visited_recovery` (Exp 5 SKIP), scope marks are always empty on chain workloads — there are no binders or optional groups to scope-mark. Exp 12 Substage 1 (path-tree arena for scope marks) would be wasted effort for chain_10000 closure.
 
-**Verdict**: **ACCEPT** (instrumentation) + **REJECT-BEFORE-ATTEMPT** for Exp 12 Substage 1 (chain track). Scope marks may matter for binder-heavy workloads (rhocalc PInputs/PNew, Lambda) but those are not in the chain_10000 critical path.
+**Verdict**: **ACCEPT** (instrumentation) + **REJECT-BEFORE-ATTEMPT** for Exp 12 Substage 1 (chain track). Scope marks may matter for binder-heavy workloads (rholang PInputs/PNew, Lambda) but those are not in the chain_10000 critical path.
 
 ---
 
@@ -381,7 +381,7 @@ Read-only instrumentation. Added `fork_total_by_class: [u64; 4]` + `fork_branche
 
 Per Plan agent's prespecified decision table: "Combined % > 30 % but `avg_fanout ≤ 2.0` → **SKIP** — suspension bookkeeping cost exceeds savings (only 2 specs per frame; the L3.4 H12 path already covers ≥3-way)."
 
-**Independent finding** (chain workload-specific): `lex_fork=0` confirms the chain test has **no lexical ambiguity** (single-character `+` tokens). The Plan agent's hypothesis that lex-Fork is the upstream source of cursor population was wrong for chain workloads (correct for rhocalc binders, edge_case grammars, calculator cast suites). For chain_10000 specifically, lex-Fork suspension would save zero work.
+**Independent finding** (chain workload-specific): `lex_fork=0` confirms the chain test has **no lexical ambiguity** (single-character `+` tokens). The Plan agent's hypothesis that lex-Fork is the upstream source of cursor population was wrong for chain workloads (correct for rholang binders, edge_case grammars, calculator cast suites). For chain_10000 specifically, lex-Fork suspension would save zero work.
 
 **Verdict**: **ACCEPT** (instrumentation) + **SKIP-AFTER-DATA** for Exp 11 Substages 1.a-1.e. The L3.4 H12 cohort path already handles ≥ 3-way cases; SuspendedFork would only save half a cursor per Fork on average — not worth the 600-800 LOC investment. Pivot to **Exp 8** (path-tree arena for `visited_dispatch` with LRU cache) next, per Plan agent's second-priority recommendation.
 
@@ -1046,7 +1046,7 @@ The cumulative wins of remaining substages (Exp 15 S5-S6 CPS continuation queue 
 2. Loosening the gauntlet target to 48-64 GB.
 3. A different cohort merge factor than the empirical 3× (e.g., grammar-side restructuring to make cursors merge more aggressively).
 
-Per the user's mandate documented in `feedback-complete-end-to-end`, this honest architectural finding is the conclusive result of the current parser-rewrite session. The remaining Exp 15 Substages 5-6 (CPS rewrite) would close chain_500 even further and benefit other workloads (rhocalc, calculator with binders), but cannot close chain_10000 in 24 GB on their own.
+Per the user's mandate documented in `feedback-complete-end-to-end`, this honest architectural finding is the conclusive result of the current parser-rewrite session. The remaining Exp 15 Substages 5-6 (CPS rewrite) would close chain_500 even further and benefit other workloads (rholang, calculator with binders), but cannot close chain_10000 in 24 GB on their own.
 
 ### Protocol amendment 2026-05-27: 24 GB bench cap → 64 GB host capability
 
@@ -1094,11 +1094,11 @@ Measured on the release binary AFTER the full Box→Arc refactor (codegen + all 
 
 **chain_10000 = 112 MB < 500 MB — PRIMARY GOAL ACHIEVED.** Memory scales O(N) (14.8 → 26.5 → 112 MB across 1000/2000/10000; was 5.5×/2× = quadratic, now ~linear). The prior "≥ 44.7 GB architectural ceiling requiring a fundamentally different parser algorithm" is **DEFINITIVELY FALSIFIED** — that figure was ~96% O(N²) AST deep-clone, exposed (not caused) by this session's H3/R4/chart fixes, and eliminated by the Arc representation change with NO parser-algorithm substitution.
 
-Correctness gates ALL GREEN: prattail gauntlet **4217/0**; `gen_calculator_op` **1325/6** (the 6 are the known pre-existing `len` cross-cat failures — unchanged); `gen_rhocalc_op` **532/0**; `h3_chain_correctness` **4/4** (incl. the decisive `1+2+3+4+5=15` eval). Eval semantics preserved under Arc sharing (Hash/Eq/semantic_hash deref transparently; `-3!` outer-discriminant tagging untouched; binder ops CoW via moniker `Arc::make_mut`).
+Correctness gates ALL GREEN: prattail gauntlet **4217/0**; `gen_calculator_op` **1325/6** (the 6 are the known pre-existing `len` cross-cat failures — unchanged); `gen_rholang_op` **532/0**; `h3_chain_correctness` **4/4** (incl. the decisive `1+2+3+4+5=15` eval). Eval semantics preserved under Arc sharing (Hash/Eq/semantic_hash deref transparently; `-3!` outer-discriminant tagging untouched; binder ops CoW via moniker `Arc::make_mut`).
 
 Secondary (stack depth): `emit_sppf_subforest` recurses ~chain_len/2 deep; chain_10000 (~5000) overflows the default ~2 MB test-thread stack — runs to completion under a large stack (`RUST_MIN_STACK`/scoped thread). Memory is unaffected (only touched stack pages count). SHIPPED (commit `5871e0f`): the emit call is wrapped in a `std::thread::scope` + `Builder::stack_size(512 MB)` scoped thread (the Earley chart drive is iterative and realize/Drop are iterative, so emit is the only deep recursion; `W: SemiringRef` is `Send + Sync + 'static` so borrows cross the boundary with no extra bounds). chain_10000 now passes WITHOUT `RUST_MIN_STACK`: 112 MB, 0.71 s.
 
-**Full validation (2026-05-28, commits `9c55d81` + `5871e0f`):** ZERO new regressions across all languages. Full op-suite: basemath 100/0, extmath 100/0, importedmath 138/0, mixedmath 199/0, optsmoke 25/0, rhocalc 532/0, calculator 1325/6, **ledtest 164/56**. The calc 6 (`len`) and ledtest 56 (`andpred`/`eqnum`/`nenum` cross-cat Pred eval) failures are PRE-EXISTING — verified by building+running gen_ledtest_op at the pre-Arc parent `b780295` in a git worktree: identical 164/56 with identical failing test names. Generalization: right_assoc_chain_10000 (normal WPDS path, NOT H3) also O(N), 371 MB / 10.1 s (was the OOM "ceiling").
+**Full validation (2026-05-28, commits `9c55d81` + `5871e0f`):** ZERO new regressions across all languages. Full op-suite: basemath 100/0, extmath 100/0, importedmath 138/0, mixedmath 199/0, optsmoke 25/0, rholang 532/0, calculator 1325/6, **ledtest 164/56**. The calc 6 (`len`) and ledtest 56 (`andpred`/`eqnum`/`nenum` cross-cat Pred eval) failures are PRE-EXISTING — verified by building+running gen_ledtest_op at the pre-Arc parent `b780295` in a git worktree: identical 164/56 with identical failing test names. Generalization: right_assoc_chain_10000 (normal WPDS path, NOT H3) also O(N), 371 MB / 10.1 s (was the OOM "ceiling").
 
 **Mixfix generalization probe (H6, 2026-05-28):** added `test_ternary_chain_{1000,2000,10000}` (deep nested ternary `Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int`, right-assoc mixfix, parsed by the normal WPDS walker — NOT H3, which is binary-infix-only). Results: 73.5 MB / 150 MB / **745 MB** at N=1000/2000/10000 — O(N) (2×→2.04×, 5×→4.97×; was O(N²)/OOM pre-Arc). heaptrack on ternary_1000 (peak 71 MB): **`clone_iterative` = 0 occurrences** (the AST-clone O(N²) is eliminated for mixfix too), dominant allocator = `prattail::wpda_walker` + `prattail::tomita_frontier` raw_vec (33 MB / 45% — the cohort/SPPF per-element working set). So the Arc fix GENERALIZES to multi-operand mixfix (O(N), AST-clone gone), but ternary_10000's 745 MB exceeds the 500 MB left-assoc target because the non-H3 normal-walker path has a high per-node constant (~74 KB/node vs 11 KB/node for the H3 left-assoc path; 37 KB/node right-assoc). Reducing it is a SEPARATE effort (walker cohort/SPPF memory, or extending H3-style absorption to mixfix) — orthogonal to the AST-representation fix.
 
@@ -1112,7 +1112,7 @@ Secondary (stack depth): `emit_sppf_subforest` recurses ~chain_len/2 deep; chain
 
 ACCEPT at all three arms (p ≪ 0.05, post-Arc faster, no regression). The speedup GROWS with N (1.47×→2.24×→4.15×) — the O(N²)→O(N) signature. Effect sizes (Cohen's d 19–56) are orders of magnitude beyond the conventional "large" threshold (0.8). The optimization-gate t-test is satisfied decisively.
 
-**Eval correctness — cross-category normal-form extraction fix (commit `c66ea9d`):** independent of the Arc perf work, fixed the 56 ledtest + 6 calc PRE-EXISTING failures (`run_ascent_typed` reported normal forms from only the input category's relation, dropping cross-category reduction products). Full op-suite now ZERO failures: basemath 100, calculator 1331, extmath 100, importedmath 138, ledtest 220, mixedmath 199, optsmoke 25, rhocalc 532. The Arc refactor is correctness-preserving (Hash/Eq/semantic_hash deref-transparent; binder ops CoW via moniker `Arc::make_mut`; `-3!` outer-discriminant tagging untouched) and the chain_10000 < 500 MB goal is closed with margin.
+**Eval correctness — cross-category normal-form extraction fix (commit `c66ea9d`):** independent of the Arc perf work, fixed the 56 ledtest + 6 calc PRE-EXISTING failures (`run_ascent_typed` reported normal forms from only the input category's relation, dropping cross-category reduction products). Full op-suite now ZERO failures: basemath 100, calculator 1331, extmath 100, importedmath 138, ledtest 220, mixedmath 199, optsmoke 25, rholang 532. The Arc refactor is correctness-preserving (Hash/Eq/semantic_hash deref-transparent; binder ops CoW via moniker `Arc::make_mut`; `-3!` outer-discriminant tagging untouched) and the chain_10000 < 500 MB goal is closed with margin.
 
 ## C1-R — WALK-S1: pre-fork RIGHT-assoc (`^`) H3 absorption via direct right-nested SPPF synthesis (2026-05-28)
 
@@ -1126,7 +1126,7 @@ ACCEPT at all three arms (p ≪ 0.05, post-Arc faster, no regression). The speed
 
 **Gates (ALL GREEN; final binary `trampoline_tests-d71bb778…`, current source):**
 - **G1** prattail lib: **4220 / 0**.
-- **G2** all 8 `gen_*_op`: basemath 100/0, calculator 1331/0, extmath 100/0, importedmath 138/0, ledtest 220/0, mixedmath 199/0, optsmoke 25/0, rhocalc 532/0.
+- **G2** all 8 `gen_*_op`: basemath 100/0, calculator 1331/0, extmath 100/0, importedmath 138/0, ledtest 220/0, mixedmath 199/0, optsmoke 25/0, rholang 532/0.
 - **G3** (`taskset -c 2 RUST_MIN_STACK=2e9 /usr/bin/time -v`): `test_left_assoc_chain_10000` = **114.8 MB** (≤ 116, no-regression vs committed ~114); `test_right_assoc_chain_10000` parse is_ok + **37.4 MB** (≪ 500; vs the pre-S1 normal-walker 371 MB = **9.9× ↓**) in **0.11 s** (was ~10 s; O(N) absorb replaces the O(N) BranchCursor-clone churn).
 - **G4** eval: **9 / 9** incl. the decisive `test_eval_right_assoc_chain` (`2^1^1^2`→"2" present, "4" absent; `3^1^1^2`→"3", "9" absent) + `test_eval_right_assoc_chain_oracle` (`2^1^3`→"2", "8" absent). Right-nesting of the ABSORBED (≥ 5-atom) path independently verified during S1 via a temporary `2^1^1^1^2`→"2"/"4"-absent + `3^1^1^1^2`→"3"/"9"-absent eval assertion (removed after confirmation — the committed G4 suite covers the < 5-atom normal-walker oracle).
 
@@ -1146,7 +1146,7 @@ ACCEPT at all three arms (p ≪ 0.05, post-Arc faster, no regression). The speed
 
 **Gates (ALL GREEN; final binary `trampoline_tests-d71bb778…` rebuilt against trace-removed `wpda_walker.rs`):**
 - **G1** prattail lib: **4220 / 0**.
-- **G2** all 8 `gen_*_op`: basemath 100/0, calculator 1331/0, extmath 100/0, importedmath 138/0, ledtest 220/0, mixedmath 199/0, optsmoke 25/0, rhocalc 532/0 — the mixfix-bearing suites (calculator, ledtest, rhocalc) confirm the mixfix-tier change does NOT perturb other mixfix ops.
+- **G2** all 8 `gen_*_op`: basemath 100/0, calculator 1331/0, extmath 100/0, importedmath 138/0, ledtest 220/0, mixedmath 199/0, optsmoke 25/0, rholang 532/0 — the mixfix-bearing suites (calculator, ledtest, rholang) confirm the mixfix-tier change does NOT perturb other mixfix ops.
 - **G3** (`taskset -c 2 RUST_MIN_STACK=2e9 /usr/bin/time -v`): `test_ternary_chain_10000` parse is_ok + **58.3 MB** (≪ 500; vs the pre-S2 normal-walker 745 MB = **12.8× ↓**) in **0.20 s**; `test_right_assoc_chain_10000` **37.8 MB** (≤ 40, no-regression vs S1's 37.4) in 0.10 s; `test_left_assoc_chain_10000` **114.9 MB** (≤ 116, no-regression) in 0.63 s.
 - **G4** eval: **9 / 9** incl. the decisive `test_eval_ternary_chain` (`0?1:0?1:0?1:0?1:0`→"0"; `1?7:0?9:3`→"7" = Tern(1,7,Tern(0,9,3)), right-nested; `0?7:1?9:3`→"9" = Tern(0,7,Tern(1,9,3))) + `test_eval_ternary_chain_oracle` (1-level normal-walker `1?7:3`→"7"). The 2-level `1?7:0?9:3` / `0?7:1?9:3` cases (levels=2 ≥ min_levels=2) DIRECTLY exercise the absorbed path and pin right-nesting in the else slot; the right-assoc `^`, AddInt, SubInt, MulInt evals are all unchanged.
 

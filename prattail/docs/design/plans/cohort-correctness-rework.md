@@ -106,7 +106,7 @@ current-tree M1 reference binary. Worktree removed; main tree verified unmodifie
 
 ## 5. Milestones
 **Standing GATE (every milestone):** gauntlet `cargo test --release -p prattail --lib`=**4220/0**; op-suites
-`gen_calculator_op≥1331/0`,`gen_rhocalc_op 532/0`; disambiguation `-3!` + `wpda_parity_calculator` /0; soundness
+`gen_calculator_op≥1331/0`,`gen_rholang_op 532/0`; disambiguation `-3!` + `wpda_parity_calculator` /0; soundness
 probe `calculator.rs::pass2c_token_soundness_probe`; regression canaries `test_unambiguous_int_literal`,
 `test_nfa_spillover_float_int_var`,`unit_calculator_bool_inttobool`,`simulator_regression_nested_casts` (F2 falsifier),
 `test_deep_ternary_{100,500,1000}`+`test_ternary_chain_10000` (≤5% wall); for ANY cohort/keying/memory change:
@@ -135,7 +135,7 @@ substitute worker `symbol_id` → `intern_packing`+`link_packing_to_symbol`); St
 for eligible sites (gate becomes inert for cross-cat; deep-ternary chain-gated out).
 GATE: standing + M0 matrix shows F4 casts green AND `nested_casts` green AND `merge_dropped_distinct_cohort_workers==0`
 on reps + **re-Welch chain panel + chain_1000/2000 RSS** (predict NEUTRAL — chains gated out). Closes (~28): R1 calc
-casts + rhocalc cross-cat/binder family (`comm::*`,`parsing::*`,`new_and_extrusion::*`,`exec`,`beta::*`,`congruence::*`,
+casts + rholang cross-cat/binder family (`comm::*`,`parsing::*`,`new_and_extrusion::*`,`exec`,`beta::*`,`congruence::*`,
 `fraction_builds_rational`,`led_delegation::test_p1_10`). Revert: `git revert` → M1-validated.
 
 ### M3 — R2: nested 2-arg-cast recognition (CODEGEN/dispatch; the real "doubly-nested" fix)
@@ -158,7 +158,7 @@ from the term set. GATE: standing + `bare_variable_infers_as_proc`,`comm::single
 ### M4 — R3 eval-cast residual (confirm-only)
 `test_cast_int_invalid_width` already passes. `test_cast_int_nonfinite_float_is_error` → classify against
 `macros/src/logic/mod.rs cast_error_variant_for`; if it needs an analogous None→CastErr binding for the nonfinite
-path, EVAL-codegen fix. Closes `test_cast_int_nonfinite_float_is_error` + rhocalc analogue.
+path, EVAL-codegen fix. Closes `test_cast_int_nonfinite_float_is_error` + rholang analogue.
 
 ### M5 (CONTINGENT, gated) — Exp-15 GSS-batch ONLY if a measured per-cursor explosion remains
 Traces show NO cohort explosion on the current tree (R2 is `registrations_total=0` recognition). **Exp-15 NOT
@@ -166,10 +166,10 @@ scheduled for Cluster Y.** Schedule ONLY if, after M2+M3, a Welch/RSS measuremen
 materialization blowup on a surviving input. Expected UNNECESSARY; contingency with a hard empirical pre-gate.
 
 ## 6. What closes where
-- M2 (R1): ~28 (calc cast family + rhocalc cross-cat/binder/comm/congruence/beta + led_delegation).
+- M2 (R1): ~28 (calc cast family + rholang cross-cat/binder/comm/congruence/beta + led_delegation).
 - M3 (R2): ~8 nested-cast (`test_nested_*`,`test_triple_nested_float`,`simulator_regression_*nested*/parens/floats/original_6`).
 - M3b: `bare_variable_infers_as_proc`,`comm::single_channel` (if residual).
-- M4 (R3): `test_cast_int_nonfinite_float_is_error` + rhocalc analogue.
+- M4 (R3): `test_cast_int_nonfinite_float_is_error` + rholang analogue.
 - `class2_opt`/`gen_class2optsmoke`: re-measure after M2/M3 (likely cascade — else separate collection-opt fix).
 - Cluster J (~26 roundtrips): re-measure after M2/M3 (J-a cascades); J-b/J-c independent (task #7).
 - Exp-15 / M5: expected NONE required (R2 proven non-memory by trace).
@@ -202,5 +202,5 @@ Snapshots: `/var/tmp/suite-green/{current-tree-2026-05-31.patch,checkpoint-after
 - `prattail/src/cohort_continuation.rs` (dead realize-time-continuation asset M2-ii wires) + `cohort_lazy.rs`
   (CohortShell/materialize `:593`; `MAX_COHORT_FRAME_MEMBERS:634`)
 - `macros/src/gen/runtime/wpda_codegen/prefix.rs` (R2 root: Pass-2a/2c `:1076-1197`; `CrossCatLhs` bootstrap `:1433-1453`)
-- `languages/tests/{calculator.rs,rhocalc_tests.rs}` (Cluster-Y tests; F2 falsifier `simulator_regression_nested_casts`;
+- `languages/tests/{calculator.rs,rholang_tests.rs}` (Cluster-Y tests; F2 falsifier `simulator_regression_nested_casts`;
   soundness probe; canaries); `gss.rs` (`EdgeKind::CrossCatProjection:408`)

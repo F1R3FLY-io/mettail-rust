@@ -109,7 +109,7 @@ Under the prior plan's ingest (`tomita_frontier.rs:292-312` `register_arc`), the
 1. **AdvanceWithEffect dropping deltas**: cursor A pushed `BuilderDelta::PushIdent("foo")`; cursor B pushed `BuilderDelta::PushIdent("bar")`. After Tomita ingest, both materialize with cursor A's deltas; on commit_winner, cursor B's recovery actions never execute. The AST surface is silently corrupted (the wrong ident appears in the final tree).
 2. **Cycle defense corruption**: cursor C has empty `visited_dispatch`; cursor D has visited `(pos=5, cat=Int, bp=10)`. After Tomita ingest, both materialize with cursor C's defense set OR cursor D's defense set. The clean cursor inherits the dirty cursor's prior visits (false-positive cycle defense → premature Drop, dropping valid derivations) or the dirty cursor inherits the clean defense (false-negative → infinite recursion + OOM).
 
-Both failure modes are silent — they manifest as derivation loss or OOM, not as a panic or test failure unless the specific multi-cursor heavy-field-divergent fixture happens to be in the test suite. The `-3!` multi-packing fixture and the recovery/binder fixtures (LedTest, rhocalc) would surface (1); the chain workloads with cross-cat would surface (2).
+Both failure modes are silent — they manifest as derivation loss or OOM, not as a panic or test failure unless the specific multi-cursor heavy-field-divergent fixture happens to be in the test suite. The `-3!` multi-packing fixture and the recovery/binder fixtures (LedTest, rholang) would surface (1); the chain workloads with cross-cat would surface (2).
 
 **The fix (Option A — per-arc storage; chosen for reasons in §2.5).** Move the 6 heavy fields from `CohortShell` to `FrontierArc`. Specifically:
 

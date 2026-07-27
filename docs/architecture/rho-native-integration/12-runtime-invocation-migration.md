@@ -100,7 +100,7 @@ the migration table above; the diagram shows the enum as it stands in
 ## In-workspace consumers (already migrated)
 
 All in-tree consumers were updated in checkpoint `313e7d09`:
-`repl/src/rho_backends.rs`, `rholang-runtime/src/{backend,lib,rhocalc_ast}.rs`, plus the
+`repl/src/rho_backends.rs`, `rholang-runtime/src/{backend,lib,rholang_ast}.rs`, plus the
 scalar-invocation planner `rholang-codegen/src/invocation.rs`
 (`plan_scalar_invocations` now yields `RhoMachineInvocation`). External crates depending on
 the legacy constructors should follow steps 1–4 above.

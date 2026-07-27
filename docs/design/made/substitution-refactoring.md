@@ -531,7 +531,7 @@ fn generate_binder_subst_arm(
 1. Create `VariantKind` enum and collection functions
 2. Implement unified `generate_subst_impl`
 3. Implement per-variant arm generators
-4. Test against existing theories (Calculator, RhoCalc, Ambient)
+4. Test against existing theories (Calculator, Rholang, Ambient)
 5. Remove old code
 
 ## Backward Compatibility

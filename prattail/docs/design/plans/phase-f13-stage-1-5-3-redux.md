@@ -81,4 +81,4 @@ If N fails Gate-4 stress: 4-hour fallback to "bail out cohort sharing on multi-p
 - Gate 2: full languages crate ≥ 6161/0.
 - Gate 3: chain_50/100/200 Welch t-test p<0.05 (preserved speedup).
 - Gate 4: 100x isolated stress runs.
-- Gate 5: rhocalc + proptest gauntlet.
+- Gate 5: rholang + proptest gauntlet.

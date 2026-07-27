@@ -9,7 +9,7 @@ Current term generation (both exhaustive and random) produces terms without cons
 3. **Inefficient exploration**: Random generation wastes effort on irreducible terms
 4. **Limited stress testing**: Hard to generate terms with multiple simultaneous redexes
 
-### Example (RhoCalc)
+### Example (Rholang)
 
 Generated terms at depth 2:
 - `0` - normal form
@@ -34,7 +34,7 @@ Generated terms at depth 2:
 
 A **redex pattern** is a template that matches the LHS of a rewrite rule.
 
-### Example Patterns (RhoCalc)
+### Example Patterns (Rholang)
 
 ```rust
 // Communication redex
@@ -466,7 +466,7 @@ impl Category {
 ## Next Steps
 
 1. Implement basic pattern extraction for simple rewrite rules
-2. Create proof-of-concept for RhoCalc communication rule
+2. Create proof-of-concept for Rholang communication rule
 3. Measure redex density improvement
 4. Expand to handle collection patterns and binders
 5. Integrate into test suite

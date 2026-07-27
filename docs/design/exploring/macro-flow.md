@@ -1539,7 +1539,7 @@ fn test_equation_codegen() {
 
 ### Regression Tests
 
-Keep existing theory tests (rhocalc, ambient, etc.) to ensure migration doesn't break functionality.
+Keep existing theory tests (rholang, ambient, etc.) to ensure migration doesn't break functionality.
 
 ---
 
@@ -1620,7 +1620,7 @@ macros/src/
 | Theory | Status | Features Tested |
 |--------|--------|-----------------|
 | calculator | ✓ Working | Native types, env queries, auto-generated IVar/NumLit |
-| rhocalc | ✓ Working | Collections, binders, communication, congruence |
+| rholang | ✓ Working | Collections, binders, communication, congruence |
 | ambient | ✓ Working | Nested binders, scope extrusion equations, freshness conditions |
 
 ---

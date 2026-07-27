@@ -14,7 +14,7 @@ use stdlib in theories. (may need a "registry" of accepted types and funcs.)
 ## Binding support
 1. specify the location of binding (currently "\<X\> Y" binds X to Y)
 
-- Th(Rhocalc):
+- Th(Rholang):
 ```
 PInput . Proc ::= "for" "(" $x0:Name "<-" Name ")" "{" (x0)Proc "}"
 ```
@@ -192,7 +192,7 @@ MeTTaIL Theory ─→ Compiled Code ─→ f1r3fly Node
 morphism! {
     name: LambdaToRho,
     from: LambdaCalc,
-    to: RhoCalc,
+    to: Rholang,
 
     // λx.M ↦ new(x.P) where M ↦ P
     translate Lam(x, m) => PNew(x, translate(m)),

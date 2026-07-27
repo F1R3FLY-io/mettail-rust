@@ -3,7 +3,7 @@
 Last updated: 2026-07-20
 
 > **A-S6 universal-mandate note (2026-07-20).** The tier model below concerns
-> the fold-bearing languages (RhoCalc / Rholang); the width-cast Tier-3
+> the fold-bearing languages (Rholang / Rholang); the width-cast Tier-3
 > held-fold trampoline remains one of the three host evaluations on admitted
 > paths (with semantic predicates and injection-boundary canonicalization —
 > [29 §4](29-knotted-topoi-satisfaction-crosswalk.md#4-the-runtime-boundary-today)).
@@ -45,8 +45,8 @@ Tier 3 is the new mechanism and is the subject of §4.
 
 ## 1. Tier 1 — sequential (byte-for-byte unchanged)
 
-The static "detection" *is* the existing `lower_rhocalc_term` to `lower_proc`
-recursion (`rholang-runtime/src/rhocalc_ast.rs`): a pure-fold term fold-normalizes
+The static "detection" *is* the existing `lower_rholang_term` to `lower_proc`
+recursion (`rholang-runtime/src/rholang_ast.rs`): a pure-fold term fold-normalizes
 (extension E2) and lowers to a `Par` run on the Rho machine; a pure-COMM or
 mixed-with-statically-present-folds term
 pre-folds the ground folds in place and lowers the rest to a `Par` the Rho machine
@@ -85,7 +85,7 @@ instead **never lowers the held fold**: it keeps the fold's static shape and run
 
 The lowering rewrites the receive body, replacing the held fold with a fresh
 result-variable drop `*r` and wrapping it in a `new ret` that calls a private fold
-contract and binds its reply (`rholang-runtime/src/rhocalc_ast.rs`
+contract and binds its reply (`rholang-runtime/src/rholang_ast.rs`
 `lower_receive_body`):
 
 ```
@@ -96,7 +96,7 @@ contract and binds its reply (`rholang-runtime/src/rhocalc_ast.rs`
 
 `C[·]` is any continuation context (the fold may sit in a send payload, a parallel
 member, or be the body itself); the rewrite is innermost-first and recursive, so
-nested held folds each get their own `new ret`. Because RhoCalc's `POutput` is
+nested held folds each get their own `new ret`. Because Rholang's `POutput` is
 single-argument, the two-argument contract send `@"<fold>"!(operand, ret)` is built
 at the rhoapi `Par` level (`Send.data` is a `Vec<Par>`), with all de Bruijn
 bookkeeping carried by `extend_env`.
@@ -243,13 +243,13 @@ For `{ (@("c")?x).{ @("OUT")!(int(*(x), 8)) } | @("c")!(int(5,8)) }`:
 
 This is exactly the integration test
 `held_fold_over_comm_received_value_execs_to_the_folded_value`
-(`rholang-runtime/tests/rho_rhocalc_ast.rs`), which observes `OUT = 5`; the stepper
+(`rholang-runtime/tests/rho_rholang_ast.rs`), which observes `OUT = 5`; the stepper
 test `held_fold_over_comm_received_value_reduces_via_trampoline`
 (`rholang-runtime/src/step.rs`) traces the two COMMs.
 
 ## 7. Citations
 
-- Tier-3 lift and contract: `rholang-runtime/src/rhocalc_ast.rs`
+- Tier-3 lift and contract: `rholang-runtime/src/rholang_ast.rs`
   (`lower_receive_body`, `find_held_fold`, `try_eval_fold_proc`),
   `rholang-runtime/src/fold_contract.rs` (`fold_definition`, `fold_eval`),
   `rholang-runtime/src/run.rs` / `backend.rs` (the `extra_system_processes` threading).

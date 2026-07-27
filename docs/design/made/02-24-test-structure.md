@@ -1,6 +1,6 @@
-# 02-24: RhoCalc test structure
+# 02-24: Rholang test structure
 
-Replaced the monolithic `rhocalc_tests.rs` (flat list of tests + manual `main()` runner) with a modular framework.
+Replaced the monolithic `rholang_tests.rs` (flat list of tests + manual `main()` runner) with a modular framework.
 
 ## Helpers
 
@@ -28,4 +28,4 @@ Replaced the monolithic `rhocalc_tests.rs` (flat list of tests + manual `main()`
 
 ## File
 
-`languages/tests/rhocalc_tests.rs`
+`languages/tests/rholang_tests.rs`

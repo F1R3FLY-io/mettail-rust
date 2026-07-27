@@ -4,13 +4,13 @@
 
 v1 proposed lowering Ambient's `PNew ^x.P` binder + freshness equations in-engine by
 (1) name-erasing the binder to a de-Bruijn `ENode`, (2) checking freshness via
-`RhocalcAstLowering.v::filter_adjust` (a de-Bruijn-index occurrence scan), and
+`RholangAstLowering.v::filter_adjust` (a de-Bruijn-index occurrence scan), and
 (3) realizing `NewComm` as a `bind_index`-based transposition of the two outer binders.
 
 A soundness red-team **REFUTED all three load-bearing claims** against source:
 
 - **CLAIM-3 (freshness = `filter_adjust`) REFUTED.** `filter_adjust`
-  (`formal/rocq/rho_bridge/theories/RhocalcAstLowering.v:354-369`) is **dead code** —
+  (`formal/rocq/rho_bridge/theories/RholangAstLowering.v:354-369`) is **dead code** —
   zero call sites, just trims the first `bind_count` elements of a `list bool`; it has
   no connection to free-variable occurrence and there is no theorem relating it to
   `x ∉ free(P)`. The **real** freshness reference is moniker `free_vars`:
@@ -25,7 +25,7 @@ A soundness red-team **REFUTED all three load-bearing claims** against source:
   position-independent).
 
 - **CLAIM-4 (NewComm = `bind_index` transposition) REFUTED.** `bind_index n i = n-1-i`
-  (RhocalcAstLowering.v:91, 318-320) is **receive-binder order** (`PInput2`), nothing to do
+  (RholangAstLowering.v:91, 318-320) is **receive-binder order** (`PInput2`), nothing to do
   with `new`; `lower_proc` has no `ANew`-producing arm. Swapping two nested single-binders
   is **not** a node swap — every bound occurrence in the body must be re-indexed
   (`ScopeOffset 0 ↔ 1`); a node-only swap is involutive but **semantically wrong** for any
@@ -71,7 +71,7 @@ A soundness red-team **REFUTED all three load-bearing claims** against source:
    *that* — with a NEW small self-contained theorem, NOT by reusing `bind_index`. May be
    staged last / gated on whether the corpus exercises adjacent-`new` commutation. Reusing
    the reference's `unbind`+rename is also admissible.
-5. **No false reuse of `RhocalcAstLowering.v`.** That theory models rho-calculus
+5. **No false reuse of `RholangAstLowering.v`.** That theory models rho-calculus
    receive-binders and contains NO `PNew`/`ANew`, no freshness predicate, no alpha theorem.
    Any binder/freshness/swap proof is NEW, self-contained, zero-admission.
 
@@ -110,7 +110,7 @@ increments + tests + the corrected differential oracle.
 - `macros/src/logic/rules.rs:959-990` — `generate_freshness_clause` = real `free_vars` ref.
 - `macros/src/logic/rules.rs:2395-2440` — binder-equation `unbind`/alpha-rename rewrite ref.
 - `macros/src/logic/equations.rs:271-283` — eqrel skips binders + collections.
-- `formal/rocq/rho_bridge/theories/RhocalcAstLowering.v:354-369` — `filter_adjust` dead;
+- `formal/rocq/rho_bridge/theories/RholangAstLowering.v:354-369` — `filter_adjust` dead;
   `:91/:318-320` — `bind_index` receive-order; no `PNew`/`ANew`/freshness/alpha anywhere.
 - `runtime/src/binding.rs` — moniker `Scope`: `unsafe_pattern()` retains the binder FreeVar
   identity; `unsafe_body()` is the closed (de-Bruijn) body; `BoundVar` Eq/Hash ignore name.

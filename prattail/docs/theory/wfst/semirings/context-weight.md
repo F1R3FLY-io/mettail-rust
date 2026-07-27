@@ -508,7 +508,7 @@ operations on `u128`:
 which executes in a single cycle.
 
 **Capacity limitation**: 128 rule labels.  Most practical grammars have
-far fewer than 128 rules (the Calculator grammar has ~50, RhoCalc has
+far fewer than 128 rules (the Calculator grammar has ~50, Rholang has
 ~80).  For hypothetical grammars exceeding 128 rules, ContextWeight
 would need to be generalized to a wider bitset (e.g., `[u128; 2]` for 256
 labels), at the cost of losing the `Copy` trait's zero-overhead semantics.

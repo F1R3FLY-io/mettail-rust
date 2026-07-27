@@ -1,6 +1,6 @@
 ---
 name: Bitwise ops for integer types
-overview: Add bitwise AND/OR/NOT for integer-like types in `Calculator` then `RhoCalc`, implemented in each language’s `terms` (and the minimal congruence rewrites needed for evaluation), with helper functions for `CanonicalBigInt`, `CanonicalBigRat`, and the `Fixed` type.
+overview: Add bitwise AND/OR/NOT for integer-like types in `Calculator` then `Rholang`, implemented in each language’s `terms` (and the minimal congruence rewrites needed for evaluation), with helper functions for `CanonicalBigInt`, `CanonicalBigRat`, and the `Fixed` type.
 todos:
   - id: research-deps
     content: Check whether `num-integer` (or equivalent gcd/lcm) is already available; pick minimal approach for lcm/gcd on `BigInt`.
@@ -11,11 +11,11 @@ todos:
   - id: calc-rewrites
     content: Add congruence rewrites for the new Calculator bitwise terms in `languages/src/calculator.rs`.
     status: pending
-  - id: rhocalc-helpers-and-terms
-    content: Add helper fns + `terms` rules on `Proc` for bitwise ops in `languages/src/rhocalc.rs` (dynamic dispatch, return `Proc::Err` on mismatch).
+  - id: rholang-helpers-and-terms
+    content: Add helper fns + `terms` rules on `Proc` for bitwise ops in `languages/src/rholang.rs` (dynamic dispatch, return `Proc::Err` on mismatch).
     status: pending
-  - id: rhocalc-rewrites
-    content: Add congruence rewrites for the new RhoCalc bitwise terms in `languages/src/rhocalc.rs`.
+  - id: rholang-rewrites
+    content: Add congruence rewrites for the new Rholang bitwise terms in `languages/src/rholang.rs`.
     status: pending
   - id: verify
     content: Compile/test the workspace and run any existing language eval checks relevant to the new operators.
@@ -27,7 +27,7 @@ isProject: false
 
 - Implement bitwise operations for all integer(-like) types currently present in each language.
   - `Calculator`: `Int` (`i32`), `UInt32` (`u32`), `BigInt` (`mettail_runtime::CanonicalBigInt`), `BigRat` (`mettail_runtime::CanonicalBigRat`), `Fixed` (fixed-point).
-  - `RhoCalc`: same set (including `Fixed`), but operations are defined on `Proc` via dynamic dispatch.
+  - `Rholang`: same set (including `Fixed`), but operations are defined on `Proc` via dynamic dispatch.
 
 ## Operator surface syntax (proposed default)
 
@@ -75,7 +75,7 @@ isProject: false
 - Add corresponding congruence rewrites in `rewrites { ... }` (mirroring existing patterns like `AddIntCongL/R`, `NotCong`, etc.).
 - Delete `CustomOp` (the existing `a "~" b` term) and delete its associated congruence rewrites (`CustomOpCongL`, `CustomOpCongR`).
 
-### `RhoCalc` (`languages/src/rhocalc.rs`)
+### `Rholang` (`languages/src/rholang.rs`)
 
 - Add helper functions (same file, above `language!`) for:
   - `CanonicalBigInt` bitwise ops (as above).
@@ -97,7 +97,7 @@ isProject: false
 ## Files to change
 
 - `[languages/src/calculator.rs](languages/src/calculator.rs)`
-- `[languages/src/rhocalc.rs](languages/src/rhocalc.rs)`
+- `[languages/src/rholang.rs](languages/src/rholang.rs)`
 - These same files are expected to contain the `Fixed` type; bitwise support will be added there.
 - Potentially add a small dependency if missing for gcd/lcm:
   - `num-integer` (only if not already in workspace dependencies).

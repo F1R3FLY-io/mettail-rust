@@ -758,7 +758,7 @@ Pattern::Collection {
 
 ### Phase 8: Integration Testing ✓ COMPLETE (basic)
 
-**Files:** `theories/tests/rhocalc.rs`, `examples/ambient_tests.rs`
+**Files:** `theories/tests/rholang.rs`, `examples/ambient_tests.rs`
 
 - [x] Test Collection with rest in both LHS and RHS
 - [x] Test binder equations (scope extrusion, freshness)
@@ -796,7 +796,7 @@ Pattern::Collection {
 The multi-communication pattern in rho-calculus demonstrates the full power of collection metasyntax:
 
 ```rust
-// Target syntax (from rhocalc.rs):
+// Target syntax (from rholang.rs):
 // PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] 
 //     |- "for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}" : Proc ;
 

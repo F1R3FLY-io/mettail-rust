@@ -1,6 +1,6 @@
-# M-RHO.1 — rhocalc NATIVE FAST PATH (Comm→RSpace COMM; non-confluent witness enumeration)
+# M-RHO.1 — rholang NATIVE FAST PATH (Comm→RSpace COMM; non-confluent witness enumeration)
 
-**Staged, verifiable execution contract** — M/D/I/L discipline (the P-series cadence). Branch `feature/wfst-architecture` @ `d8a09323`. Work item `m-rho-1-rhocalc-native-fast-path` (#281, parent #278, in_progress, prio 7). Opens the Dovetail/Rho flip epic now that the P-series ladder is closed.
+**Staged, verifiable execution contract** — M/D/I/L discipline (the P-series cadence). Branch `feature/wfst-architecture` @ `d8a09323`. Work item `m-rho-1-rholang-native-fast-path` (#281, parent #278, in_progress, prio 7). Opens the Dovetail/Rho flip epic now that the P-series ladder is closed.
 
 > **Status: v4 — implemented evidence attached.** Round 1: 2 independent critics, both NOT-CONVERGED on v1 (9 BLOCKERs + 7 MAJORs) → the v2 §0-REVISION decisions D1–D8. Round 2: host critic NOT-CONVERGED on v2 (1 BLOCKER + 3 MAJORs — all resolved below, §0-REVISION v3); the FV critic was lost to a usage limit and its load-bearing checks were performed inline by the caller (renderer/binder feasibility, Ascent API, corpus completeness, Rocq pattern — all verified, with corpus EXPANSION). Findings + resolution maps: `02-red-team-ledger.md`. The implemented proof/runtime evidence is recorded in `formal/rocq/rho_bridge/`, `rholang-runtime/tests/rho_comm_oracle.rs`, and `docs/architecture/rho-native-integration/07-verification-and-rollout.md`.
 
@@ -8,16 +8,16 @@
 
 ## ★ §0-AMENDMENT (2026-06-12, ground-truth correction — supersedes v1's §0 "load-bearing finding" and risk R1)
 
-The original plan was drafted from session data at `a95c5106` (rhocalc_tests 111/15). **Verified at HEAD `d8a09323` (fresh run): `rhocalc_tests` is 126 passed / 0 failed.** ROOT-A (`9fdaed68`), ROOT-F (`38dcd485`), and the eval-layer closure (`f1ea267c`) all landed between the plan's source data and now.
+The original plan was drafted from session data at `a95c5106` (rholang_tests 111/15). **Verified at HEAD `d8a09323` (fresh run): `rholang_tests` is 126 passed / 0 failed.** ROOT-A (`9fdaed68`), ROOT-F (`38dcd485`), and the eval-layer closure (`f1ea267c`) all landed between the plan's source data and now.
 
-**Consequences:** risk R1 DISSOLVES — no comm family is parser-blocked; no `#[ignore]` fencing. The residual parser-side items are #313 (ghost packings — does not block the comm corpus) and #312 (trace Heisenbug — constrains the verification METHOD, risk R2 stands). Battery reds for baseline accounting: `gen_rhocalc_op` 530/1 (`castbigrat`, pre-existing); `languages/tests/calculator.rs` has timing-sensitive Welch-panel tests that flake under load (not functional).
+**Consequences:** risk R1 DISSOLVES — no comm family is parser-blocked; no `#[ignore]` fencing. The residual parser-side items are #313 (ghost packings — does not block the comm corpus) and #312 (trace Heisenbug — constrains the verification METHOD, risk R2 stands). Battery reds for baseline accounting: `gen_rholang_op` 530/1 (`castbigrat`, pre-existing); `languages/tests/calculator.rs` has timing-sensitive Welch-panel tests that flake under load (not functional).
 
 ## ★ §0-REVISION v2 (2026-06-12, post red-team round 1) — the eight forced decisions
 
 Round 1 (host-grounding critic + mettail/FV critic, independent) refuted v1's §2/§3/§4-item-5/§5 mechanisms. Every decision below is derived from the critics' file:line evidence (deep-dive discipline — no implement-and-observe):
 
 - **D1 — SUPERSEDED for generated backends by §0-REVISION v4.** The original conservative bring-up decision was execution through source text (`evaluate_with_term`), not direct-`Par` `inj`. It was forced by then-unhandled risks: `inj` returned no `EvaluateResult` and ran against an `empty_cost()` budget (`rho_runtime.rs:140-145,1268`; the `bootstrap_registry` manual-cost path `:1244-1252` was the only precedent), and hand-assembled Pars had to reproduce normalizer invariants — `connective_used=false` on a pattern silently degrades matching to syntactic equality and the COMM **never fires** (`spatial_matcher.rs:178-181`), FreeVar levels are bind-local `0..free_count-1` with dispatcher-order flattening and `(level+shift)-k-1` resolution (`match.rs:22-60`, `dispatch.rs:14-19`, `env.rs:33-47`, `reduce.rs:1090-1094`), binds are pre-sorted at normalization only (`p_input_normalizer.rs:394-395`). Those risks are now handled by direct budget installation and generated-AST shape tests; source text is no longer the generated backend boundary.
-- **D2 — Free-variable grounding σ** (no free-var convention existed; both paths hard-error: `TopLevelFreeVariablesNotAllowedError` `compiler.rs:106-118`; `eval_var` FreeVar error `reduce.rs:1120-1141`; `evaluate`'s `normalizer_env` is dead in the Rust port — threaded as `_env`, zero consumers under `compiler/normalizer/`). Convention: free **Name** var `c` ⇒ ground channel `@"mtl:c"`; free **Proc** var `p` ⇒ **observation-sentinel send** `@"mtl#out"!("mtl:p")`. The sentinel channel `@"mtl#out"` is **format-disjoint** from the var-grounding image `"mtl:<name>"` (`#` vs `:`), so a free name var literally named `out` cannot collide with it. Applied uniformly at render time to BOTH the source term and the Ascent normal forms before comparison. σ is sound for transport testing: free vars are inert in rhocalc reduction (no rule fires on a bare `Var`), so reduction commutes with σ on the corpus (Rocq lemma `grounding_commutes`, §4); sentinel sends fire only on the disjoint sentinel channel, never perturbing object-channel rendezvous.
+- **D2 — Free-variable grounding σ** (no free-var convention existed; both paths hard-error: `TopLevelFreeVariablesNotAllowedError` `compiler.rs:106-118`; `eval_var` FreeVar error `reduce.rs:1120-1141`; `evaluate`'s `normalizer_env` is dead in the Rust port — threaded as `_env`, zero consumers under `compiler/normalizer/`). Convention: free **Name** var `c` ⇒ ground channel `@"mtl:c"`; free **Proc** var `p` ⇒ **observation-sentinel send** `@"mtl#out"!("mtl:p")`. The sentinel channel `@"mtl#out"` is **format-disjoint** from the var-grounding image `"mtl:<name>"` (`#` vs `:`), so a free name var literally named `out` cannot collide with it. Applied uniformly at render time to BOTH the source term and the Ascent normal forms before comparison. σ is sound for transport testing: free vars are inert in rholang reduction (no rule fires on a bare `Var`), so reduction commutes with σ on the corpus (Rocq lemma `grounding_commutes`, §4); sentinel sends fire only on the disjoint sentinel channel, never perturbing object-channel rendezvous.
 - **D3 — Observation = canonicalized RESTING-SPACE fingerprint, gate = membership.** "Read the resting datum from the keyed channel" observed NOTHING for most members (bare-process NFs rest on no channel; the reducer filters process-position exprs to `EVarBody`/`EMethodBody`, `reduce.rs:198-206`). Protocol: evaluate `⟦t⟧σ` AND each `⟦nf_i⟧σ` on fresh in-memory runtimes; observe via the **soft-checkpoint hot-store dump** (`create_soft_checkpoint`, `rho_runtime.rs:152-166`) serialized to a canonical fingerprint; assert `EvaluateResult.errors` empty on every run. **Fingerprint = space CONTENT only**: sorted (channel-`Par`, multiset of data-`Par`s) + (channel-group, multiset of (patterns, body, persist)) entries, ν-quotienting `GPrivate` ids per D5 and **projecting OUT scheduler/provenance metadata** — `ParWithRandom`'s random-state component, produce/consume event refs, sequence numbers — which differ between the `⟦t⟧σ` and `⟦nf_i⟧σ` runs by construction (the two reductions split the Blake2b512Random differently) and are not part of the observable state. **Gate (.1.0): the `⟦t⟧σ` fingerprint equals SOME `⟦nf_i⟧σ` fingerprint** (membership; equality on deterministic members where the NF set is singleton). The proc-var sentinel sends (D2) make variable-valued NFs datum-shaped and discriminating; for ground-inert NFs (e.g. `0`) the discriminator is quiescence itself — an unfired COMM leaves the parked `Receive` (and unconsumed datum) in the dump, so empty-space ⇒ the rendezvous fired.
 - **D4 — Ascent side = `normal_forms_reachable_from_seeds([initial])`** (`runtime/src/language.rs:724-735`), NOT raw `normal_forms()` (subterm-polluted: `multi_input_uses_both_vars` has `p`-the-subterm in the raw NF set — set comparisons against it can never be green).
 - **D5 — Name identity = ≡_N-canonical RENDERING; ContentKey is the SPEC, never the payload.** v1's "key channels by ContentKey bytes" is unimplementable: RSpace keys channels by the channel `Par` value (`rspace.rs:338-339,373`), `Exec`/`PDrop` requires the body recoverable from the name (opaque key bytes have no rhoapi decoder), and a received datum used as a channel (`comm_with_body_using_channel`) must collide with statically-rendered occurrences of the same name. Realization: a **≡_N canonicalizer** over Name/Proc (exhaustive `QuoteDrop` `@(*(n))→n` / `ExecEq` `*(@(P))→P` cancellation; terminating — each step strictly shrinks the term) applied before rendering, so name-equivalent channels emit byte-identical source ⇒ identical normalized `Par`s ⇒ one RSpace channel. The P4 lesson (R4) is honored as: name identity is **total canonical content** (the host's `ParSortMatcher` sort is content-total) — never insertion order, never a 64-bit hash, never Display-of-uncanonicalized. ν-names (`PNew`): fingerprints quotient `GPrivate` ids by first-occurrence order in the canonical dump (run-to-run and t-vs-nf byte alignment of unforgeables is NOT guaranteed and must not be assumed).
@@ -80,15 +80,15 @@ cases. They are not the generated backend architecture.
 
 ## 0. Frame and scope boundary
 
-**What .1 IS** (per #281 body + design §1.4/§10): rhocalc is itself a ρ-fragment. Its `POutput`/`PInputs`/`PPar`/`PNew`/`PDrop`/`NQuote` map *directly* onto Rholang `Send`/`Receive`/`Par`/`New` — no Milner CBN encoding (that is M-RHO.2, explicitly NOT this stage). The `Comm` rewrite is un-encoded: it IS the host COMM (RSpace produce/consume rendezvous). Parallelism is delegated to `eval_par` (`tokio::spawn` per `P|Q`); MeTTaIL emits `Par`, never forks. Channel identity comes from ≡_N-canonical rendering (D5). First exercise of witness-set parity for non-confluent reduction (D7).
+**What .1 IS** (per #281 body + design §1.4/§10): rholang is itself a ρ-fragment. Its `POutput`/`PInputs`/`PPar`/`PNew`/`PDrop`/`NQuote` map *directly* onto Rholang `Send`/`Receive`/`Par`/`New` — no Milner CBN encoding (that is M-RHO.2, explicitly NOT this stage). The `Comm` rewrite is un-encoded: it IS the host COMM (RSpace produce/consume rendezvous). Parallelism is delegated to `eval_par` (`tokio::spawn` per `P|Q`); MeTTaIL emits `Par`, never forks. Channel identity comes from ≡_N-canonical rendering (D5). First exercise of witness-set parity for non-confluent reduction (D7).
 
-**What .1 is NOT:** the §7 generic CBN/CESK encoding (M-RHO.2); the per-language CESK runtime-backend flip to Rho default (M-RHO.4 — rhocalc uses Rho as its default runtime backend *only after* op-correspondence proofs and runtime gates, never on the blind oracle alone); the Δ1 N-ary min-cost-matching join (M-RHO.3). The active WPDA parser/recognizer remains upstream. Ascent is legacy for production rewrite execution and remains only as a reference/oracle path. The arithmetic/collection `fold` HOL rules (~50 rules + 82 congruence rewrites) are **out of the .1 reduction core** — they are M-RHO.2 HOL-native `Definition` handlers. Per D6, corpus members whose NFs *require* a fold post-transport are excluded from the .1.0 oracle (not "carried as opaque payloads" — non-native constructors have no rhoapi image; the honest boundary is exclusion-with-reason).
+**What .1 is NOT:** the §7 generic CBN/CESK encoding (M-RHO.2); the per-language CESK runtime-backend flip to Rho default (M-RHO.4 — rholang uses Rho as its default runtime backend *only after* op-correspondence proofs and runtime gates, never on the blind oracle alone); the Δ1 N-ary min-cost-matching join (M-RHO.3). The active WPDA parser/recognizer remains upstream. Ascent is legacy for production rewrite execution and remains only as a reference/oracle path. The arithmetic/collection `fold` HOL rules (~50 rules + 82 congruence rewrites) are **out of the .1 reduction core** — they are M-RHO.2 HOL-native `Definition` handlers. Per D6, corpus members whose NFs *require* a fold post-transport are excluded from the .1.0 oracle (not "carried as opaque payloads" — non-native constructors have no rhoapi image; the honest boundary is exclusion-with-reason).
 
 **The standing discipline:** a parser-side ERR — should one resurface (#313 lineage) — is never an engine-side oracle divergence. Verification never uses `PRATTAIL_TRACE=actions` (#312).
 
 ---
 
-## 1. THE CODEGEN SURFACE — rhocalc rule classification (rule-level) + term-level disposition
+## 1. THE CODEGEN SURFACE — rholang rule classification (rule-level) + term-level disposition
 
 ### 1.0 Classifier input type (v2 — corrects v1's `&GrammarRule`-only signature)
 
@@ -109,7 +109,7 @@ extending `rholang-codegen/src/lower.rs` (today: `lower_language_def` iterates `
 
 ### 1a. Terms (`terms { … }`) — the ρ-process constructors
 
-| Rule (rhocalc.rs:line) | Concrete syntax | Class | .1 disposition / image |
+| Rule (rholang.rs:line) | Concrete syntax | Class | .1 disposition / image |
 |---|---|---|---|
 | `PZero` (:67) | `{}` | **structural** | renders `Nil`. |
 | `PPar` (:72) | `{ p \| q \| … }` (HashBag) | **structural** | renders `p \| q \| …`; the ambient `Par`. Maximal parallelism is `eval_par`'s spawn-per-member. NEVER fork host-side. |
@@ -124,7 +124,7 @@ extending `rholang-codegen/src/lower.rs` (today: `lower_language_def` iterates `
 
 ### 1a′. Term-level dispositions for constructors with NO LanguageDef rule (v2 — closes the totality gap)
 
-The macro auto-generates per-category constructors that correspond to no rule: `Var(OrdVar)` (`macros/src/gen/types/enums.rs:112-116`), `Apply{Domain}`/`MApply{Domain}` (:155-167), and the `LamProc`/`MLamProc` variants the logic block matches (`rhocalc.rs:1023,1028`). Rule-level totality therefore does NOT give term-level totality of `⟦·⟧`; the renderer recurses over Proc/Name constructors and needs a disposition for each:
+The macro auto-generates per-category constructors that correspond to no rule: `Var(OrdVar)` (`macros/src/gen/types/enums.rs:112-116`), `Apply{Domain}`/`MApply{Domain}` (:155-167), and the `LamProc`/`MLamProc` variants the logic block matches (`rholang.rs:1023,1028`). Rule-level totality therefore does NOT give term-level totality of `⟦·⟧`; the renderer recurses over Proc/Name constructors and needs a disposition for each:
 
 | Constructor | .1 disposition |
 |---|---|
@@ -138,7 +138,7 @@ The macro auto-generates per-category constructors that correspond to no rule: `
 
 ### 1c. Equations
 
-| Equation (rhocalc.rs:line) | Statement | Class | .1 disposition |
+| Equation (rholang.rs:line) | Statement | Class | .1 disposition |
 |---|---|---|---|
 | `QuoteDrop` (:858) | `@(*(n)) = n` | **equation (≡_N)** | D5 canonicalizer rewrite (static, pre-render). |
 | `ExecEq` (:860) | `*(@(P)) = P` | **equation (≡_N)** | D5 canonicalizer rewrite (static, pre-render). |
@@ -146,7 +146,7 @@ The macro auto-generates per-category constructors that correspond to no rule: `
 
 ### 1d. Rewrites
 
-| Rewrite (rhocalc.rs:line) | Class | .1 disposition |
+| Rewrite (rholang.rs:line) | Class | .1 disposition |
 |---|---|---|
 | **`Comm`** (:870–871) | **COMM — THE FAST PATH** | Un-encoded = host COMM. The k-bind `Receive` + k matching `Send`s rendezvous in RSpace; continuation binding is the host's `ReceiveBind` substitution. **M-RHO.1.0's single milestone.** |
 | `Exec` (:873) | **structural-reduction** | `*(@(P)) ~> P` — host `*` eval (and D5 static canonicalization where applicable). |
@@ -165,7 +165,7 @@ The macro auto-generates per-category constructors that correspond to no rule: `
 **Pipeline per corpus term `t`:**
 
 ```
-t : rhocalc Proc (parsed Term)
+t : rholang Proc (parsed Term)
   │ 1. ≡_N-canonicalize (QuoteDrop/ExecEq exhaustive cancellation; terminating)
   │ 2. ground free vars σ (Name var → @"mtl:<name>" ; Proc var → @"mtl#out"!("mtl:<name>"))
   │ 3. build normalized Rholang AST (`Par`) directly (the §1a/§1a′ map; partial over the ρ-core, loud on out-of-fragment)
@@ -176,7 +176,7 @@ rhoapi::Par ──> RhoRuntime::inj (explicit Cost::unsafe_max budget;
 inj Ok/Err + soft-checkpoint hot-store dump ──> canonical fingerprint (D3/D5)
 ```
 
-**AST generator residence:** for .1 the rhocalc-Term→Rholang AST generator is
+**AST generator residence:** for .1 the rholang-Term→Rholang AST generator is
 **harness-level** when it depends on `languages`' generated `Proc`/`Name`
 types. The spec-level `rholang-codegen` owns the `LanguageDef → RhoProgram`
 surface for generated backends and emits normalized `Par` directly. The
@@ -197,7 +197,7 @@ regression surface.
 `reduce.rs:1059-1064`, `rspace.rs:667-677`, `space_matcher.rs:156-172`);
 `Receive.bind_count` is the receive's total FREE-VAR count
 (`p_input_normalizer.rs:485`), used as the body env shift (`reduce.rs:1093`) —
-numerically equal to the bind count for rhocalc's one-var-per-bind `PInputs`,
+numerically equal to the bind count for rholang's one-var-per-bind `PInputs`,
 divergent in general. Under v4 the AST generator owns these invariants.
 
 **Channel disjointness invariant (replaces v1's ContentKey-payload claim):** two object channels collide in RSpace **iff** name-equivalent (≡_N). Realized by D5: canonical AST generation ⇒ the host's content-total `ParSortMatcher` sort ⇒ one channel `Par`. `ContentKey` remains the comparison-discipline SPEC (exact bytes, never a 64-bit hash, never order) — the fingerprint comparison (D3) satisfies it by construction. Proven as §4 thm 4 (`name_canonicalization_sound_complete`).
@@ -206,10 +206,10 @@ divergent in general. Under v4 the AST generator owns these invariants.
 
 ## 3. THE FIRST VERIFIABLE MILESTONE — M-RHO.1.0
 
-**Milestone: ONE rhocalc reduction — the `Comm` rule — round-trips through `RhoRuntime` with the differential oracle GREEN on the transport-pure comm corpus.**
+**Milestone: ONE rholang reduction — the `Comm` rule — round-trips through `RhoRuntime` with the differential oracle GREEN on the transport-pure comm corpus.**
 
 The smallest end-to-end green, walked concretely:
-- **Input:** `{(c?x).{*(x)} | c!(p)}` (`rhocalc_tests::comm::single_channel`). Free `c` (Name), free `p` (Proc).
+- **Input:** `{(c?x).{*(x)} | c!(p)}` (`rholang_tests::comm::single_channel`). Free `c` (Name), free `p` (Proc).
 - **Ascent side:** `normal_forms_reachable_from_seeds([t])` → `{ p }` (singleton on this member).
 - **Rho side:** σ-ground + render — `p` in DATA position grounds to the sentinel-send *process*, giving `for(x <- @"mtl:c"){ *x } | @"mtl:c"!({@"mtl#out"!("mtl:p")})`. (A send in data position is quoted data, not executed — the reducer evaluates expressions inside data but does not fire its sends.) Evaluate (in-memory runtime, `Cost::unsafe_max`): COMM fires; `x` binds `@{sentinel-send}`; `*x` runs the sentinel send; datum `"mtl:p"` RESTS at `@"mtl#out"`.
 - **Ascent NF image:** `⟦p⟧σ` = the sentinel send alone → evaluates to the same resting datum.
@@ -217,7 +217,7 @@ The smallest end-to-end green, walked concretely:
 
 **The .1.0 corpus (exact test paths, transport-pure per D6):**
 
-| # | Test (`languages/tests/rhocalc_tests.rs`) | NF (Ascent, reachable-from-seeds) | Discrimination |
+| # | Test (`languages/tests/rholang_tests.rs`) | NF (Ascent, reachable-from-seeds) | Discrimination |
 |---|---|---|---|
 | 1 | `comm::single_channel` | `p` | sentinel datum |
 | 2 | `comm::comm_substitutes_quoted_value` (`{(c?x).{*(x)} \| c!(0)}`) | `0` | quiescence (consumed receive) + ∅ errors |
@@ -267,7 +267,7 @@ The smallest end-to-end green, walked concretely:
 
 ## 5. THE NON-CONFLUENT PARITY EXERCISE (M-RHO.1.1) — witness enumeration, corrected mechanism
 
-rhocalc is intentionally non-confluent: `Comm` chooses among enabled rendezvous. **v1's flagship witness (`join_pattern_same_channel`) is confluent-up-to-multiset** — body `{{*(x) | *(y)}}` makes both bindings the same HashBag NF (`{a|b}` = `{b|a}`; the corpus' own `multiset_eq` exists because of this) — so it exercises nothing. **The .1.1 gate input is an order-SENSITIVE single-bind contention race** (new oracle member, harness-level — NOT a new rhocalc_tests parser test):
+rholang is intentionally non-confluent: `Comm` chooses among enabled rendezvous. **v1's flagship witness (`join_pattern_same_channel`) is confluent-up-to-multiset** — body `{{*(x) | *(y)}}` makes both bindings the same HashBag NF (`{a|b}` = `{b|a}`; the corpus' own `multiset_eq` exists because of this) — so it exercises nothing. **The .1.1 gate input is an order-SENSITIVE single-bind contention race** (new oracle member, harness-level — NOT a new rholang_tests parser test):
 
 ```
 { (c?x).{ *(x) }  |  c!(a)  |  c!(b) }      — Ascent reachable-NF set = { {a | b-send-rests}, {b | a-send-rests} }
@@ -293,7 +293,7 @@ This realizes ambiguity-set-preservation ("miss nothing" surviving the flip to R
 4. **AST ambiguity witness gate.** `rholang-runtime/tests/rho_ambiguity_ast.rs` injects receive-less ambiguity witnesses as normalized AST sends, observes grouped key/payload tuples, and feeds them into `AmbiguityWitnessSet`; schedule order preserves the observed set, exact duplicates are idempotent, and conflicting payloads for the same exact key reject.
 5. **f1r3node-rust conformance gate.** `mettail_rust_is_not_a_cargo_dependency` (`accounting/resource_logic.rs:292-293`) STAYS PASSING; `BridgeInertness.v` one-way. The bridge-local B1-a conformance kit is the accepted gate for this repository: `MettaFundingLawsConformance.v` proves the modeled laws, and `rholang-adapter` re-hosts the same four generic laws against `OslfResourceLogic<MettaGslt>` without changing the host deploy-admission path.
 6. **Welch.** Expect NEUTRAL (the COMM path is host-owned; MeTTaIL emits normalized `rhoapi::Par`, with source text retained only as reader/debug annotation). Panel only if a mettail-side runtime path materially changes; record per the P-series cadence.
-7. **Battery sentinel.** `prattail` lib, `gen_calculator_op` 1330/0, `edge_case` 229/0, `gen_rhocalc_op` 530/1 (pre-existing), dovetail 51/0, `ledtest` 220/0, **`rhocalc_tests` 126/0**. **M-RHO.1 changes NO parser codegen and NO `languages/tests` parser tests** (the §5 order-sensitive input lives in the oracle harness).
+7. **Battery sentinel.** `prattail` lib, `gen_calculator_op` 1330/0, `edge_case` 229/0, `gen_rholang_op` 530/1 (pre-existing), dovetail 51/0, `ledtest` 220/0, **`rholang_tests` 126/0**. **M-RHO.1 changes NO parser codegen and NO `languages/tests` parser tests** (the §5 order-sensitive input lives in the oracle harness).
 
 ---
 
@@ -301,7 +301,7 @@ This realizes ambiguity-set-preservation ("miss nothing" surviving the flip to R
 
 | # | Risk | Disposition |
 |---|---|---|
-| R1 | ~~rhocalc basics don't parse~~ | **DISSOLVED** (§0-AMENDMENT). Residual discipline: parser ERR ≠ engine divergence. |
+| R1 | ~~rholang basics don't parse~~ | **DISSOLVED** (§0-AMENDMENT). Residual discipline: parser ERR ≠ engine divergence. |
 | R2 | **Trace Heisenbug** (#312): `PRATTAIL_TRACE=actions` perturbs parses. | NEVER verify via action traces; walker-stats + behavioral probes + the outcome-set oracle only. |
 | R3 | **dovetail dep scope.** | v2: D5 removed the ContentKey-payload need — .1 requires NO dovetail dependency in the bridge crates (dovetail has no `key` feature anyway; the dep would be whole-crate). `ContentKey` stays the comparison SPEC; the fingerprint realizes it. DV-1 demand-gated saturation remains M-RHO.3. |
 | R4 | **Channel-identity nondeterminism (P4's 313× lesson).** | D5: identity = ≡_N-canonical content via the host's content-total sort; never insertion order / 64-bit hash / uncanonicalized Display. §4 thm 4 proves the canonicalizer. |
@@ -309,7 +309,7 @@ This realizes ambiguity-set-preservation ("miss nothing" surviving the flip to R
 | R6 | **Over-claiming the correspondence.** | Funded weak-bisim only; D8 statement-only fences; completeness fund-gated by construction. |
 | R7 | **Scope creep into .2/.3.** | D6 exclusion list is the boundary; folds/lambdas/Δ1 ride Ascent. |
 | R8 | **B1-b blast radius.** | Casper-located (`acceptance.rs:483-492`); USER-OK gated with the location named; guard test green is non-negotiable either way. |
-| R9 | **AST fidelity** (new): the rhocalc→Rholang AST generator mis-building a member. | Generated contracts are checked as normalized `Par`; direct `inj` fails loudly; `RhoLoweringTotalOrRejects.v`, `LinearCommCorrespondence.v`, and the runtime oracle cover the generated AST boundary. |
+| R9 | **AST fidelity** (new): the rholang→Rholang AST generator mis-building a member. | Generated contracts are checked as normalized `Par`; direct `inj` fails loudly; `RhoLoweringTotalOrRejects.v`, `LinearCommCorrespondence.v`, and the runtime oracle cover the generated AST boundary. |
 | R10 | **Observation blind spots** (new): empty-space false-greens on inert-NF members. | D3's discrimination argument: an unfired COMM leaves the parked Receive in the dump; sentinel sends make all variable-valued NFs datum-shaped. **The `errors = ∅` assertion is load-bearing and may NEVER be weakened**: on any evaluate error the host REVERTS the space (`rho_runtime.rs:117-120`), so an erroring t-run's dump equals the pre-eval state — which for inert-NF members fingerprint-matches the nf-image's empty dump (a silent false-GREEN without the assertion). |
 
 ---

@@ -321,7 +321,7 @@ movement -- the transducer can revisit already-read input, make state-dependent
 decisions based on both left and right context, and produce different output
 depending on traversal direction.
 
-RhoCalc-specific types: `ChannelConstraint<W>` (forward + backward transducers
+Rholang-specific types: `ChannelConstraint<W>` (forward + backward transducers
 for cross-channel predicates), `JoinPatternAnalysis<W>` (optimal channel
 consumption order, deadlock cycles, constraint graph).
 

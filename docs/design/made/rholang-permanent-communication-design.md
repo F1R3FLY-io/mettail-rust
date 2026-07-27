@@ -1,13 +1,13 @@
-# RhoCalc Permanent Send/Receive and COMM Normalization Design
+# Rholang Permanent Send/Receive and COMM Normalization Design
 
 **Status:** Implemented  
-**Primary areas:** `languages/src/rhocalc.rs`, `languages/src/rhocalc/runtime.rs`, `languages/src/rhocalc/receive.rs`
+**Primary areas:** `languages/src/rholang.rs`, `languages/src/rholang/runtime.rs`, `languages/src/rholang/receive.rs`
 
 ---
 
 ## 1. Goal
 
-This design defines durable communication semantics in RhoCalc and stabilizes COMM behavior around send/receive sugar.
+This design defines durable communication semantics in Rholang and stabilizes COMM behavior around send/receive sugar.
 
 The core product goals are:
 
@@ -127,7 +127,7 @@ Why:
 
 ### 5.1 Parser/surface syntax
 
-RhoCalc adds/uses:
+Rholang adds/uses:
 
 - Permanent binds: `<=` (single and join rows).
 - Permanent sends: `!!`.
@@ -163,7 +163,7 @@ This aligns UX with the new larger rewrite spaces introduced by permanent behavi
 
 ## 6. Testing Strategy
 
-Integration tests in `languages/tests/rhocalc_tests.rs` cover:
+Integration tests in `languages/tests/rholang_tests.rs` cover:
 
 - Permanent receive + ephemeral send.
 - Permanent receive + permanent send.
@@ -217,7 +217,7 @@ Would make reductions less predictable and break explicit empty-pattern semantic
 
 ## 9. Outcome
 
-RhoCalc communication semantics use a more explicit and canonical architecture:
+Rholang communication semantics use a more explicit and canonical architecture:
 
 - permanent send/receive are implemented as policy, not forked runtime logic,
 - COMM works on normalized internal forms,

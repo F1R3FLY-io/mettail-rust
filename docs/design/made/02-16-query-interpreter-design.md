@@ -26,18 +26,18 @@ explicitly Ascent-shaped reference evidence, or when a test/oracle caller uses
 Support a REPL flow:
 
 ```
-mettail> lang rhocalc (@languages/src/rhocalc.rs)
+mettail> lang rholang (@languages/src/rholang.rs)
 [language loaded]
-rhocalc> step {term}
+rholang> step {term}
 [term executed: ...]
-rhocalc> query(result) <-- path(term, result), !rw_proc(result, _)
+rholang> query(result) <-- path(term, result), !rw_proc(result, _)
 [computed: {normal forms}]
 ```
 
 For every language we must support an **arbitrary rule** of the form:
 
 - **Head**: `head(args) <--` (Ascent syntax; arrow `<--`).
-- **Body**: A composite of relations from the language’s generated datalog (e.g. `path`, `rw_proc`, `proc`, `step_term` in rhocalc).
+- **Body**: A composite of relations from the language’s generated datalog (e.g. `path`, `rw_proc`, `proc`, `step_term` in rholang).
 - **Result**: A `Vec` of tuples (one tuple per head-arity) corresponding to the head variables.
 
 Parsing and syntax should be **canonical Ascent** where possible, using **ascent_syntax_export** for parsing and structure.
@@ -58,7 +58,7 @@ Parsing and syntax should be **canonical Ascent** where possible, using **ascent
 
 ### MeTTaIL runtime and languages
 
-- **Ascent run**: Each language runs `ascent_run! { include_source!(rhocalc_source); step_term(initial); #primary_relation(initial); }` and gets a struct with relations: `path`, `rw_proc`, `proc`, `step_term`, etc.
+- **Ascent run**: Each language runs `ascent_run! { include_source!(rholang_source); step_term(initial); #primary_relation(initial); }` and gets a struct with relations: `path`, `rw_proc`, `proc`, `step_term`, etc.
 - **AscentResults**: Already has `custom_relations: HashMap<String, RelationData>` where `RelationData { param_types, tuples: Vec<Vec<String>> }`. Currently only **logic-block** relations (e.g. `path`, `trans`, `can_comm`) are extracted; **generated** relations like `rw_proc`, `proc`, `step_term` are **not** in `custom_relations`.
 - **RelationData**: Tuples are stringified (e.g. `format!("{}", p)` for Proc). So “values” are strings for display; joining/filtering would be on those strings (correct for equality of terms if Display is injective enough; otherwise we need typed comparison later).
 

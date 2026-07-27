@@ -2,7 +2,7 @@
 
 ## 1. Motivation
 
-The Ascent code generator produces cross-category subterm extraction rules for every `(src, tgt)` category pair. For example, in RhoCalc with 6 categories, a naive generator emits rules for all 36 pairs (6 x 6). Many of these rules can never fire because no constructor path connects the source to the target.
+The Ascent code generator produces cross-category subterm extraction rules for every `(src, tgt)` category pair. For example, in Rholang with 6 categories, a naive generator emits rules for all 36 pairs (6 x 6). Many of these rules can never fire because no constructor path connects the source to the target.
 
 Consider the pair `(Proc, Float)`: no `Proc` constructor has a field of type `Float`, and no intermediate category bridges them. The rule `float(sub) <-- proc(t), ...` will fire on every `Proc` term but always extract nothing — pure waste.
 
@@ -141,7 +141,7 @@ Only considers reachable source categories.
 
 **Proof.** Immediate from P3. Since the immediate consequence operator is identical with or without dead rules, and fixpoints are determined by the operator, the least fixpoints are identical. **QED.**
 
-## 6. Example: RhoCalc Dead Rules
+## 6. Example: Rholang Dead Rules
 
 ### 6.1 Category Graph
 

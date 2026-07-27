@@ -9,7 +9,7 @@ Thank you for your interest in contributing to MeTTaIL!
 1. **Read the docs**: Start with `getting_started.md` and `architecture.md`
 2. **Build the project**: `cargo build --workspace`
 3. **Run tests**: `cargo test --workspace`
-4. **Try examples**: `cargo run --example rhocalc_demo`
+4. **Try examples**: `cargo run --example rholang_demo`
 5. **Explore**: `cargo run --bin repl`
 
 ---
@@ -106,7 +106,7 @@ runtime/         # Runtime support library
 └── binding.rs   # Variable binding via moniker
 
 theories/        # Example theories
-├── rhocalc.rs   # Rho Calculus
+├── rholang.rs   # Rho Calculus
 └── ambient.rs   # Ambient Calculus
 
 repl/            # Interactive explorer
@@ -234,7 +234,7 @@ fn parse_display_roundtrip(term: Proc) -> bool {
 cargo expand -p mettail-theories --lib
 
 # Just one module
-cargo expand -p mettail-theories rhocalc
+cargo expand -p mettail-theories rholang
 ```
 
 ### Ascent Output

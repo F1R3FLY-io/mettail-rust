@@ -140,7 +140,7 @@ Mechanism, building on existing machinery (no new disambiguation policy):
 
 - gauntlet `-p prattail --lib` → **4220/0**.
 - calc full suite → **216/4** at M*.1+ (214/6 at M*.0).
-- op-suites: `gen_calculator_op` **≥1331**, `gen_rhocalc_op` **532/0**.
+- op-suites: `gen_calculator_op` **≥1331**, `gen_rholang_op` **532/0**.
 - disambiguation gate: `-3!` ladder + `wpda_parity_calculator`.
 - Welch (chain bench, N≥51, p<0.05, quiet) for the perf invariant — **only at M*.2** (no runtime hot-path change expected; confirm neutrality).
 - A/B levers: `B3_FOLD_TRIGGER_DISABLE` flips the 2 Float targets; `B3_DISABLE`/`B3_SPAN_DISABLE` flip Bool as on base.

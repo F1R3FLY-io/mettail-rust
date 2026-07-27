@@ -10,7 +10,7 @@
 | `GraphReachability.v` | 156 | `Prelude.v` | Graph model, reach, bidi_reach, field_types (shared by Opts 3, 5) |
 | `DeadRulePruning.v` | 183 | `Prelude.v`, `GraphReachability.v` | P2: Dead rules derive nothing, P3: Pruned = Full (Opt 3) |
 | `SCCSplitting.v` | 362 | `Prelude.v`, `GraphReachability.v` | S1-S3: Core/Full fixpoint equivalence (Opt 5) |
-| `ConcreteInstantiations.v` | 385 | All above | Calculator + RhoCalc language instances |
+| `ConcreteInstantiations.v` | 385 | All above | Calculator + Rholang language instances |
 | **Total** | **1,790** | | **Zero `Admitted`** |
 
 ## 2. Dependency Graph
@@ -195,7 +195,7 @@ theories/ConcreteInstantiations.v
 | `rho_Chan_not_core` | `¬bidi_reach(Proc, Chan)` | Forward direction fails |
 | `rho_Ground_not_core` | `¬bidi_reach(Proc, Ground)` | Forward direction fails |
 | `rho_Float_not_core` | `¬bidi_reach(Proc, Float)` | Forward direction fails |
-| `rho_scc_splitting_applicable` | SCC splitting applies to RhoCalc | `exact I` |
+| `rho_scc_splitting_applicable` | SCC splitting applies to Rholang | `exact I` |
 
 ## 5. Hypothesis Audit
 

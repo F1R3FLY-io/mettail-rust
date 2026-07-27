@@ -316,9 +316,9 @@ all transitions.
 | StrId       | Str      | Identity rule shadowed by direct parse        |
 | POutput     | Proc     | Output rule unreachable via prefix dispatch   |
 
-**RhoCalc language** (36 dead rules, all Tier 3):
+**Rholang language** (36 dead rules, all Tier 3):
 
-The RhoCalc grammar detects 36 dead rules, primarily cross-category
+The Rholang grammar detects 36 dead rules, primarily cross-category
 comparison operators and cast rules where higher-priority direct
 alternatives shadow the cross-category dispatch path.
 

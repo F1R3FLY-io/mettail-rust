@@ -21,7 +21,7 @@ scenarios that the auto-generated tests cannot anticipate:
 
 ```text
 language! {
-    name: RhoCalc,
+    name: Rholang,
     types { ... },
     terms { ... },
     equations { ... },

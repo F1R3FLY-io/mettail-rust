@@ -17,11 +17,11 @@ and the binding constraints for v3.
 2. **The guard is broken as written.** The binder var `x` is anonymized (v2 §1.2), so it is never a
    `Pattern::Var` and never enters `Subst` ⇒ `subst[&g.var]` panics/vacuous. v2 §1.2 (anonymize binder)
    and §1.4 (guard keyed by `subst[binder-name]`) are mutually inconsistent.
-3. **Over-generation onto rhocalc.** `rhocalc.rs:862 Extrude` is the SAME multi-binder scope-extrusion
+3. **Over-generation onto rholang.** `rholang.rs:862 Extrude` is the SAME multi-binder scope-extrusion
    with freshness, dispositioned to HOST RSpace (`RhoNativeJoin`; `ambient_dovetail_flip.rs:13-16`,
    `guard_quality.rs:131`). The GENERIC `premise_supported(Freshness)=>true` + Lambda/MultiLambda flip
-   is NOT language-conditioned `⇒` wrongly lowers rhocalc's Extrude in-engine. Silent (no test calls
-   `RhoCalcLanguage::dovetail_report_for`). Breaches the disposition-first invariant (P3/P5a).
+   is NOT language-conditioned `⇒` wrongly lowers rholang's Extrude in-engine. Silent (no test calls
+   `RholangLanguage::dovetail_report_for`). Breaches the disposition-first invariant (P3/P5a).
 4. **`free_fv_leaves` ≠ moniker `free_vars`.** It folds the UNION over e-class alternatives (nothing is
    pruned), a superset of any single term's free vars. Safe only as `⊇` with a FULL-union walk; the
    laziness mandate's canonical-representative shortcut would HIDE an `fv::x` alternative and ADMIT
@@ -76,14 +76,14 @@ reduction (InRule/OutRule/OpenRule — which rearrange the soup, not binders) st
    (capture-safe), AC-saturate the soup in-engine (ambiguity-preserving), re-wrap; handle reduction that
    re-exposes `new`s. Specify the iteration/termination + how ambiguity crosses the native/in-engine seam.
 4. **Disposition-gate, never generic-flip.** Keep `premise_supported(Freshness)=>false` generically;
-   route freshness/binder handling through the disposition layer so rhocalc's Extrude STAYS host-routed.
-   Add a regression pinning `RhoCalcLanguage::dovetail_report_for(Extrude redex)` fail-closed.
+   route freshness/binder handling through the disposition layer so rholang's Extrude STAYS host-routed.
+   Add a regression pinning `RholangLanguage::dovetail_report_for(Extrude redex)` fail-closed.
 5. **Keep the sound, useful pieces of v1/v2 IF they survive:** the `db::`/`fv::` alpha-as-ContentKey
    lowering (§1.1/§1.2) gives alpha-dedup of REPRESENTED terms for free and critic-2 found it compiles
    with no regression (already-flipped langs route through `complete_native_dovetail_report_for_language`
    first, never reaching the arm). Keep it ONLY if it is needed AND proven inert (constraint 1). If kept,
    `free_fv_leaves` (if used at all) folds the FULL union and is proven `⊇`, never `=`.
-6. **Zero-admission Rocq** for whatever is implemented; NO false reuse of `RhocalcAstLowering.v`. Honest
+6. **Zero-admission Rocq** for whatever is implemented; NO false reuse of `RholangAstLowering.v`. Honest
    `Complete`: the report is `Complete` only when the binder-congruence native step + AC saturation both
    converge; otherwise surface a typed blocker. No silent dishonesty.
 7. **Honest completion.** If full binder-congruence support is genuinely beyond a sound, validated single
@@ -102,4 +102,4 @@ reduction (InRule/OutRule/OpenRule — which rearrange the soup, not binders) st
 - `dovetail/src/rules.rs:148-153` — `RewriteRule` (3 fields, struct-literal-constructed ~30×).
 - `dovetail-runtime/src/lib.rs` — `complete_native_dovetail_report_for_language` (the native
   handler seam; `try_direct_eval` None for Ambient; `normalize_term` structural-only, no equations).
-- `languages/src/rhocalc.rs:862` — `Extrude` (the over-generation target; must stay host-routed).
+- `languages/src/rholang.rs:862` — `Extrude` (the over-generation target; must stay host-routed).

@@ -15,7 +15,7 @@
 //          e-class. Equality is the shared class itself — there is no `eq`
 //          relation to store, no `rewrites` rows to close.
 //
-//  Worked term: the integer cast  int(1+1, 8)  in RhoCalc, equal to its reduced
+//  Worked term: the integer cast  int(1+1, 8)  in Rholang, equal to its reduced
 //  forms  int(2, 8)  and  2  (the fold result). Datalog stores the three terms
 //  plus the equalities; the e-graph stores one class holding the three e-nodes.
 //
