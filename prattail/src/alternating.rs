@@ -1189,7 +1189,8 @@ pub struct ForkJoinCostAnalysis {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// # use mettail_prattail::alternating::analyze_fork_join_cost;
 /// let result = analyze_fork_join_cost(&[10.0, 20.0, 15.0], 2.0, 1.0);
 /// assert!(result.should_parallelize);
 /// assert_eq!(result.parallelism_degree, 3);

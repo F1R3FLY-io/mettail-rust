@@ -1344,7 +1344,8 @@ pub struct JoinPruningResult {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// # use mettail_prattail::two_way_transducer::prune_join_patterns;
 /// let patterns = vec![
 ///     vec!["a".into(), "b".into()],
 ///     vec!["a".into(), "c".into()],  // "c" has no producer

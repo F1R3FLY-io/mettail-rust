@@ -1332,10 +1332,10 @@ pub fn build_stream_automaton<W: Semiring>(
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use prattail::multi_tape::*;
-/// use prattail::automata::semiring::TropicalWeight;
-/// use prattail::{SyncSpec, SyncConstraintSpec};
+/// ```rust
+/// use mettail_prattail::multi_tape::*;
+/// use mettail_prattail::automata::semiring::TropicalWeight;
+/// use mettail_prattail::{SyncSpec, SyncConstraintSpec};
 ///
 /// let main_stream = build_stream_automaton::<TropicalWeight>(
 ///     "main",

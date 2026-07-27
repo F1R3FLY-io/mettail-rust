@@ -191,9 +191,19 @@ impl NormalFormReachable {
 /// [`LanguageStateMachine`](crate::model::LanguageStateMachine)'s
 /// `guarded_rewrites()` iterator:
 ///
-/// ```ignore
+/// ```
+/// # use mettail_runtime::{EquationDef, LanguageMetadata, RewriteDef, TermDef, TypeDef};
+/// # struct DemoMetadata;
+/// # impl LanguageMetadata for DemoMetadata {
+/// #     fn name(&self) -> &'static str { "Demo" }
+/// #     fn types(&self) -> &'static [TypeDef] { &[] }
+/// #     fn terms(&self) -> &'static [TermDef] { &[] }
+/// #     fn equations(&self) -> &'static [EquationDef] { &[] }
+/// #     fn rewrites(&self) -> &'static [RewriteDef] { &[] }
+/// # }
+/// # let language = DemoMetadata;
 /// use mettail_simulation::{model::LanguageStateMachine, invariant::GuardSatisfaction};
-/// let state = LanguageStateMachine::from_metadata(language.metadata());
+/// let state = LanguageStateMachine::from_metadata(&language);
 /// let invariant = GuardSatisfaction::from_state_machine(&state);
 /// ```
 pub struct GuardSatisfaction {

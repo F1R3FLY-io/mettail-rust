@@ -289,8 +289,11 @@ impl<W: Semiring> fmt::Display for TreeAutomaton<W> {
 /// ```
 ///
 /// This tree is represented as:
-/// ```ignore
-/// Term::new("Add", vec![Term::leaf("Lit"), Term::new("Neg", vec![Term::leaf("Lit")])])
+/// ```
+/// # use mettail_prattail::tree_automaton::Term;
+/// let term = Term::new("Add", vec![Term::leaf("Lit"), Term::new("Neg", vec![Term::leaf("Lit")])]);
+/// # assert_eq!(term.arity(), 2);
+/// # assert_eq!(term.size(), 4);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term {
@@ -1083,7 +1086,7 @@ fn collect_nonterminal_children(
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```text
 /// // Given TokenTree::Token("Lit", range), produces Term { symbol: "Lit", children: [] }
 /// // Given TokenTree::Group { open: ("LParen", _), children: [...], close: _ },
 /// //   produces Term { symbol: "LParen", children: [... recursively converted ...] }
@@ -1155,7 +1158,13 @@ impl std::error::Error for TreeValidationError {}
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// # use mettail_prattail::automata::semiring::BooleanWeight;
+/// # use mettail_prattail::runtime_types::Range;
+/// # use mettail_prattail::tree_automaton::{validate_token_tree, TreeAutomaton};
+/// # use mettail_prattail::vpa::TokenTree;
+/// # let wta: TreeAutomaton<BooleanWeight> = TreeAutomaton::new();
+/// # let token_tree: TokenTree<&str> = TokenTree::Token("Lit", Range::zero());
 /// let result = validate_token_tree(&wta, &token_tree, &|tok| format!("{:?}", tok));
 /// match result {
 ///     Ok(weight) => println!("accepted with weight {:?}", weight),

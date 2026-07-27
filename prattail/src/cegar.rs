@@ -623,7 +623,38 @@ pub fn refine(current_level: &AbstractionLevel) -> Option<AbstractionLevel> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
+/// # use std::collections::HashMap;
+/// # use mettail_prattail::automata::semiring::TropicalWeight;
+/// # use mettail_prattail::binding_power::Associativity;
+/// # use mettail_prattail::cegar::{cegar_verify, CegarConfig, CegarResult};
+/// # use mettail_prattail::verify::build_bad_state_automaton;
+/// # use mettail_prattail::wpds::build_wpds;
+/// # use mettail_prattail::{CategorySpec, LanguageSpec, RuleSpecInput};
+/// # let spec = LanguageSpec::new(
+/// #     "Calc".to_string(),
+/// #     vec![CategorySpec {
+/// #         name: "Expr".to_string(),
+/// #         native_type: Some("i64".to_string()),
+/// #         is_primary: true,
+/// #         has_var: true,
+/// #     }],
+/// #     vec![RuleSpecInput {
+/// #         label: "NumLit".to_string(),
+/// #         category: "Expr".to_string(),
+/// #         syntax: Vec::new(),
+/// #         associativity: Associativity::Left,
+/// #         prefix_precedence: None,
+/// #         has_rust_code: false,
+/// #         rust_code: None,
+/// #         eval_mode: None,
+/// #         source_location: None,
+/// #         is_auto_injected: false,
+/// #     }],
+/// # );
+/// # let wfsts = HashMap::new();
+/// # let wpds = build_wpds::<TropicalWeight>(&spec, &wfsts, TropicalWeight::new);
+/// # let bad_automaton = build_bad_state_automaton(&wpds, &["BadState"]);
 /// let result = cegar_verify(&wpds, &bad_automaton, &CegarConfig::default());
 /// match result {
 ///     CegarResult::Verified { level, .. } => println!("Safe at {} level", level),

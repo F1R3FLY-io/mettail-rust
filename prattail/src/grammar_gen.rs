@@ -6,10 +6,34 @@
 //!
 //! # Usage
 //!
-//! ```ignore
-//! use mettail_prattail::grammar_gen::{arb_expression, generate_bench_inputs};
+//! ```
+//! use mettail_prattail::grammar_gen::generate_bench_inputs;
+//! # use mettail_prattail::binding_power::Associativity;
+//! # use mettail_prattail::{CategorySpec, LanguageSpec, RuleSpecInput};
+//! # let spec = LanguageSpec::new(
+//! #     "Calc".to_string(),
+//! #     vec![CategorySpec {
+//! #         name: "Expr".to_string(),
+//! #         native_type: Some("i64".to_string()),
+//! #         is_primary: true,
+//! #         has_var: true,
+//! #     }],
+//! #     vec![RuleSpecInput {
+//! #         label: "NumLit".to_string(),
+//! #         category: "Expr".to_string(),
+//! #         syntax: Vec::new(),
+//! #         associativity: Associativity::Left,
+//! #         prefix_precedence: None,
+//! #         has_rust_code: false,
+//! #         rust_code: None,
+//! #         eval_mode: None,
+//! #         source_location: None,
+//! #         is_auto_injected: false,
+//! #     }],
+//! # );
 //!
 //! let inputs = generate_bench_inputs(&spec, "Expr", 5, 50);
+//! # assert_eq!(inputs.len(), 50);
 //! ```
 
 use std::collections::BTreeMap;

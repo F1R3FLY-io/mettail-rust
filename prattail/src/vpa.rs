@@ -2169,7 +2169,25 @@ impl crate::predicate_dispatch::PredicateCompiler for VpaCompiler {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust
+/// # use mettail_prattail::vpa::build_vpa_alphabet_from_modes;
+/// # use mettail_prattail::{CustomTokenSpec, LexerModeSpec};
+/// # fn spec(name: &str, push_mode: Option<&str>, is_pop: bool) -> CustomTokenSpec {
+/// #     CustomTokenSpec {
+/// #         name: name.to_string(),
+/// #         pattern: name.to_string(),
+/// #         category: None,
+/// #         payload_type: None,
+/// #         constructor_code: None,
+/// #         is_builtin_override: false,
+/// #         priority: 2,
+/// #         push_mode: push_mode.map(str::to_string),
+/// #         is_pop,
+/// #         stream: None,
+/// #     }
+/// # }
+/// # let default_tokens = vec![spec("(", Some("paren"), false), spec(")", None, true)];
+/// # let modes: Vec<LexerModeSpec> = Vec::new();
 /// let alphabet = build_vpa_alphabet_from_modes(&default_tokens, &modes);
 /// assert!(alphabet.call_symbols.contains("("));
 /// assert!(alphabet.return_symbols.contains(")"));
@@ -2220,9 +2238,20 @@ pub fn build_vpa_alphabet_from_modes(
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust
+/// # use std::collections::HashSet;
+/// # use mettail_prattail::runtime_types::Range;
+/// # use mettail_prattail::vpa::{build_skip_table, SymbolKind, VpaAlphabet};
+/// # let alphabet = VpaAlphabet::new(
+/// #     HashSet::from(["(".to_string()]),
+/// #     HashSet::from([")".to_string()]),
+/// #     HashSet::from(["x".to_string(), "y".to_string()]),
+/// # );
+/// # let tokens = [("(", Range::zero()), ("x", Range::zero()),
+/// #               ("y", Range::zero()), (")", Range::zero())];
 /// let table = build_skip_table(&tokens, |tok| alphabet.classify(tok).unwrap_or(SymbolKind::Internal));
 /// // table[0] == Some(3) means the opener at 0 matches the closer at 3.
+/// # assert_eq!(table[0], Some(3));
 /// ```
 pub fn build_skip_table<T>(
     tokens: &[(T, crate::runtime_types::Range)],

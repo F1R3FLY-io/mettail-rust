@@ -58,11 +58,20 @@
 //! cost microseconds to milliseconds). A measurement harness brackets ONE derivation
 //! sequence per collection window:
 //!
-//! ```ignore
+//! `no_run`: the middle line compiles a whole language definition, which is a
+//! measurement harness's job, not a doctest's. Compiling it still pins the bracket.
+//!
+//! ```no_run
+//! # use mettail_rholang_codegen::pipeline_spans::{
+//! #     begin_phase_span_collection, take_phase_span_report,
+//! # };
+//! # use mettail_rholang_codegen::rho_net_cache::cached_in_rho_artifacts;
+//! # let source = "";
 //! begin_phase_span_collection();
 //! let artifacts = cached_in_rho_artifacts(source)?; // …or the pure pipeline fns
 //! let report = take_phase_span_report().expect("collection was begun");
 //! assert_eq!(report.mismatched_spans, 0);
+//! # Ok::<(), String>(())
 //! ```
 //!
 //! `begin`/`take` MUST be called OUTSIDE any pipeline function. Calling them from inside

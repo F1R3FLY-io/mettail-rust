@@ -2,7 +2,7 @@
 //!
 //! Historically every parser diagnostic was written as
 //!
-//! ```ignore
+//! ```
 //! if std::env::var_os("PRATTAIL_CGLL_FENCE_DIAG").is_some() {
 //!     eprintln!("CGLL-FENCE …");
 //! }
@@ -23,7 +23,8 @@
 //! Usage — wrap the whole `if env { … }` statement so the env selector stays
 //! *inside* the gate:
 //!
-//! ```ignore
+//! ```
+//! # use mettail_prattail::trace_diag;
 //! trace_diag! {
 //!     if std::env::var_os("PRATTAIL_CGLL_FENCE_DIAG").is_some() {
 //!         eprintln!("CGLL-FENCE …");

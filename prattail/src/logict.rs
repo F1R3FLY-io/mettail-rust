@@ -762,8 +762,8 @@ impl fmt::Display for QuantifiedArg {
 ///
 /// # Example
 ///
-/// ```rust,ignore
-/// use prattail::logict::{QuantifiedFormula, QuantifiedArg, QuantifiedDomain, evaluate_quantified};
+/// ```rust
+/// use mettail_prattail::logict::{QuantifiedFormula, QuantifiedArg, QuantifiedDomain, evaluate_quantified};
 /// use std::collections::HashMap;
 ///
 /// let formula = QuantifiedFormula::forall(
@@ -772,7 +772,7 @@ impl fmt::Display for QuantifiedArg {
 ///     QuantifiedFormula::atom("positive", vec![QuantifiedArg::var("x")]),
 /// );
 ///
-/// let mut env = HashMap::new();
+/// let env = HashMap::new();
 /// let result = evaluate_quantified(
 ///     &formula,
 ///     &env,

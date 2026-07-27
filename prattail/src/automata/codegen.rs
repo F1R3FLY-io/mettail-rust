@@ -2755,7 +2755,7 @@ pub fn terminal_to_variant_name(terminal: &str) -> String {
 /// generated code and the compile-time analysis use the same mapping.
 ///
 /// Generated function signature:
-/// ```rust,ignore
+/// ```text
 /// fn token_variant_id(token: &Token) -> u8
 /// ```
 ///

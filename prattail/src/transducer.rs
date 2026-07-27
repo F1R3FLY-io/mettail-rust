@@ -23,12 +23,15 @@
 //! ## Adding New Passes
 //!
 //! Adding a new optimization = implementing `OptimizationPass`:
-//! ```rust,ignore
+//! ```rust
+//! # use mettail_prattail::transducer::{OptimizationPass, PassResult};
+//! # use mettail_prattail::wfst::PredictionWfst;
+//! #[derive(Debug)] // `OptimizationPass: Debug`
 //! struct MyPass;
 //! impl OptimizationPass for MyPass {
 //!     fn name(&self) -> &str { "my-pass" }
 //!     fn is_applicable(&self, wfst: &PredictionWfst) -> bool { true }
-//!     fn apply(&self, wfst: &mut PredictionWfst) -> PassResult { ... }
+//!     fn apply(&self, wfst: &mut PredictionWfst) -> PassResult { PassResult::unchanged() }
 //! }
 //! ```
 //!
@@ -281,7 +284,12 @@ pub struct CascadeResult {
 ///
 /// ## Usage
 ///
-/// ```rust,ignore
+/// ```rust
+/// # use mettail_prattail::transducer::{
+/// #     BeamPruning, DeadStateElimination, StateMinimization, TransducerCascade,
+/// # };
+/// # use mettail_prattail::wfst::PredictionWfst;
+/// # let mut wfst = PredictionWfst::from_flat("Expr", &[(0, 0, true, 0.0)], &[], &["Int"], None);
 /// let mut cascade = TransducerCascade::new();
 /// cascade.add_pass(Box::new(DeadStateElimination));
 /// cascade.add_pass(Box::new(StateMinimization));

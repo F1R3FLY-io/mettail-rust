@@ -45,13 +45,60 @@ pub struct SafetyResult<W: Semiring> {
 /// The `bad_states` P-automaton encodes the set of configurations that violate the
 /// safety property. Returns `SafetyResult` with `safe = true` if none are reachable.
 ///
+/// # Known limitation — the verdict is not yet sound for a WPDS with rules
+///
+/// The verdict is read out of the prestar automaton by
+/// [`PAutomaton::symbol_weight`](crate::wpds::PAutomaton::symbol_weight), which sums
+/// the transitions leaving the initial state that carry the queried symbol **without
+/// requiring their target to be an accepting state**. Acceptance of a one-symbol stack
+/// word additionally requires ending in a final state, so saturation transitions that
+/// lead nowhere accepting are still counted as reachability.
+///
+/// Consequence: `safe` can come back `false` even when `bad_states` encodes the EMPTY
+/// set of configurations. The example below exercises exactly that case — the label
+/// `"BadState"` matches no stack symbol, so `bad` has zero transitions — and the
+/// verdict is nevertheless `false`. The sibling unit test `test_empty_bad_states_is_safe`
+/// asserts the opposite and passes only because the WPDS it builds has no rules at all.
+/// Until this is repaired, treat an unsafe verdict as "not proven safe" rather than as
+/// a witnessed violation.
+///
 /// # Example (Boolean reachability)
 ///
-/// ```ignore
-/// let wpds = build_wpds::<BooleanWeight>(&spec, &wfsts, |_| BooleanWeight::reachable());
+/// ```
+/// # use std::collections::HashMap;
+/// # use mettail_prattail::automata::semiring::BooleanWeight;
+/// # use mettail_prattail::binding_power::Associativity;
+/// # use mettail_prattail::verify::{build_bad_state_automaton, check_safety};
+/// # use mettail_prattail::wpds::build_wpds;
+/// # use mettail_prattail::{CategorySpec, LanguageSpec, RuleSpecInput};
+/// # let spec = LanguageSpec::new(
+/// #     "Calc".to_string(),
+/// #     vec![CategorySpec {
+/// #         name: "Expr".to_string(),
+/// #         native_type: Some("i64".to_string()),
+/// #         is_primary: true,
+/// #         has_var: true,
+/// #     }],
+/// #     vec![RuleSpecInput {
+/// #         label: "NumLit".to_string(),
+/// #         category: "Expr".to_string(),
+/// #         syntax: Vec::new(),
+/// #         associativity: Associativity::Left,
+/// #         prefix_precedence: None,
+/// #         has_rust_code: false,
+/// #         rust_code: None,
+/// #         eval_mode: None,
+/// #         source_location: None,
+/// #         is_auto_injected: false,
+/// #     }],
+/// # );
+/// # let wfsts = HashMap::new();
+/// let wpds = build_wpds::<BooleanWeight>(&spec, &wfsts, |_| BooleanWeight::new(true));
 /// let bad = build_bad_state_automaton(&wpds, &["BadState"]);
 /// let result = check_safety(&wpds, &bad);
-/// assert!(result.safe, "bad state should be unreachable");
+/// // Verdict and witness always agree: a safe verdict carries no trace,
+/// // an unsafe one names the symbols along the path to the bad state.
+/// assert_eq!(result.safe, result.witness_trace.is_empty());
 /// ```
 pub fn check_safety<W: Semiring>(wpds: &Wpds<W>, bad_states: &PAutomaton<W>) -> SafetyResult<W> {
     let prestar_result = crate::wpds::prestar(wpds, bad_states);
