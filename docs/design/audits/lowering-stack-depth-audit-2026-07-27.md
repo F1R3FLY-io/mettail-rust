@@ -277,6 +277,31 @@ Two consequences, and both matter more than the headline factor:
    have suggested the problem was two-thirds solved; the release reading shows the structural
    problem is essentially entirely still there.
 
+### 5.2 ★ SCOPE: the binary's slope is not the lowering's slope
+
+Two instruments are used in this document and they measure **different scopes**. Conflating
+them would make M-2 look like a bigger win than it is. Release profile, B/level:
+
+| measurement | scope | B/level |
+|---|---|---|
+| gate `lower_depth` | the lowering, alone | 2,157 |
+| gate `parse_depth` | the parser, alone | 304 |
+| gate `reproducer` | parse + lower + **iterative** teardown | 2,128 |
+| `bisect_ulimit` on `target/release/rhocalc` | **everything on the main thread** | **7,266** |
+
+`reproducer` ≈ `lower_depth`, so parsing and lowering do not sum — the deeper of the two
+dominates. But the binary costs **~5,100 B/level more than parse + lower together**, and that
+residue is neither of them. It is the work the gate deliberately excludes so that each subject
+measures one traversal: **rendering the observation**, and the **derived, recursive `Drop` of
+the deep `Par`** (every gate subject avoids the latter via
+`models::rust::rholang::par_children::dismantle`).
+
+★ **Consequence, stated before it surprises anyone: M-2 will take the gate's lowering subjects
+to zero without taking the binary to zero.** Converting the SCC removes its ~2,100 B/level; the
+renderer and the `Par` teardown are separate traversals, also on the main thread, and each needs
+its own conversion and its own gate subject. "The lowering is fixed" and "`rhocalc` is
+depth-independent" are different claims, and only the first is M-2's.
+
 ---
 
 ## 6. ★ M-6 — the parser, measured (and a retracted claim)

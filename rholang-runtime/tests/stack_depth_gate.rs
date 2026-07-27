@@ -506,8 +506,34 @@ fn lowering_is_depth_independent() {
 }
 
 /// Tripwire over the lowering while it is still Θ(depth). Ceilings are ~1.5× the
-/// values measured on 2026-07-27 (`docs/design/audits/lowering-stack-depth-audit-2026-07-27.md` §5), so ordinary
+/// values measured on 2026-07-27
+/// (`docs/design/audits/lowering-stack-depth-audit-2026-07-27.md` §5), so ordinary
 /// codegen drift will not flake while a real regression still trips.
+///
+/// ## ⚠ THIS GATE'S SCOPE IS NARROWER THAN THE BINARY'S
+///
+/// The subjects here measure the **lowering, in isolation**: a pre-built term, lowered,
+/// with both sides torn down iteratively. The `ulimit -s` bisection on
+/// `target/release/rhocalc` in the audit measures the **whole main-thread pipeline**.
+/// The two disagree, and the gap is not noise (release, B/level):
+///
+/// | measurement | scope | B/level |
+/// |---|---|---|
+/// | gate `lower_depth` | lowering alone | 2,157 |
+/// | gate `parse_depth` | parsing alone | 304 |
+/// | gate `reproducer` | parse + lower + iterative teardown | 2,128 |
+/// | `bisect_ulimit` on the binary | everything on the main thread | **7,266** |
+///
+/// ★ **So roughly 5,100 B/level of the binary's main-thread cost is NOT the lowering
+/// and NOT the parser.** It is the work the gate deliberately excludes so that it
+/// measures one traversal at a time: rendering the observation, and the *derived,
+/// recursive* `Drop` of the deep `Par` (which every subject here avoids via
+/// `models::…::dismantle`).
+///
+/// The consequence is worth stating before it surprises someone: **M-2 will take these
+/// subjects to zero without taking the binary to zero.** Converting the lowering removes
+/// its ~2,100; the renderer and the `Par` teardown are separate traversals, also on the
+/// main thread, and they need their own conversions and their own subjects here.
 ///
 /// A subject LEAVES this list only by moving to
 /// [`lowering_is_depth_independent`], never by having its ceiling raised.
@@ -516,9 +542,16 @@ fn lowering_is_depth_independent() {
 /// `lower_depth` 15,132 (was 48,392 before the M-1 arm split).
 #[test]
 fn lowering_theta_depth_tripwire() {
-    assert_slope_below("lower_depth", ceiling(23_000, 6_000), 16, 128);
-    assert_slope_below("lower_add", ceiling(23_000, 6_000), 16, 128);
-    assert_slope_below("lower_par", ceiling(23_000, 6_000), 16, 128);
+    // Release ceilings are MEASURED, not guessed. An earlier revision of this file
+    // carried 6,000 for release on the strength of the `ulimit` bisection's 7,266
+    // B/level — which measures a DIFFERENT SCOPE (see the note below) and would have
+    // made this gate fail in release for a reason unrelated to the lowering.
+    //
+    // Measured 2026-07-27, release, probed at 16 and 128:
+    //   lower_depth 2,157   lower_add 2,450   lower_par 1,206  B/level
+    assert_slope_below("lower_depth", ceiling(23_000, 4_000), 16, 128);
+    assert_slope_below("lower_add", ceiling(23_000, 4_000), 16, 128);
+    assert_slope_below("lower_par", ceiling(23_000, 4_000), 16, 128);
 }
 
 /// **M-6, WIDTH axis — the parser does not grow with sibling count.**
