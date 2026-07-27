@@ -874,23 +874,65 @@ fn rhocalc_proc_alternatives_from_term(
     }
 }
 
+/// Flatten a parsed term's alternative tree into the list of `Proc` readings, in
+/// source order.
+///
+/// ## ⚠ This is a CONSISTENCY fix, NOT a depth fix — and the distinction matters
+///
+/// This walk was the last hand-written *recursive* traversal over
+/// `RhoCalcTermInner::Ambiguous` in this crate. Every macro-generated traversal over
+/// that same variant — `Clone`, `Hash`, `PartialEq`
+/// (`macros/src/gen/runtime/language.rs`) — already uses an explicit work stack, and
+/// says so: *"no compiler-generated recursion through nested Ambiguous trees. Per the
+/// stack-safety mandate."* One hand-written exception to a mandate the generated code
+/// already honours is worth removing on its own terms.
+///
+/// It is emphatically **not** part of the Θ(depth) work, and it must not be allowed to
+/// borrow that work's justification, because **its recursion depth is bounded by 2 on
+/// any parser-produced term**. Three independent mechanisms enforce that:
+///
+/// 1. **Construction flattens.** `<Lang>TermInner::from_alternatives`
+///    (`macros/src/gen/runtime/language.rs:659`) opens with
+///    `alts.into_iter().flat_map(|a| match a { Self::Ambiguous(inner) => inner, other => vec![other] })`
+///    — one level of unwrapping on every construction, which maintains flatness
+///    inductively as long as every input was itself flat.
+/// 2. **The type says so.** The generated declaration is documented
+///    *"Multiple parse alternatives (2+, flat — no nested Ambiguous)"*.
+/// 3. **Four `unreachable!` guards assert it** at the `all_alts()` seams in
+///    `macros/src/gen/runtime/dovetail_report.rs` and
+///    `dovetail_report/typed_report.rs`: *"all_alts() returns flat alternatives, not
+///    nested Ambiguous"*.
+///
+/// So there is no depth axis here to measure and none is gated. `Ambiguous` is a public
+/// variant that a caller *can* nest by hand, which is why this walk stays total rather
+/// than asserting flatness — but a bounded walk made iterative for uniformity is what
+/// this is, and calling it anything grander would misrepresent it.
+///
+/// ## Order is load-bearing
+///
+/// Children are pushed in REVERSE so the LIFO pop order reproduces the recursive
+/// pre-order walk exactly. That is not cosmetic: [`lower_proc_alternatives`] dedups by
+/// semantic key with `BTreeSet::insert`, which keeps the FIRST occurrence, so a
+/// different visit order could retain a different representative. Pinned by
+/// `iterative_alternative_collection_matches_the_recursive_walk`.
 fn collect_proc_alternatives<'a>(
     inner: &'a RhoCalcTermInner,
     alternatives: &mut Vec<&'a Proc>,
 ) -> Result<(), RhocalcAstLowerError> {
-    match inner {
-        RhoCalcTermInner::Proc(proc) => {
-            alternatives.push(proc);
-            Ok(())
-        },
-        RhoCalcTermInner::Ambiguous(inner_alternatives) => {
-            for alternative in inner_alternatives {
-                collect_proc_alternatives(alternative, alternatives)?;
-            }
-            Ok(())
-        },
-        _ => Err(RhocalcAstLowerError::ExpectedProcTerm),
+    let mut work: Vec<&'a RhoCalcTermInner> = vec![inner];
+    while let Some(node) = work.pop() {
+        match node {
+            RhoCalcTermInner::Proc(proc) => alternatives.push(proc),
+            // Reversed, so the stack pops them left-to-right.
+            RhoCalcTermInner::Ambiguous(inner_alternatives) => {
+                work.extend(inner_alternatives.iter().rev())
+            },
+            // Pre-order failure, exactly as the recursive form: alternatives collected
+            // before the offending node stay collected, and the first bad node decides.
+            _ => return Err(RhocalcAstLowerError::ExpectedProcTerm),
+        }
     }
+    Ok(())
 }
 
 fn lower_proc_alternatives<'a>(
@@ -4573,4 +4615,134 @@ fn bitvec_from_indices(indices: &[usize]) -> Vec<u8> {
         bitset[*index] = 1;
     }
     bitset
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Unit tests for the alternative-collection walk
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod alternative_collection_tests {
+    use super::*;
+
+    /// The RECURSIVE form of [`collect_proc_alternatives`], retained verbatim as a
+    /// differential ORACLE.
+    ///
+    /// Keeping the superseded implementation as a test-only twin is the cheapest way to
+    /// state what "the conversion changed nothing" means: not "the author believes the
+    /// orders match", but "the two implementations were run against the same inputs and
+    /// produced identical output, including the error cases".
+    fn collect_recursive<'a>(
+        inner: &'a RhoCalcTermInner,
+        alternatives: &mut Vec<&'a Proc>,
+    ) -> Result<(), RhocalcAstLowerError> {
+        match inner {
+            RhoCalcTermInner::Proc(proc) => {
+                alternatives.push(proc);
+                Ok(())
+            },
+            RhoCalcTermInner::Ambiguous(inner_alternatives) => {
+                for alternative in inner_alternatives {
+                    collect_recursive(alternative, alternatives)?;
+                }
+                Ok(())
+            },
+            _ => Err(RhocalcAstLowerError::ExpectedProcTerm),
+        }
+    }
+
+    fn proc_leaf(n: i64) -> RhoCalcTermInner {
+        RhoCalcTermInner::Proc(Proc::CastInt(Arc::new(Int::NumLit(n))))
+    }
+
+    /// A non-`Proc`, non-`Ambiguous` node — the arm both forms answer `Err` on.
+    fn foreign_leaf() -> RhoCalcTermInner {
+        RhoCalcTermInner::Int(Int::NumLit(0))
+    }
+
+    /// Render a collected alternative list as the integers it carries, so the two walks
+    /// can be compared on VALUE and ORDER rather than on pointer identity.
+    fn as_ints(alternatives: &[&Proc]) -> Vec<i64> {
+        alternatives
+            .iter()
+            .map(|proc| match proc {
+                Proc::CastInt(value) => match value.as_ref() {
+                    Int::NumLit(n) => *n,
+                    other => panic!("test built only NumLit leaves, got {other:?}"),
+                },
+                other => panic!("test built only CastInt leaves, got {other:?}"),
+            })
+            .collect()
+    }
+
+    /// Every shape, including ones the parser cannot produce (nested `Ambiguous`) and
+    /// ones that fail (a foreign leaf, in each position). The iterative walk must agree
+    /// with the recursive oracle on the collected ORDER **and** on the `Result`.
+    #[test]
+    fn iterative_alternative_collection_matches_the_recursive_walk() {
+        let shapes: Vec<RhoCalcTermInner> = vec![
+            // a bare reading
+            proc_leaf(1),
+            // the flat shape the parser actually produces
+            RhoCalcTermInner::Ambiguous(vec![proc_leaf(1), proc_leaf(2), proc_leaf(3)]),
+            // NESTED — unreachable from `from_alternatives`, reachable by hand
+            RhoCalcTermInner::Ambiguous(vec![
+                proc_leaf(1),
+                RhoCalcTermInner::Ambiguous(vec![proc_leaf(2), proc_leaf(3)]),
+                proc_leaf(4),
+            ]),
+            // deeper nesting, left-leaning
+            RhoCalcTermInner::Ambiguous(vec![
+                RhoCalcTermInner::Ambiguous(vec![RhoCalcTermInner::Ambiguous(vec![proc_leaf(1)])]),
+                proc_leaf(2),
+            ]),
+            // an empty alternative vector
+            RhoCalcTermInner::Ambiguous(vec![]),
+            // failures, in first / middle / last position and nested
+            foreign_leaf(),
+            RhoCalcTermInner::Ambiguous(vec![foreign_leaf(), proc_leaf(1)]),
+            RhoCalcTermInner::Ambiguous(vec![proc_leaf(1), foreign_leaf(), proc_leaf(2)]),
+            RhoCalcTermInner::Ambiguous(vec![proc_leaf(1), proc_leaf(2), foreign_leaf()]),
+            RhoCalcTermInner::Ambiguous(vec![
+                proc_leaf(1),
+                RhoCalcTermInner::Ambiguous(vec![proc_leaf(2), foreign_leaf()]),
+                proc_leaf(3),
+            ]),
+        ];
+
+        for (index, shape) in shapes.iter().enumerate() {
+            let mut from_iterative = Vec::new();
+            let iterative = collect_proc_alternatives(shape, &mut from_iterative);
+
+            let mut from_recursive = Vec::new();
+            let recursive = collect_recursive(shape, &mut from_recursive);
+
+            assert_eq!(
+                iterative.is_ok(),
+                recursive.is_ok(),
+                "shape {index}: the two walks disagreed on success/failure"
+            );
+            assert_eq!(
+                as_ints(&from_iterative),
+                as_ints(&from_recursive),
+                "shape {index}: the iterative walk collected a DIFFERENT ORDER than the \
+                 recursive oracle. Order is load-bearing — `lower_proc_alternatives` dedups \
+                 with `BTreeSet::insert`, which keeps the FIRST occurrence."
+            );
+        }
+    }
+
+    /// The ordering property stated positively, so a reader does not have to run the
+    /// oracle in their head to see what "source order" means.
+    #[test]
+    fn alternatives_are_collected_in_source_order_across_nesting() {
+        let shape = RhoCalcTermInner::Ambiguous(vec![
+            proc_leaf(1),
+            RhoCalcTermInner::Ambiguous(vec![proc_leaf(2), proc_leaf(3)]),
+            proc_leaf(4),
+        ]);
+        let mut collected = Vec::new();
+        collect_proc_alternatives(&shape, &mut collected).expect("every leaf is a Proc");
+        assert_eq!(as_ints(&collected), vec![1, 2, 3, 4]);
+    }
 }
