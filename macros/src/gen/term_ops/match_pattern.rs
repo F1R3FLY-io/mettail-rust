@@ -411,7 +411,7 @@ fn generate_iterative_engine(language: &LanguageDef) -> TokenStream {
 /// Generate the match arm for one category inside the iterative engine.
 ///
 /// Structure:
-/// ```rust,ignore
+/// ```text
 /// MatchTask::MatchProc(ground, pattern) => {
 ///     // 1. Variable check: if pattern is FreeVar, bind and continue
 ///     // 2. Constructor match: switch on (ground, pattern) variants

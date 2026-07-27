@@ -3,6 +3,7 @@
 //! A fragment defines types + terms only (no equations/rewrites/logic — those are
 //! language-specific). Multiple languages can mix in the same fragment via `mixins:`.
 //!
+// ignore-justification: invokes `mettail_macros::language_fragment!`, which cannot be in scope here — `macros` depends on `ast`, so the edge cannot be reversed. The same snippet IS compiled as a live doctest at its definition site, `macros/src/lib.rs`.
 //! ```ignore
 //! language_fragment! {
 //!     name: ArithOps,

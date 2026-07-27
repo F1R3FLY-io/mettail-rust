@@ -16,19 +16,20 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use ascent_syntax_export::{parse_ascent_program_text, AscentProgram};
+//! ```
+//! use ascent_syntax_export::parse_ascent_program_text;
 //!
 //! let program = parse_ascent_program_text(r#"
 //!     relation edge(Uuid, Uuid);
 //!     relation path(Uuid, Uuid);
-//!     
+//!
 //!     path(x, y) <-- edge(x, y);
 //!     path(x, z) <-- path(x, y), edge(y, z);
 //! "#)?;
 //!
 //! println!("Found {} relations", program.relations.len());
 //! println!("Found {} rules", program.rules.len());
+//! # Ok::<(), syn::Error>(())
 //! ```
 
 #![allow(
@@ -114,19 +115,20 @@ use syn::parse::Parser;
 /// - Lattices are declared with `lattice name(Type1, Type2, ...);`
 ///
 /// # Example
-/// ```ignore
+/// ```
 /// use ascent_syntax_export::parse_ascent_program_text;
 ///
 /// let program = parse_ascent_program_text(r#"
 ///     relation edge(Uuid, Uuid);
 ///     relation path(Uuid, Uuid);
-///     
+///
 ///     path(x, y) <-- edge(x, y);
 ///     path(x, z) <-- path(x, y), edge(y, z);
 /// "#)?;
 ///
 /// assert_eq!(program.relations.len(), 2);
 /// assert_eq!(program.rules.len(), 2);
+/// # Ok::<(), syn::Error>(())
 /// ```
 pub fn parse_ascent_program_text(text: &str) -> syn::Result<AscentProgram> {
     let tokens: proc_macro2::TokenStream = text.parse()?;

@@ -87,7 +87,7 @@ fn collect_cross_cat_triggers(language: &LanguageDef) -> std::collections::BTree
 ///
 /// The emitted signature is:
 ///
-/// ```ignore
+/// ```text
 /// fn lex_alt_rules_for_prefix(
 ///     cat_src_idx: u16,
 ///     kind: &mettail_prattail::automata::TokenKind,

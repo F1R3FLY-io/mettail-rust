@@ -55,6 +55,7 @@ fn generate_random_for_category(cat_name: &Ident, language: &LanguageDef) -> Tok
             /// * `max_collection_width` - Maximum number of elements in any collection
             ///
             /// # Example
+            // ignore-justification: this doc comment is EMITTED into generated code (it is inside `quote!`), so rustdoc never collects it for this crate; in the generated crate `Proc` names whichever category the grammar declared, which no fixed `use` path can reach.
             /// ```ignore
             /// let term = Proc::generate_random_at_depth(&["a".into(), "b".into()], 25, 3);
             /// ```

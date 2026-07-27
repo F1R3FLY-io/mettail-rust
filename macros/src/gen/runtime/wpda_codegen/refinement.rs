@@ -19,7 +19,7 @@
 //! ## Lowering model
 //!
 //! The closure body has shape:
-//! ```ignore
+//! ```text
 //! |value: &dyn Any| -> bool {
 //!     if let Some(__v) = value.downcast_ref::<NativeTy>() {
 //!         <body>

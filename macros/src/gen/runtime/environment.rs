@@ -9,7 +9,11 @@
 //!
 //! For a theory with `types { Proc; Name; }`:
 //!
-//! ```rust,ignore
+//! ```rust
+//! # use indexmap::IndexMap;
+//! # use std::collections::HashMap;
+//! # struct Proc;
+//! # struct Name;
 //! // Per-category environments (preserves insertion order)
 //! pub struct ProcEnv(pub IndexMap<String, Proc>);
 //! pub struct NameEnv(pub IndexMap<String, Name>);
@@ -24,7 +28,8 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+// ignore-justification: calls the GENERATED env API (`RhoCalcEnv::new`, `ProcEnv::set`, `Term::substitute_env`) — an API surface, not a type, so nothing in this crate can bind those names and a stand-in would only prove that the stand-in compiles. The generated *shapes* those calls target are compiled in the block above.
+//! ```ignore
 //! let mut env = RhoCalcEnv::new();
 //! env.proc.set("p".to_string(), some_proc);
 //! env.comments.insert("p".to_string(), "My comment".to_string());

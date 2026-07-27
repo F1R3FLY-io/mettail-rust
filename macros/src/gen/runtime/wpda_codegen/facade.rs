@@ -5,7 +5,7 @@
 //!
 //! ## Signature
 //!
-//! ```ignore
+//! ```text
 //! pub fn parse_<Cat>_via_wpda(
 //!     kinds: &[TokenKind],
 //!     texts: &[&str],

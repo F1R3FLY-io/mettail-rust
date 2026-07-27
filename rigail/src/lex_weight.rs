@@ -136,17 +136,36 @@
 //!
 //! Stage 6 codegen will emit each WPDS rule with:
 //!
-//! ```rust,ignore
+//! `WpdsRule` itself belongs to `prattail`, which sits DOWNSTREAM of this crate
+//! (`prattail → rigail`), so no dependency edge can bring it into scope here; the
+//! hidden lines below stand it in locally. The weight literal is the real
+//! [`LexicographicWeight`], so this example fails to compile if its fields ever
+//! change — which is how the missing `open_len`/`lex_alt_idx` below were found.
+//!
+//! ```rust
+//! # use rigail::{LexicographicWeight, TropicalWeight};
+//! # enum WpdsRule {
+//! #     Push { from_gamma: u32, to_gamma_bottom: u32, to_gamma_top: u32,
+//! #            weight: LexicographicWeight },
+//! # }
+//! # struct EmittedRule { source_category_src_idx: u16, index_within_category: u16 }
+//! # let (from_gamma, to_gamma_bottom, to_gamma_top) = (0u32, 1u32, 2u32);
+//! # let rule_cost = 1.0f64;
+//! # let rule = EmittedRule { source_category_src_idx: 3, index_within_category: 7 };
+//! # let _ =
 //! WpdsRule::Push {
 //!     from_gamma,
 //!     to_gamma_bottom,
 //!     to_gamma_top,
 //!     weight: LexicographicWeight {
+//!         open_len: 0,
 //!         primary: TropicalWeight(rule_cost),
+//!         lex_alt_idx: 0,
 //!         src_idx: rule.source_category_src_idx,
 //!         rule_idx: rule.index_within_category,
 //!     },
 //! }
+//! # ;
 //! ```
 //!
 //! The walker (Stage 4) accumulates these via `times` along the active

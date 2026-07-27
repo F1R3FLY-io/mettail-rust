@@ -67,7 +67,9 @@ use std::thread::LocalKey;
 ///
 /// # Example (generated-code shape, no user should call this directly)
 ///
-/// ```ignore
+/// ```
+/// # use std::cell::Cell;
+/// # enum DropTask { Leaf, Node(Box<DropTask>) }
 /// thread_local! {
 ///     static DROP_POOL: Cell<Vec<DropTask>> = const { Cell::new(Vec::new()) };
 /// }
@@ -76,10 +78,15 @@ use std::thread::LocalKey;
 ///     mettail_runtime::visitor::with_pool_or_fallback(&DROP_POOL, |stack| {
 ///         stack.push(root);
 ///         while let Some(task) = stack.pop() {
-///             match task { /* per-variant */ }
+///             match task {
+///                 // per-variant: push children, drop leaves
+///                 DropTask::Node(child) => stack.push(*child),
+///                 DropTask::Leaf => {},
+///             }
 ///         }
 ///     });
 /// }
+/// # drop_iter(DropTask::Node(Box::new(DropTask::Leaf)));
 /// ```
 pub fn with_pool_or_fallback<T, F, R>(pool: &'static LocalKey<Cell<Vec<T>>>, f: F) -> R
 where

@@ -265,6 +265,7 @@ pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) -> T
 ///
 /// # Invocation
 ///
+// ignore-justification: `#[path = "definitions/acdemo.rs"] mod acdemo;` loads a file off disk relative to the including source file; a doctest has no such file, and the `acdemo_generated_tests!` wrapper it then invokes is emitted BY this crate into that definition, so neither half can exist here.
 /// ```ignore
 /// #[path = "definitions/acdemo.rs"]
 /// mod acdemo;

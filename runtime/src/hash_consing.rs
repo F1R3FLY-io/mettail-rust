@@ -14,8 +14,14 @@
 //! Generated code (when ART01 gate is enabled) wraps recursive fields in
 //! `Rc<T>` and calls `intern()` after construction:
 //!
-//! ```rust,ignore
+//! ```rust
+//! # use std::rc::Rc;
+//! # #[derive(Clone, PartialEq, Eq, Hash)]
+//! # enum Proc { PNil, PPar(Rc<Proc>, Rc<Proc>) }
+//! # mettail_runtime::define_intern_table!(INTERN_PROC, intern, Proc);
+//! # let (left, right) = (Proc::PNil, Proc::PNil);
 //! let term = Proc::PPar(intern(left), intern(right));
+//! # match term { Proc::PPar(l, r) => assert!(Rc::ptr_eq(&l, &r)), _ => unreachable!() }
 //! ```
 //!
 //! The interning table is epoch-scoped: it is cleared at the start of each
@@ -118,11 +124,14 @@ pub fn intern_epoch() -> u64 {
 /// an intern function.
 ///
 /// Usage in generated code:
-/// ```rust,ignore
+/// ```rust
+/// # #[derive(Clone, PartialEq, Eq, Hash)]
+/// # struct Proc;
 /// mettail_runtime::define_intern_table!(INTERN_PROC, intern_proc, Proc);
 /// // Generates:
 /// // thread_local! { static INTERN_PROC: RefCell<InternTable<Proc>> = ... }
 /// // fn intern_proc(value: Proc) -> Rc<Proc> { ... }
+/// # assert!(std::rc::Rc::ptr_eq(&intern_proc(Proc), &intern_proc(Proc)));
 /// ```
 #[macro_export]
 macro_rules! define_intern_table {

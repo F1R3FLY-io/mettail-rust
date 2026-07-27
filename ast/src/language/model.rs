@@ -127,7 +127,7 @@ pub enum Premise {
     /// `macros/src/gen/runtime/wpda_codegen/auto_inject.rs`.
     ///
     /// Lowers at codegen to a literal pattern-rejection clause:
-    /// ```ignore
+    /// ```text
     /// if !matches!(<inner_var>, <source_category>::<v1>(_)
     ///                         | <source_category>::<v2>(_) | ...)
     /// ```

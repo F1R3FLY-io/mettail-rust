@@ -1604,7 +1604,7 @@ fn parse_guards(input: ParseStream) -> SynResult<GuardConfig> {
 
 /// Parse the `guard_slots { <Label>(<param>); ... }` sub-block.
 ///
-/// ```ignore
+/// ```text
 /// guards {
 ///     guard_slots {
 ///         ForRowWhere(cond);
@@ -1646,7 +1646,7 @@ fn parse_guard_slots_block(input: ParseStream) -> SynResult<Vec<GuardSlotDecl>> 
 
 /// Parse a single built-in predicate declaration:
 ///
-/// ```ignore
+/// ```text
 /// Label . params |- syntax_form (| syntax_form)* @[anno1, anno2]? ;
 /// ```
 fn parse_builtin_predicate(input: ParseStream) -> SynResult<BuiltinPredicate> {

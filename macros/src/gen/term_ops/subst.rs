@@ -238,7 +238,7 @@ impl FieldInfo {
 /// wrapper methods.
 ///
 /// Emitted output:
-/// ```ignore
+/// ```text
 /// enum AnySubstTerm { Wrap<Cat>(<Cat>), ... }
 /// enum SubstOp       { Match<R>{vars,repls}, Env<R>{env_map}, Unify, ... }
 /// enum SubstTask     { Visit<Cat>{src,slot,op_idx}, Assemble<Cat>_<Label>{...}, ... }

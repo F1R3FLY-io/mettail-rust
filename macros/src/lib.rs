@@ -259,7 +259,9 @@ pub fn language(input: TokenStream) -> TokenStream {
 /// Fragments are stored in the in-process registry and can be mixed into
 /// `language!` definitions via `mixins: [FragmentName]`.
 ///
-/// ```ignore
+/// ```
+/// use mettail_macros::language_fragment;
+///
 /// language_fragment! {
 ///     name: ArithOps,
 ///     types { ![i32] as Int },
@@ -294,6 +296,7 @@ pub fn language_fragment(input: TokenStream) -> TokenStream {
 /// to the constituent sub-languages. Parsing tries each sub-language in
 /// declaration order and returns the first success.
 ///
+// ignore-justification: the expansion names `mettail_runtime::{Term, Language, ...}` and the caller-supplied `calculator`/`rhocalc` modules; `macros` depends on neither (and cannot depend on `languages`, which depends on `macros`), so this invocation cannot compile from inside this crate. Verified by compiling it: E0433 on `mettail_runtime`, `calculator`, `rhocalc`.
 /// ```ignore
 /// compose_languages! {
 ///     name: Combined,

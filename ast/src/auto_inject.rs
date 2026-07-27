@@ -3,7 +3,7 @@
 //!
 //! **Stage 3.13 (2026-04-30):** generalizes per-grammar hand-written
 //! injection rules like
-//! ```ignore
+//! ```text
 //! IntToBigInt . i:Int |- i : BigInt ;
 //! IntToBigRat . i:Int |- i : BigRat ;
 //! ```
@@ -438,7 +438,7 @@ pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput 
 /// Shape (matches user-written cast cong rules like `IntToFloatCong` at
 /// `languages/src/calculator.rs:486-488`):
 ///
-/// ```ignore
+/// ```text
 /// <Source>To<Target>Cong . | S ~> T |- (<Source>To<Target> S) ~> (<Source>To<Target> T) ;
 /// ```
 ///
