@@ -1,0 +1,54 @@
+// ★★ THE COMPUTED DESK — filter over values the MACHINE computed, not values you typed.
+//
+// `demos/flt-lambda-lab/04-desk.rho` filters three Church numerals into @"numerals" and then
+// pattern-matches them. Every one of those numerals is a CONSTANT someone transcribed: the
+// program proves that the FLT pattern matcher works, and proves nothing at all about the
+// machine's ability to compute the thing being matched.
+//
+// This program removes the transcription. The `[*]` suffix on a send says:
+//
+//     x!(P)[*]   ≡   explore EVERY execution path of P, and deliver each path's terminal
+//                    term to the channel x
+//
+// so the payloads that arrive on @"results" are normal forms the f1r3node machine β-reduced,
+// one enumerated communication at a time, inside a speculative tuplespace. Nothing below
+// spells out an answer.
+//
+//   plus ≡ λm.λn.λf.λx. m f (n f x)     two ≡ λf.λx. f (f x)     three ≡ λf.λx. f (f (f x))
+//   mult ≡ λm.λn.λf. m (n f)
+//
+//   plus 2 3  ⟶β  λf.λx. f (f (f (f (f x))))          the Church numeral 5
+//   mult 2 3  ⟶β  λf.λx. f (f (f (f (f (f x)))))      the Church numeral 6
+//
+// HOW TO RUN
+// ──────────
+//   target/debug/rhocalc demos/flt-lookahead/01-computed-desk.rho
+//
+// WHAT HAPPENS, IN ONE ROUND
+// ──────────────────────────
+//   1. each `[*]` lowers to a speculation REQUEST — `@"^spec-all"!(⟦P⟧, @"results")` — and
+//      NOT to a send of P on @"results". The subject is never deposited; only computed
+//      terminal terms ever rest there;
+//   2. an installed system process on `^spec-all` consumes the request, funds a fresh
+//      speculative sandbox from this deploy's phlogiston, injects the λ guest's own installed
+//      Rho-net program alongside a seed over ⟦P⟧, and enumerates every enabled rendezvous
+//      breadth-first until the branch reaches quiescence;
+//   3. each branch's terminal term is produced back onto @"results" — as a BARE term, so the
+//      ordinary Foreign Language Term receive pattern below matches it verbatim;
+//   4. the `for` matches in the SAME reduction round. There is no second pass.
+//
+// The two `[*]` sends are independent, so both are served; the single `for` consumes one of
+// the two results and the other is left resting, exactly as it would be for two ordinary
+// sends of two ordinary values.
+//
+// EXPECT: @"OUT" carries the BODY of one computed numeral — five or six nested applications —
+// and the run reports `lookahead: 2 request(s) served`. If the engine were ever missing, the
+// request would REST on ^spec-all and the interpreter would say so; it can never quietly
+// degrade to publishing nothing, and it can never publish the subject back as an "answer".
+
+@"results"!(lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+
+for(@lambda`lam f. lam x. ${body}` <- @"results") {
+  @"OUT"!(lambda`${body}`)
+}

@@ -59,10 +59,15 @@ use mettail_rholang_codegen::{
     RhoDefaultBackendRequirements, RhoFoldDataflowDisposition, RhoGuardCoverageEvidence,
     RhoScalarType, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
 };
+use mettail_rholang_runtime::lookahead::{
+    SPEC_DELIVERY_CHANNEL, SPEC_ERR_CHANNEL, SPEC_FAILURE_CHANNEL, SPEC_REQUEST_CHANNELS,
+    SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL,
+};
+use mettail_rholang_runtime::speculation::server::{LookaheadEngine, SpeculationGuest};
 use mettail_rholang_runtime::{
     lower_rhocalc_proc_with_resolver, par_as_runtime_observation_value,
-    run_normalized_par_for_oracle_and_read_runtime_values, DriveObservationChannels,
-    PlannedRhoBackend, RhocalcAstLowerError,
+    run_normalized_par_with_lookahead_engine, DriveObservationChannels, PlannedRhoBackend,
+    RhocalcAstLowerError,
 };
 use mettail_runtime::{clear_var_cache, Language, RuntimeObservationValue};
 use models::rhoapi::Par;
@@ -630,13 +635,74 @@ async fn evaluate_term_to_normal_form(term: Par) -> Result<(), InterpError> {
     Ok(())
 }
 
-/// Run a PROCESS to rest on the reducer and report the `@"OUT"` observations. This is the exact
-/// helper the from-source beats use (`out_values_from_source`).
+/// The `[*]` / `[n]` request server this interpreter installs, carrying the `lambda` guest.
+///
+/// A speculation over a Foreign Language Term needs the guest's **installed program** and a
+/// **seed** that hands the reflected term to it — see `speculation::server`'s `prelude`
+/// section. Registering the guest here, next to the FLT resolver that lowers its terms, is
+/// what makes `lambda`…`` speculable; a subject of any other language is refused typed on
+/// `^spec-err` rather than explored inert.
+fn lookahead_engine() -> LookaheadEngine {
+    let (backend, fingerprint) = lambda_backend();
+    match backend.plan().installed_rho_net_program_par() {
+        Ok(prelude) => {
+            LookaheadEngine::new().with_guest(SpeculationGuest::driven(fingerprint, prelude))
+        },
+        // Fail-closed rather than fail-quiet: an engine with no guest still SERVES requests,
+        // and refuses every foreign subject loudly on `^spec-err`. Silently installing no
+        // engine at all would leave the request resting, which reads as "the feature is not
+        // wired" rather than "this language's program would not lower".
+        Err(_) => LookaheadEngine::new(),
+    }
+}
+
+/// Run a PROCESS to rest on the reducer and report the `@"OUT"` observations, with the
+/// `[*]` / `[n]` request server installed.
+///
+/// Fail-closed, in the same shape `evaluate_term_to_normal_form` uses for the drive's typed
+/// channels: an unserved request or a request-level refusal is reported BEFORE any
+/// observation, because a `[*]` that nothing served publishes nothing and is otherwise
+/// indistinguishable from a program that legitimately observed nothing.
 async fn run_process_to_rest(program: &Par) -> Result<(), InterpError> {
     println!("mode: process → running to rest on the f1r3node reducer (observing @\"OUT\")");
-    let out_values = run_normalized_par_for_oracle_and_read_runtime_values(program, "OUT")
+    let engine = lookahead_engine();
+
+    let mut channels: Vec<&str> = Vec::with_capacity(SPEC_REQUEST_CHANNELS.len() + 6);
+    channels.push("OUT");
+    channels.push(SPEC_SUCCESS_CHANNEL);
+    channels.push(SPEC_FAILURE_CHANNEL);
+    channels.push(SPEC_TRUNCATED_CHANNEL);
+    channels.push(SPEC_ERR_CHANNEL);
+    channels.push(SPEC_DELIVERY_CHANNEL);
+    channels.extend_from_slice(SPEC_REQUEST_CHANNELS);
+
+    let rest = run_normalized_par_with_lookahead_engine(program, &engine, &channels)
         .await
         .map_err(InterpError::Reduce)?;
+    let on = |channel: &str| rest.get(channel).map(Vec::as_slice).unwrap_or_default();
+
+    // ★ FAIL-CLOSED: a request nobody served, or one the engine refused.
+    let mut unserved: Vec<(&'static str, Vec<Par>)> =
+        Vec::with_capacity(SPEC_REQUEST_CHANNELS.len());
+    for channel in SPEC_REQUEST_CHANNELS {
+        unserved.push((channel, on(channel).to_vec()));
+    }
+    let unserved = mettail_rholang_runtime::lookahead::unserved_requests(&unserved);
+    if !unserved.is_empty() {
+        return Err(InterpError::DriverError(format!(
+            "{} lookahead request(s) rested unserved: {:?}",
+            unserved.len(),
+            unserved
+        )));
+    }
+    if !on(SPEC_ERR_CHANNEL).is_empty() {
+        return Err(InterpError::DriverError(render_pars(on(SPEC_ERR_CHANNEL))));
+    }
+
+    let out_values: Vec<RuntimeObservationValue> = on("OUT")
+        .iter()
+        .filter_map(par_as_runtime_observation_value)
+        .collect();
     if out_values.is_empty() {
         println!("  @\"OUT\": (the program rested without publishing any observation)");
     } else {
@@ -646,6 +712,21 @@ async fn run_process_to_rest(program: &Par) -> Result<(), InterpError> {
             if let Some(reading) = church_reading(value) {
                 println!("        = {reading}");
             }
+        }
+    }
+
+    // The speculation transcript, reported only when a `[*]` / `[n]` actually ran.
+    let speculated = on(SPEC_DELIVERY_CHANNEL).len();
+    if speculated > 0 {
+        println!(
+            "  lookahead: {speculated} request(s) served · ^spec-success: {} · ^spec-failure: {} \
+             · ^spec-truncated: {}",
+            on(SPEC_SUCCESS_CHANNEL).len(),
+            on(SPEC_FAILURE_CHANNEL).len(),
+            on(SPEC_TRUNCATED_CHANNEL).len(),
+        );
+        for (index, datum) in on(SPEC_FAILURE_CHANNEL).iter().enumerate() {
+            println!("    ^spec-failure[{index}] {}", render_pars(std::slice::from_ref(datum)));
         }
     }
     Ok(())

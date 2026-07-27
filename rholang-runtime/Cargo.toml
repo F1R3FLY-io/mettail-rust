@@ -787,6 +787,19 @@ name = "church_desk_demo"
 path = "tests/church_desk_demo.rs"
 required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
 
+# CI gate for the COMPUTED DESK demo (`demos/flt-lookahead/`): drives the built `rhocalc` binary
+# on the committed `[*]` program and asserts the audience's observable — the BODY of a Church
+# numeral the machine β-reduced inside a speculative tuplespace, and the `2 request(s) served`
+# line that says the lookahead actually ran. Two of its cells assert the demo's CLAIM rather than
+# its output: that the program contains neither answer (so it cannot be echoing a constant) and
+# that the transcript is byte-identical across three runs (so the enumeration is content-derived
+# rather than schedule-dependent). It also parses RUN-SHEET.md, so the presenter's page cannot
+# drift from the binary.
+[[test]]
+name = "lookahead_demo"
+path = "tests/lookahead_demo.rs"
+required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
+
 # CI gate for the `rhocalc` binary: runs it on the committed demo `.rho` file and asserts the
 # RhoCalc program (which exercises the grammar's FLT feature) reduces on the reducer — the COMM
 # fires, the typed `${x}` holes bind, and the re-quote reconstructs App(I, K) = (λ.0 λ.λ.1) on OUT.
