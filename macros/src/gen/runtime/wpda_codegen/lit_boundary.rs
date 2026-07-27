@@ -212,7 +212,9 @@ fn grammar_terminals(language: &LanguageDef) -> BTreeSet<String> {
     for rule in &language.terms {
         let mut normalized = rule.clone();
         mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
-        let Some(sp) = &normalized.syntax_pattern else { continue };
+        let Some(sp) = &normalized.syntax_pattern else {
+            continue;
+        };
         for expr in sp {
             match expr {
                 SyntaxExpr::Literal(l) => {
@@ -234,7 +236,9 @@ fn grammar_terminals(language: &LanguageDef) -> BTreeSet<String> {
     // variant-agnostic `CollectionCategory::delimiters()` accessor, so a new collection
     // container shape is covered without a new match arm here.
     for ty in &language.types {
-        let Some(kind) = &ty.collection_kind else { continue };
+        let Some(kind) = &ty.collection_kind else {
+            continue;
+        };
         let d = kind.delimiters();
         for part in [Some(&d.open), Some(&d.close), Some(&d.sep), d.key_val_sep.as_ref()]
             .into_iter()
@@ -251,14 +255,19 @@ fn grammar_terminals(language: &LanguageDef) -> BTreeSet<String> {
 /// The union DFA over the language's DEFAULT-mode token alphabet (regex families only —
 /// fixed terminals are handled as strings by the caller). `None` when no pattern
 /// compiles, in which case only the string-level terminal analysis contributes.
-fn token_alphabet_dfa(language: &LanguageDef) -> Option<(Dfa, mettail_prattail::automata::partition::AlphabetPartition)> {
+fn token_alphabet_dfa(
+    language: &LanguageDef,
+) -> Option<(Dfa, mettail_prattail::automata::partition::AlphabetPartition)> {
     let mut nfa = Nfa::new();
     let mut any = false;
     let defaults = LiteralPatterns::default();
     // Source (1): the language's own default-mode token patterns — this is where the
     // `literals { … }` entries live after desugaring.
-    let mut patterns: Vec<String> =
-        language.token_defs.iter().map(|td| td.pattern.clone()).collect();
+    let mut patterns: Vec<String> = language
+        .token_defs
+        .iter()
+        .map(|td| td.pattern.clone())
+        .collect();
     // Source (2): the built-in families, unioned in unconditionally (see the module docs
     // — a union can only widen the sets, i.e. decline more, which is the safe direction).
     patterns.push(defaults.integer.clone());
@@ -366,15 +375,14 @@ pub(crate) fn literal_boundary_sets(
         // ── Subsumption: an ident-shaped literal whose boundary bytes are all word
         // characters is already fully covered by the RETAINED word-run test. Emitting a
         // row for it would cost a runtime scan and change nothing.
-        if is_word_shaped(l)
-            && ext.iter().all(|&b| is_word(b))
-            && pre.iter().all(|&b| is_word(b))
-        {
+        if is_word_shaped(l) && ext.iter().all(|&b| is_word(b)) && pre.iter().all(|&b| is_word(b)) {
             continue;
         }
 
-        let boundary =
-            LitBoundary { pre: pre.into_iter().collect(), ext: ext.into_iter().collect() };
+        let boundary = LitBoundary {
+            pre: pre.into_iter().collect(),
+            ext: ext.into_iter().collect(),
+        };
         if boundary.is_vacuous() {
             continue;
         }
@@ -438,8 +446,12 @@ pub(crate) fn inert_token_patterns(language: &LanguageDef) -> Vec<String> {
     let mut out: Vec<String> = Vec::with_capacity(language.token_defs.len() + 1);
     for td in &language.token_defs {
         // The lexer's own off-DEFAULT predicate (`prattail/src/lexer.rs`).
-        let off_default =
-            td.stream.as_ref().map(|s| s.to_string()).filter(|s| s != "main").is_some();
+        let off_default = td
+            .stream
+            .as_ref()
+            .map(|s| s.to_string())
+            .filter(|s| s != "main")
+            .is_some();
         if off_default && !td.pattern.is_empty() {
             out.push(td.pattern.clone());
         }

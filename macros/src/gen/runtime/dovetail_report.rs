@@ -460,9 +460,7 @@ pub(crate) struct CommRewrite {
 /// (accepting `None` — inferred from the constructor's grammar — or an explicit `HashBag`, exactly
 /// as the shared `ac_rule_shape`/`collection_apply`). Returns the op constructor, the element
 /// patterns, and the optional `rest` remainder variable.
-fn comm_collection_apply(
-    pattern: &AstPattern,
-) -> Option<(&Ident, &[AstPattern], Option<&Ident>)> {
+fn comm_collection_apply(pattern: &AstPattern) -> Option<(&Ident, &[AstPattern], Option<&Ident>)> {
     let AstPattern::Term(PatternTerm::Apply { constructor, args }) = pattern else {
         return None;
     };
@@ -505,7 +503,8 @@ fn comm_structured_element(
             AstPattern::Term(PatternTerm::Var(v)) => vars.push(v.clone()),
             // `^x.body` — admitted only as the LAST argument of a single-`Binder` constructor.
             AstPattern::Term(PatternTerm::Lambda { body, .. })
-                if index + 1 == args.len() && constructor_is_single_binder(language, &category, constructor) =>
+                if index + 1 == args.len()
+                    && constructor_is_single_binder(language, &category, constructor) =>
             {
                 let AstPattern::Term(PatternTerm::Var(body_var)) = body.as_ref() else {
                     return None;
@@ -536,7 +535,9 @@ fn constructor_is_single_binder(
 ) -> bool {
     collect_category_variants(category, language)
         .into_iter()
-        .any(|variant| matches!(variant, VariantKind::Binder { label, .. } if &label == constructor))
+        .any(
+            |variant| matches!(variant, VariantKind::Binder { label, .. } if &label == constructor),
+        )
 }
 
 /// The unique variable shared by EVERY element, exactly once in each — the non-linear channel
@@ -696,9 +697,8 @@ pub(crate) fn is_comm_rewrite(language: &LanguageDef, rw: &RewriteRule) -> Optio
                 || collect_category_variants(&element.category, language)
                     .into_iter()
                     .any(|variant| match variant {
-                        VariantKind::Binder { label, .. } | VariantKind::MultiBinder { label, .. } => {
-                            label == element.constructor
-                        },
+                        VariantKind::Binder { label, .. }
+                        | VariantKind::MultiBinder { label, .. } => label == element.constructor,
                         _ => false,
                     })
         })
@@ -2477,11 +2477,17 @@ mod tests {
         assert_eq!(sr.nonlinear_var.to_string(), "N");
         assert_eq!(sr.rest_var.to_string(), "rest");
         assert_eq!(
-            sr.reduct_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+            sr.reduct_vars
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>(),
             vec!["P".to_string(), "Q".to_string()]
         );
         assert_eq!(
-            sr.elements.iter().map(|e| e.constructor.to_string()).collect::<Vec<_>>(),
+            sr.elements
+                .iter()
+                .map(|e| e.constructor.to_string())
+                .collect::<Vec<_>>(),
             vec!["POpen".to_string(), "PAmb".to_string()]
         );
         // It is NOT a Comm rewrite (mutually exclusive by RHS shape).
@@ -2694,7 +2700,11 @@ mod tests {
         assert!(binder.is_binder);
         assert!(binder.scope_is_explicit_lambda, "`^x.p` is the explicit binder spelling");
         assert_eq!(
-            binder.args.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+            binder
+                .args
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>(),
             vec!["n".to_string(), "p".to_string()],
             "the `^x.p` argument contributes the body variable `p`"
         );

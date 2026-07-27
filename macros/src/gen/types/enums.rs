@@ -340,7 +340,9 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
                 },
                 FieldType::Collection { coll_type, element_type } => {
                     let coll_type_ident = match coll_type {
-                        CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
+                        CollectionType::HashBag
+                        | CollectionType::HashMap
+                        | CollectionType::PathMap => {
                             quote! { mettail_runtime::HashBag }
                         },
                         CollectionType::HashSet => quote! { std::collections::HashSet },
@@ -595,7 +597,9 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
                 GrammarItem::Collection { coll_type, element_type, .. } => {
                     // Collection becomes a field with the appropriate collection type
                     let coll_type_ident = match coll_type {
-                        CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
+                        CollectionType::HashBag
+                        | CollectionType::HashMap
+                        | CollectionType::PathMap => {
                             quote! { mettail_runtime::HashBag }
                         },
                         CollectionType::HashSet => quote! { std::collections::HashSet },

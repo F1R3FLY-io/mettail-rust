@@ -1,10 +1,10 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+use crate::gen::capture::{capture_layout, CaptureFieldKind};
 use crate::gen::native::lossless_coercion::build_lossless_coercion;
 use crate::gen::native::{native_type_to_string, NativeType};
 use crate::gen::runtime::wpda_codegen::builtin_metadata::classify_simple_projection_shape;
-use crate::gen::capture::{capture_layout, CaptureFieldKind};
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
 };
@@ -593,9 +593,8 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                     let name = format_ident!("{}", f.name);
                                     pats.push(quote! { #name });
                                     if type_has_native_eval(ty, language) {
-                                        bindings.push(
-                                            quote! { let #name = #name.as_ref().eval(); },
-                                        );
+                                        bindings
+                                            .push(quote! { let #name = #name.as_ref().eval(); });
                                         try_bindings.push(
                                             quote! { let #name = #name.as_ref().try_eval()?; },
                                         );
@@ -1427,10 +1426,7 @@ mod tests {
     #[test]
     fn classify_top_level_guard_yields_guard_entry() {
         let category = format_ident!("Proc");
-        let ctx = vec![
-            simple("p", "Proc"),
-            TermParam::GuardBody { name: format_ident!("guard") },
-        ];
+        let ctx = vec![simple("p", "Proc"), TermParam::GuardBody { name: format_ident!("guard") }];
         let classified = classify_term_params_for_pda(&ctx, &category)
             .expect("top-level GuardBody must classify for the PDA");
         assert!(matches!(&classified[1], PdaParam::Guard { name } if name == "guard"));

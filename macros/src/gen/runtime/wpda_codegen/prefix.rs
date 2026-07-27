@@ -590,9 +590,7 @@ fn category_leading_literals(
             if let Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) = sp.first() {
                 out.insert(text.clone());
             }
-        } else if let Some(mettail_ast::grammar::GrammarItem::Terminal(text)) =
-            rule.items.first()
-        {
+        } else if let Some(mettail_ast::grammar::GrammarItem::Terminal(text)) = rule.items.first() {
             out.insert(text.clone());
         }
     }
@@ -1265,9 +1263,7 @@ pub fn emit_paren_dispatch_arms(
             });
         }
         // Branches 1..N: each binder rule with `(` trigger.
-        for (paren_binder_position, (rule_idx, shape)) in
-            paren_binder_rules.iter().enumerate()
-        {
+        for (paren_binder_position, (rule_idx, shape)) in paren_binder_rules.iter().enumerate() {
             let body_src_idx = super::binder::binder_initial_body_cat(shape)
                 .and_then(|name| super::binder::lookup_src_idx(name, categories))
                 .unwrap_or(result_src_idx);
@@ -1465,7 +1461,7 @@ fn source_ident_first_is_var_only_rec(
             Some(mettail_ast::grammar::GrammarItem::Terminal(_)) => {
                 // Literal-led: not Ident-first.
                 continue;
-            }
+            },
             Some(mettail_ast::grammar::GrammarItem::NonTerminal {
                 ident: nt_ident,
                 kind: mettail_ast::grammar::NonTerminalKind::Category,
@@ -1495,9 +1491,7 @@ fn source_ident_first_is_var_only_rec(
                 let structural_item_count = rule
                     .items
                     .iter()
-                    .filter(|it| {
-                        !matches!(it, mettail_ast::grammar::GrammarItem::Terminal(_))
-                    })
+                    .filter(|it| !matches!(it, mettail_ast::grammar::GrammarItem::Terminal(_)))
                     .count();
                 let is_pure_projection = structural_item_count == 1
                     && rule.items.iter().all(|it| {
@@ -1533,13 +1527,13 @@ fn source_ident_first_is_var_only_rec(
                     return false;
                 }
                 continue;
-            }
+            },
             Some(mettail_ast::grammar::GrammarItem::NonTerminal {
                 kind: mettail_ast::grammar::NonTerminalKind::Var,
                 ..
             }) => {
                 continue;
-            }
+            },
             _ => {
                 // Binder / IdentCapture / other leading items. Resolve via the
                 // judgement-style syntax_pattern where possible; otherwise be
@@ -1553,7 +1547,7 @@ fn source_ident_first_is_var_only_rec(
                 } else {
                     return false;
                 }
-            }
+            },
         }
     }
     // No non-Var rule of `source_cat` admits a NEW (non-var) Ident first token ⇒
@@ -1689,10 +1683,7 @@ pub fn emit_prefix_arms_for_category(
             });
             entry
                 .descs
-                .push(UnifiedDescriptor::CrossCatLhs {
-                    source_src_idx,
-                    sigil_leads_result_rule,
-                });
+                .push(UnifiedDescriptor::CrossCatLhs { source_src_idx, sigil_leads_result_rule });
         }
     }
     // B11 fix (2026-04-28): two-pass emission. Pass 1 emits ALL atomic-shape
@@ -2129,14 +2120,23 @@ enum UnifiedDescriptor {
     /// `BinderRule`; the mid-rule positions (slots 1..) parse the rest. The
     /// leading capture's `ActionArg::Token` is prepended to the action args by
     /// `classify_binder_in`.
-    LeadingTokenKindCapture { rule_idx: u16, body_src_idx: u16, kind_name: String },
+    LeadingTokenKindCapture {
+        rule_idx: u16,
+        body_src_idx: u16,
+        kind_name: String,
+    },
     /// L9-4: a LEADING guest-body rule (`PFlt . |- *flt(node, open, close) :
     /// Cat`). Mirrors `LeadingTokenKindCapture` but the emitted Fork carries
     /// `ConsumeGuestBodyAndPush` (scan opener→body→closer, assemble the FltNode,
     /// PUSH `RuleAt(slot=1)`, enter `BinderRule`). The assembled
     /// `ActionArg::GuestBody` is prepended to the action args by
     /// `classify_binder_in`'s leading-prepend.
-    LeadingGuestBody { rule_idx: u16, body_src_idx: u16, open_kind: String, close_kind: String },
+    LeadingGuestBody {
+        rule_idx: u16,
+        body_src_idx: u16,
+        open_kind: String,
+        close_kind: String,
+    },
     /// Cross-category prefix-unary rule. Consumes its own trigger token,
     /// pushes the wrapper Return frame, and delegates the operand to the
     /// source category at that source's prefix floor.
@@ -2229,22 +2229,12 @@ fn record_initiating_rule_rows(
                 )
             });
             for &member in members {
-                fork_rows.record_site2_row(
-                    category_src_idx,
-                    member,
-                    branch_position,
-                    bucket_tag,
-                );
+                fork_rows.record_site2_row(category_src_idx, member, branch_position, bucket_tag);
             }
         },
         Some(super::factoring::SpineDisposition::GroupRest) => {},
         None => {
-            fork_rows.record_site2_row(
-                category_src_idx,
-                rule_idx,
-                branch_position,
-                bucket_tag,
-            );
+            fork_rows.record_site2_row(category_src_idx, rule_idx, branch_position, bucket_tag);
         },
     }
 }
@@ -2432,7 +2422,12 @@ fn emit_unified_arm(
                     },
                 )
             },
-            UnifiedDescriptor::LeadingGuestBody { rule_idx, body_src_idx, open_kind, close_kind } => {
+            UnifiedDescriptor::LeadingGuestBody {
+                rule_idx,
+                body_src_idx,
+                open_kind,
+                close_kind,
+            } => {
                 let rule_idx = *rule_idx;
                 let body_src_idx = *body_src_idx;
                 // L9-4: leading guest body — never S1-grouped (a guest body
@@ -3378,7 +3373,15 @@ mod tests {
     #[test]
     fn empty_rule_list_emits_no_arms() {
         let lang = empty_lang();
-        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 0, "Int", &[], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
+            &lang,
+            0,
+            "Int",
+            &[],
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
+        );
         // Task #15 peel: combine arms + helpers (both empty for no rules).
         ts.extend(__ts_helpers);
         assert!(ts.to_string().trim().is_empty());
@@ -3388,7 +3391,15 @@ mod tests {
     fn atomic_integer_rule_emits_an_arm() {
         let lang = empty_lang();
         let rule = atomic_rule("IntLit", "Int", NonTerminalKind::Integer);
-        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
+            &lang,
+            2,
+            "Int",
+            &[(0, &rule)],
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
+        );
         // Task #15 peel: assert over arms + helpers combined (bodies moved).
         ts.extend(__ts_helpers);
         let s = ts.to_string();
@@ -3453,7 +3464,15 @@ mod tests {
     fn terminal_keyword_emits_fixed_match_guard() {
         let lang = empty_lang();
         let rule = terminal_rule("Err", "Int", "error");
-        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
+            &lang,
+            2,
+            "Int",
+            &[(0, &rule)],
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
+        );
         // Task #15 peel: assert over arms + helpers combined (bodies moved).
         ts.extend(__ts_helpers);
         let s = ts.to_string();
@@ -3467,7 +3486,15 @@ mod tests {
     fn literal_patterned_int_emits_integer_lit_guard() {
         let lang = lang_with_int_literal();
         let rule = category_rule("IntLit", "Int", "Int");
-        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(&lang, 2, "Int", &[(0, &rule)], &std::collections::HashMap::new(), &std::collections::HashMap::new(), &mut super::super::fork_emission::ForkEmissionOrdinalModel::new());
+        let (mut ts, __ts_helpers) = emit_prefix_arms_for_category(
+            &lang,
+            2,
+            "Int",
+            &[(0, &rule)],
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &mut super::super::fork_emission::ForkEmissionOrdinalModel::new(),
+        );
         // Task #15 peel: assert over arms + helpers combined (bodies moved).
         ts.extend(__ts_helpers);
         let s = ts.to_string();

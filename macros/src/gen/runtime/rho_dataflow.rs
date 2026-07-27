@@ -306,7 +306,10 @@ pub fn generate_rho_fold_dataflow(language: &LanguageDef) -> TokenStream {
         let all_covered = {
             let covered: std::collections::HashSet<String> =
                 root_categories.iter().map(|c| c.to_string()).collect();
-            language.types.iter().all(|t| covered.contains(&t.name.to_string()))
+            language
+                .types
+                .iter()
+                .all(|t| covered.contains(&t.name.to_string()))
         };
         let dispatch_default = if all_covered {
             quote! {}

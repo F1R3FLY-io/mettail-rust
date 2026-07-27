@@ -79,13 +79,19 @@ fn id(s: &str) -> Ident {
 }
 
 fn simple(name: &str, cat: &str) -> TermParam {
-    TermParam::Simple { name: id(name), ty: TypeExpr::Base(id(cat)) }
+    TermParam::Simple {
+        name: id(name),
+        ty: TypeExpr::Base(id(cat)),
+    }
 }
 
 fn simple_coll(name: &str, coll: CollectionType, elem: &str) -> TermParam {
     TermParam::Simple {
         name: id(name),
-        ty: TypeExpr::Collection { coll_type: coll, element: Box::new(TypeExpr::Base(id(elem))) },
+        ty: TypeExpr::Collection {
+            coll_type: coll,
+            element: Box::new(TypeExpr::Base(id(elem))),
+        },
     }
 }
 
@@ -98,7 +104,11 @@ fn lit(s: &str) -> SyntaxExpr {
 }
 
 fn sep(coll: &str, separator: &str) -> SyntaxExpr {
-    SyntaxExpr::Op(PatternOp::Sep { collection: id(coll), separator: separator.to_string(), source: None })
+    SyntaxExpr::Op(PatternOp::Sep {
+        collection: id(coll),
+        separator: separator.to_string(),
+        source: None,
+    })
 }
 
 /// Build a judgement-style `GrammarRule` from term-context + syntax-pattern,
@@ -154,12 +164,12 @@ fn mk_language(name: &str, types: Vec<LangType>, terms: Vec<GrammarRule>) -> Lan
 
 /// (name, optional native rust type). Index = `CatRef`.
 const CATS: &[(&str, Option<&str>)] = &[
-    ("Expr", None),         // 0 — primary host category
-    ("Tee", None),          // 1 — host
-    ("Pred", None),         // 2 — host
-    ("Num", Some("i64")),   // 3 — native int
+    ("Expr", None),          // 0 — primary host category
+    ("Tee", None),           // 1 — host
+    ("Pred", None),          // 2 — host
+    ("Num", Some("i64")),    // 3 — native int
     ("Txt", Some("String")), // 4 — native string
-    ("Boo", Some("bool")),  // 5 — native bool
+    ("Boo", Some("bool")),   // 5 — native bool
 ];
 
 fn cat_name(r: usize) -> &'static str {
@@ -178,7 +188,8 @@ const SEPS: &[&str] = &[",", "·"];
 /// Nullary keyword pool.
 const KWS: &[&str] = &["nil", "unit", "epsilon", "zero"];
 
-const COLLS: &[CollectionType] = &[CollectionType::Vec, CollectionType::HashBag, CollectionType::HashSet];
+const COLLS: &[CollectionType] =
+    &[CollectionType::Vec, CollectionType::HashBag, CollectionType::HashSet];
 
 // ════════════════════════════════════════════════════════════════════════════
 // Random grammar strategy.
@@ -196,7 +207,12 @@ enum RuleSpec {
     /// `a:C op b:C |- :C` — homogeneous binary infix.
     InfixHomo { cat: usize, op: usize },
     /// `a:A op b:B |- :R` with A≠B — heterogeneous binary infix (GAP-1 shape).
-    InfixHetero { lhs: usize, rhs: usize, result: usize, op: usize },
+    InfixHetero {
+        lhs: usize,
+        rhs: usize,
+        result: usize,
+        op: usize,
+    },
     /// `a:C op |- :C` — unary postfix.
     Postfix { cat: usize, op: usize },
     /// `op a:C |- :C` — same-cat unary prefix.
@@ -214,7 +230,13 @@ enum RuleSpec {
     /// `a:C op1 b:C op2 d:C |- :C` — strict-alternating mixfix ternary.
     MixfixTernary { cat: usize, op1: usize, op2: usize },
     /// `xs:Coll(E) |- open xs.sep close : R` — collection literal.
-    Collection { result: usize, elem: usize, coll: usize, delim: usize, sep: usize },
+    Collection {
+        result: usize,
+        elem: usize,
+        coll: usize,
+        delim: usize,
+        sep: usize,
+    },
 }
 
 fn arb_rule_spec() -> impl Strategy<Value = RuleSpec> {
@@ -226,18 +248,33 @@ fn arb_rule_spec() -> impl Strategy<Value = RuleSpec> {
     let cl = || 0usize..COLLS.len();
     prop_oneof![
         (c(), o()).prop_map(|(cat, op)| RuleSpec::InfixHomo { cat, op }),
-        (c(), c(), c(), o()).prop_map(|(lhs, rhs, result, op)| RuleSpec::InfixHetero { lhs, rhs, result, op }),
+        (c(), c(), c(), o()).prop_map(|(lhs, rhs, result, op)| RuleSpec::InfixHetero {
+            lhs,
+            rhs,
+            result,
+            op
+        }),
         (c(), o()).prop_map(|(cat, op)| RuleSpec::Postfix { cat, op }),
         (c(), o()).prop_map(|(cat, op)| RuleSpec::PrefixUnary { cat, op }),
         (c(), c(), o()).prop_map(|(src, result, op)| RuleSpec::CrossCatPrefix { src, result, op }),
         (c(), k()).prop_map(|(result, kw)| RuleSpec::NullaryOne { result, kw }),
         // GAP-3 (2026-06-28, LANDED): `RuleSpec::NullaryMulti` (the `Map()`
         // shape) is now drawn — the nullary multi-literal keyword run is wired.
-        (c(), k(), d()).prop_map(|(result, kw, delim)| RuleSpec::NullaryMulti { result, kw, delim }),
+        (c(), k(), d()).prop_map(|(result, kw, delim)| RuleSpec::NullaryMulti {
+            result,
+            kw,
+            delim
+        }),
         (c(), c()).prop_map(|(src, result)| RuleSpec::Projection { src, result }),
-        (c(), c(), o()).prop_map(|(lhs, result, op)| RuleSpec::CrossCatLhsInfix { lhs, result, op }),
+        (c(), c(), o()).prop_map(|(lhs, result, op)| RuleSpec::CrossCatLhsInfix {
+            lhs,
+            result,
+            op
+        }),
         (c(), o(), o()).prop_map(|(cat, op1, op2)| RuleSpec::MixfixTernary { cat, op1, op2 }),
-        (c(), c(), cl(), d(), s()).prop_map(|(result, elem, coll, delim, sep)| RuleSpec::Collection { result, elem, coll, delim, sep }),
+        (c(), c(), cl(), d(), s()).prop_map(|(result, elem, coll, delim, sep)| {
+            RuleSpec::Collection { result, elem, coll, delim, sep }
+        }),
     ]
 }
 
@@ -251,56 +288,91 @@ fn realize(specs: &[RuleSpec]) -> LanguageDef {
         let rule = match *spec {
             RuleSpec::InfixHomo { cat, op } => {
                 let c = cat_name(cat);
-                jrule(&l("Ih"), c, vec![simple("a", c), simple("b", c)], vec![param("a"), lit(OPS[op]), param("b")])
-            }
+                jrule(
+                    &l("Ih"),
+                    c,
+                    vec![simple("a", c), simple("b", c)],
+                    vec![param("a"), lit(OPS[op]), param("b")],
+                )
+            },
             RuleSpec::InfixHetero { lhs, rhs, result, op } => {
                 // Ensure heterogeneity (lhs != rhs); skip-degenerate by nudging.
-                let (a, b) = if lhs == rhs { (lhs, (rhs + 1) % CATS.len()) } else { (lhs, rhs) };
+                let (a, b) = if lhs == rhs {
+                    (lhs, (rhs + 1) % CATS.len())
+                } else {
+                    (lhs, rhs)
+                };
                 let (an, bn, rn) = (cat_name(a), cat_name(b), cat_name(result));
-                jrule(&l("Ix"), rn, vec![simple("a", an), simple("b", bn)], vec![param("a"), lit(OPS[op]), param("b")])
-            }
+                jrule(
+                    &l("Ix"),
+                    rn,
+                    vec![simple("a", an), simple("b", bn)],
+                    vec![param("a"), lit(OPS[op]), param("b")],
+                )
+            },
             RuleSpec::Postfix { cat, op } => {
                 let c = cat_name(cat);
                 jrule(&l("Pf"), c, vec![simple("a", c)], vec![param("a"), lit(OPS[op])])
-            }
+            },
             RuleSpec::PrefixUnary { cat, op } => {
                 let c = cat_name(cat);
                 jrule(&l("Pu"), c, vec![simple("a", c)], vec![lit(OPS[op]), param("a")])
-            }
+            },
             RuleSpec::CrossCatPrefix { src, result, op } => {
-                let (s, r) = if src == result { (src, (result + 1) % CATS.len()) } else { (src, result) };
+                let (s, r) = if src == result {
+                    (src, (result + 1) % CATS.len())
+                } else {
+                    (src, result)
+                };
                 let (sn, rn) = (cat_name(s), cat_name(r));
                 jrule(&l("Cp"), rn, vec![simple("a", sn)], vec![lit(OPS[op]), param("a")])
-            }
+            },
             RuleSpec::NullaryOne { result, kw } => {
                 jrule(&l("N1"), cat_name(result), vec![], vec![lit(KWS[kw])])
-            }
+            },
             RuleSpec::NullaryMulti { result, kw, delim } => {
                 let (o, c) = DELIMS[delim];
                 jrule(&l("Nm"), cat_name(result), vec![], vec![lit(KWS[kw]), lit(o), lit(c)])
-            }
+            },
             RuleSpec::Projection { src, result } => {
-                let (s, r) = if src == result { (src, (result + 1) % CATS.len()) } else { (src, result) };
+                let (s, r) = if src == result {
+                    (src, (result + 1) % CATS.len())
+                } else {
+                    (src, result)
+                };
                 jrule(&l("Pj"), cat_name(r), vec![simple("a", cat_name(s))], vec![param("a")])
-            }
+            },
             RuleSpec::CrossCatLhsInfix { lhs, result, op } => {
-                let (a, r) = if lhs == result { (lhs, (result + 1) % CATS.len()) } else { (lhs, result) };
+                let (a, r) = if lhs == result {
+                    (lhs, (result + 1) % CATS.len())
+                } else {
+                    (lhs, result)
+                };
                 let (an, rn) = (cat_name(a), cat_name(r));
-                jrule(&l("Cl"), rn, vec![simple("a", an), simple("b", an)], vec![param("a"), lit(OPS[op]), param("b")])
-            }
+                jrule(
+                    &l("Cl"),
+                    rn,
+                    vec![simple("a", an), simple("b", an)],
+                    vec![param("a"), lit(OPS[op]), param("b")],
+                )
+            },
             RuleSpec::MixfixTernary { cat, op1, op2 } => {
                 let c = cat_name(cat);
                 // Distinct triggers so the two-literal mixfix is well-formed.
                 let t1 = OPS[op1];
                 let t2 = OPS[(op2 + 1) % OPS.len()];
-                let t2 = if t2 == t1 { OPS[(op2 + 2) % OPS.len()] } else { t2 };
+                let t2 = if t2 == t1 {
+                    OPS[(op2 + 2) % OPS.len()]
+                } else {
+                    t2
+                };
                 jrule(
                     &l("Mx"),
                     c,
                     vec![simple("a", c), simple("b", c), simple("d", c)],
                     vec![param("a"), lit(t1), param("b"), lit(t2), param("d")],
                 )
-            }
+            },
             RuleSpec::Collection { result, elem, coll, delim, sep: sep_idx } => {
                 let (o, c) = DELIMS[delim];
                 jrule(
@@ -309,7 +381,7 @@ fn realize(specs: &[RuleSpec]) -> LanguageDef {
                     vec![simple_coll("xs", COLLS[coll].clone(), cat_name(elem))],
                     vec![lit(o), sep("xs", SEPS[sep_idx]), lit(c)],
                 )
-            }
+            },
         };
         terms.push(rule);
     }
@@ -321,7 +393,12 @@ fn realize(specs: &[RuleSpec]) -> LanguageDef {
 fn witness_spine() -> Vec<GrammarRule> {
     vec![
         // GAP-1 witness: heterogeneous binary infix, cross result (edge Expr→Pred).
-        jrule("HetAs", "Pred", vec![simple("a", "Expr"), simple("b", "Tee")], vec![param("a"), lit("as"), param("b")]),
+        jrule(
+            "HetAs",
+            "Pred",
+            vec![simple("a", "Expr"), simple("b", "Tee")],
+            vec![param("a"), lit("as"), param("b")],
+        ),
         // GAP-3 witness (LANDED 2026-06-28): nullary MULTI-literal keyword run
         // (the `Map()` shape) — empty term-context, all-literal `kw open close`.
         // Classifies as `AtomicShape::NullaryLiteralRun`; dispatches via the
@@ -329,10 +406,25 @@ fn witness_spine() -> Vec<GrammarRule> {
         // arm. Non-rholang delimiters keep INV-6 satisfied.
         jrule("NmW", "Num", vec![], vec![lit("unit"), lit("«"), lit("»")]),
         // INV-5 witness: trigger collision — two ops sharing (Num, "amb").
-        jrule("AmbA", "Num", vec![simple("a", "Num"), simple("b", "Num")], vec![param("a"), lit("amb"), param("b")]),
-        jrule("AmbB", "Boo", vec![simple("a", "Num"), simple("b", "Num")], vec![param("a"), lit("amb"), param("b")]),
+        jrule(
+            "AmbA",
+            "Num",
+            vec![simple("a", "Num"), simple("b", "Num")],
+            vec![param("a"), lit("amb"), param("b")],
+        ),
+        jrule(
+            "AmbB",
+            "Boo",
+            vec![simple("a", "Num"), simple("b", "Num")],
+            vec![param("a"), lit("amb"), param("b")],
+        ),
         // Plain homogeneous infix + transparent projection (baseline edges).
-        jrule("PlusN", "Num", vec![simple("a", "Num"), simple("b", "Num")], vec![param("a"), lit("plus"), param("b")]),
+        jrule(
+            "PlusN",
+            "Num",
+            vec![simple("a", "Num"), simple("b", "Num")],
+            vec![param("a"), lit("plus"), param("b")],
+        ),
         jrule("ProjNE", "Expr", vec![simple("a", "Num")], vec![param("a")]),
     ]
 }
@@ -380,12 +472,18 @@ fn crosscat_lhs_edge(rule: &GrammarRule) -> Option<(String, String)> {
     let tc = rule.term_context.as_ref()?;
     let sp = rule.syntax_pattern.as_ref()?;
     // First syntax element must be a Param naming the first Simple param.
-    let SyntaxExpr::Param(p0) = sp.first()? else { return None };
-    let TermParam::Simple { name, ty } = tc.first()? else { return None };
+    let SyntaxExpr::Param(p0) = sp.first()? else {
+        return None;
+    };
+    let TermParam::Simple { name, ty } = tc.first()? else {
+        return None;
+    };
     if name != p0 {
         return None;
     }
-    let TypeExpr::Base(lhs_ident) = ty else { return None };
+    let TypeExpr::Base(lhs_ident) = ty else {
+        return None;
+    };
     // Must carry at least one literal trigger (else it is a transparent
     // projection / non-operator shape handled elsewhere).
     if !sp.iter().any(|e| matches!(e, SyntaxExpr::Literal(_))) {
@@ -415,9 +513,9 @@ fn count_ident_in_tokens(ts: TokenStream, name: &str) -> usize {
                 if i == name {
                     n += 1;
                 }
-            }
+            },
             TokenTree::Group(g) => n += count_ident_in_tokens(g.stream(), name),
-            _ => {}
+            _ => {},
         }
     }
     n
@@ -477,8 +575,12 @@ fn lattice_infix_counts_per_group(fns: &[syn::ItemFn]) -> BTreeMap<(u16, String)
             };
             if let syn::Expr::Match(m) = expr {
                 for arm in &m.arms {
-                    let Some(cat) = arm_cat_lit(&arm.pat) else { continue };
-                    let Some(term) = arm_guard_string(arm) else { continue };
+                    let Some(cat) = arm_cat_lit(&arm.pat) else {
+                        continue;
+                    };
+                    let Some(term) = arm_guard_string(arm) else {
+                        continue;
+                    };
                     // The `LexAltRuleInfo`s live inside the arm's `vec![…]` macro,
                     // so count the ident in the raw token stream.
                     let n = count_ident_in_tokens(arm.body.to_token_stream(), "LexAltRuleInfo");
@@ -511,8 +613,12 @@ fn lattice_infix_arm_ints_per_group(fns: &[syn::ItemFn]) -> BTreeMap<(u16, Strin
             };
             if let syn::Expr::Match(m) = expr {
                 for arm in &m.arms {
-                    let Some(cat) = arm_cat_lit(&arm.pat) else { continue };
-                    let Some(term) = arm_guard_string(arm) else { continue };
+                    let Some(cat) = arm_cat_lit(&arm.pat) else {
+                        continue;
+                    };
+                    let Some(term) = arm_guard_string(arm) else {
+                        continue;
+                    };
                     let set = out.entry((cat, term)).or_default();
                     collect_int_literals(arm.body.to_token_stream(), set);
                 }
@@ -533,9 +639,9 @@ fn collect_int_literals(ts: TokenStream, out: &mut BTreeSet<u64>) {
                         out.insert(v);
                     }
                 }
-            }
+            },
             TokenTree::Group(g) => collect_int_literals(g.stream(), out),
-            _ => {}
+            _ => {},
         }
     }
 }
@@ -577,9 +683,9 @@ fn collect_str_literals(ts: TokenStream, out: &mut BTreeSet<String>) {
                         out.insert(s.value());
                     }
                 }
-            }
+            },
             TokenTree::Group(g) => collect_str_literals(g.stream(), out),
-            _ => {}
+            _ => {},
         }
     }
 }
@@ -588,8 +694,9 @@ fn collect_str_literals(ts: TokenStream, out: &mut BTreeSet<String>) {
 /// ENTIRELY of these is a "structural delimiter". Deliberately excludes
 /// arithmetic-operator chars (`+ * = < >`) so declared operator triggers are
 /// not mistaken for delimiters.
-const STRUCT_CHARS: &[char] =
-    &['(', ')', '[', ']', '{', '}', '#', '|', ';', '«', '»', '‹', '›', '⟦', '⟧', '⟨', '⟩'];
+const STRUCT_CHARS: &[char] = &[
+    '(', ')', '[', ']', '{', '}', '#', '|', ';', '«', '»', '‹', '›', '⟦', '⟧', '⟨', '⟩',
+];
 
 fn is_delim_shaped(s: &str) -> bool {
     let n = s.chars().count();
@@ -619,15 +726,15 @@ fn allowed_vocab(lang: &LanguageDef, per_cat: &[Vec<GrammarRule>]) -> BTreeSet<S
             match e {
                 SyntaxExpr::Literal(s) => {
                     v.insert(s.clone());
-                }
+                },
                 SyntaxExpr::Op(op) => walk_op(op, v),
-                SyntaxExpr::Param(_) => {}
+                SyntaxExpr::Param(_) => {},
                 // L9-3/L9-4: a custom-kind capture (`b@Tok`) / a guest-body
                 // capture (`*flt(node, open, close)`) matches variable token
                 // text delimited by CUSTOM token kinds (the FLT opener/closer),
                 // not FIXED literal terminals — neither contributes to the
                 // allowed vocabulary.
-                SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {}
+                SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {},
             }
         }
     }
@@ -638,13 +745,13 @@ fn allowed_vocab(lang: &LanguageDef, per_cat: &[Vec<GrammarRule>]) -> BTreeSet<S
                 if let Some(s) = source {
                     walk_op(s, v);
                 }
-            }
+            },
             PatternOp::Map { source, body, .. } => {
                 walk_op(source, v);
                 walk_sp(body, v);
-            }
+            },
             PatternOp::Opt { inner } => walk_sp(inner, v),
-            PatternOp::Zip { .. } | PatternOp::Var(_) => {}
+            PatternOp::Zip { .. } | PatternOp::Var(_) => {},
         }
     }
 
@@ -656,15 +763,15 @@ fn allowed_vocab(lang: &LanguageDef, per_cat: &[Vec<GrammarRule>]) -> BTreeSet<S
             match it {
                 GrammarItem::Terminal(t) => {
                     v.insert(t.clone());
-                }
+                },
                 GrammarItem::Collection { separator, delimiters, .. } => {
                     v.insert(separator.clone());
                     if let Some((o, c)) = delimiters {
                         v.insert(o.clone());
                         v.insert(c.clone());
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
@@ -695,7 +802,9 @@ fn parse_reach_pairs(ts: TokenStream) -> BTreeSet<(u16, u16)> {
         Ok(e) => e,
         Err(_) => return out,
     };
-    let syn::Expr::Macro(m) = expr else { return out };
+    let syn::Expr::Macro(m) = expr else {
+        return out;
+    };
     // mac.tokens = `(from, goal), (a, b) | (c, d) | …`
     for tt in m.mac.tokens {
         if let TokenTree::Group(g) = tt {
@@ -761,7 +870,10 @@ fn inv1_inv5_noloss(lang: &LanguageDef) -> Result<(), String> {
     for ((cat, terminal), ops) in grouped.iter() {
         group_total += ops.len();
         // Tier partition: each op is exactly ONE of infix / postfix / mixfix.
-        let infix = ops.iter().filter(|g| !g.op.is_postfix && !g.op.is_mixfix).count();
+        let infix = ops
+            .iter()
+            .filter(|g| !g.op.is_postfix && !g.op.is_mixfix)
+            .count();
         let postfix = ops.iter().filter(|g| g.op.is_postfix).count();
         let mixfix = ops.iter().filter(|g| g.op.is_mixfix).count();
         if infix + postfix + mixfix != ops.len() {
@@ -865,7 +977,10 @@ fn inv1_inv5_noloss(lang: &LanguageDef) -> Result<(), String> {
     // global subtraction so an impossible over-reduction is caught per key).
     let mut expected_lattice_total = 0usize;
     for ((cat, terminal), ops) in grouped.iter() {
-        let got = lattice_counts.get(&(*cat, terminal.clone())).copied().unwrap_or(0);
+        let got = lattice_counts
+            .get(&(*cat, terminal.clone()))
+            .copied()
+            .unwrap_or(0);
         let key = (*cat, terminal.clone());
         let cohort = cohort_by_key.get(&key).copied();
         // A cohort collapses its `members` per-member entries into ONE spine
@@ -900,8 +1015,7 @@ fn inv1_inv5_noloss(lang: &LanguageDef) -> Result<(), String> {
         // an identity field, or letting an arbitrary member survive instead of
         // the spine entry, fails here.
         if let Some(group) = cohort {
-            let carries =
-                |v: u64| lattice_arm_ints.get(&key).is_some_and(|s| s.contains(&v));
+            let carries = |v: u64| lattice_arm_ints.get(&key).is_some_and(|s| s.contains(&v));
             if !carries(u64::from(group.spine_id)) {
                 return Err(format!(
                     "INV-1 spine-identity loss at (cat {cat}, '{terminal}'): the collapsed \
@@ -968,11 +1082,10 @@ fn inv1_inv5_noloss(lang: &LanguageDef) -> Result<(), String> {
     // Slice aggregate: per-tier BP tables emit exactly one tuple per grouped op.
     let slice_ts = super::infix::emit_bp_tables(lang, &categories, &per_cat);
     let slice_fns = parse_fns(slice_ts);
-    let slice_total = count_tuples_in_prefixed_fns(&slice_fns, &["infix_bp_", "postfix_bp_", "mixfix_bp_"]);
+    let slice_total =
+        count_tuples_in_prefixed_fns(&slice_fns, &["infix_bp_", "postfix_bp_", "mixfix_bp_"]);
     if slice_total != group_total {
-        return Err(format!(
-            "INV-1 slice total {slice_total} != group total {group_total}"
-        ));
+        return Err(format!("INV-1 slice total {slice_total} != group total {group_total}"));
     }
 
     // INV-5 sanity: deliberate trigger collisions must actually produce ≥1
@@ -992,7 +1105,11 @@ fn inv2_totality(lang: &LanguageDef) -> Result<(), String> {
                 .syntax_pattern
                 .as_ref()
                 .map(|sp| sp.iter().any(|e| matches!(e, SyntaxExpr::Literal(_))))
-                .unwrap_or_else(|| rule.items.iter().any(|i| matches!(i, GrammarItem::Terminal(_))));
+                .unwrap_or_else(|| {
+                    rule.items
+                        .iter()
+                        .any(|i| matches!(i, GrammarItem::Terminal(_)))
+                });
             if !has_literal {
                 continue;
             }
@@ -1016,16 +1133,18 @@ fn inv2_totality(lang: &LanguageDef) -> Result<(), String> {
 /// INDEPENDENT extractor must be in the emitted `cat_can_reach` relation.
 fn inv3_goal_gate(lang: &LanguageDef) -> Result<(), String> {
     let (categories, per_cat) = categories_and_per_cat(lang);
-    let idx_of = |name: &str| -> Option<u16> {
-        categories.iter().position(|c| c == name).map(|i| i as u16)
-    };
-    let reach = parse_reach_pairs(super::kind_dispatch::emit_cat_can_reach(lang, &per_cat, &categories));
+    let idx_of =
+        |name: &str| -> Option<u16> { categories.iter().position(|c| c == name).map(|i| i as u16) };
+    let reach =
+        parse_reach_pairs(super::kind_dispatch::emit_cat_can_reach(lang, &per_cat, &categories));
     // Independent edge extraction directly from the rules (does NOT use the
     // classifier under test).
     for rules in &per_cat {
         for rule in rules {
             if let Some((lhs, result)) = crosscat_lhs_edge(rule) {
-                let (Some(from), Some(to)) = (idx_of(&lhs), idx_of(&result)) else { continue };
+                let (Some(from), Some(to)) = (idx_of(&lhs), idx_of(&result)) else {
+                    continue;
+                };
                 if from == to {
                     continue;
                 }
@@ -1093,8 +1212,12 @@ fn pat_last_ident(pat: &syn::Pat) -> Option<String> {
 /// If `stmt` is a top-level `__primary_survived = true;` / `__secondary_survived = true;`
 /// assignment, return the flag name.
 fn top_level_survival_assign(stmt: &syn::Stmt) -> Option<String> {
-    let syn::Stmt::Expr(syn::Expr::Assign(a), _) = stmt else { return None };
-    let syn::Expr::Path(p) = &*a.left else { return None };
+    let syn::Stmt::Expr(syn::Expr::Assign(a), _) = stmt else {
+        return None;
+    };
+    let syn::Expr::Path(p) = &*a.left else {
+        return None;
+    };
     let name = p.path.segments.last()?.ident.to_string();
     if name == "__primary_survived" || name == "__secondary_survived" {
         Some(name)
@@ -1132,10 +1255,15 @@ fn inv7_nullary_per_kind(lang: &LanguageDef) -> Result<(), String> {
     let (_categories, per_cat) = categories_and_per_cat(lang);
     for rules in &per_cat {
         for rule in rules {
-            let Some(tc) = rule.term_context.as_ref() else { continue };
-            let Some(sp) = rule.syntax_pattern.as_ref() else { continue };
-            let is_nullary_literal_run =
-                tc.is_empty() && !sp.is_empty() && sp.iter().all(|e| matches!(e, SyntaxExpr::Literal(_)));
+            let Some(tc) = rule.term_context.as_ref() else {
+                continue;
+            };
+            let Some(sp) = rule.syntax_pattern.as_ref() else {
+                continue;
+            };
+            let is_nullary_literal_run = tc.is_empty()
+                && !sp.is_empty()
+                && sp.iter().all(|e| matches!(e, SyntaxExpr::Literal(_)));
             if !is_nullary_literal_run {
                 continue;
             }
@@ -1177,15 +1305,24 @@ fn inv7_nullary_per_kind(lang: &LanguageDef) -> Result<(), String> {
 fn inv8_prefix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
     let (categories, per_cat) = categories_and_per_cat(lang);
     let models = [
-        ("factoring model", super::factoring::build_prefix_factoring(lang, &categories, &per_cat)),
-        ("emission partition", super::factoring::emission_partition(lang, &categories, &per_cat)),
+        (
+            "factoring model",
+            super::factoring::build_prefix_factoring(lang, &categories, &per_cat),
+        ),
+        (
+            "emission partition",
+            super::factoring::emission_partition(lang, &categories, &per_cat),
+        ),
     ];
     for (which, model) in &models {
         for cat in model {
             for bucket in &cat.buckets {
                 let leaves: usize = bucket.groups.iter().map(|g| g.leaf_count()).sum();
-                let deferred: usize =
-                    bucket.ineligible.iter().map(|g| g.member_rule_idxs.len()).sum();
+                let deferred: usize = bucket
+                    .ineligible
+                    .iter()
+                    .map(|g| g.member_rule_idxs.len())
+                    .sum();
                 let total = leaves + deferred + bucket.singletons.len();
                 if total != bucket.cohort_size {
                     return Err(format!(
@@ -1290,8 +1427,11 @@ fn inv8_mixfix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
         for fact in model {
             for bucket in &fact.buckets {
                 let leaves: usize = bucket.groups.iter().map(|g| g.leaves().len()).sum();
-                let deferred: usize =
-                    bucket.ineligible.iter().map(|g| g.member_rule_idxs.len()).sum();
+                let deferred: usize = bucket
+                    .ineligible
+                    .iter()
+                    .map(|g| g.member_rule_idxs.len())
+                    .sum();
                 let total = leaves + deferred + bucket.singletons.len();
                 if total != bucket.slice.len() {
                     return Err(format!(
@@ -1348,9 +1488,10 @@ fn inv8_mixfix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
                     ));
                 }
                 if bucket.singletons.len() != bucket.slice.len()
-                    || bucket.singletons.iter().any(|s| {
-                        s.reason != super::factoring::SingletonReason::FactoringDisabled
-                    })
+                    || bucket
+                        .singletons
+                        .iter()
+                        .any(|s| s.reason != super::factoring::SingletonReason::FactoringDisabled)
                 {
                     return Err(format!(
                         "INV-8-mixfix identity violated at (cat {}, {:?}): every slice \
@@ -1370,17 +1511,18 @@ fn inv8_mixfix_surface_noloss(lang: &LanguageDef) -> Result<(), String> {
 
 /// Minimal heterogeneous-infix grammar — RED before GAP-1 (INV-2 + INV-3).
 fn het_infix_lang() -> LanguageDef {
-    let types = vec![
-        lang_type("Expr", None),
-        lang_type("Tee", None),
-        lang_type("Pred", None),
-    ];
+    let types = vec![lang_type("Expr", None), lang_type("Tee", None), lang_type("Pred", None)];
     let terms = vec![
         // Atoms so categories are inhabited.
         jrule("EVar", "Expr", vec![], vec![lit("e")]),
         jrule("TVar", "Tee", vec![], vec![lit("t")]),
         // Heterogeneous binary infix: Expr `as` Tee  →  Pred  (edge Expr→Pred).
-        jrule("AsCast", "Pred", vec![simple("a", "Expr"), simple("b", "Tee")], vec![param("a"), lit("as"), param("b")]),
+        jrule(
+            "AsCast",
+            "Pred",
+            vec![simple("a", "Expr"), simple("b", "Tee")],
+            vec![param("a"), lit("as"), param("b")],
+        ),
     ];
     mk_language("HetLang", types, terms)
 }
@@ -1394,7 +1536,8 @@ fn grammar_generality_inv2_heterogeneous_infix_classifies() {
 #[test]
 fn grammar_generality_inv3_heterogeneous_edge_in_reach() {
     let lang = het_infix_lang();
-    inv3_goal_gate(&lang).expect("INV-3: heterogeneous cross-cat edge must be in cat_can_reach (GAP-1)");
+    inv3_goal_gate(&lang)
+        .expect("INV-3: heterogeneous cross-cat edge must be in cat_can_reach (GAP-1)");
 }
 
 /// Minimal nullary multi-literal grammar (Map()-shape) — RED before GAP-3.
@@ -1418,33 +1561,43 @@ fn nullary_multi_lang() -> LanguageDef {
 #[test]
 fn grammar_generality_inv7_nullary_multi_literal_classifies() {
     let lang = nullary_multi_lang();
-    inv7_nullary_per_kind(&lang).expect("INV-7: nullary multi-literal keyword run must classify (GAP-3)");
+    inv7_nullary_per_kind(&lang)
+        .expect("INV-7: nullary multi-literal keyword run must classify (GAP-3)");
 }
 
 #[test]
 fn grammar_generality_inv2_nullary_multi_literal_total() {
     let lang = nullary_multi_lang();
-    inv2_totality(&lang).expect("INV-2: nullary multi-literal carries literals and must classify (GAP-3)");
+    inv2_totality(&lang)
+        .expect("INV-2: nullary multi-literal carries literals and must classify (GAP-3)");
 }
 
 #[test]
 fn grammar_generality_inv4_fork_survival_flag_inside_gate() {
-    inv4_fork_symmetry().expect("INV-4: CrossCatProjection survival flag must be inside the gate (GAP-4)");
+    inv4_fork_symmetry()
+        .expect("INV-4: CrossCatProjection survival flag must be inside the gate (GAP-4)");
 }
 
 /// Clean non-rholang grammar (no unclassified rules) — RED before GAP-2.
 fn non_rholang_lang() -> LanguageDef {
-    let types = vec![
-        lang_type("Expr", None),
-        lang_type("Pred", None),
-        lang_type("Num", Some("i64")),
-    ];
+    let types =
+        vec![lang_type("Expr", None), lang_type("Pred", None), lang_type("Num", Some("i64"))];
     let terms = vec![
         jrule("EVar", "Expr", vec![], vec![lit("e")]),
         // Cross-cat-LHS infix so the scoped-lookahead (GAP-2 site) is exercised.
-        jrule("Cmp", "Pred", vec![simple("a", "Num"), simple("b", "Num")], vec![param("a"), lit("cmp"), param("b")]),
+        jrule(
+            "Cmp",
+            "Pred",
+            vec![simple("a", "Num"), simple("b", "Num")],
+            vec![param("a"), lit("cmp"), param("b")],
+        ),
         // Collection with NON-rholang brackets «…».
-        jrule("Lst", "Expr", vec![simple_coll("xs", CollectionType::Vec, "Num")], vec![lit("«"), sep("xs", ","), lit("»")]),
+        jrule(
+            "Lst",
+            "Expr",
+            vec![simple_coll("xs", CollectionType::Vec, "Num")],
+            vec![lit("«"), sep("xs", ","), lit("»")],
+        ),
         // Projection so Num inhabits Expr.
         jrule("ProjNE", "Expr", vec![simple("a", "Num")], vec![param("a")]),
     ];
@@ -1463,9 +1616,24 @@ fn grammar_generality_inv1_noloss_symmetry_with_collisions() {
     // A grammar with a deliberate (Num, "amb") trigger collision.
     let types = vec![lang_type("Num", Some("i64")), lang_type("Boo", Some("bool"))];
     let terms = vec![
-        jrule("AmbA", "Num", vec![simple("a", "Num"), simple("b", "Num")], vec![param("a"), lit("amb"), param("b")]),
-        jrule("AmbB", "Boo", vec![simple("a", "Num"), simple("b", "Num")], vec![param("a"), lit("amb"), param("b")]),
-        jrule("PlusN", "Num", vec![simple("a", "Num"), simple("b", "Num")], vec![param("a"), lit("plus"), param("b")]),
+        jrule(
+            "AmbA",
+            "Num",
+            vec![simple("a", "Num"), simple("b", "Num")],
+            vec![param("a"), lit("amb"), param("b")],
+        ),
+        jrule(
+            "AmbB",
+            "Boo",
+            vec![simple("a", "Num"), simple("b", "Num")],
+            vec![param("a"), lit("amb"), param("b")],
+        ),
+        jrule(
+            "PlusN",
+            "Num",
+            vec![simple("a", "Num"), simple("b", "Num")],
+            vec![param("a"), lit("plus"), param("b")],
+        ),
     ];
     let lang = mk_language("NoLoss", types, terms);
     inv1_inv5_noloss(&lang).expect("INV-1/INV-5: slice == group == lattice for trigger collisions");

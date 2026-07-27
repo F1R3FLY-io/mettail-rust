@@ -60,7 +60,10 @@ pub(crate) enum CaptureFieldKind<'a> {
     /// L9-4: a `*flt(bind, open, close)` guest-body capture → an
     /// `Arc<FltNode>` opaque leaf. Carries the opener/closer token KIND names
     /// so the WPDA codegen knows which delimiters bound the guest region.
-    GuestBody { open: &'a syn::Ident, close: &'a syn::Ident },
+    GuestBody {
+        open: &'a syn::Ident,
+        close: &'a syn::Ident,
+    },
     /// A `Simple` term-param at this syntax position → its declared type.
     Term(&'a TypeExpr),
     /// A `?guard:Guard` predicate slot → a `BehavioralPred` leaf.
@@ -89,9 +92,9 @@ pub(crate) fn capture_layout<'a>(
     term_context: &'a [TermParam],
     syntax_pattern: &'a [SyntaxExpr],
 ) -> Option<CaptureLayout<'a>> {
-    let has_capture = syntax_pattern.iter().any(|e| {
-        matches!(e, SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. })
-    });
+    let has_capture = syntax_pattern
+        .iter()
+        .any(|e| matches!(e, SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. }));
     if !has_capture {
         return None;
     }
@@ -124,13 +127,7 @@ pub(crate) fn capture_layout<'a>(
     }
 
     let mut non_scope: Vec<CaptureField<'a>> = Vec::new();
-    walk_pattern(
-        syntax_pattern,
-        term_context,
-        &abstraction_names,
-        false,
-        &mut non_scope,
-    );
+    walk_pattern(syntax_pattern, term_context, &abstraction_names, false, &mut non_scope);
 
     Some(CaptureLayout { non_scope, scope })
 }
@@ -228,7 +225,10 @@ mod tests {
     #[test]
     fn no_capture_returns_none() {
         // A capture-free rule keeps every seam on its byte-identical path.
-        let tc = vec![TermParam::Simple { name: id("a"), ty: TypeExpr::Base(id("Num")) }];
+        let tc = vec![TermParam::Simple {
+            name: id("a"),
+            ty: TypeExpr::Base(id("Num")),
+        }];
         let sp = vec![SyntaxExpr::Param(id("a"))];
         assert!(capture_layout(&tc, &sp).is_none());
     }
@@ -252,7 +252,10 @@ mod tests {
         // F.1 no-swap: `w@Word s` where `s:StringLiteral` — BOTH fields lower to
         // `String`. The layout MUST bind strictly by syntax position: `w`
         // (capture, from the pattern) first, then `s` (param, from the context).
-        let tc = vec![TermParam::Simple { name: id("s"), ty: TypeExpr::Base(id("StringLiteral")) }];
+        let tc = vec![TermParam::Simple {
+            name: id("s"),
+            ty: TypeExpr::Base(id("StringLiteral")),
+        }];
         let sp = vec![
             SyntaxExpr::TokenKind { name: id("Word"), bind: Some(id("w")) },
             SyntaxExpr::Param(id("s")),

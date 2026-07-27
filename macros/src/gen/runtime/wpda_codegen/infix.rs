@@ -556,7 +556,13 @@ pub(crate) fn emit_bp_tables(
     // Unwinding-MixfixMarker / MixfixContinuation arms to look up each
     // inner operand's category and the separator that follows it. Keyed
     // on (result_src_idx, rule_idx, part_idx).
-    per_cat_tables.push(emit_mixfix_parts_fn(&bp_table, categories, &label_to_indices, per_cat, language));
+    per_cat_tables.push(emit_mixfix_parts_fn(
+        &bp_table,
+        categories,
+        &label_to_indices,
+        per_cat,
+        language,
+    ));
     quote! { #(#per_cat_tables)* }
 }
 
@@ -1299,7 +1305,9 @@ mod tests {
         assert_eq!(info.result_category, "Int");
         assert!(info.is_mixfix, "heterogeneous binary is emitted as a mixfix");
         assert!(
-            info.mixfix_parts.iter().any(|p| p.operand_category == "Float"),
+            info.mixfix_parts
+                .iter()
+                .any(|p| p.operand_category == "Float"),
             "the second (heterogeneous) operand becomes a goal-bounded inner mixfix part",
         );
     }

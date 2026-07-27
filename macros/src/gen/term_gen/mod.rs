@@ -54,11 +54,7 @@ pub fn capture_only_construction(
     {
         return None;
     }
-    if rule
-        .term_context
-        .as_deref()
-        .is_some_and(|c| !c.is_empty())
-    {
+    if rule.term_context.as_deref().is_some_and(|c| !c.is_empty()) {
         return None;
     }
 
@@ -165,10 +161,7 @@ mod tests {
         // `k:Int, *opt(?g:Guard)` — the guardoptsmoke PCheck shape: the
         // guard contributes to the None-suffix but NOT to the positional
         // subtraction.
-        let ctx = vec![
-            simple("k", "Int"),
-            TermParam::Optional { params: vec![guard("g")] },
-        ];
+        let ctx = vec![simple("k", "Int"), TermParam::Optional { params: vec![guard("g")] }];
         assert_eq!(count_optional_positions(&ctx), (0, 1));
     }
 
@@ -187,10 +180,8 @@ mod tests {
         // `take(arg_cats.len() - term_count)` and the None-suffix emit the
         // exact tokens the single-count code emitted (byte-identity for
         // every shipped Optional grammar).
-        let ctx = vec![
-            simple("a", "Proc"),
-            TermParam::Optional { params: vec![simple("e", "Proc")] },
-        ];
+        let ctx =
+            vec![simple("a", "Proc"), TermParam::Optional { params: vec![simple("e", "Proc")] }];
         assert_eq!(count_optional_positions(&ctx), (1, 1));
     }
 

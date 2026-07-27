@@ -1453,7 +1453,8 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
         // (their Display, e.g. `readZipper@0`, is unparseable by construction).
         // Skip ONLY the parse-involving tests (4 & 5) for them; the non-parse
         // tests (debug/display/clone) stay, so `arb_<cat>` keeps a referent.
-        let is_runtime_only = crate::gen::category_is_runtime_only_native(&lang_type.name, language);
+        let is_runtime_only =
+            crate::gen::category_is_runtime_only_native(&lang_type.name, language);
 
         // Generation depth for the display->parse roundtrip (test 4): uniform
         // depth 3 for EVERY category. The former per-category depth-2 cap for
@@ -1520,7 +1521,7 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
         // non-wrapping, so short/shrunk tapes yield SIMPLE terms and proptest
         // shrinking converges on minimal counterexamples.
         if !is_runtime_only {
-        out.push_str(&format!(
+            out.push_str(&format!(
             "    #[test]\n\
              \x20   fn {cat_lower}_display_parse_roundtrip(term in arb_{cat_lower}({depth})) {{\n\
              \x20       let displayed = format!(\"{{}}\", term);\n\

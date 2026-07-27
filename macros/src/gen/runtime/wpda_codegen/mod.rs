@@ -622,10 +622,7 @@ mod tests {
         );
         assert!(ts.contains("0u8 => 0u16"), "TAKE row = binder const 0");
         assert!(ts.contains("1u8 => 1u16"), "SKIP row = binder const 1");
-        assert!(
-            ts.contains("3u8 => 1u16"),
-            "site 3 mirrors the walker-trait default's 1",
-        );
+        assert!(ts.contains("3u8 => 1u16"), "site 3 mirrors the walker-trait default's 1",);
     }
 
     #[test]

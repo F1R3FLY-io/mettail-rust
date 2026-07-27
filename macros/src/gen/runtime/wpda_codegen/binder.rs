@@ -116,7 +116,11 @@ pub enum BinderPosition {
     /// GuestChunk/Hole run → closer) in one action (`ConsumeGuestBodyAndReplace`
     /// mid-rule / `ConsumeGuestBodyAndPush` leading), binding the assembled
     /// `Arc<FltNode>` as the `param_name` action arg (`ActionArgKind::GuestBody`).
-    GuestBodyCapture { open_kind: String, close_kind: String, param_name: String },
+    GuestBodyCapture {
+        open_kind: String,
+        close_kind: String,
+        param_name: String,
+    },
     /// `Param(binder_name)` — capture single Ident, start_binder_scope,
     /// advance position.
     BinderIdent,
@@ -795,9 +799,7 @@ pub(crate) fn classify_binder_in(
                         SyntaxExpr::Literal(text) => {
                             inner_positions.push(BinderPosition::Literal(text.clone()));
                         },
-                        SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
-                            return None
-                        },
+                        SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => return None,
                         SyntaxExpr::Param(p_name) => {
                             let pn = p_name.to_string();
                             if pn == map_param_n {
@@ -902,9 +904,7 @@ pub(crate) fn classify_binder_in(
                         SyntaxExpr::Literal(text) => {
                             inner_positions.push(BinderPosition::Literal(text.clone()));
                         },
-                        SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {
-                            return None
-                        },
+                        SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => return None,
                         SyntaxExpr::Param(name) => {
                             let n = name.to_string();
                             let kind = param_map.get(&n)?;
@@ -954,8 +954,7 @@ pub(crate) fn classify_binder_in(
                                     // Stage 3 (2026-06-27): same `kv_sep_for`
                                     // resolver as the top-level Sep arm —
                                     // `*opt(...)`-nested inline binder collection.
-                                    let key_val_separator =
-                                        kv_sep_for(coll_kind, declared_delims);
+                                    let key_val_separator = kv_sep_for(coll_kind, declared_delims);
                                     let slot_idx_here = collection_slots_so_far;
                                     collection_slots_so_far += 1;
                                     inner_positions.push(BinderPosition::ParamParse {
@@ -1024,10 +1023,8 @@ pub(crate) fn classify_binder_in(
     // binder-shape so the leading-capture fork is emitted. It always carries a
     // leading capture action arg (pushed above), so the `action_args.is_empty()`
     // guard below still filters pure-literal rules.
-    let has_leading_capture = matches!(
-        &sp[0],
-        SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. }
-    );
+    let has_leading_capture =
+        matches!(&sp[0], SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. });
     if positions.is_empty() && !has_leading_capture {
         return None;
     }
@@ -1346,8 +1343,7 @@ pub(crate) fn emit_binder_rule_body(
             };
             let result_src_idx = cat_i as u16;
             let rule_idx = rule_i as u16;
-            let mut group_arms: Vec<TokenStream> =
-                Vec::with_capacity(shape.positions.len() + 1);
+            let mut group_arms: Vec<TokenStream> = Vec::with_capacity(shape.positions.len() + 1);
             // Stage 4 fix: emit a "rule complete" arm at position
             // `positions.len() + 1`. This arm fires when the marker has
             // advanced past the final syntax-pattern position (either via
@@ -2733,8 +2729,7 @@ pub(crate) fn emit_optional_group_body(
                 // `vec![TAKE, SKIP]` order of the Fork constructed just
                 // below (TAKE = branch 0, SKIP = branch 1).
                 const _: () = assert!(
-                    OPTIONAL_GROUP_TAKE_BRANCH_INDEX == 0
-                        && OPTIONAL_GROUP_SKIP_BRANCH_INDEX == 1,
+                    OPTIONAL_GROUP_TAKE_BRANCH_INDEX == 0 && OPTIONAL_GROUP_SKIP_BRANCH_INDEX == 1,
                 );
                 arms.push(quote! {
                     (#result_src_idx, #rule_idx, #group_idx_byte, 0u8) => {
@@ -3738,8 +3733,13 @@ mod tests {
         let categories = vec!["Term".to_string()];
         let per_cat = vec![vec![lambda_lam_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
-        let (mut ts, __ts_helpers) =
-            emit_binder_rule_body(&synthetic_lang_for_lambda_test(), &categories, &per_cat, &prefix_bp_map, &proc_macro2::TokenStream::new());
+        let (mut ts, __ts_helpers) = emit_binder_rule_body(
+            &synthetic_lang_for_lambda_test(),
+            &categories,
+            &per_cat,
+            &prefix_bp_map,
+            &proc_macro2::TokenStream::new(),
+        );
         // Task #15 peel: arm bodies now live in the per-(cat,rule) helpers;
         // assert over skeleton + helpers combined.
         ts.extend(__ts_helpers);
@@ -3762,8 +3762,13 @@ mod tests {
         let categories = vec!["BigInt".to_string(), "BigRat".to_string()];
         let per_cat = vec![Vec::new(), vec![fraction_rule()]];
         let prefix_bp_map = std::collections::HashMap::new();
-        let (mut ts, __ts_helpers) =
-            emit_binder_rule_body(&synthetic_lang_for_lambda_test(), &categories, &per_cat, &prefix_bp_map, &proc_macro2::TokenStream::new());
+        let (mut ts, __ts_helpers) = emit_binder_rule_body(
+            &synthetic_lang_for_lambda_test(),
+            &categories,
+            &per_cat,
+            &prefix_bp_map,
+            &proc_macro2::TokenStream::new(),
+        );
         // Task #15 peel: arm bodies now live in the per-(cat,rule) helpers;
         // assert over skeleton + helpers combined.
         ts.extend(__ts_helpers);

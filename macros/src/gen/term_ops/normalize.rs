@@ -2672,10 +2672,7 @@ mod tests {
     #[test]
     fn reg_field_decl_optional_pred_is_option_typed() {
         let tokens = emit_reg_field_decl(1, &pred_field(true)).to_string();
-        assert_eq!(
-            tokens,
-            "f1_pred : Option < mettail_runtime :: BehavioralPred >",
-        );
+        assert_eq!(tokens, "f1_pred : Option < mettail_runtime :: BehavioralPred >",);
     }
 
     #[test]

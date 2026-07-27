@@ -169,7 +169,9 @@ impl ForkEmissionOrdinalModel {
     /// including the ambiguous class).
     #[cfg(test)]
     pub(crate) fn site2_ordinal(&self, cat: u16, rule: u16) -> Option<u16> {
-        self.site2_rows.get(&(cat, rule)).map(|r| r.emission_ordinal)
+        self.site2_rows
+            .get(&(cat, rule))
+            .map(|r| r.emission_ordinal)
     }
 
     /// Test-facing readback of the ambiguous classification.

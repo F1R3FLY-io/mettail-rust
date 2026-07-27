@@ -562,8 +562,11 @@ fn generate_display_visit_helper(
     // class's DECLARED canonical member, and render an INERT GROUPING transparently. Both are
     // no-ops for a grammar that declares neither, so an unaffected language's arms are
     // byte-identical. See `synonymy.rs`.
-    let by_label: HashMap<String, &GrammarRule> =
-        language.terms.iter().map(|r| (r.label.to_string(), r)).collect();
+    let by_label: HashMap<String, &GrammarRule> = language
+        .terms
+        .iter()
+        .map(|r| (r.label.to_string(), r))
+        .collect();
 
     // Generate match arms for grammar-defined rules
     let mut variant_arms: Vec<TokenStream> = rules
@@ -1206,13 +1209,12 @@ fn simple_projection_shape_for_display(rule: &GrammarRule) -> Option<(String, St
 fn collection_param_element_category(rule: &GrammarRule, param: &str) -> Option<String> {
     let term_context = rule.term_context.as_ref()?;
     term_context.iter().find_map(|p| match p {
-        TermParam::Simple { name, ty: TypeExpr::Collection { element, .. } }
-            if name.to_string() == param =>
-        {
-            match element.as_ref() {
-                TypeExpr::Base(cat) => Some(cat.to_string()),
-                _ => None,
-            }
+        TermParam::Simple {
+            name,
+            ty: TypeExpr::Collection { element, .. },
+        } if name.to_string() == param => match element.as_ref() {
+            TypeExpr::Base(cat) => Some(cat.to_string()),
+            _ => None,
         },
         _ => None,
     })
@@ -1448,9 +1450,10 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
                     // method ends with a closing-bracket `Literal`, so its tail belongs to the
                     // same primary and rides along. This is the same shape test
                     // `facade.rs::is_receiver_led_postfix_frame` uses, for the same reason.
-                    let bracket_closed =
-                        matches!(rule.syntax_pattern.as_ref().and_then(|sp| sp.last()),
-                                 Some(SyntaxExpr::Literal(_)));
+                    let bracket_closed = matches!(
+                        rule.syntax_pattern.as_ref().and_then(|sp| sp.last()),
+                        Some(SyntaxExpr::Literal(_))
+                    );
                     match leading_operand_field_index(rule).filter(|_| bracket_closed) {
                         Some(idx) => {
                             let binds: Vec<TokenStream> = (0..constructor_field_count(rule))
@@ -1596,13 +1599,16 @@ fn generate_sigil_operand_wrap_gate(
             continue;
         };
         // The operand slot: pattern position 1, immediately after the leading literal.
-        let Some(SyntaxExpr::Param(op_param)) = sp.get(1) else { continue };
+        let Some(SyntaxExpr::Param(op_param)) = sp.get(1) else {
+            continue;
+        };
         let op_param = op_param.to_string();
         if !is_sigil_prefix_operand(rule, &op_param) {
             continue;
         }
-        let Some(TermParam::Simple { ty: TypeExpr::Base(opcat), .. }) =
-            tc.iter().find(|p| matches!(p, TermParam::Simple { name, .. } if *name == op_param))
+        let Some(TermParam::Simple { ty: TypeExpr::Base(opcat), .. }) = tc
+            .iter()
+            .find(|p| matches!(p, TermParam::Simple { name, .. } if *name == op_param))
         else {
             continue;
         };
@@ -1635,8 +1641,14 @@ fn generate_sigil_operand_wrap_gate(
         };
         let result_cat = rule.category.to_string();
         let frame = rule.label.to_string();
-        for op_rule in language.terms.iter().filter(|r| r.category.to_string() == opcat) {
-            let Some(sample) = sample_surface_for(op_rule, &filler) else { continue };
+        for op_rule in language
+            .terms
+            .iter()
+            .filter(|r| r.category.to_string() == opcat)
+        {
+            let Some(sample) = sample_surface_for(op_rule, &filler) else {
+                continue;
+            };
             let op_label = op_rule.label.to_string();
             rows.push(quote! {
                 (#opcat, #result_cat, #frame, #prefix, #suffix, #op_label, #sample)
@@ -1733,7 +1745,9 @@ fn leading_operand_field_index(rule: &GrammarRule) -> Option<usize> {
     let lead = lead.to_string();
     // Constructor fields are the term-context params in declaration order; find the leading one
     // and require it to be a plain boxed category field.
-    let idx = tc.iter().position(|p| matches!(p, TermParam::Simple { name, .. } if *name == lead))?;
+    let idx = tc
+        .iter()
+        .position(|p| matches!(p, TermParam::Simple { name, .. } if *name == lead))?;
     match tc.get(idx) {
         Some(TermParam::Simple { ty: TypeExpr::Base(_), .. }) => Some(idx),
         _ => None,
@@ -1811,7 +1825,13 @@ fn terminal_leading_arms_for(cat: &syn::Ident, language: &LanguageDef) -> Vec<To
                 SyntaxExpr::Param(_) => {
                     let idx = leading_operand_field_index(rule)?;
                     let binds: Vec<TokenStream> = (0..constructor_field_count(rule))
-                        .map(|i| if i == idx { quote! { __lead } } else { quote! { _ } })
+                        .map(|i| {
+                            if i == idx {
+                                quote! { __lead }
+                            } else {
+                                quote! { _ }
+                            }
+                        })
                         .collect();
                     Some(quote! {
                         #cat::#label(#(#binds),*) => __lead.__renders_sigil_leading(),
@@ -1881,11 +1901,8 @@ fn is_collection_mirror_infix(rule: &GrammarRule, language: &LanguageDef) -> boo
         collection_syntax.iter().any(|expr| match expr {
             SyntaxExpr::Op(PatternOp::Sep { collection, separator, .. }) => {
                 separator == operator
-                    && collection_param_element_category(
-                        collection_rule,
-                        &collection.to_string(),
-                    )
-                    .as_deref()
+                    && collection_param_element_category(collection_rule, &collection.to_string())
+                        .as_deref()
                         == Some(result_cat.as_str())
             },
             _ => false,
@@ -2472,7 +2489,10 @@ fn generate_engine_binder_arm(rule: &GrammarRule, _language: &LanguageDef) -> To
 /// `FltClose*`): a `Backtick`-suffixed kind uses `` ` ``, `Brace` uses `{`/`}`,
 /// `Fence` uses ```` ``` ````. A kind that matches none prints no delimiter
 /// (the tag+body still round-trips when the body itself is self-delimiting).
-pub(crate) fn flt_delimiters_for(open_name: &str, close_name: &str) -> (&'static str, &'static str) {
+pub(crate) fn flt_delimiters_for(
+    open_name: &str,
+    close_name: &str,
+) -> (&'static str, &'static str) {
     let open = if open_name.contains("Backtick") {
         "`"
     } else if open_name.contains("Brace") {
@@ -2976,13 +2996,12 @@ fn generate_engine_syntax_pattern_arm_inner(
                 // display). We restrict the ADDED behavior to the PREFIX side (a
                 // word-literal PRECEDED by an Op) which is the exact `where`-glom
                 // bug; the suffix side stays as the pre-existing behavior.
-                let prev_op_adjacent = i > 0
-                    && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Op(_)));
+                let prev_op_adjacent =
+                    i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Op(_)));
                 // 2026-07-24: the SUFFIX twin of `prev_op_adjacent` — a
                 // word-literal immediately FOLLOWED by an `Op` (see the
                 // `is_word && (prev_op_adjacent || next_op_adjacent)` arm below).
-                let next_op_adjacent =
-                    matches!(syntax_pattern.get(i + 1), Some(SyntaxExpr::Op(_)));
+                let next_op_adjacent = matches!(syntax_pattern.get(i + 1), Some(SyntaxExpr::Op(_)));
                 // Stage 3.3 (2026-04-30): broaden `is_word` to mirror the
                 // lexer's keyword-recognition rule
                 // (`prattail/src/lexer.rs:523`): `is_alphanumeric() || '_'`,
@@ -3005,7 +3024,11 @@ fn generate_engine_syntax_pattern_arm_inner(
                     // "where" cond`). This is the ONLY added case; it strictly
                     // adds a space (never removes one) between an identifier-
                     // emitting Op and a following keyword.
-                    if prev_op_adjacent { (" ", " ") } else { ("", " ") }
+                    if prev_op_adjacent {
+                        (" ", " ")
+                    } else {
+                        ("", " ")
+                    }
                 } else if is_word && (prev_op_adjacent || next_op_adjacent) {
                     // Word-literal keyword ABUTTING an `Op` on either side. An
                     // `Op` emits PARAM VALUES, which can be identifiers, so a
@@ -3071,11 +3094,11 @@ fn generate_engine_syntax_pattern_arm_inner(
                 ) && syntax_pattern.get(i + 2).is_none();
                 let mandatory_sep_before_trailing_restlist = if sep_op_is_last {
                     syntax_pattern.get(i + 1).and_then(|nxt| match nxt {
-                        SyntaxExpr::Op(PatternOp::Sep {
-                            collection,
-                            separator,
-                            source: None,
-                        }) if separator == s => Some(collection.clone()),
+                        SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None })
+                            if separator == s =>
+                        {
+                            Some(collection.clone())
+                        },
                         _ => None,
                     })
                 } else {
@@ -4439,20 +4462,29 @@ fn composite_repeat_of_optional_group(
         // A word carrying the optional group would not end in `tail`.
         return None;
     }
-    let separator: String = body.chars().take_while(|c| !is_regex_metacharacter(*c)).collect();
+    let separator: String = body
+        .chars()
+        .take_while(|c| !is_regex_metacharacter(*c))
+        .collect();
     if separator.is_empty() {
         return None;
     }
     if payload_is_signed && !pattern.starts_with('-') && !category_has_unary_minus {
         return None;
     }
-    Some(MandatoryTail { tail, composite_separator: Some(separator) })
+    Some(MandatoryTail {
+        tail,
+        composite_separator: Some(separator),
+    })
 }
 
 /// Whether `c` carries regex meaning rather than standing for itself. Used only to
 /// bound the separator run of a composite group, so it errs toward stopping early.
 fn is_regex_metacharacter(c: char) -> bool {
-    matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | '|' | '?' | '*' | '+' | '.' | '\\' | '^' | '$')
+    matches!(
+        c,
+        '(' | ')' | '[' | ']' | '{' | '}' | '|' | '?' | '*' | '+' | '.' | '\\' | '^' | '$'
+    )
 }
 
 /// Whether `category` has a unary-minus rule over ITSELF — `"-" a : Cat` for a single

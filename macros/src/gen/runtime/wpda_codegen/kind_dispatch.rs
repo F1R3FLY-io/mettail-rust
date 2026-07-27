@@ -32,7 +32,9 @@ use super::prefix::{classify_atomic, first_set_of_category, AtomicShape, Literal
 /// depth 0, replacing the formerly-hardcoded rholang `;`. A separator that is
 /// ALSO a cross-cat trigger must stay scannable (it binds a row's LHS), so it is
 /// excluded by the caller; a pure sequence separator bounds the row.
-pub(crate) fn collect_sequence_separators(language: &LanguageDef) -> std::collections::BTreeSet<String> {
+pub(crate) fn collect_sequence_separators(
+    language: &LanguageDef,
+) -> std::collections::BTreeSet<String> {
     fn walk_sp(sp: &[SyntaxExpr], out: &mut std::collections::BTreeSet<String>) {
         for e in sp {
             if let SyntaxExpr::Op(op) = e {
@@ -266,7 +268,8 @@ pub fn emit_lex_alt_rule_for_fn(
     // row). For rholang this resolves to `{";", "|"}` — the extra `"|"` is the
     // Proc-parallel infix, which never occurs at depth 0 inside a for-binding
     // scan, so it is behaviorally identical to the former `{";"}`. Audit §GAP-2.
-    let (gap2_opens, gap2_closes) = super::collection::collect_structural_delimiters(_language, per_cat);
+    let (gap2_opens, gap2_closes) =
+        super::collection::collect_structural_delimiters(_language, per_cat);
     let gap2_triggers = collect_cross_cat_triggers(_language);
     let gap2_row_seps: Vec<String> = collect_sequence_separators(_language)
         .into_iter()
@@ -378,9 +381,9 @@ pub fn emit_lex_alt_rule_for_fn(
         let mut out: Vec<TokenStream> = Vec::new();
         for (idx, cat) in categories.iter().enumerate() {
             let fs = super::prefix::first_set_of_category(cat, _language);
-            let has_ident = fs.iter().any(|ft| {
-                ft.pattern.to_string().contains("Ident") && ft.extra_guard.is_none()
-            });
+            let has_ident = fs
+                .iter()
+                .any(|ft| ft.pattern.to_string().contains("Ident") && ft.extra_guard.is_none());
             // Use the SAME soundness discriminator as gate (A): a source is
             // Ident-var-only iff it has an Ident in FIRST AND no NON-Var rule of
             // the source begins with an Ident (so a bare Ident reads ONLY as the
@@ -2100,28 +2103,28 @@ fn emit_infix_lex_alt_info(g: &GroupedOp<'_>) -> TokenStream {
             let l_bp = op.left_bp;
             let r_bp = op.right_bp;
             let kind = if op.is_postfix {
-                        quote! {
-                            mettail_prattail::wpda_runtime::LexAltRuleKind::PostfixOp {
-                                l_bp: #l_bp,
-                                result_src_idx: #result_src_idx,
-                            }
-                        }
-                    } else if op.is_mixfix {
-                        quote! {
-                            mettail_prattail::wpda_runtime::LexAltRuleKind::MixfixFirstTrigger {
-                                l_bp: #l_bp,
-                                result_src_idx: #result_src_idx,
-                            }
-                        }
-                    } else {
-                        quote! {
-                            mettail_prattail::wpda_runtime::LexAltRuleKind::InfixOp {
-                                l_bp: #l_bp,
-                                r_bp: #r_bp,
-                                result_src_idx: #result_src_idx,
-                            }
-                        }
-                    };
+                quote! {
+                    mettail_prattail::wpda_runtime::LexAltRuleKind::PostfixOp {
+                        l_bp: #l_bp,
+                        result_src_idx: #result_src_idx,
+                    }
+                }
+            } else if op.is_mixfix {
+                quote! {
+                    mettail_prattail::wpda_runtime::LexAltRuleKind::MixfixFirstTrigger {
+                        l_bp: #l_bp,
+                        result_src_idx: #result_src_idx,
+                    }
+                }
+            } else {
+                quote! {
+                    mettail_prattail::wpda_runtime::LexAltRuleKind::InfixOp {
+                        l_bp: #l_bp,
+                        r_bp: #r_bp,
+                        result_src_idx: #result_src_idx,
+                    }
+                }
+            };
             quote! {
                 mettail_prattail::wpda_runtime::LexAltRuleInfo {
                     rule_idx: #rule_idx,

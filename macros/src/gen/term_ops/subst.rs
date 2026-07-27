@@ -1057,7 +1057,10 @@ pub(crate) fn collection_literal_info(
     cat: &Ident,
     language: &LanguageDef,
 ) -> Option<(CollectionType, Ident)> {
-    let coll_type = language.get_type(cat).and_then(|t| t.collection_kind.as_ref())?.coll_type();
+    let coll_type = language
+        .get_type(cat)
+        .and_then(|t| t.collection_kind.as_ref())?
+        .coll_type();
     let element_cat = language.collection_element_type_for_category(cat)?;
     Some((coll_type, element_cat))
 }

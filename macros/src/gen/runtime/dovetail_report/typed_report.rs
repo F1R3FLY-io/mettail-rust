@@ -205,7 +205,10 @@ struct StructuralAcRule {
 /// Collect the language's structural non-linear AC rewrites ([`is_structural_ac_rewrite`]) as typed
 /// native rules, assigning each an `op_id` STARTING AT `start_op_id` (the shared counter after folds
 /// ∪ substitution ∪ Comm rules). Source order is preserved (stable ids).
-fn collect_structural_ac_rules(language: &LanguageDef, start_op_id: usize) -> Vec<StructuralAcRule> {
+fn collect_structural_ac_rules(
+    language: &LanguageDef,
+    start_op_id: usize,
+) -> Vec<StructuralAcRule> {
     let mut out = Vec::new();
     let mut op_id = start_op_id as u32;
     for rw in &language.rewrites {
@@ -712,8 +715,10 @@ fn generate_native_rules_and_dispatch(
             // generator bug, surfaced as a build error rather than a silently-missing rule.
             vec![quote! { compile_error!(#reason); }]
         });
-    let comm_dispatch_arms: Vec<TokenStream> =
-        comms.iter().map(|c| comm_dispatch_arm(c, &enum_id)).collect();
+    let comm_dispatch_arms: Vec<TokenStream> = comms
+        .iter()
+        .map(|c| comm_dispatch_arm(c, &enum_id))
+        .collect();
 
     // (Stage 3d) Structural-AC native rules + dispatch arms. Their `op_id`s are disjoint from folds ∪
     // substitution ∪ Comm rules, so the dispatch match has one arm per rule across all four kinds.
@@ -991,8 +996,11 @@ fn comm_native_rule(c: &CommRule, enum_id: &Ident) -> Result<TokenStream, String
     let cr = &c.rewrite;
     let label = lit(&cr.label);
     let op_variant = op_variant_ident(&cr.op_cat, &cr.op_label);
-    let fixed: Vec<TokenStream> =
-        cr.elements.iter().map(|e| comm_element_pattern(e, enum_id)).collect();
+    let fixed: Vec<TokenStream> = cr
+        .elements
+        .iter()
+        .map(|e| comm_element_pattern(e, enum_id))
+        .collect();
     let rest_lit = lit(&cr.rest_var.to_string());
     Ok(quote! {
         ::dovetail::rules::NativeRule {
@@ -1118,8 +1126,11 @@ fn structural_ac_native_rule(s: &StructuralAcRule, enum_id: &Ident) -> Result<To
     let sr = &s.rewrite;
     let label = lit(&sr.label);
     let op_variant = op_variant_ident(&sr.op_cat, &sr.op_label);
-    let fixed: Vec<TokenStream> =
-        sr.elements.iter().map(|e| comm_element_pattern(e, enum_id)).collect();
+    let fixed: Vec<TokenStream> = sr
+        .elements
+        .iter()
+        .map(|e| comm_element_pattern(e, enum_id))
+        .collect();
     let rest_lit = lit(&sr.rest_var.to_string());
     Ok(quote! {
         ::dovetail::rules::NativeRule {
@@ -2195,8 +2206,7 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // carrying its resolved σ + contractum, the runtime native-fold σ-injection F-fn would have no
     // firing (and no contractum) to read — empirically the pure scalar fold records `#justifications
     // = 0` on the untyped String path.
-    let populate_rewrite_justifications =
-        !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
+    let populate_rewrite_justifications = !mettail_rholang_codegen::rho_net_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_ac_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_contextual_injection_sites(language).is_empty()
             || !mettail_rholang_codegen::rho_net_subst_injection_sites(language).is_empty()

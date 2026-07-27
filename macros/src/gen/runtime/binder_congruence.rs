@@ -466,7 +466,9 @@ mod tests {
     /// `calculator.rs`), so every mention is tried and the one that reconstructs wins — exactly
     /// one does (the invocation), and a file where none does panics with the last error.
     fn bundled_def(name: &str, source: &str) -> mettail_ast::language::LanguageDef {
-        let close = source.rfind('}').expect("a language file closes the macro brace");
+        let close = source
+            .rfind('}')
+            .expect("a language file closes the macro brace");
         let mut search_from = 0;
         let mut last_error = String::from("no language! mention found");
         while let Some(found) = source[search_from..].find("language!") {
@@ -505,23 +507,14 @@ mod tests {
             "acbagdemo",
             include_str!("../../../../languages/tests/definitions/acbagdemo.rs"),
         ),
-        (
-            "acdemo",
-            include_str!("../../../../languages/tests/definitions/acdemo.rs"),
-        ),
-        (
-            "ambdemo",
-            include_str!("../../../../languages/tests/definitions/ambdemo.rs"),
-        ),
+        ("acdemo", include_str!("../../../../languages/tests/definitions/acdemo.rs")),
+        ("ambdemo", include_str!("../../../../languages/tests/definitions/ambdemo.rs")),
         ("ambient", include_str!("../../../../languages/src/ambient.rs")),
         (
             "ambnewdemo",
             include_str!("../../../../languages/tests/definitions/ambnewdemo.rs"),
         ),
-        (
-            "appsubst",
-            include_str!("../../../../languages/tests/definitions/appsubst.rs"),
-        ),
+        ("appsubst", include_str!("../../../../languages/tests/definitions/appsubst.rs")),
         (
             "bicongdemo",
             include_str!("../../../../languages/tests/definitions/bicongdemo.rs"),
@@ -551,14 +544,8 @@ mod tests {
             "class3opt",
             include_str!("../../../../languages/tests/definitions/class3opt.rs"),
         ),
-        (
-            "commdemo",
-            include_str!("../../../../languages/tests/definitions/commdemo.rs"),
-        ),
-        (
-            "ctxdemo",
-            include_str!("../../../../languages/tests/definitions/ctxdemo.rs"),
-        ),
+        ("commdemo", include_str!("../../../../languages/tests/definitions/commdemo.rs")),
+        ("ctxdemo", include_str!("../../../../languages/tests/definitions/ctxdemo.rs")),
         (
             "fortran_model",
             include_str!("../../../../languages/tests/definitions/fortran_model.rs"),
@@ -580,10 +567,7 @@ mod tests {
             include_str!("../../../../languages/tests/definitions/lambdademo.rs"),
         ),
         ("lambda", include_str!("../../../../languages/src/lambda.rs")),
-        (
-            "led_test",
-            include_str!("../../../../languages/tests/definitions/led_test.rs"),
-        ),
+        ("led_test", include_str!("../../../../languages/tests/definitions/led_test.rs")),
         (
             "nativedemo",
             include_str!("../../../../languages/tests/definitions/nativedemo.rs"),
@@ -592,10 +576,7 @@ mod tests {
             "nativefolddemo",
             include_str!("../../../../languages/tests/definitions/nativefolddemo.rs"),
         ),
-        (
-            "nlacdemo",
-            include_str!("../../../../languages/tests/definitions/nlacdemo.rs"),
-        ),
+        ("nlacdemo", include_str!("../../../../languages/tests/definitions/nlacdemo.rs")),
         ("optsmoke", include_str!("../../../../languages/tests/definitions/optsmoke.rs")),
         (
             "refinementsmoke",
@@ -606,10 +587,7 @@ mod tests {
             include_str!("../../../../languages/tests/definitions/reserved_model.rs"),
         ),
         ("rholang", include_str!("../../../../languages/src/rholang.rs")),
-        (
-            "swapdemo",
-            include_str!("../../../../languages/tests/definitions/swapdemo.rs"),
-        ),
+        ("swapdemo", include_str!("../../../../languages/tests/definitions/swapdemo.rs")),
     ];
 
     /// A-S5.4b CROSS-CRATE AGREEMENT (design v2 §3.2): for EVERY bundled language definition, the

@@ -327,7 +327,11 @@ fn multi_category_try_fn(language: &LanguageDef, plans: &[RhoScalarInvocationPla
         .types
         .iter()
         .all(|t| covered.contains(&t.name.to_string()));
-    let outer_default = if all_covered { quote! {} } else { quote! { _ => None, } };
+    let outer_default = if all_covered {
+        quote! {}
+    } else {
+        quote! { _ => None, }
+    };
 
     quote! {
         fn __mettail_rho_try_scalar_inner(
@@ -2431,8 +2435,7 @@ pub fn generate_rho_net_invocation(language: &LanguageDef) -> TokenStream {
     // not-yet-supported language errors typed instead of seeding a channel with no
     // installed receivers; A-S5.5 flipped Ambient's predicate to Admitted — the AC
     // carrier arms — with NO change to this emission, exactly the AM-4 design).
-    let drive_opted_in =
-        mettail_rholang_codegen::DRIVE_OPT_IN.contains(&language_name.as_str());
+    let drive_opted_in = mettail_rholang_codegen::DRIVE_OPT_IN.contains(&language_name.as_str());
     // A-S5.8 (decision Q-SEED = S2): a FLOAT-BEARING language's drive fn assembles the
     // FLOAT-ROUTED seed (`rho_net_drive_float_invocation` — `new rf { ⌜^float⌝!(⟦t⟧, rf)
     // | for(@cf <- rf){ ⌜^drive⌝!(cf, fuel, @out) } }`) so the installed `^float`
@@ -2933,9 +2936,13 @@ mod tests {
             .find(&head)
             .unwrap_or_else(|| panic!("expansion must contain `{head}`"));
         let rest = &tokens[start + head.len()..];
-        let end = rest.find("pub fn ").map_or(tokens.len(), |offset| start + head.len() + offset);
+        let end = rest
+            .find("pub fn ")
+            .map_or(tokens.len(), |offset| start + head.len() + offset);
         let slice = &tokens[start..end];
-        let brace = slice.rfind('}').expect("a fn item ends with a closing brace");
+        let brace = slice
+            .rfind('}')
+            .expect("a fn item ends with a closing brace");
         &slice[..=brace]
     }
 
@@ -3034,10 +3041,7 @@ mod tests {
             "rho_net_match_invocation_to must be byte-identical whether or not the \
              language is drive-opted-in (AM-4)"
         );
-        assert!(
-            !opted_match.contains("drive"),
-            "the match fn item carries no drive reference"
-        );
+        assert!(!opted_match.contains("drive"), "the match fn item carries no drive reference");
     }
 
     /// ★ F8-AM-5c (A-S5.8): the Lambda `rho_net_drive_invocation_to` fn-item BYTE PIN —
@@ -3271,7 +3275,10 @@ mod tests {
         // FREE occurrence → `^free`. A bound `new`-scoped ambient name rides `^bound(peano(depth))`,
         // so the non-linear guard `N ≡ N` compares the two occurrences' de-Bruijn depths.
         let name_reflect = reflect_category_fn(&language, &format_ident!("Name")).to_string();
-        assert!(name_reflect.contains("\"^bound\""), "a bound Name occurrence reflects to ^bound");
+        assert!(
+            name_reflect.contains("\"^bound\""),
+            "a bound Name occurrence reflects to ^bound"
+        );
         assert!(name_reflect.contains("\"^free\""), "a free Name occurrence reflects to ^free");
         // ★ #36 S3: the expected token spelling is DERIVED from the ABI constants, never
         // re-spelled. This assertion previously hardcoded `"\"Z\""` / `"\"S\""`; when the

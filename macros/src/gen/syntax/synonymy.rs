@@ -104,7 +104,9 @@ use quote::quote;
 pub(crate) fn nullary_filler_surfaces(language: &LanguageDef) -> BTreeMap<String, String> {
     let mut filler: BTreeMap<String, String> = BTreeMap::new();
     for rule in &language.terms {
-        let Some(sp) = &rule.syntax_pattern else { continue };
+        let Some(sp) = &rule.syntax_pattern else {
+            continue;
+        };
         if sp.is_empty() || !sp.iter().all(|e| matches!(e, SyntaxExpr::Literal(_))) {
             continue;
         }
@@ -140,11 +142,10 @@ pub(crate) fn sample_surface_for(
             SyntaxExpr::Param(p) => {
                 let pname = p.to_string();
                 let pcat = tc.iter().find_map(|tp| match tp {
-                    TermParam::Simple { name, ty: mettail_ast::types::TypeExpr::Base(cat) }
-                        if name.to_string() == pname =>
-                    {
-                        Some(cat.to_string())
-                    },
+                    TermParam::Simple {
+                        name,
+                        ty: mettail_ast::types::TypeExpr::Base(cat),
+                    } if name.to_string() == pname => Some(cat.to_string()),
                     _ => None,
                 })?;
                 parts.push(filler.get(&pcat)?.clone());
@@ -226,15 +227,20 @@ pub(crate) fn derive(language: &LanguageDef) -> SynonymyModel {
     let mut edges: BTreeMap<String, BTreeMap<String, (String, Option<Vec<usize>>)>> =
         BTreeMap::new();
     for rule in &language.terms {
-        let Some(shape) = classify_fold_alias_shape(rule) else { continue };
+        let Some(shape) = classify_fold_alias_shape(rule) else {
+            continue;
+        };
         edges
             .entry(rule.category.to_string())
             .or_default()
             .insert(rule.label.to_string(), (shape.target_label, shape.renaming_inverse));
     }
 
-    let by_label: HashMap<String, &GrammarRule> =
-        language.terms.iter().map(|r| (r.label.to_string(), r)).collect();
+    let by_label: HashMap<String, &GrammarRule> = language
+        .terms
+        .iter()
+        .map(|r| (r.label.to_string(), r))
+        .collect();
 
     for (category, cat_edges) in &edges {
         // Group aliases by the target they re-wrap into. A chain `A ⇒ B ⇒ C` would need
@@ -267,7 +273,9 @@ pub(crate) fn derive(language: &LanguageDef) -> SynonymyModel {
             // The target must itself be a declared rule of this category; if the fold body names
             // a constructor with no surface rule (a synthesised variant), there is no surface to
             // be canonical about and the class is not a SURFACE synonymy class.
-            let Some(target_rule) = by_label.get(&target) else { continue };
+            let Some(target_rule) = by_label.get(&target) else {
+                continue;
+            };
             if target_rule.category.to_string() != *category {
                 continue;
             }
@@ -288,8 +296,12 @@ pub(crate) fn derive(language: &LanguageDef) -> SynonymyModel {
             let mut renamings: BTreeMap<String, Vec<usize>> = BTreeMap::new();
             renamings.insert(target.clone(), (0..target_arity).collect());
             for alias in &aliases {
-                let Some((_, Some(inverse))) = cat_edges.get(alias) else { continue };
-                let Some(alias_rule) = by_label.get(alias) else { continue };
+                let Some((_, Some(inverse))) = cat_edges.get(alias) else {
+                    continue;
+                };
+                let Some(alias_rule) = by_label.get(alias) else {
+                    continue;
+                };
                 if inverse.len() == target_arity && field_arity(alias_rule) == target_arity {
                     renamings.insert(alias.clone(), inverse.clone());
                 }
@@ -317,13 +329,19 @@ pub(crate) fn derive(language: &LanguageDef) -> SynonymyModel {
 
     // ── Re-route plans ──
     for class in &model.classes {
-        let Some(canonical) = class.canonical.as_ref() else { continue };
-        let Some(canonical_inverse) = class.renamings.get(canonical) else { continue };
+        let Some(canonical) = class.canonical.as_ref() else {
+            continue;
+        };
+        let Some(canonical_inverse) = class.renamings.get(canonical) else {
+            continue;
+        };
         for member in &class.members {
             if member == canonical {
                 continue;
             }
-            let Some(member_inverse) = class.renamings.get(member) else { continue };
+            let Some(member_inverse) = class.renamings.get(member) else {
+                continue;
+            };
             // target field `i` is supplied by member parameter `member_inverse[i]` and by
             // canonical parameter `canonical_inverse[i]`, so the member's field
             // `member_inverse[i]` and the canonical's parameter `canonical_inverse[i]` are THE
@@ -353,8 +371,7 @@ pub(crate) fn derive(language: &LanguageDef) -> SynonymyModel {
 pub(crate) fn rerouted_rule(canonical_rule: &GrammarRule, plan: &Reroute) -> GrammarRule {
     let mut synthetic = canonical_rule.clone();
     if let Some(tc) = &canonical_rule.term_context {
-        let permuted: Vec<TermParam> =
-            plan.tc_perm.iter().map(|&i| tc[i].clone()).collect();
+        let permuted: Vec<TermParam> = plan.tc_perm.iter().map(|&i| tc[i].clone()).collect();
         synthetic.term_context = Some(permuted);
     }
     synthetic
@@ -388,8 +405,11 @@ pub(crate) fn rerouted_rule(canonical_rule: &GrammarRule, plan: &Reroute) -> Gra
 /// nullary filler contributes no sample rather than a guessed one; it is reported by the harness
 /// as uncovered instead of silently passing.
 pub(crate) fn gate_table(language: &LanguageDef, model: &SynonymyModel) -> TokenStream {
-    let by_label: HashMap<String, &GrammarRule> =
-        language.terms.iter().map(|r| (r.label.to_string(), r)).collect();
+    let by_label: HashMap<String, &GrammarRule> = language
+        .terms
+        .iter()
+        .map(|r| (r.label.to_string(), r))
+        .collect();
 
     let filler = nullary_filler_surfaces(language);
 
@@ -505,8 +525,11 @@ pub(crate) fn gate_table(language: &LanguageDef, model: &SynonymyModel) -> Token
 /// same target, which is precisely the moment their surfaces become interchangeable, and the build
 /// then stops until the grammar says which surface is the canonical one.
 pub(crate) fn compile_errors(language: &LanguageDef, model: &SynonymyModel) -> TokenStream {
-    let by_label: HashMap<String, &GrammarRule> =
-        language.terms.iter().map(|r| (r.label.to_string(), r)).collect();
+    let by_label: HashMap<String, &GrammarRule> = language
+        .terms
+        .iter()
+        .map(|r| (r.label.to_string(), r))
+        .collect();
     let mut out = TokenStream::new();
     for class in &model.classes {
         // Eligibility: ≥2 members are total renamings of the target, so `Display` genuinely has a
@@ -529,7 +552,11 @@ pub(crate) fn compile_errors(language: &LanguageDef, model: &SynonymyModel) -> T
         let target = &class.target;
         let members = class.members.join(", ");
         let renamings: Vec<&String> = class.renamings.keys().collect();
-        let renamings = renamings.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+        let renamings = renamings
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         let message = if declared.is_empty() {
             format!(
                 "SURFACE SYNONYMY: the `{category}` rules {{{members}}} all denote the same term \
@@ -541,7 +568,11 @@ pub(crate) fn compile_errors(language: &LanguageDef, model: &SynonymyModel) -> T
                  surface per nesting layer."
             )
         } else {
-            let declared = declared.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+            let declared = declared
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
             format!(
                 "SURFACE SYNONYMY: the `{category}` synonymy class {{{members}}} declares MORE \
                  THAN ONE canonical member ({declared}). A class has exactly one canonical \

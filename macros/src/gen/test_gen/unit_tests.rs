@@ -54,7 +54,8 @@ pub fn generate_unit_tests(language: &LanguageDef, _pipeline: &PipelineAnalysis)
             // Stage 0 identity — STAYS. test_gen builds its OWN variant list
             // (it does not call `collect_category_variants`), so this arm is
             // unreachable for `CollectionLiteral`; it exists for exhaustiveness.
-            VariantKind::Literal { label: lbl } | VariantKind::CollectionLiteral { label: lbl, .. } => {
+            VariantKind::Literal { label: lbl }
+            | VariantKind::CollectionLiteral { label: lbl, .. } => {
                 let lbl_str = lbl.to_string();
                 // U1: spec-derived — Literal variants are emitted only
                 // for categories with native_type per the spec, so
@@ -525,10 +526,7 @@ mod tests {
         // optional precedent (one spec-admitted arm per unit test; the
         // prop generator covers Some(Top)).
         let language = crate::gen::empty_language_for_tests();
-        assert_eq!(
-            construct_leaf_value(&pred_field(true), &language),
-            Some("None".to_string()),
-        );
+        assert_eq!(construct_leaf_value(&pred_field(true), &language), Some("None".to_string()),);
     }
 
     #[test]

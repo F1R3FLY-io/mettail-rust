@@ -122,7 +122,9 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         // record it as a contextual opt-out so the collection literal keeps
         // parsing (grammar-derived; bracket openers like `[`/`{` are skipped).
         if !trimmed_open.is_empty()
-            && trimmed_open.chars().all(|c| c.is_alphanumeric() || c == '_')
+            && trimmed_open
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_')
         {
             contextual_collection_openers.insert(trimmed_open.clone());
         }
@@ -1093,9 +1095,9 @@ fn convert_grammar_items(
                 delimiters,
             } => {
                 let kind = match coll_type {
-                    CollectionType::HashBag
-                    | CollectionType::HashMap
-                    | CollectionType::PathMap => CollectionKind::HashBag,
+                    CollectionType::HashBag | CollectionType::HashMap | CollectionType::PathMap => {
+                        CollectionKind::HashBag
+                    },
                     CollectionType::HashSet => CollectionKind::HashSet,
                     CollectionType::Vec => CollectionKind::Vec,
                 };
@@ -1163,9 +1165,7 @@ fn find_collection_info(
                     let kind = match coll_type {
                         CollectionType::HashBag
                         | CollectionType::HashMap
-                        | CollectionType::PathMap => {
-                            CollectionKind::HashBag
-                        },
+                        | CollectionType::PathMap => CollectionKind::HashBag,
                         CollectionType::HashSet => CollectionKind::HashSet,
                         CollectionType::Vec => CollectionKind::Vec,
                     };

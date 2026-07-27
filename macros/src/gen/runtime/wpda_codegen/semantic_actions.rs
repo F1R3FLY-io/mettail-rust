@@ -214,9 +214,7 @@ pub fn emit_min_terminal_span_body(
 /// sound parse. Emitted unconditionally (no kill-switch): the trait default is
 /// `false`, so the generated impl is byte-identical for grammars with no
 /// literal-led rules.
-pub fn emit_rule_leads_with_literal_body(
-    per_cat: &[Vec<(u16, &GrammarRule)>],
-) -> TokenStream {
+pub fn emit_rule_leads_with_literal_body(per_cat: &[Vec<(u16, &GrammarRule)>]) -> TokenStream {
     use mettail_ast::grammar::SyntaxExpr;
     let mut arms: Vec<TokenStream> = Vec::new();
     for (ci, rules) in per_cat.iter().enumerate() {
@@ -301,8 +299,7 @@ pub fn emit_sigil_quoted_bind_overgen_rule_body(
             // (b)+(c): some interior literal of R is also carried by a
             // sigil-led sibling of the same category.
             let has_shared_bind_trigger = sp.iter().enumerate().any(|(i, e)| {
-                i > 0
-                    && matches!(e, SyntaxExpr::Literal(t) if sigil_interior.contains(t))
+                i > 0 && matches!(e, SyntaxExpr::Literal(t) if sigil_interior.contains(t))
             });
             if has_shared_bind_trigger {
                 let r = *rule_idx;
@@ -803,11 +800,9 @@ fn emit_action_entry_arm(
         // `action_children.len() == 0`. Arity MUST therefore be 0 (the walker's
         // `debug_assert_eq!(action_entry.arity, action_children.len())` fires
         // otherwise) and there are no input-category slots.
-        AtomicShape::NullaryLiteralRun { wrapper_variant, .. } => (
-            emit_terminal_keyword_action(cat_ident, wrapper_variant),
-            0u8,
-            quote! { &[] },
-        ),
+        AtomicShape::NullaryLiteralRun { wrapper_variant, .. } => {
+            (emit_terminal_keyword_action(cat_ident, wrapper_variant), 0u8, quote! { &[] })
+        },
         AtomicShape::VarRule { wrapper_variant } => {
             (emit_var_rule_action(cat_ident, wrapper_variant), 1u8, quote! { &[#any_cat] })
         },
@@ -1364,7 +1359,11 @@ fn emit_infix_action_entry(
                 let var = format_ident!("arg{}", i);
                 // arg0 is the LHS (info.category); args 1..N correspond to
                 // mixfix_parts[i-1] in term_context (= constructor) order.
-                let part = if i == 0 { None } else { Some(&info.mixfix_parts[i - 1]) };
+                let part = if i == 0 {
+                    None
+                } else {
+                    Some(&info.mixfix_parts[i - 1])
+                };
                 // GEN-1 B-3 (Stage S3): a repetition part's arg is an
                 // `ActionArg::CollectionId`; drain it into `Vec<elem>` (the AST
                 // field type for a `*sep` collection param — all shipped rep params

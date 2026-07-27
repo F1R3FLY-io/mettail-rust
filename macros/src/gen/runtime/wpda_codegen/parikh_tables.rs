@@ -204,9 +204,7 @@ fn expr_must(
         // L9-4: a guest body consumes at least the opener token (non-nullable);
         // it owns the opener kind's class (the closer/body classes are consumed
         // atomically inside the assembly action, not by the Parikh spine).
-        SyntaxExpr::GuestBody { open, .. } => {
-            (false, alpha.mask_of_terminal(&open.to_string()))
-        },
+        SyntaxExpr::GuestBody { open, .. } => (false, alpha.mask_of_terminal(&open.to_string())),
         // A parameter reference parses its declared category.
         SyntaxExpr::Param(id) => {
             let name = id.to_string();

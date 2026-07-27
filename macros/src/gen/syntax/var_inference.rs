@@ -451,9 +451,7 @@ fn generate_var_inference_arm(
                             let kind = match coll_type {
                                 CollectionType::HashBag
                                 | CollectionType::HashMap
-                                | CollectionType::PathMap => {
-                                    InferFieldKind::HashBag
-                                },
+                                | CollectionType::PathMap => InferFieldKind::HashBag,
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
                             };
@@ -700,9 +698,7 @@ fn generate_var_type_inference_arm(
                             let kind = match coll_type {
                                 CollectionType::HashBag
                                 | CollectionType::HashMap
-                                | CollectionType::PathMap => {
-                                    InferFieldKind::HashBag
-                                },
+                                | CollectionType::PathMap => InferFieldKind::HashBag,
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
                             };

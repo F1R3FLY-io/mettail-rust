@@ -1177,12 +1177,7 @@ fn mixfix_rep_slots(rule: &GrammarRule) -> Vec<(u8, String, String, Vec<String>)
         .enumerate()
         .filter_map(|(i, part)| {
             part.repetition.as_ref().map(|rep| {
-                (
-                    i as u8,
-                    part.operand_category.clone(),
-                    rep.separator.clone(),
-                    rep.close.clone(),
-                )
+                (i as u8, part.operand_category.clone(), rep.separator.clone(), rep.close.clone())
             })
         })
         .collect()

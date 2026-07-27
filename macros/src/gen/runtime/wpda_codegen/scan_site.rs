@@ -253,7 +253,8 @@ impl InertPolicy {
     fn describe(self) -> String {
         match self {
             InertPolicy::SkipStringsAndTrivia => {
-                "SKIP — string-literal and `-> COMMENTS` bytes are not code and are stepped over".to_string()
+                "SKIP — string-literal and `-> COMMENTS` bytes are not code and are stepped over"
+                    .to_string()
             },
             InertPolicy::RawBytesJustified(reason) => {
                 format!("RAW BYTES (justified) — {reason}")
@@ -380,8 +381,12 @@ pub(crate) const SEP_LEAD_DEPTH: ScanSite = ScanSite {
     id: "sep.lead.depth",
     what: "bracket-depth tracking for the `.*sep` lead scan",
     literals: LiteralSource::DepthOnly,
-    left: Discharge::NoSpan { why: "a depth counter matches no literal, so it has no operand spans" },
-    right: Discharge::NoSpan { why: "a depth counter matches no literal, so it has no operand spans" },
+    left: Discharge::NoSpan {
+        why: "a depth counter matches no literal, so it has no operand spans",
+    },
+    right: Discharge::NoSpan {
+        why: "a depth counter matches no literal, so it has no operand spans",
+    },
     inert: InertPolicy::SkipStringsAndTrivia,
 };
 
@@ -390,8 +395,12 @@ pub(crate) const SEP_SPLIT: ScanSite = ScanSite {
     id: "sep.split",
     what: "`.*sep` domain split at depth-0 separator bytes",
     literals: LiteralSource::SepByte,
-    left: Discharge::Evidence { witness: "<element category>::parse_via_wpda{,_all_with_weights}" },
-    right: Discharge::Evidence { witness: "<element category>::parse_via_wpda{,_all_with_weights}" },
+    left: Discharge::Evidence {
+        witness: "<element category>::parse_via_wpda{,_all_with_weights}",
+    },
+    right: Discharge::Evidence {
+        witness: "<element category>::parse_via_wpda{,_all_with_weights}",
+    },
     inert: InertPolicy::SkipStringsAndTrivia,
 };
 
@@ -401,8 +410,12 @@ pub(crate) const PROJ_RECEIVER_GATE: ScanSite = ScanSite {
     id: "proj.receiver_gate",
     what: "ROOT-D receiver-frame depth-0 whitespace gate",
     literals: LiteralSource::DepthOnly,
-    left: Discharge::NoSpan { why: "a gate matches no literal; failure sets `__cap_hit` and declines" },
-    right: Discharge::NoSpan { why: "a gate matches no literal; failure sets `__cap_hit` and declines" },
+    left: Discharge::NoSpan {
+        why: "a gate matches no literal; failure sets `__cap_hit` and declines",
+    },
+    right: Discharge::NoSpan {
+        why: "a gate matches no literal; failure sets `__cap_hit` and declines",
+    },
     inert: InertPolicy::SkipStringsAndTrivia,
 };
 
@@ -411,8 +424,12 @@ pub(crate) const PROJ_SEP_REGION: ScanSite = ScanSite {
     id: "proj.sep_region",
     what: "projection arm's `OpKind::Sep` region split at depth-0 separators",
     literals: LiteralSource::SepByte,
-    left: Discharge::Evidence { witness: "<element category>::parse_via_wpda{,_all_with_weights}" },
-    right: Discharge::Evidence { witness: "<element category>::parse_via_wpda{,_all_with_weights}" },
+    left: Discharge::Evidence {
+        witness: "<element category>::parse_via_wpda{,_all_with_weights}",
+    },
+    right: Discharge::Evidence {
+        witness: "<element category>::parse_via_wpda{,_all_with_weights}",
+    },
     inert: InertPolicy::SkipStringsAndTrivia,
 };
 
@@ -456,7 +473,9 @@ pub(crate) const INFIX_OPS: ScanSite = ScanSite {
     left: Discharge::Evidence {
         witness: "<category>::parse_via_wpda{,_all_with_weights} + `__left_is_operand`",
     },
-    right: Discharge::Evidence { witness: "<category>::parse_via_wpda{,_all_with_weights}" },
+    right: Discharge::Evidence {
+        witness: "<category>::parse_via_wpda{,_all_with_weights}",
+    },
     inert: InertPolicy::SkipStringsAndTrivia,
 };
 
@@ -465,10 +484,15 @@ pub(crate) const INFIX_OPS: ScanSite = ScanSite {
 /// `__in_str` machinery is emitted.
 pub(crate) const INFIX_STRING_STATE: ScanSite = ScanSite {
     id: "infix.string_state",
-    what: "infix scan's string-literal inertness (subsumed by `__inert_skip` when RULE-inert is on)",
+    what:
+        "infix scan's string-literal inertness (subsumed by `__inert_skip` when RULE-inert is on)",
     literals: LiteralSource::DepthOnly,
-    left: Discharge::NoSpan { why: "a lexical-state toggle matches no literal" },
-    right: Discharge::NoSpan { why: "a lexical-state toggle matches no literal" },
+    left: Discharge::NoSpan {
+        why: "a lexical-state toggle matches no literal",
+    },
+    right: Discharge::NoSpan {
+        why: "a lexical-state toggle matches no literal",
+    },
     inert: InertPolicy::SkipStringsAndTrivia,
 };
 
@@ -477,7 +501,9 @@ pub(crate) const PROJ_SIGIL_REJECT: ScanSite = ScanSite {
     id: "proj.sigil_reject",
     what: "ROOT-1 authoritative-reject leading-sigil test",
     literals: LiteralSource::ProjSkeletonLits,
-    left: Discharge::NoSpan { why: "the test reads `__bytes.first()`, so `p == 0` and there is no left span" },
+    left: Discharge::NoSpan {
+        why: "the test reads `__bytes.first()`, so `p == 0` and there is no left span",
+    },
     // The reject fires only when a CLOSED σ-led frame matched the WHOLE input, and that
     // match ran through `proj.lit` — which carries the boundary test. The reject adds no
     // new literal match of its own.
@@ -489,7 +515,8 @@ pub(crate) const PROJ_SIGIL_REJECT: ScanSite = ScanSite {
     // such a frame no longer sets `__sigil_frame_matched` at all and this site's evidence
     // is genuinely independent of the byte it reads. See `facade::ProjVariant::open_ended`.
     right: Discharge::Evidence {
-        witness: "`__sigil_frame_matched`, set only by a whole-input CLOSED `proj.lit` skeleton match",
+        witness:
+            "`__sigil_frame_matched`, set only by a whole-input CLOSED `proj.lit` skeleton match",
     },
     inert: InertPolicy::RawBytesJustified(
         "reads only `__bytes.first()` of an already-trimmed span; byte 0 of a span cannot be \
@@ -566,9 +593,7 @@ pub(crate) fn site_literals(
 /// One row per `(site_id, literal, pre, ext)`, so the generated gate can reconstruct the
 /// exact acceptance predicate the emitter used and compare it against the language's own
 /// lexer. Emitted alongside [`emit_registry_table`] under the same artifact lever.
-pub(crate) fn emit_literal_table(
-    rows: &[(&'static str, String, Vec<u8>, Vec<u8>)],
-) -> TokenStream {
+pub(crate) fn emit_literal_table(rows: &[(&'static str, String, Vec<u8>, Vec<u8>)]) -> TokenStream {
     let entries = rows.iter().map(|(id, lit, pre, ext)| {
         quote! { (#id, #lit, &[ #(#pre),* ], &[ #(#ext),* ]) }
     });

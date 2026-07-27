@@ -314,9 +314,7 @@ impl SpineTree {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn leaf_for(&self, rule_idx: u16) -> Option<(&SpineItem, &GroupMember)> {
         match self {
-            SpineTree::Leaf { item, member } if member.rule_idx == rule_idx => {
-                Some((item, member))
-            },
+            SpineTree::Leaf { item, member } if member.rule_idx == rule_idx => Some((item, member)),
             SpineTree::Leaf { .. } => None,
             SpineTree::Interior { children, .. } => {
                 children.iter().find_map(|child| child.leaf_for(rule_idx))
@@ -524,7 +522,11 @@ fn binder_items(
     for (idx, position) in positions.iter().enumerate() {
         match position {
             BinderPosition::Literal(text) => {
-                let previous = if idx > 0 { positions.get(idx - 1) } else { None };
+                let previous = if idx > 0 {
+                    positions.get(idx - 1)
+                } else {
+                    None
+                };
                 items.push(SpineItem::Literal {
                     text: text.clone(),
                     required_top_cat: required_top_cat_after_position(previous, categories),
@@ -615,13 +617,8 @@ fn discover_members(
         let body_src_idx = binder_initial_body_cat(&shape)
             .and_then(|name| lookup_src_idx(name, categories))
             .unwrap_or(category_src_idx);
-        let (items, truncated) = binder_items(
-            &shape.positions,
-            category_src_idx,
-            rule_idx,
-            categories,
-            prefix_bp_map,
-        );
+        let (items, truncated) =
+            binder_items(&shape.positions, category_src_idx, rule_idx, categories, prefix_bp_map);
         out.push((
             trigger.clone(),
             CandidateMember {
@@ -828,12 +825,7 @@ pub(crate) fn build_prefix_factoring(
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
 ) -> Vec<CategoryFactoring> {
-    build_prefix_factoring_with(
-        language,
-        categories,
-        per_cat,
-        super::forks::S1F5_ACCEPT_CONTINUE,
-    )
+    build_prefix_factoring_with(language, categories, per_cat, super::forks::S1F5_ACCEPT_CONTINUE)
 }
 
 /// The `accept_continue`-explicit core of [`build_prefix_factoring`] (the F1
@@ -929,8 +921,7 @@ pub(crate) fn build_prefix_factoring_with(
                         .collect()
                 };
                 let mut interior_accepts: Vec<u16> = Vec::new();
-                let roots =
-                    build_tree(1, root_item, part, accept_continue, &mut interior_accepts);
+                let roots = build_tree(1, root_item, part, accept_continue, &mut interior_accepts);
                 if !interior_accepts.is_empty() {
                     // Only reachable with `accept_continue == false` (F5-1
                     // dormant stance) — [`build_tree`] leafs exhausted
@@ -1280,8 +1271,7 @@ pub(crate) fn build_mixfix_factoring(
     // Operand-absorbability oracle (A-M5): every (category, terminal) that
     // carries ANY operator row — a post-operand divergence literal matching
     // one of these could be absorbed INTO the operand sub-parse.
-    let operator_trigger_keys: BTreeSet<(u16, String)> =
-        grouped.keys().cloned().collect();
+    let operator_trigger_keys: BTreeSet<(u16, String)> = grouped.keys().cloned().collect();
     // Per-RESULT-category ordinal continuation after the prefix groups.
     let mut next_ordinal: Vec<u16> = vec![0; per_cat.len()];
     for cat_fact in prefix_partition {
@@ -1320,8 +1310,7 @@ pub(crate) fn build_mixfix_factoring(
                     .map(|i| i as u16)
                     .unwrap_or(0)
             };
-            let mut expected_cats: Vec<u16> =
-                Vec::with_capacity(1 + g.op.mixfix_parts.len());
+            let mut expected_cats: Vec<u16> = Vec::with_capacity(1 + g.op.mixfix_parts.len());
             expected_cats.push(*dispatch_cat);
             for part in &g.op.mixfix_parts {
                 if part.repetition.is_some() {
@@ -1489,9 +1478,7 @@ pub(crate) fn build_mixfix_factoring(
     out
 }
 
-fn op_first_nullary_literal(
-    op: &mettail_prattail::binding_power::InfixOperator,
-) -> Option<String> {
+fn op_first_nullary_literal(op: &mettail_prattail::binding_power::InfixOperator) -> Option<String> {
     op.nullary_literals.first().cloned()
 }
 
@@ -1505,8 +1492,7 @@ fn build_mixfix_group(
     next_ordinal: &mut [u16],
 ) -> Result<MixfixGroup, IneligibleGroup> {
     let member_rule_idxs: Vec<u16> = part.iter().map(|c| c.member.rule_idx).collect();
-    let member_l_bps: Vec<(u8, u16)> =
-        part.iter().map(|c| (c.l_bp, c.member.rule_idx)).collect();
+    let member_l_bps: Vec<(u8, u16)> = part.iter().map(|c| (c.l_bp, c.member.rule_idx)).collect();
     // Uniform result_src (the mixfix analog of body_src uniformity).
     let result_src_idxs: Vec<u16> = {
         let mut seen = BTreeSet::new();
@@ -1598,9 +1584,7 @@ fn build_mixfix_group(
     );
     if !interior_accepts.is_empty() {
         return Err(IneligibleGroup {
-            reason: IneligibleReason::InteriorAccept {
-                accepting_rule_idxs: interior_accepts,
-            },
+            reason: IneligibleReason::InteriorAccept { accepting_rule_idxs: interior_accepts },
             member_rule_idxs,
         });
     }
@@ -1677,7 +1661,7 @@ fn mixfix_spine_arm_coords(root: &SpineTree) -> Option<Vec<((u8, u8, u8), &Spine
     let mut out: Vec<((u8, u8, u8), &SpineTree)> = Vec::new();
     let mut seen: BTreeSet<(u8, u8, u8)> = BTreeSet::new();
     seen.insert((2, 0, 0)); // the pre-root arm key
-    // (interior node, state BEFORE consuming its edge item).
+                            // (interior node, state BEFORE consuming its edge item).
     let mut stack: Vec<(&SpineTree, (u8, u8, u8))> = vec![(root, (2, 0, 0))];
     while let Some((node, state_before)) = stack.pop() {
         let SpineTree::Interior { item, children } = node else {
@@ -1796,7 +1780,6 @@ pub(crate) fn mixfix_spine_parts_len_rows(
 // Tests — the F0 gate's rholang trie pins (real grammar, real indices),
 // the A2 exclusion receipts, and the synthetic eligibility witnesses.
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // F1 — EMISSION (plan §D F1 + delta amendments A-1/A-3/A-4/A-5).
@@ -2172,13 +2155,7 @@ pub(crate) fn build_spine_emission(
     // F5-2: the const-following mixfix partition (identity — zero groups —
     // unless `S1_FACTORING && S1F5_MIXFIX_COHORTS`).
     let mixfix_partition = mixfix_emission_partition(language, categories, per_cat);
-    build_spine_emission_from_parts(
-        &partition,
-        &mixfix_partition,
-        language,
-        categories,
-        per_cat,
-    )
+    build_spine_emission_from_parts(&partition, &mixfix_partition, language, categories, per_cat)
 }
 
 /// The prefix-partition-explicit view of [`build_spine_emission`] — the
@@ -2289,8 +2266,7 @@ pub(crate) fn build_spine_emission_from_parts(
                                 }
                             },
                             SpineItem::ParamParse { cat_src_idx, cur_bp } => {
-                                let (sym, state) =
-                                    child_target_tokens(cat, spine_id, child, *cid);
+                                let (sym, state) = child_target_tokens(cat, spine_id, child, *cid);
                                 let _ = state; // param chains resume via PrefixDispatch
                                 quote! {
                                     return WpdaStepAction::ReplaceAndPush {
@@ -2536,11 +2512,7 @@ pub(crate) fn build_spine_emission_from_parts(
                 });
                 // The loop-v2 fan arm + the MLR spine prelude arms.
                 let trigger = &bucket.trigger;
-                mixfix_fan_arm_streams.push(mixfix_fan_group_arm(
-                    dispatch_cat,
-                    trigger,
-                    group,
-                ));
+                mixfix_fan_arm_streams.push(mixfix_fan_group_arm(dispatch_cat, trigger, group));
                 mixfix_prelude_arm_streams.push(mixfix_prelude_group_arms(group));
                 mixfix_groups.push(MixfixGroupEmission {
                     dispatch_cat_src_idx: dispatch_cat,
@@ -2651,11 +2623,7 @@ pub(crate) fn build_spine_emission_from_parts(
 /// the `_` arm's verbatim per-member loop — the exact D-1 fallback (partial
 /// floor windows, goal/method-name rejections, and the fallback-full case
 /// all reproduce today's per-member behavior byte-for-byte).
-fn mixfix_fan_group_arm(
-    dispatch_cat: u16,
-    trigger: &str,
-    group: &MixfixGroup,
-) -> TokenStream {
+fn mixfix_fan_group_arm(dispatch_cat: u16, trigger: &str, group: &MixfixGroup) -> TokenStream {
     let result_src = group.result_src_idx;
     let spine_id = group.spine_id;
     let min_l_bp = group.min_l_bp;
@@ -2706,8 +2674,8 @@ fn mixfix_prelude_group_arms(group: &MixfixGroup) -> TokenStream {
     let result_src = group.result_src_idx;
     let spine_id = group.spine_id;
     let root = &group.roots[0];
-    let arm_plan = mixfix_spine_arm_coords(root)
-        .expect("eligibility rejected colliding spine coordinates");
+    let arm_plan =
+        mixfix_spine_arm_coords(root).expect("eligibility rejected colliding spine coordinates");
     let mut arms: Vec<TokenStream> = Vec::with_capacity(1 + arm_plan.len());
     // The PRE-ROOT arm: consume the root edge itself.
     let root_after = match root.item() {
@@ -2746,12 +2714,7 @@ fn mixfix_prelude_group_arms(group: &MixfixGroup) -> TokenStream {
                 (child, after)
             })
             .collect();
-        arms.push(mixfix_spine_step_arm(
-            result_src,
-            spine_id,
-            *arm_key,
-            &child_entries,
-        ));
+        arms.push(mixfix_spine_step_arm(result_src, spine_id, *arm_key, &child_entries));
     }
     quote! { #(#arms)* }
 }
@@ -2784,8 +2747,7 @@ fn mixfix_child_target_tokens(
             )
         },
         SpineTree::Leaf { member, .. } => {
-            let MemberCommit::MixfixRun { rule_idx, kind, completed_idx, sub_pos } =
-                &member.commit
+            let MemberCommit::MixfixRun { rule_idx, kind, completed_idx, sub_pos } = &member.commit
             else {
                 panic!(
                     "S1-FACTORING F5-2: mixfix trie leaf (rule {}) carries a \
@@ -2888,8 +2850,7 @@ fn mixfix_spine_step_arm(
     let mut uncond_nonforks: Vec<TokenStream> = Vec::new();
     let mut lit_idx: usize = 0;
     for (child, child_after) in children {
-        let (sym, state) =
-            mixfix_child_target_tokens(result_src, spine_id, child, *child_after);
+        let (sym, state) = mixfix_child_target_tokens(result_src, spine_id, child, *child_after);
         match child.item() {
             SpineItem::Literal { text, .. } => {
                 let t_ident = quote::format_ident!("__spine_targets_{}", lit_idx);
@@ -3159,8 +3120,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_relative);
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("bundled language source {path:?} readable: {e}"));
-        let file =
-            syn::parse_file(&source).expect("bundled language source parses as a Rust file");
+        let file = syn::parse_file(&source).expect("bundled language source parses as a Rust file");
         let mac = file
             .items
             .iter()
@@ -3210,23 +3170,17 @@ mod tests {
         categories
             .iter()
             .position(|c| c == name)
-            .unwrap_or_else(|| panic!("category {name} present"))
-            as u16
+            .unwrap_or_else(|| panic!("category {name} present")) as u16
     }
 
     fn rule_idx(per_cat_rules: &[GrammarRule], label: &str) -> u16 {
         per_cat_rules
             .iter()
             .position(|r| r.label == label)
-            .unwrap_or_else(|| panic!("rule {label} present"))
-            as u16
+            .unwrap_or_else(|| panic!("rule {label} present")) as u16
     }
 
-    fn bucket<'a>(
-        model: &'a [CategoryFactoring],
-        cat: u16,
-        literal: &str,
-    ) -> &'a FactoringBucket {
+    fn bucket<'a>(model: &'a [CategoryFactoring], cat: u16, literal: &str) -> &'a FactoringBucket {
         model
             .iter()
             .find(|c| c.category_src_idx == cat)
@@ -3278,7 +3232,10 @@ mod tests {
     }
 
     fn simple(name: &str, cat: &str) -> TermParam {
-        TermParam::Simple { name: id(name), ty: TypeExpr::Base(id(cat)) }
+        TermParam::Simple {
+            name: id(name),
+            ty: TypeExpr::Base(id(cat)),
+        }
     }
 
     fn simple_coll(name: &str, coll: CollectionType, elem: &str) -> TermParam {
@@ -3472,9 +3429,7 @@ mod tests {
         );
         assert_eq!(
             render_forest(&proc_at.groups[1].roots),
-            format!(
-                "P({name_src},0)[L(!)[L(()[P(0,0)[L())=>r12 L(,)=>r22] L())=>r17]]]"
-            ),
+            format!("P({name_src},0)[L(!)[L(()[P(0,0)[L())=>r12 L(,)=>r22] L())=>r17]]]"),
             "Quoted group divergence structure",
         );
         assert_eq!(
@@ -3506,13 +3461,14 @@ mod tests {
         assert_eq!(m15.leaf_depth, 4, "spine consumed Nil ! ( ) for rule 15");
         assert_eq!(
             m15.commit,
-            MemberCommit::Nullary { rule_idx: 15, completed_idx: 0, sub_pos: 4 },
+            MemberCommit::Nullary {
+                rule_idx: 15,
+                completed_idx: 0,
+                sub_pos: 4
+            },
             "nullary commit lands at sub_pos == parts_len (tail complete)",
         );
-        assert_eq!(
-            m15.pos_map,
-            SpinePosMap::Nullary { sub_pos_at_depth: vec![0, 1, 2, 3, 4] },
-        );
+        assert_eq!(m15.pos_map, SpinePosMap::Nullary { sub_pos_at_depth: vec![0, 1, 2, 3, 4] },);
         assert!(!m15.has_post_spine_remainder);
 
         let (edge20, m20) = nil.leaf_for(20).expect("rule 20 leaf");
@@ -3527,10 +3483,7 @@ mod tests {
             MemberCommit::Binder { rule_idx: 20, resume_pos: 6 },
             "2Plus commit resumes BinderRule at pos 6 (the collection slot)",
         );
-        assert_eq!(
-            m20.pos_map,
-            SpinePosMap::Binder { pos_at_depth: vec![1, 2, 3, 4, 5, 6] },
-        );
+        assert_eq!(m20.pos_map, SpinePosMap::Binder { pos_at_depth: vec![1, 2, 3, 4, 5, 6] },);
         assert!(
             m20.has_post_spine_remainder,
             "the 2Plus collection tail runs in the member's own machinery",
@@ -3578,8 +3531,7 @@ mod tests {
                 "Name@ members are root-divergent singletons: {s:?}",
             );
         }
-        let singleton_idxs: BTreeSet<u16> =
-            name_at.singletons.iter().map(|s| s.rule_idx).collect();
+        let singleton_idxs: BTreeSet<u16> = name_at.singletons.iter().map(|s| s.rule_idx).collect();
         assert_eq!(singleton_idxs, BTreeSet::from([nquote, nquote_nil]));
 
         let ib_at = bucket(&model, ib_src, "@");
@@ -3658,10 +3610,7 @@ mod tests {
         assert_eq!(m3.leaf_depth, 3, "spine consumed pat <- n for rule 3");
         assert_eq!(m3.commit, MemberCommit::Binder { rule_idx: 3, resume_pos: 4 });
         assert_eq!(m3.pos_map, SpinePosMap::Binder { pos_at_depth: vec![1, 2, 3, 4] });
-        assert!(
-            !m3.has_post_spine_remainder,
-            "a true accept has NO member-side remainder",
-        );
+        assert!(!m3.has_post_spine_remainder, "a true accept has NO member-side remainder",);
 
         // r6: ordinary earliest-uniqueness leaf at the `L(<=)` divergence.
         let (edge6, m6) = group.leaf_for(6).expect("rule 6 leaf");
@@ -3758,7 +3707,9 @@ mod tests {
                 "{label} is a numeric-cast-adapter row (A2)",
             );
             assert!(
-                b.groups.iter().all(|g| !g.member_rule_idxs().contains(&idx)),
+                b.groups
+                    .iter()
+                    .all(|g| !g.member_rule_idxs().contains(&idx)),
                 "{label} must not ride a spine",
             );
         }
@@ -3806,7 +3757,11 @@ mod tests {
         assert!(
             int_bucket.groups.is_empty(),
             "the (Int, \"int\") cohort must not factor (all cast rows): {:?}",
-            int_bucket.groups.iter().map(|g| g.member_rule_idxs()).collect::<Vec<_>>(),
+            int_bucket
+                .groups
+                .iter()
+                .map(|g| g.member_rule_idxs())
+                .collect::<Vec<_>>(),
         );
         for label in ["FloatToInt", "BoolToInt", "StrToInt", "IntId", "IntBin"] {
             let idx = rule_idx(&per_cat[int_src as usize], label);
@@ -3831,7 +3786,11 @@ mod tests {
         assert!(
             float_bucket.groups.is_empty(),
             "the (Float, \"float\") cohort must not factor (all cast rows): {:?}",
-            float_bucket.groups.iter().map(|g| g.member_rule_idxs()).collect::<Vec<_>>(),
+            float_bucket
+                .groups
+                .iter()
+                .map(|g| g.member_rule_idxs())
+                .collect::<Vec<_>>(),
         );
         for label in ["IntToFloat", "BoolToFloat", "StrToFloat", "FloatId", "FloatBin"] {
             let idx = rule_idx(&per_cat[float_src as usize], label);
@@ -4019,7 +3978,11 @@ mod tests {
         let (_, nullary) = g.leaf_for(0).expect("nullary leaf");
         assert_eq!(
             nullary.commit,
-            MemberCommit::Nullary { rule_idx: 0, completed_idx: 0, sub_pos: 2 },
+            MemberCommit::Nullary {
+                rule_idx: 0,
+                completed_idx: 0,
+                sub_pos: 2
+            },
         );
         let (_, binder) = g.leaf_for(1).expect("binder leaf");
         assert_eq!(binder.commit, MemberCommit::Binder { rule_idx: 1, resume_pos: 3 });
@@ -4140,11 +4103,17 @@ mod tests {
             "A1 at the roots: the remainder tree FIRST, the accept root LAST",
         );
         let (edge0, short) = g.leaf_for(0).expect("the TShort accept root");
-        assert!(matches!(edge0, SpineItem::Literal { text, required_top_cat: None } if text == "«"));
+        assert!(
+            matches!(edge0, SpineItem::Literal { text, required_top_cat: None } if text == "«")
+        );
         assert_eq!(short.kind, MemberKind::Nullary);
         assert_eq!(
             short.commit,
-            MemberCommit::Nullary { rule_idx: 0, completed_idx: 0, sub_pos: 1 },
+            MemberCommit::Nullary {
+                rule_idx: 0,
+                completed_idx: 0,
+                sub_pos: 1
+            },
             "nullary accept lands tail-complete (sub_pos == parts_len == 1)",
         );
         assert!(!short.has_post_spine_remainder);
@@ -4286,14 +4255,7 @@ mod tests {
                     "WithColl",
                     "Expr",
                     vec![simple("t", "Tee"), simple_coll("xs", CollectionType::Vec, "Tee")],
-                    vec![
-                        lit("quo"),
-                        lit("«"),
-                        param("t"),
-                        lit("·"),
-                        sep("xs", ","),
-                        lit("»"),
-                    ],
+                    vec![lit("quo"), lit("«"), param("t"), lit("·"), sep("xs", ","), lit("»")],
                 ),
                 jrule(
                     "Plain",
@@ -4310,10 +4272,7 @@ mod tests {
         assert_eq!(b.groups.len(), 1, "shared « + Tee spine factors");
         let g = &b.groups[0];
         let tee_src = src_idx(&categories, "Tee");
-        assert_eq!(
-            render_forest(&g.roots),
-            format!("L(«)[P({tee_src},0)[L(·)=>r0 L(»)=>r1]]"),
-        );
+        assert_eq!(render_forest(&g.roots), format!("L(«)[P({tee_src},0)[L(·)=>r0 L(»)=>r1]]"),);
         let (_, with_coll) = g.leaf_for(0).expect("collection member leaf");
         assert!(
             with_coll.has_post_spine_remainder,
@@ -4332,11 +4291,7 @@ mod tests {
         // path is covered by the calculator receipts test).
         let lang = mk_language(
             "BodySplit",
-            vec![
-                lang_type("Expr", None),
-                lang_type("Tee", None),
-                lang_type("Zed", None),
-            ],
+            vec![lang_type("Expr", None), lang_type("Tee", None), lang_type("Zed", None)],
             vec![
                 jrule(
                     "FromTee",
@@ -4395,7 +4350,10 @@ mod tests {
     /// Whitespace-insensitive TokenStream text (token spacing in
     /// `TokenStream::to_string` is not load-bearing).
     fn normalized(ts: &proc_macro2::TokenStream) -> String {
-        ts.to_string().chars().filter(|c| !c.is_whitespace()).collect()
+        ts.to_string()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
     }
 
     /// The window of `s` between `from` (inclusive of content after it) and
@@ -4476,13 +4434,11 @@ mod tests {
                         .min()
                         .expect("an eligible group has members");
                     assert_eq!(
-                        min,
-                        0,
+                        min, 0,
                         "group (cat {}, spine {:#06x}) has min_terminal_span > 0 — \
                          it emits a span row; re-derive the min_span_prelude \
                          expectation (A3)",
-                        cat_fact.category_src_idx,
-                        group.spine_id,
+                        cat_fact.category_src_idx, group.spine_id,
                     );
                 }
             }
@@ -4493,8 +4449,11 @@ mod tests {
         // green at BOTH stances; the min re-derivation loop above already
         // covered the new group (r2's Op-bearing pattern ⇒ min 0 ⇒ its span
         // row is ABSENT and the prelude stays empty).
-        let expected_groups =
-            if crate::gen::runtime::wpda_codegen::forks::S1F5_ACCEPT_CONTINUE { 4 } else { 3 };
+        let expected_groups = if crate::gen::runtime::wpda_codegen::forks::S1F5_ACCEPT_CONTINUE {
+            4
+        } else {
+            3
+        };
         assert_eq!(
             groups_seen, expected_groups,
             "rholang group census follows the S1F5_ACCEPT_CONTINUE stance",
@@ -4520,19 +4479,21 @@ mod tests {
                         .min()
                         .expect("an eligible mixfix group has members");
                     assert_eq!(
-                        min,
-                        0,
+                        min, 0,
                         "mixfix group (result {}, spine {:#06x}) has \
                          min_terminal_span > 0 — it emits a span row; re-derive \
                          the min_span_prelude expectation (A3)",
-                        group.result_src_idx,
-                        group.spine_id,
+                        group.result_src_idx, group.spine_id,
                     );
                 }
             }
         }
         let expected_mixfix_groups =
-            if crate::gen::runtime::wpda_codegen::forks::S1F5_MIXFIX_COHORTS { 2 } else { 0 };
+            if crate::gen::runtime::wpda_codegen::forks::S1F5_MIXFIX_COHORTS {
+                2
+            } else {
+                0
+            };
         assert_eq!(
             mixfix_groups_seen, expected_mixfix_groups,
             "rholang mixfix cohort census follows the S1F5_MIXFIX_COHORTS stance",
@@ -4542,13 +4503,8 @@ mod tests {
             expected_mixfix_groups,
             "the const-gated bundle's mixfix groups follow the stance",
         );
-        let explicit = build_spine_emission_from_parts(
-            &model,
-            &mixfix_model,
-            &def,
-            &categories,
-            &per_cat,
-        );
+        let explicit =
+            build_spine_emission_from_parts(&model, &mixfix_model, &def, &categories, &per_cat);
         assert_eq!(gated.dispositions, explicit.dispositions);
         assert_eq!(gated.binder_arms.to_string(), explicit.binder_arms.to_string());
         assert_eq!(
@@ -4556,10 +4512,7 @@ mod tests {
             explicit.trigger_spine_owner_fn.to_string(),
         );
         assert_eq!(gated.spine_members_fn.to_string(), explicit.spine_members_fn.to_string());
-        assert_eq!(
-            gated.action_for_prelude.to_string(),
-            explicit.action_for_prelude.to_string(),
-        );
+        assert_eq!(gated.action_for_prelude.to_string(), explicit.action_for_prelude.to_string(),);
         assert_eq!(
             gated.leading_trigger_prelude.to_string(),
             explicit.leading_trigger_prelude.to_string(),
@@ -4573,10 +4526,7 @@ mod tests {
         // explicit bundles at BOTH stances (empty == empty when off).
         assert_eq!(gated.mixfix_groups, explicit.mixfix_groups);
         assert_eq!(gated.mixfix_fan_arms.to_string(), explicit.mixfix_fan_arms.to_string());
-        assert_eq!(
-            gated.mixfix_prelude_arms.to_string(),
-            explicit.mixfix_prelude_arms.to_string(),
-        );
+        assert_eq!(gated.mixfix_prelude_arms.to_string(), explicit.mixfix_prelude_arms.to_string(),);
         let grouped_alts: usize = gated.lex_alt.iter().map(|alt| alt.grouped.len()).sum();
         assert!(grouped_alts > 0, "const ON ⇒ lex-alt group entries present");
     }
@@ -4689,10 +4639,7 @@ mod tests {
         );
         for (first_member, members) in proc_members {
             let group_ordinal = fork_model.site2_ordinal(0, *first_member);
-            assert!(
-                group_ordinal.is_some(),
-                "GroupFirst member {first_member} derives a row",
-            );
+            assert!(group_ordinal.is_some(), "GroupFirst member {first_member} derives a row",);
             for member in members {
                 assert_eq!(
                     fork_model.site2_ordinal(0, *member),
@@ -4719,11 +4666,7 @@ mod tests {
             .values()
             .filter(|d| matches!(d, SpineDisposition::GroupFirst { .. }))
             .count();
-        assert_eq!(
-            proc_group_members.len(),
-            n_first,
-            "one members entry per GroupFirst",
-        );
+        assert_eq!(proc_group_members.len(), n_first, "one members entry per GroupFirst",);
         let member_total: usize = proc_group_members.values().map(Vec::len).sum();
         assert_eq!(
             member_total,
@@ -4798,10 +4741,7 @@ mod tests {
         );
         // Typed commits (A4): rule 10 binder-resumes at its final pos 6;
         // rule 15 nullary-commits into its MixfixLiteralRun tail complete.
-        assert!(
-            arms.contains("rule_at(0u16,10u16,6u8"),
-            "rule 10 commit coordinate present",
-        );
+        assert!(arms.contains("rule_at(0u16,10u16,6u8"), "rule 10 commit coordinate present",);
         assert!(
             arms.contains("mixfix_marker(0u16,15u16,0u8)") && arms.contains("sub_pos:4u8"),
             "rule 15 nullary commit coordinate present",
@@ -4904,8 +4844,8 @@ mod tests {
 
         let arms = normalized(&bundle.binder_arms);
         let spine = SPINE_RULE_BASE; // 63488
-        // Arm 1 (pre-root): the shared `pat` Proc operand — ONE push where
-        // OFF ran three (the actual fan win).
+                                     // Arm 1 (pre-root): the shared `pat` Proc operand — ONE push where
+                                     // OFF ran three (the actual fan win).
         let arm1 = window(
             &arms,
             &format!("({ib}u16,{spine}u16,1u8)=>"),
@@ -4945,14 +4885,19 @@ mod tests {
             "arm 3 is the two-branch accept fork: {arm3}",
         );
         assert_eq!(
-            arm3.matches(&format!("category_entry({name_src}u16)")).count(),
+            arm3.matches(&format!("category_entry({name_src}u16)"))
+                .count(),
             2,
             "BOTH branches push the shared CategoryEntry(Name): {arm3}",
         );
         let continue_sym = format!("rule_at({ib}u16,{spine}u16,4u8");
         let accept_sym = format!("rule_at({ib}u16,3u16,4u8");
-        let continue_at = arm3.find(&continue_sym).expect("spine-continue branch present");
-        let accept_at = arm3.find(&accept_sym).expect("accept commit branch present");
+        let continue_at = arm3
+            .find(&continue_sym)
+            .expect("spine-continue branch present");
+        let accept_at = arm3
+            .find(&accept_sym)
+            .expect("accept commit branch present");
         assert!(
             continue_at < accept_at,
             "★A1: interior-continue FIRST, accept commit LAST: {arm3}",
@@ -4981,9 +4926,7 @@ mod tests {
         // sentinel for its Vec slot; r3/r6 duplicate Proc/Name.
         let actions = normalized(&bundle.action_for_prelude);
         assert!(
-            actions.contains(&format!(
-                "({ib}u16,{spine}u16)=>{{staticSPINE_ENTRY"
-            )),
+            actions.contains(&format!("({ib}u16,{spine}u16)=>{{staticSPINE_ENTRY")),
             "ib spine action row present: {actions}",
         );
         assert!(
@@ -5020,11 +4963,8 @@ mod tests {
         let bundle = build_spine_emission_from(&model, &lang, &categories, &per_cat);
         let arms = normalized(&bundle.binder_arms);
         let spine = SPINE_RULE_BASE;
-        let arm2 = window(
-            &arms,
-            &format!("(0u16,{spine}u16,2u8)=>"),
-            &format!("(0u16,{spine}u16,3u8)=>"),
-        );
+        let arm2 =
+            window(&arms, &format!("(0u16,{spine}u16,2u8)=>"), &format!("(0u16,{spine}u16,3u8)=>"));
         assert_eq!(arm2.matches("ReplaceAndPush").count(), 2, "{arm2}");
         assert_eq!(arm2.matches(&format!("category_entry({tee}u16)")).count(), 2, "{arm2}");
         let continue_at = arm2
@@ -5059,11 +4999,8 @@ mod tests {
         let bundle = build_spine_emission_from(&model, &lang, &categories, &per_cat);
         let arms = normalized(&bundle.binder_arms);
         let spine = SPINE_RULE_BASE;
-        let arm1 = window(
-            &arms,
-            &format!("(0u16,{spine}u16,1u8)=>"),
-            &format!("(0u16,{spine}u16,2u8)=>"),
-        );
+        let arm1 =
+            window(&arms, &format!("(0u16,{spine}u16,1u8)=>"), &format!("(0u16,{spine}u16,2u8)=>"));
         assert_eq!(
             arm1.matches("expected_text:\"«\"").count(),
             2,
@@ -5149,19 +5086,34 @@ mod tests {
         let (_, m4) = g.roots[0].leaf_for(4).expect("rule 4 leafs");
         assert_eq!(
             m4.commit,
-            MemberCommit::MixfixRun { rule_idx: 4, kind: 0, completed_idx: 0, sub_pos: 1 },
+            MemberCommit::MixfixRun {
+                rule_idx: 4,
+                kind: 0,
+                completed_idx: 0,
+                sub_pos: 1
+            },
         );
         assert!(!m4.has_post_spine_remainder, "rule 4's ) is its final item");
         let (_, m6) = g.roots[0].leaf_for(6).expect("rule 6 leafs");
         assert_eq!(
             m6.commit,
-            MemberCommit::MixfixRun { rule_idx: 6, kind: 2, completed_idx: 0, sub_pos: 2 },
+            MemberCommit::MixfixRun {
+                rule_idx: 6,
+                kind: 2,
+                completed_idx: 0,
+                sub_pos: 2
+            },
         );
         assert!(!m6.has_post_spine_remainder);
         let (_, m8) = g.roots[0].leaf_for(8).expect("rule 8 leafs");
         assert_eq!(
             m8.commit,
-            MemberCommit::MixfixRun { rule_idx: 8, kind: 0, completed_idx: 0, sub_pos: 1 },
+            MemberCommit::MixfixRun {
+                rule_idx: 8,
+                kind: 0,
+                completed_idx: 0,
+                sub_pos: 1
+            },
         );
         assert!(m8.has_post_spine_remainder, "rule 8 truncates at its rep");
         assert_eq!(
@@ -5176,10 +5128,7 @@ mod tests {
             .iter()
             .find(|b| b.trigger == "!!")
             .expect("the !! cohort exists");
-        assert_eq!(
-            bangbang.slice,
-            vec![(4u8, 0u16, 5u16), (8u8, 0u16, 7u16), (12u8, 0u16, 9u16)],
-        );
+        assert_eq!(bangbang.slice, vec![(4u8, 0u16, 5u16), (8u8, 0u16, 7u16), (12u8, 0u16, 9u16)],);
         assert_eq!(bangbang.groups.len(), 1);
         let g2 = &bangbang.groups[0];
         assert_eq!(g2.spine_id, SPINE_RULE_BASE + 4);
@@ -5279,10 +5228,7 @@ mod tests {
             assert_eq!(gated.mixfix_groups.len(), 2);
             assert!(!gated.mixfix_fan_arms.is_empty());
             assert!(!gated.mixfix_prelude_arms.is_empty());
-            assert_eq!(
-                rows,
-                vec![(0u16, SPINE_RULE_BASE + 3), (0u16, SPINE_RULE_BASE + 4)],
-            );
+            assert_eq!(rows, vec![(0u16, SPINE_RULE_BASE + 3), (0u16, SPINE_RULE_BASE + 4)],);
             assert_eq!(partition_groups, 2);
         } else {
             assert!(gated.mixfix_groups.is_empty());
@@ -5317,9 +5263,9 @@ mod tests {
         let census = |m: &[MixfixFactoring]| -> Vec<(u16, String, Vec<(u8, u16, u16)>)> {
             m.iter()
                 .flat_map(|f| {
-                    f.buckets.iter().map(move |b| {
-                        (f.dispatch_cat_src_idx, b.trigger.clone(), b.slice.clone())
-                    })
+                    f.buckets
+                        .iter()
+                        .map(move |b| (f.dispatch_cat_src_idx, b.trigger.clone(), b.slice.clone()))
                 })
                 .collect()
         };
@@ -5340,8 +5286,7 @@ mod tests {
         let (categories, per_cat) = cats_per_cat(&def);
         let prefix = build_prefix_factoring(&def, &categories, &per_cat);
         let mixfix = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
-        let bundle =
-            build_spine_emission_from_parts(&prefix, &mixfix, &def, &categories, &per_cat);
+        let bundle = build_spine_emission_from_parts(&prefix, &mixfix, &def, &categories, &per_cat);
         assert_eq!(bundle.mixfix_groups.len(), 2);
         assert_eq!(
             bundle.mixfix_groups[0],
@@ -5374,26 +5319,22 @@ mod tests {
         assert!(fan.contains("(3u16,\"!!\")") && fan.contains("mixfix_marker(0u16,63492u16,0,)"));
         // ── the prelude arms (the ! group; !! isomorphic) ─────────────────
         let prelude = normalized(&bundle.mixfix_prelude_arms);
-        let chain = window(
-            &prelude,
-            "(0u16,63491u16,2u8,0u8,0u8)=>",
-            "(0u16,63491u16,2u8,0u8,1u8)=>",
-        );
+        let chain =
+            window(&prelude, "(0u16,63491u16,2u8,0u8,0u8)=>", "(0u16,63491u16,2u8,0u8,1u8)=>");
         assert!(
             chain.contains("__checked_literal_consume!(\"(\"") && chain.contains("sub_pos:1u8"),
             "pre-root chain step consumes the root edge: {chain}",
         );
-        let div1 = window(
-            &prelude,
-            "(0u16,63491u16,2u8,0u8,1u8)=>",
-            "(0u16,63491u16,0u8,0u8,0u8)=>",
-        );
+        let div1 =
+            window(&prelude, "(0u16,63491u16,2u8,0u8,1u8)=>", "(0u16,63491u16,0u8,0u8,0u8)=>");
         assert!(
             div1.contains("__mixfix_literal_targets(tokens,_pos,\")\")"),
             "divergence 1 gates the rule-6 commit on the close: {div1}",
         );
         assert!(
-            div1.contains("if__spine_lit_total==0{returnWpdaStepAction::Advance(WpdaState::PrefixDispatch"),
+            div1.contains(
+                "if__spine_lit_total==0{returnWpdaStepAction::Advance(WpdaState::PrefixDispatch"
+            ),
             "divergence 1 B-alone short-circuit (descent when no close): {div1}",
         );
         assert!(
@@ -5407,7 +5348,8 @@ mod tests {
             "divergence 1 has an unconditional branch — no literal-singleton \
              short-circuit: {div1}",
         );
-        let div2 = window(&prelude, "(0u16,63491u16,0u8,0u8,0u8)=>", "(0u16,63492u16,2u8,0u8,0u8)=>");
+        let div2 =
+            window(&prelude, "(0u16,63491u16,0u8,0u8,0u8)=>", "(0u16,63492u16,2u8,0u8,0u8)=>");
         assert!(
             div2.contains("__mixfix_literal_targets(tokens,_pos,\")\")")
                 && div2.contains("__mixfix_literal_targets(tokens,_pos,\",\")"),
@@ -5426,7 +5368,14 @@ mod tests {
         );
         // ── engine-table rows ─────────────────────────────────────────────
         let owners = normalized(&bundle.trigger_spine_owner_fn);
-        for (m, spine) in [(4, "63491"), (6, "63491"), (8, "63491"), (5, "63492"), (7, "63492"), (9, "63492")] {
+        for (m, spine) in [
+            (4, "63491"),
+            (6, "63491"),
+            (8, "63491"),
+            (5, "63492"),
+            (7, "63492"),
+            (9, "63492"),
+        ] {
             assert!(
                 owners.contains(&format!("(0u16,{m}u16)=>Some({spine}u16)")),
                 "owner row for member {m}: {owners}",
@@ -5648,11 +5597,15 @@ mod tests {
         assert!(matches!(leaf_item, SpineItem::ParamParse { .. }));
         assert_eq!(
             m1.commit,
-            MemberCommit::MixfixRun { rule_idx: 1, kind: 0, completed_idx: 0, sub_pos: 0 },
+            MemberCommit::MixfixRun {
+                rule_idx: 1,
+                kind: 0,
+                completed_idx: 0,
+                sub_pos: 0
+            },
         );
         assert!(m1.has_post_spine_remainder);
-        let bundle =
-            build_spine_emission_from_parts(&prefix, &mixfix, &def, &categories, &per_cat);
+        let bundle = build_spine_emission_from_parts(&prefix, &mixfix, &def, &categories, &per_cat);
         let prelude = normalized(&bundle.mixfix_prelude_arms);
         assert!(
             prelude.contains("ForkActionKind::ReplaceAndPush")
@@ -5673,11 +5626,7 @@ mod tests {
             jrule(
                 "MTwoX",
                 "Expr",
-                vec![
-                    simple("a", "Expr"),
-                    simple("b", "Expr"),
-                    simple("c", "Expr"),
-                ],
+                vec![simple("a", "Expr"), simple("b", "Expr"), simple("c", "Expr")],
                 vec![
                     param("a"),
                     lit("!"),
@@ -5693,11 +5642,7 @@ mod tests {
             jrule(
                 "MTwoY",
                 "Expr",
-                vec![
-                    simple("a", "Expr"),
-                    simple("b", "Expr"),
-                    simple("c", "Expr"),
-                ],
+                vec![simple("a", "Expr"), simple("b", "Expr"), simple("c", "Expr")],
                 vec![
                     param("a"),
                     lit("!"),
@@ -5722,10 +5667,6 @@ mod tests {
             .expect("the ! bucket exists");
         assert!(bucket.groups.is_empty(), "{:?}", bucket.groups);
         assert_eq!(bucket.ineligible.len(), 1, "{:?}", bucket);
-        assert!(matches!(
-            bucket.ineligible[0].reason,
-            IneligibleReason::MultiOperandSharedSpine,
-        ));
+        assert!(matches!(bucket.ineligible[0].reason, IneligibleReason::MultiOperandSharedSpine,));
     }
-
 }

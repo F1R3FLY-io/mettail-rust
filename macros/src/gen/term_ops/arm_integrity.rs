@@ -162,10 +162,9 @@ mod tests {
         let mut found = BTreeSet::new();
         for (category, label) in COLLECTION_LITERAL_TEST_CATEGORIES {
             // `Cat :: Label (_)` with any interior spacing.
-            for needle in [
-                format!("{category} :: {label} (_)"),
-                format!("{category} :: {label} ( _ )"),
-            ] {
+            for needle in
+                [format!("{category} :: {label} (_)"), format!("{category} :: {label} ( _ )")]
+            {
                 if normalized.contains(&needle) {
                     found.insert((*category).to_string());
                 }
@@ -228,9 +227,9 @@ mod tests {
         for (category, label) in COLLECTION_LITERAL_TEST_CATEGORIES {
             let cat = quote::format_ident!("{}", category);
             let variants = collect_category_variants(&cat, &language);
-            let found = variants.iter().any(|v| {
-                matches!(v, VariantKind::CollectionLiteral { label: l, .. } if l == label)
-            });
+            let found = variants.iter().any(
+                |v| matches!(v, VariantKind::CollectionLiteral { label: l, .. } if l == label),
+            );
             assert!(
                 found,
                 "fixture category `{category}` must classify as \

@@ -221,9 +221,8 @@ pub(crate) fn emit_engine_impl_full(
     // defaults (`false`) apply ⇒ generated engine impl byte-identical.
     let at_quoted_bind_realize_methods: proc_macro2::TokenStream =
         if super::forks::AT_QUOTED_BIND_REALIZE_GATE {
-            let overgen_body = semantic_actions::emit_sigil_quoted_bind_overgen_rule_body(
-                &per_cat_indexed,
-            );
+            let overgen_body =
+                semantic_actions::emit_sigil_quoted_bind_overgen_rule_body(&per_cat_indexed);
             let atom_body = semantic_actions::emit_sigil_quoted_source_atom_rule_body(
                 categories,
                 &per_cat_indexed,
@@ -304,10 +303,8 @@ pub(crate) fn emit_engine_impl_full(
     // S1-FACTORING AV5: when factored groups exist, the PrefixOp lex-alt
     // weight stamps route through the `__s1_spine_weight_rule` free fn
     // (min-member identity for spine entries; the fn is emitted below).
-    let lex_fork_dispatch = super::forks::emit_lex_fork_at_prefix_dispatch(
-        primary_src_idx,
-        s1_spine.any_groups(),
-    );
+    let lex_fork_dispatch =
+        super::forks::emit_lex_fork_at_prefix_dispatch(primary_src_idx, s1_spine.any_groups());
     // S1-FACTORING F5-2 (plan f5_mixfix_cohorts_plan.md, A-M5): when THIS
     // language has factored mixfix cohorts, the InfixLoop lex-fork's
     // MixfixFirstTrigger sites route the `lex_w_alt` weight identity AND the
@@ -324,9 +321,8 @@ pub(crate) fn emit_engine_impl_full(
     // literal rules. Emitted as a sibling of the engine impl so the
     // codegen output uses a single match expression with all
     // (cat, kind) entries.
-    let lex_alt_rule_for_fn = super::kind_dispatch::emit_lex_alt_rule_for_fn(
-        language, per_cat, categories, &s1_spine,
-    );
+    let lex_alt_rule_for_fn =
+        super::kind_dispatch::emit_lex_alt_rule_for_fn(language, per_cat, categories, &s1_spine);
 
     // SPPF-realize observational-dedup (2026-06-28): the
     // `WpdaEngine::semantic_fingerprint` override. Probe the realized

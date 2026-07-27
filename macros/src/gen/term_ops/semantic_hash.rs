@@ -97,7 +97,10 @@ struct FoldAliasArm {
 /// the macro-side check that each param category is stored boxed (a Proc/Name
 /// category, not an inline native `i64`/collection) — the only extra fact the
 /// `LanguageDef` carries that the ast crate cannot see.
-fn build_fold_alias_arm(rule: &mettail_ast::grammar::GrammarRule, language: &LanguageDef) -> Option<FoldAliasArm> {
+fn build_fold_alias_arm(
+    rule: &mettail_ast::grammar::GrammarRule,
+    language: &LanguageDef,
+) -> Option<FoldAliasArm> {
     use mettail_ast::grammar::TermParam;
     use mettail_ast::types::TypeExpr;
 
@@ -212,7 +215,8 @@ fn build_fold_alias_send_arm(
     for p in canon_tc {
         canon_params.push(simple_send_param(p)?);
     }
-    if canon_params.first().map(|(id, _)| id.to_string()) != Some(canon_shape.channel_param.clone()) {
+    if canon_params.first().map(|(id, _)| id.to_string()) != Some(canon_shape.channel_param.clone())
+    {
         return None;
     }
     // Operand arity + collection-kind parity (the sugar's operand tail must match
@@ -222,7 +226,11 @@ fn build_fold_alias_send_arm(
     }
     let poly_operand_is_collection: Vec<bool> =
         canon_params.iter().skip(1).map(|(_, c)| *c).collect();
-    for ((_, sugar_c), poly_c) in sugar_params.iter().skip(1).zip(poly_operand_is_collection.iter()) {
+    for ((_, sugar_c), poly_c) in sugar_params
+        .iter()
+        .skip(1)
+        .zip(poly_operand_is_collection.iter())
+    {
         if sugar_c != poly_c {
             return None;
         }
@@ -302,8 +310,9 @@ fn generate_fold_alias_send_arm(
     sugar_label: &Ident,
     arm: &FoldAliasSendArm,
 ) -> TokenStream {
-    let field_names: Vec<Ident> =
-        (0..arm.sugar_params.len()).map(|i| format_ident!("f{}", i)).collect();
+    let field_names: Vec<Ident> = (0..arm.sugar_params.len())
+        .map(|i| format_ident!("f{}", i))
+        .collect();
 
     // Bind each sugar param to its field so the spliced `channel_expr`
     // (`p.clone()`) and the operand exprs resolve: boxed-category → `&**f`
@@ -984,7 +993,8 @@ fn generate_semantic_regular_arm(
             label_str,
         );
         let field = &fields[0];
-        if field.is_predicate || field.is_collection || field.is_optional || field.is_opaque_leaf() {
+        if field.is_predicate || field.is_collection || field.is_optional || field.is_opaque_leaf()
+        {
             // Shouldn't happen for transparent rules (would fail
             // classify_simple_projection_shape), but be defensive.
             // Fall back to non-transparent behavior.
@@ -1423,15 +1433,9 @@ mod task14_tests {
             is_optional: true,
             opaque_leaf: None,
         }];
-        let arm = generate_semantic_regular_arm(
-            &cat,
-            3u8,
-            &label,
-            &fields,
-            &HashSet::new(),
-            &language,
-        )
-        .to_string();
+        let arm =
+            generate_semantic_regular_arm(&cat, 3u8, &label, &fields, &HashSet::new(), &language)
+                .to_string();
         assert!(
             arm.contains("hash (__b , state)"),
             "the Some arm must hash the bare inner pred structurally: {arm}",
@@ -1465,7 +1469,10 @@ mod residual_11_1_send_fold_tests {
     }
 
     fn sp(name: &str, base: &str) -> TermParam {
-        TermParam::Simple { name: id(name), ty: TypeExpr::Base(id(base)) }
+        TermParam::Simple {
+            name: id(name),
+            ty: TypeExpr::Base(id(base)),
+        }
     }
 
     fn vp(name: &str, elem: &str) -> TermParam {
@@ -1492,59 +1499,87 @@ mod residual_11_1_send_fold_tests {
     fn rholang_send_terms() -> Vec<GrammarRule> {
         vec![
             // Canonicals (bare-param channel `n.clone()`).
-            fold_rule("POutput2Plus", "Proc", vec![sp("n", "Name"), sp("a", "Proc"), vp("bs", "Proc")],
+            fold_rule(
+                "POutput2Plus",
+                "Proc",
+                vec![sp("n", "Name"), sp("a", "Proc"), vp("bs", "Proc")],
                 syn::parse_quote! {{
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::POutput(std::sync::Arc::new(n.clone()),
                         std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
-                }}),
-            fold_rule("PPersistOutput2Plus", "Proc", vec![sp("n", "Name"), sp("a", "Proc"), vp("bs", "Proc")],
+                }},
+            ),
+            fold_rule(
+                "PPersistOutput2Plus",
+                "Proc",
+                vec![sp("n", "Name"), sp("a", "Proc"), vp("bs", "Proc")],
                 syn::parse_quote! {{
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::PPersistOutput(std::sync::Arc::new(n.clone()),
                         std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
-                }}),
+                }},
+            ),
             // Excluded: `*Nil*` (channel bottoms at Proc::PZero).
-            fold_rule("POutputNil2Plus", "Proc", vec![sp("a", "Proc"), vp("bs", "Proc")],
+            fold_rule(
+                "POutputNil2Plus",
+                "Proc",
+                vec![sp("a", "Proc"), vp("bs", "Proc")],
                 syn::parse_quote! {{
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::POutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::PZero))),
                         std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
-                }}),
-            fold_rule("PPersistOutputNil2Plus", "Proc", vec![sp("a", "Proc"), vp("bs", "Proc")],
+                }},
+            ),
+            fold_rule(
+                "PPersistOutputNil2Plus",
+                "Proc",
+                vec![sp("a", "Proc"), vp("bs", "Proc")],
                 syn::parse_quote! {{
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::PPersistOutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::PZero))),
                         std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
-                }}),
+                }},
+            ),
             // Excluded: `*Quoted*` (channel routes through the npt free fn).
-            fold_rule("POutputQuoted2Plus", "Proc", vec![sp("n", "Name"), sp("a", "Proc"), vp("bs", "Proc")],
+            fold_rule(
+                "POutputQuoted2Plus",
+                "Proc",
+                vec![sp("n", "Name"), sp("a", "Proc"), vp("bs", "Proc")],
                 syn::parse_quote! {{
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::POutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(
                         crate::rholang::receive::name_pattern_to_proc(&n)))),
                         std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
-                }}),
+                }},
+            ),
             // Sugars (channel-rewrap `NQuote(p)`) — the ONLY two folded.
-            fold_rule("POutputShort2Plus", "Proc", vec![sp("p", "Proc"), sp("a", "Proc"), vp("bs", "Proc")],
+            fold_rule(
+                "POutputShort2Plus",
+                "Proc",
+                vec![sp("p", "Proc"), sp("a", "Proc"), vp("bs", "Proc")],
                 syn::parse_quote! {{
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::POutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(p.clone()))),
                         std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
-                }}),
-            fold_rule("PPersistOutputShort2Plus", "Proc", vec![sp("p", "Proc"), sp("a", "Proc"), vp("bs", "Proc")],
+                }},
+            ),
+            fold_rule(
+                "PPersistOutputShort2Plus",
+                "Proc",
+                vec![sp("p", "Proc"), sp("a", "Proc"), vp("bs", "Proc")],
                 syn::parse_quote! {{
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::PPersistOutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(p.clone()))),
                         std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
-                }}),
+                }},
+            ),
         ]
     }
 
@@ -1600,13 +1635,17 @@ mod residual_11_1_send_fold_tests {
         let language = lang_with(rholang_send_terms());
         let map = build_fold_alias_send_map(&language);
         let arm = &map["POutputShort2Plus"];
-        let ts = generate_fold_alias_send_arm(&id("Proc"), &id("POutputShort2Plus"), arm).to_string();
+        let ts =
+            generate_fold_alias_send_arm(&id("Proc"), &id("POutputShort2Plus"), arm).to_string();
         // Reconstruction root is the polyadic canonical (NOT the scalar POutput),
         // with the grammar-lifted NQuote channel and the trailing Vec passed
         // through unpacked.
         assert!(ts.contains("Proc :: POutput2Plus"), "reconstructs the polyadic canonical: {ts}");
         assert!(ts.contains("NQuote"), "channel rewrap lifted from the body: {ts}");
-        assert!(ts.contains("semantic_hash"), "recurses semantic_hash on the reconstruction: {ts}");
+        assert!(
+            ts.contains("semantic_hash"),
+            "recurses semantic_hash on the reconstruction: {ts}"
+        );
         // The `bs` Vec rest is cloned through (NOT mk_proc_list-packed) so the
         // reconstruction matches POutput2Plus's (chan, first, rest-Vec) split.
         assert!(!ts.contains("mk_proc_list"), "operands must NOT be scalar list-packed: {ts}");
@@ -1618,27 +1657,36 @@ mod residual_11_1_send_fold_tests {
     #[test]
     fn generality_synthetic_language_send_fold() {
         let terms = vec![
-            fold_rule("EmitMulti", "Widget", vec![sp("n", "Chan"), sp("x", "Widget"), vp("xs", "Widget")],
+            fold_rule(
+                "EmitMulti",
+                "Widget",
+                vec![sp("n", "Chan"), sp("x", "Widget"), vp("xs", "Widget")],
                 syn::parse_quote! {{
                     let mut acc = Vec::with_capacity(1 + xs.len());
                     acc.push(x.clone()); acc.extend(xs.clone());
                     Widget::Emit(std::sync::Arc::new(n.clone()),
                         std::sync::Arc::new(some_crate::mk_widget_list(acc)))
-                }}),
-            fold_rule("WrapSend", "Widget", vec![sp("w", "Widget"), sp("x", "Widget"), vp("xs", "Widget")],
+                }},
+            ),
+            fold_rule(
+                "WrapSend",
+                "Widget",
+                vec![sp("w", "Widget"), sp("x", "Widget"), vp("xs", "Widget")],
                 syn::parse_quote! {{
                     let mut acc = Vec::with_capacity(1 + xs.len());
                     acc.push(x.clone()); acc.extend(xs.clone());
                     Widget::Emit(std::sync::Arc::new(Chan::Wrap(std::sync::Arc::new(w.clone()))),
                         std::sync::Arc::new(some_crate::mk_widget_list(acc)))
-                }}),
+                }},
+            ),
         ];
         let language = lang_with(terms);
         let map = build_fold_alias_send_map(&language);
         let keys: Vec<String> = map.keys().cloned().collect();
         assert_eq!(keys, vec!["WrapSend".to_string()], "only the synthetic sugar folds");
         assert_eq!(map["WrapSend"].poly_canon_label.to_string(), "EmitMulti");
-        let ts = generate_fold_alias_send_arm(&id("Widget"), &id("WrapSend"), &map["WrapSend"]).to_string();
+        let ts = generate_fold_alias_send_arm(&id("Widget"), &id("WrapSend"), &map["WrapSend"])
+            .to_string();
         assert!(ts.contains("Widget :: EmitMulti"), "reconstructs the synthetic canonical: {ts}");
         assert!(ts.contains("Chan :: Wrap"), "lifts the synthetic channel wrap: {ts}");
     }

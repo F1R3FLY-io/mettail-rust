@@ -237,7 +237,10 @@ fn find_single_element_twin(
             continue;
         };
         // The twin carries NO `.*sep` list operand.
-        if sp.iter().any(|e| matches!(e, SyntaxExpr::Op(PatternOp::Sep { .. }))) {
+        if sp
+            .iter()
+            .any(|e| matches!(e, SyntaxExpr::Op(PatternOp::Sep { .. })))
+        {
             continue;
         }
         // Expected shape: Param(head) then (Literal(lead), Param(op)) per group.
@@ -251,7 +254,9 @@ fn find_single_element_twin(
             })
         };
         // Slot 0: the scalar head of `element_category`.
-        let SyntaxExpr::Param(head) = &sp[0] else { continue };
+        let SyntaxExpr::Param(head) = &sp[0] else {
+            continue;
+        };
         match cat_of(&head.to_string()) {
             Some(c) if c == element_category => {},
             _ => continue,
@@ -262,7 +267,9 @@ fn find_single_element_twin(
                 SyntaxExpr::Literal(l) if *l == group.lead => {},
                 _ => continue 'rule,
             }
-            let SyntaxExpr::Param(op) = &sp[2 + 2 * gi] else { continue 'rule };
+            let SyntaxExpr::Param(op) = &sp[2 + 2 * gi] else {
+                continue 'rule;
+            };
             match cat_of(&op.to_string()) {
                 Some(c) if c == group.category => {},
                 _ => continue 'rule,
@@ -317,8 +324,12 @@ fn derive_sep_combine_shape(
         if sep_idx != 2 {
             continue;
         }
-        let SyntaxExpr::Param(_) = &sp[0] else { continue };
-        let SyntaxExpr::Literal(head_sep) = &sp[1] else { continue };
+        let SyntaxExpr::Param(_) = &sp[0] else {
+            continue;
+        };
+        let SyntaxExpr::Literal(head_sep) = &sp[1] else {
+            continue;
+        };
         // SEPARATOR-LOCALITY at the head: the head↔list join literal must equal
         // the list separator (uniform list — a genuine `.*sep`).
         if head_sep != rule_sep {
@@ -505,11 +516,10 @@ fn rule_operand_categories(rule: &GrammarRule) -> Vec<String> {
             },
             SyntaxExpr::Op(PatternOp::Sep { collection, .. }) => {
                 if let Some(cat) = tc.iter().find_map(|tp| match tp {
-                    TermParam::Simple { name, ty: TypeExpr::Collection { element, .. } }
-                        if name == collection =>
-                    {
-                        sep_base_ty(element)
-                    },
+                    TermParam::Simple {
+                        name,
+                        ty: TypeExpr::Collection { element, .. },
+                    } if name == collection => sep_base_ty(element),
                     _ => None,
                 }) {
                     out.push(cat);
@@ -575,8 +585,12 @@ fn eligible_proj(
         }
         let mut normalized = rule.clone();
         mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
-        let Some(sp) = &normalized.syntax_pattern else { continue };
-        let Some(SyntaxExpr::Literal(sigil)) = sp.first() else { continue };
+        let Some(sp) = &normalized.syntax_pattern else {
+            continue;
+        };
+        let Some(SyntaxExpr::Literal(sigil)) = sp.first() else {
+            continue;
+        };
         if is_ident_shaped(sigil) {
             continue;
         }
@@ -590,7 +604,9 @@ fn eligible_proj(
         }
     }
     // ∃ σ : |cohort(σ)| ≥ 2 ∧ ≥ 2 of its members have an operand reaching `cat`.
-    cohort.values().any(|&(size, reaching)| size >= 2 && reaching >= 2)
+    cohort
+        .values()
+        .any(|&(size, reaching)| size >= 2 && reaching >= 2)
 }
 
 /// P0 SEP eligibility: a derivable `.*sep` combine shape whose derived ELEMENT
@@ -1263,7 +1279,10 @@ enum ProjSlot {
     /// `Vec<Element>` ctor field. This is what frames the polyadic sends
     /// (`n!(a, bs.*sep)`), query binds (`lhs<-n!?(args.*sep)`), and polyadic binds
     /// (`lhs, lhss.*sep <-n`) whose comma-lists carried the residual `dᵏ` blowup.
-    SepList { element_category: String, separator: String },
+    SepList {
+        element_category: String,
+        separator: String,
+    },
 }
 
 /// One `σ`-led frame-variant the projection helper linearizes: a surface enum
@@ -1420,10 +1439,7 @@ fn proj_sigil_lead_bytes(shape: &ProjIsoShape) -> Vec<u8> {
 /// (unary prefix operators, not sends at all). A `-`-led span that failed was told it
 /// was a malformed `@`-send. The wording now cannot drift from the trigger, because it
 /// is computed from the same `ProjVariant` the trigger fires on.
-fn proj_reject_wording(
-    cat_ident: &proc_macro2::Ident,
-    variant: &ProjVariant,
-) -> (String, String) {
+fn proj_reject_wording(cat_ident: &proc_macro2::Ident, variant: &ProjVariant) -> (String, String) {
     let cat = cat_ident.to_string();
     let label = &variant.label;
     // The skeleton, rendered back to the surface shape the grammar declares.
@@ -1552,7 +1568,7 @@ fn category_produces_delim_at_depth0(language: &LanguageDef, cat: &str, delim: &
                             return true;
                         }
                         depth += depth_delta(l);
-                    }
+                    },
                     SyntaxExpr::Param(name) => {
                         if depth == 0 {
                             if let Some(pcat) = tc.iter().find_map(|tp| match tp {
@@ -1562,8 +1578,8 @@ fn category_produces_delim_at_depth0(language: &LanguageDef, cat: &str, delim: &
                                 work.push(pcat);
                             }
                         }
-                    }
-                    SyntaxExpr::Op(_) => {}
+                    },
+                    SyntaxExpr::Op(_) => {},
                 }
             }
         }
@@ -1587,7 +1603,9 @@ fn compute_receiver_decline_labels(language: &LanguageDef, cat: &str) -> Vec<Str
         }
         let mut normalized = rule.clone();
         mettail_ast::grammar::convert_items_to_term_context(&mut normalized);
-        let Some(sp) = &normalized.syntax_pattern else { continue };
+        let Some(sp) = &normalized.syntax_pattern else {
+            continue;
+        };
         let is_binary_infix = sp.len() == 3
             && matches!(
                 (&sp[0], &sp[1], &sp[2]),
@@ -1609,7 +1627,9 @@ fn compute_receiver_decline_labels(language: &LanguageDef, cat: &str) -> Vec<Str
 /// / `m . keys ( )` / sends (`n ! ( a , bs )`, already covered by the framed-list
 /// clause — same variant, harmless) but not `a | b` / `- a`. GRAMMAR-DERIVED.
 fn is_receiver_led_postfix_frame(sp: &[SyntaxExpr]) -> bool {
-    let Some(SyntaxExpr::Param(_)) = sp.first() else { return false };
+    let Some(SyntaxExpr::Param(_)) = sp.first() else {
+        return false;
+    };
     matches!(sp.last(), Some(SyntaxExpr::Literal(l)) if matches!(l.as_str(), ")" | "]" | "}"))
 }
 
@@ -1713,13 +1733,13 @@ fn derive_projection_iso_shape(
                         Some(c) if src_idx_of(&c).is_some() => {
                             slots.push(ProjSlot::Operand { category: c });
                             operand_count += 1;
-                        }
+                        },
                         _ => {
                             shape_ok = false;
                             break;
-                        }
+                        },
                     }
-                }
+                },
                 SyntaxExpr::Op(PatternOp::Sep { collection, separator, .. }) => {
                     // Element category = the inner type of the `Vec(elem)` list.
                     let elem_cat = tc.iter().find_map(|tp| match tp {
@@ -1741,17 +1761,17 @@ fn derive_projection_iso_shape(
                                 separator: separator.clone(),
                             });
                             operand_count += 1;
-                        }
+                        },
                         _ => {
                             shape_ok = false;
                             break;
-                        }
+                        },
                     }
-                }
+                },
                 _ => {
                     shape_ok = false;
                     break;
-                }
+                },
             }
         }
         if !shape_ok || operand_count == 0 {
@@ -1763,12 +1783,13 @@ fn derive_projection_iso_shape(
         // method `.` — can recur at depth 0 inside it: `a.b().c()`). Sends
         // (channel Name, delimiter `!`, no `Name "!" … : Name` rule) get `false`
         // ⇒ greedy-first / no gate, unchanged.
-        let (leading_receiver_gated, receiver_decline_labels) = match (slots.first(), slots.get(1)) {
+        let (leading_receiver_gated, receiver_decline_labels) = match (slots.first(), slots.get(1))
+        {
             (Some(ProjSlot::Operand { category }), Some(ProjSlot::Lit(delim)))
                 if category_left_recursive_via(language, category, delim) =>
             {
                 (true, compute_receiver_decline_labels(language, category))
-            }
+            },
             _ => (false, Vec::new()),
         };
         // ROOT-P (Fix A / P1): per-slot ambiguous-boundary flags. An operand slot at
@@ -1813,7 +1834,10 @@ fn derive_projection_iso_shape(
         // whole-input match requires a depth-0 `<-` at a real token boundary — genuine
         // evidence, and a genuine frame rather than a prefix operator. Only a skeleton
         // with NO interior literal degenerates to *"the input starts with σ"*.
-        let lit_count = slots.iter().filter(|s| matches!(s, ProjSlot::Lit(_))).count();
+        let lit_count = slots
+            .iter()
+            .filter(|s| matches!(s, ProjSlot::Lit(_)))
+            .count();
         let open_ended = lit_count == 1
             && matches!(slots.first(), Some(ProjSlot::Lit(_)))
             && matches!(
@@ -1853,7 +1877,10 @@ fn derive_projection_iso_shape(
     // representative, matching the monolithic specific-rule preference.
     variants.sort_by(|a, b| {
         let lits = |v: &ProjVariant| {
-            v.slots.iter().filter(|s| matches!(s, ProjSlot::Lit(_))).count()
+            v.slots
+                .iter()
+                .filter(|s| matches!(s, ProjSlot::Lit(_)))
+                .count()
         };
         lits(b).cmp(&lits(a)).then_with(|| a.label.cmp(&b.label))
     });
@@ -2175,29 +2202,28 @@ fn emit_proj_variant_arm(
     let gated = variant.leading_receiver_gated;
     // The gated receiver's category (slot 0 = the first Operand) + the AST
     // decline pattern (`Cat::Add(..) | Cat::Mod(..) | Cat::NegProc(..) | …`).
-    let decline_pat: Option<TokenStream> =
-        if gated && !variant.receiver_decline_labels.is_empty() {
-            variant
-                .slots
-                .iter()
-                .find_map(|s| match s {
-                    ProjSlot::Operand { category } => Some(format_ident!("{}", category)),
-                    _ => None,
-                })
-                .map(|rcat| {
-                    let arms: Vec<TokenStream> = variant
-                        .receiver_decline_labels
-                        .iter()
-                        .map(|lbl| {
-                            let l = format_ident!("{}", lbl);
-                            quote! { #rcat::#l(..) }
-                        })
-                        .collect();
-                    quote! { #(#arms)|* }
-                })
-        } else {
-            None
-        };
+    let decline_pat: Option<TokenStream> = if gated && !variant.receiver_decline_labels.is_empty() {
+        variant
+            .slots
+            .iter()
+            .find_map(|s| match s {
+                ProjSlot::Operand { category } => Some(format_ident!("{}", category)),
+                _ => None,
+            })
+            .map(|rcat| {
+                let arms: Vec<TokenStream> = variant
+                    .receiver_decline_labels
+                    .iter()
+                    .map(|lbl| {
+                        let l = format_ident!("{}", lbl);
+                        quote! { #rcat::#l(..) }
+                    })
+                    .collect();
+                quote! { #(#arms)|* }
+            })
+    } else {
+        None
+    };
 
     // ★ R3 (2026-07-26) — THE DECLARED-BINDING-POWER GATE AT THE OPEN-ENDED SLOT.
     //
@@ -2251,8 +2277,7 @@ fn emit_proj_variant_arm(
     };
     // The operand index of that trailing slot: it is the LAST operand-bearing slot, and
     // an open-ended variant's last slot IS operand-bearing, so it is `n_ops - 1`.
-    let open_ended_op_index: Option<usize> =
-        open_ended_decline_pat.as_ref().map(|_| n_ops - 1);
+    let open_ended_op_index: Option<usize> = open_ended_decline_pat.as_ref().map(|_| n_ops - 1);
 
     // Bind each operand: a `Scalar` sub-parses the whole region; a `Sep` splits
     // the region at the depth-0 separator, sub-parses each element, and cartesian-
@@ -2320,12 +2345,12 @@ fn emit_proj_variant_arm(
                 // an operand, so its leading-`Lit` run is 0 and it can never be
                 // `open_ended` — which is why one `__pairs` binding serves both.
                 let is_open_ended_operand = open_ended_op_index == Some(oi);
-                let gate_pat: Option<&TokenStream> = match (is_gated_receiver, is_open_ended_operand)
-                {
-                    (true, _) => decline_pat.as_ref(),
-                    (_, true) => open_ended_decline_pat.as_ref(),
-                    _ => None,
-                };
+                let gate_pat: Option<&TokenStream> =
+                    match (is_gated_receiver, is_open_ended_operand) {
+                        (true, _) => decline_pat.as_ref(),
+                        (_, true) => open_ended_decline_pat.as_ref(),
+                        _ => None,
+                    };
                 let recv_ast_filter: TokenStream = match gate_pat {
                     Some(pat) => quote! {
                         let __pairs: Vec<(#ocat, __W)> = __t
@@ -2391,7 +2416,7 @@ fn emit_proj_variant_arm(
                         #recv_ast_filter
                     };
                 });
-            }
+            },
             OpKind::Sep { element, sep_byte } => {
                 let ecat = format_ident!("{}", element);
                 let sb = *sep_byte;
@@ -2567,7 +2592,7 @@ fn emit_proj_variant_arm(
                         } // ← closes the `else` of the G1 empty-region short-circuit
                     };
                 });
-            }
+            },
         }
         parse_binds.push(quote! {
             if #pairs_id.is_empty() {
@@ -2739,58 +2764,58 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
     // literal), so a channel whose own send `!` sits at depth 0 (`@@Nil!()`) is not
     // split at that `!`.
     let run_anchor_helper: TokenStream = quote! {
-            /// Match the MAXIMAL run of consecutive `Lit` slots of `skel` starting
-            /// at slot `ks`, from byte `p0` (whitespace-flexible, with the SAME
-            /// token-boundary rule as the main `Lit` arm — BOTH halves: the
-            /// ident-run test and `__lit_boundary_ok`), returning the byte
-            /// position AFTER the last matched literal, or `None` if any literal in
-            /// the run fails. Anchors an operand's right boundary on the FULL fixed-
-            /// literal frame (not just the first literal) so an operand that itself
-            /// contains the first delimiter char at depth 0 (`@@Nil!()` — the
-            /// channel's own send `!`) is not split early. The run stops at the next
-            /// `Op` slot.
-            fn __match_lit_run(
-                bytes: &[u8],
-                n: usize,
-                skel: &[__Slot],
-                ks: usize,
-                p0: usize,
-            ) -> Option<usize> {
-                let mut p = p0;
-                let mut k = ks;
-                while k < skel.len() {
-                    match &skel[k] {
-                        __Slot::Lit(l, __pre, __ext) => {
-                            while p < n && bytes[p].is_ascii_whitespace() {
-                                p += 1;
-                            }
-                            let lb = l.as_bytes();
-                            if p + lb.len() > n || &bytes[p..p + lb.len()] != lb {
-                                return None;
-                            }
-                            if lb.iter().all(|&c| __is_word(c)) {
-                                let before_ok = p == 0 || !__is_word(bytes[p - 1]);
-                                let after_ok =
-                                    p + lb.len() == n || !__is_word(bytes[p + lb.len()]);
-                                if !(before_ok && after_ok) {
-                                    return None;
-                                }
-                            }
-                            // The GENERAL half of the same rule (see `__lit_boundary_ok`):
-                            // a punctuation sigil must not sit inside a longer token
-                            // either. Vacuous when the literal has no boundary alphabet.
-                            if !__lit_boundary_ok(bytes, n, p, lb, __pre, __ext) {
-                                return None;
-                            }
-                            p += lb.len();
-                            k += 1;
+        /// Match the MAXIMAL run of consecutive `Lit` slots of `skel` starting
+        /// at slot `ks`, from byte `p0` (whitespace-flexible, with the SAME
+        /// token-boundary rule as the main `Lit` arm — BOTH halves: the
+        /// ident-run test and `__lit_boundary_ok`), returning the byte
+        /// position AFTER the last matched literal, or `None` if any literal in
+        /// the run fails. Anchors an operand's right boundary on the FULL fixed-
+        /// literal frame (not just the first literal) so an operand that itself
+        /// contains the first delimiter char at depth 0 (`@@Nil!()` — the
+        /// channel's own send `!`) is not split early. The run stops at the next
+        /// `Op` slot.
+        fn __match_lit_run(
+            bytes: &[u8],
+            n: usize,
+            skel: &[__Slot],
+            ks: usize,
+            p0: usize,
+        ) -> Option<usize> {
+            let mut p = p0;
+            let mut k = ks;
+            while k < skel.len() {
+                match &skel[k] {
+                    __Slot::Lit(l, __pre, __ext) => {
+                        while p < n && bytes[p].is_ascii_whitespace() {
+                            p += 1;
                         }
-                        __Slot::Op => break,
+                        let lb = l.as_bytes();
+                        if p + lb.len() > n || &bytes[p..p + lb.len()] != lb {
+                            return None;
+                        }
+                        if lb.iter().all(|&c| __is_word(c)) {
+                            let before_ok = p == 0 || !__is_word(bytes[p - 1]);
+                            let after_ok =
+                                p + lb.len() == n || !__is_word(bytes[p + lb.len()]);
+                            if !(before_ok && after_ok) {
+                                return None;
+                            }
+                        }
+                        // The GENERAL half of the same rule (see `__lit_boundary_ok`):
+                        // a punctuation sigil must not sit inside a longer token
+                        // either. Vacuous when the literal has no boundary alphabet.
+                        if !__lit_boundary_ok(bytes, n, p, lb, __pre, __ext) {
+                            return None;
+                        }
+                        p += lb.len();
+                        k += 1;
                     }
+                    __Slot::Op => break,
                 }
-                Some(p)
             }
-        };
+            Some(p)
+        }
+    };
 
     // ROOT-P (Fix A / P1): the ENUMERATING matcher `__proj_skeleton_match_all`
     // returns ALL whole-input operand tilings, branching at ambiguous-δ operand
@@ -3435,11 +3460,7 @@ fn emit_infix_isolation(cat_ident: &proc_macro2::Ident, shape: &InfixIsoShape) -
     // which knew nothing about comments. When the lever is off, the original toggle is
     // emitted verbatim and the artifact is byte-identical.
     let (inert_state_decl, inert_ops_step, inert_str_toggle) = if site_ops.skips_inert() {
-        (
-            quote! {},
-            site_ops.inert_step(&bytes_ident, &idx_ident),
-            quote! {},
-        )
+        (quote! {}, site_ops.inert_step(&bytes_ident, &idx_ident), quote! {})
     } else {
         (
             quote! {
@@ -3483,7 +3504,11 @@ fn emit_infix_isolation(cat_ident: &proc_macro2::Ident, shape: &InfixIsoShape) -
         let bound_rows: Vec<TokenStream> = ordered
             .iter()
             .map(|(_, op)| {
-                let lb = shape.op_boundaries.get(&op.terminal).cloned().unwrap_or_default();
+                let lb = shape
+                    .op_boundaries
+                    .get(&op.terminal)
+                    .cloned()
+                    .unwrap_or_default();
                 let pre = lb.pre.clone();
                 let ext = lb.ext.clone();
                 quote! { (&[ #(#pre),* ], &[ #(#ext),* ]) }
@@ -4066,7 +4091,11 @@ pub(crate) fn emit_parse_fns(
                 // ★ STAGE C rows for `sep.lead` and `sep.split`.
                 for v in &shape.variants {
                     for g in &v.operand_groups {
-                        let lb = shape.lead_boundaries.get(&g.lead).cloned().unwrap_or_default();
+                        let lb = shape
+                            .lead_boundaries
+                            .get(&g.lead)
+                            .cloned()
+                            .unwrap_or_default();
                         scan_site_literal_rows.push((
                             scan_site::SEP_LEAD.id,
                             g.lead.clone(),
@@ -4172,7 +4201,11 @@ pub(crate) fn emit_parse_fns(
                 // what the sweep actually exercises here is RULE-inert — which is the
                 // obligation this site DID break.
                 for op in &shape.ops {
-                    let lb = shape.op_boundaries.get(&op.terminal).cloned().unwrap_or_default();
+                    let lb = shape
+                        .op_boundaries
+                        .get(&op.terminal)
+                        .cloned()
+                        .unwrap_or_default();
                     scan_site_literal_rows.push((
                         scan_site::INFIX_OPS.id,
                         op.terminal.clone(),
@@ -4195,105 +4228,105 @@ pub(crate) fn emit_parse_fns(
         // (1) The factored `AcceptedWithTrailing` retry helper — the exact
         //     (pre-edit) inlined retry hoisted into a nested fn.
         let exhaustive_retry_helper: TokenStream = quote! {
-                // The EXACT body of the historical `AcceptedWithTrailing` retry
-                // (a fresh `WpdaWalker::new_for_category` with
-                // `max_recovery_depth = 0`, the EXHAUSTIVE
-                // `run_to_end_of_input_env_aware` driver, resolve, and the M6
-                // min-weight realize-select over all 5 `WpdaResolveResult`
-                // variants). BOTH the `AcceptedWithTrailing` arm AND the new
-                // demand-`Accepted`-`None` fall-through arm call it (dedups
-                // ~60 lines — Boy-Scout). It sets `*pos` and returns the
-                // single-result `(term, weight)` OR the mapped error.
-                //
-                // The demand driver
-                // (`run_to_end_of_input_until_accepting_env_aware`) EARLY-STOPS
-                // on a category-correct but UNREALIZABLE accepting root (ROOT
-                // aa8ab54d), yielding a `None` M6-select → `EmptyResult`. The
-                // EXHAUSTIVE driver here explores the alternatives and realizes
-                // the canonical term (e.g. `(@a!!(Nil))` →
-                // `PPersistOutputShort`). Genuine-invalid surfaces still error
-                // (the exhaustive pass realizes no root → `EmptyResult`), so no
-                // spurious parse is fabricated (FV T4).
-                //
-                // NOTE: nested `fn` item — does NOT inherit the enclosing body's
-                // `use`/`type DW`, so every path is fully qualified.
-                #[allow(non_snake_case)]
-                fn __mettail_wpda_exhaustive_retry(
-                    source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
-                    pos: &mut usize,
-                    min_bp: u8,
-                    max_steps: usize,
-                ) -> Result<
-                    (
-                        #cat_ident,
-                        mettail_prattail::automata::lex_weight::LexicographicWeight,
-                    ),
-                    WpdaParseError,
-                > {
-                    use mettail_prattail::wpda_runtime::WpdaResolveResult;
-                    use mettail_prattail::wpda_walker::WpdaWalker;
-                    type __DW = mettail_prattail::automata::lex_weight::LexicographicWeight;
-                    let mut walker = WpdaWalker::<__DW, _>::new_for_category(
-                        #engine_ident::default(),
-                        #cat_src_idx_u16,
-                        min_bp,
-                    );
-                    let mut recovery_config =
-                        mettail_prattail::recovery::RecoveryConfig::default();
-                    recovery_config.max_recovery_depth = 0;
-                    walker.set_recovery_config(recovery_config);
-                    match walker.run_to_end_of_input_env_aware(max_steps, source) {
-                        Ok(()) => match walker.resolve_at_end_of_input(source) {
-                            WpdaResolveResult::Accepted { roots, .. } => {
-                                *pos = walker.position();
-                                // M6 realize-selection belt: iterate all
-                                // full-span roots + global min-weight that
-                                // actually realizes.
-                                let (term, dw) =
-                                    __mettail_wpda_select_min_weight_realizing(&walker, &roots)
-                                        .ok_or(WpdaParseError::EmptyResult)?;
-                                let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                    .map_err(|_| WpdaParseError::EmptyResult)?;
-                                let typed = std::sync::Arc::try_unwrap(arc)
-                                    .unwrap_or_else(|arc| (*arc).clone());
-                                Ok((typed, dw))
-                            }
-                            WpdaResolveResult::AcceptedWithTrailing {
-                                roots,
+            // The EXACT body of the historical `AcceptedWithTrailing` retry
+            // (a fresh `WpdaWalker::new_for_category` with
+            // `max_recovery_depth = 0`, the EXHAUSTIVE
+            // `run_to_end_of_input_env_aware` driver, resolve, and the M6
+            // min-weight realize-select over all 5 `WpdaResolveResult`
+            // variants). BOTH the `AcceptedWithTrailing` arm AND the new
+            // demand-`Accepted`-`None` fall-through arm call it (dedups
+            // ~60 lines — Boy-Scout). It sets `*pos` and returns the
+            // single-result `(term, weight)` OR the mapped error.
+            //
+            // The demand driver
+            // (`run_to_end_of_input_until_accepting_env_aware`) EARLY-STOPS
+            // on a category-correct but UNREALIZABLE accepting root (ROOT
+            // aa8ab54d), yielding a `None` M6-select → `EmptyResult`. The
+            // EXHAUSTIVE driver here explores the alternatives and realizes
+            // the canonical term (e.g. `(@a!!(Nil))` →
+            // `PPersistOutputShort`). Genuine-invalid surfaces still error
+            // (the exhaustive pass realizes no root → `EmptyResult`), so no
+            // spurious parse is fabricated (FV T4).
+            //
+            // NOTE: nested `fn` item — does NOT inherit the enclosing body's
+            // `use`/`type DW`, so every path is fully qualified.
+            #[allow(non_snake_case)]
+            fn __mettail_wpda_exhaustive_retry(
+                source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
+                pos: &mut usize,
+                min_bp: u8,
+                max_steps: usize,
+            ) -> Result<
+                (
+                    #cat_ident,
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                ),
+                WpdaParseError,
+            > {
+                use mettail_prattail::wpda_runtime::WpdaResolveResult;
+                use mettail_prattail::wpda_walker::WpdaWalker;
+                type __DW = mettail_prattail::automata::lex_weight::LexicographicWeight;
+                let mut walker = WpdaWalker::<__DW, _>::new_for_category(
+                    #engine_ident::default(),
+                    #cat_src_idx_u16,
+                    min_bp,
+                );
+                let mut recovery_config =
+                    mettail_prattail::recovery::RecoveryConfig::default();
+                recovery_config.max_recovery_depth = 0;
+                walker.set_recovery_config(recovery_config);
+                match walker.run_to_end_of_input_env_aware(max_steps, source) {
+                    Ok(()) => match walker.resolve_at_end_of_input(source) {
+                        WpdaResolveResult::Accepted { roots, .. } => {
+                            *pos = walker.position();
+                            // M6 realize-selection belt: iterate all
+                            // full-span roots + global min-weight that
+                            // actually realizes.
+                            let (term, dw) =
+                                __mettail_wpda_select_min_weight_realizing(&walker, &roots)
+                                    .ok_or(WpdaParseError::EmptyResult)?;
+                            let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                .map_err(|_| WpdaParseError::EmptyResult)?;
+                            let typed = std::sync::Arc::try_unwrap(arc)
+                                .unwrap_or_else(|arc| (*arc).clone());
+                            Ok((typed, dw))
+                        }
+                        WpdaResolveResult::AcceptedWithTrailing {
+                            roots,
+                            position,
+                            ..
+                        } => {
+                            *pos = position;
+                            // M6 realize-selection belt (see helper above).
+                            let (term, dw) =
+                                __mettail_wpda_select_min_weight_realizing(&walker, &roots)
+                                    .ok_or(WpdaParseError::EmptyResult)?;
+                            let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                .map_err(|_| WpdaParseError::EmptyResult)?;
+                            let typed = std::sync::Arc::try_unwrap(arc)
+                                .unwrap_or_else(|arc| (*arc).clone());
+                            Ok((typed, dw))
+                        }
+                        WpdaResolveResult::ParseError { message, position } => {
+                            Err(WpdaParseError::ParseFailed {
+                                message,
                                 position,
-                                ..
-                            } => {
-                                *pos = position;
-                                // M6 realize-selection belt (see helper above).
-                                let (term, dw) =
-                                    __mettail_wpda_select_min_weight_realizing(&walker, &roots)
-                                        .ok_or(WpdaParseError::EmptyResult)?;
-                                let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                    .map_err(|_| WpdaParseError::EmptyResult)?;
-                                let typed = std::sync::Arc::try_unwrap(arc)
-                                    .unwrap_or_else(|arc| (*arc).clone());
-                                Ok((typed, dw))
-                            }
-                            WpdaResolveResult::ParseError { message, position } => {
-                                Err(WpdaParseError::ParseFailed {
-                                    message,
-                                    position,
-                                    attempts: Vec::new(),
-                                })
-                            }
-                            WpdaResolveResult::MaxStepsExceeded { position } => {
-                                Err(WpdaParseError::Incomplete { position })
-                            }
-                            WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
-                                Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 })
-                            }
-                        },
-                        Err(exceeded) => Err(WpdaParseError::Incomplete {
-                            position: exceeded.position,
-                        }),
-                    }
+                                attempts: Vec::new(),
+                            })
+                        }
+                        WpdaResolveResult::MaxStepsExceeded { position } => {
+                            Err(WpdaParseError::Incomplete { position })
+                        }
+                        WpdaResolveResult::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 } => {
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position, frontier_ess_x1000 })
+                        }
+                    },
+                    Err(exceeded) => Err(WpdaParseError::Incomplete {
+                        position: exceeded.position,
+                    }),
                 }
-            };
+            }
+        };
 
         // (2) The demand-`Accepted` arm body: Some(verbatim common path) / None
         //     (fall through to the exhaustive retry).
