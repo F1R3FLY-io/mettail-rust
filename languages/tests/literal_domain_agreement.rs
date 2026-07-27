@@ -343,7 +343,7 @@ fn rhocalc_literal_carriers(text: &str) -> Vec<&'static str> {
 ///
 /// RhoCalc's `UInt32` has no `literals { … }` entry, so the macro synthesizes the
 /// default acceptor for its native kind
-/// (`macros/src/gen/runtime/wpda_codegen/prefix.rs:452`,
+/// (`macros/src/gen/runtime/wpda_codegen/prefix.rs::default_eval_body_for_native_kind`,
 /// `parse_int_lit(text, Some(Suffix::U32))`), which admits every UNSUFFIXED integer that
 /// fits `u32`. RhoCalc's `Int` pattern already OWNS those spellings — and the `…u32`
 /// spelling too, deliberately (`languages/src/rhocalc.rs:196`, divergence I(b)). So each

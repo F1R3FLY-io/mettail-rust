@@ -34,7 +34,8 @@
 //! | amplifier | generated `wpda.rs` — `__mettail_wpda_select_min_weight_realizing` | elects ONE derivation by **global argmin over whole-derivation `LexicographicWeight`** |
 //!
 //! A category's literal domain is decided by its own `eval` and by nothing else
-//! (`macros/src/gen/runtime/wpda_codegen/prefix.rs:386`). So the acceptor admitted a bare
+//! (`macros/src/gen/runtime/wpda_codegen/prefix.rs`, the doc comment on
+//! `classify_literal_patterned`). So the acceptor admitted a bare
 //! numeral as a `UInt32::NumLit` while `Display` wrote it back **with** the tail:
 //!
 //! ```text

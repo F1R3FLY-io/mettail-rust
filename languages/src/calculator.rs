@@ -33,7 +33,8 @@ language! {
                 // integer spelling — flatly contradicting the MANDATORY `u32` tail its own
                 // `pattern` declares one line up. Because a category's literal domain is
                 // decided by its `eval` and by nothing else
-                // (`macros/src/gen/runtime/wpda_codegen/prefix.rs:386`), a BARE numeral was a
+                // (`macros/src/gen/runtime/wpda_codegen/prefix.rs`, the doc comment on
+                // `classify_literal_patterned`), a BARE numeral was a
                 // live `UInt32::NumLit` reading:
                 //
                 //     UInt32::parse("7")  ⇒ Ok(NumLit(7))        ← accepted without the tail
