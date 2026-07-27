@@ -95,6 +95,66 @@ use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 
+/// The FILLER SURFACE of each category: the first rule of that category whose syntax pattern is
+/// entirely literals (a nullary constructor), rendered space-separated. RhoCalc's `Proc` filler is
+/// `PZero`'s `Nil`; its `Name` filler is `NQuoteNil`'s `@ Nil`.
+///
+/// Shared by the surface-synonymy gate table and by the sigil-operand wrap gate
+/// (`display::generate_sigil_operand_wrap_gate`), so both exercise the SAME sample surfaces.
+pub(crate) fn nullary_filler_surfaces(language: &LanguageDef) -> BTreeMap<String, String> {
+    let mut filler: BTreeMap<String, String> = BTreeMap::new();
+    for rule in &language.terms {
+        let Some(sp) = &rule.syntax_pattern else { continue };
+        if sp.is_empty() || !sp.iter().all(|e| matches!(e, SyntaxExpr::Literal(_))) {
+            continue;
+        }
+        let text = sp
+            .iter()
+            .filter_map(|e| match e {
+                SyntaxExpr::Literal(l) => Some(l.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        filler.entry(rule.category.to_string()).or_insert(text);
+    }
+    filler
+}
+
+/// One PARSEABLE SAMPLE SURFACE for `rule`: its own syntax pattern with every parameter replaced
+/// by its category's [`nullary_filler_surfaces`] entry.
+///
+/// `None` when any pattern element has no single filler surface — a `.*sep` list, a capture, an
+/// optional group, or a parameter whose category has no nullary constructor. A member that
+/// contributes no sample is REPORTED as uncovered by the gates rather than given a guessed one.
+pub(crate) fn sample_surface_for(
+    rule: &GrammarRule,
+    filler: &BTreeMap<String, String>,
+) -> Option<String> {
+    let sp = rule.syntax_pattern.as_ref()?;
+    let tc = rule.term_context.as_ref()?;
+    let mut parts: Vec<String> = Vec::with_capacity(sp.len());
+    for e in sp {
+        match e {
+            SyntaxExpr::Literal(l) => parts.push(l.clone()),
+            SyntaxExpr::Param(p) => {
+                let pname = p.to_string();
+                let pcat = tc.iter().find_map(|tp| match tp {
+                    TermParam::Simple { name, ty: mettail_ast::types::TypeExpr::Base(cat) }
+                        if name.to_string() == pname =>
+                    {
+                        Some(cat.to_string())
+                    },
+                    _ => None,
+                })?;
+                parts.push(filler.get(&pcat)?.clone());
+            },
+            _ => return None,
+        }
+    }
+    Some(parts.join(" "))
+}
+
 /// One surface-synonymy ALIAS class: the rules of a single category that denote the same term.
 #[derive(Debug, Clone)]
 pub(crate) struct AliasClass {
@@ -331,24 +391,7 @@ pub(crate) fn gate_table(language: &LanguageDef, model: &SynonymyModel) -> Token
     let by_label: HashMap<String, &GrammarRule> =
         language.terms.iter().map(|r| (r.label.to_string(), r)).collect();
 
-    // The filler surface of each category: the first rule of that category whose syntax pattern
-    // is entirely literals (a nullary constructor), rendered space-separated.
-    let mut filler: BTreeMap<String, String> = BTreeMap::new();
-    for rule in &language.terms {
-        let Some(sp) = &rule.syntax_pattern else { continue };
-        if sp.is_empty() || !sp.iter().all(|e| matches!(e, SyntaxExpr::Literal(_))) {
-            continue;
-        }
-        let text = sp
-            .iter()
-            .filter_map(|e| match e {
-                SyntaxExpr::Literal(l) => Some(l.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        filler.entry(rule.category.to_string()).or_insert(text);
-    }
+    let filler = nullary_filler_surfaces(language);
 
     let class_rows: Vec<TokenStream> = model
         .classes
@@ -371,31 +414,7 @@ pub(crate) fn gate_table(language: &LanguageDef, model: &SynonymyModel) -> Token
                 .iter()
                 .filter_map(|m| {
                     let rule = by_label.get(m)?;
-                    let sp = rule.syntax_pattern.as_ref()?;
-                    let tc = rule.term_context.as_ref()?;
-                    let mut parts: Vec<String> = Vec::with_capacity(sp.len());
-                    for e in sp {
-                        match e {
-                            SyntaxExpr::Literal(l) => parts.push(l.clone()),
-                            SyntaxExpr::Param(p) => {
-                                let pname = p.to_string();
-                                let pcat = tc.iter().find_map(|tp| match tp {
-                                    TermParam::Simple { name, ty: mettail_ast::types::TypeExpr::Base(cat) }
-                                        if name.to_string() == pname =>
-                                    {
-                                        Some(cat.to_string())
-                                    },
-                                    _ => None,
-                                })?;
-                                parts.push(filler.get(&pcat)?.clone());
-                            },
-                            // Any other pattern element (a `.*sep` list, a capture, an optional
-                            // group) has no single filler surface; the member contributes no
-                            // sample and the harness reports it as uncovered.
-                            _ => return None,
-                        }
-                    }
-                    let surface = parts.join(" ");
+                    let surface = sample_surface_for(rule, &filler)?;
                     Some(quote! { (#m, #surface) })
                 })
                 .collect();

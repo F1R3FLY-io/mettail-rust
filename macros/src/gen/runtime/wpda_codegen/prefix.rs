@@ -372,18 +372,24 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
 /// `LiteralPatterned` shape.
 ///
 /// Two paths produce a valid shape:
-///   (a) Explicit `literals { ... }` block — `from_literals: true` TokenDef
-///       carries the user's `eval: ![ { ... } ]` block body in `rust_code`.
-///   (b) Implicit native-type — `LangType.native_type` is `Some(_)` but no
-///       explicit literals block. We fabricate a default eval body matching
-///       the trampoline's auto-generated atomic-literal arm: for `![i32] as Num`
-///       we emit `parse_int_lit(text, Some(Suffix::I32))`.
 ///
-///       (This paragraph used to describe a `Token::Integer(v, suffix) if
-///       suffix.matches_i32()` guard. `IntSuffix::matches_*` was retired in
-///       2026-07 with zero callers — divergence I, Stage E: a documented-but-
-///       unread guard family is what made a universal-acceptor `eval` look
-///       guarded. A category's literal domain is decided by its own `eval`.)
+/// * **(a) Explicit `literals { ... }` block** — a `from_literals: true` TokenDef carries the
+///   user's `eval: ![ { ... } ]` block body in `rust_code`.
+/// * **(b) Implicit native-type** — `LangType.native_type` is `Some(_)` but there is no explicit
+///   literals block. We fabricate a default eval body matching the trampoline's auto-generated
+///   atomic-literal arm: for `![i32] as Num` we emit `parse_int_lit(text, Some(Suffix::I32))`.
+///
+/// ⚠ This paragraph used to describe a `Token::Integer(v, suffix) if suffix.matches_i32()` guard.
+/// `IntSuffix::matches_*` was retired in 2026-07 with zero callers — divergence I, Stage E: a
+/// documented-but-unread guard family is what made a universal-acceptor `eval` look guarded. A
+/// category's literal domain is decided by its own `eval`.
+///
+/// ⚠ FORMATTING, and why it is load-bearing here. The paragraph above was previously written as
+/// an INDENTED continuation after a blank `///` line. Markdown reads a blank line followed by a
+/// ≥4-space indent as a CODE BLOCK, and rustdoc compiles an unannotated code block as Rust — so
+/// `cargo test --doc` tried to compile English prose and failed with eleven parse errors, while
+/// `cargo nextest` (which does not run doctests) stayed green. Keep prose at the left margin, and
+/// use a real markdown list for enumerations rather than hanging indentation.
 fn classify_literal_patterned(cat_ident: &Ident, language: &LanguageDef) -> Option<AtomicShape> {
     let cat_name = cat_ident.to_string();
     // Find the LangType for the category to get the native Rust type.
