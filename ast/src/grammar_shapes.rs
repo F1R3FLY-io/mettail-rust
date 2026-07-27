@@ -220,6 +220,109 @@ pub struct FoldAliasShape {
     /// The category produced by the fold (== `rule.category`, == the root
     /// constructor's type segment).
     pub target_category: String,
+    /// ★ SURFACE SYNONYMY (2026-07-26) — the LABEL of the root constructor the body
+    /// re-wraps into (`NQuoteShort` ⇒ `"NQuote"`, `POutputShort` ⇒ `"POutput"`).
+    ///
+    /// This is what makes the alias relation a GRAPH rather than a predicate: the
+    /// synonymy classes of a category are the connected components of
+    /// `alias ──▶ target_label`, and every member of a component denotes the same term
+    /// under the language's own fold. Consumed by the Display canonical-member routing
+    /// (`macros/src/gen/syntax/synonymy.rs`).
+    pub target_label: String,
+    /// ★ THE TOTAL INVERSE, when it exists. `Some(v)` iff EVERY argument of the root
+    /// constructor is a bare parameter wrap (`Arc::new(p.clone())` / `p.clone()` / `p`)
+    /// and the parameters used are a PERMUTATION of the rule's own term context — i.e.
+    /// the alias is a pure RENAMING of the target, `alias(a₀…aₙ) ≡ Target(a_{v₀}…a_{vₙ})`.
+    ///
+    /// `v[i]` is the alias-parameter index that supplies the target's `i`-th field.
+    ///
+    /// **Why this exactly, and why a partial alias is different in kind.** A general
+    /// fold-alias is a partial SECTION of its target: `POutputShort(p, q)` reconstructs
+    /// `POutput(NQuote(p), q)`, so it names only those `POutput`s whose channel is a
+    /// quotation — routing an arbitrary `POutput(NVar x, q)` "through" it is not merely
+    /// awkward, it is undefined. A RENAMING alias is a BIJECTION onto its target, so the
+    /// routing is total and needs no runtime test. `NQuoteShort ⇒ Some([0])`;
+    /// `POutputShort` (argument 0 is a `NQuote(…)` wrap) and `NQuoteNil` (argument 0 is
+    /// the literal `Proc::PZero`) both ⇒ `None`.
+    pub renaming_inverse: Option<Vec<usize>>,
+}
+
+/// ★ SURFACE SYNONYMY (2026-07-26) — an **INERT GROUPING** rule: a bracket pair that
+/// wraps a term of its own category and evaluates to that term unchanged.
+///
+/// RhoCalc's instance is `NParen . n:Name |- "(" n ")" : Name ![{ n.clone() }] fold;`.
+///
+/// It is NOT a [`FoldAliasShape`] — [`classify_fold_alias_shape`] deliberately rejects an
+/// identity body, because its consumer (`semantic_hash` reconstruction) needs a body that
+/// terminates at a DIFFERENT constructor. Inert grouping is the complementary shape: the
+/// body terminates at the parameter itself, so the rule denotes a term it does not build.
+///
+/// Its synonymy class is `{ Grouping(x), x }` for every `x` of the category, which is a
+/// class with no second RULE to nominate — the canonical member is the WRAPPED TERM, by
+/// construction rather than by declaration. `Display` therefore renders it transparently
+/// (forwarding the inherited binding-power threshold), and the parser's own transparent
+/// grouping re-inserts the brackets wherever a fence or a precedence threshold demands
+/// them. See `macros/src/gen/syntax/synonymy.rs`.
+#[derive(Debug, Clone)]
+pub struct InertGroupingShape {
+    /// The single parameter's name (== the category, == what the body clones).
+    pub param: String,
+    /// The opening bracket literal (`"("`).
+    pub open: String,
+    /// The closing bracket literal (`")"`).
+    pub close: String,
+}
+
+/// Classify a `GrammarRule` as an [`InertGroupingShape`], if it matches.
+///
+/// **Predicate (all must hold):**
+/// - `eval_mode == Some(EvalMode::Fold)` with a `![…]` body,
+/// - `term_context` is exactly one `Simple { ty: Base(C) }` with `C == rule.category`,
+/// - `syntax_pattern` is exactly `[Literal(open), Param(that param), Literal(close)]`,
+/// - the body is exactly `param.clone()` or the bare `param` — the IDENTITY.
+///
+/// Derived from the rule alone: no label, bracket or language is named.
+pub fn classify_inert_grouping_shape(rule: &GrammarRule) -> Option<InertGroupingShape> {
+    if rule.eval_mode != Some(EvalMode::Fold) {
+        return None;
+    }
+    let code = &rule.rust_code.as_ref()?.code;
+    let tc = rule.term_context.as_ref()?;
+    let sp = rule.syntax_pattern.as_ref()?;
+    if tc.len() != 1 || sp.len() != 3 {
+        return None;
+    }
+    let (param, ty) = match &tc[0] {
+        TermParam::Simple { name, ty } => (name.to_string(), ty),
+        _ => return None,
+    };
+    match ty {
+        TypeExpr::Base(t) if t.to_string() == rule.category.to_string() => {},
+        _ => return None,
+    }
+    let (open, close) = match (&sp[0], &sp[1], &sp[2]) {
+        (SyntaxExpr::Literal(o), SyntaxExpr::Param(p), SyntaxExpr::Literal(c))
+            if p.to_string() == param =>
+        {
+            (o.clone(), c.clone())
+        },
+        _ => return None,
+    };
+    // The body must be the IDENTITY on that parameter.
+    let mut params = HashSet::with_capacity(1);
+    params.insert(param.clone());
+    let body = unwrap_single_expr(code)?;
+    let is_identity = match body {
+        syn::Expr::MethodCall(mc) => {
+            mc.method == "clone" && mc.args.is_empty() && is_param_ref(&mc.receiver, &params)
+        },
+        syn::Expr::Path(p) => is_single_ident_in(&p.path, &params),
+        _ => false,
+    };
+    if !is_identity {
+        return None;
+    }
+    Some(InertGroupingShape { param, open, close })
 }
 
 /// Classify a `GrammarRule` as a [`FoldAliasShape`], if it matches. See the
@@ -237,10 +340,12 @@ pub fn classify_fold_alias_shape(rule: &GrammarRule) -> Option<FoldAliasShape> {
     // Excludes collection (`Vec(..)`) and binder (`^[..]`) rules.
     let tc = rule.term_context.as_ref()?;
     let mut param_names: HashSet<String> = HashSet::with_capacity(tc.len());
+    let mut param_order: Vec<String> = Vec::with_capacity(tc.len());
     for p in tc {
         match p {
             TermParam::Simple { name, ty: TypeExpr::Base(_) } => {
                 param_names.insert(name.to_string());
+                param_order.push(name.to_string());
             },
             _ => return None,
         }
@@ -254,7 +359,67 @@ pub fn classify_fold_alias_shape(rule: &GrammarRule) -> Option<FoldAliasShape> {
         return None;
     }
 
-    Some(FoldAliasShape { target_category: cat })
+    // (4) SURFACE SYNONYMY (2026-07-26): the root constructor's VARIANT is the class edge,
+    // and its argument list decides whether the alias is a total RENAMING of the target.
+    // Both are read off the same expression `is_fold_alias_root` just validated, so they
+    // cannot disagree with it.
+    let root = unwrap_single_expr(code)?;
+    let syn::Expr::Call(root_call) = root else { return None };
+    let (_, target_label) = constructor_path(&root_call.func)?;
+    let renaming_inverse = renaming_inverse_of(root_call, &param_order);
+
+    Some(FoldAliasShape { target_category: cat, target_label, renaming_inverse })
+}
+
+/// The [`FoldAliasShape::renaming_inverse`] of a validated fold-alias root call: `Some(v)`
+/// iff every argument is a BARE parameter wrap and the parameters used are a permutation
+/// of `param_order`. `v[i]` is the alias-parameter index supplying the target's `i`-th
+/// field.
+///
+/// A "bare parameter wrap" is a (possibly smart-pointer-nested) `p.clone()` or `p`; a
+/// constructor call anywhere on the spine (`Arc::new(Name::NQuote(Arc::new(p.clone())))`)
+/// or a nullary-variant leaf (`Proc::PZero`) makes the argument non-bare and the alias
+/// merely a partial section — see the field's own documentation for why that distinction
+/// is the one that matters.
+fn renaming_inverse_of(root_call: &syn::ExprCall, param_order: &[String]) -> Option<Vec<usize>> {
+    if root_call.args.len() != param_order.len() {
+        return None;
+    }
+    let mut inverse = Vec::with_capacity(root_call.args.len());
+    for arg in &root_call.args {
+        let name = bare_param_wrap_name(arg)?;
+        inverse.push(param_order.iter().position(|p| *p == name)?);
+    }
+    // A permutation: every alias parameter is used exactly once.
+    let mut seen = vec![false; param_order.len()];
+    for &i in &inverse {
+        if seen[i] {
+            return None;
+        }
+        seen[i] = true;
+    }
+    Some(inverse)
+}
+
+/// The parameter name a BARE wrap bottoms at: `p`, `p.clone()`, `Arc::new(p.clone())`, …
+/// `None` if the spine passes through a constructor call, a nullary variant, or anything
+/// else.
+fn bare_param_wrap_name(expr: &syn::Expr) -> Option<String> {
+    match expr {
+        syn::Expr::Call(call) if is_smart_ptr_new(&call.func) && call.args.len() == 1 => {
+            bare_param_wrap_name(&call.args[0])
+        },
+        syn::Expr::MethodCall(mc) if mc.method == "clone" && mc.args.is_empty() => {
+            bare_param_wrap_name(&mc.receiver)
+        },
+        syn::Expr::Reference(r) => bare_param_wrap_name(&r.expr),
+        syn::Expr::Paren(p) => bare_param_wrap_name(&p.expr),
+        syn::Expr::Group(g) => bare_param_wrap_name(&g.expr),
+        syn::Expr::Path(p) if p.path.segments.len() == 1 && p.qself.is_none() => {
+            Some(p.path.segments[0].ident.to_string())
+        },
+        _ => None,
+    }
 }
 
 /// Unwrap a `{ tail_expr }` block / parenthesization / invisible group down to

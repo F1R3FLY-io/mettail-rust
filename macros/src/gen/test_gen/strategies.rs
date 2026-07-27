@@ -1550,9 +1550,41 @@ fn generate_proptest_blocks(language: &LanguageDef, out: &mut String) {
              \x20           \"Parse(Display(Parse(s))) should succeed for canonical form {{:?}}: {{:?}}\",\n\
              \x20           canonical, e));\n\
              \x20       let recanonical = format!(\"{{}}\", reparsed);\n\
+             \x20       // Snapshot before the move: `prop_assert_eq!` consumes both operands.\n\
+             \x20       let __first_surface = canonical.clone();\n\
              \x20       prop_assert_eq!(canonical, recanonical,\n\
              \x20           \"Display should be idempotent after canonicalization: \\\n\
              \x20            display(parse(display(parse(display(t))))) == display(parse(display(t)))\");\n\
+             \x20       // ★ CONVERGENCE WITH AN EXPLICIT BOUND (2026-07-26). The assertion above\n\
+             \x20       // is a FIXPOINT test at depth 2, and when it fails it prints two opaque\n\
+             \x20       // strings and no diagnosis. A surface synonym does not fail it randomly:\n\
+             \x20       // it sheds exactly ONE surface per nesting layer, so the layer count IS\n\
+             \x20       // the measurement. This loop reports it — \"converged in 3, expected 1\"\n\
+             \x20       // says at once that the term carries a synonym two levels deep, which is\n\
+             \x20       // the fact `languages/tests/surface_synonymy_gate.rs` then localises to a\n\
+             \x20       // class and a member.\n\
+             \x20       let mut __surface = __first_surface.clone();\n\
+             \x20       let mut __layers = 0usize;\n\
+             \x20       for _ in 0..8 {{\n\
+             \x20           let __next_term = match {cat}::parse(&__surface) {{\n\
+             \x20               Ok(t) => t,\n\
+             \x20               Err(e) => {{\n\
+             \x20                   prop_assert!(false,\n\
+             \x20                       \"the canonical surface {{:?}} stopped parsing at layer {{}}: {{:?}}\",\n\
+             \x20                       __surface, __layers, e);\n\
+             \x20                   unreachable!()\n\
+             \x20               }},\n\
+             \x20           }};\n\
+             \x20           let __next = format!(\"{{}}\", __next_term);\n\
+             \x20           if __next == __surface {{ break; }}\n\
+             \x20           __surface = __next;\n\
+             \x20           __layers += 1;\n\
+             \x20       }}\n\
+             \x20       prop_assert_eq!(__layers, 0,\n\
+             \x20           \"Display/Parse converged in {{}} extra layer(s), expected 0: the surface \\\n\
+             \x20            sheds one spelling per layer, which is the signature of a SURFACE \\\n\
+             \x20            SYNONYM whose class has no declared canonical member. First surface \\\n\
+             \x20            {{:?}}, fixpoint {{:?}}.\", __layers, __first_surface, __surface);\n\
              \x20   }}\n\n",
             cat_lower = cat_lower,
             cat = cat,

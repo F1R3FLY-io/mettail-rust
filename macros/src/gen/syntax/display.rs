@@ -384,12 +384,22 @@ pub fn generate_display(language: &LanguageDef) -> TokenStream {
     // Compute binding power lookup for precedence-aware parenthesization
     let bp_lookup = build_bp_lookup(language);
 
+    // ★ SURFACE SYNONYMY (2026-07-26). Derived from the grammar's own fold bodies and grouping
+    // shapes; see `synonymy.rs` for the defect, the two refuted inference rules, and why the
+    // canonical member has to be DECLARED. `compile_errors` is the loud build gate: a new
+    // interchangeable surface stops the build until the grammar names its canonical member.
+    let synonymy = crate::gen::syntax::synonymy::derive(language);
+    let synonymy_errors = crate::gen::syntax::synonymy::compile_errors(language, &synonymy);
+    let synonymy_table = crate::gen::syntax::synonymy::gate_table(language, &synonymy);
+
     let task_enum = generate_display_task_enum(language);
-    let iterative_engine = generate_iterative_engine(language, &bp_lookup);
+    let iterative_engine = generate_iterative_engine(language, &bp_lookup, &synonymy);
     let display_impls = generate_display_impls(language);
     let at_sigil_wrap_predicate = generate_at_sigil_wrap_predicate(language);
 
     quote! {
+        #synonymy_errors
+        #synonymy_table
         #task_enum
         #iterative_engine
         #display_impls
@@ -461,11 +471,17 @@ fn generate_display_task_enum(language: &LanguageDef) -> TokenStream {
 /// inside the arms propagate through them and the dispatch arm re-propagates
 /// with `?` — control-flow-equivalent (the only generated escapes are `?` and
 /// arm-local `break value` loops; no `return`/`continue` cross an arm).
-fn generate_iterative_engine(language: &LanguageDef, bp_lookup: &BpLookup) -> TokenStream {
+fn generate_iterative_engine(
+    language: &LanguageDef,
+    bp_lookup: &BpLookup,
+    synonymy: &crate::gen::syntax::synonymy::SynonymyModel,
+) -> TokenStream {
     let visit_helper_fns: Vec<TokenStream> = language
         .types
         .iter()
-        .map(|lang_type| generate_display_visit_helper(&lang_type.name, language, bp_lookup))
+        .map(|lang_type| {
+            generate_display_visit_helper(&lang_type.name, language, bp_lookup, synonymy)
+        })
         .collect();
     let category_arms: Vec<TokenStream> = language
         .types
@@ -526,6 +542,7 @@ fn generate_display_visit_helper(
     category: &syn::Ident,
     language: &LanguageDef,
     bp_lookup: &BpLookup,
+    synonymy: &crate::gen::syntax::synonymy::SynonymyModel,
 ) -> TokenStream {
     let helper_fn = format_ident!("display_visit_{}", category.to_string().to_lowercase());
 
@@ -541,10 +558,57 @@ fn generate_display_visit_helper(
         .map(|v| v.as_slice())
         .unwrap_or(&[]);
 
+    // ★ SURFACE SYNONYMY (2026-07-26) — route each member of a synonymy class through the
+    // class's DECLARED canonical member, and render an INERT GROUPING transparently. Both are
+    // no-ops for a grammar that declares neither, so an unaffected language's arms are
+    // byte-identical. See `synonymy.rs`.
+    let by_label: HashMap<String, &GrammarRule> =
+        language.terms.iter().map(|r| (r.label.to_string(), r)).collect();
+
     // Generate match arms for grammar-defined rules
     let mut variant_arms: Vec<TokenStream> = rules
         .iter()
-        .map(|rule| generate_engine_rule_arm(rule, language, bp_lookup))
+        .map(|rule| {
+            let label = rule.label.to_string();
+            // ★ MEASURED REFUTATION (2026-07-26) — an INERT GROUPING IS NOT DISPLAY-COLLAPSED.
+            //
+            // The first cut of surface synonymy also rendered inert groupings transparently
+            // (`NParen(x)` ⇒ `Display(x)` at the inherited threshold), on the reasoning that
+            // `Grouping(x) ≡ x` makes the brackets redundant. Two independent standing contracts
+            // REFUTED it, and both are about AMBIGUITY PRESERVATION rather than about brackets:
+            //
+            //   languages/tests/rd_a1_budget.rs::genuinely_ambiguous_witness_strict_boundary
+            //       `@((a)!(0))!()` has |R|_distinct = 2, and the two readings differ ONLY by
+            //       the kept `NParen`. Transparency displayed both as `@(a!(0))!()`, so the
+            //       distinct-reading count collapsed 2 → 1 and the budget boundary moved.
+            //   languages/tests/rhocalc_tests.rs::realize_mode_contract_pins
+            //       ::prefix_bounded_alternatives_enumerate_display_distinct_family (2026-07-14,
+            //       USER-APPROVED) requires `@Nil!(@(@Nil)!())` and `@Nil!(@@Nil!())` to remain
+            //       a display-DISTINCT 2-reading family. Transparency made both `@Nil!(@@Nil!())`.
+            //
+            // So a grouping's brackets are the ONLY observable separating the kept-grouping
+            // reading from its transparent twin; deleting them from the surface DISAMBIGUATES AT
+            // THE DISPLAY LAYER, which this project forbids. The property surface synonymy needs
+            // — `Display(Parse(Display(t))) == Display(t)` — is measured to hold for the grouping
+            // ALREADY (`(@Nil)` ⇒ `(@Nil)`), because the parser re-elects the grouping from its
+            // own brackets. There is therefore nothing to repair here and a reading to lose, so
+            // the grouping keeps its own arm. It is still REPORTED in the gate table
+            // (`__SURFACE_INERT_GROUPINGS`) and the shared harness asserts its stability.
+            let _ = &synonymy.inert_groupings;
+            if let Some(plan) = synonymy.reroutes.get(&label) {
+                if let Some(canonical_rule) = by_label.get(&plan.canonical) {
+                    let synthetic =
+                        crate::gen::syntax::synonymy::rerouted_rule(canonical_rule, plan);
+                    return generate_engine_rule_arm_as(
+                        &synthetic,
+                        &rule.label,
+                        language,
+                        bp_lookup,
+                    );
+                }
+            }
+            generate_engine_rule_arm(rule, language, bp_lookup)
+        })
         .collect();
 
     // Auto-generated Var variant
@@ -728,6 +792,81 @@ fn generate_display_visit_helper(
 // =============================================================================
 // Per-Rule Arm Generation (for the iterative engine)
 // =============================================================================
+
+// ★ COMMENTED OUT, NOT DELETED (2026-07-26) — the INERT-GROUPING transparency arm, refuted by
+// measurement. See the two contracts named at the call site in `generate_display_visit_helper`:
+// a grouping's brackets are the ONLY observable separating the kept-grouping reading from its
+// transparent twin, so collapsing them disambiguates at the display layer. The code is retained
+// verbatim so a future design that wants transparency (behind a per-rule declaration, say) does
+// not have to re-derive it, and so the refutation is legible next to what it refuted.
+//
+// /// ★ SURFACE SYNONYMY (2026-07-26) — the INERT-GROUPING arm.
+// ///
+// /// A grouping rule (`NParen . n:Name |- "(" n ")" : Name ![{ n.clone() }] fold;`) evaluates to
+// /// its child unchanged, so `Grouping(x)` and `x` are the same term with two surfaces. There is
+// /// no second RULE to nominate as canonical — the canonical member is the WRAPPED TERM — so the
+// /// arm forwards the child at the INHERITED threshold `min_bp` and writes no brackets of its own.
+// ///
+// /// Forwarding `min_bp` rather than `0` is the whole point: the child is now standing exactly
+// /// where the grouping stood, so it inherits the grouping's precedence obligation, and the child's
+// /// own `own_bp < min_bp` test re-inserts brackets whenever the surrounding context needs them.
+// /// The fence machinery (see this file's header) does the same for lexical fences. A grouping can
+// /// therefore never be dropped in a position where its absence would change the parse.
+// fn generate_inert_grouping_arm(rule: &GrammarRule) -> TokenStream {
+//     let category = &rule.category;
+//     let label = &rule.label;
+//     let child_category = rule
+//         .term_context
+//         .as_ref()
+//         .and_then(|tc| tc.first())
+//         .and_then(|p| match p {
+//             TermParam::Simple { ty: TypeExpr::Base(c), .. } => Some(c.clone()),
+//             _ => None,
+//         })
+//         .unwrap_or_else(|| category.clone());
+//     let task_variant = format_ident!("Display{}", child_category);
+//     quote! {
+//         #category::#label(__inner) => {
+//             // Transparent: the child inherits this position's binding-power obligation.
+//             stack.push(DisplayTask::#task_variant(&**__inner as *const _, min_bp));
+//         }
+//     }
+// }
+
+/// Generate the match arm for `rule`, but matching on the variant `match_label` instead of the
+/// rule's own label.
+///
+/// ★ SURFACE SYNONYMY (2026-07-26). This is how a synonymy class renders through its DECLARED
+/// canonical member: `rule` is the canonical rule (with its `term_context` already permuted into
+/// the member's field order by `synonymy::rerouted_rule`), and `match_label` is the member being
+/// rendered. The emitted arm therefore binds `Member(f₀ … fₙ)` and prints the CANONICAL surface.
+///
+/// The canonical rule's binding-power registration travels with it — `bp_lookup` is consulted
+/// with the CANONICAL label, which is correct precisely because the surface being printed is the
+/// canonical one, so the parenthesization obligation is the canonical one too. (`NQuoteShort`
+/// carries `prefix(220)`, so `Name::NQuote(Add(1, 2))` prints `@(1 + 2)` and
+/// `Name::NQuote(PZero)` prints `@Nil` — the bracket appears exactly when the operand binds
+/// looser than the sigil, which is the same condition the parser applies.)
+fn generate_engine_rule_arm_as(
+    rule: &GrammarRule,
+    match_label: &syn::Ident,
+    language: &LanguageDef,
+    bp_lookup: &BpLookup,
+) -> TokenStream {
+    if let (Some(syntax_pattern), Some(term_context)) = (&rule.syntax_pattern, &rule.term_context) {
+        return generate_engine_syntax_pattern_arm_inner(
+            rule,
+            syntax_pattern,
+            term_context,
+            language,
+            bp_lookup,
+            Some(match_label),
+        );
+    }
+    // A canonical member with no `syntax_pattern` has no surface to route through; fall back to
+    // the member's own arm rather than emit an ill-typed one.
+    generate_engine_rule_arm(rule, language, bp_lookup)
+}
 
 /// Generate the match arm for a single grammar rule inside the iterative engine.
 fn generate_engine_rule_arm(
@@ -2099,12 +2238,41 @@ fn generate_engine_syntax_pattern_arm(
     rule: &GrammarRule,
     syntax_pattern: &[SyntaxExpr],
     term_context: &[TermParam],
+    language: &LanguageDef,
+    bp_lookup: &BpLookup,
+) -> TokenStream {
+    generate_engine_syntax_pattern_arm_inner(
+        rule,
+        syntax_pattern,
+        term_context,
+        language,
+        bp_lookup,
+        None,
+    )
+}
+
+/// The body of [`generate_engine_syntax_pattern_arm`], with the MATCH-PATTERN variant name
+/// optionally overridden.
+///
+/// `match_label_override` is `Some` only on the surface-synonymy re-route path
+/// (`generate_engine_rule_arm_as`): every use of `label` below that selects a BINDING POWER, a
+/// syntax position, or a chain-walk of the rule's own variant keeps the rule's own label, and
+/// only the five arm-head emissions use the override. `None` reproduces the pre-2026-07-26
+/// generator exactly.
+fn generate_engine_syntax_pattern_arm_inner(
+    rule: &GrammarRule,
+    syntax_pattern: &[SyntaxExpr],
+    term_context: &[TermParam],
     _language: &LanguageDef,
     bp_lookup: &BpLookup,
+    match_label_override: Option<&syn::Ident>,
 ) -> TokenStream {
     let category = &rule.category;
     let label = &rule.label;
     let label_str = label.to_string();
+    // The variant the emitted arm MATCHES on. Identical to `label` unless this arm is a
+    // surface-synonymy re-route.
+    let match_label: &syn::Ident = match_label_override.unwrap_or(label);
 
     // L9-3 (ROUND-TRIP-CRITICAL): a rule with a `v@Tok` capture is never an
     // infix Pratt operator — it renders LINEARLY. Bind fields in
@@ -2779,7 +2947,7 @@ fn generate_engine_syntax_pattern_arm(
         if is_multi_binder {
             // Abstraction rules are never infix, no parenthesization needed
             quote! {
-                #category::#label(#(#field_idents),*) => {
+                #category::#match_label(#(#field_idents),*) => {
                     let inner = scope.inner();
                     let binder_names: Vec<String> = inner.unsafe_pattern.iter()
                         .map(|b| b.0.pretty_name.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "_".to_string()))
@@ -2793,7 +2961,7 @@ fn generate_engine_syntax_pattern_arm(
         } else {
             // Abstraction rules are never infix, no parenthesization needed
             quote! {
-                #category::#label(#(#field_idents),*) => {
+                #category::#match_label(#(#field_idents),*) => {
                     let inner = scope.inner();
                     let binder_name = inner.unsafe_pattern.0.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
                     let _ = binder_name;
@@ -2803,7 +2971,7 @@ fn generate_engine_syntax_pattern_arm(
         }
     } else if field_idents.is_empty() {
         quote! {
-            #category::#label => {
+            #category::#match_label => {
                 #(#forward_ops)*
             }
         }
@@ -2836,7 +3004,7 @@ fn generate_engine_syntax_pattern_arm(
         let _ = &neg_zero_prescan;
         {
             quote! {
-                #category::#label(#(#field_idents),*) => {
+                #category::#match_label(#(#field_idents),*) => {
                     // Precedence-only parenthesization — see the rationale at
                     // `generate_engine_regular_arm` (the projection-shadow
                     // disjunct was removed 2026-06-22 because it injected
@@ -2855,7 +3023,7 @@ fn generate_engine_syntax_pattern_arm(
         }
     } else {
         quote! {
-            #category::#label(#(#field_idents),*) => {
+            #category::#match_label(#(#field_idents),*) => {
                 #(#forward_ops)*
             }
         }

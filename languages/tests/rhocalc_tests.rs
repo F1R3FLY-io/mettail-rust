@@ -1162,7 +1162,12 @@ mod comm {
 
     #[test]
     fn comm_with_body_using_channel() {
-        assert_reduces_to("for(x <- c){x!(0)} | c!(p)", "@(p)!([0])");
+        // ★ SURFACE SYNONYMY (2026-07-26): the reduct's channel is `NQuote(PVar p)`, and the
+        // `Name` synonymy class `{ NQuote, NQuoteShort, NQuoteNil }` now renders through its
+        // DECLARED canonical member `NQuoteShort` (`rhocalc.rs`), so the surface is the Rholang
+        // shorthand `@p` rather than `@(p)`. The TERM is unchanged; only which member's surface
+        // `Display` emits moved. See `languages/tests/surface_synonymy_gate.rs`.
+        assert_reduces_to("for(x <- c){x!(0)} | c!(p)", "@p!([0])");
     }
 
     #[test]
@@ -1235,7 +1240,7 @@ mod comm {
         let (results, initial_id) = run_with_initial("for(x <- c){*x} | c!!(p)");
         let nfs = reachable_normal_form_displays(&results, initial_id);
         // Persistent send `c!!(p)` remains (displayed `c!!([p])` — arity list)
-        // and the received `p` is substituted into the body (`*@(p)` → `p`).
+        // and the received `p` is substituted into the body (`*@p` → `p`).
         assert!(
             any_nf_contains(&nfs, "c!!(p)") && nfs.iter().any(|nf| nf.contains('p')),
             "expected persistent send to remain after comm, got {:?}",
@@ -1291,7 +1296,7 @@ mod comm {
         assert!(
             displays
                 .iter()
-                .any(|d| d.contains("for(x <= c){") && d.contains("*@(p)")),
+                .any(|d| d.contains("for(x <= c){") && d.contains("*@p")),
             "expected persistent receive + substituted body after one comm, terms={:?}",
             displays
         );
@@ -1333,7 +1338,7 @@ mod comm {
             out
         );
         assert!(
-            out.contains("*@(p)"),
+            out.contains("*@p"),
             "expected one-step continuation payload to be produced, got {}",
             out
         );
@@ -1364,13 +1369,13 @@ mod comm {
             .iter()
             .map(|t| t.display.clone())
             .collect();
-        // Guard `x > 1` with received `x = 2` is true → fires (`*@(2)`), and the
+        // Guard `x > 1` with received `x = 2` is true → fires (`*@2`), and the
         // persistent listener remains. The listener's guard displays through the
         // projection surface as `x > @Nil!(1)`; `canon_display` restores `x > 1`.
         assert!(
             displays.iter().any(|d| {
                 let c = canon_display(d);
-                c.contains("for(x <= c where x > 1){*x}") && c.contains("*@(2)")
+                c.contains("for(x <= c where x > 1){*x}") && c.contains("*@2")
             }),
             "expected guarded persistent receive to fire and remain, got {:?}",
             displays
@@ -1422,11 +1427,11 @@ mod comm {
     // firing IS the verdict.
 
     /// One row of the host truth table: `for(x <- c where <guard>){*x} | c!(2)`
-    /// fires iff `guard` is true. On a true guard the reduct `*@(2)` appears; on
+    /// fires iff `guard` is true. On a true guard the reduct `*@2` appears; on
     /// a false guard the receive AND the send both remain (fail shut — nothing
     /// consumed, nothing fabricated).
     fn assert_host_guard(guard: &str, expected: bool) {
-        assert_host_guard_on(guard, "2", "*@(2)", expected)
+        assert_host_guard_on(guard, "2", "*@2", expected)
     }
 
     /// [`assert_host_guard`] with the datum chosen by the caller.
@@ -1487,16 +1492,16 @@ mod comm {
 /// `proc(…)` fact, so no grammar fold runs on it.
 #[test]
 fn a_boolean_equality_guard_decides_on_the_host() {
-    // The datum/reduct pair is `"hi"` / `*@("hi")`, the same one `assert_host_matches`
+    // The datum/reduct pair is `"hi"` / `*@"hi"`, the same one `assert_host_matches`
     // uses, and the choice is load-bearing. The harness detects firing by SUBSTRING,
     // so a reduct that also occurs in the blocked normal form is a false positive in
     // BOTH directions — a numeric datum `1` with reduct `1` reads as fired even
-    // though the un-fired `c!(1)` is what contains it. `*@("hi")` is the DEREFERENCED
+    // though the un-fired `c!(1)` is what contains it. `*@"hi"` is the DEREFERENCED
     // rendering and cannot appear in the resting send `c!("hi")`, so the signal is
     // real. The guard is a CONSTANT boolean comparison, so the datum is free to be
     // whatever discriminates while the guard still exercises the `CastBool` arm.
     fn guard(g: &str, expected: bool) {
-        assert_host_guard_on(g, "\"hi\"", "*@(\"hi\")", expected)
+        assert_host_guard_on(g, "\"hi\"", "*@\"hi\"", expected)
     }
     guard("true == true", true);
     guard("false == false", true);
@@ -1586,7 +1591,7 @@ fn a_boolean_equality_guard_decides_on_the_host() {
     /// and which of the two it is, is asserted precisely (on the verdict itself,
     /// not on the observation) in `rho_matches_differential.rs`.
     fn assert_host_matches(guard: &str, expected: bool) {
-        assert_host_guard_on(guard, "\"hi\"", "*@(\"hi\")", expected)
+        assert_host_guard_on(guard, "\"hi\"", "*@\"hi\"", expected)
     }
 
     #[test]
@@ -1684,12 +1689,12 @@ fn a_boolean_equality_guard_decides_on_the_host() {
             .iter()
             .map(|t| t.display.clone())
             .collect();
-        // Join guard `y > 1` with received `y = 2` is true → fires (`*@(p)`),
+        // Join guard `y > 1` with received `y = 2` is true → fires (`*@p`),
         // persistent listener remains (canonicalized guard: `y > 1`).
         assert!(
             displays.iter().any(|d| {
                 let c = canon_display(d);
-                c.contains("*@(p)") && c.contains("for(x <= c1&y <- c2 where y > 1){*x}")
+                c.contains("*@p") && c.contains("for(x <= c1&y <- c2 where y > 1){*x}")
             }),
             "expected persistent join with true guard to fire, got {:?}",
             displays
@@ -1729,7 +1734,7 @@ fn a_boolean_equality_guard_decides_on_the_host() {
         assert!(
             displays
                 .iter()
-                .any(|d| d.contains("*@(p)") && d.contains("for(y <- c2){*@(p)}")),
+                .any(|d| d.contains("*@p") && d.contains("for(y <- c2){*@p}")),
             "expected first persistent row to fire then continue with second row, got {:?}",
             displays
         );
@@ -4996,8 +5001,28 @@ mod m6_realize_selection {
     fn compound_polyadic_at_binds_with_keyword_channel_and_prefix_guard_roundtrips() {
         // The exact compound counterexample the forrow roundtrip proptest
         // fast-failed on before the M6 belt (WPDS produced no result @ EOF).
+        //
+        // ★ SURFACE SYNONYMY (2026-07-26): this assertion is Display-VERBATIM, so the input has
+        // to be written in the CANONICAL spelling of every synonymy class it contains. `@(a)`
+        // and `@(error)` are `NQuote`; the `Name` class now renders through its declared
+        // canonical member `NQuoteShort`, so the canonical surfaces are `@a` and `@error`. The
+        // parse-gap this case pins — `@`-first polyadic bind-LHS cross-cat re-entry plus a
+        // Proc→Proc prefix-op where-guard — is untouched by the respelling: `@Pathmap()` and
+        // `@Nil` are still `@`-led binds, still three of them, still followed by the same
+        // keyword channel and guard. (Verified by parsing the ORIGINAL spelling below: it still
+        // parses, and it now Displays to this canonical form.)
         assert_forrow_roundtrips_exact(
-            "@Pathmap(),@Nil , @(a) , @(error)<-@Map() where bitnot Nil.keys()",
+            "@Pathmap(),@Nil , @a , @error<-@Map() where bitnot Nil.keys()",
+        );
+        // The pre-canonicalisation spelling must still PARSE (only its Display moved), so the
+        // respelling above cannot have quietly narrowed the surface this case covers.
+        mettail_runtime::clear_var_cache();
+        let original = ForRow::parse("@Pathmap(),@Nil , @(a) , @(error)<-@Map() where bitnot Nil.keys()")
+            .expect("the pre-canonicalisation spelling must still parse");
+        assert_eq!(
+            format!("{original}"),
+            "@Pathmap(),@Nil , @a , @error<-@Map() where bitnot Nil.keys()",
+            "the `@(x)` spelling must normalise to the canonical `@x` spelling"
         );
     }
 

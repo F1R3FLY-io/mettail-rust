@@ -133,6 +133,7 @@ pub(crate) fn build_per_category_rules(
             // it remains visible to legacy unified-trampoline cast_rules.
             is_auto_injected: false,
             doc_comment: None,
+            is_canonical_synonym: false,
         };
         per_cat[i].push(synthetic);
     }
@@ -213,6 +214,7 @@ pub(crate) fn build_per_category_rules(
             // unified-trampoline cast_rules.
             is_auto_injected: false,
             doc_comment: None,
+            is_canonical_synonym: false,
         };
         per_cat[i].push(synthetic);
     }
@@ -283,6 +285,7 @@ pub(crate) fn build_per_category_rules(
             // unified-trampoline cast_rules.
             is_auto_injected: false,
             doc_comment: None,
+            is_canonical_synonym: false,
         };
         per_cat[i].push(synthetic);
     }
@@ -385,6 +388,7 @@ pub(crate) fn build_per_category_rules(
                     tier_directive: None,
                     is_auto_injected: false,
                     doc_comment: None,
+                    is_canonical_synonym: false,
                 };
                 per_cat[home_i].push(apply_rule);
 
@@ -429,6 +433,7 @@ pub(crate) fn build_per_category_rules(
                     tier_directive: None,
                     is_auto_injected: false,
                     doc_comment: None,
+                    is_canonical_synonym: false,
                 };
                 per_cat[home_i].push(mapply_rule);
             }
@@ -502,6 +507,7 @@ pub(crate) fn build_per_category_rules(
                     tier_directive: None,
                     is_auto_injected: false,
                     doc_comment: None,
+                    is_canonical_synonym: false,
                 };
                 per_cat[home_i].push(lam_rule);
 

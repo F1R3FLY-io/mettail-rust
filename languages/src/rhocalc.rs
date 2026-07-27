@@ -786,12 +786,44 @@ language! {
         // consumes a high-precedence Proc subterm.  Without it `*@1 + 0`
         // would parse as `*(@(1+0))`; with it, the `+ 0` belongs to the
         // outer expression and `*@1 + 0` parses as `(*@1) + 0`.
+        // ★ `canonical` (2026-07-26) — THE DECLARED CANONICAL MEMBER of the `Name`
+        // surface-synonymy class `{ NQuote, NQuoteShort, NQuoteNil }`. All three denote
+        // `NQuote(p)`; the last two say so in their own fold bodies. `Display` therefore
+        // renders EVERY member through this rule's surface, so one denotation has one
+        // surface and `Display(Parse(Display(t))) == Display(t)` holds independently of
+        // parse context.
+        //
+        // ★ WHY THIS MEMBER, and not `NQuote`. The choice is not free: it is fixed by a
+        // sibling rule's surface. `InputBindQuoted . pat:Proc, n:Name |- "@" pat "<-" n`
+        // spells its quoted pattern with the SHORTHAND — `"@" pat`, no parentheses — so an
+        // `InputBind` written `@(error) <- @Nil` re-parses to `InputBindQuoted(Err, …)` and
+        // renders back as `@error <- @Nil`. Choosing `NQuote` as canonical would therefore
+        // leave a surface that still sheds a layer on re-parse; choosing `NQuoteShort`
+        // makes the two agree at once. Measured 2026-07-26:
+        //
+        //     (@(error)) <- @Nil  ─▶ @(error) <- @Nil ─▶ @error <- @Nil ─▶ @error <- @Nil
+        //       before: three surfaces, fixpoint at layer 3 (the roundtrip asserts layer 2)
+        //     (@(error)) <- @Nil  ─▶ @error <- @Nil   ─▶ @error <- @Nil
+        //       after:  one surface, fixpoint at layer 1
+        //
+        // `prefix(220)` is what makes the shorthand SAFE as the canonical surface: an
+        // operand binding looser than 220 is parenthesised by Display's own precedence
+        // test, so `NQuote(1 + 2)` still renders `@(1 + 2)` — the same bracket the parser
+        // requires, emitted by the same threshold.
         NQuoteShort . p:Proc
         |- "@" p : Name ![{
             Name::NQuote(std::sync::Arc::new(p.clone()))
-        }] fold prefix(220);
+        }] fold prefix(220) canonical;
 
         // Parenthesized Name grouping used by `*(x)` compatibility.
+        //
+        // ★ An INERT GROUPING (`grammar_shapes::classify_inert_grouping_shape`): the body is
+        // the identity, so `NParen(n)` and `n` are the same `Name` with two surfaces. There
+        // is no second RULE to nominate as canonical — the canonical member IS the wrapped
+        // term — so `Display` renders it transparently, forwarding this position's
+        // binding-power obligation to the child. The brackets come back from the child's own
+        // `own_bp < min_bp` test and from the fence machinery whenever the surface needs
+        // them, which is why dropping them cannot make a term unparseable.
         NParen . n:Name
         |- "(" n ")" : Name ![{ n.clone() }] fold;
 

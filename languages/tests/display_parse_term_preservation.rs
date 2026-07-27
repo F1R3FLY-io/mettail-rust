@@ -82,6 +82,27 @@
 //! covered by [`calculator_bigrat_projection_operand_is_bracketed_not_denoted`], which
 //! pins the *bracketing* (the defect-1 property) without claiming injectivity.
 //!
+//! ## ★ The second non-injective region: SURFACE SYNONYMY (2026-07-26)
+//!
+//! A grammar may spell one term more than one way, and RhoCalc's `Name` does:
+//! `NQuote(p)` (`@(p)`), `NQuoteShort(p)` (`@p`) and `NQuoteNil` (`@Nil`) are three
+//! constructors with one denotation — the last two say so in their own `fold` bodies.
+//! Before 2026-07-26 each rendered its OWN surface, which made `Display` a function of
+//! the CONSTRUCTOR rather than of the TERM and left `Display ∘ Parse` without a fixpoint:
+//! a term whose synonym sat two nesting layers deep shed one surface per layer
+//! (`(@(error)) <- @Nil` → `@(error) <- @Nil` → `@error <- @Nil`). `Display` now renders
+//! every member of a synonymy class through the class's DECLARED canonical member
+//! (`languages/src/rhocalc.rs`: `NQuoteShort … canonical`), which is what closes that gap.
+//!
+//! ⚠ **So `display` is DELIBERATELY non-injective on a synonymy class, and LEG R changes
+//! shape there.** It does NOT weaken: `parse(display(t))` is still asserted EXACTLY, it is
+//! just asserted to be the class's CANONICAL MEMBER rather than `t` itself —
+//! `parse(display(NQuote(PZero))) == NQuoteShort(PZero)`, on the nose. Naming the quotient
+//! explicitly is strictly stronger than relaxing the comparison to a coarse equality (which
+//! is what the header already warns against for `term_eq`). The classes are enumerated and
+//! their singleton-after-normalisation property is asserted per language by
+//! `languages/tests/surface_synonymy_gate.rs`.
+//!
 //! # Non-vacuity
 //!
 //! The `negative_control_*` tests prove the harness can fail: they run the same
@@ -137,11 +158,20 @@ impl Observation {
 }
 
 /// LEGS S + R — display the term, then parse what it displayed.
+///
+/// The 6-argument form takes the term LEG R must recover, which is `t` itself EXCEPT where
+/// `t` belongs to a SURFACE-SYNONYMY class: there `display` is deliberately non-injective and
+/// the recovered term is the class's DECLARED CANONICAL MEMBER (see the module header). The
+/// comparison stays exact `Debug` equality either way.
 macro_rules! observe_roundtrip {
-    ($case:expr, $entry:expr, $parse:expr, $term:expr, $surface:expr) => {{
+    ($case:expr, $entry:expr, $parse:expr, $term:expr, $surface:expr) => {
+        observe_roundtrip!($case, $entry, $parse, $term, $surface, None::<String>)
+    };
+    ($case:expr, $entry:expr, $parse:expr, $term:expr, $surface:expr, $want_rt:expr) => {{
         mettail_runtime::clear_var_cache();
         let term = $term;
-        let want_term = format!("{:?}", term);
+        let want_term: String =
+            Option::<String>::from($want_rt).unwrap_or_else(|| format!("{:?}", term));
         let got_surface = format!("{}", term);
         let got_term = match $parse(&got_surface) {
             Ok(p) => Ok(format!("{:?}", p)),
@@ -162,9 +192,15 @@ macro_rules! observe_roundtrip {
 /// `display(t)`. This keeps LEG R honest: without it, a display that drifted to some
 /// other self-consistent surface would still "round-trip".
 macro_rules! observe_from_surface {
-    ($case:expr, $entry:expr, $parse:expr, $term:expr, $surface:expr) => {{
+    ($case:expr, $entry:expr, $parse:expr, $term:expr, $surface:expr) => {
+        observe_from_surface!($case, $entry, $parse, $term, $surface, None::<String>)
+    };
+    ($case:expr, $entry:expr, $parse:expr, $term:expr, $surface:expr, $want_rt:expr) => {{
         mettail_runtime::clear_var_cache();
-        let want_term = format!("{:?}", $term);
+        // Where the golden surface is the CANONICAL member's surface, the parser recovers the
+        // canonical member — the same quotient LEG R names, for the same reason.
+        let want_term: String =
+            Option::<String>::from($want_rt).unwrap_or_else(|| format!("{:?}", $term));
         let got_term = match $parse($surface) {
             Ok(p) => Ok(format!("{:?}", p)),
             Err(e) => Err(format!("{:?}", e)),
@@ -183,11 +219,28 @@ macro_rules! observe_from_surface {
 /// Run all three legs for one `(case, term, golden surface)` through both production
 /// parse entry points, appending five observations to `obs`.
 macro_rules! push_all_legs {
-    ($obs:expr, $case:expr, $parse:path, $wpda:path, $term:expr, $surface:expr) => {{
-        $obs.push(observe_roundtrip!($case, "parse (S+R)", $parse, $term, $surface));
-        $obs.push(observe_roundtrip!($case, "parse_via_wpda (S+R)", $wpda, $term, $surface));
-        $obs.push(observe_from_surface!($case, "parse (P)", $parse, $term, $surface));
-        $obs.push(observe_from_surface!($case, "parse_via_wpda (P)", $wpda, $term, $surface));
+    ($obs:expr, $case:expr, $parse:path, $wpda:path, $term:expr, $surface:expr) => {
+        push_all_legs!($obs, $case, $parse, $wpda, $term, $surface, None::<String>)
+    };
+    ($obs:expr, $case:expr, $parse:path, $wpda:path, $term:expr, $surface:expr, $want_rt:expr) => {{
+        $obs.push(observe_roundtrip!($case, "parse (S+R)", $parse, $term, $surface, $want_rt));
+        $obs.push(observe_roundtrip!(
+            $case,
+            "parse_via_wpda (S+R)",
+            $wpda,
+            $term,
+            $surface,
+            $want_rt
+        ));
+        $obs.push(observe_from_surface!($case, "parse (P)", $parse, $term, $surface, $want_rt));
+        $obs.push(observe_from_surface!(
+            $case,
+            "parse_via_wpda (P)",
+            $wpda,
+            $term,
+            $surface,
+            $want_rt
+        ));
     }};
 }
 
@@ -284,12 +337,43 @@ fn rhocalc_proc_display_parse_preserves_terms() {
 
 #[test]
 fn rhocalc_name_display_parse_preserves_terms() {
-    let cases: Vec<(&'static str, rho::Name, &'static str)> = vec![
-        ("name/quote-zero", rho::Name::NQuote(Arc::new(rho::Proc::PZero)), "@(Nil)"),
-        ("name/quote-int", rho::Name::NQuote(Arc::new(rho_int(4))), "@(4)"),
-        // A whole cross-category sum inside a quote: the `@( … )` delimiters come from
-        // `NQuote`'s OWN syntax (`"@" "(" p ")"`), and the operands inside are at
-        // `min_bp == 0`, so the projection operands stay bare.
+    // ★ SURFACE SYNONYMY (2026-07-26). `Name`'s `{ NQuote, NQuoteShort, NQuoteNil }` is a
+    // synonymy class, so `Display` renders all three through the class's DECLARED canonical
+    // member `NQuoteShort` (`languages/src/rhocalc.rs`). Two things follow, and both are
+    // asserted rather than excused:
+    //
+    //   LEG S — the golden surface of an `NQuote` is now the SHORTHAND. `@(Nil)` ⇒ `@Nil`,
+    //           `@(4)` ⇒ `@4`. It is not merely shorter: it is the surface official Rholang
+    //           writes, and it is the one `InputBindQuoted . pat:Proc |- "@" pat "<-" n`
+    //           already spelled, which is WHY it is the canonical member.
+    //   LEG R — `parse(display(t))` recovers the CANONICAL member, `NQuoteShort(p)`, not the
+    //           `NQuote(p)` we started from. Still exact `Debug` equality; the quotient is
+    //           named in the expectation instead of hidden in a coarser comparison.
+    //
+    //   name/quote-add is the CONTROL: `Add` binds looser than `NQuoteShort`'s declared
+    //   `prefix(220)`, so Display's own precedence test re-emits the parentheses and the
+    //   surface stays `@(1 + 2)` — which re-parses to `NQuote`, not to `NQuoteShort`. It shows
+    //   the canonicalisation is a PRECEDENCE-CORRECT re-rendering rather than a blanket
+    //   bracket deletion.
+    let quote_zero_canonical =
+        format!("{:?}", rho::Name::NQuoteShort(Arc::new(rho::Proc::PZero)));
+    let quote_int_canonical = format!("{:?}", rho::Name::NQuoteShort(Arc::new(rho_int(4))));
+    let cases: Vec<(&'static str, rho::Name, &'static str, Option<String>)> = vec![
+        (
+            "name/quote-zero",
+            rho::Name::NQuote(Arc::new(rho::Proc::PZero)),
+            "@Nil",
+            Some(quote_zero_canonical),
+        ),
+        (
+            "name/quote-int",
+            rho::Name::NQuote(Arc::new(rho_int(4))),
+            "@4",
+            Some(quote_int_canonical),
+        ),
+        // A whole cross-category sum inside a quote: the parentheses come from the canonical
+        // member's `prefix(220)` threshold (`Add` binds looser), so this case round-trips to
+        // `NQuote` itself and needs no quotient.
         (
             "name/quote-add",
             rho::Name::NQuote(Arc::new(rho::Proc::Add(
@@ -297,17 +381,19 @@ fn rhocalc_name_display_parse_preserves_terms() {
                 Arc::new(rho_int(2)),
             ))),
             "@(1 + 2)",
+            None,
         ),
     ];
     let mut obs = Vec::with_capacity(cases.len() * 4);
-    for (case, term, surface) in cases {
+    for (case, term, surface, want_rt) in cases {
         push_all_legs!(
             obs,
             case,
             rho::Name::parse,
             rho::Name::parse_via_wpda,
             term.clone(),
-            surface
+            surface,
+            want_rt.clone()
         );
     }
     report(obs);

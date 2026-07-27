@@ -275,6 +275,32 @@ pub struct GrammarRule {
     /// present. Surfaces in the generated `TermDef::description` field,
     /// displayed by the REPL `info` command.
     pub doc_comment: Option<String>,
+    /// ★ SURFACE SYNONYMY (2026-07-26): this rule is the DECLARED CANONICAL MEMBER of its
+    /// surface-synonymy class. Annotated with the bare `canonical` keyword after the eval
+    /// mode, alongside `right` and `prefix(N)`.
+    ///
+    /// A synonymy class is the set of rules of one category that denote the same term —
+    /// derived, not declared, as the connected component of `alias ──▶ fold target`
+    /// (`grammar_shapes::FoldAliasShape::target_label`). RhoCalc's `Name` class is
+    /// `{ NQuote, NQuoteShort, NQuoteNil }`. Every member has its own SURFACE, and
+    /// `Display` must emit ONE of them for the whole class, or `Display∘Parse` is not a
+    /// fixpoint: the elected member is a function of the PARSE CONTEXT, not of the class,
+    /// so the same denotation cascades through one surface per nesting layer
+    /// (`(@(error)) <- @Nil` → `@(error) <- @Nil` → `@error <- @Nil`).
+    ///
+    /// ★ WHY DECLARED RATHER THAN INFERRED. Two candidate inference rules were REFUTED by
+    /// measurement (2026-07-26): (a) *"prefer the member `parse_structured` falls back
+    /// to"* — `parse` and `parse_via_wpda` agree exactly everywhere, so there is no such
+    /// fallback; (b) *"prefer the explicit grouping"* — at `Name` level the election DOES
+    /// prefer `NParen`, yet inside `InputBind` the same substring elects `NQuoteShort`.
+    /// The election is CONTEXT-DEPENDENT, so it is not a function of the synonymy class
+    /// and cannot name a canonical member. The grammar can, and this is where it does.
+    ///
+    /// A class whose members are mutually re-routable (see
+    /// `FoldAliasShape::renaming_inverse`) and which declares no canonical member is a
+    /// COMPILE ERROR naming the class — so a newly added surface synonym fails the build
+    /// until the grammar says which member is canonical.
+    pub is_canonical_synonym: bool,
 }
 
 /// Phase 11 (predicated types): user-supplied tier override.
@@ -584,6 +610,7 @@ fn parse_grammar_rule_old(label: Ident, input: ParseStream) -> SynResult<Grammar
         tier_directive: None,
         is_auto_injected: false,
         doc_comment: None,
+        is_canonical_synonym: false,
     })
 }
 
@@ -630,12 +657,12 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
                     _ => unreachable!(),
                 }
             },
-            "right" | "prefix" => None, // handled below
+            "right" | "prefix" | "canonical" => None, // handled below
             _ => {
                 let bad = input.parse::<syn::Ident>()?;
                 return Err(syn::Error::new(
                     bad.span(),
-                    "expected 'fold', 'step', 'right', 'prefix(N)', or ';'",
+                    "expected 'fold', 'step', 'right', 'prefix(N)', 'canonical', or ';'",
                 ));
             },
         }
@@ -643,9 +670,12 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
         None
     };
 
-    // Parse optional annotations after eval mode: `right`, `prefix(N)`
+    // Parse optional annotations after eval mode: `right`, `prefix(N)`, `canonical`
     let mut is_right_assoc = false;
     let mut prefix_bp = None;
+    // ★ SURFACE SYNONYMY (2026-07-26) — see `GrammarRule::is_canonical_synonym` for what
+    // this declares and why it cannot be inferred.
+    let mut is_canonical_synonym = false;
 
     while input.peek(syn::Ident) {
         let fork = input.fork();
@@ -661,10 +691,13 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
                 let bp_lit: syn::LitInt = content.parse()?;
                 let bp_val: u8 = bp_lit.base10_parse()?;
                 prefix_bp = Some(bp_val);
+            } else if kw == "canonical" {
+                let _ = input.parse::<syn::Ident>()?; // consume
+                is_canonical_synonym = true;
             } else {
                 return Err(syn::Error::new(
                     kw.span(),
-                    "expected 'right', 'prefix(N)', or ';' after evaluation mode",
+                    "expected 'right', 'prefix(N)', 'canonical', or ';' after evaluation mode",
                 ));
             }
         } else {
@@ -692,6 +725,7 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
         tier_directive: None,
         is_auto_injected: false,
         doc_comment: None,
+        is_canonical_synonym,
     })
 }
 

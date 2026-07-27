@@ -577,6 +577,7 @@ fn make_injection_rule(source_cat: &str, target_cat: &str) -> GrammarRule {
         // pipeline.rs:1316 to exclude from legacy unified-trampoline view.
         is_auto_injected: true,
         doc_comment: None,
+        is_canonical_synonym: false,
     }
 }
 
@@ -704,6 +705,7 @@ mod tests {
             tier_directive: None,
             is_auto_injected: false,
             doc_comment: None,
+            is_canonical_synonym: false,
         };
         lang.terms.push(user_rule);
 

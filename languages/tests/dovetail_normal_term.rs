@@ -3,7 +3,7 @@
 //! e-graph→AST reconstruction arms added for `Collection`/`Binder`/`MultiBinder`
 //! variants (the inverse of the typed lowering), covering the four ground-truth
 //! cases from the E2 spec:
-//!   1. `@("OUT")!(int(1+2,8))`        → Ok, formats `@("OUT")!(3)` (Regular reconstruction)
+//!   1. `@("OUT")!(int(1+2,8))`        → Ok, formats `@"OUT"!(3)`   (Regular reconstruction)
 //!   2. `{ @("OUT")!(int(1+2,8)) }`    → Ok                          (PPar HashBag/Collection arm)
 //!   3. `{ int(1,8) | int(1,8) }`      → Ok, 2-element bag           (multiplicity preserved)
 //!   4. `new x in {x!(int(1+2,8))}`     → Ok, ≡α `new x in {x!(3)}`    (PNew MultiBinder arm)
@@ -30,8 +30,17 @@ fn normal_form(src: &str) -> String {
 #[test]
 fn reconstructs_fold_inside_output() {
     // (1) Regular (POutput) reconstruction wrapping a folded `int(1+2,8)` → `3`.
+    //
+    // ★ SURFACE SYNONYMY (2026-07-26): the reconstructed channel is `NQuote(CastStr("OUT"))`,
+    // and RhoCalc's `Name` synonymy class `{ NQuote, NQuoteShort, NQuoteNil }` renders through
+    // its DECLARED canonical member `NQuoteShort`, so the formatted channel is the Rholang
+    // shorthand `@"OUT"` rather than `@("OUT")`. The INPUT spelling is unchanged (both parse);
+    // only the OUTPUT surface moved, and it moved TOWARD official Rholang, which writes
+    // `@"OUT"!(3)`. What this case pins — the fold reducing INSIDE the surrounding `POutput`
+    // rather than being left as `int(1+2,8)` — is untouched. See
+    // `languages/tests/surface_synonymy_gate.rs`.
     let got = normal_form("@(\"OUT\")!(int(1+2,8))");
-    assert_eq!(got, "@(\"OUT\")!(3)", "fold must reduce inside the surrounding POutput");
+    assert_eq!(got, "@\"OUT\"!(3)", "fold must reduce inside the surrounding POutput");
 }
 
 #[test]
