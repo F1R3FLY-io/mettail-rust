@@ -53,6 +53,9 @@ mod trace;
 pub mod automata;
 pub mod binding_power;
 pub mod classify;
+/// ★ The cross-category projection-boundary walk's per-hop decision, factored out so its
+/// verified Rocq model can be executed against it (`tests/crosscat_boundary_oracle.rs`).
+pub mod crosscat_boundary;
 // Stage 10.5b conclusion (2026-05-05): `pub mod dispatch` DELETED (file deleted,
 // ~1,940 LoC). Trampoline-side cross-category dispatch emitter; data types
 // (CastRule, CrossCategoryRule) migrated to grammar::ir.

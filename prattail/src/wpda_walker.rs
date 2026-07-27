@@ -17764,116 +17764,65 @@ where
             // interior operators to anything outside it. A grouping does exactly that,
             // which is why it belongs here and why the `xcat` gate was never part of the
             // criterion.
-            if let Some((csym, _, _, _)) = caller {
-                let caller_is_stop = matches!(
-                    csym.kind,
-                    SymbolKind::MixfixMarker
-                        | SymbolKind::CollectionMarker
-                        | SymbolKind::GroupingMarker
-                ) || matches!(csym.kind, SymbolKind::RuleAt(k) if k > 0);
-                // ── 2026-07-26: RESTORE THE MISSING CONJUNCT ──
-                //
-                // `cgll_pure_descend` states the mirror this walk is supposed
-                // to implement, verbatim: "hop i STOPS iff `slot_i.xcat == 0
-                // ∧ caller_i.kind ∈ stop set`", because "an edge with an
-                // EXPLICIT CrossCat* kind is never a stop regardless of its
-                // pusher (`edge_kind_for_push_transition` assigns
-                // CrossCatProjection from `new_state` alone)". The walk had
-                // only the caller-kind conjunct, so a hop carrying EXPLICIT
-                // cross-category evidence died at its pusher.
-                //
-                // The evidence predicate is the SAME `explicit_wrap` this
-                // function already computes below to admit same-cat
-                // boundaries, so the two tests cannot drift apart. It is
-                // `xcat == 4` — the CrossCatProjection stamp — and NOT the
-                // INFERRED rows: `xcat ∈ {1,2}` read their target OFF THE
-                // CALLER, and `xcat == 3` (CrossCatLhsReentry) is how the
-                // `(`-open fan stamps its per-category grouping frames. Those
-                // must keep stopping at a grouping, which is what the
-                // `GroupingMarker` entry in the stop set was added for
-                // (nested-`@`/grouped-receiver: `@(…!(…))!(Nil)`); an
-                // `xcat == 3` hop has `xcat_wrap == u16::MAX` today, so it is
-                // NOT explicit and is unaffected.
-                //
-                // An `xcat == 4` hop's target is `slot.pushed_cat` — intrinsic
-                // to the hop (the projection's own result category), read from
-                // neither the caller nor anything outside the grouping — so
-                // consuming it hands nothing across the re-scoping boundary.
-                // Suppressing it merely deleted the projection's operand
-                // reading: `0 + bigrat(a)` parsed while `(0 + bigrat(a))`
-                // reported "no realizable readings", because inside a group
-                // `IntToBigRat`'s Int operand frame never got the boundary
-                // that turns its `IterativeChainAbsorb` into a Fork, hence
-                // never offered the SHORT constituent that `AddBigRat` needs
-                // as its LHS.
-                let explicit_wrap_evidence =
-                    slot.xcat == 4 || (slot.xcat == 3 && slot.xcat_wrap != u16::MAX);
-                if caller_is_stop && !explicit_wrap_evidence {
-                    continue; // this chain dies without a boundary
-                }
-                // ── 2026-07-26: THE EXEMPTION IS PER-HOP, NOT PER-CHAIN ──
-                //
-                // The conjunct restored above admits an EXPLICIT-wrap hop whose
-                // caller is a re-scoping frame, so that the hop's OWN boundary
-                // mapping runs. `5ec9f20f`'s own message states the intended
-                // scope of that admission verbatim: the pre-fix walk was
-                // "discarding the hop's own evidence RATHER THAN MERELY REFUSING
-                // TO ASCEND PAST IT". Only the first half landed — the hop also
-                // gained permission to ASCEND, and everything above a re-scoping
-                // frame is, by the criterion this stop set encodes, outside the
-                // scope the hop is allowed to consult.
-                //
-                // That divergence is visible directly in the walk's OWN VERIFIED
-                // MODEL. `CollectionElementProjectionBoundary.v` evaluates the
-                // caller chain as a list whose HEAD is this hop's edge and whose
-                // TAIL begins at the caller frame:
-                //
-                //     walk (Proj t   :: _)    = Found t      ← this hop's own evidence
-                //     walk (Pass :: Grouping :: _) = None_   ← `grouping_stops_walk`
-                //
-                // so `walk (Proj t :: Grouping :: rest) = Found t` — the hop
-                // reports ITS target and the walk goes no further. There is no
-                // derivation in that model in which a chain reads a target from
-                // BEYOND a `Grouping`/`RuleSlot`/`CollElem` edge. Ascending gave
-                // us exactly that, and the target it found was the ENCLOSING
-                // context's floor — the one thing a self-delimiting group is
-                // defined to shield its interior from.
-                //
-                // Measured, single-variable, walker-only (LedTest, `Pred` goal;
-                // `and` is a Pred-own operator at bp 3, `==` is `Num "==" Num :
-                // Pred`, `PredToNum` the transparent projection):
-                //
-                //   1 == (2 == 3)          ok    interior rooted at a CROSS-cat op
-                //   1 == (true and true)   FAIL  interior rooted at a SAME-cat op
-                //
-                // In the failing shape the walk left the `PredToNum` operand
-                // frame at floor 0 INSIDE the parens, passed two `GroupingMarker`
-                // callers on `xcat == 4` hops, and landed on the `EqNum` Return
-                // frame OUTSIDE them, yielding target `(Pred, floor 3)`. `and`
-                // binds at 3, so `target_accepts_at_projection_floor = false` and
-                // `suppress_projection_source_action` deleted the
-                // `IterativeChainAbsorb` that builds `AndPred` — the reading was
-                // destroyed before the forest saw it (`boundary_suppressed=2`
-                // versus `0` for the identical interior at a `Num` goal, which
-                // has no enclosing projection floor to find).
-                //
-                // Stopping AFTER the hop's own mapping keeps `5ec9f20f`'s receipt
-                // — `(0 + bigrat(a))` needs the `IntToBigRat` hop's own boundary,
-                // which is emitted here and not above — while restoring
-                // `grouping_stops_walk`.
-                if caller_is_stop {
-                    chain_stops_after_this_hop = true;
-                }
-            }
-            // Boundary mapping for THIS hop.
-            let target: Option<(u16, u16)> = match slot.xcat {
-                4 => Some((slot.pushed_cat, slot.xcat_bp)),
-                1 | 2 => caller.map(|(csym, _, _, _)| {
-                    (csym.category_src_idx, slot.xcat_bp)
-                }),
-                3 if slot.xcat_wrap != u16::MAX => Some((slot.xcat_wrap, slot.xcat_bp)),
-                _ => None,
+            // ★ THE PER-HOP DECISION lives in `crate::crosscat_boundary::classify_hop`, which
+            // is the SINGLE implementation of the stop set, the explicit-evidence predicate and
+            // the target resolution — and the one `prattail/tests/crosscat_boundary_oracle.rs`
+            // property-tests against an independent transcription of this walk's VERIFIED MODEL
+            // (`formal/rocq/prattail_wpda_runtime/theories/CollectionElementProjectionBoundary.v`).
+            //
+            // ★ WHY IT IS FACTORED OUT AT ALL. The theorems were proved and the loop drifted from
+            // them TWICE anyway, because nothing executable connected the two: `GroupingMarker`
+            // went missing from the stop set (so `grouping_stops_walk` did not hold here), and
+            // the stop test was gated on `slot.xcat == 0` (so a hop carrying explicit
+            // cross-category evidence died at its pusher). Each drift was found as a production
+            // parse failure weeks later. The comments below record what each cost; the oracle is
+            // what makes a third one fail at `cargo test` instead.
+            //
+            // ── DRIFT 1 (2026-07-25): `GroupingMarker` was absent from the kind list. ──
+            // The criterion the list approximates is stated in the Rocq file: a frame that
+            // RE-SCOPES its content behind a SELF-DELIMITING close cannot hand its interior
+            // operators to anything outside it. A grouping does exactly that. Measured,
+            // single-variable, walker-only — only the delimiter changes:
+            //
+            //   @{@@Nil!().subtract(a!(Nil))}!(Nil)   boundary_suppressed=0  unwind=1  ok
+            //   @(@@Nil!().subtract(a!(Nil)))!(Nil)   boundary_suppressed=1  unwind=0  FAIL
+            //
+            // `{}` is a `CollectionMarker` — in the list. `()` is a `GroupingMarker` — was not.
+            //
+            // ── DRIFT 2 (2026-07-26): the stop test was gated on `slot.xcat == 0`. ──
+            // `cgll_pure_descend` states the mirror verbatim — "hop i STOPS iff `slot_i.xcat == 0
+            // ∧ caller_i.kind ∈ stop set`" — but an edge with an EXPLICIT `CrossCat*` kind is
+            // never a stop regardless of its pusher, and the `(`-open fan stamps its per-category
+            // grouping frames with `xcat = 3` (`CrossCatLhsReentry`). Suppressing an `xcat == 4`
+            // hop merely deleted the projection's operand reading: `0 + bigrat(a)` parsed while
+            // `(0 + bigrat(a))` reported "no realizable readings".
+            //
+            // ── AND THE EXEMPTION IS PER-HOP, NOT PER-CHAIN (2026-07-26). ──
+            // An explicit-evidence hop whose caller re-scopes reports ITS OWN target and then the
+            // chain ENDS: `walk (Proj t :: Grouping :: rest) = Found t`, and there is no
+            // derivation in the model in which a chain reads a target from BEYOND a stop edge.
+            // Letting it ascend found the ENCLOSING context's floor — the one thing a
+            // self-delimiting group is defined to shield its interior from. Measured, walker-only
+            // (LedTest, `Pred` goal; `and` is a Pred-own operator at bp 3):
+            //
+            //   1 == (2 == 3)          ok    interior rooted at a CROSS-cat op
+            //   1 == (true and true)   FAIL  interior rooted at a SAME-cat op
+            let __hop = crate::crosscat_boundary::HopFacts {
+                xcat: slot.xcat,
+                xcat_bp: slot.xcat_bp,
+                xcat_wrap: slot.xcat_wrap,
+                pushed_cat: slot.pushed_cat,
+                caller_kind: caller.map(|(csym, _, _, _)| csym.kind),
+                caller_cat: caller.map(|(csym, _, _, _)| csym.category_src_idx).unwrap_or(u16::MAX),
             };
+            let __verdict = crate::crosscat_boundary::classify_hop(&__hop);
+            if __verdict.dies_before_mapping {
+                continue; // this chain dies without a boundary
+            }
+            if __verdict.stops_after_mapping {
+                chain_stops_after_this_hop = true;
+            }
+            let target: Option<(u16, u16)> = __verdict.target;
             if let Some((target_cat, target_floor)) = target {
                 // ARM G v3 (2026-07-12): EXPLICIT wrap evidence admits SAME-CAT
                 // boundaries. Classic's `crosscat_boundary_target_for_edge` has
@@ -17889,8 +17838,10 @@ where
                 // u16::MAX) — included so a future origin-recording leg
                 // activates with classic's Reentry-origin semantics, which
                 // also has no same-cat filter.
-                let explicit_wrap =
-                    slot.xcat == 4 || (slot.xcat == 3 && slot.xcat_wrap != u16::MAX);
+                let explicit_wrap = crate::crosscat_boundary::boundary_admits_same_category(
+                    slot.xcat,
+                    slot.xcat_wrap,
+                );
                 if (explicit_wrap || target_cat != source_cat)
                     && self.engine.category_recognizes_operator(target_cat, token)
                 {
