@@ -72,9 +72,7 @@
 
 use mettail_languages::rholang::Proc;
 use models::rhoapi::Par;
-use models::rust::utils::{
-    new_conn_not_body_par, new_wildcard_par, union,
-};
+use models::rust::utils::{new_conn_not_body_par, new_wildcard_par, union};
 
 use crate::rholang_ast::{BoundEnv, RholangAstLowerError};
 

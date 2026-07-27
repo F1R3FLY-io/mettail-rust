@@ -1731,7 +1731,6 @@ fn lower_name(name: &Name, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
     }
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // The 87th SCC member — `rholang_formula::lower_formula_in_env`, verbatim.
 //
@@ -1833,7 +1832,11 @@ mod differential {
         ("Nil", "PZero", Expect::Lowers),
         ("42", "CastInt", Expect::Lowers),
         ("-7", "CastInt / NegInt", Expect::Lowers),
-        ("- - - - 5", "CastInt / nested NegInt (the lower_int_value axis)", Expect::Lowers),
+        (
+            "- - - - 5",
+            "CastInt / nested NegInt (the lower_int_value axis)",
+            Expect::Lowers,
+        ),
         ("true", "CastBool", Expect::Lowers),
         ("\"hello\"", "CastStr", Expect::Lowers),
         ("1.5", "CastFloat", Expect::Lowers),
@@ -1857,7 +1860,11 @@ mod differential {
         // ── collections ─────────────────────────────────────────────────────────────────────
         ("@\"OUT\"!([1, 2, 3])", "CastList", Expect::Lowers),
         ("@\"OUT\"!([])", "CastList, empty", Expect::Lowers),
-        ("@\"OUT\"!([[[[1]]]])", "CastList, nested (the reproducer's shape)", Expect::Lowers),
+        (
+            "@\"OUT\"!([[[[1]]]])",
+            "CastList, nested (the reproducer's shape)",
+            Expect::Lowers,
+        ),
         ("@\"OUT\"!({1 : 2, 3 : 4})", "CastMap", Expect::Lowers),
         ("@\"OUT\"!(Set(1, 2, 3))", "CastSet", Expect::Lowers),
         ("@\"OUT\"!(#{1 | 2 | 2}#)", "CastBag (the tagged ABI encoding)", Expect::Lowers),
@@ -1879,7 +1886,11 @@ mod differential {
         ("@\"OUT\"!(true or false)", "Or", Expect::Lowers),
         ("@\"OUT\"!(true implies false)", "Implies", Expect::Lowers),
         ("@\"OUT\"!(not true)", "Not", Expect::Lowers),
-        ("@\"OUT\"!(((1 + 2) + 3) + 4)", "Add chain (the lower_add gate subject)", Expect::Lowers),
+        (
+            "@\"OUT\"!(((1 + 2) + 3) + 4)",
+            "Add chain (the lower_add gate subject)",
+            Expect::Lowers,
+        ),
         // ── methods ─────────────────────────────────────────────────────────────────────────
         ("@\"OUT\"!({1 : 2}.get(1))", "MGet", Expect::Lowers),
         ("@\"OUT\"!({1 : 2}.set(3, 4))", "MSet", Expect::Lowers),
@@ -1959,7 +1970,11 @@ mod differential {
         ),
         // ── folds (the held-fold trampoline, and the site register) ─────────────────────────
         ("new c in { @\"OUT\"!(int(5, 8)) }", "IntBinProc ▸ held fold", Expect::Lowers),
-        ("new c in { @\"OUT\"!(bigint(5)) }", "BigintCastProc ▸ held fold", Expect::Lowers),
+        (
+            "new c in { @\"OUT\"!(bigint(5)) }",
+            "BigintCastProc ▸ held fold",
+            Expect::Lowers,
+        ),
         (
             "new c in { @\"OUT\"!(int(5, 8)) | @\"OUT\"!(int(6, 8)) }",
             "TWO fold sites ▸ site-index order",
@@ -1969,26 +1984,10 @@ mod differential {
         ("@\"OUT\"!(1 matches 1)", "Matches ▸ FormulaShape::Term", Expect::Lowers),
         ("@\"OUT\"!(1 matches true)", "Matches ▸ Verum", Expect::Lowers),
         ("@\"OUT\"!(1 matches false)", "Matches ▸ statically-false fold", Expect::Lowers),
-        (
-            "@\"OUT\"!(1 matches (1 and 1))",
-            "Matches ▸ Conjunction",
-            Expect::Lowers,
-        ),
-        (
-            "@\"OUT\"!(1 matches (1 or 2))",
-            "Matches ▸ Disjunction",
-            Expect::Lowers,
-        ),
-        (
-            "@\"OUT\"!(1 matches (not 2))",
-            "Matches ▸ Negation",
-            Expect::Lowers,
-        ),
-        (
-            "@\"OUT\"!(1 matches (1 implies 2))",
-            "Matches ▸ Implication",
-            Expect::Lowers,
-        ),
+        ("@\"OUT\"!(1 matches (1 and 1))", "Matches ▸ Conjunction", Expect::Lowers),
+        ("@\"OUT\"!(1 matches (1 or 2))", "Matches ▸ Disjunction", Expect::Lowers),
+        ("@\"OUT\"!(1 matches (not 2))", "Matches ▸ Negation", Expect::Lowers),
+        ("@\"OUT\"!(1 matches (1 implies 2))", "Matches ▸ Implication", Expect::Lowers),
         (
             "@\"OUT\"!(@\"a\"!(1) matches { @\"a\"!(1) | @\"b\"!(2) })",
             "Matches ▸ Separation",
@@ -2142,8 +2141,9 @@ mod differential {
     #[test]
     fn every_corpus_entry_lowers_or_fails_for_its_declared_reason() {
         for (source, family, expect) in CORPUS {
-            let term = parse(source)
-                .unwrap_or_else(|| panic!("differential corpus: `{source}` ({family}) does not parse"));
+            let term = parse(source).unwrap_or_else(|| {
+                panic!("differential corpus: `{source}` ({family}) does not parse")
+            });
             let proc = readings(&term)[0];
             clear_held_fold_sites();
             let outcome = super::super::lower_proc_in_env(proc, &BoundEnv::new());
@@ -2189,7 +2189,11 @@ mod differential {
              differential says NOTHING about them: {missing:?}.\nAdd a corpus entry per name, \
              or delete the continuation."
         );
-        println!("  M-2 differential: {} of {} continuations reached", seen.len(), super::super::KONT_NAMES.len());
+        println!(
+            "  M-2 differential: {} of {} continuations reached",
+            seen.len(),
+            super::super::KONT_NAMES.len()
+        );
     }
 
     /// ★ ANTI-VACUITY 3. The deep entries must carry the depth they claim.
@@ -2208,7 +2212,9 @@ mod differential {
         let mut measured = 0usize;
         let mut cursor = &proc;
         while let Proc::CastList(list) = cursor {
-            let List::ListLit(items) = list.as_ref() else { break };
+            let List::ListLit(items) = list.as_ref() else {
+                break;
+            };
             let Some(item) = items.first() else { break };
             measured += 1;
             cursor = item;

@@ -1093,10 +1093,7 @@ struct EnvArena<'a> {
 
 impl<'a> EnvArena<'a> {
     fn new(root: &'a BoundEnv) -> Self {
-        EnvArena {
-            root,
-            derived: Vec::new(),
-        }
+        EnvArena { root, derived: Vec::new() }
     }
 
     fn get(&self, id: EnvId) -> &BoundEnv {
@@ -1274,10 +1271,7 @@ enum Kont<'a> {
     /// `Proc::Implies` — `(not a) or b`, with the negation wrapping ONLY the antecedent.
     Implies,
     /// `lower_method`: an `EMethod` over `1 + argc` children, receiver first.
-    Method {
-        name: &'static str,
-        argc: usize,
-    },
+    Method { name: &'static str, argc: usize },
     /// `EMatches` over `(target, pattern)`.
     Matches,
     /// §18.1's static-`false` fold: the formula is unsatisfiable by construction, so the whole
@@ -1793,14 +1787,14 @@ impl<'a> Drive<'a> {
                 let extended = self.envs.push(extend_env(self.env(env), &binders));
                 let body = self.keep(body);
                 self.push_children(
-                    Kont::New {
-                        binder_count: binders.len(),
-                    },
+                    Kont::New { binder_count: binders.len() },
                     [Job::Body(body, extended)],
                 );
             },
             // ── A-S4 cast purity: casts lower STRUCTURALLY ───────────────────────────────────
-            Proc::CastInt(value) => self.stacks.value(lower_int_value(value.as_ref(), self.env(env))?),
+            Proc::CastInt(value) => self
+                .stacks
+                .value(lower_int_value(value.as_ref(), self.env(env))?),
             Proc::CastBool(value) => self.stacks.value(lower_arm_cast_bool(value)?),
             Proc::CastStr(value) => self.stacks.value(lower_arm_cast_str(value)?),
             Proc::PVar(var) => self.stacks.value(lower_arm_p_var(var, self.env(env))?),
@@ -2034,13 +2028,7 @@ impl<'a> Drive<'a> {
         for argument in arguments {
             children.push(Job::Proc((*argument).as_ref(), env));
         }
-        self.push_children(
-            Kont::Method {
-                name,
-                argc: arguments.len(),
-            },
-            children,
-        );
+        self.push_children(Kont::Method { name, argc: arguments.len() }, children);
     }
 
     /// `lower_lookahead_operand` — the `(channel, payload)` split of `x!(P)[*]`'s operand.
@@ -2057,28 +2045,24 @@ impl<'a> Drive<'a> {
             operand = self.keep(Arc::new(desugared));
         }
         match operand {
-            Proc::POutput(channel, payload) => Ok((
-                Job::Name(channel.as_ref(), env),
-                Job::Proc(payload.as_ref(), env),
-            )),
-            Proc::POutputShort(channel_proc, payload) => Ok((
-                Job::Proc(channel_proc.as_ref(), env),
-                Job::Proc(payload.as_ref(), env),
-            )),
-            Proc::PPersistOutput(..) | Proc::PPersistOutputShort(..) => Err(
-                RholangAstLowerError::LookaheadOperandNotASend("a persistent send (`!!`)"),
-            ),
+            Proc::POutput(channel, payload) => {
+                Ok((Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env)))
+            },
+            Proc::POutputShort(channel_proc, payload) => {
+                Ok((Job::Proc(channel_proc.as_ref(), env), Job::Proc(payload.as_ref(), env)))
+            },
+            Proc::PPersistOutput(..) | Proc::PPersistOutputShort(..) => {
+                Err(RholangAstLowerError::LookaheadOperandNotASend("a persistent send (`!!`)"))
+            },
             Proc::PZero => Err(RholangAstLowerError::LookaheadOperandNotASend("Nil")),
             Proc::PForUser(..) => Err(RholangAstLowerError::LookaheadOperandNotASend("a receive")),
-            Proc::PPar(..) | Proc::PParInfix(..) => Err(
-                RholangAstLowerError::LookaheadOperandNotASend("a parallel composition"),
-            ),
-            Proc::CastList(..) => Err(RholangAstLowerError::LookaheadOperandNotASend(
-                "a list literal",
-            )),
-            _ => Err(RholangAstLowerError::LookaheadOperandNotASend(
-                "a non-send process",
-            )),
+            Proc::PPar(..) | Proc::PParInfix(..) => {
+                Err(RholangAstLowerError::LookaheadOperandNotASend("a parallel composition"))
+            },
+            Proc::CastList(..) => {
+                Err(RholangAstLowerError::LookaheadOperandNotASend("a list literal"))
+            },
+            _ => Err(RholangAstLowerError::LookaheadOperandNotASend("a non-send process")),
         }
     }
 
@@ -2098,9 +2082,7 @@ impl<'a> Drive<'a> {
                 self.stacks.value(par);
             },
             _ => {
-                return Err(RholangAstLowerError::UnsupportedName(
-                    "computed rholang name",
-                ));
+                return Err(RholangAstLowerError::UnsupportedName("computed rholang name"));
             },
         }
         Ok(())
@@ -2134,7 +2116,9 @@ impl<'a> Drive<'a> {
         let r_drop = Proc::PDrop(Arc::new(Name::NVar(OrdVar(Var::Free(r_var.clone())))));
         let mut replaced = false;
         let transformed = self.keep(Arc::new(replace_fold(body, &r_drop, &mut replaced)));
-        let env_new = self.envs.push(extend_env(self.env(env), &[Binder(ret_var)]));
+        let env_new = self
+            .envs
+            .push(extend_env(self.env(env), &[Binder(ret_var)]));
         let env_for = self
             .envs
             .push(extend_env(self.env(env_new), &[Binder(r_var)]));
@@ -2316,9 +2300,10 @@ impl<'a> Drive<'a> {
                 let consequent = self.stacks.pop_value();
                 let antecedent = self.stacks.pop_value();
                 let negated = unary_expr_par(antecedent, |p| ExprInstance::ENotBody(ENot { p }));
-                self.stacks.value(binary_expr_par(negated, consequent, |p1, p2| {
-                    ExprInstance::EOrBody(EOr { p1, p2 })
-                }));
+                self.stacks
+                    .value(binary_expr_par(negated, consequent, |p1, p2| {
+                        ExprInstance::EOrBody(EOr { p1, p2 })
+                    }));
             },
             Kont::Method { name, argc } => {
                 let mut children = self.stacks.pop_values(1 + argc);
@@ -2426,7 +2411,8 @@ impl<'a> Drive<'a> {
                     pairs_locally_free,
                     pairs_connective,
                 );
-                let tag = GPrivateBuilder::new_par_from_string(crate::RHOLANG_BAG_ABI_TAG.to_string());
+                let tag =
+                    GPrivateBuilder::new_par_from_string(crate::RHOLANG_BAG_ABI_TAG.to_string());
                 let locally_free = union(tag.locally_free.clone(), pairs.locally_free.clone());
                 let connective_used = tag.connective_used || pairs.connective_used;
                 self.stacks.value(new_elist_par(
@@ -2551,7 +2537,8 @@ impl<'a> Drive<'a> {
                 let mut connective_used = false;
                 let mut children = children.into_iter();
                 while let (Some(key), Some(value)) = (children.next(), children.next()) {
-                    connective_used = connective_used || key.connective_used || value.connective_used;
+                    connective_used =
+                        connective_used || key.connective_used || value.connective_used;
                     locally_free = union(
                         locally_free,
                         union(key.locally_free.clone(), value.locally_free.clone()),
@@ -2709,10 +2696,7 @@ impl<'a> Drive<'a> {
             .expect("rholang lowering: more than 2^32 receive binds in one term");
         self.pattern_states.push(PatternState::default());
         state.pending_source = Some(source);
-        self.push_children(
-            Kont::ForPattern(state, slot),
-            [Job::Pattern(pat_proc, slot)],
-        );
+        self.push_children(Kont::ForPattern(state, slot), [Job::Pattern(pat_proc, slot)]);
         Ok(())
     }
 
@@ -2808,7 +2792,8 @@ impl<'a> Drive<'a> {
 
         let receive_binder_count = slots.len();
         let bind_count = receive_binder_count as i32;
-        let mut locally_free = receive_locally_free(&binds_rho, &lowered_body, receive_binder_count);
+        let mut locally_free =
+            receive_locally_free(&binds_rho, &lowered_body, receive_binder_count);
         if let Some(cond_par) = &condition {
             locally_free = union(
                 locally_free,
