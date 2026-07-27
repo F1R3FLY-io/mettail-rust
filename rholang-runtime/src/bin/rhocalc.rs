@@ -63,11 +63,12 @@ use mettail_rholang_runtime::lookahead::{
     SPEC_DELIVERY_CHANNEL, SPEC_ERR_CHANNEL, SPEC_FAILURE_CHANNEL, SPEC_REQUEST_CHANNELS,
     SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL,
 };
+use mettail_rholang_runtime::speculation::search::ErrorCode;
 use mettail_rholang_runtime::speculation::server::{LookaheadEngine, SpeculationGuest};
 use mettail_rholang_runtime::{
     lower_rhocalc_proc_with_resolver, par_as_runtime_observation_value,
-    run_normalized_par_with_lookahead_engine, DriveObservationChannels, PlannedRhoBackend,
-    RhocalcAstLowerError,
+    render_observation_text_with, run_normalized_par_with_lookahead_engine,
+    DriveObservationChannels, PlannedRhoBackend, RhocalcAstLowerError,
 };
 use mettail_runtime::{clear_var_cache, Language, RuntimeObservationValue};
 use models::rhoapi::Par;
@@ -114,9 +115,11 @@ fn derived_opener(guest: &dyn FltReflect) -> String {
 fn guest_resolver() -> Arc<dyn FltResolve> {
     let guests: Vec<Box<dyn FltReflect>> =
         vec![Box::new(CalculatorLanguage), Box::new(LambdaLanguage)];
-    let registry = guests.into_iter().fold(FltRegistry::new(), |registry, guest| {
-        registry.with_guest(derived_opener(guest.as_ref()), guest)
-    });
+    let registry = guests
+        .into_iter()
+        .fold(FltRegistry::new(), |registry, guest| {
+            registry.with_guest(derived_opener(guest.as_ref()), guest)
+        });
     Arc::new(registry)
 }
 
@@ -125,7 +128,10 @@ fn guest_resolver() -> Arc<dyn FltResolve> {
 fn registered_openers() -> Vec<String> {
     let guests: Vec<Box<dyn FltReflect>> =
         vec![Box::new(CalculatorLanguage), Box::new(LambdaLanguage)];
-    guests.iter().map(|guest| derived_opener(guest.as_ref())).collect()
+    guests
+        .iter()
+        .map(|guest| derived_opener(guest.as_ref()))
+        .collect()
 }
 
 /// The registered `lambda` guest's Rho-default reduction backend + its definition fingerprint
@@ -198,33 +204,33 @@ impl InterpError {
             InterpError::Usage => {
                 eprintln!("{USAGE}");
                 ExitCode::from(64) // EX_USAGE
-            }
+            },
             InterpError::Io { path, source } => {
                 eprintln!("error: cannot read source file `{}`: {source}", path.display());
                 ExitCode::from(66) // EX_NOINPUT
-            }
+            },
             InterpError::Parse(message) => {
                 eprintln!("error: parse error (RhoCalc / Rholang 1.4)");
                 eprintln!("  {message}");
                 ExitCode::from(65) // EX_DATAERR
-            }
+            },
             InterpError::Lower(err) => report_lower(err),
             InterpError::Reduce(message) => {
                 eprintln!("error: reduction failed on the f1r3node reducer");
                 eprintln!("  {message}");
                 ExitCode::from(70) // EX_SOFTWARE
-            }
+            },
             InterpError::DriverError(rendered) => {
                 eprintln!("error: the in-Rho reduction driver reported an unrecognized head / typed error");
                 eprintln!("  offending datum(a): {rendered}");
                 ExitCode::from(70)
-            }
+            },
             InterpError::Stuck(rendered) => {
                 eprintln!("error: the term did not reach a normal form — reduction fuel exhausted");
                 eprintln!("  the term is non-terminating or exceeds the per-path reduction budget");
                 eprintln!("  stuck redex(es): {rendered}");
                 ExitCode::from(70)
-            }
+            },
         }
     }
 }
@@ -239,12 +245,12 @@ fn report_lower(err: &RhocalcAstLowerError) -> ExitCode {
             eprintln!("  but no guest is registered for it. an opener is the LOWER-CASED name of");
             eprintln!("  the guest grammar; registered: {}", registered_openers().join(", "));
             ExitCode::from(65)
-        }
+        },
         RhocalcAstLowerError::FltGuestHasNoFingerprint(tag) => {
             eprintln!("error: FLT guest ⌜{tag}⌝ exposes no definition fingerprint");
             eprintln!("  its reflected tags cannot be minted — the guest has no lowered identity.");
             ExitCode::from(70)
-        }
+        },
         RhocalcAstLowerError::FltReflect(message) => {
             eprintln!("error: the FLT guest could not reflect the embedded term");
             eprintln!(
@@ -252,12 +258,12 @@ fn report_lower(err: &RhocalcAstLowerError) -> ExitCode {
             );
             eprintln!("  {message}");
             ExitCode::from(65)
-        }
+        },
         other => {
             eprintln!("error: could not lower the RhoCalc program to the Rho machine");
             eprintln!("  {other:?}");
             ExitCode::from(65)
-        }
+        },
     }
 }
 
@@ -402,7 +408,7 @@ fn peano_index(value: &RuntimeObservationValue) -> usize {
             if constructor == PEANO_SUCC_REFLECT_LABEL =>
         {
             children.first().map(peano_index).unwrap_or(0) + 1
-        }
+        },
         _ => 0,
     }
 }
@@ -483,35 +489,27 @@ fn church_reading(value: &RuntimeObservationValue) -> Option<String> {
     }
 }
 
-/// Render a decoded observation to compact surface syntax, special-casing the λ-calculus guest
-/// (`λ.<body>` for lambdas, the de-Bruijn index for bound vars, `(<f> <a>)` for applications) so a
-/// normal form such as the identity `I` reads legibly as `λ.0`.
+/// Render a decoded observation to compact surface syntax, adding the λ-calculus guest's own
+/// surface for its `App` constructor so a normal form reads as `(f a)` rather than `App(f, a)`.
+///
+/// ★ Everything else delegates to [`render_observation_text_with`], the library's neutral
+/// renderer, which recurses back through here so the sugar survives nesting.
+///
+/// The split is not "λ-specific vs structural" — it is **guest constructor vs reserved ABI
+/// label**. `^lambda`, `^bound`, `^Z`/`^S` are reserved reflected-ABI tags shared by every
+/// MeTTaIL language (`is_reserved_reflect_label(l) = l.starts_with('^')`, complete by
+/// construction), so their sugar belongs in the library and is now rendered there. `App` is a
+/// user constructor of `languages/src/lambda.rs`, so its surface is this binary's business.
+///
+/// This also closes a real defect. The old fallback arm was `other => format!("{other:?}")`,
+/// which is why a `^spec-failure` datum — a `List([Bytes(…), List([Int(…), Text(…)])])` — used
+/// to print as a Rust `Debug` dump with the message re-quoted inside it. `Display` renders the
+/// same values as `0x…` hex and plain text, and is bounded and deterministic.
 fn render_obs(value: &RuntimeObservationValue) -> String {
-    match value {
-        RuntimeObservationValue::Term { constructor, children } => {
-            let label = constructor.as_str();
-            if label == LAMBDA_REFLECT_LABEL {
-                if let [body] = children.as_slice() {
-                    return format!("λ.{}", render_obs(body));
-                }
-            } else if label == BOUND_VAR_REFLECT_LABEL {
-                if let [index] = children.as_slice() {
-                    return peano_index(index).to_string();
-                }
-            } else if label == "App" {
-                if let [fun, arg] = children.as_slice() {
-                    return format!("({} {})", render_obs(fun), render_obs(arg));
-                }
-            }
-            if children.is_empty() {
-                constructor.clone()
-            } else {
-                let inner = children.iter().map(render_obs).collect::<Vec<_>>().join(", ");
-                format!("{constructor}({inner})")
-            }
-        }
-        other => format!("{other:?}"),
+    if let Some((fun, arg)) = app_parts(value) {
+        return format!("({} {})", render_obs(fun), render_obs(arg));
     }
+    render_observation_text_with(value, &render_obs)
 }
 
 /// Render a slice of raw ledger `Par`s (decoding each) for the `^drive-err`/`^drive-fuel` reports.
@@ -526,6 +524,55 @@ fn render_pars(pars: &[Par]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Render one `^spec-failure` datum on a single line.
+///
+/// The FIPS failure entry is `[trace…, [code, message]]` — *"an extra two-element list
+/// containing an error code for the failure and a message … concatenated to the end of the
+/// trace"*. Two writers produce that shape with different trace representations (the request
+/// server keys a guest-evaluator failure by a single `trace_digest`, the service emits the
+/// step list), so this destructures what it can and falls back to [`render_pars`] for anything
+/// else rather than refusing to print a datum it does not recognise.
+///
+/// ★ The trace digest is abbreviated to 8 hex characters **for presentation only**. Saying so
+/// here because an abbreviated digest in a pinned demo transcript is exactly the thing that
+/// later gets mistaken for the wire format.
+fn render_spec_failure(datum: &Par) -> String {
+    let fallback = || render_pars(std::slice::from_ref(datum));
+    let Some(RuntimeObservationValue::List(entry)) = par_as_runtime_observation_value(datum) else {
+        return fallback();
+    };
+    // The leaf is the last element; everything before it is the trace.
+    let Some((leaf, trace)) = entry.split_last() else {
+        return fallback();
+    };
+    let RuntimeObservationValue::List(leaf) = leaf else {
+        return fallback();
+    };
+    let [RuntimeObservationValue::Int(code), RuntimeObservationValue::Text(message)] =
+        leaf.as_slice()
+    else {
+        return fallback();
+    };
+    let named = match ErrorCode::from_i64(*code) {
+        Some(known) => format!("code {code} ({})", known.label()),
+        // Append-only discriminants: a newer writer's code is reported verbatim, never guessed.
+        None => format!("code {code} (unrecognized)"),
+    };
+    let trace = match trace {
+        [] => "trace (none)".to_string(),
+        [RuntimeObservationValue::Bytes(handle)] => {
+            let hex: String = handle
+                .iter()
+                .take(4)
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            format!("trace 0x{hex}…")
+        },
+        steps => format!("trace ({} step(s))", steps.len()),
+    };
+    format!("{trace}  {named}  {message}")
 }
 
 // ── the evaluation modes ────────────────────────────────────────────────────────────────────────
@@ -543,13 +590,14 @@ fn render_pars(pars: &[Par]) -> String {
 /// `BlockedBySemanticPredicate` means the term IS lowerable but a semantic predicate declined it
 /// (`5 / 0` — the guard that stops an unguarded `EDiv` hard-erroring inside the reducer).
 async fn evaluate_calculator_term(body: &str) -> Result<(), InterpError> {
-    println!("mode: term → evaluating on the f1r3node reducer (guest `calculator`, E3 fold dataflow)");
+    println!(
+        "mode: term → evaluating on the f1r3node reducer (guest `calculator`, E3 fold dataflow)"
+    );
     let parsed = CalculatorLanguage
         .parse_term_for_env(body)
         .map_err(|err| InterpError::Parse(format!("guest `calculator` body ⌜{body}⌝: {err}")))?;
-    let disposition =
-        CalculatorLanguage::rho_fold_dataflow_invocation_to(parsed.as_ref(), "OUT")
-            .map_err(InterpError::Reduce)?;
+    let disposition = CalculatorLanguage::rho_fold_dataflow_invocation_to(parsed.as_ref(), "OUT")
+        .map_err(InterpError::Reduce)?;
     let invocation = match disposition {
         RhoFoldDataflowDisposition::Run(invocation) => invocation,
         RhoFoldDataflowDisposition::Defer => {
@@ -575,11 +623,23 @@ async fn evaluate_calculator_term(body: &str) -> Result<(), InterpError> {
         RhoScalarType::Bool => backend
             .run_with_call_and_observe_bools(&call, "OUT")
             .await
-            .map(|report| report.values.iter().map(bool::to_string).collect::<Vec<_>>()),
+            .map(|report| {
+                report
+                    .values
+                    .iter()
+                    .map(bool::to_string)
+                    .collect::<Vec<_>>()
+            }),
         RhoScalarType::Str => backend
             .run_with_call_and_observe_strings(&call, "OUT")
             .await
-            .map(|report| report.values.iter().map(|value| format!("{value:?}")).collect::<Vec<_>>()),
+            .map(|report| {
+                report
+                    .values
+                    .iter()
+                    .map(|value| format!("{value:?}"))
+                    .collect::<Vec<_>>()
+            }),
     }
     .map_err(InterpError::Reduce)?;
     if rendered.is_empty() {
@@ -689,10 +749,17 @@ async fn run_process_to_rest(program: &Par) -> Result<(), InterpError> {
     }
     let unserved = mettail_rholang_runtime::lookahead::unserved_requests(&unserved);
     if !unserved.is_empty() {
+        // Name the channel and the rendered request per line. `UnservedRequest::rendered` is
+        // now `render_par_text` (bounded, deterministic) rather than a prost `Debug` dump, so
+        // this reads as a diagnostic instead of as ~15 KB of struct noise per request.
+        let detail = unserved
+            .iter()
+            .map(|request| format!("{} ← {}", request.channel, request.rendered))
+            .collect::<Vec<_>>()
+            .join("; ");
         return Err(InterpError::DriverError(format!(
-            "{} lookahead request(s) rested unserved: {:?}",
+            "{} lookahead request(s) rested unserved: {detail}",
             unserved.len(),
-            unserved
         )));
     }
     if !on(SPEC_ERR_CHANNEL).is_empty() {
@@ -726,7 +793,7 @@ async fn run_process_to_rest(program: &Par) -> Result<(), InterpError> {
             on(SPEC_TRUNCATED_CHANNEL).len(),
         );
         for (index, datum) in on(SPEC_FAILURE_CHANNEL).iter().enumerate() {
-            println!("    ^spec-failure[{index}] {}", render_pars(std::slice::from_ref(datum)));
+            println!("    ^spec-failure[{index}] {}", render_spec_failure(datum));
         }
     }
     Ok(())
@@ -790,8 +857,7 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
     // `rho_rhocalc_conformance.rs`); this binary was the sole outlier. The display defect itself
     // is upstream in the display codegen and is reported separately; using the production entry
     // removes it from this path entirely rather than compensating for it downstream.
-    let proc = Proc::parse_via_wpda(&source)
-        .map_err(|err| InterpError::Parse(err.to_string()))?;
+    let proc = Proc::parse_via_wpda(&source).map_err(|err| InterpError::Parse(err.to_string()))?;
 
     // A WHOLE-PROGRAM bare FLT (the file is one `tag`…`` and nothing else) is evaluated by THAT
     // GUEST'S OWN engine, so the tag is read off the AST before lowering reflects it away. Each
@@ -833,7 +899,7 @@ async fn main() -> ExitCode {
             Some("-h") | Some("--help") => {
                 println!("{USAGE}");
                 return ExitCode::SUCCESS;
-            }
+            },
             Some("--emit-comments") => emit_comments = true,
             _ if path.is_none() => path = Some(PathBuf::from(argument)),
             _ => return InterpError::Usage.report(),

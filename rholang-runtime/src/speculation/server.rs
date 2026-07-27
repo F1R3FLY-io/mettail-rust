@@ -163,6 +163,7 @@ use crate::lookahead::{
     SPEC_TRUNCATED_CHANNEL,
 };
 use crate::native_contract::private_name_tag;
+use crate::observation::render_par_text;
 
 use super::delivery::{resting_on_string, trace_digest};
 use super::search::{charge_host_comms, ErrorCode, Lookahead, QuiescentLeaf, TraceMode};
@@ -412,9 +413,7 @@ impl LookaheadEngine {
                     };
                     let engine = engine.clone();
                     Box::pin(async move { engine.serve(call, args, bounded).await })
-                        as Pin<
-                            Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>,
-                        >
+                        as Pin<Box<dyn Future<Output = Result<Vec<Par>, InterpreterError>> + Send>>
                 })
             }),
         }
@@ -463,11 +462,12 @@ impl LookaheadEngine {
                 // A malformed request is REPORTED, not silently dropped: the send committed,
                 // so something is going to wait for an answer forever otherwise.
                 publisher
-                    .publish(request_error_datum(ErrorCode::Interpreter, &message), &spec(SPEC_ERR_CHANNEL))
+                    .publish(
+                        request_error_datum(ErrorCode::Interpreter, &message),
+                        &spec(SPEC_ERR_CHANNEL),
+                    )
                     .await?;
-                return Err(InterpreterError::IllegalArgumentError(format!(
-                    "{urn}: {message}"
-                )));
+                return Err(InterpreterError::IllegalArgumentError(format!("{urn}: {message}")));
             },
         };
 
@@ -480,7 +480,10 @@ impl LookaheadEngine {
                  found none — refusing instead. Bind it with LookaheadEngine::bind_host."
             );
             publisher
-                .publish(request_error_datum(ErrorCode::Bootstrap, &message), &spec(SPEC_ERR_CHANNEL))
+                .publish(
+                    request_error_datum(ErrorCode::Bootstrap, &message),
+                    &spec(SPEC_ERR_CHANNEL),
+                )
                 .await?;
             return Err(InterpreterError::SetupError(message));
         };
@@ -490,7 +493,10 @@ impl LookaheadEngine {
             Ok(guest) => guest,
             Err(message) => {
                 publisher
-                    .publish(request_error_datum(ErrorCode::Bootstrap, &message), &spec(SPEC_ERR_CHANNEL))
+                    .publish(
+                        request_error_datum(ErrorCode::Bootstrap, &message),
+                        &spec(SPEC_ERR_CHANNEL),
+                    )
                     .await?;
                 return Ok(Vec::new());
             },
@@ -499,31 +505,28 @@ impl LookaheadEngine {
         // ★ `prelude | seed(⟦P⟧)` for a registered guest; the bare subject otherwise. This
         // is the line the module header's `prelude` warning is about.
         let request = match guest {
-            Some(guest) => LookaheadRequest::new(
-                guest.seed(subject, SPEC_LEAF_CHANNEL),
-                lookahead,
-            )
-            .with_prelude(guest.prelude.clone())
-            .with_projection(LeafProjection::resting_on(SPEC_LEAF_CHANNEL))
-            .with_definitions(guest.definitions()),
+            Some(guest) => LookaheadRequest::new(guest.seed(subject, SPEC_LEAF_CHANNEL), lookahead)
+                .with_prelude(guest.prelude.clone())
+                .with_projection(LeafProjection::resting_on(SPEC_LEAF_CHANNEL))
+                .with_definitions(guest.definitions()),
             None => LookaheadRequest::new(subject, lookahead)
                 .with_projection(LeafProjection::Configuration),
         }
         .with_trace_mode(self.trace_mode);
 
         // ── the exploration ──────────────────────────────────────────────
-        let response =
-            match LookaheadService::serve(request, publisher.random.clone(), host).await {
-                Ok(response) => response,
-                Err(error) => {
-                    let datum = request_error_datum(
-                        ErrorCode::of(&error),
-                        &format!("the exploration could not run: {error}"),
-                    );
-                    publisher.publish(datum, &spec(SPEC_ERR_CHANNEL)).await?;
-                    return Ok(Vec::new());
-                },
-            };
+        let response = match LookaheadService::serve(request, publisher.random.clone(), host).await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                let datum = request_error_datum(
+                    ErrorCode::of(&error),
+                    &format!("the exploration could not run: {error}"),
+                );
+                publisher.publish(datum, &spec(SPEC_ERR_CHANNEL)).await?;
+                return Ok(Vec::new());
+            },
+        };
 
         // ── the charge-back, BEFORE anything is delivered ────────────────
         //
@@ -614,11 +617,8 @@ impl LookaheadEngine {
 
         // ★ The FIPS's own three collections, as ONE datum.
         let [success_set, truncated_set, failure_set] = delivery.as_slice();
-        let collections = ground_list(vec![
-            success_set.clone(),
-            truncated_set.clone(),
-            failure_set.clone(),
-        ]);
+        let collections =
+            ground_list(vec![success_set.clone(), truncated_set.clone(), failure_set.clone()]);
         publisher
             .publish(collections, &spec(SPEC_DELIVERY_CHANNEL))
             .await?;
@@ -642,8 +642,11 @@ impl LookaheadEngine {
         {
             Some(guest) => Ok(Some(guest)),
             None => {
-                let registered: Vec<&str> =
-                    self.guests.iter().map(|guest| guest.fingerprint.as_str()).collect();
+                let registered: Vec<&str> = self
+                    .guests
+                    .iter()
+                    .map(|guest| guest.fingerprint.as_str())
+                    .collect();
                 Err(format!(
                     "the subject is a reflected term of language {fingerprint:?}, for which no \
                      evaluator is registered with the lookahead engine (registered: \
@@ -717,29 +720,35 @@ impl Publisher<'_> {
 // ══════════════════════════════════════════════════════════════════════════
 
 /// `(subject, lookahead, replyChannel)` from a request's payload.
+///
+/// ★ Every operand here is **program-controlled**, and the refusals are consensus-visible. The
+/// surface's `lookahead_bound` (`rhocalc_ast`) restricts `[n]` to a ground non-negative literal,
+/// but `^spec-n` is an ordinary Rholang channel served by an installed system process: a program
+/// can write `@"^spec-n"!(P, <any Par at all>, x)` and reach this function directly. So the
+/// malformed-bound arm renders its operand through [`render_par_text`] — bounded and
+/// derive-independent — for the reason spelled out on [`guest_evaluator_failures`], with the
+/// aggravation that here the input is attacker-chosen rather than merely large.
 fn parse_request(payload: &[Par], bounded: bool) -> Result<(Par, Lookahead, Par), String> {
     match bounded {
         false => match payload {
             [subject, reply] => Ok((subject.clone(), Lookahead::Unbounded, reply.clone())),
-            _ => Err(format!(
-                "expected (subject, replyChannel), got arity {}",
-                payload.len()
-            )),
+            _ => Err(format!("expected (subject, replyChannel), got arity {}", payload.len())),
         },
         true => match payload {
             [subject, bound, reply] => {
                 let bound = ground_int(bound).ok_or_else(|| {
-                    format!("the `[n]` bound must be a ground integer, got {bound:?}")
+                    format!(
+                        "the `[n]` bound must be a ground integer, got {}",
+                        render_par_text(bound)
+                    )
                 })?;
-                let bound = u64::try_from(bound).map_err(|_| {
-                    format!("the `[n]` bound must be non-negative, got {bound}")
-                })?;
+                let bound = u64::try_from(bound)
+                    .map_err(|_| format!("the `[n]` bound must be non-negative, got {bound}"))?;
                 Ok((subject.clone(), Lookahead::Steps(bound), reply.clone()))
             },
-            _ => Err(format!(
-                "expected (subject, bound, replyChannel), got arity {}",
-                payload.len()
-            )),
+            _ => {
+                Err(format!("expected (subject, bound, replyChannel), got arity {}", payload.len()))
+            },
         },
     }
 }
@@ -803,6 +812,19 @@ fn request_error_datum(code: ErrorCode, message: &str) -> Par {
 /// `[trace, [code, message]]` per guest-evaluator diagnostic resting in `leaf`'s terminal
 /// configuration — the FIPS failure shape, so a consumer reads a guest refusal and a reducer
 /// abort with one rule.
+///
+/// ★ The stuck redex goes through [`render_par_text`], **never** `format!("{par:?}")`. Two
+/// reasons, and the second is the load-bearing one:
+///
+/// 1. prost's derived `Debug` for the reflected Ω redex is 14 KB of nested-struct noise; the
+///    same fact in the neutral notation is 30 characters.
+/// 2. This string is published by [`Publisher::publish`], which calls `produce` into the
+///    **live** deploy's RSpace — so it is part of the post-deploy state and therefore of the
+///    checkpoint root. A derived `Debug` is generated code: a `prost` bump that re-spells it
+///    silently changes those bytes, and a node built against the new derive can no longer
+///    replay a block produced by the old one. That is precisely the hazard
+///    [`ErrorCode`](super::search::ErrorCode) writes its discriminants out longhand to
+///    prevent, and the `message` beside the code had no such protection.
 fn guest_evaluator_failures(guest: &SpeculationGuest, leaf: &QuiescentLeaf) -> Vec<Par> {
     let err = drive_err_channel(&guest.fingerprint);
     let fuel = drive_fuel_channel(&guest.fingerprint);
@@ -819,7 +841,10 @@ fn guest_evaluator_failures(guest: &SpeculationGuest, leaf: &QuiescentLeaf) -> V
                 ground_list(vec![
                     new_gint_par(code.as_i64(), Vec::new(), false),
                     new_gstring_par(
-                        format!("the guest evaluator rested on {channel}: {stuck:?}"),
+                        format!(
+                            "the guest evaluator rested on {channel}: the stuck redex is {}",
+                            render_par_text(&stuck),
+                        ),
                         Vec::new(),
                         false,
                     ),
@@ -836,11 +861,7 @@ fn guest_evaluator_failures(guest: &SpeculationGuest, leaf: &QuiescentLeaf) -> V
 /// one [`LookaheadService::resume`] takes back — so a guest failure and a resumable branch
 /// are keyed alike.
 fn trace_list(leaf: &QuiescentLeaf) -> Par {
-    models::rust::utils::new_gbytearray_par(
-        trace_digest(&leaf.trace).bytes(),
-        Vec::new(),
-        false,
-    )
+    models::rust::utils::new_gbytearray_par(trace_digest(&leaf.trace).bytes(), Vec::new(), false)
 }
 
 #[cfg(test)]
@@ -947,7 +968,8 @@ mod tests {
     fn an_unbound_engine_says_so() {
         let engine = LookaheadEngine::new();
         assert!(!engine.host_bound());
-        let budget = rholang::rust::interpreter::accounting::cost_accounting::CostAccounting::empty_cost();
+        let budget =
+            rholang::rust::interpreter::accounting::cost_accounting::CostAccounting::empty_cost();
         assert!(engine.bind_host(budget.clone()), "the first binding takes");
         assert!(engine.host_bound());
         assert!(!engine.bind_host(budget), "a second binding is refused, not silently swapped");

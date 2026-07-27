@@ -193,15 +193,7 @@ fn send_to(channel: &str, data: Vec<Par>) -> Par {
     // `new_send_par(chan, data, persistent, send_locally_free, send_connective_used,
     // par_locally_free, par_connective_used)` — the last two are the enclosing `Par`'s,
     // which the `Send`'s own do not imply. A request seed is ground on both.
-    new_send_par(
-        spec_channel_par(channel),
-        data,
-        false,
-        Vec::new(),
-        false,
-        Vec::new(),
-        false,
-    )
+    new_send_par(spec_channel_par(channel), data, false, Vec::new(), false, Vec::new(), false)
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -220,7 +212,15 @@ fn send_to(channel: &str, data: Vec<Par>) -> Par {
 pub struct UnservedRequest {
     /// Which request channel it rested on.
     pub channel: &'static str,
-    /// The resting request datum, rendered for a diagnostic.
+    /// The resting request datum, rendered by
+    /// [`render_par_text`](crate::observation::render_par_text) — **total, deterministic,
+    /// bounded**.
+    ///
+    /// This was `format!("{datum:?}")`, which put ~15 KB of prost `Debug` noise in front of
+    /// anyone whose engine was missing — the exact case where a diagnostic has to be readable.
+    /// It is not consensus-visible (this struct is host-side readback, not a datum), so the
+    /// contract here is legibility rather than replay safety; it uses the same renderer because
+    /// there should be one answer to *"how do we name a `Par` in prose?"*, not two.
     pub rendered: String,
 }
 
@@ -233,7 +233,10 @@ pub fn unserved_requests(resting: &[(&'static str, Vec<Par>)]) -> Vec<UnservedRe
     let mut unserved = Vec::with_capacity(total);
     for (channel, data) in resting {
         for datum in data {
-            unserved.push(UnservedRequest { channel, rendered: format!("{datum:?}") });
+            unserved.push(UnservedRequest {
+                channel,
+                rendered: crate::observation::render_par_text(datum),
+            });
         }
     }
     unserved
@@ -243,6 +246,12 @@ pub fn unserved_requests(resting: &[(&'static str, Vec<Par>)]) -> Vec<UnservedRe
 mod tests {
     use super::*;
 
+    /// ★ This cell reads the wire through prost's derived `Debug` **on purpose**, and it is the
+    /// one place in this tree that may. It is therefore a free canary: if a `prost` bump
+    /// re-spells the derive, this goes red — which is exactly the change that would silently
+    /// have altered consensus-visible bytes back when `guest_evaluator_failures` and
+    /// `parse_request` embedded `{:?}` in their messages. Do not "fix" it to use
+    /// `render_par_text`; that would decode the datum and stop testing the encoding.
     #[test]
     fn the_two_request_shapes_are_distinct_and_carry_their_operands() {
         let subject = spec_channel_par("subject");

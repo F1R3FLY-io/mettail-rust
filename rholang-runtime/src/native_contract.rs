@@ -45,8 +45,8 @@ use std::pin::Pin;
 
 use mettail_rholang_codegen::{
     check_body_refs_pairwise_distinct, native_contract_body_ref, native_contract_channel,
-    reflect_ground_term_par, BandAllocationError, GroundTerm, NATIVE_HANDLER_BAND,
-    NativeHandlerSpec, REFLECTED_TERM_ABI_PREFIX,
+    reflect_ground_term_par, BandAllocationError, GroundTerm, NativeHandlerSpec,
+    NATIVE_HANDLER_BAND,
 };
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
@@ -217,13 +217,11 @@ pub fn native_definition(spec: &NativeHandlerSpec) -> Definition {
                     // ABI violation and fails loudly.
                     let mut grounds = Vec::with_capacity(arity);
                     for operand in operands {
-                        grounds.push(par_to_ground_term(operand, &fingerprint).map_err(
-                            |err| {
-                                InterpreterError::IllegalArgumentError(format!(
-                                    "{urn}: located σ operand did not decode: {err}"
-                                ))
-                            },
-                        )?);
+                        grounds.push(par_to_ground_term(operand, &fingerprint).map_err(|err| {
+                            InterpreterError::IllegalArgumentError(format!(
+                                "{urn}: located σ operand did not decode: {err}"
+                            ))
+                        })?);
                     }
                     // THE A-S3 BOUNDARY: the trusted evaluator (the rule's own `fold` body) runs
                     // HERE, dispatched by the machine's COMM on the located σ — no host

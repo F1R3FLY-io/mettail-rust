@@ -69,10 +69,6 @@ pub mod guard_discharge;
 /// vocabulary the surface encoder (`mettail_languages::rhocalc::guard_substrate`) does, so both
 /// legs of a guard's life ask the same procedures.
 pub mod guard_par_substrate;
-/// A-S3 registered native-handler contracts: the machine-invoked trusted evaluator `Definition`s
-/// for admitted `fold` native rules (the held-fold trampoline generalized — same
-/// `extra_system_processes` seam, reserved `[0xF1, rule]` band).
-pub mod native_contract;
 /// The `[*]` / `[n]` lookahead **ABI** — the seam between the lowered surface (`rhocalc_ast`'s
 /// `PLookahead*` arms) and the branching engine ([`speculation`]). Owns the reserved request /
 /// result channel names, the two request-seed builders, and the fail-closed unserved-request
@@ -81,6 +77,19 @@ pub mod native_contract;
 /// ⚠ Deliberately does NOT lower `[*]` onto the `^drive` quiescence driver: λ is confluent, so a
 /// single-path drive returns the right answer for every λ term while being wrong in principle.
 pub mod lookahead;
+/// A-S3 registered native-handler contracts: the machine-invoked trusted evaluator `Definition`s
+/// for admitted `fold` native rules (the held-fold trampoline generalized — same
+/// `extra_system_processes` seam, reserved `[0xF1, rule]` band).
+pub mod native_contract;
+/// Decoding a resting `Par` into a `RuntimeObservationValue`, and **rendering** one into the
+/// short, stable text a diagnostic carries.
+///
+/// ⚠ Deliberately NOT feature-gated, unlike `runtime-report`'s report conversion. The `[*]`
+/// request server renders `Par`s into data it `produce`s onto the live tuplespace, so a
+/// build-conditional rendering would mean two nodes writing different bytes for one deploy.
+/// The module header carries the full argument, and `render_par_text`'s contract — total,
+/// deterministic, bounded — is what replaced the prost `Debug` dumps that used to go there.
+pub mod observation;
 #[cfg(feature = "rhocalc-runtime")]
 pub mod rhocalc_ast;
 /// M-1b: the FORMULA compiler — a RhoCalc `Proc` read as a Rholang PATTERN
@@ -88,20 +97,21 @@ pub mod rhocalc_ast;
 /// and everything else goes through [`rhocalc_ast`].
 #[cfg(feature = "rhocalc-runtime")]
 pub mod rhocalc_formula;
+pub mod run;
 /// **Stage 1 of the `[*]` speculation space fork** — `SpeculativeSandbox`: a fresh in-memory
 /// tuplespace whose reducer STAGES every produce/consume so nothing fires until a rendezvous is
 /// named, plus `E(S)` (the enabled rendezvous set), the named firing, and the exact state install.
 /// Branching is pinned to 1: this is the mechanism, not the search. See the module header for the
 /// four measured corrections it is built around and for what the on-chain decision fixed.
 pub mod speculation;
-pub mod run;
 /// Reactive single-step COMM stepper (the `step` command's live Rho-machine evidence).
 #[cfg(feature = "runtime-report")]
 pub mod step;
+#[cfg(feature = "dstage-instrumentation")]
+pub use backend::dstage_instrumentation;
 #[cfg(feature = "runtime-report")]
 pub use backend::{
-    build_fold_dataflow_invocation_from_contract,
-    build_rho_net_drive_invocation_from_contract,
+    build_fold_dataflow_invocation_from_contract, build_rho_net_drive_invocation_from_contract,
     build_rho_net_injection_invocation_from_contract,
     build_rho_net_replay_invocation_from_contracts, build_scalar_contract_invocation,
     build_scalar_contract_invocation_from_contract, install_dovetail_rho_runtime_backend,
@@ -112,8 +122,6 @@ pub use backend::{
     RhoRuntimeBackedLanguage, RhoRuntimeBackedLanguageError, RhoScalarInvocationError,
     RhoScalarInvocationLiteralType, RuntimeReportConversionError,
 };
-#[cfg(feature = "dstage-instrumentation")]
-pub use backend::dstage_instrumentation;
 pub use backend::{
     PlannedCallByNeedThunk, PlannedRhoBackend, RhoExecutionBoundary, RhoObservationReport,
 };
@@ -138,38 +146,41 @@ pub use e6a_support::{
     entry_query_shape, pathmap_spread_term_par, sites_non_ancestral, E6aDriveFailure,
     E6aDriveOutcome, EntryQueryShape, PathmapIndex,
 };
-pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOCALC_BAG_ABI_TAG};
-pub use native_contract::{
-    native_definition, native_definitions_for, par_to_ground_term, NativeContractError,
-};
 pub use guard_discharge::{
     all_operands_ground, classify as classify_guard_discharge, is_binder_closed, machine_verdict,
     GuardDischarge, GuardDischargeReport, GuardRouting, GuardStaticallyFalse, LoweringOptions,
     GUARD_DISCHARGE_TARGET,
+};
+pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOCALC_BAG_ABI_TAG};
+pub use native_contract::{
+    native_definition, native_definitions_for, par_to_ground_term, NativeContractError,
+};
+/// The observation ABI's inverse and its renderer. Unconditional — see [`observation`].
+pub use observation::{
+    par_as_runtime_observation_value, render_observation_text, render_observation_text_with,
+    render_par_text, RENDER_BUDGET_CHARS,
 };
 #[cfg(feature = "rhocalc-runtime")]
 pub use rhocalc_ast::{
     clear_guard_discharge_report, dovetail_rho_backed_rhocalc, lower_rhocalc_name,
     lower_rhocalc_proc, lower_rhocalc_proc_with_options, lower_rhocalc_proc_with_resolver,
     lower_rhocalc_proc_with_resolver_and_options, lower_rhocalc_term,
-    take_guard_discharge_report,
-    lower_rhocalc_term_with_folds, rho_runtime_backed_rhocalc_ints, rho_runtime_backed_rhocalc_strings,
-    rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def, rhocalc_observe_ints_invocation,
-    rhocalc_observe_strings_invocation, rhocalc_observe_values_invocation,
-    rhocalc_planned_rho_backend, RhocalcAstLowerError, RhocalcAstRuntimeLanguage,
-    RhocalcInvocationMapper, RhocalcRuntimeBackedLanguage, RhocalcRuntimeBackedLanguageResult,
+    lower_rhocalc_term_with_folds, rho_runtime_backed_rhocalc_ints,
+    rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def,
+    rhocalc_observe_ints_invocation, rhocalc_observe_strings_invocation,
+    rhocalc_observe_values_invocation, rhocalc_planned_rho_backend, take_guard_discharge_report,
+    RhocalcAstLowerError, RhocalcAstRuntimeLanguage, RhocalcInvocationMapper,
+    RhocalcRuntimeBackedLanguage, RhocalcRuntimeBackedLanguageResult,
 };
 #[cfg(feature = "runtime-report")]
 pub use run::{
     binder_apply_redex_present, drive_cross_check, flatten_observation_value,
-    par_as_runtime_observation_value,
     run_installed_program_with_call_and_read_observation_set,
     run_normalized_par_for_oracle_and_read_runtime_value_channels,
     run_normalized_par_for_oracle_and_read_runtime_values,
-    run_normalized_par_with_lookahead_engine,
-    run_validated_program_and_read_runtime_values,
-    run_validated_program_with_call_and_read_runtime_values, DriveCrossCheckError,
-    DriveNfScan, DriveObservationChannels, DriveObservationSet,
+    run_normalized_par_with_lookahead_engine, run_validated_program_and_read_runtime_values,
+    run_validated_program_with_call_and_read_runtime_values, DriveCrossCheckError, DriveNfScan,
+    DriveObservationChannels, DriveObservationSet,
 };
 pub use run::{
     run_normalized_par_for_oracle, run_normalized_par_for_oracle_and_read_bools,

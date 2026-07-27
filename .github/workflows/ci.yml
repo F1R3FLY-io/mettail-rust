@@ -83,6 +83,18 @@ jobs:
       - name: Compile every target (benches and examples included)
         run: cargo check -j1 --workspace --all-features --all-targets
 
+      # `--all-features` is one point in the feature lattice, and every gate above sits on it.
+      # The OPPOSITE end was never built, so it rotted: `rholang-runtime`'s `par_verbatim` was
+      # `#[cfg(feature = "runtime-report")]` while a caller on the crate's UNCONDITIONAL public
+      # surface was not, and `--no-default-features` had not compiled for an unknown span of
+      # commits. Nothing reported it, because nothing built it.
+      #
+      # Both ends, and only both ends: a full lattice sweep is exponential and is not the claim.
+      # A `#[cfg]` that disagrees with its caller's `#[cfg]` shows up at ONE of the two extremes,
+      # which is the class this catches. Check-only, so it adds no test time.
+      - name: Compile the opposite end of the feature lattice (no default features)
+        run: cargo check -j1 --workspace --no-default-features
+
       - name: Run tests (nextest, ci profile — bounded slow-timeouts)
         run: >
           cargo nextest run --profile ci -j1

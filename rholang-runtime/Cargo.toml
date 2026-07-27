@@ -40,7 +40,13 @@ default = [
 ]
 # Conversion from typed Rho observation reports into mettail_runtime::RuntimeBackendReport
 # plus the generic Language backend installer wrappers.
-runtime-report = ["dep:mettail-runtime"]
+#
+# ★ NO LONGER gates `dep:mettail-runtime`, and no longer gates the `Par` → observation DECODER
+# (which moved to `src/observation.rs`). It gates exactly what its name says: the REPORT
+# conversion and the installer wrappers. See `src/observation.rs`'s header — the decoder feeds
+# `render_par_text`, whose output the `[*]` request server `produce`s onto the LIVE tuplespace,
+# so a feature-conditional rendering would be two builds writing different bytes for one deploy.
+runtime-report = []
 # A-S2 test-only instrumentation: exposes `backend::dstage_instrumentation` (a process-global
 # counter of `checked_complete_dovetail_report` invocations) so downstream integration tests
 # (e.g. the REPL's zero-D-stage exec suite) can assert that an ADMITTED exec builds no Dovetail
@@ -391,7 +397,13 @@ tracing = "0.1"
 crypto = { workspace = true }
 tokio = { workspace = true }
 mettail-languages = { package = "languages", path = "../languages", optional = true, default-features = false }
-mettail-runtime = { package = "runtime", path = "../runtime", optional = true }
+# NON-OPTIONAL since the observation decoder moved to `src/observation.rs` and had to become
+# unconditional (its rendering reaches consensus-visible data — see that module's header).
+# This costs no additional compilation: `runtime` is ALREADY a non-optional transitive
+# dependency of this crate through `rholang-codegen`, in every feature configuration
+# (`cargo tree -p rholang-runtime --no-default-features -i runtime`). Same reasoning as
+# `mettail-prattail` below: a substrate that decides bytes must not have two decision paths.
+mettail-runtime = { package = "runtime", path = "../runtime" }
 # NON-OPTIONAL since THE WIRE: `guard_discharge` is available in every feature
 # configuration, and its compile-time authority leg is the Dovetail/SFT substrate
 # (`mettail_prattail::guard_formula`). Gating the substrate behind a feature would give

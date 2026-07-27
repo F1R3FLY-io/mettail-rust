@@ -12,18 +12,23 @@ use std::sync::Arc;
 use crate::guard_par_substrate::SubstrateGuardMatcher;
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use mettail_rholang_codegen::ValidatedRhoProgram;
+// Every remaining use in this module is inside a `runtime-report` item; the DECODER that used
+// it unconditionally now lives in `crate::observation`.
 #[cfg(feature = "runtime-report")]
 use mettail_runtime::RuntimeObservationValue;
 use models::rhoapi::expr::ExprInstance;
-#[cfg(feature = "runtime-report")]
-use models::rhoapi::g_unforgeable::UnfInstance;
 use models::rhoapi::{BindPattern, Expr, ListParWithRandom, Par, TaggedContinuation};
-#[cfg(feature = "runtime-report")]
-use models::rust::rholang::implicits::GPrivateBuilder;
 #[cfg(feature = "source-oracle")]
 use models::rust::utils::new_freevar_par;
-#[cfg(feature = "runtime-report")]
-use prost::Message;
+
+/// The `Par` → [`RuntimeObservationValue`] inverse, re-exported from its own module so every
+/// existing call site — and [`crate`]'s public surface — is unchanged by the extraction.
+///
+/// It moved to [`crate::observation`] because it had to become **unconditional**: the `[*]`
+/// request server renders `Par`s into data it `produce`s onto the live tuplespace, and a
+/// feature-gated decoder there would mean two builds writing different bytes for one deploy.
+/// See that module's header.
+pub use crate::observation::par_as_runtime_observation_value;
 
 use rho_pure_eval::Env;
 use rholang::rust::interpreter::accounting::costs::Cost;
@@ -78,364 +83,6 @@ fn par_as_bool(par: &Par) -> Option<bool> {
     }
 }
 
-#[cfg(feature = "runtime-report")]
-fn par_has_only_ground_value_fields(par: &Par) -> bool {
-    par.sends.is_empty()
-        && par.receives.is_empty()
-        && par.news.is_empty()
-        && par.matches.is_empty()
-        && par.bundles.is_empty()
-        && par.connectives.is_empty()
-        && par.conditionals.is_empty()
-        && par.locally_free.is_empty()
-        && !par.connective_used
-}
-
-#[cfg(feature = "runtime-report")]
-fn single_expr_instance(par: &Par) -> Option<&ExprInstance> {
-    if !par_has_only_ground_value_fields(par) || !par.unforgeables.is_empty() {
-        return None;
-    }
-
-    let [expr] = par.exprs.as_slice() else {
-        return None;
-    };
-    expr.expr_instance.as_ref()
-}
-
-#[cfg(feature = "runtime-report")]
-fn par_as_unforgeable_observation(par: &Par) -> Option<RuntimeObservationValue> {
-    if !par_has_only_ground_value_fields(par) || !par.exprs.is_empty() {
-        return None;
-    }
-
-    let [unforgeable] = par.unforgeables.as_slice() else {
-        return None;
-    };
-
-    match unforgeable.unf_instance.as_ref()? {
-        UnfInstance::GPrivateBody(value) => {
-            Some(RuntimeObservationValue::PrivateName(value.id.clone()))
-        },
-        UnfInstance::GDeployIdBody(value) => {
-            Some(RuntimeObservationValue::DeployId(value.sig.clone()))
-        },
-        UnfInstance::GDeployerIdBody(value) => {
-            Some(RuntimeObservationValue::DeployerId(value.public_key.clone()))
-        },
-        UnfInstance::GSysAuthTokenBody(_) => Some(RuntimeObservationValue::SysAuthToken),
-    }
-}
-
-#[cfg(feature = "runtime-report")]
-fn decode_runtime_values(pars: &[Par]) -> Option<Vec<RuntimeObservationValue>> {
-    pars.iter().map(par_as_runtime_observation_value).collect()
-}
-
-#[cfg(feature = "runtime-report")]
-fn decode_runtime_map(
-    pairs: &[models::rhoapi::KeyValuePair],
-) -> Option<Vec<(RuntimeObservationValue, RuntimeObservationValue)>> {
-    let mut out = Vec::with_capacity(pairs.len());
-    for pair in pairs {
-        let key = par_as_runtime_observation_value(pair.key.as_ref()?)?;
-        let value = par_as_runtime_observation_value(pair.value.as_ref()?)?;
-        out.push((key, value));
-    }
-    out.sort();
-    Some(out)
-}
-
-#[cfg(feature = "runtime-report")]
-fn list_body(par: &Par) -> Option<&models::rhoapi::EList> {
-    match single_expr_instance(par)? {
-        ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
-            Some(list)
-        },
-        _ => None,
-    }
-}
-
-#[cfg(feature = "runtime-report")]
-fn decode_rhocalc_bag(
-    list: &models::rhoapi::EList,
-) -> Option<Vec<(RuntimeObservationValue, usize)>> {
-    let [tag, entries] = list.ps.as_slice() else {
-        return None;
-    };
-    let expected_tag = GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string());
-    if tag != &expected_tag {
-        return None;
-    }
-
-    let entries = list_body(entries)?;
-    let mut counts = std::collections::BTreeMap::<RuntimeObservationValue, usize>::new();
-    for entry in &entries.ps {
-        let entry = list_body(entry)?;
-        let [value, count] = entry.ps.as_slice() else {
-            return None;
-        };
-        let value = par_as_runtime_observation_value(value)?;
-        let count = match par_as_runtime_observation_value(count)? {
-            RuntimeObservationValue::Int(count) if count >= 0 => usize::try_from(count).ok()?,
-            _ => return None,
-        };
-        let slot = counts.entry(value).or_insert(0);
-        *slot = slot.checked_add(count)?;
-    }
-    Some(counts.into_iter().collect())
-}
-
-/// Whether `par` is a NON-empty sends-only parallel composition — the AC bag-carrier soup shape
-/// (Stage AC2b): at least one `Send` and every other `Par` field empty/closed. Mirrors the exact
-/// field set of [`par_has_only_ground_value_fields`], inverted for `sends`.
-#[cfg(feature = "runtime-report")]
-fn par_is_only_sends(par: &Par) -> bool {
-    !par.sends.is_empty()
-        && par.exprs.is_empty()
-        && par.receives.is_empty()
-        && par.news.is_empty()
-        && par.matches.is_empty()
-        && par.bundles.is_empty()
-        && par.connectives.is_empty()
-        && par.conditionals.is_empty()
-        && par.unforgeables.is_empty()
-        && par.locally_free.is_empty()
-        && !par.connective_used
-}
-
-/// Whether a `Par` is the fully-empty Nil process — the A-S5.5 (AM-3) reflection of an
-/// EMPTY AC bag (`op{}` reflects as `Par::default()`), decoded by
-/// [`par_as_runtime_observation_value`] as the empty multiset `Bag`.
-#[cfg(feature = "runtime-report")]
-fn par_is_empty_nil(par: &Par) -> bool {
-    par.sends.is_empty()
-        && par.exprs.is_empty()
-        && par.receives.is_empty()
-        && par.news.is_empty()
-        && par.matches.is_empty()
-        && par.bundles.is_empty()
-        && par.connectives.is_empty()
-        && par.conditionals.is_empty()
-        && par.unforgeables.is_empty()
-        && par.locally_free.is_empty()
-        && !par.connective_used
-}
-
-/// The CARRIER IDENTITY a soup send's channel `@"ac:…"` denotes — everything after the
-/// reserved `"ac:"` prefix — when the channel is a quoted, non-empty `GString`.
-///
-/// Deliberately NOT parsed down to the bare operator label, because the `ac:` family has two
-/// shapes and only one of them ends in the operator: the bare soup carrier
-/// [`ac_soup_channel`](mettail_rholang_codegen::ac_soup_channel) is
-/// `ac:{fingerprint}/{op}`, while the site-keyed
-/// [`ac_carrier_channel`](mettail_rholang_codegen::ac_carrier_channel) is
-/// `ac:loc:{fingerprint}/{site path}/{op}`. Splitting either one to recover `op` alone would
-/// need to know which shape it is holding, and the sole caller does not care: it uses this
-/// value ONLY to check that every send in a candidate soup rides the SAME carrier, and
-/// carrier equality is the stronger, correct test.
-///
-/// ★ INV-S6 makes this test strictly sharper than it was. Before the carriers carried a
-/// fingerprint, two co-installed languages' same-`op` soups shared one channel name and this
-/// decoder MERGED them into a single bag without any way to notice. They now differ in their
-/// scope segment, so the `Some(_) => return None` mixed-carrier arm rejects the mixture and
-/// fails closed.
-#[cfg(feature = "runtime-report")]
-fn ac_soup_carrier_identity(chan: &Par) -> Option<&str> {
-    match single_expr_instance(chan)? {
-        ExprInstance::GString(name) => {
-            name.strip_prefix("ac:").filter(|carrier| !carrier.is_empty())
-        },
-        _ => None,
-    }
-}
-
-/// Decode the AC bag-carrier process soup — a bag-VALUED AC RHS's OUT value (Stage AC2b) — into a
-/// multiset of decoded elements.
-///
-/// The carrier is a sends-only parallel `Par` in which every send is `@"ac:{op}"!(⟦e⟧)`, the exact
-/// shape the codegen `reflect_ac_bag_par` (subject side) and `reflect_hashbag_soup_par` (the AC
-/// receiver's bag-RHS body) emit for a `HashBag`: all sends on the SAME `"ac:{op}"` channel, each
-/// with exactly one datum, non-persistent, with nothing else present. Each datum decodes through
-/// the same [`par_as_runtime_observation_value`], so a bag whose elements are themselves reflected
-/// terms (e.g. `Wrap(A)`) decodes recursively. Returns `None` for any `Par` that is not exactly
-/// such a soup — a tagged-`EList` term, a scalar, an unforgeable, a `for`-carrying process, or a
-/// mixed-operator soup — so this never mis-claims another observation shape (the `"ac:"` channel
-/// prefix + sends-only shape are disjoint from every other decoder's head).
-#[cfg(feature = "runtime-report")]
-fn decode_ac_bag_soup(par: &Par) -> Option<Vec<(RuntimeObservationValue, usize)>> {
-    if !par_is_only_sends(par) {
-        return None;
-    }
-    let mut carrier: Option<&str> = None;
-    let mut counts = std::collections::BTreeMap::<RuntimeObservationValue, usize>::new();
-    for send in &par.sends {
-        if send.persistent {
-            return None;
-        }
-        let send_carrier = ac_soup_carrier_identity(send.chan.as_ref()?)?;
-        match carrier {
-            None => carrier = Some(send_carrier),
-            Some(existing) if existing == send_carrier => {},
-            // A mixed carrier is not a single AC bag — two operators, two sites, or (since
-            // INV-S6) two LANGUAGES. Fail closed rather than merge two bags.
-            Some(_) => return None,
-        }
-        let [datum] = send.data.as_slice() else {
-            return None;
-        };
-        let value = par_as_runtime_observation_value(datum)?;
-        let slot = counts.entry(value).or_insert(0);
-        *slot = slot.checked_add(1)?;
-    }
-    Some(counts.into_iter().collect())
-}
-
-/// Recover the UTF-8 tag string carried by a private-name `Par`, when that name
-/// was built by `GPrivateBuilder::new_par_from_string(s)`.
-///
-/// That builder sets the unforgeable's `id` to `s.encode_to_vec()`, i.e.
-/// `<String as prost::Message>` — protobuf field 1, length-delimited. `String::
-/// decode` is that builder's exact inverse, so this needs no direct knowledge of
-/// the wire layout. Returns `None` for any `Par` that is not exactly one
-/// `GPrivate` unforgeable, or whose `id` is not a valid encoded string (e.g. a
-/// `GPrivate` created by `new_par` from a random UUID still decodes, but its tag
-/// simply will not carry the reflected-term prefix).
-#[cfg(feature = "runtime-report")]
-fn private_name_tag(par: &Par) -> Option<String> {
-    if !par_has_only_ground_value_fields(par) || !par.exprs.is_empty() {
-        return None;
-    }
-    let [unforgeable] = par.unforgeables.as_slice() else {
-        return None;
-    };
-    match unforgeable.unf_instance.as_ref()? {
-        UnfInstance::GPrivateBody(value) => String::decode(value.id.as_slice()).ok(),
-        _ => None,
-    }
-}
-
-/// Decode a reflected constructor term list into a structural
-/// [`RuntimeObservationValue::Term`], mirroring [`decode_rhocalc_bag`].
-///
-/// The reflected-term ABI (codegen `reflect_ground_term_par` / the RHS reflector)
-/// is `EList[GPrivate("mettail.term.{fingerprint}.{label}"), children…]`. This
-/// returns `None` unless the list's head is a private name whose tag carries the
-/// shared [`crate::REFLECTED_TERM_ABI_PREFIX`]. Each child is decoded through the
-/// same [`par_as_runtime_observation_value`] entry point, so a nested reflected
-/// term (a σ argument that is itself a constructor) decodes recursively.
-///
-/// ★ CORRECTED (S1). This doc previously asserted that "a constructor label is a
-/// dot-free identifier, so the FINAL `.` of the remainder separates fingerprint
-/// from label", and the code split accordingly with `rsplit_once`. Both were
-/// wrong, and they contradicted `native_contract::par_to_ground_term`, which
-/// documented the opposite invariant and split at the FIRST `.`. Labels are NOT
-/// dot-free: synthesized literal leaves bake the value into the label, so
-/// `FloatLit(8.5)` is producible. Under `rsplit_once` that yielded
-/// `fingerprint = "…:XXXX.FloatLit(8"`, `label = "5)"` — and because the
-/// corrupted fingerprint then failed `is_ground_marker_par`, the marker was not
-/// skipped and leaked into the decoded term as a phantom child. Silent, not an
-/// error. The split now goes through the single shared inverse
-/// [`mettail_rholang_codegen::parse_reflected_tag`], whose correctness rests on
-/// the one invariant the writer asserts: the fingerprint is dot-free.
-#[cfg(feature = "runtime-report")]
-fn decode_reflected_term(list: &models::rhoapi::EList) -> Option<RuntimeObservationValue> {
-    let (head, children) = list.ps.split_first()?;
-    let tag = private_name_tag(head)?;
-    let (fingerprint, label) = mettail_rholang_codegen::parse_reflected_tag(&tag)?;
-    // E-2-D (reflected-ABI v2): a marked-object node carries the `^gnd`/`^nog` hereditary-ground
-    // marker at index 1 — skip it so the DECODED term is byte-identical to the pre-D observation
-    // (the marker is codegen metadata, never an observable child). A bare marker GPrivate never
-    // occurs as a genuine child, so this claims only the marker.
-    let children =
-        match children.first() {
-            Some(first)
-                if mettail_rholang_codegen::is_ground_marker_par(first, fingerprint) =>
-            {
-                &children[1..]
-            },
-            _ => children,
-        };
-    let children = children
-        .iter()
-        .map(par_as_runtime_observation_value)
-        .collect::<Option<Vec<_>>>()?;
-    Some(RuntimeObservationValue::Term { constructor: label.to_string(), children })
-}
-
-/// Pull one closed Rho ground value out of a `Par`.
-///
-/// This deliberately rejects arbitrary process bodies. Runtime observations are
-/// public resting data values: scalars, unforgeable names, closed collection
-/// bodies, and rhocalc's tagged bag ABI.
-#[cfg(feature = "runtime-report")]
-pub fn par_as_runtime_observation_value(par: &Par) -> Option<RuntimeObservationValue> {
-    if let Some(value) = par_as_unforgeable_observation(par) {
-        return Some(value);
-    }
-
-    // Stage AC2b: a bag-VALUED AC RHS lands on OUT as the bare process-soup carrier
-    // (`@"ac:{op}"!(⟦e⟧) | …`) — the SAME shape a `HashBag` reflects to — not an `EList`. Decode
-    // it to a multiset `Bag`. The `"ac:"` channel + sends-only shape are disjoint from every
-    // `single_expr_instance` head below, so this claims only the AC carrier.
-    if let Some(entries) = decode_ac_bag_soup(par) {
-        return Some(RuntimeObservationValue::Bag(entries));
-    }
-
-    // A-S5.5 (AM-3): the EMPTY bag reflects as `Par::default()` (Nil) — the zero-send
-    // degenerate of the process-soup carrier above (`decode_ac_bag_soup` requires ≥ 1
-    // send, so Nil falls through to here). It decodes as the empty multiset `Bag`, which
-    // is how a driven `op{}` — e.g. the redeclared Ambient `OutRule`'s singleton firing
-    // `m[{n[{out(m,p)}]}] ⇒ {n[{p}], m[{}]}` — observes: `m[{}]`'s second child is Nil.
-    // No other reflected value is the empty `Par`, so the claim is unambiguous.
-    if par_is_empty_nil(par) {
-        return Some(RuntimeObservationValue::Bag(Vec::new()));
-    }
-
-    match single_expr_instance(par)? {
-        ExprInstance::GBool(value) => Some(RuntimeObservationValue::Bool(*value)),
-        ExprInstance::GInt(value) => Some(RuntimeObservationValue::Int(*value)),
-        ExprInstance::GString(value) => Some(RuntimeObservationValue::Text(value.clone())),
-        ExprInstance::GUri(value) => Some(RuntimeObservationValue::Uri(value.clone())),
-        ExprInstance::GByteArray(value) => Some(RuntimeObservationValue::Bytes(value.clone())),
-        ExprInstance::GDouble(value) => Some(RuntimeObservationValue::DoubleBits(*value)),
-        ExprInstance::GBigInt(value) => Some(RuntimeObservationValue::BigIntBytes(value.clone())),
-        ExprInstance::GBigRat(value) => Some(RuntimeObservationValue::BigRationalBytes {
-            numerator: value.numerator.clone(),
-            denominator: value.denominator.clone(),
-        }),
-        ExprInstance::GFixedPoint(value) => Some(RuntimeObservationValue::FixedPointBytes {
-            unscaled: value.unscaled.clone(),
-            scale: value.scale,
-        }),
-        ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
-            // Try the reflected-term ABI first (head = a `mettail.term.` private
-            // name), then the rhocalc bag ABI (head = the bag tag), else a plain
-            // list. The three head shapes are disjoint, so ordering only decides
-            // which decoder claims a match, never correctness.
-            if let Some(term) = decode_reflected_term(list) {
-                Some(term)
-            } else if let Some(entries) = decode_rhocalc_bag(list) {
-                Some(RuntimeObservationValue::Bag(entries))
-            } else {
-                Some(RuntimeObservationValue::List(decode_runtime_values(&list.ps)?))
-            }
-        },
-        ExprInstance::ETupleBody(tuple) if !tuple.connective_used => {
-            Some(RuntimeObservationValue::Tuple(decode_runtime_values(&tuple.ps)?))
-        },
-        ExprInstance::ESetBody(set) if set.remainder.is_none() && !set.connective_used => {
-            let mut values = decode_runtime_values(&set.ps)?;
-            values.sort();
-            Some(RuntimeObservationValue::Set(values))
-        },
-        ExprInstance::EMapBody(map) if map.remainder.is_none() && !map.connective_used => {
-            Some(RuntimeObservationValue::Map(decode_runtime_map(&map.kvs)?))
-        },
-        _ => None,
-    }
-}
-
 /// A one-value wildcard binding pattern for direct `RhoRuntime::consume_result`
 /// checks. This mirrors the host normalizer's `for (@x <- @"c")` shape without
 /// routing the receive through source text.
@@ -476,6 +123,14 @@ thread_local! {
 
 /// Stash the held-fold contract `Definition`s for the next [`build_runtime`] on THIS thread (the
 /// exec worker). See `backend::run_rho_invocation_blocking`.
+///
+/// Gated to match its **only** caller, `backend::run_rho_invocation_blocking`, which is
+/// `#[cfg(feature = "runtime-report")]`. Without the gate this is dead code in a
+/// `--no-default-features` build — invisible until that configuration was made to compile at
+/// all (see [`par_verbatim`]). `take_pending_fold_definitions` stays ungated: `build_runtime`
+/// drains the slot in every configuration, and finding it empty is the correct behaviour when
+/// nothing can fill it.
+#[cfg(feature = "runtime-report")]
 pub(crate) fn set_pending_fold_definitions(definitions: Vec<Definition>) {
     PENDING_FOLD_DEFINITIONS.with(|cell| *cell.borrow_mut() = definitions);
 }
@@ -1001,9 +656,7 @@ impl DriveObservationChannels {
     /// The channel set of one generated drive invocation
     /// ([`mettail_rholang_codegen::RhoNetDriveInvocation`]) — carries the invocation's
     /// four channel names verbatim.
-    pub fn from_invocation(
-        invocation: &mettail_rholang_codegen::RhoNetDriveInvocation,
-    ) -> Self {
+    pub fn from_invocation(invocation: &mettail_rholang_codegen::RhoNetDriveInvocation) -> Self {
         Self {
             out: invocation.out_channel.clone(),
             fired: invocation.fired_channel.clone(),
@@ -1064,7 +717,13 @@ impl DriveObservationSet {
 /// A raw pass-through reader for [`read_ground_from_runtime`] — captures every
 /// resting datum verbatim (never `None`), so the observation-channel readback
 /// cannot silently drop malformed data.
-#[cfg(feature = "runtime-report")]
+///
+/// ★ UNGATED, correcting a pre-existing mismatch found while extracting
+/// [`crate::observation`]: this was `#[cfg(feature = "runtime-report")]` while
+/// [`run_normalized_par_for_oracle_and_read_par_channels`] — one of its callers, and a
+/// member of the crate's UNCONDITIONAL public surface — was not, so
+/// `cargo check -p rholang-runtime --no-default-features` did not compile. The function
+/// itself has no `runtime-report` dependency whatsoever; it is one `clone`.
 fn par_verbatim(par: &Par) -> Option<Par> {
     Some(par.clone())
 }
@@ -1166,11 +825,7 @@ impl std::fmt::Display for DriveCrossCheckError {
                 "drive cross-check: firing-ledger channel {channel:?} datum did not decode: \
                  {detail}"
             ),
-            DriveCrossCheckError::Ledger {
-                channel,
-                fired_count,
-                subject_had_redex,
-            } => write!(
+            DriveCrossCheckError::Ledger { channel, fired_count, subject_had_redex } => write!(
                 f,
                 "drive cross-check: ledger channel {channel:?} consistency violated — \
                  fired_count = {fired_count} but subject_had_redex = {subject_had_redex} \
@@ -1235,10 +890,12 @@ pub fn drive_cross_check(
             });
         }
     }
-    let fired = set.fired_labels().map_err(|detail| DriveCrossCheckError::LedgerDecode {
-        channel: channels.fired.clone(),
-        detail,
-    })?;
+    let fired = set
+        .fired_labels()
+        .map_err(|detail| DriveCrossCheckError::LedgerDecode {
+            channel: channels.fired.clone(),
+            detail,
+        })?;
     if (!fired.is_empty()) != subject_had_redex {
         return Err(DriveCrossCheckError::Ledger {
             channel: channels.fired.clone(),
@@ -1303,8 +960,7 @@ pub fn binder_apply_redex_present(apply_label: &str, value: &RuntimeObservationV
 pub fn flatten_observation_value(value: &RuntimeObservationValue) -> RuntimeObservationValue {
     match value {
         RuntimeObservationValue::Bag(entries) => {
-            let mut flat: Vec<(RuntimeObservationValue, usize)> =
-                Vec::with_capacity(entries.len());
+            let mut flat: Vec<(RuntimeObservationValue, usize)> = Vec::with_capacity(entries.len());
             for (element, count) in entries {
                 let element = flatten_observation_value(element);
                 for _ in 0..*count {
@@ -1322,11 +978,9 @@ pub fn flatten_observation_value(value: &RuntimeObservationValue) -> RuntimeObse
             }
             RuntimeObservationValue::Bag(flat)
         },
-        RuntimeObservationValue::Term { constructor, children } => {
-            RuntimeObservationValue::Term {
-                constructor: constructor.clone(),
-                children: children.iter().map(flatten_observation_value).collect(),
-            }
+        RuntimeObservationValue::Term { constructor, children } => RuntimeObservationValue::Term {
+            constructor: constructor.clone(),
+            children: children.iter().map(flatten_observation_value).collect(),
         },
         other => other.clone(),
     }
@@ -1381,11 +1035,14 @@ impl DriveNfScan {
             DriveNfScan::BinderApply { apply_label } => {
                 binder_apply_redex_present(apply_label, &canonical)
             },
-            DriveNfScan::GuardedAcMobilityTrio { amb_label, in_label, out_label, open_label } => {
-                guarded_ac_trio_redex_present(
-                    amb_label, in_label, out_label, open_label, &canonical,
-                )
-            },
+            DriveNfScan::GuardedAcMobilityTrio {
+                amb_label,
+                in_label,
+                out_label,
+                open_label,
+            } => guarded_ac_trio_redex_present(
+                amb_label, in_label, out_label, open_label, &canonical,
+            ),
         }
     }
 }
@@ -1393,7 +1050,9 @@ impl DriveNfScan {
 /// The bag elements of a decoded value, multiplicity-expanded, or `None` when the value
 /// is not a bag.
 #[cfg(feature = "runtime-report")]
-fn observation_bag_elements(value: &RuntimeObservationValue) -> Option<Vec<&RuntimeObservationValue>> {
+fn observation_bag_elements(
+    value: &RuntimeObservationValue,
+) -> Option<Vec<&RuntimeObservationValue>> {
     match value {
         RuntimeObservationValue::Bag(entries) => {
             let mut elements = Vec::with_capacity(entries.len());
@@ -1479,8 +1138,7 @@ fn guarded_ac_trio_redex_present(
                 })
             };
             // (Open): open(n, _) beside n[_].
-            if constructor == open_label && children.len() == 2 && sibling_amb_named(&children[0])
-            {
+            if constructor == open_label && children.len() == 2 && sibling_amb_named(&children[0]) {
                 return true;
             }
             // (In): n[{in(m, _), …}] beside m[_].

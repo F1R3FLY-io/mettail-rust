@@ -295,9 +295,7 @@ enum Resource {
 fn resources(rendezvous: &Rendezvous) -> BTreeSet<Resource> {
     let mut set = BTreeSet::new();
     if !rendezvous.continuation.persist {
-        set.insert(Resource::Continuation(
-            rendezvous.continuation.source.hash.clone(),
-        ));
+        set.insert(Resource::Continuation(rendezvous.continuation.source.hash.clone()));
     }
     for candidate in rendezvous.data_candidates.iter() {
         // ⚠ A PEEK removes its datum too — `store_persistent_data` ignores its
@@ -485,6 +483,44 @@ impl ErrorCode {
     /// The wire value — what the `failure` leaf's first element carries.
     pub fn as_i64(self) -> i64 {
         self as i64
+    }
+
+    /// The human name of this code.
+    ///
+    /// **Append-only, for the same reason the discriminants are.** A reader who sees `8` in a
+    /// `failure` entry on chain and `8` in an interpreter transcript has to be able to join
+    /// them, and a second naming table living in some binary is a second place to drift. The
+    /// names live here, beside the numbers they name.
+    pub fn label(self) -> &'static str {
+        match self {
+            ErrorCode::OutOfPhlogistons => "out of phlogistons",
+            ErrorCode::UserAbort => "user abort",
+            ErrorCode::Interpreter => "interpreter",
+            ErrorCode::Tuplespace => "tuplespace",
+            ErrorCode::NotFired => "rendezvous not fired",
+            ErrorCode::Bootstrap => "sandbox bootstrap",
+            ErrorCode::GuestEvaluatorRefused => "guest evaluator: refused the head",
+            ErrorCode::GuestEvaluatorExhausted => "guest evaluator: out of fuel",
+        }
+    }
+
+    /// The [`ErrorCode`] a wire value denotes, or `None` for an unrecognized one.
+    ///
+    /// Fallible on purpose: the discriminants are append-only, so a reader may legitimately
+    /// meet a code from a newer writer. Reporting *"code 9"* verbatim is correct; guessing a
+    /// name for it is not.
+    pub fn from_i64(value: i64) -> Option<Self> {
+        match value {
+            1 => Some(ErrorCode::OutOfPhlogistons),
+            2 => Some(ErrorCode::UserAbort),
+            3 => Some(ErrorCode::Interpreter),
+            4 => Some(ErrorCode::Tuplespace),
+            5 => Some(ErrorCode::NotFired),
+            6 => Some(ErrorCode::Bootstrap),
+            7 => Some(ErrorCode::GuestEvaluatorRefused),
+            8 => Some(ErrorCode::GuestEvaluatorExhausted),
+            _ => None,
+        }
     }
 
     /// Classify a [`SpeculationError`]. Total by construction: every variant of
@@ -816,11 +852,7 @@ impl<'sandbox> Explorer<'sandbox> {
 
     /// An explorer over `sandbox` in `mode`.
     pub fn with_mode(sandbox: &'sandbox SpeculativeSandbox, mode: TraceMode) -> Self {
-        Explorer {
-            sandbox,
-            mode,
-            observer: None,
-        }
+        Explorer { sandbox, mode, observer: None }
     }
 
     /// Attach a per-level progress observer. See [`LevelReport`], and the `Send` note on
@@ -1027,10 +1059,7 @@ impl<'sandbox> Explorer<'sandbox> {
 
                 if enabled.is_empty() {
                     report.quiescent += 1;
-                    success.push(QuiescentLeaf {
-                        trace: node.trace,
-                        state: node.state,
-                    });
+                    success.push(QuiescentLeaf { trace: node.trace, state: node.state });
                     continue;
                 }
 
@@ -1108,10 +1137,8 @@ impl<'sandbox> Explorer<'sandbox> {
                     if live.len() != planned.len()
                         || RendezvousName::of(&live[index]) != *planned_name
                     {
-                        failure.push(AbortedLeaf::of(
-                            node.trace.clone(),
-                            &SpeculationError::NotFired,
-                        ));
+                        failure
+                            .push(AbortedLeaf::of(node.trace.clone(), &SpeculationError::NotFired));
                         continue;
                     }
 
@@ -1197,10 +1224,7 @@ impl<'sandbox> Explorer<'sandbox> {
             stats.nodes_expanded += 1;
             stats.max_out_degree = stats.max_out_degree.max(frontier_size);
             match frontier_size {
-                0 => success.push(QuiescentLeaf {
-                    trace: node.trace,
-                    state: node.state,
-                }),
+                0 => success.push(QuiescentLeaf { trace: node.trace, state: node.state }),
                 _ => truncated.push(TruncatedLeaf {
                     branch: ResumableBranch {
                         state: node.state,
@@ -1212,12 +1236,6 @@ impl<'sandbox> Explorer<'sandbox> {
         }
 
         stats.consumed = self.sandbox.consumed();
-        Ok(Exploration {
-            success,
-            truncated,
-            failure,
-            root,
-            stats,
-        })
+        Ok(Exploration { success, truncated, failure, root, stats })
     }
 }

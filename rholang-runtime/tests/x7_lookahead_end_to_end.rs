@@ -47,12 +47,14 @@ use mettail_rholang_runtime::lookahead::{
     SPEC_ALL_CHANNEL, SPEC_DELIVERY_CHANNEL, SPEC_ERR_CHANNEL, SPEC_FAILURE_CHANNEL,
     SPEC_N_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL,
 };
+use mettail_rholang_codegen::drive_fuel_channel;
+use mettail_rholang_runtime::speculation::search::ErrorCode;
 use mettail_rholang_runtime::speculation::server::{LookaheadEngine, SpeculationGuest};
 use mettail_rholang_runtime::{
     lower_rhocalc_proc_with_resolver, par_as_runtime_observation_value,
     run_normalized_par_with_lookahead_engine, PlannedRhoBackend,
 };
-use mettail_runtime::{clear_var_cache, Language};
+use mettail_runtime::{clear_var_cache, Language, RuntimeObservationValue};
 use models::rhoapi::Par;
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -64,7 +66,8 @@ const PLUS_TWO_THREE: &str = "lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n,
                               lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`";
 
 /// `mult ≡ λm.λn.λf. m (n f)` applied to the Church numerals 2 and 3.
-const MULT_TWO_THREE: &str = "lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), \
+const MULT_TWO_THREE: &str =
+    "lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), \
                               lam f. lam x. (f, (f, (f, x))))`";
 
 /// `Ω ≡ (λx. x x) (λx. x x)` — one β step takes it to itself, forever.
@@ -492,13 +495,10 @@ async fn installing_the_server_changes_nothing_a_lookahead_free_program_observes
 
     for (label, source) in corpus {
         let program = lower(&source);
-        let with_server = run_normalized_par_with_lookahead_engine(
-            &program,
-            &lambda_engine(),
-            &["OUT", "r"],
-        )
-        .await
-        .expect("the program runs with the request server installed");
+        let with_server =
+            run_normalized_par_with_lookahead_engine(&program, &lambda_engine(), &["OUT", "r"])
+                .await
+                .expect("the program runs with the request server installed");
         let without_server =
             mettail_rholang_runtime::run_normalized_par_for_oracle_and_read_par_channels(
                 &program,
@@ -549,10 +549,117 @@ async fn omega_reports_the_guest_evaluator_giving_up() {
         !failures.is_empty(),
         "★ the guest evaluator gave up and must SAY SO on {SPEC_FAILURE_CHANNEL}"
     );
-    let rendered = format!("{:?}", failures[0]);
-    eprintln!("[X7] Ω failure datum: {}", &rendered[..rendered.len().min(240)]);
-    assert!(
-        rendered.contains("^drive-fuel"),
-        "the failure must name the guest channel the driver rested on: {rendered}"
+
+    // ── the FIPS shape, asserted STRUCTURALLY rather than by substring ──────────────────────
+    //
+    // The old cell did `format!("{:?}", failures[0]).contains("^drive-fuel")`. That passed
+    // against a 14 KB prost `Debug` dump and would pass against almost anything else, so it
+    // could not distinguish "reports legibly" from "reports at all". It also read the datum
+    // through the derived `Debug`, which is what the message itself used to embed.
+    let decoded = par_as_runtime_observation_value(&failures[0])
+        .expect("a failure datum is a ground `[trace…, [code, message]]` list");
+    let RuntimeObservationValue::List(entry) = &decoded else {
+        panic!("the FIPS failure entry is a list, got {decoded:?}");
+    };
+    let [RuntimeObservationValue::Bytes(handle), RuntimeObservationValue::List(leaf)] =
+        entry.as_slice()
+    else {
+        panic!("a guest-evaluator failure is `[trace_digest, [code, message]]`, got {entry:?}");
+    };
+    assert_eq!(handle.len(), 32, "the trace handle is a Blake2b256 digest");
+    let [RuntimeObservationValue::Int(code), RuntimeObservationValue::Text(message)] =
+        leaf.as_slice()
+    else {
+        panic!("the leaf is the FIPS two-element `[code, message]`, got {leaf:?}");
+    };
+    eprintln!("[X7] Ω failure: code {code} · {message}");
+
+    assert_eq!(
+        *code,
+        ErrorCode::GuestEvaluatorExhausted.as_i64(),
+        "★ Ω is 'I stopped before finishing', not 'I could not reduce this' — those are \
+         different facts and the codes must keep them apart"
     );
+
+    // Full equality, with the channel DERIVED from the fingerprint the harness already has, so
+    // the assertion is exact without churning when the λ definition changes.
+    let (_, fingerprint) = lambda_backend();
+    assert_eq!(
+        message.as_str(),
+        format!(
+            "the guest evaluator rested on {}: the stuck redex is ⟦App(λ.App(0, 0), λ.App(0, 0))⟧",
+            drive_fuel_channel(&fingerprint)
+        ),
+        "the message must name the channel AND render the stuck redex in the neutral notation"
+    );
+
+    // ── the CLASS assertions: these hold whatever the message says ──────────────────────────
+    //
+    // ★ Any reintroduced prost dump fails both, regardless of its content. The message rides in
+    // a datum this server `produce`s onto the live tuplespace, so it is part of the post-deploy
+    // state; a derive-dependent, unbounded serialization there is a replay hazard, not an
+    // aesthetic one. See `crate::observation`'s module header.
+    assert!(
+        message.chars().count() < 256,
+        "a consensus-visible message must be bounded; got {} chars",
+        message.chars().count()
+    );
+    for marker in ["expr_instance", "EListBody", "unforgeables", "connective_used", "locally_free"]
+    {
+        assert!(
+            !message.contains(marker),
+            "★ {marker:?} in the message means a prost `Debug` dump got back in: {message}"
+        );
+    }
+}
+
+/// ★ A malformed `[n]` request is refused **legibly**, and its operand is not dumped.
+///
+/// The surface's `lookahead_bound` restricts `[n]` to a ground non-negative literal, so this
+/// shape is unreachable *from RhoCalc source*. But `^spec-n` is an ordinary Rholang channel
+/// served by an installed system process: any program can write `@"^spec-n"!(P, ⟨anything⟩, x)`
+/// and reach `parse_request` directly. The refusal is published on `^spec-err`, i.e. it is a
+/// datum, i.e. it is consensus-visible — and its operand is attacker-chosen and unbounded.
+///
+/// This is the second instance of the same defect class as
+/// [`omega_reports_the_guest_evaluator_giving_up`]'s message, and it is here so the class is
+/// demonstrably closed rather than one line of it.
+#[tokio::test]
+async fn a_malformed_bounded_request_is_refused_without_dumping_its_operand() {
+    let rest = run(&format!(r#"@"^spec-n"!({OMEGA}, {OMEGA}, @"results")"#)).await;
+    let errors = on(&rest, SPEC_ERR_CHANNEL);
+    assert!(!errors.is_empty(), "a malformed request must be refused, not ignored");
+
+    let decoded = par_as_runtime_observation_value(&errors[0])
+        .expect("a request-level refusal is a ground `[code, message]` list");
+    let RuntimeObservationValue::List(leaf) = &decoded else {
+        panic!("the refusal is a list, got {decoded:?}");
+    };
+    let [RuntimeObservationValue::Int(_), RuntimeObservationValue::Text(message)] =
+        leaf.as_slice()
+    else {
+        panic!("the refusal is `[code, message]`, got {leaf:?}");
+    };
+    eprintln!("[X7] malformed `[n]` bound: {message}");
+
+    assert!(
+        message.contains("ground integer"),
+        "the refusal must say what was wrong: {message}"
+    );
+    assert!(
+        message.contains('⟦') || message.contains('⟨'),
+        "the refusal must render the offending operand, not omit it: {message}"
+    );
+    assert!(
+        message.chars().count() < 256,
+        "an attacker-chosen operand must not become an unbounded consensus-visible string; \
+         got {} chars",
+        message.chars().count()
+    );
+    for marker in ["expr_instance", "EListBody", "unforgeables"] {
+        assert!(
+            !message.contains(marker),
+            "★ {marker:?} means the operand was dumped through prost `Debug`: {message}"
+        );
+    }
 }
