@@ -60,36 +60,36 @@
 // `mettail_languages::<lang>`. This file does NOT invoke any `<lang>_generated_tests!`
 // wrapper; each definition's DESIGNATED HOST binary (`languages/tests/<lang>.rs`) is the
 // sole invoker, so the generated suites exist exactly once across the whole suite.
-#[path = "definitions/nativefolddemo.rs"]
-mod nativefolddemo;
-#[path = "definitions/appsubst.rs"]
-mod appsubst;
-#[path = "definitions/guarded_rho.rs"]
-mod guardedrho;
-#[path = "definitions/swapdemo.rs"]
-mod swapdemo;
-#[path = "definitions/ctxdemo.rs"]
-mod ctxdemo;
-#[path = "definitions/bicongdemo.rs"]
-mod bicongdemo;
-#[path = "definitions/acdemo.rs"]
-mod acdemo;
 #[path = "definitions/acbagdemo.rs"]
 mod acbagdemo;
-#[path = "definitions/nlacdemo.rs"]
-mod nlacdemo;
-#[path = "definitions/commdemo.rs"]
-mod commdemo;
-#[path = "definitions/lambdademo.rs"]
-mod lambdademo;
-#[path = "definitions/nativedemo.rs"]
-mod nativedemo;
+#[path = "definitions/acdemo.rs"]
+mod acdemo;
 #[path = "definitions/ambdemo.rs"]
 mod ambdemo;
 #[path = "definitions/ambnewdemo.rs"]
 mod ambnewdemo;
+#[path = "definitions/appsubst.rs"]
+mod appsubst;
+#[path = "definitions/bicongdemo.rs"]
+mod bicongdemo;
+#[path = "definitions/commdemo.rs"]
+mod commdemo;
+#[path = "definitions/ctxdemo.rs"]
+mod ctxdemo;
+#[path = "definitions/guarded_rho.rs"]
+mod guardedrho;
 #[path = "definitions/inoutdemo.rs"]
 mod inoutdemo;
+#[path = "definitions/lambdademo.rs"]
+mod lambdademo;
+#[path = "definitions/nativedemo.rs"]
+mod nativedemo;
+#[path = "definitions/nativefolddemo.rs"]
+mod nativefolddemo;
+#[path = "definitions/nlacdemo.rs"]
+mod nlacdemo;
+#[path = "definitions/swapdemo.rs"]
+mod swapdemo;
 
 use dovetail::rules::Pattern;
 use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton, SetAutomatonView, StateId};
@@ -125,8 +125,7 @@ fn metrics_for(source: &str) -> (usize, usize, usize) {
 /// `pin` (the measured `state_count`, used as an upper bound so only BLOAT fails; a
 /// legitimate shrink from better sharing still passes).
 fn assert_size_optimal(label: &str, source: Option<&str>, pin: usize) {
-    let source =
-        source.unwrap_or_else(|| panic!("{label}: language exposes no definition_source"));
+    let source = source.unwrap_or_else(|| panic!("{label}: language exposes no definition_source"));
     let (entries, states, raw_nodes) = metrics_for(source);
 
     // (a) The interning O1/O3 quotient never grows the DAG beyond the raw pattern nodes.
@@ -262,10 +261,8 @@ fn spine_wide_and_multipattern_state_count_is_linear() {
         assert_eq!(single_pattern_states(spine), n + 1, "spine depth {n} must intern to n+1");
 
         // Wide `f(x0, ..., x_{n-1})` → 1 App + n distinct Vars = n+1.
-        let wide = Pattern::app(
-            "f".to_string(),
-            (0..n).map(|i| Pattern::var(format!("x{i}"))).collect(),
-        );
+        let wide =
+            Pattern::app("f".to_string(), (0..n).map(|i| Pattern::var(format!("x{i}"))).collect());
         assert_eq!(single_pattern_states(wide), n + 1, "wide arity {n} must intern to n+1");
 
         // n distinct flat binary patterns f_i(x, y) sharing var names → n Apps + 2 Vars = n+2.
@@ -277,6 +274,10 @@ fn spine_wide_and_multipattern_state_count_is_linear() {
                 )
             })
             .collect();
-        assert_eq!(multi_pattern_states(flat), n + 2, "n={n} distinct flat patterns must intern to n+2");
+        assert_eq!(
+            multi_pattern_states(flat),
+            n + 2,
+            "n={n} distinct flat patterns must intern to n+2"
+        );
     }
 }

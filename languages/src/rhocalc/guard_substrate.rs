@@ -123,9 +123,16 @@ impl GuardEncoding {
 /// Total: every `Proc` gets an encoding. A shape outside the covered fragment becomes an opaque
 /// atom rather than a wrong answer — the encoder never guesses.
 pub fn encode_guard(cond: &Proc) -> GuardEncoding {
-    let mut encoder = Encoder { vars: GuardVarMap::new(), opaque: Vec::new() };
+    let mut encoder = Encoder {
+        vars: GuardVarMap::new(),
+        opaque: Vec::new(),
+    };
     let formula = encoder.formula(cond);
-    GuardEncoding { formula, vars: encoder.vars, opaque: encoder.opaque }
+    GuardEncoding {
+        formula,
+        vars: encoder.vars,
+        opaque: encoder.opaque,
+    }
 }
 
 /// Encode a `where` guard whose binders are already known, so the substrate indices agree with
@@ -137,7 +144,11 @@ pub fn encode_guard_with_binders(cond: &Proc, binders: &[String]) -> GuardEncodi
     }
     let mut encoder = Encoder { vars, opaque: Vec::new() };
     let formula = encoder.formula(cond);
-    GuardEncoding { formula, vars: encoder.vars, opaque: encoder.opaque }
+    GuardEncoding {
+        formula,
+        vars: encoder.vars,
+        opaque: encoder.opaque,
+    }
 }
 
 struct Encoder {
@@ -360,11 +371,9 @@ impl Encoder {
                 _ => Operand::Uncovered,
             },
             Proc::CastFloat(v) => match v.as_ref() {
-                Float::FloatLit(f) => {
-                    Operand::Lit(GuardValue::Float(mettail_prattail::ordered_field::OrderedF64(
-                        f.get(),
-                    )))
-                },
+                Float::FloatLit(f) => Operand::Lit(GuardValue::Float(
+                    mettail_prattail::ordered_field::OrderedF64(f.get()),
+                )),
                 #[allow(unreachable_patterns)]
                 _ => Operand::Uncovered,
             },
@@ -567,9 +576,9 @@ impl GuardAtomResolver<'_> {
                 _ => Sat3::DontKnow,
             },
             // Outside every theory on the guard path. Fails closed.
-            GuardAtomKind::NonLinear
-            | GuardAtomKind::ProcessShaped
-            | GuardAtomKind::Uncovered => Sat3::DontKnow,
+            GuardAtomKind::NonLinear | GuardAtomKind::ProcessShaped | GuardAtomKind::Uncovered => {
+                Sat3::DontKnow
+            },
         }
     }
 }
@@ -611,15 +620,15 @@ pub fn eval_guard_disposition_via_substrate(cond: &Proc) -> GuardDisposition {
         Sat3::Unsat => GuardDisposition::Blocks,
         // The policy point's answer, spelled out at the site so a future change to
         // `dont_know_policy` is visible here rather than silent.
-        Sat3::DontKnow => match mettail_prattail::guard_formula::dont_know_policy(
-            GuardSiteKind::ReceiveWhere,
-        ) {
-            mettail_prattail::guard_formula::DontKnowPolicy::FailClosedBlock => {
-                GuardDisposition::Declines
-            },
-            mettail_prattail::guard_formula::DontKnowPolicy::FailOpenFire => {
-                GuardDisposition::Fires
-            },
+        Sat3::DontKnow => {
+            match mettail_prattail::guard_formula::dont_know_policy(GuardSiteKind::ReceiveWhere) {
+                mettail_prattail::guard_formula::DontKnowPolicy::FailClosedBlock => {
+                    GuardDisposition::Declines
+                },
+                mettail_prattail::guard_formula::DontKnowPolicy::FailOpenFire => {
+                    GuardDisposition::Fires
+                },
+            }
         },
     }
 }
@@ -752,10 +761,7 @@ mod tests {
         let encoding = encode_guard(&Proc::PZero);
         assert!(!encoding.reaches_substrate());
         assert_eq!(encoding.formula.atoms()[0].kind, GuardAtomKind::ProcessShaped);
-        assert_eq!(
-            eval_guard_disposition_via_substrate(&Proc::PZero),
-            GuardDisposition::Declines
-        );
+        assert_eq!(eval_guard_disposition_via_substrate(&Proc::PZero), GuardDisposition::Declines);
     }
 
     #[test]
@@ -774,21 +780,12 @@ mod tests {
     #[test]
     fn ground_division_and_modulo_fold_exactly() {
         let guard = Proc::Eq(arc(Proc::Div(arc(int(7)), arc(int(2)))), arc(int(3)));
-        assert_eq!(
-            eval_guard_disposition_via_substrate(&guard),
-            GuardDisposition::Fires
-        );
+        assert_eq!(eval_guard_disposition_via_substrate(&guard), GuardDisposition::Fires);
         let modulo = Proc::Eq(arc(Proc::Mod(arc(int(7)), arc(int(2)))), arc(int(1)));
-        assert_eq!(
-            eval_guard_disposition_via_substrate(&modulo),
-            GuardDisposition::Fires
-        );
+        assert_eq!(eval_guard_disposition_via_substrate(&modulo), GuardDisposition::Fires);
         // Division by zero is refused, not panicked or wrapped.
         let by_zero = Proc::Eq(arc(Proc::Div(arc(int(7)), arc(int(0)))), arc(int(0)));
-        assert_eq!(
-            eval_guard_disposition_via_substrate(&by_zero),
-            GuardDisposition::Declines
-        );
+        assert_eq!(eval_guard_disposition_via_substrate(&by_zero), GuardDisposition::Declines);
     }
 
     #[test]
@@ -808,10 +805,7 @@ mod tests {
             Sat3::DontKnow
         );
         // ...but the delegated structural leg can.
-        assert_eq!(
-            eval_guard_disposition_via_substrate(&guard),
-            GuardDisposition::Fires
-        );
+        assert_eq!(eval_guard_disposition_via_substrate(&guard), GuardDisposition::Fires);
     }
 
     // ── The ground leg decides substituted guards ───────────────────────────
@@ -851,14 +845,8 @@ mod tests {
 
     #[test]
     fn the_constants_decide_immediately() {
-        assert_eq!(
-            eval_guard_disposition_via_substrate(&boolean(true)),
-            GuardDisposition::Fires
-        );
-        assert_eq!(
-            eval_guard_disposition_via_substrate(&boolean(false)),
-            GuardDisposition::Blocks
-        );
+        assert_eq!(eval_guard_disposition_via_substrate(&boolean(true)), GuardDisposition::Fires);
+        assert_eq!(eval_guard_disposition_via_substrate(&boolean(false)), GuardDisposition::Blocks);
     }
 
     #[test]
@@ -876,10 +864,7 @@ mod tests {
     fn an_open_tautology_is_statically_valid_which_the_previous_leg_could_not_do() {
         // x < x + 1 — mentions a binder, so `rho_pure_eval` declines it outright.
         let guard = Proc::Lt(arc(var("x")), arc(Proc::Add(arc(var("x")), arc(int(1)))));
-        assert!(matches!(
-            encode_guard(&guard).static_verdict(),
-            StaticVerdict::Valid(_)
-        ));
+        assert!(matches!(encode_guard(&guard).static_verdict(), StaticVerdict::Valid(_)));
     }
 
     #[test]
@@ -888,19 +873,13 @@ mod tests {
             arc(Proc::Eq(arc(var("x")), arc(int(1)))),
             arc(Proc::Eq(arc(var("x")), arc(int(2)))),
         );
-        assert!(matches!(
-            encode_guard(&guard).static_verdict(),
-            StaticVerdict::Unsatisfiable(_)
-        ));
+        assert!(matches!(encode_guard(&guard).static_verdict(), StaticVerdict::Unsatisfiable(_)));
     }
 
     #[test]
     fn a_payload_dependent_guard_is_contingent_and_therefore_a_run_time_question() {
         let guard = Proc::Eq(arc(var("x")), arc(int(42)));
-        assert!(matches!(
-            encode_guard(&guard).static_verdict(),
-            StaticVerdict::Contingent(_)
-        ));
+        assert!(matches!(encode_guard(&guard).static_verdict(), StaticVerdict::Contingent(_)));
     }
 
     #[test]

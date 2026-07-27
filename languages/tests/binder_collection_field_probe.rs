@@ -43,10 +43,7 @@ fn parse(input: &str) -> Proc {
 fn different_tag_counts_still_do_not_match() {
     let ground = parse("with [ 0 ] ( ) . { 0 }");
     let pattern = parse("with [ 0 ; 0 ] ( ) . { 0 }");
-    assert!(
-        ground.match_pattern(&pattern).is_none(),
-        "different tag counts must not match"
-    );
+    assert!(ground.match_pattern(&pattern).is_none(), "different tag counts must not match");
 }
 
 /// ★ Same length, different CONTENT — the case length-only could not see.
@@ -77,8 +74,5 @@ fn same_length_different_content_must_not_match() {
 fn identical_tagged_inputs_still_match() {
     let ground = parse("with [ 0 ; 0 ] ( ) . { 0 }");
     let pattern = parse("with [ 0 ; 0 ] ( ) . { 0 }");
-    assert!(
-        ground.match_pattern(&pattern).is_some(),
-        "identical terms must still match"
-    );
+    assert!(ground.match_pattern(&pattern).is_some(), "identical terms must still match");
 }

@@ -288,7 +288,10 @@ fn pi_metadata_carries_every_doc_clause() {
         meta.equations().len(),
         3,
         "the omnibus presents three equations (NewComm, ScopeExt, RepUnfold); got {:?}",
-        meta.equations().iter().map(|e| (e.lhs, e.rhs)).collect::<Vec<_>>()
+        meta.equations()
+            .iter()
+            .map(|e| (e.lhs, e.rhs))
+            .collect::<Vec<_>>()
     );
     // ScopeExt is the freshness-premised one.
     assert!(
@@ -301,7 +304,10 @@ fn pi_metadata_carries_every_doc_clause() {
     }
     // ParCong / NewCong are the premised (congruence) rules.
     assert_eq!(
-        meta.rewrites().iter().filter(|r| r.premise.is_some()).count(),
+        meta.rewrites()
+            .iter()
+            .filter(|r| r.premise.is_some())
+            .count(),
         2,
         "ParCong and NewCong are premised congruence rules"
     );

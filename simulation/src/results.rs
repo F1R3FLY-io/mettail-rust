@@ -68,8 +68,7 @@ impl CampaignResults {
         self.total_cases += 1;
         self.failed += 1;
         if let TraceOutcome::LtlViolation { formula, message, .. } = &failure.trace.outcome {
-            self.ltl_violations
-                .push((formula.clone(), message.clone()));
+            self.ltl_violations.push((formula.clone(), message.clone()));
         }
         self.failures.push(failure);
     }

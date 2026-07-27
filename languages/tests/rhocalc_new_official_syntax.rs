@@ -86,8 +86,12 @@ fn official_paren_free_decl_list_parses_at_every_arity() {
 fn whitespace_around_the_decl_list_is_free() {
     // The list is delimited by the `new` keyword and the `in` keyword only —
     // there is no grouping bracket left to anchor on.
-    for src in ["new x in { Nil }", "new  x  in  { Nil }", "new x,y in { Nil }", "new x ,  y in { Nil }"]
-    {
+    for src in [
+        "new x in { Nil }",
+        "new  x  in  { Nil }",
+        "new x,y in { Nil }",
+        "new x ,  y in { Nil }",
+    ] {
         assert!(matches!(parse(src), Proc::PNew(_)), "`{src}` must be a PNew");
     }
 }

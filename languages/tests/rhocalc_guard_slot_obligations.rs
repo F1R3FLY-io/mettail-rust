@@ -63,8 +63,10 @@ fn both_where_surfaces_induce_a_behavioral_predicate_obligation() {
         // Compared field-wise rather than through the constructor: `RhoGuardObligation::new` is
         // private, and a test needing a value is not a reason to widen a crate's API surface.
         assert!(
-            obligations.iter().any(|o| o.id == expected_id
-                && o.kind == RhoGuardObligationKind::BehavioralPredicate),
+            obligations
+                .iter()
+                .any(|o| o.id == expected_id
+                    && o.kind == RhoGuardObligationKind::BehavioralPredicate),
             "expected obligation `{expected_id}` (BehavioralPredicate); RhoCalc's `where` slot \
              is a semantic predicate and must induce one. Got: {:?}",
             obligations

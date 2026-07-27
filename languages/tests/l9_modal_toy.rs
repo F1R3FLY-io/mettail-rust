@@ -154,12 +154,20 @@ fn l9_capture_carries_text_through_normalize_and_subst() {
     mettail_runtime::clear_var_cache();
     let term = Num::parse("tag <abc>").expect("parse");
     let normalized = term.clone().normalize();
-    assert_eq!(normalized.eval(), term.eval(), "normalize must preserve the captured-text-derived value");
+    assert_eq!(
+        normalized.eval(),
+        term.eval(),
+        "normalize must preserve the captured-text-derived value"
+    );
     // Pure substitution (no fold) over an empty env is IDENTITY on a token-text
     // leaf — the String has no free variables to replace and must not be
     // descended into.
     let env = L9ModalToyEnv::new();
-    assert_eq!(term.substitute_env_no_normalize(&env), term, "subst must carry the String leaf unchanged");
+    assert_eq!(
+        term.substitute_env_no_normalize(&env),
+        term,
+        "subst must carry the String leaf unchanged"
+    );
 }
 
 #[test]

@@ -213,7 +213,8 @@ fn the_facade_no_longer_manufactures_a_precedence_violating_reading() {
         );
         // …and the readings the grammar DOES license are all still there.
         assert!(
-            alts.iter().any(|t| t.starts_with("Add(") || t.starts_with("Mul(")),
+            alts.iter()
+                .any(|t| t.starts_with("Add(") || t.starts_with("Mul(")),
             "the operator-rooted readings must survive: {alts:?}"
         );
     }

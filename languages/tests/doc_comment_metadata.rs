@@ -21,8 +21,8 @@
 // Task #11: OptSmoke is test-hosted (see tests/definitions/optsmoke.rs).
 #[path = "definitions/optsmoke.rs"]
 mod optsmoke;
-use optsmoke::*;
 use mettail_runtime::{Language, LanguageMetadata};
+use optsmoke::*;
 
 #[test]
 fn optsmoke_ifelse_description_round_trips() {

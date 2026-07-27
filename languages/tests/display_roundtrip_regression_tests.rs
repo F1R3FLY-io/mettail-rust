@@ -17,10 +17,10 @@ mod class2multi;
 mod class3multi;
 #[path = "definitions/class3opt.rs"]
 mod class3opt;
-#[path = "definitions/led_test.rs"]
-mod ledtest;
 #[path = "definitions/guarded_rho.rs"]
 mod guardedrho;
+#[path = "definitions/led_test.rs"]
+mod ledtest;
 
 macro_rules! assert_wpda_display_roundtrip {
     ($ty:ty, $term:expr) => {{

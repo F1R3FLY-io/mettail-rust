@@ -40,10 +40,12 @@ fn to_term(p: &Proc) -> RhoCalcTerm {
 }
 
 fn proc_from_term(term: &dyn mettail_runtime::Term) -> Option<Proc> {
-    term.as_any().downcast_ref::<RhoCalcTerm>().and_then(|t| match &t.0 {
-        RhoCalcTermInner::Proc(p) => Some(p.clone()),
-        _ => None,
-    })
+    term.as_any()
+        .downcast_ref::<RhoCalcTerm>()
+        .and_then(|t| match &t.0 {
+            RhoCalcTermInner::Proc(p) => Some(p.clone()),
+            _ => None,
+        })
 }
 
 /// Normalize `bool(<literal>)` through the real Dovetail fold engine.

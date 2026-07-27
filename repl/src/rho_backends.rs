@@ -743,9 +743,9 @@ mod rho {
             Err(_gate_or_scope_reject) => {
                 let injections =
                     AmbientLanguage::rho_net_replay_invocation_from_dovetail_to(term, report, OUT)?;
-                Ok(RhoBackendInvocation::from(
-                    build_rho_net_replay_invocation_from_contracts(injections),
-                ))
+                Ok(RhoBackendInvocation::from(build_rho_net_replay_invocation_from_contracts(
+                    injections,
+                )))
             },
         }
     }

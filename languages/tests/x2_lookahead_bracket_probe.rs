@@ -260,11 +260,7 @@ fn t0b_teeth_the_reading_counter_reports_zero_for_a_rejected_string() {
     mettail_runtime::clear_var_cache();
     let rejected = readings!(x2look::Proc, "x!(Nil)[");
     report("TEETH0", "x!(Nil)[", &rejected);
-    assert_eq!(
-        rejected.len(),
-        0,
-        "an unterminated bracket must not parse; got {rejected:?}"
-    );
+    assert_eq!(rejected.len(), 0, "an unterminated bracket must not parse; got {rejected:?}");
 }
 
 // ── T1: the whole corpus under the TREATMENT language ──────────────────────
@@ -294,7 +290,7 @@ const CORPUS: &[&str] = &[
 /// Strings the grammar must REJECT. A surface that accepts these would be
 /// offering `[*]` where the design says there is nothing to attach it to.
 const REJECTED: &[&str] = &[
-    "[*]",     // no preceding Proc — a bare `[*]` is not a list and not a lookahead
+    "[*]", // no preceding Proc — a bare `[*]` is not a list and not a lookahead
     "x!(Nil)[*",
     "x!(Nil)*]",
 ];
@@ -363,10 +359,7 @@ fn t2_bracket_star_is_plookaheadall_not_plookahead_of_a_deref() {
         only.contains("PLookaheadAll"),
         "`x!(Nil)[*]` must read as PLookaheadAll, got: {only}"
     );
-    assert!(
-        only.contains("POutput"),
-        "`x!(Nil)[*]` must wrap the POutput, got: {only}"
-    );
+    assert!(only.contains("POutput"), "`x!(Nil)[*]` must wrap the POutput, got: {only}");
     // ★ THE HAZARD: `PLookahead` with `n = *…` must NOT be offered. `PDrop`
     // needs a Name after `*`; there is none before `]`.
     assert!(
@@ -397,10 +390,7 @@ fn t2c_a_bare_list_literal_is_still_a_list() {
         report("LOOK", input, &set);
         assert_eq!(set.len(), 1, "`{input}` must have exactly one reading: {set:?}");
         let only = set.iter().next().expect("checked len == 1");
-        assert!(
-            only.contains("CastList"),
-            "`{input}` must still be a list literal, got: {only}"
-        );
+        assert!(only.contains("CastList"), "`{input}` must still be a list literal, got: {only}");
         assert!(
             !only.contains("PLookahead"),
             "`{input}` must not be read as a lookahead, got: {only}"
@@ -441,11 +431,7 @@ fn t3_no_previously_accepted_string_changes_meaning() {
     for input in LEGACY {
         let base = readings!(x2base::Proc, input);
         let look = readings!(x2look::Proc, input);
-        println!(
-            "  LEGACY   {input:24} base={} look={}",
-            base.len(),
-            look.len()
-        );
+        println!("  LEGACY   {input:24} base={} look={}", base.len(), look.len());
         if base.is_empty() {
             drift.push(format!("{input:?} does not parse in the CONTROL language"));
             continue;

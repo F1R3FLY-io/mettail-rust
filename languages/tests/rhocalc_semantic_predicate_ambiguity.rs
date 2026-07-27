@@ -254,7 +254,6 @@ fn a_chained_implies_elects_the_right_associative_reading() {
     }
 }
 
-
 #[test]
 fn implies_parses_deterministically_across_repeated_parses() {
     // Determinism of the ELECTION, not just of the count: a weight tie broken by
@@ -436,7 +435,9 @@ fn normalize_var_ids(debug: &str) -> String {
         out.push_str(MARK);
         out.push('_');
         rest = &rest[idx + MARK.len()..];
-        let after_digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let after_digits = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
         rest = &rest[after_digits..];
     }
     out.push_str(rest);

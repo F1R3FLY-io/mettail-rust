@@ -129,15 +129,11 @@ fn f1_subject_floats_and_exposes_the_in_redex_structure() {
     let x = FreeVar::fresh(Some("x".to_string()));
     let n = FreeVar::fresh(Some("n".to_string()));
     let m = FreeVar::fresh(Some("m".to_string()));
-    let name =
-        |v: &FreeVar<String>| Arc::new(Name::NVar(OrdVar(Var::Free(v.clone()))));
+    let name = |v: &FreeVar<String>| Arc::new(Name::NVar(OrdVar(Var::Free(v.clone()))));
 
     // member 1: new(x, n[{ in(m, 0) }])
     let in_m = Proc::PIn(name(&m), Arc::new(Proc::PZero));
-    let amb_n = Proc::PAmb(
-        name(&n),
-        Arc::new(Proc::PPar(std::iter::once(in_m.clone()).collect())),
-    );
+    let amb_n = Proc::PAmb(name(&n), Arc::new(Proc::PPar(std::iter::once(in_m.clone()).collect())));
     let member1 = Proc::PNew(Scope::new(Binder(x.clone()), Arc::new(amb_n.clone())));
     // member 2: m[ x[0] ] — the free x that stalled the conditional float (F1).
     let amb_x = Proc::PAmb(name(&x), Arc::new(Proc::PZero));
@@ -187,15 +183,11 @@ fn am2_bag_bodied_new_floats_to_a_flat_bag() {
     let n = FreeVar::fresh(Some("n".to_string()));
     let m = FreeVar::fresh(Some("m".to_string()));
     let q = FreeVar::fresh(Some("q".to_string()));
-    let name =
-        |v: &FreeVar<String>| Arc::new(Name::NVar(OrdVar(Var::Free(v.clone()))));
+    let name = |v: &FreeVar<String>| Arc::new(Name::NVar(OrdVar(Var::Free(v.clone()))));
 
     // member 1: new(x, { n[{in(m,0)}] | q }) — the ν body is ITSELF a PPar bag.
     let in_m = Proc::PIn(name(&m), Arc::new(Proc::PZero));
-    let amb_n = Proc::PAmb(
-        name(&n),
-        Arc::new(Proc::PPar(std::iter::once(in_m).collect())),
-    );
+    let amb_n = Proc::PAmb(name(&n), Arc::new(Proc::PPar(std::iter::once(in_m).collect())));
     let q_var = Proc::PVar(OrdVar(Var::Free(q.clone())));
     let nu_body = Proc::PPar([amb_n.clone(), q_var.clone()].into_iter().collect());
     let member1 = Proc::PNew(Scope::new(Binder(x.clone()), Arc::new(nu_body)));

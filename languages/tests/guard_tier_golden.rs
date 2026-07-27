@@ -46,10 +46,10 @@
 // `mettail_languages::<lang>`. This binary is a CONSUMER of each: it deliberately does NOT
 // invoke any `<lang>_generated_tests!` wrapper, because each definition's DESIGNATED HOST
 // binary is the sole invoker, so the generated suites stay single-instanced.
-#[path = "definitions/led_test.rs"]
-mod ledtest;
 #[path = "definitions/guarded_rho.rs"]
 mod guardedrho;
+#[path = "definitions/led_test.rs"]
+mod ledtest;
 
 use mettail_runtime::{Language, LanguageMetadata};
 use mettail_testkit::analytical::guards::check_guard_decidability;
@@ -105,7 +105,8 @@ fn assert_tier_tuple(
         .count();
 
     assert_eq!(
-        structural_fields, t1,
+        structural_fields,
+        t1,
         "`{}`: T1 must equal the number of non-binder, non-Guard structural fields",
         meta.name()
     );
@@ -310,14 +311,18 @@ fn binders_never_enter_structural_tally() {
             .filter(|f| !f.is_binder && f.ty != "Guard" && f.ty != "Option<Guard>")
             .count();
         let conditions: usize = meta.rewrites().iter().map(|rw| rw.conditions.len()).sum();
-        let congruence_premises =
-            meta.rewrites().iter().filter(|rw| rw.premise.is_some()).count();
+        let congruence_premises = meta
+            .rewrites()
+            .iter()
+            .filter(|rw| rw.premise.is_some())
+            .count();
 
         assert!(binder_fields >= 1, "`{}` should have ≥1 binder for this check", meta.name());
 
         // (i) Structural T1 excludes binders entirely.
         assert_eq!(
-            r.compile_time_decidable, structural_fields,
+            r.compile_time_decidable,
+            structural_fields,
             "`{}`: a binder field leaked into the structural T1 tally",
             meta.name()
         );

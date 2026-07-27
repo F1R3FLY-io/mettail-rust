@@ -298,7 +298,8 @@ fn calculator_unary_minus_factorial_parser_exposes_both_alternatives() {
     );
     // Atomic-negative reading: (-3)! = Fact(NumLit(-3)).
     assert!(
-        alts.iter().any(|t| matches!(t, Int::Fact(a) if matches!(a.as_ref(), Int::NumLit(-3)))),
+        alts.iter()
+            .any(|t| matches!(t, Int::Fact(a) if matches!(a.as_ref(), Int::NumLit(-3)))),
         "expected atomic-negative reading Fact(NumLit(-3)) — the `Int` literal is signed \
          again (D1), so the lex DAG forks at a sign-abutted numeral; got {:?}",
         alts
@@ -349,7 +350,8 @@ fn all_facade_preserves_ambiguity_with_sr_subsume_default_on() {
     // …and so must the atomic-negative reading: subsumption is single-result-only, so the
     // `_all` path must not drop EITHER member of a genuine ambiguity.
     assert!(
-        alts.iter().any(|t| matches!(t, Int::Fact(a) if matches!(a.as_ref(), Int::NumLit(-3)))),
+        alts.iter()
+            .any(|t| matches!(t, Int::Fact(a) if matches!(a.as_ref(), Int::NumLit(-3)))),
         "atomic-negative reading Fact(NumLit(-3)) must ALSO survive on the _all path — \
          the subsumption gate is disjoint from the multi-result driver; got {:?}",
         alts

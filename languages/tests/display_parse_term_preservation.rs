@@ -355,8 +355,7 @@ fn rhocalc_name_display_parse_preserves_terms() {
     //   surface stays `@(1 + 2)` — which re-parses to `NQuote`, not to `NQuoteShort`. It shows
     //   the canonicalisation is a PRECEDENCE-CORRECT re-rendering rather than a blanket
     //   bracket deletion.
-    let quote_zero_canonical =
-        format!("{:?}", rho::Name::NQuoteShort(Arc::new(rho::Proc::PZero)));
+    let quote_zero_canonical = format!("{:?}", rho::Name::NQuoteShort(Arc::new(rho::Proc::PZero)));
     let quote_int_canonical = format!("{:?}", rho::Name::NQuoteShort(Arc::new(rho_int(4))));
     let cases: Vec<(&'static str, rho::Name, &'static str, Option<String>)> = vec![
         (
@@ -376,10 +375,7 @@ fn rhocalc_name_display_parse_preserves_terms() {
         // `NQuote` itself and needs no quotient.
         (
             "name/quote-add",
-            rho::Name::NQuote(Arc::new(rho::Proc::Add(
-                Arc::new(rho_int(1)),
-                Arc::new(rho_int(2)),
-            ))),
+            rho::Name::NQuote(Arc::new(rho::Proc::Add(Arc::new(rho_int(1)), Arc::new(rho_int(2))))),
             "@(1 + 2)",
             None,
         ),
@@ -529,7 +525,10 @@ fn calculator_uint32_projection_operand_brackets_and_round_trips() {
 
     // The bracket must be the language's pure grouping, not a borrowed constructor.
     let surface = format!("{}", bracketed);
-    assert!(surface.starts_with("(1 <= 2)"), "the projection operand must be grouped: {surface:?}");
+    assert!(
+        surface.starts_with("(1 <= 2)"),
+        "the projection operand must be grouped: {surface:?}"
+    );
     for borrowed in ["bigint(", "bigrat(", "uint(", "int(", "float(", "fixed("] {
         assert!(
             !surface.contains(borrowed),
@@ -655,7 +654,11 @@ fn negative_control_corpus_exercises_projection_operands() {
     let infix: Vec<&str> = cases
         .iter()
         .map(|(_, _, s)| *s)
-        .filter(|s| [" + ", " - ", " * ", " == ", " < ", " | "].iter().any(|op| s.contains(op)))
+        .filter(|s| {
+            [" + ", " - ", " * ", " == ", " < ", " | "]
+                .iter()
+                .any(|op| s.contains(op))
+        })
         .collect();
     assert!(
         infix.len() >= 6,
@@ -669,14 +672,20 @@ fn negative_control_corpus_exercises_projection_operands() {
             && matches!(term, rho::Proc::Add(a, b)
                 if matches!(**a, rho::Proc::CastInt(_)) && matches!(**b, rho::Proc::CastInt(_)))
     });
-    assert!(projection_operand, "the corpus must contain a cross-category projection operand");
+    assert!(
+        projection_operand,
+        "the corpus must contain a cross-category projection operand"
+    );
 
     // …and the corpus must also contain a term that legitimately IS a send, so a fix
     // that simply suppressed every `@Nil!( … )` surface would be caught.
-    let real_send = cases
-        .iter()
-        .any(|(_, term, surface)| matches!(term, rho::Proc::POutputNil(_)) && *surface == "@Nil!(1)");
-    assert!(real_send, "the corpus must keep a genuine send, so the send surface stays reachable");
+    let real_send = cases.iter().any(|(_, term, surface)| {
+        matches!(term, rho::Proc::POutputNil(_)) && *surface == "@Nil!(1)"
+    });
+    assert!(
+        real_send,
+        "the corpus must keep a genuine send, so the send surface stays reachable"
+    );
 }
 
 /// NC4 — the specific historical regression, stated on its own so the failure message

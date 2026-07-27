@@ -331,7 +331,10 @@ fn json_parses_arrays() {
     let t = Value::parse("[null,true,\"x\"]").expect("JArr parse");
     let shown = format!("{t}");
     assert!(shown.starts_with('['), "array must render bracketed, got {shown:?}");
-    assert!(shown.contains("null") && shown.contains("true"), "elements preserved: {shown:?}");
+    assert!(
+        shown.contains("null") && shown.contains("true"),
+        "elements preserved: {shown:?}"
+    );
 }
 
 /// `JObj` (:408) + `Field` (:409).
@@ -381,8 +384,9 @@ fn json_every_shape_round_trips() {
         mettail_runtime::clear_var_cache();
         let t = Value::parse(src).unwrap_or_else(|e| panic!("parse of {src:?} failed: {e:?}"));
         let printed = format!("{t}");
-        let reparsed = Value::parse(&printed)
-            .unwrap_or_else(|e| panic!("re-parse of display {printed:?} (from {src:?}) failed: {e:?}"));
+        let reparsed = Value::parse(&printed).unwrap_or_else(|e| {
+            panic!("re-parse of display {printed:?} (from {src:?}) failed: {e:?}")
+        });
         assert_eq!(reparsed, t, "round-trip identity failed for {src:?} (printed {printed:?})");
     }
 }

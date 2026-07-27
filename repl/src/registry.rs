@@ -141,13 +141,18 @@ impl<'a> FltResolver<'a> {
             .cloned()
             .unwrap_or_else(|| tag.to_lowercase());
         let language = self.registry.get(&key).map_err(|_| {
-            anyhow::anyhow!("no guest language registered for FLT tag '{tag}' (resolved name '{key}')")
-        })?;
-        let fingerprint = language.metadata().definition_fingerprint().ok_or_else(|| {
             anyhow::anyhow!(
-                "guest language '{key}' (FLT tag '{tag}') advertises no definition fingerprint"
+                "no guest language registered for FLT tag '{tag}' (resolved name '{key}')"
             )
         })?;
+        let fingerprint = language
+            .metadata()
+            .definition_fingerprint()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "guest language '{key}' (FLT tag '{tag}') advertises no definition fingerprint"
+                )
+            })?;
         Ok((language, fingerprint))
     }
 }
@@ -183,9 +188,10 @@ impl<'a> FltResolver<'a> {
         tag: &str,
         body: &str,
     ) -> Result<(mettail_rholang_codegen::GroundTerm, &'static str)> {
-        let guest = self.guests.get(&tag.to_lowercase()).ok_or_else(|| {
-            anyhow::anyhow!("no FLT guest reflector registered for tag '{tag}'")
-        })?;
+        let guest = self
+            .guests
+            .get(&tag.to_lowercase())
+            .ok_or_else(|| anyhow::anyhow!("no FLT guest reflector registered for tag '{tag}'"))?;
         // `FltReflect: Language`, so the reflector value also carries the guest fingerprint.
         let fingerprint = guest.metadata().definition_fingerprint().ok_or_else(|| {
             anyhow::anyhow!("FLT guest for tag '{tag}' advertises no definition fingerprint")
@@ -302,7 +308,9 @@ mod flt_resolver_tests {
         let registry = build_registry().expect("the production registry builds");
         let resolver = FltResolver::with_default_aliases(&registry);
 
-        let (language, fingerprint) = resolver.resolve("lambda").expect("the `lambda` tag resolves");
+        let (language, fingerprint) = resolver
+            .resolve("lambda")
+            .expect("the `lambda` tag resolves");
         assert_eq!(language.name(), "Lambda", "the `lambda` tag resolves to the Lambda language");
         assert_eq!(
             fingerprint, "mettail-langdef-v1:6ef0c40636bb0bca",
@@ -310,7 +318,9 @@ mod flt_resolver_tests {
         );
 
         // The tag is also resolvable directly as the (case-insensitive) language name.
-        let (_, by_name) = resolver.resolve("Lambda").expect("`Lambda` resolves as a name");
+        let (_, by_name) = resolver
+            .resolve("Lambda")
+            .expect("`Lambda` resolves as a name");
         assert_eq!(by_name, fingerprint, "resolving by name yields the same fingerprint");
 
         // An unknown tag fails closed.

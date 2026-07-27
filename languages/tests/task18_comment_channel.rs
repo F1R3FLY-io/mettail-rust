@@ -81,7 +81,9 @@ fn parse_debug(source: &str) -> String {
         normalized.push_str(&rest[..at]);
         normalized.push_str("UniqueId(_");
         rest = &rest[at + "UniqueId(".len()..];
-        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let digits = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
         rest = &rest[digits..];
     }
     normalized.push_str(rest);
@@ -147,7 +149,10 @@ fn retention_block_comment_spanning_lines_is_retained_whole() {
 #[test]
 fn retention_multiple_comments_arrive_in_source_order() {
     let source = "// a\n{0 /* b */ | 1} // c\n";
-    let texts: Vec<String> = retained_comments(source).into_iter().map(|(t, _, _)| t).collect();
+    let texts: Vec<String> = retained_comments(source)
+        .into_iter()
+        .map(|(t, _, _)| t)
+        .collect();
     assert_eq!(texts, vec!["// a", "/* b */", "// c"]);
 }
 
@@ -469,13 +474,19 @@ fn reader_api_hidden_tokens_attach_a_comment_to_its_neighbouring_token() {
 
     let leading = lexed.hidden_tokens_to_left(0, COMMENTS);
     assert_eq!(leading.len(), 1, "the file header attaches to the FIRST default token");
-    assert_eq!(&source[leading[0].1.start.byte_offset..leading[0].1.end.byte_offset], "// header");
+    assert_eq!(
+        &source[leading[0].1.start.byte_offset..leading[0].1.end.byte_offset],
+        "// header"
+    );
 
     // The last DEFAULT entry is `Eof`; the token before it is the closing `}`.
     let last_real = lexed.tokens.len() - 2;
     let trailing = lexed.hidden_tokens_to_right(last_real, COMMENTS);
     assert_eq!(trailing.len(), 1, "the trailing comment attaches to the LAST real token");
-    assert_eq!(&source[trailing[0].1.start.byte_offset..trailing[0].1.end.byte_offset], "// tail");
+    assert_eq!(
+        &source[trailing[0].1.start.byte_offset..trailing[0].1.end.byte_offset],
+        "// tail"
+    );
 }
 
 // ── Cross-path agreement — the retention scan and the parse scan must never drift ───────────────

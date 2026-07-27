@@ -381,10 +381,8 @@ fn task16_chain_peek_memo_no_cross_parse_contamination() {
             let _ = Int::parse_structured(p); // Ok or Err — either way must not poison
         }
         mettail_runtime::clear_var_cache();
-        let got = format!(
-            "{:?}",
-            Int::parse_structured(chain).expect("chain parses after poisoners")
-        );
+        let got =
+            format!("{:?}", Int::parse_structured(chain).expect("chain parses after poisoners"));
         assert_eq!(got, refs[i], "chain {i} contaminated by interleaved parses");
     }
 }

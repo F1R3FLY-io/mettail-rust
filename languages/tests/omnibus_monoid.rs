@@ -147,7 +147,10 @@ fn monoid_metadata_carries_every_doc_clause() {
         meta.equations().len(),
         3,
         "the omnibus presents exactly three equations (Assoc, UnitL, UnitR); got {:?}",
-        meta.equations().iter().map(|e| (e.lhs, e.rhs)).collect::<Vec<_>>()
+        meta.equations()
+            .iter()
+            .map(|e| (e.lhs, e.rhs))
+            .collect::<Vec<_>>()
     );
     assert!(meta.rewrites().is_empty(), "Monoid is rung two — `rewrites {{ }}` is empty");
 }
@@ -194,7 +197,9 @@ fn monoid_unit_right_is_quotiented() {
 fn monoid_associativity_fires() {
     let (labels, rendered) = firings("(x * y) * z");
     assert!(
-        labels.iter().any(|l| l.starts_with("Monoid::equation::Assoc::")),
+        labels
+            .iter()
+            .any(|l| l.starts_with("Monoid::equation::Assoc::")),
         "Assoc must fire on `(x * y) * z`, identifying it with `x * (y * z)`; report: {rendered}"
     );
 }
@@ -207,13 +212,12 @@ fn monoid_saturation_is_complete() {
     for src in ["e * x", "x * e", "e * e", "(x * y) * z", "e * x * e"] {
         let lang = MonoidLanguage;
         mettail_runtime::clear_var_cache();
-        let term = lang.parse_term(src).unwrap_or_else(|e| panic!("parse {src:?}: {e}"));
+        let term = lang
+            .parse_term(src)
+            .unwrap_or_else(|e| panic!("parse {src:?}: {e}"));
         let report = MonoidLanguage::dovetail_report_for(term.as_ref(), MAX_ITERS, MAX_NODES)
             .unwrap_or_else(|e| panic!("dovetail_report_for({src:?}) returned Err: {e}"));
-        assert!(
-            !report.roots.is_empty(),
-            "the report for {src:?} must carry at least one root"
-        );
+        assert!(!report.roots.is_empty(), "the report for {src:?} must carry at least one root");
         assert!(
             report.is_complete(),
             "the monoid presentation must saturate COMPLETELY for {src:?}; got {:?}",

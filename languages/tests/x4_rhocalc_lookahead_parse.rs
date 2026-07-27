@@ -28,7 +28,9 @@ use mettail_runtime::clear_var_cache;
 /// Parse through the production entry, returning the debug rendering of the term.
 fn read(source: &str) -> Result<String, String> {
     clear_var_cache();
-    Proc::parse_via_wpda(source).map(|p| format!("{p:?}")).map_err(|e| e.to_string())
+    Proc::parse_via_wpda(source)
+        .map(|p| format!("{p:?}"))
+        .map_err(|e| e.to_string())
 }
 
 fn read_ok(source: &str) -> String {
@@ -55,7 +57,10 @@ fn t2_lookahead_all_over_an_flt_payload() {
         term.contains("PLookaheadAll"),
         "an FLT-payload send with `[*]` must read as PLookaheadAll, got: {term}"
     );
-    assert!(term.contains("PFlt"), "the payload must still reflect as an FLT node, got: {term}");
+    assert!(
+        term.contains("PFlt"),
+        "the payload must still reflect as an FLT node, got: {term}"
+    );
 }
 
 #[test]

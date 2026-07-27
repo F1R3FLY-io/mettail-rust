@@ -116,10 +116,7 @@ fn grouping_inertness_does_not_mean_accept_everything() {
 /// regression is reported as itself rather than as a random seed.
 #[test]
 fn proptest_counterexamples_parse() {
-    for src in [
-        "-(592107620 + bigrat(cast_error_bigint))",
-        "(0 + bigrat(a)) * error",
-    ] {
+    for src in ["-(592107620 + bigrat(cast_error_bigint))", "(0 + bigrat(a)) * error"] {
         mettail_runtime::clear_var_cache();
         let parsed = BigRat::parse(src)
             .unwrap_or_else(|e| panic!("counterexample {src:?} must parse: {e:?}"));

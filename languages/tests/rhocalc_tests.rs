@@ -53,7 +53,7 @@ fn run_within_30s<T: Send + 'static>(label: &str, body: impl FnOnce() -> T + Sen
         Ok(value) => {
             let _ = handle.join();
             value
-        }
+        },
         Err(mpsc::RecvTimeoutError::Timeout) => panic!(
             "`{}` did not finish within 30s — F3 multiplicative-ambiguity \
              (`&`-join projection-vs-extension) regression",
@@ -292,7 +292,11 @@ mod oracle {
             // `rest` = the par with ONE occurrence of this `new` removed.
             let mut rest_bag = mettail_runtime::HashBag::new();
             for (element, count) in bag.iter() {
-                let keep = if element.term_eq(target) { count - 1 } else { count };
+                let keep = if element.term_eq(target) {
+                    count - 1
+                } else {
+                    count
+                };
                 for _ in 0..keep {
                     Proc::insert_into_ppar(&mut rest_bag, element.clone());
                 }
@@ -439,28 +443,30 @@ mod oracle {
         // seeding the renamed box form would only add a duplicate (and a spurious rewrite edge).
         let root_is_pnew = matches!(&b.procs[root], Some(Proc::PNew(_)));
         if !root_is_pnew {
-        if let Ok(nf) = RhoCalcLanguage::dovetail_normal_term(box0.as_ref(), DOVETAIL_ITERS, DOVETAIL_NODES) {
-            match proc_from_term(nf.as_ref()).map(|p| canon(&p)) {
-                Some(np) => {
-                    let progress = match &b.procs[root] {
-                        Some(rp) => !np.term_eq(rp),
-                        None => np.to_string() != b.displays[root],
-                    };
-                    if progress {
-                        let bi = b.intern_proc(&np);
-                        b.add_edge(root, bi);
-                        queue.push_back(bi);
-                    }
-                },
-                None => {
-                    let d = nf.to_string();
-                    if d != b.displays[root] {
-                        let bi = b.intern_terminal_display(d);
-                        b.add_edge(root, bi);
-                    }
-                },
+            if let Ok(nf) =
+                RhoCalcLanguage::dovetail_normal_term(box0.as_ref(), DOVETAIL_ITERS, DOVETAIL_NODES)
+            {
+                match proc_from_term(nf.as_ref()).map(|p| canon(&p)) {
+                    Some(np) => {
+                        let progress = match &b.procs[root] {
+                            Some(rp) => !np.term_eq(rp),
+                            None => np.to_string() != b.displays[root],
+                        };
+                        if progress {
+                            let bi = b.intern_proc(&np);
+                            b.add_edge(root, bi);
+                            queue.push_back(bi);
+                        }
+                    },
+                    None => {
+                        let d = nf.to_string();
+                        if d != b.displays[root] {
+                            let bi = b.intern_terminal_display(d);
+                            b.add_edge(root, bi);
+                        }
+                    },
+                }
             }
-        }
         }
 
         let mut steps = 0usize;
@@ -679,7 +685,10 @@ fn assert_reduces_to(input: &str, expected: &str) {
 fn assert_normal_form_display(input: &str, expected_display: &str) {
     let (results, initial_id) = run_with_initial(input);
     let nfs = reachable_normal_form_displays(&results, initial_id);
-    let want: String = expected_display.chars().filter(|c| !c.is_whitespace()).collect();
+    let want: String = expected_display
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     let want_singleton_par = format!("{{{}}}", want);
     let found = nfs.iter().any(|nf| {
         let got: String = nf.chars().filter(|c| !c.is_whitespace()).collect();
@@ -771,7 +780,9 @@ fn canon_display(nf: &str) -> String {
     while i < bytes.len() {
         if nf[i..].starts_with("@Nil!(") {
             let rest = &nf[i + "@Nil!(".len()..];
-            let digits_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+            let digits_end = rest
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len());
             if digits_end > 0 && rest[digits_end..].starts_with(')') {
                 out.push_str(&rest[..digits_end]);
                 i += "@Nil!(".len() + digits_end + 1; // consume through ')'
@@ -1019,7 +1030,10 @@ mod numeral_carrier_is_context_independent {
             ("(1)", "CastInt(NumLit(1))"),
             ("[1]", "CastList(ListLit([CastInt(NumLit(1))]))"),
             ("Set(1)", "CastSet(SetLit(HashSetLit({CastInt(NumLit(1))})))"),
-            ("{1: 1}", "CastMap(MapLit(HashMapLit({CastInt(NumLit(1)): CastInt(NumLit(1))})))"),
+            (
+                "{1: 1}",
+                "CastMap(MapLit(HashMapLit({CastInt(NumLit(1)): CastInt(NumLit(1))})))",
+            ),
         ] {
             fresh();
             assert_eq!(
@@ -1129,7 +1143,10 @@ mod comparator_integrity {
     #[test]
     fn bag_multiset_eq_is_order_insensitive_on_real_bags() {
         assert!(bag_multiset_eq("#{1 | 2}#", "#{2 | 1}#"));
-        assert!(bag_multiset_eq("{#{1 | 2}#}", "#{2 | 1}#"), "singleton-par wrapper is unwrapped");
+        assert!(
+            bag_multiset_eq("{#{1 | 2}#}", "#{2 | 1}#"),
+            "singleton-par wrapper is unwrapped"
+        );
         assert!(!bag_multiset_eq("#{1 | 2}#", "#{1 | 3}#"));
     }
 
@@ -1255,9 +1272,8 @@ mod comm {
         // Both receives fire against the SAME persistent send: the send remains
         // (`c!!([p])`) and two substituted copies of `p` appear.
         assert!(
-            nfs.iter().any(|nf| {
-                canon_display(nf).contains("c!!(p)") && nf.matches('p').count() >= 2
-            }),
+            nfs.iter()
+                .any(|nf| { canon_display(nf).contains("c!!(p)") && nf.matches('p').count() >= 2 }),
             "expected both receives to fire while persistent send remains, got {:?}",
             nfs
         );
@@ -1474,48 +1490,48 @@ mod comm {
     }
 
     /// ★ #33 / divergence H, SECOND HALF — the guard lane's `==` must decide two
-/// booleans, exactly as the fold lane's already does.
-///
-/// Divergence H is "Rholang's `==` is STRUCTURAL equality on the whole `Par`
-/// (`reduce.rs::combine_eq`), which answers `true` for two `GBool`s; RhoCalc
-/// conforms DOWN to Rholang." It was closed in the FOLD lane and NOT in the GUARD
-/// lane — there are two `Eq` implementations and only one got the `CastBool` arm.
-///
-/// The asymmetry is why it survived. In the fold lane an unhandled shape yields
-/// `Proc::Err`, which is LOUD and was caught same-day by the conformance
-/// differential. In the guard lane the identical gap yielded `None`, which the
-/// eager COMM sites treat identically to a decided `false` — so it was SILENT, and
-/// the host BLOCKED a COMM the machine fires.
-///
-/// And it could not be reached by the fold-lane fix: the guard is evaluated on a
-/// freshly substituted local value that is never registered as an Ascent
-/// `proc(…)` fact, so no grammar fold runs on it.
-#[test]
-fn a_boolean_equality_guard_decides_on_the_host() {
-    // The datum/reduct pair is `"hi"` / `*@"hi"`, the same one `assert_host_matches`
-    // uses, and the choice is load-bearing. The harness detects firing by SUBSTRING,
-    // so a reduct that also occurs in the blocked normal form is a false positive in
-    // BOTH directions — a numeric datum `1` with reduct `1` reads as fired even
-    // though the un-fired `c!(1)` is what contains it. `*@"hi"` is the DEREFERENCED
-    // rendering and cannot appear in the resting send `c!("hi")`, so the signal is
-    // real. The guard is a CONSTANT boolean comparison, so the datum is free to be
-    // whatever discriminates while the guard still exercises the `CastBool` arm.
-    fn guard(g: &str, expected: bool) {
-        assert_host_guard_on(g, "\"hi\"", "*@\"hi\"", expected)
+    /// booleans, exactly as the fold lane's already does.
+    ///
+    /// Divergence H is "Rholang's `==` is STRUCTURAL equality on the whole `Par`
+    /// (`reduce.rs::combine_eq`), which answers `true` for two `GBool`s; RhoCalc
+    /// conforms DOWN to Rholang." It was closed in the FOLD lane and NOT in the GUARD
+    /// lane — there are two `Eq` implementations and only one got the `CastBool` arm.
+    ///
+    /// The asymmetry is why it survived. In the fold lane an unhandled shape yields
+    /// `Proc::Err`, which is LOUD and was caught same-day by the conformance
+    /// differential. In the guard lane the identical gap yielded `None`, which the
+    /// eager COMM sites treat identically to a decided `false` — so it was SILENT, and
+    /// the host BLOCKED a COMM the machine fires.
+    ///
+    /// And it could not be reached by the fold-lane fix: the guard is evaluated on a
+    /// freshly substituted local value that is never registered as an Ascent
+    /// `proc(…)` fact, so no grammar fold runs on it.
+    #[test]
+    fn a_boolean_equality_guard_decides_on_the_host() {
+        // The datum/reduct pair is `"hi"` / `*@"hi"`, the same one `assert_host_matches`
+        // uses, and the choice is load-bearing. The harness detects firing by SUBSTRING,
+        // so a reduct that also occurs in the blocked normal form is a false positive in
+        // BOTH directions — a numeric datum `1` with reduct `1` reads as fired even
+        // though the un-fired `c!(1)` is what contains it. `*@"hi"` is the DEREFERENCED
+        // rendering and cannot appear in the resting send `c!("hi")`, so the signal is
+        // real. The guard is a CONSTANT boolean comparison, so the datum is free to be
+        // whatever discriminates while the guard still exercises the `CastBool` arm.
+        fn guard(g: &str, expected: bool) {
+            assert_host_guard_on(g, "\"hi\"", "*@\"hi\"", expected)
+        }
+        guard("true == true", true);
+        guard("false == false", true);
+        // And it genuinely decides FALSE rather than declining — a fix that made every
+        // boolean comparison fire would pass the rows above and fail these.
+        guard("true == false", false);
+        guard("false == true", false);
+        // The ORDER is `false < true`, matching `bool`'s own `Ord` and the machine's
+        // structural comparison, so the relational operators agree too.
+        guard("false < true", true);
+        guard("true < false", false);
     }
-    guard("true == true", true);
-    guard("false == false", true);
-    // And it genuinely decides FALSE rather than declining — a fix that made every
-    // boolean comparison fire would pass the rows above and fail these.
-    guard("true == false", false);
-    guard("false == true", false);
-    // The ORDER is `false < true`, matching `bool`'s own `Ord` and the machine's
-    // structural comparison, so the relational operators agree too.
-    guard("false < true", true);
-    guard("true < false", false);
-}
 
-#[test]
+    #[test]
     fn implies_truth_table_on_the_host_guard_evaluator() {
         // `p ⇒ q` ≡ `¬p ∨ q`, all four ground rows, none sampled.
         assert_host_guard("false implies false", true);
@@ -1969,21 +1985,30 @@ fn a_boolean_equality_guard_decides_on_the_host() {
     fn proc_pattern_matches_list_is_strict() {
         let pat = parse("[0, 1]");
         let val = parse("[0, 1, 2]");
-        assert!(val.match_pattern(&pat).is_none(), "strict pattern match: shorter/different pattern must not match");
+        assert!(
+            val.match_pattern(&pat).is_none(),
+            "strict pattern match: shorter/different pattern must not match"
+        );
     }
 
     #[test]
     fn proc_pattern_matches_map_is_strict() {
         let pat = parse("{1:2, 3:4}");
         let val = parse("{1:2, 3:5}");
-        assert!(val.match_pattern(&pat).is_none(), "strict pattern match: shorter/different pattern must not match");
+        assert!(
+            val.match_pattern(&pat).is_none(),
+            "strict pattern match: shorter/different pattern must not match"
+        );
     }
 
     #[test]
     fn proc_pattern_matches_set_is_strict() {
         let pat = parse("Set(1, 2)");
         let val = parse("Set(1, 2, 3)");
-        assert!(val.match_pattern(&pat).is_none(), "strict pattern match: shorter/different pattern must not match");
+        assert!(
+            val.match_pattern(&pat).is_none(),
+            "strict pattern match: shorter/different pattern must not match"
+        );
     }
 }
 
@@ -3350,7 +3375,6 @@ mod native_ops {
                 );
             }
 
-
             #[test]
             fn path_get_subtrie_at_prefix() {
                 assert_reduces_to(
@@ -3491,10 +3515,7 @@ mod native_ops {
             #[test]
             fn zipper_leaf_count_is_the_walk_bound() {
                 assert_reduces_to(&format!("{{{}.readZipper().leafCount()}}", walk_db()), "3");
-                assert_reduces_to(
-                    &format!("{{{}.readZipperAt([1]).leafCount()}}", walk_db()),
-                    "2",
-                );
+                assert_reduces_to(&format!("{{{}.readZipperAt([1]).leafCount()}}", walk_db()), "2");
             }
 
             /// `leafCount()` steps of `toNextLeaf()` visit every entry exactly
@@ -3503,20 +3524,12 @@ mod native_ops {
             #[test]
             fn zipper_leaf_walk_visits_every_entry_in_order() {
                 let db = walk_db();
-                for (steps, path, leaf) in [
-                    (1, "[1,2,3]", "100"),
-                    (2, "[1,2,4]", "200"),
-                    (3, "[2,1]", "300"),
-                ] {
+                for (steps, path, leaf) in
+                    [(1, "[1,2,3]", "100"), (2, "[1,2,4]", "200"), (3, "[2,1]", "300")]
+                {
                     let walk = ".toNextLeaf()".repeat(steps);
-                    assert_reduces_to(
-                        &format!("{{{db}.readZipper(){walk}.getPath()}}"),
-                        path,
-                    );
-                    assert_reduces_to(
-                        &format!("{{{db}.readZipper(){walk}.getLeaf()}}"),
-                        leaf,
-                    );
+                    assert_reduces_to(&format!("{{{db}.readZipper(){walk}.getPath()}}"), path);
+                    assert_reduces_to(&format!("{{{db}.readZipper(){walk}.getLeaf()}}"), leaf);
                 }
             }
 
@@ -4873,12 +4886,7 @@ mod forrow_join_f3 {
         // The one case §4.1 makes genuinely fast (~1.5s): a 2-bind all-quoted
         // join parses to ForRowNoWhere with 2 binds.
         let (debug, binds) = parse_forrow_fast("@a<-a & @a<-a");
-        assert_eq!(
-            binds,
-            Some(2),
-            "expected ForRowNoWhere with 2 binds; derived AST = {}",
-            debug
-        );
+        assert_eq!(binds, Some(2), "expected ForRowNoWhere with 2 binds; derived AST = {}", debug);
     }
 
     // The bare core of the former hang repro: 3 all-quoted `&`-join binds. Parses
@@ -4895,21 +4903,13 @@ mod forrow_join_f3 {
             debug_1
         );
         assert_eq!(binds_1, binds_2, "parse determinism: bind shape differs");
-        assert_eq!(
-            debug_1, debug_2,
-            "parse determinism: two parses of the same `&`-join differ"
-        );
+        assert_eq!(debug_1, debug_2, "parse determinism: two parses of the same `&`-join differ");
     }
 
     #[test]
     fn four_quoted_binds_join_parses_fast() {
         let (debug, binds) = parse_forrow_fast("@a <- a & @a <- a & @a <- a & @a <- a");
-        assert_eq!(
-            binds,
-            Some(4),
-            "expected ForRowNoWhere with 4 binds; derived AST = {}",
-            debug
-        );
+        assert_eq!(binds, Some(4), "expected ForRowNoWhere with 4 binds; derived AST = {}", debug);
     }
 
     // First bind is a PLAIN (var) LHS, the rest quoted — exercises the mixed-LHS
@@ -4917,12 +4917,7 @@ mod forrow_join_f3 {
     #[test]
     fn first_plain_then_quoted_binds_join_anchor_parses_fast() {
         let (debug, binds) = parse_forrow_fast("a<-a & @a<-a & @a<-a");
-        assert_eq!(
-            binds,
-            Some(3),
-            "expected ForRowNoWhere with 3 binds; derived AST = {}",
-            debug
-        );
+        assert_eq!(binds, Some(3), "expected ForRowNoWhere with 3 binds; derived AST = {}", debug);
     }
 
     // The exact former hang repro from the F3 spec, as a full `Proc`.
@@ -4948,7 +4943,8 @@ mod forrow_join_f3 {
                 binds,
                 Some(n),
                 "expected ForRowNoWhere with {} binds; derived AST = {}",
-                n, debug
+                n,
+                debug
             );
         }
     }
@@ -5033,8 +5029,9 @@ mod m6_realize_selection {
         // The pre-canonicalisation spelling must still PARSE (only its Display moved), so the
         // respelling above cannot have quietly narrowed the surface this case covers.
         mettail_runtime::clear_var_cache();
-        let original = ForRow::parse("@Pathmap(),@Nil , @(a) , @(error)<-@Map() where bitnot Nil.keys()")
-            .expect("the pre-canonicalisation spelling must still parse");
+        let original =
+            ForRow::parse("@Pathmap(),@Nil , @(a) , @(error)<-@Map() where bitnot Nil.keys()")
+                .expect("the pre-canonicalisation spelling must still parse");
         assert_eq!(
             format!("{original}"),
             "@Pathmap(),@Nil , @a , @error<-@Map() where bitnot Nil.keys()",
@@ -5133,10 +5130,7 @@ mod flip_blocker_prefix_grouped_send {
     fn control_grouped_channel_send_parses() {
         fresh();
         let t = parse("(a)!(false)");
-        assert!(
-            format!("{t:?}").starts_with("POutput("),
-            "expected POutput(..), got: {t:?}"
-        );
+        assert!(format!("{t:?}").starts_with("POutput("), "expected POutput(..), got: {t:?}");
     }
 
     /// Control: the UNGROUPED channel under the prefix op parses in both
@@ -5273,18 +5267,14 @@ mod realize_mode_contract_pins {
         let dag = lex_dag("@Nil!(@(@Nil)!())").expect("grp_d1 lexes");
         let source = LatticeTokenSource::new(dag);
         let mut pos = 0usize;
-        let (terms, weights) =
-            parse_Proc_via_wpda_prefix_with_source(&source, &mut pos, 0, 3)
-                .expect("grp_d1 parses through the bounded-prefix facade");
+        let (terms, weights) = parse_Proc_via_wpda_prefix_with_source(&source, &mut pos, 0, 3)
+            .expect("grp_d1 parses through the bounded-prefix facade");
         assert_eq!(terms.len(), weights.len(), "term-parallel weights");
         let mut displays: Vec<String> = terms.iter().map(|t| format!("{t}")).collect();
         displays.sort();
         assert_eq!(
             displays,
-            vec![
-                "@Nil!(@(@Nil)!())".to_string(),
-                "@Nil!(@@Nil!())".to_string(),
-            ],
+            vec!["@Nil!(@(@Nil)!())".to_string(), "@Nil!(@@Nil!())".to_string(),],
             "the bounded-prefix facade must enumerate the full 2-reading \
              display-distinct family (pre-2b trap: collapsed to the single \
              elected reading)"
@@ -5346,7 +5336,6 @@ mod realize_mode_contract_pins {
     }
 }
 
-
 /// Residual #11-1 Branch B (USER-APPROVED 2026-07-14) — committed regression
 /// pins for the polyadic-send `semantic_hash` normalization that closes the
 /// facade-vs-walker gap. `parse_via_wpda_all` returns the set DEDUPED BY
@@ -5366,9 +5355,24 @@ mod branch_b_send_normalization_pins {
     #[test]
     fn output_polyadic_send_facade_dedups_to_two_twins() {
         fresh();
-        assert_eq!(Proc::parse_via_wpda_all("@a!(0,1)").expect("parse_all").len(), 2);
-        assert_eq!(Proc::parse_via_wpda_all("@a!(0,1,2)").expect("parse_all").len(), 2);
-        assert_eq!(Proc::parse_via_wpda_all("@a!(1+2,3)").expect("parse_all").len(), 2);
+        assert_eq!(
+            Proc::parse_via_wpda_all("@a!(0,1)")
+                .expect("parse_all")
+                .len(),
+            2
+        );
+        assert_eq!(
+            Proc::parse_via_wpda_all("@a!(0,1,2)")
+                .expect("parse_all")
+                .len(),
+            2
+        );
+        assert_eq!(
+            Proc::parse_via_wpda_all("@a!(1+2,3)")
+                .expect("parse_all")
+                .len(),
+            2
+        );
     }
 
     /// Over-prune guard (generalized predicate, condition (b) param-bottomed):
@@ -5378,7 +5382,12 @@ mod branch_b_send_normalization_pins {
     #[test]
     fn nil_channel_polyadic_send_keeps_its_twin() {
         fresh();
-        assert_eq!(Proc::parse_via_wpda_all("@Nil!(0,1)").expect("parse_all").len(), 2);
+        assert_eq!(
+            Proc::parse_via_wpda_all("@Nil!(0,1)")
+                .expect("parse_all")
+                .len(),
+            2
+        );
     }
 
     /// Persist family (red-team A4, measurement-gated): `@a!!(0,1)` walker == 1
@@ -5386,8 +5395,18 @@ mod branch_b_send_normalization_pins {
     #[test]
     fn persist_polyadic_send_facade_matches_walker() {
         fresh();
-        assert_eq!(Proc::parse_via_wpda_all("@a!!(0,1)").expect("parse_all").len(), 1);
-        assert_eq!(Proc::parse_via_wpda_all("@a!!(0,1,2)").expect("parse_all").len(), 1);
+        assert_eq!(
+            Proc::parse_via_wpda_all("@a!!(0,1)")
+                .expect("parse_all")
+                .len(),
+            1
+        );
+        assert_eq!(
+            Proc::parse_via_wpda_all("@a!!(0,1,2)")
+                .expect("parse_all")
+                .len(),
+            1
+        );
     }
 
     /// Controls (unchanged): the scalar send `@a!(0)` already normalized this
@@ -5397,7 +5416,12 @@ mod branch_b_send_normalization_pins {
     fn send_normalization_controls_unchanged() {
         fresh();
         assert_eq!(Proc::parse_via_wpda_all("@a!(0)").expect("parse_all").len(), 2);
-        assert_eq!(Proc::parse_via_wpda_all("a!(0,1)").expect("parse_all").len(), 1);
+        assert_eq!(
+            Proc::parse_via_wpda_all("a!(0,1)")
+                .expect("parse_all")
+                .len(),
+            1
+        );
     }
 
     /// Red-team A5: the fold drops the receiver-led DUPLICATE, never the
@@ -5438,10 +5462,7 @@ mod is_ground_descends_into_collection_literals {
     fn a_closed_list_literal_is_ground() {
         // The control. If this ever fails the descent has become unfaithful in the
         // harmless direction, which is still a defect worth seeing.
-        assert!(
-            parse("[1, 2, 3]").is_ground(),
-            "a list of ground elements must report ground"
-        );
+        assert!(parse("[1, 2, 3]").is_ground(), "a list of ground elements must report ground");
     }
 
     #[test]

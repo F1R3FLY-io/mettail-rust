@@ -51,8 +51,8 @@ fn lambda_backend() -> (PlannedRhoBackend, String) {
         .metadata()
         .definition_source()
         .expect("generated LambdaLanguage must expose its definition_source");
-    let def =
-        reconstruct_language_def(source).expect("LambdaLanguage definition_source must reconstruct");
+    let def = reconstruct_language_def(source)
+        .expect("LambdaLanguage definition_source must reconstruct");
     let lowering = lower_language_def(&def);
     let requirements = RhoDefaultBackendRequirements {
         coverage: RhoCoverageEvidence::CoveredRejectedRules(suggest_rejected_rule_dispositions(
@@ -114,8 +114,15 @@ fn quoted_name(name: &str) -> Par {
 /// hole at the function position (index 2), and a GROUND subterm at the argument (index 3); the body
 /// republishes the bound hole (`BoundVar(0)`) to `@"OUT"`. Serves Beats 1, 2 (D2), and 3.
 fn hole_rendezvous_program(subject: Par, tag: Par, ground_arg: Par) -> Par {
-    let producer =
-        new_send_par(quoted_name("fltX"), vec![subject], false, Vec::new(), false, Vec::new(), false);
+    let producer = new_send_par(
+        quoted_name("fltX"),
+        vec![subject],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
     let pattern = new_elist_par(
         vec![
             tag,
@@ -169,8 +176,15 @@ fn requote_and_drive_program(fp: &str) -> Par {
     let drive_chan = reserved_tag_par(fp, DRIVE_RESERVED_LABEL);
     let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), fp);
 
-    let producer =
-        new_send_par(quoted_name("fltX"), vec![subject], false, Vec::new(), false, Vec::new(), false);
+    let producer = new_send_par(
+        quoted_name("fltX"),
+        vec![subject],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
     let pattern = new_elist_par(
         vec![
             app_tag.clone(),
@@ -239,8 +253,15 @@ fn inter_flt_reship_program(fp: &str) -> Par {
     let drive_chan = reserved_tag_par(fp, DRIVE_RESERVED_LABEL);
     let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), fp);
 
-    let producer =
-        new_send_par(quoted_name("fltX"), vec![subject], false, Vec::new(), false, Vec::new(), false);
+    let producer = new_send_par(
+        quoted_name("fltX"),
+        vec![subject],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
 
     // Consumer 1: capture the WHOLE FLT (a bare FreeVar(0) ⟹ BoundVar(0)), seed the driver with "nf".
     let consumer1 = {
@@ -396,17 +417,33 @@ async fn main() -> Result<(), String> {
 fn beat0_wire_format(renderer: &SurfaceRenderer, fp: &str) {
     println!("── Beat 0 — the wire format existed before the syntax ──────────────────────");
     println!("  ⌜App⌝      (unforgeable GPrivate tag)  = {}", reflected_tag_string(fp, "App"));
-    println!("  ⌜^lambda⌝                              = {}", reflected_tag_string(fp, LAMBDA_REFLECT_LABEL));
-    println!("  ⌜^nog⌝      (E-2-D groundness marker)   = {}", reflected_tag_string(fp, NONGROUND_MARK_REFLECT_LABEL));
+    println!(
+        "  ⌜^lambda⌝                              = {}",
+        reflected_tag_string(fp, LAMBDA_REFLECT_LABEL)
+    );
+    println!(
+        "  ⌜^nog⌝      (E-2-D groundness marker)   = {}",
+        reflected_tag_string(fp, NONGROUND_MARK_REFLECT_LABEL)
+    );
     println!("  id = ⟦{}⟧", show(renderer, fp, &g_id()));
     println!("       reflected v2:  [⌜^lambda⌝, ⌜^nog⌝, [⌜^bound⌝, ⌜^nog⌝, Z]]");
     println!("  K  = ⟦{}⟧", show(renderer, fp, &g_k()));
-    println!("       reflected v2:  [⌜^lambda⌝, ⌜^nog⌝, [⌜^lambda⌝, ⌜^nog⌝, [⌜^bound⌝, ⌜^nog⌝, S(Z)]]]");
+    println!(
+        "       reflected v2:  [⌜^lambda⌝, ⌜^nog⌝, [⌜^lambda⌝, ⌜^nog⌝, [⌜^bound⌝, ⌜^nog⌝, S(Z)]]]"
+    );
     println!("  ⟦App(id, K)⟧ = [⌜App⌝, ⌜^nog⌝, ⟦id⟧, ⟦K⟧]");
-    println!("       every marked-object node is [head-tag, groundness-marker, args…]: the marker at");
-    println!("       index 1 is what every pattern below WILDCARDS (`_`) and every re-quote RE-EMITS.");
-    println!("       All three tops are ⌜^nog⌝ — a closed λ hereditarily carries a bound variable.");
-    println!("  (VALIDATE: exact α-fresh binder spelling is renderer-chosen; the STRUCTURE is exact)\n");
+    println!(
+        "       every marked-object node is [head-tag, groundness-marker, args…]: the marker at"
+    );
+    println!(
+        "       index 1 is what every pattern below WILDCARDS (`_`) and every re-quote RE-EMITS."
+    );
+    println!(
+        "       All three tops are ⌜^nog⌝ — a closed λ hereditarily carries a bound variable."
+    );
+    println!(
+        "  (VALIDATE: exact α-fresh binder spelling is renderer-chosen; the STRUCTURE is exact)\n"
+    );
 }
 
 /// Beat 1 — ship a Lambda FLT; destructure it with a typed hole. RUNS.
@@ -417,23 +454,33 @@ async fn beat1_ship_and_destructure(
 ) -> Result<(), String> {
     println!("── Beat 1 — ship an FLT; destructure with a typed hole (RUNS) ───────────────");
     println!("  program: @\"fltX\"!(⟦App(id, K)⟧) | for( @[⌜App⌝, _, ${{f}}, ⟦K⟧] <- @\"fltX\" ){{ @\"OUT\"!(f) }}");
-    println!("           (`${{f}}` is a match FreeVar at the function position — hand-built here; the");
+    println!(
+        "           (`${{f}}` is a match FreeVar at the function position — hand-built here; the"
+    );
     println!("            refined `${{f}}` syntax generates this receive in phase-2)");
     let tag = reserved_tag_par(fp, "App");
     let k_reflected = reflect_ground_term_par(&g_k(), fp);
 
     clear_var_cache();
     let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), fp);
-    let set = observe(backend, &hole_rendezvous_program(subject, tag.clone(), k_reflected.clone()), fp).await?;
+    let set =
+        observe(backend, &hole_rendezvous_program(subject, tag.clone(), k_reflected.clone()), fp)
+            .await?;
     for value in &set.out_values {
-        println!("  OUT observes ⟦{}⟧   (the ${{f}} hole bound ⟦id⟧ at the function position)", show_value(renderer, value));
+        println!(
+            "  OUT observes ⟦{}⟧   (the ${{f}} hole bound ⟦id⟧ at the function position)",
+            show_value(renderer, value)
+        );
     }
 
     // 1b — ship ⟦K⟧ alone (a λ node, not an App): the App-shaped pattern never fires.
     clear_var_cache();
     let lone_k = reflect_ground_term_par(&g_k(), fp);
     let rested = observe(backend, &hole_rendezvous_program(lone_k, tag, k_reflected), fp).await?;
-    println!("  1b: ship ⟦K⟧ alone → OUT {} value(s) — no App node, no COMM, the datum RESTS on fltX\n", rested.out_values.len());
+    println!(
+        "  1b: ship ⟦K⟧ alone → OUT {} value(s) — no App node, no COMM, the datum RESTS on fltX\n",
+        rested.out_values.len()
+    );
     Ok(())
 }
 
@@ -445,30 +492,45 @@ async fn beat2_where_guard_on_foreign_subterm(
 ) -> Result<(), String> {
     println!("── Beat 2 — the guard vetoes on a foreign subterm (D2, RUNS) ────────────────");
     println!("  program: for( @[⌜App⌝, _, ${{f}}, ⟦K⟧] <- @\"fltX\" ){{ @\"OUT\"!(f) }}");
-    println!("           (two structurally-valid Apps, discriminated by the argument subterm alone)");
+    println!(
+        "           (two structurally-valid Apps, discriminated by the argument subterm alone)"
+    );
     let tag = reserved_tag_par(fp, "App");
     let k_reflected = reflect_ground_term_par(&g_k(), fp);
 
     clear_var_cache();
     let matched = observe(
         backend,
-        &hole_rendezvous_program(reflect_ground_term_par(&g_app(g_id(), g_k()), fp), tag.clone(), k_reflected.clone()),
+        &hole_rendezvous_program(
+            reflect_ground_term_par(&g_app(g_id(), g_k()), fp),
+            tag.clone(),
+            k_reflected.clone(),
+        ),
         fp,
     )
     .await?;
     for value in &matched.out_values {
-        println!("  ship ⟦App(id, K)⟧ → OUT ⟦{}⟧   (argument ⟦K⟧ = ⟦K⟧ — matches)", show_value(renderer, value));
+        println!(
+            "  ship ⟦App(id, K)⟧ → OUT ⟦{}⟧   (argument ⟦K⟧ = ⟦K⟧ — matches)",
+            show_value(renderer, value)
+        );
     }
 
     clear_var_cache();
     let vetoed = observe(
         backend,
-        &hole_rendezvous_program(reflect_ground_term_par(&g_app(g_id(), g_id()), fp), tag, k_reflected),
+        &hole_rendezvous_program(
+            reflect_ground_term_par(&g_app(g_id(), g_id()), fp),
+            tag,
+            k_reflected,
+        ),
         fp,
     )
     .await?;
     println!("  ship ⟦App(id, id)⟧ → OUT {} value(s)  (argument ⟦id⟧ ≠ ⟦K⟧ — veto, zero partial effects)", vetoed.out_values.len());
-    println!("  (the refined syntax spells this `where a == ⟦K⟧`; the marker-sensitive EEq guard is");
+    println!(
+        "  (the refined syntax spells this `where a == ⟦K⟧`; the marker-sensitive EEq guard is"
+    );
     println!("   deferred to guard-lowering — D2 rides the marker-wildcarded PATTERN, the sound v1 form)\n");
     Ok(())
 }
@@ -476,8 +538,12 @@ async fn beat2_where_guard_on_foreign_subterm(
 /// Beat 3 — the counterfeit is rejected: tags are unforgeable. RUNS.
 async fn beat3_counterfeit_rejected(backend: &PlannedRhoBackend, fp: &str) -> Result<(), String> {
     println!("── Beat 3 — the counterfeit is rejected: tags are unforgeable (RUNS) ────────");
-    println!("  a 4-element GString-tagged fake [\"App\", ⌜^nog⌝, ⟦id⟧, ⟦K⟧] at the same receive —");
-    println!("  byte-identical to ⟦App(id, K)⟧ EXCEPT the head (ground \"App\" vs the GPrivate ⌜App⌝).");
+    println!(
+        "  a 4-element GString-tagged fake [\"App\", ⌜^nog⌝, ⟦id⟧, ⟦K⟧] at the same receive —"
+    );
+    println!(
+        "  byte-identical to ⟦App(id, K)⟧ EXCEPT the head (ground \"App\" vs the GPrivate ⌜App⌝)."
+    );
     clear_var_cache();
     let tag = reserved_tag_par(fp, "App");
     let nog = reserved_tag_par(fp, NONGROUND_MARK_REFLECT_LABEL);
@@ -492,9 +558,15 @@ async fn beat3_counterfeit_rejected(backend: &PlannedRhoBackend, fp: &str) -> Re
         false,
     );
     let set = observe(backend, &hole_rendezvous_program(counterfeit, tag, k_reflected), fp).await?;
-    println!("    genuine head     = {}   (GPrivate, compared by identity)", reflected_tag_string(fp, "App"));
+    println!(
+        "    genuine head     = {}   (GPrivate, compared by identity)",
+        reflected_tag_string(fp, "App")
+    );
     println!("    counterfeit head = ground string \"App\"   — a DIFFERENT Par value");
-    println!("  → OUT {} value(s): no match, the datum rests (tags by identity, not spelling)", set.out_values.len());
+    println!(
+        "  → OUT {} value(s): no match, the datum rests (tags by identity, not spelling)",
+        set.out_values.len()
+    );
     println!("  the runtime face of the FIP No-Injection property.\n");
     Ok(())
 }
@@ -507,17 +579,28 @@ async fn beat4_fill_holes_and_run(
     fp: &str,
 ) -> Result<(), String> {
     println!("── Beat 4 — fill the holes and RUN it: re-quote to β-normal form (RUNS) ─────");
-    println!("  program: @\"fltX\"!(⟦App(id, K)⟧) | for( @[⌜App⌝, _, ${{f}}, ${{k}}] <- @\"fltX\" ){{");
+    println!(
+        "  program: @\"fltX\"!(⟦App(id, K)⟧) | for( @[⌜App⌝, _, ${{f}}, ${{k}}] <- @\"fltX\" ){{"
+    );
     println!("             ⌜^drive⌝!( [⌜App⌝, ⌜^nog⌝, f, k], fuel, \"OUT\" ) }}");
-    println!("           (the marker slot is FORCED ⌜^nog⌝ over the holes — the E-2-D semantic fix:");
+    println!(
+        "           (the marker slot is FORCED ⌜^nog⌝ over the holes — the E-2-D semantic fix:"
+    );
     println!("            a 3-element re-quote or a hard-coded ⌜^gnd⌝ would silently NOT β-fire)");
     clear_var_cache();
     let set = observe(backend, &requote_and_drive_program(fp), fp).await?;
     for value in &set.out_values {
-        println!("  OUT observes ⟦{}⟧   (β-normal form of App(id, K))", show_value(renderer, value));
+        println!(
+            "  OUT observes ⟦{}⟧   (β-normal form of App(id, K))",
+            show_value(renderer, value)
+        );
     }
     println!("  ^fired ledger: {:?}", set.fired_labels()?);
-    println!("  ^drive-err: {} datum(a) | ^drive-fuel: {} datum(a)  (both expected empty)", set.err_data.len(), set.fuel_data.len());
+    println!(
+        "  ^drive-err: {} datum(a) | ^drive-fuel: {} datum(a)  (both expected empty)",
+        set.err_data.len(),
+        set.fuel_data.len()
+    );
     println!("  one visible COMM (the foreign term changing hands), then a cascade of τ-steps:");
     println!("  the driver matching, β firing through the substitution calculus, the contractum re-driving.\n");
     Ok(())
@@ -537,10 +620,15 @@ async fn beat5_positive_inter_flt_reship(
     clear_var_cache();
     let set = observe(backend, &inter_flt_reship_program(fp), fp).await?;
     for value in &set.out_values {
-        println!("  OUT observes ⟦{}⟧   (a NF produced by one FLT interaction, re-matched by another)", show_value(renderer, value));
+        println!(
+            "  OUT observes ⟦{}⟧   (a NF produced by one FLT interaction, re-matched by another)",
+            show_value(renderer, value)
+        );
     }
     println!("  consumer 1's drive ^fired: {:?}", set.fired_labels()?);
-    println!("  honest scope: same-language, same-binder-depth re-wrap; the cross-language binder hole");
+    println!(
+        "  honest scope: same-language, same-binder-depth re-wrap; the cross-language binder hole"
+    );
     println!("  is the phase-3 co-install spike (D7), not this beat.\n");
     Ok(())
 }
@@ -563,8 +651,15 @@ async fn beat5_omega_witness(
 
     println!("  Ω = (λx.x x)(λx.x x), per-path fuel 3:");
     println!("    ^fired ledger: {:?}  (exactly per-path-fuel firings)", set.fired_labels()?);
-    println!("    ^drive-fuel: {} typed exhaustion datum (the stuck redex Ω)", set.fuel_data.len());
-    if let Some(stuck) = set.fuel_data.first().and_then(par_as_runtime_observation_value) {
+    println!(
+        "    ^drive-fuel: {} typed exhaustion datum (the stuck redex Ω)",
+        set.fuel_data.len()
+    );
+    if let Some(stuck) = set
+        .fuel_data
+        .first()
+        .and_then(par_as_runtime_observation_value)
+    {
         println!("      stuck redex = ⟦{}⟧", show_value(renderer, &stuck));
     }
     println!("    OUT: {} value(s)  (exhaustion NEVER claims an NF)\n", set.out_values.len());
@@ -576,9 +671,15 @@ async fn beat5_omega_witness(
 /// and recorded.
 fn deferred_after_primary() {
     println!("── Deferred — later, after the primary demo (USER decision 1) ───────────────");
-    println!("  * Beat 4b — the live StepSession τ-trace: step 1 is the USER-level FLT rendezvous COMM");
-    println!("    on fltX; each subsequent step classifies [τ drive]/[τ subst]; terminal [Rho output].");
-    println!("  * Secondary openers — the stock-RhoCalc \"stringly-typed strawman\" cameo that Beat 3");
+    println!(
+        "  * Beat 4b — the live StepSession τ-trace: step 1 is the USER-level FLT rendezvous COMM"
+    );
+    println!(
+        "    on fltX; each subsequent step classifies [τ drive]/[τ subst]; terminal [Rho output]."
+    );
+    println!(
+        "  * Secondary openers — the stock-RhoCalc \"stringly-typed strawman\" cameo that Beat 3"
+    );
     println!("    then kills, and the Guarded Settlement Desk Beat-2 bridge.");
     println!("  Deferred, NOT stubbed: they are separate demos, built once the primary beats are");
     println!("  green + recorded. Until then Beats 0/1/4 also narrate from the pinned twin facts.");

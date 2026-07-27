@@ -169,9 +169,36 @@ fn a1_rows() -> Vec<Roundtrip> {
         use mettail_languages::calculator::{BigInt, BigRat, Bool, Fixed, Float, Int, Str, UInt32};
         roundtrip!(rows, "calc", Int, NumLit, 0i32, 7, -7, i32::MAX, i32::MIN);
         roundtrip!(rows, "calc", UInt32, NumLit, 0u32, 7, u32::MAX);
-        roundtrip!(rows, "calc", BigInt, NumLit, bigint(0), bigint(7), bigint(-7), bigint(3_000_000_000));
-        roundtrip!(rows, "calc", BigRat, RatLit, bigrat(0, 1), bigrat(7, 1), bigrat(-7, 1), bigrat(3, 4), bigrat(-1, 2));
-        roundtrip!(rows, "calc", Fixed, FixedLit, fixed("0p0"), fixed("7p2"), fixed("-260592200p0"));
+        roundtrip!(
+            rows,
+            "calc",
+            BigInt,
+            NumLit,
+            bigint(0),
+            bigint(7),
+            bigint(-7),
+            bigint(3_000_000_000)
+        );
+        roundtrip!(
+            rows,
+            "calc",
+            BigRat,
+            RatLit,
+            bigrat(0, 1),
+            bigrat(7, 1),
+            bigrat(-7, 1),
+            bigrat(3, 4),
+            bigrat(-1, 2)
+        );
+        roundtrip!(
+            rows,
+            "calc",
+            Fixed,
+            FixedLit,
+            fixed("0p0"),
+            fixed("7p2"),
+            fixed("-260592200p0")
+        );
         roundtrip!(rows, "calc", Float, FloatLit, float(0.0), float(1.5), float(-1.5));
         roundtrip!(rows, "calc", Bool, BoolLit, true, false);
         roundtrip!(rows, "calc", Str, StringLit, String::new(), "ab".to_string());
@@ -181,7 +208,17 @@ fn a1_rows() -> Vec<Roundtrip> {
         roundtrip!(rows, "rhocalc", Int, NumLit, 0i64, 7, -7, i64::MAX, i64::MIN);
         roundtrip!(rows, "rhocalc", UInt32, NumLit, 0u32, 7, u32::MAX);
         roundtrip!(rows, "rhocalc", BigInt, NumLit, bigint(0), bigint(7), bigint(-7));
-        roundtrip!(rows, "rhocalc", BigRat, RatLit, bigrat(0, 1), bigrat(7, 1), bigrat(-7, 1), bigrat(3, 4), bigrat(-1, 2));
+        roundtrip!(
+            rows,
+            "rhocalc",
+            BigRat,
+            RatLit,
+            bigrat(0, 1),
+            bigrat(7, 1),
+            bigrat(-7, 1),
+            bigrat(3, 4),
+            bigrat(-1, 2)
+        );
         roundtrip!(rows, "rhocalc", Fixed, FixedLit, fixed("0p0"), fixed("7p2"), fixed("-7p0"));
         roundtrip!(rows, "rhocalc", Float, FloatLit, float(0.0), float(1.5), float(-1.5));
         roundtrip!(rows, "rhocalc", Bool, BoolLit, true, false);
@@ -323,9 +360,10 @@ fn d1_calculator_int_spells_its_whole_domain() {
     assert_eq!(format!("{neg:?}"), "NumLit(-7)", "the sign is part of the numeral token");
 
     // (3) What must NOT move: sign-abutted subtraction, spaced and unspaced.
-    for (source, want) in
-        [("1-7", "SubInt(NumLit(1), NumLit(7))"), ("1 -7", "SubInt(NumLit(1), NumLit(7))")]
-    {
+    for (source, want) in [
+        ("1-7", "SubInt(NumLit(1), NumLit(7))"),
+        ("1 -7", "SubInt(NumLit(1), NumLit(7))"),
+    ] {
         mettail_runtime::clear_var_cache();
         let term = Int::parse(source).unwrap_or_else(|e| panic!("{source:?} must parse: {e}"));
         assert_eq!(
@@ -433,8 +471,27 @@ fn d3_rhocalc_u32_suffix_must_remain_an_int_literal() {
 /// The texts swept for A2. Every integer spelling either language can lex, plus the
 /// non-integer literal forms, so a carrier that reaches outside its own family shows up.
 const A2_TEXTS: &[&str] = &[
-    "0", "7", "7i32", "7i64", "7u32", "7n", "7r", "3r/4r", "7p0", "7.5", "1e3", "0x1F", "0x1Fu32",
-    "3000000000", "4294967296", "-7", "-7n", "-7r", "-7p0", "true", "\"ab\"",
+    "0",
+    "7",
+    "7i32",
+    "7i64",
+    "7u32",
+    "7n",
+    "7r",
+    "3r/4r",
+    "7p0",
+    "7.5",
+    "1e3",
+    "0x1F",
+    "0x1Fu32",
+    "3000000000",
+    "4294967296",
+    "-7",
+    "-7n",
+    "-7r",
+    "-7p0",
+    "true",
+    "\"ab\"",
 ];
 
 fn calculator_literal_carriers(text: &str) -> Vec<&'static str> {
@@ -579,7 +636,8 @@ fn negative_control_a1_corpus_covers_every_literal_category() {
     for language in ["calc", "rhocalc"] {
         for category in ["Int", "UInt32", "BigInt", "BigRat", "Fixed", "Float", "Bool", "Str"] {
             assert!(
-                rows.iter().any(|r| r.language == language && r.category == category),
+                rows.iter()
+                    .any(|r| r.language == language && r.category == category),
                 "the A1 corpus does not exercise {language}::{category}"
             );
         }

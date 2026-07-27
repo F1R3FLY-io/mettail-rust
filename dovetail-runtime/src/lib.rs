@@ -132,7 +132,11 @@ where
 {
     RuntimeReflectedSubterm {
         constructor: subterm.op.to_string(),
-        children: subterm.children.iter().map(project_reflected_subterm).collect(),
+        children: subterm
+            .children
+            .iter()
+            .map(project_reflected_subterm)
+            .collect(),
     }
 }
 
@@ -406,9 +410,7 @@ where
 /// fingerprint, so a stage built for a different definition is rejected.
 pub fn dovetail_backed<L>(
     inner: L,
-    stage: DovetailCompilerStage<
-        fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String>,
-    >,
+    stage: DovetailCompilerStage<fn(&dyn Term) -> Result<RuntimeDovetailRunReport, String>>,
 ) -> Result<Box<dyn Language>, DovetailRuntimeBackedLanguageError>
 where
     L: Language + 'static,
@@ -971,8 +973,9 @@ mod tests {
         let sat = eg.saturate(&[rule], 64);
 
         // Resolve σ against the live e-graph, thread it through the report, project.
-        let resolved =
-            resolve_rewrite_justifications(&eg, &sat.rewrite_justifications, |_| TropicalWeight(0.0));
+        let resolved = resolve_rewrite_justifications(&eg, &sat.rewrite_justifications, |_| {
+            TropicalWeight(0.0)
+        });
         let mut extractor = Extractor::new(&eg, |_| TropicalWeight(0.0));
         let extracted = extractor.derivations(eg.find(swap)).collect_checked();
         let mut report = report_from_extraction_with_rule_firings(extracted, sat.rule_firings);
@@ -987,11 +990,17 @@ mod tests {
             vec![
                 (
                     "x".to_string(),
-                    RuntimeReflectedSubterm { constructor: "A".to_string(), children: Vec::new() }
+                    RuntimeReflectedSubterm {
+                        constructor: "A".to_string(),
+                        children: Vec::new()
+                    }
                 ),
                 (
                     "y".to_string(),
-                    RuntimeReflectedSubterm { constructor: "B".to_string(), children: Vec::new() }
+                    RuntimeReflectedSubterm {
+                        constructor: "B".to_string(),
+                        children: Vec::new()
+                    }
                 ),
             ]
         );

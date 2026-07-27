@@ -208,16 +208,32 @@ fn observe() -> BTreeMap<String, Obs> {
         let (all, all_structural) = if at_forrow {
             match ForRow::parse_via_wpda_all(src) {
                 Ok(v) => (
-                    Some(v.iter().map(|t| format!("{t}")).collect::<BTreeSet<String>>()),
-                    Some(v.iter().map(|t| canon(&format!("{t:?}"))).collect::<BTreeSet<String>>()),
+                    Some(
+                        v.iter()
+                            .map(|t| format!("{t}"))
+                            .collect::<BTreeSet<String>>(),
+                    ),
+                    Some(
+                        v.iter()
+                            .map(|t| canon(&format!("{t:?}")))
+                            .collect::<BTreeSet<String>>(),
+                    ),
                 ),
                 Err(_) => (None, None),
             }
         } else {
             match Proc::parse_via_wpda_all(src) {
                 Ok(v) => (
-                    Some(v.iter().map(|t| format!("{t}")).collect::<BTreeSet<String>>()),
-                    Some(v.iter().map(|t| canon(&format!("{t:?}"))).collect::<BTreeSet<String>>()),
+                    Some(
+                        v.iter()
+                            .map(|t| format!("{t}"))
+                            .collect::<BTreeSet<String>>(),
+                    ),
+                    Some(
+                        v.iter()
+                            .map(|t| canon(&format!("{t:?}")))
+                            .collect::<BTreeSet<String>>(),
+                    ),
                 ),
                 Err(_) => (None, None),
             }
@@ -272,21 +288,27 @@ fn parse_render(text: &str) -> BTreeMap<String, Obs> {
         let (Some(id), Some(kind), Some(payload)) = (it.next(), it.next(), it.next()) else {
             continue;
         };
-        let e = m
-            .entry(id.to_string())
-            .or_insert(Obs { all: None, elected: None, all_structural: None });
+        let e = m.entry(id.to_string()).or_insert(Obs {
+            all: None,
+            elected: None,
+            all_structural: None,
+        });
         match (kind, payload) {
             ("ALL", "<NOPARSE>") => e.all = None,
             ("ALL", "<EMPTY>") => e.all = Some(BTreeSet::new()),
             ("ALL", r) => {
-                e.all.get_or_insert_with(BTreeSet::new).insert(r.to_string());
+                e.all
+                    .get_or_insert_with(BTreeSet::new)
+                    .insert(r.to_string());
             },
             ("ONE", "<NOPARSE>") => e.elected = None,
             ("ONE", r) => e.elected = Some(r.to_string()),
             ("STR", "<NOPARSE>") => e.all_structural = None,
             ("STR", "<EMPTY>") => e.all_structural = Some(BTreeSet::new()),
             ("STR", r) => {
-                e.all_structural.get_or_insert_with(BTreeSet::new).insert(r.to_string());
+                e.all_structural
+                    .get_or_insert_with(BTreeSet::new)
+                    .insert(r.to_string());
             },
             _ => {},
         }
@@ -380,7 +402,9 @@ fn no_facade_loses_a_reading_on_the_all_seam() {
     for (name, switch) in FACADES {
         let off = off_leg(switch);
         for (id, off_obs) in &off {
-            let Some(off_set) = &off_obs.all else { continue };
+            let Some(off_set) = &off_obs.all else {
+                continue;
+            };
             let on_obs = on.get(id).expect("the two legs share the corpus");
             let Some(on_set) = &on_obs.all else {
                 if !off_set.is_empty() {
@@ -397,9 +421,16 @@ fn no_facade_loses_a_reading_on_the_all_seam() {
                 failures.push(format!(
                     "  [{name}/{id}] `{}` — {} reading(s) present with the facade OFF are MISSING \
                      with it ON:\n{}",
-                    corpus().iter().find(|(i, _)| i == id).map(|(_, s)| *s).unwrap_or("?"),
+                    corpus()
+                        .iter()
+                        .find(|(i, _)| i == id)
+                        .map(|(_, s)| *s)
+                        .unwrap_or("?"),
                     lost.len(),
-                    lost.iter().map(|r| format!("        {r}")).collect::<Vec<_>>().join("\n"),
+                    lost.iter()
+                        .map(|r| format!("        {r}"))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
                 ));
             }
         }
@@ -437,7 +468,9 @@ fn the_elected_reading_is_one_the_walker_admits() {
     for (name, switch) in FACADES {
         let off = off_leg(switch);
         for (id, on_obs) in &on {
-            let Some(elected) = &on_obs.elected else { continue };
+            let Some(elected) = &on_obs.elected else {
+                continue;
+            };
             let off_obs = off.get(id).expect("the two legs share the corpus");
             let Some(off_set) = &off_obs.all else {
                 t13_rows.push(format!("{name}/{id}"));
@@ -452,8 +485,15 @@ fn the_elected_reading_is_one_the_walker_admits() {
                 failures.push(format!(
                     "  [{name}/{id}] `{}`\n      elected(ON) : {elected}\n      readings(OFF): \
                      {}",
-                    corpus().iter().find(|(i, _)| i == id).map(|(_, s)| *s).unwrap_or("?"),
-                    off_set.iter().map(|r| format!("\n        {r}")).collect::<String>(),
+                    corpus()
+                        .iter()
+                        .find(|(i, _)| i == id)
+                        .map(|(_, s)| *s)
+                        .unwrap_or("?"),
+                    off_set
+                        .iter()
+                        .map(|r| format!("\n        {r}"))
+                        .collect::<String>(),
                 ));
             }
         }

@@ -446,8 +446,7 @@ fn test_calc_recovery_power_missing_exponent() {
 #[test]
 fn test_rhocalc_recovery_inputbind_valid_for_comprehension() {
     mettail_runtime::clear_var_cache();
-    let (result, errors) =
-        mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- z){Nil}");
+    let (result, errors) = mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- z){Nil}");
     assert!(result.is_some(), "valid for-comprehension should succeed");
     assert!(errors.is_empty(), "valid for-comprehension should have no errors");
 }
@@ -467,8 +466,7 @@ fn test_rhocalc_recovery_inputbind_valid_query_bind() {
 #[test]
 fn test_rhocalc_recovery_inputbind_missing_channel() {
     mettail_runtime::clear_var_cache();
-    let (result, errors) =
-        mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- ){Nil}");
+    let (result, errors) = mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- ){Nil}");
     assert!(result.is_none(), "dropped channel cannot yield a full parse");
     assert!(!errors.is_empty(), "dropped channel should produce errors");
 }
@@ -476,8 +474,7 @@ fn test_rhocalc_recovery_inputbind_missing_channel() {
 #[test]
 fn test_rhocalc_recovery_inputbind_unclosed_body() {
     mettail_runtime::clear_var_cache();
-    let (result, errors) =
-        mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- z){Nil");
+    let (result, errors) = mettail_languages::rhocalc::Proc::parse_recovering("for(@y <- z){Nil");
     assert!(result.is_none(), "dropped closing brace cannot yield a full parse");
     assert!(!errors.is_empty(), "dropped closing brace should produce errors");
 }
@@ -487,8 +484,7 @@ fn test_rhocalc_recovery_inputbind_persistent_unclosed_body() {
     mettail_runtime::clear_var_cache();
     // The `<=` sibling (InputBindQuotedPersistent) — the OTHER divergence
     // branch of the factored spine.
-    let (result, errors) =
-        mettail_languages::rhocalc::Proc::parse_recovering("for(@y <= z){Nil");
+    let (result, errors) = mettail_languages::rhocalc::Proc::parse_recovering("for(@y <= z){Nil");
     assert!(result.is_none(), "dropped closing brace cannot yield a full parse");
     assert!(!errors.is_empty(), "dropped closing brace should produce errors");
 }

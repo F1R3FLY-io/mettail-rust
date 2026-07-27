@@ -143,10 +143,7 @@ impl SurfaceRenderer {
     /// sound.
     fn unique_binder_rule(&self) -> Result<&GrammarRule, String> {
         let mut candidates = self.def.terms.iter().filter(|rule| {
-            matches!(
-                rule.term_context.as_deref(),
-                Some([TermParam::Abstraction { .. }])
-            )
+            matches!(rule.term_context.as_deref(), Some([TermParam::Abstraction { .. }]))
         });
         let first = candidates.next().ok_or_else(|| {
             format!(
@@ -167,17 +164,24 @@ impl SurfaceRenderer {
     /// The language's UNIQUE `HashBag` collection production (the bag-soup
     /// de-reflection target, e.g. Ambient's `PPar`).
     fn unique_bag_rule(&self) -> Result<(&GrammarRule, &str, Option<&(String, String)>), String> {
-        let mut candidates = self.def.terms.iter().filter_map(|rule| match rule.items.as_slice() {
-            [GrammarItem::Collection {
-                coll_type: mettail_ast::types::CollectionType::HashBag,
-                separator,
-                delimiters,
-                ..
-            }] => Some((rule, separator.as_str(), delimiters.as_ref())),
-            _ => None,
-        });
+        let mut candidates = self
+            .def
+            .terms
+            .iter()
+            .filter_map(|rule| match rule.items.as_slice() {
+                [GrammarItem::Collection {
+                    coll_type: mettail_ast::types::CollectionType::HashBag,
+                    separator,
+                    delimiters,
+                    ..
+                }] => Some((rule, separator.as_str(), delimiters.as_ref())),
+                _ => None,
+            });
         let first = candidates.next().ok_or_else(|| {
-            format!("language {} has no HashBag production to de-reflect a bag soup into", self.def.name)
+            format!(
+                "language {} has no HashBag production to de-reflect a bag soup into",
+                self.def.name
+            )
         })?;
         if let Some((second, _, _)) = candidates.next() {
             return Err(format!(
@@ -222,18 +226,13 @@ impl SurfaceRenderer {
                             return Err(format!("^bound carries one Peano leaf: {children:?}"));
                         };
                         let depth = peano_value(peano)?;
-                        binders
-                            .iter()
-                            .rev()
-                            .nth(depth)
-                            .cloned()
-                            .ok_or_else(|| {
-                                format!(
-                                    "^bound({depth}) exceeds the {} enclosing binder scope(s) — \
+                        binders.iter().rev().nth(depth).cloned().ok_or_else(|| {
+                            format!(
+                                "^bound({depth}) exceeds the {} enclosing binder scope(s) — \
                                      a dangling de Bruijn index",
-                                    binders.len()
-                                )
-                            })
+                                binders.len()
+                            )
+                        })
                     },
                     LAMBDA_REFLECT_LABEL => {
                         let [body] = children.as_slice() else {
@@ -289,11 +288,11 @@ impl SurfaceRenderer {
                         }
                         Ok(tokens.join(" "))
                     },
-                    MULTILAMBDA_REFLECT_LABEL => Err(
-                        "^multilambda de-reflection is not supported (no production language \
+                    MULTILAMBDA_REFLECT_LABEL => {
+                        Err("^multilambda de-reflection is not supported (no production language \
                          reflects multi-binder scopes yet)"
-                            .to_string(),
-                    ),
+                            .to_string())
+                    },
                     _ => self.render_constructor(constructor, children, binders, free_names, fresh),
                 }
             },
@@ -424,9 +423,9 @@ impl SurfaceRenderer {
                     ));
                 },
                 GrammarItem::Collection { .. } => {
-                    let child = child_iter.next().ok_or_else(|| {
-                        format!("{constructor} is missing its collection child")
-                    })?;
+                    let child = child_iter
+                        .next()
+                        .ok_or_else(|| format!("{constructor} is missing its collection child"))?;
                     tokens.push(self.render_value(child, binders, free_names, fresh)?);
                 },
             }
@@ -480,14 +479,14 @@ fn collect_free_names(
             table.assign(debug);
             Ok(())
         },
-        RuntimeObservationValue::Term { children, .. } => {
-            children.iter().try_for_each(|child| collect_free_names(child, table))
-        },
+        RuntimeObservationValue::Term { children, .. } => children
+            .iter()
+            .try_for_each(|child| collect_free_names(child, table)),
         RuntimeObservationValue::List(items)
         | RuntimeObservationValue::Tuple(items)
-        | RuntimeObservationValue::Set(items) => {
-            items.iter().try_for_each(|item| collect_free_names(item, table))
-        },
+        | RuntimeObservationValue::Set(items) => items
+            .iter()
+            .try_for_each(|item| collect_free_names(item, table)),
         RuntimeObservationValue::Bag(entries) => entries
             .iter()
             .try_for_each(|(element, _)| collect_free_names(element, table)),
@@ -502,8 +501,5 @@ fn collect_free_names(
 /// Whether de-reflection applies to this observation value at all: constructor terms and
 /// bag soups have surface productions; scalar/opaque observations keep the raw display.
 pub fn is_surface_renderable_shape(value: &RuntimeObservationValue) -> bool {
-    matches!(
-        value,
-        RuntimeObservationValue::Term { .. } | RuntimeObservationValue::Bag(_)
-    )
+    matches!(value, RuntimeObservationValue::Term { .. } | RuntimeObservationValue::Bag(_))
 }

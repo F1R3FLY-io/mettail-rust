@@ -43,10 +43,7 @@ fn par_pattern_must_account_for_every_ground_element() {
 fn par_pattern_still_matches_an_equal_par() {
     let ground = parse("1 | 2");
     let pattern = parse("1 | 2");
-    assert!(
-        ground.match_pattern(&pattern).is_some(),
-        "an identical par must still match"
-    );
+    assert!(ground.match_pattern(&pattern).is_some(), "an identical par must still match");
 }
 
 /// The converse direction: a pattern LARGER than the ground must also fail.

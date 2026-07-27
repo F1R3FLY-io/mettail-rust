@@ -2371,7 +2371,12 @@ impl Repl {
     /// non-Ascent backends can return their checked runtime reports. `step`
     /// requires the selected backend to produce an Ascent-shaped graph because
     /// graph-navigation commands operate over Ascent results.
-    fn exec_or_step_term(&mut self, term_str: &str, step_mode: bool, show_taus: bool) -> Result<()> {
+    fn exec_or_step_term(
+        &mut self,
+        term_str: &str,
+        step_mode: bool,
+        show_taus: bool,
+    ) -> Result<()> {
         let language_name = self
             .state
             .language_name()
@@ -2692,14 +2697,9 @@ impl Repl {
                 // general mechanism — e.g. SwapDemo's reflected Pair results also gain
                 // surface rendering).
                 #[cfg(feature = "rho-languages")]
-                let surface_renderer = language.metadata().definition_source().and_then(
-                    |source| {
-                        crate::observation_surface::SurfaceRenderer::for_definition_source(
-                            source,
-                        )
-                        .ok()
-                    },
-                );
+                let surface_renderer = language.metadata().definition_source().and_then(|source| {
+                    crate::observation_surface::SurfaceRenderer::for_definition_source(source).ok()
+                });
                 let render_observation =
                     |value: &mettail_runtime::RuntimeObservationValue| -> String {
                         #[cfg(feature = "rho-languages")]
@@ -2793,7 +2793,11 @@ impl Repl {
                     println!(
                         "  - evidence: {}-graph evidence (host introspection, display-only — \
                          exec results never flow from this graph)",
-                        if is_rewrite_graph { "rewrite" } else { "derivation" }
+                        if is_rewrite_graph {
+                            "rewrite"
+                        } else {
+                            "derivation"
+                        }
                     );
                 }
                 println!("  - completeness: {}", dovetail_report.completeness);

@@ -787,10 +787,7 @@ mod tests {
         let root = read_zipper_root(&lit).expect("root zipper");
         let first = zipper_descend_first(&root).expect("descendFirst from the root");
         assert_eq!(first.1.len(), 1, "descendFirst advances ONE byte");
-        assert!(
-            zipper_get_leaf(&first).is_err(),
-            "a mid-segment focus carries no value"
-        );
+        assert!(zipper_get_leaf(&first).is_err(), "a mid-segment focus carries no value");
         assert!(
             zipper_get_path(&first).is_err() || zipper_get_leaf(&first).is_err(),
             "a mid-segment focus is not an addressable entry"
@@ -837,7 +834,9 @@ mod tests {
         let up = zipper_ascend(&at_leaf, 2).expect("ascend via the full-trie rooting");
         assert_eq!(up.1, vec![b'1', 0xFF, b'2', 0xFF]);
         assert_eq!(
-            zipper_get_subtrie(&up).expect("subtrie at the shared prefix").len(),
+            zipper_get_subtrie(&up)
+                .expect("subtrie at the shared prefix")
+                .len(),
             2
         );
     }

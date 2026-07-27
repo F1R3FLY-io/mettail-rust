@@ -30,8 +30,8 @@ mod refinementsmoke;
 
 refinementsmoke::refinementsmoke_generated_tests!(crate::refinementsmoke);
 
-use refinementsmoke::register_refinements;
 use mettail_runtime::{clear_refinement_registry, evaluate_refinement_predicate};
+use refinementsmoke::register_refinements;
 
 #[test]
 fn refinement_predicate_admits_in_domain_value() {

@@ -92,7 +92,10 @@ fn the_table_contains_the_shapes_the_defects_lived_on() {
             "`{label}` is missing from the wrap-gate table — the sample derivation stopped \
              covering the shape class it belongs to, and the gate is that much weaker.\n  \
              have: {:?}",
-            samples.iter().map(|(_, _, _, _, _, l, _)| *l).collect::<Vec<_>>()
+            samples
+                .iter()
+                .map(|(_, _, _, _, _, l, _)| *l)
+                .collect::<Vec<_>>()
         );
     }
 }
@@ -165,7 +168,9 @@ fn every_composed_sigil_surface_is_a_display_fixpoint() {
     let mut failures: Vec<String> = Vec::new();
     for gate in gates() {
         for (opcat, result_cat, frame, prefix, suffix, label, sample) in gate.samples {
-            let Ok(rendered) = (gate.wrap)(opcat, sample) else { continue };
+            let Ok(rendered) = (gate.wrap)(opcat, sample) else {
+                continue;
+            };
             // ⚠ SPACE-JOINED, and that was a measured correction. Concatenating the three
             // pieces directly produced `@Nil<- @ Nil`, whose missing separator made 194 rows
             // "fail" for the GATE's reason rather than the predicate's. The frame's pieces are
@@ -178,7 +183,9 @@ fn every_composed_sigil_surface_is_a_display_fixpoint() {
                 .copied()
                 .collect::<Vec<_>>()
                 .join(" ");
-            let Ok(once) = (gate.normalise)(result_cat, &composed) else { continue };
+            let Ok(once) = (gate.normalise)(result_cat, &composed) else {
+                continue;
+            };
             match (gate.normalise)(result_cat, &once) {
                 Ok(twice) if twice == once => {},
                 Ok(twice) => failures.push(format!(

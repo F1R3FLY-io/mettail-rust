@@ -30,17 +30,16 @@
 // Neither definition emits a generated suite (`options { emit_tests: false }` — Part B is
 // the HAND-WRITTEN `gen_fortran_model_prop.rs`), so no `_generated_tests!` wrapper exists
 // and no designated host is needed for either.
-#[path = "definitions/reserved_model.rs"]
-mod reserved_model;
 #[path = "definitions/fortran_model.rs"]
 mod fortran_model;
+#[path = "definitions/reserved_model.rs"]
+mod reserved_model;
 
 mod with_reserve {
     use crate::reserved_model::*;
 
     fn send_readings() -> Vec<Stmt> {
-        Stmt::parse_via_wpda_all("@IF!(x)")
-            .expect("ReservedModel: `@IF!(x)` should parse as Stmt")
+        Stmt::parse_via_wpda_all("@IF!(x)").expect("ReservedModel: `@IF!(x)` should parse as Stmt")
     }
 
     /// A.1 — keyword_channel_single: a reserved keyword in channel position
@@ -81,8 +80,8 @@ mod with_reserve {
     /// general.
     #[test]
     fn plain_identifier_still_a_variable_channel() {
-        let readings = Stmt::parse_via_wpda_all("@y!(x)")
-            .expect("ReservedModel: `@y!(x)` should parse");
+        let readings =
+            Stmt::parse_via_wpda_all("@y!(x)").expect("ReservedModel: `@y!(x)` should parse");
         assert!(
             readings.iter().any(|s| matches!(
                 s,
@@ -103,8 +102,12 @@ mod with_reserve {
 #[test]
 fn alt_set_deterministic_reserved() {
     use crate::reserved_model as rm;
-    let a = rm::Stmt::parse_via_wpda_all("@IF!(x)").expect("parse a").len();
-    let b = rm::Stmt::parse_via_wpda_all("@IF!(x)").expect("parse b").len();
+    let a = rm::Stmt::parse_via_wpda_all("@IF!(x)")
+        .expect("parse a")
+        .len();
+    let b = rm::Stmt::parse_via_wpda_all("@IF!(x)")
+        .expect("parse b")
+        .len();
     assert_eq!(a, b, "reserved alt-set size must be deterministic");
     assert_eq!(a, 1, "reserved alt-set is exactly the single keyword reading");
 }
@@ -115,8 +118,12 @@ fn alt_set_deterministic_reserved() {
 #[test]
 fn alt_set_deterministic_fortran() {
     use crate::fortran_model as f;
-    let a = f::Stmt::parse_via_wpda_all("@IF!(x)").expect("parse a").len();
-    let b = f::Stmt::parse_via_wpda_all("@IF!(x)").expect("parse b").len();
+    let a = f::Stmt::parse_via_wpda_all("@IF!(x)")
+        .expect("parse a")
+        .len();
+    let b = f::Stmt::parse_via_wpda_all("@IF!(x)")
+        .expect("parse b")
+        .len();
     assert_eq!(a, b, "unreserved alt-set size must be deterministic");
     assert_eq!(a, 2, "unreserved alt-set retains the full ambiguity (2 readings)");
 }
@@ -164,13 +171,37 @@ fn reserved_set_is_grammar_derived() {
     use mettail_prattail::ReservationPolicy;
 
     let terminals = vec![
-        TerminalPattern { text: "IF".into(), kind: TokenKind::Fixed("IF".into()), is_keyword: true },
-        TerminalPattern { text: "Nil".into(), kind: TokenKind::Fixed("Nil".into()), is_keyword: true },
-        TerminalPattern { text: "true".into(), kind: TokenKind::True, is_keyword: true },
+        TerminalPattern {
+            text: "IF".into(),
+            kind: TokenKind::Fixed("IF".into()),
+            is_keyword: true,
+        },
+        TerminalPattern {
+            text: "Nil".into(),
+            kind: TokenKind::Fixed("Nil".into()),
+            is_keyword: true,
+        },
+        TerminalPattern {
+            text: "true".into(),
+            kind: TokenKind::True,
+            is_keyword: true,
+        },
         // operators / punctuation are NOT identifier-shaped → never reserved
-        TerminalPattern { text: "@".into(), kind: TokenKind::Fixed("@".into()), is_keyword: false },
-        TerminalPattern { text: "!".into(), kind: TokenKind::Fixed("!".into()), is_keyword: false },
-        TerminalPattern { text: "(".into(), kind: TokenKind::Fixed("(".into()), is_keyword: false },
+        TerminalPattern {
+            text: "@".into(),
+            kind: TokenKind::Fixed("@".into()),
+            is_keyword: false,
+        },
+        TerminalPattern {
+            text: "!".into(),
+            kind: TokenKind::Fixed("!".into()),
+            is_keyword: false,
+        },
+        TerminalPattern {
+            text: "(".into(),
+            kind: TokenKind::Fixed("(".into()),
+            is_keyword: false,
+        },
     ];
 
     // `auto` reserves exactly the identifier-shaped (is_keyword) terminals.
@@ -195,7 +226,10 @@ fn reserved_set_is_grammar_derived() {
         contextual,
     };
     let reserved = policy.reserved_kinds(&terminals);
-    assert!(!reserved.contains(&TokenKind::Fixed("Nil".into())), "contextual opt-out drops Nil");
+    assert!(
+        !reserved.contains(&TokenKind::Fixed("Nil".into())),
+        "contextual opt-out drops Nil"
+    );
     assert!(reserved.contains(&TokenKind::Fixed("IF".into())), "others still reserved");
 }
 
@@ -223,8 +257,8 @@ fn rhocalc_auto_reserved_unregressed() {
     // Under `auto`, `Nil` is reserved: `@Nil!(q)` keeps ONLY the null-process
     // channel reading (the spurious send-on-variable-`Nil` reading is gone), so
     // the scalar cohort is a single reading (2→1 over-generation collapse).
-    let readings = r::Proc::parse_via_wpda_all("@Nil!(q)")
-        .expect("`@Nil!(q)` should parse at `auto`");
+    let readings =
+        r::Proc::parse_via_wpda_all("@Nil!(q)").expect("`@Nil!(q)` should parse at `auto`");
     assert_eq!(
         readings.len(),
         1,

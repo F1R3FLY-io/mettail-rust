@@ -103,12 +103,9 @@ fn calc_repl_parse_preserves_huge_n_suffix() {
     let t = lang
         .parse_term_for_env("32478132567813256718n")
         .expect("parse_term_for_env");
-    let nf = calc::CalculatorLanguage::dovetail_normal_term(
-        t.as_ref(),
-        DOVETAIL_ITERS,
-        DOVETAIL_NODES,
-    )
-    .expect("dovetail normal form");
+    let nf =
+        calc::CalculatorLanguage::dovetail_normal_term(t.as_ref(), DOVETAIL_ITERS, DOVETAIL_NODES)
+            .expect("dovetail normal form");
     let display = nf.to_string();
     assert!(
         display == "32478132567813256718" || display == "32478132567813256718n",
@@ -135,12 +132,14 @@ fn calc_unary_int_float_casts_are_surface_syntax() {
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     assert!(lang.parse_term("int(3)").is_ok(), "unary `int(3)` is now surface syntax");
-    assert!(lang.parse_term("float(3.0)").is_ok(), "unary `float(3.0)` is now surface syntax");
+    assert!(
+        lang.parse_term("float(3.0)").is_ok(),
+        "unary `float(3.0)` is now surface syntax"
+    );
     // The identity cast normalizes to a well-formed (non-error) form carrying the operand.
     let nfs = calc_nf_displays("int(3)");
     assert!(
-        nfs.iter()
-            .any(|d| !d.contains("error") && d.contains('3')),
+        nfs.iter().any(|d| !d.contains("error") && d.contains('3')),
         "unary `int(3)` should normalize to a well-formed value-bearing form, got {nfs:?}"
     );
 }

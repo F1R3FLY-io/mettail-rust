@@ -1709,8 +1709,9 @@ mod guard_then_tests {
         use mettail_runtime::Language;
         let lang = crate::rhocalc::RhoCalcLanguage;
         let term = lang.parse_term("__guard_then(0, \"BODY\")").expect("parse");
-        let nf = crate::rhocalc::RhoCalcLanguage::dovetail_normal_term(term.as_ref(), 64, 1_000_000)
-            .expect("dovetail_normal_term");
+        let nf =
+            crate::rhocalc::RhoCalcLanguage::dovetail_normal_term(term.as_ref(), 64, 1_000_000)
+                .expect("dovetail_normal_term");
         let shown = lang.format_term(nf.as_ref());
         assert_ne!(
             shown, "Nil",
@@ -1731,9 +1732,12 @@ mod guard_then_tests {
     fn the_fold_lane_still_reports_nil_for_a_decided_false_condition() {
         use mettail_runtime::Language;
         let lang = crate::rhocalc::RhoCalcLanguage;
-        let term = lang.parse_term("__guard_then(false, \"BODY\")").expect("parse");
-        let nf = crate::rhocalc::RhoCalcLanguage::dovetail_normal_term(term.as_ref(), 64, 1_000_000)
-            .expect("dovetail_normal_term");
+        let term = lang
+            .parse_term("__guard_then(false, \"BODY\")")
+            .expect("parse");
+        let nf =
+            crate::rhocalc::RhoCalcLanguage::dovetail_normal_term(term.as_ref(), 64, 1_000_000)
+                .expect("dovetail_normal_term");
         assert_eq!(lang.format_term(nf.as_ref()), "Nil");
     }
 
@@ -1752,9 +1756,12 @@ mod guard_then_tests {
     fn the_fold_lane_decides_a_reducible_condition_instead_of_discarding_the_body() {
         use mettail_runtime::Language;
         let lang = crate::rhocalc::RhoCalcLanguage;
-        let term = lang.parse_term("__guard_then(1 < 2, \"BODY\")").expect("parse");
-        let nf = crate::rhocalc::RhoCalcLanguage::dovetail_normal_term(term.as_ref(), 64, 1_000_000)
-            .expect("dovetail_normal_term");
+        let term = lang
+            .parse_term("__guard_then(1 < 2, \"BODY\")")
+            .expect("parse");
+        let nf =
+            crate::rhocalc::RhoCalcLanguage::dovetail_normal_term(term.as_ref(), 64, 1_000_000)
+                .expect("dovetail_normal_term");
         let shown = lang.format_term(nf.as_ref());
         assert_ne!(shown, "Nil", "a decidable TRUE guard must not discard its body");
         assert_eq!(shown, "\"BODY\"", "`1 < 2` folds to `true`, then the gate opens");

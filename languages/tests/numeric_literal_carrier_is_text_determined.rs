@@ -195,7 +195,10 @@ fn show(trajectory: &[String]) -> String {
 /// both re-parse. What they may NOT disagree about is the spelling of a TOKEN — and a
 /// numeral acquiring a `u32` tail is exactly such a disagreement.
 fn modulo_inert_grouping(surface: &str) -> String {
-    surface.chars().filter(|c| !c.is_whitespace() && *c != '(' && *c != ')').collect()
+    surface
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '(' && *c != ')')
+        .collect()
 }
 
 /// The exact shrunken proptest seed, rebuilt from its `Debug`.
@@ -231,10 +234,15 @@ fn seed_term() -> BigRat {
 #[test]
 fn uint32_literal_accepts_exactly_its_declared_u32_domain() {
     // ACCEPTED — carries the declared tail and fits `u32`.
-    for (text, value) in
-        [("0u32", 0u32), ("7u32", 7), ("0x1Fu32", 31), ("0b101u32", 5), ("0o17u32", 15),
-         ("4294967295u32", u32::MAX), ("1_0u32", 10)]
-    {
+    for (text, value) in [
+        ("0u32", 0u32),
+        ("7u32", 7),
+        ("0x1Fu32", 31),
+        ("0b101u32", 5),
+        ("0o17u32", 15),
+        ("4294967295u32", u32::MAX),
+        ("1_0u32", 10),
+    ] {
         assert_eq!(
             UInt32::parse(text).map(|t| format!("{t:?}")).as_deref(),
             Ok(format!("NumLit({value})").as_str()),
@@ -341,7 +349,9 @@ fn numeral_carrier_is_a_function_of_the_text() {
         if !ok {
             wrong.push(format!(
                 "  {text:>16} — expected {}, got {got:?}",
-                expected.map(|c| format!("[{c:?}]")).unwrap_or_else(|| "no carrier".to_string()),
+                expected
+                    .map(|c| format!("[{c:?}]"))
+                    .unwrap_or_else(|| "no carrier".to_string()),
             ));
         }
     }
@@ -714,9 +724,7 @@ fn bigrat_literal_display_writes_its_declared_r_tail() {
 fn negative_control_the_numeric_tower_is_still_ambiguous() {
     let multi: Vec<(&str, usize)> = ["0 + 0", "1 + 2", "(0 + 0) * 0u32"]
         .into_iter()
-        .map(|s| {
-            (s, BigRat::parse_via_wpda_all(s).map(|a| a.len()).unwrap_or(0))
-        })
+        .map(|s| (s, BigRat::parse_via_wpda_all(s).map(|a| a.len()).unwrap_or(0)))
         .collect();
     assert!(
         multi.iter().all(|(_, n)| *n >= 2),

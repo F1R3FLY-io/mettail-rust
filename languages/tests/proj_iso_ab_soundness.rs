@@ -532,7 +532,9 @@ fn gate_e_reading_count_golden() {
     let mut diffs: Vec<String> = Vec::new();
     for &(id, ea, er, oa, or_) in golden {
         let g_on = on.get(id).unwrap_or_else(|| panic!("missing ON row {id}"));
-        let g_off = off.get(id).unwrap_or_else(|| panic!("missing OFF row {id}"));
+        let g_off = off
+            .get(id)
+            .unwrap_or_else(|| panic!("missing OFF row {id}"));
         let a_on = g_on.readings.map(|n| n as i64).unwrap_or(-1);
         let a_off = g_off.readings.map(|n| n as i64).unwrap_or(-1);
         if g_on.accepts != ea || a_on != er || g_off.accepts != oa || a_off != or_ {
@@ -554,7 +556,10 @@ fn gate_e_reading_count_golden() {
     // Every corpus row must be covered by the golden, so a new row cannot be added
     // without pinning it.
     let covered: std::collections::BTreeSet<&str> = golden.iter().map(|r| r.0).collect();
-    let missing: Vec<&String> = on.keys().filter(|k| !covered.contains(k.as_str())).collect();
+    let missing: Vec<&String> = on
+        .keys()
+        .filter(|k| !covered.contains(k.as_str()))
+        .collect();
     assert!(missing.is_empty(), "corpus rows not pinned in the golden: {missing:?}");
 }
 

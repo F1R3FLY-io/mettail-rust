@@ -1585,12 +1585,12 @@ fn unit_calculator_int_neg() {
     let term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Neg");
-    if let Ok(parsed) = Int::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(
-            displayed, re_displayed,
-            "Roundtrip failed for Neg: {} != {}",
-            displayed, re_displayed
+    if let Ok(alts) = Int::parse_via_wpda_all(&displayed) {
+        let alt_displays: Vec<String> = alts.iter().map(|a| format!("{}", a)).collect();
+        assert!(
+            alt_displays.iter().any(|d| d == &displayed),
+            "Multi-alt roundtrip failed for Neg: constructed display {:?} not among parse alts {:?}",
+            displayed, alt_displays,
         );
     }
 }

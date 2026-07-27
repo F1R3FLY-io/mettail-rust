@@ -406,8 +406,7 @@ mod tests {
 
     #[test]
     fn trace_to_ltl_steps_empty_trace_is_empty() {
-        let trace =
-            trace_with(&[], TraceOutcome::NormalForm { term: "x".to_string(), steps: 0 });
+        let trace = trace_with(&[], TraceOutcome::NormalForm { term: "x".to_string(), steps: 0 });
         assert!(trace_to_ltl_steps(&trace).is_empty());
     }
 

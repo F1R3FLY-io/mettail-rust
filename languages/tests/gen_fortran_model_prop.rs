@@ -102,7 +102,10 @@ fn fortran_do_archetype() {
 #[test]
 fn ambiguity_set_materialized() {
     let readings = send_readings("IF");
-    let kw = readings.iter().filter(|s| matches!(s, Stmt::SendKw(_))).count();
+    let kw = readings
+        .iter()
+        .filter(|s| matches!(s, Stmt::SendKw(_)))
+        .count();
     let var = readings
         .iter()
         .filter(|s| matches!(s, Stmt::SendVar(chan, _) if matches!(chan.as_ref(), Term::TVar(_))))

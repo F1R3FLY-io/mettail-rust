@@ -282,14 +282,12 @@ pub fn host_matches_verdict(target: &Proc, formula: &Proc) -> Option<bool> {
         // because the positive-only term arm makes "unknown" the ordinary answer
         // for a non-matching sub-pattern (`"bye" or "hi"` on the target `"hi"` is
         // TRUE and must be answered as such).
-        FormulaShape::Conjunction(left, right) => kleene_and(
-            host_matches_verdict(target, left),
-            host_matches_verdict(target, right),
-        ),
-        FormulaShape::Disjunction(left, right) => kleene_or(
-            host_matches_verdict(target, left),
-            host_matches_verdict(target, right),
-        ),
+        FormulaShape::Conjunction(left, right) => {
+            kleene_and(host_matches_verdict(target, left), host_matches_verdict(target, right))
+        },
+        FormulaShape::Disjunction(left, right) => {
+            kleene_or(host_matches_verdict(target, left), host_matches_verdict(target, right))
+        },
         FormulaShape::Negation(inner) => host_matches_verdict(target, inner).map(|v| !v),
         // `φ ⇒ ψ ≡ ¬φ ∨ ψ`, evaluated in the same three-valued logic.
         FormulaShape::Implication(antecedent, consequent) => kleene_or(

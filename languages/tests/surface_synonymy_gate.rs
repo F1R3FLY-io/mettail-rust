@@ -235,9 +235,13 @@ fn an_inert_groupings_brackets_are_re_elected_from_its_own_surface() {
     // `parse` and `parse_via_wpda` carry different error types, so each seam renders its own.
     fn show(name: &str, surface: &str, structured: bool) -> String {
         let r = if structured {
-            Name::parse(surface).map(|t| format!("{t}")).map_err(|e| format!("{e:?}"))
+            Name::parse(surface)
+                .map(|t| format!("{t}"))
+                .map_err(|e| format!("{e:?}"))
         } else {
-            Name::parse_via_wpda(surface).map(|t| format!("{t}")).map_err(|e| format!("{e:?}"))
+            Name::parse_via_wpda(surface)
+                .map(|t| format!("{t}"))
+                .map_err(|e| format!("{e:?}"))
         };
         r.unwrap_or_else(|e| panic!("`{surface}` must parse on the {name} seam: {e}"))
     }
@@ -246,8 +250,7 @@ fn an_inert_groupings_brackets_are_re_elected_from_its_own_surface() {
             let once = show(seam_name, surface, structured);
             let twice = show(seam_name, &once, structured);
             assert_eq!(
-                once,
-                twice,
+                once, twice,
                 "★ the inert grouping's surface is not a fixpoint on the {seam_name} seam \
                  ({surface:?}). Its brackets are NOT collapsed by design — they are the only \
                  observable separating the kept-grouping reading from its transparent twin — so \
@@ -292,7 +295,9 @@ fn every_alias_class_is_a_singleton_after_normalisation() {
                     }
                 }
                 checked += 1;
-                let Some((first_member, first)) = normalised.first() else { continue };
+                let Some((first_member, first)) = normalised.first() else {
+                    continue;
+                };
                 for (member, other) in normalised.iter().skip(1) {
                     if other != first {
                         failures.push(format!(

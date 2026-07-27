@@ -179,10 +179,7 @@ fn grouped_crosscat_rooted_interior_is_unchanged() {
         pred("1 == (2 == 3)"),
         "EqNum(NumLit(1), PredToNum(EqNum(NumLit(2), NumLit(3))))",
     );
-    assert_eq!(
-        pred("1 == (2 + 3)"),
-        "EqNum(NumLit(1), AddNum(NumLit(2), NumLit(3)))",
-    );
+    assert_eq!(pred("1 == (2 + 3)"), "EqNum(NumLit(1), AddNum(NumLit(2), NumLit(3)))",);
     assert_eq!(
         pred("1 == (2 + 3) * 4"),
         "EqNum(NumLit(1), MulNum(AddNum(NumLit(2), NumLit(3)), NumLit(4)))",
@@ -197,10 +194,7 @@ fn the_same_interior_at_a_num_goal_is_unchanged() {
         num("1 * (true and true)"),
         "MulNum(NumLit(1), PredToNum(AndPred(BoolLit(true), BoolLit(true))))",
     );
-    assert_eq!(
-        num("(true and true)"),
-        "PredToNum(AndPred(BoolLit(true), BoolLit(true)))",
-    );
+    assert_eq!(num("(true and true)"), "PredToNum(AndPred(BoolLit(true), BoolLit(true)))",);
 }
 
 /// Non-`(` delimiters reach the grouped operand by other routes and must be
@@ -228,14 +222,8 @@ fn other_delimiters_around_the_same_interior_are_unchanged() {
 /// still fire when nothing re-scopes the operand.
 #[test]
 fn without_parens_the_looser_operator_still_takes_the_operand() {
-    assert_eq!(
-        pred("1 == 2 and true"),
-        "AndPred(EqNum(NumLit(1), NumLit(2)), BoolLit(true))",
-    );
-    assert_eq!(
-        pred("true and 1 == 2"),
-        "AndPred(BoolLit(true), EqNum(NumLit(1), NumLit(2)))",
-    );
+    assert_eq!(pred("1 == 2 and true"), "AndPred(EqNum(NumLit(1), NumLit(2)), BoolLit(true))",);
+    assert_eq!(pred("true and 1 == 2"), "AndPred(BoolLit(true), EqNum(NumLit(1), NumLit(2)))",);
     assert_eq!(
         pred("true and (true and true)"),
         "AndPred(BoolLit(true), AndPred(BoolLit(true), BoolLit(true)))",
@@ -245,16 +233,10 @@ fn without_parens_the_looser_operator_still_takes_the_operand() {
 /// Ordinary precedence and cross-category chaining, unchanged.
 #[test]
 fn ordinary_precedence_is_unchanged() {
-    assert_eq!(
-        pred("1 == 2 == 3"),
-        "EqNum(PredToNum(EqNum(NumLit(1), NumLit(2))), NumLit(3))",
-    );
+    assert_eq!(pred("1 == 2 == 3"), "EqNum(PredToNum(EqNum(NumLit(1), NumLit(2))), NumLit(3))",);
     assert_eq!(
         pred("1 == 2 + 3 * 4"),
         "EqNum(NumLit(1), AddNum(NumLit(2), MulNum(NumLit(3), NumLit(4))))",
     );
-    assert_eq!(
-        num("1 * (2 + 3)"),
-        "MulNum(NumLit(1), AddNum(NumLit(2), NumLit(3)))",
-    );
+    assert_eq!(num("1 * (2 + 3)"), "MulNum(NumLit(1), AddNum(NumLit(2), NumLit(3)))",);
 }

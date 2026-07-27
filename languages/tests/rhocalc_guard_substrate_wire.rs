@@ -95,7 +95,11 @@ struct Form {
 
 const FORMS: &[Form] = &[
     // ── The 3 atom classes ──────────────────────────────────────────────────────────────────
-    Form { name: "atom: boolean literal", open: || boolean(true), ground: || boolean(true) },
+    Form {
+        name: "atom: boolean literal",
+        open: || boolean(true),
+        ground: || boolean(true),
+    },
     Form {
         name: "atom: integer literal",
         open: || Proc::Eq(arc(var("x")), arc(int(42))),
@@ -125,9 +129,7 @@ const FORMS: &[Form] = &[
     },
     Form {
         name: "implies",
-        open: || {
-            Proc::Implies(arc(Proc::Lt(arc(var("x")), arc(int(9)))), arc(boolean(true)))
-        },
+        open: || Proc::Implies(arc(Proc::Lt(arc(var("x")), arc(int(9)))), arc(boolean(true))),
         ground: || Proc::Implies(arc(boolean(true)), arc(boolean(true))),
     },
     // ── The 6 comparisons ───────────────────────────────────────────────────────────────────
@@ -362,10 +364,7 @@ fn differential_corpus() -> Vec<(&'static str, Proc)> {
         "list ==",
         Proc::Eq(arc(list(vec![int(1), int(2)])), arc(list(vec![int(1), int(2)]))),
     ));
-    corpus.push((
-        "list !=",
-        Proc::Ne(arc(list(vec![int(1), int(2)])), arc(list(vec![int(1)]))),
-    ));
+    corpus.push(("list !=", Proc::Ne(arc(list(vec![int(1), int(2)])), arc(list(vec![int(1)])))));
     corpus.push((
         "bag ==",
         Proc::Eq(arc(bag(vec![int(1), int(2)])), arc(bag(vec![int(2), int(1)]))),
@@ -394,9 +393,8 @@ fn the_substrate_decider_agrees_with_the_rust_fold_on_the_whole_corpus() {
         let fold = eval_guard_disposition(guard);
         let substrate = eval_guard_disposition_via_substrate(guard);
         if fold != substrate {
-            disagreements.push(format!(
-                "  {name:<22} fold={fold:?} substrate={substrate:?}  guard={guard}"
-            ));
+            disagreements
+                .push(format!("  {name:<22} fold={fold:?} substrate={substrate:?}  guard={guard}"));
         }
     }
 
@@ -420,11 +418,8 @@ fn the_substrate_decider_agrees_with_the_rust_fold_on_the_whole_corpus() {
 fn the_differential_corpus_exercises_all_three_dispositions() {
     let corpus = differential_corpus();
     assert!(corpus.len() >= 40, "corpus too small to be evidence: {}", corpus.len());
-    for expected in [
-        GuardDisposition::Fires,
-        GuardDisposition::Blocks,
-        GuardDisposition::Declines,
-    ] {
+    for expected in [GuardDisposition::Fires, GuardDisposition::Blocks, GuardDisposition::Declines]
+    {
         assert!(
             corpus
                 .iter()

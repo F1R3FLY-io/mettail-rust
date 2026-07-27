@@ -244,9 +244,41 @@ proptest! {
             "Parse(Display(Parse(s))) should succeed for canonical form {:?}: {:?}",
             canonical, e));
         let recanonical = format!("{}", reparsed);
+        // Snapshot before the move: `prop_assert_eq!` consumes both operands.
+        let __first_surface = canonical.clone();
         prop_assert_eq!(canonical, recanonical,
             "Display should be idempotent after canonicalization: \
              display(parse(display(parse(display(t))))) == display(parse(display(t)))");
+        // ★ CONVERGENCE WITH AN EXPLICIT BOUND (2026-07-26). The assertion above
+        // is a FIXPOINT test at depth 2, and when it fails it prints two opaque
+        // strings and no diagnosis. A surface synonym does not fail it randomly:
+        // it sheds exactly ONE surface per nesting layer, so the layer count IS
+        // the measurement. This loop reports it — "converged in 3, expected 1"
+        // says at once that the term carries a synonym two levels deep, which is
+        // the fact `languages/tests/surface_synonymy_gate.rs` then localises to a
+        // class and a member.
+        let mut __surface = __first_surface.clone();
+        let mut __layers = 0usize;
+        for _ in 0..8 {
+            let __next_term = match Term::parse(&__surface) {
+                Ok(t) => t,
+                Err(e) => {
+                    prop_assert!(false,
+                        "the canonical surface {:?} stopped parsing at layer {}: {:?}",
+                        __surface, __layers, e);
+                    unreachable!()
+                },
+            };
+            let __next = format!("{}", __next_term);
+            if __next == __surface { break; }
+            __surface = __next;
+            __layers += 1;
+        }
+        prop_assert_eq!(__layers, 0,
+            "Display/Parse converged in {} extra layer(s), expected 0: the surface \
+             sheds one spelling per layer, which is the signature of a SURFACE \
+             SYNONYM whose class has no declared canonical member. First surface \
+             {:?}, fixpoint {:?}.", __layers, __first_surface, __surface);
     }
 
     #[test]

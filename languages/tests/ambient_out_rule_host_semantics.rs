@@ -143,7 +143,10 @@ fn redeclared_out_rule() -> RewriteRule<String> {
 
 /// Add a canonical `par` bag node over `children` (the engine's canonical-bag idiom: children
 /// sorted by canonical class key).
-fn add_par_bag(eg: &mut EGraph<String>, mut children: Vec<dovetail::egraph::EClassId>) -> dovetail::egraph::EClassId {
+fn add_par_bag(
+    eg: &mut EGraph<String>,
+    mut children: Vec<dovetail::egraph::EClassId>,
+) -> dovetail::egraph::EClassId {
     children.sort_by_cached_key(|&child| eg.canonical_class_key(child));
     eg.add(ENode::new("par".into(), children))
 }
