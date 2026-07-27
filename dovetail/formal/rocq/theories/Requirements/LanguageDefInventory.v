@@ -175,19 +175,35 @@ Section LanguageDefInventory.
        ★ Requirement derivation. Every other entry above was read off
        `dovetail/tests/language_inventory.rs::classify_source`, a TEXTUAL scan of
        the whole source file. These four carry long clause-by-clause conformance
-       headers that quote OTHER languages' constructs, and that scan cannot tell a
-       quotation from a declaration: it reports ReqRhoCommHandlerContract for Json
-       (the header cites RhoCalc's `POutput` idiom at src/json.rs:87), ReqFreshnessPremise
+       headers that quote OTHER languages' constructs, and that scan could not tell
+       a quotation from a declaration: it reported ReqRhoCommHandlerContract for Json
+       (the header cites RhoCalc's `POutput` idiom at src/json.rs:107), ReqFreshnessPremise
        for all four (their markdown `# ` headings match the `"# "` needle), and
-       ReqCongruencePremise for Turing (the `"|" h "|"` tape delimiters match the
-       `"| "` needle). Recording those would be false. The lists below are instead
-       the STRUCTURAL requirements -- what `ast/tests/dovetail_language_inventory.rs::classify_language`
-       derives from the parsed `LanguageDef`, confirmed by re-running the textual
-       classifier over the comment-stripped declarations. No test compares an
-       entry's requirement list against either classifier (both check name-set
-       equality, per-language non-emptiness, and constructor coverage), and every
-       constructor below is a member of `current_mettail_rewrite_requirements`, so
-       the coverage proofs discharge unchanged. *)
+       ReqCongruencePremise for Turing (a markdown table row in its header, plus the
+       `map_err(|_| ())` closure in its UInt32 literal action, both match the `"| "`
+       needle). Recording those would have been false, so the lists below are the
+       STRUCTURAL requirements -- what
+       `ast/tests/dovetail_language_inventory.rs::classify_language` derives from the
+       parsed `LanguageDef`.
+
+       That textual classifier has since been REPAIRED (commit 9be969a4): it now
+       classifies `declarations_only(source)`, with every comment, string and
+       character literal blanked, and its congruence and guard needles were made
+       precise (a `~>` on the premise side of a statement; a `?<name>:Guard` slot).
+       Measured over the corpus, that removed 34 false (language, requirement) pairs
+       and no true one, and the six false positives named above are gone: Json,
+       Monoid and Turing no longer report a freshness premise, Turing no longer
+       reports a congruence premise, and Json no longer reports a Rho COMM handler
+       contract or a substitution pattern. Pi's freshness premise SURVIVES, because
+       it is real (`| x # ...rest` in ScopeExt). The two classifiers therefore now
+       agree on these four modulo the textual side's deliberately coarse carrier
+       needles (`Vec<` in a native type declaration counts as a collection).
+
+       No test compares an entry's requirement list against either classifier (both
+       check name-set equality, per-language non-emptiness, and constructor
+       coverage), and every constructor below is a member of
+       `current_mettail_rewrite_requirements`, so the coverage proofs discharge
+       unchanged. *)
     (* Json (L1) -- rung one: types + terms only, `equations {}` / `rewrites {}` both
        empty. Its `JArr`/`JObj` arity split carries an ordered `Vec(...)` slot. *)
     {| inventory_name := "json"; inventory_requirements := [ ReqCollectionPattern; ReqExactContentKey ] |};
@@ -199,7 +215,47 @@ Section LanguageDefInventory.
     {| inventory_name := "pi"; inventory_requirements := [ ReqBinderPattern; ReqCollectionPattern; ReqCongruencePremise; ReqDirectionalRewrite; ReqEquation; ReqExactContentKey; ReqFreshnessPremise; ReqSubstitutionPattern ] |};
     (* Turing (L9) -- the `Vec(Sym)` zipper tape, the `shift_right` native fold, and
        the two unpremised transition-table rewrites. *)
-    {| inventory_name := "turing"; inventory_requirements := [ ReqCollectionPattern; ReqDirectionalRewrite; ReqExactContentKey; ReqFoldNativeHandler ] |}
+    {| inventory_name := "turing"; inventory_requirements := [ ReqCollectionPattern; ReqDirectionalRewrite; ReqExactContentKey; ReqFoldNativeHandler ] |};
+
+    (* ── Definitions in a TOP-LEVEL `languages/tests/*.rs` (2026-07-27) ────────────
+
+       The relocation note above says a top-level `languages/tests/*.rs` file is NOT
+       scanned. That was a HOLE, not a property: the executable audits enumerated two
+       sub-directories, so a `language!` written anywhere else in the package was
+       audited by neither and its requirements were recorded nowhere, with every test
+       green. Pi and Turing had just been rescued from it by being moved; three more
+       definitions were still sitting in it.
+
+       Both audits now root at the `languages` PACKAGE, and each additionally proves
+       (`language_declarations_cannot_hide_outside_the_scanned_roots`) that no
+       `language!` anywhere in the repository lies outside the files it reads. The
+       three entries below are what that widening exposed. Two more of the same shape
+       were exposed with it -- X2Base/X2Look/X2Teeth in
+       `languages/tests/x2_lookahead_bracket_probe.rs` -- and are NOT inventoried:
+       they are lookahead PARSE probes with no equations, rewrites, logic, guards,
+       folds, or eval bodies, so they now declare `options { parse_only: true }`,
+       which the anti-loophole guard checks mechanically (`has_reduction_semantics`
+       must be false for a parse_only language, and is).
+
+       All three below classify identically: a `step` rule whose `![…]` action is a
+       native fold, hence DirectionalRewrite + FoldNativeHandler, plus the universal
+       ExactContentKey. Every constructor is already in
+       `current_mettail_rewrite_requirements`, so the coverage proofs are unaffected. *)
+
+    (* L9FltToy -- the L9-4 gate: the `*flt` guest-body capture (an `FltOpen…` opener
+       and an `FltClose…` closer) across three delimiter forms, with
+       `AddNum . … ![a + b] step` alongside. Its reduction semantics were outside
+       formal coverage until the roots widened. *)
+    {| inventory_name := "l9flttoy"; inventory_requirements := [ ReqDirectionalRewrite; ReqFoldNativeHandler; ReqExactContentKey ] |};
+    (* L9ModalToy -- the L9-3 gate: token-kind capture (`v@Tok`) mid-rule and leading,
+       over the modal (backtick guest mode) lexer path. Same `step` rule, same gap. *)
+    {| inventory_name := "l9modaltoy"; inventory_requirements := [ ReqDirectionalRewrite; ReqFoldNativeHandler; ReqExactContentKey ] |};
+    (* DiscoveryCanary -- `languages/tests/inventory_discovery_canary.rs`, the standing
+       witness that a definition in a top-level test file is discovered. It is
+       inventoried like any other reduction language precisely so that a future
+       narrowing of the discovery roots fails HERE, loudly, instead of silently
+       dropping some real language's coverage. *)
+    {| inventory_name := "discoverycanary"; inventory_requirements := [ ReqDirectionalRewrite; ReqFoldNativeHandler; ReqExactContentKey ] |}
   ].
 
   Definition flat_inventory : list RewriteRequirement :=

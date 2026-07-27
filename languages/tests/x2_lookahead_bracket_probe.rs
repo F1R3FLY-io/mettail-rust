@@ -78,6 +78,13 @@ pub mod x2base {
             emit_tests: false,
             emit_simulator: false,
             emit_blockly: false,
+            // A syntax/lex-only probe: this file MEASURES PARSE READINGS and declares
+            // no equations, rewrites, logic, guards, folds or eval bodies. The flag is
+            // inert for codegen (only the dovetail/ast inventory tests read it) and it
+            // is guard-checked: `has_reduction_semantics` fails the inventory loudly if
+            // a `parse_only` language ever gains reduction semantics, so this cannot
+            // become a way to hide one.
+            parse_only: true,
         },
 
         types {
@@ -120,6 +127,13 @@ pub mod x2look {
             emit_tests: false,
             emit_simulator: false,
             emit_blockly: false,
+            // A syntax/lex-only probe: this file MEASURES PARSE READINGS and declares
+            // no equations, rewrites, logic, guards, folds or eval bodies. The flag is
+            // inert for codegen (only the dovetail/ast inventory tests read it) and it
+            // is guard-checked: `has_reduction_semantics` fails the inventory loudly if
+            // a `parse_only` language ever gains reduction semantics, so this cannot
+            // become a way to hide one.
+            parse_only: true,
         },
 
         types {
@@ -166,6 +180,13 @@ pub mod x2teeth {
             emit_tests: false,
             emit_simulator: false,
             emit_blockly: false,
+            // A syntax/lex-only probe: this file MEASURES PARSE READINGS and declares
+            // no equations, rewrites, logic, guards, folds or eval bodies. The flag is
+            // inert for codegen (only the dovetail/ast inventory tests read it) and it
+            // is guard-checked: `has_reduction_semantics` fails the inventory loudly if
+            // a `parse_only` language ever gains reduction semantics, so this cannot
+            // become a way to hide one.
+            parse_only: true,
         },
 
         types {

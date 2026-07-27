@@ -29,20 +29,38 @@ enum Requirement {
     RhoResourceGuardContract,
 }
 
+/// Directories that hold no hand-written source: build output and macro output.
+///
+/// Nothing else is skipped. A `bin` skip used to sit here too, which made
+/// `languages/src/bin/` a place a definition could be written and never audited.
+const NON_SOURCE_DIRECTORIES: &[&str] = &["target", "generated"];
+
+/// Every directory that may hold a `language!` definition: the whole `languages`
+/// package.
+///
+/// This scan used to enumerate `languages/src` and `languages/tests/definitions`, so a
+/// definition in a top-level `languages/tests/*.rs` was in NEITHER root and left the
+/// formal inventory silently — which is how `Pi` and `Turing` (equations, rewrites, a
+/// freshness premise, a substituting COMM, a native fold, two transition rewrites) sat
+/// outside coverage until `e1bfcd38`, and how `L9FltToy`/`L9ModalToy` (a `step` rewrite
+/// and native `![…]` actions each) sat outside it until the roots were widened. The
+/// root is the package, and
+/// [`language_declarations_cannot_hide_outside_the_scanned_roots`] proves that choice
+/// covers the whole repository.
+///
+/// The same list appears in `dovetail/tests/language_inventory.rs`. That duplication is
+/// deliberate — the two audits are independent, one structural and one textual — and it
+/// is safe because each enforces the repository-wide totality invariant on its own: a
+/// definition can only escape one audit's roots by tripping that audit's own check.
+fn language_definition_roots() -> Vec<PathBuf> {
+    vec![repo_root().join("languages")]
+}
+
 fn language_files() -> Vec<PathBuf> {
-    // Task #11: language definitions live in TWO places by role — `languages/src/`
-    // (production, library modules) and `languages/tests/definitions/` (test
-    // definitions, declared `options { hosted_in: … }`). Both are scanned so that
-    // relocating a definition can never remove it from the formal inventory; see the
-    // matching `language_definition_roots` note in
-    // `dovetail/tests/language_inventory.rs` for why that totality is load-bearing.
-    let mut pending: Vec<PathBuf> = [
-        repo_root().join("languages/src"),
-        repo_root().join("languages/tests/definitions"),
-    ]
-    .into_iter()
-    .filter(|root| root.exists())
-    .collect();
+    let mut pending: Vec<PathBuf> = language_definition_roots()
+        .into_iter()
+        .filter(|root| root.exists())
+        .collect();
     let mut files = Vec::new();
 
     while let Some(path) = pending.pop() {
@@ -53,7 +71,7 @@ fn language_files() -> Vec<PathBuf> {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("");
-            if matches!(name, "bin" | "generated") {
+            if NON_SOURCE_DIRECTORIES.contains(&name) {
                 continue;
             }
             for entry in
@@ -68,6 +86,121 @@ fn language_files() -> Vec<PathBuf> {
 
     files.sort();
     files
+}
+
+/// Directories the repository-wide sweep does not enter.
+///
+/// `target` is build output and `scratchpad` is the gitignored, harness-wiped campaign
+/// scratch area — a stale probe left in either must not be able to fail this suite.
+/// DOT-directories are tooling state, never hand-written source: `.git` is object
+/// storage, and `.formal-tmp` holds the formal pipeline's `cargo expand` dumps, two of
+/// which are 40 MB single-item files that cost 13 seconds each to parse.
+fn is_swept_over(directory_name: &str) -> bool {
+    directory_name.starts_with('.') || matches!(directory_name, "target" | "scratchpad")
+}
+
+/// Whether `source` could contain a `language!` INVOCATION.
+///
+/// A Rust macro invocation is `path`, `!`, then a delimiter, with only whitespace and
+/// comments allowed in between — so a file that never spells `language!` followed by
+/// `(`, `[` or `{` cannot invoke it, and this gate cannot hide a declaration from the
+/// sweep. It is a strict over-approximation in the other direction (a doc comment
+/// showing `language! { … }` passes), which is harmless because `syn` then decides.
+///
+/// The gate matters because the parse behind it is the expensive step: the workspace
+/// holds 179 files that merely NAME the macro, 7.2 MB in all, one of them 1.2 MB, and
+/// `syn` in a debug test binary is slow enough on that to dominate the run. The gate
+/// admits 57 files totalling 1.1 MB.
+fn mentions_language_invocation(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    source.match_indices("language!").any(|(at, needle)| {
+        let mut index = at + needle.len();
+        loop {
+            match bytes.get(index) {
+                Some(byte) if byte.is_ascii_whitespace() => index += 1,
+                Some(b'/') if bytes.get(index + 1) == Some(&b'/') => {
+                    index = source[index..]
+                        .find('\n')
+                        .map_or(bytes.len(), |end| index + end + 1);
+                },
+                Some(b'/') if bytes.get(index + 1) == Some(&b'*') => {
+                    index = source[index + 2..]
+                        .find("*/")
+                        .map_or(bytes.len(), |end| index + 2 + end + 2);
+                },
+                Some(b'{' | b'(' | b'[') => return true,
+                _ => return false,
+            }
+        }
+    })
+}
+
+/// Every file in the repository that DECLARES a `language!`, wherever it lives.
+///
+/// Membership is decided by PARSING: a file is a declaration site iff `syn` finds an
+/// item-level `language!` macro in it. That is exact where a text search is not — the
+/// macro is named in documentation across a dozen crates, and emitted inside `quote!`
+/// templates in `macros/`, none of which is a definition. Only files that could
+/// possibly invoke it are parsed, so the sweep stays cheap.
+///
+/// A file that mentions `language!` but does not parse as Rust is reported rather than
+/// skipped: silence there would be a hole of exactly the shape this sweep closes.
+fn repository_language_declarations() -> BTreeSet<PathBuf> {
+    let mut pending = vec![repo_root()];
+    let mut declaring = BTreeSet::new();
+    let mut unparsable = Vec::new();
+
+    while let Some(path) = pending.pop() {
+        let Ok(metadata) = fs::metadata(&path) else {
+            continue; // a broken symlink is not a declaration
+        };
+        if metadata.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            if is_swept_over(name) {
+                continue;
+            }
+            let Ok(entries) = fs::read_dir(&path) else {
+                continue;
+            };
+            for entry in entries {
+                pending.push(entry.expect("repository dir entry").path());
+            }
+            continue;
+        }
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            let source = fs::read_to_string(&path).unwrap_or_default();
+            if !mentions_language_invocation(&source) {
+                continue;
+            }
+            match syn::parse_file(&source) {
+                Ok(file) => {
+                    let mut found = Vec::new();
+                    collect_language_macros(&file.items, &mut found);
+                    if !found.is_empty() {
+                        declaring.insert(path);
+                    }
+                },
+                Err(_) => {
+                    let mentions_at_item_position = source
+                        .lines()
+                        .any(|line| line.trim_start().starts_with("language!"));
+                    if mentions_at_item_position {
+                        unparsable.push(path.display().to_string());
+                    }
+                },
+            }
+        }
+    }
+
+    assert!(
+        unparsable.is_empty(),
+        "file(s) look like they declare a `language!` but do not parse as Rust, so the \
+         sweep cannot tell whether they are inventoried: {unparsable:#?}"
+    );
+    declaring
 }
 
 /// A `parse_only: true` language is a syntax/lex-only test/demo fixture (no
@@ -407,6 +540,47 @@ fn classify_language(def: &LanguageDef) -> BTreeSet<Requirement> {
     out
 }
 
+/// No `language!` in this repository lies outside the files this audit parses.
+///
+/// The structural twin of `dovetail/tests/language_inventory.rs`'s check of the same
+/// name. Both are needed: the two audits read the corpus differently (this one parses,
+/// the other scans text), so each must prove its own reach. Failing here means a
+/// definition would be classified by neither, and its requirements would exist only in
+/// the source.
+#[test]
+fn language_declarations_cannot_hide_outside_the_scanned_roots() {
+    let audited: BTreeSet<PathBuf> = language_files().into_iter().collect();
+    let declaring = repository_language_declarations();
+
+    let escaped = declaring
+        .difference(&audited)
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        escaped.is_empty(),
+        "{} file(s) declare a `language!` that this audit never parses, so nothing \
+         checks their requirements against the Rocq inventory:\n{}\n\nMove the \
+         definition under a scanned root, or widen `language_definition_roots`.",
+        escaped.len(),
+        escaped.join("\n  "),
+    );
+
+    assert!(
+        declaring.len() >= 40,
+        "the repository-wide sweep found only {} declaring file(s); it is not reaching \
+         the source tree",
+        declaring.len()
+    );
+
+    // The case the previous roots missed: a definition in a top-level
+    // `languages/tests/*.rs`.
+    let canary = repo_root().join("languages/tests/inventory_discovery_canary.rs");
+    assert!(
+        declaring.contains(&canary) && audited.contains(&canary),
+        "the discovery canary must be both recognised and audited"
+    );
+}
+
 #[test]
 fn current_language_defs_have_dovetail_requirement_inventory() {
     let mut languages = Vec::new();
@@ -414,6 +588,13 @@ fn current_language_defs_have_dovetail_requirement_inventory() {
     for path in &source_files {
         let source =
             fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        // A file that declares a `language!` necessarily contains that text, so this
+        // gate cannot hide a definition — it only spares `syn` the generated test
+        // binaries and simulators the widened root now walks. Anything that passes the
+        // gate is still parsed and decided structurally.
+        if !source.contains("language!") {
+            continue;
+        }
         let file =
             syn::parse_file(&source).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
         collect_language_macros(&file.items, &mut languages);
@@ -442,8 +623,10 @@ fn current_language_defs_have_dovetail_requirement_inventory() {
             );
         }
     }
-    let production: Vec<&LanguageDef> =
-        languages.iter().filter(|language| !is_parse_only(language)).collect();
+    let production: Vec<&LanguageDef> = languages
+        .iter()
+        .filter(|language| !is_parse_only(language))
+        .collect();
 
     let language_names = production
         .iter()

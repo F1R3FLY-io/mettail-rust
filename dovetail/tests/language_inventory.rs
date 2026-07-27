@@ -378,6 +378,15 @@ fn rocq_current_requirement_names(source: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// Directories that hold no hand-written source and are never scanned.
+///
+/// `target` is build output; `generated` is macro output (the `language!` expansion,
+/// not a declaration). Nothing else is skipped: every other directory under a root is
+/// walked, so no `language!` can be placed out of reach of the audit. In particular
+/// `bin` is NOT skipped any more — a definition dropped into `languages/src/bin/`
+/// used to leave the scan silently, which is the same hole this file exists to close.
+const NON_SOURCE_DIRECTORIES: &[&str] = &["target", "generated"];
+
 fn discover_rust_files(root: &Path) -> Vec<PathBuf> {
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
@@ -389,7 +398,7 @@ fn discover_rust_files(root: &Path) -> Vec<PathBuf> {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("");
-            if matches!(name, "bin" | "generated") {
+            if NON_SOURCE_DIRECTORIES.contains(&name) {
                 continue;
             }
             for entry in fs::read_dir(&path)
@@ -405,26 +414,83 @@ fn discover_rust_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Every directory that may hold a `language!` definition.
+/// Every directory that may hold a `language!` definition: the whole `languages`
+/// package.
 ///
-/// Task #11 split language definitions by role: `languages/src/` holds PRODUCTION
-/// languages (they are library modules), and `languages/tests/definitions/` holds
-/// TEST definitions (declared `options { hosted_in: … }`, reachable only by the test
-/// binaries that `#[path]`-include them).
+/// # Why the root is a package and not a list of sub-directories
 ///
-/// BOTH are scanned, and that is load-bearing. This inventory's whole purpose is that
-/// every `language!` in the repo carries a formal requirements entry — the `parse_only`
-/// anti-loophole guard below says so outright: "a real reduction language cannot hide
-/// behind the flag to escape the formal rewrite inventory". If relocation dropped a
-/// definition from discovery, MOVING A FILE would become exactly that escape hatch, and
-/// a language's reduction semantics could leave formal inventory without any test
-/// failing. Scanning both directories keeps the guard total: where a definition lives is
-/// a packaging decision, never a formal-coverage decision.
+/// This scan used to name two directories — `languages/src` (production, library
+/// modules) and `languages/tests/definitions` (test definitions, declared
+/// `options { hosted_in: … }`). Both were scanned deliberately, so that MOVING a file
+/// between those two roles could not drop it from the formal inventory. But a
+/// definition in a THIRD place — a top-level `languages/tests/*.rs` — was in neither
+/// root, and that is not a hypothetical:
+///
+/// | declaration | where it lived | consequence |
+/// |---|---|---|
+/// | `Pi`, `Turing` | `languages/tests/omnibus_*.rs` | equations, rewrites, a freshness premise, a substituting COMM, a native fold, two transition rewrites — ALL outside formal coverage until `e1bfcd38` moved the files |
+/// | `L9FltToy`, `L9ModalToy` | `languages/tests/l9_*_toy.rs` | a `step` rewrite and native `![…]` fold actions each, outside formal coverage until this scan was widened |
+///
+/// An enumeration of sub-directories makes PLACEMENT a coverage decision, and the
+/// decision is invisible: writing a reduction language one directory to the left
+/// removes it from the audit and no test says anything. The root is therefore the
+/// package itself, and [`language_declarations_cannot_hide_outside_the_scanned_roots`]
+/// proves the choice is total for the whole repository rather than just this package.
 fn language_definition_roots() -> Vec<std::path::PathBuf> {
-    vec![
-        repo_root().join("languages/src"),
-        repo_root().join("languages/tests/definitions"),
-    ]
+    vec![repo_root().join("languages")]
+}
+
+/// Whether the REPOSITORY-WIDE sweep declines to enter a directory.
+///
+/// `target` is build output; `scratchpad` is the documented wipeable campaign scratch
+/// area (gitignored, never a build input, cleared by the harness), so a stale probe
+/// left in either must not be able to fail this suite. DOT-directories are tooling
+/// state and never hold hand-written source: `.git` is object storage, and
+/// `.formal-tmp` holds the formal pipeline's `cargo expand` dumps — two 40 MB
+/// single-item files whose scan dominated everything else this test does.
+fn is_swept_over(directory_name: &str) -> bool {
+    directory_name.starts_with('.') || matches!(directory_name, "target" | "scratchpad")
+}
+
+/// Every file in the repository that DECLARES a `language!`, wherever it lives.
+///
+/// Quotation does not count: the text is stripped by [`declarations_only`] first, so
+/// the many files that discuss the macro in documentation (`prattail/src/lib.rs`,
+/// `macros/src/…`, `languages/tests/doc_comment_metadata.rs`, and this file) are not
+/// mistaken for definitions.
+fn repository_language_declarations() -> BTreeSet<PathBuf> {
+    let mut pending = vec![repo_root()];
+    let mut declaring = BTreeSet::new();
+
+    while let Some(path) = pending.pop() {
+        let Ok(metadata) = fs::metadata(&path) else {
+            continue; // a broken symlink is not a declaration
+        };
+        if metadata.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            if is_swept_over(name) {
+                continue;
+            }
+            let Ok(entries) = fs::read_dir(&path) else {
+                continue;
+            };
+            for entry in entries {
+                pending.push(entry.expect("repository directory entry").path());
+            }
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            let source = fs::read_to_string(&path).unwrap_or_default();
+            // Cheap gate first: reading is unavoidable, stripping is not.
+            if source.contains("language!") && is_language_macro_source(&declarations_only(&source))
+            {
+                declaring.insert(path);
+            }
+        }
+    }
+
+    declaring
 }
 
 fn discover_language_sources() -> Vec<DiscoveredLanguage> {
@@ -466,6 +532,78 @@ fn discover_language_sources() -> Vec<DiscoveredLanguage> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// The `.rs` files this audit actually reads.
+fn audited_files() -> BTreeSet<PathBuf> {
+    language_definition_roots()
+        .iter()
+        .filter(|root| root.exists())
+        .flat_map(|root| discover_rust_files(root))
+        .collect()
+}
+
+/// No `language!` in this repository lies outside the files this audit reads.
+///
+/// The roots above make the scan total for the `languages` package. This makes it
+/// total for the REPOSITORY, which is the property that matters: it is what stops
+/// placement from ever being a coverage decision again, and it is what makes the
+/// duplicate root list in `ast/tests/dovetail_language_inventory.rs` harmless — that
+/// side enforces the same invariant independently, so a definition can only be
+/// invisible to one audit by being invisible to that audit's totality check too.
+///
+/// When this fails there are exactly two honest resolutions, and neither is to delete
+/// the check: move the definition under a scanned root, or widen the roots to include
+/// where it now lives. Both leave the language inventoried.
+#[test]
+fn language_declarations_cannot_hide_outside_the_scanned_roots() {
+    let audited = audited_files();
+    let declaring = repository_language_declarations();
+
+    let escaped = declaring
+        .difference(&audited)
+        .map(|path| repo_relative(path))
+        .collect::<Vec<_>>();
+    assert!(
+        escaped.is_empty(),
+        "{} file(s) declare a `language!` that this audit never reads, so their \
+         equations, rewrites, folds and premises carry NO formal requirements entry \
+         and nothing would say so:\n{}\n\nFix by moving the definition under a scanned \
+         root ({:?}), or by widening `language_definition_roots` to cover where it \
+         lives. Placement must not decide formal coverage.",
+        escaped.len(),
+        escaped
+            .iter()
+            .map(|path| format!("  {path}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        language_definition_roots()
+            .iter()
+            .map(|root| repo_relative(root))
+            .collect::<Vec<_>>(),
+    );
+
+    // The sweep reaches the repository and finds the declarations that are really
+    // there — a walk that silently visited nothing would make the check vacuous.
+    assert!(
+        declaring.len() >= 40,
+        "the repository-wide sweep found only {} declaring file(s); it is not reaching \
+         the source tree",
+        declaring.len()
+    );
+
+    // A definition in a TOP-LEVEL `languages/tests/*.rs` is seen. This is the case the
+    // previous roots missed, and the canary exists so it stays covered even if every
+    // other top-level declaration is one day relocated.
+    let canary = repo_root().join("languages/tests/inventory_discovery_canary.rs");
+    assert!(
+        declaring.contains(&canary),
+        "the discovery canary must be recognised as a declaration"
+    );
+    assert!(
+        audited.contains(&canary),
+        "the discovery canary must be inside the audited file set"
+    );
 }
 
 /// Whether some rule declares a REWRITE PREMISE — `Label . | S ~> T |- …`.
