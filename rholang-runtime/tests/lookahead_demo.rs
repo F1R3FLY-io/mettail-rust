@@ -234,21 +234,69 @@ fn beat_4_divergence_is_reproducible() {
     assert_beat_is_reproducible(PROGRAMS[3]);
 }
 
+/// This file's own source, for the two coverage cells that count call sites in it.
+fn this_source() -> String {
+    std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lookahead_demo.rs"),
+    )
+    .expect("this test file must be readable")
+}
+
+/// How many **call sites** of `helper(ARRAY[` this file contains.
+///
+/// ## ⚠ The trap this exists to avoid, which it fell into
+///
+/// [`every_beat_has_a_reproducibility_cell`] was written as
+/// `source.matches("assert_beat_is_reproducible(PROGRAMS[").count()`. The search literal is
+/// **itself** a occurrence of the substring it searches for, so the count was always one more
+/// than the number of real call sites and the assertion `cells == PROGRAMS.len()` could never
+/// hold. The cell was red from the commit that introduced it (`ba952d1a`), which is worse than
+/// having no coverage cell: a permanently-red gate is indistinguishable from a flake and gets
+/// ignored, and the thing it was guarding — a beat added without its own test — goes unguarded.
+///
+/// Two independent defences here, because one was evidently not enough:
+///
+/// 1. the needle is **assembled at run time**, so no line of this file contains it literally;
+/// 2. only lines that **start with** the needle count, so a mention inside a comment or inside
+///    a longer expression is not a call site.
+fn call_sites(helper: &str, array: &str) -> usize {
+    let needle = format!("{helper}({array}[");
+    this_source()
+        .lines()
+        .filter(|line| line.trim_start().starts_with(&needle))
+        .count()
+}
+
 /// ★ Every beat this gate knows about has a reproducibility cell — so adding a fifth beat to
 /// [`PROGRAMS`] cannot silently go uncovered by the split above.
 #[test]
 fn every_beat_has_a_reproducibility_cell() {
-    let source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lookahead_demo.rs"),
-    )
-    .expect("this test file must be readable");
-    let cells = source.matches("assert_beat_is_reproducible(PROGRAMS[").count();
+    let cells = call_sites("assert_beat_is_reproducible", "PROGRAMS");
     assert_eq!(
         cells,
         PROGRAMS.len(),
         "PROGRAMS has {} beats but only {cells} call assert_beat_is_reproducible — a beat \
          added to the list without its own cell is uncovered",
         PROGRAMS.len()
+    );
+}
+
+/// …and the counter itself is not vacuous: it finds the calls it is supposed to find, and it
+/// does **not** count its own search literal.
+///
+/// ★ This is the cell that would have caught the defect above. A counting helper with no test
+/// of its own is a measurement nobody measured.
+#[test]
+fn the_call_site_counter_counts_calls_and_not_itself() {
+    assert!(
+        call_sites("assert_beat_is_reproducible", "PROGRAMS") > 0,
+        "the counter must find the real call sites"
+    );
+    assert_eq!(
+        call_sites("a_helper_this_file_does_not_call", "PROGRAMS"),
+        0,
+        "…and must find nothing for a helper nobody calls — including this very line, which \
+         mentions the name it is asking about"
     );
 }
 
@@ -266,7 +314,10 @@ fn the_trace_digest_is_the_same_in_two_processes() {
             .lines()
             .find_map(|line| {
                 line.split("trace 0x").nth(1).map(|rest| {
-                    rest.split_whitespace().next().unwrap_or_default().to_string()
+                    rest.split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .to_string()
                 })
             })
             .expect("the divergence beat must print a trace digest")
@@ -302,28 +353,99 @@ fn the_trace_digest_is_the_same_in_two_processes() {
 ///
 /// A single-width run — which is all [`the_trace_digest_is_the_same_in_two_processes`] does —
 /// cannot see an arrival-order dependence that both processes happen to share. This cell can.
-#[test]
-fn the_transcript_does_not_depend_on_the_scheduler_width() {
-    let at_width = |threads: &str| -> String {
-        let output = Command::new(env!("CARGO_BIN_EXE_rhocalc"))
-            .current_dir(workspace_root())
-            .env_remove("RUST_MIN_STACK")
-            .env("TOKIO_WORKER_THREADS", threads)
-            .arg("demos/flt-lookahead/04-divergence.rho")
-            .output()
-            .expect("the rhocalc binary must run");
-        transcript(&output)
-    };
-    let baseline = at_width("1");
-    for threads in ["2", "8", "32"] {
+///
+/// ## ⚠ What this cell can and cannot see, and where the rest of the property lives
+///
+/// It compares a **transcript**: what the interpreter chose to print. The thing two validators
+/// must agree on is what the deploy `produce`d into the tuplespace, and those are not the same
+/// bytes. Two defects lived in the gap and neither reached a transcript — `reify` emitting a
+/// channel's data in arrival order, and `resting_on` doing the same on the guest path — so this
+/// cell was green throughout.
+///
+/// `tests/x8_publication_is_scheduler_invariant.rs` is the half that closes it: same idea, but
+/// over the **published data** on all five report channels plus the reply channel, and over a
+/// program whose leaf holds several data on **one** channel — a shape no committed demo
+/// produces, which is precisely why the two defects were invisible.
+///
+/// **Two runs per width**, so a single differing run reads as a flake at that width rather than
+/// as a width effect. That is the distinction the dose-response table above turned on: 2 threads
+/// gave *two* distinct digests over twelve runs with the 1-thread value as the mode, which one
+/// run per width would have reported as "2 threads is broken" or as "2 threads is fine"
+/// depending on which sample it drew.
+///
+/// ★ **One test per width**, for the same three reasons the beats above are split: invariance at
+/// each width is an independent property, the test is nextest's unit of both parallelism and
+/// timeout, and the failing width should be in the test *name*. It is also a hard requirement
+/// here — looped, one run of the divergence beat costs ≈ 28 s and 1 + 4×2 runs measured **288 s**
+/// against the default profile's 300 s `terminate-after` (`.config/nextest.toml`). Split, each
+/// cell is three runs and the four run concurrently.
+const WIDTHS: &[&str] = &["1", "2", "8", "32"];
+
+/// One run of the divergence beat at a given worker-thread count.
+fn transcript_at_width(threads: &str) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_rhocalc"))
+        .current_dir(workspace_root())
+        .env_remove("RUST_MIN_STACK")
+        .env("TOKIO_WORKER_THREADS", threads)
+        .arg("demos/flt-lookahead/04-divergence.rho")
+        .output()
+        .expect("the rhocalc binary must run");
+    transcript(&output)
+}
+
+fn assert_width_reproduces_the_single_threaded_transcript(threads: &str) {
+    let baseline = transcript_at_width("1");
+    assert!(
+        baseline.contains("trace 0x"),
+        "the baseline run must actually have produced a lookahead transcript, or every \
+         comparison below holds for the wrong reason:\n{baseline}"
+    );
+    for run in 1..=2 {
         assert_eq!(
-            at_width(threads),
+            transcript_at_width(threads),
             baseline,
-            "★ TOKIO_WORKER_THREADS={threads} changed the transcript. Something published is \
-             keyed by task-arrival order rather than by content — that is a value two validators \
-             could disagree on without either being wrong. See `speculation::delivery::step_digest`."
+            "★ TOKIO_WORKER_THREADS={threads}, run {run}: the transcript changed. Something \
+             published is keyed by task-arrival order rather than by content — that is a value \
+             two validators could disagree on without either being wrong. See \
+             `speculation::delivery::step_digest`, and \
+             `x8_publication_is_scheduler_invariant` for the same property over the published \
+             DATA rather than over the printed transcript."
         );
     }
+}
+
+#[test]
+fn the_transcript_does_not_depend_on_the_scheduler_width() {
+    assert_width_reproduces_the_single_threaded_transcript(WIDTHS[0]);
+}
+
+#[test]
+fn width_2_reproduces_the_single_threaded_transcript() {
+    assert_width_reproduces_the_single_threaded_transcript(WIDTHS[1]);
+}
+
+#[test]
+fn width_8_reproduces_the_single_threaded_transcript() {
+    assert_width_reproduces_the_single_threaded_transcript(WIDTHS[2]);
+}
+
+#[test]
+fn width_32_reproduces_the_single_threaded_transcript() {
+    assert_width_reproduces_the_single_threaded_transcript(WIDTHS[3]);
+}
+
+/// ★ …and every width in [`WIDTHS`] has a cell, so adding a fifth width to the list cannot go
+/// uncovered — the same guard [`every_beat_has_a_reproducibility_cell`] provides for the beats,
+/// through the same counter, which is now tested.
+#[test]
+fn every_width_has_a_cell() {
+    let cells = call_sites("assert_width_reproduces_the_single_threaded_transcript", "WIDTHS");
+    assert_eq!(
+        cells,
+        WIDTHS.len(),
+        "WIDTHS has {} entries but only {cells} cells drive one",
+        WIDTHS.len()
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -387,7 +509,9 @@ fn every_run_sheet_command_line_is_driven_by_this_test() {
     // missing from the presenter's page.
     for program in PROGRAMS {
         assert!(
-            invocations.iter().any(|invocation| invocation.contains(program)),
+            invocations
+                .iter()
+                .any(|invocation| invocation.contains(program)),
             "{program} is driven by this gate but the run sheet never invokes it"
         );
     }
