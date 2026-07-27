@@ -450,11 +450,32 @@ fn lowering_is_depth_independent() {
 /// having its ceiling raised.
 ///
 /// Ceilings are ~1.5× the measured values, per profile, as everywhere else in this file.
+///
+/// ⚠ **One `#[test]` per row, and that is a harness constraint rather than taste.** Each
+/// `assert_slope_below` bisects twice and each bisection is ~20 child processes at depth 4,096,
+/// so all four in one test ran ~500 s and `cargo nextest` terminated it at its 300 s per-test
+/// cap — a RED gate that measured nothing. Split, each test fits comfortably, and a failure
+/// names the one residue that regressed instead of the group.
 #[test]
-fn the_unconverted_main_thread_residue_has_not_got_worse() {
+fn residue_par_drop_has_not_got_worse() {
     assert_slope_below("par_drop", ceiling(600, 200), 512, 4096);
+}
+
+/// See [`residue_par_drop_has_not_got_worse`].
+#[test]
+fn residue_ast_drop_has_not_got_worse() {
     assert_slope_below("ast_drop", ceiling(450, 200), 512, 4096);
+}
+
+/// See [`residue_par_drop_has_not_got_worse`].
+#[test]
+fn residue_render_has_not_got_worse() {
     assert_slope_below("render", ceiling(5_500, 1_500), 512, 4096);
+}
+
+/// See [`residue_par_drop_has_not_got_worse`].
+#[test]
+fn residue_static_falsity_judgement_has_not_got_worse() {
     assert_slope_below("lower_formula", ceiling(6_500, 1_500), 512, 4096);
 }
 
