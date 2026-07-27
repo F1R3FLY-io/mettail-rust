@@ -1,0 +1,23 @@
+// ★★ THE DESK — four classic λ programs, computed by the machine, then separated by SHAPE
+//    and selected by a PREDICATE.
+//
+//   plus 2 3      ⟶β  λf.λx. f(f(f(f(f x))))   Church 5   — body is an APPLICATION
+//   mult 2 3      ⟶β  λf.λx. f(f(f(f(f(f x)))))Church 6   — body is an APPLICATION
+//   not true      ⟶β  λt.λf. f                 FALSE      — body is a VARIABLE
+//   and true true ⟶β  λt.λf. t                 TRUE       — body is a VARIABLE
+//
+// Church numerals and Church booleans are BOTH two-binder terms, so a pattern that only
+// counted binders could not tell them apart. `lam f. lam x. (f, ${rest})` can: it requires
+// the body to be an application of the OUTER binder, which every numeral ≥ 1 is and no
+// boolean is. The booleans are refused structurally and left resting.
+//
+// Nothing below spells an answer. Every payload arrives because `[*]` explored the program.
+
+@"results"!(lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda`(lam b. ((b, lam t. lam f. f), lam t. lam f. t), lam t. lam f. t)`)[*] |
+@"results"!(lambda`((lam p. lam q. ((p, q), p), lam t. lam f. t), lam t. lam f. t)`)[*] |
+
+for(@lambda`lam f. lam x. (f, ${rest})` <- @"results") {
+  @"OUT"!(lambda`${rest}`)
+}

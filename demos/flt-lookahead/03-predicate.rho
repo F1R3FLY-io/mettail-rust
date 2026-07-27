@@ -1,0 +1,27 @@
+// ★★ THE PREDICATE — the same four computed results, a different question asked of them.
+//
+// `02-the-desk.rho` selected by SHAPE: the pattern required the body to be an application of
+// the outer binder, which admits Church numerals and refuses Church booleans.
+//
+// This program keeps the same pool and asks a SEMANTIC question instead. The pattern binds
+// the whole computed term; the `where` clause is a predicate decided by the substrate, and
+// it selects the one result that IS the Church boolean FALSE.
+//
+//   plus 2 3      ⟶β  Church 5   — refused by the predicate
+//   mult 2 3      ⟶β  Church 6   — refused by the predicate
+//   not true      ⟶β  FALSE      — ACCEPTED
+//   and true true ⟶β  TRUE       — refused by the predicate
+//
+// The refused three are not consumed and not destroyed; they are still resting on @"results"
+// when the program comes to rest. Change the predicate and a different one settles.
+//
+// Nothing below spells an answer. Every payload arrives because `[*]` explored the program.
+
+@"results"!(lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda`(lam b. ((b, lam t. lam f. f), lam t. lam f. t), lam t. lam f. t)`)[*] |
+@"results"!(lambda`((lam p. lam q. ((p, q), p), lam t. lam f. t), lam t. lam f. t)`)[*] |
+
+for(@lambda`${r}` <- @"results" where lambda`${r}` == lambda`lam t. lam f. f`) {
+  @"OUT"!(lambda`${r}`)
+}
