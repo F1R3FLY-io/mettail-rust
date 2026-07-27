@@ -420,17 +420,54 @@ architecture and is now **partially superseded**:
 | lane | who decides a residual guard at COMM time | status |
 |---|---|---|
 | the in-tree eager-COMM (fold) lane | **the substrate**, through the ground leg | changed by the wire |
-| the reducer lane (a populated `Receive.condition`) | the reducer's `check_commit`, i.e. the Rholang interpreter | unchanged |
+| every **mettail** RSpace (`run`, `step`, `speculation`, the benches) | **the substrate**, through `SubstrateGuardMatcher::check_commit` | changed by the run-time leg |
+| the **f1r3node consensus** lane (`runtime_manager`, `node/setup`, the REPL gRPC service) | f1r3node's `Matcher::check_commit`, i.e. `rho_pure_eval` | unchanged — see below |
 
-The reducer lane is unchanged because the artifact is a `Par` and `rhoapi` has no node that names
-an external decision procedure; changing which evaluator reads `Receive.condition` is a change to
-the host reducer, which is governed by the consensus process and not by this suite. Bringing the
-reducer lane under the rule therefore requires either a host-side hook or a lowering that carries
-the guard to a native process, and both are protocol-level designs rather than wiring.
+> ⚠ **CORRECTED (2026-07-27).** This section previously read: *"The reducer lane is unchanged
+> because the artifact is a `Par` and `rhoapi` has no node that names an external decision
+> procedure … Bringing the reducer lane under the rule therefore requires either a host-side hook
+> or a lowering that carries the guard to a native process, and both are protocol-level designs
+> rather than wiring."*
+>
+> The premise is true — `rhoapi` still has no such node — and **the conclusion drawn from it was
+> wrong.** The run-time leg shipped in `80b9d9f8` the day after this paragraph was last touched,
+> and this section survived a relocation refactor (`25716a0a`) without being re-affirmed against
+> it. The paragraph then generated a standing work item asserting the missing node *blocks* the
+> run-time half. It does not.
 
-What the wire *does* establish for the reducer lane is the compile-time half of the rule in full:
-the artifact that the reducer runs is produced by a discharge decision whose authority is the
-substrate.
+**Why the wire has no role here.** The decision procedure is not named by the *term*; it is named
+by the *runtime construction*. `check_commit` is a method on
+`Arc<Box<dyn Match<BindPattern, ListParWithRandom, TaggedContinuation>>>`, which is a **parameter**
+of `RSpace::create` / `create_with_replay`. Swapping deciders is three constructor arguments, and
+this tree has already done it: `SubstrateGuardMatcher` (`rholang-runtime/src/guard_par_substrate.rs`)
+delegates `get` to f1r3node's `Matcher` verbatim and overrides only `check_commit`, installed at
+every mettail RSpace site — with **zero** f1r3node lines changed.
+
+★ **And a wire field would be actively harmful, not merely unnecessary.** A node saying *"decide me
+with procedure X"* makes the decider **deploy-author-selectable**, promoting a host-local
+capability — which procedures a validator has, at which version, under which budget — into
+consensus-visible bytes. Today the invariant is the opposite and is what makes replay sound:
+`create_with_replay` takes **one** `Match` object and hands it to both the play and the replay
+space, so play and replay structurally cannot disagree about who decided.
+
+`rhoapi` already carries the cautionary precedent. `TaggedContinuation.scala_body_ref` *does* name
+external procedures, and its vocabulary includes genuinely non-deterministic services, which the
+reducer must special-case on replay (*"if the trace shows a failed non-deterministic process, we
+cannot replay it"*). The only discipline that makes even that survivable is that the vocabulary is
+**closed and host-defined**, reachable solely through `New.uri` — never by naming an arbitrary
+procedure.
+
+**What remains genuinely open is a different thing, correctly scoped.** f1r3node's three production
+construction sites still hard-code `Matcher`, so the **consensus lane** is not yet under the
+USER rule. That is a **decider swap at three call sites** — wire-compatible, no proto change, no
+re-encoding of stored `Par`s — which is consensus-affecting (it changes which COMMs fire wherever
+the two deciders disagree) and therefore needs validator agreement and an activation height. It is
+not a protocol-format change, and conflating the two is what the superseded paragraph did.
+
+Until that swap, the wire establishes the compile-time half of the rule in full on the consensus
+lane: `guard_discharge::classify` discharges a guard only where the substrate **and** the machine
+verdict agree, so a replayed artifact's omitted guards were called true by both. That is an
+under-approximation of the rule, never an unsound one.
 
 ## 8. On GuardedRho
 
