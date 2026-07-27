@@ -1,6 +1,6 @@
 //! **D10 — the GSLT omnibus's SYNCHRONOUS π `Comm` is REALIZED by the Rho backend.**
 //!
-//! `languages/tests/omnibus_pi.rs` proves the paper's verbatim `Comm`
+//! `languages/src/pi.rs` proves the paper's verbatim `Comm`
 //! (`omnibus.tex:1988-1989`) FIRES on the host reducer. That is only half of
 //! closing D10. The modality generator's realization fence (the design's
 //! §18.4: *"never generate a modality from a rule that is not the rule that
@@ -17,7 +17,7 @@
 //! ```
 //!
 //! This file pins the fixed state against the REAL conformance spec (it reads
-//! `languages/tests/omnibus_pi.rs` itself, so a drift in the spec is a failure
+//! `languages/src/pi.rs` itself, so a drift in the spec is a failure
 //! here rather than a stale copy): **both** communication rules lower to
 //! `CommRewrite`, and **both** surface a Comm σ-injection site — the paper's
 //! `Comm` first.
@@ -38,11 +38,13 @@ use mettail_rholang_codegen::{
 /// Extract the verbatim `language! { … }` body from a source file by BRACE
 /// MATCHING from the invocation's opening brace.
 ///
-/// This is `a_s5c_production_language_gates::extract_language_body` adapted for
-/// a file where the macro is *not* the last item: `omnibus_pi.rs` is a test
-/// module, so the production helper's `rfind('}')` would swallow the whole test
-/// suite. Anchoring on a line-leading `language! {` also skips the module
-/// doc-comment's prose mentions of `language!`.
+/// This is `a_s5c_production_language_gates::extract_language_body` with the
+/// closing brace found by BRACE MATCHING rather than by `rfind('}')`. The
+/// production helper assumes the `language!` invocation is the last item in its
+/// file; that held for `omnibus_pi.rs` only because nothing followed the test
+/// suite, and it holds for `languages/src/pi.rs` today, but brace matching does
+/// not depend on it at all. Anchoring on a line-leading `language! {` also skips
+/// the module doc-comment's prose mentions of `language!`.
 fn extract_language_body(source: &str) -> &str {
     let macro_at = source
         .find("\nlanguage! {")
@@ -74,7 +76,7 @@ fn extract_language_body(source: &str) -> &str {
 /// `reconstruct_language_def` path the production installer and the generated
 /// `rho_net_program()` accessor use.
 fn pi_def() -> LanguageDef {
-    let body = extract_language_body(include_str!("../../languages/tests/omnibus_pi.rs"));
+    let body = extract_language_body(include_str!("../../languages/src/pi.rs"));
     reconstruct_language_def(body).expect("the omnibus Pi body must reconstruct")
 }
 

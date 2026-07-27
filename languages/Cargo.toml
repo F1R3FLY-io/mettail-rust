@@ -25,8 +25,12 @@ all-languages = [
     "ambient",
     "calculator",
     "composition",
+    "json",
     "lambda",
+    "monoid",
+    "pi",
     "rhocalc",
+    "turing",
 ]
 # Task #11 (extended 2026-07-26): the twelve rho_net DEMONSTRATION grammars moved to
 # `tests/definitions/`. A TEST-HOSTED definition is not a library module, so it needs no
@@ -78,7 +82,17 @@ composition = ["calculator", "lambda"]
 # wrapper), so there is nothing left to clobber and nothing left to gate. The three
 # `[[test]]` stanzas that gated those files are removed below for the same reason.
 # guardoptsmoke = []
+# GSLT omnibus conformance specs (2026-07-27, USER ruling): `Json` (L1), `Monoid` (L2),
+# `Turing` (L9) and `Pi` (L11) are PRODUCTION specs and moved from
+# `tests/omnibus_*.rs` into `src/{json,monoid,pi,turing}.rs`, so each is a library module
+# with its own feature, exactly like ambient/calculator/lambda/rhocalc. All four are in
+# `all-languages` (hence on by default). Each declares
+# `options { emit_tests: false, emit_simulator: false, emit_blockly: false }`, so none of
+# them adds a `tests/gen_*.rs`, a `src/bin/simulate_*.rs` or a `src/generated/*.ts`; their
+# conformance suites are the hand-written `tests/{json,monoid,pi,turing}.rs`.
+json = []
 lambda = []
+monoid = []
 # lambda-demo = []
 # Task #11 (extended 2026-07-26): `LedTest` moved to `tests/definitions/`.
 # led-test = []
@@ -92,10 +106,12 @@ lambda = []
 # definition is not a library module, so it needs no library feature; its
 # consumers `#[path]`-include the definition file directly.
 # optsmoke = []
+pi = []
 # Task #11 (extended 2026-07-26): `RefinementSmoke` moved to `tests/definitions/`.
 # refinementsmoke = []
 rhocalc = []
 # swap-demo = []
+turing = []
 ## Expose public proptest strategies for generating random well-formed terms.
 ## External crates can depend on `mettail-languages/strategies` and use
 ## `arb_{cat}(max_depth)` to generate terms for property-based testing.

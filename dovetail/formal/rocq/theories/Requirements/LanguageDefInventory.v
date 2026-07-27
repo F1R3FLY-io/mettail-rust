@@ -161,7 +161,45 @@ Section LanguageDefInventory.
     {| inventory_name := "bicongdemo"; inventory_requirements := [ ReqCongruencePremise; ReqDirectionalRewrite ] |};
     {| inventory_name := "lambdademo"; inventory_requirements := [ ReqBehavioralGuard; ReqBinderPattern; ReqDirectionalRewrite; ReqSubstitutionPattern; ReqSyntheticInjectionGuard ] |};
     {| inventory_name := "nativedemo"; inventory_requirements := [ ReqBehavioralGuard; ReqDirectionalRewrite; ReqFoldNativeHandler; ReqSyntheticInjectionGuard ] |};
-    {| inventory_name := "nativefolddemo"; inventory_requirements := [ ReqBehavioralGuard; ReqDirectionalRewrite; ReqFoldNativeHandler; ReqSyntheticInjectionGuard ] |}
+    {| inventory_name := "nativefolddemo"; inventory_requirements := [ ReqBehavioralGuard; ReqDirectionalRewrite; ReqFoldNativeHandler; ReqSyntheticInjectionGuard ] |};
+    (* GSLT omnibus conformance specs (2026-07-27). The four theories transcribed
+       from the omnibus paper -- Json (L1), Monoid (L2), Turing (L9), Pi (L11) --
+       are PRODUCTION specs (USER ruling), so they moved from
+       `languages/tests/omnibus_*.rs` to `languages/src/{json,monoid,pi,turing}.rs`.
+       That relocation is what brings them into the executable audit's discovery
+       roots (`languages/src` + `languages/tests/definitions`): a top-level
+       `languages/tests/*.rs` file is NOT scanned, so until now these four real
+       reduction languages sat outside the formal requirements coverage entirely.
+       Inventorying them here CLOSES that gap; it is not bookkeeping for the move.
+
+       ★ Requirement derivation. Every other entry above was read off
+       `dovetail/tests/language_inventory.rs::classify_source`, a TEXTUAL scan of
+       the whole source file. These four carry long clause-by-clause conformance
+       headers that quote OTHER languages' constructs, and that scan cannot tell a
+       quotation from a declaration: it reports ReqRhoCommHandlerContract for Json
+       (the header cites RhoCalc's `POutput` idiom at src/json.rs:87), ReqFreshnessPremise
+       for all four (their markdown `# ` headings match the `"# "` needle), and
+       ReqCongruencePremise for Turing (the `"|" h "|"` tape delimiters match the
+       `"| "` needle). Recording those would be false. The lists below are instead
+       the STRUCTURAL requirements -- what `ast/tests/dovetail_language_inventory.rs::classify_language`
+       derives from the parsed `LanguageDef`, confirmed by re-running the textual
+       classifier over the comment-stripped declarations. No test compares an
+       entry's requirement list against either classifier (both check name-set
+       equality, per-language non-emptiness, and constructor coverage), and every
+       constructor below is a member of `current_mettail_rewrite_requirements`, so
+       the coverage proofs discharge unchanged. *)
+    (* Json (L1) -- rung one: types + terms only, `equations {}` / `rewrites {}` both
+       empty. Its `JArr`/`JObj` arity split carries an ordered `Vec(...)` slot. *)
+    {| inventory_name := "json"; inventory_requirements := [ ReqCollectionPattern; ReqExactContentKey ] |};
+    (* Monoid (L2) -- rung two: Assoc/UnitL/UnitR and no rewrites. *)
+    {| inventory_name := "monoid"; inventory_requirements := [ ReqEquation; ReqExactContentKey ] |};
+    (* Pi (L11) -- the pi-calculus: HashBag parallel, `^x.` restriction and input
+       binders, the freshness-premised ScopeExt equation, the substituting Comm
+       rewrite, and the ParCong/NewCong congruences. *)
+    {| inventory_name := "pi"; inventory_requirements := [ ReqBinderPattern; ReqCollectionPattern; ReqCongruencePremise; ReqDirectionalRewrite; ReqEquation; ReqExactContentKey; ReqFreshnessPremise; ReqSubstitutionPattern ] |};
+    (* Turing (L9) -- the `Vec(Sym)` zipper tape, the `shift_right` native fold, and
+       the two unpremised transition-table rewrites. *)
+    {| inventory_name := "turing"; inventory_requirements := [ ReqCollectionPattern; ReqDirectionalRewrite; ReqExactContentKey; ReqFoldNativeHandler ] |}
   ].
 
   Definition flat_inventory : list RewriteRequirement :=

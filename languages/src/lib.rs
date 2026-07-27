@@ -54,6 +54,14 @@ pub mod ambient;
 // pub mod appsubst;
 #[cfg(feature = "calculator")]
 pub mod calculator;
+// GSLT omnibus conformance specs (2026-07-27, USER ruling: "The language specs from the
+// omnibus paper may stay in `languages/src/` — they may be considered production specs").
+// `Json` (L1), `Monoid` (L2), `Turing` (L9) and `Pi` (L11) were declared inside their own
+// test binaries as `languages/tests/omnibus_*.rs`, which made them reachable from nothing
+// but that one binary. They are library modules now, like every other production spec, and
+// their conformance suites are `languages/tests/{json,monoid,pi,turing}.rs`.
+#[cfg(feature = "json")]
+pub mod json;
 // Task #11 (extended 2026-07-26): the Class-2 / Class-3 collection FIXTURE grammars are
 // not production languages, so they moved to `languages/tests/definitions/`.
 // `languages/src/` is production-only. Consumers `#[path]`-include the definition files
@@ -118,6 +126,9 @@ pub mod calculator;
 // pub mod guarded_rho;
 #[cfg(feature = "lambda")]
 pub mod lambda;
+// GSLT omnibus L2 — see the `json` note above.
+#[cfg(feature = "monoid")]
+pub mod monoid;
 // Task #11 (extended 2026-07-26): `LedTest` is the LED-delegation FIXTURE grammar; it moved
 // to `languages/tests/definitions/led_test.rs`.
 // #[cfg(feature = "led-test")]
@@ -138,8 +149,14 @@ pub mod lambda;
 // `FortranModel`; it moved to `languages/tests/definitions/reserved_model.rs`.
 // #[cfg(feature = "reserved_model")]
 // pub mod reserved_model;
+// GSLT omnibus L11 — see the `json` note above.
+#[cfg(feature = "pi")]
+pub mod pi;
 #[cfg(feature = "rhocalc")]
 pub mod rhocalc;
+// GSLT omnibus L9 — see the `json` note above.
+#[cfg(feature = "turing")]
+pub mod turing;
 // Task #11 (extended 2026-07-26): `SwapDemo` is a DEMONSTRATION grammar, not a production
 // language, so it moved to `languages/tests/definitions/swapdemo.rs`. `languages/src/` is
 // production-only; consumers `#[path]`-include the definition file directly.

@@ -1,40 +1,9 @@
-//! GSLT omnibus conformance — **L2 `Monoid`** (`omnibus.tex:430-449`), rung two
-//! (types + terms + **equations**; `rewrites { }` is empty).
+//! GSLT omnibus conformance suite for **L2 `Monoid`** — the hand-written gate on
+//! the production spec `languages/src/monoid.rs` (`omnibus.tex:430-449`), rung
+//! two (types + terms + **equations**; `rewrites { }` is empty).
 //!
-//! # Why this file lives in `languages/tests/`
-//!
-//! `languages/src/` is PRODUCTION-ONLY (the `main`-branch set {ambient,
-//! calculator, lambda, rhocalc} + `lib`). The omnibus `Monoid` theory is a
-//! specification-conformance / demonstration language, so it is declared here as
-//! a test-module `language!` spec with `emit_tests` / `emit_simulator` /
-//! `emit_blockly` off (no macro-written files anywhere in the tree).
-//!
-//! # Clause-by-clause containment (SUPERSET — in fact EQUAL)
-//!
-//! | omnibus clause | our clause | delta |
-//! | --- | --- | --- |
-//! | `types { M }` (:434) | `types { M }` | — |
-//! | `Unit . M ::= "e" ;` (:437) | identical | — |
-//! | `Mul . x:M, y:M \|- x "*" y : M ;` (:438) | identical | — |
-//! | `Assoc . \|- (Mul (Mul X Y) Z) = (Mul X (Mul Y Z)) ;` (:442) | identical | — |
-//! | `UnitL . \|- (Mul Unit X) = X ;` (:443) | identical | — |
-//! | `UnitR . \|- (Mul X Unit) = X ;` (:444) | identical | — |
-//! | `rewrites { }` (:447) | identical (empty) | — |
-//!
-//! 7/7 clauses, character-identical modulo whitespace. No notation deltas.
-//!
-//! # Notation: the paper is BNFC-flavoured; this file is idiomatic mettail
-//!
-//! The omnibus's listings carry a labelled-BNF (BNFC) lineage — `Label . Cat ::=
-//! "lit" Item … ;` productions and a parameterised `List(X)` carrier. mettail
-//! accepts the `::=` form (and this file uses it for nullary constants, exactly as
-//! `languages/src/ambient.rs` does), but its idiomatic form is the JUDGEMENT form
-//! `Name . ctx |- pattern : Cat ;`, and `List(X)` is spelled `Vec(X)` (the
-//! established convention — `rhocalc.rs:57` declares `![Vec<Proc>] as List`).
-//! **Superset containment here is SEMANTIC**: every `types` entry, `terms`
-//! production, `equations` clause and `rewrites` rule of the paper's version is
-//! present with the same meaning; the spelling is ours. Every deviation is
-//! tabulated above and explained below.
+//! The spec's own module header carries the clause-by-clause containment table
+//! and the notation notes; this file carries the behaviour those clauses claim.
 //!
 //! The omnibus makes this rung load-bearing (:451-457): *"The equational theory
 //! of a single operator … determines whether proximity to a resource confers
@@ -43,42 +12,10 @@
 //! quotient they present is *computed*: `e * x` and `x * e` are identified with
 //! `x`, and the two bracketings of a triple are identified with each other, by
 //! the Dovetail e-graph saturation the macro generates from `equations {}`.
+#![cfg(feature = "monoid")]
 
-#![allow(
-    non_local_definitions,
-    clippy::crate_in_macro_def,
-    clippy::empty_line_after_outer_attr,
-    unused_imports,
-    dead_code
-)]
-
-use mettail_macros::language;
+use mettail_languages::monoid::*;
 use mettail_runtime::Language;
-
-language! {
-    name: Monoid,
-
-    options {
-        emit_tests: false,
-        emit_simulator: false,
-        emit_blockly: false,
-    },
-
-    types { M },
-
-    terms {
-        Unit . M ::= "e" ;
-        Mul . x:M, y:M |- x "*" y : M ;
-    },
-
-    equations {
-        Assoc . |- (Mul (Mul X Y) Z) = (Mul X (Mul Y Z)) ;
-        UnitL . |- (Mul Unit X) = X ;
-        UnitR . |- (Mul X Unit) = X ;
-    },
-
-    rewrites { },
-}
 
 /// Iteration / node budget for the e-graph saturation used by the quotient
 /// tests. Small on purpose: a monoid presentation must converge quickly, and a
