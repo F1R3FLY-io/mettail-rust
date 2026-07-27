@@ -57,7 +57,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use mettail_ast::grammar::{
-    convert_term_context_to_items, GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam,
+    convert_term_context_to_items, rule_fixture, GrammarItem, GrammarRule, PatternOp, SyntaxExpr,
+    TermParam,
 };
 use mettail_ast::language::{LangType, LanguageDef};
 use mettail_ast::types::{CollectionType, TypeExpr};
@@ -106,19 +107,11 @@ fn sep(coll: &str, separator: &str) -> SyntaxExpr {
 fn jrule(label: &str, category: &str, tc: Vec<TermParam>, sp: Vec<SyntaxExpr>) -> GrammarRule {
     let (items, bindings) = convert_term_context_to_items(&tc);
     GrammarRule {
-        label: id(label),
-        category: id(category),
         items,
         bindings,
         term_context: Some(tc),
         syntax_pattern: Some(sp),
-        rust_code: None,
-        eval_mode: None,
-        is_right_assoc: false,
-        prefix_bp: None,
-        tier_directive: None,
-        is_auto_injected: false,
-        doc_comment: None,
+        ..rule_fixture(id(label), id(category))
     }
 }
 

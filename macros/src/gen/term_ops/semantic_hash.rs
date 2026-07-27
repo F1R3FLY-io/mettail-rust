@@ -1456,6 +1456,7 @@ mod residual_11_1_send_fold_tests {
     //! both a rhocalc-shaped fixture AND a synthetic non-rhocalc grammar (the
     //! generality-by-structure guarantee).
     use super::*;
+    use mettail_ast::grammar::rule_fixture;
     use mettail_ast::types::{EvalMode, RustCodeBlock};
     use proc_macro2::Span;
 
@@ -1479,19 +1480,11 @@ mod residual_11_1_send_fold_tests {
 
     fn fold_rule(label: &str, cat: &str, tc: Vec<TermParam>, code: syn::Expr) -> GrammarRule {
         GrammarRule {
-            label: id(label),
-            category: id(cat),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(tc),
             syntax_pattern: Some(Vec::new()),
             rust_code: Some(RustCodeBlock { code }),
             eval_mode: Some(EvalMode::Fold),
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(id(label), id(cat))
         }
     }
 

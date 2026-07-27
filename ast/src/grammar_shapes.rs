@@ -825,7 +825,7 @@ fn channel_wrap_has_constructor(expr: &syn::Expr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grammar::{GrammarRule, SyntaxExpr, TermParam};
+    use crate::grammar::{rule_fixture, GrammarRule, SyntaxExpr, TermParam};
     use crate::types::TypeExpr;
     use proc_macro2::Span;
     use syn::Ident;
@@ -834,7 +834,9 @@ mod tests {
         Ident::new(s, Span::call_site())
     }
 
-    /// Build a minimal GrammarRule with judgement-style fields populated.
+    /// Build a minimal GrammarRule with judgement-style fields populated. Everything these
+    /// shape classifiers do NOT read comes from `rule_fixture`, which holds each field's
+    /// documented default (`grammar.rs`).
     fn make_rule(
         label: &str,
         category: &str,
@@ -842,19 +844,9 @@ mod tests {
         syntax_pattern: Vec<SyntaxExpr>,
     ) -> GrammarRule {
         GrammarRule {
-            label: ident(label),
-            category: ident(category),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(term_context),
             syntax_pattern: Some(syntax_pattern),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(ident(label), ident(category))
         }
     }
 
@@ -940,22 +932,9 @@ mod tests {
     #[test]
     fn rejects_legacy_old_style_rule() {
         // Old-style BNF rule has `term_context: None` — recognizer must
-        // return None even if the pattern superficially matches.
-        let rule = GrammarRule {
-            label: ident("PAmb"),
-            category: ident("Proc"),
-            items: Vec::new(),
-            bindings: Vec::new(),
-            term_context: None,
-            syntax_pattern: None,
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
-        };
+        // return None even if the pattern superficially matches. That is already the
+        // fixture's default shape, so nothing needs overriding.
+        let rule = rule_fixture(ident("PAmb"), ident("Proc"));
         assert!(classify_unary_prefix_shape(&rule).is_none());
         assert!(classify_simple_projection_shape(&rule).is_none());
     }

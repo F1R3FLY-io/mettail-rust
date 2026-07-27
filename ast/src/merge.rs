@@ -938,22 +938,14 @@ mod tests {
         }
     }
 
+    /// Merge tests care only about a rule's IDENTITY (label + category) — what merging
+    /// collides on. Every other field takes its documented default from `rule_fixture`
+    /// (`grammar.rs`), so this helper is exactly that constructor with `&str` spelling.
     fn make_rule(label: &str, category: &str) -> GrammarRule {
-        GrammarRule {
-            label: Ident::new(label, Span::call_site()),
-            category: Ident::new(category, Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
-            term_context: None,
-            syntax_pattern: None,
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
-        }
+        crate::grammar::rule_fixture(
+            Ident::new(label, Span::call_site()),
+            Ident::new(category, Span::call_site()),
+        )
     }
 
     #[test]

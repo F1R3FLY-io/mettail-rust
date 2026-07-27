@@ -173,6 +173,7 @@ fn collect_terminals_in_rule(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mettail_ast::grammar::rule_fixture;
     use mettail_ast::language::{LangType, TokenDef};
     use proc_macro2::Span;
     use quote::quote;
@@ -233,24 +234,16 @@ mod tests {
     #[test]
     fn recovery_terminals_include_collection_separators_and_delimiters() {
         let rule = GrammarRule {
-            label: Ident::new("ListLit", Span::call_site()),
-            category: Ident::new("List", Span::call_site()),
             items: vec![GrammarItem::Collection {
                 coll_type: mettail_ast::types::CollectionType::Vec,
                 element_type: Ident::new("Expr", Span::call_site()),
                 separator: ",".to_string(),
                 delimiters: Some(("[".to_string(), "]".to_string())),
             }],
-            bindings: Vec::new(),
-            term_context: None,
-            syntax_pattern: None,
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(
+                Ident::new("ListLit", Span::call_site()),
+                Ident::new("List", Span::call_site()),
+            )
         };
         let language = empty_language("CollectionRecovery");
         let terminals = collect_terminals_for_category(&language, &[rule]);

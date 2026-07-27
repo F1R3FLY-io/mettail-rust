@@ -3543,16 +3543,12 @@ pub(crate) fn emit_binder_action_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_ast::grammar::GrammarRule;
+    use mettail_ast::grammar::{rule_fixture, GrammarRule};
     use proc_macro2::Span;
     use syn::Ident;
 
     fn lambda_lam_rule() -> GrammarRule {
         GrammarRule {
-            label: Ident::new("Lam", Span::call_site()),
-            category: Ident::new("Term", Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(vec![TermParam::Abstraction {
                 binder: Ident::new("x", Span::call_site()),
                 body: Ident::new("body", Span::call_site()),
@@ -3567,22 +3563,15 @@ mod tests {
                 SyntaxExpr::Literal(".".into()),
                 SyntaxExpr::Param(Ident::new("body", Span::call_site())),
             ]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(
+                Ident::new("Lam", Span::call_site()),
+                Ident::new("Term", Span::call_site()),
+            )
         }
     }
 
     fn fraction_rule() -> GrammarRule {
         GrammarRule {
-            label: Ident::new("Fraction", Span::call_site()),
-            category: Ident::new("BigRat", Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(vec![
                 TermParam::Simple {
                     name: Ident::new("a", Span::call_site()),
@@ -3601,13 +3590,10 @@ mod tests {
                 SyntaxExpr::Param(Ident::new("b", Span::call_site())),
                 SyntaxExpr::Literal(")".into()),
             ]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(
+                Ident::new("Fraction", Span::call_site()),
+                Ident::new("BigRat", Span::call_site()),
+            )
         }
     }
 

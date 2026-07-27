@@ -4010,6 +4010,7 @@ fn extract_base_category_ident(ty: &TypeExpr) -> syn::Ident {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mettail_ast::grammar::rule_fixture;
     use mettail_ast::language::LanguageDef;
     use proc_macro2::Span;
     use std::collections::HashMap;
@@ -4044,19 +4045,10 @@ mod tests {
         auto: bool,
     ) -> GrammarRule {
         GrammarRule {
-            label: ident(label),
-            category: ident(target),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(term_context),
             syntax_pattern: Some(syntax_pattern),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
             is_auto_injected: auto,
-            doc_comment: None,
+            ..rule_fixture(ident(label), ident(target))
         }
     }
 

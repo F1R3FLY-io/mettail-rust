@@ -3143,7 +3143,7 @@ fn literal_patterned_pattern_and_guard_for_kind(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_ast::grammar::{GrammarItem, SyntaxExpr, TermParam};
+    use mettail_ast::grammar::{rule_fixture, GrammarItem, SyntaxExpr, TermParam};
     use mettail_ast::language::{LangType, TokenDef};
     use mettail_ast::types::TypeExpr;
     use proc_macro2::Span;
@@ -3151,61 +3151,28 @@ mod tests {
 
     fn atomic_rule(label: &str, cat: &str, kind: NonTerminalKind) -> GrammarRule {
         GrammarRule {
-            label: Ident::new(label, Span::call_site()),
-            category: Ident::new(cat, Span::call_site()),
             items: vec![GrammarItem::NonTerminal {
                 ident: Ident::new(&format!("{:?}", kind), Span::call_site()),
                 kind,
             }],
-            bindings: Vec::new(),
-            term_context: None,
-            syntax_pattern: None,
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(Ident::new(label, Span::call_site()), Ident::new(cat, Span::call_site()))
         }
     }
 
     fn category_rule(label: &str, cat: &str, referenced_cat: &str) -> GrammarRule {
         GrammarRule {
-            label: Ident::new(label, Span::call_site()),
-            category: Ident::new(cat, Span::call_site()),
             items: vec![GrammarItem::NonTerminal {
                 ident: Ident::new(referenced_cat, Span::call_site()),
                 kind: NonTerminalKind::Category,
             }],
-            bindings: Vec::new(),
-            term_context: None,
-            syntax_pattern: None,
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(Ident::new(label, Span::call_site()), Ident::new(cat, Span::call_site()))
         }
     }
 
     fn terminal_rule(label: &str, cat: &str, text: &str) -> GrammarRule {
         GrammarRule {
-            label: Ident::new(label, Span::call_site()),
-            category: Ident::new(cat, Span::call_site()),
             items: vec![GrammarItem::Terminal(text.into())],
-            bindings: Vec::new(),
-            term_context: None,
-            syntax_pattern: None,
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(Ident::new(label, Span::call_site()), Ident::new(cat, Span::call_site()))
         }
     }
 
@@ -3216,10 +3183,6 @@ mod tests {
         syntax: Vec<SyntaxExpr>,
     ) -> GrammarRule {
         GrammarRule {
-            label: Ident::new(label, Span::call_site()),
-            category: Ident::new(cat, Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(
                 params
                     .iter()
@@ -3230,13 +3193,7 @@ mod tests {
                     .collect(),
             ),
             syntax_pattern: Some(syntax),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(Ident::new(label, Span::call_site()), Ident::new(cat, Span::call_site()))
         }
     }
 
@@ -3384,19 +3341,12 @@ mod tests {
         // single-literal syntax_pattern. Must classify as TerminalKeyword.
         let lang = empty_lang();
         let rule = GrammarRule {
-            label: Ident::new("Err", Span::call_site()),
-            category: Ident::new("Int", Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(Vec::new()),
             syntax_pattern: Some(vec![mettail_ast::grammar::SyntaxExpr::Literal("error".into())]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(
+                Ident::new("Err", Span::call_site()),
+                Ident::new("Int", Span::call_site()),
+            )
         };
         match classify_atomic(&rule, &lang) {
             AtomicShape::TerminalKeyword { terminal_text, wrapper_variant } => {

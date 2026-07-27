@@ -1215,7 +1215,7 @@ fn emit_mixfix_parts_fn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_ast::grammar::GrammarRule;
+    use mettail_ast::grammar::{rule_fixture, GrammarRule};
     use mettail_ast::types::TypeExpr;
     use proc_macro2::Span;
     use syn::Ident;
@@ -1237,37 +1237,17 @@ mod tests {
 
     fn infix_rule(label: &str, cat: &str, operand: &str, op: &str) -> GrammarRule {
         GrammarRule {
-            label: Ident::new(label, Span::call_site()),
-            category: Ident::new(cat, Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(vec![simple("a", operand), simple("b", operand)]),
             syntax_pattern: Some(vec![param("a"), lit(op), param("b")]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(Ident::new(label, Span::call_site()), Ident::new(cat, Span::call_site()))
         }
     }
 
     fn postfix_rule(label: &str, cat: &str, operand: &str, op: &str) -> GrammarRule {
         GrammarRule {
-            label: Ident::new(label, Span::call_site()),
-            category: Ident::new(cat, Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(vec![simple("a", operand)]),
             syntax_pattern: Some(vec![param("a"), lit(op)]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(Ident::new(label, Span::call_site()), Ident::new(cat, Span::call_site()))
         }
     }
 

@@ -1483,7 +1483,7 @@ pub(crate) fn emit_is_binder_internal_collection_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_ast::grammar::GrammarRule;
+    use mettail_ast::grammar::{rule_fixture, GrammarRule};
     use mettail_ast::language::CollectionCategory;
     use mettail_ast::types::CollectionType;
     use proc_macro2::Span;
@@ -1515,10 +1515,6 @@ mod tests {
         // Mirror of RhoCalc's:
         //   PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
         let rule = GrammarRule {
-            label: Ident::new("PPar", Span::call_site()),
-            category: Ident::new("Proc", Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(vec![TermParam::Simple {
                 name: Ident::new("ps", Span::call_site()),
                 ty: TypeExpr::Collection {
@@ -1535,13 +1531,10 @@ mod tests {
                 }),
                 SyntaxExpr::Literal("}".into()),
             ]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(
+                Ident::new("PPar", Span::call_site()),
+                Ident::new("Proc", Span::call_site()),
+            )
         };
         let lang = empty_lang();
         let shape = classify_collection(&rule, &lang).expect("collection");
@@ -1560,10 +1553,6 @@ mod tests {
         // Mirror of synthetic.rs's default split form:
         //   ListLit . ps:Vec(Proc) |- "list" "(" ps.*sep(",") ")" : List;
         let rule = GrammarRule {
-            label: Ident::new("ListLit", Span::call_site()),
-            category: Ident::new("List", Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(vec![TermParam::Simple {
                 name: Ident::new("ps", Span::call_site()),
                 ty: TypeExpr::Collection {
@@ -1581,13 +1570,10 @@ mod tests {
                 }),
                 SyntaxExpr::Literal(")".into()),
             ]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(
+                Ident::new("ListLit", Span::call_site()),
+                Ident::new("List", Span::call_site()),
+            )
         };
         let lang = empty_lang();
         let shape = classify_collection(&rule, &lang).expect("4-element collection");
@@ -1603,10 +1589,6 @@ mod tests {
 
     fn optional_inner_collection_rule() -> GrammarRule {
         GrammarRule {
-            label: Ident::new("ChooseMaybe", Span::call_site()),
-            category: Ident::new("Proc", Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(vec![
                 TermParam::Simple {
                     name: Ident::new("a", Span::call_site()),
@@ -1641,13 +1623,10 @@ mod tests {
                     ],
                 }),
             ]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(
+                Ident::new("ChooseMaybe", Span::call_site()),
+                Ident::new("Proc", Span::call_site()),
+            )
         }
     }
 
@@ -1687,10 +1666,6 @@ mod tests {
     #[test]
     fn structural_delimiter_collector_includes_grouping_collections_and_binder_closes() {
         let collection_rule = GrammarRule {
-            label: Ident::new("PPar", Span::call_site()),
-            category: Ident::new("Proc", Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(vec![TermParam::Simple {
                 name: Ident::new("ps", Span::call_site()),
                 ty: TypeExpr::Collection {
@@ -1707,13 +1682,10 @@ mod tests {
                 }),
                 SyntaxExpr::Literal("}".into()),
             ]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(
+                Ident::new("PPar", Span::call_site()),
+                Ident::new("Proc", Span::call_site()),
+            )
         };
         let lang = empty_lang();
         let per_cat = vec![vec![collection_rule, optional_inner_collection_rule()]];
@@ -1733,10 +1705,6 @@ mod tests {
     // RhoCalc's `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;`.
     fn ppar_brace_rule() -> GrammarRule {
         GrammarRule {
-            label: Ident::new("PPar", Span::call_site()),
-            category: Ident::new("Proc", Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(vec![TermParam::Simple {
                 name: Ident::new("ps", Span::call_site()),
                 ty: TypeExpr::Collection {
@@ -1753,13 +1721,10 @@ mod tests {
                 }),
                 SyntaxExpr::Literal("}".into()),
             ]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(
+                Ident::new("PPar", Span::call_site()),
+                Ident::new("Proc", Span::call_site()),
+            )
         }
     }
 
@@ -1767,22 +1732,15 @@ mod tests {
     // Map collection category into Proc (classify_atomic ⇒ CrossCatProjection).
     fn cast_map_projection_rule() -> GrammarRule {
         GrammarRule {
-            label: Ident::new("CastMap", Span::call_site()),
-            category: Ident::new("Proc", Span::call_site()),
-            items: Vec::new(),
-            bindings: Vec::new(),
             term_context: Some(vec![TermParam::Simple {
                 name: Ident::new("m", Span::call_site()),
                 ty: TypeExpr::Base(Ident::new("Map", Span::call_site())),
             }]),
             syntax_pattern: Some(vec![SyntaxExpr::Param(Ident::new("m", Span::call_site()))]),
-            rust_code: None,
-            eval_mode: None,
-            is_right_assoc: false,
-            prefix_bp: None,
-            tier_directive: None,
-            is_auto_injected: false,
-            doc_comment: None,
+            ..rule_fixture(
+                Ident::new("CastMap", Span::call_site()),
+                Ident::new("Proc", Span::call_site()),
+            )
         }
     }
 

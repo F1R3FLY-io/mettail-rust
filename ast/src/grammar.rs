@@ -303,6 +303,113 @@ pub struct GrammarRule {
     pub is_canonical_synonym: bool,
 }
 
+/// ★ THE FIXTURE CONSTRUCTOR — a `GrammarRule` holding every field's DOCUMENTED DEFAULT,
+/// with only the two fields that have no default supplied by the caller.
+///
+/// # Why this exists
+///
+/// `GrammarRule` has fourteen fields, and a test that exercises ONE of them still has to
+/// name the other thirteen, because Rust struct literals are total. Before this
+/// constructor, twenty-nine test fixtures across `ast` and `macros` each restated the
+/// whole struct. Adding `is_canonical_synonym` (2026-07-26) therefore produced
+/// thirty-nine compile errors, of which only ten carried information: the ten PRODUCTION
+/// sites, where a real rule's canonicity genuinely had to be decided. The other
+/// twenty-nine were fixtures that wanted the default and said so twenty-nine times.
+///
+/// That signal-to-noise ratio is what this fixes, and it fixes it WITHOUT weakening the
+/// signal. Production constructors keep writing exhaustive struct literals, so a newly
+/// added field still fails their compilation — exactly where somebody must decide what
+/// the field means for a real rule. Fixtures route through here, so the same field is
+/// decided ONCE, in this function, beside the field's own documentation.
+///
+/// ```text
+///   a new field is added to GrammarRule
+///            │
+///            ├──▶ 10 production sites (exhaustive literals) ──▶ ✗ COMPILE ERROR
+///            │      ast::grammar::parse_grammar_rule_{old,new}         ← decide here
+///            │      ast::auto_inject::{make_injection_rule, reconstruct_language_def}
+///            │      macros::gen::runtime::wpda_codegen::synthetic  (×6)
+///            │
+///            └──▶ 29 test fixtures (`..rule_fixture(l, c)`) ──▶ ✓ compile unchanged
+///                   …once THIS function names the default, once.
+/// ```
+///
+/// # Why not `#[derive(Default)]`
+///
+/// `syn::Ident` implements no `Default`, and a rule whose `label` and `category` were
+/// defaulted would be a nonsense rule that nevertheless COMPILES — the failure would move
+/// from the compiler to a confusing assertion in an unrelated test. Those two fields have
+/// no meaningful default, so they stay parameters. Everything else does have one, and it
+/// is written below.
+///
+/// # The defaults, and where each comes from
+///
+/// Each default is the value the DSL rule parser produces for a rule that declares nothing
+/// on that axis — so a fixture is a rule the grammar *could* have written, not an
+/// artificial one. `rule_fixture_matches_parser_defaults` (this module's tests) MEASURES
+/// that correspondence against `parse_grammar_rule` rather than asserting it in prose.
+///
+/// | field | default | meaning of the default |
+/// |---|---|---|
+/// | `items`, `bindings` | empty | no BNFC-style items; judgement rules derive them |
+/// | `term_context`, `syntax_pattern` | `None` | the old (BNFC) shape |
+/// | `rust_code`, `eval_mode` | `None` | no HOL body, hence no fold/step mode |
+/// | `is_right_assoc` | `false` | left-associative unless the rule says `right` |
+/// | `prefix_bp` | `None` | prefix binding power falls back to `max_infix_bp + 2` |
+/// | `tier_directive` | `None` | no `#[tier(…)]`; the analyzer's classification stands |
+/// | `is_auto_injected` | `false` | user-written, not emitted by auto-injection |
+/// | `doc_comment` | `None` | no `///` lines precede the rule |
+/// | `is_canonical_synonym` | `false` | no `canonical` annotation (see below) |
+///
+/// The last one is the only default that is more than bookkeeping, so it is worth stating
+/// twice. `is_canonical_synonym` marks the DECLARED canonical member of a surface-synonymy
+/// class, and a class exists only where two or more rules of one category denote the same
+/// term. A fixture built from this constructor declares no such class — it is a lone rule,
+/// or one of a handful that share nothing but a test — so there is no class for it to be
+/// canonical IN. `false` is therefore not a convenient placeholder but the only coherent
+/// value, and it coincides with what the parser assigns a rule carrying no annotation.
+///
+/// # Usage
+///
+/// Override exactly the fields the test is about; inherit the rest.
+///
+/// ```
+/// use mettail_ast::grammar::{rule_fixture, GrammarItem};
+/// use proc_macro2::Span;
+/// use syn::Ident;
+///
+/// let id = |s: &str| Ident::new(s, Span::call_site());
+/// let rule = mettail_ast::grammar::GrammarRule {
+///     items: vec![GrammarItem::Terminal("Nil".to_string())],
+///     ..rule_fixture(id("PZero"), id("Proc"))
+/// };
+/// assert_eq!(rule.label.to_string(), "PZero");
+/// assert!(!rule.is_canonical_synonym);
+/// ```
+///
+/// This is a TEST FIXTURE constructor. Production code that builds a rule is deciding what
+/// the rule MEANS, and must say so field by field; calling `rule_fixture` there would
+/// silently adopt a default the author never considered, which is the failure mode this
+/// whole design exists to keep loud.
+pub fn rule_fixture(label: Ident, category: Ident) -> GrammarRule {
+    GrammarRule {
+        label,
+        category,
+        items: Vec::new(),
+        bindings: Vec::new(),
+        term_context: None,
+        syntax_pattern: None,
+        rust_code: None,
+        eval_mode: None,
+        is_right_assoc: false,
+        prefix_bp: None,
+        tier_directive: None,
+        is_auto_injected: false,
+        doc_comment: None,
+        is_canonical_synonym: false,
+    }
+}
+
 /// Phase 11 (predicated types): user-supplied tier override.
 ///
 /// Parsed from `#[tier(t1|t2|t3|t4 [, bound = N] [, force])]`
@@ -1553,4 +1660,94 @@ fn parse_collection(coll_type_ident: Ident, input: ParseStream) -> SynResult<Gra
         separator: separator_value,
         delimiters,
     })
+}
+
+#[cfg(test)]
+mod fixture_tests {
+    use super::*;
+    use syn::parse::Parser;
+
+    /// ★ THE RECURRENCE GUARD.
+    ///
+    /// `rule_fixture` claims to hold "every field's documented default". That claim is only
+    /// worth something if it is MEASURED, because the compiler cannot check a doc comment:
+    /// when a field is added, `rule_fixture`'s struct literal fails to compile (good — the
+    /// default must be chosen), but nothing would otherwise stop the chosen value from
+    /// disagreeing with what the DSL parser actually produces for an unannotated rule. A
+    /// fixture whose defaults have drifted from the parser's is a fixture that tests a
+    /// grammar the language cannot express.
+    ///
+    /// So: parse a rule that declares NOTHING beyond its shape, transplant the six CONTENT
+    /// fields (which carry the rule's identity and syntax, not a default) onto a fixture,
+    /// and require the two to be indistinguishable.
+    ///
+    /// The comparison is on `Debug` output rather than field-by-field precisely so that it
+    /// covers fields that do not exist yet — `GrammarRule` has no `PartialEq`, and a
+    /// hand-written field-by-field comparison would silently ignore the fifteenth field the
+    /// moment somebody adds it, which is the exact failure this guard is for. If a future
+    /// field is CONTENT rather than an annotation, this test fails and the author must add
+    /// it to the transplant list — a deliberate decision, made once, in the open.
+    #[test]
+    fn rule_fixture_matches_parser_defaults() {
+        // `Proj . v:Int |- v : BigInt ;` — a judgement-style rule with no `![…]` body, no
+        // `fold`/`step`, no `right`, no `prefix(N)`, no `canonical`, no `#[tier(…)]`, and no
+        // doc comment. Every annotation field therefore takes the parser's own default.
+        let parsed = Parser::parse_str(parse_grammar_rule, "Proj . v:Int |- v : BigInt ;")
+            .expect("the unannotated judgement-style rule parses");
+
+        // The six CONTENT fields: what this particular rule IS, as opposed to what it leaves
+        // unsaid. They are transplanted, never defaulted.
+        let expected = GrammarRule {
+            items: parsed.items.clone(),
+            bindings: parsed.bindings.clone(),
+            term_context: parsed.term_context.clone(),
+            syntax_pattern: parsed.syntax_pattern.clone(),
+            ..rule_fixture(parsed.label.clone(), parsed.category.clone())
+        };
+
+        assert_eq!(
+            format!("{:#?}", expected),
+            format!("{:#?}", parsed),
+            "`rule_fixture` no longer agrees with the DSL parser on some field's default. \
+             Either the fixture default is wrong, or the newly added field is CONTENT (like \
+             `items`/`syntax_pattern`) and belongs in this test's transplant list."
+        );
+    }
+
+    /// The old (BNFC) rule shape defaults identically — `rule_fixture` is not specific to
+    /// one of the two surface styles, and `term_context: None` is the shape it starts in.
+    #[test]
+    fn rule_fixture_matches_parser_defaults_for_old_style_rules() {
+        let parsed = Parser::parse_str(parse_grammar_rule, "PZero . Proc ::= \"Nil\" ;")
+            .expect("the unannotated BNFC-style rule parses");
+
+        let expected = GrammarRule {
+            items: parsed.items.clone(),
+            bindings: parsed.bindings.clone(),
+            ..rule_fixture(parsed.label.clone(), parsed.category.clone())
+        };
+
+        assert_eq!(format!("{:#?}", expected), format!("{:#?}", parsed));
+        // The BNFC shape leaves both judgement-style fields unset, which is precisely the
+        // fixture's own starting shape — so no transplant is needed for them.
+        assert!(parsed.term_context.is_none());
+        assert!(parsed.syntax_pattern.is_none());
+    }
+
+    /// The converse of the guard: the parser DOES set `is_canonical_synonym` when the rule
+    /// says `canonical`, so `false` is a default rather than a constant. Without this, a
+    /// fixture-side `false` and a parser-side hard-coded `false` would be indistinguishable.
+    #[test]
+    fn canonical_annotation_departs_from_the_default() {
+        let annotated = Parser::parse_str(
+            parse_grammar_rule,
+            "NQuoteShort . p:Proc |- \"@\" p : Name fold prefix(220) canonical ;",
+        )
+        .expect("the `canonical`-annotated rule parses");
+
+        assert!(annotated.is_canonical_synonym);
+        assert!(
+            !rule_fixture(annotated.label.clone(), annotated.category.clone()).is_canonical_synonym
+        );
+    }
 }
