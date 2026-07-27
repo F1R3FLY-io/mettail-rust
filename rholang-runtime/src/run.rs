@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::guard_par_substrate::SubstrateGuardMatcher;
+use crate::guard_par_substrate::{GuardRefusalLedger, SubstrateGuardMatcher};
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use mettail_rholang_codegen::ValidatedRhoProgram;
 // Every remaining use in this module is inside a `runtime-report` item; the DECODER that used
@@ -140,7 +140,15 @@ fn take_pending_fold_definitions() -> Vec<Definition> {
     PENDING_FOLD_DEFINITIONS.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
 }
 
-async fn build_runtime() -> Result<impl RhoRuntime, String> {
+/// Build an in-memory `RhoRuntime`, and hand back the **guard-refusal ledger** its
+/// `SubstrateGuardMatcher` writes into.
+///
+/// ★ The ledger is returned rather than kept private because a `where` guard the substrate
+/// cannot DECIDE has nowhere else to go: `Match::check_commit` answers a `bool`, so the decider
+/// physically cannot raise, and without a driver that reads this ledger an undecidable guard
+/// blocks a COMM in total silence — indistinguishable from a guard that was evaluated and
+/// refuted. See [`crate::guard_par_substrate::GuardRefusalLedger`].
+async fn build_runtime() -> Result<(impl RhoRuntime, GuardRefusalLedger), String> {
     // Tier-3 / A-S3 contracts for this exec (empty for every term without a held fold or an
     // admitted native rule, so the common path is byte-identical to the prior `&mut Vec::new()`).
     build_runtime_with_definitions(take_pending_fold_definitions()).await
@@ -154,7 +162,7 @@ async fn build_runtime() -> Result<impl RhoRuntime, String> {
 /// them without relying on same-thread thread-local discipline.
 async fn build_runtime_with_definitions(
     mut extra_system_processes: Vec<Definition>,
-) -> Result<impl RhoRuntime, String> {
+) -> Result<(impl RhoRuntime, GuardRefusalLedger), String> {
     let mut kvm = InMemoryStoreManager::new();
     let store = kvm
         .r_space_stores()
@@ -165,22 +173,52 @@ async fn build_runtime_with_definitions(
     // `Match::check_commit`), so the decider is chosen HERE, by whoever constructs the space —
     // no f1r3node change. `SubstrateGuardMatcher` delegates `get` to f1r3node's `Matcher`
     // verbatim (spatial matching is untouched) and decides `check_commit` with the substrate.
+    let guards = SubstrateGuardMatcher::new();
+    // The handle is taken BEFORE the decider is boxed into the space, which is the only moment
+    // it is reachable: `RSpace` keeps an `Arc<Box<dyn Match<…>>>` and the trait exposes no way
+    // back to the concrete type.
+    let refusals = guards.refusals();
     let space: RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> =
-        RSpace::create(store, Arc::new(Box::new(SubstrateGuardMatcher::new())))
-            .map_err(|e| format!("rspace: {e:?}"))?;
+        RSpace::create(store, Arc::new(Box::new(guards))).map_err(|e| format!("rspace: {e:?}"))?;
 
-    Ok(create_rho_runtime(
-        space,
-        Arc::new(HashMap::new()), // mergeable tags: none (single-node eval)
-        false,                    // init_registry: not needed for pure arithmetic
-        &mut extra_system_processes, // held-fold + native-handler contracts (usually none)
-        ExternalServices::noop(), // inert — no ChromaDB/SBERT/OpenAI
-    )
-    .await)
+    Ok((
+        create_rho_runtime(
+            space,
+            Arc::new(HashMap::new()), // mergeable tags: none (single-node eval)
+            false,                    // init_registry: not needed for pure arithmetic
+            &mut extra_system_processes, // held-fold + native-handler contracts (usually none)
+            ExternalServices::noop(), // inert — no ChromaDB/SBERT/OpenAI
+        )
+        .await,
+        refusals,
+    ))
 }
 
+/// Evaluate Rholang source, then **raise on any guard the substrate could not decide**.
+///
+/// The second half is not an add-on. A `where` guard that reaches
+/// [`GuardRefusalClass::DeciderGap`](crate::guard_par_substrate::GuardRefusalClass::DeciderGap)
+/// blocked a COMM without ever being decided, and before this call existed the program compiled,
+/// ran, exited cleanly, admitted nothing and reported nothing — the same observation a guard
+/// that was evaluated and refuted produces.
 #[cfg(feature = "source-oracle")]
-async fn eval_on_runtime<R: RhoRuntime>(runtime: &mut R, program: &str) -> Result<(), String> {
+async fn eval_on_runtime<R: RhoRuntime>(
+    runtime: &mut R,
+    program: &str,
+    refusals: &GuardRefusalLedger,
+) -> Result<(), String> {
+    eval_on_runtime_unchecked(runtime, program).await?;
+    refusals.refuse_decider_gaps()
+}
+
+/// [`eval_on_runtime`] without the guard-refusal check, for the callers that report the refusals
+/// themselves alongside the tuplespace readings — see
+/// [`run_rholang_source_and_read_ints_with_guard_refusals`].
+#[cfg(feature = "source-oracle")]
+async fn eval_on_runtime_unchecked<R: RhoRuntime>(
+    runtime: &mut R,
+    program: &str,
+) -> Result<(), String> {
     let result = runtime
         .evaluate_with_term(program)
         .await
@@ -235,12 +273,40 @@ fn deploy_rand(program: &Par) -> Blake2b512Random {
     use prost::Message;
     let mut preimage = Vec::with_capacity(INTERPRETER_RAND_DOMAIN.len() + program.encoded_len());
     preimage.extend_from_slice(INTERPRETER_RAND_DOMAIN);
-    program.encode(&mut preimage).expect("encoding a Par into a Vec cannot fail");
+    program
+        .encode(&mut preimage)
+        .expect("encoding a Par into a Vec cannot fail");
     let digest = rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash::new(&preimage);
     Blake2b512Random::create_from_bytes(digest.bytes().as_slice())
 }
 
-async fn inj_on_runtime<R: RhoRuntime>(runtime: &mut R, program: Par) -> Result<(), String> {
+async fn inj_on_runtime<R: RhoRuntime>(
+    runtime: &mut R,
+    program: Par,
+    refusals: &GuardRefusalLedger,
+) -> Result<(), String> {
+    inj_on_runtime_unchecked(runtime, program).await?;
+    refusals.refuse_decider_gaps()
+}
+
+/// [`inj_on_runtime`] without the guard-refusal check.
+///
+/// ⚠ **The reduction is NOT rolled back when a guard is refused**, and that is deliberate. The
+/// refusal reports a decision that was never *made*; it is not a failed mutation. The space is
+/// exactly what the program produced — in particular the datum the undecidable guard declined to
+/// consume is still resting and still observable — which is the whole separation being reported:
+///
+/// ```text
+///   guard FALSE       → no error, rests
+///   guard UNDECIDABLE → error raised, rests   ← same space, different report
+/// ```
+///
+/// Reverting would erase the second column of that table. An `inj` **error** still reverts, as
+/// it always did, because that is a genuinely partial mutation.
+async fn inj_on_runtime_unchecked<R: RhoRuntime>(
+    runtime: &mut R,
+    program: Par,
+) -> Result<(), String> {
     let checkpoint = runtime.create_soft_checkpoint().await;
     let rand = deploy_rand(&program);
     runtime.cost().set(Cost::unsafe_max());
@@ -291,14 +357,14 @@ where
 
 #[cfg(feature = "source-oracle")]
 async fn evaluate(program: &str) -> Result<impl RhoRuntime, String> {
-    let mut runtime = build_runtime().await?;
-    eval_on_runtime(&mut runtime, program).await?;
+    let (mut runtime, refusals) = build_runtime().await?;
+    eval_on_runtime(&mut runtime, program, &refusals).await?;
     Ok(runtime)
 }
 
 async fn evaluate_par(program: &Par) -> Result<impl RhoRuntime, String> {
-    let mut runtime = build_runtime().await?;
-    inj_on_runtime(&mut runtime, program.clone()).await?;
+    let (mut runtime, refusals) = build_runtime().await?;
+    inj_on_runtime(&mut runtime, program.clone(), &refusals).await?;
     Ok(runtime)
 }
 
@@ -653,8 +719,8 @@ pub async fn run_installed_program_with_call_definitions_and_read_runtime_values
 ) -> Result<Vec<RuntimeObservationValue>, String> {
     let composed = installed_program.append(call.clone());
     let runtime = {
-        let mut runtime = build_runtime_with_definitions(definitions).await?;
-        inj_on_runtime(&mut runtime, composed).await?;
+        let (mut runtime, refusals) = build_runtime_with_definitions(definitions).await?;
+        inj_on_runtime(&mut runtime, composed, &refusals).await?;
         runtime
     };
     Ok(read_ground_from_runtime(&runtime, out_channel, par_as_runtime_observation_value).await)
@@ -1348,6 +1414,36 @@ pub async fn run_normalized_par_for_oracle_and_read_runtime_value_channels(
     Ok(result)
 }
 
+/// ★ [`run_normalized_par_for_oracle_and_read_runtime_value_channels`] reporting the `where`
+/// guards the substrate could not decide **alongside** the readings, instead of raising on them.
+///
+/// The `Par`-path twin of [`run_rholang_source_and_read_ints_with_guard_refusals`], and it exists
+/// for the same reason: a run whose guard was refused still has a tuplespace, and for the rows
+/// that matter — a guard that blocked without being decided — the tuplespace is *identical* to
+/// the one a refuted guard leaves. Only the refusal column separates them, so a caller that
+/// needs both has to be able to get both.
+pub async fn run_normalized_par_and_read_runtime_value_channels_with_guard_refusals(
+    program: &Par,
+    out_channels: &[&str],
+) -> Result<(HashMap<String, Vec<RuntimeObservationValue>>, Vec<String>), String> {
+    let (mut runtime, refusals) = build_runtime().await?;
+    inj_on_runtime_unchecked(&mut runtime, program.clone()).await?;
+
+    let mut result = HashMap::with_capacity(out_channels.len());
+    for channel in out_channels {
+        result.insert(
+            (*channel).to_string(),
+            read_ground_from_runtime(&runtime, channel, par_as_runtime_observation_value).await,
+        );
+    }
+    let reported = refusals
+        .take()
+        .iter()
+        .map(|refusal| refusal.to_string())
+        .collect();
+    Ok((result, reported))
+}
+
 /// **Run `program` with the `[*]` / `[n]` request server installed**, and read back every
 /// requested quoted channel VERBATIM from the one quiescent store.
 ///
@@ -1379,12 +1475,12 @@ pub async fn run_normalized_par_with_lookahead_engine(
 
     let mut definitions = take_pending_fold_definitions();
     definitions.extend(engine.definitions());
-    let mut runtime = build_runtime_with_definitions(definitions).await?;
+    let (mut runtime, refusals) = build_runtime_with_definitions(definitions).await?;
     // The budget is the RUNTIME's, and `RuntimeBudget` is a handle over shared atomics — so
     // this clone observes `inj_on_runtime`'s later `set`, rather than a snapshot taken before
     // the deploy was funded.
     engine.bind_host(runtime.cost().clone());
-    inj_on_runtime(&mut runtime, program.clone()).await?;
+    inj_on_runtime(&mut runtime, program.clone(), &refusals).await?;
 
     let mut result = HashMap::with_capacity(out_channels.len());
     for channel in out_channels {
@@ -1462,8 +1558,8 @@ pub async fn run_rholang_source_for_oracle_then_consume_strings(
         return Err("consume requires at least one channel".to_string());
     }
 
-    let mut runtime = build_runtime().await?;
-    eval_on_runtime(&mut runtime, program).await?;
+    let (mut runtime, refusals) = build_runtime().await?;
+    eval_on_runtime(&mut runtime, program, &refusals).await?;
 
     let channel_pars: Vec<Par> = channels
         .iter()
@@ -1496,9 +1592,9 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_strings(
     programs: &[&str],
     out_channels: &[&str],
 ) -> Result<HashMap<String, Vec<String>>, String> {
-    let mut runtime = build_runtime().await?;
+    let (mut runtime, refusals) = build_runtime().await?;
     for program in programs {
-        eval_on_runtime(&mut runtime, program).await?;
+        eval_on_runtime(&mut runtime, program, &refusals).await?;
     }
 
     let mut result = HashMap::new();
@@ -1511,6 +1607,50 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_strings(
     Ok(result)
 }
 
+/// ★ Evaluate Rholang source and report **both** the tuplespace readings and every `where`
+/// guard the substrate could not decide.
+///
+/// The ordinary entry points turn a decider-gap refusal into the run's `Err`, which is the right
+/// default — a program whose guard was never decided has not done what its author asked — but an
+/// `Err` carries no tuplespace. This variant reports the two independently, which is what makes
+/// the separation *measurable* rather than merely asserted:
+///
+/// ```text
+///   guard          refusals   OUT   c        reading
+///   x > 0          []         [5]   []       TRUE:        fired
+///   x > 100        []         []    [5]      FALSE:       rests, silently and correctly
+///   x + 1          [1 gap]    []    [5]      UNDECIDABLE: rests, and SAYS SO
+/// ```
+///
+/// Rows 2 and 3 leave the identical space; only the third column separates them, and before the
+/// substrate lane had a refusal vocabulary that column did not exist.
+///
+/// The returned strings are [`GuardRefusal`](crate::guard_par_substrate::GuardRefusal)'s
+/// `Display`: a pure function of the guard term and the recorded cause, so two nodes deciding
+/// the same guard render the same text.
+#[cfg(feature = "source-oracle")]
+pub async fn run_rholang_source_and_read_ints_with_guard_refusals(
+    program: &str,
+    out_channels: &[&str],
+) -> Result<(HashMap<String, Vec<i64>>, Vec<String>), String> {
+    let (mut runtime, refusals) = build_runtime().await?;
+    eval_on_runtime_unchecked(&mut runtime, program).await?;
+
+    let mut result = HashMap::with_capacity(out_channels.len());
+    for channel in out_channels {
+        result.insert(
+            (*channel).to_string(),
+            read_ground_from_runtime(&runtime, channel, par_as_i64).await,
+        );
+    }
+    let reported = refusals
+        .take()
+        .iter()
+        .map(|refusal| refusal.to_string())
+        .collect();
+    Ok((result, reported))
+}
+
 /// Evaluate hand-authored Rholang source programs sequentially on one in-memory
 /// `RhoRuntime`, then return every ground integer left resting on each requested
 /// quoted channel.
@@ -1519,9 +1659,9 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_ints(
     programs: &[&str],
     out_channels: &[&str],
 ) -> Result<HashMap<String, Vec<i64>>, String> {
-    let mut runtime = build_runtime().await?;
+    let (mut runtime, refusals) = build_runtime().await?;
     for program in programs {
-        eval_on_runtime(&mut runtime, program).await?;
+        eval_on_runtime(&mut runtime, program, &refusals).await?;
     }
 
     let mut result = HashMap::new();
@@ -1542,9 +1682,9 @@ pub async fn run_rholang_source_sequence_for_oracle_and_read_bools(
     programs: &[&str],
     out_channels: &[&str],
 ) -> Result<HashMap<String, Vec<bool>>, String> {
-    let mut runtime = build_runtime().await?;
+    let (mut runtime, refusals) = build_runtime().await?;
     for program in programs {
-        eval_on_runtime(&mut runtime, program).await?;
+        eval_on_runtime(&mut runtime, program, &refusals).await?;
     }
 
     let mut result = HashMap::new();

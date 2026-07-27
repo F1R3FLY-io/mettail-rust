@@ -61,8 +61,9 @@ use mettail_rholang_runtime::guard_discharge::{
     guard_as_tagged_continuation, machine_verdict, GuardDischarge,
 };
 use mettail_rholang_runtime::{
-    lower_rholang_proc_with_options, run_normalized_par_for_oracle_and_read_runtime_value_channels,
-    LoweringOptions,
+    lower_rholang_proc_with_options,
+    run_normalized_par_and_read_runtime_value_channels_with_guard_refusals,
+    run_normalized_par_for_oracle_and_read_runtime_value_channels, LoweringOptions,
 };
 use mettail_runtime::clear_var_cache;
 use models::rhoapi::Par;
@@ -469,6 +470,14 @@ const READ_CHANNELS: &[&str] = &["out", "c", "c1", "c2"];
 /// only here", but "the OBSERVABLE BEHAVIOUR does not differ at all". It covers the firing
 /// COMMs (a discharged guard must still fire), the blocked ones (a refuted guard must still
 /// leave its datum resting), and the residual majority (unchanged by construction).
+///
+/// ★ AND THE GUARD REFUSALS ARE A CHANNEL TOO. Since the substrate lane grew a refusal
+/// vocabulary (`guard_par_substrate::GuardRefusal`), "what the run reported" is an observable in
+/// its own right — and one discharge could plausibly move, because a discharged guard is never
+/// put to the decider at all. So it is differenced here alongside the tuplespace, using the
+/// refusal-REPORTING reader rather than the raising one: a corpus row whose guard cannot be
+/// decided (`1 implies 2`) must still be *runnable* by this gate, and its refusal must be the
+/// same under both switch positions.
 #[tokio::test(flavor = "multi_thread")]
 async fn running_on_and_off_observes_identical_values_on_every_channel() {
     let programs: Vec<String> = GUARD_CORPUS
@@ -478,17 +487,24 @@ async fn running_on_and_off_observes_identical_values_on_every_channel() {
         .collect();
 
     let mut divergences = Vec::new();
+    let mut rows_that_refused = 0usize;
     for program in &programs {
         let (on, off) = lower_both(program);
 
-        let on_observed =
-            run_normalized_par_for_oracle_and_read_runtime_value_channels(&on, READ_CHANNELS)
-                .await
-                .unwrap_or_else(|err| panic!("discharge-ON run failed for {program:?}: {err}"));
-        let off_observed =
-            run_normalized_par_for_oracle_and_read_runtime_value_channels(&off, READ_CHANNELS)
-                .await
-                .unwrap_or_else(|err| panic!("discharge-OFF run failed for {program:?}: {err}"));
+        let (on_observed, on_refusals) =
+            run_normalized_par_and_read_runtime_value_channels_with_guard_refusals(
+                &on,
+                READ_CHANNELS,
+            )
+            .await
+            .unwrap_or_else(|err| panic!("discharge-ON run failed for {program:?}: {err}"));
+        let (off_observed, off_refusals) =
+            run_normalized_par_and_read_runtime_value_channels_with_guard_refusals(
+                &off,
+                READ_CHANNELS,
+            )
+            .await
+            .unwrap_or_else(|err| panic!("discharge-OFF run failed for {program:?}: {err}"));
 
         for channel in READ_CHANNELS {
             let on_values = on_observed.get(*channel);
@@ -499,6 +515,14 @@ async fn running_on_and_off_observes_identical_values_on_every_channel() {
                 ));
             }
         }
+        if !off_refusals.is_empty() {
+            rows_that_refused += 1;
+        }
+        if on_refusals != off_refusals {
+            divergences.push(format!(
+                "  {program:?} GUARD REFUSALS: ON={on_refusals:?} OFF={off_refusals:?}"
+            ));
+        }
     }
     assert!(
         divergences.is_empty(),
@@ -506,6 +530,14 @@ async fn running_on_and_off_observes_identical_values_on_every_channel() {
          program/channel pair(s):\n{}",
         divergences.len(),
         divergences.join("\n")
+    );
+    // ⚠ ANTI-VACUITY for the refusal column: if no corpus row ever refuses, the comparison
+    // above is `[] == []` on every row and pins nothing. `1 implies 2` and `1` are the rows
+    // that make it real; losing them would silently hollow out this half of the gate.
+    assert!(
+        rows_that_refused >= 2,
+        "⚠ only {rows_that_refused} corpus row(s) produced a guard refusal — the refusal \
+         column of this differential is vacuous"
     );
 }
 

@@ -43,14 +43,21 @@
 //! There is no `_` arm over `ExprInstance`: a new `rhoapi` constructor is a compile error here
 //! rather than a silent `Uncovered`.
 
+use std::sync::{Arc, Mutex};
+
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::var::VarInstance;
 use models::rhoapi::{
     BindPattern, EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMatches, EMinus, EMod, EMult, ENeg, ENeq,
     ENot, EOr, EPlus, EVar, Expr, ListParWithRandom, Par, TaggedContinuation, Var,
 };
-use rholang::rust::interpreter::matcher::r#match::Matcher;
+use rho_pure_eval::{undecidable_nodes, EvalError, SpatialSupport, UndecidableNode};
+use rholang::rust::interpreter::errors::InterpreterError;
+use rholang::rust::interpreter::guard::RECEIVE_WHERE;
+use rholang::rust::interpreter::matcher::r#match::{guard_disposition, GuardDisposition, Matcher};
 use rspace_plus_plus::rspace::r#match::Match;
+
+use crate::observation::render_par_text;
 
 use mettail_prattail::algebra_tower::Sat3;
 use mettail_prattail::guard_formula::{
@@ -630,6 +637,413 @@ fn sole_expr_of(par: &Par) -> Option<&Expr> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
+// ★ THE REFUSAL VOCABULARY — "the guard is false" vs "the guard could not be decided"
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+/// **Where the obstruction came from** — the fact that decides whether a compile-time gate
+/// could ever have caught it.
+///
+/// The substrate is the only one of the three guard lanes that can answer this, because it is
+/// the only one holding *both* terms: the lowered `Receive.condition` as written, and the
+/// [`substitute_bound_pars`] image of it under the arrived payload. Comparing the two separates
+/// an obstruction the author typed from one a *datum* carried in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RefusalProvenance {
+    /// The obstruction is present in the guard term itself, before any payload arrives. A
+    /// compile-time gate sees it, and it obstructs **every** datum.
+    Term,
+    /// The guard term is clean; the obstruction was spliced in by *this* payload. No static
+    /// gate can see it — this is the position `rho_pure_eval::decidable`'s module docs name as
+    /// "the one position a static walk cannot see".
+    Datum,
+}
+
+/// ★ **The two-class split, adopted verbatim from the machine lane (`6ab1c78b`).**
+///
+/// | class | meaning | remedy |
+/// |---|---|---|
+/// | [`DeciderGap`](Self::DeciderGap) | the answer **does not exist on this node** — no datum would produce one | refuse **loudly** |
+/// | [`DataDependent`](Self::DataDependent) | the answer exists; *this* datum broke it (`x / y` is fine until `y` is 0) | recorded and `ERROR`-logged, **not** refused |
+///
+/// The partition is exactly the machine lane's criterion — *"decidable from the guard term
+/// alone"* — and here it is **computed** rather than tabulated: a cause is a decider gap iff its
+/// [`RefusalProvenance`] is [`Term`](RefusalProvenance::Term). Tabulating it is what lets a
+/// gate drift, and drift is the mechanism by which this defect class recurred three times.
+///
+/// ⚠ **Neither class fires a COMM.** `dont_know_policy` still selects
+/// [`DontKnowPolicy::FailClosedBlock`] for both; the class decides how *loud* the non-firing is,
+/// never *whether* it fires. Failing closed was never the defect — being silent was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GuardRefusalClass {
+    /// The decider has no procedure for this guard, for any payload.
+    DeciderGap,
+    /// The decider has a procedure; this payload took it outside its domain.
+    DataDependent,
+}
+
+impl GuardRefusalClass {
+    /// The class implied by a provenance. One rule, applied to every cause.
+    const fn of(provenance: RefusalProvenance) -> Self {
+        match provenance {
+            RefusalProvenance::Term => GuardRefusalClass::DeciderGap,
+            RefusalProvenance::Datum => GuardRefusalClass::DataDependent,
+        }
+    }
+}
+
+/// ★ **THE COMPLETE ENUMERATION of what stops the substrate deciding a `where` guard.**
+///
+/// Each variant is one of the three refusals in [`substrate_guard_verdict`], split by *what*
+/// stopped it rather than by *which line* returned. There is no catch-all: a new stop must add
+/// a variant here, and the exhaustive matches below will not compile until it is classified.
+///
+/// | # | cause | raised by | provenance | class |
+/// |---|---|---|---|---|
+/// | 1 | [`ResidualBinder`](Self::ResidualBinder) | step 1 — `encoding.vars` is non-empty | always `Term` | gap |
+/// | 2 | [`Unsupported`](Self::Unsupported) | step 2 — the fragment carries a node `rho_pure_eval` has no arm for | computed | either |
+/// | 3 | [`NotABoolean`](Self::NotABoolean) | step 2 — the fragment evaluated cleanly to something that is not a verdict | computed | either |
+/// | 4 | [`Malformed`](Self::Malformed) | step 2 — an `Expr` with no `expr_instance` | computed | either |
+/// | 5 | [`UnresolvedReference`](Self::UnresolvedReference) | step 2 — a variable reference survived substitution | always `Term` | gap |
+/// | 6 | [`EvaluationFailed`](Self::EvaluationFailed) | step 2 — the fragment's evaluation ran and failed | always `Datum` | data-dependent |
+/// | 7 | [`FormulaUndecided`](Self::FormulaUndecided) | step 3 — the substrate's own ground procedures gave up | always `Term` | gap |
+///
+/// ★ Rows 1 and 5 are **the same fact** — a slot no payload can supply — reached by two routes:
+/// the encoder interns `bound$k` / `free$i` as substrate *variables* (row 1) but turns a
+/// `Wildcard` into an opaque *atom* (row 5), where `rho_pure_eval` then reports
+/// `UnboundVariable`. Filing one fact in two classes because two code paths found it is exactly
+/// the arm-specific drift that let this defect survive two fixes, so both are decider gaps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GuardRefusalCause {
+    /// A binder [`substitute_bound_pars`] could not reach: `bound$k` with `k` past the arrived
+    /// bindings, or `free$i` — a match-frame slot `rho_pure_eval::resolve_var` rejects outright.
+    ///
+    /// Always [`RefusalProvenance::Term`]: substitution has *already* applied every binding the
+    /// receive will ever get, so a surviving reference is one no payload can supply.
+    ResidualBinder {
+        /// The substrate names of the unreachable slots, in interning order.
+        slots: Vec<String>,
+    },
+    /// The fragment carries a node [`rho_pure_eval::eval_with`] has no arm for. This is
+    /// **precisely** the machine lane's undecidable class, and the names come from that lane's
+    /// own [`undecidable_nodes`] so the two cannot drift.
+    Unsupported {
+        /// The `ExprInstance` variant names, in the order the evaluator would have reached them.
+        nodes: Vec<String>,
+    },
+    /// The fragment evaluated cleanly, and the value is not a verdict — no predicate was ever
+    /// tested. `where x + 1` is `Term`; `where x` under a non-boolean payload is `Datum`.
+    NotABoolean,
+    /// An `Expr` with no `expr_instance` — a malformed `Par`, not an undecidable one.
+    Malformed,
+    /// A variable reference survived substitution *inside an opaque fragment*, where the encoder
+    /// interned no substrate variable for it. Row 1's fact, other route.
+    UnresolvedReference {
+        /// What could not be read: `bound$k` / `free$i` for a de Bruijn slot, `_` for a
+        /// [`VarInstance::Wildcard`] — which binds anything and is therefore never a *readable*
+        /// value — or a `Var` carrying no instance at all.
+        slot: String,
+    },
+    /// The fragment's evaluation ran and failed on *this* payload: an operator type mismatch,
+    /// a division by zero, an arithmetic overflow, or a non-single value where one was needed.
+    EvaluationFailed {
+        /// The evaluator's own rendering of the failure.
+        error: String,
+    },
+    /// [`ground_verdict_with`] left the ground formula undecided after every binder was
+    /// substituted and every opaque fragment resolved.
+    ///
+    /// ⚠ Structurally unreachable today, and the argument is in [`substrate_guard_verdict`]'s
+    /// step 3 — it is kept, and kept *loud*, because "unreachable" is a property of three
+    /// interacting modules and a change to any of them could make it reachable **silently**.
+    FormulaUndecided,
+}
+
+impl GuardRefusalCause {
+    /// The plain-English phrase a diagnostic quotes back to the author.
+    fn describe(&self) -> String {
+        match self {
+            GuardRefusalCause::ResidualBinder { slots } => {
+                format!("a binder the payload does not supply ({})", slots.join(", "))
+            },
+            GuardRefusalCause::Unsupported { nodes } => {
+                format!("a construct the guard decider has no arm for ({})", nodes.join(", "))
+            },
+            GuardRefusalCause::NotABoolean => {
+                "a value that is not a verdict — the guard is not a predicate".to_string()
+            },
+            GuardRefusalCause::Malformed => "a malformed expression node".to_string(),
+            GuardRefusalCause::UnresolvedReference { slot } => {
+                format!("an unreadable variable reference (`{slot}`)")
+            },
+            GuardRefusalCause::EvaluationFailed { error } => {
+                format!("an evaluation failure on this payload ({error})")
+            },
+            GuardRefusalCause::FormulaUndecided => {
+                "a formula the substrate's own procedures could not settle".to_string()
+            },
+        }
+    }
+}
+
+/// One `where` guard the substrate produced **no verdict** for, recorded at the instant it was
+/// refused.
+///
+/// ★ This is the whole point of the fix: a `GuardRefusal` exists exactly when the guard was
+/// *not* decided, and it never exists when the guard was decided — so "the guard is false" and
+/// "the guard could not be decided" are two different objects rather than one boolean.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GuardRefusal {
+    /// What stopped the decider.
+    pub cause: GuardRefusalCause,
+    /// Whether the obstruction is in the guard term or arrived with the payload.
+    pub provenance: RefusalProvenance,
+    /// The remedy class implied by the provenance.
+    pub class: GuardRefusalClass,
+    /// What the refusal is *about*, rendered by [`render_par_text`] — total, deterministic and
+    /// bounded, so a refusal message never depends on a `prost` derive or on the build.
+    ///
+    /// For a [`RefusalProvenance::Term`] refusal this is **the guard as written**, and is
+    /// therefore the same string under every payload. For a
+    /// [`RefusalProvenance::Datum`] refusal whose obstruction is a *value* — a division by zero,
+    /// a type mismatch — it is the offending **fragment** instead, because naming the whole
+    /// guard would not say which datum broke it.
+    ///
+    /// ⚠ An expression `Par` is not a ground value, so `render_par_text` gives it its stable
+    /// opaque form (`⟨opaque Par, n bytes, blake2b256:…⟩`). That is a correlation handle, not the
+    /// actionable part: the actionable part is [`cause`](Self::cause), which names what stopped
+    /// the decider in the author's own vocabulary. A prettier rendering would mean a recursive
+    /// printer with no stability contract, on a path that reaches published data.
+    pub guard: String,
+}
+
+impl GuardRefusal {
+    fn new(cause: GuardRefusalCause, provenance: RefusalProvenance, guard: &Par) -> Self {
+        GuardRefusal {
+            cause,
+            provenance,
+            class: GuardRefusalClass::of(provenance),
+            guard: render_par_text(guard),
+        }
+    }
+}
+
+impl std::fmt::Display for GuardRefusal {
+    /// A **noun phrase**, not a sentence: it is written into the `obstructions` slot of
+    /// [`InterpreterError::UndecidableGuard`], whose own `Display` supplies the frame *"`where`
+    /// guard cannot be decided: it contains …"*. Emitting a second full sentence here produced a
+    /// doubled message, which is how this shape was arrived at.
+    ///
+    /// It names what stopped the decider, the guard it stopped on, and — because the remedies
+    /// differ — whether the guard term or the payload carried the obstruction.
+    ///
+    /// A pure function of the guard term and the recorded cause: [`render_par_text`] is
+    /// deterministic and bounded, `GuardRefusalCause::describe` is a fixed per-variant phrase,
+    /// and the two foreign strings it can embed (`EvalError`'s and `UndecidableNode`'s) are
+    /// hand-written `Display`s rather than derives. So two nodes deciding the same guard render
+    /// the same bytes — which matters, because on the speculation lane this text reaches a
+    /// published `^spec-failure` datum.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let provenance = match self.provenance {
+            RefusalProvenance::Term => {
+                "present in the guard term, so no payload can make this guard decidable"
+            },
+            RefusalProvenance::Datum => {
+                "carried in by this payload; the guard term itself is decidable"
+            },
+        };
+        write!(f, "{} in `{}` [{}]", self.cause.describe(), self.guard, provenance)
+    }
+}
+
+/// ★ **The substrate's COMM-time disposition** — three facts where there used to be one bit.
+///
+/// The names deliberately mirror the other two lanes so the tree has ONE guard vocabulary:
+///
+/// | this lane | host lane (`c61995c1`) | machine lane (`6ab1c78b`) |
+/// |---|---|---|
+/// | [`Admits`](Self::Admits) | `GuardDisposition::Fires` | `GuardDisposition::Admits` |
+/// | [`Refutes`](Self::Refutes) | `GuardDisposition::Blocks` | `GuardDisposition::Refutes` |
+/// | [`Undecided`](Self::Undecided) | `GuardDisposition::Declines` | `NotABoolean` / `Failed` / `Undecidable` |
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SubstrateGuardDisposition {
+    /// The substrate decided the guard holds — commit.
+    Admits,
+    /// The substrate decided the guard does not hold — an ordinary, correct non-commit.
+    Refutes,
+    /// ★ No verdict was reached. The COMM still does not fire; what has changed is that this is
+    /// no longer spelled the same way as [`Refutes`](Self::Refutes).
+    Undecided(GuardRefusal),
+}
+
+impl SubstrateGuardDisposition {
+    /// The commit verdict: `true` only for [`Admits`](Self::Admits).
+    ///
+    /// ⚠ Unchanged from before the refusal vocabulary existed — see [`GuardRefusalClass`] for
+    /// why fail-closed is correct and why it is not what was being fixed.
+    pub const fn commits(&self) -> bool {
+        matches!(self, SubstrateGuardDisposition::Admits)
+    }
+
+    /// The three-valued verdict this disposition projects to.
+    pub const fn verdict(&self) -> Sat3 {
+        match self {
+            SubstrateGuardDisposition::Admits => Sat3::Sat,
+            SubstrateGuardDisposition::Refutes => Sat3::Unsat,
+            SubstrateGuardDisposition::Undecided(_) => Sat3::DontKnow,
+        }
+    }
+
+    /// The refusal, when there is one.
+    pub const fn refusal(&self) -> Option<&GuardRefusal> {
+        match self {
+            SubstrateGuardDisposition::Undecided(refusal) => Some(refusal),
+            _ => None,
+        }
+    }
+}
+
+/// ★ **The channel that makes a refusal reach the program's output.**
+///
+/// # Why a ledger rather than a raised error
+///
+/// [`Match::check_commit`] returns a `bool`. The trait is `rspace++`'s, implemented outside this
+/// workspace, so a guard decider physically cannot raise — the machine lane hit the identical
+/// wall and answered it by refusing *earlier*, at the normalizer and at `Reduce::eval_receive`.
+/// The substrate's residue cannot be answered that way: its
+/// [`RefusalProvenance::Datum`] half does not exist until a payload arrives, and even its
+/// `Term` half is reached through `check_commit` for `Par`s built programmatically.
+///
+/// So the refusal is *recorded* at the instant it happens and *raised* by whoever is driving the
+/// reduction, at the first point that owns a `Result`. That point is
+/// [`crate::run::inj_on_runtime`] and its siblings, which already turn an `InterpreterError`
+/// into the run's `Err`; a guard refusal now arrives through the same door.
+///
+/// ★ Recording is **total by construction**: it happens inside `check_commit`, so every RSpace
+/// this crate builds — [`crate::run`], [`crate::step`], [`crate::speculation`],
+/// [`crate::bench_support`], and any site added later — records without being wired.
+///
+/// # Determinism, and why a shared `Mutex` is not a hazard here
+///
+/// The ledger is **per-matcher**, not global: [`SubstrateGuardMatcher::new`] allocates a fresh
+/// one and [`SubstrateGuardMatcher::refusals`] hands out a shared handle, so two runtimes alive
+/// in one process cannot see each other's refusals. Nothing on the COMM path reads it, so it
+/// cannot influence which COMMs fire; and the lock is taken **only** when a guard is refused —
+/// never on the decide-and-commit path, which is where `check_commit`'s cost lives.
+///
+/// A poisoned lock is recovered rather than propagated ([`Mutex::lock`]'s `PoisonError` carries
+/// the guard): a diagnostic channel that panics the matcher would be worse than the defect.
+#[derive(Clone, Debug, Default)]
+pub struct GuardRefusalLedger {
+    entries: Arc<Mutex<Vec<GuardRefusal>>>,
+}
+
+impl GuardRefusalLedger {
+    /// An empty ledger.
+    pub fn new() -> Self {
+        GuardRefusalLedger::default()
+    }
+
+    /// Record one refusal. Called only from [`Match::check_commit`], only when a guard produced
+    /// no verdict.
+    pub fn record(&self, refusal: GuardRefusal) {
+        match refusal.class {
+            // A decider gap reaching the matcher means a guard that no payload can satisfy is
+            // installed and silently unfireable. That is a defect in the program (or in a
+            // producer that staged an unevaluated datum), not a property of the data.
+            GuardRefusalClass::DeciderGap => tracing::error!(
+                target: GUARD_REFUSAL_TARGET,
+                class = "decider-gap",
+                provenance = ?refusal.provenance,
+                cause = ?refusal.cause,
+                guard = %refusal.guard,
+                "UNDECIDABLE `where` guard: no verdict was reached, and the COMM did not fire"
+            ),
+            // Recorded and logged, never raised: `x / y` is fine until `y` is 0, so refusing it
+            // would refuse a guard that works for every other payload.
+            GuardRefusalClass::DataDependent => tracing::error!(
+                target: GUARD_REFUSAL_TARGET,
+                class = "data-dependent",
+                provenance = ?refusal.provenance,
+                cause = ?refusal.cause,
+                guard = %refusal.guard,
+                "`where` guard failed on this payload: no verdict was reached, and the COMM did \
+                 not fire"
+            ),
+        }
+        self.lock().push(refusal);
+    }
+
+    /// Every refusal recorded so far, leaving the ledger empty.
+    pub fn take(&self) -> Vec<GuardRefusal> {
+        std::mem::take(&mut *self.lock())
+    }
+
+    /// Every refusal recorded so far, leaving the ledger intact.
+    pub fn snapshot(&self) -> Vec<GuardRefusal> {
+        self.lock().clone()
+    }
+
+    /// `true` iff nothing has been refused.
+    pub fn is_empty(&self) -> bool {
+        self.lock().is_empty()
+    }
+
+    /// ★ **The driver's question**: did any guard fail in a way no payload could have fixed?
+    ///
+    /// `Some(error)` iff at least one [`GuardRefusalClass::DeciderGap`] was recorded. Every such
+    /// refusal is named, in the order they happened, so a run that refused several guards
+    /// reports all of them rather than the first.
+    ///
+    /// ★ **f1r3node's OWN error type**, not a private one.
+    /// [`InterpreterError::UndecidableGuard`] is the variant the machine lane's gate
+    /// (`interpreter::guard`) raises for the identical fact, so the two lanes hand one text to
+    /// one consumer instead of two texts that have to be recognised separately. Its `Display` is
+    /// hand-written — which matters, because on the speculation lane an error string becomes a
+    /// published `^spec-failure` datum and therefore part of the checkpoint root.
+    ///
+    /// Data-dependent refusals are deliberately **not** included: they are visible through
+    /// [`take`](Self::take) and through the `ERROR`-level event, and raising on them would make
+    /// this decider disagree with `Matcher` at the program level over a guard that is perfectly
+    /// good on every other payload.
+    pub fn decider_gap_error(&self) -> Option<InterpreterError> {
+        let entries = self.lock();
+        let obstructions: Vec<String> = entries
+            .iter()
+            .filter(|refusal| refusal.class == GuardRefusalClass::DeciderGap)
+            .map(|refusal| refusal.to_string())
+            .collect();
+        match obstructions.is_empty() {
+            true => None,
+            false => {
+                Some(InterpreterError::UndecidableGuard { clause: RECEIVE_WHERE, obstructions })
+            },
+        }
+    }
+
+    /// [`decider_gap_error`](Self::decider_gap_error) as the `Result` a `String`-carrying driver
+    /// returns. The text is the error's `Display`, so all three carriers agree byte for byte.
+    pub fn refuse_decider_gaps(&self) -> Result<(), String> {
+        match self.decider_gap_error() {
+            Some(error) => Err(error.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    /// The inner guard, with a poisoned lock recovered rather than propagated.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<GuardRefusal>> {
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// The `tracing` target every substrate guard refusal is emitted on.
+///
+/// Deliberately a sibling of f1r3node's own `f1r3fly.rholang.guard`, so one subscriber sees
+/// both deciders' guard events.
+pub const GUARD_REFUSAL_TARGET: &str = "mettail.runtime.guard";
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
 // ★ THE RUN-TIME LEG — the COMM-time `where`-guard decision, decided by Dovetail/SFT
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -698,12 +1112,31 @@ fn sole_expr_of(par: &Par) -> Option<&Expr> {
 pub struct SubstrateGuardMatcher {
     /// f1r3node's matcher, held rather than reimplemented: [`Match::get`] is its, verbatim.
     spatial: Matcher,
+    /// ★ Where a guard that produced NO VERDICT is written down. See [`GuardRefusalLedger`].
+    refusals: GuardRefusalLedger,
 }
 
 impl SubstrateGuardMatcher {
-    /// The decider, ready to be handed to `RSpace::create`.
-    pub const fn new() -> Self {
-        SubstrateGuardMatcher { spatial: Matcher }
+    /// The decider, ready to be handed to `RSpace::create`, with a fresh refusal ledger.
+    ///
+    /// ⚠ Whoever builds the space should keep [`refusals`](Self::refusals) and raise on
+    /// [`GuardRefusalLedger::refuse_decider_gaps`] when the reduction settles — that is the only
+    /// thing standing between an undecidable guard and total silence. Recording happens either
+    /// way; *reporting* is the driver's.
+    pub fn new() -> Self {
+        SubstrateGuardMatcher {
+            spatial: Matcher,
+            refusals: GuardRefusalLedger::new(),
+        }
+    }
+
+    /// A shared handle on this decider's refusal ledger.
+    ///
+    /// Cloning the matcher (which `Arc<Box<dyn Match<…>>>` does not, but a caller may) shares
+    /// the same ledger, so a handle taken before the space is built stays live afterwards.
+    #[must_use]
+    pub fn refusals(&self) -> GuardRefusalLedger {
+        self.refusals.clone()
     }
 }
 
@@ -735,7 +1168,15 @@ impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for SubstrateGuar
         for m in matched {
             combined.extend_from_slice(&m.pars);
         }
-        substrate_guard_passes(guard, &combined)
+        // ★ THE SIGNAL. `substrate_guard_passes` would answer the same `bool`; going through the
+        // disposition is what makes "the guard is false" and "the guard was never decided" two
+        // different objects, and the ledger is what carries the second one out of a function
+        // whose return type cannot.
+        let disposition = substrate_guard_disposition(guard, &combined);
+        if let SubstrateGuardDisposition::Undecided(refusal) = &disposition {
+            self.refusals.record(refusal.clone());
+        }
+        disposition.commits()
     }
 }
 
@@ -765,6 +1206,11 @@ pub fn substrate_guard_passes(condition: &Par, bound_pars: &[Par]) -> bool {
 }
 
 /// [`substrate_guard_passes`] before the policy point: the raw three-valued verdict.
+///
+/// A projection of [`substrate_guard_disposition`], which is where the three steps described
+/// below actually live and where each [`Sat3::DontKnow`] carries the reason it was reached. This
+/// function is kept because `Sat3` *is* the substrate's verdict algebra and the compile-time leg
+/// speaks it; it is not a second decider.
 ///
 /// # ★ SUBSTITUTE FIRST — and why that is a soundness requirement, not a preference
 ///
@@ -829,6 +1275,68 @@ pub fn substrate_guard_passes(condition: &Par, bound_pars: &[Par]) -> bool {
 /// `classify`'s concrete-semantics leg, which exists because "valid over `2^w`" does not imply
 /// "valid over `ℤ`" — has nothing to fence here: the ground answers are answers about `ℤ`.
 pub fn substrate_guard_verdict(condition: &Par, bound_pars: &[Par]) -> Sat3 {
+    substrate_guard_disposition(condition, bound_pars).verdict()
+}
+
+/// ★ **[`substrate_guard_verdict`] with the reason attached** — THE substrate guard decider.
+///
+/// `Sat3` has one symbol, [`Sat3::DontKnow`], for every way the substrate can fail to reach a
+/// verdict, and [`dont_know_policy`] then spells that symbol `false`. That is correct as a COMM
+/// verdict and wrong as an *observation*: it makes a guard that was evaluated and REFUTED
+/// indistinguishable from a guard that was never decided at all. This function is the same three
+/// steps, each returning **what stopped it** instead of a bare symbol; [`substrate_guard_verdict`]
+/// and [`substrate_guard_passes`] are projections of it, so there is one decider, not two.
+///
+/// # The complete enumeration, step by step
+///
+/// | step | what stops it | [`GuardRefusalCause`] |
+/// |---|---|---|
+/// | 1 | `encoding.vars` is non-empty — a binder substitution could not reach | [`ResidualBinder`](GuardRefusalCause::ResidualBinder) |
+/// | 2 | an opaque fragment the delegated decider could not answer | [`Unsupported`](GuardRefusalCause::Unsupported), [`NotABoolean`](GuardRefusalCause::NotABoolean), [`Malformed`](GuardRefusalCause::Malformed), [`UnresolvedReference`](GuardRefusalCause::UnresolvedReference), [`EvaluationFailed`](GuardRefusalCause::EvaluationFailed) |
+/// | 3 | [`ground_verdict_with`] left the ground formula undecided | [`FormulaUndecided`](GuardRefusalCause::FormulaUndecided) |
+///
+/// ## ★ Step 2 delegates to the MACHINE LANE'S OWN DECIDER
+///
+/// The fragments are handed to `rholang`'s [`guard_disposition`] — the very function
+/// `Matcher::check_commit` decides a whole guard with — rather than to a private `Option<bool>`
+/// wrapper. Two things follow, and both are load-bearing:
+///
+/// 1. **The vocabularies cannot drift.** `Admits`/`Refutes`/`NotABoolean`/`Failed`/`Undecidable`
+///    arrive already separated; this function translates, it does not re-derive. The machine
+///    lane's `Undecidable` is in turn derived from `rho_pure_eval`'s own arms (an exhaustive
+///    `ExprInstance` match with no catch-all), so a new protobuf variant is a compile error
+///    there rather than a silent addition to the collapsed set here.
+/// 2. **The answer is bit-identical to what was asked before.** [`guard_disposition`] with an
+///    empty `bound_pars` builds `PureEnv::new()` and calls `eval_with(fragment, env,
+///    SpatialMatcherOracle)` followed by `extract_bool` — which is exactly what
+///    [`crate::guard_discharge::machine_verdict`] does. `Admits`/`Refutes` ⟺ `Some(true)` /
+///    `Some(false)`; every other disposition ⟺ `None`. No fragment changes its verdict.
+///
+/// See [`substitute_bound_pars`] for why an EMPTY environment is exact here rather than an
+/// approximation.
+///
+/// ## ★ Step 3's cause is structurally unreachable, and is kept anyway
+///
+/// After step 1, `encoding.vars` is empty; after step 2, every opaque atom has a verdict. In
+/// [`ground_verdict_with`] that leaves:
+///
+/// * `Prop`, `Scalar` and `ScalarRel` — each is emitted **only** when the encoder interned a
+///   variable, so a non-empty `vars` would have returned at step 1;
+/// * `Linear` — `collect_presburger_vars` yields nothing, and `LinearConstraint::evaluate_checked`
+///   accumulates a term-free sum in `i128`, which cannot overflow, so it is total here;
+/// * `Atom` — `GuardAtom::id` is the dense index the encoder assigned into `opaque`, and
+///   `resolved` has exactly `opaque.len()` entries at this point, so the lookup always hits.
+///
+/// The arm is therefore dead today. It is kept, and kept **loud**, because that argument spans
+/// three modules (`prattail`'s formula, `prattail`'s Presburger evaluator, and this encoder) and
+/// a change to any one of them could revive the arm — silently, which is the entire defect this
+/// function exists to remove. `guard_undecidable_is_loud.rs`'s
+/// `step_three_stays_unreached_and_the_sweep_that_says_so_is_not_vacuous` measures that it stays
+/// unreached rather than assuming it.
+pub fn substrate_guard_disposition(
+    condition: &Par,
+    bound_pars: &[Par],
+) -> SubstrateGuardDisposition {
     let substituted = substitute_bound_pars(condition, bound_pars);
     let encoding = encode_par_guard(&substituted);
 
@@ -836,22 +1344,37 @@ pub fn substrate_guard_verdict(condition: &Par, bound_pars: &[Par]) -> Sat3 {
     match encoding.vars.is_empty() {
         true => {},
         // `bound$k` with `k` past the arrived bindings, or `free$i` — a match-frame slot, which
-        // `rho_pure_eval::resolve_var` rejects with `UnboundVariable`. Neither is answerable.
-        false => return Sat3::DontKnow,
+        // `rho_pure_eval::resolve_var` rejects with `UnboundVariable`. Neither is answerable,
+        // and — because substitution has ALREADY applied every binding the receive will ever
+        // receive — neither becomes answerable under a different payload. Hence `Term`.
+        false => {
+            return SubstrateGuardDisposition::Undecided(GuardRefusal::new(
+                GuardRefusalCause::ResidualBinder { slots: encoding.vars.names().to_vec() },
+                RefusalProvenance::Term,
+                condition,
+            ))
+        },
     }
 
     // ── 2. Every fragment the substrate has no procedure for, decided by the structural core.
     let mut resolved: Vec<Sat3> = Vec::with_capacity(encoding.opaque.len());
     for fragment in &encoding.opaque {
-        match crate::guard_discharge::machine_verdict(fragment) {
-            Some(true) => resolved.push(Sat3::Sat),
-            Some(false) => resolved.push(Sat3::Unsat),
-            None => return Sat3::DontKnow,
+        match guard_disposition(fragment, &[]) {
+            GuardDisposition::Admits => resolved.push(Sat3::Sat),
+            GuardDisposition::Refutes => resolved.push(Sat3::Unsat),
+            // `other` is only a *routing* catch-all: [`fragment_refusal`] matches
+            // `GuardDisposition` exhaustively with no `_`, so a new variant still fails to
+            // compile rather than silently joining the collapsed set.
+            other => {
+                return SubstrateGuardDisposition::Undecided(fragment_refusal(
+                    other, condition, fragment,
+                ))
+            },
         }
     }
 
     // ── 3. The substrate decides. ─────────────────────────────────────────────────────────
-    ground_verdict_with(
+    let verdict = ground_verdict_with(
         &encoding.formula,
         &GuardAssignment::with_len(encoding.vars.len()),
         &encoding.vars,
@@ -862,7 +1385,352 @@ pub fn substrate_guard_verdict(condition: &Par, bound_pars: &[Par]) -> Sat3 {
                 .copied()
                 .unwrap_or(Sat3::DontKnow)
         },
-    )
+    );
+    match verdict {
+        Sat3::Sat => SubstrateGuardDisposition::Admits,
+        Sat3::Unsat => SubstrateGuardDisposition::Refutes,
+        Sat3::DontKnow => SubstrateGuardDisposition::Undecided(GuardRefusal::new(
+            GuardRefusalCause::FormulaUndecided,
+            RefusalProvenance::Term,
+            condition,
+        )),
+    }
+}
+
+/// Translate a delegated fragment's [`GuardDisposition`] into a [`GuardRefusal`], and decide its
+/// [`RefusalProvenance`] by asking the **unsubstituted** guard the same question.
+///
+/// ★ This is the substrate's structural advantage over the other two lanes, and it is the whole
+/// reason the two-class split can be *computed* here rather than tabulated: the substrate holds
+/// the guard as written **and** its image under the payload, so "did the author type this
+/// obstruction, or did a datum carry it in?" is a decidable question at the moment of refusal.
+///
+/// `Admits` and `Refutes` are unreachable — the caller consumed them — and are named rather than
+/// swept under a `_` so a new `GuardDisposition` variant fails to compile here.
+fn fragment_refusal(
+    disposition: GuardDisposition,
+    condition: &Par,
+    fragment: &Par,
+) -> GuardRefusal {
+    match disposition {
+        // A verdict — the caller matched these first, so this arm cannot execute. It is NAMED
+        // (rather than swept under a `_`) so a new `GuardDisposition` variant fails to compile
+        // here, and it answers a fail-closed refusal (rather than `unreachable!`) because
+        // `Match::check_commit` is contractually total: a panic on the COMM path would be a
+        // worse outcome than the defect this module removes.
+        GuardDisposition::Admits | GuardDisposition::Refutes => GuardRefusal::new(
+            GuardRefusalCause::FormulaUndecided,
+            RefusalProvenance::Term,
+            condition,
+        ),
+
+        // ★ The machine lane's class, verbatim. Provenance: if the guard TERM already carries an
+        // undecidable node, a compile-time gate sees it and every payload hits it; if it does
+        // not, this payload spliced one in — the position `rho_pure_eval::decidable` names as
+        // "the one position a static walk cannot see".
+        GuardDisposition::Undecidable { kind } => unsupported_refusal(kind, condition),
+
+        // Evaluated cleanly, and the value is not a verdict. `where x + 1` can never be one —
+        // that is a property of the guard TERM. `where x` under a payload of `5` can be one for
+        // a different payload, so it is the DATUM's doing.
+        GuardDisposition::NotABoolean => GuardRefusal::new(
+            GuardRefusalCause::NotABoolean,
+            match never_a_predicate(condition) {
+                true => RefusalProvenance::Term,
+                false => RefusalProvenance::Datum,
+            },
+            condition,
+        ),
+
+        GuardDisposition::Failed(error) => failure_refusal(error, condition, fragment),
+    }
+}
+
+/// The [`GuardRefusal`] for a fragment whose evaluation ran and failed.
+///
+/// ★ Exhaustive over [`EvalError`] with **no catch-all**: a new evaluator failure mode must be
+/// classified here, or this stops compiling. An unclassified failure defaulting to
+/// "data-dependent" would rebuild, one variant at a time, exactly the silent set this fix
+/// removes.
+fn failure_refusal(error: EvalError, condition: &Par, fragment: &Par) -> GuardRefusal {
+    match error {
+        // ⚠ Unreachable through [`fragment_refusal`]: `guard_disposition_in_env` gives this
+        // variant its own `GuardDisposition::Undecidable` arm, so it never arrives inside
+        // `Failed`. Routed to the SAME construction rather than left to a fall-through, so that
+        // if the machine lane ever folds the arm back in, this lane's answer does not change.
+        EvalError::UnsupportedExpression { kind } => unsupported_refusal(kind, condition),
+
+        // ★ ROW 1'S FACT, OTHER ROUTE. A variable reference reaching the evaluator means one
+        // survived `substitute_bound_pars` inside an opaque fragment — a `Wildcard`, which binds
+        // anything and is therefore never a readable value, or an index past the arrived
+        // bindings. Substitution has already applied every binding this receive gets, so no
+        // payload supplies it: the same decider gap `ResidualBinder` reports, found by the
+        // delegated evaluator instead of by the encoder.
+        EvalError::UnboundVariable { index } => GuardRefusal::new(
+            GuardRefusalCause::UnresolvedReference { slot: format!("de Bruijn {index}") },
+            RefusalProvenance::Term,
+            condition,
+        ),
+
+        // ⚠ `MissingExprInstance` IS TWO FACTS. `rho_pure_eval::resolve_var` raises it for a
+        // `Var` that is a `Wildcard` *or* carries no instance, and `eval_drive` raises it for an
+        // `Expr` with no `expr_instance` — one error, three shapes. Reporting them as one would
+        // rebuild the very conflation this module exists to remove, one level down: a wildcard
+        // guard is an unreadable REFERENCE (row 5, a decider gap), a headless `Expr` is a
+        // MALFORMED term. So the shape is read off the term rather than guessed from the error.
+        //
+        // The guard as written is asked first, then the fragment: an obstruction the author
+        // typed obstructs every payload (`Term`); one that appears only after substitution came
+        // in with the datum (`Datum`).
+        EvalError::MissingExprInstance => match unevaluable_node(condition) {
+            Some(node) => GuardRefusal::new(node.into_cause(), RefusalProvenance::Term, condition),
+            None => GuardRefusal::new(
+                unevaluable_node(fragment)
+                    .unwrap_or(UnevaluableNode::HeadlessExpr)
+                    .into_cause(),
+                RefusalProvenance::Datum,
+                fragment,
+            ),
+        },
+
+        // ★ THE DATA-DEPENDENT CLASS, in full. Not one of these is a function of the guard term
+        // alone — `x / y` is fine until `y` is 0, `x > 1` is fine until `x` is a string — so no
+        // compile-time gate can decide them and refusing them would refuse a guard that works
+        // for every other payload. They are separated in the type and `ERROR`-logged; their COMM
+        // verdict is unchanged.
+        EvalError::OperatorTypeMismatch { .. }
+        | EvalError::DivisionByZero
+        | EvalError::ArithmeticOverflow { .. }
+        | EvalError::NotASingleValue { .. } => GuardRefusal::new(
+            GuardRefusalCause::EvaluationFailed { error: error.to_string() },
+            RefusalProvenance::Datum,
+            fragment,
+        ),
+    }
+}
+
+/// The [`GuardRefusalCause::Unsupported`] refusal for a node `rho_pure_eval` has no arm for,
+/// with its [`RefusalProvenance`] decided by asking the **unsubstituted** guard.
+///
+/// If the guard term already carries an undecidable node, a compile-time gate sees it and every
+/// payload hits it — `Term`. If it does not, *this* payload spliced one in, which is the position
+/// `rho_pure_eval::decidable`'s module docs name as "the one position a static walk cannot see" —
+/// `Datum`.
+///
+/// The names come from [`undecidable_nodes`], the machine lane's own derivation from
+/// `rho_pure_eval`'s arms, so the two lanes cannot disagree about what the class contains.
+fn unsupported_refusal(kind: &'static str, condition: &Par) -> GuardRefusal {
+    let in_term = undecidable_nodes(condition, GUARD_SPATIAL_SUPPORT);
+    let (nodes, provenance) = match in_term.is_empty() {
+        false => (in_term.iter().map(|node| node.to_string()).collect(), RefusalProvenance::Term),
+        // The SAME rendering the `Term` branch gets: `UndecidableNode`'s `Display` is what turns
+        // a wire-format variant name into the phrase an author recognises, so building one here
+        // keeps the two provenances from reading like two different diagnostics.
+        true => (
+            vec![UndecidableNode { kind, detail: None }.to_string()],
+            RefusalProvenance::Datum,
+        ),
+    };
+    GuardRefusal::new(GuardRefusalCause::Unsupported { nodes }, provenance, condition)
+}
+
+/// ★ The spatial-match capability the substrate's delegated fragments are decided under.
+///
+/// [`guard_disposition`] injects `rholang`'s own `SpatialMatcherOracle`, so `EMatchesBody` **is**
+/// decidable here and must never be reported as an obstruction. This constant is the single
+/// place that fact is stated on this lane, mirroring `interpreter::guard`'s
+/// `GUARD_SPATIAL_SUPPORT` on the machine lane.
+const GUARD_SPATIAL_SUPPORT: SpatialSupport = SpatialSupport::Available;
+
+/// `true` iff no payload could make this guard term a verdict.
+///
+/// The question [`GuardDisposition::NotABoolean`] cannot answer on its own: it reports that the
+/// *substituted* guard reduced to a non-verdict, which is a decider gap when the guard is
+/// `x + 1` and a data-dependent failure when it is `x` under a payload of `5`.
+///
+/// ★ Exhaustive over `ExprInstance` with **no catch-all**, for the same reason
+/// `rho_pure_eval::decidable::unsupported_kind` is: a new constructor must be classified here
+/// rather than silently joining whichever answer the fall-through happened to give.
+///
+/// The recursion follows the connectives and stops everywhere else, because those are exactly
+/// the positions whose *result sort* the operator propagates: `a and b` is a verdict iff both
+/// operands are, whereas a comparison is a verdict whatever its operands turn out to be.
+fn never_a_predicate(par: &Par) -> bool {
+    let Some(expr) = sole_expr_of(par) else {
+        // Not an expression at all — a send, a `new`, a nested `for`, or several expressions in
+        // parallel. `GuardAtomKind::ProcessShaped`. Never a predicate, under any payload.
+        return true;
+    };
+    let Some(instance) = expr.expr_instance.as_ref() else {
+        return true;
+    };
+    match instance {
+        // Verdicts, or things that produce one whatever their operands are.
+        ExprInstance::GBool(_)
+        | ExprInstance::EEqBody(_)
+        | ExprInstance::ENeqBody(_)
+        | ExprInstance::ELtBody(_)
+        | ExprInstance::ELteBody(_)
+        | ExprInstance::EGtBody(_)
+        | ExprInstance::EGteBody(_)
+        | ExprInstance::EMatchesBody(_) => false,
+
+        // A variable: unknowable statically — the payload decides. Not "never".
+        ExprInstance::EVarBody(_) => false,
+
+        // The connectives propagate the sort of their operands.
+        ExprInstance::EAndBody(EAnd { p1, p2 }) | ExprInstance::EOrBody(EOr { p1, p2 }) => {
+            operand_is_never_a_predicate(p1.as_ref()) || operand_is_never_a_predicate(p2.as_ref())
+        },
+        ExprInstance::ENotBody(ENot { p }) => operand_is_never_a_predicate(p.as_ref()),
+
+        // Everything else has a non-boolean result sort for every payload: the ground literals,
+        // the arithmetic, the collections, the string and collection operators, a method call, a
+        // pathmap, a zipper.
+        ExprInstance::GInt(_)
+        | ExprInstance::GString(_)
+        | ExprInstance::GUri(_)
+        | ExprInstance::GByteArray(_)
+        | ExprInstance::GDouble(_)
+        | ExprInstance::GBigInt(_)
+        | ExprInstance::GBigRat(_)
+        | ExprInstance::GFixedPoint(_)
+        | ExprInstance::ENegBody(_)
+        | ExprInstance::EPlusBody(_)
+        | ExprInstance::EMinusBody(_)
+        | ExprInstance::EMultBody(_)
+        | ExprInstance::EDivBody(_)
+        | ExprInstance::EModBody(_)
+        | ExprInstance::EPercentPercentBody(_)
+        | ExprInstance::EPlusPlusBody(_)
+        | ExprInstance::EMinusMinusBody(_)
+        | ExprInstance::EMethodBody(_)
+        | ExprInstance::EListBody(_)
+        | ExprInstance::ESetBody(_)
+        | ExprInstance::EMapBody(_)
+        | ExprInstance::ETupleBody(_)
+        | ExprInstance::EPathmapBody(_)
+        | ExprInstance::EZipperBody(_) => true,
+    }
+}
+
+/// [`never_a_predicate`] through an optional operand. A missing operand is
+/// `EvalError::MissingExprInstance` at evaluation time — a malformed term, reported by
+/// [`GuardRefusalCause::Malformed`] rather than here, so it is not counted as "never".
+fn operand_is_never_a_predicate(par: Option<&Par>) -> bool {
+    par.is_some_and(never_a_predicate)
+}
+
+/// The three term shapes `rho_pure_eval` answers [`EvalError::MissingExprInstance`] for.
+///
+/// ★ One error, three facts. `resolve_var` raises it for a `Wildcard` **and** for a `Var` with no
+/// instance; `eval_drive` raises it for an `Expr` with no instance. A wildcard is an unreadable
+/// *reference* — the same decider gap [`GuardRefusalCause::ResidualBinder`] reports — while a
+/// headless `Expr` is a *malformed* term. Collapsing them would rebuild this module's own defect
+/// one level down, so the shape is read off the term.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnevaluableNode {
+    /// `VarInstance::Wildcard` — binds anything, so it is never a readable value.
+    Wildcard,
+    /// A `Var` with no `var_instance`.
+    HeadlessVar,
+    /// An `Expr` with no `expr_instance`.
+    HeadlessExpr,
+}
+
+impl UnevaluableNode {
+    fn into_cause(self) -> GuardRefusalCause {
+        match self {
+            UnevaluableNode::Wildcard => {
+                GuardRefusalCause::UnresolvedReference { slot: "_".to_string() }
+            },
+            UnevaluableNode::HeadlessVar => GuardRefusalCause::UnresolvedReference {
+                slot: "a variable with no instance".to_string(),
+            },
+            UnevaluableNode::HeadlessExpr => GuardRefusalCause::Malformed,
+        }
+    }
+}
+
+/// The first node of `par` that [`EvalError::MissingExprInstance`] would be raised for, in an
+/// evaluated position, or `None` if there is none.
+///
+/// Only the expression spine is walked, because that is the only place the evaluator looks: a
+/// collection's interior and a `matches` pattern are passed through unevaluated, so an
+/// unevaluable node inside one is inert (see the correspondence table on
+/// [`substitute_bound_pars`]).
+///
+/// ★ Exhaustive over `ExprInstance` with **no catch-all**, and the descent mirrors `eval_drive`
+/// position for position — the same discipline `rho_pure_eval::decidable`'s walk is held to.
+fn unevaluable_node(par: &Par) -> Option<UnevaluableNode> {
+    par.exprs
+        .iter()
+        .find_map(|expr| match expr.expr_instance.as_ref() {
+            None => Some(UnevaluableNode::HeadlessExpr),
+            Some(instance) => match instance {
+                ExprInstance::EVarBody(EVar { v }) => match v.as_ref() {
+                    None => Some(UnevaluableNode::HeadlessVar),
+                    Some(var) => match var.var_instance.as_ref() {
+                        None => Some(UnevaluableNode::HeadlessVar),
+                        Some(VarInstance::Wildcard(_)) => Some(UnevaluableNode::Wildcard),
+                        Some(VarInstance::BoundVar(_) | VarInstance::FreeVar(_)) => None,
+                    },
+                },
+
+                ExprInstance::ENotBody(ENot { p }) | ExprInstance::ENegBody(ENeg { p }) => {
+                    unevaluable_operand(p.as_ref())
+                },
+                ExprInstance::EAndBody(EAnd { p1, p2 }) | ExprInstance::EOrBody(EOr { p1, p2 }) => {
+                    unevaluable_operands(p1, p2)
+                },
+                ExprInstance::EEqBody(EEq { p1, p2 }) => unevaluable_operands(p1, p2),
+                ExprInstance::ENeqBody(ENeq { p1, p2 }) => unevaluable_operands(p1, p2),
+                ExprInstance::ELtBody(ELt { p1, p2 }) => unevaluable_operands(p1, p2),
+                ExprInstance::ELteBody(ELte { p1, p2 }) => unevaluable_operands(p1, p2),
+                ExprInstance::EGtBody(EGt { p1, p2 }) => unevaluable_operands(p1, p2),
+                ExprInstance::EGteBody(EGte { p1, p2 }) => unevaluable_operands(p1, p2),
+                ExprInstance::EPlusBody(EPlus { p1, p2 }) => unevaluable_operands(p1, p2),
+                ExprInstance::EMinusBody(EMinus { p1, p2 }) => unevaluable_operands(p1, p2),
+                ExprInstance::EMultBody(EMult { p1, p2 }) => unevaluable_operands(p1, p2),
+                ExprInstance::EDivBody(EDiv { p1, p2 }) => unevaluable_operands(p1, p2),
+                ExprInstance::EModBody(EMod { p1, p2 }) => unevaluable_operands(p1, p2),
+
+                // ⚠ TARGET ONLY — the pattern's free variables are binders and are never
+                // evaluated, so a wildcard inside one is a pattern hole, not an obstruction.
+                ExprInstance::EMatchesBody(EMatches { target, .. }) => {
+                    unevaluable_operand(target.as_ref())
+                },
+
+                // Nothing the evaluator descends into.
+                ExprInstance::GBool(_)
+                | ExprInstance::GInt(_)
+                | ExprInstance::GString(_)
+                | ExprInstance::GUri(_)
+                | ExprInstance::GByteArray(_)
+                | ExprInstance::GDouble(_)
+                | ExprInstance::GBigInt(_)
+                | ExprInstance::GBigRat(_)
+                | ExprInstance::GFixedPoint(_)
+                | ExprInstance::EListBody(_)
+                | ExprInstance::ESetBody(_)
+                | ExprInstance::EMapBody(_)
+                | ExprInstance::ETupleBody(_)
+                | ExprInstance::EPercentPercentBody(_)
+                | ExprInstance::EPlusPlusBody(_)
+                | ExprInstance::EMinusMinusBody(_)
+                | ExprInstance::EMethodBody(_)
+                | ExprInstance::EPathmapBody(_)
+                | ExprInstance::EZipperBody(_) => None,
+            },
+        })
+}
+
+fn unevaluable_operand(par: Option<&Par>) -> Option<UnevaluableNode> {
+    par.and_then(unevaluable_node)
+}
+
+fn unevaluable_operands(p1: &Option<Par>, p2: &Option<Par>) -> Option<UnevaluableNode> {
+    unevaluable_operand(p1.as_ref()).or_else(|| unevaluable_operand(p2.as_ref()))
 }
 
 /// Replace every bound-variable reference in `par` by the value bound to it, **exactly where

@@ -71,6 +71,7 @@ use mettail_rholang_runtime::rholang_ast::{clear_held_fold_sites, take_held_fold
 use mettail_rholang_runtime::run::run_installed_program_with_call_definitions_and_read_runtime_values;
 use mettail_rholang_runtime::{
     lower_rholang_proc, lower_rholang_proc_with_options,
+    run_normalized_par_and_read_runtime_value_channels_with_guard_refusals,
     run_normalized_par_for_oracle_and_read_runtime_value_channels, LoweringOptions,
 };
 use mettail_runtime::{clear_var_cache, RuntimeObservationValue};
@@ -594,15 +595,41 @@ fn the_discharge_classification_of_every_guard_in_this_suite_is_pinned() {
 async fn implies_over_a_non_boolean_operand_fabricates_nothing() {
     // Both operands ground but not `bool` ⇒ the operator is genuinely undefined
     // at those types. The host `![…]` fold answers `error`; on the machine the
-    // `ENot` of a `GBigInt` raises `EvalError`, which §18.5 collapses to
-    // guard-fail. Either way the observable contract is the one that matters: no
-    // commit, and the datum stays resting. Nothing is fabricated.
-    let (fired, resting) = guarded_receive("1 implies 2", r#""a""#).await;
+    // `ENot` of a non-boolean raises `EvalError`. The observable contract is the
+    // one that matters: no commit, and the datum stays resting. Nothing is
+    // fabricated.
+    //
+    // ★ AND IT IS NO LONGER SILENT. §18.5's collapse of "undecided" into
+    // "guard-fail" is exactly the defect the substrate lane's refusal vocabulary
+    // removes (`guard_par_substrate::GuardRefusalCause`): `1 implies 2` can
+    // never be a predicate under any payload, so it is a `Term`-provenance
+    // DECIDER GAP and the run now says so. The two observables this test was
+    // written to protect are asserted UNCHANGED beneath it — being loud may not
+    // be bought by fabricating, committing, or consuming.
+    let (observed, refusals) =
+        run_normalized_par_and_read_runtime_value_channels_with_guard_refusals(
+            &parse_lower(&guarded_source("1 implies 2", r#""a""#)),
+            &["OUT", "c"],
+        )
+        .await
+        .expect("the program itself must still run");
+    let (fired, resting) = (rendered(&observed, "OUT"), rendered(&observed, "c"));
+
     assert!(fired.is_empty(), "a type-erroneous implication must not commit");
     assert_eq!(
         resting,
         vec![r#""a""#.to_string()],
         "a type-erroneous implication must leave the datum resting"
+    );
+    assert_eq!(
+        refusals.len(),
+        1,
+        "★ a guard that was never DECIDED must not be reported the way a REFUTED guard is: {refusals:?}"
+    );
+    assert!(
+        refusals[0].contains("not a predicate")
+            && refusals[0].contains("present in the guard term"),
+        "the refusal must name the cause and say the TERM is at fault: {refusals:?}"
     );
 }
 

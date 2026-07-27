@@ -322,7 +322,7 @@ use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreMana
 use rspace_plus_plus::rspace::trace::event::Produce;
 use rspace_plus_plus::rspace::trace::Log;
 
-use crate::guard_par_substrate::SubstrateGuardMatcher;
+use crate::guard_par_substrate::{GuardRefusalLedger, SubstrateGuardMatcher};
 
 /// The concrete tuplespace the sandbox runs over.
 pub type Space = RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
@@ -849,6 +849,10 @@ pub struct SpeculativeSandbox {
     /// ★ Correction 4: the post-bootstrap state, captured once. Every
     /// [`SpeculativeSandbox::load`] layers onto this.
     baseline: SpeculativeState,
+    /// ★ Where `SubstrateGuardMatcher` writes a `where` guard it could not DECIDE. Read by
+    /// [`SpeculativeSandbox::fire`] and exposed by
+    /// [`SpeculativeSandbox::guard_refusals`].
+    guard_refusals: GuardRefusalLedger,
 }
 
 impl SpeculativeSandbox {
@@ -878,7 +882,13 @@ impl SpeculativeSandbox {
             .r_space_stores()
             .await
             .map_err(|error| SpeculationError::Bootstrap(format!("in-memory stores: {error}")))?;
-        let inner = Space::create(store, Arc::new(Box::new(SubstrateGuardMatcher::new())))
+        let guards = SubstrateGuardMatcher::new();
+        // ★ The refusal ledger, taken before the decider is boxed. `fire` reads it to tell a
+        // rendezvous that did not address this configuration (`NotFired`) from one whose `where`
+        // guard could not be DECIDED — two facts that arrive at `process_match_found` as the
+        // same `None`, and that a branch driver must not confuse.
+        let guard_refusals = guards.refusals();
+        let inner = Space::create(store, Arc::new(Box::new(guards)))
             .map_err(|error| SpeculationError::Bootstrap(format!("rspace: {error}")))?;
         let staged = StagedSpace::new(inner.clone());
 
@@ -905,7 +915,13 @@ impl SpeculativeSandbox {
         // continuations are in every state this sandbox ever loads.
         let baseline = inner.get_store().snapshot();
 
-        Ok(SpeculativeSandbox { inner, staged, runtime, baseline })
+        Ok(SpeculativeSandbox {
+            inner,
+            staged,
+            runtime,
+            baseline,
+            guard_refusals,
+        })
     }
 
     /// **Fund the sandbox from the host deploy's remaining phlogiston.** The
@@ -979,6 +995,17 @@ impl SpeculativeSandbox {
     /// The staged space, for a caller that wants the staging counters.
     pub fn staged(&self) -> &StagedSpace {
         &self.staged
+    }
+
+    /// ★ Every `where` guard this sandbox's decider could not DECIDE.
+    ///
+    /// [`SpeculativeSandbox::fire`] already raises on the
+    /// [`GuardRefusalClass::DeciderGap`](crate::guard_par_substrate::GuardRefusalClass::DeciderGap)
+    /// half; this exposes the whole ledger, including the *data-dependent* refusals — a guard
+    /// that divided by zero on this payload — which are deliberately not raised because they
+    /// would refuse a guard that is good for every other payload.
+    pub fn guard_refusals(&self) -> &GuardRefusalLedger {
+        &self.guard_refusals
     }
 
     /// Install `state` exactly, layering the bootstrap installs (correction 4)
@@ -1095,10 +1122,19 @@ impl SpeculativeSandbox {
         let peek = !rendezvous.continuation.peeks.is_empty();
 
         // (1) mutate + log, in f1r3node.
-        let (continuation, results) = self
-            .inner
-            .process_match_found(rendezvous)
-            .ok_or(SpeculationError::NotFired)?;
+        // ★ `process_match_found` answers `None` for two facts that are not one fact: the
+        // rendezvous does not address this configuration, and the rendezvous DOES address it but
+        // its `where` guard could not be decided. Reporting the second as `NotFired` attributes
+        // an undecidable guard to a stale index — the same conflation, one layer up. The ledger
+        // separates them, and only ever REPLACES an error that was already being returned, so no
+        // branch that fired before fails now.
+        let (continuation, results) =
+            self.inner.process_match_found(rendezvous).ok_or_else(|| {
+                match self.guard_refusals.decider_gap_error() {
+                    Some(error) => SpeculationError::Interpreter(error),
+                    None => SpeculationError::NotFired,
+                }
+            })?;
 
         let mut payloads = Vec::with_capacity(results.len());
         payloads.extend(results.iter().map(|result| result.matched_datum.clone()));

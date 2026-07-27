@@ -626,10 +626,15 @@ fn run_stepped_inj(
         // ★ THE `where` → Dovetail/SFT WIRE, run-time half — the same decider `run::build_runtime`
         // installs, so a stepped reduction and a straight-through one decide guards identically.
         // `get` is f1r3node's `Matcher` verbatim; only `check_commit` changes.
+        let guards = SubstrateGuardMatcher::new();
+        // ★ The refusal ledger, taken before the decider is boxed. A `where` guard the substrate
+        // cannot DECIDE blocks a COMM; without this handle it would block it in silence, exactly
+        // as it did on the straight-through path. Raised below, on the quiescent path.
+        let guard_refusals = guards.refusals();
         let inner_space =
             RSpace::<Par, BindPattern, ListParWithRandom, TaggedContinuation>::create(
                 store,
-                Arc::new(Box::new(SubstrateGuardMatcher::new())),
+                Arc::new(Box::new(guards)),
             )
             .map_err(|e| format!("rspace: {e:?}"))?;
         let output_observer = observer.clone();
@@ -662,7 +667,13 @@ fn run_stepped_inj(
                         }
                     }
                 }
-                Ok(())
+                // ★ The stepper reports a guard it could not decide through the SAME door the
+                // straight-through path does (`run::inj_on_runtime`), and — for the same reason
+                // — without reverting: the refusal is a decision that was never made, not a
+                // partial mutation, so the datum the guard declined to consume stays resting and
+                // observable. A stepped reduction and a straight-through one must not disagree
+                // about what a guard means, and silence on one path would be exactly that.
+                guard_refusals.refuse_decider_gaps()
             },
             Err(err) => {
                 rho_runtime.revert_to_soft_checkpoint(checkpoint).await;

@@ -176,6 +176,7 @@ pub use rholang_ast::{
 pub use run::{
     binder_apply_redex_present, drive_cross_check, flatten_observation_value,
     run_installed_program_with_call_and_read_observation_set,
+    run_normalized_par_and_read_runtime_value_channels_with_guard_refusals,
     run_normalized_par_for_oracle_and_read_runtime_value_channels,
     run_normalized_par_for_oracle_and_read_runtime_values,
     run_normalized_par_with_lookahead_engine, run_validated_program_and_read_runtime_values,
@@ -197,8 +198,9 @@ pub use run::{
 };
 #[cfg(feature = "source-oracle")]
 pub use run::{
-    run_rholang_source_for_oracle, run_rholang_source_for_oracle_and_read_bools,
-    run_rholang_source_for_oracle_and_read_ints, run_rholang_source_for_oracle_and_read_strings,
+    run_rholang_source_and_read_ints_with_guard_refusals, run_rholang_source_for_oracle,
+    run_rholang_source_for_oracle_and_read_bools, run_rholang_source_for_oracle_and_read_ints,
+    run_rholang_source_for_oracle_and_read_strings,
     run_rholang_source_for_oracle_then_consume_strings,
     run_rholang_source_sequence_for_oracle_and_read_bools,
     run_rholang_source_sequence_for_oracle_and_read_ints,
