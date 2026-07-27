@@ -35,12 +35,20 @@ use models::rhoapi::{
     ENot, EOr, EPlus, EPlusPlus, Expr, Par, ReceiveBind,
 };
 use models::rust::rholang::implicits::GPrivateBuilder;
+use typed_arena::Arena;
+
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_emap_par, new_eset_par, new_freevar_par, new_gbigint_expr,
     new_gbigrat_expr, new_gbool_par, new_gdouble_expr, new_gfixedpoint_expr, new_gint_par,
     new_gstring_par, new_key_value_pair, new_new_par, new_receive_par, new_send_par,
     new_wildcard_par, union,
 };
+
+/// M-2's differential twin: the RECURSIVE lowering this file's driver replaced, kept verbatim
+/// and compiled only under `cfg(test)`. See its module header for why a twin exists and why it
+/// is not a fallback.
+#[cfg(test)]
+mod recursive_oracle;
 
 const FREE_NAME_PREFIX: &str = "mtl:";
 const FREE_PROC_OUTPUT: &str = "mtl#out";
@@ -816,7 +824,7 @@ pub fn lower_rhocalc_proc_with_options(
     proc: &Proc,
     options: LoweringOptions,
 ) -> Result<Par, RhocalcAstLowerError> {
-    lower_body_lifting_folds(proc, &BoundEnv::with_options(options))
+    drive(Seed::Body(proc), &BoundEnv::with_options(options))
 }
 
 /// L9-6b: lower a RhoCalc `Proc` under an installed FLT resolver, so `PFlt` nodes
@@ -830,7 +838,7 @@ pub fn lower_rhocalc_proc_with_resolver(
     proc: &Proc,
     resolver: Arc<dyn FltResolve>,
 ) -> Result<Par, RhocalcAstLowerError> {
-    lower_body_lifting_folds(proc, &BoundEnv::with_resolver(resolver))
+    drive(Seed::Body(proc), &BoundEnv::with_resolver(resolver))
 }
 
 /// [`lower_rhocalc_proc_with_resolver`] under explicit compilation [`LoweringOptions`] (S-D0).
@@ -839,7 +847,7 @@ pub fn lower_rhocalc_proc_with_resolver_and_options(
     resolver: Arc<dyn FltResolve>,
     options: LoweringOptions,
 ) -> Result<Par, RhocalcAstLowerError> {
-    lower_body_lifting_folds(proc, &BoundEnv::with_resolver_and_options(resolver, options))
+    drive(Seed::Body(proc), &BoundEnv::with_resolver_and_options(resolver, options))
 }
 
 /// Lower a parsed `RhoCalcLanguage` term into normalized Rholang `Par`.
@@ -855,7 +863,7 @@ pub fn lower_rhocalc_term(term: &dyn Term) -> Result<Par, RhocalcAstLowerError> 
 /// Lower a rhocalc name into the normalized Rholang `Par` representation used
 /// for channels.
 pub fn lower_rhocalc_name(name: &Name) -> Result<Par, RhocalcAstLowerError> {
-    lower_name(name, &BoundEnv::new())
+    drive(Seed::Name(name), &BoundEnv::new())
 }
 
 fn rhocalc_proc_alternatives_from_term(
@@ -970,390 +978,1932 @@ fn rhocalc_proc_semantic_key(proc: &Proc) -> Vec<u8> {
 /// it is meant to match are then lowered by literally the same code, so
 /// `t matches t` cannot fail through a lowering asymmetry.
 pub fn lower_proc_in_env(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    lower_proc(proc, env)
+    drive(Seed::Proc(proc), env)
 }
 
-fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    // A-S4: exec submits the RAW parse tree (no pre-normalization), so the send-sugar nodes
-    // (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, …) arrive unfolded. Desugar the HEAD node to its
-    // canonical channel-first form first — a pure structural rearrangement (the same constructor
-    // rewrite the rule's `fold` body performs, no value computation) — then lower that.
-    if let Some(desugared) = desugar_send_node(proc) {
-        return lower_proc(&desugared, env);
+/// M-2 — the crate entry the formula compiler uses for a whole FORMULA.
+///
+/// `rhocalc_formula::lower_formula_in_env` is the 87th member of this file's recursion
+/// component (§4.1 of the audit), so it cannot be driven by its own recursion without
+/// leaving a reachable Θ(depth) path: `t matches (φ and (ψ and (…)))` nests through it.
+/// It therefore delegates here, and the driver carries [`Job::Formula`] in its work
+/// alphabet.
+pub(crate) fn drive_formula(formula: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    drive(Seed::Formula(formula), env)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// M-2 — THE EXPLICIT-STACK LOWERING DRIVER
+//
+// ## What was wrong, in one paragraph
+//
+// The lowering was 87 mutually recursive functions (the Tarjan component of §4.1 of
+// `docs/design/audits/lowering-stack-depth-audit-2026-07-27.md`, re-derived by
+// `scratch/scc.py`: 19 helpers plus the 68 recursive `lower_arm_*` frames M-1 created). Every
+// nesting level of the input term cost one native frame per member on the path, so a 30-byte
+// program — `@"OUT"!([[[…[1]…]]])` — aborted the process with a `SIGSEGV` on the guard page at
+// nesting depth 169. That is not a panic and not unwindable: it takes down the node, not the
+// deploy.
+//
+// ★ The reproducer never recursed through a self-call. Its cycle is
+// `lower_proc ▸ CastList ▸ lower_list ▸ lower_proc`, with twelve `core::iter` adapter
+// monomorphizations between the last two. A conversion scoped to `lower_proc`'s own self-calls
+// would have left it exactly as it was. THE WHOLE COMPONENT IS THE SUBJECT.
+//
+// ## The machine
+//
+// A deterministic, finite-control, **data-stack** transducer over a ranked tree, in the idiom
+// of `prattail/src/sppf_realize.rs:164` — this repository's own explicit-stack pattern, already
+// inside the WPDA pipeline. Its `Vec<(SppfId, Phase)>` with `Phase::{Enter, Leave}` is exactly
+// [`Stacks::work`] carrying [`Job`] (Enter) and [`Job::Combine`] (Leave); the one deliberate
+// divergence is that this machine also needs a VALUE stack, because `sppf_realize` memoizes
+// results by node id in a `HashMap` and a lowering has no such reuse (each `Proc` occurrence
+// lowers under its own binder environment, so a memo keyed by node would be wrong).
+//
+// * control: `{Enter, Combine} × Σ`, finite;
+// * `δ` has exactly two shapes —
+//   * **Enter**: push `Combine(k)`, then push children in REVERSE, so LIFO pops them
+//     left-to-right (the order the recursive form evaluated them in, which is load-bearing:
+//     the fold-site register, the receive binder counter and ERROR PRECEDENCE all depend on it);
+//   * **Combine**: pop `arity(k)` values, apply the arm's post-order body, push one value;
+// * final configuration: work empty, exactly one value.
+//
+// The stack alphabet is data-bearing (borrowed pointers, child counts, partially-built receive
+// state) and therefore unbounded, so this is a STACK MACHINE, not a formal pushdown automaton.
+// Saying so is cheaper than defending a class it does not occupy.
+//
+// ## ★ Unweighted, deliberately
+//
+// A `HeapSemiring` implementation was considered and declined. The one genuine `⊕` in the
+// lowering — [`lower_proc_alternatives`]' `Par::append` fold over parse alternatives — fires
+// ONCE, AT THE ROOT, over already-lowered whole alternatives, not at every meet point of a
+// reachability computation; and `⊗` fails outright, because `Par` construction here is n-ary
+// and labelled (an `EList` of 3 is not `EList(2) ⊗ EList(1)`), hence non-associative with no
+// identity. `zero`/`is_zero` would be vacuous, and the impl would advertise that `poststar` /
+// `prestar` apply to the lowering, which they do not. The depth fix comes from the pushdown
+// part; there is no weight.
+//
+// ★ Relatedly: folding the recursion out must not move the merge point. Merging alternatives at
+// every node IS the weighted reading, and it would collapse readings early — the loss this
+// tree's "never disambiguate early" mandate forbids, reached by the back door of "integrating
+// the merge into the driver". [`lower_proc_alternatives`] is untouched.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/// What a drive starts from.
+///
+/// Two entry shapes share one machine because the formula compiler is a member of the same
+/// recursion component; a second driver would be a second answer to "what does this lower to".
+enum Seed<'a> {
+    Proc(&'a Proc),
+    /// A whole program: a binder body, so that a top-level held fold lifts to its trampoline
+    /// before anything is lowered. Every `lower_rhocalc_proc*` entry point starts here.
+    Body(&'a Proc),
+    Name(&'a Name),
+    Formula(&'a Proc),
+}
+
+/// An index into the drive's environment arena.
+///
+/// ★ **`BoundEnv` rides as a DELTA, never owned per work item.** It holds a
+/// `HashMap<FreeVar<String>, usize>`, an FLT hole-level map and an `Arc<dyn FltResolve>`, so an
+/// owned environment per work item would clone that map once per level and leave the traversal
+/// Θ(depth) in HEAP anyway — refuted by measurement on the sibling f1r3node conversion, which
+/// is why it is stated here as a constraint rather than a preference. Work items carry this
+/// `u32`; an environment is materialised exactly once per BINDER SITE, which is precisely what
+/// the recursive form did.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct EnvId(u32);
+
+/// The environment the drive was called with. It is BORROWED, so the common case — a term with
+/// no binders at all — allocates no environment whatsoever.
+const ROOT_ENV: EnvId = EnvId(0);
+
+/// The drive's environment store: one borrowed root plus the environments derived at binder
+/// sites (`new`, a receive's continuation scope, a held-fold trampoline, a formula's pattern
+/// position).
+///
+/// Derived environments are never freed before the drive ends. That is a deliberate trade: a
+/// `Kont` may still name one, and reference-counting them would cost more than the few hundred
+/// bytes a binder site's `HashMap` occupies. The recursive form held exactly the same set alive
+/// on its native stack for the duration of the corresponding subtree.
+struct EnvArena<'a> {
+    root: &'a BoundEnv,
+    derived: Vec<BoundEnv>,
+}
+
+impl<'a> EnvArena<'a> {
+    fn new(root: &'a BoundEnv) -> Self {
+        EnvArena {
+            root,
+            derived: Vec::new(),
+        }
     }
-    match proc {
-        Proc::PZero => lower_arm_p_zero(),
-        Proc::PDrop(name) => lower_arm_p_drop(name, env),
-        // L9-6b CONSTRUCTION arm: a `PFlt*` in VALUE position (a send payload, a
-        // re-quote) elaborates to the reflected foreign term via the guest
-        // reflector selected by its `tag`. The three delimiter forms are identical
-        // at this level — same `Arc<FltNode>` payload.
-        Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
-            lower_arm_p_flt(node, env)
-        },
-        Proc::PPar(parts) => lower_arm_p_par(parts, env),
-        // Bare infix parallel `a | b` (no outer braces). The WPDA parser emits the raw `PParInfix`
-        // node; its `fold` to `PPar({a, b})` (`merge_pp_parallel`) runs only at eval time. Parallel
-        // composition lowers to `Par::append` (associative/commutative over sends/receives/etc.),
-        // which is exactly what lowering the folded `PPar` bag would produce. A free-process member
-        // (e.g. `q` in `c!(p) | q`) lowers via its own `PVar` arm, so it rides this path too.
-        Proc::PParInfix(left, right) => lower_arm_p_par_infix(left, right, env),
-        Proc::POutput(channel, payload) => lower_arm_p_output(channel, payload, env),
-        // ★ THE LOOKAHEAD ARMS — `x!(P)[*]` and `x!(P)[n]`.
-        //
-        // These do NOT lower to a send. `x!(P)[*]` is not "send P on x, and also explore": it is
-        // an EXPLORATION whose results are delivered on `x`. So the lowering emits a speculation
-        // REQUEST and no send at all; the data that eventually rest on `x` are the terminal terms
-        // the engine computed.
-        Proc::PLookaheadAll(subject) => lower_arm_p_lookahead_all(subject, env),
-        Proc::PLookahead(subject, bound) => lower_arm_p_lookahead(subject, bound, env),
-        // `for(...)` receive. Each `;`-separated row nests as the continuation of the previous one;
-        // each row may be a single bind, a `&`-join, persistent (`<=`), empty (`<- n`), and may
-        // carry a `where` guard. See [`lower_pfor_user`].
-        Proc::PForUser(rows, body) => lower_arm_p_for_user(rows, body, env),
-        Proc::PPersistOutput(channel, payload) => lower_arm_p_persist_output(channel, payload, env),
-        // Rholang-style short sends `@P!(q)` / `@P!!(q)`. The WPDA parser emits the raw `*Short`
-        // nodes (the `fold` to `POutput(NQuote(P), q)` / `PPersistOutput(NQuote(P), q)` runs only at
-        // eval time), so lower them here with the SAME semantics: the channel is the quote of `P`,
-        // i.e. `lower_name(NQuote(P)) == lower_proc(P)`. This is the canonical rho send idiom and the
-        // body of most COMM examples (`@("c")!(@("OUT")!("p"))` nests two of these).
-        Proc::POutputShort(channel_proc, payload) => {
-            lower_arm_p_output_short(channel_proc, payload, env)
-        },
-        Proc::PPersistOutputShort(channel_proc, payload) => {
-            lower_arm_p_persist_output_short(channel_proc, payload, env)
-        },
-        Proc::PNew(scope) => lower_arm_p_new(scope, env),
-        // ── A-S4 cast purity: casts lower STRUCTURALLY ─────────────────────────────────────
-        // A literal leaf is DATA (embedding `GInt(5)` is translation, not evaluation); a
-        // structural node lowers to the machine's own metered `Expr` (`-a` → `ENeg`); anything
-        // with no machine algebra (the macro-injected cross-type conversion constructors, an
-        // unsubstituted category variable, a lambda) fails closed, typed and named. The former
-        // `.try_eval()` arms computed those values host-side at lowering time.
-        Proc::CastInt(value) => lower_arm_cast_int(value, env),
-        Proc::CastBool(value) => lower_arm_cast_bool(value),
-        Proc::CastStr(value) => lower_arm_cast_str(value),
-        Proc::PVar(var) => lower_arm_p_var(var, env),
-        Proc::Err => lower_arm_err(),
-        Proc::CastBigRat(value) => lower_arm_cast_big_rat(value),
-        Proc::CastFixed(value) => lower_arm_cast_fixed(value),
-        Proc::CastFloat(value) => lower_arm_cast_float(value),
-        Proc::CastBigInt(value) => lower_arm_cast_big_int(value),
-        Proc::CastUInt32(value) => lower_arm_cast_u_int32(value),
-        Proc::CastList(value) => lower_arm_cast_list(value, env),
-        Proc::CastBag(value) => lower_arm_cast_bag(value, env),
-        Proc::CastMap(value) => lower_arm_cast_map(value, env),
-        Proc::CastSet(value) => lower_arm_cast_set(value, env),
-        Proc::CastPathmap(value) => lower_arm_cast_pathmap(value, env),
-        Proc::CastBytes(value) => lower_arm_cast_bytes(value),
-        // ── A-S4 fold purity: EVERY width/precision fold trampolines on the machine ─────────
-        // Fold nodes are lifted into fold-contract trampolines by [`lower_body_lifting_folds`]
-        // BEFORE `lower_proc` descends (ground operands included — the former Tier-1 in-place
-        // `try_eval_fold_proc` host fold is deleted). A fold reaching THIS arm sits in a position
-        // the lift traversal cannot reach (inside a hashed-collection literal, a receive
-        // pattern, or a fold with a non-ground width) — fail closed, typed and named.
-        Proc::IntBinProc(..) => lower_arm_int_bin_proc(),
-        Proc::UIntBinProc(..) => lower_arm_u_int_bin_proc(),
-        Proc::FloatBinProc(..) => lower_arm_float_bin_proc(),
-        Proc::FixedBinProc(..) => lower_arm_fixed_bin_proc(),
-        Proc::BigintCastProc(..) => lower_arm_bigint_cast_proc(),
-        Proc::BigratCastProc(..) => lower_arm_bigrat_cast_proc(),
-        // ── A-S4 metered machine arithmetic (the RhoCalc face of the E3 pattern) ────────────
-        // Operands lower STRUCTURALLY; the machine's reducer evaluates the expression with its
-        // size-dependent primitive costs (f1r3node `reduce.rs`: `EPlus`/`EMinus`/`EMult`/`EDiv`/
-        // `EMod`/`ENeg` over GInt/GDouble/GBigInt/GBigRat/GFixedPoint). String `+` is Rholang
-        // `++` (`EPlusPlus`): when BOTH operands lower to ground string leaves the concat parity
-        // arm is chosen; `EPlus` has no GString algebra.
-        Proc::Add(a, b) => lower_arm_add(a, b, env),
-        Proc::Sub(a, b) => lower_arm_sub(a, b, env),
-        Proc::Mul(a, b) => lower_arm_mul(a, b, env),
-        Proc::Div(a, b) => lower_arm_div(a, b, env),
-        Proc::Mod(a, b) => lower_arm_mod(a, b, env),
-        Proc::NegProc(a) => lower_arm_neg_proc(a, env),
-        // Boolean/comparison guard operators (used by `where`-conditions and boolean payloads):
-        // lower both operands and wrap in the matching Rholang comparison/logical `Expr`.
-        Proc::Eq(a, b) => lower_arm_eq(a, b, env),
-        Proc::Ne(a, b) => lower_arm_ne(a, b, env),
-        Proc::Lt(a, b) => lower_arm_lt(a, b, env),
-        Proc::Gt(a, b) => lower_arm_gt(a, b, env),
-        Proc::LtEq(a, b) => lower_arm_lt_eq(a, b, env),
-        Proc::GtEq(a, b) => lower_arm_gt_eq(a, b, env),
-        Proc::And(a, b) => lower_arm_and(a, b, env),
-        Proc::Or(a, b) => lower_arm_or(a, b, env),
-        // M-0 — material implication. Rholang's expression algebra has no `EImplies`, and it
-        // needs none: `a implies b ≡ (not a) or b`, and BOTH halves of that identity are
-        // already emitted on this very path (`ENotBody` two arms below, `EOrBody` one arm
-        // above) and both are already decided by `rho-pure-eval`
-        // (`eval.rs::ENotBody`/`EOrBody` → `bool_binop("||", …)`). So `implies` costs the
-        // machine exactly zero new surface: no new `ExprInstance`, no new evaluator arm, no
-        // consensus-visible wire change.
-        //
-        // Built from the two shared assemblers rather than `lower_binary_expr` because the
-        // negation must wrap ONLY the antecedent: `unary_expr_par` propagates the
-        // antecedent's `locally_free`/`connective_used` onto the `ENot`, and
-        // `binary_expr_par` then unions that with the consequent's — so the resulting `Par`
-        // carries exactly the free-variable footprint of `a` ∪ `b`, as `Or` would.
-        Proc::Implies(a, b) => lower_arm_implies(a, b, env),
-        Proc::Not(a) => lower_arm_not(a, env),
-        // M-1b — the SPATIAL satisfaction operator `t matches φ`.
-        //
-        // The TARGET is an ordinary term, lowered by `lower_proc`; the FORMULA is
-        // compiled to a Rholang PATTERN by `rhocalc_formula::lower_formula_in_env`
-        // (§18.1). The two are packed into ONE
-        // `EMatchesBody(EMatches{target, pattern})`, which `rho-pure-eval` decides
-        // through the caller-injected `SpatialMatch` oracle (M-1a, f1r3node
-        // `99b7b1c4`) using the reducer's OWN spatial matcher. MeTTaIL never
-        // matches anything itself on this path.
-        //
-        // ★ §18.1's static-`false` fold. When the formula is unsatisfiable by
-        // construction, `t matches φ` is `false` for EVERY `t`, so the whole guard
-        // collapses to `GBool(false)` and the matcher is never invoked. The
-        // judgement (`formula::is_statically_false`) is syntactic and conservative
-        // — it answers `true` only where the formula's own shape forces it — so
-        // the fold can only ever be a missed optimization, never a wrong verdict.
-        // The TARGET is still lowered, and its typed lowering error still
-        // propagates: folding must not turn an ill-formed program into a
-        // well-formed `false`.
-        Proc::Matches(target, formula) => lower_arm_matches(target, formula, env),
-        // M-1b — `PPar(φ, ψ)` is a PATTERN former, not a term former. It denotes
-        // the separating conjunction, which is meaningful only as the right operand
-        // of `matches` (where `rhocalc_formula` compiles it to a par-pattern). In
-        // TERM position it has no denotation at all, so it fails CLOSED with a
-        // typed error rather than being silently lowered as an ordinary parallel
-        // composition — which would look like it worked while meaning something
-        // different (`a | b` builds a process; `PPar(a,b)` asserts a split).
-        // A program that wants parallel composition writes `{ a | b }` or `a | b`.
-        Proc::SpatialPPar(..) => lower_arm_spatial_p_par(),
-        // ── Methods routed to the reducer's OWN method table (option C, C1/C2) ───────────────
-        //
-        // Every name below is a key of `reduce.rs::method_table` (8197-8256). Dispatch is on the
-        // EVALUATED receiver, so one arm covers every receiver type Rholang supports — `size` on
-        // a Map and on a Set, `length` on a List and on a String, `nth` on an `EList`, an
-        // `ETuple` AND a `GByteArray` (`reduce.rs:4106-4118`) — and a COMM-bound receiver works
-        // exactly like a literal one. See [`lower_method`].
-        //
-        // `.toByteArray()` (C2) replaces the retired `rhoapi` schema fork
-        // (`languages/proto/rhocalc_wire.proto` + `languages/src/rhocalc/wire.rs`), which encoded
-        // a hex `GString` in protobuf BYTE order and could not encode any collection the RhoCalc
-        // grammar actually produces.
-        Proc::MToByteArray(m) => lower_arm_m_to_byte_array(m, env),
-        //
-        // ── C1 — the collection method surface (landed 2026-07-26) ──────────────────────────
-        //
-        // Each arm names a key of `reduce.rs::method_table` (`method_table` is at
-        // `rholang/src/rust/interpreter/reduce.rs:8464` in the pinned `../f1r3node-rust-mettail`
-        // worktree; the stale citation "8197-8256" that stood here predated several edits). The
-        // reducer dispatches on the EVALUATED receiver, so a COMM-bound receiver works exactly
-        // like a literal one.
-        //
-        // ★ SOUNDNESS RESTS ON A MEASURED CARRIER MAP, NOT ON THE METHOD NAME.
-        //
-        // RhoCalc has two carriers with no Rholang analog, and both survive lowering only as an
-        // ENCODING: a `Bag` becomes `EList[GPrivate(RHOCALC_BAG_ABI_TAG), EList[pairs]]` (always
-        // exactly 2 elements — see [`lower_bag`]), and a `Pathmap` becomes a plain `EMap`,
-        // discarding the trie (divergence G — see [`lower_pathmap`]). Routing a method whose
-        // interpreter implementation ACCEPTS that encoding would compute over the encoding and
-        // answer something plausible and wrong. So every arm below was checked against the
-        // accepted-carrier set of the interpreter method it targets, read from the method bodies
-        // themselves (line numbers are the pinned worktree's):
-        //
-        //   method    interpreter accepts            reduce.rs   encoding reachable?
-        //   ────────  ─────────────────────────────  ─────────   ───────────────────────────────
-        //   get       EMap                                7593   Pathmap→EMap: KEY-FAITHFUL, ok
-        //   set       EMap                                7707   Pathmap→EMap: key-faithful, ok
-        //   contains  EMap, ESet, GBool                   7528   Pathmap→EMap: key-faithful, ok
-        //   delete    EMap, ESet                          7444   Pathmap→EMap: key-faithful, ok
-        //   keys      EMap, ESet                          7770   Pathmap→EMap: key-faithful, ok
-        //   size      EMap, ESet                          7829   Bag→EList REJECTED ⇒ closed
-        //   union     EMap, ESet, EPathmap                4336   Bag→EList REJECTED ⇒ closed
-        //   diff      EMap, ESet, EPathmap                4463   Bag→EList REJECTED ⇒ closed
-        //   add       ESet                                7378   —
-        //   length    EList, GString, GByteArray          7893   ⚠ Bag→EList ACCEPTED ⇒ GATED
-        //   nth       EList, ETuple, GByteArray           4078   ⚠ Bag→EList ACCEPTED ⇒ GATED
-        //
-        // The note that stood here asserted that routing would make `#{1|2|2}#.size()` answer the
-        // tagged list's pair count. That is FALSE and was the reason C1 was held: `size_method`
-        // (reduce.rs:7829) accepts only `EMapBody`/`ESetBody`, so a lowered `Bag` fails closed
-        // with `MethodNotDefined { method: "size", other_type: "List" }`. The hazard is real but
-        // lives on `length` and `nth` — the two routed methods that DO accept `EListBody` — and
-        // those two are gated by [`lower_length`] / [`lower_nth`]. Measured, not hypothesized:
-        // `rho_rhocalc_conformance.rs::c1_bag_encoding_is_rejected_by_every_routed_method`.
-        Proc::MGet(m, k) => lower_arm_m_get(m, k, env),
-        Proc::MSet(m, k, v) => lower_arm_m_set(m, k, v, env),
-        Proc::MContains(m, k) => lower_arm_m_contains(m, k, env),
-        Proc::MDelete(m, k) => lower_arm_m_delete(m, k, env),
-        Proc::MUnion(a, b) => lower_arm_m_union(a, b, env),
-        Proc::MSize(m) => lower_arm_m_size(m, env),
-        Proc::MKeys(m) => lower_arm_m_keys(m, env),
-        Proc::BDiff(a, b) => lower_arm_b_diff(a, b, env),
-        Proc::SAdd(s, e) => lower_arm_s_add(s, e, env),
-        Proc::LLength(l) => lower_arm_l_length(l, env),
-        Proc::LNth(l, i) => lower_arm_l_nth(l, i, env),
-        // `concat` is the one C1 method with NO `method_table` key: Rholang spells list/string
-        // concatenation as the `++` OPERATOR (`EPlusPlus`), not as a method. Routing to `++`
-        // still hands the operation to the reducer's own evaluator — the single-evaluator
-        // property C1 exists for — so this is a name change, not a second implementation.
-        //
-        // ⚠ `combine_plus_plus` accepts `EList`, `EMap`, `ESet`, `GByteArray` and `GString`, so it
-        // is a THIRD `EList`-accepting operation and takes the same bag gate as `length`/`nth`.
-        // Ungated, `#{1|2}#.concat(#{3}#)` would concatenate the two ENCODINGS into a 4-element
-        // list carrying two ABI tags — where the fold body, which accepts only (List, List) and
-        // (Str, Str), answers `error`. See [`lower_concat`].
-        Proc::LConcat(l, r) => lower_arm_l_concat(l, r, env),
-        //
-        // ── C1b — the Pathmap/Zipper family: routed, but UNREACHABLE until C4 ───────────────
-        //
-        // These are routed for the same reason as the rest — the reducer owns the semantics — but
-        // every one of them requires an `EPathmapBody` or `EZipperBody` receiver, and RhoCalc's
-        // `Pathmap` still lowers to `EMap` (divergence G). So on the machine they all fail closed
-        // at REDUCE time with `MethodNotDefined { other_type: "map" }` rather than at LOWER time.
-        // That is strictly more informative (it names the carrier that is actually wrong, which
-        // is the thing C4 fixes) and it is still fail-closed — measured by
-        // `c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`.
-        //
-        // ★★ CORRECTION (C4 investigation, 2026-07-26 — MEASURED). The sentence that stood here,
-        // "when C4 gives `Pathmap` its native carrier these arms start working with no further
-        // change here", is FALSE, and the reason is worth more than the sentence.
-        //
-        // C4 is not a plumbing change, because **RhoCalc's `Pathmap` and Rholang's `EPathMap` are
-        // different types**:
-        //
-        //   RhoCalc   `PathMapLit<Proc, Proc>`  a KEY→VALUE map. `{| 1 : 10 |}` is well formed and
-        //                                       `pathmap_get` reads a value out at a key.
-        //   Rholang   `EPathMap { ps }`         a SET OF PATHS. An element is its own key AND its
-        //                                       own value.
-        //
-        // The second is measured three independent ways, not read off a comment:
-        //
-        //   1. the reducer answers `getPath() == getLeaf()` ▸ `true` at every leaf, and `atPath(k)`
-        //      returns `k` itself
-        //      (`rho_rhocalc_conformance.rs::c4_the_native_carrier_has_no_value_slot`);
-        //   2. `models/.../pathmap_crate_type_mapper.rs::rholang_pathmap_to_e_pathmap` keeps only
-        //      the trie's VALUES and discards its keys, so a key that is not its own value cannot
-        //      survive one round trip through the mapper; and
-        //   3. decisively, the GROUND WIRE. Since f1r3node `f34c2d7e` a ground `EPathMap`
-        //      serialises as `bytes serialized_paths = 8` — the uncompressed trie-ordered KEY
-        //      STREAM — and `merge_field` rebuilds `ps` by `decode_trie_path` of each key. Proto
-        //      fields 6 and 7, RESERVED by that same commit, were "a retired value_form/
-        //      value_entries experiment". A value distinct from its key is not merely unrepresented
-        //      in the carrier: it is unrepresentable on the consensus wire, and that wire is the
-        //      hash preimage.
-        //
-        // Two further measured consequences, both of which a naive flip would hit immediately:
-        //
-        //   * the native carrier REFUSES the Map surface — `get`/`set`/`contains`/`delete`/`keys`/
-        //     `size`/`length` all answer `MethodNotDefined { other_type: "pathmap" }` on an
-        //     `EPathmapBody` receiver. Five of them work on a `Pathmap` receiver TODAY only because
-        //     this file emits an `EMap` (`c1_pathmap_methods_answer_through_the_emap_encoding`), so
-        //     the flip trades twenty-two dead methods for seven newly dead ones unless each is
-        //     re-expressed. Measured by `c4_the_native_carrier_refuses_the_map_method_surface`.
-        //   * ⚠ and a RhoCalc pathmap key is BARE by default (`{| 1 : 10 |}` has key `1`), which is
-        //     the element shape whose trie key the interpreter inserts WITHOUT the `0x00`
-        //     terminator its readers unconditionally append. Every value read then misses and
-        //     answers `Nil`, and `toNextLeaf` becomes a FIXED POINT — a walk-until-`Nil` over
-        //     `{| 1, 2, 3 |}` does not terminate. Measured by
-        //     `c4_defect_a_bare_element_reads_back_as_nil` and
-        //     `c4_defect_a_bare_element_walk_never_advances`. Pointing `lower_pathmap` at
-        //     `EPathmapBody` today would therefore make the very enumeration surface C4 exists to
-        //     unlock HANG rather than work.
-        //
-        // So C4 requires DECIDING what RhoCalc's value slot becomes — drop it, fuse it into the key
-        // path (which changes what `getPath`/`getLeaf` mean), or add a value arm to the consensus
-        // wire — and every answer costs something that is not a lowering's to spend. The decision
-        // is presented, not taken here; `lower_pathmap` keeps emitting `EMap` until it is made.
-        //
-        // ★ `toNextLeaf` carries a DELIBERATE CROSS-ENDPOINT CONVENTION MISMATCH, and
-        // mistranslating it does not error — it LOOPS FOREVER. The reducer reports an exhausted
-        // walk as `Nil` (`Ok(Par::default())`); RhoCalc's fold body reports it as `Err(())`, the
-        // house "failed navigation stays STUCK" form. See
-        // `languages/src/rhocalc/zipper.rs::zipper_to_next_leaf` and its f1r3node twin
-        // `rholang/tests/zipper_enumeration_spec.rs::to_next_leaf_returns_nil_when_exhausted`,
-        // which name each other.
-        //
-        // What C1 owes the contract is that the `Nil` NEVER becomes a usable zipper on this side.
-        // It cannot, and the reason is structural rather than defensive, so there is no predicate
-        // here to call: `Nil` is not an `EZipperBody`, so the reducer's own zipper methods reject
-        // it (`MethodNotDefined`), a walk cannot continue on it, and mettail has no decoder that
-        // could lift it back — `RuntimeObservationValue` (`runtime/src/language.rs:108`) has no
-        // zipper variant and `Proc::CastReadZipper` is deliberately NOT lowered (see
-        // [`unsupported_construct_name`]). The property is proved end-to-end, against the real
-        // reducer and BOUNDED so a violation fails instead of hanging, by
-        // `rho_rhocalc_conformance.rs::c1_zipper_walk_exhaustion_terminates_within_leaf_count`.
-        Proc::PGetSubtrie(m) => lower_arm_p_get_subtrie(m, env),
-        Proc::PReadZipper(m) => lower_arm_p_read_zipper(m, env),
-        Proc::PReadZipperAt(m, p) => lower_arm_p_read_zipper_at(m, p, env),
-        Proc::PWriteZipper(m) => lower_arm_p_write_zipper(m, env),
-        Proc::PWriteZipperAt(m, p) => lower_arm_p_write_zipper_at(m, p, env),
-        Proc::RZGetLeaf(z) => lower_arm_r_z_get_leaf(z, env),
-        Proc::RZDescendTo(z, rel) => lower_arm_r_z_descend_to(z, rel, env),
-        Proc::RZChildCount(z) => lower_arm_r_z_child_count(z, env),
-        Proc::RZDescendFirst(z) => lower_arm_r_z_descend_first(z, env),
-        Proc::RZToNextSibling(z) => lower_arm_r_z_to_next_sibling(z, env),
-        Proc::RZToPrevSibling(z) => lower_arm_r_z_to_prev_sibling(z, env),
-        Proc::RZDescendIndexedBranch(z, i) => lower_arm_r_z_descend_indexed_branch(z, i, env),
-        Proc::RZAscendOne(z) => lower_arm_r_z_ascend_one(z, env),
-        Proc::RZAscend(z, n) => lower_arm_r_z_ascend(z, n, env),
-        Proc::RZGetPath(z) => lower_arm_r_z_get_path(z, env),
-        Proc::RZToNextLeaf(z) => lower_arm_r_z_to_next_leaf(z, env),
-        Proc::RZLeafCount(z) => lower_arm_r_z_leaf_count(z, env),
-        // ⚠ `setLeaf` is NOT routed, and it is the reason this file checks ARITY and SEMANTICS
-        // rather than trusting a shared name. The two `setLeaf`s are different operations:
-        //
-        //   RhoCalc  `w.setLeaf(full, v)`  writes at the ABSOLUTE path given as an argument —
-        //                                  `write_zipper_set_leaf` is
-        //                                  `pm.set_val_at(encode_proc_path_entry(full), v)`
-        //                                  (`languages/src/rhocalc/zipper.rs:529`). The zipper's
-        //                                  focus is not consulted at all.
-        //   Rholang  `z.setLeaf(v)`        APPENDS `v` to the map as a new element, at the path `v`
-        //                                  derives for ITSELF. One argument. The zipper's focus is
-        //                                  not consulted either — see the correction below.
-        //
-        // Emitting `EMethod("setLeaf")` with RhoCalc's two arguments would raise
-        // `MethodArgumentNumberMismatch` — fail-closed, but for the WRONG reason, and it would
-        // leave a mapping that becomes silently incorrect the moment anyone "fixes" the arity by
-        // dropping `full`.
-        //
-        // ★★ CORRECTION (C4 investigation, 2026-07-26 — MEASURED). This note used to say Rholang's
-        // `setLeaf` "writes at the zipper's CURRENT FOCUS", and to name `writeZipperAt(full)
-        // .setLeaf(v)` as the rewrite that would express RhoCalc's meaning on the machine. **Both
-        // halves were wrong, and the second was a trap.**
-        //
-        // `reduce.rs::set_leaf_method` does `pathmap.ps_make_mut().push(value)` on BOTH of its arms
-        // and never reads `zipper.current_path`. Its doc comment still reads "set value at current
-        // position" — a leftover from the retired value-arm experiment (proto fields 6/7, RESERVED
-        // by `f34c2d7e`) — and that stale comment is what the old note was written from. Measured
-        // by `rho_rhocalc_conformance.rs::c4_set_leaf_appends_an_element_and_ignores_the_focus`:
-        // the map GROWS by one, the focused entry SURVIVES, the new element lands at its own path,
-        // and `writeZipperAt("b").setLeaf(v)`, `writeZipperAt("c").setLeaf(v)` and
-        // `writeZipper().setLeaf(v)` all produce the SAME map. `writeZipperAt(p)` is inert in front
-        // of `setLeaf`.
-        //
-        // So the proposed rewrite would have written at the wrong place while looking correct in
-        // review — the same "fix the arity by dropping the path" failure this note exists to
-        // prevent, wearing a different hat.
-        //
-        // The REAL reason `setLeaf` cannot be routed is the C4 carrier fact above: a path-addressed
-        // write needs a value slot, and `EPathMap` has none. `setLeaf(v)` is the only write the
-        // carrier can express — *insert the element `v`*, whose key is derived from `v` — and
-        // RhoCalc's `setLeaf(full, v)` is simply not that operation. It stays fail-closed and
-        // named, and it will still be fail-closed after a naive carrier flip, because the obstacle
-        // is the missing value slot rather than the argument count.
-        //
-        // The arity of every other routed zipper method was checked against the interpreter's own
-        // `expected:` counts, and `setLeaf` is the only mismatch.
-        Proc::WZSetSubtrie(w, rel) => lower_arm_w_z_set_subtrie(w, rel, env),
-        Proc::WZRemoveLeaf(w) => lower_arm_w_z_remove_leaf(w, env),
-        Proc::WZRemoveBranches(w) => lower_arm_w_z_remove_branches(w, env),
-        Proc::WZGraft(w, rz) => lower_arm_w_z_graft(w, rz, env),
-        Proc::WZJoinInto(w, rz) => lower_arm_w_z_join_into(w, rz, env),
-        //
-        // A-S4 fail-closed: every remaining construct has no machine algebra (bitwise ops,
-        // cross-type conversions, the MeTTaIL-only collection residue, lambda forms, internal
-        // gates). The typed error NAMES the construct; nothing silently host-evaluates.
-        other => lower_arm_unsupported(other),
+
+    fn get(&self, id: EnvId) -> &BoundEnv {
+        match id.0 {
+            0 => self.root,
+            n => &self.derived[(n - 1) as usize],
+        }
+    }
+
+    fn push(&mut self, env: BoundEnv) -> EnvId {
+        self.derived.push(env);
+        EnvId(
+            u32::try_from(self.derived.len())
+                .expect("rhocalc lowering: more than 2^32 binder sites in one term"),
+        )
     }
 }
 
+/// The `ExprInstance` constructors [`Kont::BinExpr`] can name.
+///
+/// A DATA tag rather than the `impl FnOnce(Option<Par>, Option<Par>) -> ExprInstance` the
+/// recursive `lower_binary_expr` took: a continuation has to be storable in a `Vec`, and a
+/// closure whose type is unique per call site is not. The mapping back to the constructor is
+/// [`BinOp::build`], one arm each, so the two statements sit next to each other.
+#[derive(Clone, Copy, Debug)]
+enum BinOp {
+    Minus,
+    Mult,
+    Div,
+    Mod,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Lte,
+    Gte,
+    And,
+    Or,
+    /// `++` — string/list concatenation (`Proc::LConcat`, and `Proc::Add` over two ground
+    /// strings).
+    PlusPlus,
+    /// `+` — numeric addition.
+    Plus,
+}
+
+impl BinOp {
+    fn build(self, p1: Option<Par>, p2: Option<Par>) -> ExprInstance {
+        match self {
+            BinOp::Minus => ExprInstance::EMinusBody(EMinus { p1, p2 }),
+            BinOp::Mult => ExprInstance::EMultBody(EMult { p1, p2 }),
+            BinOp::Div => ExprInstance::EDivBody(EDiv { p1, p2 }),
+            BinOp::Mod => ExprInstance::EModBody(EMod { p1, p2 }),
+            BinOp::Eq => ExprInstance::EEqBody(EEq { p1, p2 }),
+            BinOp::Neq => ExprInstance::ENeqBody(ENeq { p1, p2 }),
+            BinOp::Lt => ExprInstance::ELtBody(ELt { p1, p2 }),
+            BinOp::Gt => ExprInstance::EGtBody(EGt { p1, p2 }),
+            BinOp::Lte => ExprInstance::ELteBody(ELte { p1, p2 }),
+            BinOp::Gte => ExprInstance::EGteBody(EGte { p1, p2 }),
+            BinOp::And => ExprInstance::EAndBody(EAnd { p1, p2 }),
+            BinOp::Or => ExprInstance::EOrBody(EOr { p1, p2 }),
+            BinOp::PlusPlus => ExprInstance::EPlusPlusBody(EPlusPlus { p1, p2 }),
+            BinOp::Plus => ExprInstance::EPlusBody(EPlus { p1, p2 }),
+        }
+    }
+}
+
+/// The `ExprInstance` constructors [`Kont::UnExpr`] can name. See [`BinOp`].
+#[derive(Clone, Copy, Debug)]
+enum UnOp {
+    Neg,
+    Not,
+}
+
+impl UnOp {
+    fn build(self, p: Option<Par>) -> ExprInstance {
+        match self {
+            UnOp::Neg => ExprInstance::ENegBody(ENeg { p }),
+            UnOp::Not => ExprInstance::ENotBody(ENot { p }),
+        }
+    }
+}
+
+/// The receive under construction, threaded through [`Kont::ForSource`] →
+/// [`Kont::ForPattern`] → [`Kont::ForBody`] → [`Kont::ForGuard`].
+///
+/// `lower_pfor_user` is the one member whose CHILD LIST IS NOT KNOWN UP FRONT: the
+/// continuation's binder scope is derived from the binders its own PATTERNS introduce, so the
+/// body cannot be scheduled until the patterns are lowered. The machine handles that with
+/// STAGED continuations — a `Combine` that pops its values and pushes fresh work plus a
+/// successor continuation. The deficit invariant survives it exactly (see [`Stacks::check`]):
+/// popping `n` values and a continuation of arity `n`, then pushing `m` jobs and a continuation
+/// of arity `m`, moves every term by an equal and opposite amount.
+///
+/// `Box`ed at the `Kont` site so one large stage does not set the size of every work item.
+struct ForState<'a> {
+    /// The rows of THIS `for`, `rows[0]` being the one under construction.
+    rows: &'a [ForRow],
+    /// The `for`'s body, shared by every row's continuation.
+    body: &'a Proc,
+    /// The scope the row's SOURCES and PATTERNS are read in (the enclosing scope).
+    env: EnvId,
+    /// `rows[0]`'s binds, BORROWED. The recursive `decompose_for_row` cloned each
+    /// `InputBind` out of its `Arc`; nothing reads the clone, so the driver borrows.
+    binds: Vec<&'a InputBind>,
+    persistent: bool,
+    cond: Option<&'a Proc>,
+    /// How many of `binds` are done. `binds[next_bind]` is the one in flight.
+    next_bind: usize,
+    binds_rho: Vec<ReceiveBind>,
+    slots: Vec<ReceiveSlot>,
+    /// The lowered SOURCE of the bind in flight, held across its pattern's subtree. The
+    /// recursive form kept it in a local across `lower_pattern_proc`'s call; the machine has no
+    /// native frame to keep it in, so it rides the stage.
+    pending_source: Option<Par>,
+    /// The continuation scope, derived once every bind is done.
+    extended_env: EnvId,
+    /// The lowered continuation, held while the guard is lowered.
+    lowered_body: Option<Par>,
+}
+
+/// The counter and binder list one receive PATTERN accumulates.
+///
+/// `lower_pattern_proc` threaded `&mut i32` and `&mut Vec<Binder<String>>` through a pre-order
+/// walk. The driver gives each bind its own cell and jobs carry the cell's index, which
+/// reproduces the threading exactly: the machine is depth-first, so a pattern's whole subtree
+/// is drained before its next sibling job is entered, and the `PVar` leaves therefore visit in
+/// the same left-to-right order that incremented the recursive counter.
+#[derive(Default)]
+struct PatternState {
+    counter: i32,
+    binders: Vec<Binder<String>>,
+}
+
+/// A unit of work: one subtree still to be lowered, or one continuation ready to run.
+///
+/// Every variant but [`Job::Combine`] is an **Enter**; `Combine` is a **Leave**.
+enum Job<'a> {
+    /// `lower_proc` — an ordinary term.
+    Proc(&'a Proc, EnvId),
+    /// `lower_name` / `lower_drop` — a channel or a dereference. The two were textually
+    /// identical functions (they differ only in which of themselves the `NParen` arm recurses
+    /// into, and both recurse into themselves), so the machine has one job for both.
+    Name(&'a Name, EnvId),
+    /// `lower_body_lifting_folds` — a binder body, with held width/precision folds lifted to
+    /// trampolines before it is lowered.
+    Body(&'a Proc, EnvId),
+    /// `lower_pfor_user` — the receive rows still to nest, and the body under all of them.
+    ForRows(&'a [ForRow], &'a Proc, EnvId),
+    /// `lower_pattern_proc` — a receive pattern, whose free variables become binders in
+    /// `pattern_states[slot]`.
+    Pattern(&'a Proc, u32),
+    /// `rhocalc_formula::lower_formula_in_env` — a spatial formula, compiled to a pattern.
+    Formula(&'a Proc, EnvId),
+    /// Run a continuation over the values its children left.
+    Combine(Kont<'a>),
+}
+
+/// A continuation: the post-order half of one arm, plus whatever that arm needs to remember.
+enum Kont<'a> {
+    /// `parts.try_fold(Par::default(), append)` — the `PPar` bag.
+    ParFold(usize),
+    /// `left.append(right)` — `PParInfix`. Distinct from [`Kont::ParFold`] with `n = 2` on
+    /// purpose: it is a different expression, and the differential compares expressions.
+    ParPair,
+    /// `send_par` / `send_par_persistent` over `(channel, payload)`.
+    Send { persistent: bool },
+    /// `binary_expr_par(lhs, rhs, op)`.
+    BinExpr(BinOp),
+    /// `unary_expr_par(operand, op)`.
+    UnExpr(UnOp),
+    /// `Proc::Add` — `EPlusPlus` when BOTH operands lower to ground strings, else `EPlus`. The
+    /// parity is decided in the COMBINE, on the lowered operands, exactly as the recursive arm
+    /// decided it.
+    AddParity,
+    /// `Proc::Implies` — `(not a) or b`, with the negation wrapping ONLY the antecedent.
+    Implies,
+    /// `lower_method`: an `EMethod` over `1 + argc` children, receiver first.
+    Method {
+        name: &'static str,
+        argc: usize,
+    },
+    /// `EMatches` over `(target, pattern)`.
+    Matches,
+    /// §18.1's static-`false` fold: the formula is unsatisfiable by construction, so the whole
+    /// guard is `GBool(false)` carrying the target's `locally_free`. The TARGET is still
+    /// lowered — folding must not turn an ill-formed program into a well-formed `false`.
+    MatchesStaticallyFalse,
+    /// `new_elist_par` over `n` items — `CastList`, and the payload of the `!(a, b, …)` and
+    /// `!()` send sugars.
+    ListLit(usize),
+    /// `new_eset_par` over `n` elements, pre-sorted at Enter.
+    SetLit(usize),
+    /// `new_emap_par` over `n` key/value pairs, i.e. `2n` children.
+    MapLit(usize),
+    /// `lower_bag`'s tagged 2-element ABI encoding, carrying each item's multiplicity.
+    BagLit(Vec<i64>),
+    /// `lower_pathmap` — the same `EMap` carrier as [`Kont::MapLit`] (divergence G), kept
+    /// separate because its diagnostics and its C4 disposition are not the map's.
+    PathmapLit(usize),
+    /// `PNew`'s `new`-scope wrapper over its lowered body.
+    New { binder_count: usize },
+    /// `x!(P)[*]` — an unbounded speculation request over `(channel, payload)`.
+    SpecAll,
+    /// `x!(P)[n]` — a bounded speculation request over `(channel, payload)`.
+    SpecN { bound: i64 },
+    /// `lower_body_lifting_folds`' trampoline: `new(ret){ fold!(operand, ret) | for(r <- ret){ … } }`
+    /// over `(operand, for_body)`.
+    HeldFold { channel: Par },
+    /// Stage A of `lower_pfor_user`: the SOURCE of `binds[next_bind]` is on the value stack.
+    ForSource(Box<ForState<'a>>),
+    /// Stage B: the PATTERN of `binds[next_bind]` is on the value stack.
+    ForPattern(Box<ForState<'a>>, u32),
+    /// Stage C: the lowered CONTINUATION is on the value stack.
+    ForBody(Box<ForState<'a>>),
+    /// Stage D: the lowered GUARD is on the value stack.
+    ForGuard(Box<ForState<'a>>),
+    /// `lower_pattern_proc`'s list former.
+    PatListLit(usize),
+    /// `lower_pattern_proc`'s set former.
+    PatSetLit(usize),
+    /// `lower_pattern_proc`'s map former (`2n` children).
+    PatMapLit(usize),
+    /// `φ and ψ` — `ConnAndBody`.
+    FormulaAnd,
+    /// `φ or ψ` — `ConnOrBody`.
+    FormulaOr,
+    /// `not φ` — `ConnNotBody`.
+    FormulaNot,
+    /// `φ implies ψ` — `(not φ) or ψ`.
+    FormulaImplies,
+    /// `{ φ | ψ | … }` — the separating conjunction, `n` parts appended.
+    FormulaSeparation(usize),
+}
+
+impl Kont<'_> {
+    /// How many values this continuation pops.
+    ///
+    /// ⚠ Written as an exhaustive `match` that DELIBERATELY DUPLICATES the pop counts in
+    /// [`Drive::combine`]. The duplication is the point: [`Stacks::check`] cross-checks the two
+    /// statements on every step of every term, so a continuation whose arity and whose body
+    /// disagree fails on the FIRST malformed configuration, on ANY input — whereas a
+    /// differential fires only if the corpus happens to contain the witness.
+    fn arity(&self) -> usize {
+        match self {
+            Kont::ParFold(n) => *n,
+            Kont::ParPair => 2,
+            Kont::Send { .. } => 2,
+            Kont::BinExpr(_) => 2,
+            Kont::UnExpr(_) => 1,
+            Kont::AddParity => 2,
+            Kont::Implies => 2,
+            Kont::Method { argc, .. } => 1 + *argc,
+            Kont::Matches => 2,
+            Kont::MatchesStaticallyFalse => 1,
+            Kont::ListLit(n) => *n,
+            Kont::SetLit(n) => *n,
+            Kont::MapLit(n) => 2 * *n,
+            Kont::BagLit(counts) => counts.len(),
+            Kont::PathmapLit(n) => 2 * *n,
+            Kont::New { .. } => 1,
+            Kont::SpecAll => 2,
+            Kont::SpecN { .. } => 2,
+            Kont::HeldFold { .. } => 2,
+            // The four receive stages are STAGED: each awaits exactly one value.
+            Kont::ForSource(_) => 1,
+            Kont::ForPattern(..) => 1,
+            Kont::ForBody(_) => 1,
+            Kont::ForGuard(_) => 1,
+            Kont::PatListLit(n) => *n,
+            Kont::PatSetLit(n) => *n,
+            Kont::PatMapLit(n) => 2 * *n,
+            Kont::FormulaAnd => 2,
+            Kont::FormulaOr => 2,
+            Kont::FormulaNot => 1,
+            Kont::FormulaImplies => 2,
+            Kont::FormulaSeparation(n) => *n,
+        }
+    }
+
+    /// This continuation's variant name.
+    ///
+    /// Exists for the differential's ANTI-VACUITY coverage assertion
+    /// (`the_corpus_reaches_every_kont`): a corpus that never reaches a continuation proves
+    /// nothing about it, and a coverage check that cannot NAME the gap is not a check. Paired
+    /// with [`KONT_NAMES`], which must list exactly these strings — the test fails if a variant
+    /// is added and no corpus entry reaches it.
+    #[cfg(test)]
+    fn name(&self) -> &'static str {
+        match self {
+            Kont::ParFold(_) => "ParFold",
+            Kont::ParPair => "ParPair",
+            Kont::Send { .. } => "Send",
+            Kont::BinExpr(_) => "BinExpr",
+            Kont::UnExpr(_) => "UnExpr",
+            Kont::AddParity => "AddParity",
+            Kont::Implies => "Implies",
+            Kont::Method { .. } => "Method",
+            Kont::Matches => "Matches",
+            Kont::MatchesStaticallyFalse => "MatchesStaticallyFalse",
+            Kont::ListLit(_) => "ListLit",
+            Kont::SetLit(_) => "SetLit",
+            Kont::MapLit(_) => "MapLit",
+            Kont::BagLit(_) => "BagLit",
+            Kont::PathmapLit(_) => "PathmapLit",
+            Kont::New { .. } => "New",
+            Kont::SpecAll => "SpecAll",
+            Kont::SpecN { .. } => "SpecN",
+            Kont::HeldFold { .. } => "HeldFold",
+            Kont::ForSource(_) => "ForSource",
+            Kont::ForPattern(..) => "ForPattern",
+            Kont::ForBody(_) => "ForBody",
+            Kont::ForGuard(_) => "ForGuard",
+            Kont::PatListLit(_) => "PatListLit",
+            Kont::PatSetLit(_) => "PatSetLit",
+            Kont::PatMapLit(_) => "PatMapLit",
+            Kont::FormulaAnd => "FormulaAnd",
+            Kont::FormulaOr => "FormulaOr",
+            Kont::FormulaNot => "FormulaNot",
+            Kont::FormulaImplies => "FormulaImplies",
+            Kont::FormulaSeparation(_) => "FormulaSeparation",
+        }
+    }
+}
+
+/// Every continuation the machine can push, by name. See [`Kont::name`].
+#[cfg(test)]
+pub(crate) const KONT_NAMES: &[&str] = &[
+    "ParFold",
+    "ParPair",
+    "Send",
+    "BinExpr",
+    "UnExpr",
+    "AddParity",
+    "Implies",
+    "Method",
+    "Matches",
+    "MatchesStaticallyFalse",
+    "ListLit",
+    "SetLit",
+    "MapLit",
+    "BagLit",
+    "PathmapLit",
+    "New",
+    "SpecAll",
+    "SpecN",
+    "HeldFold",
+    "ForSource",
+    "ForPattern",
+    "ForBody",
+    "ForGuard",
+    "PatListLit",
+    "PatSetLit",
+    "PatMapLit",
+    "FormulaAnd",
+    "FormulaOr",
+    "FormulaNot",
+    "FormulaImplies",
+    "FormulaSeparation",
+];
+
+#[cfg(test)]
+thread_local! {
+    /// The continuation names the most recent drive pushed. Written by [`Stacks::push`] and
+    /// read by [`kont_trace`]; `cfg(test)` only, so the production drive carries no
+    /// instrumentation at all.
+    static KONT_TRACE: RefCell<std::collections::BTreeSet<&'static str>> =
+        RefCell::new(std::collections::BTreeSet::new());
+}
+
+/// Lower `proc` and merge the continuations the drive pushed into `seen`.
+///
+/// The differential's coverage instrument. It runs the REAL driver — not a model of it — so a
+/// continuation that the corpus reaches only on an error path still counts, and one that no
+/// longer exists cannot be counted.
+#[cfg(test)]
+pub(crate) fn kont_trace(
+    proc: &Proc,
+    env: &BoundEnv,
+    seen: &mut std::collections::BTreeSet<&'static str>,
+) {
+    KONT_TRACE.with(|trace| trace.borrow_mut().clear());
+    let _ = drive(Seed::Proc(proc), env);
+    KONT_TRACE.with(|trace| seen.extend(trace.borrow().iter().copied()));
+}
+
+/// The two stacks, plus the three incremental counters the deficit invariant needs.
+struct Stacks<'a> {
+    work: Vec<Job<'a>>,
+    values: Vec<Par>,
+    /// `D` — the number of **Enter** items in `work`.
+    enters: usize,
+    /// `|C|` — the number of pending continuations in `work`.
+    konts: usize,
+    /// `Σ_{k ∈ C} arity(k)`.
+    kont_arity: usize,
+}
+
+impl<'a> Stacks<'a> {
+    fn new(seed: Job<'a>) -> Self {
+        // Preallocated: a term deep enough to matter will need these, and growing a `Vec` under
+        // a hot post-order walk is pure waste. 64 covers every term in the test corpus without
+        // a realloc; deeper terms grow amortised.
+        let mut stacks = Stacks {
+            work: Vec::with_capacity(64),
+            values: Vec::with_capacity(64),
+            enters: 0,
+            konts: 0,
+            kont_arity: 0,
+        };
+        stacks.push(seed);
+        stacks
+    }
+
+    fn push(&mut self, job: Job<'a>) {
+        match &job {
+            Job::Combine(kont) => {
+                self.konts += 1;
+                self.kont_arity += kont.arity();
+                #[cfg(test)]
+                KONT_TRACE.with(|trace| trace.borrow_mut().insert(kont.name()));
+            },
+            _ => self.enters += 1,
+        }
+        self.work.push(job);
+    }
+
+    fn pop(&mut self) -> Option<Job<'a>> {
+        let job = self.work.pop()?;
+        match &job {
+            Job::Combine(kont) => {
+                self.konts -= 1;
+                self.kont_arity -= kont.arity();
+            },
+            _ => self.enters -= 1,
+        }
+        Some(job)
+    }
+
+    fn value(&mut self, par: Par) {
+        self.values.push(par);
+    }
+
+    /// Pop exactly one value. Every caller has already been told how many to expect by
+    /// [`Kont::arity`], so an empty stack here is a machine bug, not an input error.
+    fn pop_value(&mut self) -> Par {
+        self.values
+            .pop()
+            .expect("rhocalc lowering: continuation popped more values than its arity")
+    }
+
+    /// Pop the last `n` values, LEFT TO RIGHT. Children are pushed in reverse and therefore
+    /// pop — and push their values — in source order, so the tail of the value stack is
+    /// already in the order an `EList` wants.
+    fn pop_values(&mut self, n: usize) -> Vec<Par> {
+        let start = self
+            .values
+            .len()
+            .checked_sub(n)
+            .expect("rhocalc lowering: continuation popped more values than its arity");
+        self.values.split_off(start)
+    }
+
+    /// ★ **The deficit invariant**, asserted at the head of the drive loop.
+    ///
+    /// ```math
+    /// |V| \;+\; D \;+\; |C| \;-\; \sum_{k \in C}\mathrm{arity}(k) \;=\; 1
+    /// ```
+    ///
+    /// Read it as: *the machine owes exactly one value*. Every Enter still to run will produce
+    /// one; every pending continuation will consume `arity` and produce one, a net debt of
+    /// `arity − 1`; every value already on the stack is one paid. Verified transition by
+    /// transition — over the two shapes `δ` has, in their general form, so exhaustively over
+    /// reachable configurations rather than by spot check:
+    ///
+    /// | # | configuration | `\|V\|` | `D` | `\|C\|` | `Σ arity` | total |
+    /// |---|---|---|---|---|---|---|
+    /// | 0 | initial: `work = [Enter(root)]` | 0 | 1 | 0 | 0 | **1** ✓ |
+    /// | 1 | after `Enter` of an `n`-ary node | 0 | `n` | 1 | `n` | **1** ✓ |
+    /// | 2 | after `Enter` of a leaf (`n = 0`) | +1 | −1 | 0 | 0 | **1** ✓ |
+    /// | 3 | after `j` of the `n` children resolve | `j` | `n − j` | 1 | `n` | **1** ✓ |
+    /// | 4 | all `n` resolved | `n` | 0 | 1 | `n` | **1** ✓ |
+    /// | 5 | after `Combine(k)` | `n − n + 1` | 0 | 0 | 0 | **1** ✓ |
+    /// | 6 | final: work empty, one value | 1 | 0 | 0 | 0 | **1** ✓ |
+    ///
+    /// A STAGED continuation (row 5', the receive) pops `n` values and a continuation of arity
+    /// `n`, then pushes `m` Enters and a continuation of arity `m`: `−n + m + 0 − (−n + m) = 0`.
+    ///
+    /// ⚠ An earlier form, `\|V\| + D = 1 + Σ arity`, is **wrong** — off by `|C|`, and it fires
+    /// immediately after the root descends.
+    ///
+    /// ⚠ Maintained with INCREMENTAL counters, never an O(n) rescan: the gate bisects at depth
+    /// 4,096, and a rescan would make the debug build O(n²) on exactly the terms that matter.
+    #[inline]
+    fn check(&self) {
+        debug_assert_eq!(
+            self.values.len() + self.enters + self.konts,
+            1 + self.kont_arity,
+            "rhocalc lowering: deficit invariant violated — |V|={} D={} |C|={} Σarity={}",
+            self.values.len(),
+            self.enters,
+            self.konts,
+            self.kont_arity
+        );
+    }
+}
+
+/// Everything one drive owns.
+struct Drive<'a> {
+    /// Nodes the drive MATERIALISES and must keep alive: a desugared send head, a fold operand,
+    /// a fold-lifted body, an unbound `new` body, a receive's pattern process.
+    ///
+    /// `typed_arena::Arena` rather than a hand-rolled `Vec<Box<_>>`, because this crate is
+    /// `#![forbid(unsafe_code)]` and the safe formulation of "hand out `&'arena T` while still
+    /// accepting new allocations" is precisely what that crate is. It adds no crate to the
+    /// build graph — it was already in `Cargo.lock` as a transitive dependency.
+    arena: &'a Arena<Arc<Proc>>,
+    envs: EnvArena<'a>,
+    stacks: Stacks<'a>,
+    /// One cell per receive bind that carries a `lower_pattern_proc` walk.
+    pattern_states: Vec<PatternState>,
+    /// `BoundEnv::new()`, materialised at most once. `lower_pattern_proc`'s fallback arm lowers
+    /// a non-collection pattern in a FRESH empty environment, not the enclosing one; the
+    /// recursive form built a new one at each such site, and they are all equal and immutable.
+    empty_env: Option<EnvId>,
+}
+
+impl<'a> Drive<'a> {
+    /// Keep a materialised node alive for the rest of the drive and borrow it back.
+    ///
+    /// `Arc<Proc>` rather than `Proc` so the two producers that already hand out an `Arc`
+    /// (`Scope::unbind`, and the AST's own `Arc` fields) cost a refcount bump instead of a deep
+    /// clone.
+    fn keep(&self, node: Arc<Proc>) -> &'a Proc {
+        self.arena.alloc(node)
+    }
+
+    fn env(&self, id: EnvId) -> &BoundEnv {
+        self.envs.get(id)
+    }
+
+    fn empty_env(&mut self) -> EnvId {
+        match self.empty_env {
+            Some(id) => id,
+            None => {
+                let id = self.envs.push(BoundEnv::new());
+                self.empty_env = Some(id);
+                id
+            },
+        }
+    }
+
+    /// Push `children` so that LIFO pops them in the given (source) order.
+    fn push_children(&mut self, kont: Kont<'a>, children: impl IntoIterator<Item = Job<'a>>) {
+        let children: Vec<Job<'a>> = children.into_iter().collect();
+        debug_assert_eq!(
+            children.len(),
+            kont.arity(),
+            "rhocalc lowering: a continuation was pushed with a child count that disagrees \
+             with Kont::arity"
+        );
+        self.stacks.push(Job::Combine(kont));
+        for child in children.into_iter().rev() {
+            self.stacks.push(child);
+        }
+    }
+}
+
+/// Run the machine to its final configuration.
+fn drive(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    let arena: Arena<Arc<Proc>> = Arena::new();
+    let seed_job = match seed {
+        Seed::Proc(proc) => Job::Proc(proc, ROOT_ENV),
+        Seed::Body(body) => Job::Body(body, ROOT_ENV),
+        Seed::Name(name) => Job::Name(name, ROOT_ENV),
+        Seed::Formula(formula) => Job::Formula(formula, ROOT_ENV),
+    };
+    let mut drive = Drive {
+        arena: &arena,
+        envs: EnvArena::new(root_env),
+        stacks: Stacks::new(seed_job),
+        pattern_states: Vec::new(),
+        empty_env: None,
+    };
+
+    loop {
+        drive.stacks.check();
+        let Some(job) = drive.stacks.pop() else { break };
+        match job {
+            Job::Proc(proc, env) => drive.enter_proc(proc, env)?,
+            Job::Name(name, env) => drive.enter_name(name, env)?,
+            Job::Body(body, env) => drive.enter_body(body, env)?,
+            Job::ForRows(rows, body, env) => drive.enter_for_rows(rows, body, env)?,
+            Job::Pattern(pat, slot) => drive.enter_pattern(pat, slot)?,
+            Job::Formula(formula, env) => drive.enter_formula(formula, env)?,
+            Job::Combine(kont) => drive.combine(kont)?,
+        }
+    }
+
+    debug_assert_eq!(
+        drive.stacks.values.len(),
+        1,
+        "rhocalc lowering: the machine halted with {} values, not 1",
+        drive.stacks.values.len()
+    );
+    Ok(drive.stacks.pop_value())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// δ — THE ENTER HALF
+//
+// One arm per arm of the recursive `lower_proc`'s 89-arm match, IN THE SAME ORDER, so the two
+// can be read side by side. The 21 arms with no recursive child call the very same
+// `lower_arm_*` function the recursive form called and push its value; the rest name their
+// children and their continuation.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+impl<'a> Drive<'a> {
+    fn enter_proc(&mut self, proc: &'a Proc, env: EnvId) -> Result<(), RhocalcAstLowerError> {
+        // A-S4: exec submits the RAW parse tree (no pre-normalization), so the send-sugar nodes
+        // (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, …) arrive unfolded. Desugar the HEAD node to
+        // its canonical channel-first form first — a pure structural rearrangement (the same
+        // constructor rewrite the rule's `fold` body performs, no value computation) — then
+        // lower that.
+        //
+        // A LOOP rather than the recursive form's tail call. It is equivalent for a different
+        // reason than it looks: `desugar_send_node` never returns a node that is itself
+        // desugarable (its outputs are `POutput`/`PPersistOutput`/`PPar`, none of which it
+        // matches), so the recursion was one deep — but writing it as a loop means the machine
+        // does not have to KNOW that, and a new sugar rule cannot reintroduce a frame.
+        let mut proc = proc;
+        while let Some(desugared) = desugar_send_node(proc) {
+            proc = self.keep(Arc::new(desugared));
+        }
+
+        match proc {
+            Proc::PZero => self.stacks.value(lower_arm_p_zero()?),
+            Proc::PDrop(name) => self.stacks.push(Job::Name(name.as_ref(), env)),
+            // L9-6b CONSTRUCTION arm: a `PFlt*` in VALUE position elaborates to the reflected
+            // foreign term via the guest reflector selected by its `tag`. No recursive child:
+            // the reflector owns the guest's own traversal.
+            Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node) => {
+                self.stacks.value(lower_arm_p_flt(node, self.env(env))?)
+            },
+            Proc::PPar(parts) => {
+                let members: Vec<&'a Proc> = parts.iter_elements().collect();
+                self.push_children(
+                    Kont::ParFold(members.len()),
+                    members.into_iter().map(|part| Job::Proc(part, env)),
+                );
+            },
+            // Bare infix parallel `a | b`. Parallel composition lowers to `Par::append`, which
+            // is exactly what lowering the folded `PPar` bag would produce.
+            Proc::PParInfix(left, right) => self.push_children(
+                Kont::ParPair,
+                [Job::Proc(left.as_ref(), env), Job::Proc(right.as_ref(), env)],
+            ),
+            Proc::POutput(channel, payload) => self.push_children(
+                Kont::Send { persistent: false },
+                [Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env)],
+            ),
+            // ★ THE LOOKAHEAD ARMS — `x!(P)[*]` and `x!(P)[n]`. These do NOT lower to a send:
+            // the lowering emits a speculation REQUEST and no send at all.
+            Proc::PLookaheadAll(subject) => {
+                let (channel, payload) = self.lookahead_operand(subject.as_ref(), env)?;
+                self.push_children(Kont::SpecAll, [channel, payload]);
+            },
+            Proc::PLookahead(subject, bound) => {
+                let (channel, payload) = self.lookahead_operand(subject.as_ref(), env)?;
+                let bound = lookahead_bound(bound.as_ref())?;
+                self.push_children(Kont::SpecN { bound }, [channel, payload]);
+            },
+            // `for(...)` receive. Each `;`-separated row nests as the continuation of the
+            // previous one.
+            Proc::PForUser(rows, body) => {
+                self.stacks
+                    .push(Job::ForRows(rows.as_slice(), body.as_ref(), env))
+            },
+            Proc::PPersistOutput(channel, payload) => self.push_children(
+                Kont::Send { persistent: true },
+                [Job::Name(channel.as_ref(), env), Job::Proc(payload.as_ref(), env)],
+            ),
+            // Rholang-style short sends `@P!(q)` / `@P!!(q)`: the channel is the quote of `P`,
+            // i.e. `lower_name(NQuote(P)) == lower_proc(P)`.
+            Proc::POutputShort(channel_proc, payload) => self.push_children(
+                Kont::Send { persistent: false },
+                [Job::Proc(channel_proc.as_ref(), env), Job::Proc(payload.as_ref(), env)],
+            ),
+            Proc::PPersistOutputShort(channel_proc, payload) => self.push_children(
+                Kont::Send { persistent: true },
+                [Job::Proc(channel_proc.as_ref(), env), Job::Proc(payload.as_ref(), env)],
+            ),
+            Proc::PNew(scope) => {
+                let (binders, body) = scope.clone().unbind::<String>();
+                let extended = self.envs.push(extend_env(self.env(env), &binders));
+                let body = self.keep(body);
+                self.push_children(
+                    Kont::New {
+                        binder_count: binders.len(),
+                    },
+                    [Job::Body(body, extended)],
+                );
+            },
+            // ── A-S4 cast purity: casts lower STRUCTURALLY ───────────────────────────────────
+            Proc::CastInt(value) => self.stacks.value(lower_int_value(value.as_ref(), self.env(env))?),
+            Proc::CastBool(value) => self.stacks.value(lower_arm_cast_bool(value)?),
+            Proc::CastStr(value) => self.stacks.value(lower_arm_cast_str(value)?),
+            Proc::PVar(var) => self.stacks.value(lower_arm_p_var(var, self.env(env))?),
+            Proc::Err => self.stacks.value(lower_arm_err()?),
+            Proc::CastBigRat(value) => self.stacks.value(lower_arm_cast_big_rat(value)?),
+            Proc::CastFixed(value) => self.stacks.value(lower_arm_cast_fixed(value)?),
+            Proc::CastFloat(value) => self.stacks.value(lower_arm_cast_float(value)?),
+            Proc::CastBigInt(value) => self.stacks.value(lower_arm_cast_big_int(value)?),
+            Proc::CastUInt32(value) => self.stacks.value(lower_arm_cast_u_int32(value)?),
+            Proc::CastList(value) => match value.as_ref() {
+                List::ListLit(items) => self.push_children(
+                    Kont::ListLit(items.len()),
+                    items.iter().map(|item| Job::Proc(item, env)),
+                ),
+                _ => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc("computed list process"));
+                },
+            },
+            Proc::CastBag(value) => match value.as_ref() {
+                Bag::BagLit(entries) => {
+                    let mut entries = entries.iter().collect::<Vec<_>>();
+                    entries.sort_by_key(|(item, _)| *item);
+                    let mut counts = Vec::with_capacity(entries.len());
+                    for (_, count) in &entries {
+                        counts.push(i64::try_from(*count).map_err(|_| {
+                            RhocalcAstLowerError::UnsupportedProc("bag multiplicity exceeds i64")
+                        })?);
+                    }
+                    self.push_children(
+                        Kont::BagLit(counts),
+                        entries.into_iter().map(|(item, _)| Job::Proc(item, env)),
+                    );
+                },
+                _ => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc("computed bag process"));
+                },
+            },
+            Proc::CastMap(value) => match value.as_ref() {
+                Map::MapLit(entries) => {
+                    let mut children = Vec::with_capacity(2 * entries.len());
+                    let mut pair_count = 0usize;
+                    for (key, value) in entries.iter() {
+                        children.push(Job::Proc(key, env));
+                        children.push(Job::Proc(value, env));
+                        pair_count += 1;
+                    }
+                    self.push_children(Kont::MapLit(pair_count), children);
+                },
+                _ => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc("computed map process"));
+                },
+            },
+            Proc::CastSet(value) => match value.as_ref() {
+                Set::SetLit(items) => {
+                    let mut items: Vec<&Proc> = items.iter().collect();
+                    items.sort();
+                    self.push_children(
+                        Kont::SetLit(items.len()),
+                        items.into_iter().map(|item| Job::Proc(item, env)),
+                    );
+                },
+                _ => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc("computed set process"));
+                },
+            },
+            Proc::CastPathmap(value) => match value.as_ref() {
+                Pathmap::PathmapLit(entries) => {
+                    let mut entries: Vec<(&Proc, &Proc)> = entries.iter().collect();
+                    entries.sort_by(|(key_a, _), (key_b, _)| key_a.cmp(key_b));
+                    let mut children = Vec::with_capacity(2 * entries.len());
+                    let pair_count = entries.len();
+                    for (key, value) in entries {
+                        children.push(Job::Proc(key, env));
+                        children.push(Job::Proc(value, env));
+                    }
+                    self.push_children(Kont::PathmapLit(pair_count), children);
+                },
+                _ => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc("computed pathmap process"));
+                },
+            },
+            Proc::CastBytes(value) => self.stacks.value(lower_arm_cast_bytes(value)?),
+            // ── A-S4 fold purity: a fold reaching THIS arm sits where the lift traversal
+            // cannot reach it — fail closed, typed and named.
+            Proc::IntBinProc(..) => self.stacks.value(lower_arm_int_bin_proc()?),
+            Proc::UIntBinProc(..) => self.stacks.value(lower_arm_u_int_bin_proc()?),
+            Proc::FloatBinProc(..) => self.stacks.value(lower_arm_float_bin_proc()?),
+            Proc::FixedBinProc(..) => self.stacks.value(lower_arm_fixed_bin_proc()?),
+            Proc::BigintCastProc(..) => self.stacks.value(lower_arm_bigint_cast_proc()?),
+            Proc::BigratCastProc(..) => self.stacks.value(lower_arm_bigrat_cast_proc()?),
+            // ── A-S4 metered machine arithmetic ─────────────────────────────────────────────
+            Proc::Add(a, b) => self.bin(Kont::AddParity, a, b, env),
+            Proc::Sub(a, b) => self.bin(Kont::BinExpr(BinOp::Minus), a, b, env),
+            Proc::Mul(a, b) => self.bin(Kont::BinExpr(BinOp::Mult), a, b, env),
+            Proc::Div(a, b) => self.bin(Kont::BinExpr(BinOp::Div), a, b, env),
+            Proc::Mod(a, b) => self.bin(Kont::BinExpr(BinOp::Mod), a, b, env),
+            Proc::NegProc(a) => {
+                self.push_children(Kont::UnExpr(UnOp::Neg), [Job::Proc(a.as_ref(), env)])
+            },
+            Proc::Eq(a, b) => self.bin(Kont::BinExpr(BinOp::Eq), a, b, env),
+            Proc::Ne(a, b) => self.bin(Kont::BinExpr(BinOp::Neq), a, b, env),
+            Proc::Lt(a, b) => self.bin(Kont::BinExpr(BinOp::Lt), a, b, env),
+            Proc::Gt(a, b) => self.bin(Kont::BinExpr(BinOp::Gt), a, b, env),
+            Proc::LtEq(a, b) => self.bin(Kont::BinExpr(BinOp::Lte), a, b, env),
+            Proc::GtEq(a, b) => self.bin(Kont::BinExpr(BinOp::Gte), a, b, env),
+            Proc::And(a, b) => self.bin(Kont::BinExpr(BinOp::And), a, b, env),
+            Proc::Or(a, b) => self.bin(Kont::BinExpr(BinOp::Or), a, b, env),
+            // M-0 — material implication: `a implies b ≡ (not a) or b`, with the negation
+            // wrapping ONLY the antecedent.
+            Proc::Implies(a, b) => self.bin(Kont::Implies, a, b, env),
+            Proc::Not(a) => {
+                self.push_children(Kont::UnExpr(UnOp::Not), [Job::Proc(a.as_ref(), env)])
+            },
+            // M-1b — the SPATIAL satisfaction operator `t matches φ`.
+            //
+            // ★ §18.1's static-`false` fold is decided HERE, on the formula's syntax, exactly
+            // as the recursive arm decided it: the judgement is syntactic and conservative, so
+            // the fold can only ever be a missed optimization, never a wrong verdict. The
+            // TARGET is lowered either way, so an ill-formed target still fails.
+            Proc::Matches(target, formula) => {
+                match mettail_languages::rhocalc::formula::is_statically_false(formula.as_ref()) {
+                    true => self.push_children(
+                        Kont::MatchesStaticallyFalse,
+                        [Job::Proc(target.as_ref(), env)],
+                    ),
+                    false => self.push_children(
+                        Kont::Matches,
+                        [Job::Proc(target.as_ref(), env), Job::Formula(formula.as_ref(), env)],
+                    ),
+                }
+            },
+            // M-1b — `PPar(φ, ψ)` is a PATTERN former, not a term former.
+            Proc::SpatialPPar(..) => self.stacks.value(lower_arm_spatial_p_par()?),
+            // ── Methods routed to the reducer's OWN method table (option C, C1/C2) ───────────
+            Proc::MToByteArray(m) => self.method("toByteArray", m, &[], env),
+            Proc::MGet(m, k) => self.method("get", m, &[k], env),
+            Proc::MSet(m, k, v) => self.method("set", m, &[k, v], env),
+            Proc::MContains(m, k) => self.method("contains", m, &[k], env),
+            Proc::MDelete(m, k) => self.method("delete", m, &[k], env),
+            Proc::MUnion(a, b) => self.method("union", a, &[b], env),
+            Proc::MSize(m) => self.method("size", m, &[], env),
+            Proc::MKeys(m) => self.method("keys", m, &[], env),
+            Proc::BDiff(a, b) => self.method("diff", a, &[b], env),
+            Proc::SAdd(s, e) => self.method("add", s, &[e], env),
+            // ⚠ `length`/`nth`/`concat` are the three routed operations whose interpreter
+            // implementation ACCEPTS an `EList`, so they would compute over a lowered `Bag`'s
+            // 2-element ABI encoding and answer something plausible and wrong. Gated on the
+            // RECEIVER'S SYNTAX, before anything is lowered — same order as the recursive form.
+            Proc::LLength(l) => match receiver_is_literal_bag(l.as_ref()) {
+                true => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                        "#{…}#.length() bag cardinality (no Rholang analog — the machine would \
+                         measure the 2-element bag ABI encoding, not the multiset; C3 residue)",
+                    ));
+                },
+                false => self.method("length", l, &[], env),
+            },
+            Proc::LNth(l, i) => match receiver_is_literal_bag(l.as_ref()) {
+                true => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                        "#{…}#.nth(i) bag indexing (no Rholang analog — the machine would index \
+                         the 2-element bag ABI encoding, not the multiset; C3 residue)",
+                    ));
+                },
+                false => self.method("nth", l, &[i], env),
+            },
+            Proc::LConcat(l, r) => {
+                match receiver_is_literal_bag(l.as_ref()) || receiver_is_literal_bag(r.as_ref()) {
+                    true => {
+                        return Err(RhocalcAstLowerError::UnsupportedProc(
+                            "#{…}#.concat(…) bag concatenation (no Rholang analog — `++` would \
+                             concatenate the 2-element bag ABI encodings, tags and all; C3 \
+                             residue)",
+                        ));
+                    },
+                    false => self.bin(Kont::BinExpr(BinOp::PlusPlus), l, r, env),
+                }
+            },
+            // ── C1b — the Pathmap/Zipper family: routed, but UNREACHABLE until C4 ────────────
+            Proc::PGetSubtrie(m) => self.method("getSubtrie", m, &[], env),
+            Proc::PReadZipper(m) => self.method("readZipper", m, &[], env),
+            Proc::PReadZipperAt(m, p) => self.method("readZipperAt", m, &[p], env),
+            Proc::PWriteZipper(m) => self.method("writeZipper", m, &[], env),
+            Proc::PWriteZipperAt(m, p) => self.method("writeZipperAt", m, &[p], env),
+            Proc::RZGetLeaf(z) => self.method("getLeaf", z, &[], env),
+            Proc::RZDescendTo(z, rel) => self.method("descendTo", z, &[rel], env),
+            Proc::RZChildCount(z) => self.method("childCount", z, &[], env),
+            Proc::RZDescendFirst(z) => self.method("descendFirst", z, &[], env),
+            Proc::RZToNextSibling(z) => self.method("toNextSibling", z, &[], env),
+            Proc::RZToPrevSibling(z) => self.method("toPrevSibling", z, &[], env),
+            Proc::RZDescendIndexedBranch(z, i) => self.method("descendIndexedBranch", z, &[i], env),
+            Proc::RZAscendOne(z) => self.method("ascendOne", z, &[], env),
+            Proc::RZAscend(z, n) => self.method("ascend", z, &[n], env),
+            Proc::RZGetPath(z) => self.method("getPath", z, &[], env),
+            Proc::RZToNextLeaf(z) => self.method("toNextLeaf", z, &[], env),
+            Proc::RZLeafCount(z) => self.method("leafCount", z, &[], env),
+            // ⚠ `setLeaf` is NOT routed: RhoCalc's `w.setLeaf(full, v)` writes at an ABSOLUTE
+            // path and Rholang's `z.setLeaf(v)` APPENDS an element at the path `v` derives for
+            // itself. Same name, different operation; the carrier has no value slot to write
+            // into. It falls through to the fail-closed arm.
+            Proc::WZSetSubtrie(w, rel) => self.method("setSubtrie", w, &[rel], env),
+            Proc::WZRemoveLeaf(w) => self.method("removeLeaf", w, &[], env),
+            Proc::WZRemoveBranches(w) => self.method("removeBranches", w, &[], env),
+            Proc::WZGraft(w, rz) => self.method("graft", w, &[rz], env),
+            Proc::WZJoinInto(w, rz) => self.method("joinInto", w, &[rz], env),
+            // A-S4 fail-closed: every remaining construct has no machine algebra. The typed
+            // error NAMES the construct; nothing silently host-evaluates.
+            other => self.stacks.value(lower_arm_unsupported(other)?),
+        }
+        Ok(())
+    }
+
+    /// The two-operand shape, which 15 arms share.
+    fn bin(&mut self, kont: Kont<'a>, a: &'a Arc<Proc>, b: &'a Arc<Proc>, env: EnvId) {
+        self.push_children(kont, [Job::Proc(a.as_ref(), env), Job::Proc(b.as_ref(), env)]);
+    }
+
+    /// The `EMethod` shape, which 27 arms share. The receiver is child 0.
+    fn method(
+        &mut self,
+        name: &'static str,
+        target: &'a Arc<Proc>,
+        arguments: &[&'a Arc<Proc>],
+        env: EnvId,
+    ) {
+        let mut children = Vec::with_capacity(1 + arguments.len());
+        children.push(Job::Proc(target.as_ref(), env));
+        // `*argument` before `.as_ref()`: iterating `&[&'a Arc<Proc>]` yields `&&'a Arc<Proc>`,
+        // and auto-deref through the OUTER reference would tie the child's lifetime to this
+        // slice's borrow rather than to the term's.
+        for argument in arguments {
+            children.push(Job::Proc((*argument).as_ref(), env));
+        }
+        self.push_children(
+            Kont::Method {
+                name,
+                argc: arguments.len(),
+            },
+            children,
+        );
+    }
+
+    /// `lower_lookahead_operand` — the `(channel, payload)` split of `x!(P)[*]`'s operand.
+    ///
+    /// Returns the two child JOBS rather than two `Par`s: the operand's halves are ordinary
+    /// subtrees and must be lowered by the machine, not by a nested traversal.
+    fn lookahead_operand(
+        &mut self,
+        operand: &'a Proc,
+        env: EnvId,
+    ) -> Result<(Job<'a>, Job<'a>), RhocalcAstLowerError> {
+        let mut operand = operand;
+        while let Some(desugared) = desugar_send_node(operand) {
+            operand = self.keep(Arc::new(desugared));
+        }
+        match operand {
+            Proc::POutput(channel, payload) => Ok((
+                Job::Name(channel.as_ref(), env),
+                Job::Proc(payload.as_ref(), env),
+            )),
+            Proc::POutputShort(channel_proc, payload) => Ok((
+                Job::Proc(channel_proc.as_ref(), env),
+                Job::Proc(payload.as_ref(), env),
+            )),
+            Proc::PPersistOutput(..) | Proc::PPersistOutputShort(..) => Err(
+                RhocalcAstLowerError::LookaheadOperandNotASend("a persistent send (`!!`)"),
+            ),
+            Proc::PZero => Err(RhocalcAstLowerError::LookaheadOperandNotASend("Nil")),
+            Proc::PForUser(..) => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a receive")),
+            Proc::PPar(..) | Proc::PParInfix(..) => Err(
+                RhocalcAstLowerError::LookaheadOperandNotASend("a parallel composition"),
+            ),
+            Proc::CastList(..) => Err(RhocalcAstLowerError::LookaheadOperandNotASend(
+                "a list literal",
+            )),
+            _ => Err(RhocalcAstLowerError::LookaheadOperandNotASend(
+                "a non-send process",
+            )),
+        }
+    }
+
+    /// `lower_name` / `lower_drop`.
+    fn enter_name(&mut self, name: &'a Name, env: EnvId) -> Result<(), RhocalcAstLowerError> {
+        match name {
+            // `@P` full quote — the channel IS the lowered process.
+            Name::NQuote(proc) => self.stacks.push(Job::Proc(proc.as_ref(), env)),
+            // `@P` short-quote (raw `NQuoteShort`; folds to `NQuote(P)` at eval time).
+            Name::NQuoteShort(proc) => self.stacks.push(Job::Proc(proc.as_ref(), env)),
+            // `@Nil` quotes `Nil`; its channel is the empty process.
+            Name::NQuoteNil => self.stacks.value(Par::default()),
+            // Parenthesized name grouping `(N)` is transparent for channels.
+            Name::NParen(inner) => self.stacks.push(Job::Name(inner.as_ref(), env)),
+            Name::NVar(var) => {
+                let par = lower_name_var(var, self.env(env))?;
+                self.stacks.value(par);
+            },
+            _ => {
+                return Err(RhocalcAstLowerError::UnsupportedName(
+                    "computed rhocalc name",
+                ));
+            },
+        }
+        Ok(())
+    }
+
+    /// `lower_body_lifting_folds` — lift the outermost held width/precision fold out of a
+    /// binder body into a trampoline, then lower what is left.
+    ///
+    /// The fold-site REGISTER is written at Enter, before either child is entered, which is
+    /// where the recursive form wrote it. Order matters: the operand's own subtree may register
+    /// further sites (a `new` inside an operand), and the site index is `HELD_FOLD_SITES.len()`
+    /// at the moment of registration.
+    fn enter_body(&mut self, body: &'a Proc, env: EnvId) -> Result<(), RhocalcAstLowerError> {
+        let Some((operand, kind, width)) = find_fold(body) else {
+            self.stacks.push(Job::Proc(body, env));
+            return Ok(());
+        };
+        let site_index = HELD_FOLD_SITES.with(|sites| sites.borrow().len()) as u8;
+        let fingerprint = held_fold_language_fingerprint();
+        HELD_FOLD_SITES.with(|sites| {
+            sites.borrow_mut().push(FoldSpec {
+                kind,
+                width,
+                site_index,
+                fingerprint: fingerprint.clone(),
+            })
+        });
+        let channel = fold_channel(site_index, &fingerprint);
+        let ret_var = mettail_runtime::get_or_create_var(format!("__mtl_ret_{site_index}"));
+        let r_var = mettail_runtime::get_or_create_var(format!("__mtl_r_{site_index}"));
+        let r_drop = Proc::PDrop(Arc::new(Name::NVar(OrdVar(Var::Free(r_var.clone())))));
+        let mut replaced = false;
+        let transformed = self.keep(Arc::new(replace_fold(body, &r_drop, &mut replaced)));
+        let env_new = self.envs.push(extend_env(self.env(env), &[Binder(ret_var)]));
+        let env_for = self
+            .envs
+            .push(extend_env(self.env(env_new), &[Binder(r_var)]));
+        let operand = self.keep(Arc::new(operand));
+        self.push_children(
+            Kont::HeldFold { channel },
+            [Job::Proc(operand, env_new), Job::Body(transformed, env_for)],
+        );
+        Ok(())
+    }
+
+    /// `lower_pattern_proc` — a receive pattern, whose free variables become binders.
+    fn enter_pattern(&mut self, pat: &'a Proc, slot: u32) -> Result<(), RhocalcAstLowerError> {
+        match pat {
+            Proc::PVar(ordvar) => match &ordvar.0 {
+                Var::Free(free_var) => {
+                    let state = &mut self.pattern_states[slot as usize];
+                    let index = state.counter;
+                    state.counter += 1;
+                    state.binders.push(Binder(free_var.clone()));
+                    self.stacks.value(new_freevar_par(index, Vec::new()));
+                },
+                Var::Bound(_) => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                        "bound var in receive pattern",
+                    ));
+                },
+            },
+            Proc::CastList(list) => match list.as_ref() {
+                List::ListLit(items) => self.push_children(
+                    Kont::PatListLit(items.len()),
+                    items.iter().map(|item| Job::Pattern(item, slot)),
+                ),
+                _ => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                        "computed list receive pattern",
+                    ));
+                },
+            },
+            Proc::CastMap(map) => match map.as_ref() {
+                Map::MapLit(entries) => {
+                    let mut children = Vec::with_capacity(2 * entries.len());
+                    let mut pair_count = 0usize;
+                    for (key, value) in entries.iter() {
+                        children.push(Job::Pattern(key, slot));
+                        children.push(Job::Pattern(value, slot));
+                        pair_count += 1;
+                    }
+                    self.push_children(Kont::PatMapLit(pair_count), children);
+                },
+                _ => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                        "computed map receive pattern",
+                    ));
+                },
+            },
+            Proc::CastSet(set) => match set.as_ref() {
+                Set::SetLit(items) => {
+                    let mut items: Vec<&Proc> = items.iter().collect();
+                    items.sort();
+                    self.push_children(
+                        Kont::PatSetLit(items.len()),
+                        items.into_iter().map(|item| Job::Pattern(item, slot)),
+                    );
+                },
+                _ => {
+                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                        "computed set receive pattern",
+                    ));
+                },
+            },
+            // Anything else is an ordinary term read as a pattern, in a FRESH empty
+            // environment — not the enclosing one. That is what the recursive arm did, and it
+            // is load-bearing: a pattern's free variables are its own binders.
+            other => {
+                let empty = self.empty_env();
+                self.stacks.push(Job::Proc(other, empty));
+            },
+        }
+        Ok(())
+    }
+
+    /// `rhocalc_formula::lower_formula_in_env` — compile a spatial formula to a pattern.
+    fn enter_formula(&mut self, formula: &'a Proc, env: EnvId) -> Result<(), RhocalcAstLowerError> {
+        use mettail_languages::rhocalc::formula::{classify, FormulaShape};
+        match classify(formula) {
+            FormulaShape::Verum => self.stacks.value(crate::rhocalc_formula::verum_pattern()),
+            FormulaShape::Falsum => self.stacks.value(crate::rhocalc_formula::falsum_pattern()),
+            FormulaShape::Conjunction(left, right) => self.push_children(
+                Kont::FormulaAnd,
+                [Job::Formula(left, env), Job::Formula(right, env)],
+            ),
+            FormulaShape::Disjunction(left, right) => self.push_children(
+                Kont::FormulaOr,
+                [Job::Formula(left, env), Job::Formula(right, env)],
+            ),
+            FormulaShape::Negation(inner) => {
+                self.push_children(Kont::FormulaNot, [Job::Formula(inner, env)])
+            },
+            FormulaShape::Implication(antecedent, consequent) => self.push_children(
+                Kont::FormulaImplies,
+                [Job::Formula(antecedent, env), Job::Formula(consequent, env)],
+            ),
+            FormulaShape::Separation(parts) => self.push_children(
+                Kont::FormulaSeparation(parts.len()),
+                parts.into_iter().map(|part| Job::Formula(part, env)),
+            ),
+            // An ordinary `Proc`, read as a Rholang pattern: unbound free variables become
+            // `Wildcard` rather than the term-position free-variable MARKER.
+            FormulaShape::Term => {
+                let pattern_env = self.envs.push(self.env(env).in_pattern_position());
+                self.stacks.push(Job::Proc(formula, pattern_env));
+            },
+        }
+        Ok(())
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// δ — THE COMBINE HALF
+//
+// Every arm here is the POST-ORDER body of the recursive function it replaces, with
+// `lower_x(child)?` read off the value stack instead of called. Nothing is re-derived: the
+// assembly expressions are the same expressions, and `recursive_oracle` holds the originals so
+// a differential can say so rather than a reviewer having to.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+impl<'a> Drive<'a> {
+    fn combine(&mut self, kont: Kont<'a>) -> Result<(), RhocalcAstLowerError> {
+        match kont {
+            Kont::ParFold(n) => {
+                let parts = self.stacks.pop_values(n);
+                let par = parts
+                    .into_iter()
+                    .fold(Par::default(), |acc, part| acc.append(part));
+                self.stacks.value(par);
+            },
+            Kont::ParPair => {
+                let right = self.stacks.pop_value();
+                let left = self.stacks.pop_value();
+                self.stacks.value(left.append(right));
+            },
+            Kont::Send { persistent } => {
+                let payload = self.stacks.pop_value();
+                let channel = self.stacks.pop_value();
+                let par = match persistent {
+                    true => send_par_persistent(channel, vec![payload]),
+                    false => send_par(channel, vec![payload]),
+                };
+                self.stacks.value(par);
+            },
+            Kont::BinExpr(op) => {
+                let rhs = self.stacks.pop_value();
+                let lhs = self.stacks.pop_value();
+                self.stacks
+                    .value(binary_expr_par(lhs, rhs, |p1, p2| op.build(p1, p2)));
+            },
+            Kont::UnExpr(op) => {
+                let operand = self.stacks.pop_value();
+                self.stacks.value(unary_expr_par(operand, |p| op.build(p)));
+            },
+            // String `+` is Rholang `++` (`EPlusPlus`): when BOTH operands lower to ground
+            // string leaves the concat parity arm is chosen; `EPlus` has no GString algebra.
+            Kont::AddParity => {
+                let rhs = self.stacks.pop_value();
+                let lhs = self.stacks.pop_value();
+                let op = match is_single_gstring_value(&lhs) && is_single_gstring_value(&rhs) {
+                    true => BinOp::PlusPlus,
+                    false => BinOp::Plus,
+                };
+                self.stacks
+                    .value(binary_expr_par(lhs, rhs, |p1, p2| op.build(p1, p2)));
+            },
+            // Built from the two shared assemblers rather than one `binary_expr_par` because
+            // the negation must wrap ONLY the antecedent: `unary_expr_par` propagates the
+            // antecedent's `locally_free`/`connective_used` onto the `ENot`, and
+            // `binary_expr_par` then unions that with the consequent's.
+            Kont::Implies => {
+                let consequent = self.stacks.pop_value();
+                let antecedent = self.stacks.pop_value();
+                let negated = unary_expr_par(antecedent, |p| ExprInstance::ENotBody(ENot { p }));
+                self.stacks.value(binary_expr_par(negated, consequent, |p1, p2| {
+                    ExprInstance::EOrBody(EOr { p1, p2 })
+                }));
+            },
+            Kont::Method { name, argc } => {
+                let mut children = self.stacks.pop_values(1 + argc);
+                let argument_pars = children.split_off(1);
+                let target_par = children.pop().expect("Kont::Method always has a receiver");
+                self.stacks
+                    .value(method_par(name, target_par, argument_pars));
+            },
+            Kont::Matches => {
+                let pattern = self.stacks.pop_value();
+                let target = self.stacks.pop_value();
+                let locally_free = union(target.locally_free.clone(), pattern.locally_free.clone());
+                let mut par = Par::default().with_exprs(vec![Expr {
+                    expr_instance: Some(ExprInstance::EMatchesBody(EMatches {
+                        target: Some(target),
+                        pattern: Some(pattern),
+                    })),
+                }]);
+                par.locally_free = locally_free;
+                par.connective_used = false;
+                self.stacks.value(par);
+            },
+            Kont::MatchesStaticallyFalse => {
+                let target = self.stacks.pop_value();
+                let mut folded = new_gbool_par(false, Vec::new(), false);
+                folded.locally_free = target.locally_free;
+                self.stacks.value(folded);
+            },
+            Kont::ListLit(n) => {
+                let items = self.stacks.pop_values(n);
+                let locally_free = locally_free_union(&items);
+                let connective_used = any_connective_used(&items);
+                self.stacks.value(new_elist_par(
+                    items,
+                    locally_free.clone(),
+                    connective_used,
+                    None,
+                    locally_free,
+                    connective_used,
+                ));
+            },
+            Kont::SetLit(n) => {
+                let elements = self.stacks.pop_values(n);
+                let locally_free = locally_free_union(&elements);
+                let connective_used = any_connective_used(&elements);
+                self.stacks.value(new_eset_par(
+                    elements,
+                    locally_free.clone(),
+                    connective_used,
+                    None,
+                    locally_free,
+                    connective_used,
+                ));
+            },
+            Kont::MapLit(n) | Kont::PathmapLit(n) => {
+                let children = self.stacks.pop_values(2 * n);
+                let mut pairs = Vec::with_capacity(n);
+                let mut locally_free = Vec::new();
+                let mut connective_used = false;
+                let mut children = children.into_iter();
+                while let (Some(key), Some(value)) = (children.next(), children.next()) {
+                    locally_free = union(
+                        locally_free,
+                        union(key.locally_free.clone(), value.locally_free.clone()),
+                    );
+                    connective_used |= key.connective_used || value.connective_used;
+                    pairs.push(new_key_value_pair(key, value));
+                }
+                self.stacks.value(new_emap_par(
+                    pairs,
+                    locally_free.clone(),
+                    connective_used,
+                    None,
+                    locally_free,
+                    connective_used,
+                ));
+            },
+            // A `Bag` becomes `EList[GPrivate(RHOCALC_BAG_ABI_TAG), EList[pairs]]` — always
+            // exactly 2 elements. That ABI shape is what the routed-method carrier map in
+            // `lower_proc`'s C1 block reasons about.
+            Kont::BagLit(counts) => {
+                let items = self.stacks.pop_values(counts.len());
+                let mut pairs = Vec::with_capacity(items.len());
+                for (item, count) in items.into_iter().zip(counts) {
+                    let count = new_gint_par(count, Vec::new(), false);
+                    let pair_locally_free =
+                        union(item.locally_free.clone(), count.locally_free.clone());
+                    let pair_connective = item.connective_used || count.connective_used;
+                    pairs.push(new_elist_par(
+                        vec![item, count],
+                        pair_locally_free.clone(),
+                        pair_connective,
+                        None,
+                        pair_locally_free,
+                        pair_connective,
+                    ));
+                }
+                let pairs_locally_free = locally_free_union(&pairs);
+                let pairs_connective = any_connective_used(&pairs);
+                let pairs = new_elist_par(
+                    pairs,
+                    pairs_locally_free.clone(),
+                    pairs_connective,
+                    None,
+                    pairs_locally_free,
+                    pairs_connective,
+                );
+                let tag = GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string());
+                let locally_free = union(tag.locally_free.clone(), pairs.locally_free.clone());
+                let connective_used = tag.connective_used || pairs.connective_used;
+                self.stacks.value(new_elist_par(
+                    vec![tag, pairs],
+                    locally_free.clone(),
+                    connective_used,
+                    None,
+                    locally_free,
+                    connective_used,
+                ));
+            },
+            Kont::New { binder_count } => {
+                let body = self.stacks.pop_value();
+                let locally_free = filter_and_adjust_bitset(&body.locally_free, binder_count);
+                let connective_used = body.connective_used;
+                self.stacks.value(new_new_par(
+                    binder_count as i32,
+                    body,
+                    Vec::new(),
+                    BTreeMap::new(),
+                    locally_free.clone(),
+                    locally_free,
+                    connective_used,
+                ));
+            },
+            Kont::SpecAll => {
+                let payload = self.stacks.pop_value();
+                let channel = self.stacks.pop_value();
+                self.stacks
+                    .value(crate::lookahead::spec_all_request(payload, channel));
+            },
+            Kont::SpecN { bound } => {
+                let payload = self.stacks.pop_value();
+                let channel = self.stacks.pop_value();
+                self.stacks
+                    .value(crate::lookahead::spec_n_request(payload, bound, channel));
+            },
+            // `new ret { fold!(operand, *ret) | for(@r <- ret){ … } }` — the held-fold
+            // trampoline. The operand is sent to the fold contract's channel; the transformed
+            // body runs under the received result.
+            Kont::HeldFold { channel } => {
+                let for_body = self.stacks.pop_value();
+                let operand_par = self.stacks.pop_value();
+                let ret_channel = new_boundvar_par(0, Vec::new(), false);
+                let send = send_par(channel, vec![operand_par, ret_channel.clone()]);
+                let bind = ReceiveBind {
+                    patterns: vec![new_freevar_par(0, Vec::new())],
+                    source: Some(ret_channel),
+                    remainder: None,
+                    free_count: 1,
+                };
+                let recv_locally_free = receive_locally_free(&[bind.clone()], &for_body, 1);
+                let recv = new_receive_par(
+                    vec![bind],
+                    for_body,
+                    false,
+                    false,
+                    1,
+                    recv_locally_free.clone(),
+                    false,
+                    recv_locally_free,
+                    false,
+                );
+                let inner = send.append(recv);
+                let new_locally_free = filter_and_adjust_bitset(&inner.locally_free, 1);
+                self.stacks.value(new_new_par(
+                    1,
+                    inner,
+                    Vec::new(),
+                    BTreeMap::new(),
+                    new_locally_free.clone(),
+                    new_locally_free,
+                    false,
+                ));
+            },
+            Kont::ForSource(state) => return self.for_source(state),
+            Kont::ForPattern(state, slot) => return self.for_pattern(state, slot),
+            Kont::ForBody(mut state) => {
+                state.lowered_body = Some(self.stacks.pop_value());
+                match state.cond {
+                    Some(guard) => {
+                        let extended = state.extended_env;
+                        self.push_children(Kont::ForGuard(state), [Job::Proc(guard, extended)]);
+                    },
+                    None => return self.assemble_receive(state, None),
+                }
+            },
+            Kont::ForGuard(state) => {
+                let condition = self.stacks.pop_value();
+                return self.assemble_receive(state, Some(condition));
+            },
+            Kont::PatListLit(n) => {
+                let item_pars = self.stacks.pop_values(n);
+                let locally_free = locally_free_union(&item_pars);
+                let connective_used = item_pars.iter().any(|item| item.connective_used);
+                self.stacks.value(new_elist_par(
+                    item_pars,
+                    locally_free.clone(),
+                    connective_used,
+                    None,
+                    locally_free,
+                    connective_used,
+                ));
+            },
+            Kont::PatSetLit(n) => {
+                let elements = self.stacks.pop_values(n);
+                let locally_free = locally_free_union(&elements);
+                let connective_used = elements.iter().any(|e| e.connective_used);
+                self.stacks.value(new_eset_par(
+                    elements,
+                    locally_free.clone(),
+                    connective_used,
+                    None,
+                    locally_free,
+                    connective_used,
+                ));
+            },
+            Kont::PatMapLit(n) => {
+                let children = self.stacks.pop_values(2 * n);
+                let mut pairs = Vec::with_capacity(n);
+                let mut locally_free = Vec::new();
+                let mut connective_used = false;
+                let mut children = children.into_iter();
+                while let (Some(key), Some(value)) = (children.next(), children.next()) {
+                    connective_used = connective_used || key.connective_used || value.connective_used;
+                    locally_free = union(
+                        locally_free,
+                        union(key.locally_free.clone(), value.locally_free.clone()),
+                    );
+                    pairs.push(new_key_value_pair(key, value));
+                }
+                self.stacks.value(new_emap_par(
+                    pairs,
+                    locally_free.clone(),
+                    connective_used,
+                    None,
+                    locally_free,
+                    connective_used,
+                ));
+            },
+            Kont::FormulaAnd => {
+                let right = self.stacks.pop_value();
+                let left = self.stacks.pop_value();
+                let operands = [left, right];
+                self.stacks.value(crate::rhocalc_formula::connective_par(
+                    models::rust::utils::new_conn_and_body_par(operands.to_vec(), Vec::new(), true),
+                    &operands,
+                ));
+            },
+            Kont::FormulaOr => {
+                let right = self.stacks.pop_value();
+                let left = self.stacks.pop_value();
+                let operands = [left, right];
+                self.stacks.value(crate::rhocalc_formula::connective_par(
+                    models::rust::utils::new_conn_or_body_par(operands.to_vec(), Vec::new(), true),
+                    &operands,
+                ));
+            },
+            Kont::FormulaNot => {
+                let inner = self.stacks.pop_value();
+                self.stacks.value(crate::rhocalc_formula::negated(inner));
+            },
+            Kont::FormulaImplies => {
+                let consequent = self.stacks.pop_value();
+                let antecedent = self.stacks.pop_value();
+                let operands = [crate::rhocalc_formula::negated(antecedent), consequent];
+                self.stacks.value(crate::rhocalc_formula::connective_par(
+                    models::rust::utils::new_conn_or_body_par(operands.to_vec(), Vec::new(), true),
+                    &operands,
+                ));
+            },
+            Kont::FormulaSeparation(n) => {
+                let parts = self.stacks.pop_values(n);
+                let par = parts
+                    .into_iter()
+                    .fold(Par::default(), |acc, part| acc.append(part));
+                self.stacks.value(par);
+            },
+        }
+        Ok(())
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// `lower_pfor_user`, staged
+//
+// The one member whose child list is not known up front. A row's continuation is lowered in a
+// scope derived from the binders its own PATTERNS introduce, so the body cannot be scheduled
+// until the patterns are done; and each bind's SOURCE must be lowered before that bind's
+// pattern, because that is the order in which the recursive form reported errors.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+impl<'a> Drive<'a> {
+    fn enter_for_rows(
+        &mut self,
+        rows: &'a [ForRow],
+        body: &'a Proc,
+        env: EnvId,
+    ) -> Result<(), RhocalcAstLowerError> {
+        if rows.is_empty() {
+            self.stacks.push(Job::Body(body, env));
+            return Ok(());
+        }
+        let (binds, persistent, cond) = decompose_for_row_borrowed(&rows[0])?;
+        if binds.is_empty() {
+            return Err(RhocalcAstLowerError::EmptyInputJoin);
+        }
+        let binds_rho = Vec::with_capacity(binds.len());
+        self.schedule_bind_source(Box::new(ForState {
+            rows,
+            body,
+            env,
+            binds,
+            persistent,
+            cond,
+            next_bind: 0,
+            binds_rho,
+            slots: Vec::new(),
+            pending_source: None,
+            extended_env: ROOT_ENV,
+            lowered_body: None,
+        }))
+    }
+
+    /// Schedule the next bind's SOURCE, or — once every bind is done — the continuation.
+    fn schedule_bind_source(
+        &mut self,
+        state: Box<ForState<'a>>,
+    ) -> Result<(), RhocalcAstLowerError> {
+        match state.next_bind < state.binds.len() {
+            true => {
+                let channel = bind_channel_name(state.binds[state.next_bind])
+                    .ok_or(RhocalcAstLowerError::UnsupportedProc("for-row channel"))?;
+                let env = state.env;
+                self.push_children(Kont::ForSource(state), [Job::Name(channel, env)]);
+                Ok(())
+            },
+            false => self.schedule_for_body(state),
+        }
+    }
+
+    fn for_source(&mut self, mut state: Box<ForState<'a>>) -> Result<(), RhocalcAstLowerError> {
+        let source = self.stacks.pop_value();
+        let bind = state.binds[state.next_bind];
+
+        // L9-6b: an FLT receive pattern is reflected by the guest, not walked here. Its holes
+        // are receive binders, so they enter the slot list in bind order alongside monikers.
+        if let Some(node) = bind_flt_node(bind) {
+            let (pattern, free_count, hole_names) =
+                lower_flt_pattern(node.as_ref(), self.env(state.env))?;
+            for name in hole_names {
+                state.slots.push(ReceiveSlot::Hole(name));
+            }
+            state.binds_rho.push(ReceiveBind {
+                patterns: vec![pattern],
+                source: Some(source),
+                remainder: None,
+                free_count,
+            });
+            state.next_bind += 1;
+            return self.schedule_bind_source(state);
+        }
+
+        // `for(<- n)` — an empty bind consumes without binding.
+        if is_empty_bind(bind) {
+            state.binds_rho.push(ReceiveBind {
+                patterns: vec![new_wildcard_par(Vec::new(), false)],
+                source: Some(source),
+                remainder: None,
+                free_count: 0,
+            });
+            state.next_bind += 1;
+            return self.schedule_bind_source(state);
+        }
+
+        let pat_proc = bind_pattern_proc(bind)
+            .ok_or(RhocalcAstLowerError::UnsupportedProc("for-row pattern"))?;
+        let pat_proc = self.keep(Arc::new(pat_proc));
+        let slot = u32::try_from(self.pattern_states.len())
+            .expect("rhocalc lowering: more than 2^32 receive binds in one term");
+        self.pattern_states.push(PatternState::default());
+        state.pending_source = Some(source);
+        self.push_children(
+            Kont::ForPattern(state, slot),
+            [Job::Pattern(pat_proc, slot)],
+        );
+        Ok(())
+    }
+
+    fn for_pattern(
+        &mut self,
+        mut state: Box<ForState<'a>>,
+        slot: u32,
+    ) -> Result<(), RhocalcAstLowerError> {
+        let pat_par = self.stacks.pop_value();
+        let source = state
+            .pending_source
+            .take()
+            .expect("rhocalc lowering: a receive pattern ran without its source");
+        let bind_binders = std::mem::take(&mut self.pattern_states[slot as usize].binders);
+        let free_count = bind_binders.len() as i32;
+        for binder in bind_binders {
+            state.slots.push(ReceiveSlot::Moniker(binder));
+        }
+        state.binds_rho.push(ReceiveBind {
+            patterns: vec![pat_par],
+            source: Some(source),
+            remainder: None,
+            free_count,
+        });
+        state.next_bind += 1;
+        self.schedule_bind_source(state)
+    }
+
+    /// Every bind is done, so the continuation scope is known: derive it and schedule the body.
+    ///
+    /// The recursive form built an owned `continuation` `Proc` here and immediately
+    /// destructured it back apart. The driver skips the round trip and dispatches on the same
+    /// three cases directly — which is why nothing needs to be materialised: `&rows[1..]` and
+    /// `body` are borrowed from the caller's term.
+    fn schedule_for_body(
+        &mut self,
+        mut state: Box<ForState<'a>>,
+    ) -> Result<(), RhocalcAstLowerError> {
+        let extended = self
+            .envs
+            .push(self.env(state.env).extend_slots(&state.slots));
+        state.extended_env = extended;
+        let job = match state.rows.len() > 1 {
+            // More rows in THIS `for`: they nest as this row's continuation.
+            true => Job::ForRows(&state.rows[1..], state.body, extended),
+            false => match state.body {
+                // The body is itself a `for`: its rows nest under this one's binders.
+                Proc::PForUser(rest_rows, rest_body) => {
+                    Job::ForRows(rest_rows.as_slice(), rest_body.as_ref(), extended)
+                },
+                other => Job::Body(other, extended),
+            },
+        };
+        self.push_children(Kont::ForBody(state), [job]);
+        Ok(())
+    }
+
+    fn assemble_receive(
+        &mut self,
+        state: Box<ForState<'a>>,
+        condition: Option<Par>,
+    ) -> Result<(), RhocalcAstLowerError> {
+        let ForState {
+            env,
+            persistent,
+            cond,
+            binds_rho,
+            slots,
+            lowered_body,
+            ..
+        } = *state;
+        let lowered_body =
+            lowered_body.expect("rhocalc lowering: a receive assembled without its continuation");
+
+        // S-D0: a `where` guard the compile-time authority can REFUTE is omitted from the
+        // emitted `Par` rather than left for the runtime evaluator to decide again.
+        let condition = match (cond, condition) {
+            (Some(guard), Some(cond_par)) if self.env(env).options.guard_discharge => {
+                let host_verdict = eval_guard_bool(guard);
+                let outcome = guard_discharge::classify(
+                    host_verdict,
+                    &cond_par,
+                    guard_discharge::GuardRouting::MachineEvaluated,
+                );
+                record_guard_outcome(outcome, guard);
+                match outcome.omits_condition() {
+                    true => None,
+                    false => Some(cond_par),
+                }
+            },
+            (_, condition) => condition,
+        };
+
+        let receive_binder_count = slots.len();
+        let bind_count = receive_binder_count as i32;
+        let mut locally_free = receive_locally_free(&binds_rho, &lowered_body, receive_binder_count);
+        if let Some(cond_par) = &condition {
+            locally_free = union(
+                locally_free,
+                filter_and_adjust_bitset(&cond_par.locally_free, receive_binder_count),
+            );
+        }
+        let connective_used = binds_rho.iter().any(|bind| {
+            bind.source
+                .as_ref()
+                .is_some_and(|source| source.connective_used)
+        }) || lowered_body.connective_used;
+        let mut receive_par = new_receive_par(
+            binds_rho,
+            lowered_body,
+            persistent,
+            false,
+            bind_count,
+            locally_free.clone(),
+            connective_used,
+            locally_free,
+            connective_used,
+        );
+        if let Some(cond_par) = condition {
+            if let Some(receive) = receive_par.receives.get_mut(0) {
+                receive.condition = Some(cond_par);
+            }
+        }
+        self.stacks.value(receive_par);
+        Ok(())
+    }
+}
+
+/// [`decompose_for_row`], BORROWED.
+///
+/// The recursive twin cloned each `InputBind` out of its `Arc` and each `where` guard out of
+/// its `Arc<Proc>`; nothing reads the clone, so the driver borrows and the receive path stops
+/// deep-copying a bind per row. Otherwise arm-for-arm identical, including which `ForRow`
+/// shapes are rejected.
+fn decompose_for_row_borrowed(
+    row: &ForRow,
+) -> Result<(Vec<&InputBind>, bool, Option<&Proc>), RhocalcAstLowerError> {
+    match row {
+        ForRow::ForRowSingleNoWhere(b) => {
+            let binds = vec![b.as_ref()];
+            let persistent = binds.iter().any(|bind| is_persistent_bind(bind));
+            Ok((binds, persistent, None))
+        },
+        ForRow::ForRowSingleWhere(b, cond) => {
+            let binds = vec![b.as_ref()];
+            let persistent = binds.iter().any(|bind| is_persistent_bind(bind));
+            Ok((binds, persistent, Some(cond.as_ref())))
+        },
+        ForRow::ForRowNoWhere(b, bs) => {
+            let mut binds = Vec::with_capacity(1 + bs.len());
+            binds.push(b.as_ref());
+            binds.extend(bs.iter());
+            let persistent = binds.iter().any(|bind| is_persistent_bind(bind));
+            Ok((binds, persistent, None))
+        },
+        ForRow::ForRowWhere(b, bs, cond) => {
+            let mut binds = Vec::with_capacity(1 + bs.len());
+            binds.push(b.as_ref());
+            binds.extend(bs.iter());
+            let persistent = binds.iter().any(|bind| is_persistent_bind(bind));
+            Ok((binds, persistent, Some(cond.as_ref())))
+        },
+        _ => Err(RhocalcAstLowerError::UnsupportedProc("non-ground for-row")),
+    }
+}
+
+/// The non-recursive half of `lower_method`: assemble an `EMethod` from an already-lowered
+/// receiver and argument list.
+///
+/// Dispatch is on the EVALUATED receiver in the reducer, so one assembler covers every receiver
+/// type Rholang supports and a COMM-bound receiver works exactly like a literal one.
+fn method_par(method_name: &str, target_par: Par, argument_pars: Vec<Par>) -> Par {
+    let mut locally_free = target_par.locally_free.clone();
+    let mut connective_used = target_par.connective_used;
+    for argument in &argument_pars {
+        locally_free = union(locally_free, argument.locally_free.clone());
+        connective_used = connective_used || argument.connective_used;
+    }
+    let mut par = Par::default().with_exprs(vec![Expr {
+        expr_instance: Some(ExprInstance::EMethodBody(EMethod {
+            method_name: method_name.to_string(),
+            target: Some(target_par),
+            arguments: argument_pars,
+            locally_free: locally_free.clone(),
+            connective_used,
+        })),
+    }]);
+    par.locally_free = locally_free;
+    par.connective_used = connective_used;
+    par
+}
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 // M-1 — THE PER-ARM FRAMES
 //
@@ -1393,14 +2943,6 @@ fn lower_arm_p_zero() -> Result<Par, RhocalcAstLowerError> {
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_drop(
-    name: &std::sync::Arc<Name>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_drop(name.as_ref(), env)
-}
-
 /// The `Proc::PFlt(node) | Proc::PFltFence(node) | Proc::PFltBrace(node)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
@@ -1417,162 +2959,52 @@ fn lower_arm_p_flt(
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_par(
-    parts: &mettail_runtime::HashBag<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    parts
-        .iter_elements()
-        .try_fold(Par::default(), |acc, part| Ok(acc.append(lower_proc(part, env)?)))
-}
-
 /// The `Proc::PParInfix(left, right)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_par_infix(
-    left: &std::sync::Arc<Proc>,
-    right: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    Ok(lower_proc(left.as_ref(), env)?.append(lower_proc(right.as_ref(), env)?))
-}
-
 /// The `Proc::POutput(channel, payload)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_output(
-    channel: &std::sync::Arc<Name>,
-    payload: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let channel = lower_name(channel.as_ref(), env)?;
-    let payload = lower_proc(payload.as_ref(), env)?;
-    Ok(send_par(channel, vec![payload]))
-}
-
 /// The `Proc::PLookaheadAll(subject)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_lookahead_all(
-    subject: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
-    Ok(crate::lookahead::spec_all_request(payload, channel))
-}
-
 /// The `Proc::PLookahead(subject, bound)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_lookahead(
-    subject: &std::sync::Arc<Proc>,
-    bound: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
-    let bound = lookahead_bound(bound.as_ref())?;
-    Ok(crate::lookahead::spec_n_request(payload, bound, channel))
-}
-
 /// The `Proc::PForUser(rows, body)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_for_user(
-    rows: &Vec<ForRow>,
-    body: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_pfor_user(rows, body.as_ref(), env)
-}
-
 /// The `Proc::PPersistOutput(channel, payload)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_persist_output(
-    channel: &std::sync::Arc<Name>,
-    payload: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let channel = lower_name(channel.as_ref(), env)?;
-    let payload = lower_proc(payload.as_ref(), env)?;
-    Ok(send_par_persistent(channel, vec![payload]))
-}
-
 /// The `Proc::POutputShort(channel_proc, payload)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_output_short(
-    channel_proc: &std::sync::Arc<Proc>,
-    payload: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let channel = lower_proc(channel_proc.as_ref(), env)?;
-    let payload = lower_proc(payload.as_ref(), env)?;
-    Ok(send_par(channel, vec![payload]))
-}
-
 /// The `Proc::PPersistOutputShort(channel_proc, payload)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_persist_output_short(
-    channel_proc: &std::sync::Arc<Proc>,
-    payload: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let channel = lower_proc(channel_proc.as_ref(), env)?;
-    let payload = lower_proc(payload.as_ref(), env)?;
-    Ok(send_par_persistent(channel, vec![payload]))
-}
-
 /// The `Proc::PNew(scope)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_new(
-    scope: &mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<Proc>>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let (binders, body) = scope.clone().unbind::<String>();
-    let extended_env = extend_env(env, &binders);
-    // A-S4: the `new` body is a fold-lift scope — a width/precision fold inside it
-    // trampolines here (mirrors receive bodies and the top level).
-    let body = lower_body_lifting_folds(body.as_ref(), &extended_env)?;
-    let locally_free = filter_and_adjust_bitset(&body.locally_free, binders.len());
-
-    let connective_used = body.connective_used;
-    Ok(new_new_par(
-        binders.len() as i32,
-        body,
-        Vec::new(),
-        BTreeMap::new(),
-        locally_free.clone(),
-        locally_free,
-        connective_used,
-    ))
-}
-
 /// The `Proc::CastInt(value)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
+///
+/// ⚠ M-2: the DRIVER calls [`lower_int_value`] directly (there is no frame to save by going
+/// through a one-line forwarder in a machine that has no frames), so this is reached only from
+/// [`recursive_oracle`]. It is kept rather than deleted because the oracle must stay verbatim —
+/// a twin that had been edited to compile is not a twin.
+#[cfg_attr(not(test), allow(dead_code))]
 #[inline(never)]
 fn lower_arm_cast_int(
     value: &std::sync::Arc<Int>,
@@ -1715,62 +3147,22 @@ fn lower_arm_cast_u_int32(value: &std::sync::Arc<UInt32>) -> Result<Par, Rhocalc
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_cast_list(
-    value: &std::sync::Arc<List>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_list(value.as_ref(), env)
-}
-
 /// The `Proc::CastBag(value)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_cast_bag(
-    value: &std::sync::Arc<Bag>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_bag(value.as_ref(), env)
-}
-
 /// The `Proc::CastMap(value)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_cast_map(
-    value: &std::sync::Arc<Map>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_map(value.as_ref(), env)
-}
-
 /// The `Proc::CastSet(value)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_cast_set(
-    value: &std::sync::Arc<Set>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_set(value.as_ref(), env)
-}
-
 /// The `Proc::CastPathmap(value)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_cast_pathmap(
-    value: &std::sync::Arc<Pathmap>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_pathmap(value.as_ref(), env)
-}
-
 /// The `Proc::CastBytes(value)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
@@ -1855,260 +3247,70 @@ fn lower_arm_bigrat_cast_proc() -> Result<Par, RhocalcAstLowerError> {
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_add(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let lhs = lower_proc(a.as_ref(), env)?;
-    let rhs = lower_proc(b.as_ref(), env)?;
-    if is_single_gstring_value(&lhs) && is_single_gstring_value(&rhs) {
-        Ok(binary_expr_par(lhs, rhs, |p1, p2| {
-            ExprInstance::EPlusPlusBody(EPlusPlus { p1, p2 })
-        }))
-    } else {
-        Ok(binary_expr_par(lhs, rhs, |p1, p2| ExprInstance::EPlusBody(EPlus { p1, p2 })))
-    }
-}
-
 /// The `Proc::Sub(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_sub(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
-        ExprInstance::EMinusBody(EMinus { p1, p2 })
-    })
-}
-
 /// The `Proc::Mul(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_mul(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
-        ExprInstance::EMultBody(EMult { p1, p2 })
-    })
-}
-
 /// The `Proc::Div(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_div(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EDivBody(EDiv { p1, p2 }))
-}
-
 /// The `Proc::Mod(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_mod(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EModBody(EMod { p1, p2 }))
-}
-
 /// The `Proc::NegProc(a)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_neg_proc(
-    a: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let operand = lower_proc(a.as_ref(), env)?;
-    Ok(unary_expr_par(operand, |p| ExprInstance::ENegBody(ENeg { p })))
-}
-
 /// The `Proc::Eq(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_eq(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EEqBody(EEq { p1, p2 }))
-}
-
 /// The `Proc::Ne(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_ne(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ENeqBody(ENeq { p1, p2 }))
-}
-
 /// The `Proc::Lt(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_lt(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELtBody(ELt { p1, p2 }))
-}
-
 /// The `Proc::Gt(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_gt(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGtBody(EGt { p1, p2 }))
-}
-
 /// The `Proc::LtEq(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_lt_eq(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELteBody(ELte { p1, p2 }))
-}
-
 /// The `Proc::GtEq(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_gt_eq(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGteBody(EGte { p1, p2 }))
-}
-
 /// The `Proc::And(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_and(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EAndBody(EAnd { p1, p2 }))
-}
-
 /// The `Proc::Or(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_or(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EOrBody(EOr { p1, p2 }))
-}
-
 /// The `Proc::Implies(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_implies(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let antecedent = lower_proc(a.as_ref(), env)?;
-    let consequent = lower_proc(b.as_ref(), env)?;
-    let negated = unary_expr_par(antecedent, |p| ExprInstance::ENotBody(ENot { p }));
-    Ok(binary_expr_par(negated, consequent, |p1, p2| {
-        ExprInstance::EOrBody(EOr { p1, p2 })
-    }))
-}
-
 /// The `Proc::Not(a)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_not(a: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    let operand = lower_proc(a.as_ref(), env)?;
-    Ok(unary_expr_par(operand, |p| ExprInstance::ENotBody(ENot { p })))
-}
-
 /// The `Proc::Matches(target, formula)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_matches(
-    target: &std::sync::Arc<Proc>,
-    formula: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let target = lower_proc(target.as_ref(), env)?;
-    if mettail_languages::rhocalc::formula::is_statically_false(formula.as_ref()) {
-        let mut folded = new_gbool_par(false, Vec::new(), false);
-        folded.locally_free = target.locally_free;
-        return Ok(folded);
-    }
-    let pattern = crate::rhocalc_formula::lower_formula_in_env(formula.as_ref(), env)?;
-    // `connective_used` is NOT propagated from the pattern. The result of
-    // `matches` is a BOOLEAN expression, not a pattern: it is the one place
-    // in the lowering where a connective legitimately appears inside a Par
-    // that is itself not a pattern. This mirrors f1r3node's own
-    // `normalize_p_matches`, which builds the `EMatches` from a target
-    // normalized in the OUTER scope and a pattern normalized in a PUSHED
-    // scope with a fresh free map, and returns the LEFT operand's free map.
-    let locally_free = union(target.locally_free.clone(), pattern.locally_free.clone());
-    let mut par = Par::default().with_exprs(vec![Expr {
-        expr_instance: Some(ExprInstance::EMatchesBody(EMatches {
-            target: Some(target),
-            pattern: Some(pattern),
-        })),
-    }]);
-    par.locally_free = locally_free;
-    par.connective_used = false;
-    Ok(par)
-}
-
 /// The `Proc::SpatialPPar(..)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
@@ -2125,434 +3327,142 @@ fn lower_arm_spatial_p_par() -> Result<Par, RhocalcAstLowerError> {
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_m_to_byte_array(
-    m: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("toByteArray", m.as_ref(), &[], env)
-}
-
 /// The `Proc::MGet(m, k)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_m_get(
-    m: &std::sync::Arc<Proc>,
-    k: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("get", m.as_ref(), &[k.as_ref()], env)
-}
-
 /// The `Proc::MSet(m, k, v)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_m_set(
-    m: &std::sync::Arc<Proc>,
-    k: &std::sync::Arc<Proc>,
-    v: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("set", m.as_ref(), &[k.as_ref(), v.as_ref()], env)
-}
-
 /// The `Proc::MContains(m, k)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_m_contains(
-    m: &std::sync::Arc<Proc>,
-    k: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("contains", m.as_ref(), &[k.as_ref()], env)
-}
-
 /// The `Proc::MDelete(m, k)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_m_delete(
-    m: &std::sync::Arc<Proc>,
-    k: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("delete", m.as_ref(), &[k.as_ref()], env)
-}
-
 /// The `Proc::MUnion(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_m_union(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("union", a.as_ref(), &[b.as_ref()], env)
-}
-
 /// The `Proc::MSize(m)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_m_size(m: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("size", m.as_ref(), &[], env)
-}
-
 /// The `Proc::MKeys(m)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_m_keys(m: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("keys", m.as_ref(), &[], env)
-}
-
 /// The `Proc::BDiff(a, b)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_b_diff(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("diff", a.as_ref(), &[b.as_ref()], env)
-}
-
 /// The `Proc::SAdd(s, e)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_s_add(
-    s: &std::sync::Arc<Proc>,
-    e: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("add", s.as_ref(), &[e.as_ref()], env)
-}
-
 /// The `Proc::LLength(l)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_l_length(
-    l: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_length(l.as_ref(), env)
-}
-
 /// The `Proc::LNth(l, i)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_l_nth(
-    l: &std::sync::Arc<Proc>,
-    i: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_nth(l.as_ref(), i.as_ref(), env)
-}
-
 /// The `Proc::LConcat(l, r)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_l_concat(
-    l: &std::sync::Arc<Proc>,
-    r: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_concat(l.as_ref(), r.as_ref(), env)
-}
-
 /// The `Proc::PGetSubtrie(m)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_get_subtrie(
-    m: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("getSubtrie", m.as_ref(), &[], env)
-}
-
 /// The `Proc::PReadZipper(m)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_read_zipper(
-    m: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("readZipper", m.as_ref(), &[], env)
-}
-
 /// The `Proc::PReadZipperAt(m, p)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_read_zipper_at(
-    m: &std::sync::Arc<Proc>,
-    p: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("readZipperAt", m.as_ref(), &[p.as_ref()], env)
-}
-
 /// The `Proc::PWriteZipper(m)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_write_zipper(
-    m: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("writeZipper", m.as_ref(), &[], env)
-}
-
 /// The `Proc::PWriteZipperAt(m, p)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_p_write_zipper_at(
-    m: &std::sync::Arc<Proc>,
-    p: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("writeZipperAt", m.as_ref(), &[p.as_ref()], env)
-}
-
 /// The `Proc::RZGetLeaf(z)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_get_leaf(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("getLeaf", z.as_ref(), &[], env)
-}
-
 /// The `Proc::RZDescendTo(z, rel)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_descend_to(
-    z: &std::sync::Arc<Proc>,
-    rel: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("descendTo", z.as_ref(), &[rel.as_ref()], env)
-}
-
 /// The `Proc::RZChildCount(z)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_child_count(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("childCount", z.as_ref(), &[], env)
-}
-
 /// The `Proc::RZDescendFirst(z)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_descend_first(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("descendFirst", z.as_ref(), &[], env)
-}
-
 /// The `Proc::RZToNextSibling(z)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_to_next_sibling(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("toNextSibling", z.as_ref(), &[], env)
-}
-
 /// The `Proc::RZToPrevSibling(z)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_to_prev_sibling(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("toPrevSibling", z.as_ref(), &[], env)
-}
-
 /// The `Proc::RZDescendIndexedBranch(z, i)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_descend_indexed_branch(
-    z: &std::sync::Arc<Proc>,
-    i: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("descendIndexedBranch", z.as_ref(), &[i.as_ref()], env)
-}
-
 /// The `Proc::RZAscendOne(z)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_ascend_one(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("ascendOne", z.as_ref(), &[], env)
-}
-
 /// The `Proc::RZAscend(z, n)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_ascend(
-    z: &std::sync::Arc<Proc>,
-    n: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("ascend", z.as_ref(), &[n.as_ref()], env)
-}
-
 /// The `Proc::RZGetPath(z)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_get_path(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("getPath", z.as_ref(), &[], env)
-}
-
 /// The `Proc::RZToNextLeaf(z)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_to_next_leaf(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("toNextLeaf", z.as_ref(), &[], env)
-}
-
 /// The `Proc::RZLeafCount(z)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_r_z_leaf_count(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("leafCount", z.as_ref(), &[], env)
-}
-
 /// The `Proc::WZSetSubtrie(w, rel)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_w_z_set_subtrie(
-    w: &std::sync::Arc<Proc>,
-    rel: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("setSubtrie", w.as_ref(), &[rel.as_ref()], env)
-}
-
 /// The `Proc::WZRemoveLeaf(w)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_w_z_remove_leaf(
-    w: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("removeLeaf", w.as_ref(), &[], env)
-}
-
 /// The `Proc::WZRemoveBranches(w)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_w_z_remove_branches(
-    w: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("removeBranches", w.as_ref(), &[], env)
-}
-
 /// The `Proc::WZGraft(w, rz)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_w_z_graft(
-    w: &std::sync::Arc<Proc>,
-    rz: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("graft", w.as_ref(), &[rz.as_ref()], env)
-}
-
 /// The `Proc::WZJoinInto(w, rz)` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
-#[inline(never)]
-fn lower_arm_w_z_join_into(
-    w: &std::sync::Arc<Proc>,
-    rz: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    lower_method("joinInto", w.as_ref(), &[rz.as_ref()], env)
-}
-
 /// The `other` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
@@ -2706,17 +3616,6 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
 /// in `env`) into the corresponding Rholang `Expr` `Par`, propagating `locally_free` and
 /// `connective_used` from the operands so an expression that references bound/free variables is
 /// tracked correctly. The machine's reducer evaluates the expression (metered).
-fn lower_binary_expr(
-    a: &Proc,
-    b: &Proc,
-    env: &BoundEnv,
-    build: impl FnOnce(Option<Par>, Option<Par>) -> ExprInstance,
-) -> Result<Par, RhocalcAstLowerError> {
-    let lhs = lower_proc(a, env)?;
-    let rhs = lower_proc(b, env)?;
-    Ok(binary_expr_par(lhs, rhs, build))
-}
-
 /// Assemble a binary Rholang `Expr` `Par` from two already-lowered operand `Par`s
 /// (`locally_free`/`connective_used` propagation shared by [`lower_binary_expr`] and the
 /// ground-string `Add` dispatch).
@@ -2754,39 +3653,6 @@ fn binary_expr_par(
 /// correctly tracked. `EMethod` carries its own copy of both (proto fields 5 and 6) in addition to
 /// the enclosing `Par`'s, and the reducer reads the `EMethod`'s copy when it substitutes
 /// (`reduce.rs:466`), so both are set.
-fn lower_method(
-    method_name: &str,
-    target: &Proc,
-    arguments: &[&Proc],
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    let target_par = lower_proc(target, env)?;
-    let mut argument_pars = Vec::with_capacity(arguments.len());
-    for argument in arguments {
-        argument_pars.push(lower_proc(argument, env)?);
-    }
-
-    let mut locally_free = target_par.locally_free.clone();
-    let mut connective_used = target_par.connective_used;
-    for argument in &argument_pars {
-        locally_free = union(locally_free, argument.locally_free.clone());
-        connective_used = connective_used || argument.connective_used;
-    }
-
-    let mut par = Par::default().with_exprs(vec![Expr {
-        expr_instance: Some(ExprInstance::EMethodBody(EMethod {
-            method_name: method_name.to_string(),
-            target: Some(target_par),
-            arguments: argument_pars,
-            locally_free: locally_free.clone(),
-            connective_used,
-        })),
-    }]);
-    par.locally_free = locally_free;
-    par.connective_used = connective_used;
-    Ok(par)
-}
-
 /// Is this receiver a `Bag` **written literally at the call site**, so the C1 routing can see that
 /// the machine would be handed the bag ENCODING rather than a bag?
 ///
@@ -2818,31 +3684,11 @@ fn receiver_is_literal_bag(proc: &Proc) -> bool {
 /// `l.length()` → the reducer's `length` (`reduce.rs:7893`), gated on the bag encoding.
 ///
 /// See [`receiver_is_literal_bag`] for why the gate exists and exactly how far it reaches.
-fn lower_length(target: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match receiver_is_literal_bag(target) {
-        true => Err(RhocalcAstLowerError::UnsupportedProc(
-            "#{…}#.length() bag cardinality (no Rholang analog — the machine would measure the \
-             2-element bag ABI encoding, not the multiset; C3 residue)",
-        )),
-        false => lower_method("length", target, &[], env),
-    }
-}
-
 /// `l.nth(i)` → the reducer's `nth` (`reduce.rs:4078`), gated on the bag encoding.
 ///
 /// Rholang's `nth` additionally accepts `ETuple` and `GByteArray` receivers, which RhoCalc's own
 /// fold body rejects — routed receivers Rholang supports come for free, which is the point of
 /// option C. See [`receiver_is_literal_bag`] for the gate.
-fn lower_nth(target: &Proc, index: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match receiver_is_literal_bag(target) {
-        true => Err(RhocalcAstLowerError::UnsupportedProc(
-            "#{…}#.nth(i) bag indexing (no Rholang analog — the machine would index the 2-element \
-             bag ABI encoding, not the multiset; C3 residue)",
-        )),
-        false => lower_method("nth", target, &[index], env),
-    }
-}
-
 /// `l.concat(r)` → Rholang's `++` (`EPlusPlus`, `reduce.rs::combine_plus_plus`), gated on the bag
 /// encoding on EITHER side.
 ///
@@ -2851,18 +3697,6 @@ fn lower_nth(target: &Proc, index: &Proc, env: &BoundEnv) -> Result<Par, Rhocalc
 /// `RHOCALC_BAG_ABI_TAG` unforgeables, where the fold body answers `error`. Both operands are
 /// checked because either position can supply the bag. See [`receiver_is_literal_bag`] for how far
 /// the gate reaches and why it cannot reach further.
-fn lower_concat(left: &Proc, right: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match receiver_is_literal_bag(left) || receiver_is_literal_bag(right) {
-        true => Err(RhocalcAstLowerError::UnsupportedProc(
-            "#{…}#.concat(…) bag concatenation (no Rholang analog — `++` would concatenate the \
-             2-element bag ABI encodings, tags and all; C3 residue)",
-        )),
-        false => Ok(binary_expr_par(lower_proc(left, env)?, lower_proc(right, env)?, |p1, p2| {
-            ExprInstance::EPlusPlusBody(EPlusPlus { p1, p2 })
-        })),
-    }
-}
-
 /// Assemble a unary Rholang `Expr` `Par` from an already-lowered operand `Par` (the `ENeg`/`ENot`
 /// propagation shape).
 fn unary_expr_par(operand: Par, build: impl FnOnce(Option<Par>) -> ExprInstance) -> Par {
@@ -2913,8 +3747,10 @@ fn is_single_gstring_value(par: &Par) -> bool {
 /// `substitute_and_charge`) before they are stored, PATTERNS are never evaluated. So, while the
 /// front end still built a negation node for a sign-abutted numeral,
 ///
-///     `@"c"!(-7)`          stored  `GInt(-7)`          (the `ENeg` was evaluated)
-///     `for(@-7 <- @"c")`   matched `ENeg(GInt(7))`     (the `ENeg` was NOT evaluated)
+/// ```text
+///   @"c"!(-7)          stored  GInt(-7)          (the ENeg was evaluated)
+///   for(@-7 <- @"c")   matched ENeg(GInt(7))     (the ENeg was NOT evaluated)
+/// ```
 ///
 /// and the two never matched: `for(@-7 <- @"c"){…} | @"c"!(-7)` produced NO COMM — silently, with
 /// no error, where consensus Rholang DOES commit it. Both sides now emit `GInt(-7)`, because no
@@ -2996,17 +3832,36 @@ fn is_single_gstring_value(par: &Par) -> bool {
 ///
 /// Pinned per row and per position (bare / send / pattern) in
 /// `rholang-runtime/tests/rhocalc_ground_literal_conformance.rs`.
-fn lower_int_value(value: &Int, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match value {
-        Int::NumLit(literal) => Ok(new_gint_par(*literal, Vec::new(), false)),
-        Int::NegInt(inner) => {
-            let operand = lower_int_value(inner.as_ref(), env)?;
-            Ok(unary_expr_par(operand, |p| ExprInstance::ENegBody(ENeg { p })))
-        },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc(
-            "non-literal integer expression (Int category)",
-        )),
+/// ★ M-2 (found while enumerating the component, and NOT a member of it).
+///
+/// `Int::NegInt` nests, so `- - - … - 5` gave this function its own Θ(depth) native-stack
+/// axis — one frame per sign. It never appeared in the reproducer and it is not in the
+/// 87-member Tarjan component (it calls nothing that calls back into `lower_proc`), which is
+/// exactly why it would have survived a conversion scoped to the component. It is converted
+/// here rather than logged for later: the fix is a loop, the cost of deferring it is a second
+/// campaign, and "the lowering is depth-independent" must not have an asterisk.
+///
+/// The two passes are the same post-order the recursive form ran: strip the signs, lower the
+/// literal, then re-apply the signs outermost-last so the `ENeg` nesting — and therefore the
+/// `locally_free`/`connective_used` propagation `unary_expr_par` performs at each level — is
+/// byte-identical.
+fn lower_int_value(value: &Int, _env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+    let mut signs = 0usize;
+    let mut value = value;
+    while let Int::NegInt(inner) = value {
+        signs += 1;
+        value = inner.as_ref();
     }
+    let Int::NumLit(literal) = value else {
+        return Err(RhocalcAstLowerError::UnsupportedProc(
+            "non-literal integer expression (Int category)",
+        ));
+    };
+    let mut par = new_gint_par(*literal, Vec::new(), false);
+    for _ in 0..signs {
+        par = unary_expr_par(par, |p| ExprInstance::ENegBody(ENeg { p }));
+    }
+    Ok(par)
 }
 
 // ── Fold trampoline lifting (Tier-3, generalized by A-S4 to EVERY fold site) ─────────────────────
@@ -3321,78 +4176,6 @@ fn replace_fold_in_name(name: &Name, r_drop: &Proc, replaced: &mut bool) -> Name
 /// `new ret in { @"<fold>"!(operand, ret) | for(@r <- ret){ body[fold ↦ *r] } }` and records the
 /// `FoldSpec`; the `for` body is lifted recursively (nested folds). All de Bruijn bookkeeping rides
 /// `extend_env`.
-fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    let Some((operand, kind, width)) = find_fold(body) else {
-        return lower_proc(body, env);
-    };
-    let site_index = HELD_FOLD_SITES.with(|sites| sites.borrow().len()) as u8;
-    // ★ #36 S5: the site is scoped to the language it belongs to. `site_index` alone made two
-    // co-installed fold-bearing languages collide on `[0xF0, 0]` / `0xF000`.
-    let fingerprint = held_fold_language_fingerprint();
-    HELD_FOLD_SITES.with(|sites| {
-        sites.borrow_mut().push(FoldSpec {
-            kind,
-            width,
-            site_index,
-            fingerprint: fingerprint.clone(),
-        })
-    });
-    let channel = fold_channel(site_index, &fingerprint);
-
-    // Fresh result binders: `new ret` (innermost) and the `for`-bound `r`.
-    let ret_var = mettail_runtime::get_or_create_var(format!("__mtl_ret_{site_index}"));
-    let r_var = mettail_runtime::get_or_create_var(format!("__mtl_r_{site_index}"));
-    let r_drop = Proc::PDrop(Arc::new(Name::NVar(OrdVar(Var::Free(r_var.clone())))));
-
-    let mut replaced = false;
-    let transformed = replace_fold(body, &r_drop, &mut replaced);
-
-    // `new ret` shifts `env` by 1; the `for` then binds `r` (index 0), `ret` (index 1).
-    let env_new = extend_env(env, &[Binder(ret_var)]);
-    let env_for = extend_env(&env_new, &[Binder(r_var)]);
-
-    // Send `@channel!(operand, ret)` at the `new` level (ret = boundvar 0). A statically ground
-    // operand EXPRESSION (`5 + 3`) lowers to its metered `Expr`; the machine evaluates it at
-    // send time, so the contract always receives a ground value leaf.
-    let operand_par = lower_proc(&operand, &env_new)?;
-    let ret_channel = new_boundvar_par(0, Vec::new(), false);
-    let send = send_par(channel, vec![operand_par, ret_channel.clone()]);
-
-    // `for(@r <- ret){ <recursively-lifted transformed body> }`.
-    let for_body = lower_body_lifting_folds(&transformed, &env_for)?;
-    let bind = ReceiveBind {
-        patterns: vec![new_freevar_par(0, Vec::new())],
-        source: Some(ret_channel),
-        remainder: None,
-        free_count: 1,
-    };
-    let recv_locally_free = receive_locally_free(&[bind.clone()], &for_body, 1);
-    let recv = new_receive_par(
-        vec![bind],
-        for_body,
-        false,
-        false,
-        1,
-        recv_locally_free.clone(),
-        false,
-        recv_locally_free,
-        false,
-    );
-
-    // `new ret { send | recv }`.
-    let inner = send.append(recv);
-    let new_locally_free = filter_and_adjust_bitset(&inner.locally_free, 1);
-    Ok(new_new_par(
-        1,
-        inner,
-        Vec::new(),
-        BTreeMap::new(),
-        new_locally_free.clone(),
-        new_locally_free,
-        false,
-    ))
-}
-
 /// Lower a term to a `Par` PLUS the fold contract `Definition` specs its trampolines need (A-S4:
 /// every width/precision fold lifts — ground or COMM-held). The `Par` already targets the fold
 /// channels; the caller registers the contracts via the runtime's `extra_system_processes` seam.
@@ -3457,174 +4240,10 @@ fn record_guard_outcome(outcome: guard_discharge::GuardDischarge, guard: &Proc) 
     });
 }
 
-fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match bag {
-        Bag::BagLit(entries) => {
-            let mut entries = entries.iter().collect::<Vec<_>>();
-            entries.sort_by_key(|(item, _)| *item);
-
-            let mut pairs = Vec::with_capacity(entries.len());
-            for (item, count) in entries {
-                let count = i64::try_from(count).map_err(|_| {
-                    RhocalcAstLowerError::UnsupportedProc("bag multiplicity exceeds i64")
-                })?;
-                let item = lower_proc(item, env)?;
-                let count = new_gint_par(count, Vec::new(), false);
-                let pair_locally_free =
-                    union(item.locally_free.clone(), count.locally_free.clone());
-                let pair_connective = item.connective_used || count.connective_used;
-                pairs.push(new_elist_par(
-                    vec![item, count],
-                    pair_locally_free.clone(),
-                    pair_connective,
-                    None,
-                    pair_locally_free,
-                    pair_connective,
-                ));
-            }
-
-            let pairs_locally_free = locally_free_union(&pairs);
-            let pairs_connective = any_connective_used(&pairs);
-            let pairs = new_elist_par(
-                pairs,
-                pairs_locally_free.clone(),
-                pairs_connective,
-                None,
-                pairs_locally_free,
-                pairs_connective,
-            );
-            let tag = GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string());
-            let locally_free = union(tag.locally_free.clone(), pairs.locally_free.clone());
-
-            let connective_used = tag.connective_used || pairs.connective_used;
-            Ok(new_elist_par(
-                vec![tag, pairs],
-                locally_free.clone(),
-                connective_used,
-                None,
-                locally_free,
-                connective_used,
-            ))
-        },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed bag process")),
-    }
-}
-
-fn lower_list(list: &List, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match list {
-        List::ListLit(items) => {
-            let items = items
-                .iter()
-                .map(|item| lower_proc(item, env))
-                .collect::<Result<Vec<_>, _>>()?;
-            let locally_free = locally_free_union(&items);
-            let connective_used = any_connective_used(&items);
-            Ok(new_elist_par(
-                items,
-                locally_free.clone(),
-                connective_used,
-                None,
-                locally_free,
-                connective_used,
-            ))
-        },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed list process")),
-    }
-}
-
-fn lower_map(map: &Map, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match map {
-        Map::MapLit(entries) => {
-            let mut pairs = Vec::with_capacity(entries.len());
-            let mut locally_free = Vec::new();
-
-            let mut connective_used = false;
-
-            for (key, value) in entries.iter() {
-                let key = lower_proc(key, env)?;
-                let value = lower_proc(value, env)?;
-                locally_free = union(
-                    locally_free,
-                    union(key.locally_free.clone(), value.locally_free.clone()),
-                );
-                connective_used |= key.connective_used || value.connective_used;
-                pairs.push(new_key_value_pair(key, value));
-            }
-
-            Ok(new_emap_par(
-                pairs,
-                locally_free.clone(),
-                connective_used,
-                None,
-                locally_free,
-                connective_used,
-            ))
-        },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed map process")),
-    }
-}
-
-fn lower_set(set: &Set, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match set {
-        Set::SetLit(items) => {
-            // `HashSetLit` iterates in hash order; sort by `Proc` `Ord` for a deterministic `ESet`
-            // (mirrors how `lower_bag` sorts its entries).
-            let mut items: Vec<&Proc> = items.iter().collect();
-            items.sort();
-            let elements = items
-                .into_iter()
-                .map(|item| lower_proc(item, env))
-                .collect::<Result<Vec<_>, _>>()?;
-            let locally_free = locally_free_union(&elements);
-            let connective_used = any_connective_used(&elements);
-            Ok(new_eset_par(
-                elements,
-                locally_free.clone(),
-                connective_used,
-                None,
-                locally_free,
-                connective_used,
-            ))
-        },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed set process")),
-    }
-}
-
-fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match pathmap {
-        Pathmap::PathmapLit(entries) => {
-            // A pathmap is key/value like a map; lower to a Rholang `EMap` (mirrors `lower_map`).
-            // `PathMapLit` (insertion-order) is sorted by key for a deterministic encoding.
-            let mut entries: Vec<(&Proc, &Proc)> = entries.iter().collect();
-            entries.sort_by(|(key_a, _), (key_b, _)| key_a.cmp(key_b));
-
-            let mut pairs = Vec::with_capacity(entries.len());
-            let mut locally_free = Vec::new();
-            let mut connective_used = false;
-            for (key, value) in entries {
-                let key = lower_proc(key, env)?;
-                let value = lower_proc(value, env)?;
-                locally_free = union(
-                    locally_free,
-                    union(key.locally_free.clone(), value.locally_free.clone()),
-                );
-                connective_used |= key.connective_used || value.connective_used;
-                pairs.push(new_key_value_pair(key, value));
-            }
-
-            Ok(new_emap_par(
-                pairs,
-                locally_free.clone(),
-                connective_used,
-                None,
-                locally_free,
-                connective_used,
-            ))
-        },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed pathmap process")),
-    }
-}
-
+/// ⚠ M-2: superseded in production by [`decompose_for_row_borrowed`], which returns the same
+/// decomposition without cloning an `InputBind` out of its `Arc` per row. Reached only from
+/// [`recursive_oracle`], which must stay verbatim — a twin edited to compile is not a twin.
+#[cfg_attr(not(test), allow(dead_code))]
 /// Lower a `PForUser` receive (rows + body) into a normalized Rholang `Receive` `Par`.
 ///
 /// `rows[0]` is the outermost receive; the remaining rows nest as the continuation. A row is a
@@ -3638,190 +4257,6 @@ fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RhocalcAstLow
 ///   [`extend_env`] for the body, so the body's de Bruijn indices line up with the Rho machine;
 /// - the innermost user body lifts folds via [`lower_body_lifting_folds`]; a nested row recurses;
 /// - a `where`-guard is lowered (in the extended env) and attached as `Receive.condition`.
-fn lower_pfor_user(
-    rows: &[ForRow],
-    body: &Proc,
-    env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
-    if rows.is_empty() {
-        // No rows left: the body is the whole process.
-        return lower_body_lifting_folds(body, env);
-    }
-    let row = &rows[0];
-
-    // Continuation = the remaining rows (nested `PForUser`) or the body when this is the last row.
-    let continuation = if rows.len() > 1 {
-        Proc::PForUser(rows[1..].to_vec(), Arc::new(body.clone()))
-    } else {
-        body.clone()
-    };
-
-    let (binds, persistent, cond) = decompose_for_row(row)?;
-    if binds.is_empty() {
-        return Err(RhocalcAstLowerError::EmptyInputJoin);
-    }
-
-    // Lower each bind: source channel (OUTER env) + pattern `Par`(s) + the bind's local binders.
-    // #14: binders accumulate as `ReceiveSlot`s IN BIND ORDER — a moniker `PVar` binder or a
-    // name-keyed FLT hole — so an FLT hole and a moniker binder that co-occur in a `&`-join share
-    // one coherent de-Bruijn numbering (a hole's global level then follows from its slot position,
-    // not the FLT bind's local `FreeVar` numbering).
-    let mut binds_rho: Vec<ReceiveBind> = Vec::with_capacity(binds.len());
-    let mut slots: Vec<ReceiveSlot> = Vec::new();
-    for bind in &binds {
-        let channel = bind_channel_name(bind)
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("for-row channel"))?;
-        let source = lower_name(channel, env)?;
-
-        if let Some(node) = bind_flt_node(bind) {
-            let (pattern, free_count, hole_names) = lower_flt_pattern(node.as_ref(), env)?;
-            // The FLT bind contributes one hole slot per `FreeVar`, in `FreeVar` order.
-            for name in hole_names {
-                slots.push(ReceiveSlot::Hole(name));
-            }
-            binds_rho.push(ReceiveBind {
-                patterns: vec![pattern],
-                source: Some(source),
-                remainder: None,
-                free_count,
-            });
-            continue;
-        }
-
-        let (patterns, bind_binders) = if is_empty_bind(bind) {
-            // `for(_ <- c)` — match (and discard) any single message; no bound variables.
-            (vec![new_wildcard_par(Vec::new(), false)], Vec::new())
-        } else {
-            let pat_proc = bind_pattern_proc(bind)
-                .ok_or(RhocalcAstLowerError::UnsupportedProc("for-row pattern"))?;
-            let mut counter = 0i32;
-            let mut bind_binders = Vec::new();
-            let pat_par = lower_pattern_proc(&pat_proc, &mut counter, &mut bind_binders)?;
-            (vec![pat_par], bind_binders)
-        };
-
-        let free_count = bind_binders.len() as i32;
-        for binder in bind_binders {
-            slots.push(ReceiveSlot::Moniker(binder));
-        }
-        binds_rho.push(ReceiveBind {
-            patterns,
-            source: Some(source),
-            remainder: None,
-            free_count,
-        });
-    }
-
-    // #14: ONE unified continuation scope over the receive's binder slots (moniker + FLT holes
-    // interleaved in bind order). `receive_binder_count` is the receive's total bound-var width
-    // used by the `locally_free` accounting below. For a moniker-only receive this is byte-identical
-    // to the former `extend_env(env, &all_binders)` (same slot order, same `width - 1 - i` levels).
-    let receive_binder_count = slots.len();
-    let extended_env = env.extend_slots(&slots);
-
-    // The continuation is lowered under the extended env: a nested row recurses; otherwise this is
-    // the innermost user body, where held folds are lifted into Dovetail trampolines.
-    let lowered_body = match &continuation {
-        Proc::PForUser(rest_rows, rest_body) => {
-            lower_pfor_user(rest_rows, rest_body.as_ref(), &extended_env)?
-        },
-        other => lower_body_lifting_folds(other, &extended_env)?,
-    };
-
-    // `where`-guard (if any) is an ordinary boolean `Proc`, lowered in the extended env.
-    let condition = match &cond {
-        Some(guard) => Some(lower_proc(guard, &extended_env)?),
-        None => None,
-    };
-
-    // ════════════════════════════════════════════════════════════════════════════════════════
-    // S-D0 — COMPILE-TIME GUARD DISCHARGE (the decision site)
-    // ════════════════════════════════════════════════════════════════════════════════════════
-    //
-    // ★ POSITION IS LOAD-BEARING. The discharge happens HERE — after the guard is lowered, and
-    // BEFORE the `locally_free` union below. Discharging *after* the union would leave the
-    // receive carrying bits contributed by a condition that is no longer in the emitted `Par`:
-    // a bitset inconsistent with its own term, i.e. a latent scoping bug in every downstream
-    // consumer of `locally_free` (substitution, `connective_used` derivation, sorting).
-    //
-    // The decision is recorded by simply NOT populating `Receive.condition` — f1r3node's
-    // `check_commit` short-circuits `None` to `true`, which is exactly what the guard would
-    // have answered. `None`, never `Some(Par::default())`: the empty-`Par` form is a *different*
-    // artifact that `reduce.rs` happens to collapse, and an artifact difference is a consensus
-    // difference. See `crate::guard_discharge` for the soundness argument and the fence.
-    let condition = match (&cond, condition) {
-        (Some(guard), Some(cond_par)) if env.options.guard_discharge => {
-            // The routing is CONSULTED, not derived (the ROUTE-SITE INVARIANT): a populated
-            // `Receive.condition` is by construction what the Rho machine's `check_commit`
-            // reads, so this guard is `MachineEvaluated` as a structural fact about the
-            // artifact being emitted. When the wiring plan's `GuardPlan` lands, the plan's
-            // recorded route is passed here instead — `classify` still decides no routing.
-            let host_verdict = eval_guard_bool(guard);
-            let outcome = guard_discharge::classify(
-                host_verdict,
-                &cond_par,
-                guard_discharge::GuardRouting::MachineEvaluated,
-            );
-            record_guard_outcome(outcome, guard);
-            match outcome.omits_condition() {
-                true => None,
-                // Residual AND Refuted both emit the condition verbatim: a `for` that can never
-                // fire is a RESTING, OBSERVABLE continuation (it is in the normal form, the
-                // state hash and storage), so folding it away would be unsound. Refutation is
-                // diagnostic only — the artifact is byte-identical.
-                false => Some(cond_par),
-            }
-        },
-        (_, condition) => condition,
-    };
-
-    let bind_count = receive_binder_count as i32;
-    let mut locally_free = receive_locally_free(&binds_rho, &lowered_body, receive_binder_count);
-    if let Some(cond_par) = &condition {
-        // The guard is lowered in the same extended env as the body, so adjust its `locally_free`
-        // the same way (drop this receive's own bound vars, shift outer references down).
-        locally_free = union(
-            locally_free,
-            filter_and_adjust_bitset(&cond_par.locally_free, receive_binder_count),
-        );
-    }
-
-    // M-1b: `connective_used` is DERIVED, not asserted. For a receive it is the
-    // connective-ness of the SOURCES (the channels being listened on) and of the
-    // BODY — never of the bind PATTERNS, whose free variables are the receive's own
-    // binders and therefore make it no less concrete
-    // (`HasLocallyFree<ReceiveBind>::connective_used(rb) = connective_used(rb.source)`).
-    // Every term-position receive lowers concrete sources and a concrete body, so
-    // this is `false` there and the emitted `Par` is byte-identical; it becomes
-    // load-bearing only for a receive appearing inside a `matches` formula.
-    let connective_used = binds_rho.iter().any(|bind| {
-        bind.source
-            .as_ref()
-            .is_some_and(|source| source.connective_used)
-    }) || lowered_body.connective_used;
-    let mut receive_par = new_receive_par(
-        binds_rho,
-        lowered_body,
-        persistent,
-        false,
-        bind_count,
-        locally_free.clone(),
-        connective_used,
-        locally_free,
-        connective_used,
-    );
-
-    if let Some(cond_par) = condition {
-        // `new_receive_par` hardcodes `condition: None`; attach the `where`-guard post-construction
-        // (the matcher coordinator evaluates it against the combined bindings of all binds).
-        if let Some(receive) = receive_par.receives.get_mut(0) {
-            receive.condition = Some(cond_par);
-        }
-    }
-
-    Ok(receive_par)
-}
-
 /// Decompose a (non-lambda) [`ForRow`] into `(binds, persistent, where-cond)`. The lambda-calculus
 /// `ForRow` variants (`FVar`/`Lam*`/`Apply*`/`MLam*`/`MApply*`) never appear in a normalized ground
 /// term and are rejected as unsupported.
@@ -3871,104 +4306,6 @@ fn decompose_for_row(
 /// (numbered left-to-right WITHIN this bind) and its `Binder` is pushed to `binders` in the same
 /// order. `CastList` patterns recurse (threading the same counter/binders). Any other sub-pattern is
 /// a GROUND value matched exactly, lowered via [`lower_proc`] in the empty env.
-fn lower_pattern_proc(
-    pat: &Proc,
-    counter: &mut i32,
-    binders: &mut Vec<Binder<String>>,
-) -> Result<Par, RhocalcAstLowerError> {
-    match pat {
-        Proc::PVar(ordvar) => match &ordvar.0 {
-            Var::Free(free_var) => {
-                let index = *counter;
-                *counter += 1;
-                binders.push(Binder(free_var.clone()));
-                Ok(new_freevar_par(index, Vec::new()))
-            },
-            Var::Bound(_) => {
-                Err(RhocalcAstLowerError::UnsupportedProc("bound var in receive pattern"))
-            },
-        },
-        Proc::CastList(list) => match list.as_ref() {
-            List::ListLit(items) => {
-                let mut item_pars = Vec::with_capacity(items.len());
-                for item in items {
-                    item_pars.push(lower_pattern_proc(item, counter, binders)?);
-                }
-                let locally_free = locally_free_union(&item_pars);
-                // A list pattern is "connective-using" iff it contains free variables; derive that
-                // from the lowered children (a free-variable `Par` carries `connective_used = true`).
-                let connective_used = item_pars.iter().any(|item| item.connective_used);
-                Ok(new_elist_par(
-                    item_pars,
-                    locally_free.clone(),
-                    connective_used,
-                    None,
-                    locally_free,
-                    connective_used,
-                ))
-            },
-            _ => Err(RhocalcAstLowerError::UnsupportedProc("computed list receive pattern")),
-        },
-        // Map pattern `@{k: v, ...}` — keys/values may contain pattern variables (e.g. `{1: x}`
-        // binds `x` to the value at key `1`). Recurse so embedded `PVar`s become free variables;
-        // ground keys/values stay exact-match. Mirrors `lower_map` but threads the freevar counter.
-        Proc::CastMap(map) => match map.as_ref() {
-            Map::MapLit(entries) => {
-                let mut pairs = Vec::with_capacity(entries.len());
-                let mut locally_free = Vec::new();
-                let mut connective_used = false;
-                for (key, value) in entries.iter() {
-                    let key = lower_pattern_proc(key, counter, binders)?;
-                    let value = lower_pattern_proc(value, counter, binders)?;
-                    connective_used =
-                        connective_used || key.connective_used || value.connective_used;
-                    locally_free = union(
-                        locally_free,
-                        union(key.locally_free.clone(), value.locally_free.clone()),
-                    );
-                    pairs.push(new_key_value_pair(key, value));
-                }
-                Ok(new_emap_par(
-                    pairs,
-                    locally_free.clone(),
-                    connective_used,
-                    None,
-                    locally_free,
-                    connective_used,
-                ))
-            },
-            _ => Err(RhocalcAstLowerError::UnsupportedProc("computed map receive pattern")),
-        },
-        // Set pattern `@Set(e, ...)` — elements may contain pattern variables. Recurse; ground
-        // elements stay exact-match. (Sorted for a deterministic `ESet`, as `lower_set` does.)
-        Proc::CastSet(set) => match set.as_ref() {
-            Set::SetLit(items) => {
-                let mut items: Vec<&Proc> = items.iter().collect();
-                items.sort();
-                let mut elements = Vec::with_capacity(items.len());
-                for item in items {
-                    elements.push(lower_pattern_proc(item, counter, binders)?);
-                }
-                let locally_free = locally_free_union(&elements);
-                let connective_used = elements.iter().any(|e| e.connective_used);
-                Ok(new_eset_par(
-                    elements,
-                    locally_free.clone(),
-                    connective_used,
-                    None,
-                    locally_free,
-                    connective_used,
-                ))
-            },
-            _ => Err(RhocalcAstLowerError::UnsupportedProc("computed set receive pattern")),
-        },
-        // A ground sub-pattern (literal/constructor with no pattern variables): exact-match value.
-        // This covers ground Bag/Pathmap/Drop/Nil/numeric/string patterns, whose `lower_proc`
-        // encoding is itself the exact structure to match.
-        other => lower_proc(other, &BoundEnv::new()),
-    }
-}
-
 fn send_par_persistent(channel: Par, data: Vec<Par>) -> Par {
     let locally_free = data
         .iter()
@@ -4015,34 +4352,6 @@ fn mk_proc_list(items: Vec<Proc>) -> Proc {
 /// to every taker, forever", and there is no such thing as a persistent *exploration* — the
 /// request is answered once, and repeating it would re-run the whole search per consumer. It
 /// fails closed here rather than being silently demoted to a linear send.
-fn lower_lookahead_operand(
-    operand: &Proc,
-    env: &BoundEnv,
-) -> Result<(Par, Par), RhocalcAstLowerError> {
-    if let Some(desugared) = desugar_send_node(operand) {
-        return lower_lookahead_operand(&desugared, env);
-    }
-    match operand {
-        Proc::POutput(channel, payload) => {
-            Ok((lower_name(channel.as_ref(), env)?, lower_proc(payload.as_ref(), env)?))
-        },
-        // `@P!(q)` — the channel is the quote of `P`, i.e. `lower_proc(P)`.
-        Proc::POutputShort(channel_proc, payload) => {
-            Ok((lower_proc(channel_proc.as_ref(), env)?, lower_proc(payload.as_ref(), env)?))
-        },
-        Proc::PPersistOutput(..) | Proc::PPersistOutputShort(..) => {
-            Err(RhocalcAstLowerError::LookaheadOperandNotASend("a persistent send (`!!`)"))
-        },
-        Proc::PZero => Err(RhocalcAstLowerError::LookaheadOperandNotASend("Nil")),
-        Proc::PForUser(..) => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a receive")),
-        Proc::PPar(..) | Proc::PParInfix(..) => {
-            Err(RhocalcAstLowerError::LookaheadOperandNotASend("a parallel composition"))
-        },
-        Proc::CastList(..) => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a list literal")),
-        _ => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a non-send process")),
-    }
-}
-
 /// Admit a `P[n]` step bound: a ground, non-negative integer literal.
 ///
 /// Non-negative because `n` counts COMMs and a negative count denotes nothing; `0` is admitted
@@ -4267,39 +4576,6 @@ fn is_empty_bind(bind: &InputBind) -> bool {
             | InputBind::InputBindEmptyPersistent(_)
             | InputBind::InputBindEmptyQuery(_, _)
     )
-}
-
-fn lower_drop(name: &Name, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match name {
-        // `*@(P)` drops to `P`.
-        Name::NQuote(proc) => lower_proc(proc.as_ref(), env),
-        // `*@P` short-quote: the WPDA parser keeps the raw `NQuoteShort` node (its `fold` to
-        // `NQuote(P)` runs only at eval time), and dropping `@P` yields `P`.
-        Name::NQuoteShort(proc) => lower_proc(proc.as_ref(), env),
-        // `*@Nil` drops the quote of `Nil` back to `Nil` (the empty process).
-        Name::NQuoteNil => Ok(Par::default()),
-        // Parenthesized name grouping `*(N)`: the WPDA parser keeps the raw `NParen` wrapper (its
-        // `fold` to `N` runs only at eval time), so `*(N)` is just `*N`. This is the canonical
-        // `*(x)` / `*(@(0))` rho drop idiom and the body of most COMM examples.
-        Name::NParen(inner) => lower_drop(inner.as_ref(), env),
-        Name::NVar(var) => lower_name_var(var, env),
-        _ => Err(RhocalcAstLowerError::UnsupportedName("computed rhocalc name")),
-    }
-}
-
-fn lower_name(name: &Name, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    match name {
-        // `@(P)` quotes `P`; its channel `Par` is just `P`'s lowering.
-        Name::NQuote(proc) => lower_proc(proc.as_ref(), env),
-        // `@P` short-quote (raw `NQuoteShort`; folds to `NQuote(P)` at eval time) — same channel.
-        Name::NQuoteShort(proc) => lower_proc(proc.as_ref(), env),
-        // `@Nil` quotes `Nil`; its channel is the empty process.
-        Name::NQuoteNil => Ok(Par::default()),
-        // Parenthesized name grouping `(N)` is transparent for channels (raw `NParen`; folds to `N`).
-        Name::NParen(inner) => lower_name(inner.as_ref(), env),
-        Name::NVar(var) => lower_name_var(var, env),
-        _ => Err(RhocalcAstLowerError::UnsupportedName("computed rhocalc name")),
-    }
 }
 
 fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {

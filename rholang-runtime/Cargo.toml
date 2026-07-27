@@ -425,6 +425,14 @@ async-trait = "0.1"
 # canonical MeTTaIL numerics so the trusted native fold runs on the machine-delivered operand.
 # Same version the `runtime` crate's canonical numeric types are built on.
 num-bigint = "0.4"
+# M-2 (the explicit-stack lowering driver, `rhocalc_ast::drive`). The driver MATERIALISES a
+# handful of nodes mid-traversal — a desugared send head, a held fold's operand and its
+# fold-lifted body, an unbound `new` body, a receive's pattern process — and must hand out
+# `&'drive Proc` for them while still accepting further allocations. That is exactly a typed
+# arena, and this crate is `#![forbid(unsafe_code)]`, so it cannot hand-roll the one the safe
+# formulation needs. Adds NO crate to the build graph: `typed-arena 2.0.2` was already in
+# `Cargo.lock` as a transitive dependency, and it has no dependencies of its own.
+typed-arena = "2.0"
 # BENCHMARK-ONLY (Track B, `bench-naive-baseline`): the set automaton, for the
 # harness's direct-construction workload rulesets (see the feature's comment).
 # Inert unless the quarantined bench feature is enabled.
@@ -456,6 +464,12 @@ indexmap = { workspace = true, optional = true }
 mettail-dovetail-runtime = { package = "dovetail-runtime", path = "../dovetail-runtime", optional = true }
 
 [dev-dependencies]
+# `tests/stack_depth_gate.rs` installs `RLIMIT_STACK` (and `RLIMIT_CORE` = 0) in the forked
+# probe child before `exec`, which is the only window in which the rlimit still governs the
+# MAIN thread the kernel is about to lay out — see that file's header for why a spawned
+# thread's `stack_size` measures a proxy rather than the thing. `libc` was already in
+# `Cargo.lock` transitively; this adds no crate to the build graph.
+libc = "0.2"
 # The translator (LanguageDef → Rholang) + a parsed calculator fragment, to drive
 # the RhoRuntime run / differential oracle.
 mettail-ast = { package = "ast", path = "../ast" }
@@ -856,3 +870,12 @@ required-features = ["ambient-runtime"]
 name = "s2_lookahead_service"
 path = "tests/s2_lookahead_service.rs"
 required-features = ["runtime-report"]
+
+# The child half of `tests/stack_depth_gate.rs`. It is a `[[bin]]` rather than a `#[test]`
+# because libtest runs every test on a SPAWNED thread, and the traversal being gated is on the
+# MAIN thread — see `src/bin/stack_depth_probe.rs`. The gate reaches it through
+# `CARGO_BIN_EXE_stack_depth_probe`, which Cargo sets for integration tests of this package.
+[[bin]]
+name = "stack_depth_probe"
+path = "src/bin/stack_depth_probe.rs"
+required-features = ["rhocalc-runtime"]

@@ -24,10 +24,22 @@
 //! `RUST_MIN_STACK` from 1 MiB to 32 MiB against the reproducer reported "ok" at
 //! every value **because it was controlling nothing**.
 //!
-//! That is exactly why every subject here runs on a thread created with an
-//! explicit [`std::thread::Builder::stack_size`]: it is the one mechanism that
-//! binds regardless of how the code under test is *reached* in production, so
-//! neither `RUST_MIN_STACK` nor `ulimit -s` can mask a regression.
+//! ★ **So the probe must not use a spawned thread either.** An earlier form of
+//! this gate ran each subject on a `std::thread::Builder::stack_size` thread.
+//! That is a precise instrument, but it measures a **proxy**: a spawned thread's
+//! stack is one `mmap` with a guard page, while a main thread's is a kernel-grown
+//! VMA bounded by `RLIMIT_STACK` — and it is the latter that production faults
+//! on. Every probe here therefore forks
+//! [`stack_depth_probe`](../../src/bin/stack_depth_probe.rs), a program whose
+//! `main` runs the subject directly, with `RLIMIT_STACK` installed in the child
+//! before `exec`. That is exactly what `ulimit -s` does in the shell harness of
+//! the audit's Appendix A, driven from Rust so the ladder is reproducible.
+//!
+//! ⚠ The probe cannot be a `#[test]` in this file, for a mechanical reason:
+//! **libtest runs every test on a spawned thread** (`run_test_inner` always calls
+//! `thread::Builder::spawn`, falling back to the current thread only when the OS
+//! refuses to create one). A `#[test]` body therefore *cannot* execute on a main
+//! thread, whatever the parent sets. A plain `fn main` can.
 //!
 //! ## Two axes, not one
 //!
@@ -64,8 +76,12 @@
 //! which prints and `abort()`s. It is not a panic and not unwindable, so a probe
 //! that overflows in-process takes the whole test binary with it — every
 //! assertion that had already passed included. Each probe therefore runs in a
-//! CHILD process: the gate re-execs its own test binary with `GATE_SUBJECT` /
-//! `GATE_DEPTH` / `GATE_STACK` set and reads the exit status. 0 = survived.
+//! CHILD process: the gate spawns `stack_depth_probe` with `GATE_SUBJECT` /
+//! `GATE_DEPTH` set and reads the exit status. 0 = survived.
+//!
+//! ⚠ And `RLIMIT_CORE` is set to 0 in the same `pre_exec` hook. A core dump of
+//! this binary is ~305 MB and a single bisection produces dozens of faults; a
+//! run that filled the disk would look like a gate failure and would not be one.
 //!
 //! ## ⚠ Teardown is a DIFFERENT traversal, and only ONE side of it needs help
 //!
@@ -92,228 +108,77 @@
 //! that family to `rhoapi::Par` — had not.
 #![cfg(feature = "rhocalc-runtime")]
 
-use std::sync::Arc;
-
-use mettail_languages::rhocalc::{Int, List, Proc};
-use mettail_rholang_runtime::rhocalc_ast::{lower_proc_in_env, BoundEnv};
-use models::rust::rholang::par_children::dismantle;
 
 // ---------------------------------------------------------------------------
-// term construction — ITERATIVE, so the builder itself is never the constraint
-// ---------------------------------------------------------------------------
-
-fn int(n: i64) -> Proc {
-    Proc::CastInt(Arc::new(Int::NumLit(n)))
-}
-
-fn list(items: Vec<Proc>) -> Proc {
-    Proc::CastList(Arc::new(List::ListLit(items)))
-}
-
-/// `[[[…[1]…]]]` with `depth` bracket levels — the reported shape.
-fn nested_list(depth: usize) -> Proc {
-    let mut p = int(1);
-    for _ in 0..depth {
-        p = list(vec![p]);
-    }
-    p
-}
-
-/// `[0, 1, …, width-1]` — the WIDTH counterpart of [`nested_list`].
-fn wide_list(width: usize) -> Proc {
-    let mut items = Vec::with_capacity(width);
-    for i in 0..width {
-        items.push(int(i as i64));
-    }
-    list(items)
-}
-
-/// `(((…(1 + 1)… + 1) + 1)` with `depth` additions: a chain through the BINARY
-/// arithmetic arms rather than the collection arm, so a conversion that flattens
-/// only `CastList` cannot pass by accident.
-fn nested_add(depth: usize) -> Proc {
-    let mut p = int(1);
-    for _ in 0..depth {
-        p = Proc::Add(Arc::new(p), Arc::new(int(1)));
-    }
-    p
-}
-
-/// `a | (b | (c | …))` with `depth` levels: the `PParInfix` arm, which recurses
-/// on BOTH operands.
-fn nested_par(depth: usize) -> Proc {
-    let mut p = Proc::PZero;
-    for _ in 0..depth {
-        p = Proc::PParInfix(Arc::new(Proc::PZero), Arc::new(p));
-    }
-    p
-}
-
-/// The reported reproducer as a SOURCE string: `@"OUT"!([[[…[1]…]]])`.
-fn reproducer_source(depth: usize) -> String {
-    // 8 chars of frame + 2 chars per level + a digit; preallocate exactly.
-    let mut s = String::with_capacity(2 * depth + 16);
-    s.push_str("@\"OUT\"!(");
-    for _ in 0..depth {
-        s.push('[');
-    }
-    s.push('1');
-    for _ in 0..depth {
-        s.push(']');
-    }
-    s.push(')');
-    s
-}
-
-// ---------------------------------------------------------------------------
-// teardown
+// the probe mechanism
 //
-// `Proc` needs none: the `language!` macro gives the AST family a pooled,
-// iterative `Drop` (see the module header). `Par` does, and gets f1r3node's.
+// The subjects themselves live in `src/bin/stack_depth_probe.rs`, because they
+// must run on a MAIN thread and libtest cannot give them one (see the module
+// header). This file owns the ladder, the bisection and the assertions.
 // ---------------------------------------------------------------------------
 
-/// Drop a lowered `Proc` on the gated thread.
+/// The probe program, located by Cargo at compile time. `CARGO_BIN_EXE_<name>` is set for
+/// integration tests of the package that declares the `[[bin]]`, so the parent and the child
+/// are always the same build — no path arithmetic off `current_exe()`, which breaks under
+/// `cargo nextest`'s archive layout.
+const PROBE: &str = env!("CARGO_BIN_EXE_stack_depth_probe");
+
+/// Run one probe point in a child process, under `RLIMIT_STACK = stack`. `true` iff it
+/// survived.
 ///
-/// A plain `drop`, deliberately — and the fact that a plain `drop` is *correct*
-/// here is itself part of what this gate asserts. If the generated iterative
-/// `Drop` were ever replaced by derived glue, every depth subject below would
-/// start showing a slope, and the gate would go red without needing a new
-/// subject to notice it.
-fn release(term: Proc) {
-    drop(term);
-}
-
-// ---------------------------------------------------------------------------
-// subjects
-// ---------------------------------------------------------------------------
-
-fn lower(term: Proc) {
-    let env = BoundEnv::new();
-    let par = lower_proc_in_env(&term, &env).expect("stack_depth_gate: lowering failed");
-    dismantle(par);
-    release(term);
-}
-
-fn lower_depth_body(depth: usize) {
-    lower(nested_list(depth));
-}
-
-fn lower_width_body(width: usize) {
-    lower(wide_list(width));
-}
-
-fn lower_add_body(depth: usize) {
-    lower(nested_add(depth));
-}
-
-fn lower_par_body(depth: usize) {
-    lower(nested_par(depth));
-}
-
-/// The reported reproducer end-to-end: PARSE the source, then lower it. This is
-/// the subject that reproduces the `SIGSEGV`, and it is the only one that has
-/// the parser in its path on purpose.
-fn reproducer_body(depth: usize) {
-    let source = reproducer_source(depth);
-    let term = Proc::parse_via_wpda(&source).expect("stack_depth_gate: reproducer did not parse");
-    lower(term);
-}
-
-/// **M-6 — the PARSER's own constant.** It is not binding at the depths the
-/// lowering used to fault at, but "not binding" and "not present" are different
-/// claims, and only one of them had been measured. Subject the parser alone, so
-/// its slope is a number in the ledger rather than an assumption.
-fn parse_depth_body(depth: usize) {
-    let source = reproducer_source(depth);
-    let term = Proc::parse_via_wpda(&source).expect("stack_depth_gate: reproducer did not parse");
-    release(term);
-}
-
-fn parse_width_body(width: usize) {
-    let mut s = String::with_capacity(4 * width + 16);
-    s.push_str("@\"OUT\"!([");
-    for i in 0..width {
-        if i > 0 {
-            s.push_str(", ");
-        }
-        s.push_str(&i.to_string());
-    }
-    s.push_str("])");
-    let term = Proc::parse_via_wpda(&s).expect("stack_depth_gate: wide source did not parse");
-    release(term);
-}
-
-/// Names the subject a child process should run. Kept in one place so the parent
-/// and the child cannot drift.
-///
-/// `GATE_DEPTH` means *nesting* for the depth subjects and *sibling count* for
-/// the `*_wide` subjects.
-fn subject(name: &str) -> fn(usize) {
-    match name {
-        // -------- depth axis --------
-        "lower_depth" => lower_depth_body,
-        "lower_add" => lower_add_body,
-        "lower_par" => lower_par_body,
-        "reproducer" => reproducer_body,
-        "parse_depth" => parse_depth_body,
-        // -------- width axis --------
-        "lower_width" => lower_width_body,
-        "parse_width" => parse_width_body,
-        other => panic!("stack_depth_gate: unknown GATE_SUBJECT={:?}", other),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// the child / probe mechanism
-// ---------------------------------------------------------------------------
-
-/// The child entry point. `#[ignore]`d so a normal run never executes it
-/// directly; the parent always invokes it explicitly.
-///
-/// ⚠ It must be a NO-OP when its environment is absent. `cargo nextest run
-/// --run-ignored all` will run every `#[ignore]`d test, including this one, with
-/// no `GATE_SUBJECT` set — so a child entry point that *required* its environment
-/// would fail the suite for a reason that has nothing to do with the property
-/// being gated. Skipping is correct here precisely because this test is a
-/// mechanism, not an assertion: the assertions live in its callers.
-#[test]
-#[ignore = "child process of the gate; driven via GATE_SUBJECT"]
-fn gate_child() {
-    let Ok(name) = std::env::var("GATE_SUBJECT") else {
-        println!("gate_child: no GATE_SUBJECT — not a child invocation, nothing to do");
-        return;
-    };
-    let depth: usize = std::env::var("GATE_DEPTH")
-        .expect("GATE_DEPTH must accompany GATE_SUBJECT")
-        .parse()
-        .expect("GATE_DEPTH must be an integer");
-    let stack: usize = std::env::var("GATE_STACK")
-        .expect("GATE_STACK must accompany GATE_SUBJECT")
-        .parse()
-        .expect("GATE_STACK must be an integer");
-
-    std::thread::Builder::new()
-        .stack_size(stack)
-        .name("gate".to_string())
-        .spawn(move || subject(&name)(depth))
-        .expect("stack_depth_gate: failed to spawn")
-        .join()
-        .expect("stack_depth_gate: subject panicked");
-}
-
-/// Run one probe point in a child process. `true` iff it survived.
+/// ★ The bound is installed with `setrlimit` in the forked child **before `exec`** — the same
+/// thing `ulimit -s` does in a shell — so it governs the child's MAIN thread, which is where
+/// production's lowering runs. `RLIMIT_CORE` goes to 0 in the same hook: a bisection produces
+/// dozens of `SIGSEGV`s and each core of this binary is ~305 MB.
 fn runs_within(stack: usize, depth: usize, subject_name: &str) -> bool {
-    let exe = std::env::current_exe().expect("stack_depth_gate: current_exe");
-    std::process::Command::new(exe)
-        .args(["--ignored", "--exact", "gate_child"])
+    use std::os::unix::process::CommandExt;
+
+    let mut command = std::process::Command::new(PROBE);
+    command
         .env("GATE_SUBJECT", subject_name)
         .env("GATE_DEPTH", depth.to_string())
-        .env("GATE_STACK", stack.to_string())
+        // ⚠ Explicitly cleared. It cannot reach a main thread (see the module header), and a
+        // value inherited from the developer's environment would make the ladder depend on it.
+        .env_remove("RUST_MIN_STACK")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .expect("stack_depth_gate: failed to run child")
-        .success()
+        .stderr(std::process::Stdio::null());
+
+    // SAFETY: `setrlimit` is async-signal-safe and this hook allocates nothing. It runs in the
+    // forked child between `fork` and `exec`, which is the only window in which `RLIMIT_STACK`
+    // can still govern the main thread the kernel is about to lay out.
+    unsafe {
+        command.pre_exec(move || {
+            let stack_limit = libc::rlimit {
+                rlim_cur: stack as libc::rlim_t,
+                rlim_max: stack as libc::rlim_t,
+            };
+            if libc::setrlimit(libc::RLIMIT_STACK, &stack_limit) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let no_core = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::setrlimit(libc::RLIMIT_CORE, &no_core) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+
+    match command.status() {
+        Ok(status) => status.success(),
+        // ⚠ At the bottom of the exponential probe the rlimit can be too small for the kernel
+        // to lay out the child's stack at all, and `execve` fails rather than the child
+        // faulting. That is still "did not survive at this bound", and treating it as one keeps
+        // the bisection monotone. A MISSING probe binary is a different thing and must not be
+        // silently read as a fault.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => panic!(
+            "stack_depth_gate: the probe binary is missing at {PROBE}. Build it with \
+             `--features rhocalc-runtime`."
+        ),
+        Err(_) => false,
+    }
 }
 
 /// Bisection resolution, in bytes. Both the zero-slope tolerance and the
@@ -420,6 +285,40 @@ fn assert_no_slope(name: &str, lo_param: usize, hi_param: usize, axis: &str) {
     );
 }
 
+/// **The bar for a subject whose ladder contains a Θ(depth) traversal it does not own.**
+///
+/// Bisects `name` and `baseline` at both ends and asserts that the DIFFERENCE does not grow.
+/// `baseline` must be the same subject with the traversal under test removed, so the delta is
+/// that traversal and nothing else.
+///
+/// ★ Why this exists rather than a ceiling. `lower_new`'s ladder is dominated by
+/// `moniker::Scope::new`, which closes each `new` body over its binder by walking it — measured
+/// **1,055 B/level in debug** by `new_build`, which builds the identical ladder and lowers
+/// nothing. A plain zero-slope assertion on `lower_new` would fail for a reason the lowering
+/// neither causes nor can fix; a plain ceiling would pass while saying nothing about the
+/// lowering. Subtracting the baseline says exactly the intended thing: *the `PNew` arm adds no
+/// per-level frame of its own.*
+///
+/// Measured 2026-07-27, debug: `lower_new` 618,496 @ 512 and 4,403,200 @ 4,096; `new_build`
+/// 561,152 and 4,341,760. Delta 57,344 → 61,440, i.e. **1.1 B/level**. In release both are flat
+/// (LLVM flattens the moniker walk), so the delta is 0.
+fn assert_no_slope_over_baseline(name: &str, baseline: &str, lo_param: usize, hi_param: usize) {
+    let lo = min_stack_for(name, lo_param).saturating_sub(min_stack_for(baseline, lo_param));
+    let hi = min_stack_for(name, hi_param).saturating_sub(min_stack_for(baseline, hi_param));
+    let growth = hi.saturating_sub(lo);
+    assert!(
+        growth <= ZERO_SLOPE_TOLERANCE,
+        "BASELINE-RELATIVE ZERO-SLOPE GATE FAILED for `{name}` over `{baseline}`: the excess \
+         above the baseline grew {} KiB between depth {lo_param} ({} KiB) and depth {hi_param} \
+         ({} KiB). The baseline subtracts the traversal this subject does not own, so a growing \
+         delta is the LOWERING growing.",
+        growth / 1024,
+        lo / 1024,
+        hi / 1024
+    );
+    println!("  {name} − {baseline}: O(1) — {} KiB at {lo_param}, {} KiB at {hi_param}", lo / 1024, hi / 1024);
+}
+
 /// **Tripwire for traversals not yet converted.** Bisects the minimum stack at
 /// two parameters, derives bytes-per-step, and fails if it exceeds `ceiling`.
 ///
@@ -463,95 +362,100 @@ fn ceiling(debug: usize, release: usize) -> usize {
 /// Lowering traversals converted to a heap-bounded (explicit worklist) form.
 /// Membership of these lists is the deliverable; they only ever grow.
 ///
-/// ⚠ **The depth list is EMPTY at present, and that is a deliberate, honest state
-/// rather than an oversight.** M-1 split all 89 arms of `lower_proc` into
-/// per-arm `#[inline(never)]` frames and took the measured cost from 48,392 to
-/// 15,132 B/level — a 3.20× constant-factor win that moved the main-thread ceiling
-/// from depth 169 to 542. It did **not** change the CLASS: the traversal is still
-/// Θ(depth), so listing any lowering subject here would be a false claim. The
-/// residual is pinned, with its number, by [`lowering_theta_depth_tripwire`].
+/// ★ **M-2 landed.** `rhocalc_ast::drive` replaced the whole 87-member recursion component —
+/// `lower_proc` ⇄ `lower_list` / `lower_name` / `lower_method` / `lower_binary_expr` /
+/// `lower_pfor_user` / `lower_body_lifting_folds` / `lower_pattern_proc` / `lower_formula_in_env`
+/// and the 68 `lower_arm_*` frames M-1 created — with one explicit `Job`/`Kont` worklist, in the
+/// idiom of `prattail/src/sppf_realize.rs:164`.
 ///
-/// M-2 is what empties the tripwire into this list: an explicit `(Job, Phase)`
-/// worklist over the whole 19-member recursion SCC (`lower_proc` ⇄ `lower_list` /
-/// `lower_name` / `lower_method` / `lower_binary_expr` / `lower_pfor_user` / …),
-/// in the idiom of `prattail/src/sppf_realize.rs:164`.
+/// Each subject names the cycle it would catch if that cycle came back. Bisected 2026-07-27,
+/// B/level, on the ladder this test asserts (16 → 4,096):
 ///
-/// ★ The WIDTH list is populated already, and it is a real result rather than a
-/// consolation: `lower_list` iterates its elements instead of folding them
-/// recursively, so sibling count never reached the host stack. That axis is
-/// asserted, not assumed — a future arm that recursed on a list tail would turn
-/// this test red without anyone having to think of it.
+/// | subject | cycle | debug | release |
+/// |---|---|---|---|
+/// | `lower_leak` | the lowering ALONE — both teardowns removed | **0** | **1** |
+/// | `lower_depth` | `CastList` ⇄ `lower_list` — the reported reproducer's own path | **1** | **0** |
+/// | `lower_add` | the binary-expression cycle | **0** | **0** |
+/// | `lower_par` | `PParInfix`, which recurses on BOTH operands | **1** | **0** |
+/// | `lower_neg` | `Int::NegInt` ⇄ `lower_int_value` — Θ(depth) OUTSIDE the component | **0** | **1** |
+/// | `lower_width` | sibling count, `lower_list`'s iteration | **1** | **0** |
+///
+/// (A reading of 0 or 1 B/level is one 4 KiB bisection bucket across a 4,080-step ladder — the
+/// instrument's floor. Two of the readings are NEGATIVE before clamping, which is what a flat
+/// subject looks like when address-space layout shifts by a bucket.)
+///
+/// ★ `lower_leak` is the load-bearing one, and it is why the others can be trusted. It builds the
+/// identical term, lowers it, and `mem::forget`s both sides, so its ladder contains the
+/// conversion and nothing else. Before it existed, `lower_depth` read **252 B/level** and the
+/// obvious conclusion — "the conversion is incomplete" — was WRONG: `ast_drop`, which lowers
+/// nothing at all, read **254**. The slope was the AST's own teardown. A subject that measures
+/// two traversals measures neither.
 #[test]
 fn lowering_is_depth_independent() {
     let converted_depth: &[&str] = &[
-        // "lower_depth",   // M-2 — the CastList ⇄ lower_list cycle
-        // "lower_add",     // M-2 — the binary-expr cycle
-        // "lower_par",     // M-2 — the PParInfix cycle
+        "lower_leak",
+        "lower_depth",
+        "lower_add",
+        "lower_par",
+        "lower_neg",
     ];
     let converted_width: &[&str] = &["lower_width"];
 
     for name in converted_depth {
-        // 1 MiB is well below what even the M-1 form needs at depth 256.
+        // 1 MiB is an order of magnitude above what a converted traversal needs at any depth
+        // (measured floors: 74–107 KiB debug, 29–37 KiB release).
         assert_depth_independent(name, 1024 * 1024);
     }
     for name in converted_width {
         assert_width_independent(name, 1024 * 1024);
     }
-    if converted_depth.is_empty() {
-        println!(
-            "no lowering traversal is depth-independent yet — M-1 is a constant-factor result; \
-             see `lowering_theta_depth_tripwire` and docs/design/audits/lowering-stack-depth-audit-2026-07-27.md"
-        );
-    }
+    // The `PNew` arm, against the ladder's own builder — see `assert_no_slope_over_baseline`.
+    assert_no_slope_over_baseline("lower_new", "new_build", 512, 4096);
 }
 
-/// Tripwire over the lowering while it is still Θ(depth). Ceilings are ~1.5× the
-/// values measured on 2026-07-27
-/// (`docs/design/audits/lowering-stack-depth-audit-2026-07-27.md` §5), so ordinary
-/// codegen drift will not flake while a real regression still trips.
+/// ★ **THE RESIDUE — every Θ(depth) traversal M-2 does NOT fix, with its number and its owner.**
 ///
-/// ## ⚠ THIS GATE'S SCOPE IS NARROWER THAN THE BINARY'S
+/// The whole `rhocalc` binary went from **7,277 to 2,567 B/level** on its main thread (release,
+/// bisected `ulimit -s` at depths 100 and 400, `RUST_MIN_STACK` pinned so only the main thread
+/// binds). The gate's own lowering subjects went to **0**. The 2,567 that remain are *four other
+/// traversals*, and none of them is reachable by the pushdown transform this conversion applied:
 ///
-/// The subjects here measure the **lowering, in isolation**: a pre-built term, lowered,
-/// with both sides torn down iteratively. The `ulimit -s` bisection on
-/// `target/release/rhocalc` in the audit measures the **whole main-thread pipeline**.
-/// The two disagree, and the gap is not noise (release, B/level):
+/// | subject | traversal | owner | debug | release |
+/// |---|---|---|---|---|
+/// | `par_drop` | `drop_in_place::<Par>` — `prost`'s DERIVED recursive `Drop` | `models` (f1r3node) | 368 | 95 |
+/// | `ast_drop` | the `language!` iterative `Drop`, across a CROSS-TYPE hop | `macros/src/gen/` | 271 | 96 |
+/// | `render` | `observation::render_par_text` — decode + format, both recursive | this crate | 3,674 | 911 |
+/// | `lower_formula` | `formula::is_statically_false` ⇄ `is_statically_true` | `languages/src/` | 4,097 | 978 |
 ///
-/// | measurement | scope | B/level |
-/// |---|---|---|
-/// | gate `lower_depth` | lowering alone | 2,157 |
-/// | gate `parse_depth` | parsing alone | 304 |
-/// | gate `reproducer` | parse + lower + iterative teardown | 2,128 |
-/// | `bisect_ulimit` on the binary | everything on the main thread | **7,266** |
+/// ★ **Why the two `Drop`s are not this conversion's to fix, stated precisely.** A pushdown
+/// transform rewrites a traversal *whose text you own* into a worklist. `drop_in_place::<Par>` has
+/// no text: it is glue the compiler derives from the type, and the only ways to change it are to
+/// change the type or to intercept it at the call site. That is the **derived-impl class** — a
+/// different repair with a different shape (f1r3node's own `par_children::dismantle` is the
+/// call-site interception, and every subject above uses it, which is why `par_drop` is the only
+/// one still paying). `ast_drop` is the same class with a twist worth recording: the `language!`
+/// macro DOES emit a pooled iterative `Drop`, and `lower_add` — a pure `Proc::Add(Arc<Proc>, …)`
+/// chain — is flat under it. But `nested_list` alternates `Proc::CastList(Arc<List>)` with
+/// `List::ListLit(Vec<Proc>)`, and the worklist does not follow the hop through `List`. So the
+/// generated teardown is iterative *within* a type and recursive *across* types.
 ///
-/// ★ **So roughly 5,100 B/level of the binary's main-thread cost is NOT the lowering
-/// and NOT the parser.** It is the work the gate deliberately excludes so that it
-/// measures one traversal at a time: rendering the observation, and the *derived,
-/// recursive* `Drop` of the deep `Par` (which every subject here avoids via
-/// `models::…::dismantle`).
+/// `lower_formula`'s slope is likewise not the formula compiler — that WAS converted, and
+/// `Job::Formula`/`Kont::Formula*` drive it from the same work stack. It is the syntactic
+/// static-falsity judgement `lower_proc`'s `Matches` arm consults before lowering, which is a
+/// mutually recursive pair in another crate.
 ///
-/// The consequence is worth stating before it surprises someone: **M-2 will take these
-/// subjects to zero without taking the binary to zero.** Converting the lowering removes
-/// its ~2,100; the renderer and the `Par` teardown are separate traversals, also on the
-/// main thread, and they need their own conversions and their own subjects here.
+/// **"The lowering is fixed" and "`rhocalc` is depth-independent" are different claims, and M-2
+/// only makes the first.** Each row above needs its own conversion and its own move into
+/// [`lowering_is_depth_independent`]. A subject leaves this list by being converted, never by
+/// having its ceiling raised.
 ///
-/// A subject LEAVES this list only by moving to
-/// [`lowering_is_depth_independent`], never by having its ceiling raised.
-///
-/// Measured 2026-07-27, debug, bytes per nesting level:
-/// `lower_depth` 15,132 (was 48,392 before the M-1 arm split).
+/// Ceilings are ~1.5× the measured values, per profile, as everywhere else in this file.
 #[test]
-fn lowering_theta_depth_tripwire() {
-    // Release ceilings are MEASURED, not guessed. An earlier revision of this file
-    // carried 6,000 for release on the strength of the `ulimit` bisection's 7,266
-    // B/level — which measures a DIFFERENT SCOPE (see the note below) and would have
-    // made this gate fail in release for a reason unrelated to the lowering.
-    //
-    // Measured 2026-07-27, release, probed at 16 and 128:
-    //   lower_depth 2,157   lower_add 2,450   lower_par 1,206  B/level
-    assert_slope_below("lower_depth", ceiling(23_000, 4_000), 16, 128);
-    assert_slope_below("lower_add", ceiling(23_000, 4_000), 16, 128);
-    assert_slope_below("lower_par", ceiling(23_000, 4_000), 16, 128);
+fn the_unconverted_main_thread_residue_has_not_got_worse() {
+    assert_slope_below("par_drop", ceiling(600, 200), 512, 4096);
+    assert_slope_below("ast_drop", ceiling(450, 200), 512, 4096);
+    assert_slope_below("render", ceiling(5_500, 1_500), 512, 4096);
+    assert_slope_below("lower_formula", ceiling(6_500, 1_500), 512, 4096);
 }
 
 /// **M-6, WIDTH axis — the parser does not grow with sibling count.**
@@ -624,17 +528,19 @@ fn parser_theta_depth_tripwire() {
 #[test]
 fn reported_reproducer_survives_the_default_main_thread_stack() {
     const DEFAULT_MAIN_THREAD_STACK: usize = 8 * 1024 * 1024;
-    // Depth 256 is ~1.9× past the depth at which the bug was reported (bisected: the
-    // main thread failed first at 170, and the DEFAULT configuration failed at 133 —
-    // on the tokio worker, see the ledger §2), and comfortably inside what the M-1
-    // form supports (measured ceiling 542). It is deliberately NOT set near that
-    // ceiling: this test states "the reported bug is fixed", and a value chosen to
-    // sit one rung below the current limit would be re-measuring the limit instead.
-    // When M-2 lands, `lower_depth` joins `lowering_is_depth_independent` and this
-    // constant stops being interesting.
+    // ★ Depth 4,096 — 24× past the depth at which the bug was reported (bisected: the main
+    // thread failed first at 170, and the DEFAULT configuration failed at 133, on the tokio
+    // worker; see the ledger §2). Before M-2 this constant read 256, chosen to sit well inside
+    // the M-1 ceiling of 542.
+    //
+    // ⚠ It is 4,096 rather than something absurd because this subject still has the PARSER in
+    // its path, and the parser is Θ(depth) at ~1,240 B/level debug (`parse_depth`, and see
+    // `parser_theta_depth_tripwire`). Measured: 5,865,472 B at depth 4,096, comfortably inside
+    // 8 MiB; the next rung would not be. The lowering's own contribution is 0 — that is what
+    // `lower_depth` and `lower_leak` assert.
     assert!(
-        runs_within(DEFAULT_MAIN_THREAD_STACK, 256, "reproducer"),
-        "REGRESSION: `@\"OUT\"!([[…[1]…]])` at depth 256 no longer survives parse+lower on \
+        runs_within(DEFAULT_MAIN_THREAD_STACK, 4096, "reproducer"),
+        "REGRESSION: `@\"OUT\"!([[…[1]…]])` at depth 4,096 no longer survives parse+lower on \
          an {} MiB stack — the reported SIGSEGV is back or worse.",
         DEFAULT_MAIN_THREAD_STACK / (1024 * 1024)
     );
@@ -650,18 +556,23 @@ fn reported_reproducer_survives_the_default_main_thread_stack() {
 #[test]
 #[ignore = "measurement instrument; run explicitly with --nocapture"]
 fn report_slopes() {
-    if std::env::var("GATE_SUBJECT").is_ok() {
-        // A child invocation reached here through `--run-ignored all`; do nothing.
-        return;
-    }
     let subjects: &[(&str, &[usize])] = &[
         ("lower_depth", &[4, 16, 64, 256, 1024, 4096]),
         ("lower_add", &[4, 16, 64, 256, 1024, 4096]),
         ("lower_par", &[4, 16, 64, 256, 1024, 4096]),
+        ("lower_neg", &[4, 16, 64, 256, 1024, 4096]),
+        ("lower_formula", &[512, 4096]),
+        ("lower_new", &[512, 4096]),
+        ("new_build", &[512, 4096]),
+        ("lower_leak", &[4, 16, 64, 256, 1024, 4096]),
         ("lower_width", &[4, 256, 4096, 65536]),
         ("parse_depth", &[4, 16, 64, 128]),
         ("parse_width", &[4, 16, 64, 128]),
         ("reproducer", &[4, 16, 64, 128]),
+        // ★ THE RESIDUE — expected to have a slope; measured so it is a number.
+        ("par_drop", &[512, 4096]),
+        ("ast_drop", &[512, 4096]),
+        ("render", &[512, 4096]),
     ];
     println!("subject,param,min_stack_bytes");
     for (name, ladder) in subjects {
