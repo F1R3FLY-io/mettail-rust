@@ -191,9 +191,58 @@ async fn eval_on_runtime<R: RhoRuntime>(runtime: &mut R, program: &str) -> Resul
     Ok(())
 }
 
+/// The domain separator for [`deploy_rand`]. Its only job is to make an interpreter seed
+/// impossible to confuse with a deploy-envelope seed, whose preimage is a `DeployDataProto`.
+const INTERPRETER_RAND_DOMAIN: &[u8] = b"mettail.rholang-runtime.inj.v1";
+
+/// The injection randomness, **derived from the program** rather than drawn from OS entropy.
+///
+/// ## Why this is not `Blake2b512Random::create_from_length(128)`
+///
+/// That constructor's name reads like a fixed-width seed. It is not: `crypto`'s
+/// `create_from_length` fills its buffer with `rand::thread_rng()`, i.e. **fresh OS entropy per
+/// process**. This was the crate's only entropy-seeded injection — [`crate::step`] and the
+/// bench harnesses all use `create_from_bytes` with a constant — and it made the interpreter's
+/// own output irreproducible in a way that took a renderer fix to become visible.
+///
+/// The chain, because it is six links long and none of them is obvious:
+///
+/// 1. the seed is split positionally across the injected program's data;
+/// 2. every staged datum carries a `random_state` derived from it;
+/// 3. `models`' `event_hash_bytes_list_par_with_random` **hashes `random_state` into** the
+///    `Produce` / `Consume` event hashes;
+/// 4. `speculation::RendezvousName::of` copies exactly those hashes;
+/// 5. [`speculation::delivery::step_digest`](crate::speculation::delivery::step_digest) folds
+///    them, and `trace_digest` folds the step digests;
+/// 6. so a `^spec-success` / `^spec-failure` / `^spec-truncated` entry — and every FIPS
+///    collection — carried a fresh random value on every run.
+///
+/// Measured before the fix: twenty runs of `demos/flt-lookahead/04-divergence.rho` produced
+/// **twenty distinct trace digests, zero repeats**, which is the entropy signature and not the
+/// small-permutation signature a scheduling or iteration-order cause would give.
+///
+/// ## Why a content hash, and why domain-separated
+///
+/// This mirrors what the **on-chain** path already does — `casper`'s `Tools::unforgeable_name_rng`
+/// seeds from `DeployDataProto{deployer, timestamp, …}.encode_to_vec()`, both consensus-visible —
+/// so the interpreter now has the reproducibility property a validator already had, by the same
+/// mechanism rather than by accident.
+///
+/// The cost is that unforgeable names become predictable from the source. On chain they already
+/// are (from a public key and a timestamp); here there is no adversary and no chain. The domain
+/// tag is what keeps the two preimage spaces disjoint regardless.
+fn deploy_rand(program: &Par) -> Blake2b512Random {
+    use prost::Message;
+    let mut preimage = Vec::with_capacity(INTERPRETER_RAND_DOMAIN.len() + program.encoded_len());
+    preimage.extend_from_slice(INTERPRETER_RAND_DOMAIN);
+    program.encode(&mut preimage).expect("encoding a Par into a Vec cannot fail");
+    let digest = rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash::new(&preimage);
+    Blake2b512Random::create_from_bytes(digest.bytes().as_slice())
+}
+
 async fn inj_on_runtime<R: RhoRuntime>(runtime: &mut R, program: Par) -> Result<(), String> {
     let checkpoint = runtime.create_soft_checkpoint().await;
-    let rand = Blake2b512Random::create_from_length(128);
+    let rand = deploy_rand(&program);
     runtime.cost().set(Cost::unsafe_max());
     match runtime.inj(program, Env::new(), rand).await {
         Ok(()) => Ok(()),

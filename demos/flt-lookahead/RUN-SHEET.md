@@ -16,12 +16,16 @@ computed it.
 
 ```
 cargo build -p rholang-runtime --bin rhocalc --features "rhocalc-runtime lambda-runtime calculator-runtime"
-export RUST_MIN_STACK=134217728
 ```
 
-The stack setting is required: λ terms of this size exceed the default thread stack. That is a
-separately-tracked defect with its own root-cause plan — it is not a property of the feature being
-shown. Run everything from the workspace root; each command completes in well under a second.
+**No stack incantation.** This page used to open with `export RUST_MIN_STACK=134217728`, attributed
+to "λ terms of this size exceed the default thread stack". That was wrong twice, and both halves
+were settled by measurement: the interpreter's parse and lowering run in `#[tokio::main]`'s
+`block_on` body — on the **main** thread, whose size that variable does not set — and every
+committed demo in this directory was measured running green with the variable unset entirely.
+`no_run_sheet_command_line_raises_the_stack` now asserts its absence, so the incantation cannot
+come back as folklore. Run everything from the workspace root; each command completes in well
+under a second.
 
 ## The operator
 
@@ -122,6 +126,54 @@ one the substrate could not decide, would answer both the same way.
 
 ---
 
+## Beat 4 — the honest limit (2 min)
+
+```
+$ target/debug/rhocalc demos/flt-lookahead/04-divergence.rho
+```
+```
+  @"OUT" observations (1):
+    [0] ⟦(1 (1 (1 (1 (1 0)))))⟧
+  lookahead: 2 request(s) served · ^spec-success: 2 · ^spec-failure: 1 · ^spec-truncated: 0
+    ^spec-failure[0] trace 0x4f13e762…  code 8 (guest evaluator: out of fuel)  the guest evaluator
+      rested on ^drive-fuel:mettail-langdef-v1:6ef0c40636bb0bca: the stuck redex is
+      ⟦App(λ.App(0, 0), λ.App(0, 0))⟧
+```
+
+Beats 1–3 all end with an answer, which is the easy half of the claim: a machine that only ever
+reports success is indistinguishable from one that reports success unconditionally. This beat runs
+`plus 2 3` and **Ω** — `(λx. x x)(λx. x x)`, which β-reduces to itself forever — in the same
+program.
+
+**Point at the two counters.** `^spec-success: 2` and `^spec-failure: 1` — Ω's branch is in *both*,
+and that is the design, not a bookkeeping accident. Its branch really does reach tuplespace
+quiescence (`E(S)` empties, nothing raises) while the guest's own evaluator computed nothing along
+it. Those are two different facts. Collapsing them would make "no answer exists" and "I gave up"
+indistinguishable, which is the silence the whole fail-closed design exists to prevent.
+
+The message names the term in the **machine's neutral notation** — `App(…)` for λ's own
+constructor, `λ.` and de-Bruijn indices for the reserved reflected-ABI tags. `flt-church-desk`'s
+`divergence.rho` prints the guest's *surface* syntax instead, and the difference is deliberate: a
+`^spec-failure` entry is data on the tuplespace, which a guest-independent reader has to parse; the
+interpreter holds the `Par` and may sugar it.
+
+**The trace digest is quotable, and getting there found two defects.** Building this beat is what
+made them visible: the digest used to differ on *every run*, and before the `^spec-failure`
+renderer landed it was buried inside a prost `Debug` dump nobody read.
+
+Two independent non-content inputs were reaching it. The interpreter seeded its injection
+randomness from OS entropy — `Blake2b512Random::create_from_length(128)` reads like a fixed-width
+seed but fills its buffer with `thread_rng()` — and `step_digest` folded the **store index**, which
+is not content at all but a local address assigned by task-arrival order, since `HotStore` prepends
+and every branch of a `|` is a detached `tokio::spawn`. The second is why a dose-response curve
+over `TOKIO_WORKER_THREADS` was the discriminator that cracked it: 1 thread gave one digest, 2 gave
+two, 32 gave twenty-of-twenty.
+
+Both are closed. The digest above is now invariant across processes **and** across scheduler
+widths (1, 2, 8, 32 worker threads all agree), and the whole transcript is asserted byte-for-byte.
+
+---
+
 ## What this rests on
 
 - **The results are computed.** No numeral or boolean literal appears in any of these files.
@@ -139,10 +191,6 @@ success set here is a singleton. That is mathematics, not a limit of the engine:
 guest it returns several results, gated by a send/receive race yielding two leaves, with a
 teeth-test proving two *independent* communications yield one.
 
-The `failure` map is populated correctly for a divergent subject — Ω reports on `^spec-failure` —
-but its message currently embeds a raw internal dump, so that beat is held back. See
-`demos/flt-church-desk/divergence.rho` for a clean divergence beat.
-
 ## Files
 
 | | |
@@ -150,3 +198,4 @@ but its message currently embeds a raw internal dump, so that beat is held back.
 | `01-computed-desk.rho` | two programs, computed, destructured |
 | `02-the-desk.rho` | four programs, separated by shape |
 | `03-predicate.rho` | the same four, selected by predicate |
+| `04-divergence.rho` | one that finishes and one that cannot, in the same run |

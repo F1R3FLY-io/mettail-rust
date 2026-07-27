@@ -111,8 +111,8 @@
 use models::rhoapi::tagged_continuation::TaggedCont;
 use models::rhoapi::{Expr, Par, Receive, ReceiveBind, Send, Var};
 use models::rust::utils::{
-    new_elist_par, new_eset_par, new_etuple_par, new_gbytearray_par, new_gint_par,
-    new_gstring_par, union,
+    new_elist_par, new_eset_par, new_etuple_par, new_gbytearray_par, new_gint_par, new_gstring_par,
+    union,
 };
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 
@@ -127,30 +127,129 @@ use crate::lookahead::{SPEC_FAILURE_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATE
 /// The **content digest of one named selection** — what a delivered trace
 /// element is.
 ///
-/// Folds the whole [`RendezvousName`] — the `Consume` content hash, every
-/// selected datum's `Produce` content hash in bind order, the continuation's
-/// candidate index and the data's store indices — into one 32-byte
-/// `Blake2b256Hash`. Content-derived and total, so two validators that reach the
-/// same configuration and make the same selection produce the same trace
-/// element.
+/// Folds the [`RendezvousName`]'s **semantic** identity — the `Consume` content
+/// hash and every selected datum's `Produce` content hash in bind order — into
+/// one 32-byte `Blake2b256Hash`.
 ///
-/// The indices are included because content hashing alone cannot separate two
-/// byte-identical sends on one channel: firing either yields the same successor,
-/// so the distinction is not semantically load-bearing, but including it makes a
-/// digest name a *specific* enumeration exactly, which is what a
-/// replay-equivalence differential compares.
+/// ## ★ Store indices are DELIBERATELY EXCLUDED, and this used to be a defect
+///
+/// This function previously also folded `continuation_index` and
+/// `datum_indices`, with a comment arguing that content hashing alone cannot
+/// separate two byte-identical sends on one channel, and that including the
+/// indices makes a digest name a *specific* enumeration. That comment also
+/// conceded, correctly, that *"the distinction is not semantically
+/// load-bearing"* — and the indices turned out to be the one non-content input
+/// in the whole chain.
+///
+/// A store index is **not content. It is a local address assigned by
+/// task-arrival order.** `HotStore::put_datum` / `put_continuation` *prepend*
+/// (`rspace++/src/rspace/hot_store.rs:270, 289, 400-410`), so a datum's position
+/// is "how many data were staged after it on that channel". Arrival races by
+/// design: every branch of a `|` is a detached `tokio::spawn`
+/// (`rholang/src/rust/interpreter/reduce.rs:653-664`), whose own `DriveState`
+/// doc concedes *"Push order is non-deterministic."*
+/// `order_candidates_with_index` then decorates candidates with their position
+/// in the received `Vec` and sorts by `(content_hash, store_index)` — the
+/// content hash dominates, so the **selection** is content-determined, but the
+/// index carried alongside is arrival order, and it used to land here.
+///
+/// Measured, on `demos/flt-lookahead/04-divergence.rho`, before the fix:
+///
+/// | `TOKIO_WORKER_THREADS` | runs | distinct digests |
+/// |---|---|---|
+/// | 1 | 5 | **1** |
+/// | 2 | 12 | 2 (mode = the 1-thread value) |
+/// | 32 (default) | 20 | 20 |
+///
+/// Monotone in scheduler width, with the 2-thread mode equal to the 1-thread
+/// value. Nothing but an arrival-order dependence has that shape.
+///
+/// ★ The search itself already knew this. `SemanticName` — [`RendezvousName::semantic`] —
+/// is the sleep-set key, chosen because *"indices renumber across a firing"*. The search
+/// treated indices as not-a-name and delivery did not. This aligns them.
+///
+/// ## What this costs
+///
+/// Two byte-identical sends on one channel are now indistinguishable in a
+/// published trace. By the old comment's own argument that is semantically
+/// nothing — firing either yields the same successor. It does cost a
+/// replay-equivalence differential its index leg, but that leg was comparing
+/// scheduler noise and would have reported spurious mismatches on every honest
+/// replay; the structured [`RendezvousName`] is still available in-process for a
+/// differential that wants it.
+///
+/// ## Why it mattered beyond reproducibility
+///
+/// The digest is published — `^spec-success`, `^spec-failure`, `^spec-truncated`
+/// and all three `^spec-delivery` collections carry it — and publication is a
+/// `produce` into the live tuplespace. A local address promoted into a published
+/// name is a value two validators can disagree on *without either being wrong*:
+/// core count, load and tokio version all move it, and no deploy-derived seed
+/// can fix it, because it is not about randomness. `[*]` is on no deploy path
+/// today, so this was prospective — but it was prospective on a worse footing
+/// than the injection-randomness cause beside it, which the deploy envelope does
+/// determine.
 pub fn step_digest(name: &RendezvousName) -> Blake2b256Hash {
-    // 32 (consume) + 32 per datum + 4 (continuation index) + 4 per datum index.
-    let mut bytes = Vec::with_capacity(36 + 36 * name.data.len());
+    // 32 (consume) + 32 per datum.
+    let mut bytes = Vec::with_capacity(32 + 32 * name.data.len());
     bytes.extend_from_slice(&name.consume.bytes());
     for datum in name.data.iter() {
         bytes.extend_from_slice(&datum.bytes());
     }
-    bytes.extend_from_slice(&name.continuation_index.to_be_bytes());
-    for index in name.datum_indices.iter() {
-        bytes.extend_from_slice(&index.to_be_bytes());
-    }
     Blake2b256Hash::new(&bytes)
+}
+
+#[cfg(test)]
+mod step_digest_tests {
+    use super::*;
+
+    fn hash(byte: u8) -> Blake2b256Hash {
+        Blake2b256Hash::new(&[byte])
+    }
+
+    fn name(consume: u8, data: &[u8], cont_index: i32, datum_indices: &[i32]) -> RendezvousName {
+        RendezvousName {
+            consume: hash(consume),
+            data: data.iter().copied().map(hash).collect(),
+            continuation_index: cont_index,
+            datum_indices: datum_indices.to_vec(),
+        }
+    }
+
+    /// ★ THE INVARIANT, in one line and with no runtime: store positions do not name a
+    /// selection. Two rendezvous identical in `consume` and `data` but differing in the
+    /// scheduler-assigned indices are the SAME step, because firing either yields the same
+    /// successor — which is what the superseded doc comment already conceded while folding
+    /// them in anyway.
+    #[test]
+    fn store_indices_do_not_change_the_digest() {
+        let a = name(1, &[2, 3], 0, &[0, 1]);
+        let b = name(1, &[2, 3], 7, &[4, 9]);
+        assert_eq!(
+            step_digest(&a),
+            step_digest(&b),
+            "★ a store index is a local address assigned by task-arrival order, not content. \
+             Folding it makes the digest a function of the scheduler."
+        );
+    }
+
+    /// …and the digest still separates what it must. Content differences are load-bearing.
+    #[test]
+    fn content_differences_do_change_the_digest() {
+        let base = name(1, &[2, 3], 0, &[0, 1]);
+        for (label, other) in [
+            ("a different consume", name(9, &[2, 3], 0, &[0, 1])),
+            ("a different datum", name(1, &[2, 9], 0, &[0, 1])),
+            ("a different bind ORDER", name(1, &[3, 2], 0, &[0, 1])),
+            ("a different arity", name(1, &[2], 0, &[0])),
+        ] {
+            assert_ne!(
+                step_digest(&base),
+                step_digest(&other),
+                "{label} must be a different step"
+            );
+        }
+    }
 }
 
 /// The **handle name of a whole trace**: the digest of the concatenated step
@@ -268,8 +367,8 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
             for par in payload.iter() {
                 locally_free = union(locally_free, par.locally_free.clone());
             }
-            let connective_used = channel.connective_used
-                || payload.iter().any(|par| par.connective_used);
+            let connective_used =
+                channel.connective_used || payload.iter().any(|par| par.connective_used);
             process = process.prepend_send(Send {
                 chan: Some(channel.clone()),
                 data: payload.clone(),
@@ -291,9 +390,7 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
                     waiting.continuation.guard.clone(),
                 ),
                 Some(TaggedCont::ScalaBodyRef(body_ref)) => {
-                    return Err(ReificationError::SystemContinuation {
-                        body_ref: *body_ref,
-                    })
+                    return Err(ReificationError::SystemContinuation { body_ref: *body_ref })
                 },
                 // `TaggedContinuation { tagged_cont: None }` is the dispatcher's
                 // `Skip`: a receive whose body really is `Nil`.
@@ -310,11 +407,9 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
             for (position, channel) in channels.iter().enumerate() {
                 let pattern = waiting.patterns.get(position).cloned().unwrap_or_default();
                 bind_count += pattern.free_count;
-                sources_locally_free =
-                    union(sources_locally_free, channel.locally_free.clone());
+                sources_locally_free = union(sources_locally_free, channel.locally_free.clone());
                 for par in pattern.patterns.iter() {
-                    patterns_locally_free =
-                        union(patterns_locally_free, par.locally_free.clone());
+                    patterns_locally_free = union(patterns_locally_free, par.locally_free.clone());
                 }
                 connective_used = connective_used || channel.connective_used;
                 binds.push(ReceiveBind {
@@ -332,8 +427,10 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
                 .as_ref()
                 .map(|par| par.locally_free.clone())
                 .unwrap_or_default();
-            let guard_connective_used =
-                guard.as_ref().map(|par| par.connective_used).unwrap_or(false);
+            let guard_connective_used = guard
+                .as_ref()
+                .map(|par| par.connective_used)
+                .unwrap_or(false);
             let locally_free = union(
                 sources_locally_free,
                 union(
@@ -351,9 +448,7 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
                 peek: !waiting.peeks.is_empty(),
                 bind_count,
                 locally_free,
-                connective_used: connective_used
-                    || body.connective_used
-                    || guard_connective_used,
+                connective_used: connective_used || body.connective_used || guard_connective_used,
                 condition: guard,
                 body: Some(body),
             });
@@ -423,26 +518,12 @@ impl SpeculationDelivery {
 /// A ground `ESet` over `elements` — no remainder, no free variables, no
 /// connective. `ParSet` sorts, so the encoding is canonical.
 fn ground_set(elements: Vec<Par>) -> Par {
-    new_eset_par(
-        elements,
-        Vec::new(),
-        false,
-        None::<Var>,
-        Vec::new(),
-        false,
-    )
+    new_eset_par(elements, Vec::new(), false, None::<Var>, Vec::new(), false)
 }
 
 /// A ground `EList` over `elements`.
 fn ground_list(elements: Vec<Par>) -> Par {
-    new_elist_par(
-        elements,
-        Vec::new(),
-        false,
-        None::<Var>,
-        Vec::new(),
-        false,
-    )
+    new_elist_par(elements, Vec::new(), false, None::<Var>, Vec::new(), false)
 }
 
 /// One `success` entry: `[step₀, …, step_{k-1}, ⟦configuration⟧]`.
@@ -461,11 +542,7 @@ pub fn success_entry(leaf: &QuiescentLeaf) -> Result<Par, ReificationError> {
 pub fn truncated_entry(leaf: &TruncatedLeaf) -> Result<Par, ReificationError> {
     let mut elements = trace_pars(&leaf.branch.trace);
     elements.push(new_etuple_par(vec![
-        new_gbytearray_par(
-            trace_digest(&leaf.branch.trace).bytes(),
-            Vec::new(),
-            false,
-        ),
+        new_gbytearray_par(trace_digest(&leaf.branch.trace).bytes(), Vec::new(), false),
         new_gint_par(leaf.branch.frontier as i64, Vec::new(), false),
         reify(&leaf.branch.state)?,
     ]));
@@ -546,10 +623,7 @@ pub fn resting_on(state: &SpeculativeState, channel: &Par) -> Vec<Par> {
 /// in this tree uses (`"OUT"`, the reserved `^fired` / `^drive-err` /
 /// `^drive-fuel` channels).
 pub fn resting_on_string(state: &SpeculativeState, channel: &str) -> Vec<Par> {
-    resting_on(
-        state,
-        &new_gstring_par(channel.to_string(), Vec::new(), false),
-    )
+    resting_on(state, &new_gstring_par(channel.to_string(), Vec::new(), false))
 }
 
 /// A stable textual fingerprint of the data resting on `channel` — the

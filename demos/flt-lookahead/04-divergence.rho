@@ -1,0 +1,57 @@
+// ★★ THE HONEST LIMIT — one program that finishes and one that cannot, in the same run.
+//
+// Beats 1-3 all end with an answer. That is the easy half of the claim. A machine that only
+// ever reports success is indistinguishable from a machine that reports success unconditionally,
+// so this beat shows the other half: a subject with NO normal form, and what the substrate says
+// about it.
+//
+//
+// THE TWO SUBJECTS
+// ────────────────
+//   #1  plus 2 3   ⟶β  λf.λx. f(f(f(f(f x))))   the Church numeral 5 — terminates in 6 β steps
+//   #2  Ω ≡ (λx. x x)(λx. x x)                  β-reduces to ITSELF, forever
+//
+// Ω is the canonical non-terminating λ term. Substituting `λx. x x` for `x` in `x x` gives
+// `(λx. x x)(λx. x x)` — the term it started as. There is no normal form to deliver, and no
+// finite amount of work discovers that fact.
+//
+//
+// WHAT THE MACHINE DOES ABOUT IT
+// ──────────────────────────────
+// The in-Rho quiescence driver is fuel-bounded per path. Ω's branch consumes its fuel and then
+// rests the redex it could not finish on the guest's `^drive-fuel` channel. So:
+//
+//   * the branch DOES reach tuplespace quiescence — `E(S)` empties, nothing raises;
+//   * but the guest's own evaluator computed no answer along it.
+//
+// Those are two different facts, and the substrate keeps them apart. Quiescence-without-an-answer
+// is published as a trace-keyed entry on `^spec-failure` with the code `8`, NOT left as silence.
+// Without that, a divergent branch would deliver an empty projection — indistinguishable from a
+// branch that legitimately published nothing, which is precisely the silence the whole
+// fail-closed design exists to prevent.
+//
+// ★ Note the two counters BOTH move. `^spec-success` counts branches that reached quiescence;
+// `^spec-failure` counts branches whose guest evaluator produced nothing. Ω's branch is in both,
+// and that is not a bookkeeping accident — it is the distinction the design is built on.
+//
+//
+// READING THE FAILURE LINE
+// ────────────────────────
+// The message names the term in the MACHINE'S NEUTRAL NOTATION — `App(…)` for the guest's own
+// `App` constructor, `λ.` and de-Bruijn indices for the reserved reflected-ABI tags. That differs
+// from `demos/flt-church-desk/divergence.rho`, which prints the guest's SURFACE syntax, and the
+// difference is deliberate: a `^spec-failure` entry is data on the tuplespace, which a
+// guest-independent reader has to be able to parse. The interpreter holds the `Par` and may sugar
+// it; the datum may not.
+//
+//
+// HOW TO RUN
+// ──────────
+//   target/debug/rhocalc demos/flt-lookahead/04-divergence.rho
+
+@"results"!(lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
+@"results"!(lambda`(lam x. (x, x), lam x. (x, x))`)[*] |
+
+for(@lambda`lam f. lam x. ${body}` <- @"results") {
+  @"OUT"!(lambda`${body}`)
+}
