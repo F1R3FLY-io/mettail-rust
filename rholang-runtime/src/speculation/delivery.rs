@@ -200,6 +200,105 @@ pub fn step_digest(name: &RendezvousName) -> Blake2b256Hash {
 }
 
 #[cfg(test)]
+mod reify_tests {
+    use super::*;
+    use models::rhoapi::ListParWithRandom;
+    use prost::Message;
+    use rspace_plus_plus::rspace::internal::Datum;
+
+    fn channel(name: &str) -> Par {
+        new_gstring_par(name.to_string(), Vec::new(), false)
+    }
+
+    /// A datum built the way the store builds one, so its `source` is a real content hash
+    /// rather than a default — the reified `Par` does not read it, but constructing the
+    /// fixture faithfully keeps the test from passing for a reason the production path lacks.
+    fn datum(chan: &Par, value: i64) -> Datum<ListParWithRandom> {
+        Datum::create(
+            chan,
+            ListParWithRandom {
+                pars: vec![new_gint_par(value, Vec::new(), false)],
+                random_state: Vec::new(),
+            },
+            false,
+        )
+    }
+
+    /// ★ Insertion order into the store must not reach the reified bytes.
+    ///
+    /// `HotStoreState`'s maps are `HashMap`s with a per-process `RandomState`, so their
+    /// iteration order is not a property of the configuration. `reify` builds a `Par` with
+    /// `prepend_send`/`prepend_receive`, which do not sort — so before the canonical ordering
+    /// landed, map order *was* field order *was* emitted bytes, and those bytes ride inside
+    /// `^spec-success` / `^spec-truncated` / `^spec-delivery` and the bare reply term.
+    ///
+    /// Permuting insertion order is the unit-test form of the cross-process check: it is what
+    /// a different `RandomState` amounts to, without needing a second process.
+    #[test]
+    fn reify_does_not_depend_on_insertion_order() {
+        // Enough channels that a hash order is very unlikely to coincide with any fixed order.
+        let names = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"];
+
+        let build = |order: &dyn Fn(usize) -> usize| -> Par {
+            let mut state = SpeculativeState::default();
+            for slot in 0..names.len() {
+                let index = order(slot);
+                let chan = channel(names[index]);
+                let value = datum(&chan, index as i64);
+                state.data.insert(chan, vec![value]);
+            }
+            reify(&state).expect("a data-only configuration reifies")
+        };
+
+        let forward = build(&|slot| slot);
+        let reverse = build(&|slot| names.len() - 1 - slot);
+        // A third, non-monotone permutation, so the test cannot pass by the two orders being
+        // symmetric under whatever the map happens to do.
+        let shuffled_order = [3usize, 0, 6, 1, 7, 4, 2, 5];
+        let shuffled = build(&|slot| shuffled_order[slot]);
+
+        assert_eq!(
+            forward.encode_to_vec(),
+            reverse.encode_to_vec(),
+            "★ reversing insertion order changed the reified bytes — the configuration's \
+             identity must not include the order the host happened to stage it in"
+        );
+        assert_eq!(
+            forward.encode_to_vec(),
+            shuffled.encode_to_vec(),
+            "★ permuting insertion order changed the reified bytes"
+        );
+        assert_eq!(forward.sends.len(), names.len(), "every send must survive the ordering");
+    }
+
+    /// …and the ordering is canonical rather than merely stable: it is the channels' own
+    /// encoded bytes, so it is a function of the configuration and of nothing else.
+    #[test]
+    fn reify_orders_sends_by_their_channel_encoding() {
+        let mut state = SpeculativeState::default();
+        for name in ["gamma", "alpha", "beta"] {
+            let chan = channel(name);
+            let value = datum(&chan, 0);
+            state.data.insert(chan, vec![value]);
+        }
+        let reified = reify(&state).expect("a data-only configuration reifies");
+
+        let mut emitted: Vec<Vec<u8>> = reified
+            .sends
+            .iter()
+            .map(|send| send.chan.as_ref().expect("every send has a channel").encode_to_vec())
+            .collect();
+        let mut canonical = emitted.clone();
+        canonical.sort();
+        // `prepend_send` pushes to the FRONT, so the emitted order is the reverse of the
+        // iteration order. Assert against the reversal rather than asserting a direction the
+        // constructor does not promise.
+        emitted.reverse();
+        assert_eq!(emitted, canonical, "sends must be ordered by their channel's encoding");
+    }
+}
+
+#[cfg(test)]
 mod step_digest_tests {
     use super::*;
 
@@ -354,13 +453,49 @@ impl std::error::Error for ReificationError {}
 /// guard restored onto `Receive.condition`, `locally_free` recomputed the
 /// normalizer's way).
 ///
-/// Deterministic: `HotStoreState`'s maps are `BTreeMap`s (channel-ordered), and
-/// within a channel the store order is preserved, so two validators reifying the
-/// same configuration emit the same `Par` bytes.
+/// ## ★ Determinism, and the premise that was false
+///
+/// This comment used to read: *"Deterministic: `HotStoreState`'s maps are
+/// `BTreeMap`s (channel-ordered), and within a channel the store order is
+/// preserved, so two validators reifying the same configuration emit the same
+/// `Par` bytes."*
+///
+/// **They are `HashMap`s** — `rspace++/src/rspace/hot_store.rs:90-94` declares
+/// `continuations`, `data` and `joins` as `std::collections::HashMap`. Their
+/// iteration order is `RandomState`-seeded per process. And `prepend_send` /
+/// `prepend_receive` push to the front of a `Vec` without sorting
+/// (`models/src/rust/utils.rs`), so map order became `Par` field order, which
+/// became emitted bytes. The conclusion was right and the premise it rested on
+/// was not, which is the worse of the two failure modes: a stated reason nobody
+/// re-checks.
+///
+/// This went unnoticed because a reified configuration is never *rendered* —
+/// it rides inside `^spec-success` / `^spec-truncated` entries and all three
+/// `^spec-delivery` collections, and (for a subject with no registered guest,
+/// via `LeafProjection::Configuration`) inside the bare reply term published on
+/// the caller's own channel. Nothing in any transcript shows it.
+///
+/// It is the same class as the store-index defect in
+/// [`step_digest`] — a local, host-assigned ordering promoted into published
+/// bytes — and it is fixed the same way: **iterate a canonical, content-derived
+/// order**, not the map's.
+///
+/// Both key sets are ordered by their protobuf encoding: total (a byte-string
+/// order over a canonical serialization), content-derived (nothing but the
+/// channel's own bytes decides it), and already the tree's idiom for naming a
+/// `Par` when a name is needed. Within a channel the store order is preserved
+/// as before — that part of the old comment was true and remains load-bearing,
+/// because two data on one channel are genuinely ordered.
 pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
+    use prost::Message;
+
     let mut process = Par::default();
 
-    for (channel, data) in state.data.iter() {
+    // ★ Canonical, not `HashMap` order. See the header above.
+    let mut data_channels: Vec<_> = state.data.iter().collect();
+    data_channels.sort_by_cached_key(|(channel, _)| channel.encode_to_vec());
+
+    for (channel, data) in data_channels {
         for datum in data.iter() {
             let payload = &datum.a.pars;
             let mut locally_free = channel.locally_free.clone();
@@ -379,7 +514,21 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
         }
     }
 
-    for (channels, continuations) in state.continuations.iter() {
+    // ★ Same canonicalisation for the continuation side. The key is a channel
+    // GROUP (`Vec<Par>`), so the sort key is the concatenation of the members'
+    // encodings in their own order — group order is load-bearing (it pairs
+    // positionally with `WaitingContinuation::patterns`) and must not be sorted
+    // away, only the ORDER AMONG GROUPS is the map's arbitrary contribution.
+    let mut continuation_groups: Vec<_> = state.continuations.iter().collect();
+    continuation_groups.sort_by_cached_key(|(channels, _)| {
+        let mut key = Vec::new();
+        for channel in channels.iter() {
+            channel.encode(&mut key).expect("encoding a Par into a Vec cannot fail");
+        }
+        key
+    });
+
+    for (channels, continuations) in continuation_groups {
         if channels.is_empty() {
             return Err(ReificationError::EmptyChannelGroup);
         }
