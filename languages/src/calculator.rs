@@ -26,7 +26,56 @@ language! {
         UInt32 {
             pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)u32";
             eval: ![ {
-                mettail_prattail::parse_int_lit(text, None).map_err(|_| ())
+                // ★ Divergence I, Stage A′ (2026-07-27). The SAME defect this file already
+                // fixed for `BigInt` below, in the one integer category it was left in.
+                //
+                // The eval was `parse_int_lit(text, None)` — a UNIVERSAL ACCEPTOR of every
+                // integer spelling — flatly contradicting the MANDATORY `u32` tail its own
+                // `pattern` declares one line up. Because a category's literal domain is
+                // decided by its `eval` and by nothing else
+                // (`macros/src/gen/runtime/wpda_codegen/prefix.rs:386`), a BARE numeral was a
+                // live `UInt32::NumLit` reading:
+                //
+                //     UInt32::parse("7")  ⇒ Ok(NumLit(7))        ← accepted without the tail
+                //     format!("{}", UInt32::NumLit(7)) ⇒ "7u32"  ← written back WITH it
+                //
+                // Display is right (the pattern says `u32`); the acceptor was wrong. The gap
+                // put a term in the SPPF whose display is not the surface it was parsed from,
+                // so `"0 + 0"` in a `BigRat` position carried FOUR readings, three displaying
+                // `"0 + 0"` and one — `UInt32ToBigRat(AddUInt32 …)` — displaying `"0u32 + 0u32"`.
+                // `parse_via_wpda` elects by GLOBAL argmin over whole-derivation
+                // `LexicographicWeight` (the generated
+                // `__mettail_wpda_select_min_weight_realizing`), so which of the four won was a
+                // function of the WHOLE expression: appending a third factor flipped the FIRST
+                // factor's carrier, and with it the surface —
+                //
+                //     "(0 + 0) * 0u32"                     ⇒ IntToBigRat(AddInt …)     surface stable
+                //     "(0 + 0) * 0u32 * (0p0 bitand 0p0)"  ⇒ UInt32ToBigRat(AddUInt32 …)
+                //                                          ⇒ "(0u32 + 0u32) * 0u32 * …"
+                //
+                // — which is the `bigrat_display_parse_roundtrip` failure. Fixing the ELECTION
+                // would have been fixing the wrong layer: the reading it was electing was one
+                // the grammar should never have admitted (`languages/src/rhocalc.rs:129`).
+                //
+                // The eval now accepts EXACTLY its declared `…u32` domain. Unlike `BigInt`
+                // below there is NO superset clause and none is needed: every unsuffixed
+                // numeral already has a carrier — `Int` when it fits `i32`, `BigInt` by its
+                // overflow clause otherwise — so narrowing here removes readings without
+                // removing spellings. The carrier of a numeral is now a function of the
+                // numeral TEXT alone, and no remaining reading of a canonical surface
+                // RE-SPELLS a token — readings may still differ in the language's inert
+                // `(` … `)` grouping, and legitimately do, so that (not display equality)
+                // is the invariant pinned by
+                // `languages/tests/numeric_literal_carrier_is_text_determined.rs`.
+                if matches!(
+                    mettail_prattail::IntSuffix::from_text(text),
+                    mettail_prattail::IntSuffix::U32
+                ) {
+                    mettail_prattail::parse_int_lit(text, Some(mettail_prattail::Suffix::U32))
+                        .map_err(|_| ())
+                } else {
+                    Err(())
+                }
             } ]
         }
         Int {
