@@ -118,7 +118,7 @@ pub(crate) const INERT_SPAN_SKIP: bool = true;
 ///
 /// ⚠ **THE "ACCIDENTALLY INERT" READING IS REFUTED BY MEASUREMENT.** The plan for this
 /// change predicted that `where`'s alphabets would be empty in every bundled grammar, so
-/// that turning this on would be byte-identical. Emitted and measured on RhoCalc, they
+/// that turning this on would be byte-identical. Emitted and measured on Rholang, they
 /// are **not**:
 ///
 /// ```text
@@ -126,7 +126,7 @@ pub(crate) const INERT_SPAN_SKIP: bool = true;
 ///     ext("where") = { 0-9, A-Z, '_', '`', a-z, … }        ← note the BACKTICK
 /// ```
 ///
-/// The backtick is decisive and it is not a curiosity: RhoCalc's Foreign Language Term
+/// The backtick is decisive and it is not a curiosity: Rholang's Foreign Language Term
 /// opener is `FltOpenBacktick = "[a-z]+`"`, so `` where` `` is a **single token** whose
 /// text begins with the lead. The ident-run test cannot see it, because a backtick is not
 /// a word character. With this lever off, a `.*sep` domain containing an FLT term tagged

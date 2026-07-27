@@ -33,7 +33,7 @@
 //!   `LanguageSpec.rules` with pluggable `SelectionPolicy`.
 //!
 //! The first cut ships `classify` only, plus a narrow wiring into
-//! `strategies.rs` to fix the rhocalc `NumLit(negative)` bug. The
+//! `strategies.rs` to fix the rholang `NumLit(negative)` bug. The
 //! remaining sub-modules land as the rest of the plan is executed.
 
 #[cfg(test)]

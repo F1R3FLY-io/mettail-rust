@@ -185,11 +185,11 @@ mod tests {
     fn diagnostic_renders_without_category() {
         let d = Diagnostic {
             code: "D11".to_string(),
-            language: "RhoCalc".to_string(),
+            language: "Rholang".to_string(),
             category: String::new(),
             message: "test".to_string(),
         };
-        assert_eq!(d.render(), "[RhoCalc-D11] test");
+        assert_eq!(d.render(), "[Rholang-D11] test");
     }
 
     #[test]

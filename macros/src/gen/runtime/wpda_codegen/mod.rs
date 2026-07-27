@@ -373,7 +373,7 @@ pub(crate) fn collect_category_names_with_literals(language: &LanguageDef) -> Ve
             categories.push(cat);
         }
     }
-    // Stage 4 fix (Pass 4): native-type-only categories (e.g. RhoCalc's
+    // Stage 4 fix (Pass 4): native-type-only categories (e.g. Rholang's
     // `![bool] as Bool` and `![str] as Str` declared at type-level but
     // with no rules and no `literals { ... }` block). Cross-cat projection
     // rules in OTHER categories may reference these as source categories

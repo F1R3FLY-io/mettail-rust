@@ -27,7 +27,7 @@ pub(crate) mod typed_report;
 /// the typed path when it has either:
 ///
 ///   1. **a non-native-output `fold`** — a `fold` term rule whose OUTPUT category has no native
-///      type (e.g. RhoCalc's `int(..)`/`+`/`concat` casts that return `Proc`). Such folds reduce
+///      type (e.g. Rholang's `int(..)`/`+`/`concat` casts that return `Proc`). Such folds reduce
 ///      nowhere on the `EGraph<String>` path (their `![{..}]` bodies were emitted only into the
 ///      retired Ascent backend); OR
 ///   2. **(E1.1) a substitution rewrite** — a rewrite whose RHS is a β-style `Subst`/`MultiSubst`
@@ -176,7 +176,7 @@ pub(crate) struct SubstRewrite {
 /// (E1.2 — MF4, shape-guarded) Classify a rewrite as a [`SubstRewrite`], or `None`.
 ///
 /// Accepts ONLY the precise β-substitution shape, fail-closed on everything else (verified to
-/// REJECT RhoCalc's `Comm`, whose RHS nests the `MultiSubst` inside an AC `PPar` and whose
+/// REJECT Rholang's `Comm`, whose RHS nests the `MultiSubst` inside an AC `PPar` and whose
 /// replacement is a `Map`):
 ///
 ///  - premises are congruence-only (every other premise kind is a side condition the structural
@@ -186,7 +186,7 @@ pub(crate) struct SubstRewrite {
 ///    inside `Apply`/`Collection`/`Map`/`Zip`;
 ///  - exactly one scope variable (single binder), and the scope is a bare `Var`;
 ///  - every replacement is a plain `Var` (the supported, fully-general case) — `Map`/`Zip`/
-///    `Collection` replacements (RhoCalc's `qs.*map(..)`) are rejected;
+///    `Collection` replacements (Rholang's `qs.*map(..)`) are rejected;
 ///  - the LHS contains NO collection metapattern anywhere (no AC-collection-nested redex);
 ///  - the `scope_var` is bound by a `Binder`/`MultiBinder` constructor position in the LHS —
 ///    i.e. `left` contains an `Apply { constructor: C, args: [Var(scope_var)] }` where `C` is a
@@ -225,7 +225,7 @@ pub(crate) fn is_substitution_rewrite(
     };
 
     // Every replacement is a plain `Var` (Map/Zip/Collection replacements rejected — this is what
-    // excludes RhoCalc's `qs.*map(|q| (NQuote q))`).
+    // excludes Rholang's `qs.*map(|q| (NQuote q))`).
     let mut repl_vars: Vec<Ident> = Vec::with_capacity(repl_pats.len());
     for rp in &repl_pats {
         match rp {
@@ -388,7 +388,7 @@ pub(crate) struct CommElementInfo {
 ///
 /// The reduct is a bag `op{ r_0, …, r_{m-1}, ...rest }` with `m ≥ 1` elements, EXACTLY ONE of which
 /// is the host-computed substitution; the others are σ-delivered LHS variables. `m = 1` is the
-/// ASYNCHRONOUS communication `op{ (eval cont Q), ...rest }` (RhoCalc/`CommDemo`); `m = 2` is the
+/// ASYNCHRONOUS communication `op{ (eval cont Q), ...rest }` (Rholang/`CommDemo`); `m = 2` is the
 /// SYNCHRONOUS π communication `op{ (eval ^x.p m), q, ...rest }` — the output's continuation `q`
 /// runs in parallel with the substituted receive continuation (`c!x.P | c?y.Q ⇒ P | Q{x/y}`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -481,7 +481,7 @@ fn comm_collection_apply(
 ///
 /// (D10) The LAST argument may ALSO be an EXPLICIT single binder abstraction `^x.body` whose body is
 /// a bare variable — the omnibus π spelling `(PIn n ^x.p)` (`omnibus.tex:1988`) of the same element
-/// the RhoCalc/`CommDemo` rules write as a bare scope variable `(PFor N cont)`. It is admitted ONLY
+/// the Rholang/`CommDemo` rules write as a bare scope variable `(PFor N cont)`. It is admitted ONLY
 /// when `C` is a single `VariantKind::Binder` of its category, i.e. only where the element really
 /// does lower to the FIX-A `[pre-scope children…, BinderArity(1), body]` node whose LAST child is
 /// the binder BODY. Under that condition the two spellings produce the SAME element pattern
@@ -589,7 +589,7 @@ fn comm_subst_element(pattern: &AstPattern) -> Option<(Ident, Ident)> {
 ///
 /// The reduct bag admits `m ≥ 1` fixed elements: EXACTLY ONE substitution `(eval scope arg)` plus
 /// `m - 1` bare LHS variables delivered straight from the AC match's σ. `m = 1` is the ASYNCHRONOUS
-/// output (RhoCalc / `CommDemo`: `op{ (eval cont Q), ...rest }`); `m = 2` is the omnibus's
+/// output (Rholang / `CommDemo`: `op{ (eval cont Q), ...rest }`); `m = 2` is the omnibus's
 /// SYNCHRONOUS π `Comm` (`omnibus.tex:1988-1989`)
 ///
 /// ```text
@@ -962,7 +962,7 @@ fn pattern_term_contains_substitution(term: &PatternTerm) -> bool {
 ///   2. has a **typed-path structural rewrite/equation** — a non-congruence rewrite, or any
 ///      equation (equations are structural rewrites the typed path turns into bidirectional
 ///      `RewriteRule`s); these can rewrite a term into a different typed normal form (e.g.
-///      RhoCalc's `Comm`/`PNew` AC equations); OR
+///      Rholang's `Comm`/`PNew` AC equations); OR
 ///   3. **declares a Rho/RhoMachine backend capability**. Raw `language!` codegen advertises
 ///      `NO_RUNTIME_BACKEND_CAPABILITIES` in metadata (backends are installed by runtime
 ///      wrappers, not the macro), so the closest `LanguageDef`-level signal is a `guards {
@@ -1374,7 +1374,7 @@ fn pattern_term_to_dovetail(
             // lowering is representation-uniform (A-1): on the `EGraph<String>` path
             // (`enum_id = None`) the operator is the label string; on the typed fold
             // path (`enum_id = Some(L)`) it is the typed op variant `L::<Cat>_<Ctor>`,
-            // so an `AcApp` LHS matches the typed lowering's n-ary bag node (RhoCalc's
+            // so an `AcApp` LHS matches the typed lowering's n-ary bag node (Rholang's
             // / CommDemo's `PPar`). `ac::lower_ac_collection` threads `enum_id` to both
             // the operator and the `fixed` sub-patterns.
             if let [AstPattern::Collection { .. }] = args.as_slice() {
@@ -1619,7 +1619,7 @@ fn rule_block(language: &LanguageDef, enum_id: Option<&Ident>) -> (TokenStream, 
 /// Generate feature-gated helpers that compile generated typed AST terms into
 /// checked `RuntimeDovetailRunReport` values.
 pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
-    // Fold-bearing languages (non-native-output `fold`s — RhoCalc's Proc casts/arith) take the
+    // Fold-bearing languages (non-native-output `fold`s — Rholang's Proc casts/arith) take the
     // typed-`L` path: a typed op-enum + native-rewrite dispatcher that actually reduces folds.
     // Every other language keeps the `EGraph<String>` path below, byte-for-byte unchanged.
     if needs_typed_fold_path(language) {
@@ -1726,7 +1726,7 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     // Epic 4 (R-4): a language whose rewrites lower to a base-rewrite σ-receiver is
     // a "rho-net-rewrite" language — its Dovetail report additionally carries the
     // resolved σ provenance a runtime Rho σ-injection reads. Every other language
-    // (scalar / rhocalc-typed-path / no base rewrite) keeps `rewrite_justifications`
+    // (scalar / rholang-typed-path / no base rewrite) keeps `rewrite_justifications`
     // empty, so its report stays byte-identical. The decision is made here, at
     // generation time, from the same σ-receiver derivation the runtime uses.
     //
@@ -2312,15 +2312,15 @@ mod tests {
         assert!(needs_typed_dovetail_path(&language));
     }
 
-    /// (MF4 — the crux negative) RhoCalc's `Comm` is NOT a substitution rewrite: its RHS nests
+    /// (MF4 — the crux negative) Rholang's `Comm` is NOT a substitution rewrite: its RHS nests
     /// the `MultiSubst` inside an AC `PPar` collection, AND the replacement is a `*map(..)`
     /// comprehension (a `Pattern::Map`), AND the LHS is AC-collection-nested. ANY of these must
     /// reject it; this exercises all three guards together on the real `Comm` shape.
     #[test]
-    fn is_substitution_rewrite_rejects_rhocalc_comm() {
+    fn is_substitution_rewrite_rejects_rholang_comm() {
         let language = parse(
             r#"
-                name: RhoCalcSubset,
+                name: RholangSubset,
                 types {
                     Name
                     Proc
@@ -2341,7 +2341,7 @@ mod tests {
         );
         assert!(
             is_substitution_rewrite(&language, rewrite(&language, "Comm")).is_none(),
-            "RhoCalc Comm (MultiSubst nested in AC PPar, Map replacement, AC-nested LHS) must NOT \
+            "Rholang Comm (MultiSubst nested in AC PPar, Map replacement, AC-nested LHS) must NOT \
              be detected as a substitution rewrite"
         );
     }

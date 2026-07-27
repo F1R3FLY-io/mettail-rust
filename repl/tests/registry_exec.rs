@@ -52,7 +52,7 @@ const A_S6_DEMOS: [&str; 0] = [
 #[test]
 fn every_bundled_language_advertises_a_default_runtime_backend() {
     let by_name = default_backends();
-    for expected in ["RhoCalc", "Calculator", "Lambda", "Ambient"] {
+    for expected in ["Rholang", "Calculator", "Lambda", "Ambient"] {
         assert!(by_name.contains_key(expected), "registry must contain {expected}");
     }
     // A-S6: the demo languages are registry members too (the runtime mandate is universal).
@@ -71,12 +71,12 @@ fn every_bundled_language_advertises_a_default_runtime_backend() {
 #[test]
 fn default_backends_are_capability_based() {
     let by_name = default_backends();
-    // RhoCalc + Calculator run on the Rho machine (COMM / scalar dataflow); their Dovetail stage is
+    // Rholang + Calculator run on the Rho machine (COMM / scalar dataflow); their Dovetail stage is
     // the fold prereduce + the fallback.
     assert_eq!(
-        by_name.get("RhoCalc"),
+        by_name.get("Rholang"),
         Some(&Some(RuntimeBackend::RhoMachine)),
-        "RhoCalc defaults to the two-stage Dovetail+Rholang backend"
+        "Rholang defaults to the two-stage Dovetail+Rholang backend"
     );
     assert_eq!(
         by_name.get("Calculator"),

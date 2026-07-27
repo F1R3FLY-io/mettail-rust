@@ -181,7 +181,7 @@ fn test_delimiters() {
 }
 
 #[test]
-fn test_rhocalc_terminals() {
+fn test_rholang_terminals() {
     let (dfa, partition) = build_pipeline(
         &[
             ("+", TokenKind::Fixed("+".to_string())),
@@ -227,14 +227,14 @@ fn test_rhocalc_terminals() {
     // Verify minimization keeps state count reasonable
     assert!(
         dfa.states.len() <= 30,
-        "RhoCalc DFA should have at most 30 states after minimization, got {}",
+        "Rholang DFA should have at most 30 states after minimization, got {}",
         dfa.states.len()
     );
 
     // Verify equivalence class compression
     assert!(
         partition.num_classes < 25,
-        "RhoCalc should have fewer than 25 equivalence classes, got {}",
+        "Rholang should have fewer than 25 equivalence classes, got {}",
         partition.num_classes
     );
 }
@@ -432,8 +432,8 @@ fn lambda_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
     (terminals, needs)
 }
 
-/// Build terminal set for the RhoCalc grammar.
-fn rhocalc_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
+/// Build terminal set for the Rholang grammar.
+fn rholang_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
     let terms: Vec<(&str, TokenKind)> = vec![
         ("!", TokenKind::Fixed("!".to_string())),
         ("(", TokenKind::Fixed("(".to_string())),
@@ -507,13 +507,13 @@ fn test_dafsa_vs_prefix_identical_codegen_lambda() {
 }
 
 #[test]
-fn test_dafsa_vs_prefix_identical_codegen_rhocalc() {
-    let (terminals, needs) = rhocalc_terminals();
+fn test_dafsa_vs_prefix_identical_codegen_rholang() {
+    let (terminals, needs) = rholang_terminals();
     let dafsa_code = run_codegen_pipeline(&terminals, &needs, false);
     let prefix_code = run_codegen_pipeline(&terminals, &needs, true);
     assert_eq!(
         dafsa_code, prefix_code,
-        "RhoCalc: DAFSA and prefix-only should produce identical lexer code"
+        "Rholang: DAFSA and prefix-only should produce identical lexer code"
     );
 }
 

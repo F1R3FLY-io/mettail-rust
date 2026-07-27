@@ -2,7 +2,7 @@
 //!
 //! # The defect this module exists to make impossible
 //!
-//! A grammar may spell the SAME term more than one way. RhoCalc spells a quoted name three:
+//! A grammar may spell the SAME term more than one way. Rholang spells a quoted name three:
 //!
 //! ```text
 //!   NQuote      . p:Proc |- "@" "(" p ")" : Name ;
@@ -25,7 +25,7 @@
 //!                       ──display─▶ @error <- @Nil          ← fixpoint, one layer too late
 //! ```
 //!
-//! One surface is shed per nesting layer, so `gen_rhocalc_prop::inputbind_display_parse_roundtrip`
+//! One surface is shed per nesting layer, so `gen_rholang_prop::inputbind_display_parse_roundtrip`
 //! (which asserts `D(P(D(P(D(t))))) == D(P(D(t)))`, i.e. a fixpoint after ONE re-parse) fails on
 //! every term whose synonym sits two layers deep.
 //!
@@ -96,7 +96,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 /// The FILLER SURFACE of each category: the first rule of that category whose syntax pattern is
-/// entirely literals (a nullary constructor), rendered space-separated. RhoCalc's `Proc` filler is
+/// entirely literals (a nullary constructor), rendered space-separated. Rholang's `Proc` filler is
 /// `PZero`'s `Nil`; its `Name` filler is `NQuoteNil`'s `@ Nil`.
 ///
 /// Shared by the surface-synonymy gate table and by the sigil-operand wrap gate
@@ -373,8 +373,8 @@ pub(crate) fn rerouted_rule(canonical_rule: &GrammarRule, plan: &Reroute) -> Gra
 /// `__SURFACE_SYNONYMY_SAMPLES` is what makes the gate EXECUTABLE rather than descriptive. For
 /// each class member with a syntax pattern, the sample is that pattern rendered with every
 /// parameter replaced by a FILLER SURFACE — the surface of the simplest nullary rule of the
-/// parameter's category (a rule whose syntax pattern is literals only, e.g. RhoCalc's
-/// `PZero |- "Nil"`). So RhoCalc's `Name` class yields
+/// parameter's category (a rule whose syntax pattern is literals only, e.g. Rholang's
+/// `PZero |- "Nil"`). So Rholang's `Name` class yields
 ///
 /// ```text
 ///   NQuote      ⇒ "@ ( Nil )"

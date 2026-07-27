@@ -48,7 +48,7 @@
 //! reaching the emitted `Par`.
 //!
 //! * **(A) two token patterns were missing the sign — ✅ CLOSED 2026-07-26 (`98d861a3`).**
-//!   `languages/src/rhocalc.rs` gave `BigInt`, `Fixed` and `Float` a leading `-?` but gave `Int`
+//!   `languages/src/rholang.rs` gave `BigInt`, `Fixed` and `Float` a leading `-?` but gave `Int`
 //!   and `BigRat` none, so for `-7`, `-7i32`, `-7i64` and `-7r` NO folded reading was generated at
 //!   all. Both now carry it (with the `u32` spelling split out so it stays unsigned, mirroring
 //!   upstream `unsigned_int_literal`). Measured effect of (A) ALONE: the folded reading appears at
@@ -87,7 +87,7 @@
 //! stops `Nil` matching inside `Nilish` — and enforced none for a punctuation sigil.
 //! `macros/src/gen/runtime/wpda_codegen/lit_boundary.rs` now derives, from the grammar's own token
 //! patterns, the bytes that can EXTEND each literal into a longer token; for `-` that is
-//! `{'.', '0'..'9'}` (RhoCalc's `Int`/`BigInt`/`BigRat`/`Float`/`Fixed` all lead with `-?`, and
+//! `{'.', '0'..'9'}` (Rholang's `Int`/`BigInt`/`BigRat`/`Float`/`Fixed` all lead with `-?`, and
 //! `Float`/`Fixed` also admit `-.5`), so `-` abutting a digit is a proper prefix of the numeral and
 //! the helper declines to the monolithic walker, whose election honours maximal munch. For `@`,
 //! `(`, `*`, `[`, `{`, `,`, `<-`, `<=` the derived sets are EMPTY, so their matching is unchanged
@@ -125,7 +125,7 @@
 
 #![cfg(all(feature = "rholang-runtime", feature = "source-oracle"))]
 
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_runtime::{lower_rholang_proc_with_options, LoweringOptions};
 use mettail_runtime::clear_var_cache;
 use models::rhoapi::Par;
@@ -255,7 +255,7 @@ fn oracle_has_teeth() {
 //      are the regression guard: the fix for §2 must not disturb any of them.
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 
-/// Unsigned ground literals of every numeric carrier RhoCalc has, plus the non-numeric grounds.
+/// Unsigned ground literals of every numeric carrier Rholang has, plus the non-numeric grounds.
 #[test]
 fn unsigned_ground_literals_conform() {
     for literal in ["7", "0", "7n", "7r", "1.5f64", "1.5p2", "0u32", "true", "false", r#""hi""#] {
@@ -431,7 +431,7 @@ fn adjacency_is_honoured() {
 //      is now its DUAL, so the repair carries a pin at least as strong as the defect had.
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 
-/// Every sign-abutted numeric literal spelling RhoCalc and Rholang share. Each is checked in all
+/// Every sign-abutted numeric literal spelling Rholang and Rholang share. Each is checked in all
 /// three [`positions`], which are exactly the three whole-input numeral-led spans the string-entry
 /// projection prologue used to frame as `- ⟨operand⟩`.
 ///
@@ -467,7 +467,7 @@ fn sign_abutted_numerals_conform_in_every_position() {
 /// The one row where the divergence changed the SHAPE of the tree rather than just a leaf — and
 /// the row that makes the repair's *precedence* consequence visible.
 ///
-/// `languages/src/rhocalc.rs` states the intent directly — "`NegProc` is declared after `/` and
+/// `languages/src/rholang.rs` states the intent directly — "`NegProc` is declared after `/` and
 /// `%` so `-` binds tighter than division (e.g. `-3r/2r` is `(-3r)/2r`)". Until 2026-07-26 it was
 /// not so: MeTTaIL elected `ENeg(EDiv(3r, 2r))` = `-(3r/2r)`, because the projection helper framed
 /// the whole span as `- ⟨3r/2r⟩` with no precedence awareness at all. f1r3node gets

@@ -48,13 +48,13 @@ pub(crate) fn emit_recovery_module(
         // FOLLOW set tokens: structural delimiters + sequence separators +
         // grammar terminals. GEN-1 GAP-2 extension (2026-06-28): these sync
         // points are now SPEC-DERIVED rather than the formerly-hardcoded
-        // rhocalc bracket alphabet `) } ] ; ,` (a non-bracket grammar — e.g.
+        // rholang bracket alphabet `) } ] ; ,` (a non-bracket grammar — e.g.
         // one using `« »` — needs ITS OWN closers/separators as sync points,
-        // not rhocalc's). The closing delimiters come from
+        // not rholang's). The closing delimiters come from
         // `collect_structural_delimiters` (the same source the dispatch
         // delimiter table uses) and the separators from
         // `collect_sequence_separators`; `"Eof"` is the universal end sync.
-        // For rhocalc this is a SUPERSET of the former hardcode (adds the Set/
+        // For rholang this is a SUPERSET of the former hardcode (adds the Set/
         // Pathmap closers `}# |}` and the `& |` separators), so recovery is at
         // least as effective and never regresses. Audit §GAP-2 (additional site
         // surfaced by the grammar-generality harness INV-6).

@@ -61,9 +61,9 @@ rholang-runtime = [
     "dep:mettail-ast",
     "dep:mettail-languages",
     "dep:syn",
-    "mettail-languages/rhocalc",
-    # The two-stage Dovetail+Rho RhoCalc wrapper (`dovetail_rho_backed_rholang`) needs the generated
-    # `RhoCalcLanguage::dovetail_report_for` / `dovetail_normal_term` (E2), which are emitted only
+    "mettail-languages/rholang",
+    # The two-stage Dovetail+Rho Rholang wrapper (`dovetail_rho_backed_rholang`) needs the generated
+    # `RholangLanguage::dovetail_report_for` / `dovetail_normal_term` (E2), which are emitted only
     # under the language crate's `dovetail-codegen` feature.
     "mettail-languages/dovetail-codegen",
 ]
@@ -491,9 +491,9 @@ name = "rho_rholang_ast"
 path = "tests/rho_rholang_ast.rs"
 required-features = ["rholang-runtime"]
 
-# The RhoCalc ⟷ Rholang DIFFERENTIAL CONFORMANCE suite (option C, Stage 0): asserts
+# The Rholang ⟷ Rholang DIFFERENTIAL CONFORMANCE suite (option C, Stage 0): asserts
 # `fold(e) ≡ reduce(lower(e))` across the ground-data algebra, and carries the divergence
-# ledger (A–H) as witness/target test pairs. Needs both evaluators — the generated RhoCalc
+# ledger (A–H) as witness/target test pairs. Needs both evaluators — the generated Rholang
 # language with its Dovetail fold bodies AND the real f1r3node reducer — which is exactly the
 # `rholang-runtime` surface (it forwards `mettail-languages/{rholang,dovetail-codegen}`).
 [[test]]
@@ -768,15 +768,15 @@ path = "tests/rho_guard_oracle.rs"
 required-features = ["source-oracle"]
 
 # M-0: the `implies` connective end-to-end on the real reducer. Needs the GENERATED
-# RhoCalc parser + `lower_rholang_proc` (`rholang-runtime`), not the source oracle:
-# `implies` is RhoCalc surface syntax that f1r3node's own Rholang parser does not know.
+# Rholang parser + `lower_rholang_proc` (`rholang-runtime`), not the source oracle:
+# `implies` is Rholang surface syntax that f1r3node's own Rholang parser does not know.
 [[test]]
 name = "rho_implies_guard"
 path = "tests/rho_implies_guard.rs"
 required-features = ["rholang-runtime"]
 
 # M-1b: the spatial surface (`matches`, `PPar`) + the formula compiler, on the real
-# reducer. Same feature gate as `rho_implies_guard`: `matches`/`PPar` are RhoCalc
+# reducer. Same feature gate as `rho_implies_guard`: `matches`/`PPar` are Rholang
 # surface syntax that f1r3node's own Rholang parser does not know, so the test needs
 # the GENERATED parser + `lower_rholang_proc` (`rholang-runtime`).
 [[test]]
@@ -791,9 +791,9 @@ name = "rho_matches_differential"
 path = "tests/rho_matches_differential.rs"
 required-features = ["rholang-runtime"]
 
-# The `rholang` interpreter binary. It parses RhoCalc (Rholang 1.4) source with the GENERATED
+# The `rholang` interpreter binary. It parses Rholang (Rholang 1.4) source with the GENERATED
 # parser, lowers it (`lower_rholang_proc_with_resolver`), and evaluates on the f1r3node reducer.
-# The RhoCalc grammar supports Foreign Language Terms, so the interpreter bundles the `lambda` guest
+# The Rholang grammar supports Foreign Language Terms, so the interpreter bundles the `lambda` guest
 # (the production LambdaLanguage) to lower programs that embed λ-terms — hence `lambda-runtime`;
 # `rholang-runtime` provides the generated `Proc` parser.
 [[bin]]
@@ -827,7 +827,7 @@ path = "tests/lookahead_demo.rs"
 required-features = ["rholang-runtime", "lambda-runtime", "calculator-runtime"]
 
 # CI gate for the `rholang` binary: runs it on the committed demo `.rho` file and asserts the
-# RhoCalc program (which exercises the grammar's FLT feature) reduces on the reducer — the COMM
+# Rholang program (which exercises the grammar's FLT feature) reduces on the reducer — the COMM
 # fires, the typed `${x}` holes bind, and the re-quote reconstructs App(I, K) = (λ.0 λ.λ.1) on OUT.
 [[test]]
 name = "rholang_bin"

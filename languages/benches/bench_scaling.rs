@@ -1,6 +1,6 @@
 //! Full-language scaling benchmarks using composite deterministic inputs.
 //!
-//! Languages: All 4 (Calculator, Lambda, Ambient, RhoCalc)
+//! Languages: All 4 (Calculator, Lambda, Ambient, Rholang)
 //! Features exercised: ALL features simultaneously via composite inputs
 //! built from deterministic generators. This shows overall O(n) scaling.
 //!
@@ -13,7 +13,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use mettail_languages::ambient;
 use mettail_languages::calculator;
 use mettail_languages::lambda;
-use mettail_languages::rhocalc;
+use mettail_languages::rholang;
 use std::time::Duration;
 
 use mettail_languages::bench_common::{
@@ -144,14 +144,14 @@ fn bench_ambient_scaling(c: &mut Criterion) {
 }
 
 // =============================================================================
-// RhoCalc composite scaling
+// Rholang composite scaling
 // =============================================================================
 
-/// Build a composite RhoCalc expression at scale N:
+/// Build a composite Rholang expression at scale N:
 /// "{c0!(0) | c1!(0) | ... | 1 | 2 | ... | N}"
 /// This exercises: channel output, cast rules (int -> Proc),
 /// parallel composition, and structural delimiters.
-fn gen_rhocalc_composite(n: usize) -> String {
+fn gen_rholang_composite(n: usize) -> String {
     // Output terms
     let outputs = gen_nested_output(n);
     // Cast chain (ints in parallel)
@@ -168,16 +168,16 @@ fn gen_rhocalc_composite(n: usize) -> String {
     }
 }
 
-fn bench_rhocalc_scaling(c: &mut Criterion) {
-    let mut group = c.benchmark_group("scaling/rhocalc");
+fn bench_rholang_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("scaling/rholang");
     for &n in SIZES {
-        let input = gen_rhocalc_composite(n);
+        let input = gen_rholang_composite(n);
         let len = input.len();
         group.throughput(Throughput::Bytes(len as u64));
         group.bench_with_input(BenchmarkId::new("composite", n), &input, |b, input| {
             b.iter(|| {
                 mettail_runtime::clear_var_cache();
-                rhocalc::Proc::parse(black_box(input)).expect("parse failed")
+                rholang::Proc::parse(black_box(input)).expect("parse failed")
             })
         });
     }
@@ -185,7 +185,7 @@ fn bench_rhocalc_scaling(c: &mut Criterion) {
 }
 
 // =============================================================================
-// Width x Depth matrix for Ambient and RhoCalc
+// Width x Depth matrix for Ambient and Rholang
 // =============================================================================
 
 /// Ambient width x depth: flat parallel of varying widths at varying nesting depths.
@@ -227,7 +227,7 @@ criterion_group! {
     targets = bench_calculator_scaling,
         bench_lambda_scaling,
         bench_ambient_scaling,
-        bench_rhocalc_scaling,
+        bench_rholang_scaling,
         bench_ambient_matrix
 }
 criterion_main!(benches);

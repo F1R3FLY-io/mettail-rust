@@ -489,8 +489,8 @@ pub fn peano_par(n: usize, fingerprint: &str) -> Par {
 }
 
 /// The reflected bound-variable leaf `⟦^bound(peano(depth))⟧` — a tagged `EList`
-/// `[⌜^bound⌝, ⌜^nog⌝, ⟦peano(depth)⟧]`, OPAQUE to the host RhoCalc binder machinery (a plain
-/// `EList`, not a host `BoundVar` Par), so a guest binder depth SURVIVES the RhoCalc boundary
+/// `[⌜^bound⌝, ⌜^nog⌝, ⟦peano(depth)⟧]`, OPAQUE to the host Rholang binder machinery (a plain
+/// `EList`, not a host `BoundVar` Par), so a guest binder depth SURVIVES the Rholang boundary
 /// (invisible to `locally_free`/`filter_and_adjust_bitset`).
 pub fn bound_var_par(depth: usize, fingerprint: &str) -> Par {
     reflect_ground_term_par(

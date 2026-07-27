@@ -50,7 +50,7 @@
 //! ⚠ **PathMap methods do not lower on the reducer path** — all 22 zipper methods fail, and a
 //! `Pathmap` lowers to an `EMap`. So a delivery built on PathMap operations is one the receiving
 //! program cannot then read. The FIPS's "success map / failure map" is therefore realized as
-//! **resting data on channels**, which is the shape RhoCalc can actually consume:
+//! **resting data on channels**, which is the shape Rholang can actually consume:
 //!
 //! | what | where | datum |
 //! |---|---|---|

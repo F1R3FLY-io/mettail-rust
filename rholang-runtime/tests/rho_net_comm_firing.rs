@@ -129,7 +129,7 @@ fn reflected_output(chan: &str, val: &str) -> RuntimeReflectedSubterm {
 }
 
 /// (A-3 GATE) `dovetail_report_for(CommDemo subject)` now PRODUCES the Comm justification — the
-/// AUTOMATED Dovetail pipeline drives the RhoCalc `Comm` rule, removing the hand-built-σ workaround.
+/// AUTOMATED Dovetail pipeline drives the Rholang `Comm` rule, removing the hand-built-σ workaround.
 ///
 /// The redex `{ for(y <- na){ y!(nc) } | na!(nb) }` (both channels `na`) reduces on the typed native
 /// lane: the Comm native rule AC-matches the non-linear soup (`N ≡ N` by e-class equality), the

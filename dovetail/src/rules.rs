@@ -1204,10 +1204,10 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
 //       saturation ≥ 20% of eval wall-time  →  recommend DV-1; else record the non-goal.
 //
 // CORPUS CAVEAT (recorded in findings.md, pre-P6 framing): when this DV-0 probe was
-// written the rhocalc eval corpus did NOT route through dovetail — `rholang-runtime`
+// written the rholang eval corpus did NOT route through dovetail — `rholang-runtime`
 // runs f1r3node's RhoRuntime directly (run.rs). Post-P6, dovetail is the live
 // general-purpose backend (via the `languages` `dovetail-codegen` default feature);
-// rhocalc process terms still execute on the host RhoRuntime while dovetail reduces
+// rholang process terms still execute on the host RhoRuntime while dovetail reduces
 // the in-engine folds. So this probe still measures the LARGEST representative
 // dovetail workload: a saturate→extract arithmetic-rewrite system that mirrors the
 // equality-saturation shape the flip created. The corpus-representativeness caveat

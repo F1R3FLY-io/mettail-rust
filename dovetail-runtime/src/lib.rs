@@ -947,7 +947,7 @@ mod tests {
         assert_eq!(projected.derivation_edges.len(), 2);
         assert!(projected.term_by_key(&projected.roots[0]).is_some());
         // Additivity guard: a no-rewrite report projects to EMPTY σ justifications,
-        // so existing scalar/rhocalc reports are byte-identical under the field.
+        // so existing scalar/rholang reports are byte-identical under the field.
         assert!(projected.rewrite_justifications.is_empty());
     }
 

@@ -14,7 +14,7 @@
 //! category is either a numeric native type (native-output) or the object category itself
 //! (object-output, keyed on the binary width-bearing shape). Flavor and arity both come from the
 //! output category: a native-output cast (Calculator `int(a,m) : Int`) returns `Option<scalar>`,
-//! defers on `None`, and reads its arity from the output kind; an object-output cast (RhoCalc
+//! defers on `None`, and reads its arity from the output kind; an object-output cast (Rholang
 //! `int(a,m) : Proc`) returns the result `Proc` (`Err` on a bad cast), needs `CastResult`, and
 //! carries no arity (parse-committed by the WPDA, never needed at reduction).
 //!
@@ -721,7 +721,7 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
 ///   (b) cast-FOLD redex rows: [`recognize_cast_fold`] against the SAME
 ///       elected `proc_cat` as steps 1-2 (empty wrapper-candidate set ⇒ the
 ///       adapter emits nothing ⇒ no fold rows — mirrored faithfully). This
-///       catches the binary object casts (RhoCalc `IntBinProc` / `UIntBinProc`
+///       catches the binary object casts (Rholang `IntBinProc` / `UIntBinProc`
 ///       / `FloatBinProc` / `FixedBinProc`: `int(a, w) : Proc` …) and the
 ///       native-output casts.
 ///   (c) trigger-bearing unary wrappers FROM the numeric-cast domain: the
@@ -736,7 +736,7 @@ pub(crate) fn generate_numeric_cast_adapter(language: &LanguageDef) -> TokenStre
 ///
 /// ## The boundary (documented deliberately — pinned by the F0 trie tests)
 ///
-/// Arity-1 wrapper rows whose source category is NOT native-numeric — RhoCalc
+/// Arity-1 wrapper rows whose source category is NOT native-numeric — Rholang
 /// `POutputNil` (`@Nil!(q)`, Proc→Proc), `POutputQuotedEmpty` (`@n!()`,
 /// Name→Proc), `NQuote` (`@(p)`, Proc→Name) — do satisfy the walker's
 /// arity-1 `rule_matches` shape and may park waiters incidentally, but they
@@ -804,7 +804,7 @@ mod tests {
         syn::parse_str::<LanguageDef>(src).expect("fixture grammar should parse")
     }
 
-    /// A brand-new **native-output** cast grammar — neither Calculator nor RhoCalc — exercising the
+    /// A brand-new **native-output** cast grammar — neither Calculator nor Rholang — exercising the
     /// fully structural derivation: `Int` (i32) native, a `ProcInt` wrapper, and one binary
     /// `int(a, w) : Int` cast whose body is the language-agnostic `mettail_runtime` reduction.
     const NATIVE_CAST_GRAMMAR: &str = r#"

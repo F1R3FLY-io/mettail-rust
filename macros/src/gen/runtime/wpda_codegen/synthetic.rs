@@ -1,6 +1,6 @@
 //! Synthetic grammar rules for implicit atomic literals.
 //!
-//! Calculator / RhoCalc / other grammars do NOT write explicit
+//! Calculator / Rholang / other grammars do NOT write explicit
 //! `IntLit . i:Int |- i : Int` rules in their `terms { }` block —
 //! the atomic-literal variant (`Int::NumLit(i32)`, `Bool::BoolLit(bool)`,
 //! `Str::StringLit(String)`, etc.) is **synthesized** by

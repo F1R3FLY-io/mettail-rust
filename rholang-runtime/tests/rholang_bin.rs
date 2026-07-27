@@ -1,9 +1,9 @@
 //! CI gate for the `rholang` interpreter binary (`src/bin/rholang.rs`).
 //!
-//! Runs the built binary on the committed demo `.rho` files and asserts the RhoCalc programs —
+//! Runs the built binary on the committed demo `.rho` files and asserts the Rholang programs —
 //! which exercise the grammar's Foreign Language Term feature — actually evaluate on the f1r3node
 //! reducer, so "the demos work" is CI-gated rather than a one-time manual check. The full path is
-//! the rho-native one: the GENERATED RhoCalc parser → `PFlt` lowering (lam → LambdaLanguage) → the
+//! the rho-native one: the GENERATED Rholang parser → `PFlt` lowering (lam → LambdaLanguage) → the
 //! real reducer (never a host/Dovetail simulation).
 //!
 //!  * `k-combinator.rho` — a bare λ-term `App(App(K, I), K)` EVALUATES TO ITS NORMAL FORM: it

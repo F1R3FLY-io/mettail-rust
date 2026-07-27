@@ -2,7 +2,7 @@
 //  THE NEGATIVE CONTROL — a predicate no result satisfies. The search exhausts and everything
 //  rests.
 //
-//  Run me with the RhoCalc interpreter:
+//  Run me with the Rholang interpreter:
 //    target/debug/rholang demos/flt-assay-desk/desk-accepts-nothing.rho
 //
 //  Same three resting results, same pattern, same channel. The only change is the term the

@@ -34,7 +34,7 @@ use super::lit;
 ///     label string, and the `fixed` sub-patterns lower over `String`.
 ///   * `Some(L)` → the typed fold path — the operator is the typed op variant
 ///     `L::<Cat>_<Ctor>` (so an `AcApp` LHS matches the typed lowering's n-ary bag
-///     node, e.g. RhoCalc's / CommDemo's `PPar`), and the `fixed` sub-patterns lower
+///     node, e.g. Rholang's / CommDemo's `PPar`), and the `fixed` sub-patterns lower
 ///     over the same typed `L`. (A-1: typed AC lowering — the untyped and typed
 ///     branches share this one lowering, differing only in `enum_id`.)
 ///

@@ -13,7 +13,7 @@
 //!   * **native-output** (`numeric_*`, e.g. Calculator `int(a,m) : Int`): returns
 //!     `Option<scalar>`; `None` means "no numeric result for this derivation" and the
 //!     caller (the fold dispatcher) leaves the redex unreduced (defers).
-//!   * **object-output** (`proc_*`, e.g. RhoCalc `int(a,m) : Proc`): returns the result
+//!   * **object-output** (`proc_*`, e.g. Rholang `int(a,m) : Proc`): returns the result
 //!     `Proc`, or the language's `Err` `Proc` on a bad cast (object folds cannot defer on
 //!     `None` — a bad cast must fold to `Err`, not stay a redex).
 //!
@@ -63,7 +63,7 @@ pub trait ProcToNumericInput {
     fn to_numeric_input(&self) -> Option<NumericInput<'_>>;
 
     /// Indexed-collection element peel (Calculator `at([..], i)` → element `Proc`). The
-    /// default is identity, so languages without indexed-collection numeric casts (RhoCalc)
+    /// default is identity, so languages without indexed-collection numeric casts (Rholang)
     /// pay nothing. An out-of-bounds / non-literal index MUST return `self` (never panic):
     /// it is evidence the parse alternate is invalid, and a sibling alternate still peels.
     #[inline]
@@ -104,7 +104,7 @@ pub trait ProcToNumericInput {
 
 /// Build the **object-output** result `Proc` from a computed cast value, or the language's
 /// `Err` `Proc` on failure. Implemented (macro-generated) ONLY for non-native-output
-/// languages (RhoCalc). Native-output languages (Calculator) never implement this — their
+/// languages (Rholang). Native-output languages (Calculator) never implement this — their
 /// reductions return the native scalar and defer on `None`.
 pub trait CastResult: Sized {
     fn err() -> Self;
@@ -117,7 +117,7 @@ pub trait CastResult: Sized {
 }
 
 // ── native-output (scalar) reductions ───────────────────────────────────────────────────
-// Two int widths: Calculator `Int = i32` uses `numeric_int_bin_i32`; RhoCalc `Int = i64`
+// Two int widths: Calculator `Int = i32` uses `numeric_int_bin_i32`; Rholang `Int = i64`
 // uses `numeric_int_bin_i64` (and `proc_int_bin` wraps it). The `_i32` path narrows through
 // `to_i32` and so rejects values an `i64` would accept — this is intentional and preserved.
 
@@ -140,7 +140,7 @@ where
     int_bin_pipeline_i32(a.to_numeric_input()?, width)
 }
 
-/// `int(a, m) : i64` — RhoCalc's int cast value (also the body of [`proc_int_bin`]).
+/// `int(a, m) : i64` — Rholang's int cast value (also the body of [`proc_int_bin`]).
 #[inline]
 pub fn numeric_int_bin_i64<P, W>(a: &P, w: W) -> Option<i64>
 where

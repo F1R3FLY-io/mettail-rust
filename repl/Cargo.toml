@@ -15,7 +15,7 @@ name = "mettail_repl"
 default = ["rho-languages"]
 bundled-languages = ["dep:mettail-languages", "dep:mettail-dovetail-runtime"]
 # Install the production runtime backends so `exec` works: Lambda/Ambient → Dovetail (generic
-# `dovetail_backed`); RhoCalc → two-stage Dovetail+Rholang; Calculator → two-stage Dovetail+Rholang
+# `dovetail_backed`); Rholang → two-stage Dovetail+Rholang; Calculator → two-stage Dovetail+Rholang
 # (E3 fold-dataflow). Pulls f1r3node (via rholang-runtime); a Dovetail-only build can opt out by
 # building `--no-default-features --features bundled-languages` (Lambda/Ambient still get Dovetail).
 rho-languages = [
@@ -86,7 +86,7 @@ mettail-rholang-runtime = { package = "rholang-runtime", path = "../rholang-runt
 ] }
 # A-S4 value-absence probes (`zero_dstage_exec.rs`): byte-level checks that the injected call
 # `Par` does NOT embed the host-computed result literal (prost encoding of `models::rhoapi::Par`,
-# the A-S3 probe style) — and the arbitrary-precision expected values for RhoCalc observations.
+# the A-S3 probe style) — and the arbitrary-precision expected values for Rholang observations.
 models = { workspace = true }
 prost = "0.14"
 num-bigint = "0.4"

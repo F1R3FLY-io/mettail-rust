@@ -281,7 +281,7 @@ pub struct GrammarRule {
     ///
     /// A synonymy class is the set of rules of one category that denote the same term —
     /// derived, not declared, as the connected component of `alias ──▶ fold target`
-    /// (`grammar_shapes::FoldAliasShape::target_label`). RhoCalc's `Name` class is
+    /// (`grammar_shapes::FoldAliasShape::target_label`). Rholang's `Name` class is
     /// `{ NQuote, NQuoteShort, NQuoteNil }`. Every member has its own SURFACE, and
     /// `Display` must emit ONE of them for the whole class, or `Display∘Parse` is not a
     /// fixpoint: the elected member is a function of the PARSE CONTEXT, not of the class,

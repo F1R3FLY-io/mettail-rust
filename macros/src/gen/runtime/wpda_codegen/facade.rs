@@ -455,7 +455,7 @@ pub(crate) fn sep_isolation_helper_ident(cat_name: &str) -> proc_macro2::Ident {
 // categories via a GRAMMAR-DERIVED eligibility predicate ([`eligible_family`]) —
 // a prefix-cohort / list-element / infix-operand REACHABILITY analysis over the
 // grammar IR, with NO hardcoded category names. It is a behavior-preserving
-// REFINEMENT of the former rhocalc-name-coupled hardcoded include-lists: it
+// REFINEMENT of the former rholang-name-coupled hardcoded include-lists: it
 // isolates EXACTLY the categories that fork-explode (a ≥2 shared-prefix cohort
 // whose operands nest back into the category), in ANY language, present or future.
 
@@ -1347,7 +1347,7 @@ struct ProjVariant {
     /// INFIX (`[Param, Literal, Param]`) or a UNARY PREFIX (`[Literal, Param]`).
     ///
     /// The reading is the same in both places, because it is the same fact: a prefix
-    /// operator binds TIGHTER than every infix operator of its category (RhoCalc declares
+    /// operator binds TIGHTER than every infix operator of its category (Rholang declares
     /// `NegProc` after `/` and `%` exactly so, and `NQuoteShort`/`POutputShort` carry an
     /// explicit `prefix(220)`), so an operand whose own top constructor is an infix — or a
     /// looser prefix — is NOT the operand: the frame stopped in the wrong place. `- 7 + 1`
@@ -1807,7 +1807,7 @@ fn derive_projection_iso_shape(
         // "EXACTLY ONE LEADING `Lit`" is read as *exactly one `Lit` in the whole
         // skeleton, and it leads* — equivalently, every slot after slot 0 is an `Op`.
         // That is the reading the justification requires and it is measurably NOT the
-        // same as *the leading run of `Lit`s has length one*: RhoCalc's
+        // same as *the leading run of `Lit`s has length one*: Rholang's
         // `InputBindQuoted . lhs:Proc, n:Name |- "@" lhs "<-" n : InputBind` is
         // `[Lit("@"), Op, Lit("<-"), Op]`, whose leading run is also one, and whose
         // whole-input match requires a depth-0 `<-` at a real token boundary — genuine
@@ -1984,7 +1984,7 @@ pub(crate) fn emit_projection_isolation_prologue(
             //
             // ★ The decisive evidence that this is a REPAIR and not a trade-off: the
             // USER-APPROVED `realize_mode_contract_pins` (2026-07-14,
-            // `languages/tests/rhocalc_tests.rs`) ALREADY requires both readings of
+            // `languages/tests/rholang_tests.rs`) ALREADY requires both readings of
             // `@Nil!(@(@Nil)!())` to be enumerable, and passes only because it enters
             // through `parse_*_with_source`, where this prologue is not wired. So the
             // facade already contradicted an approved contract at the STRING entry.
@@ -2204,7 +2204,7 @@ fn emit_proj_variant_arm(
     // An open-ended frame's trailing `Op` slot takes `(start, n)` — the WHOLE remaining
     // span — because `__proj_skeleton_match_all` has no following literal to stop at.
     // That is the matcher discarding a fact the grammar states: a unary prefix operator
-    // binds TIGHTER than the infix operators of its category. `rhocalc.rs` says it in
+    // binds TIGHTER than the infix operators of its category. `rholang.rs` says it in
     // prose for `NegProc` (*"declared after `/` and `%` so `-` binds tighter than
     // division"*) and in an annotation for `NQuoteShort` / `POutputShort`
     // (`prefix(220)`, *"well above any Proc-level infix BP"*). The frame honoured
@@ -2722,7 +2722,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
     let helper_name = proj_isolation_helper_ident(&cat_ident.to_string());
     let result_src_idx = shape.result_src_idx;
     // ROOT-D: this category carries method frames iff ANY variant is a gated
-    // receiver-led frame. When it does NOT (every non-`Proc` rhocalc category and
+    // receiver-led frame. When it does NOT (every non-`Proc` rholang category and
     // EVERY calculator category), the matcher's greedy-last additions are elided ⇒
     // the emitted helper is BYTE-IDENTICAL to the pre-ROOT-D baseline.
     let has_method = shape.variants.iter().any(|v| v.leading_receiver_gated);
@@ -3109,7 +3109,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             /// check per side and nothing else.
             ///
             /// ⚠ This is the half of the boundary rule the matcher previously stated only
-            /// for IDENT-shaped literals. RhoCalc's numerals carry their sign
+            /// for IDENT-shaped literals. Rholang's numerals carry their sign
             /// (`Int = -?…`, mirroring consensus Rholang's `long_literal /-?\d+/`), so in
             /// `-7n` the maximal munch at byte 0 is `BigInt("-7n")` and the `NegProc`
             /// skeleton's one-byte `-` is a PROPER PREFIX of it. Matching there framed the

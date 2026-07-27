@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use mettail_languages::lambda::LambdaLanguage;
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, FltRegistry, FltResolve, RhoCoverageEvidence,

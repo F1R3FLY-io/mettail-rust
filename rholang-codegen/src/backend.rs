@@ -283,7 +283,7 @@ fn guard_pred_obligation_kind(pred: &BehavioralPred) -> RhoGuardObligationKind {
 /// | `param:SomeCategory` + a `guards { guard_slots { Label(param); } }` declaration | by the author's **declaration** |
 ///
 /// The second exists for a language whose guard sublanguage IS its own expression language.
-/// RhoCalc's `where` is the case: its guard is an ordinary `Proc`, which is what keeps
+/// Rholang's `where` is the case: its guard is an ordinary `Proc`, which is what keeps
 /// `where x + y < 10` and `where t matches {phi | psi}` writable — neither is expressible as a
 /// `BehavioralPred`, whose grammar is relation queries, quantifiers and AC-matches with no
 /// comparison, no arithmetic and no nesting inside arguments. Retyping the slot to `Guard` would
@@ -421,7 +421,7 @@ fn collect_guard_config_obligations(
         // sublanguage", and that is a claim about the sublanguage, not about the `guards { }`
         // block. Firing it for the mere PRESENCE of a block conflated two different facts, and
         // the conflation surfaced the moment a language declared a `guards { }` block for
-        // something else: RhoCalc's `guard_slots` declaration induced an uncovered
+        // something else: Rholang's `guard_slots` declaration induced an uncovered
         // `predicate:standard-builtins` obligation for a vocabulary it cannot reach, because it
         // has no `?name:Guard` slot and therefore never enters the predicate sublanguage.
         //

@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use mettail_languages::lambda::LambdaLanguage;
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def, rho_net_drive_call_par,
     suggest_rejected_rule_dispositions, FltRegistry, FltResolve, RhoCoverageEvidence,

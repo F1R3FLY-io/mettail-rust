@@ -26,7 +26,7 @@
 //! about: a non-normalizing term (1) **does not hang**, and (2) **never yields a wrong (reduced)
 //! normal form** — it returns Ω itself, β-equal, in bounded time. The `Err` divergence *path*
 //! (`sat.outcome != Converged ⇒ Err`) is shared, unchanged typed-path machinery already covered by
-//! the RhoCalc/Calculator fold tests.
+//! the Rholang/Calculator fold tests.
 #![cfg(all(feature = "lambda", feature = "dovetail-codegen"))]
 
 use mettail_languages::lambda::LambdaLanguage;

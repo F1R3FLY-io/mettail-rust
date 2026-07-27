@@ -7,15 +7,15 @@
 //! so every `run_ascent` call now returns `Err("…oracle…not installed…")`. These cast
 //! regressions are pure **non-COMM** reductions (arithmetic folds + width/numeric casts),
 //! so the live oracle is the generated whole-box Dovetail normalizer
-//! `<Lang>::dovetail_normal_term` — the *same* non-COMM reducer `rhocalc_tests.rs`'s
+//! `<Lang>::dovetail_normal_term` — the *same* non-COMM reducer `rholang_tests.rs`'s
 //! Path-B `mod oracle` drives (there wrapped in a bounded COMM fixpoint these tests do
 //! not need). It returns the single typed Dovetail normal form; the `.contains`/`.any`
 //! assertions below hold on that one folded value.
 
-use mettail_languages::{calculator as calc, rhocalc};
+use mettail_languages::{calculator as calc, rholang};
 use mettail_runtime::Language;
 
-/// Saturation budget for the Dovetail normalizer (mirrors `rhocalc_tests::oracle`).
+/// Saturation budget for the Dovetail normalizer (mirrors `rholang_tests::oracle`).
 const DOVETAIL_ITERS: usize = 256;
 const DOVETAIL_NODES: usize = 4_000_000;
 
@@ -47,12 +47,12 @@ fn calc_normal_form(input: &str, expected: &str) {
     );
 }
 
-/// RhoCalc analogue of [`calc_nf_displays`].
+/// Rholang analogue of [`calc_nf_displays`].
 fn rho_nf_displays(input: &str) -> Vec<String> {
     mettail_runtime::clear_var_cache();
-    let lang = rhocalc::RhoCalcLanguage;
+    let lang = rholang::RholangLanguage;
     let term = lang.parse_term(input).expect("parse");
-    match rhocalc::RhoCalcLanguage::dovetail_normal_term(
+    match rholang::RholangLanguage::dovetail_normal_term(
         term.as_ref(),
         DOVETAIL_ITERS,
         DOVETAIL_NODES,
@@ -114,7 +114,7 @@ fn calc_repl_parse_preserves_huge_n_suffix() {
     );
 }
 
-/// **Unary `int(_)` / `float(_)` ARE surface syntax post-merge.** The RhoCalc→Rholang-1.4
+/// **Unary `int(_)` / `float(_)` ARE surface syntax post-merge.** The Rholang→Rholang-1.4
 /// merge added the single-argument casts to the Calculator grammar — the identity casts
 /// `IntId . a:Int |- "int" "(" a ")"` and `FloatId . a:Float |- "float" "(" a ")"`, plus the
 /// cross-type conversions `FloatToInt`/`BoolToInt`/`StrToInt` and `IntToFloat`/`BoolToFloat`/

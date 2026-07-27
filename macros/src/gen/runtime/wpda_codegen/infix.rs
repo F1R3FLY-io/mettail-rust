@@ -800,7 +800,7 @@ fn emit_iter_eligible_fn(
     // category bearing its terminal. This STRENGTHENS the (terminal, left_bp)
     // uniqueness (I1, below) to plain terminal uniqueness. A breach is a
     // grammar-level GEN-1 precondition violation ⇒ hard `compile_error!`.
-    // Vacuous when no op in the category is iterative-eligible (e.g. rhocalc).
+    // Vacuous when no op in the category is iterative-eligible (e.g. rholang).
     let disjointness_errors: Vec<TokenStream> = cat_ops
         .iter()
         .enumerate()

@@ -35,7 +35,7 @@
 //! (`float_preserves_bag_flatness` in the FV file).
 //!
 //! Disposition gate: emitted iff the language declares equations AND has no
-//! `RhoNativeJoin` obligation (no host RSpace). Ambient qualifies; rhocalc /
+//! `RhoNativeJoin` obligation (no host RSpace). Ambient qualifies; rholang /
 //! guarded_rho route their binders/COMM to the host and are NOT emitted.
 
 use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
@@ -52,7 +52,7 @@ use std::collections::HashSet;
 ///
 /// Condition 3 both distinguishes a name-restriction calculus (Ambient) from a
 /// message-passing process calculus — whose binders are MULTI-binders tied to
-/// COMM (rhocalc/guarded_rho: `PInputs . ^[xs]`, `PNew . ^[xs]`) and are routed
+/// COMM (rholang/guarded_rho: `PInputs . ^[xs]`, `PNew . ^[xs]`) and are routed
 /// to the host RSpace — and keeps the float (`impl Cat`) and term-wrapper
 /// (`impl {Name}TermInner`) emissions consistent: both depend on a single binder
 /// existing.
@@ -487,7 +487,7 @@ mod tests {
 
     /// Every bundled standalone language definition — the PRODUCTION `language!` files under
     /// `languages/src` PLUS the non-production ones under `languages/tests/definitions`
-    /// (`bench_common.rs` declares no language and the `composition/` / `rhocalc/`
+    /// (`bench_common.rs` declares no language and the `composition/` / `rholang/`
     /// subdirectories hold fragments, not standalone definitions).
     ///
     /// Task #11 split the definitions by role: `languages/src/` is production-only, and every
@@ -605,7 +605,7 @@ mod tests {
             "reserved_model",
             include_str!("../../../../languages/tests/definitions/reserved_model.rs"),
         ),
-        ("rhocalc", include_str!("../../../../languages/src/rhocalc.rs")),
+        ("rholang", include_str!("../../../../languages/src/rholang.rs")),
         (
             "swapdemo",
             include_str!("../../../../languages/tests/definitions/swapdemo.rs"),

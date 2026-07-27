@@ -113,7 +113,7 @@ Section LanguageDefInventory.
 
   Definition current_language_inventory : list LanguageInventory := [
     {| inventory_name := "calculator"; inventory_requirements := arithmetic_rewrite_surface ++ collection_rewrite_surface |};
-    {| inventory_name := "rhocalc"; inventory_requirements := process_rewrite_surface ++ arithmetic_rewrite_surface |};
+    {| inventory_name := "rholang"; inventory_requirements := process_rewrite_surface ++ arithmetic_rewrite_surface |};
     {| inventory_name := "ambient"; inventory_requirements := process_rewrite_surface |};
     {| inventory_name := "lambda"; inventory_requirements := binder_rewrite_surface |};
     {| inventory_name := "appsubst"; inventory_requirements := binder_rewrite_surface |};
@@ -177,7 +177,7 @@ Section LanguageDefInventory.
        the whole source file. These four carry long clause-by-clause conformance
        headers that quote OTHER languages' constructs, and that scan could not tell
        a quotation from a declaration: it reported ReqRhoCommHandlerContract for Json
-       (the header cites RhoCalc's `POutput` idiom at src/json.rs:107), ReqFreshnessPremise
+       (the header cites Rholang's `POutput` idiom at src/json.rs:107), ReqFreshnessPremise
        for all four (their markdown `# ` headings match the `"# "` needle), and
        ReqCongruencePremise for Turing (a markdown table row in its header, plus the
        `map_err(|_| ())` closure in its UInt32 literal action, both match the `"| "`

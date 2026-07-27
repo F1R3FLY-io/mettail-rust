@@ -2328,7 +2328,7 @@ where
                 self.name()
             )
         })?;
-        // The program's observation channel (e.g. RhoCalc's `"OUT"`); the stepper reads its resting
+        // The program's observation channel (e.g. Rholang's `"OUT"`); the stepper reads its resting
         // value(s) post-quiescence to surface terminal output step(s). Extracted (owned) before the
         // `program_par` borrow so it does not conflict with it.
         match invocation {
@@ -2343,7 +2343,7 @@ where
                 // Compose the call with the backend's persistent contracts (e.g. Calculator's E3
                 // `@"AddInt"`/`@"SubInt"`/`@"MulInt"` dataflow contracts) so their COMMs actually
                 // fire — the SAME composition the wrapper's run path uses
-                // (`run::evaluate_validated_program_with_call` → `par.append(call)`). For RhoCalc
+                // (`run::evaluate_validated_program_with_call` → `par.append(call)`). For Rholang
                 // the contract program is empty, so this is just the call (a direct COMM term).
                 // A-S5.6: a `^drive` SEED composes with the INSTALLED Rho-net program (the
                 // receiver family lives there, not in the scalar program) — the same
@@ -2591,7 +2591,7 @@ where
         match backend {
             RuntimeBackend::RhoMachine => {
                 // Tier-3 bracket around the REPORT-FREE compile: F2 may lift held-fold
-                // contracts (e.g. the RhoCalc AST lowering); they ride the executed invocation.
+                // contracts (e.g. the Rholang AST lowering); they ride the executed invocation.
                 clear_pending_fold_sites();
                 let free = (self.invocation_free.compiler)(term);
                 let free_fold_definitions = drain_pending_fold_definitions().map_err(|err| {

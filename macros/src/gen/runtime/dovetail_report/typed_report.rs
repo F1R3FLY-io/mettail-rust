@@ -123,7 +123,7 @@ fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
         // answered `error`. Nothing downstream needs a non-empty param list: the LHS becomes the
         // nullary `Pattern::app(op, vec![])`, the extractor block degenerates to `let () = { () }`
         // (already templated for, see `extract` below), and there are no operand bindings — the
-        // body is a closed expression. Verified against `languages/tests/rhocalc_tests.rs`
+        // body is a closed expression. Verified against `languages/tests/rholang_tests.rs`
         // (`map_size_empty`, `map_set_chain_reduces_to_literal`, …), whose comments record the
         // symptom this guard caused.
         if !all_simple {
@@ -394,7 +394,7 @@ fn generate_helpers(
     // `Exec . |- (PDrop (NQuote P)) ~> P;` CONSUMES its `PDrop` head, so by the same
     // set-difference reasoning the nested structural-AC arm above uses, `PDrop` looks like it
     // belongs here. Adding every non-congruence rewrite whose LHS head does not reappear on its
-    // RHS was implemented and measured against `languages/tests/rhocalc_tests.rs`: it took the
+    // RHS was implemented and measured against `languages/tests/rholang_tests.rs`: it took the
     // suite from 9 failures to **104**.
     //
     // Why it is wrong: unlike a fold redex or a β-redex, a `PDrop` is NOT guaranteed to be
@@ -408,7 +408,7 @@ fn generate_helpers(
     // here only when its presence PROVES an un-fired reduction (a fold's constructor, a
     // substitution/β redex head, a COMM binder, an AC element that the firing consumes). The
     // fold-vs-redex operand problem this was written for is fixed where the type information
-    // actually lives — in the language's own `![…]` body, see `languages/src/rhocalc.rs`
+    // actually lives — in the language's own `![…]` body, see `languages/src/rholang.rs`
     // `is_ground_operand`.
     let var_pats: Vec<TokenStream> = language
         .types
@@ -1235,7 +1235,7 @@ fn nested_structural_ac_dispatch_arm(
 /// recover — e.g. an opaque/`Vec`/`HashSet`/`HashMap` field). Multi-type languages reconstruct
 /// each `all_alts()` alternative under its own category and reassemble the distinct results into
 /// `<Lang>TermInner::Ambiguous` (deduplicated by semantic key), mirroring
-/// `rholang-runtime/src/rhocalc_ast.rs`'s `lower_proc_alternatives`.
+/// `rholang-runtime/src/rholang_ast.rs`'s `lower_proc_alternatives`.
 fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) -> TokenStream {
     let enum_id = op_enum_ident(language);
     let term_name = format_ident!("{}Term", language.name);
@@ -2458,7 +2458,7 @@ mod tests {
 
     #[test]
     fn object_output_cast_fns_do_not_classify_as_option() {
-        // The generated object-output cast bodies (RhoCalc) call these; they return a `Proc`
+        // The generated object-output cast bodies (Rholang) call these; they return a `Proc`
         // directly (`Proc::Err` on failure), so they MUST NOT be `?`-unwrapped.
         for body in [
             quote::quote!(mettail_runtime::proc_int_bin(&a, w)),

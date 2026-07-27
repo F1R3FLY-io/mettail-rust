@@ -29,7 +29,7 @@ use super::prefix::{classify_atomic, first_set_of_category, AtomicShape, Literal
 /// chains). The cross-cat-LHS row-scoped trigger lookahead
 /// (`prefix_crosscat_lhs_trigger_ahead_scoped`) treats these — minus the
 /// cross-cat trigger set — as ROW / SEQUENCE separators that bound the scan at
-/// depth 0, replacing the formerly-hardcoded rhocalc `;`. A separator that is
+/// depth 0, replacing the formerly-hardcoded rholang `;`. A separator that is
 /// ALSO a cross-cat trigger must stay scannable (it binds a row's LHS), so it is
 /// excluded by the caller; a pure sequence separator bounds the row.
 pub(crate) fn collect_sequence_separators(language: &LanguageDef) -> std::collections::BTreeSet<String> {
@@ -257,13 +257,13 @@ pub fn emit_lex_alt_rule_for_fn(
 
     // GEN-1 GAP-2 (2026-06-28): spec-derived structural-delimiter + row-separator
     // tables for `prefix_crosscat_lhs_trigger_ahead_scoped`, replacing the
-    // hardcoded rhocalc bracket alphabet (`( [ { #{ {|` / `) ] } }# |}`) and the
+    // hardcoded rholang bracket alphabet (`( [ { #{ {|` / `) ] } }# |}`) and the
     // hardcoded `;` row boundary. `opens`/`closes` come from the SAME
     // `collect_structural_delimiters` the rest of the backend consumes (for
-    // rhocalc this is byte-identical to the former hardcode); `row_seps` is every
+    // rholang this is byte-identical to the former hardcode); `row_seps` is every
     // `*sep` separator declared in the grammar MINUS the cross-cat trigger set (a
     // trigger must stay scannable at depth 0; a pure sequence separator bounds the
-    // row). For rhocalc this resolves to `{";", "|"}` — the extra `"|"` is the
+    // row). For rholang this resolves to `{";", "|"}` — the extra `"|"` is the
     // Proc-parallel infix, which never occurs at depth 0 inside a for-binding
     // scan, so it is behaviorally identical to the former `{";"}`. Audit §GAP-2.
     let (gap2_opens, gap2_closes) = super::collection::collect_structural_delimiters(_language, per_cat);
@@ -287,7 +287,7 @@ pub fn emit_lex_alt_rule_for_fn(
                 /// over-generation of that sigil-quoted sibling. Returns `true`
                 /// iff the FIRST depth-0 whole-source trigger reached ahead is a
                 /// `bind_trigger` (shared by a sigil-led sibling, e.g. `<-`/`<=`
-                /// for rhocalc InputBind); returns `false` if a `polyadic_stop`
+                /// for rholang InputBind); returns `false` if a `polyadic_stop`
                 /// (a whole-source trigger with NO sigil sibling, e.g. `,`) is
                 /// reached first — a legitimate whole-source (polyadic) reading
                 /// with no sigil counterpart, so the delegate must NOT be
@@ -570,7 +570,7 @@ pub fn emit_lex_alt_rule_for_fn(
         /// the ENTIRE remaining input for a trigger (the legacy fall-through
         /// use, unchanged). This scoped variant instead bounds the scan to the
         /// CURRENT row / enclosing bracketed region: it depth-tracks brackets
-        /// from `pos` (`( [ {` and the rhocalc multi-char collection openers
+        /// from `pos` (`( [ {` and the rholang multi-char collection openers
         /// `#{ {|` → +1; `) ] }` and closers `}# |}` → −1) and STOPS at the row
         /// boundary `;` (depth 0) or when a closer drops depth below 0 (the
         /// enclosing for-`)`). It returns `true` ONLY for a trigger seen at
@@ -588,7 +588,7 @@ pub fn emit_lex_alt_rule_for_fn(
         /// only branches that would die by evidence. The `;` / depth-0 stop
         /// pins `for(@[1]<-c ; x<-a & y<-b){…}` row 1 to projection-only: a
         /// later `;`-row's `&` cannot re-enable an earlier no-`&` row. Note
-        /// every rhocalc multi-char delimiter carries exactly one brace char, so
+        /// every rholang multi-char delimiter carries exactly one brace char, so
         /// single-char `{`/`}` tracking stays balanced even when a delimiter
         /// tokenizes split — the explicit multi-char arms only add robustness.
         #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
@@ -607,7 +607,7 @@ pub fn emit_lex_alt_rule_for_fn(
             // GEN-1 GAP-2 (2026-06-28): spec-derived delimiter / row-separator
             // tables (emitted from `collect_structural_delimiters` +
             // `collect_sequence_separators` \ cross-cat-triggers), replacing the
-            // formerly-hardcoded rhocalc alphabet. `opens`/`closes` depth-track
+            // formerly-hardcoded rholang alphabet. `opens`/`closes` depth-track
             // brackets; a depth-0 `row_seps` entry bounds the row.
             const __OPENS: &[&str] = &[ #( #gap2_open_lits ),* ];
             const __CLOSES: &[&str] = &[ #( #gap2_close_lits ),* ];
@@ -1355,7 +1355,7 @@ fn emit_prefix_crosscat_lhs_trigger_set_arms(
 ///     cross-cat-LHS rule `result ::= source T …` exists (contributing `T` to
 ///     the cross-cat trigger set) AND a SIGIL-LED sibling rule `result ::= σ …
 ///     T …` (a rule whose `syntax_pattern[0]` is a Literal `σ`) also carries
-///     `T` as an interior terminal. For rhocalc InputBind + sigil `@`: `<-`
+///     `T` as an interior terminal. For rholang InputBind + sigil `@`: `<-`
 ///     (InputBind `lhs "<-" n` ∧ InputBindQuoted `"@" pat "<-" n`) and `<=`
 ///     (InputBindPersistent ∧ InputBindQuotedPersistent). A bind-trigger
 ///     reached FIRST at depth 0 ⇒ the whole-`source` reading is the proven
@@ -1612,7 +1612,7 @@ fn emit_prefix_pushes_for_shape(
         },
         AtomicShape::LiteralPatterned { cat_name, family, .. } => {
             let cat_name_lit = cat_name.as_str();
-            // M6c.5.fix (2026-05-14): the calculator/rhocalc codegen
+            // M6c.5.fix (2026-05-14): the calculator/rholang codegen
             // emits `TokenKind::Custom(cat_name)` for BigInt/BigRat/
             // Fixed literals (the suffix-tagged ones: `42n`, `1/2r`,
             // `3.14p`), AND `TokenKind::Integer/Float/etc.` for
@@ -1779,7 +1779,7 @@ fn emit_prefix_pushes_for_shape(
                 }
             });
         },
-        // (2026-07-06) Nullary terminal-keyword atom (e.g. rhocalc `PZero . |-
+        // (2026-07-06) Nullary terminal-keyword atom (e.g. rholang `PZero . |-
         // "Nil" : Proc`; calculator `Err . |- "error" : …`). PRE-RESERVATION a
         // keyword terminal was "never a lex-DAG ambiguity producer" (an exact
         // byte match, single alt), so the PrefixDispatch lex-Fork never needed a

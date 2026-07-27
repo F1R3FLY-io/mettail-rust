@@ -405,7 +405,7 @@ The rules module includes unit tests in `rules.rs::tests` covering:
 - Ground rewrite detection
 
 Integration tests in `languages/tests/` exercise all rule generation paths
-through complete language compilations (RhoCalc, Lambda, Calculator, etc.).
+through complete language compilations (Rholang, Lambda, Calculator, etc.).
 
 ## 9. Source References
 

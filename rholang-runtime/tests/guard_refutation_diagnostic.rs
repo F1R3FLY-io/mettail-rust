@@ -31,7 +31,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_runtime::{
     clear_guard_discharge_report, lower_rholang_proc_with_options, take_guard_discharge_report,
     LoweringOptions, GUARD_DISCHARGE_TARGET,

@@ -10,7 +10,7 @@
 //! What they must **not** have is their own *decider*. Both encode into the one substrate
 //! vocabulary, [`GuardFormula`], and both then ask the same procedures in
 //! [`mettail_prattail::guard_formula`]. The surface half is
-//! `mettail_languages::rhocalc::guard_substrate`; this is the lowered half.
+//! `mettail_languages::rholang::guard_substrate`; this is the lowered half.
 //!
 //! ```text
 //!    Proc ──encode──┐                        ┌── static_verdict   (compile time, HERE)
@@ -143,7 +143,7 @@ pub fn substrate_verdict(cond: &Par) -> Option<bool> {
 /// questions belong to the **structural core**, which is a different decider with its own
 /// semantics. The substrate does not duplicate it; it *uses* it. Making delegation the only
 /// route is what keeps a second, divergent matcher from growing here, exactly as it does on the
-/// run-time leg (`mettail_languages::rhocalc::guard_substrate`'s `GuardAtomResolver`).
+/// run-time leg (`mettail_languages::rholang::guard_substrate`'s `GuardAtomResolver`).
 ///
 /// A resolver may answer `None` freely: an undecided atom leaves the whole guard undecided,
 /// which is the fail-closed direction.
@@ -783,7 +783,7 @@ pub fn substrate_guard_passes(condition: &Par, bound_pars: &[Par]) -> bool {
 /// degrading to `Operand::NonLinear` ⇒ an opaque atom ⇒ delegation ⇒ `DontKnow` ⇒ fail-closed.
 /// That is the same answer `rho_pure_eval` reaches by the same mechanism, since it maps
 /// `EvalError::ArithmeticOverflow` to guard-fail. It is also exactly what the surface run-time
-/// leg does (`mettail_languages::rhocalc::guard_substrate::eval_guard_disposition_via_substrate`
+/// leg does (`mettail_languages::rholang::guard_substrate::eval_guard_disposition_via_substrate`
 /// is handed an already-substituted guard), so the two front ends' run-time legs are the same
 /// shape as well as the same decider.
 ///

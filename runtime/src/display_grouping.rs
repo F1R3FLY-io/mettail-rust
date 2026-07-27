@@ -31,7 +31,7 @@
 //!
 //! # Why it became reachable
 //!
-//! Until 2026-07-24 no RhoCalc `Proc` rendered a depth-0 comma: every comma in
+//! Until 2026-07-24 no Rholang `Proc` rendered a depth-0 comma: every comma in
 //! the surface sat inside `(…)`, `[…]`, `{…}` or `#{…}#`. Aligning `new` with
 //! official Rholang (`new x, y in { P }`, `grammar.js:89` /
 //! `rholang_mercury.cf:72`) introduced the first one.
@@ -62,7 +62,7 @@
 //! @@Nil!(new a0 , a1 in{Nil},)
 //! ```
 //!
-//! which does not parse (`gen_rhocalc_prop::name_display_parse_roundtrip`,
+//! which does not parse (`gen_rholang_prop::name_display_parse_roundtrip`,
 //! minimal input
 //! `NQuote(POutput2Plus(NParen(NQuoteNil), PNew([a0,a1], PZero), []))`).
 //! Grouping the slot fixes it:
@@ -102,11 +102,11 @@
 //! # Why `(…)` is the right wrapper
 //!
 //! PraTTaIL gives every category a TRANSPARENT parenthesized grouping: `( P )`
-//! parses to `P` itself with no wrapper AST node (verified for RhoCalc `Proc`:
+//! parses to `P` itself with no wrapper AST node (verified for Rholang `Proc`:
 //! `parse("(Nil)")` yields `PZero`, and
 //! `parse("@Nil!(0, (new a, b in {Nil}))")` yields exactly the term whose
 //! Display produced it). So grouping preserves the term, unlike a
-//! language-specific block such as RhoCalc's `{ P }`, which would introduce a
+//! language-specific block such as Rholang's `{ P }`, which would introduce a
 //! singleton `PPar`.
 //!
 //! # Token boundaries
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn separators_inside_brackets_do_not_count() {
-        // The exact shapes that made every pre-2026-07-24 RhoCalc element safe.
+        // The exact shapes that made every pre-2026-07-24 Rholang element safe.
         for s in ["x!(a,b)", "[1, 2]", "{k : v , j : w}", "f(g(a,b))", "#{a|b}#"] {
             assert!(!has_bare_sep(s, ","), "{s} has no DEPTH-0 comma");
             assert_eq!(group_if_bare_sep(s, ","), s);

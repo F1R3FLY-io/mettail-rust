@@ -17,7 +17,7 @@ The morphology system provides two components:
 
 ### Language-Agnostic Design
 
-MeTTaIL supports many language definitions (Calculator, Lambda, RhoCalc, Ambient, etc.), each with a different AST structure. A morphology tracker that operates on the AST would need to be parameterized by the language type, breaking the uniform `SimulationRunner` interface.
+MeTTaIL supports many language definitions (Calculator, Lambda, Rholang, Ambient, etc.), each with a different AST structure. A morphology tracker that operates on the AST would need to be parameterized by the language type, breaking the uniform `SimulationRunner` interface.
 
 Instead, `TermMetrics` is computed from the **display string**, using two universal structural proxies:
 

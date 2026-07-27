@@ -1,6 +1,6 @@
-//! `rholang` — a RhoCalc (Rholang 1.4) interpreter over the f1r3node reducer.
+//! `rholang` — a Rholang (Rholang 1.4) interpreter over the f1r3node reducer.
 //!
-//! It takes a RhoCalc source-file PATH, parses it with the GENERATED RhoCalc parser
+//! It takes a Rholang source-file PATH, parses it with the GENERATED Rholang parser
 //! (`Proc::parse`), lowers it to a normalized `rhoapi::Par` (`lower_rholang_proc_with_resolver`),
 //! and EVALUATES it on the real f1r3node Rholang reducer — no host/Dovetail simulation.
 //!
@@ -17,9 +17,9 @@
 //!    reported.
 //!
 //! ## Foreign Language Terms are a grammar feature, not a special case
-//! The RhoCalc grammar supports Foreign Language Terms (FLT): the opener `tag`…`` embeds a term of
+//! The Rholang grammar supports Foreign Language Terms (FLT): the opener `tag`…`` embeds a term of
 //! a guest language written in the guest's own concrete syntax. The interpreter is NOT
-//! FLT-specific — it just interprets RhoCalc — but it supplies an [`FltResolve`] registry of the
+//! FLT-specific — it just interprets Rholang — but it supplies an [`FltResolve`] registry of the
 //! guest languages it bundles (`calculator`, the production `CalculatorLanguage`; `lambda`, the
 //! untyped λ-calculus `LambdaLanguage`) so that programs USING the FLT feature lower, and so a bare guest term can be reduced to normal form by
 //! that guest's reduction engine. A program with no FLT never touches the registry; a program
@@ -27,8 +27,8 @@
 //!
 //! ## Comments are LEXED and RETAINED on the `COMMENTS` channel (task #18)
 //! Comments are no longer removed before parsing. `//` line comments and `/* … */` block comments
-//! are declared as ordinary tokens in the RhoCalc grammar's `tokens {}` block, routed to the
-//! alternative channel `COMMENTS` (`languages/src/rhocalc.rs`). A `-> CHANNEL` token is TRIVIA: the
+//! are declared as ordinary tokens in the Rholang grammar's `tokens {}` block, routed to the
+//! alternative channel `COMMENTS` (`languages/src/rholang.rs`). A `-> CHANNEL` token is TRIVIA: the
 //! lexer resolves it by the same maximal-munch rule as every other token, and when it wins the span
 //! is consumed but never delivered to the parse stream — exactly how inter-token whitespace is
 //! already consumed. So the parser sees precisely the token sequence it saw under the old
@@ -41,7 +41,7 @@
 //!
 //! **The channel boundary is hard**: `COMMENTS` is compile-time / tooling-facing apparatus. Only
 //! `DEFAULT` feeds the parser AND the running program. There is no `@"COMMENTS"` rho channel, no
-//! injected send, and no way for a running RhoCalc program to observe a comment.
+//! injected send, and no way for a running Rholang program to observe a comment.
 //!
 //! ## Exit codes (sysexits-style)
 //!   0  success · 64 usage · 66 cannot read input · 65 parse/lower error · 70 reduce/driver/stuck.
@@ -52,7 +52,7 @@ use std::sync::Arc;
 
 use mettail_languages::calculator::CalculatorLanguage;
 use mettail_languages::lambda::LambdaLanguage;
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def, rho_net_drive_call_par,
     suggest_rejected_rule_dispositions, FltReflect, FltRegistry, FltResolve, RhoCoverageEvidence,
@@ -74,7 +74,7 @@ use mettail_runtime::{clear_var_cache, Language, RuntimeObservationValue};
 use models::rhoapi::Par;
 
 const USAGE: &str = "\
-rholang — RhoCalc (Rholang 1.4) interpreter over the f1r3node reducer
+rholang — Rholang (Rholang 1.4) interpreter over the f1r3node reducer
 
 USAGE:
     rholang [--emit-comments] <SOURCE.rho>
@@ -85,13 +85,13 @@ OPTIONS:
                       Comments are LEXED (not stripped) and routed off the parser's DEFAULT stream;
                       this is a backend diagnostic, never data a running program can observe.
 
-It parses the RhoCalc source with the generated parser, lowers it to a normalized Rholang term,
+It parses the Rholang source with the generated parser, lowers it to a normalized Rholang term,
 and evaluates it on the f1r3node reducer:
   * a bare term evaluates to its NORMAL FORM (reduced on the reducer by the registered guest's
     reduction engine), printed with the ^fired rewrite ledger;
   * a process (sends/receives) runs to rest and its @\"OUT\" observations are reported.
 
-The RhoCalc grammar supports Foreign Language Terms (`tag`…``). An opener IS the lower-cased name
+The Rholang grammar supports Foreign Language Terms (`tag`…``). An opener IS the lower-cased name
 of the guest grammar, so the tag is never a nickname to memorize. The interpreter bundles two:
   * `calculator` — the production Calculator grammar (arithmetic, comparison, boolean, string). A
                    bare `calculator`…`` term EVALUATES to a value through the E3 fold-dataflow:
@@ -110,7 +110,7 @@ fn derived_opener(guest: &dyn FltReflect) -> String {
     guest.name().to_lowercase()
 }
 
-/// The guest registry the interpreter installs so RhoCalc's Foreign Language Term feature can
+/// The guest registry the interpreter installs so Rholang's Foreign Language Term feature can
 /// lower and reduce. Each guest is registered under [`derived_opener`].
 fn guest_resolver() -> Arc<dyn FltResolve> {
     let guests: Vec<Box<dyn FltReflect>> =
@@ -210,7 +210,7 @@ impl InterpError {
                 ExitCode::from(66) // EX_NOINPUT
             },
             InterpError::Parse(message) => {
-                eprintln!("error: parse error (RhoCalc / Rholang 1.4)");
+                eprintln!("error: parse error (Rholang / Rholang 1.4)");
                 eprintln!("  {message}");
                 ExitCode::from(65) // EX_DATAERR
             },
@@ -241,7 +241,7 @@ fn report_lower(err: &RholangAstLowerError) -> ExitCode {
     match err {
         RholangAstLowerError::UnresolvedFltTag(tag) => {
             eprintln!("error: unknown guest language ⌜{tag}⌝");
-            eprintln!("  the RhoCalc program embeds a Foreign Language Term with opener `{tag}`,");
+            eprintln!("  the Rholang program embeds a Foreign Language Term with opener `{tag}`,");
             eprintln!("  but no guest is registered for it. an opener is the LOWER-CASED name of");
             eprintln!("  the guest grammar; registered: {}", registered_openers().join(", "));
             ExitCode::from(65)
@@ -260,7 +260,7 @@ fn report_lower(err: &RholangAstLowerError) -> ExitCode {
             ExitCode::from(65)
         },
         other => {
-            eprintln!("error: could not lower the RhoCalc program to the Rho machine");
+            eprintln!("error: could not lower the Rholang program to the Rho machine");
             eprintln!("  {other:?}");
             ExitCode::from(65)
         },
@@ -281,7 +281,7 @@ fn report_lower(err: &RholangAstLowerError) -> ExitCode {
 /// Failing to lex is NOT an error here: the caller's `Proc::parse` reports parse failures with a
 /// far better message, so an unlexable source simply yields no comments.
 fn comments_on_channel(source: &str) -> Vec<(&str, usize, usize)> {
-    let Ok(lexed) = mettail_languages::rhocalc::lex_with_streams(source) else {
+    let Ok(lexed) = mettail_languages::rholang::lex_with_streams(source) else {
         return Vec::new();
     };
     lexed
@@ -299,7 +299,7 @@ fn comments_on_channel(source: &str) -> Vec<(&str, usize, usize)> {
         .collect()
 }
 
-/// The conventional channel name RhoCalc's `tokens {}` block routes its comment tokens to. It
+/// The conventional channel name Rholang's `tokens {}` block routes its comment tokens to. It
 /// carries no engine-level privilege — it is an ordinary channel name, treated exactly as
 /// `PRAGMAS` or `DOCTESTS` would be.
 const COMMENTS_CHANNEL: &str = "COMMENTS";
@@ -313,11 +313,11 @@ const COMMENTS_CHANNEL: &str = "COMMENTS";
 // column positions shifted, comments could never round-trip, and no downstream consumer could ever
 // observe them.
 //
-// WHAT REPLACED IT: the comment tokens now declared in the RhoCalc grammar's `tokens {}` block,
+// WHAT REPLACED IT: the comment tokens now declared in the Rholang grammar's `tokens {}` block,
 // routed to the retained `COMMENTS` channel —
 //     LineComment  = "//[^\n]*"                  -> COMMENTS ;
 //     BlockComment = "/\*([^*]|\*+[^*/])*\*+/"   -> COMMENTS ;
-// (`languages/src/rhocalc.rs`). The lexer resolves them by maximal munch like every other token and
+// (`languages/src/rholang.rs`). The lexer resolves them by maximal munch like every other token and
 // treats a channel-routed win as TRIVIA (consumed, never handed to the parser — `expand_lex_node_impl`
 // and the `*_core_modal` scanners in `prattail/src/runtime_types.rs`), while `lex_with_streams()`
 // retains them with their source `Range` for the backend (`comments_on_channel` above).
@@ -801,7 +801,7 @@ async fn run_process_to_rest(program: &Par) -> Result<(), InterpError> {
 
 // ── driver ──────────────────────────────────────────────────────────────────────────────────────
 
-/// Parse, lower, and evaluate the RhoCalc source at `path`.
+/// Parse, lower, and evaluate the Rholang source at `path`.
 ///
 /// `emit_comments` dumps the retained `COMMENTS` channel (an out-of-band diagnostic artifact of the
 /// BACKEND — never data on any program-observable channel).
@@ -809,7 +809,7 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
     let source = std::fs::read_to_string(path)
         .map_err(|source| InterpError::Io { path: path.to_path_buf(), source })?;
 
-    println!("rholang — RhoCalc (Rholang 1.4) interpreter");
+    println!("rholang — Rholang (Rholang 1.4) interpreter");
     println!("source: {}", path.display());
 
     // Task #18: comments are LEXED, not stripped. They are routed to the `COMMENTS` channel, kept
@@ -833,7 +833,7 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
     // `Proc::parse` is `parse_structured`, which starts from `parse_via_wpda(input)` (the correct
     // term) and then, whenever `display(parsed) != input`, REPLACES the returned representative
     // with the reparse of its own DISPLAY, accepting it as soon as the display is a fixpoint
-    // (`redisplay == display`). Display stability is not term preservation, and RhoCalc's display
+    // (`redisplay == display`). Display stability is not term preservation, and Rholang's display
     // is not term-preserving for a projection operand of an arithmetic/relational/boolean
     // operator: a scalar literal there is rendered through a PROJECTION SURFACE — the first
     // delimited single-param `Proc` rule reachable from the literal's category, which is
@@ -852,7 +852,7 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
     // then never fire, and `match.rs::guard_passes` deliberately collapses "false" / "not a
     // boolean" / "eval failed" into one verdict, so the lowering artifact is invisible.
     //
-    // Every other production caller of the RhoCalc parser already uses `parse_via_wpda` (it is
+    // Every other production caller of the Rholang parser already uses `parse_via_wpda` (it is
     // "the disambiguated best-parse entry the production AST-first lowering path uses" —
     // `rho_rholang_conformance.rs`); this binary was the sole outlier. The display defect itself
     // is upstream in the display codegen and is reported separately; using the production entry

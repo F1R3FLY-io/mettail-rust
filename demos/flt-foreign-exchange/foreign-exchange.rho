@@ -1,17 +1,17 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════
-//  The Foreign Exchange — a RhoCalc program that ships a λ-calculus Foreign Language Term,
+//  The Foreign Exchange — a Rholang program that ships a λ-calculus Foreign Language Term,
 //  destructures it with typed holes, and reconstructs it, all on the f1r3node Rholang reducer.
 //
-//  Run me with the RhoCalc interpreter:
+//  Run me with the Rholang interpreter:
 //    rholang demos/flt-foreign-exchange/foreign-exchange.rho
 //
 //  FOREIGN LANGUAGE TERMS ARE A RHOLANG GRAMMAR FEATURE
 //  ────────────────────────────────────────────────────
-//  RhoCalc (MeTTaIL's Rholang-1.4 surface) can carry a term of ANOTHER language verbatim. The
+//  Rholang (MeTTaIL's Rholang-1.4 surface) can carry a term of ANOTHER language verbatim. The
 //  opener `lambda`…`` embeds a guest term written in the untyped λ-calculus; the text between the
-//  back-ticks is the guest's OWN concrete syntax, which RhoCalc hands to the guest's reflector
+//  back-ticks is the guest's OWN concrete syntax, which Rholang hands to the guest's reflector
 //  (secure by construction — No-Injection). The interpreter bundles the `lambda` guest, so this is
-//  ordinary RhoCalc — nothing about the interpreter is FLT-specific.
+//  ordinary Rholang — nothing about the interpreter is FLT-specific.
 //
 //  THE PROGRAM
 //  ───────────
@@ -29,7 +29,7 @@
 //        ${f}  binds the function position   ⟶   ⟦I⟧ = λ.0
 //        ${k}  binds the argument position   ⟶   ⟦K⟧ = λ.λ.1
 //  A `${x}` hole is a secure typed-AST hole: it matches a reflected sub-term by SHAPE, never by
-//  string splicing. On the reducer the send and receive rendezvous in ONE COMM (a real RhoCalc
+//  string splicing. On the reducer the send and receive rendezvous in ONE COMM (a real Rholang
 //  reduction): the holes capture the two foreign sub-terms, the body RE-QUOTES `lambda`(${f}, ${k})``
 //  filling the holes, and the reconstructed application is published to @"OUT".
 //

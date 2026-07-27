@@ -348,7 +348,7 @@ When `analysis` is provided:
 
 The equation module is tested through:
 
-- **Integration tests**: All language compilations (RhoCalc, Lambda, Calculator,
+- **Integration tests**: All language compilations (Rholang, Lambda, Calculator,
   etc.) exercise equation generation end-to-end
 - **Edge case tests**: `languages/tests/edge_case_tests.rs` tests cancellation
   pairs, subsumed equations, and demand-driven filtering

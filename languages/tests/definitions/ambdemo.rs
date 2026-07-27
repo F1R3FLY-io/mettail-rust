@@ -19,7 +19,7 @@ use mettail_macros::language;
 //     OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest}) ~> (PPar {P, Q, ...rest})
 //
 // i.e. `open(n, P) | n[Q]  ~>  P | Q`, spliced back into the residual bag. It is the STRUCTURAL
-// twin of the RhoCalc `Comm` rule (`CommDemo`): the SAME non-linear AC firing shape MINUS the
+// twin of the Rholang `Comm` rule (`CommDemo`): the SAME non-linear AC firing shape MINUS the
 // substitution. It composes, in ONE atomic COMM on the live f1r3node reducer:
 //
 //   * a HashBag AC match over `PPar` with k=2 STRUCTURED fixed elements — the capability `POpen N P`

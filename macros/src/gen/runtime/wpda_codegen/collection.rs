@@ -1,7 +1,7 @@
 //! Phase A.5: Collection rule classification + dispatch.
 //!
 //! Detects judgement-style rules that parse a collection literal, e.g.,
-//! RhoCalc's `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;`
+//! Rholang's `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;`
 //!
 //! The parsed shape:
 //! - `term_context = [Simple { name: ps, ty: Collection { coll_type: HashBag, element: Proc } }]`
@@ -178,7 +178,7 @@ pub(crate) fn kv_sep_for(
 ///
 /// Accepts both 3- and 4-element syntax patterns:
 /// - 3-element: `[Literal(open), Op(Sep), Literal(close)]` — explicit single-token
-///   open delimiter (e.g., RhoCalc's `"{" ... "}"`).
+///   open delimiter (e.g., Rholang's `"{" ... "}"`).
 /// - 4-element: `[Literal(open_kw), Literal("("), Op(Sep), Literal(close)]` — the
 ///   default form from `synthetic.rs` where `synthetic.rs` splits `"list("` into
 ///   `["list", "("]` so the lexer (which tokenizes whitespace between tokens)
@@ -283,7 +283,7 @@ pub(crate) fn classify_collection(
 /// token equals the lexer's first emitted `Fixed` token — equals this collection
 /// rule's open token.
 ///
-/// The defect this guards: at RhoCalc's `Proc` entry the open `{` is a single
+/// The defect this guards: at Rholang's `Proc` entry the open `{` is a single
 /// (non-lex-ambiguous) token, so the lex-fork is SKIPPED and the braced `PPar`
 /// arm commits a bare `ConsumeAndPush(collection_marker)` before the registered
 /// `Map` projection alternative (`CastMap . m:Map |- m : Proc`, Map open `{`)
@@ -347,7 +347,7 @@ fn collection_open_collision_projections(
 ///
 /// After the open delim, the new_state is `PrefixDispatch{cur_bp:0}`. The
 /// frontier_top is the marker, whose `category_src_idx == result_src_idx`.
-/// For self-collections (RhoCalc PPar: HashBag(Proc) in Proc), this routes
+/// For self-collections (Rholang PPar: HashBag(Proc) in Proc), this routes
 /// the first-element parse to the right category. For cross-cat collections
 /// (e.g. `Vec<Int>` in some `List` category), the open arm pushes an
 /// additional CategoryEntry(element_src_idx) frame to redirect dispatch.
@@ -1196,7 +1196,7 @@ fn mixfix_rep_slots(rule: &GrammarRule) -> Vec<(u8, String, String, Vec<String>)
 /// the `pos_match` fallback that claims a leading `TriggerTerminal` at the
 /// firing rule's frame-start position.
 ///
-/// ROOT (trace-pinned, rhocalc `@Nil!!(x,y)` name/proc display roundtrip): a
+/// ROOT (trace-pinned, rholang `@Nil!!(x,y)` name/proc display roundtrip): a
 /// lex-ambiguous keyword (`Nil` = `Fixed("Nil") | Ident`) at a send channel
 /// admits a phantom reading where the `@` structural trigger (owner: the
 /// `@`-prefix send rule, e.g. POutputQuoted) is claimed by an OPERAND-leading
@@ -1265,7 +1265,7 @@ pub(crate) fn emit_rule_has_leading_structural_trigger_lookup(
 /// (`BinderShape`) metadata:
 ///   (a) `C` is the RESULT category of a rule that opens a binder scope (a
 ///       `TermParam::Abstraction`/`MultiAbstraction`, i.e. emits
-///       `StartBinderScope` — e.g. rhocalc `PNew . ^[xs].p:[Name* -> Proc] :
+///       `StartBinderScope` — e.g. rholang `PNew . ^[xs].p:[Name* -> Proc] :
 ///       Proc`);
 ///   (b) `C` is a binder-PATTERN category — the abstraction DOMAIN (bound
 ///       position), e.g. `Name` in `[Name* -> Proc]`;
@@ -1454,7 +1454,7 @@ pub(crate) fn emit_is_binder_internal_collection_lookup(
             // collection slot — the binder rule's terminal action
             // drains the CollectionId at outer RuleAt pop, so the
             // CollectionMarker pop must NOT fire its own action.
-            // Prior to this extension, Class 3 rules (rhocalc PInputs)
+            // Prior to this extension, Class 3 rules (rholang PInputs)
             // were missing from the suppression table, causing spurious
             // PInputs action fire when `apply_pop_body_to_cursor`
             // popped the Class 3 CollectionMarker.
@@ -1512,7 +1512,7 @@ mod tests {
 
     #[test]
     fn classifies_hashbag_collection_rule() {
-        // Mirror of RhoCalc's:
+        // Mirror of Rholang's:
         //   PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
         let rule = GrammarRule {
             term_context: Some(vec![TermParam::Simple {
@@ -1702,7 +1702,7 @@ mod tests {
         );
     }
 
-    // RhoCalc's `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;`.
+    // Rholang's `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;`.
     fn ppar_brace_rule() -> GrammarRule {
         GrammarRule {
             term_context: Some(vec![TermParam::Simple {
@@ -1728,7 +1728,7 @@ mod tests {
         }
     }
 
-    // RhoCalc's `CastMap . m:Map |- m : Proc;` — a cross-cat projection from the
+    // Rholang's `CastMap . m:Map |- m : Proc;` — a cross-cat projection from the
     // Map collection category into Proc (classify_atomic ⇒ CrossCatProjection).
     fn cast_map_projection_rule() -> GrammarRule {
         GrammarRule {

@@ -1,6 +1,6 @@
 //! Floating-point literal parsing: decimal / exponent forms with optional `f32` / `f64` suffix.
 //!
-//! `f32` is parsed and widened to [`CanonicalFloat64`]. Calculator and RhoCalc only **lex** optional
+//! `f32` is parsed and widened to [`CanonicalFloat64`]. Calculator and Rholang only **lex** optional
 //! `f64` in their float patterns (no `f32` surface token), but other callers may still pass `f32`
 //! strings into [`parse_float_lit`].
 

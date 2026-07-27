@@ -7,7 +7,7 @@
 //!
 //! ## Limitations
 //!
-//! - Binder-containing terms (Lambda, RhoCalc) need alpha-equivalence comparison.
+//! - Binder-containing terms (Lambda, Rholang) need alpha-equivalence comparison.
 //!   This test suite focuses on binder-free Calculator Int terms.
 //! - Only tests Int category (the primary Calculator category).
 //! - Bool and Str are tested at depth 0 (literals and variables only) since

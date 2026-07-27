@@ -63,7 +63,7 @@
 //! comparison can fail, and that the exception table is not silently absorbing rows that
 //! actually pass.
 
-#![cfg(all(feature = "calculator", feature = "rhocalc"))]
+#![cfg(all(feature = "calculator", feature = "rholang"))]
 
 use mettail_runtime::{CanonicalBigInt, CanonicalBigRat, CanonicalFixedPoint, CanonicalFloat64};
 
@@ -204,13 +204,13 @@ fn a1_rows() -> Vec<Roundtrip> {
         roundtrip!(rows, "calc", Str, StringLit, String::new(), "ab".to_string());
     }
     {
-        use mettail_languages::rhocalc::{BigInt, BigRat, Bool, Fixed, Float, Int, Str, UInt32};
-        roundtrip!(rows, "rhocalc", Int, NumLit, 0i64, 7, -7, i64::MAX, i64::MIN);
-        roundtrip!(rows, "rhocalc", UInt32, NumLit, 0u32, 7, u32::MAX);
-        roundtrip!(rows, "rhocalc", BigInt, NumLit, bigint(0), bigint(7), bigint(-7));
+        use mettail_languages::rholang::{BigInt, BigRat, Bool, Fixed, Float, Int, Str, UInt32};
+        roundtrip!(rows, "rholang", Int, NumLit, 0i64, 7, -7, i64::MAX, i64::MIN);
+        roundtrip!(rows, "rholang", UInt32, NumLit, 0u32, 7, u32::MAX);
+        roundtrip!(rows, "rholang", BigInt, NumLit, bigint(0), bigint(7), bigint(-7));
         roundtrip!(
             rows,
-            "rhocalc",
+            "rholang",
             BigRat,
             RatLit,
             bigrat(0, 1),
@@ -219,10 +219,10 @@ fn a1_rows() -> Vec<Roundtrip> {
             bigrat(3, 4),
             bigrat(-1, 2)
         );
-        roundtrip!(rows, "rhocalc", Fixed, FixedLit, fixed("0p0"), fixed("7p2"), fixed("-7p0"));
-        roundtrip!(rows, "rhocalc", Float, FloatLit, float(0.0), float(1.5), float(-1.5));
-        roundtrip!(rows, "rhocalc", Bool, BoolLit, true, false);
-        roundtrip!(rows, "rhocalc", Str, StringLit, String::new(), "ab".to_string());
+        roundtrip!(rows, "rholang", Fixed, FixedLit, fixed("0p0"), fixed("7p2"), fixed("-7p0"));
+        roundtrip!(rows, "rholang", Float, FloatLit, float(0.0), float(1.5), float(-1.5));
+        roundtrip!(rows, "rholang", Bool, BoolLit, true, false);
+        roundtrip!(rows, "rholang", Str, StringLit, String::new(), "ab".to_string());
     }
     rows
 }
@@ -249,7 +249,7 @@ fn a1_exception(language: &str, category: &str, built: &str) -> Option<Exception
             Some(Exception::SignIsAnOperator)
         },
 
-        // ── NoSurface — NO ROWS. D1 (`calc::Int` at `i32::MIN`) and D2 (`rhocalc::BigRat`
+        // ── NoSurface — NO ROWS. D1 (`calc::Int` at `i32::MIN`) and D2 (`rholang::BigRat`
         //    at a composite rational) were the only two, and both were FIXED in the
         //    grammar on 2026-07-27; see the ledger at the bottom of this file.
         _ => None,
@@ -339,7 +339,7 @@ fn a1_a_detached_sign_preserves_the_denotation() {
 /// The three assertions are the three things the reversal had to be checked against:
 /// the value that motivated it, the reading it changes, and the reading it must NOT change
 /// (`1-7` is still subtraction — the one-token `1`,`-7` fork is two adjacent `Int`s and
-/// dies on feasibility, which is the mechanism `languages/src/rhocalc.rs`'s divergence
+/// dies on feasibility, which is the mechanism `languages/src/rholang.rs`'s divergence
 /// I(b) note describes).
 #[test]
 fn d1_calculator_int_spells_its_whole_domain() {
@@ -375,7 +375,7 @@ fn d1_calculator_int_spells_its_whole_domain() {
     }
 }
 
-/// **D2 CLOSED.** RhoCalc's `BigRat` pattern carries the composite `(/(…)r)?` group, so a
+/// **D2 CLOSED.** Rholang's `BigRat` pattern carries the composite `(/(…)r)?` group, so a
 /// rational with a denominator ≠ 1 — which `Div`'s fold PRODUCES — has a literal surface.
 ///
 /// The measured exposure before the fix was unparseability, NOT the value corruption its
@@ -384,8 +384,8 @@ fn d1_calculator_int_spells_its_whole_domain() {
 /// becoming integer division. Both halves are pinned here, along with the boundary that
 /// bounds the divergence: only the UNSPACED spelling is claimed.
 #[test]
-fn d2_rhocalc_bigrat_spells_a_composite_rational() {
-    use mettail_languages::rhocalc::{BigRat, Proc};
+fn d2_rholang_bigrat_spells_a_composite_rational() {
+    use mettail_languages::rholang::{BigRat, Proc};
 
     for (numer, denom, want_surface) in
         [(3i64, 4i64, "3r/4r"), (-1, 2, "-1r/2r"), (7, 1, "7r"), (-7, 1, "-7r")]
@@ -429,7 +429,7 @@ fn d2_rhocalc_bigrat_spells_a_composite_rational() {
 /// SPELLING of a 64-bit integer, not a 32-bit carrier —
 ///
 /// ```text
-///     bitnot 0u32          ⇒ -1            ← f1r3node, and RhoCalc today
+///     bitnot 0u32          ⇒ -1            ← f1r3node, and Rholang today
 ///     bitnot 0u32          ⇒ 4294967295    ← with the spelling moved to `UInt32`
 ///     bitnot uint(0, 32)   ⇒ 4294967295    ← the MeTTaIL-only 32-bit carrier, either way
 /// ```
@@ -439,12 +439,12 @@ fn d2_rhocalc_bigrat_spells_a_composite_rational() {
 /// give a `UInt32` value the surface of the cast that PRODUCES it (`uint(v, 32)`), and that
 /// is a `Display` codegen change rather than a grammar one.
 ///
-/// (`rhocalc_tests::numeral_carrier_is_context_independent::u32_suffix_is_an_i64_literal`
+/// (`rholang_tests::numeral_carrier_is_context_independent::u32_suffix_is_an_i64_literal`
 /// pins the reduction; this pins the LITERAL-LAYER premise it rests on, in the file whose
 /// exception table would otherwise invite the repair.)
 #[test]
-fn d3_rhocalc_u32_suffix_must_remain_an_int_literal() {
-    use mettail_languages::rhocalc::{Int, UInt32};
+fn d3_rholang_u32_suffix_must_remain_an_int_literal() {
+    use mettail_languages::rholang::{Int, UInt32};
 
     for text in ["7u32", "0x1Fu32", "0u32"] {
         mettail_runtime::clear_var_cache();
@@ -524,8 +524,8 @@ fn calculator_literal_carriers(text: &str) -> Vec<&'static str> {
     out
 }
 
-fn rhocalc_literal_carriers(text: &str) -> Vec<&'static str> {
-    use mettail_languages::rhocalc::{BigInt, BigRat, Bool, Fixed, Float, Int, Str, UInt32};
+fn rholang_literal_carriers(text: &str) -> Vec<&'static str> {
+    use mettail_languages::rholang::{BigInt, BigRat, Bool, Fixed, Float, Int, Str, UInt32};
     let mut out = Vec::with_capacity(2);
     if matches!(Int::parse(text), Ok(Int::NumLit(_))) {
         out.push("Int");
@@ -556,18 +556,18 @@ fn rhocalc_literal_carriers(text: &str) -> Vec<&'static str> {
 
 /// ⚠ The DECLARED A2 exceptions — every one an OPEN DEFECT, enumerated exactly.
 ///
-/// RhoCalc's `UInt32` has no `literals { … }` entry, so the macro synthesizes the
+/// Rholang's `UInt32` has no `literals { … }` entry, so the macro synthesizes the
 /// default acceptor for its native kind
 /// (`macros/src/gen/runtime/wpda_codegen/prefix.rs::default_eval_body_for_native_kind`,
 /// `parse_int_lit(text, Some(Suffix::U32))`), which admits every UNSUFFIXED integer that
-/// fits `u32`. RhoCalc's `Int` pattern already OWNS those spellings — and the `…u32`
-/// spelling too, deliberately (divergence I(b) in `languages/src/rhocalc.rs`). So each
+/// fits `u32`. Rholang's `Int` pattern already OWNS those spellings — and the `…u32`
+/// spelling too, deliberately (divergence I(b) in `languages/src/rholang.rs`). So each
 /// text below has TWO literal carriers, exactly the shape divergence I killed for
 /// `BigInt`.
 ///
 /// ★ **Do not close this by moving `…u32` to `UInt32`.** That was tried and REFUTED on
-/// 2026-07-27 — see [`d3_rhocalc_u32_suffix_must_remain_an_int_literal`] and ledger D3.
-fn rhocalc_a2_exception(text: &str) -> Option<Exception> {
+/// 2026-07-27 — see [`d3_rholang_u32_suffix_must_remain_an_int_literal`] and ledger D3.
+fn rholang_a2_exception(text: &str) -> Option<Exception> {
     matches!(text, "0" | "7" | "7u32" | "0x1F" | "0x1Fu32" | "3000000000")
         .then_some(Exception::CarrierOverlap)
 }
@@ -591,16 +591,16 @@ fn a2_calculator_gives_every_numeral_exactly_one_carrier() {
 }
 
 #[test]
-fn a2_rhocalc_overlaps_are_exactly_the_known_int_uint32_set() {
+fn a2_rholang_overlaps_are_exactly_the_known_int_uint32_set() {
     let mut undeclared = Vec::with_capacity(A2_TEXTS.len());
     let mut stale = Vec::with_capacity(8);
     for text in A2_TEXTS {
-        let carriers = rhocalc_literal_carriers(text);
-        match (carriers.len() > 1, rhocalc_a2_exception(text)) {
+        let carriers = rholang_literal_carriers(text);
+        match (carriers.len() > 1, rholang_a2_exception(text)) {
             (true, Some(_)) => assert_eq!(
                 carriers,
                 vec!["Int", "UInt32"],
-                "the declared rhocalc overlap is Int/UInt32; {text:?} overlaps differently: \
+                "the declared rholang overlap is Int/UInt32; {text:?} overlaps differently: \
                  {carriers:?}"
             ),
             (false, None) => {},
@@ -610,14 +610,14 @@ fn a2_rhocalc_overlaps_are_exactly_the_known_int_uint32_set() {
     }
     assert!(
         undeclared.is_empty(),
-        "A2: rhocalc grew a NEW literal-carrier overlap beyond the known Int/UInt32 set; \
+        "A2: rholang grew a NEW literal-carrier overlap beyond the known Int/UInt32 set; \
          {} text(s):\n{}",
         undeclared.len(),
         undeclared.join("\n"),
     );
     assert!(
         stale.is_empty(),
-        "A2: {} rhocalc overlap(s) were FIXED — remove them from `rhocalc_a2_exception` and \
+        "A2: {} rholang overlap(s) were FIXED — remove them from `rholang_a2_exception` and \
          from the ledger so the table keeps meaning what it says:\n{}",
         stale.len(),
         stale.join("\n"),
@@ -633,7 +633,7 @@ fn a2_rhocalc_overlaps_are_exactly_the_known_int_uint32_set() {
 #[test]
 fn negative_control_a1_corpus_covers_every_literal_category() {
     let rows = a1_rows();
-    for language in ["calc", "rhocalc"] {
+    for language in ["calc", "rholang"] {
         for category in ["Int", "UInt32", "BigInt", "BigRat", "Fixed", "Float", "Bool", "Str"] {
             assert!(
                 rows.iter()
@@ -692,17 +692,17 @@ fn negative_control_the_a1_comparison_can_fail() {
 /// several DIFFERENT carriers, or "at most one carrier" would hold by the corpus being
 /// too narrow to reach more than one category at all.
 ///
-/// ★ The rhocalc half was ADDED on 2026-07-27. Until then the control covered calculator
-/// only, so the rhocalc sweep had no non-vacuity guard of its own: a corpus that stopped
-/// reaching (say) `Fixed` or `BigRat` at rhocalc would have made
-/// `a2_rhocalc_overlaps_are_exactly_the_known_int_uint32_set` quieter without making it
+/// ★ The rholang half was ADDED on 2026-07-27. Until then the control covered calculator
+/// only, so the rholang sweep had no non-vacuity guard of its own: a corpus that stopped
+/// reaching (say) `Fixed` or `BigRat` at rholang would have made
+/// `a2_rholang_overlaps_are_exactly_the_known_int_uint32_set` quieter without making it
 /// wrong, and D3's exception table is asserted EXACTLY, so a shrinking corpus is precisely
 /// how its six rows could appear to close without anything being fixed.
 #[test]
 fn negative_control_a2_corpus_reaches_several_carriers() {
     for (language, carriers_of) in [
         ("calc", calculator_literal_carriers as fn(&str) -> Vec<&'static str>),
-        ("rhocalc", rhocalc_literal_carriers as fn(&str) -> Vec<&'static str>),
+        ("rholang", rholang_literal_carriers as fn(&str) -> Vec<&'static str>),
     ] {
         let mut seen: std::collections::BTreeSet<&'static str> = std::collections::BTreeSet::new();
         for text in A2_TEXTS {
@@ -745,38 +745,38 @@ fn negative_control_a2_corpus_reaches_several_carriers() {
 //   'prefer main's regexes'" (`cc21ee1b`). The reversal attacks the decision's PREMISE:
 //   Rholang's own grammar puts the sign inside the token (`long_literal /-?\d+/`,
 //   `signed_int_literal /-?\d+i[1-9]\d*/`; only `unsigned_int_literal` has no sign), so
-//   "aligned with Rholang" argues FOR the `-?`, not against it. RhoCalc — the grammar that
+//   "aligned with Rholang" argues FOR the `-?`, not against it. Rholang — the grammar that
 //   IS Rholang 1.4 — had already been corrected on exactly this ground (divergence I(b),
 //   `12704fc1`), which is why its `i64::MIN` row in the A1 corpus above has never needed
 //   an exception. Calculator was the last holdout of a refuted premise.
 //   FIX: `languages/src/calculator.rs`, `Int` pattern gains `-?`. Pinned by
 //   `d1_calculator_int_spells_its_whole_domain`.
 //
-// ── D2 · rhocalc `BigRat` had no surface for a composite rational ─── CLOSED ──────
+// ── D2 · rholang `BigRat` had no surface for a composite rational ─── CLOSED ──────
 //   SYMPTOM (measured). `RatLit 3/4` displayed `3/4r` — the tail appended once to
 //   `CanonicalBigRat`'s own `3/4` rendering — and `BigRat::parse("3/4r")` was a hard
 //   parse error. The value is produced by `Div`'s fold (`3r / 4r`) and drawn by
 //   `arb_bigrat`, so it is not hypothetical.
 //   EXPOSURE, ESTABLISHED: unparseability ONLY, not value corruption. Calculator's twin
 //   defect DID corrupt values (`RatLit 3/4` displayed `3/4`, re-parsed as integer division
-//   `IntToBigRat(DivInt 3 4)`, evaluated to `0`). RhoCalc cannot reach that: its broken
+//   `IntToBigRat(DivInt 3 4)`, evaluated to `0`). Rholang cannot reach that: its broken
 //   word keeps the `r` on the right operand, so the rational carrier is forced and no
 //   integer division is expressible. Fail-closed, not silently wrong.
 //   RULING: the pattern was wrong. At the `BigRat` CATEGORY there is no operator that
-//   could read a detached `/` — RhoCalc sites division at `Proc` — so unlike the detached
+//   could read a detached `/` — Rholang sites division at `Proc` — so unlike the detached
 //   SIGN there is no operator form for `Display` to fall back on, and A1 is satisfiable
 //   only by a literal spelling.
 //   THE DIVERGENCE, STATED. Upstream's `bigrat_literal` is `/-?\d+r/`; the composite is a
-//   deliberate widening, recorded as divergence I(d) in `languages/src/rhocalc.rs`. It is
+//   deliberate widening, recorded as divergence I(d) in `languages/src/rholang.rs`. It is
 //   FORCED by a real asymmetry — MeTTaIL folds and therefore PRODUCES composite rationals;
 //   f1r3node folds nothing and never has to print one — and it is bounded: it claims only
 //   the UNSPACED `Nr/Dr`, the three-token reading folds to the same value, `Div` displays
 //   the SPACED form so no term's surface is stolen, and the fork stays in the lattice.
-//   FIX: `languages/src/rhocalc.rs`, `BigRat` pattern gains `(/(…)r)?`; the derived
+//   FIX: `languages/src/rholang.rs`, `BigRat` pattern gains `(/(…)r)?`; the derived
 //   composite-aware `Display` arm then writes `3r/4r` with no codegen change. Pinned by
-//   `d2_rhocalc_bigrat_spells_a_composite_rational`.
+//   `d2_rholang_bigrat_spells_a_composite_rational`.
 //
-// ── D3 · rhocalc `UInt32` shares six spellings with `Int` ─── ⚠ OPEN ──────────────
+// ── D3 · rholang `UInt32` shares six spellings with `Int` ─── ⚠ OPEN ──────────────
 //   SYMPTOM (measured). `UInt32` has no `literals { … }` entry, so it inherits the
 //   SYNTHESIZED default acceptor (`parse_int_lit(text, Some(Suffix::U32))`), which takes
 //   every unsuffixed integer fitting `u32` — spellings `Int` already owns, plus `…u32`,
@@ -786,7 +786,7 @@ fn negative_control_a2_corpus_reaches_several_carriers() {
 //   is `6000000000` at `Int` and a `u32` overflow `error` at `UInt32`.
 //
 //   WHICH IS WRONG, THE PROSE OR THE CODE? BOTH, in different clauses, and the correction
-//   that ships is the prose. `languages/src/rhocalc.rs` asserted "`UInt32` has NO literal
+//   that ships is the prose. `languages/src/rholang.rs` asserted "`UInt32` has NO literal
 //   surface … no election, no context, no parentheses". As a description of the CODE that
 //   was false — the synthesized acceptor is a literal surface, and a very wide one — so the
 //   prose has been corrected in place to say what is actually true and to name D3.
@@ -796,17 +796,17 @@ fn negative_control_a2_corpus_reaches_several_carriers() {
 //   `4aa64cb6` established. It was IMPLEMENTED and MEASURED on 2026-07-27, and it moves a
 //   VALUE:
 //
-//       bitnot 0u32          ⇒ -1            ← f1r3node, and RhoCalc today
+//       bitnot 0u32          ⇒ -1            ← f1r3node, and Rholang today
 //       bitnot 0u32          ⇒ 4294967295    ← with the spelling moved to `UInt32`
 //
 //   because `normalize_ground` maps `UnsignedIntLiteral{bits ≤ 64, ≤ i64::MAX}` to `GInt`:
-//   the `u32` SUFFIX IS A SPELLING OF A 64-BIT INTEGER, not a 32-bit carrier. RhoCalc
-//   already pins this (`rhocalc_tests::numeral_carrier_is_context_independent::
-//   u32_suffix_is_an_i64_literal`), and `d3_rhocalc_u32_suffix_must_remain_an_int_literal`
+//   the `u32` SUFFIX IS A SPELLING OF A 64-BIT INTEGER, not a 32-bit carrier. Rholang
+//   already pins this (`rholang_tests::numeral_carrier_is_context_independent::
+//   u32_suffix_is_an_i64_literal`), and `d3_rholang_u32_suffix_must_remain_an_int_literal`
 //   in this file now pins the literal-layer premise so the repair is not tried again.
 //   NOTE the defect is therefore NOT identical to calculator's: calculator's `UInt32` had a
 //   `pattern` with a mandatory `u32` tail and an `eval` WIDER than it — a pattern/eval
-//   disagreement inside one category. RhoCalc's has no pattern at all, and the spelling its
+//   disagreement inside one category. Rholang's has no pattern at all, and the spelling its
 //   pattern would want belongs to another category by conformance. The precedent does not
 //   transfer.
 //
@@ -816,14 +816,14 @@ fn negative_control_a2_corpus_reaches_several_carriers() {
 //   closes A2 but breaks A1: `uint(x, 32)` folds to a `UInt32::NumLit`, `Display` writes it
 //   (`bitnot uint(0, 32)` displays `4294967295`), and a `NoSurface` row would replace the
 //   `CarrierOverlap` rows — a reclassification, not a fix — while also breaking the
-//   generated `gen_rhocalc_prop::uint32_display_parse_roundtrip`.
+//   generated `gen_rholang_prop::uint32_display_parse_roundtrip`.
 //
 //   WHAT WOULD ACTUALLY CLOSE IT. A `UInt32` value's surface must be the cast that PRODUCES
 //   it — `uint(v, 32)` — so that it is re-readable AT the 32-bit carrier and collides with
 //   no numeral. `NumLit`'s `Display` is derived from the literal pattern, so this is a
 //   change in `macros/src/gen/syntax/display.rs` (choose a rule-derived surface for a
 //   literal constructor whose category declares no literal domain), plus the regenerated
-//   `languages/tests/gen_rhocalc_prop.rs`. Both files are owned elsewhere at the time of
+//   `languages/tests/gen_rholang_prop.rs`. Both files are owned elsewhere at the time of
 //   writing, so D3 is REPORTED rather than half-fixed.
 //   OWNER: the display-codegen owner, jointly with consensus — `uint(v, 32)` as the printed
 //   normal form of a 32-bit value is a surface-language change.

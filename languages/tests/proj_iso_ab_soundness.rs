@@ -57,7 +57,7 @@
 //!
 //! It read: *"the repair would change the facade's short-circuit semantics and
 //! therefore the USER-APPROVED reading-count goldens in
-//! `rhocalc_tests.rs::branch_b_send_normalization_pins`."* **Measured 2026-07-25:
+//! `rholang_tests.rs::branch_b_send_normalization_pins`."* **Measured 2026-07-25:
 //! every one of those eight inputs moves by +0.** None has a `(`-grouped channel, so
 //! no transparent twin arises for them. The grouped-channel multiset pins
 //! (`bitnot (a)!(…)`, `bitnot ((a))!(false)`) are +0 as well — `bitnot …` is a
@@ -69,13 +69,13 @@
 //! a measurement contradicts a standing note, correct the note in place.
 //!
 //! What the repair actually rests on: the USER-APPROVED `realize_mode_contract_pins`
-//! (2026-07-14, `rhocalc_tests.rs`) ALREADY requires both readings of
+//! (2026-07-14, `rholang_tests.rs`) ALREADY requires both readings of
 //! `@Nil!(@(@Nil)!())` to be enumerable, and passes only because it enters through
 //! `parse_*_with_source`, where this prologue is not wired. The facade therefore
 //! already contradicted an approved contract at the STRING entry; unioning makes the
 //! string entry AGREE with that golden rather than break one.
 
-use mettail_languages::rhocalc::*;
+use mettail_languages::rholang::*;
 
 /// Env var that makes this binary run as the OFF-leg child.
 const CHILD_MARKER: &str = "PROJ_ISO_AB_CHILD";
@@ -521,8 +521,8 @@ fn gate_e_reading_count_golden() {
         // ON elects `NParen(NQuote(1))` where OFF elects `NParen(NQuoteShort(1))`.
         ("cov-drop-paren-numeral", true, 2, true, 2),
         ("cov-drop-numeral", true, 2, true, 2),
-        // ★ The cleanest discriminator, and the one `gen_rhocalc_unit::
-        // unit_rhocalc_name_nparen` round-trips: ON elects `NParen(NQuoteShort(PZero))`
+        // ★ The cleanest discriminator, and the one `gen_rholang_unit::
+        // unit_rholang_name_nparen` round-trips: ON elects `NParen(NQuoteShort(PZero))`
         // (displaying `(@Nil)`, reproducing the source) and OFF elects the transparent
         // `NQuoteShort(PZero)` (displaying `@Nil`). Counts agree; structure does not.
         ("cov-name-paren-nil", true, 2, true, 2),

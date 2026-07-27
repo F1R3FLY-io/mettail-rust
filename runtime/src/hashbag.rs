@@ -317,7 +317,7 @@ impl<T: Clone + Hash + Eq> Eq for HashBag<T> {}
 // unequal elements collide on the sort key, equal bags built in different
 // insertion orders may write their tied entries in different orders and violate
 // Hash's `a == b => hash(a) == hash(b)` contract. Use commutative summaries
-// instead. This keeps the BigInt/RhoCalc fast path O(distinct element hash
+// instead. This keeps the BigInt/Rholang fast path O(distinct element hash
 // cost), without going back to `Debug`/`Display` sorting.
 impl<T: Clone + Hash + Eq> Hash for HashBag<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {

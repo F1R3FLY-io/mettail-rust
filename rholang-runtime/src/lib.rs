@@ -37,7 +37,7 @@
 //! artifact-validation, and deadlock gates. The
 //! default `runtime-report` feature exposes the generic `Language`
 //! report-adapter and Dovetail+Rho installer surface. Generated language
-//! fixtures, the RhoCalc AST-runtime helper, and source-text oracle helpers
+//! fixtures, the Rholang AST-runtime helper, and source-text oracle helpers
 //! remain opt-in through `rholang-runtime` and `source-oracle`.
 
 #![forbid(unsafe_code)]
@@ -66,7 +66,7 @@ pub mod guard_discharge;
 /// verdict — the AUTHORITY leg of [`guard_discharge::classify`].
 ///
 /// A second *encoder*, deliberately not a second *decider*: it targets the same substrate
-/// vocabulary the surface encoder (`mettail_languages::rhocalc::guard_substrate`) does, so both
+/// vocabulary the surface encoder (`mettail_languages::rholang::guard_substrate`) does, so both
 /// legs of a guard's life ask the same procedures.
 pub mod guard_par_substrate;
 /// The `[*]` / `[n]` lookahead **ABI** — the seam between the lowered surface (`rholang_ast`'s
@@ -92,7 +92,7 @@ pub mod native_contract;
 pub mod observation;
 #[cfg(feature = "rholang-runtime")]
 pub mod rholang_ast;
-/// M-1b: the FORMULA compiler — a RhoCalc `Proc` read as a Rholang PATTERN
+/// M-1b: the FORMULA compiler — a Rholang `Proc` read as a Rholang PATTERN
 /// (§18.1). The right operand of `matches` goes through here; the left operand
 /// and everything else goes through [`rholang_ast`].
 #[cfg(feature = "rholang-runtime")]

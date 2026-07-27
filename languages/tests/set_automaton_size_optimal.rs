@@ -51,7 +51,7 @@
 //! structural sharing, breaks (2)/(3) and inflates (1) past its pins.
 //!
 //! Measured baselines (2026-07, branch `codex/rho-native-set-automata`), pinned below:
-//! RhoCalc 124 states / 117 entries / 314 raw nodes; Calculator 72 / 70 / 188; every
+//! Rholang 124 states / 117 entries / 314 raw nodes; Calculator 72 / 70 / 188; every
 //! demo language ≤ 4 states.
 
 // Task #11 (extended 2026-07-26): the DEMONSTRATION / fixture languages are test-hosted
@@ -179,7 +179,7 @@ fn per_language_in_rho_automaton_is_size_optimal() {
 
     // `pin` = the measured `state_count` used as an upper bound. Demo languages are
     // pinned to their exact measured size; the two large languages carry a small
-    // margin (RhoCalc 124→130, Calculator 72→78). AC / contextual / binder-only
+    // margin (Rholang 124→130, Calculator 72→78). AC / contextual / binder-only
     // languages have NO positional entries (their redexes ride the AC / contextual /
     // nested-structural dispatch paths), so their automaton is empty — pin 0.
     macro_rules! check {
@@ -202,7 +202,7 @@ fn per_language_in_rho_automaton_is_size_optimal() {
     check!("AmbDemo", crate::ambdemo::AmbDemoLanguage, 0);
     check!("AmbNewDemo", crate::ambnewdemo::AmbNewDemoLanguage, 0);
     check!("InOutDemo", crate::inoutdemo::InOutDemoLanguage, 0);
-    check!("RhoCalc", mettail_languages::rhocalc::RhoCalcLanguage, 130);
+    check!("Rholang", mettail_languages::rholang::RholangLanguage, 130);
     check!("Calculator", mettail_languages::calculator::CalculatorLanguage, 78);
     check!("Ambient", mettail_languages::ambient::AmbientLanguage, 0);
     check!("AppSubst", crate::appsubst::AppSubstLanguage, 4);

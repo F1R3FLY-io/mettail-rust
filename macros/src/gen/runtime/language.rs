@@ -1916,7 +1916,7 @@ fn generate_language_struct_multi(
             /// When the language has non-native categories (e.g. Proc, Name), a lexer probe
             /// classifies the first token: if it's an `Ident`, native-only categories (Float,
             /// Int, Bool, Str) are skipped since identifiers are not native literals. This
-            /// reduces 6-way ambiguity to 2-way for bare variables in languages like rhocalc.
+            /// reduces 6-way ambiguity to 2-way for bare variables in languages like rholang.
             pub fn parse_preserving_vars(input: &str) -> Result<#term_name, std::string::String> {
                 #lexer_probe
 
@@ -2397,7 +2397,7 @@ fn generate_language_trait_impl_multi(
     // codegen, so the trait's default `get_env_term` (returns `None`) shadowed
     // every binding. `exec <name>` / env-file loading (which resolve a bound
     // name to its stored term rather than re-parsing it as a bare variable)
-    // depend on this, e.g. `rhocalc_examples_env_file_loads_and_runs`. Category
+    // depend on this, e.g. `rholang_examples_env_file_loads_and_runs`. Category
     // probe order follows `language.types`; a name is stored in one category per
     // (non-Ambiguous) binding, so first-match is unambiguous.
     let get_env_term_arms: Vec<TokenStream> = language
@@ -2448,7 +2448,7 @@ fn generate_language_trait_impl_multi(
         })
         .collect();
 
-    // Primary category: first type in the language definition (e.g. Proc for rhocalc, Int for Calculator).
+    // Primary category: first type in the language definition (e.g. Proc for rholang, Int for Calculator).
     // Used to prefer the primary category's type when reporting the type of an Ambiguous term.
     let primary_type = &language.types[0].name;
     let primary_variant = format_ident!("{}", primary_type);

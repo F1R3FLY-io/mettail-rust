@@ -48,7 +48,7 @@ use std::sync::Arc;
 
 use mettail_languages::calculator::CalculatorLanguage;
 use mettail_languages::lambda::LambdaLanguage;
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{FltReflect, FltRegistry, FltResolve};
 use mettail_rholang_runtime::{
     lower_rholang_proc_with_resolver, run_normalized_par_for_oracle_and_read_runtime_value_channels,
@@ -203,7 +203,7 @@ fn guest_resolver() -> Arc<dyn FltResolve> {
     Arc::new(registry)
 }
 
-/// Run one RhoCalc program to rest and report, per channel, the sorted renderings of every datum
+/// Run one Rholang program to rest and report, per channel, the sorted renderings of every datum
 /// left on it — all read from ONE quiescent store, which is what makes "the desk kept X" and
 /// "and it refused Y, which is still resting" a statement about the same execution rather than
 /// two unrelated runs.
@@ -648,7 +648,7 @@ fn the_run_sheet_build_line_names_the_features_the_binary_requires() {
 /// ★ INVERTED BY STAGE M. No run line in the sheet may carry a `RUST_MIN_STACK` prefix.
 ///
 /// This assertion used to be its own negation — *every* run line had to carry the prefix, because
-/// dropping it aborted the arithmetic beat on a stack overflow. Stage M converted the RhoCalc
+/// dropping it aborted the arithmetic beat on a stack overflow. Stage M converted the Rholang
 /// lowering off host recursion, and every beat on this page now runs at the default stack; the
 /// prefix removal is measured, not assumed (`every_committed_demo_runs_at_the_default_stack`).
 ///

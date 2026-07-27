@@ -386,11 +386,11 @@ pub fn medium_spec() -> LanguageSpec {
     }
 }
 
-/// Complex language (~RhoCalc): 3 categories, 10 rules.
+/// Complex language (~Rholang): 3 categories, 10 rules.
 pub fn complex_spec() -> LanguageSpec {
     LanguageSpec {
         reservation_policy: Default::default(),
-        name: "RhoCalc".to_string(),
+        name: "Rholang".to_string(),
         types: vec![
             CategorySpec {
                 name: "Proc".to_string(),

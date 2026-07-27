@@ -5,11 +5,11 @@
 //! `Language` trait implementation. No new parser or ascent program is
 //! generated -- everything is delegated to the constituent sub-languages.
 //!
-// ignore-justification: invokes `mettail_macros::compose_languages!`, which cannot be in scope here — `macros` depends on `ast`, so the edge cannot be reversed. It does not compile at its definition site either: the expansion names `mettail_runtime` and the caller's `calculator`/`rhocalc` modules (see the matching note in `macros/src/lib.rs`).
+// ignore-justification: invokes `mettail_macros::compose_languages!`, which cannot be in scope here — `macros` depends on `ast`, so the edge cannot be reversed. It does not compile at its definition site either: the expansion names `mettail_runtime` and the caller's `calculator`/`rholang` modules (see the matching note in `macros/src/lib.rs`).
 //! ```ignore
 //! compose_languages! {
 //!     name: Combined,
-//!     languages: [calculator::Calculator, rhocalc::RhoCalc],
+//!     languages: [calculator::Calculator, rholang::Rholang],
 //! }
 //! ```
 

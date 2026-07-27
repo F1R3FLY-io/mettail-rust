@@ -181,7 +181,7 @@ pub fn gen_nested_parallel(depth: usize) -> String {
 }
 
 // =============================================================================
-// Binder generators (Ambient: Proc, RhoCalc: Proc)
+// Binder generators (Ambient: Proc, Rholang: Proc)
 // =============================================================================
 
 /// Chained new-binders: "new(x0, new(x1, ... new(xN, 0)...))"
@@ -196,7 +196,7 @@ pub fn gen_chained_new(depth: usize) -> String {
     result
 }
 
-/// RhoCalc multi-input Sep(Zip(Map)): "(x0?a0, x1?a1, ..., xN?aN).{0}"
+/// Rholang multi-input Sep(Zip(Map)): "(x0?a0, x1?a1, ..., xN?aN).{0}"
 pub fn gen_multi_input(n: usize) -> String {
     if n == 0 {
         return "{}".to_string();
@@ -205,7 +205,7 @@ pub fn gen_multi_input(n: usize) -> String {
     format!("({}).{{{}}}", bindings.join(", "), "0")
 }
 
-/// RhoCalc nested output: "{c0!(0) | c1!(0) | ... | cN!(0)}"
+/// Rholang nested output: "{c0!(0) | c1!(0) | ... | cN!(0)}"
 pub fn gen_nested_output(n: usize) -> String {
     if n == 0 {
         return "{}".to_string();
@@ -215,7 +215,7 @@ pub fn gen_nested_output(n: usize) -> String {
 }
 
 // =============================================================================
-// Cross-category generators (Calculator: Bool, RhoCalc: Proc)
+// Cross-category generators (Calculator: Bool, Rholang: Proc)
 // =============================================================================
 
 /// Cross-category equality: "(1 + 2 + ... + N) == (N + ... + 2 + 1)"
@@ -226,7 +226,7 @@ pub fn gen_cross_cat_eq(n: usize) -> String {
     format!("{} == {}", lhs, rhs)
 }
 
-/// Cast chain in RhoCalc: "{1 | 2 | 3 | ... | N}" (ints cast to Proc)
+/// Cast chain in Rholang: "{1 | 2 | 3 | ... | N}" (ints cast to Proc)
 pub fn gen_cast_chain(n: usize) -> String {
     if n == 0 {
         return "{}".to_string();

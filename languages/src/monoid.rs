@@ -20,7 +20,7 @@
 //! precisely — and only — by the hand-written suite next door.
 //!
 //! ⚠ Those three `false`s must STAY false, and not because production specs are
-//! forbidden generated suites — `ambient`/`calculator`/`lambda`/`rhocalc` all
+//! forbidden generated suites — `ambient`/`calculator`/`lambda`/`rholang` all
 //! carry theirs. `emit_simulator: true` would make the macro write
 //! `languages/src/bin/simulate_monoid.rs` on every compile, and cargo's edition-2021
 //! auto-discovery would pick that file up as a binary target with NO
@@ -52,7 +52,7 @@
 //! accepts the `::=` form (and this file uses it for nullary constants, exactly as
 //! `languages/src/ambient.rs` does), but its idiomatic form is the JUDGEMENT form
 //! `Name . ctx |- pattern : Cat ;`, and `List(X)` is spelled `Vec(X)` (the
-//! established convention — `rhocalc.rs:57` declares `![Vec<Proc>] as List`).
+//! established convention — `rholang.rs:57` declares `![Vec<Proc>] as List`).
 //! **Superset containment here is SEMANTIC**: every `types` entry, `terms`
 //! production, `equations` clause and `rewrites` rule of the paper's version is
 //! present with the same meaning; the spelling is ours. Every deviation is

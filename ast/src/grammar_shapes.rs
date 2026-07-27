@@ -186,7 +186,7 @@ pub fn classify_simple_projection_shape(rule: &GrammarRule) -> Option<SimpleProj
 ///   the rule's own label (so a self-reconstruction / identity fold is rejected
 ///   and reconstruction terminates).
 ///
-/// ## Examples (RhoCalc)
+/// ## Examples (Rholang)
 ///
 /// Classified (sugar ≡ a structural re-wrap of its fold target):
 /// - `POutputShort . p:Proc, q:Proc |- "@" p "!" "(" q ")" : Proc
@@ -250,7 +250,7 @@ pub struct FoldAliasShape {
 /// ★ SURFACE SYNONYMY (2026-07-26) — an **INERT GROUPING** rule: a bracket pair that
 /// wraps a term of its own category and evaluates to that term unchanged.
 ///
-/// RhoCalc's instance is `NParen . n:Name |- "(" n ")" : Name ![{ n.clone() }] fold;`.
+/// Rholang's instance is `NParen . n:Name |- "(" n ")" : Name ![{ n.clone() }] fold;`.
 ///
 /// It is NOT a [`FoldAliasShape`] — [`classify_fold_alias_shape`] deliberately rejects an
 /// identity body, because its consumer (`semantic_hash` reconstruction) needs a body that
@@ -589,7 +589,7 @@ fn is_pascal_case(s: &str) -> bool {
 // realize-dedup's `semantic_hash` must fold the two (facade 3→2 = walker; see
 // `ProjectionIsolation.v` T7 `fallthrough_refines`). This classifier recognizes
 // that shape by PURE STRUCTURE — no constructor / type / language name is ever
-// matched — so it fires only where the grammar exhibits the shape (rhocalc's
+// matched — so it fires only where the grammar exhibits the shape (rholang's
 // send family today) and is byte-inert for every other language.
 
 /// Recognized shape of a **fold-alias polyadic-send** (sugar OR canonical) rule.
@@ -1028,7 +1028,7 @@ mod tests {
             syn::parse_quote! {{
                 Proc::POutput(
                     std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(
-                        crate::rhocalc::receive::name_pattern_to_proc(&n),
+                        crate::rholang::receive::name_pattern_to_proc(&n),
                     ))),
                     std::sync::Arc::new(q.clone()),
                 )
@@ -1096,7 +1096,7 @@ mod tests {
                 items.extend(bs.clone());
                 Proc::POutput(
                     std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(p.clone()))),
-                    std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)),
+                    std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)),
                 )
             }},
         );
@@ -1122,7 +1122,7 @@ mod tests {
                 items.extend(bs.clone());
                 Proc::POutput(
                     std::sync::Arc::new(n.clone()),
-                    std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)),
+                    std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)),
                 )
             }},
         );
@@ -1146,9 +1146,9 @@ mod tests {
                 items.extend(bs.clone());
                 Proc::POutput(
                     std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(
-                        crate::rhocalc::receive::name_pattern_to_proc(&n),
+                        crate::rholang::receive::name_pattern_to_proc(&n),
                     ))),
-                    std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)),
+                    std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)),
                 )
             }},
         );
@@ -1171,7 +1171,7 @@ mod tests {
                 items.extend(bs.clone());
                 Proc::POutput(
                     std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::PZero))),
-                    std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)),
+                    std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)),
                 )
             }},
         );
@@ -1196,16 +1196,16 @@ mod tests {
         assert!(classify_fold_alias_send_shape(&rule).is_none());
     }
 
-    /// ★ GENERALITY (Residual #11-1 generality guard). A SYNTHETIC, non-rhocalc
+    /// ★ GENERALITY (Residual #11-1 generality guard). A SYNTHETIC, non-rholang
     /// grammar (categories `Widget`/`Chan`, constructors `Emit`/`Wrap`/`Zero`,
     /// helper `synthetic_helper`) exhibiting the SAME fold-alias-send SHAPE — a
     /// sugar re-expressing a canonical with a constructor-wrapped PARAM channel
     /// plus passed-through Vec operands. The classifier recognizes it PURELY by
-    /// structure (proving it keys on shape, not on rhocalc names), and rejects
+    /// structure (proving it keys on shape, not on rholang names), and rejects
     /// the free-fn-channel and literal-channel siblings by the SAME A1a / A1b
-    /// gates. No name in this test appears anywhere in rhocalc.
+    /// gates. No name in this test appears anywhere in rholang.
     #[test]
-    fn generality_synthetic_non_rhocalc_send_alias() {
+    fn generality_synthetic_non_rholang_send_alias() {
         // Sugar: `WrapSend . w:Widget, x:Widget, xs:Vec(Widget)` re-expressing
         // the canonical `Emit` with the channel `Chan::Wrap(w)`.
         let sugar = fold_rule(
@@ -1251,7 +1251,7 @@ mod tests {
         assert!(cshape.channel_is_bare_param, "bare-param channel ⇒ canonical/pairing target");
 
         // Free-fn-channel sibling — channel routes through a snake_case free fn
-        // ⇒ A1a PURITY rejects (the SAME gate that excludes rhocalc `*Quoted*`).
+        // ⇒ A1a PURITY rejects (the SAME gate that excludes rholang `*Quoted*`).
         let impure = fold_rule(
             "WrapSendImpure",
             "Widget",
@@ -1273,7 +1273,7 @@ mod tests {
 
         // Literal-channel sibling — channel bottoms at a nullary variant
         // `Widget::Zero` (∉ params) ⇒ A1b PARAM-BOTTOMED rejects (the SAME gate
-        // that excludes rhocalc `*Nil*`).
+        // that excludes rholang `*Nil*`).
         let literal = fold_rule(
             "WrapSendLit",
             "Widget",

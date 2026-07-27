@@ -4,7 +4,7 @@
 //! ## What this gate proves
 //!
 //! 1. **PARITY (inertness).** Over every existing grammar fixture
-//!    (calculator / lambda / rhocalc / ambient / guarded_rho),
+//!    (calculator / lambda / rholang / ambient / guarded_rho),
 //!    `parity_tree::analyze_recursive_predicates` returns a result EQUIVALENT to
 //!    today's stub `analyze_from_bundle` — specifically an EMPTY
 //!    `fixpoint_decisions` and the identical headline fields (`num_states`,
@@ -138,7 +138,7 @@ fn lambda_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
     (all_syntax, categories)
 }
 
-fn rhocalc_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
+fn rholang_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
     let categories = vec![
         struct_cat("Proc", true, true),
         struct_cat("Name", false, true),
@@ -223,7 +223,7 @@ fn all_fixtures() -> Vec<(&'static str, (Vec<SyntaxRule>, Vec<CategoryInfo>))> {
     vec![
         ("calculator", calculator_fixture()),
         ("lambda", lambda_fixture()),
-        ("rhocalc", rhocalc_fixture()),
+        ("rholang", rholang_fixture()),
         ("ambient", ambient_fixture()),
         ("guarded_rho", guarded_rho_fixture()),
     ]

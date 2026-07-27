@@ -123,7 +123,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         Proc::FixedBinProc(..) => lower_arm_fixed_bin_proc(),
         Proc::BigintCastProc(..) => lower_arm_bigint_cast_proc(),
         Proc::BigratCastProc(..) => lower_arm_bigrat_cast_proc(),
-        // ── A-S4 metered machine arithmetic (the RhoCalc face of the E3 pattern) ────────────
+        // ── A-S4 metered machine arithmetic (the Rholang face of the E3 pattern) ────────────
         // Operands lower STRUCTURALLY; the machine's reducer evaluates the expression with its
         // size-dependent primitive costs (f1r3node `reduce.rs`: `EPlus`/`EMinus`/`EMult`/`EDiv`/
         // `EMod`/`ENeg` over GInt/GDouble/GBigInt/GBigRat/GFixedPoint). String `+` is Rholang
@@ -198,8 +198,8 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         // exactly like a literal one. See [`lower_method`].
         //
         // `.toByteArray()` (C2) replaces the retired `rhoapi` schema fork
-        // (`languages/proto/rholang_wire.proto` + `languages/src/rhocalc/wire.rs`), which encoded
-        // a hex `GString` in protobuf BYTE order and could not encode any collection the RhoCalc
+        // (`languages/proto/rholang_wire.proto` + `languages/src/rholang/wire.rs`), which encoded
+        // a hex `GString` in protobuf BYTE order and could not encode any collection the Rholang
         // grammar actually produces.
         Proc::MToByteArray(m) => lower_arm_m_to_byte_array(m, env),
         //
@@ -213,7 +213,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         //
         // ★ SOUNDNESS RESTS ON A MEASURED CARRIER MAP, NOT ON THE METHOD NAME.
         //
-        // RhoCalc has two carriers with no Rholang analog, and both survive lowering only as an
+        // Rholang has two carriers with no Rholang analog, and both survive lowering only as an
         // ENCODING: a `Bag` becomes `EList[GPrivate(RHOLANG_BAG_ABI_TAG), EList[pairs]]` (always
         // exactly 2 elements — see [`lower_bag`]), and a `Pathmap` becomes a plain `EMap`,
         // discarding the trie (divergence G — see [`lower_pathmap`]). Routing a method whose
@@ -269,7 +269,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         // ── C1b — the Pathmap/Zipper family: routed, but UNREACHABLE until C4 ───────────────
         //
         // These are routed for the same reason as the rest — the reducer owns the semantics — but
-        // every one of them requires an `EPathmapBody` or `EZipperBody` receiver, and RhoCalc's
+        // every one of them requires an `EPathmapBody` or `EZipperBody` receiver, and Rholang's
         // `Pathmap` still lowers to `EMap` (divergence G). So on the machine they all fail closed
         // at REDUCE time with `MethodNotDefined { other_type: "map" }` rather than at LOWER time.
         // That is strictly more informative (it names the carrier that is actually wrong, which
@@ -280,10 +280,10 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         // "when C4 gives `Pathmap` its native carrier these arms start working with no further
         // change here", is FALSE, and the reason is worth more than the sentence.
         //
-        // C4 is not a plumbing change, because **RhoCalc's `Pathmap` and Rholang's `EPathMap` are
+        // C4 is not a plumbing change, because **Rholang's `Pathmap` and Rholang's `EPathMap` are
         // different types**:
         //
-        //   RhoCalc   `PathMapLit<Proc, Proc>`  a KEY→VALUE map. `{| 1 : 10 |}` is well formed and
+        //   Rholang   `PathMapLit<Proc, Proc>`  a KEY→VALUE map. `{| 1 : 10 |}` is well formed and
         //                                       `pathmap_get` reads a value out at a key.
         //   Rholang   `EPathMap { ps }`         a SET OF PATHS. An element is its own key AND its
         //                                       own value.
@@ -313,7 +313,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         //     the flip trades twenty-two dead methods for seven newly dead ones unless each is
         //     re-expressed. Measured by `c4_the_native_carrier_refuses_the_map_method_surface`.
         //   * ✅ RETIRED 2026-07-27 — a SECOND blocker used to be recorded here and it no longer
-        //     exists. A RhoCalc pathmap key is BARE by default (`{| 1 : 10 |}` has key `1`), and
+        //     exists. A Rholang pathmap key is BARE by default (`{| 1 : 10 |}` has key `1`), and
         //     that element shape used to read back as `Nil` while `toNextLeaf` sat on a FIXED
         //     POINT, so a walk-until-`Nil` over `{| 1, 2, 3 |}` did not terminate; pointing
         //     `lower_pathmap` at `EPathmapBody` would have made the very enumeration surface C4
@@ -329,16 +329,16 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         //     `::c1_zipper_walk_exhaustion_terminates_within_leaf_count` where it was written.
         //     ⚠ So the VALUE SLOT below is the whole of what holds C4 — do not cite the walk.
         //
-        // So C4 requires DECIDING what RhoCalc's value slot becomes — drop it, fuse it into the key
+        // So C4 requires DECIDING what Rholang's value slot becomes — drop it, fuse it into the key
         // path (which changes what `getPath`/`getLeaf` mean), or add a value arm to the consensus
         // wire — and every answer costs something that is not a lowering's to spend. The decision
         // is presented, not taken here; `lower_pathmap` keeps emitting `EMap` until it is made.
         //
         // ★ `toNextLeaf` carries a DELIBERATE CROSS-ENDPOINT CONVENTION MISMATCH, and
         // mistranslating it does not error — it LOOPS FOREVER. The reducer reports an exhausted
-        // walk as `Nil` (`Ok(Par::default())`); RhoCalc's fold body reports it as `Err(())`, the
+        // walk as `Nil` (`Ok(Par::default())`); Rholang's fold body reports it as `Err(())`, the
         // house "failed navigation stays STUCK" form. See
-        // `languages/src/rhocalc/zipper.rs::zipper_to_next_leaf` and its f1r3node twin
+        // `languages/src/rholang/zipper.rs::zipper_to_next_leaf` and its f1r3node twin
         // `rholang/tests/zipper_enumeration_spec.rs::to_next_leaf_returns_nil_when_exhausted`,
         // which name each other.
         //
@@ -371,23 +371,23 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         // ⚠ `setLeaf` is NOT routed, and it is the reason this file checks ARITY and SEMANTICS
         // rather than trusting a shared name. The two `setLeaf`s are different operations:
         //
-        //   RhoCalc  `w.setLeaf(full, v)`  writes at the ABSOLUTE path given as an argument —
+        //   Rholang  `w.setLeaf(full, v)`  writes at the ABSOLUTE path given as an argument —
         //                                  `write_zipper_set_leaf` is
         //                                  `pm.set_val_at(encode_proc_path_entry(full), v)`
-        //                                  (`languages/src/rhocalc/zipper.rs:529`). The zipper's
+        //                                  (`languages/src/rholang/zipper.rs:529`). The zipper's
         //                                  focus is not consulted at all.
         //   Rholang  `z.setLeaf(v)`        APPENDS `v` to the map as a new element, at the path `v`
         //                                  derives for ITSELF. One argument. The zipper's focus is
         //                                  not consulted either — see the correction below.
         //
-        // Emitting `EMethod("setLeaf")` with RhoCalc's two arguments would raise
+        // Emitting `EMethod("setLeaf")` with Rholang's two arguments would raise
         // `MethodArgumentNumberMismatch` — fail-closed, but for the WRONG reason, and it would
         // leave a mapping that becomes silently incorrect the moment anyone "fixes" the arity by
         // dropping `full`.
         //
         // ★★ CORRECTION (C4 investigation, 2026-07-26 — MEASURED). This note used to say Rholang's
         // `setLeaf` "writes at the zipper's CURRENT FOCUS", and to name `writeZipperAt(full)
-        // .setLeaf(v)` as the rewrite that would express RhoCalc's meaning on the machine. **Both
+        // .setLeaf(v)` as the rewrite that would express Rholang's meaning on the machine. **Both
         // halves were wrong, and the second was a trap.**
         //
         // `reduce.rs::set_leaf_method` does `pathmap.ps_make_mut().push(value)` on BOTH of its arms
@@ -407,7 +407,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         // The REAL reason `setLeaf` cannot be routed is the C4 carrier fact above: a path-addressed
         // write needs a value slot, and `EPathMap` has none. `setLeaf(v)` is the only write the
         // carrier can express — *insert the element `v`*, whose key is derived from `v` — and
-        // RhoCalc's `setLeaf(full, v)` is simply not that operation. It stays fail-closed and
+        // Rholang's `setLeaf(full, v)` is simply not that operation. It stays fail-closed and
         // named, and it will still be fail-closed after a naive carrier flip, because the obstacle
         // is the missing value slot rather than the argument count.
         //
@@ -755,7 +755,7 @@ fn lower_arm_matches(
     env: &BoundEnv,
 ) -> Result<Par, RholangAstLowerError> {
     let target = lower_proc(target.as_ref(), env)?;
-    if mettail_languages::rhocalc::formula::is_statically_false(formula.as_ref()) {
+    if mettail_languages::rholang::formula::is_statically_false(formula.as_ref()) {
         let mut folded = new_gbool_par(false, Vec::new(), false);
         folded.locally_free = target.locally_free;
         return Ok(folded);
@@ -1744,7 +1744,7 @@ fn lower_name(name: &Name, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
 /// Compile a spatial formula to a Rholang PATTERN, in `env` (recursive twin).
 fn lower_formula_in_env(formula: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     use crate::rholang_formula::{connective_par, falsum_pattern, negated, verum_pattern};
-    use mettail_languages::rhocalc::formula::{classify, FormulaShape};
+    use mettail_languages::rholang::formula::{classify, FormulaShape};
     use models::rust::utils::{new_conn_and_body_par, new_conn_or_body_par};
 
     match classify(formula) {
@@ -1824,7 +1824,7 @@ mod differential {
 
     /// `(source, arm family, expectation)`.
     ///
-    /// Sources are RhoCalc SURFACE, parsed by the same WPDA parser production uses, so the
+    /// Sources are Rholang SURFACE, parsed by the same WPDA parser production uses, so the
     /// corpus exercises the raw parse-tree shapes (`POutputShort`, `POutput2Plus`,
     /// `PParInternal`, …) that `desugar_send_node` rewrites — the arms a hand-built `Proc`
     /// corpus would never reach.
@@ -2022,7 +2022,7 @@ mod differential {
     ///
     /// `parse_via_wpda` already resolves the WPDA's alternatives to one `Proc`, so this is a
     /// one-element list today. It is a list rather than a scalar so that a corpus driven from
-    /// `RhoCalcTerm` (which does carry `Ambiguous`) can be dropped in without restructuring the
+    /// `RholangTerm` (which does carry `Ambiguous`) can be dropped in without restructuring the
     /// comparison, and so the failure messages already name a reading index.
     fn readings(term: &Proc) -> Vec<&Proc> {
         vec![term]

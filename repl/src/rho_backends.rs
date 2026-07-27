@@ -8,7 +8,7 @@
 //! |------------|---------------------------------|-----------------|
 //! | Lambda     | Dovetail + Rholang (two-stage)  | A-S5.6: the in-Rho QUIESCENCE DRIVER (`^drive` seed) β-reduces the whole subject to NF on the Rho machine |
 //! | Ambient    | Dovetail + Rholang (two-stage)  | A-S5.6: the in-Rho QUIESCENCE DRIVER fires the guarded AC mobility trio (In/Out/Open) to quiescence on the Rho machine |
-//! | RhoCalc    | Dovetail + Rholang (two-stage)  | COMM / observed pure values → Rho machine; mixed → pre-fold then Rho |
+//! | Rholang    | Dovetail + Rholang (two-stage)  | COMM / observed pure values → Rho machine; mixed → pre-fold then Rho |
 //! | Calculator | Dovetail + Rholang (two-stage)  | scalar expr tree → Rho dataflow (E3); non-scalar → rejected at Rho-default boundary; partial arithmetic → semantic predicate |
 //! | SwapDemo + the 12 rho_net demos | Dovetail + Rholang (two-stage) | A-S6: the in-Rho set-automaton MATCH (single-shot locate-and-fire) is the default exec path; the D-stage runs only on typed deferrals |
 //!
@@ -422,7 +422,7 @@ mod rho {
         Ok(PlannedRhoBackend::from_plan(plan))
     }
 
-    /// RhoCalc → two-stage Dovetail+Rholang backend (re-exported from rholang-runtime, beside the
+    /// Rholang → two-stage Dovetail+Rholang backend (re-exported from rholang-runtime, beside the
     /// AST-first lowering it depends on).
     pub fn rholang_backed() -> Result<Box<dyn Language>> {
         dovetail_rho_backed_rholang(OUT).map_err(|err| anyhow!("{err}"))

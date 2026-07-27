@@ -11,11 +11,11 @@
 //!
 //! Before the registry, that rule was stated in exactly one place — the infix facade's
 //! hand-written `__in_str` string-literal state — and implemented nowhere else. It knew
-//! about string literals and **nothing about comments**. RhoCalc's comments are
-//! **LEXED, NOT STRIPPED** (`languages/src/rhocalc.rs`:
+//! about string literals and **nothing about comments**. Rholang's comments are
+//! **LEXED, NOT STRIPPED** (`languages/src/rholang.rs`:
 //! `LineComment = "//[^\n]*" -> COMMENTS`), so raw comment bytes reach every string facade.
 //!
-//! The consequence was measured on the shipped `rhocalc` binary before any code changed,
+//! The consequence was measured on the shipped `rholang` binary before any code changed,
 //! with the presence of a depth-0 `|` **inside the comment** as the single controlled
 //! variable:
 //!
@@ -61,13 +61,13 @@
 //! same safety argument `ProjectionIsolation.v` `T7_fallthrough_is_monolithic` makes for
 //! `combine_run = None`.
 
-#![cfg(feature = "rhocalc")]
+#![cfg(feature = "rholang")]
 
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 
 /// The elected single-winner reading, as a structural `Debug` string.
 fn one(source: &str) -> String {
-    format!("{:?}", Proc::parse_via_wpda(source).expect("RhoCalc parses the source"))
+    format!("{:?}", Proc::parse_via_wpda(source).expect("Rholang parses the source"))
 }
 
 /// ★ THE HEADLINE PIN — a depth-0 separator inside a line comment is not a split.
@@ -148,7 +148,7 @@ fn an_unbalanced_bracket_inside_a_comment_does_not_corrupt_depth() {
 /// comment *stripping*, which would lose the `COMMENTS` channel the tooling depends on.
 #[test]
 fn comments_are_still_retained_on_their_channel() {
-    let lexed = mettail_languages::rhocalc::lex_with_streams("Nil // a|b\n| Nil")
+    let lexed = mettail_languages::rholang::lex_with_streams("Nil // a|b\n| Nil")
         .expect("the source lexes");
     let comments: Vec<_> = lexed.tokens_on_channel("COMMENTS").iter().collect();
     assert_eq!(

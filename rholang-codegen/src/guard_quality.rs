@@ -319,7 +319,7 @@ pub fn derive_guard_qualities(def: &LanguageDef) -> Vec<RhoGuardDispositionQuali
 /// A caller that knows a language has no guard obligations can pass
 /// `RhoGuardCoverageEvidence::NoGuardObligations`. That is an *assertion about the language*,
 /// and it silently becomes false the moment the language grows one — the plan then fails
-/// coverage at a call site that has no idea why. (Measured: RhoCalc declaring its `where` slots
+/// coverage at a call site that has no idea why. (Measured: Rholang declaring its `where` slots
 /// broke every consumer of the production registry, because the registry asserted
 /// `NoGuardObligations`.)
 ///

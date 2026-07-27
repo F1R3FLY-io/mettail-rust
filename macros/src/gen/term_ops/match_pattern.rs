@@ -364,8 +364,8 @@ fn generate_match_task_enum(language: &LanguageDef) -> TokenStream {
 /// match is peeled into a `#[inline(never)] match_visit_<cat>` helper (the
 /// Tier-1 idiom `normalize_iterative` uses). Without it, `match_pattern_iterative`'s
 /// -O0 frame is the alloca SUM of every category's variant locals (measured
-/// 1,481,688 B for rhocalc — the second-largest driver, and it runs on the
-/// sim/rewrite path whose `gen_rhocalc_prop` workers use the DEFAULT 2 MiB
+/// 1,481,688 B for rholang — the second-largest driver, and it runs on the
+/// sim/rewrite path whose `gen_rholang_prop` workers use the DEFAULT 2 MiB
 /// stack). Helpers return `Option<()>`: the arms' `return None` propagate as
 /// the engine's failure (the `?` at the call site turns `None` into the
 /// engine's `return None`), and the FreeVar-branch `continue` becomes

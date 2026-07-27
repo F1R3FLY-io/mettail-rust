@@ -116,7 +116,7 @@ fn calculator_bigrat_int_projection_add_display_is_idempotent() {
     // CONSTRUCTOR, which `macros/src/gen/syntax/display.rs::find_projection_surface_wrapper`
     // BORROWED as a bracketing device for any cross-category projection operand. It
     // bracketed correctly and denoted wrongly: the emitted text reparses as a `BigratCast`
-    // over `Proc`, a node the term never contained. (The same election on rhocalc landed on
+    // over `Proc`, a node the term never contained. (The same election on rholang landed on
     // `POutputNil . q:Proc |- "@" "Nil" "!" "(" q ")"`, so `Add(CastInt 1, CastInt 2)`
     // displayed as `@Nil!(1) + @Nil!(2)` — two SENDS.)
     //

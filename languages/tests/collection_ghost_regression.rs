@@ -9,16 +9,16 @@
 //! never return: each multi-element collection has EXACTLY one surviving
 //! all-alternatives parse, and legitimate single/cross-cat collections still parse.
 
-use mettail_languages::rhocalc;
+use mettail_languages::rholang;
 use mettail_prattail::wpda_runtime::{LatticeTokenSource, WpdaTokenSource};
 
 /// Parse `input` via the language-trait all-alternatives path; return the
 /// realized-term Display strings (the surface where the ghost appeared).
 fn all_alts_displays(input: &str) -> Vec<String> {
-    let dag = rhocalc::lex_dag(input).unwrap_or_else(|e| panic!("lex `{input}`: {e}"));
+    let dag = rholang::lex_dag(input).unwrap_or_else(|e| panic!("lex `{input}`: {e}"));
     let source = LatticeTokenSource::new(dag);
     let mut pos = 0usize;
-    let (terms, _weights) = rhocalc::parse_Proc_via_wpda_all_with_source(&source, &mut pos, 0)
+    let (terms, _weights) = rholang::parse_Proc_via_wpda_all_with_source(&source, &mut pos, 0)
         .unwrap_or_else(|e| panic!("all_alts parse `{input}`: {e}"));
     assert_eq!(pos, source.eof_node(), "`{input}` must consume to EOI");
     terms.iter().map(|t| format!("{t}")).collect()

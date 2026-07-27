@@ -20,7 +20,7 @@ use mettail_macros::language;
 //
 // This is the FIRST bundled language shape that exercises the in-Rho CONTEXTUAL firing path
 // (Stage 3a) end-to-end: SwapDemo has only a base rewrite, AcDemo only an AC rewrite, and
-// RhoCalc's sole congruence (`ParCong`) is over an AC `PPar` bag — too entangled for the first
+// Rholang's sole congruence (`ParCong`) is over an AC `PPar` bag — too entangled for the first
 // slice (it stays fail-closed). A clean unary constructor context `Wrap(_)` isolates INV-6 (a
 // contextual rewrite fires as an atomic JOIN) without AC.
 //

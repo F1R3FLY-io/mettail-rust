@@ -177,7 +177,7 @@ mod tests {
     use crate::schema::QuerySchema;
     use std::collections::HashMap;
 
-    fn rhocalc_like_schema() -> QuerySchema {
+    fn rholang_like_schema() -> QuerySchema {
         let mut relations = HashMap::new();
         relations.insert("path".into(), vec!["Proc".into(), "Proc".into()]);
         relations.insert("rw_proc".into(), vec!["Proc".into(), "Proc".into()]);
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_parse_query_simple() {
-        let schema = rhocalc_like_schema();
+        let schema = rholang_like_schema();
         let q = parse_query("query(result) <-- path(term, result), !rw_proc(result, _).", &schema)
             .unwrap();
         assert_eq!(q.head.relation, "query");
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_parse_unknown_relation() {
-        let schema = rhocalc_like_schema();
+        let schema = rholang_like_schema();
         let err = parse_query("q(x) <-- path(x, y), bad_rel(y).", &schema).unwrap_err();
         assert!(matches!(err, ParseError::UnknownRelation { relation } if relation == "bad_rel"));
     }

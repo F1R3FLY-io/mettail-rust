@@ -1464,10 +1464,10 @@ mod tests {
         }
     }
 
-    /// RhoCalc-style float + fixed: `3.5p0` must lex as one fixed-point token (maximal munch), not
+    /// Rholang-style float + fixed: `3.5p0` must lex as one fixed-point token (maximal munch), not
     /// `3.5` float + `p0` ident.
     #[test]
-    fn test_rhocalc_float_fixed_maximal_munch() {
+    fn test_rholang_float_fixed_maximal_munch() {
         use crate::automata::{
             minimize::minimize_dfa, partition::compute_equivalence_classes,
             subset::subset_construction,

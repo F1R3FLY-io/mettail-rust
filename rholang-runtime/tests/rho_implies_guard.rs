@@ -2,7 +2,7 @@
 //!
 //! `implies` is the paper's `φ ⇒ ψ` (notation delta N2: a word, because neither
 //! `⇒` nor `=>` is available in this grammar). It adds **no machine surface at
-//! all**: the RhoCalc lowering compiles it to the material-implication identity
+//! all**: the Rholang lowering compiles it to the material-implication identity
 //!
 //! ```text
 //!     ⟦a implies b⟧  =  EOrBody { p1: ENotBody ⟦a⟧ , p2: ⟦b⟧ }
@@ -17,7 +17,7 @@
 //! Everything here runs on the production guard path, not a host simulation:
 //!
 //! ```text
-//!   RhoCalc source ──Proc::parse_via_wpda──▶ Proc ──lower_rholang_proc──▶ Par
+//!   Rholang source ──Proc::parse_via_wpda──▶ Proc ──lower_rholang_proc──▶ Par
 //!        │                                                                 │
 //!        │  (f1r3node's own Rholang parser is    Receive.condition ◀────────┘
 //!        │   NEVER invoked on this path)                  │
@@ -42,7 +42,7 @@
 //!
 //! ## Why the guard-position tests compare STRINGS, not integers
 //!
-//! ★ HISTORICAL as of 2026-07-25 (divergence I). A plain RhoCalc integer literal
+//! ★ HISTORICAL as of 2026-07-25 (divergence I). A plain Rholang integer literal
 //! used to lower to `GBigInt`, and `rho-pure-eval`'s `cmp_binop` (`eval.rs`)
 //! admits only `(GInt,GInt)`, `(GString,GString)` and `(GBool,GBool)` — so a
 //! `GBigInt` comparison raised `EvalError`, §18.5 collapsed that to guard-fail,
@@ -58,14 +58,14 @@
 //!
 //! The HOST twin of the same truth table (`eval_guard_bool`, reached through the
 //! Dovetail/oracle receive path) lives in
-//! `languages/tests/rhocalc_tests.rs::implies_*` — the two suites are the two
+//! `languages/tests/rholang_tests.rs::implies_*` — the two suites are the two
 //! halves of the two-evaluator agreement obligation.
 
 #![cfg(feature = "rholang-runtime")]
 
 use std::collections::HashMap;
 
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_runtime::fold_contract::fold_definitions_for;
 use mettail_rholang_runtime::rholang_ast::{clear_held_fold_sites, take_held_fold_sites};
 use mettail_rholang_runtime::run::run_installed_program_with_call_definitions_and_read_runtime_values;
@@ -77,7 +77,7 @@ use mettail_runtime::{clear_var_cache, RuntimeObservationValue};
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::Par;
 
-/// Parse RhoCalc surface syntax with the GENERATED PraTTaIL parser and lower it
+/// Parse Rholang surface syntax with the GENERATED PraTTaIL parser and lower it
 /// to a normalized `Par`. No Rholang source text is produced or reparsed.
 fn parse_lower(source: &str) -> Par {
     clear_var_cache();
@@ -87,7 +87,7 @@ fn parse_lower(source: &str) -> Par {
         .unwrap_or_else(|err| panic!("rholang lowering failed for {source:?}: {err:?}"))
 }
 
-/// Evaluate a RhoCalc program that may contain width folds, materializing every
+/// Evaluate a Rholang program that may contain width folds, materializing every
 /// held fold site into the system-process `Definition`s the production exec path
 /// installs (`backend.rs`), and return the observations resting on `@"OUT"`.
 ///
@@ -355,7 +355,7 @@ async fn implies_is_looser_than_or_and_and() {
     );
 
     // ★ ASSOCIATIVITY, pinned by TRUTH VALUE (#30). `implies` is declared `right`
-    // (`languages/src/rhocalc.rs`), so a chain reads `a ⇒ (b ⇒ c)` — classical
+    // (`languages/src/rholang.rs`), so a chain reads `a ⇒ (b ⇒ c)` — classical
     // material implication, and the reading the Heyting `⇒` of
     // `prattail::algebra_tower::HeytingAlgebra::implies` has.
     //
@@ -372,7 +372,7 @@ async fn implies_is_looser_than_or_and_and() {
     // truth value from the one its author wrote, silently, with no diagnostic.
     //
     // The parse-shape companion is
-    // `languages/tests/rhocalc_semantic_predicate_ambiguity.rs::a_chained_implies_elects_the_right_associative_reading`.
+    // `languages/tests/rholang_semantic_predicate_ambiguity.rs::a_chained_implies_elects_the_right_associative_reading`.
     // Shape alone is not enough: it would still pass if the fold ever disagreed
     // with the parse. This row closes the loop from surface to value ON THE MACHINE.
     assert!(
@@ -607,14 +607,14 @@ async fn implies_over_a_non_boolean_operand_fabricates_nothing() {
 }
 
 /// `RuntimeObservationValue::BigIntBytes` renders as signed big-endian hex, so a
-/// RhoCalc **`…n`** literal `11n` observes as `BigInt(0x0b)`. A PLAIN `11` now
+/// Rholang **`…n`** literal `11n` observes as `BigInt(0x0b)`. A PLAIN `11` now
 /// observes as the `GInt` `11` (divergence I).
 const BIGINT_ELEVEN: &str = "BigInt(0x0b)";
 
 /// ★ INVERTED 2026-07-25 (divergence I). This test was
 /// `a_bigint_comparison_guard_fails_shut_pre_existing`, and it pinned a REAL
 /// defect that this suite's ordered-`Str` guards existed to route around: a plain
-/// RhoCalc integer literal lowered to `GBigInt`, `rho-pure-eval`'s `cmp_binop`
+/// Rholang integer literal lowered to `GBigInt`, `rho-pure-eval`'s `cmp_binop`
 /// (`eval.rs`) admits only `(GInt,GInt)`, `(GString,GString)`, `(GBool,GBool)`,
 /// so a numeric guard as ordinary as `where x > 0` raised `EvalError` and §18.5
 /// collapsed that to guard-FAIL. Every numeric guard in the language failed shut.

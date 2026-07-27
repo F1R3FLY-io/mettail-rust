@@ -28,7 +28,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use mettail_languages::{calculator, rhocalc};
+use mettail_languages::{calculator, rholang};
 use mettail_prattail::wpda_runtime::LatticeTokenSource;
 
 // ── Corpora (identical to the equivalence gate) ─────────────────────────────────
@@ -96,11 +96,11 @@ fn calc_lazy(input: &str) {
 
 #[inline(never)]
 fn rho_eager(input: &str) {
-    match rhocalc::lex_dag(input) {
+    match rholang::lex_dag(input) {
         Ok(dag) => {
             let source = LatticeTokenSource::new(dag);
             let mut pos = 0usize;
-            let r = rhocalc::parse_Proc_via_wpda_with_source(&source, &mut pos, 0);
+            let r = rholang::parse_Proc_via_wpda_with_source(&source, &mut pos, 0);
             black_box(&r);
         },
         Err(e) => {
@@ -111,9 +111,9 @@ fn rho_eager(input: &str) {
 
 #[inline(never)]
 fn rho_lazy(input: &str) {
-    let source = rhocalc::lex_dag_lazy(input);
+    let source = rholang::lex_dag_lazy(input);
     let mut pos = 0usize;
-    let r = rhocalc::parse_Proc_via_wpda_with_source(&source, &mut pos, 0);
+    let r = rholang::parse_Proc_via_wpda_with_source(&source, &mut pos, 0);
     black_box(&r);
 }
 
@@ -130,10 +130,10 @@ fn calc_space(input: &str) -> (usize, usize) {
 }
 
 fn rho_space(input: &str) -> (usize, usize) {
-    let eager = rhocalc::lex_dag(input).map(|d| d.nodes.len()).unwrap_or(0);
-    let lazy_src = rhocalc::lex_dag_lazy(input);
+    let eager = rholang::lex_dag(input).map(|d| d.nodes.len()).unwrap_or(0);
+    let lazy_src = rholang::lex_dag_lazy(input);
     let mut pos = 0usize;
-    let _ = rhocalc::parse_Proc_via_wpda_with_source(&lazy_src, &mut pos, 0);
+    let _ = rholang::parse_Proc_via_wpda_with_source(&lazy_src, &mut pos, 0);
     (eager, lazy_src.nodes_materialized())
 }
 
@@ -199,8 +199,8 @@ fn main() {
     for (lang, class, inputs, spacefn) in [
         ("calculator", "full", CALC_FULL, calc_space as fn(&str) -> (usize, usize)),
         ("calculator", "earlyfail", CALC_EARLY_FAIL, calc_space),
-        ("rhocalc", "full", RHO_FULL, rho_space),
-        ("rhocalc", "earlyfail", RHO_EARLY_FAIL, rho_space),
+        ("rholang", "full", RHO_FULL, rho_space),
+        ("rholang", "earlyfail", RHO_EARLY_FAIL, rho_space),
     ] {
         for (input_idx, &input) in inputs.iter().enumerate() {
             let (eager, lazy) = spacefn(input);
@@ -232,10 +232,10 @@ fn main() {
         warmups,
         reps,
     );
-    time_arm("rhocalc", "full", "eager", RHO_FULL, rho_eager, samples, warmups, reps);
-    time_arm("rhocalc", "full", "lazy", RHO_FULL, rho_lazy, samples, warmups, reps);
+    time_arm("rholang", "full", "eager", RHO_FULL, rho_eager, samples, warmups, reps);
+    time_arm("rholang", "full", "lazy", RHO_FULL, rho_lazy, samples, warmups, reps);
     time_arm(
-        "rhocalc",
+        "rholang",
         "earlyfail",
         "eager",
         RHO_EARLY_FAIL,
@@ -244,7 +244,7 @@ fn main() {
         warmups,
         reps,
     );
-    time_arm("rhocalc", "earlyfail", "lazy", RHO_EARLY_FAIL, rho_lazy, samples, warmups, reps);
+    time_arm("rholang", "earlyfail", "lazy", RHO_EARLY_FAIL, rho_lazy, samples, warmups, reps);
 
     eprintln!("lazy_lex_bench: done");
 }

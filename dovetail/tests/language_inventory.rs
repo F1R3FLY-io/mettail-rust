@@ -70,7 +70,7 @@ fn repo_relative(path: &Path) -> String {
 /// |---|---|---|
 /// | `//! # Clause-by-clause containment` (a markdown heading) | `"# "` | `ReqFreshnessPremise` |
 /// | `//! \| omnibus clause \| our clause \|` (a markdown table row) | `"\| "` | `ReqCongruencePremise` |
-/// | ``//! `rhocalc.rs` `POutput` idiom`` (prose quoting another language) | `"POutput"` | `ReqRhoCommHandlerContract` |
+/// | ``//! `rholang.rs` `POutput` idiom`` (prose quoting another language) | `"POutput"` | `ReqRhoCommHandlerContract` |
 ///
 /// Those are not hypotheticals: they were measured on `json`, `monoid`, and `turing`,
 /// which were each told they declare a freshness premise they do not have. The
@@ -789,7 +789,7 @@ const QUOTES_EVERY_REQUIREMENT: &str = r##"
 //! | --- | --- | --- |
 //! | `Mul . x:M, y:M \|- x "*" y : M ;` | identical | — |
 //!
-//! Follows the `rhocalc.rs` `POutput` / `PInputs` / `PGuardedInput` idiom, where the
+//! Follows the `rholang.rs` `POutput` / `PInputs` / `PGuardedInput` idiom, where the
 //! carrier is a `Vec(T)` slot. The paper writes `x # ...rest` for freshness and
 //! `S ~> T` for a step; substitution is spelled `eval`, e.g. `(eval cont Q)`, and a
 //! `?g:Guard` slot would sit in the term context. See `logic { relation ok(Proc); }`

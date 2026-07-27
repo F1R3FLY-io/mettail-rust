@@ -3,7 +3,7 @@
 //!
 //! # What a surface synonym is, and why it is a defect rather than a convenience
 //!
-//! A grammar may spell one term more than one way. RhoCalc spells a quoted name three ways:
+//! A grammar may spell one term more than one way. Rholang spells a quoted name three ways:
 //!
 //! ```text
 //!   NQuote      . p:Proc |- "@" "(" p ")" : Name ;
@@ -21,7 +21,7 @@
 //!                          ↑ layer 1          ↑ layer 2          ↑ fixpoint at layer 3
 //! ```
 //!
-//! `gen_rhocalc_prop::inputbind_display_parse_roundtrip` asserts a fixpoint after ONE re-parse,
+//! `gen_rholang_prop::inputbind_display_parse_roundtrip` asserts a fixpoint after ONE re-parse,
 //! so it failed on every term whose synonym sat two layers deep — for months, as a single opaque
 //! string mismatch that named neither the class nor the layer.
 //!
@@ -63,7 +63,7 @@
 //!   rd_a1_budget::genuinely_ambiguous_witness_strict_boundary
 //!       `@((a)!(0))!()` has TWO readings differing only by the kept `NParen`; under
 //!       transparency both displayed `@(a!(0))!()` and the budget boundary moved.
-//!   rhocalc_tests::realize_mode_contract_pins
+//!   rholang_tests::realize_mode_contract_pins
 //!       ::prefix_bounded_alternatives_enumerate_display_distinct_family   (USER-APPROVED)
 //!       requires `@Nil!(@(@Nil)!())` and `@Nil!(@@Nil!())` to stay a display-DISTINCT family.
 //! ```
@@ -86,13 +86,13 @@ struct LanguageGate {
 /// all three properties; nothing per-language is asserted by hand.
 fn gates() -> Vec<LanguageGate> {
     let mut out: Vec<LanguageGate> = Vec::new();
-    #[cfg(feature = "rhocalc")]
+    #[cfg(feature = "rholang")]
     out.push(LanguageGate {
-        name: "RhoCalc",
-        classes: mettail_languages::rhocalc::__SURFACE_SYNONYMY_CLASSES,
-        samples: mettail_languages::rhocalc::__SURFACE_SYNONYMY_SAMPLES,
-        inert_groupings: mettail_languages::rhocalc::__SURFACE_INERT_GROUPINGS,
-        normalise: mettail_languages::rhocalc::__surface_synonymy_normalise,
+        name: "Rholang",
+        classes: mettail_languages::rholang::__SURFACE_SYNONYMY_CLASSES,
+        samples: mettail_languages::rholang::__SURFACE_SYNONYMY_SAMPLES,
+        inert_groupings: mettail_languages::rholang::__SURFACE_INERT_GROUPINGS,
+        normalise: mettail_languages::rholang::__surface_synonymy_normalise,
     });
     #[cfg(feature = "calculator")]
     out.push(LanguageGate {
@@ -128,19 +128,19 @@ const SEAMS: [(&str, bool); 2] = [("parse_via_wpda", false), ("parse", true)];
 //  0 — THE TEETH TEST. A gate over an empty table asserts nothing.
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 
-/// The derivation must actually FIND the classes it is supposed to find. RhoCalc's `Name` class
+/// The derivation must actually FIND the classes it is supposed to find. Rholang's `Name` class
 /// `{ NQuote, NQuoteNil, NQuoteShort }` is the one this whole mechanism was built for, and its
-/// canonical member is declared in `languages/src/rhocalc.rs`; if the derivation silently stopped
+/// canonical member is declared in `languages/src/rholang.rs`; if the derivation silently stopped
 /// producing it, every assertion below would pass vacuously.
-#[cfg(feature = "rhocalc")]
+#[cfg(feature = "rholang")]
 #[test]
 fn the_derivation_finds_the_class_it_was_built_for() {
-    let classes = mettail_languages::rhocalc::__SURFACE_SYNONYMY_CLASSES;
+    let classes = mettail_languages::rholang::__SURFACE_SYNONYMY_CLASSES;
     let name_class = classes
         .iter()
         .find(|(cat, members, _)| *cat == "Name" && members.contains(&"NQuote"))
         .expect(
-            "RhoCalc's `Name` alias class {NQuote, NQuoteNil, NQuoteShort} is no longer derived — \
+            "Rholang's `Name` alias class {NQuote, NQuoteNil, NQuoteShort} is no longer derived — \
              `classify_fold_alias_shape` or the class construction has stopped seeing the fold \
              bodies that declare it",
         );
@@ -149,7 +149,7 @@ fn the_derivation_finds_the_class_it_was_built_for() {
     assert_eq!(
         members,
         vec!["NQuote", "NQuoteNil", "NQuoteShort"],
-        "the `Name` class membership moved — re-derive it from the fold bodies in rhocalc.rs"
+        "the `Name` class membership moved — re-derive it from the fold bodies in rholang.rs"
     );
     assert_eq!(
         name_class.2, "NQuoteShort",
@@ -159,7 +159,7 @@ fn the_derivation_finds_the_class_it_was_built_for() {
          re-parse."
     );
     assert!(
-        mettail_languages::rhocalc::__SURFACE_INERT_GROUPINGS.contains(&"NParen"),
+        mettail_languages::rholang::__SURFACE_INERT_GROUPINGS.contains(&"NParen"),
         "`NParen` is no longer classified as an inert grouping — the identity-body classifier \
          stopped matching it"
     );
@@ -227,11 +227,11 @@ fn every_class_members_surface_is_a_display_parse_fixpoint() {
 
 /// The same stability, for the INERT GROUPINGS — which are deliberately NOT collapsed (see the
 /// module header), so their brackets must be re-elected by the parser from the surface `Display`
-/// emits. Measured for RhoCalc's `NParen`: `(@Nil)` ⇒ `(@Nil)`.
-#[cfg(feature = "rhocalc")]
+/// emits. Measured for Rholang's `NParen`: `(@Nil)` ⇒ `(@Nil)`.
+#[cfg(feature = "rholang")]
 #[test]
 fn an_inert_groupings_brackets_are_re_elected_from_its_own_surface() {
-    use mettail_languages::rhocalc::Name;
+    use mettail_languages::rholang::Name;
     // `parse` and `parse_via_wpda` carry different error types, so each seam renders its own.
     fn show(name: &str, surface: &str, structured: bool) -> String {
         let r = if structured {

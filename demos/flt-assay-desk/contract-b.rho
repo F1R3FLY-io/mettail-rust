@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════
 //  CONTRACT B — a second foreign-language term, driven to a DIFFERENT normal form.
 //
-//  Run me with the RhoCalc interpreter:
+//  Run me with the Rholang interpreter:
 //    target/debug/rholang demos/flt-assay-desk/contract-b.rho
 //
 //  THE TERM — the mirror combinator discards its FIRST argument

@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════
 //  THE ASSAY DESK — three foreign results rest on one channel; a `where` guard picks ONE.
 //
-//  Run me with the RhoCalc interpreter:
+//  Run me with the Rholang interpreter:
 //    target/debug/rholang demos/flt-assay-desk/desk-accepts-constant.rho
 //
 //  WHAT RESTS ON @"assay"
@@ -20,7 +20,7 @@
 //  Two filters, stacked, and they do different jobs:
 //    * the PATTERN `@lambda`${r}`` is itself a Foreign Language Term carrying one typed hole. It
 //      matches a reflected guest term by SHAPE and binds the whole λ-term to `r`. This is the
-//      EXTRACTION: the foreign result is now a value the RhoCalc program holds.
+//      EXTRACTION: the foreign result is now a value the Rholang program holds.
 //    * the `where` clause is the FILTER: it re-quotes the captured term and decides it against
 //      the constant combinator K. The decision is made by the substrate, not by the pattern.
 //

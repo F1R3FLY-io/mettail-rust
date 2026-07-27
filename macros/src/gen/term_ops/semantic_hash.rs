@@ -1453,7 +1453,7 @@ mod residual_11_1_send_fold_tests {
     //! emit reconstruction arms for EXACTLY the channel-rewrap SUGARS
     //! (`…Short2Plus`), pairing each to its bare-channel CANONICAL (`…2Plus`),
     //! and NONE for the canonicals / `*Quoted*` / `*Nil*` variants. Verified on
-    //! both a rhocalc-shaped fixture AND a synthetic non-rhocalc grammar (the
+    //! both a rholang-shaped fixture AND a synthetic non-rholang grammar (the
     //! generality-by-structure guarantee).
     use super::*;
     use mettail_ast::grammar::rule_fixture;
@@ -1488,8 +1488,8 @@ mod residual_11_1_send_fold_tests {
         }
     }
 
-    /// The seven rhocalc send-family rules (verbatim bodies).
-    fn rhocalc_send_terms() -> Vec<GrammarRule> {
+    /// The seven rholang send-family rules (verbatim bodies).
+    fn rholang_send_terms() -> Vec<GrammarRule> {
         vec![
             // Canonicals (bare-param channel `n.clone()`).
             fold_rule("POutput2Plus", "Proc", vec![sp("n", "Name"), sp("a", "Proc"), vp("bs", "Proc")],
@@ -1497,14 +1497,14 @@ mod residual_11_1_send_fold_tests {
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::POutput(std::sync::Arc::new(n.clone()),
-                        std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)))
+                        std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
                 }}),
             fold_rule("PPersistOutput2Plus", "Proc", vec![sp("n", "Name"), sp("a", "Proc"), vp("bs", "Proc")],
                 syn::parse_quote! {{
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::PPersistOutput(std::sync::Arc::new(n.clone()),
-                        std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)))
+                        std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
                 }}),
             // Excluded: `*Nil*` (channel bottoms at Proc::PZero).
             fold_rule("POutputNil2Plus", "Proc", vec![sp("a", "Proc"), vp("bs", "Proc")],
@@ -1512,14 +1512,14 @@ mod residual_11_1_send_fold_tests {
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::POutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::PZero))),
-                        std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)))
+                        std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
                 }}),
             fold_rule("PPersistOutputNil2Plus", "Proc", vec![sp("a", "Proc"), vp("bs", "Proc")],
                 syn::parse_quote! {{
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::PPersistOutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(Proc::PZero))),
-                        std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)))
+                        std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
                 }}),
             // Excluded: `*Quoted*` (channel routes through the npt free fn).
             fold_rule("POutputQuoted2Plus", "Proc", vec![sp("n", "Name"), sp("a", "Proc"), vp("bs", "Proc")],
@@ -1527,8 +1527,8 @@ mod residual_11_1_send_fold_tests {
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::POutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(
-                        crate::rhocalc::receive::name_pattern_to_proc(&n)))),
-                        std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)))
+                        crate::rholang::receive::name_pattern_to_proc(&n)))),
+                        std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
                 }}),
             // Sugars (channel-rewrap `NQuote(p)`) — the ONLY two folded.
             fold_rule("POutputShort2Plus", "Proc", vec![sp("p", "Proc"), sp("a", "Proc"), vp("bs", "Proc")],
@@ -1536,14 +1536,14 @@ mod residual_11_1_send_fold_tests {
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::POutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(p.clone()))),
-                        std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)))
+                        std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
                 }}),
             fold_rule("PPersistOutputShort2Plus", "Proc", vec![sp("p", "Proc"), sp("a", "Proc"), vp("bs", "Proc")],
                 syn::parse_quote! {{
                     let mut items = Vec::with_capacity(1 + bs.len());
                     items.push(a.clone()); items.extend(bs.clone());
                     Proc::PPersistOutput(std::sync::Arc::new(Name::NQuote(std::sync::Arc::new(p.clone()))),
-                        std::sync::Arc::new(crate::rhocalc::runtime::mk_proc_list(items)))
+                        std::sync::Arc::new(crate::rholang::runtime::mk_proc_list(items)))
                 }}),
         ]
     }
@@ -1556,7 +1556,7 @@ mod residual_11_1_send_fold_tests {
 
     #[test]
     fn a2_send_map_fires_for_exactly_the_two_short_sugars() {
-        let language = lang_with(rhocalc_send_terms());
+        let language = lang_with(rholang_send_terms());
         let map = build_fold_alias_send_map(&language);
 
         let mut keys: Vec<String> = map.keys().cloned().collect();
@@ -1581,7 +1581,7 @@ mod residual_11_1_send_fold_tests {
 
     #[test]
     fn a2_sugars_pair_to_the_matching_scalar_target_canonical() {
-        let language = lang_with(rhocalc_send_terms());
+        let language = lang_with(rholang_send_terms());
         let map = build_fold_alias_send_map(&language);
         assert_eq!(
             map["POutputShort2Plus"].poly_canon_label.to_string(),
@@ -1597,7 +1597,7 @@ mod residual_11_1_send_fold_tests {
 
     #[test]
     fn a2_generated_arm_reconstructs_canonical_2plus_with_nquote_channel() {
-        let language = lang_with(rhocalc_send_terms());
+        let language = lang_with(rholang_send_terms());
         let map = build_fold_alias_send_map(&language);
         let arm = &map["POutputShort2Plus"];
         let ts = generate_fold_alias_send_arm(&id("Proc"), &id("POutputShort2Plus"), arm).to_string();
@@ -1612,7 +1612,7 @@ mod residual_11_1_send_fold_tests {
         assert!(!ts.contains("mk_proc_list"), "operands must NOT be scalar list-packed: {ts}");
     }
 
-    /// ★ Generality (macros level): a SYNTHETIC non-rhocalc grammar with the same
+    /// ★ Generality (macros level): a SYNTHETIC non-rholang grammar with the same
     /// send shape yields the fold arm too, pairing the sugar to its own bare
     /// canonical — proving the pass keys on structure, not names.
     #[test]

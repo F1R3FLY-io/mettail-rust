@@ -17,7 +17,7 @@ use mettail_macros::language;
 // Stage AC-U3 demonstration language: the linear with-rest HashBag AC base rewrite
 // `PPar{x, ...rest} ~> Wrap(x)` over nullary `A`/`B`/`C`. This is the ONLY bundled
 // language shape that exercises the in-Rho AC firing path (AC-U0..U3) end-to-end:
-// SwapDemo has no AC rule, and RhoCalc's `PPar` rules are contextual (`ParCong`) or
+// SwapDemo has no AC rule, and Rholang's `PPar` rules are contextual (`ParCong`) or
 // equations (`Extrude`) rather than a base rewrite over a with-rest HashBag.
 //
 // Promoted to a generated `language!` (exactly like `swapdemo`) so the full

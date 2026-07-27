@@ -2,7 +2,7 @@
 #
 # Rationale (2026-05-29, "drive suite green" workstream): the full-workspace run
 # had NO slow-timeout, so two binder-heavy proptest campaigns
-# (gen_rhocalc_prop::sim_rhocalc_proptest_campaign,
+# (gen_rholang_prop::sim_rholang_proptest_campaign,
 #  gen_ambient_prop::proc_display_parse_roundtrip) ran unbounded >39 min and
 # stalled the whole run. These profiles BOUND hangs (a terminated test FAILS
 # loudly, surfacing the root cause) WITHOUT weakening coverage. This is a

@@ -130,7 +130,7 @@ pub enum AtomicShape {
     /// GAP-3 (2026-06-28): 0-operand MULTI-literal keyword-PREFIX rule — the
     /// dual of B-1's LHS-anchored `MixfixLiteralRun` nullary path. Shape:
     /// empty term-context, `syntax_pattern` is two-or-more CONSECUTIVE
-    /// `Literal`s with NO `Param`/`Op` (e.g. RhoCalc's
+    /// `Literal`s with NO `Param`/`Op` (e.g. Rholang's
     /// `MapEmpty . |- "Map" "(" ")" : Proc`, `PathmapEmpty . |- "Pathmap" "("
     /// ")" : Proc`, `NQuoteNil . |- "@" "Nil" : Name`). The FIRST literal is
     /// the dispatch trigger; the REST are consumed (membership-checked) by the
@@ -161,7 +161,7 @@ pub enum AtomicShape {
         wrapper_variant: Ident,
     },
     /// Stage 1.1: cross-category projection (e.g., Calculator's
-    /// `ProcInt . i:Int |- i : Proc`, RhoCalc's `CastBigRat . r:BigRat |- r : Proc`).
+    /// `ProcInt . i:Int |- i : Proc`, Rholang's `CastBigRat . r:BigRat |- r : Proc`).
     /// The rule's source category differs from the result category. The
     /// engine pushes a CategoryEntry sub-frame for the source category;
     /// after sub-parse, the action wraps the result in
@@ -218,7 +218,7 @@ pub enum AtomicShape {
 /// phases handle the rest.
 ///
 /// Handles BOTH old-style rules (populated `items`) and new-style judgement
-/// rules (`term_context` + `syntax_pattern`), since Calculator / RhoCalc
+/// rules (`term_context` + `syntax_pattern`), since Calculator / Rholang
 /// use exclusively judgement-style.
 pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShape {
     // Judgement-style rules: check `term_context` + `syntax_pattern` to
@@ -939,7 +939,7 @@ fn grouping_source_infix_hop(
 /// (the cast fires transparently), so a grouped `(S)` grows into `R` directly —
 /// this edge is included only at the FIRST closure level and NOT compounded
 /// transitively, which would otherwise pull the entire cast lattice into every
-/// group-open (e.g. rhocalc `Proc` has `CastX : Proc` for ~15 numeric/collection
+/// group-open (e.g. rholang `Proc` has `CastX : Proc` for ~15 numeric/collection
 /// `X`, and chaining their projections back through each other's casts explodes
 /// the group-open fan-out → deep-paren fork blow-up). The infix hop IS still
 /// followed transitively FROM these first-level projection sources, which is
@@ -989,7 +989,7 @@ fn grouping_source_projection_hop(
 /// through further projections. Rationale: a projection `X : R` means a bare `X`
 /// already IS an `R`, so a grouped `(X)` grows into `R` directly — chaining
 /// projection→projection pulls the ENTIRE cast lattice into every group-open
-/// (rhocalc `Proc` has `CastX : Proc` for ~15 `X`; compounding blew Proc's `(`
+/// (rholang `Proc` has `CastX : Proc` for ~15 `X`; compounding blew Proc's `(`
 /// group-open from 7 to 18 branches → 18^depth deep-paren fork explosion, timing
 /// out the adversarial `proc_display` proptest). Infix expansion FROM the
 /// first-level projection sources is still followed, which is exactly what M4
@@ -1014,7 +1014,7 @@ fn grouping_source_categories_for_result(
     // `R →proj→ P →infix→ Q` needs `Q` in R's group-open) is applied ONLY when
     // `R` has FEW projection sources — a proxy for "narrow numeric-tower
     // category" (calculator `UInt32`/`Int`/…: 1-3 projection sources) versus a
-    // "hub" category with a large cast lattice (rhocalc `Proc`: ~15 `CastX`
+    // "hub" category with a large cast lattice (rholang `Proc`: ~15 `CastX`
     // sources, whose infix expansion pulls in the whole comparison-operand set
     // and blows the `(` group-open fan-out to 18 → deep-paren fork explosion,
     // timing out `proc_display`). Threshold 4: keeps M4 (UInt32 has 1 projection
@@ -1133,7 +1133,7 @@ pub fn emit_paren_dispatch_arms(
         // needed by transparent projections and category-changing infix.
         //
         // Quote-of-numeral PInputs fix (2026-06-20): when this category owns a
-        // `(`-triggered BINDER rule (e.g. RhoCalc's `PInputs . ns:Vec(Name) …
+        // `(`-triggered BINDER rule (e.g. Rholang's `PInputs . ns:Vec(Name) …
         // |- "(" … ")" "." "{" p "}"`), the `(` is structurally claimed by the
         // binder, not by a bare grouped sub-expression. The extra
         // SOURCE-category grouping speculations (added for the pure-grouping
@@ -3110,7 +3110,7 @@ fn literal_patterned_pattern_and_guard_for_kind(
             // No bare `TokenKind::Integer` arm for Rational. Stage 4 fix
             // (2026-04-27): the default eval body for Rational
             // (`parse_rational_lit(text)`) requires an `r` suffix, so bare
-            // integers like `"0"` fail. Allowing this arm caused RhoCalc's
+            // integers like `"0"` fail. Allowing this arm caused Rholang's
             // Proc dispatch to route bare integers to `CastBigRat` (the
             // first declared cross-cat projection with Integer in its
             // FIRST set), shadowing `CastInt`/`CastUInt32`. The lexer
@@ -3318,7 +3318,7 @@ mod tests {
     #[test]
     fn judgement_style_nullary_multi_literal_is_nullary_literal_run() {
         // GAP-3 (2026-06-28): an empty-term-context rule whose syntax_pattern
-        // is two-or-more consecutive literals (e.g. RhoCalc's
+        // is two-or-more consecutive literals (e.g. Rholang's
         // `MapEmpty . |- "Map" "(" ")"`) classifies as NullaryLiteralRun —
         // the FIRST literal is the trigger, the REST are the trailing literals.
         let lang = empty_lang();

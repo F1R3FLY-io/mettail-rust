@@ -334,7 +334,7 @@ The module includes 7 unit tests in `fusion.rs::tests`:
 | `test_congruence_rules_excluded_from_candidates` | Congruence rewrites excluded            |
 
 Additional integration coverage comes from the full language compilation tests
-(RhoCalc, Lambda, Calculator, etc.) which exercise the fused rule generation
+(Rholang, Lambda, Calculator, etc.) which exercise the fused rule generation
 through actual Ascent compilation.
 
 ## 9. Source References

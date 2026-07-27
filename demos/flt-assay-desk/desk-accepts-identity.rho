@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════
 //  THE ASSAY DESK, SAME SET, DIFFERENT PREDICATE — the guard is what chooses.
 //
-//  Run me with the RhoCalc interpreter:
+//  Run me with the Rholang interpreter:
 //    target/debug/rholang demos/flt-assay-desk/desk-accepts-identity.rho
 //
 //  This file is `desk-accepts-constant.rho` with ONE token changed: the term on the right of

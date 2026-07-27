@@ -13,7 +13,7 @@
 //! both code paths and asserts their rendered `Display` strings are equal,
 //! independent of which path `analyze_from_bundle` dispatches to.
 //!
-//! The three fixtures (calculator, rhocalc, ambient) reproduce the real
+//! The three fixtures (calculator, rholang, ambient) reproduce the real
 //! grammars' category native-types and a representative rule set that exercises
 //! every `guard_satisfiability` branch:
 //!   - terminal-led rules (e.g. `"error"`, `"0"`, `a "+" b`),
@@ -160,12 +160,12 @@ fn calculator_fixture() -> (Vec<Rule>, Vec<CategoryInfo>) {
     (all_syntax, categories)
 }
 
-/// RhoCalc: `Proc`/`Name` process categories + the scalar tower (`i64` Int),
+/// Rholang: `Proc`/`Name` process categories + the scalar tower (`i64` Int),
 /// plus collections. Representative rules cover the constant `PZero` ("{}"),
 /// the mixfix `POutput` (NonTerminal-led: `n "!" "(" q ")"`), the binder-led
 /// `PNew`, the `Err` literal, scalar casts (NonTerminal-led), and the
 /// collection-led `PPar`.
-fn rhocalc_fixture() -> (Vec<Rule>, Vec<CategoryInfo>) {
+fn rholang_fixture() -> (Vec<Rule>, Vec<CategoryInfo>) {
     let categories = vec![
         struct_cat("Proc", None, true, true),
         struct_cat("Name", None, false, true),
@@ -336,9 +336,9 @@ fn calculator_carrier_is_byte_identical() {
 }
 
 #[test]
-fn rhocalc_carrier_is_byte_identical() {
-    let (all_syntax, categories) = rhocalc_fixture();
-    assert_byte_identical("rhocalc", &all_syntax, &categories);
+fn rholang_carrier_is_byte_identical() {
+    let (all_syntax, categories) = rholang_fixture();
+    assert_byte_identical("rholang", &all_syntax, &categories);
 }
 
 #[test]
@@ -364,15 +364,15 @@ fn fixtures_exercise_overlap_and_subsumption() {
         "calculator fixture should produce overlapping guards (shared `int` leading terminal)"
     );
 
-    // RhoCalc: IntBinProc / UIntBinProc are distinct leading terminals, but the
+    // Rholang: IntBinProc / UIntBinProc are distinct leading terminals, but the
     // many Proc casts + PZero/Err give a rich satisfiability vector. Assert the
     // analysis is non-trivial.
-    let (rs, rc) = rhocalc_fixture();
+    let (rs, rc) = rholang_fixture();
     let rho = analyze_from_bundle_string_set(&rs, &rc);
-    assert!(rho.guard_satisfiability.len() >= 10, "rhocalc fixture too small");
+    assert!(rho.guard_satisfiability.len() >= 10, "rholang fixture too small");
     assert!(
         rho.guard_satisfiability.iter().all(|(_, sat)| *sat),
-        "every rhocalc fixture rule is satisfiable by construction"
+        "every rholang fixture rule is satisfiable by construction"
     );
 
     // Ambient: every rule satisfiable; no scalar categories at all.

@@ -1,7 +1,7 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════
 //  CONTRACT C — a third foreign-language term. One β step; it is the one the desk will accept.
 //
-//  Run me with the RhoCalc interpreter:
+//  Run me with the Rholang interpreter:
 //    target/debug/rholang demos/flt-assay-desk/contract-c.rho
 //
 //  THE TERM — feed the constant combinator to the identity

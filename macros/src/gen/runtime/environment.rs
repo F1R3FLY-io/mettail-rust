@@ -19,7 +19,7 @@
 //! pub struct NameEnv(pub IndexMap<String, Name>);
 //!
 //! // Combined environment
-//! pub struct RhoCalcEnv {
+//! pub struct RholangEnv {
 //!     pub proc: ProcEnv,
 //!     pub name: NameEnv,
 //!     pub comments: HashMap<String, String>,  // Optional comments per binding
@@ -28,9 +28,9 @@
 //!
 //! ## Usage
 //!
-// ignore-justification: calls the GENERATED env API (`RhoCalcEnv::new`, `ProcEnv::set`, `Term::substitute_env`) — an API surface, not a type, so nothing in this crate can bind those names and a stand-in would only prove that the stand-in compiles. The generated *shapes* those calls target are compiled in the block above.
+// ignore-justification: calls the GENERATED env API (`RholangEnv::new`, `ProcEnv::set`, `Term::substitute_env`) — an API surface, not a type, so nothing in this crate can bind those names and a stand-in would only prove that the stand-in compiles. The generated *shapes* those calls target are compiled in the block above.
 //! ```ignore
-//! let mut env = RhoCalcEnv::new();
+//! let mut env = RholangEnv::new();
 //! env.proc.set("p".to_string(), some_proc);
 //! env.comments.insert("p".to_string(), "My comment".to_string());
 //! let substituted = term.substitute_env(&env);

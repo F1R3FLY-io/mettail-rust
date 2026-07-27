@@ -18,7 +18,7 @@ use crate::language::RuntimeBackend;
 ///
 /// Implemented by generated `{LanguageName}Metadata` structs.
 pub trait LanguageMetadata: 'static + Send + Sync {
-    /// The language name (e.g., "RhoCalc")
+    /// The language name (e.g., "Rholang")
     fn name(&self) -> &'static str;
 
     /// Stable compiler-facing fingerprint of the macro-expanded `LanguageDef`.

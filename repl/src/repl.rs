@@ -2485,7 +2485,7 @@ impl Repl {
         // language's dedicated step-report API for the faithful one-step REWRITE graph (Increment 4): a
         // pure-fold / β / AC term (Calculator, Lambda, Ambient) reduces structurally in Dovetail, so
         // `dovetail_step_graph` enumerates real branching successors (`1 + 2 * 3 → 1 + 6 → 7`). A
-        // genuine COMM term (RhoCalc `for(x<-@1){*x} | @1!(42)`) has NO Dovetail structural successor
+        // genuine COMM term (Rholang `for(x<-@1){*x} | @1!(42)`) has NO Dovetail structural successor
         // (COMM is Rho-machine work), so its rewrite graph is a single normal-form node — for those we
         // refine to the live reactive COMM reduction trace (Layer 2), one operational schedule on the
         // real Rho machine. Bail only when neither is available.

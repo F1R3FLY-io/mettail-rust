@@ -256,10 +256,10 @@ fn calculator_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
     (all_syntax, categories)
 }
 
-/// RhoCalc: `Proc`/`Name` process categories + scalar `Int`, with the constant
+/// Rholang: `Proc`/`Name` process categories + scalar `Int`, with the constant
 /// `PZero`, the mixfix `POutput`, the binder-led `PNew`, scalar casts, and the
 /// collection-led `PPar`. All categories inhabited.
-fn rhocalc_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
+fn rholang_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
     let categories = vec![
         struct_cat("Proc", None, true, true),
         struct_cat("Name", None, false, true),
@@ -364,9 +364,9 @@ fn calculator_agrees() {
 }
 
 #[test]
-fn rhocalc_agrees() {
-    let (all_syntax, categories) = rhocalc_fixture();
-    assert_agrees("rhocalc", &all_syntax, &categories);
+fn rholang_agrees() {
+    let (all_syntax, categories) = rholang_fixture();
+    assert_agrees("rholang", &all_syntax, &categories);
 }
 
 #[test]

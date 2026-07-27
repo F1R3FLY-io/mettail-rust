@@ -134,7 +134,7 @@ jobs:
       #
       # `rholang-{codegen,adapter,runtime}` are covered by `rho-backend`'s plain
       # `cargo test -p …`, which runs doctests. `languages` is NOT covered by that
-      # job's `--test rhocalc_tests` step: `--test X` selects only that one target
+      # job's `--test rholang_tests` step: `--test X` selects only that one target
       # and excludes doctests.
       - name: Run doctests
         run: >
@@ -350,11 +350,11 @@ jobs:
       - name: Rho runtime gate
         run: cargo test -j1 -p rholang-runtime
 
-      - name: rhocalc parser/runtime corpus gate
-        run: cargo test -j1 -p languages --no-default-features --features rhocalc --test rhocalc_tests
+      - name: rholang parser/runtime corpus gate
+        run: cargo test -j1 -p languages --no-default-features --features rholang --test rholang_tests
 
       # The three gates above run doctests as a side effect of plain `cargo test -p …`.
-      # The step above them does NOT: `--test rhocalc_tests` selects exactly that one
+      # The step above them does NOT: `--test rholang_tests` selects exactly that one
       # target, so `languages`' doctests were run by no job on x86 — only by the ARM64
       # `--all-features --workspace` job.
       #

@@ -208,7 +208,7 @@ fn format_generated_rust_source(content: &str) -> String {
 /// which is superficially the shape that blew up. It is safe here for a reason
 /// that must stay true: only test-hosted languages take it, and their suites are
 /// small (the largest, LedTest, is ~35 KB). The production languages whose suites
-/// are large — Calculator (~324 KB) and RhoCalc (~360 KB) — are library-hosted
+/// are large — Calculator (~324 KB) and Rholang (~360 KB) — are library-hosted
 /// and keep the split path untouched. Merging the paths, or moving a large
 /// language to `hosted_in`, re-arms the 96 GB failure.
 pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) -> TokenStream {

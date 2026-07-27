@@ -15,7 +15,7 @@
 //! `Proc::parse` (= `parse_structured`) starts from `parse_via_wpda(input)`, which is correct, and
 //! then — whenever `display(parsed) != input` — REPLACES the returned representative with the
 //! reparse of its own DISPLAY, accepting it as soon as the display is a fixpoint. Display
-//! stability is not term preservation, and RhoCalc's display is not term-preserving for a
+//! stability is not term preservation, and Rholang's display is not term-preserving for a
 //! projection operand of an arithmetic / relational / boolean operator: such an operand is
 //! rendered through a PROJECTION SURFACE (`macros/src/gen/syntax/display.rs`,
 //! `find_projection_surface_wrapper`), which for a `Proc` operand elects
@@ -55,7 +55,7 @@
 //! known firing from a known non-firing before any other row is trusted.
 #![cfg(feature = "rholang-runtime")]
 
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_runtime::{
     lower_rholang_proc_with_options, run_normalized_par_for_oracle_and_read_runtime_values,
     LoweringOptions,
@@ -297,7 +297,7 @@ async fn operators_in_send_position_evaluate_on_the_reducer() {
 //      so a scalar ground pattern must match it VERBATIM — and must NOT match a one-element list.
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 
-/// Every scalar ground pattern shape the RhoCalc grammar admits. Before the fix ONLY the two
+/// Every scalar ground pattern shape the Rholang grammar admits. Before the fix ONLY the two
 /// exempted shapes (`CastList`, `PVar`) matched a scalar send; every other shape here silently
 /// never committed.
 #[tokio::test]
@@ -363,7 +363,7 @@ async fn a_scalar_ground_pattern_does_not_match_a_listed_send() {
 /// `lower_int_value`: by lowering time `-7`, `- 7` and `-(7)` are the same term, so folding there
 /// would have broken the spellings that already conformed.
 ///
-/// THE REPAIR, and why THIS row closed while some rows in the artifact matrix have not. RhoCalc's
+/// THE REPAIR, and why THIS row closed while some rows in the artifact matrix have not. Rholang's
 /// `Int` and `BigRat` token patterns gained the leading `-?` that `BigInt`/`Float`/`Fixed` already
 /// carried, so a sign-abutted numeral now has its conforming one-token reading in the lattice, and
 /// the parser elects it under `LexicographicWeight`'s `open_len` leg (maximal munch). What was NOT
@@ -386,8 +386,8 @@ async fn negative_literal_patterns_match_like_consensus_rholang() {
     assert!(
         fired(&source).await,
         "`for(@-7 <- c)` must match `c!(-7)` — a sign-abutted numeral is ONE signed literal token \
-         on both sides, exactly as in consensus Rholang. If this regressed, the `-?` on RhoCalc's \
-         `Int` literal pattern (`languages/src/rhocalc.rs`) is gone, or something now elects the \
+         on both sides, exactly as in consensus Rholang. If this regressed, the `-?` on Rholang's \
+         `Int` literal pattern (`languages/src/rholang.rs`) is gone, or something now elects the \
          `NegProc` reading over the folded one.\n{source}"
     );
 

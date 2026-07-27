@@ -2,12 +2,12 @@
 //!
 //! # Why this suite exists
 //!
-//! RhoCalc guards have TWO evaluators, and the standing obligation on that design
+//! Rholang guards have TWO evaluators, and the standing obligation on that design
 //! is that they never disagree:
 //!
 //! | | Where | What decides a `matches` |
 //! | --- | --- | --- |
-//! | **host** | `languages/src/rhocalc/receive.rs::eval_guard_bool` | `formula::host_matches_verdict` → the generated first-order `Proc::match_pattern` |
+//! | **host** | `languages/src/rholang/receive.rs::eval_guard_bool` | `formula::host_matches_verdict` → the generated first-order `Proc::match_pattern` |
 //! | **machine** | f1r3node `guard_passes` → `rho_pure_eval::eval_with` | `SpatialMatcherOracle` → the reducer's own `SpatialMatcherContext` |
 //!
 //! A divergence would be invisible in ordinary use — the host path only runs
@@ -46,10 +46,10 @@
 
 #![cfg(feature = "rholang-runtime")]
 
-use mettail_languages::rhocalc::formula::{
+use mettail_languages::rholang::formula::{
     classify, host_matches_verdict, is_statically_false, is_statically_true, FormulaShape,
 };
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_runtime::{
     lower_rholang_proc, run_normalized_par_for_oracle_and_read_par_channels,
 };
@@ -70,7 +70,7 @@ async fn machine_verdict(target: &str, formula: &str) -> bool {
     // a BOOLEAN disjunction of a match and a process, not the formula-level
     // disjunction the host is asked about. Parenthesizing makes both sides of the
     // differential see the SAME formula, which is the whole point of the suite.
-    // (RhoCalc parentheses are transparent — there is no `PParen` node — so this
+    // (Rholang parentheses are transparent — there is no `PParen` node — so this
     // changes grouping only.)
     let source = format!(
         r#"{{ for(@x <- @"c" where x matches ({formula})) {{ @"OUT"!("fired") }} | @"c"!({target}) }}"#

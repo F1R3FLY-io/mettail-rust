@@ -71,7 +71,7 @@
 //!
 //! ## The front-end leg is RETIRED from the decision
 //!
-//! `host_verdict` (for RhoCalc, `mettail_languages::rhocalc::receive::eval_guard_bool`) used to
+//! `host_verdict` (for Rholang, `mettail_languages::rholang::receive::eval_guard_bool`) used to
 //! be a *gate*. It is now purely advisory: consumed only by
 //! `report_front_end_divergence`, which turns a drift between two readings of the same surface
 //! guard language into a loud `WARN` without letting it change any outcome.
@@ -277,7 +277,7 @@ pub const GUARD_DISCHARGE_TARGET: &str = "mettail.lowering.guard";
 /// |---|---|---|
 /// | **substrate** | [`crate::guard_par_substrate::substrate_verdict`] — the guard encoded into `GuardFormula` and decided by Presburger automata / the propositional algebra / a scalar sort's effective Boolean algebra | ★ **THE AUTHORITY.** A `None` here is `Residual`, whatever the other legs say. |
 /// | **machine** | [`machine_verdict`] — `rho_pure_eval` under the reducer's own `SpatialMatcherOracle` | the CONCRETE-SEMANTICS fence (see below) |
-/// | **front end** | `host_verdict`, e.g. `mettail_languages::rhocalc::receive::eval_guard_bool` | ADVISORY ONLY since THE WIRE — see below |
+/// | **front end** | `host_verdict`, e.g. `mettail_languages::rholang::receive::eval_guard_bool` | ADVISORY ONLY since THE WIRE — see below |
 ///
 /// # ⚠ Why the machine leg is still required — it is a SOUNDNESS fence, not hygiene
 ///

@@ -4,7 +4,7 @@
 //! cast results, nested keyword-prefix functions, operator chains, postfix +
 //! cross-category combinations, ternary edge cases, parenthesization stress,
 //! whitespace variations, negative tests, and language-specific edge cases for
-//! Lambda, Ambient, RhoCalc, Composition languages, and LedTest.
+//! Lambda, Ambient, Rholang, Composition languages, and LedTest.
 //!
 //! Run:
 //!   cargo test -p mettail-languages --test edge_case_tests
@@ -390,80 +390,80 @@ mod ambient_edge_cases {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// Category 16: RhoCalc Edge Cases (~16 tests)
+// Category 16: Rholang Edge Cases (~16 tests)
 // ════════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "rhocalc")]
-mod rhocalc_edge_cases {
-    use mettail_languages::rhocalc::Proc;
+#[cfg(feature = "rholang")]
+mod rholang_edge_cases {
+    use mettail_languages::rholang::Proc;
 
-    fn rhocalc_parses(input: &str) {
+    fn rholang_parses(input: &str) {
         mettail_runtime::clear_var_cache();
-        Proc::parse(input).unwrap_or_else(|e| panic!("rhocalc parse({:?}) failed: {}", input, e));
+        Proc::parse(input).unwrap_or_else(|e| panic!("rholang parse({:?}) failed: {}", input, e));
     }
 
     // 16A: Arithmetic & comparisons
 
     #[test]
     fn comparison_and() {
-        rhocalc_parses("{1 == 1 and 2 == 2}");
+        rholang_parses("{1 == 1 and 2 == 2}");
     }
 
     #[test]
     fn not_eq() {
-        rhocalc_parses("{not (1 == 2)}");
+        rholang_parses("{not (1 == 2)}");
     }
 
     #[test]
     fn chained_gt() {
-        rhocalc_parses("{3 > 2 and 2 > 1}");
+        rholang_parses("{3 > 2 and 2 > 1}");
     }
 
     // 16B: Type conversions with expressions
 
     #[test]
     fn int_of_float_add() {
-        // rhocalc requires explicit width: int(a:Proc, w:Int)
-        rhocalc_parses("{int(1.5 + 2.5, 32)}");
+        // rholang requires explicit width: int(a:Proc, w:Int)
+        rholang_parses("{int(1.5 + 2.5, 32)}");
     }
 
     #[test]
     fn bool_of_int_add() {
-        rhocalc_parses("{bool(1 + 0)}");
+        rholang_parses("{bool(1 + 0)}");
     }
 
     #[test]
     fn float_of_int_add() {
-        // rhocalc requires explicit width: float(a:Proc, w:Int)
-        rhocalc_parses("{float(1 + 2, 64)}");
+        // rholang requires explicit width: float(a:Proc, w:Int)
+        rholang_parses("{float(1 + 2, 64)}");
     }
 
     // 16C: Process calculus nesting
 
     #[test]
     fn comm_under_new() {
-        rhocalc_parses("new x in { {for(y <- x){*(y)} | x!(42)} }");
+        rholang_parses("new x in { {for(y <- x){*(y)} | x!(42)} }");
     }
 
     #[test]
     fn exec_of_quoted_arithmetic() {
-        rhocalc_parses("{*(@(1 + 2))}");
+        rholang_parses("{*(@(1 + 2))}");
     }
 
     #[test]
     fn nested_concat() {
-        rhocalc_parses(r#"{"hello".concat("wor".concat("ld"))}"#);
+        rholang_parses(r#"{"hello".concat("wor".concat("ld"))}"#);
     }
 
     #[test]
     fn len_of_concat() {
-        rhocalc_parses(r#"{"a".concat("bc").length()}"#);
+        rholang_parses(r#"{"a".concat("bc").length()}"#);
     }
 
     #[test]
     fn dollar_proc_regression() {
         // Existing dollar syntax — regression test
-        rhocalc_parses("$proc(^f.{f}, {})");
+        rholang_parses("$proc(^f.{f}, {})");
     }
 }
 

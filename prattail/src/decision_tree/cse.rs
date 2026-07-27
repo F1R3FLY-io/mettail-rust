@@ -146,7 +146,7 @@ pub fn detect_shared_nonterminal_prefixes(
 /// gate (~0.10) safely STOPS CD06 at diagnostic-only (recorded negative).
 ///
 /// VERDICT (2026-06-11, Phase 4B closed): the measured depth2 ratios EXCEEDED
-/// the screen (calculator 0.19, rhocalc 0.42, Ambient 0.57, GuardedRho 0), so
+/// the screen (calculator 0.19, rholang 0.42, Ambient 0.57, GuardedRho 0), so
 /// the group-level analysis decided instead: every depth-2 bucket's rules are
 /// already discriminated by disjoint LEADING literals (CD02 top-down
 /// dispatch), so a shared tail is parsed once whether or not it is factored —

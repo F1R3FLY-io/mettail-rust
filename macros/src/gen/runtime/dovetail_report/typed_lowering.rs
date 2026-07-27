@@ -10,7 +10,7 @@
 //!
 //! Field-level non-category leaves (builtin/predicate/optional-None and non-AC or field-level
 //! collections) lower to the spine sentinels `FieldOpaque`/`FieldNone`; they are spine leaves a
-//! fold never reads back, so reconstruction returns `None` for them. (RhoCalc's collection
+//! fold never reads back, so reconstruction returns `None` for them. (Rholang's collection
 //! folds read whole `List`/`Map`/`Bag` *category* values via the `Literal` arm, and AC soup via
 //! the `Collection`-variant arm — both reconstructable.)
 
@@ -65,7 +65,7 @@ fn ac_bag_lowering_typed(
 
 /// Typed analogue of [`super::field_child_expr`]: a category field recurses; everything else
 /// becomes a `FieldOpaque`/`FieldNone` spine sentinel (field-level collections included — see
-/// the module doc; RhoCalc's reconstructable collections are categories, not fields).
+/// the module doc; Rholang's reconstructable collections are categories, not fields).
 fn field_child_expr_typed(
     enum_id: &Ident,
     field_index: usize,

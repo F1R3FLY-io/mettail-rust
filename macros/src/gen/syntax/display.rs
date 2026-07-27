@@ -49,7 +49,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 // `Display` therefore wraps such a child in PraTTaIL's TRANSPARENT `( … )`
 // grouping. The full statement of the invariant, the proof that `(…)` is
 // term-preserving and that the wrapped form is a canonical fixed point, and the
-// two RhoCalc failures that motivated it live in
+// two Rholang failures that motivated it live in
 // `runtime/src/display_grouping.rs`.
 //
 // The helpers below derive each slot's fence set from the template alone — no
@@ -65,12 +65,12 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 //     at all, which covers the trailing operand.
 //
 //     ⚠ The exclusion keys on BP REGISTRATION, not on template position alone.
-//     A rule may start with a slot and still be fence-delimited: RhoCalc's
+//     A rule may start with a slot and still be fence-delimited: Rholang's
 //     `InputBindPolyadic` is `lhs "," lhss.*sep(",") "<-" n` with no binding
 //     power at all, and an `@`-quoted two-binder `new` in `lhs` rendered
 //     `@new a0 , a1 in{…},a , a<-@Nil`, which does not parse. Excluding every
 //     template-leading slot missed exactly that family
-//     (`gen_rhocalc_prop::inputbind_display_parse_roundtrip`, 2026-07-25).
+//     (`gen_rholang_prop::inputbind_display_parse_roundtrip`, 2026-07-25).
 //
 //   * VACUOUS BRACKET FENCES. The depth scan consumes `(`, `[`, `{` as depth
 //     increments and `)`, `]`, `}` as decrements, so a bracket character is
@@ -467,7 +467,7 @@ fn generate_display_task_enum(language: &LanguageDef) -> TokenStream {
 /// match is peeled into a `#[inline(never)] display_visit_<cat>` helper (the
 /// Tier-1 idiom `normalize_iterative` uses). Without it, `display_iterative`'s
 /// -O0 frame is the alloca SUM of every category's variant locals (measured
-/// 385,544 B for rhocalc). Helpers return `std::fmt::Result`, so the `?` writes
+/// 385,544 B for rholang). Helpers return `std::fmt::Result`, so the `?` writes
 /// inside the arms propagate through them and the dispatch arm re-propagates
 /// with `?` — control-flow-equivalent (the only generated escapes are `?` and
 /// arm-local `break value` loops; no `return`/`continue` cross an arm).
@@ -581,7 +581,7 @@ fn generate_display_visit_helper(
             //       `@((a)!(0))!()` has |R|_distinct = 2, and the two readings differ ONLY by
             //       the kept `NParen`. Transparency displayed both as `@(a!(0))!()`, so the
             //       distinct-reading count collapsed 2 → 1 and the budget boundary moved.
-            //   languages/tests/rhocalc_tests.rs::realize_mode_contract_pins
+            //   languages/tests/rholang_tests.rs::realize_mode_contract_pins
             //       ::prefix_bounded_alternatives_enumerate_display_distinct_family (2026-07-14,
             //       USER-APPROVED) requires `@Nil!(@(@Nil)!())` and `@Nil!(@@Nil!())` to remain
             //       a display-DISTINCT 2-reading family. Transparency made both `@Nil!(@@Nil!())`.
@@ -1083,7 +1083,7 @@ fn simple_projection_shape_for_display(rule: &GrammarRule) -> Option<(String, St
 // slot fuses with the surrounding operator and the bracketing is lost.
 //
 // THE DEFECT: the borrowed rule is a REAL CONSTRUCTOR, so the rendered text does not
-// denote the term. Measured on rhocalc, where the election lands on
+// denote the term. Measured on rholang, where the election lands on
 // `POutputNil . q:Proc |- "@" "Nil" "!" "(" q ")"` — a SEND:
 //
 //     Add(CastInt 1, CastInt 2)  ─display→  "@Nil!(1) + @Nil!(2)"
@@ -1223,7 +1223,7 @@ fn collection_param_element_category(rule: &GrammarRule, param: &str) -> Option<
 /// is also the element separator of a collection rule producing `C` over
 /// elements of category `C`.
 ///
-/// Example (rhocalc): `PParInfix . a:Proc, b:Proc |- a "|" b : Proc` mirrors
+/// Example (rholang): `PParInfix . a:Proc, b:Proc |- a "|" b : Proc` mirrors
 /// the parallel-composition collection
 /// `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc`.
 ///
@@ -1242,13 +1242,13 @@ fn collection_param_element_category(rule: &GrammarRule, param: &str) -> Option<
 /// `syntax_pattern` + `term_context` — NOT `rule.items`, whose terminal tokens
 /// are dropped and whose collection separator is a hard-coded `"|"` default
 /// (see `convert_term_context_to_items`).
-/// Compile-time gate for the `@`-prefix display disambiguation (the RhoCalc
+/// Compile-time gate for the `@`-prefix display disambiguation (the Rholang
 /// `@`-quote round-trip fix). Flip to `false` to restore the prior bare emission.
 const AT_QUOTE_DISAMBIGUATION: bool = true;
 
 /// Whether `param` is the **operand directly following a leading sigil terminal**
 /// of a sigil-prefix rule whose operand is parsed under a prefix binding-power cap
-/// (the RhoCalc `prefix(220)` on `NQuoteShort`, `POutputShort`,
+/// (the Rholang `prefix(220)` on `NQuoteShort`, `POutputShort`,
 /// `PPersistOutputShort`).
 ///
 /// Grammar shape (structural, per-rule):
@@ -1308,7 +1308,7 @@ fn is_sigil_prefix_operand(rule: &GrammarRule, param: &str) -> bool {
 /// is the GRAMMAR-DERIVED, per-rule structural core of
 /// [`generate_at_sigil_wrap_predicate`].
 ///
-/// A sigil prefix parses its operand under a very high binding-power cap (RhoCalc
+/// A sigil prefix parses its operand under a very high binding-power cap (Rholang
 /// `prefix(220)`), so the operand parser accepts ONLY a self-delimiting primary:
 /// an atom / variable, a cast rendered bare, a bracket-delimited literal
 /// (`{ … }`, `{| … |}`), a keyword-prefixed call (`int( … )`, `str( … )`), or a
@@ -1320,7 +1320,7 @@ fn is_sigil_prefix_operand(rule: &GrammarRule, param: &str) -> bool {
 /// > first syntax item is a `Param` (nonterminal operand) AND the rule carries at
 /// > least one `Literal` terminal
 ///
-/// captures exactly the wrap set, verified against parser-truth for every RhoCalc
+/// captures exactly the wrap set, verified against parser-truth for every Rholang
 /// `Proc` rule:
 ///   • binary infix     `a "|" b`, `a "+" b`, `a "==" b`, …  → WRAP
 ///   • postfix method   `m "." "size" "(" ")"`, …            → WRAP
@@ -1359,7 +1359,7 @@ fn rule_is_sigil_operand_wrap_shape(rule: &GrammarRule) -> bool {
 /// This is the missing companion to [`rule_is_sigil_operand_wrap_shape`]: that one
 /// wraps OPERAND-LEADING rules (infix/postfix/send); this one wraps the ONE class
 /// of param-only PROJECTION that also fails bare — a keyword-led collection cast.
-/// Bracket-opened collection casts (rhocalc `CastMap`→`{…}`, `CastList`→`[…]`,
+/// Bracket-opened collection casts (rholang `CastMap`→`{…}`, `CastList`→`[…]`,
 /// `CastBag`→`#{…}#`, `CastPathmap`→`{|…|}`) are self-delimiting primaries reachable
 /// at the cap, and their EMPTY forms additionally have direct `Proc` rules
 /// (`MapEmpty`/`PathmapEmpty`), so they do NOT need wrapping — the opener's leading
@@ -1550,7 +1550,7 @@ fn generate_at_sigil_wrap_predicate(language: &LanguageDef) -> TokenStream {
 ///
 /// * too EAGER — the bracket is kept where it is not needed, two constructors that render the
 ///   same surface disagree about it, and `Display ∘ Parse` sheds one surface per nesting layer
-///   (`gen_rhocalc_prop::inputbind_display_parse_roundtrip`, 2026-07-27);
+///   (`gen_rholang_prop::inputbind_display_parse_roundtrip`, 2026-07-27);
 /// * too LAX — the bracket is dropped where the re-parse needs it, and `Display` emits a surface
 ///   the grammar rejects outright (`@@a!(a,) * Nil`).
 ///
@@ -1587,7 +1587,7 @@ fn generate_sigil_operand_wrap_gate(
     let mut rows: Vec<TokenStream> = Vec::new();
     let mut gate_cats: BTreeSet<String> = BTreeSet::new();
     // The categories the FRAMES produce — the gate parses its composed surfaces at these, and
-    // they need not be synonymy categories (RhoCalc's `InputBind` is a frame result and has no
+    // they need not be synonymy categories (Rholang's `InputBind` is a frame result and has no
     // synonymy class), so the gate carries its own entry rather than borrowing one.
     let mut frame_cats: BTreeSet<String> = BTreeSet::new();
     for rule in &language.terms {
@@ -1751,7 +1751,7 @@ fn constructor_field_count(rule: &GrammarRule) -> usize {
 /// *"an operand-leading rule — one whose surface begins with a nonterminal operand and then
 /// continues with a terminal — loses its tail unless wrapped"* — and the implementation tested the
 /// TEMPLATE instead. Those differ exactly when the leading operand's own surface begins with a
-/// terminal, and RhoCalc reaches that case constantly, because a send's channel is usually an
+/// terminal, and Rholang reaches that case constantly, because a send's channel is usually an
 /// `@`-name:
 ///
 /// ```text
@@ -1764,7 +1764,7 @@ fn constructor_field_count(rule: &GrammarRule) -> usize {
 /// ⇒ wrap; `POutputNil2Plus` is `"@"`-leading ⇒ bare). An enclosing `@ pat` therefore rendered
 /// `@(@Nil!(Nil,))` from one and `@@Nil!(Nil,)` from the other, and re-parsing moved between them,
 /// so `Display ∘ Parse` shed one surface per layer. That is what
-/// `gen_rhocalc_prop::inputbind_display_parse_roundtrip` measured on
+/// `gen_rholang_prop::inputbind_display_parse_roundtrip` measured on
 /// `InputBindQuotedPersistent(POutput2Plus(NParen(NQuoteNil), …), NQuoteNil)`.
 ///
 /// ★ THE WRAP IS NOT LOAD-BEARING WHERE IT IS DROPPED — measured, not argued. For each candidate
@@ -3061,7 +3061,7 @@ fn generate_engine_syntax_pattern_arm_inner(
                 // `@Nil <- @Nil& where Nil`) that PARSES BACK to the same empty-list
                 // variant (the following token delimits the empty list), so dropping
                 // the separator there would BREAK the roundtrip (regressed
-                // `unit_rhocalc_inputbind_inputbindpolyadic` etc.). So we gate on the
+                // `unit_rholang_inputbind_inputbindpolyadic` etc.). So we gate on the
                 // op being the final element. Spec-derived from the syntax pattern
                 // (no per-rule hardcoding); preserves Display for every non-degenerate
                 // AST and for every self-consistent trailing-token rule.
@@ -3151,7 +3151,7 @@ fn generate_engine_syntax_pattern_arm_inner(
                                 // one position later. A two-binder `new` in `a`
                                 // then rendered `@@Nil!(new a0 , a1 in{Nil},)`,
                                 // which does not parse. Pinned by
-                                // `languages/tests/rhocalc_new_official_syntax.rs`.
+                                // `languages/tests/rholang_new_official_syntax.rs`.
                                 //
                                 // Emitted only where the child's inherited
                                 // threshold is statically 0 — the guard renders
@@ -4214,7 +4214,7 @@ fn generate_engine_auto_literal_arm(
         // ── Divergence I / Stage C (2026-07-25): MANDATORY LITERAL TAIL ──────────
         //
         // A `literals { }` pattern whose language forces every accepted word to end
-        // with a fixed literal — RhoCalc/Calculator's `BigInt` (`…n`) is the case in
+        // with a fixed literal — Rholang/Calculator's `BigInt` (`…n`) is the case in
         // point — must have that tail in its Display, or Display emits a word its own
         // category cannot read back.
         //
@@ -4238,7 +4238,7 @@ fn generate_engine_auto_literal_arm(
         // not a word of `(…)r(/(…)r)?` in either language that declares one:
         //
         //   Calculator  `3/4`   ⇒ IntToBigRat(DivInt 3 4)   ← INTEGER division, value 0
-        //   RhoCalc     `3/4r`  ⇒ parse error at BigRat
+        //   Rholang     `3/4r`  ⇒ parse error at BigRat
         //
         // The tail belongs to each COMPONENT of the composite, not to the rendering:
         // `3r/4r`. The separator is the one the pattern's own optional group declares,
@@ -4314,7 +4314,7 @@ fn generate_engine_auto_literal_arm(
 ///
 /// A tail is only usable if the pattern's language covers EVERY value the native
 /// type can render. A signed payload renders a leading `-`, so a pattern that does
-/// not admit one (RhoCalc/Calculator `BigRat`: `(…)r`, versus `BigInt`: `-?(…)r`)
+/// not admit one (Rholang/Calculator `BigRat`: `(…)r`, versus `BigInt`: `-?(…)r`)
 /// covers only the non-negative half. Appending its tail anyway would emit
 /// `-823154820r` — a MINUS followed by a rational literal, which those grammars
 /// have no unary-minus rule to read at the `BigRat` category. Refusing the tail in

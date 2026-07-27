@@ -17,7 +17,7 @@
 //!     different ink). No `^free`→`FreeVar` reflector is exposed, so nothing here is faked: the
 //!     patterns are assembled directly against the matcher contract.
 //!   * DEFERRED to after the primary demo (USER decision 1): the live-trace Beat 4b (StepSession +
-//!     the τ-classifier) and the secondary openers (the stock-RhoCalc strawman cameo; the
+//!     the τ-classifier) and the secondary openers (the stock-Rholang strawman cameo; the
 //!     Settlement Desk bridge). They are NOT stubbed or faked — see `deferred_after_primary`.
 
 use mettail_languages::lambda::LambdaLanguage;
@@ -678,7 +678,7 @@ fn deferred_after_primary() {
         "    on fltX; each subsequent step classifies [τ drive]/[τ subst]; terminal [Rho output]."
     );
     println!(
-        "  * Secondary openers — the stock-RhoCalc \"stringly-typed strawman\" cameo that Beat 3"
+        "  * Secondary openers — the stock-Rholang \"stringly-typed strawman\" cameo that Beat 3"
     );
     println!("    then kills, and the Guarded Settlement Desk Beat-2 bridge.");
     println!("  Deferred, NOT stubbed: they are separate demos, built once the primary beats are");

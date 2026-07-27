@@ -19,7 +19,7 @@ The coverage system provides:
 
 ### The Coverage Gap Problem
 
-Random testing excels at finding bugs in well-exercised code paths but may never explore rare rules. In a language like RhoCalc with 6 rewrite rules, random term generation might exercise `Comm` and `ParCong` frequently (because parallel composition is common) but never exercise `Exec` (because it requires the specific pattern `*(@ P)`).
+Random testing excels at finding bugs in well-exercised code paths but may never explore rare rules. In a language like Rholang with 6 rewrite rules, random term generation might exercise `Comm` and `ParCong` frequently (because parallel composition is common) but never exercise `Exec` (because it requires the specific pattern `*(@ P)`).
 
 Coverage-guided generation solves this by:
 1. Measuring which rules have fired at least once.

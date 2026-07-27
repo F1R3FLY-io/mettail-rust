@@ -1,13 +1,13 @@
-//! # RhoCalc ⟷ Rholang differential conformance suite (option C, Stage 0)
+//! # Rholang ⟷ Rholang differential conformance suite (option C, Stage 0)
 //!
 //! ## Why this file exists
 //!
-//! RhoCalc ("MeTTaIL *is* Rholang 1.4") currently carries **two** implementations of the same
+//! Rholang ("MeTTaIL *is* Rholang 1.4") currently carries **two** implementations of the same
 //! ground-data algebra:
 //!
 //! | # | Implementation | Where | Who runs it |
 //! |---|---|---|---|
-//! | ① | the `![{ … }]` **fold bodies** | `languages/src/rhocalc.rs` | MeTTaIL's Dovetail/e-graph (REPL, simulation) |
+//! | ① | the `![{ … }]` **fold bodies** | `languages/src/rholang.rs` | MeTTaIL's Dovetail/e-graph (REPL, simulation) |
 //! | ② | the **lowering** to `rhoapi::Par` | `rholang-runtime/src/rholang_ast.rs` | f1r3node's real reducer (`rholang/…/reduce.rs`) |
 //!
 //! Two implementations of one algebra can — and demonstrably **do** — diverge. This suite is the
@@ -18,12 +18,12 @@
 //!
 //! ## The invariant
 //!
-//! For a RhoCalc source expression `e`:
+//! For a Rholang source expression `e`:
 //!
 //! ```text
 //!                    ┌──────────────── ① fold ────────────────┐
 //!                    │  Dovetail e-graph saturation over the  │
-//!                    │  `![{…}]` native bodies                │──▶ RhoCalc surface display
+//!                    │  `![{…}]` native bodies                │──▶ Rholang surface display
 //!   parse(e) ──▶ Proc┤                                        │            ║
 //!    (ONE parse)     │                                        │            ║  must be EQUAL
 //!                    │  lower_rholang_proc ▸ rhoapi::Par      │            ║
@@ -37,18 +37,18 @@
 //!
 //! ### The comparison is on VALUES, not carriers
 //!
-//! Carrier binding (making RhoCalc's categories literally be `rhoapi` types) is **blocked** and
+//! Carrier binding (making Rholang's categories literally be `rhoapi` types) is **blocked** and
 //! deliberately not attempted: `models/src/rust/rhoapi_ext.rs:64-76` documents that `Ord` on `Par`
 //! includes `locally_free` while the hand-written `PartialEq` ignores it — *"the wart is
 //! load-bearing … do NOT 'fix' it"* — and MeTTaIL's collections and e-graph require `Ord` ⟷ `Eq`
 //! agreement. So the two sides keep different carriers, and conformance is asserted on the
-//! **observable value rendered in RhoCalc surface syntax**. [`render_as_rholang`] is that adapter;
+//! **observable value rendered in Rholang surface syntax**. [`render_as_rholang`] is that adapter;
 //! it is part of the specification, not a convenience.
 //!
 //! ### The reducer is NORMATIVE
 //!
 //! Where the two disagree, `rholang/src/rust/interpreter/reduce.rs` (the consensus semantics) is
-//! right and RhoCalc is wrong — "rholang IS rholang". Every divergence below is therefore recorded
+//! right and Rholang is wrong — "rholang IS rholang". Every divergence below is therefore recorded
 //! as a pair:
 //!
 //! * a **witness** test (runs, green) that pins TODAY's divergent behaviour with citations to both
@@ -62,7 +62,7 @@
 //!
 //! ## The divergence ledger (measured 2026-07-25, not hypothesized)
 //!
-//! | ID | Subject | RhoCalc fold ① | Rholang reducer ② | Closed by | Status |
+//! | ID | Subject | Rholang fold ① | Rholang reducer ② | Closed by | Status |
 //! |---|---|---|---|---|---|
 //! | **A** | `Int` overflow | the **`error`** term (was: silently **`0`**) | wraps (`i64::MIN`) | C1 | open (fabrication fixed) |
 //! | **A2** | `Int` division / remainder by zero | the **`error`** term (was: silently **`0`**) | `ReduceError("Division by zero")` | — | ★ CLOSED |
@@ -103,7 +103,7 @@
 //!
 //! ### The boundary of `K`: the GUARD lane, not the FORMULA lane
 //!
-//! RhoCalc spells `or` at two levels, and `K` belongs to exactly one of them. The guard-level
+//! Rholang spells `or` at two levels, and `K` belongs to exactly one of them. The guard-level
 //! `or` (`Proc::Or` ⟶ `EOr`, an EVALUATED expression) is `eval_guard_disposition`'s left-strict
 //! arm and is where `K` lives. The formula-level `or` (`FormulaShape::Disjunction` ⟶
 //! `ConnOrBody`, a MATCHED pattern) is `formula::kleene_or`, which is full Kleene — it already
@@ -118,8 +118,8 @@
 //!
 //! ### ⚠ The pins this suite replaced did not pin anything — now FIXED
 //!
-//! `languages/tests/rhocalc_tests.rs::assert_reduces_to` — the helper behind most of that file's
-//! RhoCalc semantics tests — reached its verdict through a disjunction ending in
+//! `languages/tests/rholang_tests.rs::assert_reduces_to` — the helper behind most of that file's
+//! Rholang semantics tests — reached its verdict through a disjunction ending in
 //! `bag_multiset_eq(nf, expected)`, and `bag_multiset_eq` returned
 //! `to_sorted_bag_elements(a) == to_sorted_bag_elements(b)`, i.e. `None == None` ⟹ **`true`**,
 //! whenever neither side was a `#{…}#` bag literal. Measured 2026-07-25:
@@ -146,7 +146,7 @@
 //!
 //! Reconciling those two is an **upstream f1r3node / consensus decision the USER has not made**,
 //! and it is out of scope for MeTTaIL. What this suite *does* assert is the part that is
-//! unambiguously MeTTaIL's problem: RhoCalc must not contribute a **third arithmetic answer**, and
+//! unambiguously MeTTaIL's problem: Rholang must not contribute a **third arithmetic answer**, and
 //! must eventually inherit whichever f1r3node evaluator its lowering routes to — process position
 //! ⟶ `reduce.rs`, guard position ⟶ `rho-pure-eval`. The 2026-07-25 fix removes the part that was
 //! indefensible on its own terms — a *checked* operation FABRICATING `Default::default()` and
@@ -159,14 +159,14 @@
 //! `catch_unwind` cannot contain a panic raised inside a Dovetail fold in this workspace: the
 //! unwinder crosses Cranelift-compiled frames (`[profile.dev] codegen-backend = "cranelift"`,
 //! workspace `Cargo.toml:79`) and dies with `fatal runtime error: failed to initiate panic,
-//! error 5, aborting`. That is why every fold-side failure disposition in RhoCalc is a VALUE
+//! error 5, aborting`. That is why every fold-side failure disposition in Rholang is a VALUE
 //! (`Proc::Err`) and never a panic, and why
 //! [`divergence_c_closed_nth_is_total_and_carrier_agnostic`] can assert an out-of-range `nth`
 //! in-process: if the panic were back, the test binary would die instead of failing.
 
 use std::sync::Arc;
 
-use mettail_languages::rhocalc::{Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner, Str};
+use mettail_languages::rholang::{Name, Proc, RholangLanguage, RholangTerm, RholangTermInner, Str};
 use mettail_rholang_runtime::fold_contract::fold_definitions_for;
 use mettail_rholang_runtime::rholang_ast::{clear_held_fold_sites, take_held_fold_sites};
 use mettail_rholang_runtime::run::run_installed_program_with_call_definitions_and_read_runtime_values;
@@ -178,8 +178,8 @@ use models::rhoapi::Par;
 // Harness
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-/// Dovetail saturation bounds — the same values the RhoCalc language test oracle uses
-/// (`languages/tests/rhocalc_tests.rs::oracle`), so a fold that converges there converges here.
+/// Dovetail saturation bounds — the same values the Rholang language test oracle uses
+/// (`languages/tests/rholang_tests.rs::oracle`), so a fold that converges there converges here.
 const DOVETAIL_ITERS: usize = 256;
 const DOVETAIL_NODES: usize = 4_000_000;
 
@@ -195,7 +195,7 @@ fn parse(source: &str) -> Proc {
         .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err}"))
 }
 
-/// ① the FOLD side: reduce `proc` to a Dovetail normal form and render it in RhoCalc surface
+/// ① the FOLD side: reduce `proc` to a Dovetail normal form and render it in Rholang surface
 /// syntax.
 ///
 /// Runs on a worker thread with a 32 MiB stack. The thread is not a panic *guard* (see the module
@@ -207,8 +207,8 @@ fn fold(proc: &Proc) -> Result<String, String> {
         .name("rholang-fold".into())
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
-            let term = RhoCalcTerm(RhoCalcTermInner::Proc(owned));
-            RhoCalcLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
+            let term = RholangTerm(RholangTermInner::Proc(owned));
+            RholangLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
                 .map(|normal_form| normal_form.to_string())
                 .map_err(|err| format!("dovetail: {err}"))
         })
@@ -221,8 +221,8 @@ fn fold(proc: &Proc) -> Result<String, String> {
 ///
 /// `dovetail_normal_term` alone folds native operators but does not fire a rendezvous, so a
 /// program shaped `@("c")!(v) | for (@x <- @("c")) { … }` needs `Proc::try_comm_once` interleaved
-/// with folding. This is exactly the `try_comm_anywhere` / `normalize_anywhere` loop the RhoCalc
-/// language test oracle runs (`languages/tests/rhocalc_tests.rs:331` `run_fixpoint`), reduced to
+/// with folding. This is exactly the `try_comm_anywhere` / `normalize_anywhere` loop the Rholang
+/// language test oracle runs (`languages/tests/rholang_tests.rs:331` `run_fixpoint`), reduced to
 /// the single-successor case this suite needs.
 fn fold_program(proc: &Proc) -> Result<String, String> {
     let owned = proc.clone();
@@ -233,9 +233,9 @@ fn fold_program(proc: &Proc) -> Result<String, String> {
             let mut current = owned;
             for _ in 0..COMM_STEP_BOUND {
                 // Fold first: a send payload must be a value before the rendezvous delivers it.
-                let term = RhoCalcTerm(RhoCalcTermInner::Proc(current.clone()));
+                let term = RholangTerm(RholangTermInner::Proc(current.clone()));
                 if let Ok(normal_form) =
-                    RhoCalcLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
+                    RholangLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
                 {
                     if let Some(folded) = proc_of(normal_form.as_ref()) {
                         if !folded.term_eq(&current) {
@@ -256,13 +256,13 @@ fn fold_program(proc: &Proc) -> Result<String, String> {
         .unwrap_or_else(|_| unreachable!("a fold panic aborts the process; it never unwinds here"))
 }
 
-/// Unwrap a boxed `RhoCalcTerm` back to its `Proc` alternative (`None` for a non-`Proc` category
+/// Unwrap a boxed `RholangTerm` back to its `Proc` alternative (`None` for a non-`Proc` category
 /// or an `Ambiguous` residue).
 fn proc_of(term: &dyn mettail_runtime::Term) -> Option<Proc> {
     term.as_any()
-        .downcast_ref::<RhoCalcTerm>()
+        .downcast_ref::<RholangTerm>()
         .and_then(|typed| match &typed.0 {
-            RhoCalcTermInner::Proc(proc) => Some(proc.clone()),
+            RholangTermInner::Proc(proc) => Some(proc.clone()),
             _ => None,
         })
 }
@@ -311,23 +311,23 @@ fn lower_error_message(err: &RholangAstLowerError) -> String {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// The carrier adapter: `RuntimeObservationValue` ⟶ RhoCalc surface syntax
+// The carrier adapter: `RuntimeObservationValue` ⟶ Rholang surface syntax
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-/// Render a reducer observation in RhoCalc's own surface syntax, so it can be compared with a fold
+/// Render a reducer observation in Rholang's own surface syntax, so it can be compared with a fold
 /// normal form's `Display`.
 ///
 /// This is the **specification of the carrier correspondence**, not a test convenience: it states,
-/// value by value, which `rhoapi` ground datum RhoCalc considers to *be* which RhoCalc value.
+/// value by value, which `rhoapi` ground datum Rholang considers to *be* which Rholang value.
 /// Deliberately total-by-panic on the shapes this suite does not yet specify, so an unspecified
 /// carrier can never be silently accepted as conformant.
 fn render_as_rholang(value: &RuntimeObservationValue) -> String {
     match value {
         // The `Int` category ⟷ `ExprInstance::GInt`. ★ CORRECTED 2026-07-25 (divergence I):
-        // this is the carrier of a PLAIN RhoCalc integer literal — `1`, `1i32`, `1i64`, `1u32`
+        // this is the carrier of a PLAIN Rholang integer literal — `1`, `1i32`, `1i64`, `1u32`
         // — exactly as f1r3node's `normalize_ground` maps them, as well as of `int(a, w)`.
         RuntimeObservationValue::Int(literal) => literal.to_string(),
-        // ⚠ The comment that stood here — "a plain RhoCalc integer literal is arbitrary-precision
+        // ⚠ The comment that stood here — "a plain Rholang integer literal is arbitrary-precision
         // (Rholang 1.4's default), so it rides as `GBigInt`" — was FACTUALLY WRONG, and stating
         // it in the conformance suite is part of why divergence I survived so long.
         // `normalize_ground` sends a bare numeral to `GInt`; only the `…n` spelling is `GBigInt`.
@@ -337,10 +337,10 @@ fn render_as_rholang(value: &RuntimeObservationValue) -> String {
             format!("{}n", num_bigint::BigInt::from_signed_bytes_be(bytes))
         },
         RuntimeObservationValue::Bool(literal) => literal.to_string(),
-        // RhoCalc `Str` displays quoted; `{:?}` on `&str` is the same escaping RhoCalc's generated
+        // Rholang `Str` displays quoted; `{:?}` on `&str` is the same escaping Rholang's generated
         // `Display` uses for the shapes this suite covers (no embedded quotes/backslashes).
         RuntimeObservationValue::Text(text) => format!("{text:?}"),
-        // `GDouble` carries the IEEE-754 bit pattern. `{:?}` keeps the trailing `.0` RhoCalc's
+        // `GDouble` carries the IEEE-754 bit pattern. `{:?}` keeps the trailing `.0` Rholang's
         // `Float` display emits (`4.0`, not `4`).
         RuntimeObservationValue::DoubleBits(bits) => format!("{:?}", f64::from_bits(*bits)),
         RuntimeObservationValue::BigRationalBytes { numerator, denominator } => format!(
@@ -373,7 +373,7 @@ fn render_as_rholang(value: &RuntimeObservationValue) -> String {
             format!("({})", render_all(items).join(", "))
         },
         other => panic!(
-            "render_as_rholang: no RhoCalc surface form is specified for {other:?}; \
+            "render_as_rholang: no Rholang surface form is specified for {other:?}; \
              add one deliberately rather than letting an unspecified carrier pass as conformant"
         ),
     }
@@ -390,7 +390,7 @@ fn hex_of(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// RhoCalc's `Fixed` surface form: the unscaled integer with a decimal point `scale` digits from
+/// Rholang's `Fixed` surface form: the unscaled integer with a decimal point `scale` digits from
 /// the right, suffixed `p<scale>` (`3p0`, `3.3p1`, `1.00p2`).
 fn render_fixed_point(unscaled: &[u8], scale: u32) -> String {
     let value = num_bigint::BigInt::from_signed_bytes_be(unscaled);
@@ -419,7 +419,7 @@ fn render_fixed_point(unscaled: &[u8], scale: u32) -> String {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 /// The suite's core assertion: `fold(e)`, `reduce(lower(e))`, and the human-written `expected`
-/// RhoCalc surface form all agree.
+/// Rholang surface form all agree.
 ///
 /// `expected` is stated explicitly rather than only asserting `fold == reduce`, so a *mutual*
 /// drift (both sides changing together) still fails.
@@ -427,10 +427,10 @@ async fn assert_conformant(source: &str, expected: &str) {
     let proc = parse(source);
 
     let folded = fold(&proc)
-        .unwrap_or_else(|err| panic!("{source:?}: the RhoCalc fold did not converge: {err}"));
+        .unwrap_or_else(|err| panic!("{source:?}: the Rholang fold did not converge: {err}"));
     assert_eq!(
         folded, expected,
-        "{source:?}: the RhoCalc FOLD (languages/src/rhocalc.rs `![{{…}}]` bodies) \
+        "{source:?}: the Rholang FOLD (languages/src/rholang.rs `![{{…}}]` bodies) \
          disagrees with the specified value"
     );
 
@@ -453,7 +453,7 @@ async fn assert_conformant(source: &str, expected: &str) {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 /// Integer arithmetic on the two integer carriers. ★ CORRECTED 2026-07-25 (divergence I): a plain
-/// RhoCalc integer literal is **`Int`**, riding `GInt` on the machine and `i64` in the fold, exactly
+/// Rholang integer literal is **`Int`**, riding `GInt` on the machine and `i64` in the fold, exactly
 /// as f1r3node's `normalize_ground` maps it. Only the `…n` spelling is arbitrary-precision, riding
 /// `GBigInt` / `CanonicalBigInt` and displaying with its mandatory `n` tail.
 #[tokio::test(flavor = "multi_thread")]
@@ -582,7 +582,7 @@ async fn conformance_runtime_bound_integer_add_after_comm() {
 
 // ── A — integer overflow and integer division by zero ────────────────────────────────────────────
 
-/// **Divergence A (witness) — RhoCalc's fold FAILS CLOSED; it no longer fabricates a value.**
+/// **Divergence A (witness) — Rholang's fold FAILS CLOSED; it no longer fabricates a value.**
 ///
 /// For `int(i64::MAX, 64) + int(1, 64)`:
 ///
@@ -590,7 +590,7 @@ async fn conformance_runtime_bound_integer_add_after_comm() {
 /// |---|---|---|
 /// | f1r3node consensus reducer | `i64::MIN` (wraps) | `rholang/src/rust/interpreter/reduce.rs:3106` `lhs.wrapping_add(rhs)` |
 /// | f1r3node guard evaluator | an error | `rho-pure-eval/src/eval.rs:144-146` `int_binop_checked` |
-/// | MeTTaIL RhoCalc fold | the **`error`** term | `languages/src/rhocalc.rs` `Add` body ▸ `SafeArith::safe_add` ▸ `None` ▸ `Proc::Err` |
+/// | MeTTaIL Rholang fold | the **`error`** term | `languages/src/rholang.rs` `Add` body ▸ `SafeArith::safe_add` ▸ `None` ▸ `Proc::Err` |
 ///
 /// **Amended 2026-07-25.** Until then the fold answered a silent **`0`**: its `Int` arm wrote
 /// `(**a).clone() + (**b).clone()`, which reached a macro-emitted `impl std::ops::Add for Int`
@@ -614,7 +614,7 @@ async fn divergence_a_witness_int_overflow_folds_to_the_error_term() {
     assert_eq!(
         fold(&proc).expect("the fold converges"),
         "error",
-        "A: RhoCalc's fold fails CLOSED on i64 overflow — never a fabricated value"
+        "A: Rholang's fold fails CLOSED on i64 overflow — never a fabricated value"
     );
 
     let observed = reduce(&proc).await.expect("the machine evaluates the sum");
@@ -692,7 +692,7 @@ async fn no_arithmetic_failure_ever_fabricates_a_value() {
     }
 }
 
-/// **Divergence A (target) — RhoCalc must INHERIT f1r3node's answer, never invent a third.**
+/// **Divergence A (target) — Rholang must INHERIT f1r3node's answer, never invent a third.**
 ///
 /// This asserts only what is unambiguously MeTTaIL's to fix: the fold and the reducer must give
 /// the *same* answer for the same expression in the same (process) position, whatever that answer
@@ -702,7 +702,7 @@ async fn no_arithmetic_failure_ever_fabricates_a_value() {
 ///
 /// Closed by **C1** (deleting the arithmetic fold bodies makes the machine the only evaluator).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence A: RhoCalc's fold answers a silent 0 where f1r3node's reducer wraps; \
+#[ignore = "divergence A: Rholang's fold answers a silent 0 where f1r3node's reducer wraps; \
             closed by C1 (delete the arithmetic fold bodies)"]
 async fn divergence_a_target_int_overflow_inherits_the_f1r3node_evaluator() {
     for source in [
@@ -718,7 +718,7 @@ async fn divergence_a_target_int_overflow_inherits_the_f1r3node_evaluator() {
         assert_eq!(
             folded,
             render_as_rholang(value),
-            "A: {source:?} — RhoCalc must inherit the f1r3node evaluator it routes to, \
+            "A: {source:?} — Rholang must inherit the f1r3node evaluator it routes to, \
              not contribute a third behaviour"
         );
     }
@@ -740,7 +740,7 @@ async fn divergence_a2_target_int_division_by_zero_fails_closed() {
 /// static decisions differ.**
 ///
 /// Rholang's `EPlus` has no `GString` arm — `reduce.rs::combine_plus` (3100-3187) ends in
-/// `OperatorNotDefined`; concatenation is `++` (`EPlusPlus`, `reduce.rs:2760-2775`). RhoCalc's
+/// `OperatorNotDefined`; concatenation is `++` (`EPlusPlus`, `reduce.rs:2760-2775`). Rholang's
 /// surface uses `+`, so `rholang-runtime/src/rholang_ast.rs:930-942` bridges the gap with a shim
 /// that emits `EPlusPlus` **iff** `is_single_gstring_value` holds of the *already-lowered* operand
 /// `Par`s (`rholang_ast.rs:1107-1121`) — a purely static test.
@@ -790,7 +790,7 @@ async fn divergence_b_witness_runtime_bound_string_add_diverges_by_static_shape(
     assert_eq!(
         fold_program(&ground).expect("the ground twin folds"),
         // ★ SURFACE SYNONYMY (2026-07-26): the folded channel is `NQuote(CastStr("OUT"))`, and
-        // RhoCalc's `Name` synonymy class `{ NQuote, NQuoteShort, NQuoteNil }` renders through
+        // Rholang's `Name` synonymy class `{ NQuote, NQuoteShort, NQuoteNil }` renders through
         // its DECLARED canonical member `NQuoteShort`, so the surface is the Rholang shorthand
         // `@"OUT"` rather than `@("OUT")`. The INPUT spelling above is unchanged and still
         // parses; only the rendered form moved, and it moved toward official Rholang, which
@@ -812,7 +812,7 @@ async fn divergence_b_witness_runtime_bound_string_add_diverges_by_static_shape(
 /// compiler happened to know.**
 ///
 /// This asserts *position-independence* rather than a particular outcome, because the outcome is
-/// USER decision **D-4** (§17.11.7): does RhoCalc conform *down* to Rholang — where `+` on strings
+/// USER decision **D-4** (§17.11.7): does Rholang conform *down* to Rholang — where `+` on strings
 /// is simply undefined and `++` is concatenation — or is `+`-on-strings a deliberate Rholang-1.4
 /// extension that must then work for bound operands too? Both answers satisfy this test; the
 /// current ad-hoc static shim satisfies neither.
@@ -857,13 +857,13 @@ async fn divergence_b_target_string_add_is_position_independent() {
 
 /// **Divergence C (parts 1 + 2) — ★ CLOSED 2026-07-25 on the FOLD side.**
 ///
-/// Two of C's three symptoms were defects in `languages/src/rhocalc.rs`'s `LNth` body, and both
+/// Two of C's three symptoms were defects in `languages/src/rholang.rs`'s `LNth` body, and both
 /// are fixed:
 ///
 /// | symptom | before | now |
 /// |---|---|---|
 /// | out-of-range index | `v.get(n).cloned().expect("at: index out of bounds")` — a panic, which **aborts the process** here (unwinding across this workspace's Cranelift frames dies with `failed to initiate panic, error 5`) | the `error` term |
-/// | index carrier | the arm matched only `(CastList, CastInt)`, so a PLAIN RhoCalc integer — which is `BigInt` — was rejected and `[1,2,3].nth(0)` answered `error` | `Int`, `BigInt` and `UInt32` indices all accepted |
+/// | index carrier | the arm matched only `(CastList, CastInt)`, so a PLAIN Rholang integer — which is `BigInt` — was rejected and `[1,2,3].nth(0)` answered `error` | `Int`, `BigInt` and `UInt32` indices all accepted |
 ///
 /// This test is now a REGRESSION PIN, and it proves the panic is gone by construction: it calls
 /// the out-of-range fold **in-process**. A panic would take the whole binary with it, so the test
@@ -887,7 +887,7 @@ async fn divergence_c_closed_nth_is_total_and_carrier_agnostic() {
             "C: {source:?} — an out-of-range `nth` is a value, never a panic"
         );
     }
-    // Every integer carrier RhoCalc can write is accepted, and they agree.
+    // Every integer carrier Rholang can write is accepted, and they agree.
     for source in ["[1, 2, 3].nth(0)", "[1, 2, 3].nth(int(0, 64))", "[1, 2, 3].nth(uint(0, 32))"] {
         assert_eq!(
             fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}")),
@@ -937,7 +937,7 @@ async fn divergence_c_target_nth_is_the_reducers_nth() {
 /// **Divergence D (witness) — the fold rescales where the reducer refuses.**
 ///
 /// `rholang/src/rust/interpreter/reduce.rs:3193-3200` requires `fp1.scale == fp2.scale` and
-/// otherwise raises `OperatorExpectedError { expected: "FixedPoint(pN)" }`. RhoCalc's `Add` body
+/// otherwise raises `OperatorExpectedError { expected: "FixedPoint(pN)" }`. Rholang's `Add` body
 /// delegates to `CanonicalFixedPoint`'s `std::ops::Add`, which rescales to the wider scale, so
 /// `1p0 + 0.5p1` folds to `1.5p1`.
 ///
@@ -999,20 +999,20 @@ async fn divergence_d_target_fixed_scale_policy_is_the_reducers() {
 ///
 /// ### What was retired, and why the goldens changed
 ///
-/// `languages/src/rhocalc/wire.rs` + `languages/proto/rholang_wire.proto` + `languages/build.rs`
+/// `languages/src/rholang/wire.rs` + `languages/proto/rholang_wire.proto` + `languages/build.rs`
 /// were a hand-maintained **fork** of f1r3node's `rhoapi` schema (7 of its 62 messages), compiled
 /// by `protoc` into a *second* `rhoapi::Par` type in the same workspace. Three independent defects
 /// made it unsalvageable rather than merely redundant:
 ///
 /// | # | Defect | Consequence |
 /// |---|---|---|
-/// | 1 | the fork's `.proto` had **no `g_big_int` field**, and `proc_to_par` matched only `Proc::CastInt(Int::NumLit(_))` | a plain RhoCalc integer literal is arbitrary-precision (`CastBigInt`), so `.toByteArray()` folded to `error` for every collection the grammar produces |
+/// | 1 | the fork's `.proto` had **no `g_big_int` field**, and `proc_to_par` matched only `Proc::CastInt(Int::NumLit(_))` | a plain Rholang integer literal is arbitrary-precision (`CastBigInt`), so `.toByteArray()` folded to `error` for every collection the grammar produces |
 /// | 2 | it sorted set/map members by raw **protobuf byte order** (`wire.rs:19-25`, `sort_by_key(encode_to_vec)`) | disagrees with Rholang's **`ScoredTerm` value order** (`models/src/rust/sorted_par_hash_set.rs:22`) on negative integers — divergence **E** |
 /// | 3 | it returned a **hex `GString`**, not a `GByteArray` (`wire.rs:136-139`) | the wrong Rholang carrier — divergence **F** |
 ///
 /// ### ★ RE-MEASURED 2026-07-25 after divergence I closed
 ///
-/// The C2 goldens were re-baselined onto `GBigInt` leaves (`9a 02 01 0N`) because a plain RhoCalc
+/// The C2 goldens were re-baselined onto `GBigInt` leaves (`9a 02 01 0N`) because a plain Rholang
 /// numeral was then a `CastBigInt`. **It should never have been**: `normalize_ground` maps a bare
 /// numeral to `GInt`, and divergence I fixed the grammar accordingly. So these goldens are measured
 /// again, deliberately — a carrier change moves the wire bytes, and rubber-stamping them would have
@@ -1022,12 +1022,12 @@ async fn divergence_d_target_fixed_scale_policy_is_the_reducers() {
 /// identical to the goldens the RETIRED FORK produced** (`GInt` elements, `sint64` zigzag
 /// `02 04 06` = 1, 2, 3). That is a receipt, not a coincidence: defect #1 in the table above was
 /// that the fork's `.proto` had no `g_big_int` field — the fork was encoding what Rholang actually
-/// means, and only *looked* wrong because RhoCalc's literals were landing in the wrong carrier.
+/// means, and only *looked* wrong because Rholang's literals were landing in the wrong carrier.
 /// The `GBigInt` encoding is now reached by exactly the spelling that asks for it, `[1n, 2n, 3n]`
 /// (pinned below).
 ///
 /// (The five golden-hex tests that pinned the fork lived in
-/// `languages/tests/rhocalc_tests.rs::native_ops::collection_wire`. They were retired rather than
+/// `languages/tests/rholang_tests.rs::native_ops::collection_wire`. They were retired rather than
 /// migrated because they asserted nothing: see that module's replacement comment for the measured
 /// `assert_reduces_to` vacuity.)
 #[tokio::test(flavor = "multi_thread")]
@@ -1110,7 +1110,7 @@ async fn c2_closed_to_byte_array_uses_the_machines_canonical_order() {
 /// `(element, count)` pairs. The retired fork instead **expanded the multiset** into a bare
 /// `EList` of repeated elements, discarding both the tag and the count structure — so its bytes
 /// decoded back to a *list*, not a bag. Routing through `EMethod` means the bytes are the encoding
-/// of the term RhoCalc actually lowers.
+/// of the term Rholang actually lowers.
 #[tokio::test(flavor = "multi_thread")]
 async fn c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag() {
     let observed = reduce(&parse("#{1 | 2 | 2}#.toByteArray()"))
@@ -1130,8 +1130,8 @@ async fn c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag() {
         // rather than `GBigInt` (`9a 02`); the `(element, count)` pair structure and the ABI tag
         // are unchanged. The counts were always `GInt`, so each pair is now homogeneous.
         //
-        // ★ RE-PINNED 2026-07-27 (task #22, the `rhocalc` → `rholang` rename): the tag bytes
-        // `72686f63616c63` ("rhocalc") became `72686f6c616e67` ("rholang"). This is the ONLY
+        // ★ RE-PINNED 2026-07-27 (task #22, the `rholang` → `rholang` rename): the tag bytes
+        // `72686f63616c63` ("rholang") became `72686f6c616e67` ("rholang"). This is the ONLY
         // byte-level site of the ABI tag — textual substitution reaches the constant and the
         // `&str` literal but not a hex TRANSCRIPT of them, so this line is hand-re-pinned. The
         // two names are both 7 bytes, so every surrounding protobuf length prefix is unchanged
@@ -1150,7 +1150,7 @@ async fn c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag() {
 /// `readZipper/writeZipper/descendTo/getLeaf/getSubtrie/graft/joinInto/ascend/childCount/…`. But
 /// `rholang-runtime/src/rholang_ast.rs::lower_pathmap` (line 2317) lowers `Pathmap` to **`EMap`**,
 /// discarding the trie structure, so the ~8 pathmap and ~15 zipper methods implemented MeTTaIL-side
-/// (`languages/src/rhocalc/{pathmap,zipper}.rs`) never reach their native counterpart.
+/// (`languages/src/rholang/{pathmap,zipper}.rs`) never reach their native counterpart.
 ///
 /// ★ AMENDED by C1 (2026-07-26). The second half of this witness used to assert that pathmap and
 /// zipper methods "never reach the machine at all", i.e. that they were rejected at the LOWERING:
@@ -1204,7 +1204,7 @@ async fn divergence_g_witness_pathmap_lowers_to_emap_and_zippers_are_unsupported
 /// **Divergence G (target) — `Pathmap` is `EPathmapBody` and zippers are `EZipperBody`.**
 ///
 /// Closed by **C4**. This is the divergence with the most strategic weight: the in-flight EPathMap
-/// wire-model campaign needs RhoCalc pathmaps to land on the *real* `EPathMap` carrier, not on an
+/// wire-model campaign needs Rholang pathmaps to land on the *real* `EPathMap` carrier, not on an
 /// `EMap` that has already thrown the trie structure away.
 ///
 /// ★★ AMENDED (C4 investigation, 2026-07-26 — MEASURED). The middle assertion used to be
@@ -1223,17 +1223,17 @@ async fn divergence_g_witness_pathmap_lowers_to_emap_and_zippers_are_unsupported
 /// consensus semantics.
 ///
 /// The replacement is `getSubtrie()`, chosen because it satisfies both sides of the constraint: the
-/// interpreter's `getSubtrie` accepts an `EPathmapBody` receiver (`reduce.rs:5322`), and RhoCalc
+/// interpreter's `getSubtrie` accepts an `EPathmapBody` receiver (`reduce.rs:5322`), and Rholang
 /// HAS the method (`Proc::PGetSubtrie`, routed by C1b). The carrier's own key lookup, `atPath`, is
-/// the semantically closer counterpart to `get` but is NOT reachable from RhoCalc source — RhoCalc
-/// has no `atPath` production at all — so it cannot appear in a test that parses RhoCalc.
+/// the semantically closer counterpart to `get` but is NOT reachable from Rholang source — Rholang
+/// has no `atPath` production at all — so it cannot appear in a test that parses Rholang.
 ///
 /// The `#[ignore]` reason has been corrected too. G is NOT blocked on a lowering that simply has
 /// not been written; it is blocked on a semantic decision, because `EPathMap` has no value slot for
-/// RhoCalc's `{| k : v |}` to land in. See the C1b block in `rholang-runtime/src/rholang_ast.rs`.
+/// Rholang's `{| k : v |}` to land in. See the C1b block in `rholang-runtime/src/rholang_ast.rs`.
 ///
 /// ★★ AMENDED AGAIN (2026-07-27) — **half of the stated blocker is gone.** The reason above used to
-/// name a SECOND blocker: *"RhoCalc keys are BARE, the shape whose walk does not terminate on the
+/// name a SECOND blocker: *"Rholang keys are BARE, the shape whose walk does not terminate on the
 /// interpreter"*. That is no longer true of the interpreter — the bare-element enumeration surface
 /// is sound and is pinned by [`c4_a_bare_element_walk_visits_every_element_in_order`] and
 /// [`c4_a_bare_element_reads_back_as_itself`]. Re-measured with the blocker removed, this test
@@ -1247,9 +1247,9 @@ async fn divergence_g_witness_pathmap_lowers_to_emap_and_zippers_are_unsupported
 /// be pre-judging it. It therefore asserts only that the calls REACH the pathmap surface.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "divergence G: blocked on the C4 CARRIER DECISION, not on unwritten plumbing — EPathMap \
-            has no value slot for RhoCalc's `{| k : v |}` (proto fields 6/7 were the retired \
+            has no value slot for Rholang's `{| k : v |}` (proto fields 6/7 were the retired \
             value_form/value_entries experiment; the ground wire is a KEY stream). ⚠ The former \
-            second clause — `RhoCalc keys are BARE, the shape whose walk does not terminate` — is \
+            second clause — `Rholang keys are BARE, the shape whose walk does not terminate` — is \
             RETIRED: that interpreter defect is fixed (f1r3node 5aacebc3 + 0a6d2ce0 + 7dcff96f). \
             Re-measured 2026-07-27 with it gone: this still fails at its FIRST assertion, because \
             `lower_pathmap` still emits an EMap, which is the value-slot decision itself"]
@@ -1273,13 +1273,13 @@ async fn divergence_g_target_pathmap_and_zippers_use_their_native_carriers() {
 
 /// **Divergence H — ★ CLOSED 2026-07-25.**
 ///
-/// H was discovered by this suite: `languages/src/rhocalc.rs`'s `Eq`/`Ne` fold bodies had arms for
+/// H was discovered by this suite: `languages/src/rholang.rs`'s `Eq`/`Ne` fold bodies had arms for
 /// every ground type EXCEPT `Bool`, so `true == true` fell through to the collection-equality
 /// fallback and answered `Proc::Err`, while the machine answered `true`.
 ///
 /// Rholang is normative and Rholang's `==` is STRUCTURAL equality on the whole `Par`
 /// (`reduce.rs::combine_eq`, `sv1 == sv2` after substitution — not `relopb`, which serves only
-/// `<`/`<=`/`>`/`>=`), so two `GBool`s compare by value. RhoCalc now has the matching `Bool` arm
+/// `<`/`<=`/`>`/`>=`), so two `GBool`s compare by value. Rholang now has the matching `Bool` arm
 /// in both `Eq` and `Ne`, and its target twin
 /// [`divergence_h_target_boolean_equality_agrees`] is GREEN.
 ///
@@ -1311,7 +1311,7 @@ async fn divergence_h_target_boolean_equality_agrees() {
 
 // ── I — the numeric-literal CARRIER depends on syntax (discovered 2026-07-25) ─────────────────────
 
-/// **Divergence I — ★ CLOSED 2026-07-25 in the GRAMMAR (`languages/src/rhocalc.rs`).**
+/// **Divergence I — ★ CLOSED 2026-07-25 in the GRAMMAR (`languages/src/rholang.rs`).**
 ///
 /// Rholang has ONE integer type. MeTTaIL offers several carriers for it (`Int` = `i64` ▸ `GInt`,
 /// `BigInt` = arbitrary precision ▸ `GBigInt`, `UInt32`), which is fine as long as the carrier is
@@ -1341,14 +1341,14 @@ async fn divergence_h_target_boolean_equality_agrees() {
 /// (`ground_normalize_matcher.rs:14-50`) maps a bare numeral, `…i32`, `…i64` and `…u32` (≤
 /// `i64::MAX`) to `GInt`, and only `…n` to `GBigInt`.
 ///
-/// The MeTTaIL-side pins are `languages/tests/rhocalc_tests.rs::numeral_carrier_is_context_
+/// The MeTTaIL-side pins are `languages/tests/rholang_tests.rs::numeral_carrier_is_context_
 /// independent`.
 #[tokio::test(flavor = "multi_thread")]
 async fn divergence_i_closed_numeral_carrier_is_syntax_independent() {
     assert_conformant("int(1, 64) + 2", "3").await;
     // (`5u32 bitand 3u32` is pinned on the MeTTaIL side only — `bitand` is a MeTTaIL-only
     // operation with no Rholang `Expr`, so it is C3 residue and cannot be asserted CONFORMANT.
-    // Its carrier claim lives in `languages/tests/rhocalc_tests.rs::
+    // Its carrier claim lives in `languages/tests/rholang_tests.rs::
     // numeral_carrier_is_context_independent::u32_suffix_is_an_i64_literal`.)
     assert_conformant("5u32 + 3u32", "8").await;
     // The parenthesis witness itself: one pair of parentheses used to change the carrier.
@@ -1401,17 +1401,17 @@ async fn f1r3node_combine_plus_has_no_mixed_gint_gbigint_arm() {
 
 /// **Divergence J (witness) — `x!()` fires against `for(@y <- x)` and delivers the empty list.**
 ///
-/// RhoCalc canonicalizes every send payload to a LIST (`x!(p)` ≡ `x!([p])`, `x!()` ≡ `x!([])` —
-/// pinned by `languages/tests/rhocalc_tests.rs::parsing::{send_unary_is_list_sugar,
+/// Rholang canonicalizes every send payload to a LIST (`x!(p)` ≡ `x!([p])`, `x!()` ≡ `x!([])` —
+/// pinned by `languages/tests/rholang_tests.rs::parsing::{send_unary_is_list_sugar,
 /// send_empty_is_list_sugar}`), and a whole-message binder receives that payload. So the 0-arity
 /// send `x!()` satisfies the 1-arity receive `for(@y <- x)` and binds `y = []`.
 ///
 /// Rholang's COMM is ARITY-CHECKED: `x!()` produces a `Send` with an empty `data` vector, and a
 /// `Receive` whose single `ReceiveBind` has one pattern never matches it, so the program rests.
-/// (RhoCalc agrees for multi-binder rows — `x!(1,2) | for(a,b,c <- x){…}` blocks — so the
+/// (Rholang agrees for multi-binder rows — `x!(1,2) | for(a,b,c <- x){…}` blocks — so the
 /// divergence is specific to the whole-message binder against the EMPTY payload.)
 ///
-/// Discovered while burning down `languages/tests/rhocalc_tests.rs`, where
+/// Discovered while burning down `languages/tests/rholang_tests.rs`, where
 /// `send_empty_payload_quoted_bind_emits_empty_proc` had an expectation that contradicted both its
 /// own name and the sugar pins, and only "passed" because `assert_reduces_to` was vacuous.
 #[tokio::test(flavor = "multi_thread")]
@@ -1421,7 +1421,7 @@ async fn divergence_j_witness_empty_send_satisfies_an_arity_one_receive() {
         "{[]}",
         "J: the empty send's payload IS `[]`, and the whole-message binder receives it"
     );
-    // The multi-binder row is arity-checked, so the divergence is not "RhoCalc ignores arity".
+    // The multi-binder row is arity-checked, so the divergence is not "Rholang ignores arity".
     let blocked = fold_program(&parse("x!(1,2) | for(a, b, c <- x){[a,b,c]}"))
         .expect("the fold fixpoint settles");
     assert!(
@@ -1487,7 +1487,7 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
         // golden is updated, NOT relaxed — `1r/2r` is the surface that round-trips.
         ("fraction(1, 2)", "1r/2r", "unsupported: fraction(a, b) rational constructor"),
         // `reduce.rs::method_table` provides `keys` but NOT `values` — a Map's values are
-        // reachable in Rholang only via `toList`/`get`. So `.values()` is a RhoCalc extension
+        // reachable in Rholang only via `toList`/`get`. So `.values()` is a Rholang extension
         // with no Rholang counterpart, and it stays MeTTaIL-only under C3.
         (
             "{1 : 10}.values()",
@@ -1637,7 +1637,7 @@ async fn c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime() {
 /// **C1b — the Pathmap/Zipper family is routed, and blocked at the CARRIER by C4.**
 ///
 /// Every one of these methods requires an `EPathmapBody` or `EZipperBody` receiver
-/// (`reduce.rs:4926` `readZipper`, `5322` `getSubtrie`, …), and RhoCalc's `Pathmap` still lowers
+/// (`reduce.rs:4926` `readZipper`, `5322` `getSubtrie`, …), and Rholang's `Pathmap` still lowers
 /// to a plain `EMap` — divergence **G**. So the routing is correct and inert: the machine names
 /// the carrier that is wrong, which is exactly what C4 fixes.
 ///
@@ -1672,7 +1672,7 @@ async fn c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier() {
 /// 1. **key-faithful and AGREEING** — `get`/`contains` read the same key/value relation the fold
 ///    reads, so both sides answer identically;
 /// 2. **the machine is MORE DEFINED than the fold** — `size`/`keys`/`delete` answer on the machine
-///    where RhoCalc's fold bodies have no `Pathmap` arm and reduce to `error`. Under "the reducer
+///    where Rholang's fold bodies have no `Pathmap` arm and reduce to `error`. Under "the reducer
 ///    is normative" the machine is right and the fold is incomplete;
 /// 3. **⚠ the CARRIER of the result differs** — `set`/`union` return a `Pathmap` from the fold and
 ///    a `Map` from the machine. The VALUE is the same relation; the type is not, and a `Pathmap`
@@ -1694,7 +1694,7 @@ async fn c1_pathmap_methods_answer_through_the_emap_encoding() {
         assert_eq!(
             fold(&proc).expect("the fold converges"),
             "error",
-            "G: {source:?} — RhoCalc's fold body has no Pathmap arm"
+            "G: {source:?} — Rholang's fold body has no Pathmap arm"
         );
         let observed = reduce(&proc).await.expect("the machine reduces");
         assert_eq!(
@@ -1724,9 +1724,9 @@ async fn c1_pathmap_methods_answer_through_the_emap_encoding() {
     }
 }
 
-/// **`length` on a Map/Set: RhoCalc's fold body is MORE PERMISSIVE than Rholang.**
+/// **`length` on a Map/Set: Rholang's fold body is MORE PERMISSIVE than Rholang.**
 ///
-/// `fold_proc_length` (`languages/src/rhocalc/runtime.rs:217`) answers for `CastMap` and
+/// `fold_proc_length` (`languages/src/rholang/runtime.rs:217`) answers for `CastMap` and
 /// `CastSet`; Rholang's `length` (`reduce.rs:7893`) accepts only `EList`/`GString`/`GByteArray`
 /// and spells map/set cardinality `size`. Since the reducer is normative, the fold is the side
 /// that is wrong, and routing makes the machine fail closed rather than inventing an answer.
@@ -1829,7 +1829,7 @@ async fn c1_residue_without_an_interpreter_counterpart_fails_closed_and_named() 
 /// operation Rholang cannot perform). So this suite is exactly the instrument that proves the two
 /// implementations agree wherever both are defined.
 ///
-/// `assert_conformant` compares the RhoCalc-rendered values, so a row passing here also pins the
+/// `assert_conformant` compares the Rholang-rendered values, so a row passing here also pins the
 /// **canonical order** question: a set/map result flowing back from the reducer has been through
 /// `ScoredTerm` sorting (`models/src/rust/sorted_par_hash_set.rs`), and `Set(1, 2).union(Set(3))`
 /// rendering as `Set(1, 2, 3)` on both sides is the evidence that the two orders coincide for
@@ -1899,7 +1899,7 @@ async fn c1_routed_methods_see_through_a_comm() {
     }
 }
 
-/// **★ Divergence L (NEW, discovered by C1's ordering check 2026-07-26) — RhoCalc sorts a
+/// **★ Divergence L (NEW, discovered by C1's ordering check 2026-07-26) — Rholang sorts a
 /// `Set`/`Map` LEXICOGRAPHICALLY by rendered element; Rholang sorts by `ScoredTerm` VALUE.**
 ///
 /// The two orders coincide on every fixture the suite had before today, which is why this survived
@@ -1909,7 +1909,7 @@ async fn c1_routed_methods_see_through_a_comm() {
 ///
 /// ⚠ **This is NOT caused by C1, and the first row proves it.** `Set(10, 2)` is a bare literal
 /// with no method call anywhere in it — nothing C1 touched can be involved — and it already
-/// renders differently on the two sides. The divergence lives in the collection LITERAL: RhoCalc's
+/// renders differently on the two sides. The divergence lives in the collection LITERAL: Rholang's
 /// own `Set`/`Map` carrier orders its elements one way and `lower_set`/`lower_map` hand the
 /// reducer a collection it then sorts its own way (`models/src/rust/sorted_par_hash_set.rs`).
 ///
@@ -1943,11 +1943,11 @@ async fn c1_routed_methods_see_through_a_comm() {
 /// 2. *change the ten sort sites anyway.* They are LANGUAGE-AGNOSTIC macro codegen shared by every
 ///    generated language, so this re-renders every collection in the repo to buy a partial fix.
 ///
-/// The honest close is the same one C4 needs and for the same reason: RhoCalc must stop maintaining
+/// The honest close is the same one C4 needs and for the same reason: Rholang must stop maintaining
 /// a second canonical form for ground data and take the reducer's. Concretely, a per-language
-/// canonical-order hook consulted by the display codegen, with RhoCalc supplying `ScoredTerm`
+/// canonical-order hook consulted by the display codegen, with Rholang supplying `ScoredTerm`
 /// order — which is task 21's "one evaluator" convergence, not a display patch. L and C4 are two
-/// symptoms of one root: **RhoCalc owns a collection carrier whose canonical form is its own.**
+/// symptoms of one root: **Rholang owns a collection carrier whose canonical form is its own.**
 ///
 /// So L stands, deliberately, and this witness keeps it under active measurement.
 ///
@@ -1955,7 +1955,7 @@ async fn c1_routed_methods_see_through_a_comm() {
 /// result in the SAME order the literal already lands in, so routing introduces no NEW ordering
 /// behaviour. That is what the second half asserts.
 ///
-/// The reducer is normative, so `Set(2, 10)` is the right answer and RhoCalc's rendering is the
+/// The reducer is normative, so `Set(2, 10)` is the right answer and Rholang's rendering is the
 /// side that is wrong.
 ///
 /// ⚠ A negative literal would be the sharper discriminator — it is where protobuf BYTE order and
@@ -1976,7 +1976,7 @@ async fn divergence_l_witness_collection_order_is_lexicographic_in_the_fold() {
         assert_eq!(
             fold(&proc).expect("the fold converges"),
             fold_order,
-            "L: {source:?} — RhoCalc orders by the RENDERED element"
+            "L: {source:?} — Rholang orders by the RENDERED element"
         );
         let observed = reduce(&proc).await.expect("the literal lowers");
         assert_eq!(
@@ -2016,7 +2016,7 @@ async fn divergence_l_witness_collection_order_is_lexicographic_in_the_fold() {
 // PART 5 — the adapter's own unit tests
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-/// [`render_fixed_point`] implements RhoCalc's `Fixed` surface form; pin it directly so a
+/// [`render_fixed_point`] implements Rholang's `Fixed` surface form; pin it directly so a
 /// conformance failure is never mis-attributed to the adapter.
 #[test]
 fn render_fixed_point_matches_the_rholang_surface_form() {
@@ -2033,7 +2033,7 @@ fn render_fixed_point_matches_the_rholang_surface_form() {
 #[test]
 fn render_as_rholang_matches_the_rholang_surface_form() {
     assert_eq!(render_as_rholang(&RuntimeObservationValue::Int(-3)), "-3");
-    // ★ The `n` tail (divergence I, Stage C): `GBigInt`'s RhoCalc surface form REQUIRES it —
+    // ★ The `n` tail (divergence I, Stage C): `GBigInt`'s Rholang surface form REQUIRES it —
     // `-7` is the surface form of the `Int` `-7`, a different carrier.
     assert_eq!(render_as_rholang(&RuntimeObservationValue::BigIntBytes(vec![249])), "-7n");
     assert_eq!(render_as_rholang(&RuntimeObservationValue::Bool(false)), "false");
@@ -2251,7 +2251,7 @@ async fn divergence_k_target_guard_lane_normal_form_agrees_with_the_machine() {
 /// ## The question this closes
 ///
 /// Divergence K's sharpest row is `(x matches {φ|ψ}) or true` — a guard forced `true` by its
-/// right operand that the host nevertheless declines. RhoCalc spells `or` at TWO levels, and
+/// right operand that the host nevertheless declines. Rholang spells `or` at TWO levels, and
 /// only one of them is the one that misbehaves:
 ///
 /// ```text
@@ -2339,7 +2339,7 @@ async fn divergence_k_target_guard_lane_normal_form_agrees_with_the_machine() {
 /// the lane that is already correct.
 #[tokio::test(flavor = "multi_thread")]
 async fn formula_level_disjunction_agrees_where_the_guard_level_or_diverges() {
-    use mettail_languages::rhocalc::formula::{
+    use mettail_languages::rholang::formula::{
         host_matches_verdict, is_statically_false, is_statically_true,
     };
 
@@ -2437,7 +2437,7 @@ async fn formula_level_disjunction_agrees_where_the_guard_level_or_diverges() {
 //   | runtime                          | exhausted `toNextLeaf`          |
 //   |----------------------------------|---------------------------------|
 //   | the Rholang interpreter (f1r3node) | `Ok(Par::default())` = **Nil**  |
-//   | mettail / RhoCalc                | `Err(())` = **stuck**           |
+//   | mettail / Rholang                | `Err(())` = **stuck**           |
 //
 // Mistranslating this does not raise an error — it LOOPS FOREVER. `pathmap`'s `to_next_val()`
 // RESETS the zipper to the root when the walk finishes (`pathmap/src/zipper.rs:546`), so the
@@ -2447,8 +2447,8 @@ async fn formula_level_disjunction_agrees_where_the_guard_level_or_diverges() {
 //
 // The contract is pinned on both sides by tests that name each other:
 //   * f1r3node: `rholang/tests/zipper_enumeration_spec.rs::to_next_leaf_returns_nil_when_exhausted`
-//   * mettail:  `languages/src/rhocalc/zipper.rs::exhausted_walk_is_stuck_here_and_nil_on_the_reducer`
-//     (and the surface-level `languages/tests/rhocalc_tests.rs::zipper_leaf_walk_exhaustion_stays_stuck`)
+//   * mettail:  `languages/src/rholang/zipper.rs::exhausted_walk_is_stuck_here_and_nil_on_the_reducer`
+//     (and the surface-level `languages/tests/rholang_tests.rs::zipper_leaf_walk_exhaustion_stays_stuck`)
 //
 // This section is C1's half: it proves the property END-TO-END against the REAL reducer, over the
 // exact `EMethod` chain the C1b lowering emits, and BOUNDED so a violation FAILS instead of
@@ -2466,7 +2466,7 @@ fn zipper_expr_par(instance: ZExprInstance) -> Par {
 /// A ground `EPathMap` over the given elements. In Rholang a PathMap element is BOTH the key and
 /// the value it stores, which is why `getLeaf()` at a leaf returns the same list `getPath()` does.
 ///
-/// ★ This is the C4 STAND-IN. RhoCalc source cannot produce an `EPathmapBody` today — a `Pathmap`
+/// ★ This is the C4 STAND-IN. Rholang source cannot produce an `EPathmapBody` today — a `Pathmap`
 /// literal lowers to `EMap` (divergence G), which is exactly what
 /// [`c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`] measures. Building the carrier here
 /// exercises the routed method names against the real reducer NOW, so that when C4 lands the
@@ -2836,12 +2836,12 @@ async fn c1_zipper_walk_cannot_continue_past_exhaustion() {
     );
 }
 
-/// **The RhoCalc side of the same fixture still reports exhaustion as STUCK — the two conventions,
+/// **The Rholang side of the same fixture still reports exhaustion as STUCK — the two conventions,
 /// measured side by side.**
 ///
 /// The fold path is unchanged by C1, and this pins that the mismatch documented in
-/// `languages/src/rhocalc/zipper.rs` is still exactly what it says it is: where the reducer
-/// answers `Nil`, RhoCalc's `.toNextLeaf()` leaves the term unreduced. A stuck term still DISPLAYS
+/// `languages/src/rholang/zipper.rs` is still exactly what it says it is: where the reducer
+/// answers `Nil`, Rholang's `.toNextLeaf()` leaves the term unreduced. A stuck term still DISPLAYS
 /// the method call, which is how "stuck" is observed here.
 #[tokio::test(flavor = "multi_thread")]
 async fn c1_rholang_side_still_reports_exhaustion_as_stuck() {
@@ -2850,7 +2850,7 @@ async fn c1_rholang_side_still_reports_exhaustion_as_stuck() {
     let residue = fold(&parse(source)).expect("the fold converges");
     assert!(
         residue.contains("toNextLeaf"),
-        "the exhausted RhoCalc walk must stay STUCK (the call survives in the normal form), which \
+        "the exhausted Rholang walk must stay STUCK (the call survives in the normal form), which \
          is the convention the reducer's Nil has to be translated FROM. Got {residue:?}"
     );
 }
@@ -2860,12 +2860,12 @@ async fn c1_rholang_side_still_reports_exhaustion_as_stuck() {
 ///
 /// A shared method NAME is not a shared operation, and this family is the one place where that
 /// cannot be checked by the ordinary conformance rows: `Pathmap` lowers to `EMap`, so none of these
-/// calls can reach their carrier from RhoCalc source until C4
+/// calls can reach their carrier from Rholang source until C4
 /// ([`c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`]). Without this test the entire
 /// family would be routed on the strength of name matching alone.
 ///
 /// It already earned its keep. `setLeaf` is **not** in the list below because this check found that
-/// RhoCalc's `w.setLeaf(full, v)` writes at an ABSOLUTE PATH ARGUMENT while Rholang's
+/// Rholang's `w.setLeaf(full, v)` writes at an ABSOLUTE PATH ARGUMENT while Rholang's
 /// `z.setLeaf(v)` writes at the zipper's FOCUS and takes one argument — the same name, a different
 /// operation, and an arity mismatch that would otherwise have shipped as a latent bug. It is left
 /// fail-closed and named in `rholang_ast.rs::unsupported_construct_name`.
@@ -2952,9 +2952,9 @@ async fn c1b_routed_zipper_family_matches_the_interpreter_arity() {
 //
 // ★ THAT UNDERSTANDING IS REFUTED, and this section is the refutation — measured, not read.
 //
-// RhoCalc's `Pathmap` is `mettail_runtime::PathMapLit<Proc, Proc>`: a KEY→VALUE map whose key and
-// value are independent (`{| 1 : 10 |}` is a well-formed RhoCalc literal, and
-// `languages/src/rhocalc/pathmap.rs::pathmap_get` reads a value out at a key).
+// Rholang's `Pathmap` is `mettail_runtime::PathMapLit<Proc, Proc>`: a KEY→VALUE map whose key and
+// value are independent (`{| 1 : 10 |}` is a well-formed Rholang literal, and
+// `languages/src/rholang/pathmap.rs::pathmap_get` reads a value out at a key).
 //
 // Rholang's `EPathMap` is a SET OF PATHS. An element IS its own key AND its own value:
 //
@@ -2975,7 +2975,7 @@ async fn c1b_routed_zipper_family_matches_the_interpreter_arity() {
 // [`c4_the_native_carrier_has_no_value_slot`] measures this from the reducer's own answers.
 //
 // The consequence for C4 is that "lower `Pathmap` to `EPathmapBody`" is not a plumbing change: it
-// requires DECIDING what RhoCalc's value slot becomes, and every available answer costs something
+// requires DECIDING what Rholang's value slot becomes, and every available answer costs something
 // that is not a lowering's to spend (drop the values; fuse them into the key path, which changes
 // what `getPath`/`getLeaf` mean; or add a value arm to the consensus wire). That decision is
 // presented rather than taken. Everything below it that IS determinate is measured here.
@@ -2986,7 +2986,7 @@ async fn c1b_routed_zipper_family_matches_the_interpreter_arity() {
 /// some element could have `getPath() != getLeaf()`; the reducer answers that they are equal, at
 /// every leaf, and `atPath(k)` answers `k` itself.
 ///
-/// RhoCalc's `Pathmap` therefore does not embed: `{| 1 : 10 |}` has a key (`1`) and a value (`10`)
+/// Rholang's `Pathmap` therefore does not embed: `{| 1 : 10 |}` has a key (`1`) and a value (`10`)
 /// that are different terms, and the target has one slot for both.
 #[tokio::test(flavor = "multi_thread")]
 async fn c4_the_native_carrier_has_no_value_slot() {
@@ -3061,7 +3061,7 @@ async fn c4_the_native_carrier_refuses_the_map_method_surface() {
 /// **★ C4-3 — `setLeaf` APPENDS an element. The zipper's focus is never consulted.**
 ///
 /// C1b left `setLeaf` fail-closed and recorded the reason as an arity-plus-semantics mismatch:
-/// "RhoCalc's `w.setLeaf(full, v)` writes at an ABSOLUTE PATH ARGUMENT while Rholang's
+/// "Rholang's `w.setLeaf(full, v)` writes at an ABSOLUTE PATH ARGUMENT while Rholang's
 /// `z.setLeaf(v)` writes at the zipper's FOCUS". The arity half was right. **The semantics half was
 /// wrong, and this test is what corrects it.**
 ///
@@ -3071,14 +3071,14 @@ async fn c4_the_native_carrier_refuses_the_map_method_surface() {
 /// that stale comment is what the C1b note was written from.
 ///
 /// ⚠ **Why this matters more than a documentation fix.** C1b named `writeZipperAt(full).setLeaf(v)`
-/// as "expressing RhoCalc's meaning on the machine … a REWRITE, not a routing". That rewrite is
+/// as "expressing Rholang's meaning on the machine … a REWRITE, not a routing". That rewrite is
 /// REFUTED below: `writeZipperAt(full)` contributes NOTHING, so the rewrite silently writes at the
 /// wrong place. It is precisely the "fix the arity by dropping the path" failure C1b set out to
 /// prevent, wearing a different hat — and it would have looked correct in review.
 ///
 /// The true reason `setLeaf` cannot be routed is C4-1: a path-addressed write needs a value slot,
 /// and the carrier has none. `setLeaf(v)` is the only write the carrier can express — *insert the
-/// element `v`* — and RhoCalc's `setLeaf(full, v)` is not that operation.
+/// element `v`* — and Rholang's `setLeaf(full, v)` is not that operation.
 #[tokio::test(flavor = "multi_thread")]
 async fn c4_set_leaf_appends_an_element_and_ignores_the_focus() {
     let new_element = || zipper_elist(vec![zipper_gstring("z")]);
@@ -3160,7 +3160,7 @@ async fn c4_set_leaf_appends_an_element_and_ignores_the_focus() {
         vec![zipper_elist(vec![zipper_gstring("b")]), new_element()],
     ))
     .await
-    .expect_err("RhoCalc's two-argument setLeaf has no counterpart");
+    .expect_err("Rholang's two-argument setLeaf has no counterpart");
     assert!(
         error.contains(
             r#"MethodArgumentNumberMismatch { method: "setLeaf", expected: 1, actual: 2 }"#
@@ -3176,7 +3176,7 @@ async fn c4_set_leaf_appends_an_element_and_ignores_the_focus() {
 /// exercised against the reducer even once". The premise was wrong — a real `EPathMap` is
 /// constructible right here, which is how this test exists — and so was the guess.
 ///
-/// | RhoCalc (`runtime/src/pathmap_bridge.rs`) | keys kept | values kept |
+/// | Rholang (`runtime/src/pathmap_bridge.rs`) | keys kept | values kept |
 /// |---|---|---|
 /// | `restrict(base, mask)` (`trie_restrict_lit`) | base keys **exactly present** in mask | base's |
 /// | `meet(left, right)` (`trie_meet_lit`) | left keys **exactly present** in right | right's |
@@ -3248,7 +3248,7 @@ async fn c4_restrict_is_not_restriction_and_meet_is_intersection() {
             observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected_count.to_string()],
             "C4-4 {label}: `restriction` is PREFIX containment and `intersection` is EXACT \
-             membership. RhoCalc's `restrict` is exact, so `restriction` is the WRONG target."
+             membership. Rholang's `restrict` is exact, so `restriction` is the WRONG target."
         );
     }
 
@@ -3693,9 +3693,9 @@ async fn c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil() {
 /// (the `Nil` value reads, and `getPath` reporting the list) is `0a6d2ce0` + `7dcff96f`; the full
 /// three-commit derivation is on [`c4_a_bare_element_reads_back_as_itself`].
 ///
-/// ## ⚠ The RhoCalc consequence, which was the whole reason this mattered
+/// ## ⚠ The Rholang consequence, which was the whole reason this mattered
 ///
-/// RhoCalc pathmap keys are BARE by default — `{| 1 : 10 |}` has key `1`, and
+/// Rholang pathmap keys are BARE by default — `{| 1 : 10 |}` has key `1`, and
 /// `encode_proc_path_entry` gives a bare `Proc` one segment. The witness recorded that pointing
 /// `lower_pathmap` at `EPathmapBody` would therefore make the enumeration surface C4 exists to
 /// unlock HANG rather than work. **That blocker is gone.** What still blocks C4 is the carrier's

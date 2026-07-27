@@ -1,6 +1,6 @@
 //! L9-6b — the Foreign Exchange, driven FROM SOURCE. The sibling
 //! `flt_abi_over_rspace.rs` hand-builds every reflected pattern/construction with the
-//! `models` builders; here the SAME observables are produced by lowering RhoCalc FLT
+//! `models` builders; here the SAME observables are produced by lowering Rholang FLT
 //! surface syntax (`lambda`(…, …)``) through the `PFlt` arms (`lower_proc` construction →
 //! `reflect_flt_construction`; the receive-pattern path → `reflect_flt_pattern`), with a
 //! `FltRegistry` mapping the opener tag `"lambda"` → `LambdaLanguage`.
@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use mettail_languages::lambda::LambdaLanguage;
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{
     ground_marker_tag_par, lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     reflect_ground_term_par, rho_net_drive_call_par, suggest_rejected_rule_dispositions,
@@ -106,7 +106,7 @@ fn beat0_from_source_construction_reflects_app_id_k() {
         "the guest metadata fingerprint must equal the backend plan fingerprint"
     );
 
-    let proc = Proc::parse(APP_ID_K_BODY).expect("the FLT construction parses as a RhoCalc Proc");
+    let proc = Proc::parse(APP_ID_K_BODY).expect("the FLT construction parses as a Rholang Proc");
     let lowered = lower_rholang_proc_with_resolver(&proc, lambda_resolver())
         .expect("the PFlt construction arm lowers via the lam-registered guest");
 
@@ -145,7 +145,7 @@ fn oid() -> RuntimeObservationValue {
     olambda(obound(0))
 }
 
-/// Lower a from-source RhoCalc FLT program (installing the `lambda` guest) and run it to rest,
+/// Lower a from-source Rholang FLT program (installing the `lambda` guest) and run it to rest,
 /// reading the `RuntimeObservationValue`s published to `@"OUT"`.
 async fn out_values_from_source(program_src: &str) -> Vec<RuntimeObservationValue> {
     let proc = Proc::parse(program_src).expect("the from-source FLT program parses");

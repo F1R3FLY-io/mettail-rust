@@ -2,7 +2,7 @@
 //  The Foreign Exchange — genuinely EVALUATE a λ-calculus Foreign Language Term: β-reduce it on
 //  the f1r3node reducer and read back its normal form.
 //
-//  Run me with the RhoCalc interpreter:
+//  Run me with the Rholang interpreter:
 //    rholang demos/flt-foreign-exchange/k-combinator.rho
 //
 //  A BARE TERM EVALUATES TO ITS NORMAL FORM

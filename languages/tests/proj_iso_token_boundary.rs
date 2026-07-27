@@ -3,7 +3,7 @@
 //!
 //! # What this file is for, and why it is separate from the artifact suite
 //!
-//! `rholang-runtime/tests/rhocalc_ground_literal_conformance.rs` is the CONFORMANCE criterion: it
+//! `rholang-runtime/tests/rholang_ground_literal_conformance.rs` is the CONFORMANCE criterion: it
 //! compares the emitted `Par` against f1r3node's own normalizer. That is the right criterion and it
 //! is not this file's job. This file pins the layer BELOW it — the elected parse tree and the
 //! ambiguity-preserving alternative SET — for two reasons the artifact comparison cannot serve:
@@ -19,7 +19,7 @@
 //!
 //! A fixed literal in a projection skeleton is a TOKEN, so it may only match where the lexer would
 //! end that token. The helper enforced that for IDENT-shaped literals only (the rule that stops
-//! `Nil` matching inside `Nilish`); a punctuation sigil got no test, and RhoCalc's numerals carry
+//! `Nil` matching inside `Nilish`); a punctuation sigil got no test, and Rholang's numerals carry
 //! their sign (`Int = -?…`, mirroring consensus Rholang's `long_literal /-?\d+/`). So in `-7n` the
 //! maximal munch at byte 0 is `BigInt("-7n")` and the `NegProc` skeleton's one-byte `-` is a PROPER
 //! PREFIX of it. Matching there framed the whole span as `- ⟨7n⟩`.
@@ -45,23 +45,23 @@
 //! ```
 //!
 //! The unchanged rows are not luck: the derived byte sets for `@`, `(`, `*`, `[`, `{`, `,`, `<-`,
-//! `<=` are all EMPTY (nothing in RhoCalc's token alphabet extends them or runs into them), so
+//! `<=` are all EMPTY (nothing in Rholang's token alphabet extends them or runs into them), so
 //! those literals' matching is byte-identical. That is the mechanical reason the two goldens
 //! `43ef99aa` protected when it declined to touch the `Single` seam cannot move.
 
-#![cfg(feature = "rhocalc")]
+#![cfg(feature = "rholang")]
 
-use mettail_languages::rhocalc::{Name, Proc};
+use mettail_languages::rholang::{Name, Proc};
 
 /// The elected single-winner reading, as a structural `Debug` string.
 fn one(source: &str) -> String {
-    format!("{:?}", Proc::parse_via_wpda(source).expect("RhoCalc parses the source"))
+    format!("{:?}", Proc::parse_via_wpda(source).expect("Rholang parses the source"))
 }
 
 /// The ambiguity-preserving alternative set, as structural `Debug` strings.
 fn all(source: &str) -> Vec<String> {
     Proc::parse_via_wpda_all(source)
-        .expect("RhoCalc parses the source")
+        .expect("Rholang parses the source")
         .iter()
         .map(|t| format!("{t:?}"))
         .collect()
@@ -104,7 +104,7 @@ fn negative_zero_elects_the_literal_carrier_not_a_negation() {
 
 /// ★ THE PRECEDENCE CONSEQUENCE. The `- ⟨operand⟩` framing swallowed the WHOLE remaining span with
 /// no precedence awareness, so `-7 + 1` elected `-(7 + 1)` = −8 where the grammar's own declaration
-/// order says `-` binds tighter than `+` and the answer is −6. `rhocalc.rs` states this intent
+/// order says `-` binds tighter than `+` and the answer is −6. `rholang.rs` states this intent
 /// verbatim for division: *"`NegProc` is declared after `/` and `%` so `-` binds tighter than
 /// division (e.g. `-3r/2r` is `(-3r)/2r`)"*.
 #[test]
@@ -122,7 +122,7 @@ fn a_signed_numeral_is_the_operator_s_operand_not_its_argument() {
 /// an EMPTY boundary alphabet), and the Proc operand it sub-parses now elects the signed literal.
 #[test]
 fn a_quoted_name_carries_the_signed_literal_through() {
-    let name = Name::parse_via_wpda("@-7").expect("RhoCalc parses `@-7`");
+    let name = Name::parse_via_wpda("@-7").expect("Rholang parses `@-7`");
     assert_eq!(format!("{name:?}"), "NQuoteShort(CastInt(NumLit(-7)))");
 }
 
@@ -135,7 +135,7 @@ fn a_quoted_name_carries_the_signed_literal_through() {
 ///
 /// ⚠ A repair applied after parsing (a fold in the lowering, say) would collapse these into the
 /// abutted readings and this test is what makes that fail loudly. Its artifact-level twin is
-/// `rholang-runtime/tests/rhocalc_ground_literal_conformance.rs::adjacency_is_honoured`.
+/// `rholang-runtime/tests/rholang_ground_literal_conformance.rs::adjacency_is_honoured`.
 #[test]
 fn a_detached_sign_still_builds_a_negation() {
     for (source, expected) in [
@@ -159,7 +159,7 @@ fn a_detached_sign_still_builds_a_negation() {
 /// infeasible for a single `Proc`, so the lexer's fork dies on feasibility and `Minus` wins. This is
 /// also the row where MeTTaIL is deliberately MORE permissive than f1r3node, whose maximal-munch
 /// lexer commits before feasibility is known and cannot compile `1-7` at all (pinned in
-/// `rhocalc_ground_literal_conformance.rs::f1r3node_rejects_unspaced_subtraction_and_negated_unsigned`).
+/// `rholang_ground_literal_conformance.rs::f1r3node_rejects_unspaced_subtraction_and_negated_unsigned`).
 #[test]
 fn unspaced_subtraction_is_still_subtraction() {
     for source in ["1-7", "1 -7", "5-3"] {
@@ -232,7 +232,7 @@ fn the_facade_no_longer_manufactures_a_precedence_violating_reading() {
 /// is the measurement that says so rather than the argument that claims it.
 #[test]
 fn the_g3_election_goldens_are_untouched() {
-    let paren_name = Name::parse_via_wpda("(@Nil)").expect("RhoCalc parses `(@Nil)` as a Name");
+    let paren_name = Name::parse_via_wpda("(@Nil)").expect("Rholang parses `(@Nil)` as a Name");
     assert_eq!(
         format!("{paren_name:?}"),
         "NParen(NQuoteShort(PZero))",

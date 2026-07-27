@@ -1,4 +1,4 @@
-//! Tier-3 fold trampoline: the fold contracts that let a RhoCalc native width/precision fold
+//! Tier-3 fold trampoline: the fold contracts that let a Rholang native width/precision fold
 //! reduce on the metered Rho machine.
 //!
 //! Pre-A-S4 this band served only HELD folds — e.g. `int(*(x), 8)` where `x` is bound by
@@ -29,7 +29,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use mettail_languages::rhocalc::{BigInt, BigRat, Bool, Fixed, Float, Int, Proc, Str};
+use mettail_languages::rholang::{BigInt, BigRat, Bool, Fixed, Float, Int, Proc, Str};
 // A-S3: the reserved MeTTaIL system-process bands are enumerated in ONE place —
 // `mettail_rholang_codegen::native_handler` (held-fold `[0xF0, site]` / `0xF000+site` and
 // native-handler `[0xF1, rule]` / `0xF100+rule`, with the collision unit test) — so this module
@@ -77,12 +77,12 @@ impl FoldKind {
 
 /// Convert a *ground value-leaf* operand `Par` (as it arrives at the contract — either a
 /// statically ground operand the send evaluated, or a COMM-substituted received value) into the
-/// corresponding RhoCalc value `Proc`, so the native fold can run on it. `None` if the operand is
+/// corresponding Rholang value `Proc`, so the native fold can run on it. `None` if the operand is
 /// not a single ground value leaf — the fold is then genuinely undefined on a non-value, and the
 /// handler reports a clear error rather than silently mis-reducing (the documented Tier-3
 /// boundary).
 ///
-/// A-S4: covers ALL the machine ground numerics the RhoCalc value lowering emits —
+/// A-S4: covers ALL the machine ground numerics the Rholang value lowering emits —
 /// `GInt`/`GBool`/`GString` plus `GDouble`/`GBigInt`/`GBigRat`/`GFixedPoint` (the send-time
 /// evaluation of a `float`/`fixed`/`bigint`/`bigrat` operand delivers those shapes). Each decode
 /// arm is the exact inverse of the corresponding literal lowering arm in

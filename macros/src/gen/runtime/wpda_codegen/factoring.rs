@@ -25,7 +25,7 @@
 //!
 //! ## The fan being factored (plan §0, receipts)
 //!
-//! At `WpdaState::PrefixDispatch` on `@` in RhoCalc `Proc`, the generated
+//! At `WpdaState::PrefixDispatch` on `@` in Rholang `Proc`, the generated
 //! engine emits ONE Fork with 16 branches — 1 CrossCatLhs + 15 rule branches
 //! (rules 10-24), each pushing its own `rule_at(0, r, 1)` and mirroring the
 //! SAME `@` token into the SPPF 15 times under 15 distinct TriggerTerminal
@@ -44,7 +44,7 @@
 //! `BinderShape.positions` for binder members and the
 //! `mixfix_nullary_literals` trailing-literal list
 //! (`AtomicShape::NullaryLiteralRun::trailing_literals`) for nullary members
-//! such as RhoCalc rules 15/16, whose whole tail is literals. Item equality:
+//! such as Rholang rules 15/16, whose whole tail is literals. Item equality:
 //!
 //!   - [`SpineItem::Literal`] — exact text plus the derived
 //!     `required_top_cat` guard payload (equal by induction along a shared
@@ -54,7 +54,7 @@
 //!     `build_prefix_bp_map` lookup the `emit_binder_rule_body` ParamParse
 //!     arm emits. Red-team AV2: the `prefix(220)` spec annotation does NOT
 //!     surface here — `build_prefix_bp_map` only maps
-//!     `classify_unary_prefix_shape` rules, so the six RhoCalc Short-group
+//!     `classify_unary_prefix_shape` rules, so the six Rholang Short-group
 //!     pos-1 arms are byte-equal with `cur_bp: 0` (pinned below).
 //!
 //! Any collection / binder-list / optional-group / guard item TERMINATES
@@ -73,10 +73,10 @@
 //!     [`crate::gen::runtime::numeric_cast_adapter::cast_machinery_participates`]
 //!     for the row definition (same source data as the walker-consulted
 //!     tables) and the deliberate boundary (same-category sends such as
-//!     RhoCalc `POutputNil` and non-numeric wrappers such as
+//!     Rholang `POutputNil` and non-numeric wrappers such as
 //!     `POutputQuotedEmpty` stay groupable — the pinned `@`-cohort trie
 //!     depends on it).
-//!   - Proper-prefix members (interior accept-nodes, e.g. RhoCalc
+//!   - Proper-prefix members (interior accept-nodes, e.g. Rholang
 //!     `InputBindQuoted` inside the `@`-led query row): stance-gated by
 //!     [`super::forks::S1F5_ACCEPT_CONTINUE`] (F5-1, plan
 //!     `f5_accept_continue_plan.md`). With the const `false` they are
@@ -165,7 +165,7 @@ pub(crate) enum MemberKind {
     Binder,
     Nullary,
     /// F5-2 (2026-07-13, plan `f5_mixfix_cohorts_plan.md`): a member of an
-    /// InfixLoop mixfix send cohort (rhocalc `!`/`!!`). Commits back into the
+    /// InfixLoop mixfix send cohort (rholang `!`/`!!`). Commits back into the
     /// member's OWN generic `MixfixLiteralRun` machinery at typed
     /// `(kind, completed_idx, sub_pos)` coordinates
     /// ([`MemberCommit::MixfixRun`], the A4-analog).
@@ -196,7 +196,7 @@ pub(crate) enum MemberCommit {
     /// and enters `MixfixLiteralRun { rule_idx, completed_idx, kind,
     /// sub_pos }`. The F0 `Nullary` variant is the `kind: 2, completed: 0`
     /// special case on the PREFIX surface; mixfix-cohort members (including
-    /// their nullary members, e.g. rhocalc POutputEmpty) always use this
+    /// their nullary members, e.g. rholang POutputEmpty) always use this
     /// variant so the coordinate law is stated once per surface.
     MixfixRun {
         rule_idx: u16,
@@ -385,7 +385,7 @@ pub(crate) enum SingletonReason {
     /// `numeric_cast_adapter::cast_machinery_participates`.
     CastMachinery,
     /// The member has no mergeable post-trigger item at all (its first item
-    /// already terminates mergeability — e.g. RhoCalc `PNew`'s leading
+    /// already terminates mergeability — e.g. Rholang `PNew`'s leading
     /// binder-list) — it commits at the trigger exactly as today.
     EmptySequence,
     /// [`super::forks::S1_FACTORING`] is `false`: the emission-effective
@@ -415,7 +415,7 @@ pub(crate) struct SingletonMember {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum IneligibleReason {
     /// One or more members are proper prefixes of siblings (interior
-    /// accept-nodes — e.g. RhoCalc `InputBindQuoted` inside the `@`-led
+    /// accept-nodes — e.g. Rholang `InputBindQuoted` inside the `@`-led
     /// query row). Modeled here, deferred to F5 (plan §5).
     InteriorAccept { accepting_rule_idxs: Vec<u16> },
     /// Binder members disagree on the initial `BinderRule.body_src_idx`
@@ -744,7 +744,7 @@ fn finalize_leaf(member: CandidateMember, leaf_depth: usize) -> GroupMember {
 /// rule to multi-root pre-root children, and every emitted divergence fork
 /// therefore puts the spine-continue branch before the accept commit
 /// branches. The choice preserves OFF's relative branch order at the only
-/// real cohort (rhocalc InputBind@ emits [QuotedQuery, Quoted]) and
+/// real cohort (rholang InputBind@ emits [QuotedQuery, Quoted]) and
 /// minimizes `source_priority` order channels; the emission pins assert it.
 ///
 /// A part whose members ALL exhaust here (identical-sequence twins) returns
@@ -1063,7 +1063,7 @@ pub(crate) fn emission_partition(
 //
 // The InfixLoop mixfix fan (engine_impl.rs `__mixfix_slice` loop) forks one
 // `mixfix_marker` + `MixfixLiteralRun{kind:2}` branch per slice member; the
-// bundled census has exactly TWO factorable cohorts — rhocalc Name `!`
+// bundled census has exactly TWO factorable cohorts — rholang Name `!`
 // {4,6,8} and `!!` {5,7,9} (isomorphic tries: divergences at depths 1 and 2,
 // rule 8/9 truncated at its rep, NO interior accepts). Discovery mirrors the
 // `mixfix_bp_<cat>` slice construction EXACTLY (same
@@ -1377,7 +1377,7 @@ pub(crate) fn build_mixfix_factoring(
                     reason: SingletonReason::CastMachinery,
                 });
             } else if cand.member.items.is_empty() {
-                // Rep-part-0 members (rhocalc InputBindPolyadic `,`): no
+                // Rep-part-0 members (rholang InputBindPolyadic `,`): no
                 // mergeable post-trigger item at all.
                 singletons.push(SingletonMember {
                     rule_idx: cand.member.rule_idx,
@@ -1793,7 +1793,7 @@ pub(crate) fn mixfix_spine_parts_len_rows(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Tests — the F0 gate's rhocalc trie pins (real grammar, real indices),
+// Tests — the F0 gate's rholang trie pins (real grammar, real indices),
 // the A2 exclusion receipts, and the synthetic eligibility witnesses.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1921,11 +1921,11 @@ pub(crate) struct SpineEmission {
 /// F5-2: one factored mixfix cohort's emission coordinates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MixfixGroupEmission {
-    /// The InfixLoop dispatch category (rhocalc Name = 3).
+    /// The InfixLoop dispatch category (rholang Name = 3).
     pub dispatch_cat_src_idx: u16,
     /// The trigger terminal (`"!"` / `"!!"`).
     pub trigger: String,
-    /// Uniform member result category (rhocalc Proc = 0).
+    /// Uniform member result category (rholang Proc = 0).
     pub result_src_idx: u16,
     pub spine_id: u16,
     /// D-1 full-admission floor (min over member l_bps).
@@ -3151,7 +3151,7 @@ mod tests {
     use proc_macro2::Span;
     use syn::Ident;
 
-    // ── real-grammar loading (the pinned trie is against the ACTUAL rhocalc
+    // ── real-grammar loading (the pinned trie is against the ACTUAL rholang
     //    source, run through the same pre-codegen pipeline as `language!`:
     //    parse → auto-inject → per-category materialization) ─────────────────
 
@@ -3188,8 +3188,8 @@ mod tests {
         def
     }
 
-    fn rhocalc() -> LanguageDef {
-        parse_bundled_language("../languages/src/rhocalc.rs")
+    fn rholang() -> LanguageDef {
+        parse_bundled_language("../languages/src/rholang.rs")
     }
 
     fn calculator() -> LanguageDef {
@@ -3348,7 +3348,7 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // The rhocalc `@`-cohort pins (F0 gate, plan §5).
+    // The rholang `@`-cohort pins (F0 gate, plan §5).
     // ═══════════════════════════════════════════════════════════════════════
 
     /// Proc@ = 3 groups with 6/3/6 leaves: Nil {10,11,15,16,20,21} (incl. the
@@ -3356,8 +3356,8 @@ mod tests {
     /// 23,24}. Rule indices are pinned against the generated WPDA_RULES
     /// table (labels asserted first, so drift fails loudly and precisely).
     #[test]
-    fn rhocalc_proc_at_cohort_pins_three_groups_6_3_6() {
-        let def = rhocalc();
+    fn rholang_proc_at_cohort_pins_three_groups_6_3_6() {
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         assert_eq!(categories[0], "Proc", "Proc is the primary category");
         let name_src = src_idx(&categories, "Name");
@@ -3457,8 +3457,8 @@ mod tests {
     /// same two-level `{!,!!}` × `( { ), PP { ), , } }` lattice over the
     /// shared leading Proc operand; Quoted is the single-`!` column.
     #[test]
-    fn rhocalc_at_cohort_divergence_structure_pins() {
-        let def = rhocalc();
+    fn rholang_at_cohort_divergence_structure_pins() {
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let model = build_prefix_factoring(&def, &categories, &per_cat);
         let proc_at = bucket(&model, 0, "@");
@@ -3491,8 +3491,8 @@ mod tests {
     /// commit at the `,` leaf into BinderRule pos 6, collection remainder in
     /// its own machinery); rule 10 as the no-remainder control.
     #[test]
-    fn rhocalc_commit_coordinates_rule15_nullary_and_rule20_2plus() {
-        let def = rhocalc();
+    fn rholang_commit_coordinates_rule15_nullary_and_rule20_2plus() {
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let model = build_prefix_factoring(&def, &categories, &per_cat);
         let nil = &bucket(&model, 0, "@").groups[0];
@@ -3555,11 +3555,11 @@ mod tests {
     /// `InputBindQuoted` is a proper PREFIX of the query row — an interior
     /// accept-node — so the whole group defers. The F5-1 admission of this
     /// exact cohort is pinned by
-    /// `rhocalc_inputbind_at_cohort_factors_with_accept_continue`; the
+    /// `rholang_inputbind_at_cohort_factors_with_accept_continue`; the
     /// const coupling by `inputbind_at_stance_follows_the_s1f5_const`.
     #[test]
-    fn rhocalc_name_and_inputbind_at_cohorts_excluded_or_singleton() {
-        let def = rhocalc();
+    fn rholang_name_and_inputbind_at_cohorts_excluded_or_singleton() {
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let model = build_prefix_factoring_with(&def, &categories, &per_cat, false);
         let name_src = src_idx(&categories, "Name");
@@ -3603,7 +3603,7 @@ mod tests {
 
     /// F5-1 — the ONLY real accept+continue cohort, admitted under
     /// `accept_continue == true` (explicit stance; green at both const
-    /// values): rhocalc `(InputBind, "@")` = {InputBindQuotedQuery=2,
+    /// values): rholang `(InputBind, "@")` = {InputBindQuotedQuery=2,
     /// InputBindQuoted=3 (the accept), InputBindQuotedPersistent=6} —
     /// index re-pin per plan §1/P1. Pins the sibling-leaf trie (the accept
     /// leaf SHARES its `P(Name)` edge item with the continuation subtree),
@@ -3613,8 +3613,8 @@ mod tests {
     /// per-category spine-ordinal isolation (InputBind's first group takes
     /// 0xF800 in its OWN category; Proc@ ids unshifted).
     #[test]
-    fn rhocalc_inputbind_at_cohort_factors_with_accept_continue() {
-        let def = rhocalc();
+    fn rholang_inputbind_at_cohort_factors_with_accept_continue() {
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let ib_src = src_idx(&categories, "InputBind");
         let name_src = src_idx(&categories, "Name");
@@ -3703,7 +3703,7 @@ mod tests {
     #[test]
     fn inputbind_at_stance_follows_the_s1f5_const() {
         let s1f5 = crate::gen::runtime::wpda_codegen::forks::S1F5_ACCEPT_CONTINUE;
-        let def = rhocalc();
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let ib_src = src_idx(&categories, "InputBind");
         let const_model = build_prefix_factoring(&def, &categories, &per_cat);
@@ -3726,13 +3726,13 @@ mod tests {
         }
     }
 
-    /// ★A2 receipts — RhoCalc: the binary object casts (`int(a,w) : Proc`
+    /// ★A2 receipts — Rholang: the binary object casts (`int(a,w) : Proc`
     /// family) are numeric-cast-adapter rows and excluded; the `@`-cohort
     /// sends (incl. the arity-1 `POutputNil`/`POutputQuotedEmpty`) are NOT
     /// cast rows and stay grouped (pinned above).
     #[test]
-    fn rhocalc_cast_rules_excluded_from_factoring_a2() {
-        let def = rhocalc();
+    fn rholang_cast_rules_excluded_from_factoring_a2() {
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let model = build_prefix_factoring(&def, &categories, &per_cat);
 
@@ -3764,7 +3764,7 @@ mod tests {
         }
 
         // Receipts to stderr for the campaign log.
-        eprintln!("A2 cast-machinery exclusion receipts (rhocalc):");
+        eprintln!("A2 cast-machinery exclusion receipts (rholang):");
         for cat in &model {
             for b in &cat.buckets {
                 for s in &b.singletons {
@@ -3865,7 +3865,7 @@ mod tests {
         }
     }
 
-    /// RhoCalc `PNew` (`new xs... in { p }` — the official-Rholang paren-free
+    /// Rholang `PNew` (`new xs... in { p }` — the official-Rholang paren-free
     /// declaration list, 2026-07-24): it stays an UNFACTORED SINGLETON in the
     /// `new` bucket, exactly as before the paren-drop. No sibling shares the
     /// `new` trigger, so it never factors.
@@ -3879,13 +3879,13 @@ mod tests {
     /// | after | `xs.*sep · "in" · "{" · p · "}"` | EMPTY — the binder-list is now item 0 | [`SingletonReason::EmptySequence`] |
     ///
     /// [`SingletonReason::EmptySequence`]'s own doc names this exact case ("its
-    /// first item already terminates mergeability — e.g. RhoCalc `PNew`'s
+    /// first item already terminates mergeability — e.g. Rholang `PNew`'s
     /// leading binder-list"), so the new label is the semantically correct one
     /// rather than a weakened assertion. The EMISSION is unchanged: still a
     /// singleton, still committing at the trigger, still zero groups.
     #[test]
-    fn rhocalc_pnew_stays_a_singleton() {
-        let def = rhocalc();
+    fn rholang_pnew_stays_a_singleton() {
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let model = build_prefix_factoring(&def, &categories, &per_cat);
         let pnew = rule_idx(&per_cat[0], "PNew");
@@ -3920,7 +3920,7 @@ mod tests {
             crate::gen::runtime::wpda_codegen::forks::S1_FACTORING,
             "F4 ships with the factoring const ON (kill-switch retained)",
         );
-        let def = rhocalc();
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let effective = emission_partition(&def, &categories, &per_cat);
         let model = build_prefix_factoring(&def, &categories, &per_cat);
@@ -3954,7 +3954,7 @@ mod tests {
                 }
             }
         }
-        // The rhocalc @-cohort ships factored: 3 groups, 6/3/6 leaves
+        // The rholang @-cohort ships factored: 3 groups, 6/3/6 leaves
         // (the F0-pinned trie, now emission-effective).
         let at = bucket(&effective, 0, "@");
         assert_eq!(at.groups.len(), 3);
@@ -3976,7 +3976,7 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Synthetic eligibility witnesses (non-rhocalc alphabet).
+    // Synthetic eligibility witnesses (non-rholang alphabet).
     // ═══════════════════════════════════════════════════════════════════════
 
     fn expr_num_types() -> Vec<LangType> {
@@ -4427,7 +4427,7 @@ mod tests {
             crate::gen::runtime::wpda_codegen::forks::S1_FACTORING,
             "F4 ships with the factoring const ON (kill-switch retained)",
         );
-        let def = rhocalc();
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let gated = build_spine_emission(&def, &categories, &per_cat);
         assert!(gated.any_groups(), "const ON ⇒ the factored emission is LIVE");
@@ -4441,7 +4441,7 @@ mod tests {
         // the group min is > 0 (the `if v > 0` row-omission in
         // `build_spine_emission_from`; 0 = the table default = absent), and
         // `member_min_span` returns 0 for EVERY member of EVERY current
-        // rhocalc group — each `@`-cohort member's pattern is Op-bearing
+        // rholang group — each `@`-cohort member's pattern is Op-bearing
         // (`SyntaxExpr::Op` short-circuits to 0 before literal counting) —
         // so min = 0 per group ⇒ every span row OMITTED ⇒ the CORRECT
         // ON-stance `min_span_prelude` is EMPTY (the engine falls through to
@@ -4497,7 +4497,7 @@ mod tests {
             if crate::gen::runtime::wpda_codegen::forks::S1F5_ACCEPT_CONTINUE { 4 } else { 3 };
         assert_eq!(
             groups_seen, expected_groups,
-            "rhocalc group census follows the S1F5_ACCEPT_CONTINUE stance",
+            "rholang group census follows the S1F5_ACCEPT_CONTINUE stance",
         );
         // F5-2 stance-follow (A3 discipline — no pin edits ride the flip):
         // the const-gated bundle gains the two Name-dispatched send cohorts
@@ -4535,7 +4535,7 @@ mod tests {
             if crate::gen::runtime::wpda_codegen::forks::S1F5_MIXFIX_COHORTS { 2 } else { 0 };
         assert_eq!(
             mixfix_groups_seen, expected_mixfix_groups,
-            "rhocalc mixfix cohort census follows the S1F5_MIXFIX_COHORTS stance",
+            "rholang mixfix cohort census follows the S1F5_MIXFIX_COHORTS stance",
         );
         assert_eq!(
             gated.mixfix_groups.len(),
@@ -4581,7 +4581,7 @@ mod tests {
         assert!(grouped_alts > 0, "const ON ⇒ lex-alt group entries present");
     }
 
-    /// ON-shape pins over the rhocalc `@`-cohort: dispositions (GroupFirst at
+    /// ON-shape pins over the rholang `@`-cohort: dispositions (GroupFirst at
     /// the min member with the AV5 weight identity, GroupRest for the rest),
     /// the ROOT-EDGE arm (F1 root-edge fix: the pre-root arm at node id 1 —
     /// the coordinate the trigger branch pushes — consumes the group's FIRST
@@ -4607,7 +4607,7 @@ mod tests {
                 _ => u16::MAX,
             }
         };
-        for (name, def) in [("rhocalc", rhocalc()), ("calculator", calculator())] {
+        for (name, def) in [("rholang", rholang()), ("calculator", calculator())] {
             let (categories, per_cat) = cats_per_cat(&def);
             let bundle = build_spine_emission(&def, &categories, &per_cat);
             let empty_disp: HashMap<u16, SpineDisposition> = HashMap::new();
@@ -4662,14 +4662,14 @@ mod tests {
         // position — the GroupFirst branch is every member's initiating
         // branch, so all members of one group share ONE ordinal in the
         // generated table.
-        let def = rhocalc();
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let bundle = build_spine_emission(&def, &categories, &per_cat);
         let proc_dispositions = &bundle.dispositions[0];
         let proc_members = &bundle.group_members[0];
         assert!(
             !proc_members.is_empty(),
-            "rhocalc Proc carries S1 spine groups under the committed ON stance",
+            "rholang Proc carries S1 spine groups under the committed ON stance",
         );
         let mut fork_model =
             crate::gen::runtime::wpda_codegen::fork_emission::ForkEmissionOrdinalModel::new();
@@ -4704,8 +4704,8 @@ mod tests {
     }
 
     #[test]
-    fn spine_emission_on_rhocalc_pins_dispositions_root_edge_and_tables() {
-        let def = rhocalc();
+    fn spine_emission_on_rholang_pins_dispositions_root_edge_and_tables() {
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let model = build_prefix_factoring(&def, &categories, &per_cat);
         let bundle = build_spine_emission_from(&model, &def, &categories, &per_cat);
@@ -4860,7 +4860,7 @@ mod tests {
     // no const flip needed, green at both stances (the F1 discipline).
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// P3(b) — the rhocalc InputBind@ accept+continue emission, hand-derived
+    /// P3(b) — the rholang InputBind@ accept+continue emission, hand-derived
     /// in plan §2.2 and pinned arm-by-arm: pre-root Proc push (arm 1), the
     /// `<-`/`<=` divergence with the r6 commit (arm 2), ★THE
     /// ACCEPT+CONTINUE FORK (arm 3 — two `ReplaceAndPush` branches BOTH
@@ -4872,7 +4872,7 @@ mod tests {
     /// and the engine-table rows incl. the A3 span-row ABSENCE.
     #[test]
     fn spine_emission_on_inputbind_accept_fork_pins() {
-        let def = rhocalc();
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let ib = src_idx(&categories, "InputBind");
         let name_src = src_idx(&categories, "Name");
@@ -4994,7 +4994,7 @@ mod tests {
         assert!(leads.contains(&format!("({ib}u16,{spine}u16)=>returntrue")));
         // A3: r2's Op-bearing pattern short-circuits member_min_span to 0 ⇒
         // group min 0 ⇒ the (ib, spine) span row is ABSENT — and since every
-        // rhocalc group is min-0, the whole prelude is EMPTY.
+        // rholang group is min-0, the whole prelude is EMPTY.
         assert!(
             bundle.min_span_prelude.is_empty(),
             "A3: min=0 ⇒ the span row is omitted; got {}",
@@ -5091,7 +5091,7 @@ mod tests {
     // §2.2 + amendments A-M4/A-M5).
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// P1 (GO/STOP): the two real cohort tries against the ACTUAL rhocalc
+    /// P1 (GO/STOP): the two real cohort tries against the ACTUAL rholang
     /// grammar — leaves {4,6,8}/{5,7,9}, divergences at depths 1 and 2,
     /// rules 8/9 truncated at their rep, NO interior accepts, whole-slice
     /// coverage, uniform result_src = 0, spine ids CONTINUING Proc's prefix
@@ -5100,8 +5100,8 @@ mod tests {
     /// A-M4 Fix-B evidence (both cohorts share "("), and the typed
     /// MixfixRun commit coordinates.
     #[test]
-    fn rhocalc_mixfix_send_cohorts_pin_two_groups() {
-        let def = rhocalc();
+    fn rholang_mixfix_send_cohorts_pin_two_groups() {
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let name_src = src_idx(&categories, "Name");
         let proc_src = src_idx(&categories, "Proc");
@@ -5205,8 +5205,8 @@ mod tests {
     /// remains its own `LoneRootChild` singleton and the cohort still yields
     /// zero factorable groups. Only the census count moves.
     #[test]
-    fn rhocalc_mixfix_other_cohorts_stay_unfactored() {
-        let def = rhocalc();
+    fn rholang_mixfix_other_cohorts_stay_unfactored() {
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let name_src = src_idx(&categories, "Name");
         let proc_src = src_idx(&categories, "Proc");
@@ -5251,7 +5251,7 @@ mod tests {
             .flat_map(|f| f.buckets.iter())
             .map(|b| b.groups.len())
             .sum();
-        assert_eq!(total_groups, 2, "exactly two factorable mixfix cohorts in rhocalc");
+        assert_eq!(total_groups, 2, "exactly two factorable mixfix cohorts in rholang");
     }
 
     /// Dormancy pin (stance-adaptive on `S1F5_MIXFIX_COHORTS` — no pin edit
@@ -5263,7 +5263,7 @@ mod tests {
     /// two Proc-space spine ids.
     #[test]
     fn mixfix_emission_follows_the_s1f5_2_const() {
-        let def = rhocalc();
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let gated = build_spine_emission(&def, &categories, &per_cat);
         let rows = mixfix_spine_parts_len_rows(&def, &categories, &per_cat);
@@ -5309,7 +5309,7 @@ mod tests {
     /// denominators therefore agree across stances.
     #[test]
     fn mixfix_identity_partition_census_twin() {
-        let def = rhocalc();
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let prefix = build_prefix_factoring(&def, &categories, &per_cat);
         let model = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
@@ -5336,7 +5336,7 @@ mod tests {
     /// engine-table rows (owner/members/H9 union/weight; A7 rows ABSENT).
     #[test]
     fn mixfix_emission_pins_fan_arm_prelude_and_tables() {
-        let def = rhocalc();
+        let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let prefix = build_prefix_factoring(&def, &categories, &per_cat);
         let mixfix = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
@@ -5450,7 +5450,7 @@ mod tests {
             !leads.contains("63491") && !leads.contains("63492"),
             "mixfix spine ids must NOT appear on the leading-trigger surface: {leads}",
         );
-        // min_span stays EMPTY for rhocalc (rules 8/9 are Op-bearing ⇒ min 0).
+        // min_span stays EMPTY for rholang (rules 8/9 are Op-bearing ⇒ min 0).
         assert!(bundle.min_span_prelude.is_empty());
     }
 

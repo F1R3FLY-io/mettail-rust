@@ -2,7 +2,7 @@
 //!
 //! This module is the durable, compile-free codegen-property gate proving the
 //! prattail WPDA/WFST codegen is *uniformly general* across ARBITRARY grammars
-//! — not overfit to the bundled ones (RhoCalc / Calculator / Lambda). It calls
+//! — not overfit to the bundled ones (Rholang / Calculator / Lambda). It calls
 //! the `pub(crate)` codegen functions directly on randomly-generated
 //! `LanguageDef`s (no parser build, no `cargo` sub-process) and asserts the
 //! seven generality invariants documented in
@@ -44,8 +44,8 @@
 //! `S1_FACTORING && S1F5_MIXFIX_COHORTS` is not satisfied (`mixfix_groups`
 //! empty ⇒ byte-identical to the pre-F1 lattice).
 //!
-//! The harness draws delimiters from a NON-rhocalc alphabet (`«»`, `‹›`, `⟦⟧`,
-//! `⟨⟩`, custom keywords, non-`;` separators) so the rhocalc-specific hardcodes
+//! The harness draws delimiters from a NON-rholang alphabet (`«»`, `‹›`, `⟦⟧`,
+//! `⟨⟩`, custom keywords, non-`;` separators) so the rholang-specific hardcodes
 //! the audit flags (GAP-2's `#{ {| }# |}`, the bracket set, the `;` row
 //! boundary) surface as foreign string literals in INV-6.
 //!
@@ -145,7 +145,7 @@ fn mk_language(name: &str, types: Vec<LangType>, terms: Vec<GrammarRule>) -> Lan
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Fixed category universe + NON-rhocalc delimiter alphabet.
+// Fixed category universe + NON-rholang delimiter alphabet.
 //
 // Native categories use distinct names that do NOT collide with the reserved
 // `NonTerminalKind` literals (`Var`/`Integer`/`Boolean`/`StringLiteral`/
@@ -166,7 +166,7 @@ fn cat_name(r: usize) -> &'static str {
     CATS[r].0
 }
 
-/// NON-rhocalc bracket pairs. Deliberately avoid `( ) [ ] { } #{ }# {| |}`.
+/// NON-rholang bracket pairs. Deliberately avoid `( ) [ ] { } #{ }# {| |}`.
 const DELIMS: &[(&str, &str)] = &[("«", "»"), ("‹", "›"), ("⟦", "⟧"), ("⟨", "⟩")];
 
 /// Operator / trigger pool. Avoid `;`.
@@ -326,7 +326,7 @@ fn witness_spine() -> Vec<GrammarRule> {
         // (the `Map()` shape) — empty term-context, all-literal `kw open close`.
         // Classifies as `AtomicShape::NullaryLiteralRun`; dispatches via the
         // prefix-site marker + reused `MixfixLiteralRun(kind=2, parts_len==0)`
-        // arm. Non-rhocalc delimiters keep INV-6 satisfied.
+        // arm. Non-rholang delimiters keep INV-6 satisfied.
         jrule("NmW", "Num", vec![], vec![lit("unit"), lit("«"), lit("»")]),
         // INV-5 witness: trigger collision — two ops sharing (Num, "amb").
         jrule("AmbA", "Num", vec![simple("a", "Num"), simple("b", "Num")], vec![param("a"), lit("amb"), param("b")]),
@@ -1432,8 +1432,8 @@ fn grammar_generality_inv4_fork_survival_flag_inside_gate() {
     inv4_fork_symmetry().expect("INV-4: CrossCatProjection survival flag must be inside the gate (GAP-4)");
 }
 
-/// Clean non-rhocalc grammar (no unclassified rules) — RED before GAP-2.
-fn non_rhocalc_lang() -> LanguageDef {
+/// Clean non-rholang grammar (no unclassified rules) — RED before GAP-2.
+fn non_rholang_lang() -> LanguageDef {
     let types = vec![
         lang_type("Expr", None),
         lang_type("Pred", None),
@@ -1443,7 +1443,7 @@ fn non_rhocalc_lang() -> LanguageDef {
         jrule("EVar", "Expr", vec![], vec![lit("e")]),
         // Cross-cat-LHS infix so the scoped-lookahead (GAP-2 site) is exercised.
         jrule("Cmp", "Pred", vec![simple("a", "Num"), simple("b", "Num")], vec![param("a"), lit("cmp"), param("b")]),
-        // Collection with NON-rhocalc brackets «…».
+        // Collection with NON-rholang brackets «…».
         jrule("Lst", "Expr", vec![simple_coll("xs", CollectionType::Vec, "Num")], vec![lit("«"), sep("xs", ","), lit("»")]),
         // Projection so Num inhabits Expr.
         jrule("ProjNE", "Expr", vec![simple("a", "Num")], vec![param("a")]),
@@ -1453,9 +1453,9 @@ fn non_rhocalc_lang() -> LanguageDef {
 
 #[test]
 fn grammar_generality_inv6_no_hardcoded_delimiters() {
-    let lang = non_rhocalc_lang();
+    let lang = non_rholang_lang();
     inv6_no_hardcoded_delims(&lang)
-        .expect("INV-6: emitted engine must not reference rhocalc-hardcoded delimiters (GAP-2)");
+        .expect("INV-6: emitted engine must not reference rholang-hardcoded delimiters (GAP-2)");
 }
 
 #[test]
@@ -1473,7 +1473,7 @@ fn grammar_generality_inv1_noloss_symmetry_with_collisions() {
 
 /// INV-1/INV-5 RESTATEMENT witness — Literal-root mixfix cohort (PERMANENT
 /// regression pin, board task #13). This is `Inv8MixfixLang` (the
-/// rhocalc-shaped POutput/POutputEmpty `!`+`«` send cohort), the CHEAPEST
+/// rholang-shaped POutput/POutputEmpty `!`+`«` send cohort), the CHEAPEST
 /// decisive probe: an in-tree grammar already fed to
 /// `inv8_mixfix_surface_noloss`, which by construction cannot catch the
 /// INFIX-lattice defect. Hand-walk (red-team 2026-07-13) confirms it forms a
@@ -1520,7 +1520,7 @@ fn grammar_generality_inv1_cohort_litroot_witness() {
 /// factoring.rs:1499-1528). Under the PRE-F5-2 INV-1 statement this Err'd
 /// "lattice arm has 1 infos, group has 2 ops" at (cat 0, '++'); the
 /// cohort-aware RESTATEMENT must PASS. This is the ParamParse-root class the
-/// bundled census never exercises (rhocalc's `!` cohorts are Literal-root),
+/// bundled census never exercises (rholang's `!` cohorts are Literal-root),
 /// so it pins the restatement across BOTH root classes.
 #[test]
 fn grammar_generality_inv1_cohort_paramroot_witness() {
@@ -1650,7 +1650,7 @@ fn grammar_generality_inv8_prefix_surface_noloss() {
 /// INV-8-mixfix witness: a deliberately factorable mixfix send cohort — two
 /// `!`-triggered postfix-mixfix rules sharing the `«` opener (an
 /// operand-bearing member `a ! « b »` and a nullary member `a ! « »`,
-/// the rhocalc POutput/POutputEmpty shape on a foreign alphabet) — the
+/// the rholang POutput/POutputEmpty shape on a foreign alphabet) — the
 /// slice accounting must balance in both models, and with the F5-2 consts
 /// not both on the emission partition must be the identity.
 #[test]

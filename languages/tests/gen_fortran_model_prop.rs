@@ -8,14 +8,14 @@
 //! terminal (`IF`) in channel/identifier position still yields BOTH the keyword
 //! reading and the variable reading — Fortran's no-reserved-words property.
 //!
-//! The send pair `SendKw`/`SendVar` mirrors RhoCalc's `POutputNil`
+//! The send pair `SendKw`/`SendVar` mirrors Rholang's `POutputNil`
 //! (`@ Nil ! (q)`, literal keyword channel) vs `POutputQuoted`
 //! (`@ n:Name ! (q)`, variable channel): `@Nil!(q)` forks between the keyword
-//! `Nil` and a variable named `Nil`. Under RhoCalc's `reserved_keywords: auto`
+//! `Nil` and a variable named `Nil`. Under Rholang's `reserved_keywords: auto`
 //! that fork collapses to one reading; here, under `none`, it is retained
 //! (empirically verified: `@IF!(x)` → 2 readings).
 //!
-//! Companion: `keyword_reservation_tests.rs` (RhoCalc, reservation ON).
+//! Companion: `keyword_reservation_tests.rs` (Rholang, reservation ON).
 
 #![allow(clippy::bool_assert_comparison)]
 

@@ -20,7 +20,7 @@
 //! `macros/src/gen/syntax/display.rs::find_projection_surface_wrapper` rendered a
 //! cross-category projection operand at `min_bp > 0` by **borrowing** the first
 //! delimited single-base-param rule of the target category and re-emitting that rule's
-//! surface around the source term. For a rhocalc `Proc` operand the election landed on
+//! surface around the source term. For a rholang `Proc` operand the election landed on
 //! `POutputNil . q:Proc |- "@" "Nil" "!" "(" q ")"` — a **send**:
 //!
 //! ```text
@@ -64,9 +64,9 @@
 //! passed by either fix alone.
 //!
 //! Structural equality is `format!("{:?}", …)` equality, in preference to the
-//! languages' `term_eq`, which is *deliberately* coarser: rhocalc's `term_eq`
+//! languages' `term_eq`, which is *deliberately* coarser: rholang's `term_eq`
 //! canonicalizes every `@`-send sugar
-//! (`languages/src/rhocalc/runtime.rs::normalize_send_sugar_canon`), so `POutputNil(q)`
+//! (`languages/src/rholang/runtime.rs::normalize_send_sugar_canon`), so `POutputNil(q)`
 //! and `POutput(NQuote(PZero), q)` compare EQUAL under it — a term-preservation test
 //! must not inherit that coarsening. The corpus is binder-free, which additionally
 //! makes `Debug` equality insensitive to variable-cache identity.
@@ -84,7 +84,7 @@
 //!
 //! ## ★ The second non-injective region: SURFACE SYNONYMY (2026-07-26)
 //!
-//! A grammar may spell one term more than one way, and RhoCalc's `Name` does:
+//! A grammar may spell one term more than one way, and Rholang's `Name` does:
 //! `NQuote(p)` (`@(p)`), `NQuoteShort(p)` (`@p`) and `NQuoteNil` (`@Nil`) are three
 //! constructors with one denotation — the last two say so in their own `fold` bodies.
 //! Before 2026-07-26 each rendered its OWN surface, which made `Display` a function of
@@ -92,7 +92,7 @@
 //! a term whose synonym sat two nesting layers deep shed one surface per layer
 //! (`(@(error)) <- @Nil` → `@(error) <- @Nil` → `@error <- @Nil`). `Display` now renders
 //! every member of a synonymy class through the class's DECLARED canonical member
-//! (`languages/src/rhocalc.rs`: `NQuoteShort … canonical`), which is what closes that gap.
+//! (`languages/src/rholang.rs`: `NQuoteShort … canonical`), which is what closes that gap.
 //!
 //! ⚠ **So `display` is DELIBERATELY non-injective on a synonymy class, and LEG R changes
 //! shape there.** It does NOT weaken: `parse(display(t))` is still asserted EXACTLY, it is
@@ -110,7 +110,7 @@
 //! mismatch, assert `report` actually panics, and assert the corpus really exercises
 //! the operand positions where the defects lived.
 
-#![cfg(all(feature = "rhocalc", feature = "calculator"))]
+#![cfg(all(feature = "rholang", feature = "calculator"))]
 
 use std::sync::Arc;
 
@@ -259,7 +259,7 @@ fn report(observations: Vec<Observation>) {
 }
 
 mod rho {
-    pub use mettail_languages::rhocalc::{Int, Name, Proc};
+    pub use mettail_languages::rholang::{Int, Name, Proc};
 }
 mod calc {
     pub use mettail_languages::calculator::{BigInt, BigRat, Bool, Int, UInt32};
@@ -270,7 +270,7 @@ fn rho_int(v: i64) -> rho::Proc {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// rhocalc — Proc (the category the defects were found in)
+// rholang — Proc (the category the defects were found in)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// `(name, term, golden surface)`.
@@ -279,8 +279,8 @@ fn rho_int(v: i64) -> rho::Proc {
 /// cross-category projection (`CastInt : Int ▸ Proc`) in an operand slot whose inherited
 /// `min_bp` is non-zero — exactly the position that used to borrow `POutputNil`'s
 /// `@Nil!( … )` surface. Their goldens carry NO parentheses, because a bare integer
-/// literal is self-delimiting and cannot fuse with `+`; rhocalc's `Int` category has no
-/// operators of its own, so no rhocalc projection operand ever needs a bracket. The
+/// literal is self-delimiting and cannot fuse with `+`; rholang's `Int` category has no
+/// operators of its own, so no rholang projection operand ever needs a bracket. The
 /// `@Nil!(1)` row is the control that keeps the send surface reachable: a term that
 /// really IS a send must still display as one.
 fn rho_proc_cases() -> Vec<(&'static str, rho::Proc, &'static str)> {
@@ -315,7 +315,7 @@ fn rho_proc_cases() -> Vec<(&'static str, rho::Proc, &'static str)> {
 }
 
 #[test]
-fn rhocalc_proc_display_parse_preserves_terms() {
+fn rholang_proc_display_parse_preserves_terms() {
     let cases = rho_proc_cases();
     let mut obs = Vec::with_capacity(cases.len() * 4);
     for (case, term, surface) in cases {
@@ -332,14 +332,14 @@ fn rhocalc_proc_display_parse_preserves_terms() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// rhocalc — Name and Int
+// rholang — Name and Int
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn rhocalc_name_display_parse_preserves_terms() {
+fn rholang_name_display_parse_preserves_terms() {
     // ★ SURFACE SYNONYMY (2026-07-26). `Name`'s `{ NQuote, NQuoteShort, NQuoteNil }` is a
     // synonymy class, so `Display` renders all three through the class's DECLARED canonical
-    // member `NQuoteShort` (`languages/src/rhocalc.rs`). Two things follow, and both are
+    // member `NQuoteShort` (`languages/src/rholang.rs`). Two things follow, and both are
     // asserted rather than excused:
     //
     //   LEG S — the golden surface of an `NQuote` is now the SHORTHAND. `@(Nil)` ⇒ `@Nil`,
@@ -396,7 +396,7 @@ fn rhocalc_name_display_parse_preserves_terms() {
 }
 
 #[test]
-fn rhocalc_int_display_parse_preserves_terms() {
+fn rholang_int_display_parse_preserves_terms() {
     let cases: Vec<(&'static str, rho::Int, &'static str)> =
         vec![("int/lit", rho::Int::NumLit(42), "42")];
     let mut obs = Vec::with_capacity(cases.len() * 4);
@@ -410,7 +410,7 @@ fn rhocalc_int_display_parse_preserves_terms() {
 // calculator — Int / BigInt / Bool / UInt32
 //
 // A DIFFERENT language, whose projection-surface election landed on `bigrat( … )` /
-// `bigint( … )` rather than rhocalc's `@Nil!( … )`. `UInt32` carries the positive
+// `bigint( … )` rather than rholang's `@Nil!( … )`. `UInt32` carries the positive
 // bracketing witness.
 // ═══════════════════════════════════════════════════════════════════════════
 

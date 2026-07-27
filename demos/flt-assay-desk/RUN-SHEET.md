@@ -1,13 +1,13 @@
 # The Foreign Assay Desk — foreign terms reduced by the Rholang machine, then filtered by a `where` guard
 
-A live demonstration of RhoCalc's **Foreign Language Term** (FLT) integration, end to end, on
+A live demonstration of Rholang's **Foreign Language Term** (FLT) integration, end to end, on
 F1r3node's Rho machine. A guest language — the untyped $`\lambda`$-calculus — is embedded in
-RhoCalc source; its terms are **driven to normal form by the Rholang machine itself**, not by a
-host interpreter; the results are **extracted** into the RhoCalc program by typed-hole patterns;
+Rholang source; its terms are **driven to normal form by the Rholang machine itself**, not by a
+host interpreter; the results are **extracted** into the Rholang program by typed-hole patterns;
 and a **`where` clause selects** the ones the program needs, leaving the rest resting on the
 channel.
 
-Everything below is stock RhoCalc plus the bundled `lambda` guest. There is no Rust harness in the
+Everything below is stock Rholang plus the bundled `lambda` guest. There is no Rust harness in the
 demo path: the presenter runs one interpreter binary on seven committed `.rho` files.
 
 > Status: **VALIDATED end to end, 2026-07-26** — every command on this page was run and every
@@ -69,7 +69,7 @@ Two mechanisms are stacked in that one receive, and they do different jobs:
 
 | | what it is | what it does |
 |---|---|---|
-| `` @lambda`${r}` `` | the receive **pattern** — itself an FLT, carrying one typed hole | matches a reflected guest term by **shape** and binds the whole $`\lambda`$-term to `r`. This is the **extraction**: the foreign result becomes a value the RhoCalc program holds. A `${x}` hole is a secure typed-AST hole; it never splices strings (No-Injection). |
+| `` @lambda`${r}` `` | the receive **pattern** — itself an FLT, carrying one typed hole | matches a reflected guest term by **shape** and binds the whole $`\lambda`$-term to `r`. This is the **extraction**: the foreign result becomes a value the Rholang program holds. A `${x}` hole is a secure typed-AST hole; it never splices strings (No-Injection). |
 | `` where lambda`${r}` == … `` | the **guard** | re-quotes the captured term and **decides** it against a reference term. This is the **filter**, and the decision is made by the substrate, not by the pattern. |
 
 ---
@@ -81,7 +81,7 @@ $ cargo build -p rholang-runtime --bin rholang --features "rholang-runtime lambd
 ```
 
 Both features are required by the `rholang` bin target: `rholang-runtime` pulls in the generated
-RhoCalc language and its AST-first lowering, `lambda-runtime` pulls in the production
+Rholang language and its AST-first lowering, `lambda-runtime` pulls in the production
 `LambdaLanguage` that the interpreter registers as the `lambda` guest. The build takes several
 minutes cold. Everything after this is instant.
 
@@ -106,7 +106,7 @@ $ tail -1 demos/flt-assay-desk/contract-a.rho
 lambda`((lam a. lam b. a, lam x. x), lam a. lam b. a)`
 ```
 
-> "`` lambda`…` `` is RhoCalc's opener for a term of another language. Everything between the
+> "`` lambda`…` `` is Rholang's opener for a term of another language. Everything between the
 > back-ticks is the **guest's** concrete syntax — the untyped λ-calculus — handed to the guest's
 > own reflector. In the guest, `(f, a)` is application. So with the two standard combinators
 >
@@ -122,7 +122,7 @@ $ target/debug/rholang demos/flt-assay-desk/contract-a.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/contract-a.rho
 comments: 36 retained on the COMMENTS channel
 mode: term → reducing to normal form on the f1r3node reducer
@@ -158,7 +158,7 @@ $ target/debug/rholang demos/flt-assay-desk/contract-b.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/contract-b.rho
 comments: 25 retained on the COMMENTS channel
 mode: term → reducing to normal form on the f1r3node reducer
@@ -176,7 +176,7 @@ $ target/debug/rholang demos/flt-assay-desk/contract-c.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/contract-c.rho
 comments: 27 retained on the COMMENTS channel
 mode: term → reducing to normal form on the f1r3node reducer
@@ -224,7 +224,7 @@ for(@lambda`${r}` <- @"assay" where lambda`${r}` == lambda`lam a. lam b. a`) {
 >
 > The receive does two things at once. Its **pattern** is itself a foreign term with a typed hole
 > in it, `` @lambda`${r}` ``; that matches a reflected guest term by shape and binds it — that is how the
-> foreign result gets *into* the RhoCalc program. Its **`where` clause** is the filter: it decides
+> foreign result gets *into* the Rholang program. Its **`where` clause** is the filter: it decides
 > the captured term against the constant combinator.
 >
 > Three data are resting and exactly one satisfies the guard. So the receive has to *search*."
@@ -236,7 +236,7 @@ $ target/debug/rholang demos/flt-assay-desk/desk-accepts-constant.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/desk-accepts-constant.rho
 comments: 53 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -270,7 +270,7 @@ $ target/debug/rholang demos/flt-assay-desk/desk-accepts-identity.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/desk-accepts-identity.rho
 comments: 24 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -313,7 +313,7 @@ $ target/debug/rholang demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.r
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho
 comments: 35 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -339,7 +339,7 @@ $ target/debug/rholang demos/flt-assay-desk/desk-accepts-nothing.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/desk-accepts-nothing.rho
 comments: 30 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -483,5 +483,5 @@ expected outputs, and their tests are agnostic to the provenance of the resting 
 * `demos/flt-foreign-exchange/` — the FLT feature's first demo: typed `${x}` holes destructuring a
   foreign term across a COMM (`foreign-exchange.rho`), and a bare term driven to normal form
   (`k-combinator.rho`).
-* `demos/rhocalc-settlement/` — `where` guards over ground data in the REPL, and the account of
+* `demos/rholang-settlement/` — `where` guards over ground data in the REPL, and the account of
   defect D1 and its repair (`repl/tests/settlement_demo.rs`).

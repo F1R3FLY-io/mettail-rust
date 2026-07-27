@@ -320,7 +320,7 @@ The G38 diagnostic includes:
 The congruence module is tested through integration tests that compile
 full language definitions with explicit congruence rules:
 
-- **RhoCalc tests**: Exercise all three congruence strategies (Simple for
+- **Rholang tests**: Exercise all three congruence strategies (Simple for
   POutput fields, Collection for PPar bag elements, Binding for PNew scope)
 - **Lambda tests**: Exercise binding congruence
 - **Ambient tests**: Exercise collection congruence

@@ -37,13 +37,13 @@
 //!
 //! ## The corpus
 //!
-//! [`GUARD_CORPUS`] is every distinct `where`-guard instance reachable from the tree's RhoCalc
+//! [`GUARD_CORPUS`] is every distinct `where`-guard instance reachable from the tree's Rholang
 //! test suites and demos, harvested from:
 //!
 //! | source | shape |
 //! |---|---|
-//! | `languages/tests/rhocalc_tests.rs` | the literal guarded programs + the `assert_host_guard` truth-table rows |
-//! | `languages/tests/rhocalc_semantic_predicate_ambiguity.rs` | `implies` / `matches` guards |
+//! | `languages/tests/rholang_tests.rs` | the literal guarded programs + the `assert_host_guard` truth-table rows |
+//! | `languages/tests/rholang_semantic_predicate_ambiguity.rs` | `implies` / `matches` guards |
 //! | `rholang-runtime/tests/rho_implies_guard.rs` | the machine-side `implies` rows |
 //! | `rholang-runtime/tests/rho_matches_guard.rs` | the `matches` formula rows |
 //! | `rholang-runtime/tests/rho_guard_oracle.rs` | the cross-bind `&`-join guards |
@@ -56,7 +56,7 @@
 
 #![cfg(feature = "rholang-runtime")]
 
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_runtime::guard_discharge::{
     guard_as_tagged_continuation, machine_verdict, GuardDischarge,
 };
@@ -78,7 +78,7 @@ use GuardDischarge::{Discharged, Refuted, Residual};
 /// One corpus row: the `where`-guard source, and the outcome `classify` must reach for it.
 type GuardRow = (&'static str, GuardDischarge);
 
-/// Every distinct guard instance in the tree's RhoCalc corpus.
+/// Every distinct guard instance in the tree's Rholang corpus.
 ///
 /// A row's outcome is a fact about the guard ALONE (the receive shape it appears in is
 /// irrelevant — `classify` is a pure function of the lowered condition), so each guard is
@@ -185,7 +185,7 @@ const GUARD_CORPUS: &[GuardRow] = &[
     ("x > 0 and false", Residual),
     ("false or x > 0", Residual),
     // ── ★ THE DEMO GUARDS, VERBATIM (decision U-7: the demos are unchanged by S-D0).
-    //    Taken from `demos/rhocalc-settlement/settlement.env` and `RUN-SHEET.md`. All three
+    //    Taken from `demos/rholang-settlement/settlement.env` and `RUN-SHEET.md`. All three
     //    are payload-dependent, so all three are Residual and every demo beat behaves
     //    exactly as it did — asserted here rather than argued. ──────────────────────────────
     ("x < 46u32", Residual), // settlement.env `desk`  (`px <= 45u32`, RUN-SHEET §fallback)
@@ -205,7 +205,7 @@ const JOIN_GUARD_CORPUS: &[GuardRow] = &[
     (r#"(x > 1) and (y == "lemon")"#, Residual), // rholang_tests.rs:1851
     ("x >= y", Residual),
     ("x != y", Residual),
-    // ★ The cross-bind DEMO guard, verbatim from `demos/rhocalc-settlement/settlement.env`'s
+    // ★ The cross-bind DEMO guard, verbatim from `demos/rholang-settlement/settlement.env`'s
     // `settle` row (`px * qty <= 500u32`, in the RUN-SHEET's `<`-fallback spelling). Payload-
     // dependent ⇒ Residual ⇒ the demo is unchanged (decision U-7).
     ("x * y < 501u32", Residual),
@@ -605,14 +605,14 @@ fn host_verdict_for(proc: &Proc) -> Option<bool> {
             _ => None,
         }
     }
-    fn for_row_guard(row: &mettail_languages::rhocalc::ForRow) -> Option<&Proc> {
-        use mettail_languages::rhocalc::ForRow as R;
+    fn for_row_guard(row: &mettail_languages::rholang::ForRow) -> Option<&Proc> {
+        use mettail_languages::rholang::ForRow as R;
         match row {
             R::ForRowWhere(_, _, cond) | R::ForRowSingleWhere(_, cond) => Some(cond.as_ref()),
             _ => None,
         }
     }
-    guard_of(proc).and_then(mettail_languages::rhocalc::receive::eval_guard_bool)
+    guard_of(proc).and_then(mettail_languages::rholang::receive::eval_guard_bool)
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -681,7 +681,7 @@ fn the_three_codegen_guard_sites_are_all_residual() {
 /// ★ The RUN-SHEET's **Beat 3b** claims, VERIFIED rather than asserted on paper.
 ///
 /// The two programs are copied verbatim from
-/// `demos/rhocalc-settlement/RUN-SHEET.md`. Beat 3b tells the audience three things, and all
+/// `demos/rholang-settlement/RUN-SHEET.md`. Beat 3b tells the audience three things, and all
 /// three are checked here: the vacuous guard fires, its `where` clause is ABSENT from the
 /// compiled artifact, and the statically-false mirror neither fires nor loses its guard.
 #[tokio::test(flavor = "multi_thread")]
@@ -750,7 +750,7 @@ async fn the_run_sheets_beat_3b_is_exactly_what_the_compiler_does() {
 }
 
 /// ★ Decision U-7: the demos are UNCHANGED by S-D0. Every settlement guard, taken verbatim
-/// from `demos/rhocalc-settlement/settlement.env` and its RUN-SHEET, is payload-dependent and
+/// from `demos/rholang-settlement/settlement.env` and its RUN-SHEET, is payload-dependent and
 /// therefore Residual — the compiled demo is byte-identical with the switch either way.
 #[test]
 fn every_settlement_demo_guard_is_residual_so_the_demo_is_unchanged() {

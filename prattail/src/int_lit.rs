@@ -343,7 +343,7 @@ impl IntSuffix {
     //
     // The real guard is now where it can be neither bypassed nor overlooked — in
     // each category's own `eval`, which accepts EXACTLY the domain its `pattern`
-    // declares (`languages/src/rhocalc.rs`, `languages/src/calculator.rs`).
+    // declares (`languages/src/rholang.rs`, `languages/src/calculator.rs`).
     // `from_text` above is RETAINED: it is live (the lexer tags every
     // `Token::Integer` with it, and `BigInt`'s eval reads it to distinguish an
     // unsuffixed overflow from a width-suffixed one).

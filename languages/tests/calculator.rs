@@ -746,7 +746,7 @@ fn calculator_cast_explicit_budget_reports_overflow_without_default_cap() {
     // A1 (task #18): `float(float(10, 64), 64)` has exactly ONE DISTINCT reading
     // (deduped), so the PURE engine — the SOLE engine after #19b physically
     // removed the classic lever (2026-07-15) — returns Ok at budget=1 (1 <= 1).
-    // The genuine-overflow witness for the pure engine is the rhocalc
+    // The genuine-overflow witness for the pure engine is the rholang
     // `@((a)!(0))!()` pin in `rd_a1_budget.rs` (2 distinct readings, fires at N=1).
     let mut bounded_pos = 0usize;
     let all_b1 = calc::parse_Float_via_wpda_all_with_source_and_bounding_mode(

@@ -8,7 +8,7 @@
 //! v3 first-fork window (post-window gap + over-fire on transient fans) got
 //! wrong.
 
-use mettail_languages::{calculator as calc, rhocalc};
+use mettail_languages::{calculator as calc, rholang};
 use mettail_prattail::wpda_runtime::{CursorBoundingMode, LatticeTokenSource, WpdaTokenSource};
 
 /// NO-FALSE-FIRE + cross-packing-DUP gate (amdt #1/#6). `int(float(int(3.14)))
@@ -37,13 +37,13 @@ fn pure_no_false_fire_on_reconvergent_cast_tower() {
     }
 }
 
-/// Parse a rhocalc Proc `input` under `AmbiguityBudget(n)`; return Ok(display
+/// Parse a rholang Proc `input` under `AmbiguityBudget(n)`; return Ok(display
 /// set) or Err(rendered message).
 fn proc_budget_at(input: &str, n: usize) -> Result<Vec<String>, String> {
-    let dag = rhocalc::lex_dag(input).expect("lex");
+    let dag = rholang::lex_dag(input).expect("lex");
     let source = LatticeTokenSource::new(dag);
     let mut pos = 0usize;
-    match rhocalc::parse_Proc_via_wpda_all_with_source_and_bounding_mode(
+    match rholang::parse_Proc_via_wpda_all_with_source_and_bounding_mode(
         &source,
         &mut pos,
         0,

@@ -4,12 +4,12 @@
 //! The search ([`super::search`]) produces Rust leaves. The FIPS puts the
 //! results *on a channel*: **"The names of `success` and `failure` are then
 //! placed on the channel `x`."** So something has to become a `Par`. This module
-//! is that something, and every choice it makes is a choice about what a RhoCalc
+//! is that something, and every choice it makes is a choice about what a Rholang
 //! program on the other end can do with the answer.
 //!
 //! ## ★ What the delivery is NOT built on, and why
 //!
-//! The FIPS names the collection a `PathMap`, and `{| … |}` is RhoCalc's PathMap
+//! The FIPS names the collection a `PathMap`, and `{| … |}` is Rholang's PathMap
 //! literal. **PathMap methods do not lower on the reducer path** — all 22 zipper
 //! methods fail, and a `Pathmap` lowers to an `EMap` — so a receiving program
 //! cannot iterate, filter, or fold a delivered PathMap. Delivering one would be

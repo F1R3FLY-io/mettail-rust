@@ -4,7 +4,7 @@
 //! (on-demand node materialization) produces results OBSERVATIONALLY IDENTICAL
 //! to driving it over an eager [`LatticeTokenSource`] (whole-DAG-upfront),
 //! across a corpus of full-parse and early-failure inputs, for both the
-//! calculator and rhocalc grammars.
+//! calculator and rholang grammars.
 //!
 //! Two layers of evidence:
 //! 1. **Parse-result equivalence** (`assert_parse_eq`): the WPDA parse outcome
@@ -18,7 +18,7 @@
 //!    value over a FULLY-materialized lazy source as over the eager DAG, for
 //!    every node id. This directly confirms node-id-stable equivalence.
 
-use mettail_languages::{calculator, rhocalc};
+use mettail_languages::{calculator, rholang};
 use mettail_prattail::wpda_runtime::{LatticeTokenSource, WpdaTokenSource};
 
 // ── Corpora ──────────────────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ const CALC_EARLY_FAIL: &[&str] = &[
     "* 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 12 + 13 + 14 + 15 + 16 + 17 + 18",
 ];
 
-/// Full-parse rhocalc inputs.
+/// Full-parse rholang inputs.
 const RHO_FULL: &[&str] = &[
     "{0 | 1 | 2}",
     "new x, y in { {x!(0) | y!(1)} }",
@@ -56,7 +56,7 @@ const RHO_FULL: &[&str] = &[
     "{0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19}",
 ];
 
-/// Early-failure rhocalc inputs.
+/// Early-failure rholang inputs.
 const RHO_EARLY_FAIL: &[&str] = &[
     "{ } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } } }",
     "{0 | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | | |}",
@@ -119,25 +119,25 @@ fn calc_parse_eq(input: &str) -> (usize, usize) {
     (eager_node_count, lazy_nodes)
 }
 
-/// Same as [`calc_parse_eq`] for rhocalc.
+/// Same as [`calc_parse_eq`] for rholang.
 fn rho_parse_eq(input: &str) -> (usize, usize) {
-    let eager_dag = rhocalc::lex_dag(input);
+    let eager_dag = rholang::lex_dag(input);
     let (eager_outcome, eager_pos, eager_node_count) = match eager_dag {
         Ok(dag) => {
             let node_count = dag.nodes.len();
             let source = LatticeTokenSource::new(dag);
             let mut pos = 0usize;
             let outcome =
-                format!("{:?}", rhocalc::parse_Proc_via_wpda_with_source(&source, &mut pos, 0));
+                format!("{:?}", rholang::parse_Proc_via_wpda_with_source(&source, &mut pos, 0));
             (outcome, pos, node_count)
         },
         Err(e) => (format!("LEX_ERR({})", e), 0usize, 0usize),
     };
 
-    let lazy = rhocalc::lex_dag_lazy(input);
+    let lazy = rholang::lex_dag_lazy(input);
     let mut lazy_pos = 0usize;
     let lazy_outcome =
-        format!("{:?}", rhocalc::parse_Proc_via_wpda_with_source(&lazy, &mut lazy_pos, 0));
+        format!("{:?}", rholang::parse_Proc_via_wpda_with_source(&lazy, &mut lazy_pos, 0));
     let lazy_nodes = lazy.nodes_materialized();
 
     if eager_outcome.starts_with("LEX_ERR") {
@@ -150,12 +150,12 @@ fn rho_parse_eq(input: &str) -> (usize, usize) {
     } else {
         assert_eq!(
             eager_outcome, lazy_outcome,
-            "PARSE RESULT MISMATCH for rhocalc input {:?}\n eager: {}\n lazy:  {}",
+            "PARSE RESULT MISMATCH for rholang input {:?}\n eager: {}\n lazy:  {}",
             input, eager_outcome, lazy_outcome,
         );
         assert_eq!(
             eager_pos, lazy_pos,
-            "FINAL POS MISMATCH for rhocalc input {:?}: eager={} lazy={}",
+            "FINAL POS MISMATCH for rholang input {:?}: eager={} lazy={}",
             input, eager_pos, lazy_pos,
         );
     }
@@ -368,7 +368,7 @@ fn report_nodes_materialized() {
             truncate(input, 48),
         );
     }
-    println!("--- rhocalc FULL-PARSE ---");
+    println!("--- rholang FULL-PARSE ---");
     for &input in RHO_FULL {
         let (eager, lazy) = rho_parse_eq(input);
         println!(
@@ -379,7 +379,7 @@ fn report_nodes_materialized() {
             truncate(input, 48),
         );
     }
-    println!("--- rhocalc EARLY-FAILURE ---");
+    println!("--- rholang EARLY-FAILURE ---");
     for &input in RHO_EARLY_FAIL {
         let (eager, lazy) = rho_parse_eq(input);
         println!(

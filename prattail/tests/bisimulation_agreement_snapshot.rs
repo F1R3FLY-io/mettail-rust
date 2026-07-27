@@ -22,7 +22,7 @@
 //! by adjusting the expectation.
 //!
 //! The fixtures mirror the `languages/` corpus grammars (calculator, lambda,
-//! rhocalc, ambient, guarded_rho), constructed with the same tiny
+//! rholang, ambient, guarded_rho), constructed with the same tiny
 //! `term`/`nonterm`/`rule` bundle helpers the sibling `.0` snapshot tests
 //! (`sym_tree_structural_snapshot.rs`, `guard_carrier_snapshot.rs`) use.
 
@@ -177,10 +177,10 @@ fn lambda_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
     (all_syntax, categories)
 }
 
-/// RhoCalc: `Proc`/`Name` process categories + scalar `Int`, with the constant
+/// Rholang: `Proc`/`Name` process categories + scalar `Int`, with the constant
 /// `PZero`, the mixfix `POutput`, the binder-led `PNew`, a scalar cast, and the
 /// collection-led `PPar`.
-fn rhocalc_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
+fn rholang_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
     let categories = vec![
         struct_cat("Proc", true, true),
         struct_cat("Name", false, true),
@@ -283,9 +283,9 @@ fn lambda_agrees() {
 }
 
 #[test]
-fn rhocalc_agrees() {
-    let (all_syntax, categories) = rhocalc_fixture();
-    assert_agrees("rhocalc", &all_syntax, &categories);
+fn rholang_agrees() {
+    let (all_syntax, categories) = rholang_fixture();
+    assert_agrees("rholang", &all_syntax, &categories);
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn guarded_rho_agrees() {
 fn fixtures_exercise_non_bisimilar_pairs() {
     for (name, (rules, cats)) in [
         ("calculator", calculator_fixture()),
-        ("rhocalc", rhocalc_fixture()),
+        ("rholang", rholang_fixture()),
         ("ambient", ambient_fixture()),
         ("guarded_rho", guarded_rho_fixture()),
     ] {

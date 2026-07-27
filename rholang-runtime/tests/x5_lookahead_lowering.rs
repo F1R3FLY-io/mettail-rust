@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use mettail_languages::lambda::LambdaLanguage;
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{FltRegistry, FltResolve};
 use mettail_rholang_runtime::lookahead::{
     spec_all_request, spec_n_request, SPEC_ALL_CHANNEL, SPEC_N_CHANNEL, SPEC_REQUEST_CHANNELS,

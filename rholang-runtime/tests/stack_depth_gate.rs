@@ -1,7 +1,7 @@
-//! # The Θ(depth) regression gate for the RhoCalc **lowering**
+//! # The Θ(depth) regression gate for the Rholang **lowering**
 //!
 //! **The defect this gate exists for.** `rholang_ast::lower_proc` translates a
-//! parsed RhoCalc `Proc` into a normalized `rhoapi::Par`. Before Stage M it did
+//! parsed Rholang `Proc` into a normalized `rhoapi::Par`. Before Stage M it did
 //! so by *host recursion*: one native frame per nesting level of the term. A
 //! 30-byte program — `@"OUT"!([[[[…[1]…]]]])` — therefore aborted the process,
 //! because a stack overflow is a `SIGSEGV` delivered on the guard page, not a

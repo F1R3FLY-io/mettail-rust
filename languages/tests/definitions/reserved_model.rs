@@ -11,10 +11,10 @@
 //! dual-mode toggle (`keyword_reservation_tests.rs`).
 //!
 //! The reserved keyword `IF` sits in a NON-prefix position (immediately after
-//! the `@` sigil, exactly like RhoCalc's working `@Nil` / `POutputNil` forms),
+//! the `@` sigil, exactly like Rholang's working `@Nil` / `POutputNil` forms),
 //! so it does NOT exercise the WPDA lex-fork prefix-dispatch dependency that
-//! blocks reserving RhoCalc's nullary-prefix `PZero` (`|- "Nil" : Proc`). See
-//! `rhocalc.rs`'s `options {}` comment for that measured HALT.
+//! blocks reserving Rholang's nullary-prefix `PZero` (`|- "Nil" : Proc`). See
+//! `rholang.rs`'s `options {}` comment for that measured HALT.
 //!
 //! Like `FortranModel`, this is a real `src` fixture with `emit_tests` /
 //! `emit_simulator` / `emit_blockly` disabled.

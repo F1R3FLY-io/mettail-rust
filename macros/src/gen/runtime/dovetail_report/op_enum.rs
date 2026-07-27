@@ -29,7 +29,7 @@ use syn::Ident;
 use crate::gen::native::NativeType;
 use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
 
-/// The generated op-enum identifier for a language (e.g. `RhoCalcDovetailOp`).
+/// The generated op-enum identifier for a language (e.g. `RholangDovetailOp`).
 pub(crate) fn op_enum_ident(language: &LanguageDef) -> Ident {
     format_ident!("{}DovetailOp", language.name)
 }

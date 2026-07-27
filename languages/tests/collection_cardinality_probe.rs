@@ -13,12 +13,12 @@
 //! differential MATRIX rows for the same shapes are all green, which shows the
 //! host DECLINES that route and therefore cannot witness the defect.
 //!
-//! In RhoCalc `PPar` is a `HashBag<Proc>` collection FIELD (not a collection
+//! In Rholang `PPar` is a `HashBag<Proc>` collection FIELD (not a collection
 //! literal), so `p | q` is the shape that reaches the arm.
 
-#![cfg(feature = "rhocalc")]
+#![cfg(feature = "rholang")]
 
-use mettail_languages::rhocalc::*;
+use mettail_languages::rholang::*;
 
 fn parse(input: &str) -> Proc {
     mettail_runtime::clear_var_cache();

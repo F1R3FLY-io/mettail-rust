@@ -20,7 +20,7 @@
 //! below.
 //!
 //! ⚠ Those three `false`s must STAY false, and not because production specs are
-//! forbidden generated suites — `ambient`/`calculator`/`lambda`/`rhocalc` all
+//! forbidden generated suites — `ambient`/`calculator`/`lambda`/`rholang` all
 //! carry theirs. `emit_simulator: true` would make the macro write
 //! `languages/src/bin/simulate_pi.rs` on every compile, and cargo's edition-2021
 //! auto-discovery would pick that file up as a binary target with NO
@@ -57,7 +57,7 @@
 //! accepts the `::=` form (and this file uses it for nullary constants, exactly as
 //! `languages/src/ambient.rs` does), but its idiomatic form is the JUDGEMENT form
 //! `Name . ctx |- pattern : Cat ;`, and `List(X)` is spelled `Vec(X)` (the
-//! established convention — `rhocalc.rs:57` declares `![Vec<Proc>] as List`).
+//! established convention — `rholang.rs:57` declares `![Vec<Proc>] as List`).
 //! **Superset containment here is SEMANTIC**: every `types` entry, `terms`
 //! production, `equations` clause and `rewrites` rule of the paper's version is
 //! present with the same meaning; the spelling is ours. Every deviation is
@@ -88,7 +88,7 @@
 //!    `op{ (eval scope arg), ...rest }`, i.e. exactly ONE element besides the
 //!    remainder. The paper's π output is SYNCHRONOUS (`n!m.q` carries a
 //!    continuation `q`), so its reduct has TWO: the substituted receive
-//!    continuation AND `q`. RhoCalc's output — the shape the lane was first
+//!    continuation AND `q`. Rholang's output — the shape the lane was first
 //!    written for — is asynchronous and has no continuation;
 //! 2. **binder spelling** — the lane required every structured LHS element
 //!    argument to be a bare variable, while the paper writes the receive's scope

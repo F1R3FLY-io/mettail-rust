@@ -1,6 +1,6 @@
 //! Binder and Sep(Zip(Map)) benchmarks: single binder, multi-binder, channel output.
 //!
-//! Languages: Ambient (single binder via `new`), RhoCalc (multi-input Sep(Zip(Map(...))))
+//! Languages: Ambient (single binder via `new`), Rholang (multi-input Sep(Zip(Map(...))))
 //! Features exercised: single binder (Scope creation, ident capture),
 //! multi-binder, Sep(Zip(Map)) (parallel dual-vec parsing with closing delimiter guard).
 //!
@@ -8,7 +8,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use mettail_languages::ambient;
-use mettail_languages::rhocalc;
+use mettail_languages::rholang;
 use std::time::Duration;
 
 use mettail_languages::bench_common::{
@@ -41,7 +41,7 @@ fn bench_zipmapsep_width(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(n), &input, |b, input| {
             b.iter(|| {
                 mettail_runtime::clear_var_cache();
-                rhocalc::Proc::parse(black_box(input)).expect("parse failed")
+                rholang::Proc::parse(black_box(input)).expect("parse failed")
             })
         });
     }
@@ -56,7 +56,7 @@ fn bench_output_width(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(n), &input, |b, input| {
             b.iter(|| {
                 mettail_runtime::clear_var_cache();
-                rhocalc::Proc::parse(black_box(input)).expect("parse failed")
+                rholang::Proc::parse(black_box(input)).expect("parse failed")
             })
         });
     }

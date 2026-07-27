@@ -135,7 +135,7 @@ fn parse_pattern_to_term(pattern: &str) -> Option<Term> {
     // `nil`, or quoted terminals like `cast_error_int`), and no single
     // lowercase letter is ever a function/App head in any rewrite pattern.
     //
-    // This is the fix for the rhocalc/ledtest termination false-negative:
+    // This is the fix for the rholang/ledtest termination false-negative:
     // the auto-injected `NormCast<Src>To<Tgt>In<Cat>` rules render to user
     // syntax `v ~> v` (the cast wrappers are invisible transparent
     // projections). Pre-fix, the bare-identifier heuristic below classified

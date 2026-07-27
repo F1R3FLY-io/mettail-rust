@@ -109,7 +109,7 @@ fn test_generate_lexer_produces_code() {
 }
 
 #[test]
-fn test_lexer_stats_rhocalc() {
+fn test_lexer_stats_rholang() {
     let rules = vec![
         GrammarRuleInfo {
             label: "PZero".to_string(),
@@ -172,17 +172,17 @@ fn test_lexer_stats_rhocalc() {
     let types = vec![
         TypeInfo {
             name: "Proc".to_string(),
-            language_name: "RhoCalc".to_string(),
+            language_name: "Rholang".to_string(),
             native_type_name: None,
         },
         TypeInfo {
             name: "Name".to_string(),
-            language_name: "RhoCalc".to_string(),
+            language_name: "Rholang".to_string(),
             native_type_name: None,
         },
         TypeInfo {
             name: "Int".to_string(),
-            language_name: "RhoCalc".to_string(),
+            language_name: "Rholang".to_string(),
             native_type_name: Some("i32".to_string()),
         },
     ];
@@ -190,15 +190,15 @@ fn test_lexer_stats_rhocalc() {
     let input = extract_terminals(&rules, &types, false, &[]);
     let (_code, stats) = generate_lexer(&input);
 
-    // RhoCalc should have reasonable stats
+    // Rholang should have reasonable stats
     assert!(
         stats.num_equiv_classes < 30,
-        "RhoCalc should have <30 equivalence classes, got {}",
+        "Rholang should have <30 equivalence classes, got {}",
         stats.num_equiv_classes
     );
     assert!(
         stats.num_minimized_states < 30,
-        "RhoCalc minimized DFA should have <30 states, got {}",
+        "Rholang minimized DFA should have <30 states, got {}",
         stats.num_minimized_states
     );
 }

@@ -11,8 +11,8 @@
 //! Together they prove: (A) reservation collapses the keyword over-generation,
 //! (C) the alternative set is deterministic/stable in both modes, and (D) the
 //! per-language toggle flips exactly one reading. The reserved set is shown to
-//! be grammar-derived (identifier-shaped terminals only), and RhoCalc — held
-//! at `none` after the S0-kw-no-break measurement (see `rhocalc.rs`) — is
+//! be grammar-derived (identifier-shaped terminals only), and Rholang — held
+//! at `none` after the S0-kw-no-break measurement (see `rholang.rs`) — is
 //! confirmed unregressed.
 
 #![allow(clippy::bool_assert_comparison)]
@@ -234,20 +234,20 @@ fn reserved_set_is_grammar_derived() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RhoCalc is unregressed at the shipped `reserved_keywords: auto`
+// Rholang is unregressed at the shipped `reserved_keywords: auto`
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// RhoCalc ships at `auto` (2026-07-06 flip): `Nil` is reserved, so the
+/// Rholang ships at `auto` (2026-07-06 flip): `Nil` is reserved, so the
 /// over-generated `@Nil!(q)`-as-send-on-a-channel-variable-named-`Nil`
 /// (`POutputQuoted(NVar(Free("Nil")), q)`) reading is removed — the scalar
 /// `@Nil!(q)` cohort collapses 2→1 — while nullary `Nil` in prefix/operand
 /// position still parses (the `NULLARY_KEYWORD_LEXFORK_SEED` lex-Fork seed
 /// restores it under reservation). Guards against a regression of either the
 /// flip (over-generation returns) or the lex-Fork seed (nullary `Nil` breaks).
-#[cfg(feature = "rhocalc")]
+#[cfg(feature = "rholang")]
 #[test]
-fn rhocalc_auto_reserved_unregressed() {
-    use mettail_languages::rhocalc as r;
+fn rholang_auto_reserved_unregressed() {
+    use mettail_languages::rholang as r;
 
     // Nullary `Nil` in prefix/operand position still parses under reservation
     // (this is exactly what the pre-`NULLARY_KEYWORD_LEXFORK_SEED` flip broke).

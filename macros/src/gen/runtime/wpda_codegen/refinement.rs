@@ -43,7 +43,7 @@
 //!
 //! ## No shipped grammar exercises this today
 //!
-//! Calculator/RhoCalc/etc. don't declare `refinement_types`. The synthetic
+//! Calculator/Rholang/etc. don't declare `refinement_types`. The synthetic
 //! test grammar in `languages/tests/refinement_smoke.rs` covers the path.
 
 use mettail_ast::language::{

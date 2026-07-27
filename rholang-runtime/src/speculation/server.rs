@@ -1019,7 +1019,7 @@ mod tests {
     /// ## On reachability — measured, and narrower than first claimed
     ///
     /// I originally asserted that "any program can write `@\"^spec-n\"!(P, ⟨anything⟩, x)`".
-    /// That is **not** true of RhoCalc source: `@c!(a, b, c)` lowers to a send of a single
+    /// That is **not** true of Rholang source: `@c!(a, b, c)` lowers to a send of a single
     /// **list** payload (`⟦[a, b, c]⟧`), not to a polyadic send, so it arrives at arity 1 and
     /// the arity-3 `^spec-n` `Definition` never matches it. An end-to-end cell written that
     /// way does not exercise this path at all.

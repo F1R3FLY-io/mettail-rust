@@ -70,7 +70,7 @@ pub(crate) fn build_fn(category: &Ident) -> Ident {
 /// parsed back into the payload, and it has no `__mettail_dovetail_build_<leaf>_d`
 /// reconstruction fn. A variant carrying one is therefore not structurally
 /// invertible; `category_reconstruct` skips it (falls through to `_ => None`).
-/// This is sound: such variants (e.g. RhoCalc's inert `PFlt`) never participate in
+/// This is sound: such variants (e.g. Rholang's inert `PFlt`) never participate in
 /// a Dovetail rewrite, so they are never reached for reconstruction.
 fn is_plain_category_field(field: &FieldInfo) -> bool {
     !field.is_optional

@@ -14,12 +14,12 @@ use mettail_runtime::{
 ///
 /// # Example
 ///
-// ignore-justification: names the GENERATED `mettail_languages::rhocalc::RhoCalcLanguage`, which is unreachable from this crate — `languages` already dev-depends on `testkit`, so the edge cannot be reversed; the only alternative is a 15-method `Language` mock, and the builder chain it would check is already covered by the unit tests at the bottom of this file.
+// ignore-justification: names the GENERATED `mettail_languages::rholang::RholangLanguage`, which is unreachable from this crate — `languages` already dev-depends on `testkit`, so the edge cannot be reversed; the only alternative is a 15-method `Language` mock, and the builder chain it would check is already covered by the unit tests at the bottom of this file.
 /// ```ignore
 /// use mettail_testkit::program::ProgramTestSuite;
-/// use mettail_languages::rhocalc::RhoCalcLanguage;
+/// use mettail_languages::rholang::RholangLanguage;
 ///
-/// let suite = ProgramTestSuite::new(&RhoCalcLanguage)
+/// let suite = ProgramTestSuite::new(&RholangLanguage)
 ///     .source("for(x <- chan){chan!(*x)}")
 ///     .expect_parses()
 ///     .expect_terminates(1000);

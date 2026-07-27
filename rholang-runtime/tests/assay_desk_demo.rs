@@ -53,7 +53,7 @@ use std::process::{Command, Output};
 use std::sync::Arc;
 
 use mettail_languages::lambda::LambdaLanguage;
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{FltRegistry, FltResolve};
 use mettail_rholang_runtime::{
     lower_rholang_proc_with_resolver, run_normalized_par_for_oracle_and_read_runtime_value_channels,
@@ -189,7 +189,7 @@ fn guest_resolver() -> Arc<dyn FltResolve> {
     Arc::new(FltRegistry::new().with_guest("lambda", Box::new(LambdaLanguage)))
 }
 
-/// Run one RhoCalc program to rest and report, per channel, the sorted renderings of every datum
+/// Run one Rholang program to rest and report, per channel, the sorted renderings of every datum
 /// left on it — all read from ONE quiescent store, which is what makes "the desk settled X" and
 /// "and it refused Y, which is still resting" a statement about the same execution rather than
 /// two unrelated runs.

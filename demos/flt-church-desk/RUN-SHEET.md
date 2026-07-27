@@ -1,12 +1,12 @@
 # The Church Desk — a foreign language computed, filtered, and taken apart by the Rholang machine
 
-A live demonstration of RhoCalc's **Foreign Language Term** (FLT) integration on F1r3node's Rho
-machine. Two guest grammars are embedded in RhoCalc source. Their terms are **evaluated by the
+A live demonstration of Rholang's **Foreign Language Term** (FLT) integration on F1r3node's Rho
+machine. Two guest grammars are embedded in Rholang source. Their terms are **evaluated by the
 Rholang machine itself**, not by a host interpreter; a **`where` clause selects** among the
 results, leaving the rest resting on the channel; and a receive pattern whose hole sits **inside
 the foreign term** takes one apart, binding a foreign sub-term out into Rholang.
 
-Everything below is stock RhoCalc plus two bundled guests. There is no Rust harness in the demo
+Everything below is stock Rholang plus two bundled guests. There is no Rust harness in the demo
 path: the presenter runs one interpreter binary on six committed `.rho` files.
 
 > Status: **VALIDATED end to end, 2026-07-26** — every command on this page was run and every
@@ -82,7 +82,7 @@ Three mechanisms, doing three different jobs:
 
 | | what it is | what it does |
 |---|---|---|
-| `` @lambda`${r}` `` | a receive **pattern** carrying one WHOLE-TERM hole | matches any reflected guest term and binds it to `r`. The foreign result becomes a value the RhoCalc program holds. A `${x}` hole is a secure typed-AST hole; it never splices strings (No-Injection). |
+| `` @lambda`${r}` `` | a receive **pattern** carrying one WHOLE-TERM hole | matches any reflected guest term and binds it to `r`. The foreign result becomes a value the Rholang program holds. A `${x}` hole is a secure typed-AST hole; it never splices strings (No-Injection). |
 | `` where lambda`${r}` == … `` | the **guard** | re-quotes the captured term and **decides** it against a reference term. The decision is made by the substrate, not by the pattern. |
 | `` @lambda`lam f. lam x. ${body}` `` | a receive pattern carrying a **NESTED** hole | matches only terms of that **shape**, and binds a **sub-term** — reached from under two guest binders — out into Rholang as an ordinary name. This is pattern matching *into* a foreign language. |
 
@@ -95,7 +95,7 @@ $ cargo build -p rholang-runtime --bin rholang --features "rholang-runtime lambd
 ```
 
 All three features are required by the `rholang` bin target: `rholang-runtime` pulls in the
-generated RhoCalc language and its AST-first lowering; `lambda-runtime` and `calculator-runtime`
+generated Rholang language and its AST-first lowering; `lambda-runtime` and `calculator-runtime`
 pull in the two production grammars the interpreter registers as guests. The build takes a couple
 of minutes cold. Everything after this is instant.
 
@@ -126,14 +126,14 @@ Run every command from the workspace root.
 ## Beat 0 — a foreign language, evaluated as real arithmetic by the machine (1 min)
 
 Start here because it needs no explanation at all. The file is one line of the **Calculator**
-grammar, embedded in a RhoCalc program.
+grammar, embedded in a Rholang program.
 
 ```
 $ target/debug/rholang demos/flt-church-desk/calculator.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-church-desk/calculator.rho
 comments: 5 retained on the COMMENTS channel
 mode: term → evaluating on the f1r3node reducer (guest `calculator`, E3 fold dataflow)
@@ -188,7 +188,7 @@ $ target/debug/rholang demos/flt-church-desk/arithmetic.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-church-desk/arithmetic.rho
 comments: 11 retained on the COMMENTS channel
 mode: term → reducing to normal form on the f1r3node reducer
@@ -220,7 +220,7 @@ $ target/debug/rholang demos/flt-church-desk/divergence.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-church-desk/divergence.rho
 comments: 7 retained on the COMMENTS channel
 mode: term → reducing to normal form on the f1r3node reducer
@@ -251,7 +251,7 @@ $ target/debug/rholang demos/flt-church-desk/desk-keeps-five.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-church-desk/desk-keeps-five.rho
 comments: 6 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -281,7 +281,7 @@ $ target/debug/rholang demos/flt-church-desk/desk-keeps-six.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-church-desk/desk-keeps-six.rho
 comments: 9 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -336,7 +336,7 @@ $ target/debug/rholang demos/flt-church-desk/destructure.rho
 ```
 
 ```
-rholang — RhoCalc (Rholang 1.4) interpreter
+rholang — Rholang (Rholang 1.4) interpreter
 source: demos/flt-church-desk/destructure.rho
 comments: 12 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")

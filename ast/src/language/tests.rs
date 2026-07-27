@@ -273,7 +273,7 @@ fn parse_channels_block() {
 #[test]
 fn parse_full_guards_block() {
     let lang = parse_lang(quote::quote! {
-        name: RhoCalc,
+        name: Rholang,
         types { },
         guards {
             eq . x, y |- x "==" y @[selectivity(0.1), cost(2)] ;

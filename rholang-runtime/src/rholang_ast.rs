@@ -12,10 +12,10 @@ use std::sync::Arc;
 
 use crate::fold_contract::{fold_channel, FoldKind, FoldSpec};
 use crate::guard_discharge::{self, GuardDischargeReport, LoweringOptions};
-use mettail_languages::rhocalc::receive::eval_guard_bool;
-use mettail_languages::rhocalc::{
+use mettail_languages::rholang::receive::eval_guard_bool;
+use mettail_languages::rholang::{
     Bag, BigInt, BigRat, Bool, Bytes, Fixed, Float, ForRow, InputBind, Int, List, Map, Name,
-    Pathmap, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner, Set, Str, UInt32,
+    Pathmap, Proc, RholangLanguage, RholangTerm, RholangTermInner, Set, Str, UInt32,
 };
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reflect_flt_construction, reflect_flt_pattern,
@@ -87,7 +87,7 @@ pub struct BoundEnv {
     binders: HashMap<FreeVar<String>, usize>,
     /// L9-6b: FLT hole name → de-Bruijn level. A `${name}` hole captured by an FLT
     /// receive pattern ([`reflect_flt_pattern`]) is a receive binder, but — unlike
-    /// a RhoCalc `PVar` binder — it is a STRING metavar, not a moniker `FreeVar`
+    /// a Rholang `PVar` binder — it is a STRING metavar, not a moniker `FreeVar`
     /// shared with the continuation's `name` reference (whose `FreeVar` carries a
     /// distinct `unique_id`). So the continuation's reference resolves by NAME
     /// through this map (`lower_proc_var`/`lower_name_var` fall back to it when the
@@ -235,44 +235,44 @@ enum ReceiveSlot {
     Hole(String),
 }
 
-/// Reconstruct the REAL `RhoCalcLanguage` augmented `LanguageDef` from the
+/// Reconstruct the REAL `RholangLanguage` augmented `LanguageDef` from the
 /// generated metadata's `definition_source()`.
 ///
-/// The generated `RhoCalcLanguage` is both the parser/AST model AND the source
+/// The generated `RholangLanguage` is both the parser/AST model AND the source
 /// of identity here: the dynamic Rho backend plan is built from this exact
 /// augmented definition (composition + auto-injection), so its
-/// `definition_fingerprint()` equals `RhoCalcLanguage.metadata().definition_fingerprint()`.
-/// The runtime wrapper therefore installs on the real RhoCalc identity and
+/// `definition_fingerprint()` equals `RholangLanguage.metadata().definition_fingerprint()`.
+/// The runtime wrapper therefore installs on the real Rholang identity and
 /// still rejects plans for any other language — without the prior
 /// fingerprint-spoofing minimal fragment.
 ///
-/// RhoCalc is a standalone language (no `extends`/`includes`/`mixins`), so the
+/// Rholang is a standalone language (no `extends`/`includes`/`mixins`), so the
 /// reconstruction is exact (see [`reconstruct_language_def`]).
 pub fn rholang_ast_runtime_def() -> mettail_ast::language::LanguageDef {
-    let source = RhoCalcLanguage
+    let source = RholangLanguage
         .metadata()
         .definition_source()
-        .expect("generated RhoCalcLanguage must expose its definition_source");
+        .expect("generated RholangLanguage must expose its definition_source");
     mettail_rholang_codegen::reconstruct_language_def(source)
-        .expect("RhoCalcLanguage definition_source must reconstruct as a LanguageDef")
+        .expect("RholangLanguage definition_source must reconstruct as a LanguageDef")
 }
 
-/// Invocation mapper used by the RhoCalc runtime-backed wrapper helpers.
+/// Invocation mapper used by the Rholang runtime-backed wrapper helpers.
 pub type RholangInvocationMapper =
     Box<dyn Fn(&dyn Term) -> Result<crate::backend::RhoMachineInvocation, String> + Send + Sync>;
 
-/// Rho-default wrapper type used by the RhoCalc helper constructors.
+/// Rho-default wrapper type used by the Rholang helper constructors.
 pub type RholangRuntimeBackedLanguage =
     crate::backend::RhoRuntimeBackedLanguage<RholangAstRuntimeLanguage, RholangInvocationMapper>;
 
-/// Fallible RhoCalc runtime-backed wrapper construction result.
+/// Fallible Rholang runtime-backed wrapper construction result.
 pub type RholangRuntimeBackedLanguageResult =
     Result<RholangRuntimeBackedLanguage, crate::backend::RhoRuntimeBackedLanguageError>;
 
 /// Fallible rholang-to-Rholang-AST lowering error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RholangAstLowerError {
-    ExpectedRhoCalcTerm,
+    ExpectedRholangTerm,
     ExpectedProcTerm,
     UnsupportedProc(&'static str),
     UnsupportedName(&'static str),
@@ -295,7 +295,7 @@ pub enum RholangAstLowerError {
     FltReflect(String),
     /// A lookahead suffix (`P[*]` / `P[n]`) was written over an operand that is not a send.
     ///
-    /// The grammar takes `p:Proc` because RhoCalc's ~20 send sugars are all `: Proc` and there is
+    /// The grammar takes `p:Proc` because Rholang's ~20 send sugars are all `: Proc` and there is
     /// no shared `Send` nonterminal to attach a suffix to, so "the operand must be a send" is a
     /// LOWERING obligation rather than a parsing one. It is discharged here, loudly, naming the
     /// constructor that was found — never by silently treating the lookahead as a no-op.
@@ -309,11 +309,11 @@ pub enum RholangAstLowerError {
     LookaheadBoundNotAGroundNonNegativeInt(String),
 }
 
-/// RhoCalc language adapter for the AST-first Rho machine runtime path.
+/// Rholang language adapter for the AST-first Rho machine runtime path.
 ///
 /// This adapter delegates parsing, formatting, normalization, environment
 /// handling, type inference, AND metadata (including the definition
-/// fingerprint) to the generated `RhoCalcLanguage`. It exposes the real RhoCalc
+/// fingerprint) to the generated `RholangLanguage`. It exposes the real Rholang
 /// identity — the dynamic Rho backend plan is built from the reconstructed real
 /// `LanguageDef` ([`rholang_ast_runtime_def`]), so installation matches on the
 /// genuine fingerprint rather than a reduced fragment. It does not forward the
@@ -323,69 +323,69 @@ pub struct RholangAstRuntimeLanguage;
 
 impl Language for RholangAstRuntimeLanguage {
     fn name(&self) -> &'static str {
-        RhoCalcLanguage.name()
+        RholangLanguage.name()
     }
 
     fn metadata(&self) -> &'static dyn LanguageMetadata {
-        // Real generated RhoCalc metadata — including the real
+        // Real generated Rholang metadata — including the real
         // `definition_fingerprint()` and `definition_source()`. No spoofing
         // shim: the dynamic backend plan is built from the reconstructed real
         // definition, so the fingerprints match by construction.
-        RhoCalcLanguage.metadata()
+        RholangLanguage.metadata()
     }
 
     fn parse_term(&self, input: &str) -> Result<Box<dyn Term>, String> {
-        RhoCalcLanguage.parse_term(input)
+        RholangLanguage.parse_term(input)
     }
 
     fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String> {
-        RhoCalcLanguage.parse_term_for_env(input)
+        RholangLanguage.parse_term_for_env(input)
     }
 
     fn parse_term_with_weighted_seed_ids(
         &self,
         input: &str,
     ) -> Result<(Box<dyn Term>, Vec<WeightedSeedId>), String> {
-        RhoCalcLanguage.parse_term_with_weighted_seed_ids(input)
+        RholangLanguage.parse_term_with_weighted_seed_ids(input)
     }
 
     fn parse_term_with_weighted_rewrite_seeds(
         &self,
         input: &str,
     ) -> Result<(Box<dyn Term>, Vec<WeightedRewriteSeed>), String> {
-        RhoCalcLanguage.parse_term_with_weighted_rewrite_seeds(input)
+        RholangLanguage.parse_term_with_weighted_rewrite_seeds(input)
     }
 
     fn try_direct_eval(&self, term: &dyn Term) -> Option<Box<dyn Term>> {
-        RhoCalcLanguage.try_direct_eval(term)
+        RholangLanguage.try_direct_eval(term)
     }
 
     fn normalize_term(&self, term: &dyn Term) -> Box<dyn Term> {
-        RhoCalcLanguage.normalize_term(term)
+        RholangLanguage.normalize_term(term)
     }
 
     fn format_term(&self, term: &dyn Term) -> String {
-        RhoCalcLanguage.format_term(term)
+        RholangLanguage.format_term(term)
     }
 
     fn create_env(&self) -> Box<dyn Any + Send + Sync> {
-        RhoCalcLanguage.create_env()
+        RholangLanguage.create_env()
     }
 
     fn add_to_env(&self, env: &mut dyn Any, name: &str, term: &dyn Term) -> Result<(), String> {
-        RhoCalcLanguage.add_to_env(env, name, term)
+        RholangLanguage.add_to_env(env, name, term)
     }
 
     fn remove_from_env(&self, env: &mut dyn Any, name: &str) -> Result<bool, String> {
-        RhoCalcLanguage.remove_from_env(env, name)
+        RholangLanguage.remove_from_env(env, name)
     }
 
     fn clear_env(&self, env: &mut dyn Any) {
-        RhoCalcLanguage.clear_env(env)
+        RholangLanguage.clear_env(env)
     }
 
     fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String> {
-        RhoCalcLanguage.substitute_env(term, env)
+        RholangLanguage.substitute_env(term, env)
     }
 
     fn substitute_env_preserve_structure(
@@ -393,11 +393,11 @@ impl Language for RholangAstRuntimeLanguage {
         term: &dyn Term,
         env: &dyn Any,
     ) -> Result<Box<dyn Term>, String> {
-        RhoCalcLanguage.substitute_env_preserve_structure(term, env)
+        RholangLanguage.substitute_env_preserve_structure(term, env)
     }
 
     fn list_env(&self, env: &dyn Any) -> Vec<(String, String, Option<String>)> {
-        RhoCalcLanguage.list_env(env)
+        RholangLanguage.list_env(env)
     }
 
     fn set_env_comment(
@@ -406,27 +406,27 @@ impl Language for RholangAstRuntimeLanguage {
         name: &str,
         comment: String,
     ) -> Result<(), String> {
-        RhoCalcLanguage.set_env_comment(env, name, comment)
+        RholangLanguage.set_env_comment(env, name, comment)
     }
 
     fn is_env_empty(&self, env: &dyn Any) -> bool {
-        RhoCalcLanguage.is_env_empty(env)
+        RholangLanguage.is_env_empty(env)
     }
 
     fn get_env_term(&self, env: &dyn Any, name: &str) -> Option<Box<dyn Term>> {
-        RhoCalcLanguage.get_env_term(env, name)
+        RholangLanguage.get_env_term(env, name)
     }
 
     fn infer_term_type(&self, term: &dyn Term) -> TermType {
-        RhoCalcLanguage.infer_term_type(term)
+        RholangLanguage.infer_term_type(term)
     }
 
     fn infer_var_types(&self, term: &dyn Term) -> Vec<VarTypeInfo> {
-        RhoCalcLanguage.infer_var_types(term)
+        RholangLanguage.infer_var_types(term)
     }
 
     fn infer_var_type(&self, term: &dyn Term, var_name: &str) -> Option<TermType> {
-        RhoCalcLanguage.infer_var_type(term, var_name)
+        RholangLanguage.infer_var_type(term, var_name)
     }
 }
 
@@ -448,49 +448,49 @@ fn rholang_invocation_stage(
     Ok(crate::backend::RhoInvocationCompilerStage::new(fingerprint, mapper))
 }
 
-/// Build a Rho runtime invocation that executes a parsed `RhoCalcLanguage`
+/// Build a Rho runtime invocation that executes a parsed `RholangLanguage`
 /// process and observes strings from `out_channel`.
 pub fn rholang_observe_strings_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
 ) -> Result<crate::backend::RhoMachineInvocation, String> {
     let call = lower_rholang_term(term)
-        .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
+        .map_err(|err| format!("failed to lower Rholang process to Rholang AST: {err:?}"))?;
     Ok(crate::backend::RhoMachineInvocation::RunWithCallAndObserveStrings {
         call,
         out_channel: out_channel.into(),
     })
 }
 
-/// Build a Rho runtime invocation that executes a parsed `RhoCalcLanguage`
+/// Build a Rho runtime invocation that executes a parsed `RholangLanguage`
 /// process and observes integers from `out_channel`.
 pub fn rholang_observe_ints_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
 ) -> Result<crate::backend::RhoMachineInvocation, String> {
     let call = lower_rholang_term(term)
-        .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
+        .map_err(|err| format!("failed to lower Rholang process to Rholang AST: {err:?}"))?;
     Ok(crate::backend::RhoMachineInvocation::RunWithCallAndObserveInts {
         call,
         out_channel: out_channel.into(),
     })
 }
 
-/// Build a Rho runtime invocation that executes a parsed `RhoCalcLanguage`
+/// Build a Rho runtime invocation that executes a parsed `RholangLanguage`
 /// process and observes closed Rho ground values from `out_channel`.
 pub fn rholang_observe_values_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
 ) -> Result<crate::backend::RhoMachineInvocation, String> {
     let call = lower_rholang_term(term)
-        .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
+        .map_err(|err| format!("failed to lower Rholang process to Rholang AST: {err:?}"))?;
     Ok(crate::backend::RhoMachineInvocation::RunWithCallAndObserveRuntimeValues {
         call,
         out_channel: out_channel.into(),
     })
 }
 
-/// Wrap RhoCalc as an AST-first Rho-default language whose default report
+/// Wrap Rholang as an AST-first Rho-default language whose default report
 /// observes strings on `out_channel`.
 pub fn rho_runtime_backed_rholang_strings(
     backend: crate::backend::PlannedRhoBackend,
@@ -503,7 +503,7 @@ pub fn rho_runtime_backed_rholang_strings(
     crate::backend::RhoRuntimeBackedLanguage::new(RholangAstRuntimeLanguage, backend, invocation)
 }
 
-/// Wrap RhoCalc as an AST-first Rho-default language whose default report
+/// Wrap Rholang as an AST-first Rho-default language whose default report
 /// observes integers on `out_channel`.
 pub fn rho_runtime_backed_rholang_ints(
     backend: crate::backend::PlannedRhoBackend,
@@ -516,7 +516,7 @@ pub fn rho_runtime_backed_rholang_ints(
     crate::backend::RhoRuntimeBackedLanguage::new(RholangAstRuntimeLanguage, backend, invocation)
 }
 
-/// Wrap RhoCalc as an AST-first Rho-default language whose default report
+/// Wrap Rholang as an AST-first Rho-default language whose default report
 /// observes closed Rho ground values on `out_channel`.
 pub fn rho_runtime_backed_rholang_values(
     backend: crate::backend::PlannedRhoBackend,
@@ -553,45 +553,45 @@ fn rho_default_coverage_requirements(
     }
 }
 
-/// Build the RhoCalc [`crate::backend::PlannedRhoBackend`] from the REAL reconstructed RhoCalc
+/// Build the Rholang [`crate::backend::PlannedRhoBackend`] from the REAL reconstructed Rholang
 /// augmented `LanguageDef` ([`rholang_ast_runtime_def`]) — so its fingerprint equals the generated
-/// `RhoCalcLanguage` identity and the wrapper installs on the real RhoCalc.
+/// `RholangLanguage` identity and the wrapper installs on the real Rholang.
 pub fn rholang_planned_rho_backend() -> Result<crate::backend::PlannedRhoBackend, String> {
     let def = rholang_ast_runtime_def();
     let plan = plan_rho_default_backend(&def, rho_default_coverage_requirements(&def))
-        .map_err(|err| format!("RhoCalc Rho-default backend planning failed: {err:?}"))?;
+        .map_err(|err| format!("Rholang Rho-default backend planning failed: {err:?}"))?;
     Ok(crate::backend::PlannedRhoBackend::from_plan(plan))
 }
 
-/// Bounds for the RhoCalc Dovetail D-stage (mirror the generated `dovetail_compiler_stage`).
+/// Bounds for the Rholang Dovetail D-stage (mirror the generated `dovetail_compiler_stage`).
 const RHOLANG_DOVETAIL_MAX_ITERS: usize = 64;
 const RHOLANG_DOVETAIL_MAX_NODES: usize = 1_000_000;
 
-/// The Dovetail D-stage report producer for RhoCalc (the bare fn
+/// The Dovetail D-stage report producer for Rholang (the bare fn
 /// [`crate::backend::install_dovetail_rho_runtime_backend`] wraps): saturate the term to a runtime
 /// report — native folds reduce; COMM/`new` remain Rho-machine work for the invocation stage.
 fn rholang_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
-    RhoCalcLanguage::dovetail_report_for(
+    RholangLanguage::dovetail_report_for(
         term,
         RHOLANG_DOVETAIL_MAX_ITERS,
         RHOLANG_DOVETAIL_MAX_NODES,
     )
 }
 
-/// The step-only Dovetail producer for RhoCalc — the REPL `step` navigable one-step REWRITE-step
+/// The step-only Dovetail producer for Rholang — the REPL `step` navigable one-step REWRITE-step
 /// graph (Increment 4): each node is a whole program state in source syntax, each edge a one-step
 /// rewrite successor (structural `Exec`/`QuoteDrop`/`Extrude` + folds; COMM is not a Dovetail
 /// structural rewrite), and a node with no successor is a normal form. Reached only via the `step` path
 /// (`Language::run_step_backend_report`); production `exec` uses `rholang_dovetail_report`.
 fn rholang_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
-    RhoCalcLanguage::dovetail_step_graph(
+    RholangLanguage::dovetail_step_graph(
         term,
         RHOLANG_DOVETAIL_MAX_ITERS,
         RHOLANG_DOVETAIL_MAX_NODES,
     )
 }
 
-/// The RhoCalc F-stage lowering shared by the report-free compile and the report-carrying
+/// The Rholang F-stage lowering shared by the report-free compile and the report-carrying
 /// fallback.
 ///
 /// A-S4 (lowering purity), AS AMENDED BY S-D0: the lowering is PURE structural translation —
@@ -642,7 +642,7 @@ fn rholang_backend_invocation(
 ) -> Result<crate::backend::RhoBackendInvocation, String> {
     let call = lower_rholang_exec_term(term, out_channel).map_err(|err| {
         format!(
-            "RhoCalc term could not be lowered to the Rho machine \
+            "Rholang term could not be lowered to the Rho machine \
              (A-S4 fail-closed lowering; no host fold-normalization fallback): {err:?}"
         )
     })?;
@@ -741,8 +741,8 @@ fn name_has_machine_effects(name: &Name) -> bool {
     }
 }
 
-/// Two-stage checked-Dovetail+Rho RhoCalc backend — the production default for the REPL `exec` of
-/// RhoCalc.
+/// Two-stage checked-Dovetail+Rho Rholang backend — the production default for the REPL `exec` of
+/// Rholang.
 ///
 /// One-way pipeline (no bidirectional bridge; see
 /// `docs/architecture/rho-native-integration/09-term-level-reduction-split.md`): the **F-stage**
@@ -789,7 +789,7 @@ pub fn dovetail_rho_backed_rholang(
         invocation_free,
         invocation,
     )
-    .map_err(|err| format!("RhoCalc Dovetail+Rho backend install failed: {err:?}"))?;
+    .map_err(|err| format!("Rholang Dovetail+Rho backend install failed: {err:?}"))?;
     Ok(Box::new(language))
 }
 
@@ -827,7 +827,7 @@ pub fn lower_rholang_proc_with_options(
     drive(Seed::Body(proc), &BoundEnv::with_options(options))
 }
 
-/// L9-6b: lower a RhoCalc `Proc` under an installed FLT resolver, so `PFlt` nodes
+/// L9-6b: lower a Rholang `Proc` under an installed FLT resolver, so `PFlt` nodes
 /// elaborate (construction position → [`reflect_flt_construction`]; receive-pattern
 /// position → [`reflect_flt_pattern`]) via the guest each opener `tag` selects. With
 /// the empty ([`EmptyFltResolver`]) default this is byte-identical to
@@ -850,7 +850,7 @@ pub fn lower_rholang_proc_with_resolver_and_options(
     drive(Seed::Body(proc), &BoundEnv::with_resolver_and_options(resolver, options))
 }
 
-/// Lower a parsed `RhoCalcLanguage` term into normalized Rholang `Par`.
+/// Lower a parsed `RholangLanguage` term into normalized Rholang `Par`.
 ///
 /// Ambiguous generated terms are preserved as parallel branches after exact
 /// semantic-key deduplication. This prevents the runtime backend from silently
@@ -871,8 +871,8 @@ fn rholang_proc_alternatives_from_term(
 ) -> Result<Vec<&Proc>, RholangAstLowerError> {
     let typed = term
         .as_any()
-        .downcast_ref::<RhoCalcTerm>()
-        .ok_or(RholangAstLowerError::ExpectedRhoCalcTerm)?;
+        .downcast_ref::<RholangTerm>()
+        .ok_or(RholangAstLowerError::ExpectedRholangTerm)?;
     let mut alternatives = Vec::new();
     collect_proc_alternatives(&typed.0, &mut alternatives)?;
     if alternatives.is_empty() {
@@ -888,7 +888,7 @@ fn rholang_proc_alternatives_from_term(
 /// ## ⚠ This is a CONSISTENCY fix, NOT a depth fix — and the distinction matters
 ///
 /// This walk was the last hand-written *recursive* traversal over
-/// `RhoCalcTermInner::Ambiguous` in this crate. Every macro-generated traversal over
+/// `RholangTermInner::Ambiguous` in this crate. Every macro-generated traversal over
 /// that same variant — `Clone`, `Hash`, `PartialEq`
 /// (`macros/src/gen/runtime/language.rs`) — already uses an explicit work stack, and
 /// says so: *"no compiler-generated recursion through nested Ambiguous trees. Per the
@@ -924,15 +924,15 @@ fn rholang_proc_alternatives_from_term(
 /// different visit order could retain a different representative. Pinned by
 /// `iterative_alternative_collection_matches_the_recursive_walk`.
 fn collect_proc_alternatives<'a>(
-    inner: &'a RhoCalcTermInner,
+    inner: &'a RholangTermInner,
     alternatives: &mut Vec<&'a Proc>,
 ) -> Result<(), RholangAstLowerError> {
-    let mut work: Vec<&'a RhoCalcTermInner> = vec![inner];
+    let mut work: Vec<&'a RholangTermInner> = vec![inner];
     while let Some(node) = work.pop() {
         match node {
-            RhoCalcTermInner::Proc(proc) => alternatives.push(proc),
+            RholangTermInner::Proc(proc) => alternatives.push(proc),
             // Reversed, so the stack pops them left-to-right.
-            RhoCalcTermInner::Ambiguous(inner_alternatives) => {
+            RholangTermInner::Ambiguous(inner_alternatives) => {
                 work.extend(inner_alternatives.iter().rev())
             },
             // Pre-order failure, exactly as the recursive form: alternatives collected
@@ -971,7 +971,7 @@ fn rholang_proc_semantic_key(proc: &Proc) -> Vec<u8> {
 
 /// M-1b: the crate-visible alias the formula compiler
 /// ([`crate::rholang_formula::lower_formula_in_env`]) calls for a
-/// [`mettail_languages::rhocalc::formula::FormulaShape::Term`] — an ordinary term
+/// [`mettail_languages::rholang::formula::FormulaShape::Term`] — an ordinary term
 /// read as a pattern.
 ///
 /// Delegating rather than duplicating is the whole point: a pattern and the term
@@ -1921,7 +1921,7 @@ impl<'a> Drive<'a> {
             // the fold can only ever be a missed optimization, never a wrong verdict. The
             // TARGET is lowered either way, so an ill-formed target still fails.
             Proc::Matches(target, formula) => {
-                match mettail_languages::rhocalc::formula::is_statically_false(formula.as_ref()) {
+                match mettail_languages::rholang::formula::is_statically_false(formula.as_ref()) {
                     true => self.push_children(
                         Kont::MatchesStaticallyFalse,
                         [Job::Proc(target.as_ref(), env)],
@@ -1997,7 +1997,7 @@ impl<'a> Drive<'a> {
             Proc::RZGetPath(z) => self.method("getPath", z, &[], env),
             Proc::RZToNextLeaf(z) => self.method("toNextLeaf", z, &[], env),
             Proc::RZLeafCount(z) => self.method("leafCount", z, &[], env),
-            // ⚠ `setLeaf` is NOT routed: RhoCalc's `w.setLeaf(full, v)` writes at an ABSOLUTE
+            // ⚠ `setLeaf` is NOT routed: Rholang's `w.setLeaf(full, v)` writes at an ABSOLUTE
             // path and Rholang's `z.setLeaf(v)` APPENDS an element at the path `v` derives for
             // itself. Same name, different operation; the carrier has no value slot to write
             // into. It falls through to the fail-closed arm.
@@ -2219,7 +2219,7 @@ impl<'a> Drive<'a> {
 
     /// `rholang_formula::lower_formula_in_env` — compile a spatial formula to a pattern.
     fn enter_formula(&mut self, formula: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
-        use mettail_languages::rhocalc::formula::{classify, FormulaShape};
+        use mettail_languages::rholang::formula::{classify, FormulaShape};
         match classify(formula) {
             FormulaShape::Verum => self.stacks.value(crate::rholang_formula::verum_pattern()),
             FormulaShape::Falsum => self.stacks.value(crate::rholang_formula::falsum_pattern()),
@@ -3170,7 +3170,7 @@ fn lower_arm_cast_u_int32(value: &std::sync::Arc<UInt32>) -> Result<Par, Rholang
 #[inline(never)]
 fn lower_arm_cast_bytes(value: &std::sync::Arc<Bytes>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
-        // RhoCalc `Bytes` is a `String`-backed literal (`![String] as Bytes`); lower the ground
+        // Rholang `Bytes` is a `String`-backed literal (`![String] as Bytes`); lower the ground
         // literal to a Rholang `GString` (mirrors `CastStr`). Non-ground bytes are unsupported.
         Bytes::StringLit(string) => Ok(new_gstring_par(string.clone(), Vec::new(), false)),
         _ => Err(RholangAstLowerError::UnsupportedProc("non-ground bytes process")),
@@ -3513,7 +3513,7 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         // so the mappings were measurable all along. They have now been measured, and one of the
         // two guesses was WRONG.
         //
-        //   RhoCalc (`runtime/src/pathmap_bridge.rs`)   keys kept                        values
+        //   Rholang (`runtime/src/pathmap_bridge.rs`)   keys kept                        values
         //   ─────────────────────────────────────────   ──────────────────────────────   ────────
         //   restrict(base, mask)  `trie_restrict_lit`   base keys EXACTLY in mask        base's
         //   meet(left, right)     `trie_meet_lit`       left keys EXACTLY in right       right's
@@ -3552,7 +3552,7 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         Proc::PGetSubtrieAt(..) => "p.getSubtrieAt(q) pathmap method (MEASURED: \
                                     `readZipperAt(q).getSubtrie()`, absolute paths — a rewrite, \
                                     held on the C4 carrier decision)",
-        // `setLeaf` shares a NAME with `reduce.rs::set_leaf_method` and not an operation: RhoCalc's
+        // `setLeaf` shares a NAME with `reduce.rs::set_leaf_method` and not an operation: Rholang's
         // writes a value at an absolute path argument; Rholang's APPENDS its one argument to the
         // map as a new element and never consults the zipper's focus (MEASURED — see the C1b block
         // in `lower_proc`, which also records why the once-proposed `writeZipperAt(full).setLeaf(v)`
@@ -3634,9 +3634,9 @@ fn binary_expr_par(
     par
 }
 
-/// Lower a RhoCalc **method call** to Rholang's own `EMethod` — the single-evaluator seam.
+/// Lower a Rholang **method call** to Rholang's own `EMethod` — the single-evaluator seam.
 ///
-/// This is the mechanism of "option C — different carriers, ONE evaluator". Instead of RhoCalc
+/// This is the mechanism of "option C — different carriers, ONE evaluator". Instead of Rholang
 /// carrying a second implementation of a method Rholang already has, the method name is handed to
 /// the reducer's own method table (`rholang/src/rust/interpreter/reduce.rs::method_table`,
 /// 8197-8256), which dispatches on the *evaluated* receiver. Consequences that matter:
@@ -3645,7 +3645,7 @@ fn binary_expr_par(
 ///   diverge from;
 /// * dispatch is dynamic, so a COMM-bound receiver works exactly like a literal one (the class of
 ///   bug that divergence B is an instance of); and
-/// * receivers Rholang supports but RhoCalc's fold bodies did not (e.g. `nth` over `ETuple` and
+/// * receivers Rholang supports but Rholang's fold bodies did not (e.g. `nth` over `ETuple` and
 ///   `GByteArray`, `reduce.rs:4106-4118`) come for free.
 ///
 /// `locally_free`/`connective_used` are unioned over the receiver and every argument, exactly as
@@ -3669,7 +3669,7 @@ fn binary_expr_par(
 /// It closes the case that is decidable here: a syntactically apparent bag. It cannot close the
 /// case where the receiver's carrier is only known at run time — a COMM-bound variable, or a bag
 /// projected out of another collection (`[#{1|2|2}#].nth(0).length()`). Deciding those would
-/// require type inference over RhoCalc, and no shape check reaches them; this is the same class as
+/// require type inference over Rholang, and no shape check reaches them; this is the same class as
 /// divergence B. The residue is MEASURED and pinned rather than assumed, by
 /// `rho_rholang_conformance.rs::c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime`.
 ///
@@ -3686,7 +3686,7 @@ fn receiver_is_literal_bag(proc: &Proc) -> bool {
 /// See [`receiver_is_literal_bag`] for why the gate exists and exactly how far it reaches.
 /// `l.nth(i)` → the reducer's `nth` (`reduce.rs:4078`), gated on the bag encoding.
 ///
-/// Rholang's `nth` additionally accepts `ETuple` and `GByteArray` receivers, which RhoCalc's own
+/// Rholang's `nth` additionally accepts `ETuple` and `GByteArray` receivers, which Rholang's own
 /// fold body rejects — routed receivers Rholang supports come for free, which is the point of
 /// option C. See [`receiver_is_literal_bag`] for the gate.
 /// `l.concat(r)` → Rholang's `++` (`EPlusPlus`, `reduce.rs::combine_plus_plus`), gated on the bag
@@ -3711,7 +3711,7 @@ fn unary_expr_par(operand: Par, build: impl FnOnce(Option<Par>) -> ExprInstance)
 }
 
 /// Is this lowered `Par` a single ground string leaf (`GString`, nothing else)? Drives the
-/// `Add` → `EPlusPlus` string-concat parity arm (Rholang `+` has no GString algebra; RhoCalc `+`
+/// `Add` → `EPlusPlus` string-concat parity arm (Rholang `+` has no GString algebra; Rholang `+`
 /// concatenates ground strings).
 fn is_single_gstring_value(par: &Par) -> bool {
     par.sends.is_empty()
@@ -3785,7 +3785,7 @@ fn is_single_gstring_value(par: &Par) -> bool {
 ///
 /// ── WHERE THE FIX WENT (two defects; NEITHER alone was sufficient) ─────────────────────────────
 ///
-///  (A) ✅ CLOSED `98d861a3`. `languages/src/rhocalc.rs` — the `Int` and `BigRat` token patterns
+///  (A) ✅ CLOSED `98d861a3`. `languages/src/rholang.rs` — the `Int` and `BigRat` token patterns
 ///      lacked the leading `-?` that `BigInt`, `Fixed` and `Float` already carried, so for
 ///      `-7`/`-7i32`/`-7i64`/`-7r` no folded reading was generated at all. Both now mirror
 ///      f1r3node's token set, which signs `long`/`signed_int`/`bigint`/`bigrat`/`float`/
@@ -3885,7 +3885,7 @@ thread_local! {
 
 /// ★ #36 S5 — the language fingerprint every held-fold site is scoped to.
 ///
-/// Held folds are lifted out of RhoCalc AST lowering, so the owning language is
+/// Held folds are lifted out of Rholang AST lowering, so the owning language is
 /// [`RholangAstRuntimeLanguage`] and its fingerprint is a constant of the build. It is read
 /// through the same `metadata().definition_fingerprint()` accessor every other emission path
 /// uses, so the fold band can never disagree with the reflect-tag ABI about which language a
@@ -3895,7 +3895,7 @@ thread_local! {
 /// silently falling back to an unscoped band (which is the defect S5 removes) the sites are
 /// scoped to the language NAME, which is still definition-specific and still keeps two
 /// co-installed languages apart. `RholangAstRuntimeLanguage` always exposes one — it forwards
-/// the generated `RhoCalcLanguage`'s — so the fallback is unreachable in this build and exists
+/// the generated `RholangLanguage`'s — so the fallback is unreachable in this build and exists
 /// only so the derivation is total.
 fn held_fold_language_fingerprint() -> String {
     RholangAstRuntimeLanguage
@@ -4197,7 +4197,7 @@ pub fn clear_held_fold_sites() {
 }
 
 /// Take (and clear) the fold sites recorded since the last clear. Empty if the lowering had no
-/// folds (e.g. Calculator, whose invocation compiler never lifts; A-S4: RhoCalc records a site
+/// folds (e.g. Calculator, whose invocation compiler never lifts; A-S4: Rholang records a site
 /// for EVERY fold, ground or COMM-held). The caller materializes the contracts with
 /// [`crate::fold_contract::fold_definitions_for`].
 pub fn take_held_fold_sites() -> Vec<FoldSpec> {
@@ -4322,7 +4322,7 @@ fn send_par_persistent(channel: Par, data: Vec<Par>) -> Par {
     )
 }
 
-// ── Receive-bind helpers (replicated from `mettail_languages::rhocalc::receive`) ───────────────────
+// ── Receive-bind helpers (replicated from `mettail_languages::rholang::receive`) ───────────────────
 //
 // The `receive` helpers there are `pub(crate)` to the `mettail_languages` crate and so are NOT
 // reachable from this (`rholang-runtime`) crate. They are tiny pure functions over public AST
@@ -4336,7 +4336,7 @@ fn mk_proc_list(items: Vec<Proc>) -> Proc {
 /// A-S4: desugar ONE raw send-sugar node (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, their `!!`
 /// twins, and the internal `__ppar`) to its canonical channel-first form. Returns `None` for
 /// every non-sugar node. Each arm performs EXACTLY the constructor rewrite the rule's `![{…}]
-/// fold` body performs (`languages/src/rhocalc.rs`) — a pure structural rearrangement, no value
+/// fold` body performs (`languages/src/rholang.rs`) — a pure structural rearrangement, no value
 /// computation — so lowering the desugared node is byte-identical to lowering the eval-time fold
 /// target. Exec submits the RAW parse tree post-A-S4, so these nodes reach the lowering unfolded.
 // ── the lookahead suffix: operand admission + bound admission ───────────────────────────────
@@ -4714,7 +4714,7 @@ fn flt_resolve_and_reflect(
 /// L9-6b CONSTRUCTION arm: lower a `PFlt` in a VALUE (send / re-quote) position.
 /// Each declared hole `${name}` is FILLED with its in-scope binding — the reflected
 /// `^bound(peano(level))` image (E-2-D-opaque to the host binder machinery, so a
-/// captured hole survives the RhoCalc boundary), read by NAME from the enclosing
+/// captured hole survives the Rholang boundary), read by NAME from the enclosing
 /// FLT pattern's hole bindings. `reflect_flt_construction` (C2) then recomputes each
 /// hole-bearing node's `⌜^nog⌝` marker from the FILLED subtree — never a stale
 /// `⌜^gnd⌝` — so a binder-carrying fill drives β. A hole-FREE `PFlt` (a spelled-out
@@ -4909,15 +4909,15 @@ mod alternative_collection_tests {
     /// orders match", but "the two implementations were run against the same inputs and
     /// produced identical output, including the error cases".
     fn collect_recursive<'a>(
-        inner: &'a RhoCalcTermInner,
+        inner: &'a RholangTermInner,
         alternatives: &mut Vec<&'a Proc>,
     ) -> Result<(), RholangAstLowerError> {
         match inner {
-            RhoCalcTermInner::Proc(proc) => {
+            RholangTermInner::Proc(proc) => {
                 alternatives.push(proc);
                 Ok(())
             },
-            RhoCalcTermInner::Ambiguous(inner_alternatives) => {
+            RholangTermInner::Ambiguous(inner_alternatives) => {
                 for alternative in inner_alternatives {
                     collect_recursive(alternative, alternatives)?;
                 }
@@ -4927,13 +4927,13 @@ mod alternative_collection_tests {
         }
     }
 
-    fn proc_leaf(n: i64) -> RhoCalcTermInner {
-        RhoCalcTermInner::Proc(Proc::CastInt(Arc::new(Int::NumLit(n))))
+    fn proc_leaf(n: i64) -> RholangTermInner {
+        RholangTermInner::Proc(Proc::CastInt(Arc::new(Int::NumLit(n))))
     }
 
     /// A non-`Proc`, non-`Ambiguous` node — the arm both forms answer `Err` on.
-    fn foreign_leaf() -> RhoCalcTermInner {
-        RhoCalcTermInner::Int(Int::NumLit(0))
+    fn foreign_leaf() -> RholangTermInner {
+        RholangTermInner::Int(Int::NumLit(0))
     }
 
     /// Render a collected alternative list as the integers it carries, so the two walks
@@ -4956,32 +4956,32 @@ mod alternative_collection_tests {
     /// with the recursive oracle on the collected ORDER **and** on the `Result`.
     #[test]
     fn iterative_alternative_collection_matches_the_recursive_walk() {
-        let shapes: Vec<RhoCalcTermInner> = vec![
+        let shapes: Vec<RholangTermInner> = vec![
             // a bare reading
             proc_leaf(1),
             // the flat shape the parser actually produces
-            RhoCalcTermInner::Ambiguous(vec![proc_leaf(1), proc_leaf(2), proc_leaf(3)]),
+            RholangTermInner::Ambiguous(vec![proc_leaf(1), proc_leaf(2), proc_leaf(3)]),
             // NESTED — unreachable from `from_alternatives`, reachable by hand
-            RhoCalcTermInner::Ambiguous(vec![
+            RholangTermInner::Ambiguous(vec![
                 proc_leaf(1),
-                RhoCalcTermInner::Ambiguous(vec![proc_leaf(2), proc_leaf(3)]),
+                RholangTermInner::Ambiguous(vec![proc_leaf(2), proc_leaf(3)]),
                 proc_leaf(4),
             ]),
             // deeper nesting, left-leaning
-            RhoCalcTermInner::Ambiguous(vec![
-                RhoCalcTermInner::Ambiguous(vec![RhoCalcTermInner::Ambiguous(vec![proc_leaf(1)])]),
+            RholangTermInner::Ambiguous(vec![
+                RholangTermInner::Ambiguous(vec![RholangTermInner::Ambiguous(vec![proc_leaf(1)])]),
                 proc_leaf(2),
             ]),
             // an empty alternative vector
-            RhoCalcTermInner::Ambiguous(vec![]),
+            RholangTermInner::Ambiguous(vec![]),
             // failures, in first / middle / last position and nested
             foreign_leaf(),
-            RhoCalcTermInner::Ambiguous(vec![foreign_leaf(), proc_leaf(1)]),
-            RhoCalcTermInner::Ambiguous(vec![proc_leaf(1), foreign_leaf(), proc_leaf(2)]),
-            RhoCalcTermInner::Ambiguous(vec![proc_leaf(1), proc_leaf(2), foreign_leaf()]),
-            RhoCalcTermInner::Ambiguous(vec![
+            RholangTermInner::Ambiguous(vec![foreign_leaf(), proc_leaf(1)]),
+            RholangTermInner::Ambiguous(vec![proc_leaf(1), foreign_leaf(), proc_leaf(2)]),
+            RholangTermInner::Ambiguous(vec![proc_leaf(1), proc_leaf(2), foreign_leaf()]),
+            RholangTermInner::Ambiguous(vec![
                 proc_leaf(1),
-                RhoCalcTermInner::Ambiguous(vec![proc_leaf(2), foreign_leaf()]),
+                RholangTermInner::Ambiguous(vec![proc_leaf(2), foreign_leaf()]),
                 proc_leaf(3),
             ]),
         ];
@@ -5012,9 +5012,9 @@ mod alternative_collection_tests {
     /// oracle in their head to see what "source order" means.
     #[test]
     fn alternatives_are_collected_in_source_order_across_nesting() {
-        let shape = RhoCalcTermInner::Ambiguous(vec![
+        let shape = RholangTermInner::Ambiguous(vec![
             proc_leaf(1),
-            RhoCalcTermInner::Ambiguous(vec![proc_leaf(2), proc_leaf(3)]),
+            RholangTermInner::Ambiguous(vec![proc_leaf(2), proc_leaf(3)]),
             proc_leaf(4),
         ]);
         let mut collected = Vec::new();

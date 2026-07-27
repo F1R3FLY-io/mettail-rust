@@ -740,7 +740,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                         // sibling lexical readings of a collection element collapse
                         // to one arc, killing the O(N^4) frontier cross-product on
                         // `{0|1|...|N}`. See
-                        // docs/design/rhocalc-collection-fork-explosion.md.
+                        // docs/design/rholang-collection-fork-explosion.md.
                         && (Arc::ptr_eq(
                             &existing.sppf_collection_arena,
                             &arc.sppf_collection_arena,

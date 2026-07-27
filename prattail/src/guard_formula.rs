@@ -19,7 +19,7 @@
 //!
 //! | front end | representation | leg |
 //! |---|---|---|
-//! | `mettail_languages::rhocalc` | the surface `Proc` | run time (the COMM decision) |
+//! | `mettail_languages::rholang` | the surface `Proc` | run time (the COMM decision) |
 //! | `mettail_rholang_runtime` | the lowered `rhoapi::Par` | compile time (discharge) |
 //!
 //! If each encoded straight into `PresburgerPred`/`AnyPred` there would be two encoders with no
@@ -1410,7 +1410,7 @@ fn project_interval(pred: &AnyPred) -> Option<IntervalPred> {
 /// non-boolean result to `false`. So a full-Kleene `or` that answered `Sat` from the right
 /// operand alone would fire host-side while the reducer did **not** fire — unsoundness in the
 /// firing direction. The discipline here reproduces, arm for arm, the one
-/// `mettail_languages::rhocalc::receive::eval_guard_disposition` was measured to have.
+/// `mettail_languages::rholang::receive::eval_guard_disposition` was measured to have.
 pub fn ground_verdict_with<F>(
     formula: &GuardFormula,
     assignment: &GuardAssignment,

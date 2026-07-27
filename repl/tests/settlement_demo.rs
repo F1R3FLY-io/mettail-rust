@@ -1,6 +1,6 @@
-//! CI gate for the **Guarded Settlement Desk** demo (`demos/rhocalc-settlement/`).
+//! CI gate for the **Guarded Settlement Desk** demo (`demos/rholang-settlement/`).
 //!
-//! The sibling FLT demo is gated by `rholang-runtime/tests/rhocalc_bin.rs`, which runs the
+//! The sibling FLT demo is gated by `rholang-runtime/tests/rholang_bin.rs`, which runs the
 //! BUILT binary on the COMMITTED demo files and asserts the observables the run sheet claims.
 //! This file is the same pattern for a demo whose vehicle is the REPL: it drives the built
 //! `repl` binary with the run sheet's own command lines (piped on stdin, exactly as a
@@ -22,12 +22,12 @@
 //!
 //! ## ★ Pending rename (NOT performed here)
 //!
-//! `RhoCalc` becomes `Rholang`, `demos/rhocalc-settlement/` becomes `demos/rholang-settlement/`,
-//! and `repl rhocalc` becomes `repl rholang`. Every occurrence of the CURRENT names in this file
+//! `Rholang` becomes `Rholang`, `demos/rholang-settlement/` becomes `demos/rholang-settlement/`,
+//! and `repl rholang` becomes `repl rholang`. Every occurrence of the CURRENT names in this file
 //! is confined to the two constants below, [`DEMO_DIR`] and [`STARTUP_LANGUAGE`] — so the rename
 //! is a two-line edit here. Nothing else names the language: the Beat-7 refusal is matched on
 //! the rename-free part of the message (the message itself opens `RhoMachine backend for
-//! language RhoCalc …`, which will move with the production code that emits it), and every
+//! language Rholang …`, which will move with the production code that emits it), and every
 //! other needle names a BACKEND (`RhoMachine`, `Dovetail`) or another language (`Calculator`).
 //!
 //! ## ★ Defect D1 — a guard rejection did not backtrack to the next resting datum (REPAIRED)
@@ -78,7 +78,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_runtime::{
     lower_rholang_proc, run_normalized_par_for_oracle_and_read_runtime_value_channels,
     run_rholang_source_sequence_for_oracle_and_read_ints,
@@ -90,10 +90,10 @@ use mettail_runtime::clear_var_cache;
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 /// The demo directory, relative to the workspace root.
-const DEMO_DIR: &str = "demos/rhocalc-settlement";
+const DEMO_DIR: &str = "demos/rholang-settlement";
 
 /// The language the run sheet's launch line starts the REPL in (`repl <LANGUAGE>`).
-const STARTUP_LANGUAGE: &str = "rhocalc";
+const STARTUP_LANGUAGE: &str = "rholang";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // The beats, verbatim from RUN-SHEET.md
@@ -325,7 +325,7 @@ fn desk_binding(name: &str) -> String {
 // Runtime readback — what RESTS, which the REPL's OUT view cannot show
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-/// Run one RhoCalc program to rest and report the values left on each channel, rendered the
+/// Run one Rholang program to rest and report the values left on each channel, rendered the
 /// way the REPL renders an observation (so an expectation reads like the run sheet's).
 async fn rest_on_channels(program: &str, channels: &[&str]) -> Vec<(String, Vec<String>)> {
     clear_var_cache();
@@ -362,7 +362,7 @@ fn desk_program(offers: &str) -> String {
 /// `info` reports the language's INSTALLED runtime backends. The Rho machine is the default
 /// and the only capability the summary names — the run sheet's older "names the two-stage
 /// Dovetail+Rholang backend" reading is the WRAPPER's internal shape, which this line has
-/// never printed (`runtime_backend_summary` prints capabilities, and RhoCalc advertises one).
+/// never printed (`runtime_backend_summary` prints capabilities, and Rholang advertises one).
 #[test]
 fn beat_0_info_reports_the_rho_machine_as_the_default_runtime() {
     let transcript = run_repl(&[BEAT_0_INFO]);
@@ -410,10 +410,10 @@ fn beat_1_the_numeral_spelling_selects_the_wire_carrier() {
 // Beat 2 — hello COMM
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-/// A rho-calculus COMM written in RhoCalc executes as a machine COMM: the receiver binds the
+/// A rho-calculus COMM written in Rholang executes as a machine COMM: the receiver binds the
 /// sent process and drops it, and the `"p"` it publishes rests on OUT.
 #[test]
-fn beat_2_a_rhocalc_comm_runs_as_a_machine_comm() {
+fn beat_2_a_rholang_comm_runs_as_a_machine_comm() {
     let transcript = run_repl(&[BEAT_2_COMM]);
     assert_eq!(out_lines(&transcript), vec![r#"OUT: ["p"] (1 value(s))"#]);
     assert_shows(&transcript, "- backend: RhoMachine");
@@ -730,7 +730,7 @@ fn every_run_sheet_command_line_is_driven_by_this_test() {
 }
 
 /// The launch line names the binary and startup language this test actually drives, so the
-/// pending `repl rhocalc` → `repl rholang` rename cannot land in one place only.
+/// pending `repl rholang` → `repl rholang` rename cannot land in one place only.
 #[test]
 fn the_run_sheet_launch_line_matches_the_binary_this_test_drives() {
     let sheet =

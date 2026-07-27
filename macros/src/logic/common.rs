@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 /// references to these variants *unconditionally* for every (cat,
 /// domain) pair. Gating the enum emission against the user-side scan
 /// produced dangling references to nonexistent variants — 96+ compile
-/// errors across rhocalc/guardedrho on the merge.
+/// errors across rholang/guardedrho on the merge.
 ///
 /// The memory reduction this gating provided was a real constant
 /// factor savings, but it came at the cost of correctness. If we want

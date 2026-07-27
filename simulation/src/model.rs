@@ -689,12 +689,12 @@ mod tests {
         }
     }
 
-    /// Stub metadata for RhoCalc-like language with known structure.
-    struct RhoCalcStubMetadata;
+    /// Stub metadata for Rholang-like language with known structure.
+    struct RholangStubMetadata;
 
-    impl LanguageMetadata for RhoCalcStubMetadata {
+    impl LanguageMetadata for RholangStubMetadata {
         fn name(&self) -> &'static str {
-            "RhoCalc"
+            "Rholang"
         }
 
         fn types(&self) -> &'static [TypeDef] {
@@ -870,8 +870,8 @@ mod tests {
     }
 
     #[test]
-    fn test_model_from_rhocalc() {
-        let metadata = RhoCalcStubMetadata;
+    fn test_model_from_rholang() {
+        let metadata = RholangStubMetadata;
         let model = LanguageStateMachine::from_metadata(&metadata);
 
         // Verify categories
@@ -928,7 +928,7 @@ mod tests {
 
     #[test]
     fn test_arb_model_ops_basic() {
-        let metadata = RhoCalcStubMetadata;
+        let metadata = RholangStubMetadata;
         let model = LanguageStateMachine::from_metadata(&metadata);
 
         // Just verify the strategy can be created and produces valid ops
@@ -1007,7 +1007,7 @@ mod tests {
 
     #[test]
     fn test_named_rules() {
-        let metadata = RhoCalcStubMetadata;
+        let metadata = RholangStubMetadata;
         let model = LanguageStateMachine::from_metadata(&metadata);
 
         let named = model.named_rules();
@@ -1217,9 +1217,9 @@ mod tests {
 
     #[test]
     fn sim_c_backward_compat_for_unguarded_languages() {
-        // RhoCalcStubMetadata has no guard metadata — verify the model
+        // RholangStubMetadata has no guard metadata — verify the model
         // reflects that with empty guard fields.
-        let metadata = RhoCalcStubMetadata;
+        let metadata = RholangStubMetadata;
         let model = LanguageStateMachine::from_metadata(&metadata);
 
         assert!(model.builtin_predicates.is_empty());

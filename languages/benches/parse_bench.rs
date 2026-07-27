@@ -6,7 +6,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use mettail_languages::ambient::*;
 use mettail_languages::calculator::*;
 use mettail_languages::lambda::*;
-use mettail_languages::rhocalc::*;
+use mettail_languages::rholang::*;
 use std::time::Duration;
 
 // =============================================================================
@@ -63,10 +63,10 @@ fn lambda_inputs() -> Vec<(&'static str, &'static str)> {
 }
 
 // =============================================================================
-// RhoCalc inputs
+// Rholang inputs
 // =============================================================================
 
-fn rhocalc_inputs() -> Vec<(&'static str, &'static str)> {
+fn rholang_inputs() -> Vec<(&'static str, &'static str)> {
     vec![
         ("zero", "{}"),
         ("variable", "x"),
@@ -127,13 +127,13 @@ fn bench_lambda_parse(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_rhocalc_parse(c: &mut Criterion) {
-    let mut group = c.benchmark_group("parse/rhocalc");
-    for (name, input) in rhocalc_inputs() {
+fn bench_rholang_parse(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parse/rholang");
+    for (name, input) in rholang_inputs() {
         group.bench_with_input(BenchmarkId::new("parse", name), input, |b, input| {
             b.iter(|| {
                 mettail_runtime::clear_var_cache();
-                RhoCalcLanguage::parse(black_box(input)).expect("parse failed")
+                RholangLanguage::parse(black_box(input)).expect("parse failed")
             })
         });
     }
@@ -149,6 +149,6 @@ criterion_group! {
     targets = bench_ambient_parse,
         bench_calculator_parse,
         bench_lambda_parse,
-        bench_rhocalc_parse
+        bench_rholang_parse
 }
 criterion_main!(benches);

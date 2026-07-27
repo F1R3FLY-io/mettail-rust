@@ -5,7 +5,7 @@
 
 pub mod ambient;
 pub mod calculator;
-pub mod rhocalc;
+pub mod rholang;
 
 /// Metadata for an example process
 pub struct Example {
@@ -18,7 +18,7 @@ pub struct Example {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LanguageName {
-    RhoCalculus,
+    Rholang,
     AmbientCalculus,
     Calculator,
 }
@@ -26,7 +26,7 @@ pub enum LanguageName {
 impl LanguageName {
     pub fn as_str(&self) -> &'static str {
         match self {
-            LanguageName::RhoCalculus => "rhocalc",
+            LanguageName::Rholang => "rholang",
             LanguageName::AmbientCalculus => "ambient",
             LanguageName::Calculator => "calculator",
         }
@@ -51,7 +51,7 @@ impl Example {
     /// Get all examples across all languages
     pub fn all() -> Vec<&'static Example> {
         let mut examples = Vec::new();
-        examples.extend(rhocalc::all());
+        examples.extend(rholang::all());
         examples.extend(ambient::all());
         examples.extend(calculator::all());
         examples
@@ -73,7 +73,7 @@ impl Example {
     /// Get all examples for a specific language
     pub fn by_language(language: LanguageName) -> Vec<&'static Example> {
         match language {
-            LanguageName::RhoCalculus => rhocalc::all(),
+            LanguageName::Rholang => rholang::all(),
             LanguageName::AmbientCalculus => ambient::all(),
             LanguageName::Calculator => calculator::all(),
         }

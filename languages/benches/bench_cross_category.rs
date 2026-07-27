@@ -1,6 +1,6 @@
 //! Cross-category dispatch benchmarks: FIRST set dispatch, cast rules.
 //!
-//! Languages: Calculator (cross-cat `==`), RhoCalc (cast `Int -> Proc`)
+//! Languages: Calculator (cross-cat `==`), Rholang (cast `Int -> Proc`)
 //! Features exercised: FIRST set dispatch, unambiguous cross-category rules,
 //! cast rules (prefix handler), backtracking (save/restore for ambiguous tokens).
 //!
@@ -8,7 +8,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use mettail_languages::calculator;
-use mettail_languages::rhocalc;
+use mettail_languages::rholang;
 use std::time::Duration;
 
 use mettail_languages::bench_common::{gen_cast_chain, gen_cross_cat_eq, SIZES};
@@ -46,7 +46,7 @@ fn bench_cast_int(c: &mut Criterion) {
     group.bench_function("baseline", |b| {
         b.iter(|| {
             mettail_runtime::clear_var_cache();
-            rhocalc::Proc::parse(black_box(input)).expect("parse failed")
+            rholang::Proc::parse(black_box(input)).expect("parse failed")
         })
     });
     group.finish();
@@ -60,7 +60,7 @@ fn bench_cast_in_parallel(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(n), &input, |b, input| {
             b.iter(|| {
                 mettail_runtime::clear_var_cache();
-                rhocalc::Proc::parse(black_box(input)).expect("parse failed")
+                rholang::Proc::parse(black_box(input)).expect("parse failed")
             })
         });
     }

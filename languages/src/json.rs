@@ -20,7 +20,7 @@
 //! next door.
 //!
 //! ⚠ Those three `false`s must STAY false, and not because production specs are
-//! forbidden generated suites — `ambient`/`calculator`/`lambda`/`rhocalc` all
+//! forbidden generated suites — `ambient`/`calculator`/`lambda`/`rholang` all
 //! carry theirs. `emit_simulator: true` would make the macro write
 //! `languages/src/bin/simulate_json.rs` on every compile, and cargo's edition-2021
 //! auto-discovery would pick that file up as a binary target with NO
@@ -54,7 +54,7 @@
 //! accepts the `::=` form (and this file uses it for nullary constants, exactly as
 //! `languages/src/ambient.rs` does), but its idiomatic form is the JUDGEMENT form
 //! `Name . ctx |- pattern : Cat ;`, and `List(X)` is spelled `Vec(X)` (the
-//! established convention — `rhocalc.rs:57` declares `![Vec<Proc>] as List`).
+//! established convention — `rholang.rs:57` declares `![Vec<Proc>] as List`).
 //! **Superset containment here is SEMANTIC**: every `types` entry, `terms`
 //! production, `equations` clause and `rewrites` rule of the paper's version is
 //! present with the same meaning; the spelling is ours. Every deviation is
@@ -79,7 +79,7 @@
 //!    `random_generation.rs:138` does the same for `JObj`, and `flatten.rs:15,39`
 //!    iterates `for (e, count) in inner.iter()` (the `HashBag`
 //!    (item, multiplicity) shape) over a `Vec` field. Every existing
-//!    single-collection-param rule in the tree (`rhocalc` / `ambient` /
+//!    single-collection-param rule in the tree (`rholang` / `ambient` /
 //!    `commdemo` `PPar`) is a `HashBag`, so the bug is latent — and it is an
 //!    EMITTER bug (`macros/src/gen/…`), not a `grammar.rs` one. Reported, not
 //!    fixed unilaterally.
@@ -90,7 +90,7 @@
 //!    `Vec<Value>` and `normalize.rs:4181` calls
 //!    `insert_into_jobj(&mut HashBag<Value>, Field)`.
 //! 4. A native list carrier — `![Vec<Value>] as List { open_parts: ["["], … }`
-//!    plus the injection `JArr . l:List |- l : Value ;` (the `rhocalc.rs:57`
+//!    plus the injection `JArr . l:List |- l : Value ;` (the `rholang.rs:57`
 //!    idiom) — compiles and parses **in isolation**, but a native collection
 //!    alias may only be *named* `List` / `Bag` / `Map` / `Set` / `Pathmap`
 //!    (`ast/src/language/parse.rs:509-511`), so the second instantiation
@@ -104,9 +104,9 @@
 //!    pairing pass, `ast/src/grammar_shapes.rs`).
 //!
 //! **The spelling that works — and what we use — is the arity split**, i.e. the
-//! `rhocalc.rs` `POutput` / `POutput2Plus` idiom, in which a `Vec(T)` slot is a
+//! `rholang.rs` `POutput` / `POutput2Plus` idiom, in which a `Vec(T)` slot is a
 //! *non-sole* parameter (Class 2). Such a slot is fully supported and may be
-//! heterogeneous (`rhocalc.rs:449-455` `InputBindQuery . … args:Vec(Proc) :
+//! heterogeneous (`rholang.rs:449-455` `InputBindQuery . … args:Vec(Proc) :
 //! InputBind` is the precedent):
 //!
 //! ```text
@@ -247,7 +247,7 @@ language! {
         JStr . s:Str |- s : Value ;
         // `"[" List(Value) "]"` and `"{" List(Field) "}"` — the delimited,
         // comma-separated, ORDERED collections, each realized as the three arity
-        // cases of one production over a `Vec(…)` slot (the `rhocalc.rs:196-204`
+        // cases of one production over a `Vec(…)` slot (the `rholang.rs:196-204`
         // `POutput` / `POutput2Plus` idiom). Each triple's union is exactly the
         // language the paper's production denotes: zero, one, or n elements
         // between the delimiters. See the module header for why the single-rule

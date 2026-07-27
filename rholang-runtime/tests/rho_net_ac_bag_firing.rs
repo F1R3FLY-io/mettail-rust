@@ -171,7 +171,7 @@ fn assert_transformed_bag(value: &RuntimeObservationValue, bag_elements: &[Strin
 /// the TRANSFORMED BAG `PPar{Mark(e), <the rest>}` on OUT — where `e` is one element of the whole
 /// operand bag the firing's σ reconstructs. This is the bag-VALUED-RHS analogue of
 /// `acdemo_ac_rewrite_fires_as_a_comm_on_the_reducer` and the direct prerequisite shape for
-/// RhoCalc's `Comm` rule (whose RHS `PPar{P[Q/y], ...rest}` is likewise a bag).
+/// Rholang's `Comm` rule (whose RHS `PPar{P[Q/y], ...rest}` is likewise a bag).
 #[tokio::test]
 async fn acbagdemo_bag_rhs_ac_rewrite_fires_as_a_comm_on_the_reducer() {
     mettail_runtime::clear_var_cache();

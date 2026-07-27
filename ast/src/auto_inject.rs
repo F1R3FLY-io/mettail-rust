@@ -20,7 +20,7 @@
 //! ## Why
 //!
 //! Hand-writing `<Source>To<Target>` injection rules per grammar is
-//! duplicative + error-prone + combinatorial. RhoCalc's `bigrat_display_parse_roundtrip`
+//! duplicative + error-prone + combinatorial. Rholang's `bigrat_display_parse_roundtrip`
 //! failure (B9) was caused by missing such an injection that Calculator
 //! had hand-written. With auto-injection, every grammar declaring both
 //! `Int` (or any signed-int width) and `BigInt` automatically gets the
@@ -118,7 +118,7 @@ fn is_auto_inject_enabled(language: &LanguageDef) -> bool {
 /// and fragment grammars against `crate::registry`, which is the *macro-time*
 /// in-process registry. At runtime that registry is empty, so composition is a
 /// no-op for any language that declares `extends`/`includes`/`mixins`. The
-/// standalone generated languages (Calculator, RhoCalc, Ambient, GuardedRho)
+/// standalone generated languages (Calculator, Rholang, Ambient, GuardedRho)
 /// declare none, so this reconstruction is **exact** for them. Reconstructing a
 /// composed language exactly would require serializing the resolved base/fragment
 /// sources into the registry at runtime — that is a separate, later task.

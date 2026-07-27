@@ -94,7 +94,7 @@ for(@lambda`lam f. lam x. (f, ${rest})` <- @"results") { … }
 requires the body to be an *application of the outer binder* — true of every numeral ≥ 1, false of
 every boolean. **The booleans are refused structurally and left resting on `@"results"`.**
 
-That is pattern-matching *into* a foreign language: `rest` is now a RhoCalc value holding a
+That is pattern-matching *into* a foreign language: `rest` is now a Rholang value holding a
 sub-term of a λ-term.
 
 ---

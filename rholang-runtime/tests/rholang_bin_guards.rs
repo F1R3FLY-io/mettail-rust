@@ -7,7 +7,7 @@
 //! The binary used to call `Proc::parse`, which is `parse_structured`: it starts from
 //! `parse_via_wpda(input)` — the correct term — and then, whenever `display(parsed) != input`,
 //! replaces the returned representative with the reparse of its own DISPLAY, accepting it as soon
-//! as the display reaches a fixpoint. Display stability is not term preservation. RhoCalc's
+//! as the display reaches a fixpoint. Display stability is not term preservation. Rholang's
 //! display renders a projection operand of an arithmetic / relational / boolean operator through
 //! a PROJECTION SURFACE (`macros/src/gen/syntax/display.rs::find_projection_surface_wrapper`),
 //! which elects `POutputNil . q:Proc |- "@" "Nil" "!" "(" q ")"`, so

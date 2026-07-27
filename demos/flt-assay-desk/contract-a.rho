@@ -1,12 +1,12 @@
 // ════════════════════════════════════════════════════════════════════════════════════════════
 //  CONTRACT A — a foreign-language term, driven to its normal form BY THE RHOLANG MACHINE.
 //
-//  Run me with the RhoCalc interpreter:
+//  Run me with the Rholang interpreter:
 //    target/debug/rholang demos/flt-assay-desk/contract-a.rho
 //
 //  WHAT THIS FILE IS
 //  ─────────────────
-//  One Foreign Language Term (FLT) and nothing else. `lambda`…`` is RhoCalc's opener for a guest
+//  One Foreign Language Term (FLT) and nothing else. `lambda`…`` is Rholang's opener for a guest
 //  term written in the untyped λ-calculus — the text between the back-ticks is the GUEST's own
 //  concrete syntax, handed to the guest's reflector, never string-spliced (No-Injection).
 //

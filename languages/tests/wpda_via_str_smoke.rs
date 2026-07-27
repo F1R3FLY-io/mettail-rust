@@ -4,7 +4,7 @@
 
 use mettail_languages::calculator::{Bool, Int, Proc};
 use mettail_languages::lambda::Term;
-use mettail_languages::rhocalc;
+use mettail_languages::rholang;
 
 #[test]
 fn calculator_int_lit_via_wpds() {
@@ -49,11 +49,11 @@ fn lambda_lam_identity_via_wpds() {
 }
 
 #[test]
-fn rhocalc_proc_par_via_wpds() {
+fn rholang_proc_par_via_wpds() {
     // `{ error | error }` → Proc::PPar(HashBag::from([Err, Err])).
-    let result = rhocalc::Proc::parse_via_wpda("{ error | error }").expect("Proc::PPar parses");
+    let result = rholang::Proc::parse_via_wpda("{ error | error }").expect("Proc::PPar parses");
     match &result {
-        rhocalc::Proc::PPar(bag) => {
+        rholang::Proc::PPar(bag) => {
             assert_eq!(bag.len(), 2);
         },
         other => panic!("expected Proc::PPar(...), got {:?}", other),
@@ -65,11 +65,11 @@ fn rhocalc_proc_par_via_wpds() {
 // main removed that receive syntax in favor of `for`.)
 
 #[test]
-fn rhocalc_for_empty_bind_via_wpds() {
+fn rholang_for_empty_bind_via_wpds() {
     // Empty bind: `for(<- c){0}` — one row, no bound variable.
-    let result = rhocalc::Proc::parse_via_wpda("for(<- c){0}").expect("empty-bind for parses");
+    let result = rholang::Proc::parse_via_wpda("for(<- c){0}").expect("empty-bind for parses");
     match &result {
-        rhocalc::Proc::PForUser(rows, _body) => {
+        rholang::Proc::PForUser(rows, _body) => {
             assert_eq!(rows.len(), 1, "one receive row expected");
         },
         other => panic!("expected Proc::PForUser(_, _), got {:?}", other),
@@ -77,12 +77,12 @@ fn rhocalc_for_empty_bind_via_wpds() {
 }
 
 #[test]
-fn rhocalc_for_single_bind_via_wpds() {
+fn rholang_for_single_bind_via_wpds() {
     // Single ephemeral bind: `for(x <- c){*(x)}` — one row binding `x`.
     let result =
-        rhocalc::Proc::parse_via_wpda("for(x <- c){*(x)}").expect("single-bind for parses");
+        rholang::Proc::parse_via_wpda("for(x <- c){*(x)}").expect("single-bind for parses");
     match &result {
-        rhocalc::Proc::PForUser(rows, _body) => {
+        rholang::Proc::PForUser(rows, _body) => {
             assert_eq!(rows.len(), 1, "one receive row expected");
         },
         other => panic!("expected Proc::PForUser(_, _), got {:?}", other),
@@ -90,12 +90,12 @@ fn rhocalc_for_single_bind_via_wpds() {
 }
 
 #[test]
-fn rhocalc_for_join_bind_via_wpds() {
+fn rholang_for_join_bind_via_wpds() {
     // Join (`&`): `for(x <- c1 & y <- c2){*(x)}` — one row joining two binds.
-    let result = rhocalc::Proc::parse_via_wpda("for(x <- c1 & y <- c2){*(x)}")
+    let result = rholang::Proc::parse_via_wpda("for(x <- c1 & y <- c2){*(x)}")
         .expect("join-bind for parses");
     match &result {
-        rhocalc::Proc::PForUser(rows, _body) => {
+        rholang::Proc::PForUser(rows, _body) => {
             assert_eq!(rows.len(), 1, "one (joined) receive row expected");
         },
         other => panic!("expected Proc::PForUser(_, _), got {:?}", other),
@@ -103,24 +103,24 @@ fn rhocalc_for_join_bind_via_wpds() {
 }
 
 #[test]
-fn rhocalc_pnew_single_binder_via_wpds() {
+fn rholang_pnew_single_binder_via_wpds() {
     // PNew . ^[xs].p:[Name* -> Proc] |- "new" xs.*sep(",") "in" "{" p "}" : Proc;
     // Single: `new x in {*(x)}`.
     let result =
-        rhocalc::Proc::parse_via_wpda("new x in {*(x)}").expect("single-binder PNew parses");
+        rholang::Proc::parse_via_wpda("new x in {*(x)}").expect("single-binder PNew parses");
     match &result {
-        rhocalc::Proc::PNew(_scope) => {},
+        rholang::Proc::PNew(_scope) => {},
         other => panic!("expected Proc::PNew(_), got {:?}", other),
     }
 }
 
 #[test]
-fn rhocalc_pnew_multi_binder_via_wpds() {
+fn rholang_pnew_multi_binder_via_wpds() {
     // Multi-binder: `new x, y in {*(x)}`.
     let result =
-        rhocalc::Proc::parse_via_wpda("new x, y in {*(x)}").expect("multi-binder PNew parses");
+        rholang::Proc::parse_via_wpda("new x, y in {*(x)}").expect("multi-binder PNew parses");
     match &result {
-        rhocalc::Proc::PNew(_scope) => {},
+        rholang::Proc::PNew(_scope) => {},
         other => panic!("expected Proc::PNew(_), got {:?}", other),
     }
 }

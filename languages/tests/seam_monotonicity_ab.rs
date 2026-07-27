@@ -84,11 +84,11 @@
 //! PRINTED on every run, so a divergence the surface key cannot see is visible rather than
 //! silently absent.
 
-#![cfg(feature = "rhocalc")]
+#![cfg(feature = "rholang")]
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use mettail_languages::rhocalc::{ForRow, Proc};
+use mettail_languages::rholang::{ForRow, Proc};
 
 /// Env var that makes this binary run as an OFF-leg child.
 const CHILD_MARKER: &str = "SEAM_AB_CHILD";
@@ -123,7 +123,7 @@ fn corpus() -> Vec<(&'static str, &'static str)> {
         ("proj-drop-grouped", "*(@(1))"),
         ("proj-persist", "@Nil!!(0)"),
         ("proj-empty", "@a!()"),
-        // ── sep ── observed AT `ForRow`, the only category whose `.*sep` facade RhoCalc
+        // ── sep ── observed AT `ForRow`, the only category whose `.*sep` facade Rholang
         //    generates. A `Proc` span containing a `for(…)` does NOT engage it: the row list is
         //    reached through `ForRow`'s own string entry, so a corpus of `Proc` spans leaves the
         //    sep column of this gate inert — which is precisely what `every_kill_switch_is_effective`
@@ -197,7 +197,7 @@ fn canon(debug: &str) -> String {
 /// Observe the whole corpus on THIS process's configuration.
 ///
 /// Rows are observed at the category their `id` names: `forrow-*` rows enter through
-/// `ForRow::parse_via_wpda*` (the ONLY category whose `.*sep` facade RhoCalc generates — without
+/// `ForRow::parse_via_wpda*` (the ONLY category whose `.*sep` facade Rholang generates — without
 /// them the `sep` column of this gate is inert, which the teeth test now proves), everything else
 /// through `Proc`.
 fn observe() -> BTreeMap<String, Obs> {

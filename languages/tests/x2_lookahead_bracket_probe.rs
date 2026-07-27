@@ -19,17 +19,17 @@
 //!
 //! # Method — three languages, one binary
 //!
-//! Editing `languages/src/rhocalc.rs` is not possible here (another agent holds
-//! it), and would in any case conflate the question with rhocalc's 4000-line
+//! Editing `languages/src/rholang.rs` is not possible here (another agent holds
+//! it), and would in any case conflate the question with rholang's 4000-line
 //! election lattice. So the probe declares a **scratch minimal language** that
-//! reproduces exactly the four rhocalc shapes that can interact with `[` / `]`:
+//! reproduces exactly the four rholang shapes that can interact with `[` / `]`:
 //!
-//! | rhocalc shape | scratch analogue | why it matters |
+//! | rholang shape | scratch analogue | why it matters |
 //! | --- | --- | --- |
-//! | `![Vec<Proc>] as List { open_parts: ["["], close_parts: ["]"], sep: "," }` (`rhocalc.rs:78-82`) | identical | the ONLY existing consumer of `[` / `]` |
-//! | `CastList . l:List \|- l : Proc ;` (`rhocalc.rs:838`) | identical | lifts a list literal into `Proc` |
-//! | `PDrop . n:Name \|- "*" n : Proc ;` (`rhocalc.rs:294`) | identical | the `*` dereference prefix — THE hazard |
-//! | `POutput . n:Name, q:Proc \|- n "!" "(" q ")" : Proc ;` (`rhocalc.rs:309-310`) | identical | the send the corpus suffixes |
+//! | `![Vec<Proc>] as List { open_parts: ["["], close_parts: ["]"], sep: "," }` (`rholang.rs:78-82`) | identical | the ONLY existing consumer of `[` / `]` |
+//! | `CastList . l:List \|- l : Proc ;` (`rholang.rs:838`) | identical | lifts a list literal into `Proc` |
+//! | `PDrop . n:Name \|- "*" n : Proc ;` (`rholang.rs:294`) | identical | the `*` dereference prefix — THE hazard |
+//! | `POutput . n:Name, q:Proc \|- n "!" "(" q ")" : Proc ;` (`rholang.rs:309-310`) | identical | the send the corpus suffixes |
 //!
 //! plus `PPar` (braced) and `PParInfix` for the two corpus rows that need them.
 //!
@@ -63,7 +63,7 @@ use mettail_macros::language;
 use mettail_runtime::Language;
 
 // ══════════════════════════════════════════════════════════════════════════
-// X2Base — the control: the bracket-relevant rhocalc shapes, NO new rules
+// X2Base — the control: the bracket-relevant rholang shapes, NO new rules
 // ══════════════════════════════════════════════════════════════════════════
 
 pub mod x2base {

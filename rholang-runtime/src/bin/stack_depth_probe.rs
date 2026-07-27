@@ -49,7 +49,7 @@
 
 use std::sync::Arc;
 
-use mettail_languages::rhocalc::{Int, List, Proc};
+use mettail_languages::rholang::{Int, List, Proc};
 use mettail_runtime::{Binder, Scope};
 use mettail_rholang_runtime::rholang_ast::{lower_proc_in_env, BoundEnv};
 use models::rust::rholang::par_children::dismantle;

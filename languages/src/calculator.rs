@@ -56,7 +56,7 @@ language! {
                 //
                 // — which is the `bigrat_display_parse_roundtrip` failure. Fixing the ELECTION
                 // would have been fixing the wrong layer: the reading it was electing was one
-                // the grammar should never have admitted (`languages/src/rhocalc.rs:129`).
+                // the grammar should never have admitted (`languages/src/rholang.rs:129`).
                 //
                 // The eval now accepts EXACTLY its declared `…u32` domain. Unlike `BigInt`
                 // below there is NO superset clause and none is needed: every unsuffixed
@@ -102,7 +102,7 @@ language! {
             //     literal: alignment REQUIRES the `-?`. The merged file already applied the
             //     ground inconsistently — `BigInt` kept `-?…n`, `Fixed` and `Float` kept
             //     theirs, and only `Int` and `BigRat` lost it.
-            // (2) THE REPO ALREADY CORRECTED IT WHERE IT MATTERS MOST. RhoCalc — which IS
+            // (2) THE REPO ALREADY CORRECTED IT WHERE IT MATTERS MOST. Rholang — which IS
             //     the Rholang 1.4 grammar — restored `-?` on `Int` and `BigRat` as
             //     divergence I(b) (`12704fc1`, 2026-07-26), with the full lexer argument
             //     (adjacency is a LEXER fact; the fork is elected by maximal munch; `1-7`
@@ -152,7 +152,7 @@ language! {
                 //
                 // The eval now accepts EXACTLY its declared `…n` domain, plus the
                 // unsuffixed numerals too large for `Int`'s `i32` carrier — the same
-                // priority-ordered superset RhoCalc uses, and what kept a bare
+                // priority-ordered superset Rholang uses, and what kept a bare
                 // `3_000_000_000` readable before.
                 let __lit = mettail_prattail::parse_int_lit(text, None).map_err(|_| ())?;
                 let __declared_bigint = text.ends_with('n');

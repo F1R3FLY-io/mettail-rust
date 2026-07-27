@@ -1,4 +1,4 @@
-//! Regression tests for `RhoCalcLanguage::dovetail_normal_term` — the typed
+//! Regression tests for `RholangLanguage::dovetail_normal_term` — the typed
 //! Dovetail normal-form reconstruction (macro extension E2). These exercise the
 //! e-graph→AST reconstruction arms added for `Collection`/`Binder`/`MultiBinder`
 //! variants (the inverse of the typed lowering), covering the four ground-truth
@@ -10,7 +10,7 @@
 //!
 //! See `docs/design/dovetail-rho-macro-extensions/00-design-and-ledger.md` (E2).
 
-use mettail_languages::rhocalc::RhoCalcLanguage;
+use mettail_languages::rholang::RholangLanguage;
 use mettail_runtime::Language;
 
 const MAX_ITERS: usize = 64;
@@ -18,11 +18,11 @@ const MAX_NODES: usize = 1_000_000;
 
 /// Parse `src`, run `dovetail_normal_term`, and return the formatted normal form (or panic).
 fn normal_form(src: &str) -> String {
-    let lang = RhoCalcLanguage;
+    let lang = RholangLanguage;
     let term = lang
         .parse_term(src)
         .unwrap_or_else(|e| panic!("parse {src:?} failed: {e}"));
-    let nf = RhoCalcLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES)
+    let nf = RholangLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES)
         .unwrap_or_else(|e| panic!("dovetail_normal_term({src:?}) returned Err: {e}"));
     lang.format_term(nf.as_ref())
 }
@@ -32,7 +32,7 @@ fn reconstructs_fold_inside_output() {
     // (1) Regular (POutput) reconstruction wrapping a folded `int(1+2,8)` → `3`.
     //
     // ★ SURFACE SYNONYMY (2026-07-26): the reconstructed channel is `NQuote(CastStr("OUT"))`,
-    // and RhoCalc's `Name` synonymy class `{ NQuote, NQuoteShort, NQuoteNil }` renders through
+    // and Rholang's `Name` synonymy class `{ NQuote, NQuoteShort, NQuoteNil }` renders through
     // its DECLARED canonical member `NQuoteShort`, so the formatted channel is the Rholang
     // shorthand `@"OUT"` rather than `@("OUT")`. The INPUT spelling is unchanged (both parse);
     // only the OUTPUT surface moved, and it moved TOWARD official Rholang, which writes
@@ -47,9 +47,9 @@ fn reconstructs_fold_inside_output() {
 fn reconstructs_ppar_collection() {
     // (2) The PPar HashBag/Collection arm must reconstruct (the surrounding par is what matters).
     let src = "{ @(\"OUT\")!(int(1+2,8)) }";
-    let lang = RhoCalcLanguage;
+    let lang = RholangLanguage;
     let term = lang.parse_term(src).expect("parse PPar");
-    let nf = RhoCalcLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES);
+    let nf = RholangLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES);
     assert!(nf.is_ok(), "PPar Collection reconstruction must be Ok: {:?}", nf.err());
 }
 
@@ -99,7 +99,7 @@ fn reconstructs_pnew_binder_alpha_equivalently() {
     //       * the `(` / `)` literals are simply gone.
     //     `in{` keeps no space because `{` is not an identifier character, so it cannot
     //     glom. The rendered term is unchanged (same `PNew` / same body); only its
-    //     spelling moved. Roundtrip is pinned in `rhocalc_new_official_syntax.rs`.
+    //     spelling moved. Roundtrip is pinned in `rholang_new_official_syntax.rs`.
     //
     //     Comparison method: the generated `<Lang>Term::term_eq` is plain field-wise `PartialEq`
     //     (binder pretty-name + `FreeVar` unique_id), NOT moniker's α-aware `Scope::term_eq`, so a
@@ -108,9 +108,9 @@ fn reconstructs_pnew_binder_alpha_equivalently() {
     //     already-folded sibling `new x in {x!(int(3,8))}` must yield the IDENTICAL normal form
     //     (identical NFs ⇒ the same α-class).
     let src = "new x in {x!(int(1+2,8))}";
-    let lang = RhoCalcLanguage;
+    let lang = RholangLanguage;
     let term = lang.parse_term(src).expect("parse PNew");
-    let nf = RhoCalcLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES)
+    let nf = RholangLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES)
         .unwrap_or_else(|e| panic!("dovetail_normal_term({src:?}) returned Err: {e}"));
     let nf_fmt = lang.format_term(nf.as_ref());
 
@@ -122,7 +122,7 @@ fn reconstructs_pnew_binder_alpha_equivalently() {
 
     // (4b) Fixed point under a second `dovetail_normal_term` (format round-trip is stable).
     let reparsed = lang.parse_term(&nf_fmt).expect("re-parse PNew normal form");
-    let nf2 = RhoCalcLanguage::dovetail_normal_term(reparsed.as_ref(), MAX_ITERS, MAX_NODES)
+    let nf2 = RholangLanguage::dovetail_normal_term(reparsed.as_ref(), MAX_ITERS, MAX_NODES)
         .expect("re-reduce PNew normal form");
     assert_eq!(
         lang.format_term(nf2.as_ref()),
@@ -133,7 +133,7 @@ fn reconstructs_pnew_binder_alpha_equivalently() {
     // (4c) Rigorous α-equivalence: the already-folded sibling reduces to the SAME normal form.
     let sibling_src = "new x in {x!(int(3,8))}";
     let sibling = lang.parse_term(sibling_src).expect("parse sibling");
-    let sibling_nf = RhoCalcLanguage::dovetail_normal_term(sibling.as_ref(), MAX_ITERS, MAX_NODES)
+    let sibling_nf = RholangLanguage::dovetail_normal_term(sibling.as_ref(), MAX_ITERS, MAX_NODES)
         .expect("reduce sibling");
     assert_eq!(
         lang.format_term(sibling_nf.as_ref()),

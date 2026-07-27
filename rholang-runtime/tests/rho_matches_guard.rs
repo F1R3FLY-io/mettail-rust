@@ -13,7 +13,7 @@
 //! matcher's correctness is f1r3node's own, already-shipped property.
 //!
 //! ```text
-//!   RhoCalc source                this repo                      f1r3node
+//!   Rholang source                this repo                      f1r3node
 //!  ┌────────────────┐   ┌────────────────────────────┐   ┌────────────────────┐
 //!  │ for(@x <- @"c" │   │ lower_proc      ⟦t⟧ target │   │ Match::check_commit│
 //!  │   where        │──▶│ lower_formula   ⟦φ⟧ pattern│──▶│  → guard_passes    │
@@ -37,16 +37,16 @@
 //! # Companion suites
 //!
 //! * `rho_matches_differential.rs` — the host-vs-machine agreement lock.
-//! * `languages/tests/rhocalc_semantic_predicate_ambiguity.rs` — parse-count
+//! * `languages/tests/rholang_semantic_predicate_ambiguity.rs` — parse-count
 //!   goldens for `matches` / `PPar`.
-//! * `languages/tests/rhocalc_tests.rs::matches_*` — the host evaluator.
+//! * `languages/tests/rholang_tests.rs::matches_*` — the host evaluator.
 
 #![cfg(feature = "rholang-runtime")]
 
 use std::collections::HashMap;
 
-use mettail_languages::rhocalc::formula::{classify, FormulaShape};
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::formula::{classify, FormulaShape};
+use mettail_languages::rholang::Proc;
 use mettail_rholang_runtime::rholang_formula::{lower_formula, lower_formula_in_env};
 use mettail_rholang_runtime::{
     lower_rholang_proc, run_normalized_par_for_oracle_and_read_par_channels, RholangAstLowerError,
@@ -497,7 +497,7 @@ fn ppar_in_term_position_fails_closed() {
 #[test]
 fn every_shape_is_classified_by_constructor() {
     // The classification is the shared seam between the host evaluator and the
-    // pattern compiler (`languages/src/rhocalc/formula.rs`), so its assignment is
+    // pattern compiler (`languages/src/rholang/formula.rs`), so its assignment is
     // pinned directly: a drift here would silently change BOTH consumers at once.
     assert!(matches!(classify(&parse("true")), FormulaShape::Verum));
     assert!(matches!(classify(&parse("false")), FormulaShape::Falsum));

@@ -3,7 +3,7 @@
 The debut demonstration of Rholang↔MeTTaIL Foreign Language Terms: a foreign term built by one
 process, shipped over the tuplespace, destructured by a pattern with a typed hole, guard-vetoed
 fail-closed, rebuilt from its captured holes, and executed to β-normal form — every step a
-committed COMM on F1r3node's RSpace. Companion piece to `../rhocalc-settlement/` ("same machine,
+committed COMM on F1r3node's RSpace. Companion piece to `../rholang-settlement/` ("same machine,
 same guards — now the *data* is a language").
 
 > **The load-bearing fact**: the FLT FIP (2026-06-26, under review) predates the A-S5/A-S6 flip.
@@ -169,7 +169,7 @@ hard *cross-language*, cross-context binder hole is the phase-3 co-install spike
 
 Total ~13–14 min for the primary demo (Beats 0 / 1 / 2-D2 / 3 / 4 / 5-positive). **Secondary /
 deferred (later, after the primary demo is complete — decision 1):** the live-trace Beat 4b, and the
-optional openers (the stock-RhoCalc "stringly-typed strawman" cameo that Beat 3 then kills; the
+optional openers (the stock-Rholang "stringly-typed strawman" cameo that Beat 3 then kills; the
 Settlement Desk Beat-2 bridge).
 
 ---
@@ -221,7 +221,7 @@ runtime-pattern-interning matching layer is built (phase-3). Today's demo needs 
   is complete (decision 1): the live-trace Beat 4b and the secondary openers. Dependencies all met
   (the flip, the driver, de-reflection, and the E-2-D marker `d89e7421`). ~1 build-window day to
   green beats; a second for validation + recording. No production crate touched.
-- **Phase 2**: the smallest honest syntax — a RhoCalc `PFlt` literal (the fixed-length backtick
+- **Phase 2**: the smallest honest syntax — a Rholang `PFlt` literal (the fixed-length backtick
   fence + inline backtick + reserved-tag `{`/`[` the demo needs — decision 3; `${x}` / `${x:Cat}`
   holes; construction + pattern positions) lowered through the guest parser + the reflected ABI;
   NOT a REPL text pre-pass (textual splice is the exact insecure path No-Injection rejects). Plus
@@ -268,7 +268,7 @@ runtime-pattern-interning matching layer is built (phase-3). Today's demo needs 
 Greenfield, docs-first (2 commits; roadmap/user stories; implementation language uncommitted).
 Nothing to reuse for this demo; not a prerequisite; do not couple. Its role is productization:
 the natural home for the raw-Rholang FLT host grammar once a standalone interpreter exists —
-this demo + the FIP are the design input it should receive; if phase-2 sugar lands in RhoCalc
+this demo + the FIP are the design input it should receive; if phase-2 sugar lands in Rholang
 first, f1r3Rho adopts the settled surface rather than pioneering it.
 
 ## Decisions for Dylon (recommendations inline)
@@ -279,12 +279,12 @@ first, f1r3Rho adopts the settled surface rather than pioneering it.
   is PRIMARY (marker-wildcarded pattern; robust and LOAD-BEARING). The `EEq where a == ⟦K⟧` guard is
   marker-sensitive — a whole-value compare that includes the index-1 marker byte — so the general
   `where φ` surface (with a marker-canonical guard-RHS) is deferred to guard-lowering (phase-2/3).
-- **D3** — **DEFERRED** (decision 1): the stock-RhoCalc strawman cameo is a *secondary* opener,
+- **D3** — **DEFERRED** (decision 1): the stock-Rholang strawman cameo is a *secondary* opener,
   built after the primary demo is complete (it still sets up Beat 3 when it lands).
 - **D4**: show FIP surface on slides with the flux banner (recommended); narrate holes as
   `${f}` while the terminal shows `f` (recommended).
 - **D5 name**: "The Foreign Exchange" (proposed; pairs with "The Guarded Settlement Desk").
-- **D6 phase-2 home**: RhoCalc `PFlt` literal (recommended) vs REPL affordance vs waiting for
+- **D6 phase-2 home**: Rholang `PFlt` literal (recommended) vs REPL affordance vs waiting for
   f1r3Rho — plus the guest-parser registry-seam design.
 - **D7** — **AUTHORIZED** (decision 5): the two-languages-one-RSpace co-install, sequenced after
   phase-now + phase-2 and implemented PRINCIPLED — R2 per-child fingerprint-dispatch, the

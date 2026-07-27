@@ -629,7 +629,7 @@ pub enum WpdaState {
     /// state exists because the lexer tokenizes `list(` as two separate
     /// `Fixed` tokens (whitespace between them is allowed), so a single
     /// `ConsumeAndPush` cannot atomically consume both. For 3-element
-    /// synthetic patterns (no synthetic paren — e.g. RhoCalc's `"{" ... "}"`),
+    /// synthetic patterns (no synthetic paren — e.g. Rholang's `"{" ... "}"`),
     /// the prefix arm transitions directly to `PrefixDispatch` and skips
     /// this state.
     CollectionOpenParen {

@@ -757,7 +757,7 @@ pub struct GuardConfig {
     ///
     /// A `?name:Guard` slot is a semantic predicate by its *type*, and the codegen recognizes
     /// it structurally. A language whose guard sublanguage is its own expression language —
-    /// RhoCalc's `where`, whose guard is an ordinary `Proc` so that `x + y < 10` and
+    /// Rholang's `where`, whose guard is an ordinary `Proc` so that `x + y < 10` and
     /// `t matches {phi | psi}` remain writable — has no such type to key on, and its guard
     /// parameter is an ordinary `TermParam::Simple`.
     ///
@@ -1907,7 +1907,7 @@ impl LanguageDef {
     }
 
     /// Label of the term that injects a collection type (List, Bag, Map) into the primary category.
-    /// E.g. for RhoCalc with `CastList . l:List |- l : Proc`, returns `CastList` for "List".
+    /// E.g. for Rholang with `CastList . l:List |- l : Proc`, returns `CastList` for "List".
     pub fn injection_term_label_for_collection(&self, collection_type: &str) -> Option<Ident> {
         use crate::grammar::TermParam;
         use crate::types::TypeExpr;

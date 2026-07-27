@@ -134,8 +134,8 @@ fn calculator_guard_tiers() {
     assert_tier_tuple(meta, 671, 236, 435, 0, 0, T2);
 }
 
-/// **RhoCalc** — process calculus over `Proc`/`Name` + the scalar tower, grown by the
-/// RhoCalc→Rholang-1.4/WFST merge (pathmap + read/write zippers, set/map/bag native types,
+/// **Rholang** — process calculus over `Proc`/`Name` + the scalar tower, grown by the
+/// Rholang→Rholang-1.4/WFST merge (pathmap + read/write zippers, set/map/bag native types,
 /// for-row sugar, input-bind, byte-array). 1 binder field (the `^[xs].p` scope binder ⇒ T2
 /// freshness). 227 structural fields (211 after Layer-F, +16 from the `@`-led empty/polyadic
 /// send rules — see the send-rule paragraph below; scalar operands, casts, channel/process
@@ -213,8 +213,8 @@ fn calculator_guard_tiers() {
 /// the cross-check inside `assert_tier_tuple` re-counts the structural fields from the raw
 /// metadata and would reject a fitted number.
 #[test]
-fn rhocalc_guard_tiers() {
-    let meta = mettail_languages::rhocalc::RhoCalcLanguage.metadata();
+fn rholang_guard_tiers() {
+    let meta = mettail_languages::rholang::RholangLanguage.metadata();
     assert_tier_tuple(meta, 522, 239, 283, 0, 0, T2);
 }
 
@@ -291,7 +291,7 @@ fn extmath_guard_tiers() {
 #[test]
 fn binders_never_enter_structural_tally() {
     for meta in [
-        mettail_languages::rhocalc::RhoCalcLanguage.metadata(),
+        mettail_languages::rholang::RholangLanguage.metadata(),
         mettail_languages::ambient::AmbientLanguage.metadata(),
         mettail_languages::lambda::LambdaLanguage.metadata(),
         crate::guardedrho::GuardedRhoLanguage.metadata(),

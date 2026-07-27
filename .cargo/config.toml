@@ -35,7 +35,7 @@ codegen-backend = true
 
 # RE-ENABLED on the feature/wfst-architecture -> feature/rho-native-set-automata
 # merge (2026-07-18). wfst retired this pin (residual #11-2, below) after proving
-# its beta::*/rhocalc term-op frames fit the default 2 MiB. That analysis did NOT
+# its beta::*/rholang term-op frames fit the default 2 MiB. That analysis did NOT
 # cover the in-Rho runtime's deep reducer recursion: the current branch's
 # `rholang-runtime` test `rho_net_subst_trs_prop::subst_trs_cascade_on_reducer_matches_reference`
 # overflows the 2 MiB test-thread stack (observed `fatal runtime error: stack
@@ -51,7 +51,7 @@ codegen-backend = true
 # five HOL-cross-product Assemble families were unpeeled), overflowing the default
 # 2 MiB test-thread stack for every `beta::*` test (input-independent). Residual
 # #11-2 peeled those families (+ subst Bind/MBind + match_pattern/display/debug)
-# into `#[inline(never)]` helpers. DWARF-CFA census (target/debug/deps/rhocalc_tests,
+# into `#[inline(never)]` helpers. DWARF-CFA census (target/debug/deps/rholang_tests,
 # scratchpad/zz_probes/logs_residual_nf/g2_*):
 #   normalize_iterative     2,240,888 B -> 45,096 B  (49.7x)
 #   match_pattern_iterative 1,481,688 B ->  5,272 B  (281x)
@@ -61,11 +61,11 @@ codegen-backend = true
 # All five term-op drivers (and every peeled helper — max match_visit_proc
 # 118,120 B) are now <= 256 KB. Measured beta:: whole-thread high-water at the
 # default stack: PASSES at 2 MiB and 1.25 MB, ABORTS at 1.1875 MB => minimum
-# ~1.25 MB, ~0.75 MB (60%) headroom. Full rhocalc_tests (402) + sim_rhocalc pass
+# ~1.25 MB, ~0.75 MB (60%) headroom. Full rholang_tests (402) + sim_rholang pass
 # at the default 2 MiB.
 #
 # CAVEAT (do not DELETE this block until resolved): the whole-thread high-water is
-# now set by the OUT-OF-SCOPE prattail parser `RhoCalcWpdaEngine::step` (1,137,256 B
+# now set by the OUT-OF-SCOPE prattail parser `RholangWpdaEngine::step` (1,137,256 B
 # = 1.11 MB, unchanged by this fix — a separate residual). That caps the headroom
 # at ~1.7x rather than the ~8x the <=256 KB term-op frames alone would give. The
 # aarch64 L1 ladder is NOT measurable on this box; the retirement argument is the

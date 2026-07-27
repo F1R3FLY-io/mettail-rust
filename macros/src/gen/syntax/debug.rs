@@ -104,7 +104,7 @@ fn generate_debug_task_enum(language: &LanguageDef) -> TokenStream {
 /// match is extracted into its own `#[inline(never)]` `debug_visit_<cat>`
 /// helper (the same Tier-1 peel `normalize_iterative` uses for its `Visit`
 /// arms). Without this split, `debug_iterative`'s frame is the -O0 alloca SUM
-/// of every category's variant locals (measured 275,432 B for rhocalc). Each
+/// of every category's variant locals (measured 275,432 B for rholang). Each
 /// helper returns `std::fmt::Result`, so the `?` writes inside the arms
 /// propagate through it and the dispatch arm re-propagates with `?` — a
 /// control-flow-equivalent refactor, not "pure code motion" (the arms escape

@@ -1,10 +1,10 @@
 //! Task #18 gate — comments are LEXED to the retained `COMMENTS` channel, not stripped.
 //!
-//! Comments used to be removed by a PRE-PARSE STRING STRIP in the `rhocalc` interpreter binary
+//! Comments used to be removed by a PRE-PARSE STRING STRIP in the `rholang` interpreter binary
 //! (`strip_comments`, now retired in place with a rationale). That was lossy: source positions
 //! shifted, the text was unrecoverable, and no consumer could ever see a comment. They are now
-//! ordinary tokens declared in the RhoCalc grammar's `tokens {}` block and routed to the
-//! alternative channel `COMMENTS` (`languages/src/rhocalc.rs`).
+//! ordinary tokens declared in the Rholang grammar's `tokens {}` block and routed to the
+//! alternative channel `COMMENTS` (`languages/src/rholang.rs`).
 //!
 //! The mechanism under test is GENERAL — `-> CHANNEL` on any token of any grammar — and rests on
 //! ONE rule, applied where the lexer already skipped whitespace:
@@ -29,15 +29,15 @@
 //! 4. **The accepted comment language is exactly what the strip removed** — flat (non-nested)
 //!    C-style block comments, `//` to end of line, markers inert inside strings (`language_*`).
 
-use mettail_languages::rhocalc::{self, Proc};
+use mettail_languages::rholang::{self, Proc};
 use mettail_runtime::FltNode;
 
-/// The conventional channel name the RhoCalc grammar routes its comment tokens to.
+/// The conventional channel name the Rholang grammar routes its comment tokens to.
 const COMMENTS: &str = "COMMENTS";
 
 /// The `DEFAULT` (parse-stream) token sequence, positions dropped — what the parser consumes.
 fn default_tokens(source: &str) -> Vec<String> {
-    rhocalc::lex(source)
+    rholang::lex(source)
         .unwrap_or_else(|e| panic!("lex {source:?}: {e}"))
         .into_iter()
         .map(|(token, _range)| format!("{token:?}"))
@@ -46,7 +46,7 @@ fn default_tokens(source: &str) -> Vec<String> {
 
 /// Every comment retained on `COMMENTS`, as `(verbatim text, 1-based line, 1-based column)`.
 fn retained_comments(source: &str) -> Vec<(String, usize, usize)> {
-    let lexed = rhocalc::lex_with_streams(source)
+    let lexed = rholang::lex_with_streams(source)
         .unwrap_or_else(|e| panic!("lex_with_streams {source:?}: {e}"));
     lexed
         .tokens_on_channel(COMMENTS)
@@ -223,7 +223,7 @@ fn unperturbed_default_token_stream_is_identical() {
 #[test]
 fn unperturbed_no_comment_token_ever_reaches_the_default_stream() {
     let source = "// header\n{0 /* inline */ | 1} // tail";
-    let lexed = rhocalc::lex_with_streams(source).expect("lex_with_streams");
+    let lexed = rholang::lex_with_streams(source).expect("lex_with_streams");
     for (token, _range) in &lexed.tokens {
         let rendered = format!("{token:?}");
         assert!(
@@ -456,7 +456,7 @@ fn language_a_comment_may_contain_non_ascii_text() {
 
 #[test]
 fn reader_api_tokens_on_channel_is_generic_over_the_channel_name() {
-    let lexed = rhocalc::lex_with_streams("// a\n{0 | 1}").expect("lex_with_streams");
+    let lexed = rholang::lex_with_streams("// a\n{0 | 1}").expect("lex_with_streams");
     assert_eq!(lexed.tokens_on_channel(COMMENTS).len(), 1);
     assert!(
         lexed.tokens_on_channel("PRAGMAS").is_empty(),
@@ -470,7 +470,7 @@ fn reader_api_tokens_on_channel_is_generic_over_the_channel_name() {
 fn reader_api_hidden_tokens_attach_a_comment_to_its_neighbouring_token() {
     //   `// header` precedes DEFAULT token 0; `// tail` follows the last DEFAULT token.
     let source = "// header\n{0 | 1}\n// tail\n";
-    let lexed = rhocalc::lex_with_streams(source).expect("lex_with_streams");
+    let lexed = rholang::lex_with_streams(source).expect("lex_with_streams");
 
     let leading = lexed.hidden_tokens_to_left(0, COMMENTS);
     assert_eq!(leading.len(), 1, "the file header attaches to the FIRST default token");
@@ -518,8 +518,8 @@ fn cross_path_retention_scan_and_plain_lex_agree_on_the_default_stream() {
     // disagreed with the parse about where a comment lies, a tool would re-attach comments to the
     // wrong tokens — silently.
     for source in CORPUS {
-        let plain = rhocalc::lex(source).unwrap_or_else(|e| panic!("lex {source:?}: {e}"));
-        let streamed = rhocalc::lex_with_streams(source)
+        let plain = rholang::lex(source).unwrap_or_else(|e| panic!("lex {source:?}: {e}"));
+        let streamed = rholang::lex_with_streams(source)
             .unwrap_or_else(|e| panic!("lex_with_streams {source:?}: {e}"));
         assert_eq!(
             plain.len(),
@@ -550,7 +550,7 @@ fn cross_path_every_source_byte_is_a_default_token_a_comment_or_whitespace() {
     // dropped" means — the strip's failure mode was exactly a class of bytes vanishing with no
     // record, and this test would catch its return.
     for source in CORPUS {
-        let lexed = rhocalc::lex_with_streams(source)
+        let lexed = rholang::lex_with_streams(source)
             .unwrap_or_else(|e| panic!("lex_with_streams {source:?}: {e}"));
         let mut claimed = vec![false; source.len()];
         let mut claim = |range: &mettail_prattail::runtime_types::Range| {
@@ -579,7 +579,7 @@ fn cross_path_every_source_byte_is_a_default_token_a_comment_or_whitespace() {
 
 #[test]
 fn reader_api_hidden_tokens_are_empty_where_no_trivia_sits() {
-    let lexed = rhocalc::lex_with_streams("{0 | 1}").expect("lex_with_streams");
+    let lexed = rholang::lex_with_streams("{0 | 1}").expect("lex_with_streams");
     assert!(lexed.hidden_tokens_to_left(0, COMMENTS).is_empty());
     assert!(lexed.hidden_tokens_to_right(0, COMMENTS).is_empty());
     assert!(

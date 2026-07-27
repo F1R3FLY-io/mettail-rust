@@ -152,8 +152,8 @@ pub mod monoid;
 // GSLT omnibus L11 — see the `json` note above.
 #[cfg(feature = "pi")]
 pub mod pi;
-#[cfg(feature = "rhocalc")]
-pub mod rhocalc;
+#[cfg(feature = "rholang")]
+pub mod rholang;
 // GSLT omnibus L9 — see the `json` note above.
 #[cfg(feature = "turing")]
 pub mod turing;
@@ -193,7 +193,7 @@ pub use composition::mixed_lang as mixedmath;
 
 // Note: Different languages may export types with the same names (e.g., Proc, Term)
 // Users should import from specific modules to avoid ambiguity:
-//   use mettail_languages::rhocalc::*;
+//   use mettail_languages::rholang::*;
 //   use mettail_languages::ambient::*;
 //   use mettail_languages::lambda::*;
 

@@ -11,7 +11,7 @@
 //!
 //! | direction | what happens | witness |
 //! |---|---|---|
-//! | too EAGER | the bracket is kept where it is not needed. Two constructors that render the SAME surface then disagree about it, so `Display ∘ Parse` sheds one surface per nesting layer. | `POutput2Plus(NQuoteShort(PZero), a, [])` and `POutputNil2Plus(a, [])` both render `@Nil!(Nil,)`; the first was wrapped and the second was not, and `gen_rhocalc_prop::inputbind_display_parse_roundtrip` failed at depth 2. |
+//! | too EAGER | the bracket is kept where it is not needed. Two constructors that render the SAME surface then disagree about it, so `Display ∘ Parse` sheds one surface per nesting layer. | `POutput2Plus(NQuoteShort(PZero), a, [])` and `POutputNil2Plus(a, [])` both render `@Nil!(Nil,)`; the first was wrapped and the second was not, and `gen_rholang_prop::inputbind_display_parse_roundtrip` failed at depth 2. |
 //! | too LAX | the bracket is dropped where the re-parse needs it, and `Display` emits a surface the grammar REJECTS. | `Display(NQuoteShort(Mul(send, Nil)))` emitted `@@a!(a,) * Nil`, which does not parse: `@` takes `@@a!(a,)` and `* Nil` is stranded. |
 //!
 //! Each was found by a single proptest draw. **A draw is a poor detector**: it finds an instance
@@ -64,12 +64,12 @@ struct LanguageGate {
 
 fn gates() -> Vec<LanguageGate> {
     let mut out: Vec<LanguageGate> = Vec::new();
-    #[cfg(feature = "rhocalc")]
+    #[cfg(feature = "rholang")]
     out.push(LanguageGate {
-        name: "RhoCalc",
-        samples: mettail_languages::rhocalc::__SIGIL_OPERAND_WRAP_SAMPLES,
-        wrap: mettail_languages::rhocalc::__sigil_operand_wrap_surface,
-        normalise: mettail_languages::rhocalc::__sigil_frame_normalise,
+        name: "Rholang",
+        samples: mettail_languages::rholang::__SIGIL_OPERAND_WRAP_SAMPLES,
+        wrap: mettail_languages::rholang::__sigil_operand_wrap_surface,
+        normalise: mettail_languages::rholang::__sigil_frame_normalise,
     });
     out
 }
@@ -81,10 +81,10 @@ fn gates() -> Vec<LanguageGate> {
 /// The table must contain the shapes the two known defects lived on: an operand-leading SEND
 /// (whose wrap was too eager) and a binary INFIX (whose wrap is load-bearing). If the derivation
 /// stops producing them, every assertion below passes vacuously.
-#[cfg(feature = "rhocalc")]
+#[cfg(feature = "rholang")]
 #[test]
 fn the_table_contains_the_shapes_the_defects_lived_on() {
-    let samples = mettail_languages::rhocalc::__SIGIL_OPERAND_WRAP_SAMPLES;
+    let samples = mettail_languages::rholang::__SIGIL_OPERAND_WRAP_SAMPLES;
     assert!(!samples.is_empty(), "no sigil-operand samples were derived at all");
     for label in ["POutput", "Mul"] {
         assert!(

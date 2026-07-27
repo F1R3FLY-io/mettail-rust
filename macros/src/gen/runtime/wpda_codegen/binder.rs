@@ -12,7 +12,7 @@
 //! - **Multi-Param non-binder** (Phase 5b, e.g. Calculator's `Fraction`):
 //!   `a:T, b:T |- "trigger" "(" a "," b ")"`. The rule has multiple
 //!   `Simple` params and no binder.
-//! - **Multi-binder list** (Phase 5b, e.g. RhoCalc's `PNew`):
+//! - **Multi-binder list** (Phase 5b, e.g. Rholang's `PNew`):
 //!   `^[xs].p:[T* -> T]` with syntax containing a `Sep` operator over
 //!   the binder list.
 //! - **Mixed** (Phase 5b, e.g. PInputs): combines `Simple` params,
@@ -63,7 +63,7 @@ pub(crate) fn build_prefix_bp_map(
             // at `cur_bp` 3 alike. Reproducing official Rholang's `Proc1`-level
             // body therefore needs real work in the walker's trailing-operand
             // path, not a binding-power annotation; see the campaign's §17.10-B1
-            // for the scoped follow-up. RhoCalc's `PNew` consequently keeps a
+            // for the scoped follow-up. Rholang's `PNew` consequently keeps a
             // DELIMITED body (`… "in" "{" p "}"`), which needs no floor.
             if classify_unary_prefix_shape(rule).is_some() {
                 let bp = compute_prefix_bp(&rule.category.to_string(), rule.prefix_bp, &bp_table);
@@ -127,7 +127,7 @@ pub enum BinderPosition {
     ///
     /// B8 / Class 3 ZIP-MAP-SEP (2026-05-08): extended fields support the
     /// chained `Sep{source: Some(Map{source: Zip})}` pattern (e.g.
-    /// rhocalc PInputs `*zip(ns,xs).*map(|n,x| n "?" x).*sep(",")`).
+    /// rholang PInputs `*zip(ns,xs).*map(|n,x| n "?" x).*sep(",")`).
     /// `inner_positions` is the per-iteration inner walk; for PNew-style
     /// rules it's `[BinderIdent]`.
     /// `collection_param_cat` is `Some(elem_cat)` for Class 3 (the
@@ -530,7 +530,7 @@ pub(crate) fn classify_binder_in(
     // NOT be re-pushed as a separate `BinderPosition::Literal` — doing so
     // produces a position-numbering bug where the close token is consumed
     // twice (once by BinderListLoop's close branch, once by the spurious
-    // pos+1 Literal arm), causing rhocalc::PNew parses to fail with
+    // pos+1 Literal arm), causing rholang::PNew parses to fail with
     // "expected '<close>' but found '<next>'" at every dispatch.
     // `skip_next` tracks this and skips the close Literal at the next
     // iteration.
@@ -744,7 +744,7 @@ pub(crate) fn classify_binder_in(
             },
             // B8 / Class 3 ZIP-MAP-SEP (2026-05-08): chained-Sep pattern
             // `*zip(left,right).*map(|p1,p2| body).*sep(",")`. Used by
-            // rhocalc PInputs:
+            // rholang PInputs:
             //   ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "(" *zip(ns,xs)
             //     .*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc;
             // Per-iteration the inner walk parses a Name (n, spliced into
@@ -2265,7 +2265,7 @@ pub(crate) fn emit_binder_list_loop_body(
                             // branches fired on every dispatch regardless
                             // of token, multiplying cursor count
                             // exponentially per BinderListLoop iteration
-                            // — caused >4000s hangs on rhocalc::PNew
+                            // — caused >4000s hangs on rholang::PNew
                             // multi-binder grammars.
                             //
                             // Branch semantics:

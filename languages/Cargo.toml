@@ -29,7 +29,7 @@ all-languages = [
     "lambda",
     "monoid",
     "pi",
-    "rhocalc",
+    "rholang",
     "turing",
 ]
 # Task #11 (extended 2026-07-26): the twelve rho_net DEMONSTRATION grammars moved to
@@ -85,7 +85,7 @@ composition = ["calculator", "lambda"]
 # GSLT omnibus conformance specs (2026-07-27, USER ruling): `Json` (L1), `Monoid` (L2),
 # `Turing` (L9) and `Pi` (L11) are PRODUCTION specs and moved from
 # `tests/omnibus_*.rs` into `src/{json,monoid,pi,turing}.rs`, so each is a library module
-# with its own feature, exactly like ambient/calculator/lambda/rhocalc. All four are in
+# with its own feature, exactly like ambient/calculator/lambda/rholang. All four are in
 # `all-languages` (hence on by default). Each declares
 # `options { emit_tests: false, emit_simulator: false, emit_blockly: false }`, so none of
 # them adds a `tests/gen_*.rs`, a `src/bin/simulate_*.rs` or a `src/generated/*.ts`; their
@@ -109,7 +109,7 @@ monoid = []
 pi = []
 # Task #11 (extended 2026-07-26): `RefinementSmoke` moved to `tests/definitions/`.
 # refinementsmoke = []
-rhocalc = []
+rholang = []
 # swap-demo = []
 turing = []
 ## Expose public proptest strategies for generating random well-formed terms.
@@ -176,7 +176,7 @@ mimalloc = { version = "0.1", default-features = false, optional = true }
 # Required by generated simulation CLI binaries.
 clap = { version = "4.5", features = ["derive"] }
 
-# PathMap trie (M-RHO) — backs the RhoCalc pathmap/zipper submodules; pin matches f1r3node `models` 0.2.2.
+# PathMap trie (M-RHO) — backs the Rholang pathmap/zipper submodules; pin matches f1r3node `models` 0.2.2.
 pathmap = { workspace = true }
 
 [dev-dependencies]
@@ -224,8 +224,8 @@ path = "src/bin/simulate_lambda.rs"
 required-features = ["strategies"]
 
 [[bin]]
-name = "simulate_rhocalc"
-path = "src/bin/simulate_rhocalc.rs"
+name = "simulate_rholang"
+path = "src/bin/simulate_rholang.rs"
 required-features = ["strategies"]
 
 [[bin]]

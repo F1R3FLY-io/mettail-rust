@@ -17,7 +17,7 @@
 //! where `Q→` and `Q←` partition the state set into forward and backward states,
 //! determining head movement direction after each transition.
 //!
-//! ## Applications to RhoCalc
+//! ## Applications to Rholang
 //!
 //! - **Cross-channel constraint propagation**: Two-way scanning enables predicates
 //!   to flow both forward and backward across process channels.
@@ -939,7 +939,7 @@ fn collect_syntax_dependencies(item: &crate::SyntaxItemSpec, out: &mut HashSet<S
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// RhoCalc-specific types
+// Rholang-specific types
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Channel constraint for cross-channel predicate propagation.

@@ -197,7 +197,7 @@ pub fn emit_min_terminal_span_body(
 ///
 /// This is the STRUCTURAL companion to `min_terminal_span`. Where the (count-
 /// based) span filter cannot soundly distinguish a rule's IN-span leading
-/// literal (rhocalc `ToStr`'s `str`) from an OUT-OF-span leading trigger
+/// literal (rholang `ToStr`'s `str`) from an OUT-OF-span leading trigger
 /// (calculator `StrToInt`'s `int`, lambda `App`'s `(`) — because that split is
 /// a runtime parse property, not a grammar property — this predicate captures
 /// the ONE grammar fact both dispositions share: the rule LEADS WITH A LITERAL,
@@ -251,7 +251,7 @@ pub fn emit_rule_leads_with_literal_body(
 /// `Param` (the whole-`source` LHS — NOT a leading literal), (b) `R` carries at
 /// least one interior bind-trigger literal `T`, and (c) `C` contains a
 /// SIGIL-LED sibling `R'` (`R'.syntax_pattern[0]` a `Literal`) that ALSO carries
-/// `T` as an interior literal. For rhocalc InputBind this selects rule 7
+/// `T` as an interior literal. For rholang InputBind this selects rule 7
 /// `InputBind (lhs "<-" n)`, rule 8 `InputBindPersistent (lhs "<=" n)`, and
 /// rule 0 `InputBindQuery (lhs "<-" n "!" "?" …)` — each subsumed by
 /// InputBindQuoted / …Persistent / …Query respectively. Polyadic rules
@@ -329,7 +329,7 @@ pub fn emit_sigil_quoted_bind_overgen_rule_body(
 /// The SIGIL-ATOM set: a rule `R` in category `S` whose `syntax_pattern[0]` is
 /// a Literal `σ` that ALSO leads a sibling rule in a DIFFERENT result category
 /// `C ≠ S` (so `σ` both makes `σ…` an `S` atom and directly triggers a rule in
-/// `C`). For rhocalc this selects `NQuoteShort . p:Proc |- "@" p : Name` and
+/// `C`). For rholang this selects `NQuoteShort . p:Proc |- "@" p : Name` and
 /// `NQuote . p:Proc |- "@" "(" p ")" : Name` (both `@`-led in Name, and `@`
 /// also leads InputBindQuoted in InputBind). The realize backstop uses this to
 /// decide whether a whole-source packing's `children[0]` is `σ`-quoted.
@@ -702,7 +702,7 @@ pub fn emit_prefix_cast_keyword_body(
 ///
 /// Returns the rule's label ident (e.g., `Err` for `Err . |- "error" : BigRat`).
 /// Calculator has `Err . |- "error" : BigRat` and `Err . |- "error" : Int`;
-/// rhocalc has `Err . |- "error" : Proc`. Pattern is grammar-determined.
+/// rholang has `Err . |- "error" : Proc`. Pattern is grammar-determined.
 ///
 /// Returns the FIRST matching rule (source order). If a grammar lacks such a
 /// rule for a category, returns None and the literal action silent-fails as
@@ -1161,7 +1161,7 @@ fn emit_collection_action_entry(
                 };
                 let drained = b.drain_collection(id);
                 // `as Set` (Rholang 1.4 / main) carries a `HashSetLit` payload (see
-                // rhocalc `![mettail_runtime::HashSetLit<Proc>] as Set`); build the
+                // rholang `![mettail_runtime::HashSetLit<Proc>] as Set`); build the
                 // deterministic wrapper, not `std::collections::HashSet`.
                 let container = mettail_runtime::HashSetLit::<#element_cat_ident>::from_iter(
                     drained

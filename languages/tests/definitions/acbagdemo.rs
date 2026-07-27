@@ -33,7 +33,7 @@ use mettail_macros::language;
 // It is kept SEPARATE from `AcDemo` (rather than adding a second rewrite) so the two languages'
 // firing suites do not interfere: the same subject `PPar{A|B|C}` would fire BOTH rules if they
 // shared a language, changing each other's firing counts. `AcBagDemo` is the direct prerequisite
-// shape for RhoCalc's `Comm` rule, whose RHS `PPar{P[Q/y], ...rest}` is likewise a bag.
+// shape for Rholang's `Comm` rule, whose RHS `PPar{P[Q/y], ...rest}` is likewise a bag.
 //
 // `PPar{A | B | C}` reduces to `PPar{Mark(A), B, C}` / `PPar{Mark(B), A, C}` / `PPar{Mark(C), A, B}`
 // (one bag element marked, picked by the native AC matcher; the rest spliced back via

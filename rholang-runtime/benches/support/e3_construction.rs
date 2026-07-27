@@ -22,9 +22,9 @@
 //!
 //! # Workloads
 //!
-//! * **W-C real anchors** — the production `language!` bodies of RhoCalc / Calculator /
+//! * **W-C real anchors** — the production `language!` bodies of Rholang / Calculator /
 //!   Lambda / Ambient, extracted verbatim from `languages/src/*.rs` exactly as the
-//!   production-language gate tests do (`extract_language_body`). RhoCalc is the largest
+//!   production-language gate tests do (`extract_language_body`). Rholang is the largest
 //!   committed full-pipeline datapoint; Ambient is pinned POST-A-S5.4b (EM-9: the
 //!   Cardelli–Gordon premise fix changed Ambient's fingerprint and flipped it
 //!   installing).
@@ -123,9 +123,9 @@ pub enum AnchorLanguage {
     Ambient,
     /// `languages/src/calculator.rs` — production Calculator (the scalar-heavy anchor).
     Calculator,
-    /// `languages/src/rhocalc.rs` — production RhoCalc: the largest committed
+    /// `languages/src/rholang.rs` — production Rholang: the largest committed
     /// full-pipeline datapoint (117 entries / 124 states / 314 raw automaton nodes).
-    RhoCalc,
+    Rholang,
 }
 
 /// Every anchor, in the order cells are reported.
@@ -133,7 +133,7 @@ pub const ALL_ANCHORS: [AnchorLanguage; 4] = [
     AnchorLanguage::Lambda,
     AnchorLanguage::Ambient,
     AnchorLanguage::Calculator,
-    AnchorLanguage::RhoCalc,
+    AnchorLanguage::Rholang,
 ];
 
 impl AnchorLanguage {
@@ -143,7 +143,7 @@ impl AnchorLanguage {
             AnchorLanguage::Lambda => "lambda",
             AnchorLanguage::Ambient => "ambient",
             AnchorLanguage::Calculator => "calculator",
-            AnchorLanguage::RhoCalc => "rholang",
+            AnchorLanguage::Rholang => "rholang",
         }
     }
 
@@ -167,8 +167,8 @@ impl AnchorLanguage {
             AnchorLanguage::Calculator => {
                 extract_language_body(include_str!("../../../languages/src/calculator.rs"))
             },
-            AnchorLanguage::RhoCalc => {
-                extract_language_body(include_str!("../../../languages/src/rhocalc.rs"))
+            AnchorLanguage::Rholang => {
+                extract_language_body(include_str!("../../../languages/src/rholang.rs"))
             },
         }
     }

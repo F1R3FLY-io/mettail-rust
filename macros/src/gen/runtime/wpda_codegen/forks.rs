@@ -96,7 +96,7 @@ pub(crate) const FORROW_PROJ_GATE: bool = true;
 /// ## The defect it ships the fix for (ROOT A — the display-roundtrip blocker)
 /// A comma-separated `Proc`-operand sequence FAILS to parse when one operand is a
 /// keyword/ident-ambiguous bare cross-cat projection (`CastBool` of `true`/`false`
-/// — the ONLY such trigger in rhocalc: `true`/`false` lex as BOTH a `Bool` literal
+/// — the ONLY such trigger in rholang: `true`/`false` lex as BOTH a `Bool` literal
 /// keyword AND an `Ident`) AND a LATER comma-operand carries a top-level send
 /// (`!(`/`!!(`). Minimal: `fraction(false, a!(0))` FAILS; `fraction(0, a!(0))`,
 /// `fraction(Nil, a!(0))`, `fraction((false), a!(0))`, `fraction(false, (a!(0)))`
@@ -160,7 +160,7 @@ pub(crate) const KWAMBIG_PROJ_EXEMPT_GATE: bool = true;
 /// ## What over-generation
 /// A grammar with BOTH (i) a generic cross-category-LHS bind rule
 /// `result ::= source <bind-trigger> …` whose `source` FIRST-set contains a
-/// SIGIL `σ` (e.g. rhocalc `InputBind ::= Name "<-" Name`, `Name`'s FIRST
+/// SIGIL `σ` (e.g. rholang `InputBind ::= Name "<-" Name`, `Name`'s FIRST
 /// includes `@` via `NQuoteShort "@" p`), AND (ii) a SIBLING rule
 /// `result ::= σ operand <same-bind-trigger> …` that begins with the SAME
 /// sigil (e.g. `InputBindQuoted ::= "@" pat "<-" n`) admits TWO readings of
@@ -168,7 +168,7 @@ pub(crate) const KWAMBIG_PROJ_EXEMPT_GATE: bool = true;
 /// as one `source` atom, then project `source → result`) and the direct
 /// sigil-triggered reading `result_quoted(operand=x, …)`. The whole-`source`
 /// reading is a GRAMMAR OVER-GENERATION with no canonical counterpart (proven
-/// for rhocalc against tree-sitter grammar.js + the interpreter + 100% corpus;
+/// for rholang against tree-sitter grammar.js + the interpreter + 100% corpus;
 /// `@a` in a bind LHS is UNAMBIGUOUSLY a quoted pattern = the scalar
 /// `InputBindQuoted`). Keeping it makes every such bind ≥2-way ambiguous, which
 /// under a `.*sep` repetition (`@a<-@b & …`) compounds multiplicatively (the
@@ -213,7 +213,7 @@ pub(crate) const KWAMBIG_PROJ_EXEMPT_GATE: bool = true;
 /// alts=2 (over-generation) to alts=1 (the canonical scalar InputBindQuoted
 /// family), provably inert for every legit bind (x<-c / (x)<-c / polyadic
 /// a,b<-c all preserved), roundtrip-idempotent, ZERO regression (prattail
-/// 3604/0, gen_rhocalc_unit 157/0, rhocalc_tests 383/0). BUT the design's
+/// 3604/0, gen_rholang_unit 157/0, rholang_tests 383/0). BUT the design's
 /// S0-G-LINEAR premise — that the `@` over-generation is the SOLE fork source,
 /// so removing it linearizes the `@a<-@b & …` frontier — was REFUTED live:
 /// gate-ON `branch_cursors_peak_pre_merge` still grows super-linearly
@@ -226,7 +226,7 @@ pub(crate) const KWAMBIG_PROJ_EXEMPT_GATE: bool = true;
 /// content-distinct derivations). The ~14 ROOT-P `<-` timeouts DO NOT clear
 /// from this fix alone. Left OFF (byte-identical baseline) pending the user's
 /// decision on whether the correctness-only win (evidence-based disambiguation
-/// of `@a<-@b`, aligning RhoCalc with canonical Rholang) justifies enabling it
+/// of `@a<-@b`, aligning Rholang with canonical Rholang) justifies enabling it
 /// independently of the perf residual. Flip THIS + the walker-side
 /// `AT_QUOTED_BIND_REALIZE_GATE` consts + `super::forks::AT_QUOTED_BIND_REALIZE_GATE`
 /// together to enable.
@@ -313,7 +313,7 @@ pub(crate) const CROSSCAT_LEX_COMPAT_RUNTIME_GATE: bool = true;
 /// Plan of record: `scratchpad/zz_probes/s1_factoring_plan.md` (§0-§5 plus the
 /// red-team amendments A1-A10). Literature anchor: Scott & Johnstone,
 /// *Structuring the GLL parsing algorithm for performance*, SCP 125 (2016).
-/// The fan: at `PrefixDispatch` on `@` in RhoCalc `Proc` the generated engine
+/// The fan: at `PrefixDispatch` on `@` in Rholang `Proc` the generated engine
 /// forks 15 per-rule branches (rules 10-24) that mirror the SAME `@` token
 /// into the SPPF 15 times and run the inner `Name`/`Proc` sub-parse once per
 /// RULE per nesting level; the factored emission runs it once per GROUP
@@ -349,7 +349,7 @@ pub(crate) const S1_FACTORING: bool = true;
 /// Plan of record: `scratchpad/zz_probes/f5_accept_continue_plan.md` (§0-§9
 /// plus the §RED-TEAM amendments A1-A4). The cohort being admitted: a
 /// proper-prefix member — one whose post-trigger item list is a proper
-/// prefix of a sibling's, e.g. RhoCalc `InputBindQuoted` (`@ pat <- n`)
+/// prefix of a sibling's, e.g. Rholang `InputBindQuoted` (`@ pat <- n`)
 /// inside `InputBindQuotedQuery` (`@ pat <- n ! ? ( args… )`) — marks its
 /// whole group `IneligibleReason::InteriorAccept` under F0/F1, so the bucket
 /// emits unfactored per-rule branches. The F5-1 design REJECTS an ε-branch
@@ -371,8 +371,8 @@ pub(crate) const S1_FACTORING: bool = true;
 /// When `true`: exhausted members finalize as sibling accept leaves
 /// (`factoring::build_tree`, normative forest order `remainder ++ accepts`
 /// per amendment A1) and the group proceeds to ordinary eligibility.
-/// Exactly ONE bundled cohort changes: rhocalc `(InputBind, "@")`
-/// {QuotedQuery=2, Quoted=3, QuotedPersistent=6} — rhocalc groups 3 → 4,
+/// Exactly ONE bundled cohort changes: rholang `(InputBind, "@")`
+/// {QuotedQuery=2, Quoted=3, QuotedPersistent=6} — rholang groups 3 → 4,
 /// ineligible 1 → 0, InputBind@ dispatch rule-fan 3 → 1; every other
 /// engine byte-invariant (amendment A2; census + hash gates in
 /// `run_s1f5_1_*.sh`).
@@ -388,7 +388,7 @@ pub(crate) const S1F5_ACCEPT_CONTINUE: bool = true;
 ///
 /// Plan of record: `scratchpad/zz_probes/f5_mixfix_cohorts_plan.md` (§1-§8
 /// plus the §RED-TEAM amendments A-M1..A-M5). The fan being factored: at
-/// `InfixLoop` on `!` (resp. `!!`) in RhoCalc `Name` the generated engine
+/// `InfixLoop` on `!` (resp. `!!`) in Rholang `Name` the generated engine
 /// forks 3 per-rule `mixfix_marker` + `MixfixLiteralRun{kind: 2}` branches
 /// — rules {4 POutput, 6 POutputEmpty, 8 POutput2Plus} (resp. {5, 7, 9}) —
 /// so rules 4 and 8 EACH descend the payload sub-parse (×2 per send, and
@@ -415,7 +415,7 @@ pub(crate) const S1F5_ACCEPT_CONTINUE: bool = true;
 /// `target/generated/<lang>/wpda.rs` files are byte-identical to the F5-1
 /// flip state (receipts: `scratchpad/zz_probes/logs_s1f5_2/`).
 ///
-/// When `true`: exactly ONE bundled engine changes (rhocalc — the only
+/// When `true`: exactly ONE bundled engine changes (rholang — the only
 /// language with factorable mixfix cohorts: Name `!` {4,6,8} spine 0xF803
 /// and `!!` {5,7,9} spine 0xF804, per-RESULT-category ordinals continuing
 /// after the Proc `@`-cohort prefix groups); calculator + fortranmodel are
@@ -653,7 +653,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(
             // CollectionMarker cross-cat redirect in the `PrefixDispatch`
             // arm (engine_impl.rs: `category_entry_goal(element_src_idx)`),
             // which the lex-fork otherwise PRE-EMPTS: without this, a
-            // lex-ambiguous keyword-led element (e.g. rhocalc `Nil`/`Map`/
+            // lex-ambiguous keyword-led element (e.g. rholang `Nil`/`Map`/
             // `Set`/`Pathmap`/`str`/`bigrat`, each `Fixed(kw) | Ident`) in a
             // cross-cat collection slot (InputBindQuery `args:Vec(Proc)`
             // owned by `InputBind`) is looked up in the OWNING category, so

@@ -116,7 +116,7 @@ pub fn int_bin_pipeline_i32(input: NumericInput<'_>, width_i64: i64) -> Option<i
     numeric_try_int(input, bits).and_then(|b| b.to_i32())
 }
 
-/// `int(·, m)` for `i64` carriers (e.g. RhoCalc `CastInt`).
+/// `int(·, m)` for `i64` carriers (e.g. Rholang `CastInt`).
 #[inline]
 pub fn int_bin_pipeline_i64(input: NumericInput<'_>, width_i64: i64) -> Option<i64> {
     let bits = int_uint_bits_from_width(width_i64)?;

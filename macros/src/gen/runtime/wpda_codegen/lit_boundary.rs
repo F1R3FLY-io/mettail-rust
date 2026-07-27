@@ -21,7 +21,7 @@
 //! unstated assumption that punctuation is never inside a longer token.
 //!
 //! That assumption is false exactly when a literal token pattern carries the sigil. In
-//! RhoCalc — and in consensus Rholang, whose tree-sitter grammar it mirrors — the sign
+//! Rholang — and in consensus Rholang, whose tree-sitter grammar it mirrors — the sign
 //! is part of the numeral:
 //!
 //! ```text
@@ -70,7 +70,7 @@
 //! `b · l₀` a viable token prefix?"*. That is unsound to the point of uselessness,
 //! because an unbounded family swallows the whole alphabet after its opener: the string
 //! family `"([^"\\]|\\.)*"` makes `b = '"'` viable before EVERY literal, so `pre(l) ∋ '"'`
-//! for all `l`. Emitted and measured on RhoCalc, that made `@"OUT"!(0)` — the single most
+//! for all `l`. Emitted and measured on Rholang, that made `@"OUT"!(0)` — the single most
 //! common Rholang send — decline, because its `!` is preceded by a CLOSING quote and one
 //! byte of lookbehind cannot tell a closing quote from an opening one. (The same happened
 //! to `*` via the comment families: `pre("*") ∋ '/'` from `/*`.) The declines were sound
@@ -195,7 +195,7 @@ fn is_word_shaped(l: &str) -> bool {
 ///   lexer does NOT produce it as a DEFAULT-channel token there.
 /// ```
 ///
-/// RhoCalc declares `![PathMapLit<Proc,Proc>] as Pathmap { open_parts: ["{|"],
+/// Rholang declares `![PathMapLit<Proc,Proc>] as Pathmap { open_parts: ["{|"],
 /// close_parts: ["|}"], sep: "," }` and `as Bag { open_parts: ["#{"], close_parts: ["}#"] }`
 /// in its `types { … }` block — **not** as `SyntaxExpr::Literal` in any rule's syntax
 /// pattern. So `{|` was never in the terminal set, `ext("{")` was missing `'|'`, and the
@@ -395,7 +395,7 @@ pub(crate) fn literal_boundary_sets(
 //     DEFAULT channel. Bytes inside a string literal, or inside `-> COMMENTS` trivia,
 //     are NOT CODE.
 //
-// The measured consequence of the missing half, on the shipped `rhocalc` binary:
+// The measured consequence of the missing half, on the shipped `rholang` binary:
 //
 // ```text
 //     @"OUT"!(1) // z|@"OUT"!(2)          ⇒  @"OUT" observations (2): Int(1), Int(2)
@@ -410,7 +410,7 @@ pub(crate) fn literal_boundary_sets(
 // text to its right, which the lexer had already routed to the COMMENTS channel, is
 // handed to a sub-parser as code.
 //
-// RhoCalc's comments are LEXED, NOT STRIPPED (`languages/src/rhocalc.rs`
+// Rholang's comments are LEXED, NOT STRIPPED (`languages/src/rholang.rs`
 // `LineComment = "//[^\n]*" -> COMMENTS`), which is what puts raw comment bytes in front
 // of every string facade in the first place.
 //
@@ -612,7 +612,7 @@ mod tests {
     use super::*;
 
     /// A DFA over a signed-integer family: `-` must be extensible by every digit, and by
-    /// nothing else. This is the exact shape of the RhoCalc defect.
+    /// nothing else. This is the exact shape of the Rholang defect.
     #[test]
     fn a_sign_is_extended_by_digits_only() {
         let mut nfa = Nfa::new();

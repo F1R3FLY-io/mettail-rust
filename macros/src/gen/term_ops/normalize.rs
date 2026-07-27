@@ -1954,7 +1954,7 @@ fn generate_binder_assemble_arm(
     }
     */
     // Frame-bound constraint: the body must NOT inline in the driver — the
-    // 400 Bind arms (rhocalc) each carry `body`/`new_scope`/ctor locals, whose
+    // 400 Bind arms (rholang) each carry `body`/`new_scope`/ctor locals, whose
     // -O0 alloca sum overflowed the 2 MiB thread stack. Peel into a local
     // `#[inline(never)]` fn (touches `results` only — no stack/sources).
     quote! {
@@ -2021,7 +2021,7 @@ fn generate_multi_binder_assemble_arm(
         }
     }
     */
-    // Frame-bound constraint: the 401 MBind arms (rhocalc) must not inline in
+    // Frame-bound constraint: the 401 MBind arms (rholang) must not inline in
     // the driver; peel into a local `#[inline(never)]` fn (touches `results`
     // only). `cloned_pattern` is the multi-binder Vec.
     quote! {
@@ -2283,7 +2283,7 @@ fn generate_beta_apply_assemble_arm(
         }
     }
     */
-    // Frame-bound constraint: the 400 BetaApply arms (rhocalc) each carry
+    // Frame-bound constraint: the 400 BetaApply arms (rholang) each carry
     // `lam`/`arg`/`substituted` (Proc by value), the per-tag scope-clone match,
     // and staging temps — heaviest unpeeled family. Peel into a local
     // `#[inline(never)]` fn on the Tier-1 (stack, results, sources) shape.
@@ -2425,7 +2425,7 @@ fn generate_beta_mapply_assemble_arm(
         }
     }
     */
-    // Frame-bound constraint: the 400 BetaMApply arms (rhocalc) add
+    // Frame-bound constraint: the 400 BetaMApply arms (rholang) add
     // `args_vec: Vec<Dom>` + per-loop temps to the BetaApply shape. Peel into a
     // local `#[inline(never)]` fn on the Tier-1 (stack, results, sources) shape.
     quote! {

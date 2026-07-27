@@ -1,5 +1,5 @@
 //! X3 — the **in-process drive** probe: can a `[*]` lookahead evaluate a Foreign Language Term
-//! from INSIDE a RhoCalc process and deliver the computed normal form to a channel a receive in
+//! from INSIDE a Rholang process and deliver the computed normal form to a channel a receive in
 //! the same program is waiting on?
 //!
 //! This file measures the mechanism the `[*]` lowering needs, BEFORE any grammar or lowering
@@ -17,7 +17,7 @@
 //! `H`: the drive seed is an ordinary `Par`. Composing it into a user program and running that
 //! whole program as the **call** against the Lambda backend's installed `^drive` receiver family
 //! makes the driver available in-process, so `⟦P⟧` reduces and its resting term is delivered to an
-//! arbitrary quoted channel — where an ordinary RhoCalc `for` can consume it.
+//! arbitrary quoted channel — where an ordinary Rholang `for` can consume it.
 //!
 //! ## The second question, which the coordinator flagged as the collision risk
 //!
@@ -30,7 +30,7 @@
 use std::sync::Arc;
 
 use mettail_languages::lambda::LambdaLanguage;
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def, rho_net_drive_call_par,
     suggest_rejected_rule_dispositions, FltRegistry, FltResolve, RhoCoverageEvidence,
@@ -68,7 +68,7 @@ fn guest_resolver() -> Arc<dyn FltResolve> {
     Arc::new(FltRegistry::new().with_guest("lambda", Box::new(LambdaLanguage)))
 }
 
-/// Parse RhoCalc source through the PRODUCTION entry and lower it under the FLT registry.
+/// Parse Rholang source through the PRODUCTION entry and lower it under the FLT registry.
 fn lower_source(source: &str) -> Par {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source)
@@ -91,7 +91,7 @@ async fn one_inprocess_drive_delivers_a_computed_normal_form_to_a_waiting_receiv
     // The lowering `x!(P)[*]` is to become: drive ⟦P⟧, deliver the resting term to `x`.
     let seed = rho_net_drive_call_par(&fingerprint, subject, "results");
 
-    // An ORDINARY RhoCalc receive on that channel, republishing to @"OUT".
+    // An ORDINARY Rholang receive on that channel, republishing to @"OUT".
     let collector = lower_source(r#"for(@x <- @"results") { @"OUT"!(x) }"#);
 
     let program = seed.append(collector);

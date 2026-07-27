@@ -1,4 +1,4 @@
-//! M-1b — the FORMULA compiler: a RhoCalc `Proc` ⟶ a Rholang PATTERN (`Par`).
+//! M-1b — the FORMULA compiler: a Rholang `Proc` ⟶ a Rholang PATTERN (`Par`).
 //!
 //! # The idea (§18.1)
 //!
@@ -24,7 +24,7 @@
 //! `rho-pure-eval/src/oracle.rs`).
 //!
 //! ```text
-//!        RhoCalc                    this module                 f1r3node
+//!        Rholang                    this module                 f1r3node
 //!   ┌──────────────────┐      ┌──────────────────────┐   ┌────────────────────┐
 //!   │  t matches φ     │      │  ⟦t⟧  via lower_proc │   │ rho_pure_eval::    │
 //!   │  (a Proc)        │─────▶│  ⟦φ⟧  via THIS file  │──▶│   eval_with        │
@@ -37,7 +37,7 @@
 //!
 //! # The compilation table (§18.1, implemented arm for arm)
 //!
-//! The left column is [`mettail_languages::rhocalc::formula::FormulaShape`], the
+//! The left column is [`mettail_languages::rholang::formula::FormulaShape`], the
 //! single shared classification (see that module for why it lives in the
 //! `languages` crate rather than here).
 //!
@@ -70,7 +70,7 @@
 //! than silently becoming a modality. This is an extension point, not a stub:
 //! nothing here is inert or waiting to be filled in.
 
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 use models::rhoapi::Par;
 use models::rust::utils::{
     new_conn_not_body_par, new_wildcard_par, union,

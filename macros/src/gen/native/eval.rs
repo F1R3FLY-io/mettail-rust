@@ -430,7 +430,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         // out. `n.clone()` resolves to the payload type's `Clone` and is correct
         // for every native type — Copy primitives (compiled to a bitwise copy),
         // string/collection wrappers, and non-Copy structs (e.g. the
-        // `Arc<…ZipperLit>` payloads of RhoCalc's ReadZipper/WriteZipper) alike.
+        // `Arc<…ZipperLit>` payloads of Rholang's ReadZipper/WriteZipper) alike.
         if !has_literal_rule {
             try_eval_arms.push(quote! {
                 #category::#literal_label(n) => Some(n.clone()),
@@ -492,7 +492,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 // synthetic variants fell through `try_eval`'s catch-all
                 // `_ => None` arm, which made `eval()` panic when the rewrite
                 // pipeline didn't collapse the wrapper before evaluation —
-                // surfacing as the 7 `cross_cat_rhocalc_castop_*` failures.
+                // surfacing as the 7 `cross_cat_rholang_castop_*` failures.
                 //
                 // β-2 closes the gap: detect the synthetic rule via
                 // `classify_simple_projection_shape`, look up source/target
@@ -1244,7 +1244,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 //         .unwrap_or_else(|| #category::#literal_label(Default::default()))
                 //
                 // i.e. a *checked* operation whose failure path FABRICATED the category's
-                // `Default` value. Measured consequences in RhoCalc (whose `Add`/`Div`/`Mod`
+                // `Default` value. Measured consequences in Rholang (whose `Add`/`Div`/`Mod`
                 // fold bodies are object-output, hence NOT routed through
                 // `rust_code_rewrite::safeify`, hence reaching these impls):
                 //
@@ -1263,7 +1263,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 //     contained in this workspace (unwinding across the Cranelift-compiled
                 //     frames of `[profile.dev] codegen-backend = "cranelift"` dies with
                 //     `fatal runtime error: failed to initiate panic, error 5, aborting`,
-                //     documented in `rholang-runtime/tests/rho_rhocalc_conformance.rs`
+                //     documented in `rholang-runtime/tests/rho_rholang_conformance.rs`
                 //     divergence C). A process abort is worse than a wrong value.
                 //   * `type Output = Option<Self>` — rejected: it leaves TWO spellings of the
                 //     same fallible operation (`a + b` and `SafeArith::safe_add(a, b)`), and
@@ -1273,8 +1273,8 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 //     because the fabricating operation no longer exists: `a + b` on a
                 //     category value is a COMPILE error, and every call site must consume the
                 //     `Option` returned by the `SafeArith` impl below and map `None` onto the
-                //     language's own failure disposition (for RhoCalc: `Proc::Err`, the
-                //     `error` term — see `languages/src/rhocalc.rs` `Add`/`Sub`/`Mul`/`Div`/
+                //     language's own failure disposition (for Rholang: `Proc::Err`, the
+                //     `error` term — see `languages/src/rholang.rs` `Add`/`Sub`/`Mul`/`Div`/
                 //     `Mod`, whose `UInt32`/`BigInt`/`BigRat`/`Fixed` arms already answered
                 //     `Proc::Err` on ÷0 before this change; the `Int`/`Float` arms were the
                 //     only fabricating ones).
@@ -1290,7 +1290,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 // `SafeArith` impl, and re-wraps the result as a literal. This is
                 // what the `rust_code_rewrite` pass emits when a user's `![...]`
                 // block contains `a + b` where `a` / `b` are typed as the category
-                // (e.g., rhocalc's `Proc::CastInt(Box::new(*a.clone() + *b.clone()))`
+                // (e.g., rholang's `Proc::CastInt(Box::new(*a.clone() + *b.clone()))`
                 // with `a, b: &Box<Int>` — after `*a.clone()` they are `Int`).
                 //
                 // Returning `None` from any of the three steps (unevaluable operand,

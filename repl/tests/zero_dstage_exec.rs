@@ -8,7 +8,7 @@
 //! (`mettail_rholang_runtime::dstage_instrumentation`, a process-global count of
 //! `checked_complete_dovetail_report` invocations):
 //!
-//! - admitted SwapDemo (in-Rho locate-all match), Calculator (E3 fold dataflow), and RhoCalc
+//! - admitted SwapDemo (in-Rho locate-all match), Calculator (E3 fold dataflow), and Rholang
 //!   (direct AST lowering) execs: counter delta 0, with the exact pre-A-S2 observations;
 //! - a semantic-predicate-blocked exec (Calculator `5 / 0`): counter delta ≥ 1 and the checked
 //!   Dovetail report as the observational payload (today's outcome, lazily produced);
@@ -161,24 +161,24 @@ fn admitted_calculator_exec_builds_no_dovetail_report() {
 
 #[test]
 fn admitted_rholang_exec_builds_no_dovetail_report() {
-    let language = rholang_backed().expect("RhoCalc lazy backend installs");
+    let language = rholang_backed().expect("Rholang lazy backend installs");
     // The single-channel COMM example (`rho_rholang_ast.rs` precedent): the receiver binds the
     // sent process and drops it, emitting "p" on OUT. Lowerable DIRECTLY by the AST mapper, so
     // the report-free F2 admits it.
     let term = language
         .parse_term(r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#)
-        .expect("the RhoCalc COMM example parses");
+        .expect("the Rholang COMM example parses");
 
     let before = dovetail_report_invocations();
     let report = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
-        .expect("the admitted RhoCalc exec runs report-free on the Rho machine");
+        .expect("the admitted Rholang exec runs report-free on the Rho machine");
     let after = dovetail_report_invocations();
 
     assert_eq!(
         after - before,
         0,
-        "an ADMITTED RhoCalc exec must build ZERO Dovetail reports (direct AST lowering)"
+        "an ADMITTED Rholang exec must build ZERO Dovetail reports (direct AST lowering)"
     );
     assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
     assert_eq!(report.artifact(), RuntimeBackendArtifact::RhoNormalizedAst);
@@ -481,19 +481,19 @@ fn a_s4_calculator_call_par_does_not_embed_the_result_literal() {
     );
 }
 
-/// A-S4 (RhoCalc): raw Proc-level arithmetic execs through the PURE lowering (the E2
+/// A-S4 (Rholang): raw Proc-level arithmetic execs through the PURE lowering (the E2
 /// fold-normalization fallback is deleted) — the machine's metered `EPlus` computes the value;
 /// zero Dovetail reports. Plain rholang literals are arbitrary-precision (`GBigInt`), so the
 /// observed value is `BigIntBytes`.
 #[test]
 fn a_s4_admitted_rholang_arithmetic_exec_computes_on_machine_with_no_dovetail_report() {
-    let language = rholang_backed().expect("RhoCalc lazy backend installs");
+    let language = rholang_backed().expect("Rholang lazy backend installs");
     let term = language.parse_term("1 + 2").expect("1 + 2 parses");
 
     let before = dovetail_report_invocations();
     let report = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
-        .expect("the raw RhoCalc arithmetic exec runs report-free on the Rho machine");
+        .expect("the raw Rholang arithmetic exec runs report-free on the Rho machine");
     let after = dovetail_report_invocations();
 
     assert_eq!(
@@ -510,8 +510,8 @@ fn a_s4_admitted_rholang_arithmetic_exec_computes_on_machine_with_no_dovetail_re
     assert_eq!(
         out.values,
         vec![RuntimeObservationValue::Int(3)],
-        // ★ `Int`, not `BigIntBytes` (divergence I, 2026-07-25). A plain RhoCalc numeral is
-        // f1r3node's `GInt` — `normalize_ground` says so — and RhoCalc's grammar now agrees, so
+        // ★ `Int`, not `BigIntBytes` (divergence I, 2026-07-25). A plain Rholang numeral is
+        // f1r3node's `GInt` — `normalize_ground` says so — and Rholang's grammar now agrees, so
         // bare literals ride the wire as `GInt`. This is a DELIBERATE wire re-baseline; no
         // persisted rspace state exists on this branch (the demos build in-memory runtimes per
         // invocation).

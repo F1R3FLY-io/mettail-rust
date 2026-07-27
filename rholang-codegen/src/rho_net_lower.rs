@@ -1444,7 +1444,7 @@ fn lower_native_system_process(
 /// FAIL-CLOSED (never silently deferred) when the rewrite has no flat join image:
 ///
 ///  - the independent P2 detector reports a binder / collection / substitution context
-///    (e.g. RhoCalc's `ParCong` over an AC `PPar` bag has an AC-collection LHS/RHS) — such a
+///    (e.g. Rholang's `ParCong` over an AC `PPar` bag has an AC-collection LHS/RHS) — such a
 ///    context stays `Unsupported{family}`, exactly as before this slice;
 ///  - a non-congruence side condition (a semantic-predicate guard, freshness, relation
 ///    query, universal) appears as a premise — it has no join slot ([`congruence_targets`]);
@@ -1469,7 +1469,7 @@ fn lower_contextual_rewrite(
         errors.push(RhoNetLoweringError::RuleSourceDrift { rule_id: rule.id.clone() });
         return None;
     };
-    // Independent P2 detector: a binder / collection / substitution context (RhoCalc's
+    // Independent P2 detector: a binder / collection / substitution context (Rholang's
     // ParCong over an AC PPar bag) has no flat contextual-join image — fail closed with the
     // out-of-scope family, exactly as the classify-only predecessor did.
     if let Some(family) = rewrite_pattern_unsupported(&rewrite.left, &rewrite.right) {
@@ -1497,7 +1497,7 @@ fn contextual_join_rule_par(
     // `i` (`targets[i]`) reflects to `BoundVar(rhs_var_index(n, i)) = BoundVar(n - i)` — the
     // reverse-De-Bruijn slot the join binds it at (out is `BoundVar(0)`).
     // A contextual (congruence) RHS with a collection context is already rejected by the P2
-    // detector before reaching here (RhoCalc's `ParCong` over an AC bag), so no HashBag bag-RHS
+    // detector before reaching here (Rholang's `ParCong` over an AC bag), so no HashBag bag-RHS
     // resolver is threaded (`None`) — a bag context stays fail-closed, exactly as before.
     let context_rhs = reflect_term_par(&rewrite.right, &targets, n, language_fingerprint, None)?;
     // The `n` premise location channels are `input_channels[1..]` (channel 0 is the LHS
@@ -4855,7 +4855,7 @@ pub(crate) struct CommElement {
 
 /// (D10) One fixed element of a Comm rule's AC bag REDUCT, in RHS order. The reduct admits `m ≥ 1`
 /// elements: EXACTLY ONE host-computed substitution plus `m - 1` σ-delivered LHS variables. `m = 1`
-/// is the ASYNCHRONOUS communication (RhoCalc / `CommDemo`); `m = 2` is the omnibus's SYNCHRONOUS π
+/// is the ASYNCHRONOUS communication (Rholang / `CommDemo`); `m = 2` is the omnibus's SYNCHRONOUS π
 /// `Comm`, whose output `n!m.q` carries a continuation that runs in parallel with the substituted
 /// receive continuation. The Rho mirror of `dovetail_report::CommReductElement`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4932,7 +4932,7 @@ fn structured_element(pattern: &Pattern) -> Option<CommElement> {
 /// (D10) A structured element for the COMM lane specifically: [`structured_element`], but the LAST
 /// argument may ALSO be an EXPLICIT single binder abstraction `^x.body` whose body is a bare
 /// variable — the omnibus π spelling `(PIn n ^x.p)` (`omnibus.tex:1988`) of the element the
-/// RhoCalc/`CommDemo` rules write as a bare scope variable `(PFor N cont)`. The abstraction
+/// Rholang/`CommDemo` rules write as a bare scope variable `(PFor N cont)`. The abstraction
 /// contributes its BODY variable, so `args.last()` is the scope under either spelling and the
 /// emitted [`comm_element_pattern`] (whose non-channel positions are wildcards) is IDENTICAL.
 ///
@@ -5264,7 +5264,7 @@ fn expr_par_with(instance: Expr, free: &[usize]) -> Par {
 /// (D10) The receiver does not distinguish a HOST-COMPUTED reduct slot from a σ-DELIVERED one — it
 /// FORWARDS whatever the injection sends at each slot — so the arity generalization is entirely in
 /// the slot COUNT. At `m = 1` (`free_count = 2 + 1 + 1 + 1 = COMM_FREE_COUNT`) every emitted byte is
-/// unchanged, which is the asynchronous receiver `CommDemo`/RhoCalc install. This is the same frame
+/// unchanged, which is the asynchronous receiver `CommDemo`/Rholang install. This is the same frame
 /// [`structural_ac_receiver_par`] uses for its `m` σ-delivered reducts; the two receivers now differ
 /// only in WHERE the injection sources each slot's value.
 fn comm_receiver_par(shape: &CommShape, source: Par, language_fingerprint: &str) -> Par {

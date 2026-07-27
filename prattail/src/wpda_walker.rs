@@ -425,7 +425,7 @@ struct KbestEntry<W> {
 /// rightmost-fastest — plain child-order `j`-lex only coincides with it
 /// when every Intermediate child precedes every combo child, which REAL
 /// forests violate (trailing weight-carrier Intermediates in e.g. the
-/// rhocalc optional/collection shapes — the S3 suite-under-ON receipt).
+/// rholang optional/collection shapes — the S3 suite-under-ON receipt).
 /// The permutation restores the family nesting for ARBITRARY child
 /// arrangements; on Intermediate-first packings it degenerates to `j`
 /// itself.
@@ -1330,7 +1330,7 @@ pub trait WpdaEngine<W: SemiringRef> {
     /// AT_QUOTED_BIND_GATE realize-backstop companion (option B, 2026-07-03).
     /// Returns `true` iff `(src_idx, rule_idx)` is a SIGIL-QUOTED atom rule of a
     /// `source` category — a rule whose realized term makes its parent's LHS a
-    /// `σ`-quoted `source` (e.g. rhocalc `NQuoteShort . p:Proc |- "@" p : Name`,
+    /// `σ`-quoted `source` (e.g. rholang `NQuoteShort . p:Proc |- "@" p : Name`,
     /// `NQuote . p:Proc |- "@" "(" p ")" : Name`). The realize backstop tests
     /// the `children[0]` Symbol's packing rule against this predicate to decide
     /// whether the whole-source LHS is `σ`-quoted. Grammar-derived: a rule whose
@@ -1344,13 +1344,13 @@ pub trait WpdaEngine<W: SemiringRef> {
     /// ROOT-C structural token-soundness backstop (2026-07-08). Returns `true`
     /// iff `(src_idx, rule_idx)`'s FIRST `syntax_pattern` element is a
     /// `SyntaxExpr::Literal` — i.e. the rule is LED by a fixed terminal: a
-    /// keyword/sigil cast (`"str" "(" p ")"`, rhocalc `ToStr`), a cross-category
+    /// keyword/sigil cast (`"str" "(" p ")"`, rholang `ToStr`), a cross-category
     /// trigger cast (`"int" "(" a ")"`, calculator `StrToInt`), a grouping
     /// (`"(" fun "," arg ")"`, lambda `App`), or a sigil send (`"@" n "!" …`).
     ///
     /// A SOUND derivation of such a rule ALWAYS REALIZES that leading literal
     /// into the packing as its FIRST child — either an IN-span `Terminal`
-    /// (rhocalc's `str` is matched within the result span) OR an OUT-OF-span
+    /// (rholang's `str` is matched within the result span) OR an OUT-OF-span
     /// `TriggerTerminal` (calculator's cross-cat `int`, lambda's grouping `(`
     /// are consumed as span-anchored triggers). The two dispositions differ by
     /// span arithmetic (which is NOT codegen-derivable — see the abandoned
@@ -2143,7 +2143,7 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     sppf: crate::sppf::Sppf<W>,
     // Phase F.4 (2026-05-18): walker-global `sppf_collection_arena:
     // Vec<Vec<SppfId>>` DELETED. Splice events from N concurrent
-    // cursors pre-merge polluted the shared slot — for rhocalc
+    // cursors pre-merge polluted the shared slot — for rholang
     // `{(c?x).{*(x)} | c!(p)}`, slot 0 grew to `[100, 105, 133, 146,
     // 189]` (5 entries) instead of `[X_id, Y_id]`. Splice state is now
     // per-cursor at `BranchCursor::sppf_collection_arena: Arc<Vec<Vec<
@@ -2154,7 +2154,7 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     // fix (2026-05-29): REALIZE-time readers no longer consult any cursor's
     // arena — they read each derivation's `CollectionId` SPPF node's own
     // `items` (snapshotted at the fire site). See
-    // `docs/design/notes/2026-05-18-cursor-explosion-rhocalc.md` and
+    // `docs/design/notes/2026-05-18-cursor-explosion-rholang.md` and
     // `docs/design/plans/collection-accumulation-fix.md`.
     /// Option C / C3: SPPF-side predicate payload arena.
     /// `emit_push_predicate` interns the `Arc<dyn Any + Send + Sync>` here
@@ -2853,7 +2853,7 @@ pub enum ForkActionKind {
     /// previously-unguarded `Consume` branch in BinderListLoop's
     /// 3-branch Fork — that branch ran on every dispatch regardless of
     /// token, causing exponential cursor multiplication and >4000s hangs
-    /// on rhocalc::PNew multi-binder grammars.
+    /// on rholang::PNew multi-binder grammars.
     GuardedConsume { expected_text: String },
 
     /// L12 follow-up B2 (2026-05-07) — closure for BinderListLoop
@@ -3275,18 +3275,18 @@ pub struct BranchCursor<W: SemiringRef> {
     /// pre-merge fanout window, so N cursors at the same `ConfigKey`
     /// would each splice into the same shared slot, accumulating N
     /// entries before `merge_equivalent_cursors` could collapse them.
-    /// Empirical bug: rhocalc `{(c?x).{*(x)} | c!(p)}` arena slot 0
+    /// Empirical bug: rholang `{(c?x).{*(x)} | c!(p)}` arena slot 0
     /// held `[100, 105, 133, 146, 189]` (5 entries) for what should be
     /// a 2-element bag `[X_id, Y_id]`; the resulting 5-entry
     /// `Proc::PPar` bag triggered exponential Ascent fixpoint blowup.
     /// Diagnosis ledger:
-    /// `docs/design/notes/2026-05-18-cursor-explosion-rhocalc.md`.
+    /// `docs/design/notes/2026-05-18-cursor-explosion-rholang.md`.
     ///
     /// `Arc<Vec<Vec<SppfId>>>` chosen for the same reason
     /// `builder: Arc<SemanticBuilder>` was introduced in Phase 5.2:
     /// Fork-arm cursor clone is O(1) (Arc bump). First splice in a
     /// fork-child triggers `Arc::make_mut` deep clone — O(arena_size).
-    /// For rhocalc's peak ~25 cursors × ~5 slots × 0-9 SppfIds each,
+    /// For rholang's peak ~25 cursors × ~5 slots × 0-9 SppfIds each,
     /// this is trivial. Per `feedback_never_disambiguate_early.md` no
     /// weight-based pruning; per `feedback_no_pragmatic_scopedown.md`
     /// no scope-down — this is the architecturally correct fix.
@@ -5022,7 +5022,7 @@ impl PackedDispatchConfig {
 /// but ONLY for CollectionMarker-node dispatches (`NO_POS` elsewhere): the
 /// flip experiment showed the set ALSO serves as the cross-position
 /// dispatch-suppression memo (GLOBAL pos-keying re-exploded the cross-cat
-/// projection fan — rhocalc `x!(0)` failed, suite 0.6s→133s), while the
+/// projection fan — rholang `x!(0)` failed, suite 0.6s→133s), while the
 /// sppf-restore aliasing exists ONLY at marker nodes. At marker nodes: a
 /// genuine no-progress cycle consumes no input so it re-enters at the SAME
 /// pos (still caught — `no_progress_still_caught`), while the pos-advancing
@@ -8174,7 +8174,7 @@ where
         // A rule that LEADS WITH A LITERAL (`rule_leads_with_literal`) always
         // realizes that leading literal as its FIRST child in a SOUND
         // derivation — an in-span `Terminal` OR an out-of-span
-        // `TriggerTerminal` (empirically rhocalc `str`, calc cross-cat `int`,
+        // `TriggerTerminal` (empirically rholang `str`, calc cross-cat `int`,
         // and lambda grouping `(` all realize a `TriggerTerminal` first child).
         // The single-result demand driver's grouping-close, however, FABRICATES
         // an outer cast wrap whose `children[0]` is the OPERAND `Symbol` — the
@@ -12463,7 +12463,7 @@ where
         // rightmost-fastest — REGARDLESS of where the Intermediate children
         // sit (real forests carry trailing weight-carrier Intermediates
         // after combo children; the former child-order-lex premise assert
-        // fired on rhocalc's optional/collection shapes in the S3
+        // fired on rholang's optional/collection shapes in the S3
         // suite-under-ON window). The raw comparator therefore orders by
         // the flats-major PERMUTATION of `j` built in
         // `cgll_kbest_candidate_key`'s FirstRaw arm — slot ORDER here stays
@@ -15709,7 +15709,7 @@ where
             }
             // ── P3.a STANDALONE collection rules (PPar-class) ─────────────
             // When the marker IS the rule frame (the rule's whole syntax is
-            // the delimited sep-list, e.g. rhocalc `PPar . "{" ps "}"`),
+            // the delimited sep-list, e.g. rholang `PPar . "{" ps "}"`),
             // classic FIRES the finalize action at the marker's
             // ConsumeAndPop (apply_pop_body @~37117: CollectionMarker is a
             // firing kind unless binder-internal). The pure analog: intern
@@ -17499,7 +17499,7 @@ where
     ///   classic-adjudication protocol; all fail loud as pure-ERR): Case-A/B
     ///   reentry pushes at delegate pops, the cast-only synthesizer, and
     ///   engine-declared `PushWithEdgeKind{CrossCatLhsReentry}` CE pushes (the
-    ///   third feeder class — NOT live in rhocalc's generated engine: both
+    ///   third feeder class — NOT live in rholang's generated engine: both
     ///   PushWithEdgeKind sites carry plain CrossCatLhs).
     /// - REJECTED codegen alternative (do not resurrect): making the engine's
     ///   marker-close arm emit `InfixLoop{0}` directly is NOT behavior-preserving
@@ -19608,7 +19608,7 @@ where
                 // classic ACCEPTS, pure still refuses — documented, out of
                 // reach of any display output (same strictness class as
                 // the accepted B2/Class-2 precedent).
-                // PNew-style `^[xs]` loops (rhocalc `new(x,y)`, lambda,
+                // PNew-style `^[xs]` loops (rholang `new(x,y)`, lambda,
                 // ambient) are excluded TWICE: they run on RuleAt frames
                 // (not CollectionMarker) AND their slots are not class-3.
                 // Marker-fold BEFORE carry — the `ConsumeCollectionSep`
@@ -21111,7 +21111,7 @@ where
         // but binder/class-2 collections consume separators through their
         // own guarded routes (NOT ForkActionKind::ConsumeCollectionSep),
         // so their sep counts under-read and the gate over-refuted
-        // (rhocalc 123/3 → 115/11). The counting substrate
+        // (rholang 123/3 → 115/11). The counting substrate
         // (collection_sep_counts + ConsumeCollectionSep) stays — it is
         // behavior-neutral and is the witness #313's completed gate will
         // consume once every separator route is counted (or the
@@ -24267,7 +24267,7 @@ mod tests {
     //   1. The Arc::clone fast-path on cursor.builder (any test that
     //      forks a cursor exercises this).
     //   2. predicate-carrying parsers in the language test corpus
-    //      (gen_rhocalc_op cross_cat tests).
+    //      (gen_rholang_op cross_cat tests).
 
 
     // ══════════════════════════════════════════════════════════════════════
@@ -24318,7 +24318,7 @@ mod tests {
     // designed in /home/dylon/.claude/plans/commit2-h7-h8-tests-resolution-2026-05-05.md
     // — at the walker level (not full grammar codegen) since shipped
     // grammars exercise Mechanism γ end-to-end via gen_calculator_op (1331+),
-    // gen_rhocalc_op (532), gen_optsmoke_op (25), gen_mixedmath_op (199).
+    // gen_rholang_op (532), gen_optsmoke_op (25), gen_mixedmath_op (199).
     // ════════════════════════════════════════════════════════════════════════
 
 

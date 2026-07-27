@@ -42,11 +42,11 @@ use mettail_macros::language;
 // The concrete redex `{ for(y <- @0){ y!(@2) } | @0!(@1) }` reduces (both channels are `@0`) to
 // `{ @1!(@2) }` — the body `y!(@2)` with the sent `@1` substituted for the bound `y` — and
 // `{ for(y <- @0){ y!(@2) } | @0!(@1) } ≠ { @1!(@2) }`, so a positive OUT observation of `{ @1!(@2) }`
-// is non-vacuous evidence RhoCalc's communication rule fired as ONE COMM with the σ + substitution
+// is non-vacuous evidence Rholang's communication rule fired as ONE COMM with the σ + substitution
 // Dovetail computed. The mismatched soup `{ for(y <- @0){ y!(@2) } | @1!(@3) }` (channels `@0` ≠
 // `@1`) does NOT fire — the non-linear `Receive.condition` vetoes it.
 //
-// Kept SEPARATE from the full `RhoCalc` (whose communication rides the entangled multi-`&`
+// Kept SEPARATE from the full `Rholang` (whose communication rides the entangled multi-`&`
 // `PForUser` query engine, `receive::try_comm_rw_proc`) so the canonical single-receive Comm is
 // isolated exactly as `SwapDemo`/`AcDemo`/`AcBagDemo`/`CtxDemo`/`LambdaDemo`/`NativeDemo` isolate
 // their respective firing families.

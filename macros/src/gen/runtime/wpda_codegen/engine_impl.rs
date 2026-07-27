@@ -1472,7 +1472,7 @@ pub(crate) fn emit_engine_impl_full(
                         // (2026-07-03): when the InfixLoop frontier is a
                         // `CollectionMarker` whose declared `element_src_idx`
                         // differs from the marker's own (result) category — a
-                        // CROSS-CATEGORY collection literal (rhocalc `[…]` List
+                        // CROSS-CATEGORY collection literal (rholang `[…]` List
                         // (cat 10) / `#{…}#` Bag (11) / `{|…|}` Pathmap (14),
                         // each carrying `Vec<Proc>`/`HashBag<Proc>`/… i.e.
                         // `element_src_idx = Proc(0)`) — the operator-dispatch
@@ -2142,7 +2142,7 @@ pub(crate) fn emit_engine_impl_full(
                         // pick-one. The PREVIOUS code consumed UNCHECKED
                         // (`_expected` unused) — stealing enclosing
                         // delimiters or fabricating positions: the ROOT-A
-                        // defect (rhocalc `x!(0)` never parsed).
+                        // defect (rholang `x!(0)` never parsed).
                         //
                         // S1-FACTORING F5-2 (A-M3): the helper fn + macro
                         // are extracted to `mixfix_literal_helpers` above —

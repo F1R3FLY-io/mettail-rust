@@ -171,9 +171,9 @@ might shrink to:
 
 revealing that the bug requires only rule 1 followed by Ascent, not the full 6-step sequence.
 
-### Example: RhoCalc State Machine
+### Example: Rholang State Machine
 
-For the RhoCalc language (a process algebra), the derived state machine has:
+For the Rholang language (a process algebra), the derived state machine has:
 
 ```
 Categories: [Proc, Name, Int, Float, Bool, Str]

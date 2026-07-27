@@ -72,7 +72,7 @@
 //! * **The ELECTION is not the wrong answer, it is the wrong layer.** Teaching the
 //!   elector to prefer a reading whose display equals the input would be a post-hoc
 //!   surface filter over readings the grammar should never have admitted — the mistake
-//!   `languages/src/rhocalc.rs:129` already names, in the identical defect for `BigInt`.
+//!   `languages/src/rholang.rs:129` already names, in the identical defect for `BigInt`.
 //! * **The LITERAL ACCEPTOR is the root**: an `eval` strictly wider than its own declared
 //!   `pattern`. `BigInt`'s copy of this defect was fixed in the same file on 2026-07-25
 //!   (divergence I, Stage A); `UInt32` was the one integer category left with it.

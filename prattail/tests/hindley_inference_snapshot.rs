@@ -4,7 +4,7 @@
 //! ## What this gate proves
 //!
 //! 1. **PARITY (inertness + correctness).** Over every existing grammar fixture
-//!    (calculator / lambda / rhocalc / ambient / guarded_rho),
+//!    (calculator / lambda / rholang / ambient / guarded_rho),
 //!    `hindley_milner::analyze_from_bundle`:
 //!      - reports NO `sort_mismatches` (every field category is declared ⇒ the
 //!        inferred constructor arrow unifies with the declared arrow);
@@ -194,7 +194,7 @@ fn lambda_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
     (all_syntax, categories)
 }
 
-fn rhocalc_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
+fn rholang_fixture() -> (Vec<SyntaxRule>, Vec<CategoryInfo>) {
     let categories = vec![
         struct_cat("Proc", true, true),
         struct_cat("Name", false, true),
@@ -360,9 +360,9 @@ fn lambda_inert() {
 }
 
 #[test]
-fn rhocalc_inert() {
-    let (all_syntax, categories) = rhocalc_fixture();
-    assert_inert_and_correct("rhocalc", &all_syntax, &categories);
+fn rholang_inert() {
+    let (all_syntax, categories) = rholang_fixture();
+    assert_inert_and_correct("rholang", &all_syntax, &categories);
 }
 
 #[test]
@@ -386,7 +386,7 @@ fn fixtures_exercise_nonnullary_arrows() {
     for (name, (rules, cats)) in [
         ("calculator", calculator_fixture()),
         ("lambda", lambda_fixture()),
-        ("rhocalc", rhocalc_fixture()),
+        ("rholang", rholang_fixture()),
         ("ambient", ambient_fixture()),
         ("guarded_rho", guarded_rho_fixture()),
     ] {

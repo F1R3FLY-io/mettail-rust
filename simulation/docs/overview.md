@@ -106,7 +106,7 @@ MeTTaIL languages are defined declaratively: type categories, term constructors,
 
 ### 1. `cargo test` (Unit and Integration Tests)
 
-Every module contains `#[cfg(test)]` unit tests. These verify individual components in isolation using mock languages (e.g., `MockLanguage` in the invariant tests, `CalculatorStubMetadata` and `RhoCalcStubMetadata` in the model tests). Running `cargo test -p simulation` exercises the full test suite.
+Every module contains `#[cfg(test)]` unit tests. These verify individual components in isolation using mock languages (e.g., `MockLanguage` in the invariant tests, `CalculatorStubMetadata` and `RholangStubMetadata` in the model tests). Running `cargo test -p simulation` exercises the full test suite.
 
 The generated test files under `languages/tests/gen_*.rs` use the tape-based proptest strategies (see [strategies.md](strategies.md)) to generate random terms for each defined language and run them through the simulation pipeline.
 

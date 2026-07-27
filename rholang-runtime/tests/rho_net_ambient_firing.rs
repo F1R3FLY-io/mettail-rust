@@ -6,7 +6,7 @@
 //!     OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest}) ~> (PPar {P, Q, ...rest})
 //!
 //! i.e. `open(n, P) | n[Q]  ~>  P | Q`, spliced into the residual bag. It is the STRUCTURAL twin of
-//! the RhoCalc `Comm` rule (`rho_net_comm_firing`): the SAME non-linear AC firing shape MINUS the
+//! the Rholang `Comm` rule (`rho_net_comm_firing`): the SAME non-linear AC firing shape MINUS the
 //! substitution. It composes, in ONE COMM on the reducer:
 //!
 //!   * a HashBag AC match over `PPar` with k=2 STRUCTURED fixed elements (the capability `POpen N P`

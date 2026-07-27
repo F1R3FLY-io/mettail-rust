@@ -17,11 +17,11 @@
 //! per-category variable variant (`Term::…Var`), a keyword-shaped token in
 //! identifier position yields BOTH readings — full ambiguity is retained.
 //!
-//! Contrast with RhoCalc (`options { reserved_keywords: auto }`), where `Nil`
+//! Contrast with Rholang (`options { reserved_keywords: auto }`), where `Nil`
 //! is reserved and `@Nil` has exactly one reading. The SAME grammar-derived
 //! mechanism drives both; only the per-language `reserved_keywords` toggle
 //! differs. See `languages/tests/gen_fortran_model_prop.rs` (this language,
-//! opt-out) and `languages/tests/keyword_reservation_tests.rs` (RhoCalc,
+//! opt-out) and `languages/tests/keyword_reservation_tests.rs` (Rholang,
 //! reserve) for the durable dual-mode test matrix.
 //!
 //! It is a real `src` fixture (not a test-local `language!`) for the same
@@ -91,7 +91,7 @@ language! {
         RealTerm . r:Real |- r : Term ;
 
         // ── Keyword-vs-variable fork ──
-        // Mirrors RhoCalc's `POutputNil` (literal `@ Nil ! (q)`) vs
+        // Mirrors Rholang's `POutputNil` (literal `@ Nil ! (q)`) vs
         // `POutputQuoted` (`@ n:Name ! (q)`, channel is a variable). The
         // channel position is a nested `Term`, so a keyword-shaped token there
         // competes between the LITERAL keyword rule and the VARIABLE rule.
@@ -107,7 +107,7 @@ language! {
 
         // ── Fortran DO archetype (the `DO 10 I = …` ambiguity) ──
         // This WPDA dispatches a *prefix keyword* on the following PUNCTUATION
-        // token (like RhoCalc's `for( … )` / `new( … )`), so the fixed-form
+        // token (like Rholang's `for( … )` / `new( … )`), so the fixed-form
         // `DO 10 I = …` (keyword immediately followed by a number) is written
         // here in its parenthesized analog `DO(10, I) = …`. The DECISIVE part
         // of the archetype is preserved verbatim: a top-level comma vs. a

@@ -66,13 +66,13 @@
 //! This file pins the rows so the measurement can be re-taken by flipping one `const`, and
 //! so a future change that makes `1-7` depend on the exemption fails loudly.
 
-#![cfg(feature = "rhocalc")]
+#![cfg(feature = "rholang")]
 
-use mettail_languages::rhocalc::Proc;
+use mettail_languages::rholang::Proc;
 
 /// The elected single-winner reading, as a structural `Debug` string.
 fn one(source: &str) -> String {
-    format!("{:?}", Proc::parse_via_wpda(source).expect("RhoCalc parses the source"))
+    format!("{:?}", Proc::parse_via_wpda(source).expect("Rholang parses the source"))
 }
 
 /// ★ THE ROW THE FOLKLORE NAMED. `1-7` is the input the exemption was said to protect;
