@@ -52,9 +52,8 @@ use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use workloads::{
-    cell_width_probe, compile_workload, consume_test_admitted, node_count,
-    run_compiled_workload, GuardEncodingKind, MatcherKind, WorkloadKind, ALL_ENCODINGS,
-    ALL_MATCHERS, ALL_WORKLOADS,
+    cell_width_probe, compile_workload, consume_test_admitted, node_count, run_compiled_workload,
+    GuardEncodingKind, MatcherKind, WorkloadKind, ALL_ENCODINGS, ALL_MATCHERS, ALL_WORKLOADS,
 };
 
 /// Whether a `(workload, matcher, encoding, n)` cell must be SKIPPED, with the
@@ -152,11 +151,7 @@ fn bench_matrix(c: &mut Criterion) {
             let mut warm = c.benchmark_group(format!("warm/{}/{}", kind.name(), matcher.name()));
             for &n in kind.full_sizes() {
                 if let Some(reason) = cell_skip_reason(kind, matcher, encoding, n) {
-                    eprintln!(
-                        "skipping warm/{}/{}/{n}: {reason}",
-                        kind.name(),
-                        matcher.name(),
-                    );
+                    eprintln!("skipping warm/{}/{}/{n}: {reason}", kind.name(), matcher.name(),);
                     continue;
                 }
                 // The B3 hoist: compile ONCE, outside the measured region.
@@ -205,11 +200,7 @@ fn bench_matrix(c: &mut Criterion) {
             let mut cold = c.benchmark_group(format!("cold/{}/{}", kind.name(), matcher.name()));
             for &n in kind.full_sizes() {
                 if let Some(reason) = cell_skip_reason(kind, matcher, encoding, n) {
-                    eprintln!(
-                        "skipping cold/{}/{}/{n}: {reason}",
-                        kind.name(),
-                        matcher.name(),
-                    );
+                    eprintln!("skipping cold/{}/{}/{n}: {reason}", kind.name(), matcher.name(),);
                     continue;
                 }
                 let runtime = tokio::runtime::Builder::new_current_thread()
@@ -223,10 +214,7 @@ fn bench_matrix(c: &mut Criterion) {
                             // Compilation INSIDE the measured region (cold).
                             let compile_started = Instant::now();
                             let compiled = compile_workload(kind, n).unwrap_or_else(|error| {
-                                panic!(
-                                    "compile_workload({}, {n}) failed: {error}",
-                                    kind.name(),
-                                )
+                                panic!("compile_workload({}, {n}) failed: {error}", kind.name(),)
                             });
                             let compile_span = compile_started.elapsed();
                             let outcome = runtime

@@ -28,8 +28,8 @@ use mettail_rholang_runtime::lookahead::{
     spec_all_request, spec_n_request, SPEC_ALL_CHANNEL, SPEC_N_CHANNEL, SPEC_REQUEST_CHANNELS,
 };
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc_with_resolver, run_normalized_par_for_oracle_and_read_runtime_value_channels,
-    RhocalcAstLowerError,
+    lower_rhocalc_proc_with_resolver,
+    run_normalized_par_for_oracle_and_read_runtime_value_channels, RhocalcAstLowerError,
 };
 use mettail_runtime::clear_var_cache;
 use models::rhoapi::Par;
@@ -149,7 +149,10 @@ fn a_lookahead_does_not_also_send_the_subject_on_the_channel() {
         1,
         "a lookahead emits exactly ONE send — the request — and no send on the reply channel"
     );
-    let channel = lowered.sends[0].chan.clone().expect("a send must carry a channel");
+    let channel = lowered.sends[0]
+        .chan
+        .clone()
+        .expect("a send must carry a channel");
     let rendered = format!("{channel:?}");
     assert!(
         rendered.contains(SPEC_ALL_CHANNEL),
@@ -170,10 +173,9 @@ fn a_lookahead_does_not_also_send_the_subject_on_the_channel() {
 
 #[test]
 fn a_non_send_operand_is_rejected_with_a_typed_error() {
-    for (source, what) in [
-        (r#"@"r"!!(Nil)[*]"#, "a persistent send (`!!`)"),
-        ("[1][*]", "a list literal"),
-    ] {
+    for (source, what) in
+        [(r#"@"r"!!(Nil)[*]"#, "a persistent send (`!!`)"), ("[1][*]", "a list literal")]
+    {
         match lower(source) {
             Err(RhocalcAstLowerError::LookaheadOperandNotASend(found)) => {
                 println!("X5 rejected {source:?} → operand is {found}");
@@ -226,7 +228,10 @@ async fn an_unserved_lookahead_request_rests_and_is_reported() {
         println!("X5 unserved: {channel} ← {} datum(a)", data.len());
     }
     let on = |name: &str| {
-        rest.iter().find(|(c, _)| c.as_str() == name).map(|(_, d)| d.len()).unwrap_or_default()
+        rest.iter()
+            .find(|(c, _)| c.as_str() == name)
+            .map(|(_, d)| d.len())
+            .unwrap_or_default()
     };
 
     assert_eq!(

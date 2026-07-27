@@ -89,11 +89,17 @@ fn subject() -> CtxDemoTerm {
 }
 
 fn nullary(constructor: &str) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children: Vec::new() }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children: Vec::new(),
+    }
 }
 
 fn nullary_subterm(constructor: &str) -> RuntimeReflectedSubterm {
-    RuntimeReflectedSubterm { constructor: constructor.to_string(), children: Vec::new() }
+    RuntimeReflectedSubterm {
+        constructor: constructor.to_string(),
+        children: Vec::new(),
+    }
 }
 
 /// The generated CONTEXTUAL σ-injection fires the installed `WrapCong` atomic JOIN as ONE COMM,
@@ -235,8 +241,7 @@ async fn s_contextual_holes_reassembled_in_rho_not_the_report() {
         children: vec![nullary_subterm(c), nullary_subterm(c)],
     };
     for justification in &mut report.rewrite_justifications {
-        justification.sigma =
-            vec![("x".to_string(), wrong("A")), ("y".to_string(), wrong("B"))];
+        justification.sigma = vec![("x".to_string(), wrong("A")), ("y".to_string(), wrong("B"))];
         assert_eq!(
             justification.rule_label, "Flip",
             "the fired premise label (the location-independent identity) stays valid"
@@ -279,16 +284,14 @@ async fn s_contextual_holes_reassembled_in_rho_not_the_report() {
 
     // The value that WOULD arise from the corrupted report σ (`Wrap(Pair(Pair(B,B), Pair(A,A)))`) is
     // demonstrably ABSENT — the host report σ was not used to reassemble the reduced context.
-    let pair = |a: RuntimeObservationValue, b: RuntimeObservationValue| RuntimeObservationValue::Term {
-        constructor: "Pair".to_string(),
-        children: vec![a, b],
-    };
+    let pair =
+        |a: RuntimeObservationValue, b: RuntimeObservationValue| RuntimeObservationValue::Term {
+            constructor: "Pair".to_string(),
+            children: vec![a, b],
+        };
     let would_be_wrong_if_report_sigma_were_used = RuntimeObservationValue::Term {
         constructor: "Wrap".to_string(),
-        children: vec![pair(
-            pair(nullary("B"), nullary("B")),
-            pair(nullary("A"), nullary("A")),
-        )],
+        children: vec![pair(pair(nullary("B"), nullary("B")), pair(nullary("A"), nullary("A")))],
     };
     assert_ne!(
         observation.values[0], would_be_wrong_if_report_sigma_were_used,

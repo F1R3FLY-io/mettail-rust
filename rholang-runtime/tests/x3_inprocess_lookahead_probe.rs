@@ -32,9 +32,9 @@ use std::sync::Arc;
 use mettail_languages::lambda::LambdaLanguage;
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_codegen::{
-    lower_language_def, plan_rho_default_backend, reconstruct_language_def,
-    rho_net_drive_call_par, suggest_rejected_rule_dispositions, FltRegistry, FltResolve,
-    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    lower_language_def, plan_rho_default_backend, reconstruct_language_def, rho_net_drive_call_par,
+    suggest_rejected_rule_dispositions, FltRegistry, FltResolve, RhoCoverageEvidence,
+    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
 use mettail_rholang_runtime::{
     lower_rhocalc_proc_with_resolver, DriveObservationChannels, PlannedRhoBackend,
@@ -101,12 +101,21 @@ async fn one_inprocess_drive_delivers_a_computed_normal_form_to_a_waiting_receiv
         .await
         .expect("the composed program must run");
 
-    println!("PROBE-1 out={} err={} fuel={}", set.out_values.len(), set.err_data.len(), set.fuel_data.len());
+    println!(
+        "PROBE-1 out={} err={} fuel={}",
+        set.out_values.len(),
+        set.err_data.len(),
+        set.fuel_data.len()
+    );
     for (i, v) in set.out_values.iter().enumerate() {
         println!("PROBE-1 OUT[{i}] = {v:?}");
     }
     assert!(set.err_data.is_empty(), "PROBE-1 ^drive-err must be empty: {:?}", set.err_data);
-    assert!(set.fuel_data.is_empty(), "PROBE-1 ^drive-fuel must be empty: {:?}", set.fuel_data);
+    assert!(
+        set.fuel_data.is_empty(),
+        "PROBE-1 ^drive-fuel must be empty: {:?}",
+        set.fuel_data
+    );
     assert_eq!(
         set.out_values.len(),
         1,
@@ -141,14 +150,27 @@ async fn two_inprocess_drives_in_one_program_both_deliver() {
         .await
         .expect("the composed two-drive program must run");
 
-    println!("PROBE-2 out={} err={} fuel={}", set.out_values.len(), set.err_data.len(), set.fuel_data.len());
+    println!(
+        "PROBE-2 out={} err={} fuel={}",
+        set.out_values.len(),
+        set.err_data.len(),
+        set.fuel_data.len()
+    );
     for (i, v) in set.out_values.iter().enumerate() {
         println!("PROBE-2 OUT[{i}] = {v:?}");
     }
     println!("PROBE-2 err = {:?}", set.err_data);
     assert!(set.err_data.is_empty(), "PROBE-2 ^drive-err must be empty: {:?}", set.err_data);
-    assert!(set.fuel_data.is_empty(), "PROBE-2 ^drive-fuel must be empty: {:?}", set.fuel_data);
-    assert_eq!(set.out_values.len(), 2, "PROBE-2 expected BOTH computed normal forms on @\"OUT\"");
+    assert!(
+        set.fuel_data.is_empty(),
+        "PROBE-2 ^drive-fuel must be empty: {:?}",
+        set.fuel_data
+    );
+    assert_eq!(
+        set.out_values.len(),
+        2,
+        "PROBE-2 expected BOTH computed normal forms on @\"OUT\""
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -169,7 +191,12 @@ async fn omega_under_an_inprocess_drive_reports_fuel_exhaustion() {
         .await
         .expect("the composed Ω program must run");
 
-    println!("PROBE-3 out={} err={} fuel={}", set.out_values.len(), set.err_data.len(), set.fuel_data.len());
+    println!(
+        "PROBE-3 out={} err={} fuel={}",
+        set.out_values.len(),
+        set.err_data.len(),
+        set.fuel_data.len()
+    );
     assert!(
         !set.fuel_data.is_empty(),
         "PROBE-3 Ω must exhaust fuel and SAY SO on ^drive-fuel (out={:?}, err={:?})",

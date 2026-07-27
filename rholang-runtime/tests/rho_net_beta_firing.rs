@@ -38,10 +38,11 @@ mod lambdademo;
 
 use lambdademo::LambdaDemoLanguage;
 use mettail_rholang_codegen::{
-    lower_language_def, plan_rho_default_backend, reconstruct_language_def, reflect_ground_term_par,
-    subst_seed_send_par, suggest_rejected_rule_dispositions, GroundTerm, RhoCoverageEvidence,
-    RhoDefaultBackendRequirements, RhoGuardCoverageEvidence, BOUND_VAR_REFLECT_LABEL,
-    FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+    lower_language_def, plan_rho_default_backend, reconstruct_language_def,
+    reflect_ground_term_par, subst_seed_send_par, suggest_rejected_rule_dispositions, GroundTerm,
+    RhoCoverageEvidence, RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
+    BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::PlannedRhoBackend;
 use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
@@ -74,10 +75,16 @@ fn lambda_demo_backend() -> (PlannedRhoBackend, String) {
 
 /// A nullary observation term, e.g. `A`.
 fn onullary(constructor: &str) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children: Vec::new() }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children: Vec::new(),
+    }
 }
 fn oterm(constructor: &str, children: Vec<RuntimeObservationValue>) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children,
+    }
 }
 
 // ── reflected-term (GroundTerm) builders, for the direct-seed spike cases ──────────────────────
@@ -143,9 +150,12 @@ async fn lambdademo_beta_reduction_fires_as_a_comm_on_the_reducer() {
 
     // The MATCH path: M-reflect the subject, admit `Beta`, LOCATE + CAPTURE the raw `(body, arg)`,
     // fire the SEED, drive the TRS cascade — all on the reducer.
-    let invocation =
-        LambdaDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
-            .expect("the in-Rho β MATCH path admits (lam x. f(x), A)");
+    let invocation = LambdaDemoLanguage::rho_net_match_invocation_from_dovetail_to(
+        term.as_ref(),
+        &report,
+        "OUT",
+    )
+    .expect("the in-Rho β MATCH path admits (lam x. f(x), A)");
     assert_eq!(invocation.out_channel, "OUT");
 
     let observation = backend
@@ -191,12 +201,19 @@ async fn s_binder_reduct_is_report_sigma_independent() {
 
     let mut report = LambdaDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
         .expect("LambdaDemo Dovetail report must compile");
-    assert_eq!(report.rewrite_justifications.len(), 1, "(lam x. f(x), A) fires exactly one Beta");
+    assert_eq!(
+        report.rewrite_justifications.len(),
+        1,
+        "(lam x. f(x), A) fires exactly one Beta"
+    );
 
     // Corrupt BOTH the σ (a report-σ locator would key off it and never find the real
     // `App(^lambda(F(^bound Z)), A)`) AND the contractum (the RETIRED host reduct). Leave the fired
     // label + completeness valid — the only report reads the MATCH path makes.
-    let nonsense = RuntimeReflectedSubterm { constructor: "NONSENSE".to_string(), children: Vec::new() };
+    let nonsense = RuntimeReflectedSubterm {
+        constructor: "NONSENSE".to_string(),
+        children: Vec::new(),
+    };
     for justification in &mut report.rewrite_justifications {
         justification.sigma =
             vec![("fun".to_string(), nonsense.clone()), ("arg".to_string(), nonsense.clone())];
@@ -205,9 +222,12 @@ async fn s_binder_reduct_is_report_sigma_independent() {
     }
     assert!(report.is_complete(), "completeness stays valid (gate only)");
 
-    let invocation =
-        LambdaDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
-            .expect("the MATCH path admits the β-redex despite a corrupted report σ + contractum");
+    let invocation = LambdaDemoLanguage::rho_net_match_invocation_from_dovetail_to(
+        term.as_ref(),
+        &report,
+        "OUT",
+    )
+    .expect("the MATCH path admits the β-redex despite a corrupted report σ + contractum");
 
     let observation = backend
         .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
@@ -229,7 +249,10 @@ async fn s_binder_reduct_is_report_sigma_independent() {
     );
     assert_ne!(
         observation.values[0],
-        oterm("F", vec![oterm(BOUND_VAR_REFLECT_LABEL, vec![onullary(PEANO_ZERO_REFLECT_LABEL)])]),
+        oterm(
+            "F",
+            vec![oterm(BOUND_VAR_REFLECT_LABEL, vec![onullary(PEANO_ZERO_REFLECT_LABEL)])]
+        ),
         "the reduct is the SUBSTITUTED NF f(A), not the raw captured body f(^bound ^Z)"
     );
 }
@@ -258,7 +281,10 @@ async fn lambdademo_beta_case2_nested_binder_depth_increment_fires_in_rho() {
 
     assert_eq!(
         observation.values,
-        vec![oterm(LAMBDA_REFLECT_LABEL, vec![oterm(FREE_VAR_REFLECT_LABEL, vec![onullary("c")])])],
+        vec![oterm(
+            LAMBDA_REFLECT_LABEL,
+            vec![oterm(FREE_VAR_REFLECT_LABEL, vec![onullary("c")])]
+        )],
         "(λ.λ.1) c must reduce to λ.c — depth increment + shiftk fired on the installed TRS",
     );
 }

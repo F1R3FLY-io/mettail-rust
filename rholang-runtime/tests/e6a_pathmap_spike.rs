@@ -16,20 +16,20 @@
 //! * (U2) THREE repeated runs produce bit-identical observed multisets,
 //!   site-enumeration readbacks (including order), and counter snapshots.
 
+use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{EPathMap, Expr, Par, ReceiveBind};
-use models::rust::utils::{new_boundvar_par, new_freevar_par, new_gstring_par, new_receive_par,
-    new_send_par};
-use models::create_bit_vector;
+use models::rust::utils::{
+    new_boundvar_par, new_freevar_par, new_gstring_par, new_receive_par, new_send_par,
+};
 
 use mettail_rholang_codegen::{reflect_ground_term_par, GroundTerm, InRhoMatchingRuleset};
-use rholang::rust::interpreter::rho_runtime::RhoRuntime;
 use mettail_rholang_runtime::{
     bench_inj_and_read, bench_runtime_with_counters, decode_sites_par, discovery_call_par,
-    e6a_index_channel, e6a_sites_channel, e6a_tag_string, entry_query_match_par,
-    entry_query_shape,
+    e6a_index_channel, e6a_sites_channel, e6a_tag_string, entry_query_match_par, entry_query_shape,
     pathmap_spread_term_par, sites_non_ancestral, BenchWorkloadParams, CommCounterSnapshot,
 };
+use rholang::rust::interpreter::rho_runtime::RhoRuntime;
 
 use dovetail::rules::Pattern;
 use dovetail::set_automaton::{PatternId, SetAutomaton};
@@ -117,10 +117,7 @@ fn swap_ruleset() -> InRhoMatchingRuleset {
 fn nested_ruleset() -> InRhoMatchingRuleset {
     let automaton = SetAutomaton::compile_structural([(
         PatternId(0),
-        Pattern::app(
-            "f".to_string(),
-            vec![Pattern::app("g".to_string(), vec![Pattern::var("x")])],
-        ),
+        Pattern::app("f".to_string(), vec![Pattern::app("g".to_string(), vec![Pattern::var("x")])]),
     )])
     .expect("f(g(x)) compiles");
     InRhoMatchingRuleset {
@@ -141,14 +138,8 @@ fn two_swap_subject() -> GroundTerm {
     GroundTerm::new(
         "Pair",
         vec![
-            GroundTerm::new(
-                "Swap",
-                vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")],
-            ),
-            GroundTerm::new(
-                "Swap",
-                vec![GroundTerm::nullary("C"), GroundTerm::nullary("D")],
-            ),
+            GroundTerm::new("Swap", vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")]),
+            GroundTerm::new("Swap", vec![GroundTerm::nullary("C"), GroundTerm::nullary("D")]),
         ],
     )
 }
@@ -195,8 +186,15 @@ async fn u1_receive_pattern_cannot_destructure_epathmap() {
             remainder: None,
             free_count: 1,
         }],
-        new_send_par(quoted("u1:witness"), vec![quoted("fired")], false, Vec::new(), false,
-            Vec::new(), false),
+        new_send_par(
+            quoted("u1:witness"),
+            vec![quoted("fired")],
+            false,
+            Vec::new(),
+            false,
+            Vec::new(),
+            false,
+        ),
         false,
         false,
         1,
@@ -302,11 +300,8 @@ async fn drive_flat_two_swap() -> (Vec<String>, Vec<String>, CommCounterSnapshot
     let sites_channel = e6a_sites_channel(FP, ROOT_SITE, "Swap");
     let sites_data = runtime.get_data(&quoted(&sites_channel)).await;
     assert_eq!(sites_data.len(), 1, "exactly one discovery result rests on {sites_channel}");
-    let decoded = decode_sites_par(
-        &sites_data[0].a.pars[0],
-        &e6a_tag_string(FP, "Swap"),
-    )
-    .expect("the subtrie decodes");
+    let decoded = decode_sites_par(&sites_data[0].a.pars[0], &e6a_tag_string(FP, "Swap"))
+        .expect("the subtrie decodes");
 
     (sorted_renderings(&result.observed), decoded, result.comm.clone())
 }
@@ -344,7 +339,11 @@ async fn flat_query_chain_guard_sigma_accept_and_machine_enumeration() {
     assert_eq!(comm.pathmap_index, 3, "1 discovery + 2 per-site index binds; got {comm:?}");
     assert_eq!(comm.firing_visible, 2, "one accept COMM per fired site; got {comm:?}");
     assert_eq!(comm.matching_tau, 0, "NO spread-channel traffic in the treatment; got {comm:?}");
-    assert_eq!(comm.other, 0, "all channels classified; unknown: {:?}", comm.unknown_channel_samples);
+    assert_eq!(
+        comm.other, 0,
+        "all channels classified; unknown: {:?}",
+        comm.unknown_channel_samples
+    );
     assert_eq!(comm.subst_tau, 0, "no subst TRS in this workload; got {comm:?}");
     assert_eq!(comm.ac_carrier, 0, "no AC in this workload; got {comm:?}");
 }
@@ -461,9 +460,10 @@ async fn guard_failing_sites_fire_nothing_and_never_abort() {
     let (mut runtime, comm, matches) = bench_runtime_with_counters(Vec::new(), OUT)
         .await
         .expect("counting runtime builds");
-    let result = bench_inj_and_read(&mut runtime, &program, OUT, workload("guard"), &comm, &matches)
-        .await
-        .expect("a guard-failing site must not abort the injection");
+    let result =
+        bench_inj_and_read(&mut runtime, &program, OUT, workload("guard"), &comm, &matches)
+            .await
+            .expect("a guard-failing site must not abort the injection");
     assert!(
         result.observed.is_empty(),
         "no accept may fire at a guard-failing site; got {:?}",

@@ -75,25 +75,21 @@ use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{
     BindPattern, Expr, ListParWithRandom, Par, Receive, ReceiveBind, Send, TaggedContinuation,
 };
-use models::rust::utils::{
-    new_boundvar_par, new_freevar_par, new_gint_par, new_gstring_par,
-};
+use models::rust::utils::{new_boundvar_par, new_freevar_par, new_gint_par, new_gstring_par};
+use rho_pure_eval::Env;
 use rholang::rust::interpreter::accounting::cost_accounting::CostAccounting;
 use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::has_cost::HasCost;
 use rholang::rust::interpreter::accounting::RuntimeBudget;
-use rholang::rust::interpreter::metering::MeteredMachine;
 use rholang::rust::interpreter::external_services::ExternalServices;
+use rholang::rust::interpreter::metering::MeteredMachine;
 use rholang::rust::interpreter::rho_runtime::{create_rho_runtime, RhoRuntime};
-use rho_pure_eval::Env;
 use rspace_plus_plus::rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::rspace::RSpace;
-use rspace_plus_plus::rspace::rspace_interface::{
-    ISpace, MaybeConsumeResult, MaybeProduceResult,
-};
+use rspace_plus_plus::rspace::rspace_interface::{ISpace, MaybeConsumeResult, MaybeProduceResult};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use rspace_plus_plus::rspace::trace::event::{Consume, Produce};
@@ -101,8 +97,8 @@ use rspace_plus_plus::rspace::trace::Log;
 
 use mettail_rholang_runtime::guard_par_substrate::SubstrateGuardMatcher;
 use mettail_rholang_runtime::speculation::{
-    canonicalize, content_fingerprint, BranchOutcome, Rendezvous, RendezvousName,
-    SpeculationError, SpeculativeSandbox, SpeculativeState,
+    canonicalize, content_fingerprint, BranchOutcome, Rendezvous, RendezvousName, SpeculationError,
+    SpeculativeSandbox, SpeculativeState,
 };
 
 type Space = RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
@@ -135,9 +131,7 @@ fn host_budget(units: i64) -> RuntimeBudget {
 
 /// A sandbox funded from a fresh host budget of `HOST_UNITS`.
 async fn funded_sandbox() -> SpeculativeSandbox {
-    let sandbox = SpeculativeSandbox::new()
-        .await
-        .expect("sandbox must build");
+    let sandbox = SpeculativeSandbox::new().await.expect("sandbox must build");
     sandbox.fund_from(&host_budget(HOST_UNITS));
     sandbox
 }
@@ -204,11 +198,7 @@ fn forwarding_receive(source: &str, target: &str) -> Par {
         None,
         Par::default().with_sends(vec![Send {
             chan: Some(chan(target)),
-            data: vec![new_boundvar_par(
-                0,
-                models::create_bit_vector(&vec![0]),
-                false,
-            )],
+            data: vec![new_boundvar_par(0, models::create_bit_vector(&vec![0]), false)],
             persistent: false,
             locally_free: models::create_bit_vector(&vec![0]),
             connective_used: false,
@@ -249,11 +239,7 @@ fn receive_with_body(
 fn guard_first_bound_at_most_45() -> Par {
     Par::default().with_exprs(vec![Expr {
         expr_instance: Some(ExprInstance::ELteBody(models::rhoapi::ELte {
-            p1: Some(new_boundvar_par(
-                0,
-                models::create_bit_vector(&vec![0]),
-                false,
-            )),
+            p1: Some(new_boundvar_par(0, models::create_bit_vector(&vec![0]), false)),
             p2: Some(new_gint_par(45, Vec::new(), false)),
         })),
     }])
@@ -297,13 +283,7 @@ fn corpus() -> Vec<Program> {
             par: parallel(vec![
                 send("offer", 55),
                 send("offer", 42),
-                receive(
-                    &["offer"],
-                    "guarded",
-                    false,
-                    false,
-                    Some(guard_first_bound_at_most_45()),
-                ),
+                receive(&["offer"], "guarded", false, false, Some(guard_first_bound_at_most_45())),
             ]),
             expected_comms: 1,
         },
@@ -406,10 +386,7 @@ impl RecordingSpace {
             self.fired
                 .lock()
                 .expect("the COMM ledger mutex")
-                .push(CommName {
-                    consume: consume.hash,
-                    data,
-                });
+                .push(CommName { consume: consume.hash, data });
         }
     }
 }
@@ -562,7 +539,9 @@ async fn ordinary_run(par: Par) -> OrdinaryRun {
     // The oracle is metered exactly as the sandbox is — same units, same
     // charge points (`eval_send` / `eval_receive`) — so the two arms differ in
     // the stratification and in nothing else, cost included.
-    runtime.cost().set(Cost::create(HOST_UNITS, "s1 host deploy"));
+    runtime
+        .cost()
+        .set(Cost::create(HOST_UNITS, "s1 host deploy"));
     runtime
         .inj(par, Env::new(), seed())
         .await
@@ -598,10 +577,7 @@ struct TraceRun {
 
 /// Run `par` in a sandbox, at each step firing the rendezvous whose name matches
 /// the next COMM the ordinary run made.
-async fn trace_following_run(
-    par: Par,
-    wanted: &[CommName],
-) -> Result<TraceRun, SpeculationError> {
+async fn trace_following_run(par: Par, wanted: &[CommName]) -> Result<TraceRun, SpeculationError> {
     let sandbox = SpeculativeSandbox::new().await?;
     sandbox.fund_from(&host_budget(HOST_UNITS));
     sandbox.saturate(par, seed()).await?;
@@ -788,10 +764,7 @@ async fn t0d_snapshot_sees_what_to_map_cannot() {
     let program_continuations: usize = snapshot.continuations.values().map(|v| v.len()).sum();
     let program_joins: usize = snapshot.joins.values().map(|v| v.len()).sum();
 
-    assert_eq!(
-        program_continuations, 3,
-        "snapshot() sees all three staged continuations"
-    );
+    assert_eq!(program_continuations, 3, "snapshot() sees all three staged continuations");
     assert!(
         program_joins >= 4,
         "snapshot() sees the joins index (one entry per channel per group); saw {program_joins}"
@@ -940,17 +913,10 @@ async fn t2_index_zero_diverges_from_the_ordinary_choice() {
     for line in lines {
         println!("  {line}");
     }
-    println!(
-        "  all steps:       {agreements}/{decisions} agreed with E(S)[0]"
-    );
-    println!(
-        "  contended steps: {contended_agreements}/{contended_decisions} agreed with E(S)[0]"
-    );
+    println!("  all steps:       {agreements}/{decisions} agreed with E(S)[0]");
+    println!("  contended steps: {contended_agreements}/{contended_decisions} agreed with E(S)[0]");
 
-    assert!(
-        decisions > 0,
-        "the corpus must make at least one scheduling decision"
-    );
+    assert!(decisions > 0, "the corpus must make at least one scheduling decision");
     assert!(
         contended_decisions > 0,
         "teeth: the corpus must contain at least one CONTENDED step, or this \
@@ -997,10 +963,7 @@ async fn t3_a_peek_is_two_strata() {
 
     let step = sandbox.fire(enabled[0].clone()).await.expect("fire");
     assert!(step.peek, "the fired step is a peek");
-    assert_eq!(
-        step.peek_restores, 1,
-        "exactly one non-persistent datum is restored"
-    );
+    assert_eq!(step.peek_restores, 1, "exactly one non-persistent datum is restored");
 
     let after = canonicalize(&sandbox.snapshot());
     let resting_after: Vec<Blake2b256Hash> = after
@@ -1010,11 +973,7 @@ async fn t3_a_peek_is_two_strata() {
         .iter()
         .map(|datum| datum.source.hash.clone())
         .collect();
-    assert_eq!(
-        resting_after.len(),
-        1,
-        "the peek'd datum is enumerable again"
-    );
+    assert_eq!(resting_after.len(), 1, "the peek'd datum is enumerable again");
 
     // The payload is the same...
     let payload_before = before.data.get(&chan("p")).expect("before").as_slice()[0]
@@ -1025,10 +984,7 @@ async fn t3_a_peek_is_two_strata() {
         .a
         .pars
         .clone();
-    assert_eq!(
-        payload_before, payload_after,
-        "a peek returns the same payload"
-    );
+    assert_eq!(payload_before, payload_after, "a peek returns the same payload");
 
     // ...but the SOURCE is not. `Produce::create` reads (channel, payload,
     // persistence) — all three unchanged — so the hashes would be EQUAL if the
@@ -1089,10 +1045,7 @@ async fn t4_a_persistent_continuation_survives_its_own_firing() {
         "both data drained; the receiver rests with nothing to take"
     );
     let final_state = canonicalize(&sandbox.snapshot());
-    assert!(
-        final_state.data.get(&chan("q")).is_none(),
-        "both data are consumed"
-    );
+    assert!(final_state.data.get(&chan("q")).is_none(), "both data are consumed");
     assert_eq!(
         final_state
             .continuations
@@ -1123,7 +1076,10 @@ async fn t5_a_named_non_least_selection_is_reachable() {
 
     // Enumerate once to learn the shape.
     let probe = funded_sandbox().await;
-    probe.saturate(program.clone(), seed()).await.expect("saturate");
+    probe
+        .saturate(program.clone(), seed())
+        .await
+        .expect("saturate");
     let width = probe.enabled().len();
     assert_eq!(width, 3, "one receiver, three data");
 
@@ -1132,16 +1088,16 @@ async fn t5_a_named_non_least_selection_is_reachable() {
 
     for index in 0..width {
         let sandbox = funded_sandbox().await;
-        sandbox.saturate(program.clone(), seed()).await.expect("saturate");
+        sandbox
+            .saturate(program.clone(), seed())
+            .await
+            .expect("saturate");
         let enabled = sandbox.enabled();
         assert_eq!(enabled.len(), width, "the enumeration is reproducible");
 
         let name = RendezvousName::of(&enabled[index]);
         let step = sandbox.fire(enabled[index].clone()).await.expect("fire");
-        assert_eq!(
-            step.name, name,
-            "the step reports the name it was asked to fire"
-        );
+        assert_eq!(step.name, name, "the step reports the name it was asked to fire");
 
         // The datum it named is gone; the other two are not.
         let after = canonicalize(&sandbox.snapshot());
@@ -1333,11 +1289,7 @@ async fn t7_a_saved_configuration_reloads_exactly() {
 #[tokio::test]
 async fn t8_an_unfunded_sandbox_refuses_to_evaluate() {
     let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
-    assert_eq!(
-        sandbox.remaining().value,
-        0,
-        "a fresh sandbox is funded with nothing"
-    );
+    assert_eq!(sandbox.remaining().value, 0, "a fresh sandbox is funded with nothing");
 
     let outcome = sandbox.saturate(send("c", 1), seed()).await;
     match outcome {
@@ -1494,7 +1446,10 @@ async fn t11_truncation_is_resumable_and_resumption_is_faithful() {
 
     // ── the unbroken run: three steps, always E(S)[0] (each step has |E(S)| = 1)
     let whole = funded_sandbox().await;
-    whole.saturate(program.clone(), seed()).await.expect("saturate");
+    whole
+        .saturate(program.clone(), seed())
+        .await
+        .expect("saturate");
     let unbroken = whole.run_trace(8, |_| 0).await;
     let (unbroken_state, unbroken_trace) = match unbroken {
         BranchOutcome::Quiescent { state, trace } => (state, trace),

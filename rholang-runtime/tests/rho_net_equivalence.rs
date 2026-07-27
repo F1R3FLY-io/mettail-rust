@@ -37,7 +37,6 @@ use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton};
 #[path = "../../languages/tests/definitions/swapdemo.rs"]
 mod swapdemo;
 
-use swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 use mettail_rholang_codegen::{
     ac_bag_pattern, ac_contract_call, ac_sigma_receiver_par, automaton_receiver_network_par,
     compile_in_rho_matching_ruleset, in_rho_match_call_par, lower_language_def,
@@ -56,6 +55,7 @@ use mettail_runtime::{
     Language, RuntimeBackend, RuntimeDovetailRunReport, RuntimeObservationValue,
     RuntimeReflectedSubterm, Term,
 };
+use swapdemo::{Proc, SwapDemoLanguage, SwapDemoTerm};
 
 /// Reconstruct SwapDemo's augmented `LanguageDef` from the generated metadata's
 /// `definition_source()` (the macro-time def, composition + auto-injection),
@@ -1562,9 +1562,10 @@ async fn nested_redex_in_arg_position_fires_in_rho() {
     let report = SwapDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
         .expect("SwapDemo nested-arg Dovetail report must compile");
 
-    let invocation =
-        SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(&term, &report, "OUT")
-            .expect("the locate-all MATCH path admits the outer + nested-arg redexes (no fallback)");
+    let invocation = SwapDemoLanguage::rho_net_match_invocation_from_dovetail_to(
+        &term, &report, "OUT",
+    )
+    .expect("the locate-all MATCH path admits the outer + nested-arg redexes (no fallback)");
     let observation = backend
         .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
         .await
@@ -1749,7 +1750,12 @@ fn stage4_swapdemo_default_backend_fires_nested_and_multiple_in_rho() {
     let nested_obs = nested_backend_report
         .observations_for_channel("OUT")
         .expect("an OUT observation");
-    assert_eq!(nested_obs.observed_count(), 1, "the nested redex fired (got {:?})", nested_obs.values);
+    assert_eq!(
+        nested_obs.observed_count(),
+        1,
+        "the nested redex fired (got {:?})",
+        nested_obs.values
+    );
     assert_eq!(nested_obs.values[0], pair_b_a, "the nested Swap(A,B) fired → Pair(B, A)");
 }
 
@@ -1943,9 +1949,8 @@ mod locate_all_property {
     /// Reflect a SwapDemo `Proc` to the observation value the spread's `cap:` collapse fold yields
     /// for it (the decoder counterpart of `reflect_ground_term_par` over the whole subtree).
     fn proc_to_observation(proc: &Proc) -> RuntimeObservationValue {
-        let node = |c: &str, children: Vec<RuntimeObservationValue>| RuntimeObservationValue::Term {
-            constructor: c.to_string(),
-            children,
+        let node = |c: &str, children: Vec<RuntimeObservationValue>| {
+            RuntimeObservationValue::Term { constructor: c.to_string(), children }
         };
         match proc {
             Proc::A => node("A", Vec::new()),

@@ -72,7 +72,7 @@
 
 use mettail_rholang_codegen::{
     reconstruct_language_def, reflect_ground_term_par, rho_net_drive_call_par_with_fuel,
-    BOUND_VAR_REFLECT_LABEL, CollectionType, FREE_VAR_REFLECT_LABEL, GroundTerm,
+    CollectionType, GroundTerm, BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL,
     LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::{
@@ -206,9 +206,8 @@ fn multi_rule_shared_def(r: usize) -> mettail_ast::language::LanguageDef {
         terms.push_str(&format!(
             "                H{i} . u:Term |- \"h{i}\" \"(\" u \")\" : Term ;\n"
         ));
-        rewrites.push_str(&format!(
-            "                R{i} . |- (H{i} (Wrap u)) ~> (C (H{i} u)) ;\n"
-        ));
+        rewrites
+            .push_str(&format!("                R{i} . |- (H{i} (Wrap u)) ~> (C (H{i} u)) ;\n"));
     }
     reconstruct(&format!(
         "name: Lambda,\n            types {{ Term }},\n            terms {{\n{terms}            }},\n            equations {{}},\n            rewrites {{\n{rewrites}            }},\n"
@@ -230,8 +229,13 @@ async fn drive_both_arms(
     subject: &GroundTerm,
 ) -> (ArmObservation, ArmObservation) {
     let arms = scion_arm_programs(def).expect("both arms plan + install");
-    drive_installed_arms(&arms.control_installed, &arms.treatment_installed, &arms.fingerprint, subject)
-        .await
+    drive_installed_arms(
+        &arms.control_installed,
+        &arms.treatment_installed,
+        &arms.fingerprint,
+        subject,
+    )
+    .await
 }
 
 /// Drive `subject` through two pre-built installed programs sharing `fingerprint`
@@ -252,7 +256,10 @@ async fn drive_installed_arms(
     let (t_set, t_comm) = drive_arm_with_counters(treatment_installed, &call, &channels)
         .await
         .expect("treatment drive runs to quiescence");
-    (ArmObservation { set: c_set, comm: c_comm }, ArmObservation { set: t_set, comm: t_comm })
+    (
+        ArmObservation { set: c_set, comm: c_comm },
+        ArmObservation { set: t_set, comm: t_comm },
+    )
 }
 
 /// Sum every class counter (the flag-counter `join_arity_gt1` is excluded — it is
@@ -271,7 +278,9 @@ fn total_comms(c: &CommCounterSnapshot) -> u64 {
 }
 
 fn fired_sorted(set: &DriveObservationSet) -> Vec<String> {
-    let mut fired = set.fired_labels().expect("every ledger datum is a GString rule label");
+    let mut fired = set
+        .fired_labels()
+        .expect("every ledger datum is a GString rule label");
     fired.sort();
     fired
 }
@@ -344,29 +353,95 @@ async fn w_a_beta_chains_are_exact_aa_null() {
         // The β cascade actually ran (n Beta firings, subst_tau > 0).
         check(
             fired_count(&control.set, "Beta") == n && fired_count(&treatment.set, "Beta") == n,
-            format!("W-A n={n}: expected {n} Beta firings, got c={} t={}", fired_count(&control.set, "Beta"), fired_count(&treatment.set, "Beta")),
+            format!(
+                "W-A n={n}: expected {n} Beta firings, got c={} t={}",
+                fired_count(&control.set, "Beta"),
+                fired_count(&treatment.set, "Beta")
+            ),
             &mut deviations,
         );
-        check(c.subst_tau > 0, format!("W-A n={n}: control subst_tau must be > 0 (β ran)"), &mut deviations);
+        check(
+            c.subst_tau > 0,
+            format!("W-A n={n}: control subst_tau must be > 0 (β ran)"),
+            &mut deviations,
+        );
 
         // FROZEN: EXACT Δ=0 on EVERY counter.
-        check(c.matching_tau == t.matching_tau, format!("W-A n={n}: Δmatching_tau={}", c.matching_tau as i64 - t.matching_tau as i64), &mut deviations);
-        check(c.firing_visible == t.firing_visible, format!("W-A n={n}: Δfiring_visible={}", c.firing_visible as i64 - t.firing_visible as i64), &mut deviations);
-        check(c.subst_tau == t.subst_tau, format!("W-A n={n}: Δsubst_tau={}", c.subst_tau as i64 - t.subst_tau as i64), &mut deviations);
-        check(c.respread_tau == t.respread_tau, format!("W-A n={n}: Δrespread_tau={}", c.respread_tau as i64 - t.respread_tau as i64), &mut deviations);
-        check(c.drive_tau == t.drive_tau, format!("W-A n={n}: Δdrive_tau={}", c.drive_tau as i64 - t.drive_tau as i64), &mut deviations);
-        check(c.ac_carrier == t.ac_carrier, format!("W-A n={n}: Δac_carrier={}", c.ac_carrier as i64 - t.ac_carrier as i64), &mut deviations);
-        check(c.pathmap_index == t.pathmap_index, format!("W-A n={n}: Δpathmap_index"), &mut deviations);
-        check(c.contextual_plumbing == t.contextual_plumbing, format!("W-A n={n}: Δcontextual_plumbing"), &mut deviations);
-        check(c.observation == t.observation, format!("W-A n={n}: Δobservation={}", c.observation as i64 - t.observation as i64), &mut deviations);
-        check(c.other == t.other, format!("W-A n={n}: Δother={}", c.other as i64 - t.other as i64), &mut deviations);
-        check(c.join_arity_gt1 == t.join_arity_gt1, format!("W-A n={n}: Δjoin_arity_gt1={}", c.join_arity_gt1 as i64 - t.join_arity_gt1 as i64), &mut deviations);
+        check(
+            c.matching_tau == t.matching_tau,
+            format!("W-A n={n}: Δmatching_tau={}", c.matching_tau as i64 - t.matching_tau as i64),
+            &mut deviations,
+        );
+        check(
+            c.firing_visible == t.firing_visible,
+            format!(
+                "W-A n={n}: Δfiring_visible={}",
+                c.firing_visible as i64 - t.firing_visible as i64
+            ),
+            &mut deviations,
+        );
+        check(
+            c.subst_tau == t.subst_tau,
+            format!("W-A n={n}: Δsubst_tau={}", c.subst_tau as i64 - t.subst_tau as i64),
+            &mut deviations,
+        );
+        check(
+            c.respread_tau == t.respread_tau,
+            format!("W-A n={n}: Δrespread_tau={}", c.respread_tau as i64 - t.respread_tau as i64),
+            &mut deviations,
+        );
+        check(
+            c.drive_tau == t.drive_tau,
+            format!("W-A n={n}: Δdrive_tau={}", c.drive_tau as i64 - t.drive_tau as i64),
+            &mut deviations,
+        );
+        check(
+            c.ac_carrier == t.ac_carrier,
+            format!("W-A n={n}: Δac_carrier={}", c.ac_carrier as i64 - t.ac_carrier as i64),
+            &mut deviations,
+        );
+        check(
+            c.pathmap_index == t.pathmap_index,
+            format!("W-A n={n}: Δpathmap_index"),
+            &mut deviations,
+        );
+        check(
+            c.contextual_plumbing == t.contextual_plumbing,
+            format!("W-A n={n}: Δcontextual_plumbing"),
+            &mut deviations,
+        );
+        check(
+            c.observation == t.observation,
+            format!("W-A n={n}: Δobservation={}", c.observation as i64 - t.observation as i64),
+            &mut deviations,
+        );
+        check(
+            c.other == t.other,
+            format!("W-A n={n}: Δother={}", c.other as i64 - t.other as i64),
+            &mut deviations,
+        );
+        check(
+            c.join_arity_gt1 == t.join_arity_gt1,
+            format!(
+                "W-A n={n}: Δjoin_arity_gt1={}",
+                c.join_arity_gt1 as i64 - t.join_arity_gt1 as i64
+            ),
+            &mut deviations,
+        );
 
         // Fired-multiset equality + err/fuel empty.
-        check(fired_sorted(&control.set) == fired_sorted(&treatment.set), format!("W-A n={n}: fired multisets differ"), &mut deviations);
+        check(
+            fired_sorted(&control.set) == fired_sorted(&treatment.set),
+            format!("W-A n={n}: fired multisets differ"),
+            &mut deviations,
+        );
         check_err_fuel_empty(&format!("W-A n={n}"), &control, &treatment, &mut deviations);
     }
-    assert!(deviations.is_empty(), "W-A FROZEN-prediction deviations (report, do not adjust):\n{}", deviations.join("\n"));
+    assert!(
+        deviations.is_empty(),
+        "W-A FROZEN-prediction deviations (report, do not adjust):\n{}",
+        deviations.join("\n")
+    );
 }
 
 // ══ W-B — the structural ladder: demand-driven scion RECOVERS ΔDriveTau/firing = s (LINEAR) ══
@@ -415,9 +490,18 @@ async fn w_b_scion_ladder_drivetau_linear_delta_s() {
             let drive_c = control.comm.drive_tau as i64;
             let drive_t = treatment.comm.drive_tau as i64;
             let delta_drive = drive_c - drive_t;
-            let per_r1 = if m > 0 { delta_drive.div_euclid(m as i64) } else { 0 };
-            let delta_total = total_comms(&control.comm) as i64 - total_comms(&treatment.comm) as i64;
-            let total_per_r1 = if m > 0 { delta_total.div_euclid(m as i64) } else { 0 };
+            let per_r1 = if m > 0 {
+                delta_drive.div_euclid(m as i64)
+            } else {
+                0
+            };
+            let delta_total =
+                total_comms(&control.comm) as i64 - total_comms(&treatment.comm) as i64;
+            let total_per_r1 = if m > 0 {
+                delta_total.div_euclid(m as i64)
+            } else {
+                0
+            };
             // FROZEN prediction (design v2 §5): `Δ(DriveTau)/firing = s` within ±1 — the demand-
             // driven recovery. `per_r1 = s ±1` at m=16 also certifies treatment DriveTau LINEAR
             // (a ½m² treatment would make `per_r1` hugely negative). A deviation is REPORTED below.
@@ -431,13 +515,34 @@ async fn w_b_scion_ladder_drivetau_linear_delta_s() {
             );
 
             // Structural chain shape.
-            check(n_r1 == m, format!("W-B s={s} m={m}: expected {m} R1 firings, got {n_r1}"), &mut correctness);
-            check(n_r2 == 1, format!("W-B s={s} m={m}: expected 1 R2 firing, got {n_r2}"), &mut correctness);
+            check(
+                n_r1 == m,
+                format!("W-B s={s} m={m}: expected {m} R1 firings, got {n_r1}"),
+                &mut correctness,
+            );
+            check(
+                n_r2 == 1,
+                format!("W-B s={s} m={m}: expected 1 R2 firing, got {n_r2}"),
+                &mut correctness,
+            );
             // CORRECTNESS (must hold): the scion reaches the same NF and fires the same multiset
             // as control, with empty typed channels — the semantic validation of L1.
-            check(control.set.out_values == treatment.set.out_values, format!("W-B s={s} m={m}: out_values differ (scion NF ≠ redrive NF)"), &mut correctness);
-            check(fired_sorted(&control.set) == fired_sorted(&treatment.set), format!("W-B s={s} m={m}: fired multisets differ"), &mut correctness);
-            check_err_fuel_empty(&format!("W-B s={s} m={m}"), &control, &treatment, &mut correctness);
+            check(
+                control.set.out_values == treatment.set.out_values,
+                format!("W-B s={s} m={m}: out_values differ (scion NF ≠ redrive NF)"),
+                &mut correctness,
+            );
+            check(
+                fired_sorted(&control.set) == fired_sorted(&treatment.set),
+                format!("W-B s={s} m={m}: fired multisets differ"),
+                &mut correctness,
+            );
+            check_err_fuel_empty(
+                &format!("W-B s={s} m={m}"),
+                &control,
+                &treatment,
+                &mut correctness,
+            );
         }
     }
     // CORRECTNESS first (the most serious gate — a real L1 defect).
@@ -485,8 +590,16 @@ async fn w_c_multi_rule_shared_win_preserved() {
             treatment.set.err_data.len(), treatment.set.fuel_data.len(),
         );
         // Each of the r rules fires exactly once.
-        check(fired_c.len() == r, format!("W-C r={r}: expected {r} firings, control fired {}", fired_c.len()), &mut deviations);
-        check(fired_c == fired_t, format!("W-C r={r}: fired multisets differ (c={fired_c:?} t={fired_t:?})"), &mut deviations);
+        check(
+            fired_c.len() == r,
+            format!("W-C r={r}: expected {r} firings, control fired {}", fired_c.len()),
+            &mut deviations,
+        );
+        check(
+            fired_c == fired_t,
+            format!("W-C r={r}: fired multisets differ (c={fired_c:?} t={fired_t:?})"),
+            &mut deviations,
+        );
         // The scion WIN is PRESERVED (design v2 §5 — "W-C win preserved"; Δ≥0 unconditional). The v2
         // mechanism grafts the shared `C` wrapper inert, saving the 1 `C`-descent DriveTau control
         // pays PER firing → ΔDriveTau = r (the r firings). ⚠ L2 FINDING: this is HALF the task's
@@ -501,10 +614,18 @@ async fn w_c_multi_rule_shared_win_preserved() {
             &mut deviations,
         );
         // Confluent cell: same NF on both arms (strengthens the fired-multiset gate).
-        check(control.set.out_values == treatment.set.out_values, format!("W-C r={r}: out_values differ (scion NF ≠ redrive NF)"), &mut deviations);
+        check(
+            control.set.out_values == treatment.set.out_values,
+            format!("W-C r={r}: out_values differ (scion NF ≠ redrive NF)"),
+            &mut deviations,
+        );
         check_err_fuel_empty(&format!("W-C r={r}"), &control, &treatment, &mut deviations);
     }
-    assert!(deviations.is_empty(), "W-C deviations (report, do not adjust):\n{}", deviations.join("\n"));
+    assert!(
+        deviations.is_empty(),
+        "W-C deviations (report, do not adjust):\n{}",
+        deviations.join("\n")
+    );
 }
 
 // ══ SM-8 — the corrupt-bundle probe (resting-term gate is fail-closed) ═════════════════
@@ -518,8 +639,13 @@ async fn sm8_corrupt_bundle_caught_by_resting_term_gate() {
     let subject = ladder_subject(4);
 
     // The TRUE control drive (the reference resting term).
-    let (control, treatment) =
-        drive_installed_arms(&arms.control_installed, &arms.treatment_installed, &arms.fingerprint, &subject).await;
+    let (control, treatment) = drive_installed_arms(
+        &arms.control_installed,
+        &arms.treatment_installed,
+        &arms.fingerprint,
+        &subject,
+    )
+    .await;
     // Sanity: the (uncorrupted) treatment matches control.
     assert_eq!(
         control.set.out_values, treatment.set.out_values,
@@ -533,14 +659,21 @@ async fn sm8_corrupt_bundle_caught_by_resting_term_gate() {
     let corrupted_treatment =
         corrupt_reflected_label(&arms.treatment_installed, &arms.fingerprint, "D1", "Dz")
             .expect("the D1 tag occurs in the treatment program and re-decodes after rewrite");
-    let (_control2, corrupted) =
-        drive_installed_arms(&arms.control_installed, &corrupted_treatment, &arms.fingerprint, &subject).await;
+    let (_control2, corrupted) = drive_installed_arms(
+        &arms.control_installed,
+        &corrupted_treatment,
+        &arms.fingerprint,
+        &subject,
+    )
+    .await;
 
     println!("── SM-8 corrupt-bundle probe (s=1 ladder, D1→Dz) ──");
     println!(
         "  control out={:?}\n  corrupt out={:?}\n  fired c={:?} corrupt={:?}",
-        control.set.out_values, corrupted.set.out_values,
-        fired_sorted(&control.set), fired_sorted(&corrupted.set),
+        control.set.out_values,
+        corrupted.set.out_values,
+        fired_sorted(&control.set),
+        fired_sorted(&corrupted.set),
     );
 
     // The RESTING-TERM gate CATCHES the corruption (OUT differs from control) …
@@ -643,8 +776,10 @@ async fn fold1_inert_graft_rootedness_prevents_under_reduction() {
     println!("── Fold 1 (inert-graft rootedness) — RTrig RHS (Bar (Baz u)), Bar is an RBar redex root ──");
     println!(
         "  control out={:?} fired={:?}\n  treat   out={:?} fired={:?}",
-        control.set.out_values, fired_sorted(&control.set),
-        treatment.set.out_values, fired_sorted(&treatment.set),
+        control.set.out_values,
+        fired_sorted(&control.set),
+        treatment.set.out_values,
+        fired_sorted(&treatment.set),
     );
 
     // Control must actually reach `Done(End)` (fire RBar) — otherwise the cell witnesses nothing.
@@ -660,7 +795,8 @@ async fn fold1_inert_graft_rootedness_prevents_under_reduction() {
         "Fold-1: the rootedness guard must prevent under-reduction — treatment NF must equal control NF Done(End)"
     );
     assert_eq!(
-        fired_sorted(&control.set), fired_sorted(&treatment.set),
+        fired_sorted(&control.set),
+        fired_sorted(&treatment.set),
         "Fold-1: same fired multiset as control (RTrig re-drives; RBaz/RBar fire on the re-check)"
     );
     // Both typed channels empty (no err, no fuel exhaustion) on both arms.
@@ -702,7 +838,8 @@ fn drive_both_arms_big_stack(
                 .expect("drive runtime builds");
             rt.block_on(async move {
                 let reflected = reflect_ground_term_par(&subject, &fingerprint);
-                let call = rho_net_drive_call_par_with_fuel(&fingerprint, reflected, CELL_FUEL, "OUT");
+                let call =
+                    rho_net_drive_call_par_with_fuel(&fingerprint, reflected, CELL_FUEL, "OUT");
                 let channels = DriveObservationChannels::for_fingerprint(&fingerprint, "OUT");
                 let (c_set, c_comm) = drive_arm_with_counters(&control, &call, &channels)
                     .await
@@ -794,7 +931,10 @@ mod w_d_ambient {
 
     // ── expected-NF decoded-observation builders (mirror rho_net_ambient_full.rs) ──
     fn oterm(constructor: &str, children: Vec<Value>) -> Value {
-        Value::Term { constructor: constructor.to_string(), children }
+        Value::Term {
+            constructor: constructor.to_string(),
+            children,
+        }
     }
     fn ozero() -> Value {
         oterm("PZero", Vec::new())
@@ -943,7 +1083,8 @@ mod w_d_ambient {
     async fn w_d_ambient_scion_delta_zero() {
         mettail_runtime::clear_var_cache();
         let def = ambient_def();
-        let arms = scion_arm_programs(&def).expect("production Ambient def plans + installs both arms");
+        let arms =
+            scion_arm_programs(&def).expect("production Ambient def plans + installs both arms");
 
         // THE W-D STRUCTURAL RESULT (the re-derived prediction): no Ambient rule scions ⇒ the
         // StructuralScion treatment program is BYTE-IDENTICAL to the AllRedrive control. This is
@@ -994,25 +1135,90 @@ mod w_d_ambient {
             // (2) Δ on EVERY counter = 0 (byte-identical installed programs). Δ(accept/sa) =
             // Δfiring_visible = 0 REFINES the design §5 "Δ(accept/sa)=1": with no ScionBundle
             // emitted there is NO accept bypass (SM-1 re-pin against the landed AC arms).
-            check(c.matching_tau == t.matching_tau, format!("W-D {name}: Δmatching_tau={}", c.matching_tau as i64 - t.matching_tau as i64), &mut deviations);
-            check(c.firing_visible == t.firing_visible, format!("W-D {name}: Δ(accept/sa)=Δfiring_visible={}, predicted 0", c.firing_visible as i64 - t.firing_visible as i64), &mut deviations);
-            check(c.subst_tau == t.subst_tau, format!("W-D {name}: Δsubst_tau={}", c.subst_tau as i64 - t.subst_tau as i64), &mut deviations);
-            check(c.respread_tau == t.respread_tau, format!("W-D {name}: Δrespread_tau={}", c.respread_tau as i64 - t.respread_tau as i64), &mut deviations);
-            check(c.ac_carrier == t.ac_carrier, format!("W-D {name}: Δac_carrier={}", c.ac_carrier as i64 - t.ac_carrier as i64), &mut deviations);
-            check(c.pathmap_index == t.pathmap_index, format!("W-D {name}: Δpathmap_index"), &mut deviations);
-            check(c.contextual_plumbing == t.contextual_plumbing, format!("W-D {name}: Δcontextual_plumbing"), &mut deviations);
-            check(c.observation == t.observation, format!("W-D {name}: Δobservation={}", c.observation as i64 - t.observation as i64), &mut deviations);
-            check(c.other == t.other, format!("W-D {name}: Δother={}", c.other as i64 - t.other as i64), &mut deviations);
-            check(total_comms(c) == total_comms(t), format!("W-D {name}: Δtotal={}", total_comms(c) as i64 - total_comms(t) as i64), &mut deviations);
+            check(
+                c.matching_tau == t.matching_tau,
+                format!(
+                    "W-D {name}: Δmatching_tau={}",
+                    c.matching_tau as i64 - t.matching_tau as i64
+                ),
+                &mut deviations,
+            );
+            check(
+                c.firing_visible == t.firing_visible,
+                format!(
+                    "W-D {name}: Δ(accept/sa)=Δfiring_visible={}, predicted 0",
+                    c.firing_visible as i64 - t.firing_visible as i64
+                ),
+                &mut deviations,
+            );
+            check(
+                c.subst_tau == t.subst_tau,
+                format!("W-D {name}: Δsubst_tau={}", c.subst_tau as i64 - t.subst_tau as i64),
+                &mut deviations,
+            );
+            check(
+                c.respread_tau == t.respread_tau,
+                format!(
+                    "W-D {name}: Δrespread_tau={}",
+                    c.respread_tau as i64 - t.respread_tau as i64
+                ),
+                &mut deviations,
+            );
+            check(
+                c.ac_carrier == t.ac_carrier,
+                format!("W-D {name}: Δac_carrier={}", c.ac_carrier as i64 - t.ac_carrier as i64),
+                &mut deviations,
+            );
+            check(
+                c.pathmap_index == t.pathmap_index,
+                format!("W-D {name}: Δpathmap_index"),
+                &mut deviations,
+            );
+            check(
+                c.contextual_plumbing == t.contextual_plumbing,
+                format!("W-D {name}: Δcontextual_plumbing"),
+                &mut deviations,
+            );
+            check(
+                c.observation == t.observation,
+                format!("W-D {name}: Δobservation={}", c.observation as i64 - t.observation as i64),
+                &mut deviations,
+            );
+            check(
+                c.other == t.other,
+                format!("W-D {name}: Δother={}", c.other as i64 - t.other as i64),
+                &mut deviations,
+            );
+            check(
+                total_comms(c) == total_comms(t),
+                format!("W-D {name}: Δtotal={}", total_comms(c) as i64 - total_comms(t) as i64),
+                &mut deviations,
+            );
 
             // (3) fired-multiset / ledger consistency: exactly `[rule]` on BOTH arms.
-            check(fired == vec![rule.to_string()], format!("W-D {name}: control fired {fired:?}, expected [{rule:?}]"), &mut deviations);
-            check(n_fired == 1, format!("W-D {name}: expected exactly 1 {rule} firing, got {n_fired}"), &mut deviations);
-            check(fired == fired_sorted(&treatment.set), format!("W-D {name}: fired multisets differ across arms"), &mut deviations);
+            check(
+                fired == vec![rule.to_string()],
+                format!("W-D {name}: control fired {fired:?}, expected [{rule:?}]"),
+                &mut deviations,
+            );
+            check(
+                n_fired == 1,
+                format!("W-D {name}: expected exactly 1 {rule} firing, got {n_fired}"),
+                &mut deviations,
+            );
+            check(
+                fired == fired_sorted(&treatment.set),
+                format!("W-D {name}: fired multisets differ across arms"),
+                &mut deviations,
+            );
 
             // (4) valid-NF-set MEMBERSHIP (singleton set = the known flat NF) on BOTH arms.
             if control.set.out_values.is_empty() || treatment.set.out_values.is_empty() {
-                check(false, format!("W-D {name}: OUT is empty (subject did not reach a resting NF)"), &mut deviations);
+                check(
+                    false,
+                    format!("W-D {name}: OUT is empty (subject did not reach a resting NF)"),
+                    &mut deviations,
+                );
                 continue;
             }
             let observed_c = flatten(&control.set.out_values[0]);

@@ -104,7 +104,10 @@ fn amb_demo_backend() -> (PlannedRhoBackend, String, String) {
 
 /// A nullary process observation value (e.g. the unwrapped `PA` = `A`).
 fn proc_leaf(constructor: &str) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children: Vec::new() }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children: Vec::new(),
+    }
 }
 
 /// Reconstruct `AmbNewDemo`'s augmented `LanguageDef` (the OpenRule fragment PLUS the `PNew` name
@@ -137,10 +140,17 @@ fn assert_bag_is(value: &RuntimeObservationValue, expected: &[RuntimeObservation
         panic!("OUT must be a bag (the restructured result), got {value:?}");
     };
     let total: usize = entries.iter().map(|(_, count)| *count).sum();
-    assert_eq!(total, expected.len(), "the restructured bag has {} elements, got {value:?}", expected.len());
+    assert_eq!(
+        total,
+        expected.len(),
+        "the restructured bag has {} elements, got {value:?}",
+        expected.len()
+    );
     for element in expected {
         assert!(
-            entries.iter().any(|(observed, count)| observed == element && *count == 1),
+            entries
+                .iter()
+                .any(|(observed, count)| observed == element && *count == 1),
             "the restructured bag must contain {element:?} (multiplicity 1), got {value:?}"
         );
     }
@@ -277,10 +287,7 @@ async fn ambdemo_open_splices_the_residual_bag() {
         observation.values
     );
     // The restructured bag = { P, Q, rest } = { A, B, 0 }.
-    assert_bag_is(
-        &observation.values[0],
-        &[proc_leaf("PA"), proc_leaf("PB"), proc_leaf("PZero")],
-    );
+    assert_bag_is(&observation.values[0], &[proc_leaf("PA"), proc_leaf("PB"), proc_leaf("PZero")]);
 }
 
 /// NEGATIVE (mismatched names): `{ open(na, A) | nb[B] }` — the open name `na` ≠ the ambient name
@@ -396,9 +403,14 @@ async fn s_ac_structural_bag_is_produced_by_the_spread_not_the_report() {
     // Deliberately WRONG σ: a report-σ structural-AC arm would reconstruct the bag + reducts from
     // these and fire `{ PZero | PZero }`. The rule label (`OpenRule`) stays valid so the in-Rho match
     // gate admits the path; ONLY the σ (the bag + reduct source) is corrupted.
-    let decoy = RuntimeReflectedSubterm { constructor: "PZero".to_string(), children: Vec::new() };
-    let decoy_rest =
-        RuntimeReflectedSubterm { constructor: "PPar".to_string(), children: Vec::new() };
+    let decoy = RuntimeReflectedSubterm {
+        constructor: "PZero".to_string(),
+        children: Vec::new(),
+    };
+    let decoy_rest = RuntimeReflectedSubterm {
+        constructor: "PPar".to_string(),
+        children: Vec::new(),
+    };
     for justification in &mut report.rewrite_justifications {
         assert_eq!(justification.rule_label, "OpenRule", "the fired rule label stays valid");
         justification.sigma = vec![
@@ -462,9 +474,12 @@ async fn ambnewdemo_open_under_new_matches_in_rho_via_the_spread() {
 
     // The DEFAULT match path (NOT the replay branch — the retirement proof): STRUCTURALLY reflects
     // `^lambda([⟦bag⟧])`, descends the binder image into the bag, and assembles the spread-match call.
-    let invocation =
-        AmbNewDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
-            .expect("the structural-AC MATCH path admits OpenRule UNDER the new");
+    let invocation = AmbNewDemoLanguage::rho_net_match_invocation_from_dovetail_to(
+        term.as_ref(),
+        &report,
+        "OUT",
+    )
+    .expect("the structural-AC MATCH path admits OpenRule UNDER the new");
     assert_eq!(invocation.out_channel, "OUT");
 
     let observation = backend
@@ -505,9 +520,12 @@ async fn ambnewdemo_distinct_binders_veto_the_open() {
     // positive case — the distinct binder depths change only the ground bound-var subterms, not the
     // shape), so it returns Ok; the veto happens on the REDUCER, where the `N ≡ N` guard sees the two
     // DIFFERENT `^bound` depths and never commits the COMM.
-    let invocation =
-        AmbNewDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
-            .expect("the match path assembles a call; the guard vetoes on the reducer, not at build");
+    let invocation = AmbNewDemoLanguage::rho_net_match_invocation_from_dovetail_to(
+        term.as_ref(),
+        &report,
+        "OUT",
+    )
+    .expect("the match path assembles a call; the guard vetoes on the reducer, not at build");
 
     let observation = backend
         .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
@@ -544,9 +562,14 @@ async fn s_ac_under_new_bag_is_produced_by_the_spread_not_the_report() {
     // from the reflected `^lambda` subject), so this must not change OUT. (Some reports may carry no
     // OpenRule firing at all — the match path fires from the spread regardless; the loop is a no-op
     // then, and the spread still drives the firing.)
-    let decoy = RuntimeReflectedSubterm { constructor: "PZero".to_string(), children: Vec::new() };
-    let decoy_rest =
-        RuntimeReflectedSubterm { constructor: "PPar".to_string(), children: Vec::new() };
+    let decoy = RuntimeReflectedSubterm {
+        constructor: "PZero".to_string(),
+        children: Vec::new(),
+    };
+    let decoy_rest = RuntimeReflectedSubterm {
+        constructor: "PPar".to_string(),
+        children: Vec::new(),
+    };
     for justification in &mut report.rewrite_justifications {
         justification.sigma = vec![
             ("N".to_string(), decoy.clone()),
@@ -556,9 +579,12 @@ async fn s_ac_under_new_bag_is_produced_by_the_spread_not_the_report() {
         ];
     }
 
-    let invocation =
-        AmbNewDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
-            .expect("the MATCH path admits OpenRule under the new despite the corrupted report σ");
+    let invocation = AmbNewDemoLanguage::rho_net_match_invocation_from_dovetail_to(
+        term.as_ref(),
+        &report,
+        "OUT",
+    )
+    .expect("the MATCH path admits OpenRule under the new despite the corrupted report σ");
 
     let observation = backend
         .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)

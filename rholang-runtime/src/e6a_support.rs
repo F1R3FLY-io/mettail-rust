@@ -358,8 +358,7 @@ fn push_index_entries(
     omitted: &mut BTreeSet<String>,
 ) -> Result<(), String> {
     // «s»: [ tag(f), c₀, …, c_d ] — MUST fit (else the cell fails closed).
-    let mut s_elements: Vec<Par> =
-        Vec::with_capacity(1 + components.len());
+    let mut s_elements: Vec<Par> = Vec::with_capacity(1 + components.len());
     s_elements.push(quoted(&e6a_tag_string(language_fingerprint, &term.constructor)));
     for component in components.iter() {
         s_elements.push(quoted(component));
@@ -867,8 +866,7 @@ pub fn entry_query_match_par(
     }
 
     // ── the guard conjunction (evaluated under idx = BoundVar(0)) ────────────
-    let mut conjuncts: Vec<Par> =
-        Vec::with_capacity(shape.guards.len() + sigma_components.len());
+    let mut conjuncts: Vec<Par> = Vec::with_capacity(shape.guards.len() + sigma_components.len());
     for (relative, op) in &shape.guards {
         conjuncts.push(tag_guard_expr(
             &e6a_tag_string(language_fingerprint, op),

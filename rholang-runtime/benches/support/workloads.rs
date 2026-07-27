@@ -154,15 +154,13 @@ mod swapdemo;
 
 use ctxdemo::CtxDemoLanguage;
 use lambdademo::LambdaDemoLanguage;
-use swapdemo::SwapDemoLanguage;
 use mettail_rholang_codegen::{
     contextual_match_call_par, in_rho_match_all_sites_call_par, in_rho_match_call_par,
     multi_pattern_receiver_network_par, naive_kt_contextual_match_call_par,
     naive_kt_entry_receiver_par, naive_kt_match_call_par, naive_kt_selfdriving_call_par,
-    reflect_ground_term_par,
-    spread_child_location, spread_term_par, AutomatonAcceptTarget, GroundTerm,
-    InRhoMatchingRuleset, NaiveGuardEncoding, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
-    PEANO_ZERO_REFLECT_LABEL,
+    reflect_ground_term_par, spread_child_location, spread_term_par, AutomatonAcceptTarget,
+    GroundTerm, InRhoMatchingRuleset, NaiveGuardEncoding, BOUND_VAR_REFLECT_LABEL,
+    LAMBDA_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::{
     bench_inj_and_read, bench_runtime_with_counters, compile_bench_language,
@@ -177,6 +175,7 @@ use models::rust::utils::{
     new_boundvar_par, new_freevar_par, new_gstring_par, new_receive_par, new_send_par,
 };
 use prost::Message;
+use swapdemo::SwapDemoLanguage;
 
 /// The shared root-site nonce for every drive (each injection executes on its
 /// own isolated fresh counting runtime, so a fixed nonce cannot collide — the
@@ -353,9 +352,7 @@ impl WorkloadKind {
             // The r × s cross product (n = 100·r + s): the r-scaling leg at
             // every shared depth AND the s-scaling leg at every rule count —
             // r ∈ {2, 4, 8} × s ∈ {1, 2, 3}.
-            WorkloadKind::MultiRuleShared => {
-                &[201, 202, 203, 401, 402, 403, 801, 802, 803]
-            },
+            WorkloadKind::MultiRuleShared => &[201, 202, 203, 401, 402, 403, 801, 802, 803],
         }
     }
 
@@ -367,9 +364,9 @@ impl WorkloadKind {
             WorkloadKind::LambdaChain => {
                 &[MatcherKind::Sa, MatcherKind::Naive, MatcherKind::NaiveR3]
             },
-            WorkloadKind::SwapComb
-            | WorkloadKind::SwapSmall
-            | WorkloadKind::WrapSwapCtx => &[MatcherKind::Sa, MatcherKind::Naive],
+            WorkloadKind::SwapComb | WorkloadKind::SwapSmall | WorkloadKind::WrapSwapCtx => {
+                &[MatcherKind::Sa, MatcherKind::Naive]
+            },
             // The optimized locate-all fails closed on k ≥ 2 nested candidate
             // sites (B0), so the honest optimized-side column is the
             // production host-σ REPLAY fallback.
@@ -540,9 +537,8 @@ pub fn swap_comb_leaf(index: usize) -> GroundTerm {
 /// `4m − 1`.
 pub fn swap_comb_subject(m: usize) -> (GroundTerm, Vec<RuntimeObservationValue>) {
     assert!(m >= 1, "the comb carries at least one redex");
-    let swap_at = |i: usize| {
-        GroundTerm::new("Swap", vec![swap_comb_leaf(2 * i), swap_comb_leaf(2 * i + 1)])
-    };
+    let swap_at =
+        |i: usize| GroundTerm::new("Swap", vec![swap_comb_leaf(2 * i), swap_comb_leaf(2 * i + 1)]);
     let mut expected: Vec<RuntimeObservationValue> = Vec::with_capacity(m);
     for i in 0..m {
         expected.push(ground_to_observation(&GroundTerm::new(
@@ -586,10 +582,8 @@ pub fn wrap_swap_ctx_subject(depth: usize) -> (GroundTerm, Vec<RuntimeObservatio
     for _ in 0..depth {
         subject = GroundTerm::new("Wrap", vec![subject]);
     }
-    let mut reduced = GroundTerm::new(
-        "Pair",
-        vec![GroundTerm::nullary("B"), GroundTerm::nullary("A")],
-    );
+    let mut reduced =
+        GroundTerm::new("Pair", vec![GroundTerm::nullary("B"), GroundTerm::nullary("A")]);
     for _ in 0..depth {
         reduced = GroundTerm::new("Wrap", vec![reduced]);
     }
@@ -608,9 +602,8 @@ fn nested_spine_leaf(i: usize) -> GroundTerm {
 /// σ[x], forwarded by its one-shot σ-echo).
 pub fn nested_spine_subject(k: usize) -> (GroundTerm, Vec<RuntimeObservationValue>) {
     assert!(k >= 1, "the spine carries at least one candidate site");
-    let fg = |i: usize| {
-        GroundTerm::new("f", vec![GroundTerm::new("g", vec![nested_spine_leaf(i)])])
-    };
+    let fg =
+        |i: usize| GroundTerm::new("f", vec![GroundTerm::new("g", vec![nested_spine_leaf(i)])]);
     let mut expected: Vec<RuntimeObservationValue> = Vec::with_capacity(k);
     for i in 0..k {
         expected.push(ground_to_observation(&nested_spine_leaf(i)));
@@ -628,10 +621,7 @@ pub fn nested_spine_subject(k: usize) -> (GroundTerm, Vec<RuntimeObservationValu
 pub fn nested_spine_ruleset() -> InRhoMatchingRuleset {
     let automaton = SetAutomaton::compile_structural([(
         PatternId(0),
-        Pattern::app(
-            "f".to_string(),
-            vec![Pattern::app("g".to_string(), vec![Pattern::var("x")])],
-        ),
+        Pattern::app("f".to_string(), vec![Pattern::app("g".to_string(), vec![Pattern::var("x")])]),
     )])
     .expect("f(g(x)) compiles to a positional automaton");
     InRhoMatchingRuleset {
@@ -682,10 +672,7 @@ pub fn multi_rule_shared_pattern(rule: usize, shared_depth: usize) -> Pattern<St
 /// σ[x] = its contractum, forwarded by rule i's OWN accept channel's σ-echo —
 /// so the observation pins each rule fired exactly once). Node count:
 /// `(r − 1) + r·(s + 2)`.
-pub fn multi_rule_shared_subject(
-    r: usize,
-    s: usize,
-) -> (GroundTerm, Vec<RuntimeObservationValue>) {
+pub fn multi_rule_shared_subject(r: usize, s: usize) -> (GroundTerm, Vec<RuntimeObservationValue>) {
     assert!(r >= 1, "the pattern set carries at least one rule");
     assert!(s >= 1, "the shared sub-pattern chain has at least one level");
     let redex_at = |i: usize| {
@@ -753,12 +740,7 @@ pub fn multi_rule_shared_sites(
             AutomatonNode::Var(_) => None,
         })
         .collect();
-    fn walk(
-        node: &GroundTerm,
-        location: &str,
-        roots: &BTreeSet<String>,
-        sites: &mut Vec<String>,
-    ) {
+    fn walk(node: &GroundTerm, location: &str, roots: &BTreeSet<String>, sites: &mut Vec<String>) {
         if roots.contains(&node.constructor) {
             sites.push(location.to_string());
         }
@@ -1196,9 +1178,7 @@ pub fn emit_call(
             // rejected as ConsumeTest before any drive reaches this arm).
             let (call, installed) =
                 naive_kt_selfdriving_call_par(ruleset, subject, ROOT_SITE, OUT_CHANNEL)
-                    .map_err(|e| {
-                        WorkloadFailure::new(format!("R3 self-driving emitter: {e:?}"))
-                    })?;
+                    .map_err(|e| WorkloadFailure::new(format!("R3 self-driving emitter: {e:?}")))?;
             Ok((call, Some(installed)))
         },
         (WorkloadKind::LambdaChain, MatcherKind::Naive) => {
@@ -1206,8 +1186,7 @@ pub fn emit_call(
             // the entry's per-site receiver at exactly the root site ∥ the ONE
             // spread of the whole subject.
             let view = ruleset.automaton.view();
-            let accept_channel =
-                entry_accept_channel(ruleset, 0).map_err(WorkloadFailure::new)?;
+            let accept_channel = entry_accept_channel(ruleset, 0).map_err(WorkloadFailure::new)?;
             let receiver = naive_kt_entry_receiver_par(
                 &view,
                 0,
@@ -1224,10 +1203,9 @@ pub fn emit_call(
         },
         (WorkloadKind::SwapComb | WorkloadKind::SwapSmall, MatcherKind::Sa) => {
             let (call, sites) =
-                in_rho_match_all_sites_call_par(ruleset, subject, ROOT_SITE, OUT_CHANNEL)
-                    .map_err(|e| {
-                        WorkloadFailure::new(format!("optimized locate-all emitter: {e:?}"))
-                    })?;
+                in_rho_match_all_sites_call_par(ruleset, subject, ROOT_SITE, OUT_CHANNEL).map_err(
+                    |e| WorkloadFailure::new(format!("optimized locate-all emitter: {e:?}")),
+                )?;
             Ok((call, Some(sites)))
         },
         (
@@ -1429,8 +1407,9 @@ fn composed_program_for(
     if let Some(count) = emitted_count {
         let expected_sites = match kind {
             WorkloadKind::LambdaChain => 1, // the root-restricted per-step drive
-            _ => usize::try_from(kind.expected_firings(n))
-                .expect("expected firing count fits usize"),
+            _ => {
+                usize::try_from(kind.expected_firings(n)).expect("expected firing count fits usize")
+            },
         };
         if count != expected_sites {
             return Err(WorkloadFailure::new(format!(
@@ -1510,7 +1489,10 @@ pub fn cell_width_probe(
 ) -> Result<CellWidthProbe, WorkloadFailure> {
     let ruleset = compiled.ruleset();
     let echo_channels = workload_echo_channels(compiled);
-    let mut probe = CellWidthProbe { max_eval_width: 0, regression_zone_width: None };
+    let mut probe = CellWidthProbe {
+        max_eval_width: 0,
+        regression_zone_width: None,
+    };
     let mut record = |width: usize| {
         probe.max_eval_width = probe.max_eval_width.max(width);
         if probe.regression_zone_width.is_none() && width_in_split_regression_zone(width) {
@@ -1823,8 +1805,8 @@ pub async fn run_compiled_workload(
             )
             .await?;
 
-            let observed_values = decode_observed(&result.observed)
-                .map_err(WorkloadFailure::new)?;
+            let observed_values =
+                decode_observed(&result.observed).map_err(WorkloadFailure::new)?;
             let observed_sorted = sorted_multiset(observed_values);
             let expected_sorted = sorted_multiset(compiled.expected.clone());
             if observed_sorted != expected_sorted {
@@ -1955,9 +1937,8 @@ pub async fn run_e6a_treatment_workload(
             let mut subject = compiled.subject.clone();
             let root_filter: std::collections::BTreeSet<String> =
                 std::iter::once(ROOT_SITE.to_string()).collect();
-            let mut machine_sites_first: Option<
-                std::collections::BTreeMap<String, Vec<String>>,
-            > = None;
+            let mut machine_sites_first: Option<std::collections::BTreeMap<String, Vec<String>>> =
+                None;
             let mut spread_sends_total = 0usize;
             let mut emission_total = Duration::ZERO;
             let mut bringup_total = Duration::ZERO;

@@ -562,11 +562,7 @@ async fn a_s4_raw_arithmetic_lowers_to_metered_exprs_and_the_machine_computes_th
     let values = run_normalized_par_for_oracle_and_read_runtime_values(&par, "OUT")
         .await
         .expect("the metered expression call executes on the Rho machine");
-    assert_eq!(
-        values,
-        vec![RuntimeObservationValue::Int(7)],
-        "1 + 2 * 3 = 7, machine-computed"
-    );
+    assert_eq!(values, vec![RuntimeObservationValue::Int(7)], "1 + 2 * 3 = 7, machine-computed");
 }
 
 /// A-S4 string-concat parity: RhoCalc `+` on ground strings is Rholang `++` (`EPlusPlus`) — the
@@ -657,10 +653,7 @@ fn a_s4_unlowerable_construct_fails_closed_with_a_named_typed_error() {
         .expect_err("bitand has no Rholang bitwise Expr; the lowering must fail closed");
     match err {
         RhocalcAstLowerError::UnsupportedProc(name) => {
-            assert!(
-                name.contains("bitand"),
-                "the typed error names the construct, got {name:?}"
-            );
+            assert!(name.contains("bitand"), "the typed error names the construct, got {name:?}");
         },
         other => panic!("expected a typed UnsupportedProc naming the construct, got {other:?}"),
     }

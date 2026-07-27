@@ -43,8 +43,7 @@ fn ambient_backend() -> (PlannedRhoBackend, String) {
         ),
         guard_coverage: mettail_rholang_codegen::RhoGuardCoverageEvidence::NoGuardObligations,
     };
-    let plan = mettail_rholang_codegen::plan_rho_default_backend(&def, requirements)
-        .expect("plan");
+    let plan = mettail_rholang_codegen::plan_rho_default_backend(&def, requirements).expect("plan");
     let fingerprint = plan.definition_fingerprint().to_string();
     (PlannedRhoBackend::from_plan(plan), fingerprint)
 }
@@ -107,7 +106,10 @@ async fn graph_shape_of_the_open_race() {
     sandbox.fund_from(&host_budget(4_000_000));
 
     let started = Instant::now();
-    sandbox.load(SpeculativeState::default()).await.expect("load");
+    sandbox
+        .load(SpeculativeState::default())
+        .await
+        .expect("load");
     sandbox
         .saturate(program, Blake2b512Random::create_from_length(128))
         .await
@@ -183,7 +185,6 @@ async fn graph_shape_of_the_open_race() {
     );
 }
 
-
 /// The same subject through the PRODUCTION engine under partial-order reduction,
 /// reported as counters. This is the A/B against the hand-rolled unreduced walk
 /// above: same graph, same guest, the only difference is whether independent
@@ -207,8 +208,8 @@ async fn independence_reduced_exploration_terminates() {
     let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
     sandbox.fund_from(&host_budget(4_000_000));
     let started = Instant::now();
-    let mut explorer = Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced)
-        .observing(|report| {
+    let mut explorer =
+        Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced).observing(|report| {
             eprintln!(
                 "  [level {}] expanded={} degrees={:?} classes={:?} → frontier={} merged={} \
                  pruned={} quiescent={} aborted={} consumed={}",
@@ -225,11 +226,7 @@ async fn independence_reduced_exploration_terminates() {
             );
         });
     let exploration = explorer
-        .explore(
-            program,
-            Blake2b512Random::create_from_length(128),
-            Lookahead::Unbounded,
-        )
+        .explore(program, Blake2b512Random::create_from_length(128), Lookahead::Unbounded)
         .await
         .expect("exploration");
     eprintln!(
@@ -267,12 +264,12 @@ async fn what_is_enabled_at_depth() {
     );
     let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
     sandbox.fund_from(&host_budget(4_000_000));
-    sandbox.load(SpeculativeState::default()).await.expect("load");
     sandbox
-        .saturate(
-            installed.append(seed),
-            Blake2b512Random::create_from_length(128),
-        )
+        .load(SpeculativeState::default())
+        .await
+        .expect("load");
+    sandbox
+        .saturate(installed.append(seed), Blake2b512Random::create_from_length(128))
         .await
         .expect("saturate");
 
@@ -282,11 +279,7 @@ async fn what_is_enabled_at_depth() {
         let enabled = sandbox.enabled();
         let mut rows: Vec<String> = Vec::with_capacity(enabled.len());
         for rendezvous in enabled.iter() {
-            let channels: Vec<String> = rendezvous
-                .channels
-                .iter()
-                .map(render_channel)
-                .collect();
+            let channels: Vec<String> = rendezvous.channels.iter().map(render_channel).collect();
             rows.push(format!(
                 "{}{}",
                 channels.join("&"),
@@ -354,9 +347,9 @@ fn render_channel(channel: &models::rhoapi::Par) -> String {
         return format!("@\"{text}\"");
     }
     let bytes = channel.encode_to_vec();
-    let digest: u32 = bytes.iter().fold(2166136261u32, |hash, byte| {
-        (hash ^ *byte as u32).wrapping_mul(16777619)
-    });
+    let digest: u32 = bytes
+        .iter()
+        .fold(2166136261u32, |hash, byte| (hash ^ *byte as u32).wrapping_mul(16777619));
     match channel.unforgeables.is_empty() {
         false => format!("priv:{digest:08x}"),
         true => format!("par:{digest:08x}"),
@@ -392,8 +385,8 @@ async fn match_path_conflict_structure() {
 
     let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
     sandbox.fund_from(&host_budget(4_000_000));
-    let mut explorer = Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced)
-        .observing(|report| {
+    let mut explorer =
+        Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced).observing(|report| {
             eprintln!(
                 "  [match level {}] degrees={:?} classes={:?} → frontier={} merged={} \
                  pruned={} quiescent={}",
@@ -422,17 +415,12 @@ async fn match_path_conflict_structure() {
         exploration.stats
     );
     for (index, leaf) in exploration.success.iter().enumerate() {
-        let resting = mettail_rholang_runtime::speculation::delivery::resting_on_string(
-            &leaf.state,
-            OUT,
-        );
+        let resting =
+            mettail_rholang_runtime::speculation::delivery::resting_on_string(&leaf.state, OUT);
         let decoded: Vec<String> = resting
             .iter()
             .map(|par| {
-                format!(
-                    "{:?}",
-                    mettail_rholang_runtime::par_as_runtime_observation_value(par)
-                )
+                format!("{:?}", mettail_rholang_runtime::par_as_runtime_observation_value(par))
             })
             .collect();
         eprintln!("  leaf {index}: |trace|={} OUT={:?}", leaf.trace.len(), decoded);
@@ -462,8 +450,8 @@ async fn frontier_growth_without_any_race() {
     );
     let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
     sandbox.fund_from(&host_budget(4_000_000));
-    let mut explorer = Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced)
-        .observing(|report| {
+    let mut explorer =
+        Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced).observing(|report| {
             eprintln!(
                 "  [no-race level {}] expanded={} → frontier={} merged={} pruned={} quiescent={}",
                 report.level,

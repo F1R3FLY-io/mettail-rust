@@ -94,7 +94,10 @@ fn lambda_backend() -> (PlannedRhoBackend, String) {
 
 // ── decoded-observation builders (mirror rho_net_lambda_firing.rs) ─────────────────────────
 fn oterm(constructor: &str, children: Vec<RuntimeObservationValue>) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children,
+    }
 }
 fn onullary(constructor: &str) -> RuntimeObservationValue {
     oterm(constructor, Vec::new())
@@ -189,7 +192,11 @@ fn beat0_wire_format_reflects_and_tags_are_unforgeable_private_names() {
         app_tag.starts_with("mettail.term.") && app_tag.ends_with(".App"),
         "the App tag is the mettail.term.<fp>.App private name, got {app_tag:?}"
     );
-    assert_eq!(app_tag, format!("mettail.term.{fp}.App"), "the tag is fingerprint-deterministic");
+    assert_eq!(
+        app_tag,
+        format!("mettail.term.{fp}.App"),
+        "the tag is fingerprint-deterministic"
+    );
 }
 
 // ── Beat 4 (core) — fill the holes and RUN it: quotation to β-normal form ──────────────────
@@ -214,8 +221,16 @@ async fn beat4_app_id_k_drives_to_konst_in_rho() {
         .await
         .expect("the App(id, K) drive runs to quiescence on the reducer");
 
-    assert_eq!(set.out_values, vec![okonst()], "(λx.x) K rests at K = λ.λ.1 — β fired, contractum re-drove");
-    assert_eq!(set.fired_labels().expect("ledger decodes"), vec!["Beta".to_string()], "exactly one Beta firing");
+    assert_eq!(
+        set.out_values,
+        vec![okonst()],
+        "(λx.x) K rests at K = λ.λ.1 — β fired, contractum re-drove"
+    );
+    assert_eq!(
+        set.fired_labels().expect("ledger decodes"),
+        vec!["Beta".to_string()],
+        "exactly one Beta firing"
+    );
     assert!(set.err_data.is_empty(), "no unrecognized head — the err channel stays empty");
     assert!(set.fuel_data.is_empty(), "the drive terminated by quiescence, not fuel");
     drive_cross_check(&set, &channels, true, DRIVE_DEFAULT_FUEL, &lambda_redex_scan)
@@ -235,7 +250,8 @@ async fn beat5_omega_exhausts_fuel_with_the_typed_datum() {
 
     let omega_half = g_lambda(g_app(g_bound(0), g_bound(0)));
     let omega = g_app(omega_half.clone(), omega_half);
-    let seed = rho_net_drive_call_par_with_fuel(&fp, reflect_ground_term_par(&omega, &fp), 3, "OUT");
+    let seed =
+        rho_net_drive_call_par_with_fuel(&fp, reflect_ground_term_par(&omega, &fp), 3, "OUT");
     let channels = DriveObservationChannels::for_fingerprint(&fp, "OUT");
     let set = backend
         .run_rho_net_with_call_and_read_observation_set(&seed, &channels)
@@ -247,11 +263,13 @@ async fn beat5_omega_exhausts_fuel_with_the_typed_datum() {
         vec!["Beta".to_string(); 3],
         "Ω fires exactly per-path-fuel = 3 times before exhaustion"
     );
-    assert_eq!(set.fuel_data.len(), 1, "exactly one typed exhaustion datum rests on ^drive-fuel");
-    let omega_decoded = oapp(
-        olambda(oapp(obound(0), obound(0))),
-        olambda(oapp(obound(0), obound(0))),
+    assert_eq!(
+        set.fuel_data.len(),
+        1,
+        "exactly one typed exhaustion datum rests on ^drive-fuel"
     );
+    let omega_decoded =
+        oapp(olambda(oapp(obound(0), obound(0))), olambda(oapp(obound(0), obound(0))));
     assert_eq!(
         par_as_runtime_observation_value(&set.fuel_data[0]),
         Some(omega_decoded),
@@ -291,13 +309,12 @@ fn reflected_app_parts(fp: &str) -> (Par, Par, Par, Par) {
     match subject.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
         // E-2-D (reflected-ABI v2): ⟦App(id, K)⟧ = [App_tag, ^nog, ⟦id⟧, ⟦K⟧] — the hereditary-
         // ground marker sits at index 1, so the head tag / marker / id / K are ps[0..4].
-        Some(ExprInstance::EListBody(list)) => (
-            list.ps[0].clone(),
-            list.ps[1].clone(),
-            list.ps[2].clone(),
-            list.ps[3].clone(),
-        ),
-        other => panic!("⟦App(id, K)⟧ must reflect to a 4-element EList (marker at 1), got {other:?}"),
+        Some(ExprInstance::EListBody(list)) => {
+            (list.ps[0].clone(), list.ps[1].clone(), list.ps[2].clone(), list.ps[3].clone())
+        },
+        other => {
+            panic!("⟦App(id, K)⟧ must reflect to a 4-element EList (marker at 1), got {other:?}")
+        },
     }
 }
 
@@ -320,8 +337,15 @@ fn quoted_name(name: &str) -> Par {
 /// `FreeVar` hole at the function position and a GROUND subterm at the argument position; the body
 /// republishes the bound hole to `@"OUT"`. Shape mirrors `e6a_support::discovery_call_par`.
 fn hole_rendezvous_program(subject: Par, tag: Par, ground_arg: Par) -> Par {
-    let producer =
-        new_send_par(quoted_name("fltX"), vec![subject], false, Vec::new(), false, Vec::new(), false);
+    let producer = new_send_par(
+        quoted_name("fltX"),
+        vec![subject],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
     // Pattern `[⌜tag⌝, _, ${f}, ground_arg]`: E-2-D v2 puts the hereditary-ground marker at index
     // 1, so a wildcard absorbs it; the FreeVar (function-position hole) then binds at index 2. The
     // FreeVar makes the EList (and its Par) connective-used.
@@ -384,13 +408,17 @@ async fn beat1_typed_hole_binds_the_function_position() {
     let (tag, _marker, _id_reflected, k_reflected) = reflected_app_parts(&fp);
 
     let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), &fp);
-    let fired = out_values(&hole_rendezvous_program(subject, tag.clone(), k_reflected.clone())).await;
+    let fired =
+        out_values(&hole_rendezvous_program(subject, tag.clone(), k_reflected.clone())).await;
     assert_eq!(fired, vec![oid()], "the ${{f}} hole binds ⟦id⟧ — OUT de-reflects to λ.0");
 
     // 1b — ship ⟦K⟧ alone (a λ node, not an App): the App-shaped pattern never fires.
     let lone_k = reflect_ground_term_par(&g_k(), &fp);
     let rested = out_values(&hole_rendezvous_program(lone_k, tag, k_reflected)).await;
-    assert!(rested.is_empty(), "⟦K⟧ alone is no App node — no COMM, OUT empty, datum rests on fltX");
+    assert!(
+        rested.is_empty(),
+        "⟦K⟧ alone is no App node — no COMM, OUT empty, datum rests on fltX"
+    );
 }
 
 /// Beat 2 — the guard vetoes on a foreign subterm (run-sheet D2 ground-subpattern form). Against
@@ -409,7 +437,11 @@ async fn beat2_where_guard_vetoes_on_foreign_subterm() {
         k_reflected.clone(),
     ))
     .await;
-    assert_eq!(matches, vec![oid()], "⟦App(id, K)⟧ satisfies the ⟦K⟧ argument subpattern → OUT [⟦id⟧]");
+    assert_eq!(
+        matches,
+        vec![oid()],
+        "⟦App(id, K)⟧ satisfies the ⟦K⟧ argument subpattern → OUT [⟦id⟧]"
+    );
 
     let vetoed = out_values(&hole_rendezvous_program(
         reflect_ground_term_par(&g_app(g_id(), g_id()), &fp),
@@ -417,7 +449,10 @@ async fn beat2_where_guard_vetoes_on_foreign_subterm() {
         k_reflected,
     ))
     .await;
-    assert!(vetoed.is_empty(), "⟦App(id, id)⟧ has ⟦id⟧ ≠ ⟦K⟧ at the argument — veto, OUT empty, rests");
+    assert!(
+        vetoed.is_empty(),
+        "⟦App(id, id)⟧ has ⟦id⟧ ≠ ⟦K⟧ at the argument — veto, OUT empty, rests"
+    );
 }
 
 /// Beat 3 — the counterfeit is rejected: a 4-element `GString`-tagged fake
@@ -447,7 +482,10 @@ async fn beat3_counterfeit_tag_rejected() {
         false,
     );
     let rested = out_values(&hole_rendezvous_program(counterfeit, tag, k_reflected)).await;
-    assert!(rested.is_empty(), "the GString-tagged counterfeit ≠ the GPrivate ⌜App⌝ tag — no match");
+    assert!(
+        rested.is_empty(),
+        "the GString-tagged counterfeit ≠ the GPrivate ⌜App⌝ tag — no match"
+    );
 }
 
 // ── Beat 4 (re-quote from holes) — fill the holes and RUN: capture f,k, re-quote, drive to β-NF ──
@@ -477,8 +515,15 @@ fn requote_and_drive_program(fp: &str) -> Par {
     let drive_chan = reserved_tag_par(fp, DRIVE_RESERVED_LABEL);
     let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), fp);
 
-    let producer =
-        new_send_par(quoted_name("fltX"), vec![subject], false, Vec::new(), false, Vec::new(), false);
+    let producer = new_send_par(
+        quoted_name("fltX"),
+        vec![subject],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
 
     // Pattern `[⌜App⌝, _, ${f}, ${k}]` — wildcard the E-2-D marker (index 1); FreeVar(0)=f at index
     // 2, FreeVar(1)=k at index 3. The wildcard + FreeVars make the EList (and its Par) connective-used.
@@ -561,13 +606,20 @@ async fn beat4_requote_from_holes_drives_to_konst_in_rho() {
         .await
         .expect("the re-quote-from-holes rendezvous drives to quiescence on the reducer");
 
-    assert_eq!(set.out_values, vec![okonst()], "the hole-filled App re-quote drives to K = λ.λ.1");
+    assert_eq!(
+        set.out_values,
+        vec![okonst()],
+        "the hole-filled App re-quote drives to K = λ.λ.1"
+    );
     assert_eq!(
         set.fired_labels().expect("ledger decodes"),
         vec!["Beta".to_string()],
         "exactly one Beta firing — the re-quote matched the marked App redex arm and fired"
     );
-    assert!(set.err_data.is_empty(), "no unrecognized head — the ⌜^nog⌝ re-quote is well-formed v2");
+    assert!(
+        set.err_data.is_empty(),
+        "no unrecognized head — the ⌜^nog⌝ re-quote is well-formed v2"
+    );
     assert!(set.fuel_data.is_empty(), "the drive terminated by quiescence, not fuel");
     drive_cross_check(&set, &channels, true, DRIVE_DEFAULT_FUEL, &lambda_redex_scan)
         .expect("the always-on drive cross-check is green");
@@ -598,8 +650,8 @@ async fn beat4_flt_construction_forces_nog_and_drives_beta() {
     .into_iter()
     .collect();
     let template = g_node("App", vec![g_free("f"), g_free("k")]);
-    let subject =
-        reflect_flt_construction(&template, &fills, &fp).expect("the FLT App construction reflects");
+    let subject = reflect_flt_construction(&template, &fills, &fp)
+        .expect("the FLT App construction reflects");
 
     // C2: the RECOMPUTED App marker is ⌜^nog⌝ (both fills carry ^bound).
     match subject.exprs.first().and_then(|e| e.expr_instance.as_ref()) {
@@ -630,7 +682,10 @@ async fn beat4_flt_construction_forces_nog_and_drives_beta() {
         vec!["Beta".to_string()],
         "exactly one Beta firing — the recomputed ⌜^nog⌝ App matched the marked redex arm and fired"
     );
-    assert!(set.err_data.is_empty(), "no unrecognized head — the construction is well-formed v2");
+    assert!(
+        set.err_data.is_empty(),
+        "no unrecognized head — the construction is well-formed v2"
+    );
     assert!(set.fuel_data.is_empty(), "the drive terminated by quiescence, not fuel");
     drive_cross_check(&set, &channels, true, DRIVE_DEFAULT_FUEL, &lambda_redex_scan)
         .expect("the always-on drive cross-check is green");
@@ -762,7 +817,11 @@ async fn flt_shift_fill_for_depth_equals_in_rho_shift() {
         .await
         .expect("the in-Rho ^shift(S Z, App(0,1)) drives to its NF");
     let expected1 = oapp(obound(0), obound(2));
-    assert_eq!(set1.out_values, vec![expected1.clone()], "in-Rho ^shift(S Z, App(0,1)) = App(0, 2)");
+    assert_eq!(
+        set1.out_values,
+        vec![expected1.clone()],
+        "in-Rho ^shift(S Z, App(0,1)) = App(0, 2)"
+    );
     assert_eq!(
         par_as_runtime_observation_value(&host1),
         Some(expected1),
@@ -809,8 +868,15 @@ fn inter_flt_reship_program(fp: &str) -> Par {
     let subject = reflect_ground_term_par(&g_app(g_id(), g_k()), fp);
 
     // Producer: @"fltX"!(⟦App(id, K)⟧).
-    let producer =
-        new_send_par(quoted_name("fltX"), vec![subject], false, Vec::new(), false, Vec::new(), false);
+    let producer = new_send_par(
+        quoted_name("fltX"),
+        vec![subject],
+        false,
+        Vec::new(),
+        false,
+        Vec::new(),
+        false,
+    );
 
     // Consumer 1: for(@${t} <- @"fltX"){ ⌜^drive⌝!(t, fuel, "nf") } — capture the WHOLE FLT (a bare
     // FreeVar(0)), then seed the driver with the "nf" return label. In the body t = BoundVar(0).
@@ -924,5 +990,8 @@ async fn beat5_inter_flt_reship_positive() {
         "consumer 1's drive fired exactly one Beta"
     );
     assert!(set.err_data.is_empty(), "no unrecognized head on consumer 1's drive");
-    assert!(set.fuel_data.is_empty(), "consumer 1's drive terminated by quiescence, not fuel");
+    assert!(
+        set.fuel_data.is_empty(),
+        "consumer 1's drive terminated by quiescence, not fuel"
+    );
 }

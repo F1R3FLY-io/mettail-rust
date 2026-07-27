@@ -37,8 +37,13 @@ fn observation_constructor(value: &RuntimeObservationValue) -> String {
 }
 
 /// Build + run `receiver ∥ source!(⟦collection⟧, @OUT)` on the reducer and read the OUT values.
-async fn fire(collection: GroundTerm, kind: CollectionType, op: &str, k: usize, rhs_bound_var: i32)
--> Vec<RuntimeObservationValue> {
+async fn fire(
+    collection: GroundTerm,
+    kind: CollectionType,
+    op: &str,
+    k: usize,
+    rhs_bound_var: i32,
+) -> Vec<RuntimeObservationValue> {
     mettail_runtime::clear_var_cache();
     let carrier = reflect_ground_term_par(&collection, FINGERPRINT);
     // The receiver fires `rhs` (a σ slot, referenced as `BoundVar(rhs_bound_var)`) on the dynamic out.
@@ -81,7 +86,10 @@ async fn mapzipdemo_set_rewrite_fires_as_a_comm_on_the_reducer() {
     let observed = fire(set, CollectionType::HashSet, "SetOp", 1, 2).await;
     assert_eq!(observed.len(), 1, "the ESet AC receiver fires once (got {observed:?})");
     let fired = observation_constructor(&observed[0]);
-    assert!(fired == "A" || fired == "B", "OUT is a member of the reflected set, got {fired}");
+    assert!(
+        fired == "A" || fired == "B",
+        "OUT is a member of the reflected set, got {fired}"
+    );
 }
 
 /// AC4-map (`HashMap` → `EMap`): the linear `MapOp{k => v, ...rest} ~> v` picks ONE `(key, value)`

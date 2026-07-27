@@ -67,9 +67,7 @@ use mettail_rholang_codegen::{
     DRIVE_DEFAULT_FUEL, FREE_VAR_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::speculation::delivery::{deliver, reify, resting_on_string};
-use mettail_rholang_runtime::speculation::search::{
-    Exploration, Explorer, Lookahead, TraceMode,
-};
+use mettail_rholang_runtime::speculation::search::{Exploration, Explorer, Lookahead, TraceMode};
 use mettail_rholang_runtime::speculation::SpeculativeSandbox;
 use mettail_rholang_runtime::{
     par_as_runtime_observation_value, DriveObservationChannels, PlannedRhoBackend,
@@ -170,7 +168,11 @@ fn ordinary_rand() -> Blake2b512Random {
     Blake2b512Random::create_from_length(128)
 }
 
-async fn explore(program: models::rhoapi::Par, mode: TraceMode, lookahead: Lookahead) -> Exploration {
+async fn explore(
+    program: models::rhoapi::Par,
+    mode: TraceMode,
+    lookahead: Lookahead,
+) -> Exploration {
     let sandbox = SpeculativeSandbox::new()
         .await
         .expect("the speculative sandbox must build");
@@ -327,11 +329,7 @@ async fn the_report_free_match_lowering_makes_no_choice() {
         Lookahead::Unbounded,
     )
     .await;
-    eprintln!(
-        "[match] success={} stats={:?}",
-        exploration.success.len(),
-        exploration.stats
-    );
+    eprintln!("[match] success={} stats={:?}", exploration.success.len(), exploration.stats);
     assert_eq!(
         exploration.stats.max_conflict_class, 1,
         "locate-all fires every located redex: no selection competes with another"
@@ -366,11 +364,7 @@ async fn the_spread_match_lowering_makes_no_choice() {
         Lookahead::Unbounded,
     )
     .await;
-    eprintln!(
-        "[spread] success={} stats={:?}",
-        exploration.success.len(),
-        exploration.stats
-    );
+    eprintln!("[spread] success={} stats={:?}", exploration.success.len(), exploration.stats);
     assert_eq!(exploration.stats.max_conflict_class, 1);
     assert_eq!(exploration.success.len(), 1);
 }
@@ -403,10 +397,7 @@ async fn zero_lookahead_truncates_the_drive() {
     // receiver network plus the drive seed — the work that has not been done.
     let process = reify(&exploration.truncated[0].branch.state)
         .expect("the retained configuration must reify");
-    assert!(
-        !process.receives.is_empty(),
-        "the installed receiver network is still waiting"
-    );
+    assert!(!process.receives.is_empty(), "the installed receiver network is still waiting");
     assert!(!process.sends.is_empty(), "and the seed is still resting");
 }
 
@@ -441,10 +432,7 @@ async fn a_truncated_drive_resumes_to_the_unbroken_result() {
         .resume(&cut.handles(), Lookahead::Unbounded)
         .await
         .expect("the handle must resume");
-    eprintln!(
-        "[resume] unbroken={unbroken_outcomes:?} resumed={:?}",
-        outcomes(&resumed)
-    );
+    eprintln!("[resume] unbroken={unbroken_outcomes:?} resumed={:?}", outcomes(&resumed));
     assert_eq!(
         outcomes(&resumed),
         unbroken_outcomes,

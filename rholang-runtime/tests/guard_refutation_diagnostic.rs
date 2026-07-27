@@ -58,7 +58,10 @@ struct CapturedEvent {
 
 impl CapturedEvent {
     fn field(&self, name: &str) -> Option<&str> {
-        self.fields.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+        self.fields
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -67,7 +70,8 @@ struct FieldCollector(Vec<(String, String)>);
 
 impl Visit for FieldCollector {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        self.0.push((field.name().to_string(), format!("{value:?}")));
+        self.0
+            .push((field.name().to_string(), format!("{value:?}")));
     }
     fn record_str(&mut self, field: &Field, value: &str) {
         self.0.push((field.name().to_string(), value.to_string()));
@@ -97,11 +101,11 @@ impl EventSink {
 }
 
 /// The captured events emitted on `target`, in emission order.
-fn sink_events_on_target<'a>(
-    events: &'a [CapturedEvent],
-    target: &str,
-) -> Vec<&'a CapturedEvent> {
-    events.iter().filter(|event| event.target == target).collect()
+fn sink_events_on_target<'a>(events: &'a [CapturedEvent], target: &str) -> Vec<&'a CapturedEvent> {
+    events
+        .iter()
+        .filter(|event| event.target == target)
+        .collect()
 }
 
 impl Subscriber for EventSink {
@@ -116,11 +120,14 @@ impl Subscriber for EventSink {
     fn event(&self, event: &Event<'_>) {
         let mut collector = FieldCollector::default();
         event.record(&mut collector);
-        self.0.lock().expect("event sink poisoned").push(CapturedEvent {
-            target: event.metadata().target().to_string(),
-            level: event.metadata().level().to_string(),
-            fields: collector.0,
-        });
+        self.0
+            .lock()
+            .expect("event sink poisoned")
+            .push(CapturedEvent {
+                target: event.metadata().target().to_string(),
+                level: event.metadata().level().to_string(),
+                fields: collector.0,
+            });
     }
     fn enter(&self, _span: &tracing::span::Id) {}
     fn exit(&self, _span: &tracing::span::Id) {}
@@ -236,7 +243,8 @@ fn w1_guard_statically_false_is_emitted_with_its_code_site_and_guard() {
         w1.field("guard")
     );
     assert!(
-        w1.field("message").is_some_and(|m| m.contains("statically FALSE")),
+        w1.field("message")
+            .is_some_and(|m| m.contains("statically FALSE")),
         "W1's message must say what it found; got {:?}",
         w1.field("message")
     );
@@ -273,7 +281,9 @@ fn the_switch_off_arm_emits_no_guard_diagnostic() {
     let source = program("false");
     let (_par, events, report) = lower_capturing(&source, LoweringOptions::NO_DISCHARGE);
     assert!(
-        events.iter().all(|event| event.target != GUARD_DISCHARGE_TARGET),
+        events
+            .iter()
+            .all(|event| event.target != GUARD_DISCHARGE_TARGET),
         "discharge-OFF must not classify, and therefore must not diagnose: {events:#?}"
     );
     assert_eq!(report.total(), 0, "no site is classified with the switch off: {report:?}");
@@ -299,7 +309,9 @@ fn every_refuted_corpus_guard_raises_exactly_one_w1_and_no_disagreement() {
             "{guard:?} must not trip the evaluator-disagreement fence"
         );
         assert!(
-            events.iter().all(|event| event.level != Level::WARN.to_string()),
+            events
+                .iter()
+                .all(|event| event.level != Level::WARN.to_string()),
             "{guard:?} must raise no WARN — a WARN on this target is an evaluator disagreement"
         );
     }
@@ -311,13 +323,13 @@ fn a_discharged_guard_raises_no_w1() {
     let source = program("true");
     let (par, events, report) = lower_capturing(&source, LoweringOptions::PRODUCTION);
     assert!(
-        par.receives.first().is_some_and(|receive| receive.condition.is_none()),
+        par.receives
+            .first()
+            .is_some_and(|receive| receive.condition.is_none()),
         "precondition: this guard discharges"
     );
     assert!(
-        events
-            .iter()
-            .all(|event| event.field("code") != Some("W1")),
+        events.iter().all(|event| event.field("code") != Some("W1")),
         "a discharged guard is not statically false: {events:#?}"
     );
     assert_eq!(report.discharged, 1);

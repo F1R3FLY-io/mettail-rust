@@ -85,10 +85,7 @@ fn lower(source: &str) -> Par {
 }
 
 /// Run `source` to rest under `options` and return every observation resting on `@"OUT"`.
-async fn observations_with(
-    source: &str,
-    options: LoweringOptions,
-) -> Vec<RuntimeObservationValue> {
+async fn observations_with(source: &str, options: LoweringOptions) -> Vec<RuntimeObservationValue> {
     let par = lower_with(source, options);
     run_normalized_par_for_oracle_and_read_runtime_values(&par, "OUT")
         .await
@@ -143,9 +140,7 @@ fn guarded(guard: &str, datum: &str) -> String {
 
 /// A monadic receive with a ground quoted pattern, and a send of `datum`.
 fn monadic(pattern: &str, datum: &str) -> String {
-    format!(
-        r#"{{ for(@{pattern} <- @"c") {{ @"OUT"!("{FIRED_MARKER}") }} | @"c"!({datum}) }}"#
-    )
+    format!(r#"{{ for(@{pattern} <- @"c") {{ @"OUT"!("{FIRED_MARKER}") }} | @"c"!({datum}) }}"#)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -178,12 +173,12 @@ async fn guards_that_mention_no_bound_variable_fire() {
         ("true", "42"),
         ("1 == 1", "42"),
         ("42 == 42", "42"),
-        ("1 < 46", "42"),            // ⚠ ELt over two projection-surface operands
-        ("true and true", "42"),     // ⚠ EAnd  "
-        ("true or false", "42"),     // ⚠ EOr   "
-        ("not false", "42"),         // ⚠ ENot  "
-        ("not (not true)", "42"),    // ⚠ nested ENot
-        ("1 + 1 == 2", "42"),        // ⚠ EPlus under EEq
+        ("1 < 46", "42"),         // ⚠ ELt over two projection-surface operands
+        ("true and true", "42"),  // ⚠ EAnd  "
+        ("true or false", "42"),  // ⚠ EOr   "
+        ("not false", "42"),      // ⚠ ENot  "
+        ("not (not true)", "42"), // ⚠ nested ENot
+        ("1 + 1 == 2", "42"),     // ⚠ EPlus under EEq
     ] {
         let source = guarded(guard, datum);
         let (production, _) = fired_under_both_discharge_settings(&source).await;
@@ -197,27 +192,24 @@ async fn guards_over_bound_data_fire() {
         ("x", "true"),
         ("not x", "false"),
         ("x == x", "42"),
-        ("x == 42", "42"),        // ⚠ THE headline row: EEq(BoundVar, GInt) — structural equality
-        ("x == \"a\"", "\"a\""),  // ⚠ the same over GString
-        ("x == true", "true"),    // ⚠ the same over GBool
-        ("x != 43", "42"),        // fired BEFORE the fix too — for the WRONG reason (see header)
-        ("x < 46", "42"),         // ⚠ ELt with one bound operand
-        ("x > 0", "7"),           // ⚠ EGt   "
-        ("x <= 42", "42"),        // ⚠ ELte  "
-        ("x >= 42", "42"),        // ⚠ EGte  "
-        ("x + 1 > 0", "7"),       // ⚠ arithmetic under a relation
-        ("x - 1 == 6", "7"),      // ⚠ EMinus
-        ("x * 2 == 14", "7"),     // ⚠ EMult
-        ("x or false", "true"),   // ⚠ EOr with one bound operand
-        ("x and true", "true"),   // ⚠ EAnd  "
-        ("x matches 42", "42"),   // ⚠ EMatches against a projection-surface pattern
+        ("x == 42", "42"), // ⚠ THE headline row: EEq(BoundVar, GInt) — structural equality
+        ("x == \"a\"", "\"a\""), // ⚠ the same over GString
+        ("x == true", "true"), // ⚠ the same over GBool
+        ("x != 43", "42"), // fired BEFORE the fix too — for the WRONG reason (see header)
+        ("x < 46", "42"),  // ⚠ ELt with one bound operand
+        ("x > 0", "7"),    // ⚠ EGt   "
+        ("x <= 42", "42"), // ⚠ ELte  "
+        ("x >= 42", "42"), // ⚠ EGte  "
+        ("x + 1 > 0", "7"), // ⚠ arithmetic under a relation
+        ("x - 1 == 6", "7"), // ⚠ EMinus
+        ("x * 2 == 14", "7"), // ⚠ EMult
+        ("x or false", "true"), // ⚠ EOr with one bound operand
+        ("x and true", "true"), // ⚠ EAnd  "
+        ("x matches 42", "42"), // ⚠ EMatches against a projection-surface pattern
     ] {
         let source = guarded(guard, datum);
         let (production, _) = fired_under_both_discharge_settings(&source).await;
-        assert!(
-            production,
-            "`where {guard}` with datum {datum} is TRUE and must fire\n{source}"
-        );
+        assert!(production, "`where {guard}` with datum {datum} is TRUE and must fire\n{source}");
     }
 }
 
@@ -279,17 +271,17 @@ async fn operators_in_send_position_evaluate_on_the_reducer() {
     use RuntimeObservationValue::{Bool, Int};
     for (payload, expected) in [
         ("1", Int(1)),
-        ("1 + 2", Int(3)),          // ⚠ was ReduceError "parallel or non expression found …"
-        ("7 - 2", Int(5)),          // ⚠
-        ("3 * 4", Int(12)),         // ⚠
-        ("1 < 46", Bool(true)),     // ⚠ was ReduceError "parallel or non expression found …"
-        ("46 < 1", Bool(false)),    // ⚠
-        ("1 == 1", Bool(true)),     //   passed before — EEq compared two IDENTICAL wrong operands
-        ("1 == 2", Bool(false)),    //   ditto
-        ("true and true", Bool(true)),  // ⚠ was ReduceError "Multiple expressions given."
-        ("true or false", Bool(true)),  // ⚠
-        ("not false", Bool(true)),      // ⚠
-        ("not true", Bool(false)),      // ⚠
+        ("1 + 2", Int(3)), // ⚠ was ReduceError "parallel or non expression found …"
+        ("7 - 2", Int(5)), // ⚠
+        ("3 * 4", Int(12)), // ⚠
+        ("1 < 46", Bool(true)), // ⚠ was ReduceError "parallel or non expression found …"
+        ("46 < 1", Bool(false)), // ⚠
+        ("1 == 1", Bool(true)), //   passed before — EEq compared two IDENTICAL wrong operands
+        ("1 == 2", Bool(false)), //   ditto
+        ("true and true", Bool(true)), // ⚠ was ReduceError "Multiple expressions given."
+        ("true or false", Bool(true)), // ⚠
+        ("not false", Bool(true)), // ⚠
+        ("not true", Bool(false)), // ⚠
     ] {
         let source = format!(r#"{{ @"OUT"!({payload}) }}"#);
         assert_eq!(
@@ -311,23 +303,23 @@ async fn operators_in_send_position_evaluate_on_the_reducer() {
 #[tokio::test]
 async fn a_scalar_ground_pattern_matches_a_scalar_send() {
     for subject in [
-        "42",          // ⚠ CastInt
-        "\"hi\"",      // ⚠ CastStr
-        "true",        // ⚠ CastBool
-        "{1:2}",       // ⚠ CastMap
-        "Set(1,2)",    // ⚠ CastSet
-        "#{1|2}#",     // ⚠ CastBag
-        "[1,2]",       //   CastList — matched before the fix (the exemption)
+        "42",       // ⚠ CastInt
+        "\"hi\"",   // ⚠ CastStr
+        "true",     // ⚠ CastBool
+        "{1:2}",    // ⚠ CastMap
+        "Set(1,2)", // ⚠ CastSet
+        "#{1|2}#",  // ⚠ CastBag
+        "[1,2]",    //   CastList — matched before the fix (the exemption)
         // ★ The SIGN-ABUTTED numerals, moved here 2026-07-26 when the token patterns gained the
         // leading `-?` (see `negative_literal_patterns_match_like_consensus_rholang` for the full
         // mechanism). Each is ONE signed literal token, so pattern and datum carry the same
         // ground literal and the COMM commits exactly as it does in consensus Rholang.
-        "-7",          //   Int
-        "-7n",         //   BigInt
-        "-7r",         //   BigRat
-        "-1.5f64",     //   Float
-        "-1.5p2",      //   Fixed
-        "[-7]",        //   the nested row — a signed element inside a collection
+        "-7",      //   Int
+        "-7n",     //   BigInt
+        "-7r",     //   BigRat
+        "-1.5f64", //   Float
+        "-1.5p2",  //   Fixed
+        "[-7]",    //   the nested row — a signed element inside a collection
     ] {
         let source = monadic(subject, subject);
         assert!(
@@ -439,9 +431,8 @@ async fn empty_and_polyadic_arities_still_agree() {
     let empty = format!(r#"{{ for(<- @"c") {{ @"OUT"!("{FIRED_MARKER}") }} | @"c"!() }}"#);
     assert!(fired(&empty).await, "`for(<- c)` must match `c!()`\n{empty}");
 
-    let polyadic = format!(
-        r#"{{ for(@a, @b <- @"c") {{ @"OUT"!("{FIRED_MARKER}") }} | @"c"!(1, 2) }}"#
-    );
+    let polyadic =
+        format!(r#"{{ for(@a, @b <- @"c") {{ @"OUT"!("{FIRED_MARKER}") }} | @"c"!(1, 2) }}"#);
     assert!(fired(&polyadic).await, "`for(@a, @b <- c)` must match `c!(1, 2)`\n{polyadic}");
 }
 
@@ -522,7 +513,10 @@ async fn a_guard_condition_carries_no_process_structure() {
     ] {
         let source = guarded(guard, datum);
         let par = lower_with(&source, LoweringOptions::NO_DISCHARGE);
-        let receive = par.receives.first().expect("the program contains one receive");
+        let receive = par
+            .receives
+            .first()
+            .expect("the program contains one receive");
         let condition = receive.condition.as_ref().unwrap_or_else(|| {
             panic!(
                 "`where {guard}` must lower to a populated Receive.condition under \
@@ -546,13 +540,19 @@ async fn a_monadic_ground_pattern_lowers_verbatim() {
     ] {
         let source = format!(r#"{{ for(@{pattern} <- @"c") {{ @"OUT"!("Z") }} }}"#);
         let par = lower(&source);
-        let receive = par.receives.first().expect("the program contains one receive");
+        let receive = par
+            .receives
+            .first()
+            .expect("the program contains one receive");
         let bind = receive.binds.first().expect("the receive has one bind");
         let [only_pattern] = bind.patterns.as_slice() else {
             panic!("a monadic bind must carry exactly ONE pattern\n{source}");
         };
         assert_eq!(
-            only_pattern.exprs.first().and_then(|e| e.expr_instance.clone()),
+            only_pattern
+                .exprs
+                .first()
+                .and_then(|e| e.expr_instance.clone()),
             Some(expected.clone()),
             "`for(@{pattern} <- c)` must lower its pattern VERBATIM, not wrapped in a list\n\
              source: {source}\npattern: {only_pattern:?}"

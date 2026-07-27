@@ -239,7 +239,10 @@ async fn wherever_the_host_decides_the_machine_agrees() {
         "at least a third of the matrix must be DECIDED host-side, got {decided}/{}",
         MATRIX.len()
     );
-    assert!(declined >= 5, "the matrix must exercise the DECLINED fragment too, got {declined}");
+    assert!(
+        declined >= 5,
+        "the matrix must exercise the DECLINED fragment too, got {declined}"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

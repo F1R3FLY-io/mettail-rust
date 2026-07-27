@@ -190,8 +190,11 @@ async fn the_provenance_datum_is_a_trace_and_a_term() {
             "a step is a 32-byte content digest"
         );
     }
-    let mut handles: Vec<[u8; 32]> =
-        response.success.iter().map(|report| report.handle).collect();
+    let mut handles: Vec<[u8; 32]> = response
+        .success
+        .iter()
+        .map(|report| report.handle)
+        .collect();
     handles.sort();
     handles.dedup();
     assert_eq!(handles.len(), 2, "the two branches have distinct handles");
@@ -251,7 +254,11 @@ async fn a_truncated_branch_is_published_with_a_resumable_handle() {
     .await
     .expect("serve `[*]`");
 
-    let handles: Vec<_> = cut.handles.iter().map(|(_, branch)| branch.clone()).collect();
+    let handles: Vec<_> = cut
+        .handles
+        .iter()
+        .map(|(_, branch)| branch.clone())
+        .collect();
     let resumed = LookaheadService::resume(
         &handles,
         Lookahead::Unbounded,
@@ -319,7 +326,10 @@ async fn an_unaffordable_request_publishes_typed_branch_failures() {
     assert_eq!(reason.ps.len(), 2);
     assert!(
         matches!(
-            reason.ps[0].exprs.first().and_then(|e| e.expr_instance.as_ref()),
+            reason.ps[0]
+                .exprs
+                .first()
+                .and_then(|e| e.expr_instance.as_ref()),
             Some(ExprInstance::GInt(1))
         ),
         "code 1 is out-of-phlogistons"
@@ -345,10 +355,7 @@ async fn the_configuration_projection_delivers_a_process() {
         response.reply.iter().all(|par| !par.sends.is_empty()),
         "a terminal configuration with resting data reifies to sends"
     );
-    assert_ne!(
-        response.reply[0], response.reply[1],
-        "two configurations, two processes"
-    );
+    assert_ne!(response.reply[0], response.reply[1], "two configurations, two processes");
 }
 
 /// The wire and the engine agree on what a request looks like: a seed built by

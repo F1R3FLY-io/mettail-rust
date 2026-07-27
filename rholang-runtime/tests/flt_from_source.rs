@@ -16,8 +16,8 @@ use std::sync::Arc;
 use mettail_languages::lambda::LambdaLanguage;
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_codegen::{
-    ground_marker_tag_par, lower_language_def, plan_rho_default_backend, reflect_ground_term_par,
-    reconstruct_language_def, rho_net_drive_call_par, suggest_rejected_rule_dispositions,
+    ground_marker_tag_par, lower_language_def, plan_rho_default_backend, reconstruct_language_def,
+    reflect_ground_term_par, rho_net_drive_call_par, suggest_rejected_rule_dispositions,
     FltRegistry, FltResolve, GroundTerm, RhoCoverageEvidence, RhoDefaultBackendRequirements,
     RhoGuardCoverageEvidence, BOUND_VAR_REFLECT_LABEL, DRIVE_DEFAULT_FUEL, LAMBDA_REFLECT_LABEL,
     PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
@@ -119,7 +119,10 @@ fn beat0_from_source_construction_reflects_app_id_k() {
 
 // ── decoded-observation builders (mirror flt_abi_over_rspace.rs) ────────────────────────────────
 fn oterm(constructor: &str, children: Vec<RuntimeObservationValue>) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children,
+    }
 }
 fn onullary(constructor: &str) -> RuntimeObservationValue {
     oterm(constructor, Vec::new())
@@ -199,7 +202,10 @@ async fn beat2_from_source_ground_subpattern_vetoes() {
          for( @lambda`(${f}, lam a. lam b. a)` <- @\"fltX\" ){ @\"OUT\"!(f) }",
     )
     .await;
-    assert!(vetoed.is_empty(), "⟦App(id, id)⟧ has ⟦id⟧ ≠ ⟦K⟧ at the argument — veto, OUT empty");
+    assert!(
+        vetoed.is_empty(),
+        "⟦App(id, id)⟧ has ⟦id⟧ ≠ ⟦K⟧ at the argument — veto, OUT empty"
+    );
 }
 
 // ── Beat 4 (from source, re-quote) — capture the holes, re-quote, reconstruct ⟦App(id, K)⟧ ──────

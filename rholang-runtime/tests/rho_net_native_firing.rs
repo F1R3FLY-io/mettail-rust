@@ -45,7 +45,6 @@
 #[path = "../../languages/tests/definitions/nativedemo.rs"]
 mod nativedemo;
 
-use nativedemo::NativeDemoLanguage;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,
@@ -55,6 +54,7 @@ use mettail_rholang_runtime::{
     build_rho_net_injection_invocation_from_contract, PlannedRhoBackend, RhoMachineInvocation,
 };
 use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
+use nativedemo::NativeDemoLanguage;
 use prost::Message;
 
 /// Reconstruct NativeDemo's augmented `LanguageDef` from the generated metadata's
@@ -134,7 +134,10 @@ async fn nativedemo_native_system_process_fires_as_a_comm_on_the_reducer() {
 
     // The firing's contractum IS the host-computed native value `8` — the whole point of model-b:
     // the value is computed host-side by the TRUSTED native handler and handed to the σ-injection.
-    let eight = RuntimeReflectedSubterm { constructor: "NumLit(8)".to_string(), children: Vec::new() };
+    let eight = RuntimeReflectedSubterm {
+        constructor: "NumLit(8)".to_string(),
+        children: Vec::new(),
+    };
     assert_eq!(
         justification.contractum.as_ref(),
         Some(&eight),
@@ -220,21 +223,18 @@ async fn s_native_location_is_produced_by_the_automaton_not_the_report() {
 
     let mut report = NativeDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
         .expect("NativeDemo Dovetail report must compile");
-    assert_eq!(
-        report.rewrite_justifications.len(),
-        1,
-        "2 ^ 3 fires exactly one native rewrite"
-    );
+    assert_eq!(report.rewrite_justifications.len(), 1, "2 ^ 3 fires exactly one native rewrite");
 
     // Deliberately WRONG σ (the matched-subterm LOCATION): a report-σ locator would key off these
     // and never find the real PowInt(NumLit(2), NumLit(3)). The rule label + contractum (the native
     // VALUE) stay valid — only the LOCATION σ is corrupted.
-    let nonsense = RuntimeReflectedSubterm { constructor: "NumLit(999)".to_string(), children: Vec::new() };
+    let nonsense = RuntimeReflectedSubterm {
+        constructor: "NumLit(999)".to_string(),
+        children: Vec::new(),
+    };
     for justification in &mut report.rewrite_justifications {
-        justification.sigma = vec![
-            ("a".to_string(), nonsense.clone()),
-            ("b".to_string(), nonsense.clone()),
-        ];
+        justification.sigma =
+            vec![("a".to_string(), nonsense.clone()), ("b".to_string(), nonsense.clone())];
         assert_eq!(
             justification.rule_label, "Int_PowInt",
             "the fired rule label (the location-independent identity) stays valid"
@@ -251,9 +251,12 @@ async fn s_native_location_is_produced_by_the_automaton_not_the_report() {
 
     // The MATCH path (M-reflect + locate) admits the native redex despite the corrupted σ, and the
     // automaton LOCATES PowInt from the reflected subject `term`.
-    let invocation =
-        NativeDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
-            .expect("the MATCH path admits 2 ^ 3 with a corrupted report σ");
+    let invocation = NativeDemoLanguage::rho_net_match_invocation_from_dovetail_to(
+        term.as_ref(),
+        &report,
+        "OUT",
+    )
+    .expect("the MATCH path admits 2 ^ 3 with a corrupted report σ");
     assert_eq!(invocation.out_channel, "OUT");
 
     let observation = backend
@@ -294,7 +297,11 @@ async fn s_native_location_is_produced_by_the_automaton_not_the_report() {
 /// corrupts EVERY occurrence (the spread's `loc:` head publications and `cap:` collapse values
 /// alike) — a CONSISTENTLY corrupted spread, as if the automaton had been handed a different
 /// subject.
-fn corrupt_par_bytes(par: &models::rhoapi::Par, needle: &[u8], replacement: &[u8]) -> models::rhoapi::Par {
+fn corrupt_par_bytes(
+    par: &models::rhoapi::Par,
+    needle: &[u8],
+    replacement: &[u8],
+) -> models::rhoapi::Par {
     assert_eq!(
         needle.len(),
         replacement.len(),
@@ -375,9 +382,12 @@ async fn a_s3_admitted_native_value_is_computed_by_the_registered_handler_at_com
     // probe is sensitive, and the deferral path is byte-compatibly unchanged.
     let report = NativeDemoLanguage::dovetail_report_for(term.as_ref(), 64, 1_000_000)
         .expect("NativeDemo Dovetail report must compile");
-    let report_invocation =
-        NativeDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
-            .expect("the report-carrying match still admits");
+    let report_invocation = NativeDemoLanguage::rho_net_match_invocation_from_dovetail_to(
+        term.as_ref(),
+        &report,
+        "OUT",
+    )
+    .expect("the report-carrying match still admits");
     assert!(
         par_bytes_contain(&report_invocation.call, b"NumLit(8)"),
         "the report path's value bridge embeds the host-computed contractum (the D-stage lane)"
@@ -515,7 +525,9 @@ fn a_s3_admitted_native_exec_builds_no_dovetail_report() {
     ) -> Result<RhoBackendInvocation, String> {
         let contract =
             NativeDemoLanguage::rho_net_match_invocation_from_dovetail_to(term, report, "OUT")?;
-        Ok(RhoBackendInvocation::from(build_rho_net_injection_invocation_from_contract(contract)))
+        Ok(RhoBackendInvocation::from(build_rho_net_injection_invocation_from_contract(
+            contract,
+        )))
     }
 
     let language = install_dovetail_rho_runtime_backend_lazy(

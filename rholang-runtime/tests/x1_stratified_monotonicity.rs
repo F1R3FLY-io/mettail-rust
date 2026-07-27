@@ -91,12 +91,12 @@ use models::rhoapi::{
     BindPattern, Expr, ListParWithRandom, Par, Receive, ReceiveBind, Send, TaggedContinuation,
 };
 use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par};
+use rho_pure_eval::Env;
 use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::has_cost::HasCost;
 use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::rho_runtime::{create_rho_runtime, RhoRuntime};
-use rho_pure_eval::Env;
 use rspace_plus_plus::rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rspace_plus_plus::rspace::errors::RSpaceError;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
@@ -104,9 +104,7 @@ use rspace_plus_plus::rspace::hot_store::HotStoreState;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
 use rspace_plus_plus::rspace::r#match::Match;
 use rspace_plus_plus::rspace::rspace::RSpace;
-use rspace_plus_plus::rspace::rspace_interface::{
-    ISpace, MaybeConsumeResult, MaybeProduceResult,
-};
+use rspace_plus_plus::rspace::rspace_interface::{ISpace, MaybeConsumeResult, MaybeProduceResult};
 use rspace_plus_plus::rspace::shared::in_mem_store_manager::InMemoryStoreManager;
 use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreManager;
 use rspace_plus_plus::rspace::trace::event::{Consume, Produce};
@@ -150,7 +148,8 @@ impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for CountingMatch
     }
 
     fn check_commit(&self, k: &TaggedContinuation, matched: &[&ListParWithRandom]) -> bool {
-        self.check_commit_calls.fetch_add(1, AtomicOrdering::Relaxed);
+        self.check_commit_calls
+            .fetch_add(1, AtomicOrdering::Relaxed);
         self.inner.check_commit(k, matched)
     }
 }
@@ -222,11 +221,9 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Specula
         RSpaceError,
     > {
         let source = Produce::create(&channel, &data, persist);
-        self.inner.get_store().put_datum(&channel, Datum {
-            a: Arc::new(data),
-            persist,
-            source,
-        });
+        self.inner
+            .get_store()
+            .put_datum(&channel, Datum { a: Arc::new(data), persist, source });
         self.staged_produces.fetch_add(1, AtomicOrdering::Relaxed);
         Ok(None)
     }
@@ -244,13 +241,7 @@ impl ISpace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for Specula
         MaybeConsumeResult<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
         RSpaceError,
     > {
-        let wk = WaitingContinuation::create(
-            &channels,
-            &patterns,
-            &continuation,
-            persist,
-            peeks,
-        );
+        let wk = WaitingContinuation::create(&channels, &patterns, &continuation, persist, peeks);
         let store = self.inner.get_store();
         let _ = store.put_continuation(&channels, wk);
         for channel in channels.iter() {
@@ -360,12 +351,7 @@ struct FiredComm {
 
 impl FiredComm {
     fn key(&self) -> Consume {
-        Consume::create(
-            &self.channels,
-            &self.patterns,
-            &self.continuation,
-            self.persistent,
-        )
+        Consume::create(&self.channels, &self.patterns, &self.continuation, self.persistent)
     }
     fn consumed_ints(&self) -> Vec<i64> {
         let mut values: Vec<i64> = self
@@ -391,7 +377,10 @@ struct RecordingSpace {
 
 impl RecordingSpace {
     fn new(inner: Space) -> Self {
-        Self { inner, fired: Arc::new(Mutex::new(Vec::new())) }
+        Self {
+            inner,
+            fired: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     fn record(
@@ -719,11 +708,7 @@ async fn run_speculative(par: Par) -> SpeculativeRun {
     .await;
     runtime.cost().set(Cost::unsafe_max());
     runtime
-        .inj(
-            par,
-            Env::new(),
-            Blake2b512Random::create_from_bytes(FIXED_SEED),
-        )
+        .inj(par, Env::new(), Blake2b512Random::create_from_bytes(FIXED_SEED))
         .await
         .expect("the administrative fragment must reduce to quiescence");
 
@@ -760,11 +745,7 @@ async fn run_ordinary(par: Par) -> OrdinaryRun {
     .await;
     runtime.cost().set(Cost::unsafe_max());
     runtime
-        .inj(
-            par,
-            Env::new(),
-            Blake2b512Random::create_from_bytes(FIXED_SEED),
-        )
+        .inj(par, Env::new(), Blake2b512Random::create_from_bytes(FIXED_SEED))
         .await
         .expect("the ordinary run must reduce to quiescence");
 
@@ -1104,8 +1085,7 @@ async fn t1_stratification_removes_no_rendezvous_over_the_corpus() {
 
         // ★ THE ASSERTION. Every rendezvous the ordinary run fired must be a
         // member of E(S).
-        let enabled_keys: BTreeSet<Consume> =
-            enabled.iter().map(|r| r.key.clone()).collect();
+        let enabled_keys: BTreeSet<Consume> = enabled.iter().map(|r| r.key.clone()).collect();
         for fired in &ordinary.fired {
             if !enabled_keys.contains(&fired.key()) {
                 refutations.push(format!(
@@ -1258,7 +1238,11 @@ async fn t2b_persistent() {
     println!("   ordinary COMMs fired : {}", ordinary.fired.len());
     println!(
         "   ordinary persistent  : {:?}",
-        ordinary.fired.iter().map(|f| f.persistent).collect::<Vec<_>>()
+        ordinary
+            .fired
+            .iter()
+            .map(|f| f.persistent)
+            .collect::<Vec<_>>()
     );
     println!(
         "   continuation resting AFTER : {}",
@@ -1272,10 +1256,7 @@ async fn t2b_persistent() {
     println!("   |E(S)| at quiescence : {}", enabled.len());
 
     assert_eq!(ordinary.fired.len(), 1, "the persistent receive must fire once");
-    assert!(
-        ordinary.fired[0].persistent,
-        "the fired COMM must be flagged persistent"
-    );
+    assert!(ordinary.fired[0].persistent, "the fired COMM must be flagged persistent");
     assert_eq!(
         enabled.len(),
         1,
@@ -1321,11 +1302,7 @@ async fn t2c_the_least_admissible_selection_may_differ() {
     );
 
     // The SET of enabled rendezvous is the claim under test, and it must hold.
-    assert_eq!(
-        enabled.len(),
-        2,
-        "both receives must be enabled at administrative quiescence"
-    );
+    assert_eq!(enabled.len(), 2, "both receives must be enabled at administrative quiescence");
     // Each probe, run against the FULL resting pool, must be able to take
     // either datum — so each selection is one of the two available.
     for selection in &speculative_selections {
@@ -1509,7 +1486,11 @@ async fn t2d_where_guard() {
     println!("\n── X1 · WHERE GUARD ──");
     println!(
         "   ordinary consumed    : {:?}",
-        ordinary.fired.iter().map(|f| f.consumed_ints()).collect::<Vec<_>>()
+        ordinary
+            .fired
+            .iter()
+            .map(|f| f.consumed_ints())
+            .collect::<Vec<_>>()
     );
     println!(
         "   resting after        : {:?}",
@@ -1562,11 +1543,7 @@ async fn t2e_join() {
          quiescence"
     );
     assert_eq!(enabled[0].selected, vec![1, 2]);
-    assert_eq!(
-        speculative.quiescent.joins.len(),
-        2,
-        "both join-index entries must be staged"
-    );
+    assert_eq!(speculative.quiescent.joins.len(), 2, "both join-index entries must be staged");
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1594,11 +1571,11 @@ fn confluent_new_fan(width: usize) -> Par {
                 locally_free: models::create_bit_vector(&vec![0]),
                 connective_used: false,
             }]),
-            Vec::new(),       // uri
-            BTreeMap::new(),  // injections
-            Vec::new(),       // locally_free (of the New)
-            Vec::new(),       // locally_free (of the wrapping Par)
-            false,            // connective_used
+            Vec::new(),      // uri
+            BTreeMap::new(), // injections
+            Vec::new(),      // locally_free (of the New)
+            Vec::new(),      // locally_free (of the wrapping Par)
+            false,           // connective_used
         ));
     }
     program
@@ -1616,8 +1593,12 @@ fn store_fingerprint(state: &State) -> Vec<String> {
             let channel_bytes = hex(&channel.encode_to_vec());
             data.iter()
                 .map(|datum| {
-                    let mut payload: Vec<String> =
-                        datum.a.pars.iter().map(|p| hex(&p.encode_to_vec())).collect();
+                    let mut payload: Vec<String> = datum
+                        .a
+                        .pars
+                        .iter()
+                        .map(|p| hex(&p.encode_to_vec()))
+                        .collect();
                     payload.sort();
                     format!("{channel_bytes} → [{}]", payload.join(","))
                 })
@@ -1696,8 +1677,7 @@ async fn r2_the_whole_run_is_reproducible_under_the_multi_threaded_runtime() {
     let mut fingerprints: Vec<Vec<String>> = Vec::with_capacity(RUNS);
     for _ in 0..RUNS {
         let run = run_ordinary(program.clone()).await;
-        let mut selections: Vec<Vec<i64>> =
-            run.fired.iter().map(|f| f.consumed_ints()).collect();
+        let mut selections: Vec<Vec<i64>> = run.fired.iter().map(|f| f.consumed_ints()).collect();
         selections.sort();
         outcomes.push(selections);
         fingerprints.push(store_fingerprint(&run.final_state));

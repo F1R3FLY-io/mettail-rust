@@ -500,7 +500,10 @@ fn extract_bool(par: &Par) -> Option<bool> {
 ///
 /// Exposed for the agreement tests; the lowering never builds one.
 pub fn guard_as_tagged_continuation(cond_par: &Par) -> TaggedContinuation {
-    TaggedContinuation { guard: Some(cond_par.clone()), tagged_cont: None }
+    TaggedContinuation {
+        guard: Some(cond_par.clone()),
+        tagged_cont: None,
+    }
 }
 
 /// The `W1 GuardStaticallyFalse` refutation diagnostic (S-D0R).
@@ -581,7 +584,10 @@ mod tests {
     use rspace_plus_plus::rspace::r#match::Match;
 
     fn expr_par(instance: ExprInstance) -> Par {
-        Par { exprs: vec![Expr { expr_instance: Some(instance) }], ..Par::default() }
+        Par {
+            exprs: vec![Expr { expr_instance: Some(instance) }],
+            ..Par::default()
+        }
     }
 
     fn gbool(b: bool) -> Par {
@@ -658,8 +664,7 @@ mod tests {
             p1: Some(new_boundvar_par(3, create_bit_vector(&[3]), false)),
             p2: Some(new_boundvar_par(1, create_bit_vector(&[1]), false)),
         }));
-        let conj =
-            expr_par(ExprInstance::EAndBody(EAnd { p1: Some(eq0), p2: Some(eq1) }));
+        let conj = expr_par(ExprInstance::EAndBody(EAnd { p1: Some(eq0), p2: Some(eq1) }));
         assert_eq!(machine(&conj), GuardDischarge::Residual);
     }
 
@@ -778,8 +783,10 @@ mod tests {
             p1: Some(x()),
             p2: Some(gint(1)),
         }));
-        let tautology =
-            expr_par(ExprInstance::ELtBody(models::rhoapi::ELt { p1: Some(x()), p2: Some(x_plus_1) }));
+        let tautology = expr_par(ExprInstance::ELtBody(models::rhoapi::ELt {
+            p1: Some(x()),
+            p2: Some(x_plus_1),
+        }));
 
         assert_eq!(
             crate::guard_par_substrate::substrate_verdict(&tautology),
@@ -807,7 +814,10 @@ mod tests {
             gint(1),
             expr_par(ExprInstance::EGtBody(EGt { p1: Some(gint(3)), p2: Some(gint(2)) })),
             expr_par(ExprInstance::EGtBody(EGt { p1: Some(gint(2)), p2: Some(gint(3)) })),
-            expr_par(ExprInstance::EAndBody(EAnd { p1: Some(gbool(true)), p2: Some(gbool(true)) })),
+            expr_par(ExprInstance::EAndBody(EAnd {
+                p1: Some(gbool(true)),
+                p2: Some(gbool(true)),
+            })),
             expr_par(ExprInstance::EAndBody(EAnd {
                 p1: Some(gbool(true)),
                 p2: Some(gbool(false)),
@@ -832,7 +842,10 @@ mod tests {
         let absent = TaggedContinuation { guard: None, tagged_cont: None };
         assert!(matcher.check_commit(&absent, &[]));
         // …and so does the empty-`Par` form `reduce.rs` collapses to `None`.
-        let empty = TaggedContinuation { guard: Some(Par::default()), tagged_cont: None };
+        let empty = TaggedContinuation {
+            guard: Some(Par::default()),
+            tagged_cont: None,
+        };
         assert!(matcher.check_commit(&empty, &[]));
     }
 

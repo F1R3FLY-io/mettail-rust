@@ -166,9 +166,10 @@ fn guarded_source(guard: &str, datum: &str) -> String {
 async fn guarded_receive(guard: &str, datum: &str) -> (Vec<String>, Vec<String>) {
     let source = guarded_source(guard, datum);
     let par = parse_lower(&source);
-    let observed = run_normalized_par_for_oracle_and_read_runtime_value_channels(&par, &["OUT", "c"])
-        .await
-        .unwrap_or_else(|err| panic!("guarded receive failed for {source:?}: {err}"));
+    let observed =
+        run_normalized_par_for_oracle_and_read_runtime_value_channels(&par, &["OUT", "c"])
+            .await
+            .unwrap_or_else(|err| panic!("guarded receive failed for {source:?}: {err}"));
     (rendered(&observed, "OUT"), rendered(&observed, "c"))
 }
 
@@ -182,10 +183,7 @@ async fn guarded_receive(guard: &str, datum: &str) -> (Vec<String>, Vec<String>)
 /// (`true implies false`, `false implies false`), and the second of them discharges.
 /// Running that row on both arms keeps the runtime evaluator under test AND pins the
 /// equivalence.
-async fn guarded_receive_without_discharge(
-    guard: &str,
-    datum: &str,
-) -> (Vec<String>, Vec<String>) {
+async fn guarded_receive_without_discharge(guard: &str, datum: &str) -> (Vec<String>, Vec<String>) {
     let source = guarded_source(guard, datum);
     clear_var_cache();
     let proc = Proc::parse_via_wpda(&source)
@@ -193,17 +191,23 @@ async fn guarded_receive_without_discharge(
     let par = lower_rhocalc_proc_with_options(&proc, LoweringOptions::NO_DISCHARGE)
         .unwrap_or_else(|err| panic!("rhocalc lowering failed for {source:?}: {err:?}"));
     assert!(
-        par.receives.first().is_some_and(|receive| receive.condition.is_some()),
+        par.receives
+            .first()
+            .is_some_and(|receive| receive.condition.is_some()),
         "discharge-OFF must emit the guard verbatim, so the runtime evaluator decides it: \
          {guard:?}"
     );
-    let observed = run_normalized_par_for_oracle_and_read_runtime_value_channels(&par, &["OUT", "c"])
-        .await
-        .unwrap_or_else(|err| panic!("guarded receive failed for {source:?}: {err}"));
+    let observed =
+        run_normalized_par_for_oracle_and_read_runtime_value_channels(&par, &["OUT", "c"])
+            .await
+            .unwrap_or_else(|err| panic!("guarded receive failed for {source:?}: {err}"));
     (rendered(&observed, "OUT"), rendered(&observed, "c"))
 }
 
-fn rendered(observed: &HashMap<String, Vec<RuntimeObservationValue>>, channel: &str) -> Vec<String> {
+fn rendered(
+    observed: &HashMap<String, Vec<RuntimeObservationValue>>,
+    channel: &str,
+) -> Vec<String> {
     let mut values: Vec<String> = observed
         .get(channel)
         .map(|vs| vs.iter().map(|v| v.to_string()).collect())
@@ -215,8 +219,12 @@ fn rendered(observed: &HashMap<String, Vec<RuntimeObservationValue>>, channel: &
 /// The four rows of `⇒`, each spelled twice — once as ground `bool` literals and
 /// once as `int`-width-folded comparisons — so the table is exercised both with
 /// and without the fold trampoline in the operand positions.
-const IMPLICATION_ROWS: [(bool, bool, bool); 4] =
-    [(false, false, true), (false, true, true), (true, false, false), (true, true, true)];
+const IMPLICATION_ROWS: [(bool, bool, bool); 4] = [
+    (false, false, true),
+    (false, true, true),
+    (true, false, false),
+    (true, true, true),
+];
 
 fn as_bool_literal(value: bool) -> &'static str {
     if value {
@@ -289,19 +297,29 @@ async fn implies_lowers_to_or_of_not() {
         ExprInstance::EOrBody(or) => or,
         other => panic!("`implies` must lower to EOrBody, got {other:?}"),
     };
-    let antecedent = disjunction.p1.as_ref().expect("EOr must carry its left operand");
+    let antecedent = disjunction
+        .p1
+        .as_ref()
+        .expect("EOr must carry its left operand");
     assert!(
         matches!(
             antecedent.exprs.as_slice(),
-            [models::rhoapi::Expr { expr_instance: Some(ExprInstance::ENotBody(_)) }]
+            [models::rhoapi::Expr {
+                expr_instance: Some(ExprInstance::ENotBody(_))
+            }]
         ),
         "the ANTECEDENT must be negated: ⟦a implies b⟧ = EOr(ENot ⟦a⟧, ⟦b⟧), got {antecedent:?}"
     );
-    let consequent = disjunction.p2.as_ref().expect("EOr must carry its right operand");
+    let consequent = disjunction
+        .p2
+        .as_ref()
+        .expect("EOr must carry its right operand");
     assert!(
         matches!(
             consequent.exprs.as_slice(),
-            [models::rhoapi::Expr { expr_instance: Some(ExprInstance::GBool(false)) }]
+            [models::rhoapi::Expr {
+                expr_instance: Some(ExprInstance::GBool(false))
+            }]
         ),
         "the CONSEQUENT must ride verbatim, got {consequent:?}"
     );
@@ -379,7 +397,8 @@ async fn comparison_binds_tighter_than_implies() {
     // Comparisons are declared AFTER `implies`, so `a > b implies c > d` needs no
     // parentheses to mean `(a > b) implies (c > d)`. `int(·,8)` keeps the operands
     // in the `GInt` carrier the machine can compare.
-    let (folds, observed) = run_with_folds(r#"@"OUT"!(int(3,8) > int(1,8) implies int(3,8) > int(1,8))"#).await;
+    let (folds, observed) =
+        run_with_folds(r#"@"OUT"!(int(3,8) > int(1,8) implies int(3,8) > int(1,8))"#).await;
     assert_eq!(folds, 4, "four `int(·,8)` folds ride the two comparisons");
     assert_eq!(
         observed,
@@ -433,7 +452,11 @@ const ORDERED_GUARD: &str = r#"x > "m" implies x > "s""#;
 async fn implies_guard_fires_on_a_satisfying_datum() {
     // "z" > "m" is true and "z" > "s" is true ⇒ T ⇒ T = true.
     let (fired, resting) = guarded_receive(ORDERED_GUARD, r#""z""#).await;
-    assert_eq!(fired, vec![r#""z""#.to_string()], "a satisfied implication must commit the receive");
+    assert_eq!(
+        fired,
+        vec![r#""z""#.to_string()],
+        "a satisfied implication must commit the receive"
+    );
     assert!(resting.is_empty(), "a committed receive consumes its datum");
 }
 
@@ -533,9 +556,11 @@ fn the_discharge_classification_of_every_guard_in_this_suite_is_pinned() {
         let source = guarded_source(guard, r#""a""#);
         clear_var_cache();
         let proc = Proc::parse_via_wpda(&source).expect("parse");
-        let par = lower_rhocalc_proc_with_options(&proc, LoweringOptions::PRODUCTION)
-            .expect("lower");
-        par.receives.first().is_some_and(|receive| receive.condition.is_some())
+        let par =
+            lower_rhocalc_proc_with_options(&proc, LoweringOptions::PRODUCTION).expect("lower");
+        par.receives
+            .first()
+            .is_some_and(|receive| receive.condition.is_some())
     }
 
     // DISCHARGED — the condition is omitted (the only row in this file).

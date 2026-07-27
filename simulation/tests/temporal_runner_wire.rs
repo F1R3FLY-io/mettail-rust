@@ -343,10 +343,7 @@ fn non_converging_campaign_surfaces_violation_in_campaign_results() {
 
     // The full failure record must also carry the LtlViolation outcome.
     assert_eq!(results.failures.len(), 1);
-    assert!(matches!(
-        results.failures[0].trace.outcome,
-        TraceOutcome::LtlViolation { .. }
-    ));
+    assert!(matches!(results.failures[0].trace.outcome, TraceOutcome::LtlViolation { .. }));
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -26,9 +26,7 @@
 //! carries BOTH gates: the module must exist AND `SwapDemo`'s codegen surface must be on.
 #![cfg(all(feature = "swap-demo-runtime", feature = "bench-naive-baseline"))]
 
-use mettail_rholang_runtime::bench_support::{
-    compile_bench_language, count_receive_nodes,
-};
+use mettail_rholang_runtime::bench_support::{compile_bench_language, count_receive_nodes};
 
 #[path = "../../languages/tests/definitions/swapdemo.rs"]
 mod swapdemo;
@@ -46,8 +44,8 @@ fn compile_bench_language_hoists_swapdemo_once() {
         .metadata()
         .definition_source()
         .expect("the generated SwapDemo exposes its definition_source");
-    let compiled = compile_bench_language(source)
-        .expect("SwapDemo compiles through the warm-mode hoist");
+    let compiled =
+        compile_bench_language(source).expect("SwapDemo compiles through the warm-mode hoist");
     assert_eq!(
         compiled.ruleset.language_fingerprint,
         compiled.lowered.definition_fingerprint(),

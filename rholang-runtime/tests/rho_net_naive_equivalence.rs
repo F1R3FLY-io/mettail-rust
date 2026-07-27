@@ -71,7 +71,6 @@ mod swapdemo;
 
 use ctxdemo::CtxDemoLanguage;
 use lambdademo::LambdaDemoLanguage;
-use swapdemo::SwapDemoLanguage;
 use mettail_rholang_codegen::{
     compile_in_rho_matching_ruleset, contextual_match_call_par, in_rho_match_all_sites_call_par,
     in_rho_match_call_par, lower_language_def, naive_kt_contextual_match_call_par,
@@ -85,6 +84,7 @@ use mettail_rholang_runtime::{
     run_normalized_par_for_oracle_and_read_runtime_values, PlannedRhoBackend,
 };
 use mettail_runtime::{Language, RuntimeObservationValue};
+use swapdemo::SwapDemoLanguage;
 
 /// The shared root-site nonce for every drive in this suite (each run executes
 /// on its own isolated in-memory runtime, so a fixed nonce cannot collide).
@@ -125,7 +125,10 @@ fn planned_backend_and_ruleset(
 }
 
 fn obs(constructor: &str, children: Vec<RuntimeObservationValue>) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children,
+    }
 }
 
 fn onullary(constructor: &str) -> RuntimeObservationValue {
@@ -393,7 +396,10 @@ async fn fired_sets_agree_for_multi_redex_combs() {
 /// pinned separately in
 /// [`naive_full_comprehension_fires_the_whole_lambda_spine`], not a per-step
 /// root drive.
-fn naive_root_beta_call(ruleset: &InRhoMatchingRuleset, subject: &GroundTerm) -> models::rhoapi::Par {
+fn naive_root_beta_call(
+    ruleset: &InRhoMatchingRuleset,
+    subject: &GroundTerm,
+) -> models::rhoapi::Par {
     let view = ruleset.automaton.view();
     let accept_channel = entry_accept_channel(ruleset, 0);
     let receiver = naive_kt_entry_receiver_par(
@@ -595,8 +601,7 @@ async fn contextual_fired_sets_agree_for_wrap_swap() {
 async fn zero_firing_normal_form_observes_empty_out_on_both_sides() {
     mettail_runtime::clear_var_cache();
     let (backend, ruleset) = planned_backend_and_ruleset(&SwapDemoLanguage, "SwapDemo");
-    let subject =
-        GroundTerm::new("Pair", vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")]);
+    let subject = GroundTerm::new("Pair", vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")]);
 
     let (optimized_call, sites) = in_rho_match_all_sites_call_par(&ruleset, &subject, SITE, "OUT")
         .expect("a normal form is a valid locate-all no-op, not an error");

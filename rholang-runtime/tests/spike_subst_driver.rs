@@ -185,7 +185,11 @@ async fn probe_recursive_contract_dispatch_reduces_peano_cmp() {
       }
     "#;
     let observed = run_to_nf(program).await;
-    assert_eq!(observed, vec![text("Gt")], "cmp(2,1) must reduce to Gt via the recursive cascade");
+    assert_eq!(
+        observed,
+        vec![text("Gt")],
+        "cmp(2,1) must reduce to Gt via the recursive cascade"
+    );
 }
 
 /// Probe 2 (the runtime "widening" in isolation): ONE persistent contract serves TWO parallel
@@ -253,8 +257,7 @@ async fn case2_nested_binder_subst_reduces_with_shiftk() {
 /// each `subst(Z, a, bound Z) → a`. NF = `f(a, a) = ("f", ("free","a"), ("free","a"))`.
 #[tokio::test]
 async fn case3_object_descent_widening_two_sibling_substs_coreduce() {
-    let seed =
-        r#"subst!("Z", ("free", "a"), ("f", ("bound", "Z"), ("bound", "Z")), *result)"#;
+    let seed = r#"subst!("Z", ("free", "a"), ("f", ("bound", "Z"), ("bound", "Z")), *result)"#;
     let observed = run_to_nf(&trs_program(seed)).await;
     println!("case3 NF = {observed:?}");
     assert_eq!(

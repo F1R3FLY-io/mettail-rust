@@ -35,7 +35,9 @@ use mettail_languages::rhocalc::{BigInt, BigRat, Bool, Fixed, Float, Int, Proc, 
 // native-handler `[0xF1, rule]` / `0xF100+rule`, with the collision unit test) — so this module
 // IMPORTS its band rather than redeclaring it. The held-fold channel id is two-byte, so it
 // cannot collide with f1r3node's std (0–36) or test-framework (101–108) single-byte names.
-use mettail_rholang_codegen::{check_body_refs_pairwise_distinct, BandAllocationError, HELD_FOLD_BAND};
+use mettail_rholang_codegen::{
+    check_body_refs_pairwise_distinct, BandAllocationError, HELD_FOLD_BAND,
+};
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{ListParWithRandom, Par};
 use rholang::rust::interpreter::contract_call::ContractCall;
@@ -108,27 +110,23 @@ pub fn par_ground_to_proc(par: &Par) -> Option<Proc> {
             ExprInstance::GDouble(bits) => Some(Proc::CastFloat(Arc::new(Float::FloatLit(
                 mettail_runtime::CanonicalFloat64::from(f64::from_bits(*bits)),
             )))),
-            ExprInstance::GBigInt(bytes) => {
-                Some(Proc::CastBigInt(Arc::new(BigInt::NumLit(
-                    mettail_runtime::CanonicalBigInt::new(
-                        num_bigint::BigInt::from_signed_bytes_be(bytes),
-                    ),
-                ))))
-            },
+            ExprInstance::GBigInt(bytes) => Some(Proc::CastBigInt(Arc::new(BigInt::NumLit(
+                mettail_runtime::CanonicalBigInt::new(num_bigint::BigInt::from_signed_bytes_be(
+                    bytes,
+                )),
+            )))),
             ExprInstance::GBigRat(rational) => {
                 let numerator = num_bigint::BigInt::from_signed_bytes_be(&rational.numerator);
                 let denominator = num_bigint::BigInt::from_signed_bytes_be(&rational.denominator);
                 mettail_runtime::CanonicalBigRat::try_from_nd(numerator, denominator)
                     .map(|value| Proc::CastBigRat(Arc::new(BigRat::RatLit(value))))
             },
-            ExprInstance::GFixedPoint(fixed_point) => {
-                Some(Proc::CastFixed(Arc::new(Fixed::FixedLit(
-                    mettail_runtime::CanonicalFixedPoint::new(
-                        num_bigint::BigInt::from_signed_bytes_be(&fixed_point.unscaled),
-                        fixed_point.scale,
-                    ),
-                ))))
-            },
+            ExprInstance::GFixedPoint(fixed_point) => Some(Proc::CastFixed(Arc::new(
+                Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(
+                    num_bigint::BigInt::from_signed_bytes_be(&fixed_point.unscaled),
+                    fixed_point.scale,
+                )),
+            ))),
             _ => None,
         },
         _ => None,
@@ -252,7 +250,9 @@ pub fn fold_definitions_for(specs: &[FoldSpec]) -> Result<Vec<Definition>, BandA
     let urns: Vec<String> = specs.iter().map(fold_urn).collect();
     check_body_refs_pairwise_distinct(
         &HELD_FOLD_BAND,
-        urns.iter().map(String::as_str).zip(specs.iter().map(FoldSpec::body_ref)),
+        urns.iter()
+            .map(String::as_str)
+            .zip(specs.iter().map(FoldSpec::body_ref)),
     )?;
     Ok(specs.iter().map(fold_definition).collect())
 }

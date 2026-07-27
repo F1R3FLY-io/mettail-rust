@@ -105,7 +105,10 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
             .ok_or_else(|| format!("flag {flag} requires a value\n\n{}", usage()))?;
         match flag {
             "--workload" => {
-                workload = ALL_WORKLOADS.iter().copied().find(|kind| kind.name() == value);
+                workload = ALL_WORKLOADS
+                    .iter()
+                    .copied()
+                    .find(|kind| kind.name() == value);
                 if workload.is_none() {
                     return Err(format!("unknown workload `{value}`\n\n{}", usage()));
                 }
@@ -124,7 +127,9 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
                 reps = Some(value.parse::<u64>().map_err(|e| format!("--reps: {e}"))?);
             },
             "--warmups" => {
-                warmups = value.parse::<u64>().map_err(|e| format!("--warmups: {e}"))?;
+                warmups = value
+                    .parse::<u64>()
+                    .map_err(|e| format!("--warmups: {e}"))?;
             },
             "--out" => out = Some(value.clone()),
             other => return Err(format!("unknown flag `{other}`\n\n{}", usage())),
@@ -335,37 +340,38 @@ fn run_rep(
                         )
                     })
                 },
-                Arm::Treatment => tokio::time::timeout(
-                    REP_TIMEOUT,
-                    run_e6a_treatment_workload(compiled, rep),
-                )
-                .await
-                .map_err(|_| format!("timeout-guard: rep exceeded {}s", REP_TIMEOUT.as_secs()))
-                .and_then(|outcome| outcome.map_err(|failure| failure.reason))
-                .map(|outcome| {
-                    let mut sites_json = String::from("{");
-                    for (index, (op, sites)) in outcome.machine_sites.iter().enumerate() {
-                        if index > 0 {
-                            sites_json.push(',');
-                        }
-                        sites_json.push_str(&json_string(op));
-                        sites_json.push(':');
-                        sites_json.push_str(&sites.len().to_string());
-                    }
-                    sites_json.push('}');
-                    rep_line(
-                        args,
-                        rep,
-                        is_warmup,
-                        &outcome.result,
-                        &outcome.result.matches.clone(),
-                        outcome.treatment_spread_sends,
-                        outcome.result.comm.pathmap_index,
-                        &sites_json,
-                        outcome.emission,
-                        outcome.bringup,
-                    )
-                }),
+                Arm::Treatment => {
+                    tokio::time::timeout(REP_TIMEOUT, run_e6a_treatment_workload(compiled, rep))
+                        .await
+                        .map_err(|_| {
+                            format!("timeout-guard: rep exceeded {}s", REP_TIMEOUT.as_secs())
+                        })
+                        .and_then(|outcome| outcome.map_err(|failure| failure.reason))
+                        .map(|outcome| {
+                            let mut sites_json = String::from("{");
+                            for (index, (op, sites)) in outcome.machine_sites.iter().enumerate() {
+                                if index > 0 {
+                                    sites_json.push(',');
+                                }
+                                sites_json.push_str(&json_string(op));
+                                sites_json.push(':');
+                                sites_json.push_str(&sites.len().to_string());
+                            }
+                            sites_json.push('}');
+                            rep_line(
+                                args,
+                                rep,
+                                is_warmup,
+                                &outcome.result,
+                                &outcome.result.matches.clone(),
+                                outcome.treatment_spread_sends,
+                                outcome.result.comm.pathmap_index,
+                                &sites_json,
+                                outcome.emission,
+                                outcome.bringup,
+                            )
+                        })
+                },
             }
         })
     }));

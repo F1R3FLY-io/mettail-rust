@@ -317,10 +317,8 @@ async fn s_ac_bag_is_produced_by_the_spread_not_the_report() {
             justification.rule_label, "AcStep",
             "the fired rule label (the location-independent identity) stays valid"
         );
-        justification.sigma = vec![
-            ("x".to_string(), nonsense.clone()),
-            ("rest".to_string(), nonsense_rest.clone()),
-        ];
+        justification.sigma =
+            vec![("x".to_string(), nonsense.clone()), ("rest".to_string(), nonsense_rest.clone())];
     }
 
     // The MATCH path admits the AC redex despite the corrupted σ, and RE-SOURCES the operand bag

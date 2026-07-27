@@ -31,13 +31,6 @@ use mettail_runtime::{
 };
 use models::rhoapi::Par;
 
-use crate::run::{
-    run_validated_program, run_validated_program_and_read_bools,
-    run_validated_program_and_read_ints, run_validated_program_and_read_string_channels,
-    run_validated_program_and_read_strings, run_validated_program_with_call,
-    run_validated_program_with_call_and_read_bools, run_validated_program_with_call_and_read_ints,
-    run_validated_program_with_call_and_read_strings,
-};
 #[cfg(feature = "runtime-report")]
 use crate::run::{
     drive_cross_check, par_as_runtime_observation_value,
@@ -45,8 +38,15 @@ use crate::run::{
     run_installed_program_with_call_and_read_runtime_values,
     run_validated_program_and_read_runtime_value_and_string_channels,
     run_validated_program_and_read_runtime_values,
-    run_validated_program_with_call_and_read_runtime_values, DriveNfScan,
-    DriveObservationChannels, DriveObservationSet,
+    run_validated_program_with_call_and_read_runtime_values, DriveNfScan, DriveObservationChannels,
+    DriveObservationSet,
+};
+use crate::run::{
+    run_validated_program, run_validated_program_and_read_bools,
+    run_validated_program_and_read_ints, run_validated_program_and_read_string_channels,
+    run_validated_program_and_read_strings, run_validated_program_with_call,
+    run_validated_program_with_call_and_read_bools, run_validated_program_with_call_and_read_ints,
+    run_validated_program_with_call_and_read_strings,
 };
 
 /// Runtime boundary that produced a Rho observation report.
@@ -491,13 +491,14 @@ impl PlannedRhoBackend {
             .plan()
             .installed_rho_net_program_par()
             .map_err(|err| err.to_string())?;
-        let values = crate::run::run_installed_program_with_call_definitions_and_read_runtime_values(
-            &installed,
-            call,
-            definitions,
-            out_channel,
-        )
-        .await?;
+        let values =
+            crate::run::run_installed_program_with_call_definitions_and_read_runtime_values(
+                &installed,
+                call,
+                definitions,
+                out_channel,
+            )
+            .await?;
         Ok(RhoObservationReport::planned(self.artifact_kind(), out_channel, values))
     }
 
@@ -1129,9 +1130,7 @@ impl RhoMachineInvocation {
             | RhoMachineInvocation::RunWithCallAndObserveStrings { call, .. }
             | RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { call, .. }
             | RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { call, .. }
-            | RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet { call, .. } => {
-                Some(call)
-            },
+            | RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet { call, .. } => Some(call),
             _ => None,
         }
     }
@@ -1147,9 +1146,9 @@ impl RhoMachineInvocation {
             | RhoMachineInvocation::RunWithCallAndObserveBools { out_channel, .. }
             | RhoMachineInvocation::RunWithCallAndObserveStrings { out_channel, .. }
             | RhoMachineInvocation::RunWithCallAndObserveRuntimeValues { out_channel, .. }
-            | RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { out_channel, .. } => {
-                Some(out_channel)
-            },
+            | RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues {
+                out_channel, ..
+            } => Some(out_channel),
             RhoMachineInvocation::RunRhoNetDriveAndReadObservationSet { channels, .. } => {
                 Some(&channels.out)
             },
@@ -1214,7 +1213,10 @@ impl RhoMachineInvocation {
                         format!("failed to convert Rho runtime value observation report: {err:?}")
                     })
             },
-            RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues { call, out_channel } => {
+            RhoMachineInvocation::RunRhoNetWithCallAndObserveRuntimeValues {
+                call,
+                out_channel,
+            } => {
                 // The Epic 4 composition fix: run the INSTALLED σ-receiver program
                 // (`installed_rho_net_program_par`) ∥ call so the base-rewrite
                 // σ-receiver actually fires, rather than the scalar `program()`.
@@ -1262,9 +1264,7 @@ impl RhoMachineInvocation {
                     set.out_values,
                 )
                 .try_into_runtime_backend_report()
-                .map_err(|err| {
-                    format!("failed to convert Rho drive observation report: {err:?}")
-                })
+                .map_err(|err| format!("failed to convert Rho drive observation report: {err:?}"))
             },
             RhoMachineInvocation::RunCallByNeedThunk { plan } => {
                 PlannedCallByNeedThunk::from_plan(*plan)

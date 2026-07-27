@@ -64,7 +64,10 @@ fn lambda_backend() -> (PlannedRhoBackend, String) {
 
 // ── decoded-observation builders ───────────────────────────────────────────────────────
 fn oterm(constructor: &str, children: Vec<RuntimeObservationValue>) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children,
+    }
 }
 fn onullary(constructor: &str) -> RuntimeObservationValue {
     oterm(constructor, Vec::new())
@@ -145,10 +148,7 @@ fn host_shift(c: usize, term: &RuntimeObservationValue) -> RuntimeObservationVal
             },
             LAMBDA_REFLECT_LABEL => olambda(host_shift(c + 1, &children[0])),
             FREE_VAR_REFLECT_LABEL => term.clone(),
-            _ => oterm(
-                constructor,
-                children.iter().map(|child| host_shift(c, child)).collect(),
-            ),
+            _ => oterm(constructor, children.iter().map(|child| host_shift(c, child)).collect()),
         },
         other => other.clone(),
     }
@@ -181,7 +181,10 @@ fn host_subst(
             FREE_VAR_REFLECT_LABEL => term.clone(),
             _ => oterm(
                 constructor,
-                children.iter().map(|child| host_subst(j, a, child)).collect(),
+                children
+                    .iter()
+                    .map(|child| host_subst(j, a, child))
+                    .collect(),
             ),
         },
         other => other.clone(),
@@ -192,8 +195,10 @@ fn host_subst(
 fn host_beta_step(term: &RuntimeObservationValue) -> Option<RuntimeObservationValue> {
     if let RuntimeObservationValue::Term { constructor, children } = term {
         if constructor == "App" {
-            if let RuntimeObservationValue::Term { constructor: head, children: head_children } =
-                &children[0]
+            if let RuntimeObservationValue::Term {
+                constructor: head,
+                children: head_children,
+            } = &children[0]
             {
                 if head == LAMBDA_REFLECT_LABEL {
                     return Some(host_subst(0, &children[1], &head_children[0]));
@@ -273,7 +278,9 @@ fn assert_green_drive(
         &lambda_redex_scan,
     )
     .expect("the always-on drive cross-check is green");
-    let fired = set.fired_labels().expect("every ledger datum is a GString rule label");
+    let fired = set
+        .fired_labels()
+        .expect("every ledger datum is a GString rule label");
     assert_eq!(fired.len(), expected_firings, "the ledger records every firing exactly once");
     assert!(
         fired.iter().all(|label| label == "Beta"),
@@ -430,10 +437,8 @@ async fn omega_exhausts_the_per_path_fuel_with_the_typed_datum() {
         "Ω fires exactly per-path-fuel = 3 times before exhaustion"
     );
     assert_eq!(set.fuel_data.len(), 1, "exactly one typed exhaustion datum rests");
-    let omega_decoded = oapp(
-        olambda(oapp(obound(0), obound(0))),
-        olambda(oapp(obound(0), obound(0))),
-    );
+    let omega_decoded =
+        oapp(olambda(oapp(obound(0), obound(0))), olambda(oapp(obound(0), obound(0))));
     assert_eq!(
         mettail_rholang_runtime::par_as_runtime_observation_value(&set.fuel_data[0]),
         Some(omega_decoded),
@@ -449,7 +454,12 @@ async fn omega_exhausts_the_per_path_fuel_with_the_typed_datum() {
     let violation = drive_cross_check(&set, &channels, true, 3, &lambda_redex_scan)
         .expect_err("fuel exhaustion must surface as the typed cross-check error");
     match &violation {
-        DriveCrossCheckError::FuelChannel { channel, count, per_path_fuel, global_fired } => {
+        DriveCrossCheckError::FuelChannel {
+            channel,
+            count,
+            per_path_fuel,
+            global_fired,
+        } => {
             assert_eq!(channel, &channels.fuel, "the error names the fuel channel");
             assert_eq!(*count, 1);
             assert_eq!(*per_path_fuel, 3, "the error carries the per-path bound");

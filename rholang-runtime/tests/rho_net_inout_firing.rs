@@ -95,7 +95,10 @@ fn inout_demo_backend() -> (PlannedRhoBackend, String) {
 
 /// A nullary observation value (e.g. the process leaf `PA` = `A` or the ambient name `Nb` = `nb`).
 fn leaf(constructor: &str) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children: Vec::new() }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children: Vec::new(),
+    }
 }
 
 /// An ambient observation value `PAmb(name, body)`.
@@ -162,18 +165,12 @@ fn assert_obs_eq(value: &RuntimeObservationValue, expected: &RuntimeObservationV
 
 /// The restructured `InRule` bag `{ nb[{ na[{ A }] | B }] }` — the `na` ambient moved INTO `nb`.
 fn in_reduct() -> RuntimeObservationValue {
-    par_bag(vec![amb(
-        "Nb",
-        par_bag(vec![amb("Na", par_bag(vec![leaf("PA")])), leaf("PB")]),
-    )])
+    par_bag(vec![amb("Nb", par_bag(vec![amb("Na", par_bag(vec![leaf("PA")])), leaf("PB")]))])
 }
 
 /// The restructured `OutRule` bag `{ na[{ A }] | nb[B] }` — the `na` ambient moved OUT of `nb`.
 fn out_reduct() -> RuntimeObservationValue {
-    par_bag(vec![
-        amb("Na", par_bag(vec![leaf("PA")])),
-        amb("Nb", leaf("PB")),
-    ])
+    par_bag(vec![amb("Na", par_bag(vec![leaf("PA")])), amb("Nb", leaf("PB"))])
 }
 
 /// POSITIVE In (empty rest) VIA THE SPREAD: `{ na[{ in(nb, A) }] | nb[B] }` (both cross-level names
@@ -201,7 +198,9 @@ async fn inoutdemo_in_matches_in_rho_via_the_spread() {
     // InRule and assembles the in-Rho DEPTH-2 spread-match call.
     let invocation =
         InOutDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
-            .expect("the nested structural-AC MATCH path admits InRule and assembles the spread call");
+            .expect(
+                "the nested structural-AC MATCH path admits InRule and assembles the spread call",
+            );
     assert_eq!(invocation.out_channel, "OUT");
 
     let observation = backend
@@ -249,10 +248,7 @@ async fn inoutdemo_in_splices_the_outer_remainder_via_the_spread() {
     );
     // `{ nb[{ na[{ A }] | B }], 0 }` — the restructured ambient PLUS the spliced outer residual `0`.
     let expected = par_bag(vec![
-        amb(
-            "Nb",
-            par_bag(vec![amb("Na", par_bag(vec![leaf("PA")])), leaf("PB")]),
-        ),
+        amb("Nb", par_bag(vec![amb("Na", par_bag(vec![leaf("PA")])), leaf("PB")])),
         leaf("PZero"),
     ]);
     assert_obs_eq(&observation.values[0], &expected);
@@ -276,7 +272,9 @@ async fn inoutdemo_out_matches_in_rho_via_the_spread() {
         .expect("InOutDemo Dovetail report must compile");
     let invocation =
         InOutDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
-            .expect("the nested structural-AC MATCH path admits OutRule and assembles the spread call");
+            .expect(
+                "the nested structural-AC MATCH path admits OutRule and assembles the spread call",
+            );
 
     let observation = backend
         .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
@@ -315,7 +313,9 @@ async fn inoutdemo_in_mismatched_name_vetoes_on_the_spread() {
     // decides on the reducer.
     let invocation =
         InOutDemoLanguage::rho_net_match_invocation_from_dovetail_to(term.as_ref(), &report, "OUT")
-            .expect("the match path assembles a call; the guard vetoes on the reducer, not at build");
+            .expect(
+                "the match path assembles a call; the guard vetoes on the reducer, not at build",
+            );
 
     let observation = backend
         .run_rho_net_with_call_and_observe_runtime_values(&invocation.call, &invocation.out_channel)
@@ -365,9 +365,14 @@ async fn s_ac_nested_in_bag_is_produced_by_the_spread_not_the_report() {
     // Deliberately WRONG σ: a report-σ nested-AC arm would rebuild the operand + reduct from these and
     // fire a `PZero`-laden term. The rule label (`InRule`) stays valid so the in-Rho match gate admits
     // the path; ONLY the σ (the operand + reduct source) is corrupted.
-    let decoy = RuntimeReflectedSubterm { constructor: "PZero".to_string(), children: Vec::new() };
-    let decoy_bag =
-        RuntimeReflectedSubterm { constructor: "PPar".to_string(), children: Vec::new() };
+    let decoy = RuntimeReflectedSubterm {
+        constructor: "PZero".to_string(),
+        children: Vec::new(),
+    };
+    let decoy_bag = RuntimeReflectedSubterm {
+        constructor: "PPar".to_string(),
+        children: Vec::new(),
+    };
     for justification in &mut report.rewrite_justifications {
         assert_eq!(justification.rule_label, "InRule", "the fired rule label stays valid");
         justification.sigma = vec![
@@ -426,9 +431,14 @@ async fn s_ac_nested_out_bag_is_produced_by_the_spread_not_the_report() {
         "the OutRule must surface at least one firing justification"
     );
 
-    let decoy = RuntimeReflectedSubterm { constructor: "PZero".to_string(), children: Vec::new() };
-    let decoy_bag =
-        RuntimeReflectedSubterm { constructor: "PPar".to_string(), children: Vec::new() };
+    let decoy = RuntimeReflectedSubterm {
+        constructor: "PZero".to_string(),
+        children: Vec::new(),
+    };
+    let decoy_bag = RuntimeReflectedSubterm {
+        constructor: "PPar".to_string(),
+        children: Vec::new(),
+    };
     for justification in &mut report.rewrite_justifications {
         assert_eq!(justification.rule_label, "OutRule", "the fired rule label stays valid");
         justification.sigma = vec![

@@ -118,7 +118,11 @@ async fn probe(label: &str, source: &str) {
     for (index, value) in rendered.iter().enumerate() {
         eprintln!("[{label}] reply[{index}] = {value}");
     }
-    assert!(response.failure.is_empty(), "[{label}] nothing may abort: {:?}", response.failure);
+    assert!(
+        response.failure.is_empty(),
+        "[{label}] nothing may abort: {:?}",
+        response.failure
+    );
     assert!(response.error.is_none(), "[{label}] the request itself must be served");
     assert_eq!(response.reply.len(), 1, "[{label}] λ is confluent: exactly one normal form");
 }

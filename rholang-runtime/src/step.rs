@@ -144,7 +144,9 @@ impl TauChannelClassifier {
     /// Classify one COMM by its rendezvous channels: the FIRST channel matching a
     /// reserved family decides (a COMM never rendezvouses across families).
     pub fn classify(&self, channels: &[Par]) -> Option<RuntimeTauClass> {
-        channels.iter().find_map(|channel| self.classify_channel(channel))
+        channels
+            .iter()
+            .find_map(|channel| self.classify_channel(channel))
     }
 
     fn classify_channel(&self, channel: &Par) -> Option<RuntimeTauClass> {
@@ -164,7 +166,10 @@ impl TauChannelClassifier {
             // and no `^…` label above shares these spellings), so no existing label
             // reclassifies.
             if tag == self.float_tag
-                || self.float_prefixes.iter().any(|prefix| tag.starts_with(prefix))
+                || self
+                    .float_prefixes
+                    .iter()
+                    .any(|prefix| tag.starts_with(prefix))
             {
                 return Some(RuntimeTauClass::Float);
             }
@@ -921,11 +926,7 @@ mod tests {
             assert_eq!(spec.kind, crate::fold_contract::FoldKind::Int);
             assert_eq!(spec.width, 8);
         }
-        assert_eq!(
-            par.news.len(),
-            1,
-            "the top level is the ground fold's trampoline `new` scope"
-        );
+        assert_eq!(par.news.len(), 1, "the top level is the ground fold's trampoline `new` scope");
     }
 
     #[test]
@@ -994,8 +995,9 @@ mod tests {
     fn dropping_a_session_mid_trace_aborts_cleanly() {
         // Start a session, take one step, then drop it: the gate aborts the paused worker and the
         // Drop impl joins it without leaking a thread or panicking.
-        let mut session = StepSession::start(lower(COMM_SRC), Vec::new(), Some("OUT".to_string()), None)
-            .expect("start");
+        let mut session =
+            StepSession::start(lower(COMM_SRC), Vec::new(), Some("OUT".to_string()), None)
+                .expect("start");
         let _first = session.next_step().expect("first step");
         drop(session); // must not hang or panic
     }
@@ -1025,9 +1027,7 @@ mod tests {
             classifier.classify(&[gpriv(reflected_tag_string(fp, "^drive"))]),
             Some(RuntimeTauClass::Drive)
         );
-        for name in
-            [drive_fired_channel(fp), drive_err_channel(fp), drive_fuel_channel(fp)]
-        {
+        for name in [drive_fired_channel(fp), drive_err_channel(fp), drive_fuel_channel(fp)] {
             assert_eq!(classifier.classify(&[gstr(name)]), Some(RuntimeTauClass::Drive));
         }
         // [τ subst]: the whole ^subst TRS family.
@@ -1041,7 +1041,8 @@ mod tests {
         // [τ ac]: every per-rule carrier `^drive-ac:{Rule}`.
         for rule in ["InRule", "OutRule", "OpenRule"] {
             assert_eq!(
-                classifier.classify(&[gpriv(reflected_tag_string(fp, &format!("^drive-ac:{rule}")))]),
+                classifier
+                    .classify(&[gpriv(reflected_tag_string(fp, &format!("^drive-ac:{rule}")))]),
                 Some(RuntimeTauClass::Ac),
                 "^drive-ac:{rule} classifies as τ ac"
             );
@@ -1076,7 +1077,11 @@ mod tests {
             format!("ac:loc:{FP}/site0/PPar"),
             format!("loc:{FP}/site0"),
         ] {
-            assert_eq!(classifier.classify(&[gstr(name.to_string())]), None, "{name} stays visible");
+            assert_eq!(
+                classifier.classify(&[gstr(name.to_string())]),
+                None,
+                "{name} stays visible"
+            );
         }
         assert_eq!(classifier.classify(&[gpriv(reflected_tag_string(fp, "App"))]), None);
         assert_eq!(
@@ -1086,10 +1091,8 @@ mod tests {
         );
         // Multi-channel COMM: the first reserved channel decides.
         assert_eq!(
-            classifier.classify(&[
-                gstr("OUT".to_string()),
-                gpriv(reflected_tag_string(fp, "^subst")),
-            ]),
+            classifier
+                .classify(&[gstr("OUT".to_string()), gpriv(reflected_tag_string(fp, "^subst")),]),
             Some(RuntimeTauClass::Subst)
         );
     }

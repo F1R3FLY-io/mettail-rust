@@ -110,7 +110,10 @@ const WITNESS_SEAL_SOURCE: &str = r#"
 type Value = RuntimeObservationValue;
 
 fn oterm(constructor: &str, children: Vec<Value>) -> Value {
-    Value::Term { constructor: constructor.to_string(), children }
+    Value::Term {
+        constructor: constructor.to_string(),
+        children,
+    }
 }
 fn ozero() -> Value {
     oterm("PZero", Vec::new())
@@ -232,14 +235,18 @@ fn flatten(value: &Value) -> Value {
 
 /// Decode a `^bound(peano)` leaf's index.
 fn bound_index(value: &Value) -> Option<usize> {
-    let Value::Term { constructor, children } = value else { return None };
+    let Value::Term { constructor, children } = value else {
+        return None;
+    };
     if constructor != BOUND_VAR_REFLECT_LABEL || children.len() != 1 {
         return None;
     }
     let mut index = 0usize;
     let mut cursor = &children[0];
     loop {
-        let Value::Term { constructor, children } = cursor else { return None };
+        let Value::Term { constructor, children } = cursor else {
+            return None;
+        };
         match constructor.as_str() {
             PEANO_ZERO_REFLECT_LABEL if children.is_empty() => return Some(index),
             PEANO_SUCC_REFLECT_LABEL if children.len() == 1 => {
@@ -290,7 +297,10 @@ fn rename_run(value: &Value, rho: &[usize], depth: usize) -> Value {
         ),
         Value::Term { constructor, children } => oterm(
             constructor,
-            children.iter().map(|child| rename_run(child, rho, depth)).collect(),
+            children
+                .iter()
+                .map(|child| rename_run(child, rho, depth))
+                .collect(),
         ),
         Value::Bag(entries) => obag(
             entries
@@ -391,7 +401,9 @@ fn assert_float_drive_green(
 ) -> Value {
     assert!(set.err_data.is_empty(), "no ^drive-err datum: {:?}", set.err_data);
     assert!(set.fuel_data.is_empty(), "no fuel exhaustion: {:?}", set.fuel_data);
-    let mut fired = set.fired_labels().expect("every ledger datum is a GString rule label");
+    let mut fired = set
+        .fired_labels()
+        .expect("every ledger datum is a GString rule label");
     fired.sort();
     let mut expected: Vec<String> = expected_fired.iter().map(|s| s.to_string()).collect();
     expected.sort();
@@ -457,10 +469,7 @@ async fn raw_am2_bag_bodied_nu_subject_splices_and_fires() {
         drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &["InRule"]);
     let expected = olam(obag(vec![
-        oamb(
-            oname("m"),
-            obag(vec![oamb(oname("n"), obag(vec![ozero()])), ozero()]),
-        ),
+        oamb(oname("m"), obag(vec![oamb(oname("n"), obag(vec![ozero()])), ozero()])),
         o_leaf_amb("q"),
     ]));
     assert!(
@@ -570,10 +579,7 @@ async fn multi_seam_nested_binders_hoist_merge_and_fire() {
     mettail_runtime::clear_var_cache();
     let (backend, fingerprint) = ambient_backend();
     let subject = g_bag(vec![
-        g_lam(g_amb(
-            g_name("n"),
-            g_bag(vec![g_lam(g_in(g_name("m"), g_zero()))]),
-        )),
+        g_lam(g_amb(g_name("n"), g_bag(vec![g_lam(g_in(g_name("m"), g_zero()))]))),
         g_amb(g_name("m"), g_bag(vec![g_zero()])),
     ]);
     let (set, _channels) =
@@ -633,10 +639,7 @@ async fn element_lambda_nil_wraps_the_rest() {
 async fn shift_nil_arm_is_load_bearing_for_the_empty_bag_element_merge() {
     mettail_runtime::clear_var_cache();
     let (backend, fingerprint) = ambient_backend();
-    let subject = g_bag(vec![
-        g_bag(Vec::new()),
-        g_lam(g_amb(g_bound(0), g_bag(vec![g_zero()]))),
-    ]);
+    let subject = g_bag(vec![g_bag(Vec::new()), g_lam(g_amb(g_bound(0), g_bag(vec![g_zero()])))]);
     let (set, _channels) =
         drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &[]);
@@ -657,10 +660,8 @@ async fn shift_nil_arm_is_load_bearing_for_the_empty_bag_element_merge() {
 async fn nu_over_a_same_op_soup_splices_flat() {
     mettail_runtime::clear_var_cache();
     let (backend, fingerprint) = ambient_backend();
-    let subject = g_bag(vec![
-        g_lam(g_bag(vec![g_leaf_amb("a"), g_leaf_amb("b")])),
-        g_leaf_amb("c"),
-    ]);
+    let subject =
+        g_bag(vec![g_lam(g_bag(vec![g_leaf_amb("a"), g_leaf_amb("b")])), g_leaf_amb("c")]);
     let (set, _channels) =
         drive_float_raw(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
     let observed = assert_float_drive_green(&set, &[]);
@@ -675,7 +676,9 @@ async fn nu_over_a_same_op_soup_splices_flat() {
     let elems = bag_elems(body).expect("the body is a bag");
     assert_eq!(elems.len(), 3, "three FLAT members: {observed:?}");
     assert!(
-        elems.iter().all(|element| !matches!(element, Value::Bag(_))),
+        elems
+            .iter()
+            .all(|element| !matches!(element, Value::Bag(_))),
         "no nested-bag member survives the in-float splice: {observed:?}"
     );
 }

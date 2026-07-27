@@ -137,7 +137,11 @@ impl H2Arm {
 #[derive(Clone, Copy, Debug)]
 enum Workload {
     Anchor(AnchorLanguage),
-    Ladder { r: usize, shape: LadderShape, alphabet: LadderAlphabet },
+    Ladder {
+        r: usize,
+        shape: LadderShape,
+        alphabet: LadderAlphabet,
+    },
 }
 
 impl Workload {
@@ -310,7 +314,8 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
     }
 
     let workload = if workload_token == "ladder" {
-        let r = r.ok_or_else(|| format!("--r is required for the ladder workload\n\n{}", usage()))?;
+        let r =
+            r.ok_or_else(|| format!("--r is required for the ladder workload\n\n{}", usage()))?;
         let shape = shape
             .ok_or_else(|| format!("--shape is required for the ladder workload\n\n{}", usage()))?;
         let alphabet = alphabet.unwrap_or(LadderAlphabet::Distinct);
@@ -381,7 +386,17 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
             return Err("--mode wb-gate runs its cases once: --reps must be 1".to_string());
         }
     }
-    Ok(DriverArgs { mode, workload, arm, policy, store, appends, warmup, reps, out })
+    Ok(DriverArgs {
+        mode,
+        workload,
+        arm,
+        policy,
+        store,
+        appends,
+        warmup,
+        reps,
+        out,
+    })
 }
 
 /// Append `value` with JSON string escaping (the driver-local mirror of the Track-B
@@ -434,7 +449,8 @@ fn cpus_allowed_list() -> String {
         .ok()
         .and_then(|status| {
             status.lines().find_map(|line| {
-                line.strip_prefix("Cpus_allowed_list:").map(|rest| rest.trim().to_string())
+                line.strip_prefix("Cpus_allowed_list:")
+                    .map(|rest| rest.trim().to_string())
             })
         })
         .unwrap_or_else(|| "unknown".to_string())
@@ -471,7 +487,11 @@ fn header_line(args: &DriverArgs, source_bytes: usize, pattern_nodes: Option<usi
     line.push_str(&json_string(args.store.map_or("-", E6bStoreArm::name)));
     line.push_str(&format!(
         ",\"appends\":{}",
-        if matches!(args.mode, Mode::Wb | Mode::E6b) { args.appends } else { 0 }
+        if matches!(args.mode, Mode::Wb | Mode::E6b) {
+            args.appends
+        } else {
+            0
+        }
     ));
     line.push_str(",\"workload\":");
     line.push_str(&json_string(&args.workload.name()));
@@ -614,8 +634,7 @@ fn main() -> ExitCode {
         let record_index = rep.saturating_sub(args.warmup);
         let line = match (args.mode, args.workload) {
             (Mode::Spans, _) => {
-                let cell_source =
-                    source.clone().expect("spans mode always carries a source");
+                let cell_source = source.clone().expect("spans mode always carries a source");
                 match in_fresh_thread(move || run_spans_once(&cell_source)) {
                     Ok(cell) => {
                         let mut phases = String::with_capacity(512);
@@ -646,13 +665,17 @@ fn main() -> ExitCode {
                     },
                     Err(reason) => {
                         failures += 1;
-                        format!("{{\"dnf\":true,\"rep\":{record_index},\"reason\":{}}}", json_string(&reason))
+                        format!(
+                            "{{\"dnf\":true,\"rep\":{record_index},\"reason\":{}}}",
+                            json_string(&reason)
+                        )
                     },
                 }
             },
             (Mode::Direct, Workload::Ladder { r, shape, alphabet }) => {
-                let cell =
-                    in_fresh_thread(move || run_direct_compile_once(ladder_patterns(r, shape, alphabet)));
+                let cell = in_fresh_thread(move || {
+                    run_direct_compile_once(ladder_patterns(r, shape, alphabet))
+                });
                 format!(
                     "{{\"direct\":{{\"rep\":{record_index},\"wall_ns\":{},\"entry_count\":{},\
                      \"state_count\":{},\"pattern_nodes\":{}}}}}",
@@ -663,7 +686,9 @@ fn main() -> ExitCode {
                 unreachable!("parse_args rejects direct mode over anchors")
             },
             (Mode::Wb, Workload::Ladder { r, shape, .. }) => {
-                let policy = args.policy.expect("parse_args requires --policy for wb mode");
+                let policy = args
+                    .policy
+                    .expect("parse_args requires --policy for wb mode");
                 let appends = usize::try_from(args.appends)
                     .expect("--appends fits a usize on every supported target");
                 match in_fresh_thread(move || run_wb_rep(policy, r, shape, appends)) {
@@ -700,7 +725,9 @@ fn main() -> ExitCode {
                 }
             },
             (Mode::E6b, Workload::Ladder { r, shape, .. }) => {
-                let store = args.store.expect("parse_args requires --store for e6b mode");
+                let store = args
+                    .store
+                    .expect("parse_args requires --store for e6b mode");
                 let appends = usize::try_from(args.appends)
                     .expect("--appends fits a usize on every supported target");
                 match in_fresh_thread(move || run_e6b_rep(store, r, shape, appends)) {

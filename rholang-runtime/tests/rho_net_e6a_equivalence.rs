@@ -45,21 +45,22 @@ fn decode_sorted(observed: &[Par]) -> Vec<RuntimeObservationValue> {
 ///       directly-computed host-walk site set.
 async fn assert_cell_equivalence(kind: WorkloadKind, n: u64) {
     mettail_runtime::clear_var_cache();
-    let compiled = compile_workload(kind, n)
-        .unwrap_or_else(|e| panic!("{}({n}) compiles: {e}", kind.name()));
+    let compiled =
+        compile_workload(kind, n).unwrap_or_else(|e| panic!("{}({n}) compiles: {e}", kind.name()));
     let control_matcher =
         e6a_control_matcher(kind).expect("every E-6a corpus cell has a control column");
 
-    let control = run_compiled_workload(
-        &compiled,
-        control_matcher,
-        GuardEncodingKind::PatternGuard,
-        0,
-    )
-    .await
-    .unwrap_or_else(|failure| {
-        panic!("{}({n}) control ({}): {}", kind.name(), control_matcher.name(), failure.reason)
-    });
+    let control =
+        run_compiled_workload(&compiled, control_matcher, GuardEncodingKind::PatternGuard, 0)
+            .await
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "{}({n}) control ({}): {}",
+                    kind.name(),
+                    control_matcher.name(),
+                    failure.reason
+                )
+            });
     let treatment = run_e6a_treatment_workload(&compiled, 0)
         .await
         .unwrap_or_else(|failure| panic!("{}({n}) treatment: {}", kind.name(), failure.reason));
@@ -111,7 +112,8 @@ async fn assert_cell_equivalence(kind: WorkloadKind, n: u64) {
     // Structural claims of the treatment: zero spread-channel traffic, every
     // COMM classified.
     assert_eq!(
-        treatment.result.comm.matching_tau, 0,
+        treatment.result.comm.matching_tau,
+        0,
         "{}({n}): the treatment must publish NO loc:/col:/cap: traffic; got {:?}",
         kind.name(),
         treatment.result.comm,
@@ -122,7 +124,8 @@ async fn assert_cell_equivalence(kind: WorkloadKind, n: u64) {
     // never from the treatment's own machinery: assert LIKE-FOR-LIKE equality
     // with the control instead of zero.
     assert_eq!(
-        treatment.result.comm.other, control.result.comm.other,
+        treatment.result.comm.other,
+        control.result.comm.other,
         "{}({n}): treatment `other` COMMs must equal the control's (the shared firing \
          cascade); treatment samples: {:?}, control samples: {:?}",
         kind.name(),

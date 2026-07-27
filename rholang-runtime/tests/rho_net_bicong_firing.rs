@@ -83,11 +83,17 @@ fn subject() -> BiCongDemoTerm {
 }
 
 fn nullary(constructor: &str) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children: Vec::new() }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children: Vec::new(),
+    }
 }
 
 fn pair(a: RuntimeObservationValue, b: RuntimeObservationValue) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: "Pair".to_string(), children: vec![a, b] }
+    RuntimeObservationValue::Term {
+        constructor: "Pair".to_string(),
+        children: vec![a, b],
+    }
 }
 
 /// The generated N-ARY CONTEXTUAL σ-injection fires the installed `NodeCong` atomic 2-premise JOIN
@@ -193,13 +199,18 @@ async fn s_contextual_nary_holes_reassembled_in_rho_not_the_report() {
     let wrong = |c: &str| RuntimeReflectedSubterm {
         constructor: "Pair".to_string(),
         children: vec![
-            RuntimeReflectedSubterm { constructor: c.to_string(), children: Vec::new() },
-            RuntimeReflectedSubterm { constructor: c.to_string(), children: Vec::new() },
+            RuntimeReflectedSubterm {
+                constructor: c.to_string(),
+                children: Vec::new(),
+            },
+            RuntimeReflectedSubterm {
+                constructor: c.to_string(),
+                children: Vec::new(),
+            },
         ],
     };
     for justification in &mut report.rewrite_justifications {
-        justification.sigma =
-            vec![("x".to_string(), wrong("A")), ("y".to_string(), wrong("B"))];
+        justification.sigma = vec![("x".to_string(), wrong("A")), ("y".to_string(), wrong("B"))];
         assert_eq!(justification.rule_label, "Flip", "the fired premise labels stay valid");
     }
 

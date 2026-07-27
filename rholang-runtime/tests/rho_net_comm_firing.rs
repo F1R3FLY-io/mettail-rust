@@ -114,7 +114,10 @@ fn output_value(chan: &str, val: &str) -> RuntimeObservationValue {
 
 /// A nullary `RuntimeReflectedSubterm`, e.g. the Name `Nb`.
 fn reflected_nullary(constructor: &str) -> RuntimeReflectedSubterm {
-    RuntimeReflectedSubterm { constructor: constructor.to_string(), children: Vec::new() }
+    RuntimeReflectedSubterm {
+        constructor: constructor.to_string(),
+        children: Vec::new(),
+    }
 }
 
 /// `POutput(chan, val)` as a reflected σ/contractum sub-term.

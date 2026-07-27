@@ -22,7 +22,6 @@
 #[path = "../../languages/tests/definitions/nlacdemo.rs"]
 mod nlacdemo;
 
-use nlacdemo::{NlAcDemoLanguage, NlAcDemoTerm, NlAcDemoTermInner, Proc};
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,
@@ -30,6 +29,7 @@ use mettail_rholang_codegen::{
 };
 use mettail_rholang_runtime::PlannedRhoBackend;
 use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
+use nlacdemo::{NlAcDemoLanguage, NlAcDemoTerm, NlAcDemoTermInner, Proc};
 
 /// Reconstruct NlAcDemo's augmented `LanguageDef` from the generated metadata's `definition_source()`
 /// and plan its Rho-default backend (the non-linear AC receiver installs alongside the structural
@@ -74,7 +74,10 @@ fn assert_wraps_a(value: &RuntimeObservationValue) {
                     constructor: elem,
                     children: grandchildren,
                 } => {
-                    assert!(grandchildren.is_empty(), "the wrapped element is nullary, got {value:?}");
+                    assert!(
+                        grandchildren.is_empty(),
+                        "the wrapped element is nullary, got {value:?}"
+                    );
                     assert_eq!(
                         elem, "A",
                         "the UNIQUE non-linear match is x = A (the only element with multiplicity ≥ 2)"
@@ -164,10 +167,8 @@ async fn s_ac_nonlinear_guard_fires_in_rho_from_the_spread_not_the_report() {
         children: vec![nonsense.clone()],
     };
     for justification in &mut report.rewrite_justifications {
-        justification.sigma = vec![
-            ("x".to_string(), nonsense.clone()),
-            ("rest".to_string(), nonsense_rest.clone()),
-        ];
+        justification.sigma =
+            vec![("x".to_string(), nonsense.clone()), ("rest".to_string(), nonsense_rest.clone())];
     }
 
     let invocation =

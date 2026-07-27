@@ -282,7 +282,10 @@ async fn s_ac_rest_and_bag_rhs_are_produced_by_the_spread_not_the_report() {
     let mut report = AcBagDemoLanguage::dovetail_report_for(&term, 64, 1_000_000)
         .expect("AcBagDemo Dovetail report must compile");
     assert_eq!(
-        report.rewrite_justifications.first().map(|j| j.rule_label.as_str()),
+        report
+            .rewrite_justifications
+            .first()
+            .map(|j| j.rule_label.as_str()),
         Some("AcBagStep"),
         "the bag-transforming AC rewrite AcBagStep is the first firing"
     );
@@ -301,10 +304,8 @@ async fn s_ac_rest_and_bag_rhs_are_produced_by_the_spread_not_the_report() {
         children: vec![nonsense.clone(), nonsense.clone()],
     };
     for justification in &mut report.rewrite_justifications {
-        justification.sigma = vec![
-            ("x".to_string(), nonsense.clone()),
-            ("rest".to_string(), nonsense_rest.clone()),
-        ];
+        justification.sigma =
+            vec![("x".to_string(), nonsense.clone()), ("rest".to_string(), nonsense_rest.clone())];
     }
 
     // The MATCH path admits the AC redex despite the corrupted σ, and re-sources the whole bag (and

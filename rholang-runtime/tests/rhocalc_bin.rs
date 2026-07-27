@@ -115,7 +115,10 @@ fn demos_retain_their_comments_on_the_comments_channel() {
 fn emit_comments_dumps_the_retained_channel_with_positions() {
     let output = run_interpreter_with("k-combinator.rho", &["--emit-comments"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "rhocalc --emit-comments exited non-zero\nstdout:\n{stdout}");
+    assert!(
+        output.status.success(),
+        "rhocalc --emit-comments exited non-zero\nstdout:\n{stdout}"
+    );
     // The demo's header opens on line 1, column 1 with a box-drawing rule — proof that the
     // position is the TRUE source position and that non-ASCII comment text survives intact.
     assert!(

@@ -51,8 +51,14 @@ fn expected_pair_b_a() -> RuntimeObservationValue {
     RuntimeObservationValue::Term {
         constructor: "Pair".to_string(),
         children: vec![
-            RuntimeObservationValue::Term { constructor: "B".to_string(), children: Vec::new() },
-            RuntimeObservationValue::Term { constructor: "A".to_string(), children: Vec::new() },
+            RuntimeObservationValue::Term {
+                constructor: "B".to_string(),
+                children: Vec::new(),
+            },
+            RuntimeObservationValue::Term {
+                constructor: "A".to_string(),
+                children: Vec::new(),
+            },
         ],
     }
 }

@@ -567,7 +567,9 @@ fn the_two_desks_differ_only_in_the_guards_comparison_term() {
         differing[0]
             .0
             .contains("where lambda`${r}` == lambda`lam a. lam b. a`")
-            && differing[0].1.contains("where lambda`${r}` == lambda`lam x. x`"),
+            && differing[0]
+                .1
+                .contains("where lambda`${r}` == lambda`lam x. x`"),
         "the load-bearing difference is the guard's comparison term: {:?}",
         differing[0]
     );

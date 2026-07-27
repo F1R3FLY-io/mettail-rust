@@ -153,7 +153,9 @@ fn verum_compiles_to_a_wildcard() {
             pattern.exprs.as_slice(),
             [models::rhoapi::Expr {
                 expr_instance: Some(ExprInstance::EVarBody(models::rhoapi::EVar {
-                    v: Some(models::rhoapi::Var { var_instance: Some(VarInstance::Wildcard(_)) })
+                    v: Some(models::rhoapi::Var {
+                        var_instance: Some(VarInstance::Wildcard(_))
+                    })
                 }))
             }]
         ),
@@ -169,7 +171,10 @@ fn falsum_compiles_to_the_pattern_satisfied_by_nothing() {
     // is what lets `false` appear anywhere INSIDE a formula, not only at its root.
     let pattern = lower_formula(&parse("false")).expect("`false` must compile");
     let connective = match pattern.connectives.as_slice() {
-        [connective] => connective.connective_instance.as_ref().expect("a connective instance"),
+        [connective] => connective
+            .connective_instance
+            .as_ref()
+            .expect("a connective instance"),
         other => panic!("`false` must compile to exactly one connective, got {other:?}"),
     };
     let negated = match connective {
@@ -181,7 +186,9 @@ fn falsum_compiles_to_the_pattern_satisfied_by_nothing() {
             negated.exprs.as_slice(),
             [models::rhoapi::Expr {
                 expr_instance: Some(ExprInstance::EVarBody(models::rhoapi::EVar {
-                    v: Some(models::rhoapi::Var { var_instance: Some(VarInstance::Wildcard(_)) })
+                    v: Some(models::rhoapi::Var {
+                        var_instance: Some(VarInstance::Wildcard(_))
+                    })
                 }))
             }]
         ),
@@ -207,7 +214,9 @@ fn a_statically_false_formula_folds_the_whole_guard_to_gbool_false() {
         assert!(
             matches!(
                 par.exprs.as_slice(),
-                [models::rhoapi::Expr { expr_instance: Some(ExprInstance::GBool(false)) }]
+                [models::rhoapi::Expr {
+                    expr_instance: Some(ExprInstance::GBool(false))
+                }]
             ),
             "{source:?} must fold to GBool(false) at lowering, got {par:?}"
         );
@@ -219,7 +228,9 @@ fn a_statically_false_formula_folds_the_whole_guard_to_gbool_false() {
     assert!(
         matches!(
             par.exprs.as_slice(),
-            [models::rhoapi::Expr { expr_instance: Some(ExprInstance::EMatchesBody(_)) }]
+            [models::rhoapi::Expr {
+                expr_instance: Some(ExprInstance::EMatchesBody(_))
+            }]
         ),
         "a satisfiable formula must emit a real EMatches, got {par:?}"
     );
@@ -347,8 +358,7 @@ fn the_two_spellings_compile_to_the_same_pattern() {
     // spellings classify as `FormulaShape::Separation` and are compiled by the
     // same arm, so the emitted `Par`s must be equal byte for byte.
     let braced = lower_formula(&parse(r#"{ @"a"!(1) | true }"#)).expect("braced form compiles");
-    let verbatim =
-        lower_formula(&parse(r#"PPar(@"a"!(1), true)"#)).expect("paper form compiles");
+    let verbatim = lower_formula(&parse(r#"PPar(@"a"!(1), true)"#)).expect("paper form compiles");
     assert_eq!(
         braced, verbatim,
         "`{{ φ | ψ }}` and `PPar(φ, ψ)` must compile to the SAME separating par-pattern"
@@ -365,9 +375,7 @@ async fn matches_composes_with_the_boolean_guard_language() {
     // `or` / `not` / `implies` at the EXPRESSION level — a different level from
     // the pattern-level connectives of §3, and the two must not be confused.
     let source = |guard: &str| {
-        format!(
-            r#"{{ for(@x <- @"c" where {guard}) {{ @"OUT"!("fired") }} | @"c"!(@"a"!(1)) }}"#
-        )
+        format!(r#"{{ for(@x <- @"c" where {guard}) {{ @"OUT"!("fired") }} | @"c"!(@"a"!(1)) }}"#)
     };
     for (guard, expected) in [
         (r#"x matches @"a"!(1) and true"#, true),
@@ -463,7 +471,9 @@ fn an_unlowerable_sub_term_surfaces_as_a_typed_error_not_a_placeholder() {
             message.contains("PPar"),
             "the typed error must name the offending construct, got {message:?}"
         ),
-        other => panic!("an unlowerable sub-term must fail CLOSED with a typed error, got {other:?}"),
+        other => {
+            panic!("an unlowerable sub-term must fail CLOSED with a typed error, got {other:?}")
+        },
     }
 }
 
@@ -496,7 +506,10 @@ fn every_shape_is_classified_by_constructor() {
     assert!(matches!(classify(&parse("not true")), FormulaShape::Negation(..)));
     assert!(matches!(classify(&parse("true implies false")), FormulaShape::Implication(..)));
     assert!(matches!(classify(&parse("PPar(true, true)")), FormulaShape::Separation(_)));
-    assert!(matches!(classify(&parse(r#"{ @"a"!(1) | true }"#)), FormulaShape::Separation(_)));
+    assert!(matches!(
+        classify(&parse(r#"{ @"a"!(1) | true }"#)),
+        FormulaShape::Separation(_)
+    ));
     assert!(matches!(classify(&parse(r#"@"a"!(1)"#)), FormulaShape::Term));
     assert!(matches!(classify(&parse("42")), FormulaShape::Term));
 }
@@ -508,7 +521,8 @@ fn the_environment_free_entry_agrees_with_the_empty_environment() {
     // default.
     let formula = parse(r#"(PPar(@"a"!(1), true) or not false)"#);
     let direct = lower_formula(&formula).expect("compiles");
-    let threaded = lower_formula_in_env(&formula, &mettail_rholang_runtime::rhocalc_ast::BoundEnv::new())
-        .expect("compiles");
+    let threaded =
+        lower_formula_in_env(&formula, &mettail_rholang_runtime::rhocalc_ast::BoundEnv::new())
+            .expect("compiles");
     assert_eq!(direct, threaded);
 }

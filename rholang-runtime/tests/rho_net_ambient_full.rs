@@ -88,7 +88,10 @@ fn ambient_backend() -> (PlannedRhoBackend, String) {
 type Value = RuntimeObservationValue;
 
 fn oterm(constructor: &str, children: Vec<Value>) -> Value {
-    Value::Term { constructor: constructor.to_string(), children }
+    Value::Term {
+        constructor: constructor.to_string(),
+        children,
+    }
 }
 fn ozero() -> Value {
     oterm("PZero", Vec::new())
@@ -162,10 +165,9 @@ fn flatten(value: &Value) -> Value {
             }
             obag(flat)
         },
-        Value::Term { constructor, children } => oterm(
-            constructor,
-            children.iter().map(flatten).collect(),
-        ),
+        Value::Term { constructor, children } => {
+            oterm(constructor, children.iter().map(flatten).collect())
+        },
         other => other.clone(),
     }
 }
@@ -183,7 +185,9 @@ fn flat_bag(values: Vec<Value>) -> Value {
 fn open_apply_here(elems: &[Value]) -> Vec<Value> {
     let mut results = Vec::new();
     for (i, open_element) in elems.iter().enumerate() {
-        let Value::Term { constructor, children } = open_element else { continue };
+        let Value::Term { constructor, children } = open_element else {
+            continue;
+        };
         if constructor != "POpen" {
             continue;
         }
@@ -192,7 +196,9 @@ fn open_apply_here(elems: &[Value]) -> Vec<Value> {
             if i == j {
                 continue;
             }
-            let Value::Term { constructor, children } = amb_element else { continue };
+            let Value::Term { constructor, children } = amb_element else {
+                continue;
+            };
             if constructor != "PAmb" || &children[0] != open_name {
                 continue;
             }
@@ -217,12 +223,16 @@ fn open_apply_here(elems: &[Value]) -> Vec<Value> {
 fn in_apply_here(elems: &[Value]) -> Vec<Value> {
     let mut results = Vec::new();
     for (i, nested_element) in elems.iter().enumerate() {
-        let Value::Term { constructor, children } = nested_element else { continue };
+        let Value::Term { constructor, children } = nested_element else {
+            continue;
+        };
         if constructor != "PAmb" {
             continue;
         }
         let n_name = &children[0];
-        let Some(body) = bag_elems(&children[1]) else { continue };
+        let Some(body) = bag_elems(&children[1]) else {
+            continue;
+        };
         for (in_index, in_element) in body.iter().enumerate() {
             let Value::Term { constructor, children: in_children } = in_element else {
                 continue;
@@ -249,7 +259,10 @@ fn in_apply_here(elems: &[Value]) -> Vec<Value> {
                 }
                 let rebuilt_m = oamb(
                     m_name.clone(),
-                    flat_bag(vec![oamb(n_name.clone(), flat_bag(inner_n)), amb_children[1].clone()]),
+                    flat_bag(vec![
+                        oamb(n_name.clone(), flat_bag(inner_n)),
+                        amb_children[1].clone(),
+                    ]),
                 );
                 let mut top: Vec<Value> = vec![rebuilt_m];
                 for (k, element) in elems.iter().enumerate() {
@@ -270,12 +283,16 @@ fn in_apply_here(elems: &[Value]) -> Vec<Value> {
 /// INSIDE `m` (empty rest legal, so the singleton fires to `{n[{P}], m[{}]}`).
 fn out_apply_here(value: &Value) -> Vec<Value> {
     let mut results = Vec::new();
-    let Value::Term { constructor, children } = value else { return results };
+    let Value::Term { constructor, children } = value else {
+        return results;
+    };
     if constructor != "PAmb" {
         return results;
     }
     let m_name = &children[0];
-    let Some(body) = bag_elems(&children[1]) else { return results };
+    let Some(body) = bag_elems(&children[1]) else {
+        return results;
+    };
     for (i, nested_element) in body.iter().enumerate() {
         let Value::Term { constructor, children: n_children } = nested_element else {
             continue;
@@ -284,7 +301,9 @@ fn out_apply_here(value: &Value) -> Vec<Value> {
             continue;
         }
         let n_name = &n_children[0];
-        let Some(inner) = bag_elems(&n_children[1]) else { continue };
+        let Some(inner) = bag_elems(&n_children[1]) else {
+            continue;
+        };
         for (out_index, out_element) in inner.iter().enumerate() {
             let Value::Term { constructor, children: out_children } = out_element else {
                 continue;
@@ -397,8 +416,7 @@ fn replay_search(current: &Value, remaining: &[String], target: &Value) -> bool 
 /// seed the subject is no longer the call's first top-level send datum.)
 fn decode_seed_subject(call: &models::rhoapi::Par) -> Value {
     let datum = &call.sends[0].data[0];
-    par_as_runtime_observation_value(datum)
-        .expect("the drive seed's reflected subject must decode")
+    par_as_runtime_observation_value(datum).expect("the drive seed's reflected subject must decode")
 }
 
 /// Drive one PARSED production-Ambient subject through the generated seed invocation
@@ -458,15 +476,13 @@ fn assert_green_drive(
     subject: &Value,
     expected_fired: &[&str],
 ) {
-    drive_cross_check(
-        set,
-        channels,
-        !expected_fired.is_empty(),
-        DRIVE_DEFAULT_FUEL,
-        &|value| ambient_redex_present(&flatten(value)),
-    )
+    drive_cross_check(set, channels, !expected_fired.is_empty(), DRIVE_DEFAULT_FUEL, &|value| {
+        ambient_redex_present(&flatten(value))
+    })
     .expect("the always-on flattened drive cross-check is green");
-    let mut fired = set.fired_labels().expect("every ledger datum is a GString rule label");
+    let mut fired = set
+        .fired_labels()
+        .expect("every ledger datum is a GString rule label");
     fired.sort();
     let mut expected: Vec<String> = expected_fired.iter().map(|s| s.to_string()).collect();
     expected.sort();
@@ -522,8 +538,7 @@ fn o_leaf_amb(atom: &str) -> Value {
 async fn open_fires_in_rho_with_wrap_and_splice_dispatch() {
     mettail_runtime::clear_var_cache();
     let (backend, _fp) = ambient_backend();
-    let (set, channels, subject) =
-        drive_parsed(&backend, "{open(n, a[{0}]) | n[{b[{0}]}]}").await;
+    let (set, channels, subject) = drive_parsed(&backend, "{open(n, a[{0}]) | n[{b[{0}]}]}").await;
 
     let observed = flatten(&set.out_values[0]);
     let elems = bag_elems(&observed).expect("the resting term is a bag");
@@ -541,8 +556,7 @@ async fn open_fires_in_rho_with_wrap_and_splice_dispatch() {
 async fn in_fires_in_rho_with_the_contractum_entry_splice() {
     mettail_runtime::clear_var_cache();
     let (backend, _fp) = ambient_backend();
-    let (set, channels, subject) =
-        drive_parsed(&backend, "{n[{in(m, 0)}] | m[{r[{0}]}]}").await;
+    let (set, channels, subject) = drive_parsed(&backend, "{n[{in(m, 0)}] | m[{r[{0}]}]}").await;
 
     let observed = flatten(&set.out_values[0]);
     // The resting term is `{m[{n[{0}], r[{0}]}]}` — ONE top element, whose body has TWO
@@ -560,7 +574,9 @@ async fn in_fires_in_rho_with_the_contractum_entry_splice() {
         "m's body is the FLAT {{n[{{0}}], r[{{0}}]}} (the R splice): {observed:?}"
     );
     assert!(
-        m_body.iter().all(|element| !matches!(element, Value::Bag(_))),
+        m_body
+            .iter()
+            .all(|element| !matches!(element, Value::Bag(_))),
         "no nested-bag element survives the contractum-entry splice: {observed:?}"
     );
     assert_green_drive(&set, &channels, &subject, &["InRule"]);
@@ -617,10 +633,8 @@ async fn out_singleton_fires_to_the_empty_bodied_m() {
     let (set, channels, subject_value) =
         drive_direct(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
 
-    let expected = obag(vec![
-        oamb(oname("n"), obag(vec![ozero()])),
-        oamb(oname("m"), obag(Vec::new())),
-    ]);
+    let expected =
+        obag(vec![oamb(oname("n"), obag(vec![ozero()])), oamb(oname("m"), obag(Vec::new()))]);
     assert_eq!(
         flatten(&set.out_values[0]),
         expected,
@@ -636,15 +650,12 @@ async fn out_singleton_fires_to_the_empty_bodied_m() {
 /// re-drive fires it, and the subject rests `{m[{c[{0}], 0}]}` after exactly the ordered
 /// two-firing cascade.
 #[tokio::test]
-async fn in_then_open_cascades_to_quiescence()  {
+async fn in_then_open_cascades_to_quiescence() {
     mettail_runtime::clear_var_cache();
     let (backend, fingerprint) = ambient_backend();
     let subject = g_bag(vec![
         g_amb(g_name("n"), g_bag(vec![g_in(g_name("m"), g_zero())])),
-        g_amb(
-            g_name("m"),
-            g_bag(vec![g_open(g_name("n"), g_bag(vec![g_leaf_amb("c")]))]),
-        ),
+        g_amb(g_name("m"), g_bag(vec![g_open(g_name("n"), g_bag(vec![g_leaf_amb("c")]))])),
     ]);
     let (set, channels, subject_value) =
         drive_direct(&backend, &fingerprint, &subject, DRIVE_DEFAULT_FUEL).await;
@@ -700,7 +711,9 @@ async fn f1_subject_drives_through_the_float_boundary_capture_free() {
         match value {
             Value::Term { constructor, children } => {
                 constructor == label
-                    || children.iter().any(|child| contains_constructor(child, label))
+                    || children
+                        .iter()
+                        .any(|child| contains_constructor(child, label))
             },
             Value::Bag(entries) => entries
                 .iter()
@@ -853,10 +866,7 @@ async fn cascade_exhausts_the_per_path_fuel_with_the_typed_datum() {
     let (backend, fingerprint) = ambient_backend();
     let subject = g_bag(vec![
         g_amb(g_name("n"), g_bag(vec![g_in(g_name("m"), g_zero())])),
-        g_amb(
-            g_name("m"),
-            g_bag(vec![g_open(g_name("n"), g_bag(vec![g_leaf_amb("c")]))]),
-        ),
+        g_amb(g_name("m"), g_bag(vec![g_open(g_name("n"), g_bag(vec![g_leaf_amb("c")]))])),
     ]);
     let (set, channels, _subject_value) = drive_direct(&backend, &fingerprint, &subject, 1).await;
 
@@ -866,8 +876,8 @@ async fn cascade_exhausts_the_per_path_fuel_with_the_typed_datum() {
         "exactly the In firing fits the per-path fuel of 1"
     );
     assert_eq!(set.fuel_data.len(), 1, "exactly one typed exhaustion datum rests");
-    let datum = par_as_runtime_observation_value(&set.fuel_data[0])
-        .expect("the exhaustion datum decodes");
+    let datum =
+        par_as_runtime_observation_value(&set.fuel_data[0]).expect("the exhaustion datum decodes");
     // The stuck redex is the re-assembled m-body soup `{n[{0}], open(n, {c[{0}]})}`.
     let expected_stuck = obag(vec![
         oamb(oname("n"), obag(vec![ozero()])),
@@ -889,7 +899,12 @@ async fn cascade_exhausts_the_per_path_fuel_with_the_typed_datum() {
     })
     .expect_err("fuel exhaustion must surface as the typed cross-check error");
     match &violation {
-        DriveCrossCheckError::FuelChannel { channel, count, per_path_fuel, global_fired } => {
+        DriveCrossCheckError::FuelChannel {
+            channel,
+            count,
+            per_path_fuel,
+            global_fired,
+        } => {
             assert_eq!(channel, &channels.fuel);
             assert_eq!(*count, 1);
             assert_eq!(*per_path_fuel, 1, "the error carries the per-path bound");
@@ -963,9 +978,8 @@ async fn non_confluent_open_rests_in_the_valid_nf_set() {
 
     // The valid-NF set, enumerated by the host mirror: one application of OpenRule at
     // the top level, either pairing.
-    let valid_nfs = open_apply_here(
-        &bag_elems(&flatten(&subject_value)).expect("the subject is a bag"),
-    );
+    let valid_nfs =
+        open_apply_here(&bag_elems(&flatten(&subject_value)).expect("the subject is a bag"));
     assert_eq!(valid_nfs.len(), 2, "two legal pairings ⟹ two valid NFs");
     let expected_a = obag(vec![
         o_leaf_amb("p"),

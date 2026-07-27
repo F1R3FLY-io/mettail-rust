@@ -190,7 +190,14 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
                 .to_string(),
         );
     }
-    Ok(DriverArgs { workload, matcher, encoding, n, reps, out })
+    Ok(DriverArgs {
+        workload,
+        matcher,
+        encoding,
+        n,
+        reps,
+        out,
+    })
 }
 
 /// Append `value` to `out` with JSON string escaping (quote, backslash, and
@@ -253,7 +260,11 @@ fn cpus_allowed_list() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn header_line(args: &DriverArgs, subject_node_count: usize, probe: &Option<CellWidthProbe>) -> String {
+fn header_line(
+    args: &DriverArgs,
+    subject_node_count: usize,
+    probe: &Option<CellWidthProbe>,
+) -> String {
     let unix_time_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
@@ -438,10 +449,7 @@ fn main() -> ExitCode {
     );
 
     if dnf_count > 0 {
-        eprintln!(
-            "{dnf_count}/{} reps did not finish (see the \"dnf\":true lines)",
-            args.reps
-        );
+        eprintln!("{dnf_count}/{} reps did not finish (see the \"dnf\":true lines)", args.reps);
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS
@@ -458,13 +466,12 @@ fn main() -> ExitCode {
 mod workloads_tests {
     use super::workloads::{
         compile_workload, consume_test_admitted, emit_call, ground_to_observation,
-        lambda_chain_subject, matcher_admitted,
-        multi_rule_shared_params, multi_rule_shared_pattern, multi_rule_shared_ruleset,
-        multi_rule_shared_sites, multi_rule_shared_subject, nested_spine_expected,
-        nested_spine_ruleset, nested_spine_subject, node_count, run_compiled_workload,
-        swap_comb_leaf, swap_comb_subject, swap_small_subject, wrap_swap_ctx_subject,
-        GuardEncodingKind, MatcherKind, WorkloadKind, ALL_ENCODINGS, ALL_MATCHERS, ALL_WORKLOADS,
-        OUT_CHANNEL, ROOT_SITE,
+        lambda_chain_subject, matcher_admitted, multi_rule_shared_params,
+        multi_rule_shared_pattern, multi_rule_shared_ruleset, multi_rule_shared_sites,
+        multi_rule_shared_subject, nested_spine_expected, nested_spine_ruleset,
+        nested_spine_subject, node_count, run_compiled_workload, swap_comb_leaf, swap_comb_subject,
+        swap_small_subject, wrap_swap_ctx_subject, GuardEncodingKind, MatcherKind, WorkloadKind,
+        ALL_ENCODINGS, ALL_MATCHERS, ALL_WORKLOADS, OUT_CHANNEL, ROOT_SITE,
     };
     use mettail_rholang_codegen::{
         contextual_match_call_par, in_rho_match_all_sites_call_par,
@@ -567,8 +574,16 @@ mod workloads_tests {
 
         // CLI-level consume-test rejection.
         let args: Vec<String> = [
-            "--workload", "lambda_chain", "--matcher", "naive-r3",
-            "--encoding", "consume-test", "--n", "2", "--reps", "1",
+            "--workload",
+            "lambda_chain",
+            "--matcher",
+            "naive-r3",
+            "--encoding",
+            "consume-test",
+            "--n",
+            "2",
+            "--reps",
+            "1",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -668,8 +683,7 @@ mod workloads_tests {
         for m in [1usize, 2, 4, 8, 16, 32, 64] {
             let (subject, expected) = swap_comb_subject(m);
             // Distinctness: m distinct contracta (the multiset has no repeats).
-            let mut renderings: Vec<String> =
-                expected.iter().map(|v| format!("{v:?}")).collect();
+            let mut renderings: Vec<String> = expected.iter().map(|v| format!("{v:?}")).collect();
             renderings.sort();
             renderings.dedup();
             assert_eq!(renderings.len(), m, "m={m}: the contracta are pairwise distinct");
@@ -697,8 +711,9 @@ mod workloads_tests {
     /// (2 × 64 leaves at m = 64).
     #[test]
     fn comb_leaves_are_pairwise_distinct() {
-        let mut renderings: Vec<String> =
-            (0..128).map(|i| format!("{:?}", swap_comb_leaf(i))).collect();
+        let mut renderings: Vec<String> = (0..128)
+            .map(|i| format!("{:?}", swap_comb_leaf(i)))
+            .collect();
         renderings.sort();
         renderings.dedup();
         assert_eq!(renderings.len(), 128, "128 distinct indices ⇒ 128 distinct leaves");
@@ -1025,7 +1040,10 @@ mod workloads_tests {
                 outcome.result.program_encoded_len,
                 outcome.result.program_receiver_count,
             );
-            tau.insert(matcher.name(), (outcome.result.comm.matching_tau, outcome.result.matches.attempts));
+            tau.insert(
+                matcher.name(),
+                (outcome.result.comm.matching_tau, outcome.result.matches.attempts),
+            );
         }
         // MEASURED REFUTATION, pinned as the regression expectation (pgmcp
         // experiment 144, amendment of 2026-07-18; measured 2026-07-19): the
@@ -1091,7 +1109,8 @@ mod workloads_tests {
 
         for kind in ALL_WORKLOADS {
             for &n in kind.full_sizes() {
-                kind.admitted_size(n).expect("every full-ladder size is admitted");
+                kind.admitted_size(n)
+                    .expect("every full-ladder size is admitted");
             }
         }
         assert!(WorkloadKind::SwapComb.admitted_size(0).is_err(), "n = 0 is rejected");
@@ -1130,9 +1149,8 @@ mod workloads_tests {
         for (kind, n) in smoke_cells {
             let compiled = compile_workload(kind, n).expect("smoke cell compiles");
             for &matcher in kind.matchers() {
-                let probe =
-                    cell_width_probe(&compiled, matcher, GuardEncodingKind::PatternGuard)
-                        .expect("smoke cell emits");
+                let probe = cell_width_probe(&compiled, matcher, GuardEncodingKind::PatternGuard)
+                    .expect("smoke cell emits");
                 assert_eq!(
                     probe.regression_zone_width,
                     None,
@@ -1247,9 +1265,7 @@ mod workloads_tests {
             rho_runtime
                 .inj(wide_par, Env::new(), Blake2b512Random::create_from_bytes(&[]))
                 .await
-                .expect(
-                    "width-129 Par must evaluate without the split_byte(i8) PosOverflow panic",
-                );
+                .expect("width-129 Par must evaluate without the split_byte(i8) PosOverflow panic");
         });
     }
 

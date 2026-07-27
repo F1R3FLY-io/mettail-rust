@@ -14,16 +14,16 @@ mod ambdemo;
 
 use ambdemo::AmbDemoLanguage;
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
-use models::rhoapi::{Par, Send};
-use models::rust::utils::{
-    new_freevar_var, new_gint_par, new_gstring_par, new_receive_par, new_send_par,
-};
-use models::rhoapi::{BindPattern, ReceiveBind};
 use mettail_rholang_runtime::speculation::delivery::resting_on_string;
 use mettail_rholang_runtime::speculation::search::{Explorer, Lookahead, TraceMode};
 use mettail_rholang_runtime::speculation::SpeculativeSandbox;
 use mettail_rholang_runtime::{par_as_runtime_observation_value, PlannedRhoBackend};
 use mettail_runtime::Language;
+use models::rhoapi::{BindPattern, ReceiveBind};
+use models::rhoapi::{Par, Send};
+use models::rust::utils::{
+    new_freevar_var, new_gint_par, new_gstring_par, new_receive_par, new_send_par,
+};
 use rholang::rust::interpreter::accounting::cost_accounting::CostAccounting;
 use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::RuntimeBudget;
@@ -79,20 +79,20 @@ fn forwarder(source: &str) -> Par {
 async fn explore(program: Par, label: &str) -> usize {
     let sandbox = SpeculativeSandbox::new().await.expect("sandbox");
     sandbox.fund_from(&host_budget(1_000_000));
-    let mut explorer = Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced)
-        .observing(move |report| {
+    let mut explorer =
+        Explorer::with_mode(&sandbox, TraceMode::IndependenceReduced).observing(move |report| {
             eprintln!(
                 "  [{} level {}] degrees={:?} classes={:?} → frontier={} quiescent={}",
-                label, report.level, report.out_degrees, report.class_sizes, report.frontier,
+                label,
+                report.level,
+                report.out_degrees,
+                report.class_sizes,
+                report.frontier,
                 report.quiescent
             );
         });
     let exploration = explorer
-        .explore(
-            program,
-            Blake2b512Random::create_from_length(128),
-            Lookahead::Unbounded,
-        )
+        .explore(program, Blake2b512Random::create_from_length(128), Lookahead::Unbounded)
         .await
         .expect("exploration");
     eprintln!(
@@ -167,8 +167,7 @@ fn amb_demo_backend() -> PlannedRhoBackend {
         ),
         guard_coverage: mettail_rholang_codegen::RhoGuardCoverageEvidence::NoGuardObligations,
     };
-    let plan =
-        mettail_rholang_codegen::plan_rho_default_backend(&def, requirements).expect("plan");
+    let plan = mettail_rholang_codegen::plan_rho_default_backend(&def, requirements).expect("plan");
     PlannedRhoBackend::from_plan(plan)
 }
 
@@ -220,18 +219,17 @@ async fn ambdemo_open_race_through_the_spread() {
         "[spread] the host report records {} firing(s)",
         report.rewrite_justifications.len()
     );
-    let invocation =
-        match AmbDemoLanguage::rho_net_match_invocation_from_dovetail_to(
-            term.as_ref(),
-            &report,
-            OUT,
-        ) {
-            Ok(invocation) => invocation,
-            Err(detail) => {
-                eprintln!("[spread] the spread-match path REJECTED the race: {detail}");
-                return;
-            },
-        };
+    let invocation = match AmbDemoLanguage::rho_net_match_invocation_from_dovetail_to(
+        term.as_ref(),
+        &report,
+        OUT,
+    ) {
+        Ok(invocation) => invocation,
+        Err(detail) => {
+            eprintln!("[spread] the spread-match path REJECTED the race: {detail}");
+            return;
+        },
+    };
     let leaves = explore(installed.append(invocation.call.clone()), "ambdemo-spread").await;
     eprintln!("[ambdemo-spread] leaves={leaves}");
 }

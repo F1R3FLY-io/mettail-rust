@@ -105,9 +105,16 @@ impl ParGuardEncoding {
 /// Total: every `Par` gets an encoding. A shape outside the covered fragment becomes an opaque
 /// atom, never a wrong answer.
 pub fn encode_par_guard(cond: &Par) -> ParGuardEncoding {
-    let mut encoder = ParEncoder { vars: GuardVarMap::new(), opaque: Vec::new() };
+    let mut encoder = ParEncoder {
+        vars: GuardVarMap::new(),
+        opaque: Vec::new(),
+    };
     let formula = encoder.par_formula(cond);
-    ParGuardEncoding { formula, vars: encoder.vars, opaque: encoder.opaque }
+    ParGuardEncoding {
+        formula,
+        vars: encoder.vars,
+        opaque: encoder.opaque,
+    }
 }
 
 /// ★ **THE SUBSTRATE'S VERDICT for a lowered guard** — the compile-time authority leg of
@@ -295,9 +302,9 @@ impl ParEncoder {
 
             // ── A bare variable used as a boolean. ───────────────────────────────────────
             ExprInstance::EVarBody(EVar { v }) => match self.var_index(v.as_ref()) {
-                Some(idx) => GuardFormula::Prop(
-                    mettail_prattail::guard_formula::prop_var(&idx.to_string()),
-                ),
+                Some(idx) => {
+                    GuardFormula::Prop(mettail_prattail::guard_formula::prop_var(&idx.to_string()))
+                },
                 None => self.atom_for(whole, GuardAtomKind::Uncovered),
             },
 
@@ -420,8 +427,7 @@ impl ParEncoder {
     }
 
     fn prop_compare(&mut self, op: CmpOp, idx: usize, literal: bool) -> GuardFormula {
-        let atom =
-            GuardFormula::Prop(mettail_prattail::guard_formula::prop_var(&idx.to_string()));
+        let atom = GuardFormula::Prop(mettail_prattail::guard_formula::prop_var(&idx.to_string()));
         match (op, literal) {
             (CmpOp::Eq, true) | (CmpOp::Ne, false) => atom,
             (CmpOp::Eq, false) | (CmpOp::Ne, true) => GuardFormula::not(atom),
@@ -725,8 +731,7 @@ impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for SubstrateGuar
         if guard == &Par::default() {
             return true;
         }
-        let mut combined: Vec<Par> =
-            Vec::with_capacity(matched.iter().map(|m| m.pars.len()).sum());
+        let mut combined: Vec<Par> = Vec::with_capacity(matched.iter().map(|m| m.pars.len()).sum());
         for m in matched {
             combined.extend_from_slice(&m.pars);
         }
@@ -851,7 +856,12 @@ pub fn substrate_guard_verdict(condition: &Par, bound_pars: &[Par]) -> Sat3 {
         &GuardAssignment::with_len(encoding.vars.len()),
         &encoding.vars,
         CONSENSUS_SUBSTRATE_CONFIG,
-        &mut |atom| resolved.get(atom.id as usize).copied().unwrap_or(Sat3::DontKnow),
+        &mut |atom| {
+            resolved
+                .get(atom.id as usize)
+                .copied()
+                .unwrap_or(Sat3::DontKnow)
+        },
     )
 }
 
@@ -1081,7 +1091,10 @@ mod tests {
     use models::rhoapi::expr::ExprInstance as EI;
 
     fn expr(instance: EI) -> Par {
-        Par { exprs: vec![Expr { expr_instance: Some(instance) }], ..Default::default() }
+        Par {
+            exprs: vec![Expr { expr_instance: Some(instance) }],
+            ..Default::default()
+        }
     }
 
     fn gint(n: i64) -> Par {
@@ -1098,7 +1111,9 @@ mod tests {
 
     fn bound(i: i32) -> Par {
         expr(EI::EVarBody(EVar {
-            v: Some(Var { var_instance: Some(VarInstance::BoundVar(i)) }),
+            v: Some(Var {
+                var_instance: Some(VarInstance::BoundVar(i)),
+            }),
         }))
     }
 
@@ -1153,11 +1168,8 @@ mod tests {
     #[test]
     fn material_implication_arrives_already_decomposed_and_settles() {
         let not_antecedent = expr(EI::ENotBody(ENot { p: Some(gbool(false)) }));
-        let implication = binary(
-            |p1, p2| EI::EOrBody(EOr { p1, p2 }),
-            not_antecedent,
-            gbool(false),
-        );
+        let implication =
+            binary(|p1, p2| EI::EOrBody(EOr { p1, p2 }), not_antecedent, gbool(false));
         assert_eq!(
             substrate_verdict(&implication),
             Some(true),
@@ -1191,7 +1203,10 @@ mod tests {
 
     #[test]
     fn a_process_shaped_guard_fails_closed() {
-        let process = Par { sends: vec![Default::default()], ..Default::default() };
+        let process = Par {
+            sends: vec![Default::default()],
+            ..Default::default()
+        };
         assert_eq!(substrate_verdict(&process), None);
         assert!(!encode_par_guard(&process).reaches_substrate());
     }
@@ -1208,17 +1223,16 @@ mod tests {
             "the compile-time leg has no payload and no matcher; a spatial guard is a run-time \
              question and must NOT be settled here"
         );
-        assert_eq!(
-            encode_par_guard(&guard).formula.atoms()[0].kind,
-            GuardAtomKind::Spatial
-        );
+        assert_eq!(encode_par_guard(&guard).formula.atoms()[0].kind, GuardAtomKind::Spatial);
     }
 
     #[test]
     fn a_wildcard_is_not_a_readable_variable() {
         let guard = eq(
             expr(EI::EVarBody(EVar {
-                v: Some(Var { var_instance: Some(VarInstance::Wildcard(Default::default())) }),
+                v: Some(Var {
+                    var_instance: Some(VarInstance::Wildcard(Default::default())),
+                }),
             })),
             gint(1),
         );
@@ -1250,10 +1264,7 @@ mod tests {
         let product = binary(|p1, p2| EI::EMultBody(EMult { p1, p2 }), bound(0), bound(1));
         let guard = lt(product, gint(10));
         assert_eq!(substrate_verdict(&guard), None);
-        assert_eq!(
-            encode_par_guard(&guard).formula.atoms()[0].kind,
-            GuardAtomKind::NonLinear
-        );
+        assert_eq!(encode_par_guard(&guard).formula.atoms()[0].kind, GuardAtomKind::NonLinear);
     }
 
     #[test]
@@ -1311,7 +1322,10 @@ mod tests {
     }
 
     fn matches_expr(target: Par, pattern: Par) -> Par {
-        expr(EI::EMatchesBody(EMatches { target: Some(target), pattern: Some(pattern) }))
+        expr(EI::EMatchesBody(EMatches {
+            target: Some(target),
+            pattern: Some(pattern),
+        }))
     }
 
     /// `@"c"!(n)` — a process-shaped value, usable as a payload or a `matches` operand.
@@ -1344,11 +1358,16 @@ mod tests {
     ) -> bool {
         let owned: Vec<ListParWithRandom> = binds
             .iter()
-            .map(|pars| ListParWithRandom { pars: pars.to_vec(), random_state: Vec::new() })
+            .map(|pars| ListParWithRandom {
+                pars: pars.to_vec(),
+                random_state: Vec::new(),
+            })
             .collect();
         let borrowed: Vec<&ListParWithRandom> = owned.iter().collect();
-        let continuation =
-            TaggedContinuation { guard: Some(guard.clone()), tagged_cont: None };
+        let continuation = TaggedContinuation {
+            guard: Some(guard.clone()),
+            tagged_cont: None,
+        };
         matcher.check_commit(&continuation, &borrowed)
     }
 
@@ -1370,65 +1389,104 @@ mod tests {
             ("x > \"a\" [\"b\"]", gt(bound(0), gstring("a")), vec![vec![gstring("b")]]),
             ("x > \"c\" [\"b\"]", gt(bound(0), gstring("c")), vec![vec![gstring("b")]]),
             // ── error-shaped rows: `rho_pure_eval` raises, so the guard must not pass ──────
-            ("x / 0 > 1 [6] DIV0", gt(divide(bound(0), gint(0)), gint(1)), vec![vec![gint(6)]]),
-            ("x + 1 > 0 [i64::MAX] OVERFLOW", gt(plus(bound(0), gint(1)), gint(0)), vec![vec![
-                gint(i64::MAX),
-            ]]),
-            ("2 * x > 0 [i64::MAX] OVERFLOW", gt(times(gint(2), bound(0)), gint(0)), vec![vec![
-                gint(i64::MAX),
-            ]]),
+            (
+                "x / 0 > 1 [6] DIV0",
+                gt(divide(bound(0), gint(0)), gint(1)),
+                vec![vec![gint(6)]],
+            ),
+            (
+                "x + 1 > 0 [i64::MAX] OVERFLOW",
+                gt(plus(bound(0), gint(1)), gint(0)),
+                vec![vec![gint(i64::MAX)]],
+            ),
+            (
+                "2 * x > 0 [i64::MAX] OVERFLOW",
+                gt(times(gint(2), bound(0)), gint(0)),
+                vec![vec![gint(i64::MAX)]],
+            ),
             ("x [\"s\"] NON-BOOLEAN", bound(0), vec![vec![gstring("s")]]),
             ("x > 0 [\"s\"] SORT MISMATCH", gt(bound(0), gint(0)), vec![vec![gstring("s")]]),
             ("x > 0 [@\"c\"!(1)] PROCESS", gt(bound(0), gint(0)), vec![vec![send("c", 1)]]),
             // ── ★ an undecidable operand in a SHORT-CIRCUITED position ────────────────────
-            ("true or (x / 0 > 1) [6]", or(gbool(true), gt(divide(bound(0), gint(0)), gint(1))), vec![
-                vec![gint(6)],
-            ]),
-            ("(x > 0) or (x / 0 > 1) [6]", or(gt(bound(0), gint(0)), gt(divide(bound(0), gint(0)), gint(1))), vec![
-                vec![gint(6)],
-            ]),
-            ("true or (2 * x > 0) [i64::MAX]", or(gbool(true), gt(times(gint(2), bound(0)), gint(0))), vec![
-                vec![gint(i64::MAX)],
-            ]),
-            ("false implies (x / 0 > 1) [6]", implies(gbool(false), gt(divide(bound(0), gint(0)), gint(1))), vec![
-                vec![gint(6)],
-            ]),
-            ("(x matches @\"c\"!(1)) or (x > 9) [@\"c\"!(1)]", or(matches_expr(bound(0), send("c", 1)), gt(bound(0), gint(9))), vec![
-                vec![send("c", 1)],
-            ]),
+            (
+                "true or (x / 0 > 1) [6]",
+                or(gbool(true), gt(divide(bound(0), gint(0)), gint(1))),
+                vec![vec![gint(6)]],
+            ),
+            (
+                "(x > 0) or (x / 0 > 1) [6]",
+                or(gt(bound(0), gint(0)), gt(divide(bound(0), gint(0)), gint(1))),
+                vec![vec![gint(6)]],
+            ),
+            (
+                "true or (2 * x > 0) [i64::MAX]",
+                or(gbool(true), gt(times(gint(2), bound(0)), gint(0))),
+                vec![vec![gint(i64::MAX)]],
+            ),
+            (
+                "false implies (x / 0 > 1) [6]",
+                implies(gbool(false), gt(divide(bound(0), gint(0)), gint(1))),
+                vec![vec![gint(6)]],
+            ),
+            (
+                "(x matches @\"c\"!(1)) or (x > 9) [@\"c\"!(1)]",
+                or(matches_expr(bound(0), send("c", 1)), gt(bound(0), gint(9))),
+                vec![vec![send("c", 1)]],
+            ),
             // ── the dual: an undecidable operand behind a decided-FALSE `and` ─────────────
-            ("false and (x / 0 > 1) [6]", and(gbool(false), gt(divide(bound(0), gint(0)), gint(1))), vec![
-                vec![gint(6)],
-            ]),
-            ("(x > 0) and (x / 0 > 1) [6]", and(gt(bound(0), gint(0)), gt(divide(bound(0), gint(0)), gint(1))), vec![
-                vec![gint(6)],
-            ]),
+            (
+                "false and (x / 0 > 1) [6]",
+                and(gbool(false), gt(divide(bound(0), gint(0)), gint(1))),
+                vec![vec![gint(6)]],
+            ),
+            (
+                "(x > 0) and (x / 0 > 1) [6]",
+                and(gt(bound(0), gint(0)), gt(divide(bound(0), gint(0)), gint(1))),
+                vec![vec![gint(6)]],
+            ),
             // ── ★ positions `rho_pure_eval` does not evaluate ─────────────────────────────
-            ("[x] == [5] [5]", eq(list(vec![bound(0)]), list(vec![gint(5)])), vec![vec![gint(5)]]),
-            ("[x] == [6] [5]", eq(list(vec![bound(0)]), list(vec![gint(6)])), vec![vec![gint(5)]]),
-            ("[1,2] == [1,2]", eq(list(vec![gint(1), gint(2)]), list(vec![gint(1), gint(2)])), vec![
-                vec![gint(5)],
-            ]),
-            ("x matches @\"c\"!(1) [@\"c\"!(1)]", matches_expr(bound(0), send("c", 1)), vec![vec![
-                send("c", 1),
-            ]]),
-            ("x matches @\"c\"!(2) [@\"c\"!(1)]", matches_expr(bound(0), send("c", 2)), vec![vec![
-                send("c", 1),
-            ]]),
+            (
+                "[x] == [5] [5]",
+                eq(list(vec![bound(0)]), list(vec![gint(5)])),
+                vec![vec![gint(5)]],
+            ),
+            (
+                "[x] == [6] [5]",
+                eq(list(vec![bound(0)]), list(vec![gint(6)])),
+                vec![vec![gint(5)]],
+            ),
+            (
+                "[1,2] == [1,2]",
+                eq(list(vec![gint(1), gint(2)]), list(vec![gint(1), gint(2)])),
+                vec![vec![gint(5)]],
+            ),
+            (
+                "x matches @\"c\"!(1) [@\"c\"!(1)]",
+                matches_expr(bound(0), send("c", 1)),
+                vec![vec![send("c", 1)]],
+            ),
+            (
+                "x matches @\"c\"!(2) [@\"c\"!(1)]",
+                matches_expr(bound(0), send("c", 2)),
+                vec![vec![send("c", 1)]],
+            ),
             // ── cross-bind (`&`-join) rows: two binds, de Bruijn in bind order ────────────
-            ("x - y > 0 [9 | 4]", gt(minus_expr(bound(1), bound(0)), gint(0)), vec![
-                vec![gint(9)],
-                vec![gint(4)],
-            ]),
-            ("x - y > 0 [4 | 9]", gt(minus_expr(bound(1), bound(0)), gint(0)), vec![
-                vec![gint(4)],
-                vec![gint(9)],
-            ]),
+            (
+                "x - y > 0 [9 | 4]",
+                gt(minus_expr(bound(1), bound(0)), gint(0)),
+                vec![vec![gint(9)], vec![gint(4)]],
+            ),
+            (
+                "x - y > 0 [4 | 9]",
+                gt(minus_expr(bound(1), bound(0)), gint(0)),
+                vec![vec![gint(4)], vec![gint(9)]],
+            ),
             ("x == y [2 | 2]", eq(bound(1), bound(0)), vec![vec![gint(2)], vec![gint(2)]]),
-            ("x > 1 and y > 1 [2 | 0]", and(gt(bound(1), gint(1)), gt(bound(0), gint(1))), vec![
-                vec![gint(2)],
-                vec![gint(0)],
-            ]),
+            (
+                "x > 1 and y > 1 [2 | 0]",
+                and(gt(bound(1), gint(1)), gt(bound(0), gint(1))),
+                vec![vec![gint(2)], vec![gint(0)]],
+            ),
             // ── a binder the substitution cannot reach ────────────────────────────────────
             ("bound$3 > 0 [5]", gt(bound(3), gint(0)), vec![vec![gint(5)]]),
             ("free$0 > 0 [5]", gt(free(0), gint(0)), vec![vec![gint(5)]]),
@@ -1445,7 +1503,9 @@ mod tests {
 
     fn free(i: i32) -> Par {
         expr(EI::EVarBody(EVar {
-            v: Some(Var { var_instance: Some(VarInstance::FreeVar(i)) }),
+            v: Some(Var {
+                var_instance: Some(VarInstance::FreeVar(i)),
+            }),
         }))
     }
 
@@ -1637,10 +1697,16 @@ mod tests {
     #[test]
     fn a_guardless_continuation_and_an_empty_guard_both_commit() {
         let matcher = SubstrateGuardMatcher::new();
-        let matched = ListParWithRandom { pars: vec![gint(1)], random_state: Vec::new() };
+        let matched = ListParWithRandom {
+            pars: vec![gint(1)],
+            random_state: Vec::new(),
+        };
         let guardless = TaggedContinuation { guard: None, tagged_cont: None };
         assert!(matcher.check_commit(&guardless, &[&matched]));
-        let empty = TaggedContinuation { guard: Some(Par::default()), tagged_cont: None };
+        let empty = TaggedContinuation {
+            guard: Some(Par::default()),
+            tagged_cont: None,
+        };
         assert!(matcher.check_commit(&empty, &[&matched]));
         // …byte-for-byte the reducer's own answer.
         assert!(Matcher.check_commit(&guardless, &[&matched]));
@@ -1655,11 +1721,11 @@ mod tests {
             remainder: None,
             free_count: 1,
         };
-        let data = ListParWithRandom { pars: vec![gint(42)], random_state: Vec::new() };
-        assert_eq!(
-            SubstrateGuardMatcher::new().get(&pattern, &data),
-            Matcher.get(&pattern, &data)
-        );
+        let data = ListParWithRandom {
+            pars: vec![gint(42)],
+            random_state: Vec::new(),
+        };
+        assert_eq!(SubstrateGuardMatcher::new().get(&pattern, &data), Matcher.get(&pattern, &data));
         let mismatched = BindPattern {
             patterns: vec![gint(1), gint(2)],
             remainder: None,

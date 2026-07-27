@@ -188,20 +188,20 @@ const GUARD_CORPUS: &[GuardRow] = &[
     //    Taken from `demos/rhocalc-settlement/settlement.env` and `RUN-SHEET.md`. All three
     //    are payload-dependent, so all three are Residual and every demo beat behaves
     //    exactly as it did — asserted here rather than argued. ──────────────────────────────
-    ("x < 46u32", Residual),          // settlement.env `desk`  (`px <= 45u32`, RUN-SHEET §fallback)
+    ("x < 46u32", Residual), // settlement.env `desk`  (`px <= 45u32`, RUN-SHEET §fallback)
     ("100u32 / x >= 1u32", Residual), // RUN-SHEET:131,138 — the divide-by-zero beat
 ];
 
 /// The cross-bind (`&`-join) corpus: guards over TWO binds. Kept separate because they need a
 /// two-bind receive to lower. Every one is payload-dependent by construction.
 const JOIN_GUARD_CORPUS: &[GuardRow] = &[
-    ("x + y > 10", Residual),          // rho_guard_oracle.rs:61
-    ("y > 1", Residual),               // rhocalc_tests.rs:1582
-    ("y > 10", Residual),              // rhocalc_tests.rs:1602
-    ("x > 1 and y > 1", Residual),     // rhocalc_tests.rs:1819
-    ("x > 1 and y > 3", Residual),     // rhocalc_tests.rs:1827
-    ("x == y", Residual),              // rhocalc_tests.rs:3845
-    ("x > 1", Residual),               // rhocalc_tests.rs:1795
+    ("x + y > 10", Residual),                    // rho_guard_oracle.rs:61
+    ("y > 1", Residual),                         // rhocalc_tests.rs:1582
+    ("y > 10", Residual),                        // rhocalc_tests.rs:1602
+    ("x > 1 and y > 1", Residual),               // rhocalc_tests.rs:1819
+    ("x > 1 and y > 3", Residual),               // rhocalc_tests.rs:1827
+    ("x == y", Residual),                        // rhocalc_tests.rs:3845
+    ("x > 1", Residual),                         // rhocalc_tests.rs:1795
     (r#"(x > 1) and (y == "lemon")"#, Residual), // rhocalc_tests.rs:1851
     ("x >= y", Residual),
     ("x != y", Residual),
@@ -259,7 +259,9 @@ fn lower_both(source: &str) -> (Par, Par) {
 
 /// The `Receive.condition` of the (single) receive in `par`, if it survived lowering.
 fn receive_condition(par: &Par) -> Option<Par> {
-    par.receives.first().and_then(|receive| receive.condition.clone())
+    par.receives
+        .first()
+        .and_then(|receive| receive.condition.clone())
 }
 
 /// The outcome S-D0 reached for `guard`, READ OFF THE ARTIFACT rather than recomputed: the
@@ -537,8 +539,10 @@ fn machine_verdict_agrees_with_the_runtime_check_commit() {
         checked += 1;
     }
     assert!(checked > 0, "no binder-closed guard reached the runtime agreement check");
-    println!("S-D0 runtime agreement: {checked} binder-closed corpus guard(s) checked against \
-              `Matcher::check_commit`");
+    println!(
+        "S-D0 runtime agreement: {checked} binder-closed corpus guard(s) checked against \
+              `Matcher::check_commit`"
+    );
 }
 
 /// ★ THE ANTI-DIVERGENCE FENCE, over the corpus: for every binder-closed guard, the HOST
@@ -562,7 +566,9 @@ fn the_two_evaluators_agree_on_every_binder_closed_corpus_guard() {
             LoweringOptions::NO_DISCHARGE,
         )
         .unwrap_or_else(|err| panic!("lowering failed for {program:?}: {err:?}"));
-        let Some(condition) = receive_condition(&par) else { continue };
+        let Some(condition) = receive_condition(&par) else {
+            continue;
+        };
         if !mettail_rholang_runtime::is_binder_closed(&condition) {
             continue;
         }
@@ -570,9 +576,8 @@ fn the_two_evaluators_agree_on_every_binder_closed_corpus_guard() {
         let machine = machine_verdict(&condition);
         let host = host_verdict_for(&proc);
         match (machine, host) {
-            (Some(m), Some(h)) if m != h => disagreements.push(format!(
-                "  {guard:?}: machine={m}, host={h}  ← DIVERGENCE-A-SHAPED"
-            )),
+            (Some(m), Some(h)) if m != h => disagreements
+                .push(format!("  {guard:?}: machine={m}, host={h}  ← DIVERGENCE-A-SHAPED")),
             _ => {},
         }
     }
@@ -631,7 +636,10 @@ fn the_three_codegen_guard_sites_are_all_residual() {
     use models::rust::utils::new_boundvar_par;
 
     fn expr_par(instance: ExprInstance) -> Par {
-        Par { exprs: vec![Expr { expr_instance: Some(instance) }], ..Par::default() }
+        Par {
+            exprs: vec![Expr { expr_instance: Some(instance) }],
+            ..Par::default()
+        }
     }
     fn slot_eq(i: usize, j: usize) -> Par {
         expr_par(ExprInstance::EEqBody(EEq {
@@ -805,10 +813,8 @@ fn single_bind_payload_battery() -> Vec<(&'static str, Vec<Par>)> {
         locally_free: Vec::new(),
         connective_used: false,
     }]);
-    let double = Par::default()
-        .with_exprs(vec![models::rust::utils::new_gdouble_expr(1.5)]);
-    let bigint = Par::default()
-        .with_exprs(vec![models::rust::utils::new_gbigint_expr(vec![0x00])]);
+    let double = Par::default().with_exprs(vec![models::rust::utils::new_gdouble_expr(1.5)]);
+    let bigint = Par::default().with_exprs(vec![models::rust::utils::new_gbigint_expr(vec![0x00])]);
     vec![
         ("x=2 (the program's own payload)", vec![int(2)]),
         ("x=0", vec![int(0)]),
@@ -820,7 +826,10 @@ fn single_bind_payload_battery() -> Vec<(&'static str, Vec<Par>)> {
         ("x=true", vec![new_gbool_par(true, Vec::new(), false)]),
         ("x=false", vec![new_gbool_par(false, Vec::new(), false)]),
         ("x=\"ok\"", vec![new_gstring_par("ok".to_string(), Vec::new(), false)]),
-        ("x=\"OK\" (case differs)", vec![new_gstring_par("OK".to_string(), Vec::new(), false)]),
+        (
+            "x=\"OK\" (case differs)",
+            vec![new_gstring_par("OK".to_string(), Vec::new(), false)],
+        ),
         ("x=\"\" (empty)", vec![new_gstring_par(String::new(), Vec::new(), false)]),
         ("x=1.5 (double)", vec![double]),
         ("x=0n (big integer)", vec![bigint]),
@@ -840,18 +849,21 @@ fn join_payload_battery() -> Vec<(&'static str, Vec<Par>)> {
         ("x=0, y=0", vec![int(0), int(0)]),
         ("x=i64::MAX, y=1", vec![int(i64::MAX), int(1)]),
         ("x=1, y=i64::MIN", vec![int(1), int(i64::MIN)]),
-        ("x=\"lemon\", y=\"lemon\"", vec![
-            new_gstring_par("lemon".to_string(), Vec::new(), false),
-            new_gstring_par("lemon".to_string(), Vec::new(), false),
-        ]),
-        ("x=true, y=false", vec![
-            new_gbool_par(true, Vec::new(), false),
-            new_gbool_par(false, Vec::new(), false),
-        ]),
-        ("x=2, y=\"lemon\" (mixed sorts)", vec![
-            int(2),
-            new_gstring_par("lemon".to_string(), Vec::new(), false),
-        ]),
+        (
+            "x=\"lemon\", y=\"lemon\"",
+            vec![
+                new_gstring_par("lemon".to_string(), Vec::new(), false),
+                new_gstring_par("lemon".to_string(), Vec::new(), false),
+            ],
+        ),
+        (
+            "x=true, y=false",
+            vec![new_gbool_par(true, Vec::new(), false), new_gbool_par(false, Vec::new(), false)],
+        ),
+        (
+            "x=2, y=\"lemon\" (mixed sorts)",
+            vec![int(2), new_gstring_par("lemon".to_string(), Vec::new(), false)],
+        ),
         ("x=2 (only ONE bind arrived)", vec![int(2)]),
     ]
 }
@@ -882,10 +894,12 @@ fn undecided_cause(condition: &Par, payloads: &[Par]) -> String {
     let substituted = substitute_bound_pars(condition, payloads);
     let encoding = encode_par_guard(&substituted);
     match encoding.vars.is_empty() {
-        false => return format!(
-            "RESIDUAL BINDER — {} slot(s) the substitution could not reach",
-            encoding.vars.len()
-        ),
+        false => {
+            return format!(
+                "RESIDUAL BINDER — {} slot(s) the substitution could not reach",
+                encoding.vars.len()
+            )
+        },
         true => {},
     }
     for (index, fragment) in encoding.opaque.iter().enumerate() {
@@ -941,9 +955,8 @@ fn the_two_comm_time_deciders_agree_on_the_whole_corpus() {
                     "  {guard:?} [{payload_label}]: reducer=true substrate=false — {}",
                     undecided_cause(&condition, &payloads)
                 )),
-                (false, true) => fires_where_reducer_rests.push(format!(
-                    "  {guard:?} [{payload_label}]: reducer=false substrate=TRUE"
-                )),
+                (false, true) => fires_where_reducer_rests
+                    .push(format!("  {guard:?} [{payload_label}]: reducer=false substrate=TRUE")),
             }
         }
     }
@@ -986,7 +999,11 @@ fn the_two_comm_time_deciders_agree_on_the_whole_corpus() {
 #[test]
 fn gate_4_exhaustiveness_is_enforced_at_the_predicate() {
     use models::rust::utils::{new_gbool_par, new_wildcard_par};
-    assert!(mettail_rholang_runtime::is_binder_closed(&new_gbool_par(true, Vec::new(), false)));
+    assert!(mettail_rholang_runtime::is_binder_closed(&new_gbool_par(
+        true,
+        Vec::new(),
+        false
+    )));
     assert!(!mettail_rholang_runtime::is_binder_closed(&new_wildcard_par(Vec::new(), true)));
     // An UNKNOWN `Par` shape (no exprs, no processes) is the empty `Par`: vacuously closed but
     // not a decidable guard, so it can never discharge.

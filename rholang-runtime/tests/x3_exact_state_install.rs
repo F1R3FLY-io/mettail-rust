@@ -66,12 +66,12 @@ use models::rhoapi::{
     TaggedContinuation,
 };
 use models::rust::utils::{new_freevar_par, new_gint_par, new_gstring_par};
+use rho_pure_eval::Env;
 use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::has_cost::HasCost;
 use rholang::rust::interpreter::external_services::ExternalServices;
 use rholang::rust::interpreter::matcher::r#match::Matcher;
 use rholang::rust::interpreter::rho_runtime::{create_rho_runtime, RhoRuntime};
-use rho_pure_eval::Env;
 use rspace_plus_plus::rspace::checkpoint::SoftCheckpoint;
 use rspace_plus_plus::rspace::hot_store::HotStoreState;
 use rspace_plus_plus::rspace::internal::{Datum, Row, WaitingContinuation};
@@ -96,8 +96,7 @@ async fn fresh_sandbox() -> Space {
         .r_space_stores()
         .await
         .expect("in-memory rspace stores must build");
-    RSpace::create(store, Arc::new(Box::new(Matcher)))
-        .expect("a fresh in-memory RSpace must build")
+    RSpace::create(store, Arc::new(Box::new(Matcher))).expect("a fresh in-memory RSpace must build")
 }
 
 async fn install(space: &Space, state: State) {
@@ -167,13 +166,7 @@ fn waiting(
     marker: i64,
 ) -> WaitingContinuation<BindPattern, TaggedContinuation> {
     let patterns = vec![wildcard_bind(); channels.len()];
-    WaitingContinuation::create(
-        channels,
-        &patterns,
-        &continuation_body(marker),
-        persist,
-        peeks,
-    )
+    WaitingContinuation::create(channels, &patterns, &continuation_body(marker), persist, peeks)
 }
 
 /// A state exercising every field of `HotStoreState`, including the two the
@@ -188,17 +181,19 @@ fn fixture_state() -> State {
     let mut state = State::default();
 
     // ── data ──
-    state
-        .data
-        .insert(chan("alpha"), vec![datum(&chan("alpha"), 1, false), datum(&chan("alpha"), 2, false)]);
+    state.data.insert(
+        chan("alpha"),
+        vec![datum(&chan("alpha"), 1, false), datum(&chan("alpha"), 2, false)],
+    );
     state
         .data
         .insert(chan("gamma"), vec![datum(&chan("gamma"), 3, true)]);
 
     // ── a linear continuation on a channel that HAS data ──
-    state
-        .continuations
-        .insert(vec![chan("alpha")], vec![waiting(&vec![chan("alpha")], false, BTreeSet::new(), 10)]);
+    state.continuations.insert(
+        vec![chan("alpha")],
+        vec![waiting(&vec![chan("alpha")], false, BTreeSet::new(), 10)],
+    );
 
     // ── a PEEK continuation on a channel with NO data (to_map-invisible) ──
     let mut peeks = BTreeSet::new();
@@ -209,18 +204,20 @@ fn fixture_state() -> State {
 
     // ── a PERSISTENT continuation, and a JOIN over two channels ──
     let join_channels = vec![chan("delta"), chan("epsilon")];
-    state.continuations.insert(
-        join_channels.clone(),
-        vec![waiting(&join_channels, true, BTreeSet::new(), 12)],
-    );
-    state.joins.insert(chan("delta"), vec![join_channels.clone()]);
-    state.joins.insert(chan("epsilon"), vec![join_channels.clone()]);
+    state
+        .continuations
+        .insert(join_channels.clone(), vec![waiting(&join_channels, true, BTreeSet::new(), 12)]);
+    state
+        .joins
+        .insert(chan("delta"), vec![join_channels.clone()]);
+    state
+        .joins
+        .insert(chan("epsilon"), vec![join_channels.clone()]);
 
     // ── the `install` lane ──
-    state.installed_continuations.insert(
-        vec![chan("zeta")],
-        waiting(&vec![chan("zeta")], true, BTreeSet::new(), 13),
-    );
+    state
+        .installed_continuations
+        .insert(vec![chan("zeta")], waiting(&vec![chan("zeta")], true, BTreeSet::new(), 13));
     state
         .installed_joins
         .insert(chan("zeta"), vec![vec![chan("zeta")]]);
@@ -389,11 +386,7 @@ async fn d0_teeth_to_map_is_not_a_faithful_readback() {
     println!("\n── X3 D0: snapshot() vs to_map() over the same installed state ──");
     describe_state("installed", &planted);
     describe_state("snapshot()", &read_back);
-    println!(
-        "  to_map()               {} row(s): {:?}",
-        map.len(),
-        sorted_group_keys(&map)
-    );
+    println!("  to_map()               {} row(s): {:?}", map.len(), sorted_group_keys(&map));
 
     // snapshot() sees everything…
     assert_eq!(total_continuations(&read_back), 4, "snapshot must see all 4 continuations");
@@ -551,7 +544,9 @@ async fn d2_reinstall_erases_a_previous_runs_effects() {
         "TEETH FAILED: the two sends did not rest on @\"x3-run-residue\""
     );
     assert!(
-        dirty.continuations.contains_key(&vec![chan("x3-run-waiting")]),
+        dirty
+            .continuations
+            .contains_key(&vec![chan("x3-run-waiting")]),
         "TEETH FAILED: the receive did not wait on @\"x3-run-waiting\""
     );
 
@@ -572,7 +567,9 @@ async fn d2_reinstall_erases_a_previous_runs_effects() {
         "the run's resting sends survived the re-install"
     );
     assert!(
-        !clean.continuations.contains_key(&vec![chan("x3-run-waiting")]),
+        !clean
+            .continuations
+            .contains_key(&vec![chan("x3-run-waiting")]),
         "the run's waiting receive survived the re-install"
     );
 

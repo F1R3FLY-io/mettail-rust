@@ -56,8 +56,8 @@ use std::cmp::Ordering;
 
 use mettail_rholang_codegen::{
     reflect_ground_term_par, subst_seed_send_par, subst_trs_program_par, GroundTerm,
-    BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
-    PEANO_ZERO_REFLECT_LABEL,
+    BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::run_normalized_par_for_oracle_and_read_runtime_values;
 use mettail_runtime::RuntimeObservationValue;
@@ -200,7 +200,9 @@ fn head_step(t: &Tm) -> Option<Tm> {
             Tm::Lam(b) => Some(Tm::Lam(Box::new(Tm::Shift(*c + 1, b.clone())))),
             Tm::Node(op, ts) => Some(Tm::Node(
                 op.clone(),
-                ts.iter().map(|s| Tm::Shift(*c, Box::new(s.clone()))).collect(),
+                ts.iter()
+                    .map(|s| Tm::Shift(*c, Box::new(s.clone())))
+                    .collect(),
             )),
             _ => None,
         },
@@ -218,7 +220,9 @@ fn head_step(t: &Tm) -> Option<Tm> {
             Tm::Lam(b) => Some(Tm::Lam(Box::new(Tm::Subst(*j + 1, a.clone(), b.clone())))),
             Tm::Node(op, ts) => Some(Tm::Node(
                 op.clone(),
-                ts.iter().map(|s| Tm::Subst(*j, a.clone(), Box::new(s.clone()))).collect(),
+                ts.iter()
+                    .map(|s| Tm::Subst(*j, a.clone(), Box::new(s.clone())))
+                    .collect(),
             )),
             _ => None,
         },
@@ -368,7 +372,10 @@ fn render_obs(t: &RefTerm) -> RuntimeObservationValue {
 }
 
 fn oterm(constructor: &str, children: Vec<RuntimeObservationValue>) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children,
+    }
 }
 fn onull(constructor: &str) -> RuntimeObservationValue {
     oterm(constructor, Vec::new())
@@ -432,7 +439,10 @@ fn arb_term_pair(max_depth: usize) -> impl Strategy<Value = (RefTerm, RefTerm)> 
 
 /// Read a case count from an environment variable, defaulting when unset/unparsable.
 fn env_cases(var: &str, default: u32) -> u32 {
-    std::env::var(var).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+    std::env::var(var)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -448,8 +458,11 @@ fn env_cases(var: &str, default: u32) -> u32 {
 #[test]
 fn subst_trs_reference_matches_operational_trs_over_many_terms() {
     let cases = env_cases("SUBST_TRS_FLOOR_CASES", 20_000);
-    let mut runner =
-        TestRunner::new(Config { cases, failure_persistence: None, ..Config::default() });
+    let mut runner = TestRunner::new(Config {
+        cases,
+        failure_persistence: None,
+        ..Config::default()
+    });
     runner
         .run(&arb_term_pair(3), |(a, b)| {
             let reference = reference_beta_subst(&a, &b);
@@ -491,8 +504,11 @@ fn subst_trs_cascade_on_reducer_matches_reference() {
         .enable_all()
         .build()
         .expect("a tokio runtime for the reducer cascade");
-    let mut runner =
-        TestRunner::new(Config { cases, failure_persistence: None, ..Config::default() });
+    let mut runner = TestRunner::new(Config {
+        cases,
+        failure_persistence: None,
+        ..Config::default()
+    });
     runner
         .run(&arb_term_pair(3), |(a, b)| {
             let reference = reference_beta_subst(&a, &b);

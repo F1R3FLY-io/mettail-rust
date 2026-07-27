@@ -130,13 +130,23 @@ fn binary_fires_relational_arithmetic_and_boolean_guards() {
 /// LOUDLY. These pin the loud half, which is what makes a future regression findable.
 #[test]
 fn binary_evaluates_operators_in_send_position() {
+    // ★ These were `Int(3)` / `Bool(true)` — `RuntimeObservationValue`'s Rust `Debug` spelling,
+    // which the interpreter used to print because `render_obs`'s fallback arm was
+    // `format!("{other:?}")`. That fallback is why a `^spec-failure` datum printed as a
+    // re-quoted prost dump, and removing it routed every non-`Term` observation through
+    // `Display` instead. So the binary now prints the VALUE — `⟦3⟧`, `⟦true⟧` — and these
+    // expectations are updated to the value rather than to the debug spelling of its carrier.
+    //
+    // The `⟦…⟧` delimiters are kept in the needle deliberately: a bare `"3"` would match any
+    // stdout containing a 3, including the source echo, and this cell exists to pin the
+    // observation.
     for (name, payload, expected) in [
-        ("send_plus", "1 + 2", "Int(3)"),
-        ("send_minus", "7 - 2", "Int(5)"),
-        ("send_lt", "1 < 46", "Bool(true)"),
-        ("send_and", "true and true", "Bool(true)"),
-        ("send_not", "not false", "Bool(true)"),
-        ("send_or", "false or true", "Bool(true)"),
+        ("send_plus", "1 + 2", "⟦3⟧"),
+        ("send_minus", "7 - 2", "⟦5⟧"),
+        ("send_lt", "1 < 46", "⟦true⟧"),
+        ("send_and", "true and true", "⟦true⟧"),
+        ("send_not", "not false", "⟦true⟧"),
+        ("send_or", "false or true", "⟦true⟧"),
     ] {
         let stdout = run(name, &format!(r#"{{ @"OUT"!({payload}) }}"#));
         assert!(
@@ -150,11 +160,9 @@ fn binary_evaluates_operators_in_send_position() {
 /// and NOT a one-element-list send. Before the fix this held exactly backwards.
 #[test]
 fn binary_matches_a_scalar_ground_pattern_against_a_scalar_send() {
-    let scalar =
-        format!(r#"{{ for(@42 <- @"c") {{ @"OUT"!("{FIRED_MARKER}") }} | @"c"!(42) }}"#);
+    let scalar = format!(r#"{{ for(@42 <- @"c") {{ @"OUT"!("{FIRED_MARKER}") }} | @"c"!(42) }}"#);
     assert!(fired("arity_scalar", &scalar), "`for(@42 <- c)` must match `c!(42)`");
 
-    let listed =
-        format!(r#"{{ for(@42 <- @"c") {{ @"OUT"!("{FIRED_MARKER}") }} | @"c"!([42]) }}"#);
+    let listed = format!(r#"{{ for(@42 <- @"c") {{ @"OUT"!("{FIRED_MARKER}") }} | @"c"!([42]) }}"#);
     assert!(!fired("arity_listed", &listed), "`for(@42 <- c)` must NOT match `c!([42])`");
 }

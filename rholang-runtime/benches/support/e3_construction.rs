@@ -90,9 +90,7 @@ use std::time::Instant;
 
 use dovetail::egraph::{EClassId, EGraph, ENode};
 use dovetail::rules::Pattern;
-use dovetail::set_automaton::{
-    AutomatonNode, PatternId, SetAutomaton, SetAutomatonView, StateId,
-};
+use dovetail::set_automaton::{AutomatonNode, PatternId, SetAutomaton, SetAutomatonView, StateId};
 use mettail_rholang_codegen::pipeline_spans::{
     begin_phase_span_collection, take_phase_span_report, PhaseSpanReport,
 };
@@ -151,7 +149,10 @@ impl AnchorLanguage {
 
     /// Parse a CLI anchor name.
     pub fn from_name(name: &str) -> Option<Self> {
-        ALL_ANCHORS.iter().copied().find(|anchor| anchor.name() == name)
+        ALL_ANCHORS
+            .iter()
+            .copied()
+            .find(|anchor| anchor.name() == name)
     }
 
     /// The verbatim `language! { … }` body of this anchor's production source file.
@@ -179,13 +180,16 @@ impl AnchorLanguage {
 /// the macro invocation's opening `{` and the LAST `}` in the file (each anchor file
 /// ends at the macro's own closing brace — verified for all four anchors).
 pub fn extract_language_body(source: &str) -> &str {
-    let macro_at =
-        source.find("language!").expect("the production language file must invoke language!");
+    let macro_at = source
+        .find("language!")
+        .expect("the production language file must invoke language!");
     let open = source[macro_at..]
         .find('{')
         .map(|offset| macro_at + offset)
         .expect("the language! invocation must open a brace");
-    let close = source.rfind('}').expect("the language! invocation must close its brace");
+    let close = source
+        .rfind('}')
+        .expect("the language! invocation must close its brace");
     &source[open + 1..close]
 }
 
@@ -278,8 +282,9 @@ fn ladder_rule_spine(
 ) -> (String, Vec<String>) {
     match shape {
         LadderShape::Multi1 | LadderShape::Multi3 => {
-            let base_depth =
-                shape.shared_depth().expect("multi* shapes carry a shared depth");
+            let base_depth = shape
+                .shared_depth()
+                .expect("multi* shapes carry a shared depth");
             let (root, depth) = match alphabet {
                 LadderAlphabet::Distinct => (format!("R{rule}"), base_depth),
                 LadderAlphabet::Shared16 => (format!("R{}", rule % 16), base_depth + rule / 16),
@@ -466,8 +471,8 @@ fn run_full_pipeline(source: &str) -> Result<(u64, bool), String> {
 pub fn run_spans_once(source: &str) -> Result<SpanCell, String> {
     begin_phase_span_collection();
     let outcome = run_full_pipeline(source);
-    let report = take_phase_span_report()
-        .expect("the collection window begun by this rep is still active");
+    let report =
+        take_phase_span_report().expect("the collection window begun by this rep is still active");
     let (wall_ns, installed_ok) = outcome?;
     Ok(SpanCell { wall_ns, report, installed_ok })
 }
@@ -550,7 +555,12 @@ pub fn run_direct_compile_once(patterns: Vec<(PatternId, Pattern<String>)>) -> D
     let entry_count = automaton.view().entry_count();
     let state_count = automaton.view().state_count();
     std::hint::black_box(&automaton);
-    DirectCell { wall_ns, entry_count, state_count, pattern_nodes }
+    DirectCell {
+        wall_ns,
+        entry_count,
+        state_count,
+        pattern_nodes,
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
@@ -582,7 +592,9 @@ impl WbPolicy {
 
     /// Parse a CLI policy name.
     pub fn from_name(name: &str) -> Option<Self> {
-        [WbPolicy::Incremental, WbPolicy::Full].into_iter().find(|policy| policy.name() == name)
+        [WbPolicy::Incremental, WbPolicy::Full]
+            .into_iter()
+            .find(|policy| policy.name() == name)
     }
 }
 
@@ -1038,8 +1050,8 @@ pub fn run_gate_case(
     let incremental_installed = current.installed_par();
     let installed_ok_incremental = incremental_installed.is_ok();
     let installed_ok_batch = batch_installed.is_ok();
-    let installed_par_bytes_equal = installed_result_bytes(incremental_installed)
-        == installed_result_bytes(&batch_installed);
+    let installed_par_bytes_equal =
+        installed_result_bytes(incremental_installed) == installed_result_bytes(&batch_installed);
     let (fired_multiset_equal, fired_matches) =
         fired_multisets_agree(incremental_ruleset, &batch_ruleset);
 
@@ -1047,16 +1059,21 @@ pub fn run_gate_case(
     // are extracted HERE (field access on the inferred def type) so the helper
     // below never has to NAME the ast `LanguageDef` type — the
     // `bench-e3-construction` feature deliberately carries no ast dependency.
-    let incremental_auto_flags: Vec<bool> =
-        current.def.rewrites.iter().map(|rewrite| rewrite.is_auto_injected).collect();
-    let batch_auto_flags: Vec<bool> =
-        batch_def.rewrites.iter().map(|rewrite| rewrite.is_auto_injected).collect();
-    let auto_injected_rewrites =
-        incremental_auto_flags.iter().filter(|&&auto| auto).count();
-    let auto_entry_violations = auto_entry_violation_count(
-        incremental_ruleset,
-        &incremental_auto_flags,
-    ) + auto_entry_violation_count(&batch_ruleset, &batch_auto_flags);
+    let incremental_auto_flags: Vec<bool> = current
+        .def
+        .rewrites
+        .iter()
+        .map(|rewrite| rewrite.is_auto_injected)
+        .collect();
+    let batch_auto_flags: Vec<bool> = batch_def
+        .rewrites
+        .iter()
+        .map(|rewrite| rewrite.is_auto_injected)
+        .collect();
+    let auto_injected_rewrites = incremental_auto_flags.iter().filter(|&&auto| auto).count();
+    let auto_entry_violations =
+        auto_entry_violation_count(incremental_ruleset, &incremental_auto_flags)
+            + auto_entry_violation_count(&batch_ruleset, &batch_auto_flags);
 
     Ok(GateCaseReport {
         case_name: case_name.to_string(),
@@ -1085,12 +1102,12 @@ pub fn run_gate_case(
 /// VOIDS the incremental arm — report, never measure a voided arm).
 pub fn run_gate_cases_for(r: usize) -> Vec<Result<GateCaseReport, String>> {
     let base = ladder_source(r, LadderShape::Multi1, LadderAlphabet::Distinct);
-    let auto_base =
-        auto_inject_ladder_source(r, LadderShape::Multi1, LadderAlphabet::Distinct);
+    let auto_base = auto_inject_ladder_source(r, LadderShape::Multi1, LadderAlphabet::Distinct);
     let single = vec![wb_append_fragment(0, r, LadderShape::Multi1)];
     let congruence = vec!["E3GateCong . | S ~> T |- (Wrap S) ~> (Wrap T) ;".to_string()];
-    let chained: Vec<String> =
-        (0..3).map(|j| wb_append_fragment(j, r, LadderShape::Multi1)).collect();
+    let chained: Vec<String> = (0..3)
+        .map(|j| wb_append_fragment(j, r, LadderShape::Multi1))
+        .collect();
 
     let cases: Vec<(&str, String, Vec<String>, bool)> = vec![
         ("base-shape", base.clone(), single.clone(), true),
@@ -1125,7 +1142,10 @@ fn deferred_multiset(ruleset: &InRhoMatchingRuleset) -> Vec<(String, String)> {
 fn installed_result_bytes(
     installed: &Result<models::rhoapi::Par, String>,
 ) -> Result<Vec<u8>, String> {
-    installed.as_ref().map(Message::encode_to_vec).map_err(Clone::clone)
+    installed
+        .as_ref()
+        .map(Message::encode_to_vec)
+        .map_err(Clone::clone)
 }
 
 /// Automaton entries whose `PatternId` names an auto-injected rewrite (must be 0 —
@@ -1176,8 +1196,10 @@ fn instantiate_state(
     match view.node(state) {
         AutomatonNode::Var(name) => eg.add(ENode::leaf(format!("cvar:{name}"))),
         AutomatonNode::App { op, args } => {
-            let children: Vec<EClassId> =
-                args.iter().map(|&arg| instantiate_state(view, arg, eg)).collect();
+            let children: Vec<EClassId> = args
+                .iter()
+                .map(|&arg| instantiate_state(view, arg, eg))
+                .collect();
             eg.add(ENode::new(op.clone(), children))
         },
     }
@@ -1234,8 +1256,7 @@ mod tests {
             // non-whitespace content is the language header, not the macro name.
             // (The body may still MENTION `language!` in comments — Calculator does.)
             assert!(
-                body.trim_start().starts_with("name:")
-                    || body.trim_start().starts_with("//"),
+                body.trim_start().starts_with("name:") || body.trim_start().starts_with("//"),
                 "{} extraction must start at the language body, got: {:.60}",
                 anchor.name(),
                 body.trim_start()
@@ -1287,8 +1308,10 @@ mod tests {
                 let def = mettail_rholang_codegen::reconstruct_language_def(&source)
                     .expect("the generated ladder source reconstructs");
                 let ruleset = compile_in_rho_matching_ruleset(&def);
-                let counts =
-                    (ruleset.automaton.view().entry_count(), ruleset.automaton.view().state_count());
+                let counts = (
+                    ruleset.automaton.view().entry_count(),
+                    ruleset.automaton.view().state_count(),
+                );
                 (counts, ruleset.deferred.len())
             });
             assert_eq!(
@@ -1298,13 +1321,7 @@ mod tests {
                 shape.name(),
                 alphabet.name()
             );
-            assert_eq!(
-                ruleset.0,
-                r,
-                "{}/{}: one entry per rule",
-                shape.name(),
-                alphabet.name()
-            );
+            assert_eq!(ruleset.0, r, "{}/{}: one entry per rule", shape.name(), alphabet.name());
             let direct = run_direct_compile_once(ladder_patterns(r, shape, alphabet));
             assert_eq!(direct.entry_count, r);
             assert_eq!(
@@ -1324,7 +1341,8 @@ mod tests {
         // r distinct roots over one shared Sˢ(x) chain.
         for (shape, s) in [(LadderShape::Multi1, 1), (LadderShape::Multi3, 3)] {
             let r = 8;
-            let direct = run_direct_compile_once(ladder_patterns(r, shape, LadderAlphabet::Distinct));
+            let direct =
+                run_direct_compile_once(ladder_patterns(r, shape, LadderAlphabet::Distinct));
             assert_eq!(direct.entry_count, r);
             assert_eq!(
                 direct.state_count,
@@ -1342,8 +1360,11 @@ mod tests {
         // r > 16 under the shared alphabet: entries stay one-per-rule (depth
         // distinguishes same-root rules).
         let r = 40;
-        let direct =
-            run_direct_compile_once(ladder_patterns(r, LadderShape::Multi1, LadderAlphabet::Shared16));
+        let direct = run_direct_compile_once(ladder_patterns(
+            r,
+            LadderShape::Multi1,
+            LadderAlphabet::Shared16,
+        ));
         assert_eq!(direct.entry_count, r);
     }
 
@@ -1371,11 +1392,7 @@ mod tests {
             run_lazy_force_installed_once(&source).expect("the ladder source derives")
         });
         assert!(force.forced_ruleset && force.forced_lowered && force.forced_installed_par);
-        assert_eq!(
-            force.installed_ok,
-            Some(true),
-            "the all-base-rewrite ladder language installs"
-        );
+        assert_eq!(force.installed_ok, Some(true), "the all-base-rewrite ladder language installs");
     }
 }
 
@@ -1403,11 +1420,7 @@ mod wb_tests {
     fn equivalence_gate_passes_at_ladder_r8() {
         for outcome in run_gate_cases_for(8) {
             let report = outcome.expect("every gate case derives");
-            assert!(
-                report.pass(),
-                "gate case `{}` failed: {report:?}",
-                report.case_name
-            );
+            assert!(report.pass(), "gate case `{}` failed: {report:?}", report.case_name);
             match report.case_name.as_str() {
                 "auto-inject-nonempty" => {
                     assert!(
@@ -1457,8 +1470,9 @@ mod wb_tests {
         // Every appended rule references only DECLARED constructors (root R{j}
         // needs j < r) and the K fragments are pairwise distinct.
         let r = 8;
-        let fragments: Vec<String> =
-            (0..r).map(|j| wb_append_fragment(j, r, LadderShape::Multi1)).collect();
+        let fragments: Vec<String> = (0..r)
+            .map(|j| wb_append_fragment(j, r, LadderShape::Multi1))
+            .collect();
         for (j, fragment) in fragments.iter().enumerate() {
             assert!(fragment.contains(&format!("(R{j} ")));
             assert!(fragment.starts_with(&format!("MX{j} ")));
@@ -1470,9 +1484,13 @@ mod wb_tests {
     #[test]
     fn auto_inject_ladder_source_reconstructs_with_a_nonempty_auto_set() {
         let source = auto_inject_ladder_source(8, LadderShape::Multi1, LadderAlphabet::Distinct);
-        let def = reconstruct_language_def(&source)
-            .expect("the auto-inject ladder source reconstructs");
-        let autos = def.rewrites.iter().filter(|rewrite| rewrite.is_auto_injected).count();
+        let def =
+            reconstruct_language_def(&source).expect("the auto-inject ladder source reconstructs");
+        let autos = def
+            .rewrites
+            .iter()
+            .filter(|rewrite| rewrite.is_auto_injected)
+            .count();
         assert!(autos >= 1, "the Int/BigInt lossless edge must auto-inject a congruence");
         assert!(def.name.to_string().starts_with("E3AutoInject"));
     }
@@ -1482,8 +1500,10 @@ mod wb_tests {
     /// invalidated_existing, invalidated_removed, manifest_invalidated,
     /// inserted_new, unchanged_group, expected_invalidated,
     /// actual_invalidated, store_entries))`.
-    type E6bAppendDeterministic =
-        (usize, (bool, bool, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize));
+    type E6bAppendDeterministic = (
+        usize,
+        (bool, bool, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize),
+    );
 
     /// The `Send`-safe deterministic observables of one e6b rep (walls excluded).
     type E6bDeterministic =

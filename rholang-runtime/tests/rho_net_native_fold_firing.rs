@@ -48,7 +48,6 @@
 #[path = "../../languages/tests/definitions/nativefolddemo.rs"]
 mod nativefolddemo;
 
-use nativefolddemo::NativeFoldDemoLanguage;
 use mettail_rholang_codegen::{
     lower_language_def, plan_rho_default_backend, reconstruct_language_def,
     suggest_rejected_rule_dispositions, RhoCoverageEvidence, RhoDefaultBackendRequirements,
@@ -58,6 +57,7 @@ use mettail_rholang_runtime::{
     build_rho_net_injection_invocation_from_contract, PlannedRhoBackend, RhoMachineInvocation,
 };
 use mettail_runtime::{Language, RuntimeObservationValue, RuntimeReflectedSubterm};
+use nativefolddemo::NativeFoldDemoLanguage;
 
 /// Reconstruct NativeFoldDemo's augmented `LanguageDef` from the generated metadata's
 /// `definition_source()` and plan its Rho-default backend (the `AddInt` `NativeFold` dispatch
@@ -136,7 +136,10 @@ async fn nativefolddemo_native_scalar_fold_fires_as_a_comm_on_the_reducer() {
 
     // The firing's contractum IS the host-computed reduced value `5` — the whole point of model-b:
     // the value is computed host-side by the trusted `fold` handler and handed to the σ-injection.
-    let five = RuntimeReflectedSubterm { constructor: "NumLit(5)".to_string(), children: Vec::new() };
+    let five = RuntimeReflectedSubterm {
+        constructor: "NumLit(5)".to_string(),
+        children: Vec::new(),
+    };
     assert_eq!(
         justification.contractum.as_ref(),
         Some(&five),

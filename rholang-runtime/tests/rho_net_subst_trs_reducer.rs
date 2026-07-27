@@ -17,8 +17,8 @@
 
 use mettail_rholang_codegen::{
     reflect_ground_term_par, subst_seed_send_par, subst_trs_program_par, GroundTerm,
-    BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
-    PEANO_ZERO_REFLECT_LABEL,
+    BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
+    PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::run_normalized_par_for_oracle_and_read_runtime_values;
 use mettail_runtime::RuntimeObservationValue;
@@ -83,7 +83,10 @@ fn lambda(body: GroundTerm) -> GroundTerm {
 
 // Observation-value builders (the decoded shape — the ABI fingerprint is stripped to the label).
 fn oterm(constructor: &str, children: Vec<RuntimeObservationValue>) -> RuntimeObservationValue {
-    RuntimeObservationValue::Term { constructor: constructor.to_string(), children }
+    RuntimeObservationValue::Term {
+        constructor: constructor.to_string(),
+        children,
+    }
 }
 fn onull(constructor: &str) -> RuntimeObservationValue {
     oterm(constructor, Vec::new())

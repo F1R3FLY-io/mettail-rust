@@ -1285,7 +1285,12 @@ pub fn compile_bench_language(definition_source: &str) -> Result<CompiledBenchLa
     let installed_program = plan
         .installed_rho_net_program_par()
         .map_err(|error| format!("installed Rho-net program: {error:?}"))?;
-    Ok(CompiledBenchLanguage { def, lowered: plan.lowering, ruleset, installed_program })
+    Ok(CompiledBenchLanguage {
+        def,
+        lowered: plan.lowering,
+        ruleset,
+        installed_program,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1350,7 +1355,11 @@ pub fn scion_arm_programs(def: &LanguageDef) -> Result<ScionArmPrograms, String>
         .installed_program_par()
         .map_err(|error| format!("treatment (StructuralScion) installed program: {error:?}"))?;
     let fingerprint = plan.definition_fingerprint().to_string();
-    Ok(ScionArmPrograms { fingerprint, control_installed, treatment_installed })
+    Ok(ScionArmPrograms {
+        fingerprint,
+        control_installed,
+        treatment_installed,
+    })
 }
 
 /// Drive one arm's `installed` program composed with the `^drive` seed `call` on
@@ -1408,7 +1417,12 @@ pub async fn drive_arm_with_counters(
     let err_data = drive_peek_channel(&runtime, &channels.err).await;
     let fuel_data = drive_peek_channel(&runtime, &channels.fuel).await;
     Ok((
-        crate::run::DriveObservationSet { out_values, fired_data, err_data, fuel_data },
+        crate::run::DriveObservationSet {
+            out_values,
+            fired_data,
+            err_data,
+            fuel_data,
+        },
         snapshot,
     ))
 }
@@ -1459,8 +1473,9 @@ pub fn corrupt_reflected_label(
     if count == 0 {
         return Err(format!("corrupt_reflected_label: target tag {from:?} not found in program"));
     }
-    Par::decode(bytes.as_slice())
-        .map_err(|error| format!("corrupt_reflected_label: mutated bytes did not re-decode: {error}"))
+    Par::decode(bytes.as_slice()).map_err(|error| {
+        format!("corrupt_reflected_label: mutated bytes did not re-decode: {error}")
+    })
 }
 
 /// Peek every resting `Par` on a quoted channel (`get_data` — NON-consuming, so
@@ -1805,10 +1820,7 @@ mod tests {
     fn swap_shaped_ruleset() -> InRhoMatchingRuleset {
         let automaton = SetAutomaton::compile_structural([(
             PatternId(0),
-            Pattern::app(
-                "Swap".to_string(),
-                vec![Pattern::var("x"), Pattern::var("y")],
-            ),
+            Pattern::app("Swap".to_string(), vec![Pattern::var("x"), Pattern::var("y")]),
         )])
         .expect("Swap(x, y) compiles to a positional automaton");
         InRhoMatchingRuleset {

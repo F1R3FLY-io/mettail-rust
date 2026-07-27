@@ -188,7 +188,8 @@ async fn p2_gint_zero_first_arm_order_drives_fuel_from_two_to_exhaustion() {
 
     // Exactly 2 decrements: fuel 2 → 1 → 0.
     assert_eq!(
-        set.fired_labels().expect("every ledger datum is a ground GString"),
+        set.fired_labels()
+            .expect("every ledger datum is a ground GString"),
         vec!["dec".to_string(), "dec".to_string()],
         "fuel 2 must decrement exactly twice before the ground 0 case fires"
     );
@@ -212,10 +213,7 @@ async fn p2_gint_zero_first_arm_order_drives_fuel_from_two_to_exhaustion() {
 async fn observation_set_reads_all_four_channels_from_one_execution() {
     const FP: &str = "readback-probe-fp";
     let out_datum = reflect_ground_term_par(
-        &GroundTerm::new(
-            "Pair",
-            vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")],
-        ),
+        &GroundTerm::new("Pair", vec![GroundTerm::nullary("A"), GroundTerm::nullary("B")]),
         FP,
     );
     let program = new_send_par(
@@ -261,10 +259,13 @@ async fn observation_set_reads_all_four_channels_from_one_execution() {
         fuel: "u:fuel".to_string(),
     };
 
-    let set =
-        run_installed_program_with_call_and_read_observation_set(&program, &Par::default(), &channels)
-            .await
-            .expect("the four-channel program must run to quiescence");
+    let set = run_installed_program_with_call_and_read_observation_set(
+        &program,
+        &Par::default(),
+        &channels,
+    )
+    .await
+    .expect("the four-channel program must run to quiescence");
 
     // OUT decodes through the reflected-term ABI.
     assert_eq!(
@@ -286,7 +287,8 @@ async fn observation_set_reads_all_four_channels_from_one_execution() {
     );
     // The ledger decodes to its rule label.
     assert_eq!(
-        set.fired_labels().expect("the ledger datum is a ground GString"),
+        set.fired_labels()
+            .expect("the ledger datum is a ground GString"),
         vec!["RuleX".to_string()]
     );
     // The err / fuel channels surface their raw resting data.
