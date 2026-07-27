@@ -194,19 +194,62 @@ fn the_demo_reports_that_the_lookahead_ran() {
 ///
 /// The lesson generalises past this file: a reproducibility cell scoped to a subset of the
 /// artifacts it claims to cover reads as coverage and is not.
-#[test]
-fn the_demo_transcript_is_reproducible() {
-    for program in PROGRAMS {
-        let first = transcript(&rhocalc(program));
-        for run in 2..=3 {
-            assert_eq!(
-                transcript(&rhocalc(program)),
-                first,
-                "{program}: run {run} differed from run 1 — the exploration must not depend on \
-                 the scheduler, and the injection randomness must be derived from the program"
-            );
-        }
+/// Three consecutive runs of one beat produce byte-identical output.
+///
+/// ★ Split one-test-per-beat rather than looped inside a single test, and not to dodge a
+/// timeout. Reproducibility of each committed demo is an **independent property**, and the test
+/// is nextest's unit of both parallelism and timeout — so four tests is the honest modelling,
+/// runs the four beats concurrently instead of serially, and names the failing beat in the test
+/// name rather than only in an assertion message. Looped, this took 300 s and tripped the
+/// slow-timeout; the fix is the modelling, not a larger budget.
+fn assert_beat_is_reproducible(program: &str) {
+    let first = transcript(&rhocalc(program));
+    for run in 2..=3 {
+        assert_eq!(
+            transcript(&rhocalc(program)),
+            first,
+            "{program}: run {run} differed from run 1 — the exploration must not depend on the \
+             scheduler, and the injection randomness must be derived from the program"
+        );
     }
+}
+
+#[test]
+fn beat_1_computed_desk_is_reproducible() {
+    assert_beat_is_reproducible(PROGRAMS[0]);
+}
+
+#[test]
+fn beat_2_the_desk_is_reproducible() {
+    assert_beat_is_reproducible(PROGRAMS[1]);
+}
+
+#[test]
+fn beat_3_predicate_is_reproducible() {
+    assert_beat_is_reproducible(PROGRAMS[2]);
+}
+
+#[test]
+fn beat_4_divergence_is_reproducible() {
+    assert_beat_is_reproducible(PROGRAMS[3]);
+}
+
+/// ★ Every beat this gate knows about has a reproducibility cell — so adding a fifth beat to
+/// [`PROGRAMS`] cannot silently go uncovered by the split above.
+#[test]
+fn every_beat_has_a_reproducibility_cell() {
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lookahead_demo.rs"),
+    )
+    .expect("this test file must be readable");
+    let cells = source.matches("assert_beat_is_reproducible(PROGRAMS[").count();
+    assert_eq!(
+        cells,
+        PROGRAMS.len(),
+        "PROGRAMS has {} beats but only {cells} call assert_beat_is_reproducible — a beat \
+         added to the list without its own cell is uncovered",
+        PROGRAMS.len()
+    );
 }
 
 /// ★ The trace digest specifically, across processes — the diagnostic twin of the cell above.

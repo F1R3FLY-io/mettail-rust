@@ -923,6 +923,65 @@ mod tests {
         );
     }
 
+    /// ★ A refused `[n]` bound is named **legibly and boundedly**, because the refusal becomes
+    /// a datum.
+    ///
+    /// `parse_request`'s `Err` is wrapped by `request_error_datum` and published on
+    /// `^spec-err` — i.e. it is `produce`d into the live tuplespace, so it is part of the
+    /// post-deploy state. This message used to be `format!("{bound:?}")`, prost's derived
+    /// `Debug`: unbounded, and derive-version-dependent, which is a replay hazard in exactly
+    /// the way [`ErrorCode`](super::search::ErrorCode) writes its discriminants out longhand
+    /// to avoid.
+    ///
+    /// ## On reachability — measured, and narrower than first claimed
+    ///
+    /// I originally asserted that "any program can write `@\"^spec-n\"!(P, ⟨anything⟩, x)`".
+    /// That is **not** true of RhoCalc source: `@c!(a, b, c)` lowers to a send of a single
+    /// **list** payload (`⟦[a, b, c]⟧`), not to a polyadic send, so it arrives at arity 1 and
+    /// the arity-3 `^spec-n` `Definition` never matches it. An end-to-end cell written that
+    /// way does not exercise this path at all.
+    ///
+    /// The path is real all the same, and this is the level at which it is testable: `^spec-n`
+    /// is an ordinary channel in the shared tuplespace served by an installed system process,
+    /// and Rholang — f1r3node's own surface, which *does* have polyadic sends — can reach it.
+    /// So the contract belongs to `parse_request`, and it is asserted here rather than through
+    /// a surface that cannot express the shape.
+    #[test]
+    fn a_refused_bound_is_rendered_not_dumped() {
+        let subject = spec_channel_par("subject");
+        let reply = spec_channel_par("results");
+        // A bound that is a whole reflected term rather than an integer — the shape an
+        // adversary would choose, being both non-integer and arbitrarily large.
+        let bound = ground_list(vec![
+            spec_channel_par("not-an-integer"),
+            new_gint_par(1, Vec::new(), false),
+        ]);
+
+        let message = parse_request(&[subject, bound, reply], true)
+            .expect_err("a list is not a ground integer");
+
+        assert!(
+            message.contains("ground integer"),
+            "the refusal must say what was wrong: {message}"
+        );
+        assert!(
+            message.contains('⟦') || message.contains('⟨'),
+            "the refusal must RENDER the offending operand rather than omit it: {message}"
+        );
+        assert!(
+            message.chars().count() < 256,
+            "an attacker-chosen operand must not become an unbounded consensus-visible \
+             string; got {} chars",
+            message.chars().count()
+        );
+        for marker in ["expr_instance", "EListBody", "unforgeables", "connective_used"] {
+            assert!(
+                !message.contains(marker),
+                "★ {marker:?} means the operand was dumped through prost `Debug`: {message}"
+            );
+        }
+    }
+
     /// A plain value is not a reflected foreign term, so it is explored as itself.
     #[test]
     fn a_plain_value_selects_no_guest() {
