@@ -1,7 +1,7 @@
-//! CI gate for the `rhocalc` binary's PARSE ENTRY.
+//! CI gate for the `rholang` binary's PARSE ENTRY.
 //!
-//! `rholang-runtime/tests/rhocalc_guard_lowering.rs` pins the guard/arity semantics through the
-//! library (`parse_via_wpda` + `lower_rhocalc_proc`). This file pins the one thing that suite
+//! `rholang-runtime/tests/rholang_guard_lowering.rs` pins the guard/arity semantics through the
+//! library (`parse_via_wpda` + `lower_rholang_proc`). This file pins the one thing that suite
 //! structurally cannot: that the BINARY reaches that lowering with the term the user wrote.
 //!
 //! The binary used to call `Proc::parse`, which is `parse_structured`: it starts from
@@ -22,31 +22,31 @@
 //!
 //! These tests therefore run the REAL binary end-to-end. A library-level test cannot catch a
 //! regression of the parse entry, because it never goes through it.
-#![cfg(all(feature = "rhocalc-runtime", feature = "lambda-runtime"))]
+#![cfg(all(feature = "rholang-runtime", feature = "lambda-runtime"))]
 
 use std::path::PathBuf;
 use std::process::Command;
 
-/// The distinctive firing marker — see `rhocalc_guard_lowering.rs`'s teeth-test rationale. It is
+/// The distinctive firing marker — see `rholang_guard_lowering.rs`'s teeth-test rationale. It is
 /// never a substring of a guard, a datum, or an un-fired residual.
 const FIRED_MARKER: &str = "ZQFIREDZQ";
 
 /// Write `program` to a uniquely named file under the target tmpdir and run the binary on it.
 fn run(name: &str, program: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
-    path.push(format!("rhocalc_bin_guards_{name}.rho"));
+    path.push(format!("rholang_bin_guards_{name}.rho"));
     std::fs::write(&path, program).expect("the probe program must be writable");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rhocalc"))
+    let output = Command::new(env!("CARGO_BIN_EXE_rholang"))
         .arg(&path)
         .env("RUST_MIN_STACK", "8388608")
         .output()
-        .expect("the rhocalc binary must run");
+        .expect("the rholang binary must run");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     assert!(
         output.status.success(),
-        "rhocalc exited non-zero on {program}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        "rholang exited non-zero on {program}\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     stdout
 }

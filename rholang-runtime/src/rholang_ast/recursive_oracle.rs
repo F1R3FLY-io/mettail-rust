@@ -10,7 +10,7 @@
 //!
 //! So the superseded implementation is kept here, verbatim — not paraphrased, not
 //! simplified, not re-indented. Every function below is the exact text that stood in
-//! `rhocalc_ast.rs` at commit `1b334d62`, moved by
+//! `rholang_ast.rs` at commit `1b334d62`, moved by
 //! `scratch/extract.py` (an item-span extractor that edits nothing inside a span).
 //! Its call sites into the NON-recursive helpers (`binary_expr_par`, `send_par`,
 //! `new_elist_par`, the 21 leaf `lower_arm_*` functions, …) resolve through
@@ -34,11 +34,11 @@
 
 use super::*;
 
-pub fn lower_proc_in_env(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+pub fn lower_proc_in_env(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     lower_proc(proc, env)
 }
 
-fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     // A-S4: exec submits the RAW parse tree (no pre-normalization), so the send-sugar nodes
     // (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, …) arrive unfolded. Desugar the HEAD node to its
     // canonical channel-first form first — a pure structural rearrangement (the same constructor
@@ -163,7 +163,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // M-1b — the SPATIAL satisfaction operator `t matches φ`.
         //
         // The TARGET is an ordinary term, lowered by `lower_proc`; the FORMULA is
-        // compiled to a Rholang PATTERN by `rhocalc_formula::lower_formula_in_env`
+        // compiled to a Rholang PATTERN by `rholang_formula::lower_formula_in_env`
         // (§18.1). The two are packed into ONE
         // `EMatchesBody(EMatches{target, pattern})`, which `rho-pure-eval` decides
         // through the caller-injected `SpatialMatch` oracle (M-1a, f1r3node
@@ -182,7 +182,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         Proc::Matches(target, formula) => lower_arm_matches(target, formula, env),
         // M-1b — `PPar(φ, ψ)` is a PATTERN former, not a term former. It denotes
         // the separating conjunction, which is meaningful only as the right operand
-        // of `matches` (where `rhocalc_formula` compiles it to a par-pattern). In
+        // of `matches` (where `rholang_formula` compiles it to a par-pattern). In
         // TERM position it has no denotation at all, so it fails CLOSED with a
         // typed error rather than being silently lowered as an ordinary parallel
         // composition — which would look like it worked while meaning something
@@ -198,7 +198,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // exactly like a literal one. See [`lower_method`].
         //
         // `.toByteArray()` (C2) replaces the retired `rhoapi` schema fork
-        // (`languages/proto/rhocalc_wire.proto` + `languages/src/rhocalc/wire.rs`), which encoded
+        // (`languages/proto/rholang_wire.proto` + `languages/src/rhocalc/wire.rs`), which encoded
         // a hex `GString` in protobuf BYTE order and could not encode any collection the RhoCalc
         // grammar actually produces.
         Proc::MToByteArray(m) => lower_arm_m_to_byte_array(m, env),
@@ -214,7 +214,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // ★ SOUNDNESS RESTS ON A MEASURED CARRIER MAP, NOT ON THE METHOD NAME.
         //
         // RhoCalc has two carriers with no Rholang analog, and both survive lowering only as an
-        // ENCODING: a `Bag` becomes `EList[GPrivate(RHOCALC_BAG_ABI_TAG), EList[pairs]]` (always
+        // ENCODING: a `Bag` becomes `EList[GPrivate(RHOLANG_BAG_ABI_TAG), EList[pairs]]` (always
         // exactly 2 elements — see [`lower_bag`]), and a `Pathmap` becomes a plain `EMap`,
         // discarding the trie (divergence G — see [`lower_pathmap`]). Routing a method whose
         // interpreter implementation ACCEPTS that encoding would compute over the encoding and
@@ -242,7 +242,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // with `MethodNotDefined { method: "size", other_type: "List" }`. The hazard is real but
         // lives on `length` and `nth` — the two routed methods that DO accept `EListBody` — and
         // those two are gated by [`lower_length`] / [`lower_nth`]. Measured, not hypothesized:
-        // `rho_rhocalc_conformance.rs::c1_bag_encoding_is_rejected_by_every_routed_method`.
+        // `rho_rholang_conformance.rs::c1_bag_encoding_is_rejected_by_every_routed_method`.
         Proc::MGet(m, k) => lower_arm_m_get(m, k, env),
         Proc::MSet(m, k, v) => lower_arm_m_set(m, k, v, env),
         Proc::MContains(m, k) => lower_arm_m_contains(m, k, env),
@@ -292,7 +292,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         //
         //   1. the reducer answers `getPath() == getLeaf()` ▸ `true` at every leaf, and `atPath(k)`
         //      returns `k` itself
-        //      (`rho_rhocalc_conformance.rs::c4_the_native_carrier_has_no_value_slot`);
+        //      (`rho_rholang_conformance.rs::c4_the_native_carrier_has_no_value_slot`);
         //   2. `models/.../pathmap_crate_type_mapper.rs::rholang_pathmap_to_e_pathmap` keeps only
         //      the trie's VALUES and discards its keys, so a key that is not its own value cannot
         //      survive one round trip through the mapper; and
@@ -324,7 +324,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         //     the whole path `Par` asks the codec), and `7dcff96f` (`EZipper.cursor_kind`: the
         //     cursor carries its own Split/Bare/Prefix arm). No canonical key moved and no
         //     activation height was needed. Now measured SOUND by
-        //     `rho_rhocalc_conformance.rs::c4_a_bare_element_reads_back_as_itself` and
+        //     `rho_rholang_conformance.rs::c4_a_bare_element_reads_back_as_itself` and
         //     `::c4_a_bare_element_walk_visits_every_element_in_order`, and the bare row is back in
         //     `::c1_zipper_walk_exhaustion_terminates_within_leaf_count` where it was written.
         //     ⚠ So the VALUE SLOT below is the whole of what holds C4 — do not cite the walk.
@@ -350,7 +350,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // zipper variant and `Proc::CastReadZipper` is deliberately NOT lowered (see
         // [`unsupported_construct_name`]). The property is proved end-to-end, against the real
         // reducer and BOUNDED so a violation fails instead of hanging, by
-        // `rho_rhocalc_conformance.rs::c1_zipper_walk_exhaustion_terminates_within_leaf_count`.
+        // `rho_rholang_conformance.rs::c1_zipper_walk_exhaustion_terminates_within_leaf_count`.
         Proc::PGetSubtrie(m) => lower_arm_p_get_subtrie(m, env),
         Proc::PReadZipper(m) => lower_arm_p_read_zipper(m, env),
         Proc::PReadZipperAt(m, p) => lower_arm_p_read_zipper_at(m, p, env),
@@ -394,7 +394,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // and never reads `zipper.current_path`. Its doc comment still reads "set value at current
         // position" — a leftover from the retired value-arm experiment (proto fields 6/7, RESERVED
         // by `f34c2d7e`) — and that stale comment is what the old note was written from. Measured
-        // by `rho_rhocalc_conformance.rs::c4_set_leaf_appends_an_element_and_ignores_the_focus`:
+        // by `rho_rholang_conformance.rs::c4_set_leaf_appends_an_element_and_ignores_the_focus`:
         // the map GROWS by one, the focused entry SURVIVES, the new element lands at its own path,
         // and `writeZipperAt("b").setLeaf(v)`, `writeZipperAt("c").setLeaf(v)` and
         // `writeZipper().setLeaf(v)` all produce the SAME map. `writeZipperAt(p)` is inert in front
@@ -430,7 +430,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
 fn lower_arm_p_drop(
     name: &std::sync::Arc<Name>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_drop(name.as_ref(), env)
 }
 
@@ -438,7 +438,7 @@ fn lower_arm_p_drop(
 fn lower_arm_p_par(
     parts: &mettail_runtime::HashBag<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     parts
         .iter_elements()
         .try_fold(Par::default(), |acc, part| Ok(acc.append(lower_proc(part, env)?)))
@@ -449,7 +449,7 @@ fn lower_arm_p_par_infix(
     left: &std::sync::Arc<Proc>,
     right: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     Ok(lower_proc(left.as_ref(), env)?.append(lower_proc(right.as_ref(), env)?))
 }
 
@@ -458,7 +458,7 @@ fn lower_arm_p_output(
     channel: &std::sync::Arc<Name>,
     payload: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let channel = lower_name(channel.as_ref(), env)?;
     let payload = lower_proc(payload.as_ref(), env)?;
     Ok(send_par(channel, vec![payload]))
@@ -468,7 +468,7 @@ fn lower_arm_p_output(
 fn lower_arm_p_lookahead_all(
     subject: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
     Ok(crate::lookahead::spec_all_request(payload, channel))
 }
@@ -478,7 +478,7 @@ fn lower_arm_p_lookahead(
     subject: &std::sync::Arc<Proc>,
     bound: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let (channel, payload) = lower_lookahead_operand(subject.as_ref(), env)?;
     let bound = lookahead_bound(bound.as_ref())?;
     Ok(crate::lookahead::spec_n_request(payload, bound, channel))
@@ -489,7 +489,7 @@ fn lower_arm_p_for_user(
     rows: &Vec<ForRow>,
     body: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_pfor_user(rows, body.as_ref(), env)
 }
 
@@ -498,7 +498,7 @@ fn lower_arm_p_persist_output(
     channel: &std::sync::Arc<Name>,
     payload: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let channel = lower_name(channel.as_ref(), env)?;
     let payload = lower_proc(payload.as_ref(), env)?;
     Ok(send_par_persistent(channel, vec![payload]))
@@ -509,7 +509,7 @@ fn lower_arm_p_output_short(
     channel_proc: &std::sync::Arc<Proc>,
     payload: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let channel = lower_proc(channel_proc.as_ref(), env)?;
     let payload = lower_proc(payload.as_ref(), env)?;
     Ok(send_par(channel, vec![payload]))
@@ -520,7 +520,7 @@ fn lower_arm_p_persist_output_short(
     channel_proc: &std::sync::Arc<Proc>,
     payload: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let channel = lower_proc(channel_proc.as_ref(), env)?;
     let payload = lower_proc(payload.as_ref(), env)?;
     Ok(send_par_persistent(channel, vec![payload]))
@@ -530,7 +530,7 @@ fn lower_arm_p_persist_output_short(
 fn lower_arm_p_new(
     scope: &mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<Proc>>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let (binders, body) = scope.clone().unbind::<String>();
     let extended_env = extend_env(env, &binders);
     // A-S4: the `new` body is a fold-lift scope — a width/precision fold inside it
@@ -554,7 +554,7 @@ fn lower_arm_p_new(
 fn lower_arm_cast_list(
     value: &std::sync::Arc<List>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_list(value.as_ref(), env)
 }
 
@@ -562,7 +562,7 @@ fn lower_arm_cast_list(
 fn lower_arm_cast_bag(
     value: &std::sync::Arc<Bag>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_bag(value.as_ref(), env)
 }
 
@@ -570,7 +570,7 @@ fn lower_arm_cast_bag(
 fn lower_arm_cast_map(
     value: &std::sync::Arc<Map>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_map(value.as_ref(), env)
 }
 
@@ -578,7 +578,7 @@ fn lower_arm_cast_map(
 fn lower_arm_cast_set(
     value: &std::sync::Arc<Set>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_set(value.as_ref(), env)
 }
 
@@ -586,7 +586,7 @@ fn lower_arm_cast_set(
 fn lower_arm_cast_pathmap(
     value: &std::sync::Arc<Pathmap>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_pathmap(value.as_ref(), env)
 }
 
@@ -595,7 +595,7 @@ fn lower_arm_add(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let lhs = lower_proc(a.as_ref(), env)?;
     let rhs = lower_proc(b.as_ref(), env)?;
     if is_single_gstring_value(&lhs) && is_single_gstring_value(&rhs) {
@@ -612,7 +612,7 @@ fn lower_arm_sub(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
         ExprInstance::EMinusBody(EMinus { p1, p2 })
     })
@@ -623,7 +623,7 @@ fn lower_arm_mul(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| {
         ExprInstance::EMultBody(EMult { p1, p2 })
     })
@@ -634,7 +634,7 @@ fn lower_arm_div(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EDivBody(EDiv { p1, p2 }))
 }
 
@@ -643,7 +643,7 @@ fn lower_arm_mod(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EModBody(EMod { p1, p2 }))
 }
 
@@ -651,7 +651,7 @@ fn lower_arm_mod(
 fn lower_arm_neg_proc(
     a: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let operand = lower_proc(a.as_ref(), env)?;
     Ok(unary_expr_par(operand, |p| ExprInstance::ENegBody(ENeg { p })))
 }
@@ -661,7 +661,7 @@ fn lower_arm_eq(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EEqBody(EEq { p1, p2 }))
 }
 
@@ -670,7 +670,7 @@ fn lower_arm_ne(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ENeqBody(ENeq { p1, p2 }))
 }
 
@@ -679,7 +679,7 @@ fn lower_arm_lt(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELtBody(ELt { p1, p2 }))
 }
 
@@ -688,7 +688,7 @@ fn lower_arm_gt(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGtBody(EGt { p1, p2 }))
 }
 
@@ -697,7 +697,7 @@ fn lower_arm_lt_eq(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::ELteBody(ELte { p1, p2 }))
 }
 
@@ -706,7 +706,7 @@ fn lower_arm_gt_eq(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EGteBody(EGte { p1, p2 }))
 }
 
@@ -715,7 +715,7 @@ fn lower_arm_and(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EAndBody(EAnd { p1, p2 }))
 }
 
@@ -724,7 +724,7 @@ fn lower_arm_or(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_binary_expr(a.as_ref(), b.as_ref(), env, |p1, p2| ExprInstance::EOrBody(EOr { p1, p2 }))
 }
 
@@ -733,7 +733,7 @@ fn lower_arm_implies(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let antecedent = lower_proc(a.as_ref(), env)?;
     let consequent = lower_proc(b.as_ref(), env)?;
     let negated = unary_expr_par(antecedent, |p| ExprInstance::ENotBody(ENot { p }));
@@ -743,7 +743,7 @@ fn lower_arm_implies(
 }
 
 #[inline(never)]
-fn lower_arm_not(a: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_not(a: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     let operand = lower_proc(a.as_ref(), env)?;
     Ok(unary_expr_par(operand, |p| ExprInstance::ENotBody(ENot { p })))
 }
@@ -753,14 +753,14 @@ fn lower_arm_matches(
     target: &std::sync::Arc<Proc>,
     formula: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let target = lower_proc(target.as_ref(), env)?;
     if mettail_languages::rhocalc::formula::is_statically_false(formula.as_ref()) {
         let mut folded = new_gbool_par(false, Vec::new(), false);
         folded.locally_free = target.locally_free;
         return Ok(folded);
     }
-    let pattern = crate::rhocalc_formula::lower_formula_in_env(formula.as_ref(), env)?;
+    let pattern = crate::rholang_formula::lower_formula_in_env(formula.as_ref(), env)?;
     // `connective_used` is NOT propagated from the pattern. The result of
     // `matches` is a BOOLEAN expression, not a pattern: it is the one place
     // in the lowering where a connective legitimately appears inside a Par
@@ -784,7 +784,7 @@ fn lower_arm_matches(
 fn lower_arm_m_to_byte_array(
     m: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("toByteArray", m.as_ref(), &[], env)
 }
 
@@ -793,7 +793,7 @@ fn lower_arm_m_get(
     m: &std::sync::Arc<Proc>,
     k: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("get", m.as_ref(), &[k.as_ref()], env)
 }
 
@@ -803,7 +803,7 @@ fn lower_arm_m_set(
     k: &std::sync::Arc<Proc>,
     v: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("set", m.as_ref(), &[k.as_ref(), v.as_ref()], env)
 }
 
@@ -812,7 +812,7 @@ fn lower_arm_m_contains(
     m: &std::sync::Arc<Proc>,
     k: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("contains", m.as_ref(), &[k.as_ref()], env)
 }
 
@@ -821,7 +821,7 @@ fn lower_arm_m_delete(
     m: &std::sync::Arc<Proc>,
     k: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("delete", m.as_ref(), &[k.as_ref()], env)
 }
 
@@ -830,17 +830,17 @@ fn lower_arm_m_union(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("union", a.as_ref(), &[b.as_ref()], env)
 }
 
 #[inline(never)]
-fn lower_arm_m_size(m: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_m_size(m: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     lower_method("size", m.as_ref(), &[], env)
 }
 
 #[inline(never)]
-fn lower_arm_m_keys(m: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_m_keys(m: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     lower_method("keys", m.as_ref(), &[], env)
 }
 
@@ -849,7 +849,7 @@ fn lower_arm_b_diff(
     a: &std::sync::Arc<Proc>,
     b: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("diff", a.as_ref(), &[b.as_ref()], env)
 }
 
@@ -858,7 +858,7 @@ fn lower_arm_s_add(
     s: &std::sync::Arc<Proc>,
     e: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("add", s.as_ref(), &[e.as_ref()], env)
 }
 
@@ -866,7 +866,7 @@ fn lower_arm_s_add(
 fn lower_arm_l_length(
     l: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_length(l.as_ref(), env)
 }
 
@@ -875,7 +875,7 @@ fn lower_arm_l_nth(
     l: &std::sync::Arc<Proc>,
     i: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_nth(l.as_ref(), i.as_ref(), env)
 }
 
@@ -884,7 +884,7 @@ fn lower_arm_l_concat(
     l: &std::sync::Arc<Proc>,
     r: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_concat(l.as_ref(), r.as_ref(), env)
 }
 
@@ -892,7 +892,7 @@ fn lower_arm_l_concat(
 fn lower_arm_p_get_subtrie(
     m: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("getSubtrie", m.as_ref(), &[], env)
 }
 
@@ -900,7 +900,7 @@ fn lower_arm_p_get_subtrie(
 fn lower_arm_p_read_zipper(
     m: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("readZipper", m.as_ref(), &[], env)
 }
 
@@ -909,7 +909,7 @@ fn lower_arm_p_read_zipper_at(
     m: &std::sync::Arc<Proc>,
     p: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("readZipperAt", m.as_ref(), &[p.as_ref()], env)
 }
 
@@ -917,7 +917,7 @@ fn lower_arm_p_read_zipper_at(
 fn lower_arm_p_write_zipper(
     m: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("writeZipper", m.as_ref(), &[], env)
 }
 
@@ -926,7 +926,7 @@ fn lower_arm_p_write_zipper_at(
     m: &std::sync::Arc<Proc>,
     p: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("writeZipperAt", m.as_ref(), &[p.as_ref()], env)
 }
 
@@ -934,7 +934,7 @@ fn lower_arm_p_write_zipper_at(
 fn lower_arm_r_z_get_leaf(
     z: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("getLeaf", z.as_ref(), &[], env)
 }
 
@@ -943,7 +943,7 @@ fn lower_arm_r_z_descend_to(
     z: &std::sync::Arc<Proc>,
     rel: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("descendTo", z.as_ref(), &[rel.as_ref()], env)
 }
 
@@ -951,7 +951,7 @@ fn lower_arm_r_z_descend_to(
 fn lower_arm_r_z_child_count(
     z: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("childCount", z.as_ref(), &[], env)
 }
 
@@ -959,7 +959,7 @@ fn lower_arm_r_z_child_count(
 fn lower_arm_r_z_descend_first(
     z: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("descendFirst", z.as_ref(), &[], env)
 }
 
@@ -967,7 +967,7 @@ fn lower_arm_r_z_descend_first(
 fn lower_arm_r_z_to_next_sibling(
     z: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("toNextSibling", z.as_ref(), &[], env)
 }
 
@@ -975,7 +975,7 @@ fn lower_arm_r_z_to_next_sibling(
 fn lower_arm_r_z_to_prev_sibling(
     z: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("toPrevSibling", z.as_ref(), &[], env)
 }
 
@@ -984,7 +984,7 @@ fn lower_arm_r_z_descend_indexed_branch(
     z: &std::sync::Arc<Proc>,
     i: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("descendIndexedBranch", z.as_ref(), &[i.as_ref()], env)
 }
 
@@ -992,7 +992,7 @@ fn lower_arm_r_z_descend_indexed_branch(
 fn lower_arm_r_z_ascend_one(
     z: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("ascendOne", z.as_ref(), &[], env)
 }
 
@@ -1001,7 +1001,7 @@ fn lower_arm_r_z_ascend(
     z: &std::sync::Arc<Proc>,
     n: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("ascend", z.as_ref(), &[n.as_ref()], env)
 }
 
@@ -1009,7 +1009,7 @@ fn lower_arm_r_z_ascend(
 fn lower_arm_r_z_get_path(
     z: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("getPath", z.as_ref(), &[], env)
 }
 
@@ -1017,7 +1017,7 @@ fn lower_arm_r_z_get_path(
 fn lower_arm_r_z_to_next_leaf(
     z: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("toNextLeaf", z.as_ref(), &[], env)
 }
 
@@ -1025,7 +1025,7 @@ fn lower_arm_r_z_to_next_leaf(
 fn lower_arm_r_z_leaf_count(
     z: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("leafCount", z.as_ref(), &[], env)
 }
 
@@ -1034,7 +1034,7 @@ fn lower_arm_w_z_set_subtrie(
     w: &std::sync::Arc<Proc>,
     rel: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("setSubtrie", w.as_ref(), &[rel.as_ref()], env)
 }
 
@@ -1042,7 +1042,7 @@ fn lower_arm_w_z_set_subtrie(
 fn lower_arm_w_z_remove_leaf(
     w: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("removeLeaf", w.as_ref(), &[], env)
 }
 
@@ -1050,7 +1050,7 @@ fn lower_arm_w_z_remove_leaf(
 fn lower_arm_w_z_remove_branches(
     w: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("removeBranches", w.as_ref(), &[], env)
 }
 
@@ -1059,7 +1059,7 @@ fn lower_arm_w_z_graft(
     w: &std::sync::Arc<Proc>,
     rz: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("graft", w.as_ref(), &[rz.as_ref()], env)
 }
 
@@ -1068,7 +1068,7 @@ fn lower_arm_w_z_join_into(
     w: &std::sync::Arc<Proc>,
     rz: &std::sync::Arc<Proc>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_method("joinInto", w.as_ref(), &[rz.as_ref()], env)
 }
 
@@ -1077,7 +1077,7 @@ fn lower_binary_expr(
     b: &Proc,
     env: &BoundEnv,
     build: impl FnOnce(Option<Par>, Option<Par>) -> ExprInstance,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let lhs = lower_proc(a, env)?;
     let rhs = lower_proc(b, env)?;
     Ok(binary_expr_par(lhs, rhs, build))
@@ -1088,7 +1088,7 @@ fn lower_method(
     target: &Proc,
     arguments: &[&Proc],
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let target_par = lower_proc(target, env)?;
     let mut argument_pars = Vec::with_capacity(arguments.len());
     for argument in arguments {
@@ -1116,9 +1116,9 @@ fn lower_method(
     Ok(par)
 }
 
-fn lower_length(target: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_length(target: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match receiver_is_literal_bag(target) {
-        true => Err(RhocalcAstLowerError::UnsupportedProc(
+        true => Err(RholangAstLowerError::UnsupportedProc(
             "#{…}#.length() bag cardinality (no Rholang analog — the machine would measure the \
              2-element bag ABI encoding, not the multiset; C3 residue)",
         )),
@@ -1126,9 +1126,9 @@ fn lower_length(target: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerErr
     }
 }
 
-fn lower_nth(target: &Proc, index: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_nth(target: &Proc, index: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match receiver_is_literal_bag(target) {
-        true => Err(RhocalcAstLowerError::UnsupportedProc(
+        true => Err(RholangAstLowerError::UnsupportedProc(
             "#{…}#.nth(i) bag indexing (no Rholang analog — the machine would index the 2-element \
              bag ABI encoding, not the multiset; C3 residue)",
         )),
@@ -1136,9 +1136,9 @@ fn lower_nth(target: &Proc, index: &Proc, env: &BoundEnv) -> Result<Par, Rhocalc
     }
 }
 
-fn lower_concat(left: &Proc, right: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_concat(left: &Proc, right: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match receiver_is_literal_bag(left) || receiver_is_literal_bag(right) {
-        true => Err(RhocalcAstLowerError::UnsupportedProc(
+        true => Err(RholangAstLowerError::UnsupportedProc(
             "#{…}#.concat(…) bag concatenation (no Rholang analog — `++` would concatenate the \
              2-element bag ABI encodings, tags and all; C3 residue)",
         )),
@@ -1148,7 +1148,7 @@ fn lower_concat(left: &Proc, right: &Proc, env: &BoundEnv) -> Result<Par, Rhocal
     }
 }
 
-fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     let Some((operand, kind, width)) = find_fold(body) else {
         return lower_proc(body, env);
     };
@@ -1220,7 +1220,7 @@ fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RhocalcA
     ))
 }
 
-fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match bag {
         Bag::BagLit(entries) => {
             let mut entries = entries.iter().collect::<Vec<_>>();
@@ -1229,7 +1229,7 @@ fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
             let mut pairs = Vec::with_capacity(entries.len());
             for (item, count) in entries {
                 let count = i64::try_from(count).map_err(|_| {
-                    RhocalcAstLowerError::UnsupportedProc("bag multiplicity exceeds i64")
+                    RholangAstLowerError::UnsupportedProc("bag multiplicity exceeds i64")
                 })?;
                 let item = lower_proc(item, env)?;
                 let count = new_gint_par(count, Vec::new(), false);
@@ -1256,7 +1256,7 @@ fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
                 pairs_locally_free,
                 pairs_connective,
             );
-            let tag = GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string());
+            let tag = GPrivateBuilder::new_par_from_string(crate::RHOLANG_BAG_ABI_TAG.to_string());
             let locally_free = union(tag.locally_free.clone(), pairs.locally_free.clone());
 
             let connective_used = tag.connective_used || pairs.connective_used;
@@ -1269,11 +1269,11 @@ fn lower_bag(bag: &Bag, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
                 connective_used,
             ))
         },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed bag process")),
+        _ => Err(RholangAstLowerError::UnsupportedProc("computed bag process")),
     }
 }
 
-fn lower_list(list: &List, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_list(list: &List, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match list {
         List::ListLit(items) => {
             let items = items
@@ -1291,11 +1291,11 @@ fn lower_list(list: &List, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
                 connective_used,
             ))
         },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed list process")),
+        _ => Err(RholangAstLowerError::UnsupportedProc("computed list process")),
     }
 }
 
-fn lower_map(map: &Map, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_map(map: &Map, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match map {
         Map::MapLit(entries) => {
             let mut pairs = Vec::with_capacity(entries.len());
@@ -1323,11 +1323,11 @@ fn lower_map(map: &Map, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
                 connective_used,
             ))
         },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed map process")),
+        _ => Err(RholangAstLowerError::UnsupportedProc("computed map process")),
     }
 }
 
-fn lower_set(set: &Set, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_set(set: &Set, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match set {
         Set::SetLit(items) => {
             // `HashSetLit` iterates in hash order; sort by `Proc` `Ord` for a deterministic `ESet`
@@ -1349,11 +1349,11 @@ fn lower_set(set: &Set, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
                 connective_used,
             ))
         },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed set process")),
+        _ => Err(RholangAstLowerError::UnsupportedProc("computed set process")),
     }
 }
 
-fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match pathmap {
         Pathmap::PathmapLit(entries) => {
             // A pathmap is key/value like a map; lower to a Rholang `EMap` (mirrors `lower_map`).
@@ -1384,7 +1384,7 @@ fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RhocalcAstLow
                 connective_used,
             ))
         },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("computed pathmap process")),
+        _ => Err(RholangAstLowerError::UnsupportedProc("computed pathmap process")),
     }
 }
 
@@ -1392,7 +1392,7 @@ fn lower_pfor_user(
     rows: &[ForRow],
     body: &Proc,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     if rows.is_empty() {
         // No rows left: the body is the whole process.
         return lower_body_lifting_folds(body, env);
@@ -1408,7 +1408,7 @@ fn lower_pfor_user(
 
     let (binds, persistent, cond) = decompose_for_row(row)?;
     if binds.is_empty() {
-        return Err(RhocalcAstLowerError::EmptyInputJoin);
+        return Err(RholangAstLowerError::EmptyInputJoin);
     }
 
     // Lower each bind: source channel (OUTER env) + pattern `Par`(s) + the bind's local binders.
@@ -1420,7 +1420,7 @@ fn lower_pfor_user(
     let mut slots: Vec<ReceiveSlot> = Vec::new();
     for bind in &binds {
         let channel = bind_channel_name(bind)
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("for-row channel"))?;
+            .ok_or(RholangAstLowerError::UnsupportedProc("for-row channel"))?;
         let source = lower_name(channel, env)?;
 
         if let Some(node) = bind_flt_node(bind) {
@@ -1443,7 +1443,7 @@ fn lower_pfor_user(
             (vec![new_wildcard_par(Vec::new(), false)], Vec::new())
         } else {
             let pat_proc = bind_pattern_proc(bind)
-                .ok_or(RhocalcAstLowerError::UnsupportedProc("for-row pattern"))?;
+                .ok_or(RholangAstLowerError::UnsupportedProc("for-row pattern"))?;
             let mut counter = 0i32;
             let mut bind_binders = Vec::new();
             let pat_par = lower_pattern_proc(&pat_proc, &mut counter, &mut bind_binders)?;
@@ -1576,7 +1576,7 @@ fn lower_pattern_proc(
     pat: &Proc,
     counter: &mut i32,
     binders: &mut Vec<Binder<String>>,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     match pat {
         Proc::PVar(ordvar) => match &ordvar.0 {
             Var::Free(free_var) => {
@@ -1586,7 +1586,7 @@ fn lower_pattern_proc(
                 Ok(new_freevar_par(index, Vec::new()))
             },
             Var::Bound(_) => {
-                Err(RhocalcAstLowerError::UnsupportedProc("bound var in receive pattern"))
+                Err(RholangAstLowerError::UnsupportedProc("bound var in receive pattern"))
             },
         },
         Proc::CastList(list) => match list.as_ref() {
@@ -1608,7 +1608,7 @@ fn lower_pattern_proc(
                     connective_used,
                 ))
             },
-            _ => Err(RhocalcAstLowerError::UnsupportedProc("computed list receive pattern")),
+            _ => Err(RholangAstLowerError::UnsupportedProc("computed list receive pattern")),
         },
         // Map pattern `@{k: v, ...}` — keys/values may contain pattern variables (e.g. `{1: x}`
         // binds `x` to the value at key `1`). Recurse so embedded `PVar`s become free variables;
@@ -1638,7 +1638,7 @@ fn lower_pattern_proc(
                     connective_used,
                 ))
             },
-            _ => Err(RhocalcAstLowerError::UnsupportedProc("computed map receive pattern")),
+            _ => Err(RholangAstLowerError::UnsupportedProc("computed map receive pattern")),
         },
         // Set pattern `@Set(e, ...)` — elements may contain pattern variables. Recurse; ground
         // elements stay exact-match. (Sorted for a deterministic `ESet`, as `lower_set` does.)
@@ -1661,7 +1661,7 @@ fn lower_pattern_proc(
                     connective_used,
                 ))
             },
-            _ => Err(RhocalcAstLowerError::UnsupportedProc("computed set receive pattern")),
+            _ => Err(RholangAstLowerError::UnsupportedProc("computed set receive pattern")),
         },
         // A ground sub-pattern (literal/constructor with no pattern variables): exact-match value.
         // This covers ground Bag/Pathmap/Drop/Nil/numeric/string patterns, whose `lower_proc`
@@ -1673,7 +1673,7 @@ fn lower_pattern_proc(
 fn lower_lookahead_operand(
     operand: &Proc,
     env: &BoundEnv,
-) -> Result<(Par, Par), RhocalcAstLowerError> {
+) -> Result<(Par, Par), RholangAstLowerError> {
     if let Some(desugared) = desugar_send_node(operand) {
         return lower_lookahead_operand(&desugared, env);
     }
@@ -1686,19 +1686,19 @@ fn lower_lookahead_operand(
             Ok((lower_proc(channel_proc.as_ref(), env)?, lower_proc(payload.as_ref(), env)?))
         },
         Proc::PPersistOutput(..) | Proc::PPersistOutputShort(..) => {
-            Err(RhocalcAstLowerError::LookaheadOperandNotASend("a persistent send (`!!`)"))
+            Err(RholangAstLowerError::LookaheadOperandNotASend("a persistent send (`!!`)"))
         },
-        Proc::PZero => Err(RhocalcAstLowerError::LookaheadOperandNotASend("Nil")),
-        Proc::PForUser(..) => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a receive")),
+        Proc::PZero => Err(RholangAstLowerError::LookaheadOperandNotASend("Nil")),
+        Proc::PForUser(..) => Err(RholangAstLowerError::LookaheadOperandNotASend("a receive")),
         Proc::PPar(..) | Proc::PParInfix(..) => {
-            Err(RhocalcAstLowerError::LookaheadOperandNotASend("a parallel composition"))
+            Err(RholangAstLowerError::LookaheadOperandNotASend("a parallel composition"))
         },
-        Proc::CastList(..) => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a list literal")),
-        _ => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a non-send process")),
+        Proc::CastList(..) => Err(RholangAstLowerError::LookaheadOperandNotASend("a list literal")),
+        _ => Err(RholangAstLowerError::LookaheadOperandNotASend("a non-send process")),
     }
 }
 
-fn lower_drop(name: &Name, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_drop(name: &Name, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match name {
         // `*@(P)` drops to `P`.
         Name::NQuote(proc) => lower_proc(proc.as_ref(), env),
@@ -1712,11 +1712,11 @@ fn lower_drop(name: &Name, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // `*(x)` / `*(@(0))` rho drop idiom and the body of most COMM examples.
         Name::NParen(inner) => lower_drop(inner.as_ref(), env),
         Name::NVar(var) => lower_name_var(var, env),
-        _ => Err(RhocalcAstLowerError::UnsupportedName("computed rhocalc name")),
+        _ => Err(RholangAstLowerError::UnsupportedName("computed rholang name")),
     }
 }
 
-fn lower_name(name: &Name, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_name(name: &Name, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match name {
         // `@(P)` quotes `P`; its channel `Par` is just `P`'s lowering.
         Name::NQuote(proc) => lower_proc(proc.as_ref(), env),
@@ -1727,23 +1727,23 @@ fn lower_name(name: &Name, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> 
         // Parenthesized name grouping `(N)` is transparent for channels (raw `NParen`; folds to `N`).
         Name::NParen(inner) => lower_name(inner.as_ref(), env),
         Name::NVar(var) => lower_name_var(var, env),
-        _ => Err(RhocalcAstLowerError::UnsupportedName("computed rhocalc name")),
+        _ => Err(RholangAstLowerError::UnsupportedName("computed rholang name")),
     }
 }
 
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
-// The 87th SCC member — `rhocalc_formula::lower_formula_in_env`, verbatim.
+// The 87th SCC member — `rholang_formula::lower_formula_in_env`, verbatim.
 //
-// It lives in a different translation unit (`rholang-runtime/src/rhocalc_formula.rs`) but the
+// It lives in a different translation unit (`rholang-runtime/src/rholang_formula.rs`) but the
 // same strongly-connected component: its `FormulaShape::Term` arm re-enters `lower_proc_in_env`,
 // and `Proc::Matches`' arm calls it. A twin that stopped at the module boundary would leave the
 // formula half of `t matches φ` uncompared.
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 /// Compile a spatial formula to a Rholang PATTERN, in `env` (recursive twin).
-fn lower_formula_in_env(formula: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    use crate::rhocalc_formula::{connective_par, falsum_pattern, negated, verum_pattern};
+fn lower_formula_in_env(formula: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
+    use crate::rholang_formula::{connective_par, falsum_pattern, negated, verum_pattern};
     use mettail_languages::rhocalc::formula::{classify, FormulaShape};
     use models::rust::utils::{new_conn_and_body_par, new_conn_or_body_par};
 
@@ -2032,7 +2032,7 @@ mod differential {
     /// produced: the `Par` (as encoded BYTES), the typed error, and both registers.
     fn run<F>(lower: F, proc: &Proc) -> (Result<Vec<u8>, String>, String, String)
     where
-        F: FnOnce(&Proc, &BoundEnv) -> Result<Par, RhocalcAstLowerError>,
+        F: FnOnce(&Proc, &BoundEnv) -> Result<Par, RholangAstLowerError>,
     {
         clear_held_fold_sites();
         clear_guard_discharge_report();
@@ -2089,7 +2089,7 @@ mod differential {
 
     /// ★ The formula half, compared SEPARATELY — and the reason it has to be.
     ///
-    /// `lower_arm_matches` (above, verbatim) calls `crate::rhocalc_formula::lower_formula_in_env`
+    /// `lower_arm_matches` (above, verbatim) calls `crate::rholang_formula::lower_formula_in_env`
     /// by ABSOLUTE PATH, and that function now delegates to the driver. So on a `matches` corpus
     /// entry the oracle's TERM half is genuinely recursive while its FORMULA half is already the
     /// driver — `driver_matches_the_recursive_oracle` compares the driver against itself there,
@@ -2119,7 +2119,7 @@ mod differential {
             let formula = parse(source)
                 .unwrap_or_else(|| panic!("formula corpus: `{source}` ({shape}) does not parse"));
             let env = BoundEnv::new();
-            let driven = crate::rhocalc_formula::lower_formula_in_env(&formula, &env)
+            let driven = crate::rholang_formula::lower_formula_in_env(&formula, &env)
                 .map(|par| par.encode_to_vec())
                 .map_err(|error| format!("{error:?}"));
             let recursed = lower_formula_in_env(&formula, &env)

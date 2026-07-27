@@ -3,7 +3,7 @@
 //  desk refuses it.
 //
 //  Run me with the RhoCalc interpreter:
-//    target/debug/rhocalc demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho
+//    target/debug/rholang demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho
 //
 //  WHAT CHANGED FROM `desk-accepts-constant.rho`
 //  ─────────────────────────────────────────────

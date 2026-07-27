@@ -1307,14 +1307,14 @@ impl RhoBackendInvocation {
 
 /// Tier-3 + A-S3: clear the pending system-process session state before an invocation compiler
 /// runs, so the `Definition`s it registers can be collected afterwards with
-/// [`drain_pending_fold_definitions`]. Covers BOTH bands: the rhocalc held-fold lift sites
-/// (no-op unless the rhocalc lowering is compiled in — a dependency boundary, not a behavior
+/// [`drain_pending_fold_definitions`]. Covers BOTH bands: the rholang held-fold lift sites
+/// (no-op unless the rholang lowering is compiled in — a dependency boundary, not a behavior
 /// gate) and the A-S3 native-handler specs the generated report-free match body records
 /// (`rho_net_match_invocation_to`).
 #[cfg(feature = "runtime-report")]
 fn clear_pending_fold_sites() {
-    #[cfg(feature = "rhocalc-runtime")]
-    crate::rhocalc_ast::clear_held_fold_sites();
+    #[cfg(feature = "rholang-runtime")]
+    crate::rholang_ast::clear_held_fold_sites();
     mettail_rholang_codegen::clear_pending_native_handler_specs();
 }
 
@@ -1339,10 +1339,10 @@ fn drain_pending_fold_definitions() -> Result<
     Vec<rholang::rust::interpreter::system_processes::Definition>,
     mettail_rholang_codegen::BandAllocationError,
 > {
-    #[cfg(feature = "rhocalc-runtime")]
+    #[cfg(feature = "rholang-runtime")]
     let mut definitions =
-        crate::fold_contract::fold_definitions_for(&crate::rhocalc_ast::take_held_fold_sites())?;
-    #[cfg(not(feature = "rhocalc-runtime"))]
+        crate::fold_contract::fold_definitions_for(&crate::rholang_ast::take_held_fold_sites())?;
+    #[cfg(not(feature = "rholang-runtime"))]
     let mut definitions: Vec<rholang::rust::interpreter::system_processes::Definition> = Vec::new();
     definitions.extend(crate::native_contract::native_definitions_for(
         &mettail_rholang_codegen::take_pending_native_handler_specs(),
@@ -2319,7 +2319,7 @@ where
         let dovetail_report =
             checked_complete_dovetail_report(&self.inner, term, &self.dovetail.compiler)?;
         // Tier-3: bracket the lowering so we can collect any held-fold contract sites it records
-        // (rhocalc only; empty for Calculator).
+        // (rholang only; empty for Calculator).
         clear_pending_fold_sites();
         let invocation = (self.invocation.compiler)(term, &dovetail_report).map_err(|err| {
             format!(
@@ -2713,7 +2713,7 @@ where
         let dovetail_report =
             checked_complete_dovetail_report(&self.inner, term, &self.dovetail.compiler)?;
         // Tier-3: bracket the lowering so we can collect any held-fold contract sites it
-        // records (rhocalc only; empty for Calculator).
+        // records (rholang only; empty for Calculator).
         clear_pending_fold_sites();
         let invocation = (self.invocation.compiler)(term, &dovetail_report).map_err(|err| {
             format!(

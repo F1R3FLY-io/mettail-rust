@@ -47,7 +47,7 @@ use mettail_languages::calculator::CalculatorLanguage;
 // out of the REPL (USER: "I don't want REPL integration for the non-production grammars!").
 // The four PRODUCTION wrappers keep the zero-D-stage lock unchanged.
 use mettail_repl::rho_backends::{
-    ambient_backed, calculator_backed, lambda_backed, rhocalc_backed,
+    ambient_backed, calculator_backed, lambda_backed, rholang_backed,
 };
 use mettail_rholang_codegen::{
     RhoFoldDataflowDisposition, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
@@ -160,9 +160,9 @@ fn admitted_calculator_exec_builds_no_dovetail_report() {
 }
 
 #[test]
-fn admitted_rhocalc_exec_builds_no_dovetail_report() {
-    let language = rhocalc_backed().expect("RhoCalc lazy backend installs");
-    // The single-channel COMM example (`rho_rhocalc_ast.rs` precedent): the receiver binds the
+fn admitted_rholang_exec_builds_no_dovetail_report() {
+    let language = rholang_backed().expect("RhoCalc lazy backend installs");
+    // The single-channel COMM example (`rho_rholang_ast.rs` precedent): the receiver binds the
     // sent process and drops it, emitting "p" on OUT. Lowerable DIRECTLY by the AST mapper, so
     // the report-free F2 admits it.
     let term = language
@@ -483,11 +483,11 @@ fn a_s4_calculator_call_par_does_not_embed_the_result_literal() {
 
 /// A-S4 (RhoCalc): raw Proc-level arithmetic execs through the PURE lowering (the E2
 /// fold-normalization fallback is deleted) — the machine's metered `EPlus` computes the value;
-/// zero Dovetail reports. Plain rhocalc literals are arbitrary-precision (`GBigInt`), so the
+/// zero Dovetail reports. Plain rholang literals are arbitrary-precision (`GBigInt`), so the
 /// observed value is `BigIntBytes`.
 #[test]
-fn a_s4_admitted_rhocalc_arithmetic_exec_computes_on_machine_with_no_dovetail_report() {
-    let language = rhocalc_backed().expect("RhoCalc lazy backend installs");
+fn a_s4_admitted_rholang_arithmetic_exec_computes_on_machine_with_no_dovetail_report() {
+    let language = rholang_backed().expect("RhoCalc lazy backend installs");
     let term = language.parse_term("1 + 2").expect("1 + 2 parses");
 
     let before = dovetail_report_invocations();

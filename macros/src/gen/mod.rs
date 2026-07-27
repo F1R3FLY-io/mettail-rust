@@ -1404,7 +1404,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             // `display` there is the display of the PREVIOUS pass, not `input`. So
             // the accepted term is a derivation of a string that is not the caller's
             // string, and the accepted fixpoint need not denote the input at all.
-            // Measured on rhocalc (`languages/tests/display_parse_term_preservation.rs`):
+            // Measured on rholang (`languages/tests/display_parse_term_preservation.rs`):
             //
             //     input          "1 + 2"
             //     pass0 AST      Add(CastInt 1, CastInt 2)          ← the CORRECT term
@@ -2052,7 +2052,7 @@ pub fn spec_admitted_var_name(language: &LanguageDef) -> String {
 ///
 /// For Calculator's `Neg . a:Int |- "-" a : Int`, the Int pattern is
 /// `-?(0b...|...)i32?` → admits leading dash → returns `true`. Same for
-/// `NegBigInt`, `NegBigRat`, `NegFixed`, `NegFloat`, and Rhocalc's
+/// `NegBigInt`, `NegBigRat`, `NegFixed`, `NegFloat`, and Rholang's
 /// `NegInt`.
 ///
 /// Returns `false` for rules that don't match this shape — e.g., `BitNotInt`

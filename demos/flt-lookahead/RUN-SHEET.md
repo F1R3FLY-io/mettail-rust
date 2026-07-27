@@ -15,7 +15,7 @@ computed it.
 ## Setup — before the audience arrives
 
 ```
-cargo build -p rholang-runtime --bin rhocalc --features "rhocalc-runtime lambda-runtime calculator-runtime"
+cargo build -p rholang-runtime --bin rholang --features "rholang-runtime lambda-runtime calculator-runtime"
 ```
 
 **No stack incantation.** This page used to open with `export RUST_MIN_STACK=134217728`, attributed
@@ -47,7 +47,7 @@ quietly publish nothing, and it cannot publish the subject back as an "answer".
 ## Beat 1 — the machine computes (1 min)
 
 ```
-$ target/debug/rhocalc demos/flt-lookahead/01-computed-desk.rho
+$ target/debug/rholang demos/flt-lookahead/01-computed-desk.rho
 ```
 ```
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -67,7 +67,7 @@ receive pattern that reached inside the foreign term.
 ## Beat 2 — separated by shape (2 min — the point)
 
 ```
-$ target/debug/rhocalc demos/flt-lookahead/02-the-desk.rho
+$ target/debug/rholang demos/flt-lookahead/02-the-desk.rho
 ```
 ```
   @"OUT" observations (1):
@@ -102,7 +102,7 @@ sub-term of a λ-term.
 ## Beat 3 — selected by predicate (2 min)
 
 ```
-$ target/debug/rhocalc demos/flt-lookahead/03-predicate.rho
+$ target/debug/rholang demos/flt-lookahead/03-predicate.rho
 ```
 ```
   @"OUT" observations (1):
@@ -129,7 +129,7 @@ one the substrate could not decide, would answer both the same way.
 ## Beat 4 — the honest limit (2 min)
 
 ```
-$ target/debug/rhocalc demos/flt-lookahead/04-divergence.rho
+$ target/debug/rholang demos/flt-lookahead/04-divergence.rho
 ```
 ```
   @"OUT" observations (1):

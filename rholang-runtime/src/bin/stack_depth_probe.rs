@@ -3,7 +3,7 @@
 //!
 //! # ★ Why this is a separate program rather than a `#[test]`
 //!
-//! The defect being gated is on the **main thread**. `rholang-runtime/src/bin/rhocalc.rs` is
+//! The defect being gated is on the **main thread**. `rholang-runtime/src/bin/rholang.rs` is
 //! `#[tokio::main] async fn main`, so parsing and lowering run there, and a main thread's size
 //! is fixed by `RLIMIT_STACK` before `main` is entered — `RUST_MIN_STACK` cannot reach it (a
 //! sweep from 1 MiB to 32 MiB once reported "ok" at every value *because it was controlling
@@ -51,7 +51,7 @@ use std::sync::Arc;
 
 use mettail_languages::rhocalc::{Int, List, Proc};
 use mettail_runtime::{Binder, Scope};
-use mettail_rholang_runtime::rhocalc_ast::{lower_proc_in_env, BoundEnv};
+use mettail_rholang_runtime::rholang_ast::{lower_proc_in_env, BoundEnv};
 use models::rust::rholang::par_children::dismantle;
 
 // ---------------------------------------------------------------------------
@@ -257,7 +257,7 @@ fn par_drop_body(depth: usize) {
 
 /// ★ THE RESIDUE, subject 2: rendering the observation.
 ///
-/// `rhocalc`'s main thread lowers, runs, and then RENDERS what it observed, through
+/// `rholang`'s main thread lowers, runs, and then RENDERS what it observed, through
 /// `observation::render_par_text` — which decodes the `Par` back to a
 /// `RuntimeObservationValue` and formats it, both recursively. Same construction as
 /// [`par_drop_body`]: lower, then render, so the ladder isolates the renderer against

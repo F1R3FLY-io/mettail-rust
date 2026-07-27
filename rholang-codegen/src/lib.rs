@@ -44,15 +44,15 @@
 
 #![forbid(unsafe_code)]
 
-/// Stable Rho AST ABI tag for rhocalc bag payloads.
+/// Stable Rho AST ABI tag for rholang bag payloads.
 ///
 /// Rholang has native list, tuple, set, and map bodies, but no native multiset
-/// expression body. MeTTaIL/rhocalc bags therefore lower as a tagged list:
+/// expression body. MeTTaIL/rholang bags therefore lower as a tagged list:
 /// `[private_tag, [[value, count], ...]]`, where `private_tag` is constructed
-/// by F1r3node's `GPrivateBuilder::new_par_from_string(RHOCALC_BAG_ABI_TAG)`.
+/// by F1r3node's `GPrivateBuilder::new_par_from_string(RHOLANG_BAG_ABI_TAG)`.
 /// The tag is not raw UTF-8 bytes; it must match the host private-name builder
 /// so codegen and runtime observation decode the same nominal bag ABI.
-pub const RHOCALC_BAG_ABI_TAG: &str = "mettail.rhocalc.bag.v1";
+pub const RHOLANG_BAG_ABI_TAG: &str = "mettail.rholang.bag.v1";
 
 /// Stable Rho AST ABI prefix identifying a reflected constructor term.
 ///
@@ -61,7 +61,7 @@ pub const RHOCALC_BAG_ABI_TAG: &str = "mettail.rhocalc.bag.v1";
 /// (see [`rho_net_lower::reflect_ground_term_par`] and the internal
 /// `reflect_term_par`). The unforgeable `GPrivate` head carries this prefix so a
 /// reflected term is collision-free with any user `GString` data and with the
-/// rhocalc bag ABI ([`RHOCALC_BAG_ABI_TAG`]). Both the codegen tag builder and
+/// rholang bag ABI ([`RHOLANG_BAG_ABI_TAG`]). Both the codegen tag builder and
 /// the runtime decoder key on this single constant so the ABI cannot drift.
 pub const REFLECTED_TERM_ABI_PREFIX: &str = "mettail.term.";
 

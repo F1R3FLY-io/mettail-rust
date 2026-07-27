@@ -28,7 +28,7 @@
 //!   carry no de-Bruijn index — the ONLY bound variables are a JOIN's received values, local to its
 //!   own body. The send-channel↔receive-source rendezvous works exactly as the proven `@"OUT"`
 //!   return channel of the single-op path (a gstring name passed as the contract's `ret` argument).
-//! * **Multi-bind JOIN** (one [`ReceiveBind`] per node-operand, `bind_count = m`) mirrors rhocalc's
+//! * **Multi-bind JOIN** (one [`ReceiveBind`] per node-operand, `bind_count = m`) mirrors rholang's
 //!   `PInputs` lowering verbatim; the k-th joined channel's received value is `BoundVar(m-1-k)`
 //!   (the `extend_env` convention: binder `i` of `m` ↦ index `m-1-i`).
 //! * Every operand is either ground (a leaf literal `Par`) or a JOIN-bound value filtered out by
@@ -240,7 +240,7 @@ fn build_node_process(
         // Node with node-operands: a multi-bind JOIN consuming each node-operand's channel, whose
         // body is the contract-call send. One ReceiveBind per node operand (free_count 1 each); the
         // receive's locally_free is empty (the body's bound indices are < bind_count → all filtered,
-        // and the ground sources contribute nothing). Mirrors `lower::contract_ast` + rhocalc PInputs.
+        // and the ground sources contribute nothing). Mirrors `lower::contract_ast` + rholang PInputs.
         let binds: Vec<ReceiveBind> = node_operands
             .iter()
             .map(|&child| ReceiveBind {

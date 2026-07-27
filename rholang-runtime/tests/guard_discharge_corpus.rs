@@ -54,14 +54,14 @@
 //! [`the_measured_split_is_recorded`] prints it so a drift is visible in the test log rather
 //! than only in a diff.
 
-#![cfg(feature = "rhocalc-runtime")]
+#![cfg(feature = "rholang-runtime")]
 
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_runtime::guard_discharge::{
     guard_as_tagged_continuation, machine_verdict, GuardDischarge,
 };
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc_with_options, run_normalized_par_for_oracle_and_read_runtime_value_channels,
+    lower_rholang_proc_with_options, run_normalized_par_for_oracle_and_read_runtime_value_channels,
     LoweringOptions,
 };
 use mettail_runtime::clear_var_cache;
@@ -85,7 +85,7 @@ type GuardRow = (&'static str, GuardDischarge);
 /// listed once with the canonical single-bind receive used to lower it.
 const GUARD_CORPUS: &[GuardRow] = &[
     // ── Constant guards (D0: binder-closed). ────────────────────────────────────────────────
-    // `rhocalc_tests.rs:1703,1708` — `assert_never_reaches(… where false …)`.
+    // `rholang_tests.rs:1703,1708` — `assert_never_reaches(… where false …)`.
     ("false", Refuted),
     ("true", Discharged),
     // `rho_matches_guard.rs:142-145` — the logical constants as `matches` formulae are
@@ -96,18 +96,18 @@ const GUARD_CORPUS: &[GuardRow] = &[
     ("false or false", Refuted),
     ("not true", Refuted),
     ("not false", Discharged),
-    // ── The `implies` truth table (`rhocalc_tests.rs:1417-1420`,
+    // ── The `implies` truth table (`rholang_tests.rs:1417-1420`,
     //    `rho_implies_guard.rs:368,372`). `a implies b` lowers to `EOr(ENot a, b)`. ───────────
     ("false implies false", Discharged),
     ("false implies true", Discharged),
     ("true implies false", Refuted),
     ("true implies true", Discharged),
-    // ── The same four rows with COMPARISON operands (`rhocalc_tests.rs:1428-1431`). ──────────
+    // ── The same four rows with COMPARISON operands (`rholang_tests.rs:1428-1431`). ──────────
     ("2 > 3 implies 2 > 3", Discharged),
     ("2 > 3 implies 3 > 2", Discharged),
     ("3 > 2 implies 2 > 3", Refuted),
     ("3 > 2 implies 3 > 2", Discharged),
-    // ── Precedence rows (`rhocalc_tests.rs:1454-1456`, `rho_implies_guard.rs:261-271`). ──────
+    // ── Precedence rows (`rholang_tests.rs:1454-1456`, `rho_implies_guard.rs:261-271`). ──────
     ("false or false implies false and false", Discharged),
     ("true and true implies false or true", Discharged),
     ("true implies false or false", Refuted),
@@ -116,7 +116,7 @@ const GUARD_CORPUS: &[GuardRow] = &[
     ("2 > 3", Refuted),
     ("1 == 1", Discharged),
     ("1 == 2", Refuted),
-    // ── Closed COLLECTION comparisons (`rhocalc_tests.rs:3492,3497`). ───────────────────────
+    // ── Closed COLLECTION comparisons (`rholang_tests.rs:3492,3497`). ───────────────────────
     ("Set(1, 2) == Set(2, 1)", Discharged),
     ("Set(1, 2) == Set(1, 3)", Refuted),
     // ── A closed guard that does NOT decide to a boolean (`rho_implies_guard.rs:388`).
@@ -153,7 +153,7 @@ const GUARD_CORPUS: &[GuardRow] = &[
     (r#"x matches @"b"!(1)"#, Residual),
     ("x matches true", Residual),
     // ★ NOT a discharge decision. `lower_proc`'s `Proc::Matches` arm already folds
-    // `t matches false` to the constant `false` at `rhocalc_ast.rs:1191` (`is_statically_false`
+    // `t matches false` to the constant `false` at `rholang_ast.rs:1191` (`is_statically_false`
     // — `Falsum` compiles to `ConnNot(Wildcard)`, the pattern satisfied by NOTHING, so the
     // predicate is false for every `t`), keeping the discarded target's `locally_free` so the
     // free-variable footprint stays conservative. S-D0 then sees an ordinary binder-closed
@@ -196,13 +196,13 @@ const GUARD_CORPUS: &[GuardRow] = &[
 /// two-bind receive to lower. Every one is payload-dependent by construction.
 const JOIN_GUARD_CORPUS: &[GuardRow] = &[
     ("x + y > 10", Residual),                    // rho_guard_oracle.rs:61
-    ("y > 1", Residual),                         // rhocalc_tests.rs:1582
-    ("y > 10", Residual),                        // rhocalc_tests.rs:1602
-    ("x > 1 and y > 1", Residual),               // rhocalc_tests.rs:1819
-    ("x > 1 and y > 3", Residual),               // rhocalc_tests.rs:1827
-    ("x == y", Residual),                        // rhocalc_tests.rs:3845
-    ("x > 1", Residual),                         // rhocalc_tests.rs:1795
-    (r#"(x > 1) and (y == "lemon")"#, Residual), // rhocalc_tests.rs:1851
+    ("y > 1", Residual),                         // rholang_tests.rs:1582
+    ("y > 10", Residual),                        // rholang_tests.rs:1602
+    ("x > 1 and y > 1", Residual),               // rholang_tests.rs:1819
+    ("x > 1 and y > 3", Residual),               // rholang_tests.rs:1827
+    ("x == y", Residual),                        // rholang_tests.rs:3845
+    ("x > 1", Residual),                         // rholang_tests.rs:1795
+    (r#"(x > 1) and (y == "lemon")"#, Residual), // rholang_tests.rs:1851
     ("x >= y", Residual),
     ("x != y", Residual),
     // ★ The cross-bind DEMO guard, verbatim from `demos/rhocalc-settlement/settlement.env`'s
@@ -228,12 +228,12 @@ fn join_program(guard: &str) -> String {
 fn parse(source: &str) -> Proc {
     clear_var_cache();
     Proc::parse_via_wpda(source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"))
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err:?}"))
 }
 
 fn lower_parsed(proc: &Proc, options: LoweringOptions, source: &str) -> Par {
-    lower_rhocalc_proc_with_options(proc, options)
-        .unwrap_or_else(|err| panic!("rhocalc lowering failed for {source:?}: {err:?}"))
+    lower_rholang_proc_with_options(proc, options)
+        .unwrap_or_else(|err| panic!("rholang lowering failed for {source:?}: {err:?}"))
 }
 
 fn lower(source: &str, options: LoweringOptions) -> Par {
@@ -561,7 +561,7 @@ fn the_two_evaluators_agree_on_every_binder_closed_corpus_guard() {
         clear_var_cache();
         let proc = Proc::parse_via_wpda(&program)
             .unwrap_or_else(|err| panic!("parse failed for {program:?}: {err:?}"));
-        let par = mettail_rholang_runtime::lower_rhocalc_proc_with_options(
+        let par = mettail_rholang_runtime::lower_rholang_proc_with_options(
             &proc,
             LoweringOptions::NO_DISCHARGE,
         )

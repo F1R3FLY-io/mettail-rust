@@ -217,7 +217,7 @@ pub fn build_registry() -> Result<LanguageRegistry> {
         let mut registry = LanguageRegistry::new();
         registry.register(crate::rho_backends::lambda_backed()?);
         registry.register(crate::rho_backends::ambient_backed()?);
-        registry.register(crate::rho_backends::rhocalc_backed()?);
+        registry.register(crate::rho_backends::rholang_backed()?);
         registry.register(crate::rho_backends::calculator_backed()?);
         // Task #11 (extended 2026-07-26) — DE-PRODUCTIONIZED, per USER decision: "I don't
         // want REPL integration for the non-production grammars!" SwapDemo and the eleven

@@ -50,7 +50,7 @@ const JUSTIFICATION_MARKER: &str = "// ignore-justification:";
 /// therefore cannot outlive the situation that earned it, which is the failure mode
 /// that makes allowlists rot.
 const EXEMPT: &[(&str, &str)] = &[(
-    "rholang-runtime/src/rhocalc_ast.rs",
+    "rholang-runtime/src/rholang_ast.rs",
     "Owned by concurrent task #47 and unsafe to edit from here. Its single fence holds \
      a commented-out previous body of `canonicalize_arity_pattern` — an all-comment \
      historical record, so the correct disposition is ```text rather than a \

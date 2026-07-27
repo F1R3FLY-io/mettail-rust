@@ -3,7 +3,7 @@
 //  the f1r3node reducer and read back its normal form.
 //
 //  Run me with the RhoCalc interpreter:
-//    rhocalc demos/flt-foreign-exchange/k-combinator.rho
+//    rholang demos/flt-foreign-exchange/k-combinator.rho
 //
 //  A BARE TERM EVALUATES TO ITS NORMAL FORM
 //  ────────────────────────────────────────

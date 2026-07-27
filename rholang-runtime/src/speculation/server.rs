@@ -125,7 +125,7 @@
 //! The server therefore reads the guest's own `^drive-err` / `^drive-fuel` channels out of
 //! each leaf and republishes them as trace-keyed branch failures
 //! ([`ErrorCode::GuestEvaluatorRefused`] / [`ErrorCode::GuestEvaluatorExhausted`]) — the
-//! same fail-closed check the `rhocalc` interpreter makes before it reports a normal form,
+//! same fail-closed check the `rholang` interpreter makes before it reports a normal form,
 //! made per-branch.
 //!
 //! ## Metering
@@ -798,7 +798,7 @@ impl Publisher<'_> {
 /// `(subject, lookahead, replyChannel)` from a request's payload.
 ///
 /// ★ Every operand here is **program-controlled**, and the refusals are consensus-visible. The
-/// surface's `lookahead_bound` (`rhocalc_ast`) restricts `[n]` to a ground non-negative literal,
+/// surface's `lookahead_bound` (`rholang_ast`) restricts `[n]` to a ground non-negative literal,
 /// but `^spec-n` is an ordinary Rholang channel served by an installed system process: a program
 /// can write `@"^spec-n"!(P, <any Par at all>, x)` and reach this function directly. So the
 /// malformed-bound arm renders its operand through [`render_par_text`] — bounded and

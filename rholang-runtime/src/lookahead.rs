@@ -206,7 +206,7 @@ fn send_to(channel: &str, data: Vec<Par>) -> Par {
 /// This is the fail-closed guard that makes the missing-engine case loud. Without it a program
 /// containing `[*]` would run, publish nothing, and rest — indistinguishable from a program
 /// whose exploration legitimately found no successful branch. A caller that reads back a
-/// lookahead-bearing program MUST check this and report, exactly as the `rhocalc` interpreter
+/// lookahead-bearing program MUST check this and report, exactly as the `rholang` interpreter
 /// already fails closed on non-empty `^drive-err` / `^drive-fuel` before reporting a normal form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnservedRequest {

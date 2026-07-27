@@ -99,7 +99,7 @@
 //!   The NON-abutted spelling has a genuine `-` token at byte 0, so `NegProc . a:Proc |- "-" a`'s
 //!   skeleton `[Lit("-"), Op]` DOES match — and its trailing `Op` slot has no following literal
 //!   to stop at, so `__proj_skeleton_match_all` gives it `(start, n)`: **the whole remaining
-//!   span, one tiling, unconditionally**. `rhocalc.rs` declares the opposite (*"`NegProc` is
+//!   span, one tiling, unconditionally**. `rholang.rs` declares the opposite (*"`NegProc` is
 //!   declared after `/` and `%` so `-` binds tighter than division"*), and the frame honoured
 //!   none of it. Measured on the shipped interpreter with the committed kill switch as the single
 //!   controlled variable:
@@ -115,7 +115,7 @@
 //!
 //! # ⚠ Why a lowering-time fold is the WRONG fix
 //!
-//! Folding `NegProc(<ground literal>)` inside `rhocalc_ast.rs` looks like a one-line repair and is
+//! Folding `NegProc(<ground literal>)` inside `rholang_ast.rs` looks like a one-line repair and is
 //! refuted by measurement: by lowering time the ADJACENCY IS ALREADY GONE — `-7` and `- 7` and
 //! `-(7)` all parse to the identical `NegProc(CastInt(NumLit(7)))`. A lowering fold would
 //! therefore convert the four rows in [`adjacency_is_honoured`] from AGREE to DIVERGE while
@@ -123,10 +123,10 @@
 //! the front end, where adjacency still exists. [`adjacency_is_honoured`] is the guard that makes
 //! that mistake fail loudly.
 
-#![cfg(all(feature = "rhocalc-runtime", feature = "source-oracle"))]
+#![cfg(all(feature = "rholang-runtime", feature = "source-oracle"))]
 
 use mettail_languages::rhocalc::Proc;
-use mettail_rholang_runtime::{lower_rhocalc_proc_with_options, LoweringOptions};
+use mettail_rholang_runtime::{lower_rholang_proc_with_options, LoweringOptions};
 use mettail_runtime::clear_var_cache;
 use models::rhoapi::Par;
 use rholang::rust::interpreter::compiler::compiler::Compiler;
@@ -137,11 +137,11 @@ fn f1r3node_par(source: &str) -> Result<Par, String> {
 }
 
 /// THE SUBJECT SIDE: MeTTaIL's production front end (`parse_via_wpda`, never `Proc::parse` —
-/// see `rhocalc_guard_lowering.rs`'s header on the display round-trip) plus production lowering.
+/// see `rholang_guard_lowering.rs`'s header on the display round-trip) plus production lowering.
 fn mettail_par(source: &str) -> Result<Par, String> {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source).map_err(|err| format!("parse: {err:?}"))?;
-    lower_rhocalc_proc_with_options(&proc, LoweringOptions::PRODUCTION)
+    lower_rholang_proc_with_options(&proc, LoweringOptions::PRODUCTION)
         .map_err(|err| format!("lower: {err:?}"))
 }
 
@@ -188,7 +188,7 @@ fn positions(literal: &str) -> [String; 3] {
 /// The open-ended sigil frame `[Lit("-"), Op]` is precisely that defect: its trailing operand
 /// slot has no following literal to stop at, so `__proj_skeleton_match_all` gives it
 /// `(start, n)` — everything to the end of input, unconditionally, with no regard for the
-/// binding power `rhocalc.rs` declares (*"`NegProc` is declared after `/` and `%` so `-` binds
+/// binding power `rholang.rs` declares (*"`NegProc` is declared after `/` and `%` so `-` binds
 /// tighter than division"*). The measured consequence, on the shipped interpreter, with the
 /// facade kill switch as the single controlled variable:
 ///
@@ -201,7 +201,7 @@ fn positions(literal: &str) -> [String; 3] {
 /// numeral. So the axis is not a nicety: it is the coordinate the defect lived on.
 ///
 /// Every enclosing operator here is a REAL binary operator of the language whose declared
-/// precedence relative to unary `-` is stated in `rhocalc.rs`, and both sides of the operator are
+/// precedence relative to unary `-` is stated in `rholang.rs`, and both sides of the operator are
 /// exercised (`X + 1` and `1 + X`) so a left-swallowing frame and a right-swallowing one are both
 /// covered.
 fn enclosings(literal: &str) -> [String; 5] {
@@ -340,7 +340,7 @@ fn sign_abutted_numerals_conform_as_collection_elements() {
 /// somewhere inside it, where the prologue never reached and the walker's election decided. So
 /// this row measures the case that actually governs whether MeTTaIL and f1r3node agree on a
 /// deployed term, and it is the artifact-level counterpart of
-/// `rhocalc_guard_lowering.rs::negative_literal_patterns_match_like_consensus_rholang`. It PASSED
+/// `rholang_guard_lowering.rs::negative_literal_patterns_match_like_consensus_rholang`. It PASSED
 /// while the whole-input rows still failed, which is what proved the residue was a string-entry
 /// framing defect rather than a grammar or lowering defect.
 ///
@@ -477,7 +477,7 @@ fn sign_binds_tighter_than_division_as_the_grammar_declares() {
     assert!(
         agrees("-3r/2r"),
         "★ `-3r/2r` must be `EDiv(GBigRat(-3), GBigRat(2))` — one signed rational token divided \
-         by another, which is also what `rhocalc.rs`'s `NegProc` declaration-order comment \
+         by another, which is also what `rholang.rs`'s `NegProc` declaration-order comment \
          claims.\n  f1r3node: {}\n  mettail : {}",
         render(&f1r3node_par("-3r/2r")),
         render(&mettail_par("-3r/2r")),
@@ -578,7 +578,7 @@ fn a_non_abutted_sign_binds_tighter_than_the_enclosing_operator() {
         assert!(
             agrees(source),
             "★ `{source}`: unary `-` is declared to bind TIGHTER than `+`/`-`/`*` \
-             (`rhocalc.rs`: *\"`NegProc` is declared after `/` and `%`\"*), so the ENCLOSING \
+             (`rholang.rs`: *\"`NegProc` is declared after `/` and `%`\"*), so the ENCLOSING \
              operator is the root and the negation is its left operand. A frame that takes the \
              whole remaining span as `-`'s operand makes the negation the root and changes the \
              VALUE.\n  f1r3node: {}\n  mettail : {}",

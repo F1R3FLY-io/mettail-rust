@@ -13,7 +13,7 @@ path: the presenter runs one interpreter binary on six committed `.rho` files.
 > output below is the observed one. Each of the six files produced byte-identical output on three
 > consecutive runs of a freshly built binary.
 > The whole script is a CI gate: `rholang-runtime/tests/church_desk_demo.rs` drives the built
-> `rhocalc` binary with these exact command lines and asserts each beat's observable, plus a
+> `rholang` binary with these exact command lines and asserts each beat's observable, plus a
 > runtime-level readback for the "…and the refused terms are still on the channel" half that the
 > interpreter's single-channel `@"OUT"` view cannot show. A command line added or respelled here
 > without matching coverage there fails the build
@@ -33,7 +33,7 @@ path: the presenter runs one interpreter binary on six committed `.rho` files.
 
 There is no nickname to memorize. An FLT opener is the **lower-cased name of the guest grammar**,
 and the interpreter derives it from the language itself rather than from a hand-typed literal
-(`derived_opener`, `rholang-runtime/src/bin/rhocalc.rs`):
+(`derived_opener`, `rholang-runtime/src/bin/rholang.rs`):
 
 | grammar | opener | what a bare term of it does |
 |---|---|---|
@@ -91,15 +91,15 @@ Three mechanisms, doing three different jobs:
 ## Setup (do this before the audience arrives)
 
 ```
-$ cargo build -p rholang-runtime --bin rhocalc --features "rhocalc-runtime lambda-runtime calculator-runtime"
+$ cargo build -p rholang-runtime --bin rholang --features "rholang-runtime lambda-runtime calculator-runtime"
 ```
 
-All three features are required by the `rhocalc` bin target: `rhocalc-runtime` pulls in the
+All three features are required by the `rholang` bin target: `rholang-runtime` pulls in the
 generated RhoCalc language and its AST-first lowering; `lambda-runtime` and `calculator-runtime`
 pull in the two production grammars the interpreter registers as guests. The build takes a couple
 of minutes cold. Everything after this is instant.
 
-CI drives the same binary through `env!("CARGO_BIN_EXE_rhocalc")`, so the presenter's binary and
+CI drives the same binary through `env!("CARGO_BIN_EXE_rholang")`, so the presenter's binary and
 the gated one are built from one source.
 
 ★ **No run line below needs a `RUST_MIN_STACK` prefix, and none carries one.** Every run line on
@@ -129,11 +129,11 @@ Start here because it needs no explanation at all. The file is one line of the *
 grammar, embedded in a RhoCalc program.
 
 ```
-$ target/debug/rhocalc demos/flt-church-desk/calculator.rho
+$ target/debug/rholang demos/flt-church-desk/calculator.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-church-desk/calculator.rho
 comments: 5 retained on the COMMENTS channel
 mode: term → evaluating on the f1r3node reducer (guest `calculator`, E3 fold dataflow)
@@ -184,11 +184,11 @@ That is `$\mathrm{mult}\;(\mathrm{plus}\;1\;2)\;(\mathrm{plus}\;2\;2)$` — in o
 Addition and multiplication are not primitives here. They are **consequences of substitution**.
 
 ```
-$ target/debug/rhocalc demos/flt-church-desk/arithmetic.rho
+$ target/debug/rholang demos/flt-church-desk/arithmetic.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-church-desk/arithmetic.rho
 comments: 11 retained on the COMMENTS channel
 mode: term → reducing to normal form on the f1r3node reducer
@@ -216,11 +216,11 @@ Three things to point at, in order:
 ## Beat 2 — and when it cannot finish, it says so (2 min)
 
 ```
-$ target/debug/rhocalc demos/flt-church-desk/divergence.rho
+$ target/debug/rholang demos/flt-church-desk/divergence.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-church-desk/divergence.rho
 comments: 7 retained on the COMMENTS channel
 mode: term → reducing to normal form on the f1r3node reducer
@@ -247,11 +247,11 @@ This is the beat that makes Beat 1's `^drive-fuel: 0` mean something.
 Three Church numerals rest on one channel — 5, 6, and 0. A `where` clause picks one.
 
 ```
-$ target/debug/rhocalc demos/flt-church-desk/desk-keeps-five.rho
+$ target/debug/rholang demos/flt-church-desk/desk-keeps-five.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-church-desk/desk-keeps-five.rho
 comments: 6 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -277,11 +277,11 @@ that — the CI gate reads a second channel of the same quiescent store and asse
 terms, same channel, same receive pattern, same order in the file.
 
 ```
-$ target/debug/rhocalc demos/flt-church-desk/desk-keeps-six.rho
+$ target/debug/rholang demos/flt-church-desk/desk-keeps-six.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-church-desk/desk-keeps-six.rho
 comments: 9 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -332,11 +332,11 @@ Look at the receive pattern. It is itself a foreign term — and its hole is **n
 position*. Three terms are resting; only the first has the shape.
 
 ```
-$ target/debug/rhocalc demos/flt-church-desk/destructure.rho
+$ target/debug/rholang demos/flt-church-desk/destructure.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-church-desk/destructure.rho
 comments: 12 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")

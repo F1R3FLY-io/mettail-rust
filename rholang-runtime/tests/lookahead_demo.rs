@@ -1,6 +1,6 @@
 //! CI gate for the **Computed Desk** demo (`demos/flt-lookahead/`).
 //!
-//! The demo's vehicle is the `rhocalc` interpreter binary run on a committed `.rho` file, so
+//! The demo's vehicle is the `rholang` interpreter binary run on a committed `.rho` file, so
 //! this file drives that binary with the run sheet's own command line and asserts what the
 //! audience sees. Without it the run sheet is a hand-run narrative that rots silently — the
 //! same reasoning `church_desk_demo.rs` is built on.
@@ -19,7 +19,7 @@
 //!   A run in which the engine was missing would report unserved requests and exit non-zero.
 
 #![cfg(all(
-    feature = "rhocalc-runtime",
+    feature = "rholang-runtime",
     feature = "lambda-runtime",
     feature = "calculator-runtime"
 ))]
@@ -55,7 +55,7 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Run the built `rhocalc` binary on `path`, exactly as the run sheet does.
+/// Run the built `rholang` binary on `path`, exactly as the run sheet does.
 ///
 /// ★ `RUST_MIN_STACK` is deliberately **removed from the environment**, not merely left unset:
 /// the harness must reproduce what a presenter at a terminal gets, and the cell
@@ -65,13 +65,13 @@ fn workspace_root() -> PathBuf {
 ///
 /// `env_remove` rather than nothing at all, because the ambient environment may carry the
 /// variable from an outer `cargo` invocation.
-fn rhocalc(path: &str) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rhocalc"))
+fn rholang(path: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_rholang"))
         .current_dir(workspace_root())
         .env_remove("RUST_MIN_STACK")
         .arg(path)
         .output()
-        .expect("the rhocalc binary must run")
+        .expect("the rholang binary must run")
 }
 
 fn transcript(output: &Output) -> String {
@@ -90,7 +90,7 @@ fn transcript(output: &Output) -> String {
 ///
 /// This is the single definition of *"a command the sheet tells a presenter to type"*, and both
 /// run-sheet gates are built on it. They previously used two different notions — one matched any
-/// line containing `target/debug/rhocalc`, the other matched three hardcoded environment-
+/// line containing `target/debug/rholang`, the other matched three hardcoded environment-
 /// assignment prefixes — so the sheet had two inconsistent ideas of what a command was, and the
 /// prefix list would silently miss a fourth spelling.
 ///
@@ -147,7 +147,7 @@ fn program_without_comments() -> String {
 /// 5, which is `plus 2 3`.
 #[test]
 fn the_demo_publishes_a_computed_church_numeral() {
-    let output = rhocalc(PROGRAM);
+    let output = rholang(PROGRAM);
     let rendered = transcript(&output);
     eprintln!("{rendered}");
     assert!(output.status.success(), "the demo must exit clean:\n{rendered}");
@@ -162,7 +162,7 @@ fn the_demo_publishes_a_computed_church_numeral() {
 /// no truncation.
 #[test]
 fn the_demo_reports_that_the_lookahead_ran() {
-    let rendered = transcript(&rhocalc(PROGRAM));
+    let rendered = transcript(&rholang(PROGRAM));
     assert!(
         rendered.contains("lookahead: 2 request(s) served"),
         "both `[*]` sends must be served — an unserved one would be reported and would fail \
@@ -203,10 +203,10 @@ fn the_demo_reports_that_the_lookahead_ran() {
 /// name rather than only in an assertion message. Looped, this took 300 s and tripped the
 /// slow-timeout; the fix is the modelling, not a larger budget.
 fn assert_beat_is_reproducible(program: &str) {
-    let first = transcript(&rhocalc(program));
+    let first = transcript(&rholang(program));
     for run in 2..=3 {
         assert_eq!(
-            transcript(&rhocalc(program)),
+            transcript(&rholang(program)),
             first,
             "{program}: run {run} differed from run 1 — the exploration must not depend on the \
              scheduler, and the injection randomness must be derived from the program"
@@ -323,8 +323,8 @@ fn the_trace_digest_is_the_same_in_two_processes() {
             .expect("the divergence beat must print a trace digest")
     };
     let program = "demos/flt-lookahead/04-divergence.rho";
-    let first = digest(&rhocalc(program));
-    let second = digest(&rhocalc(program));
+    let first = digest(&rholang(program));
+    let second = digest(&rholang(program));
     assert_eq!(
         first, second,
         "★ the trace digest must be a function of the program, not of the process. It folds the \
@@ -383,13 +383,13 @@ const WIDTHS: &[&str] = &["1", "2", "8", "32"];
 
 /// One run of the divergence beat at a given worker-thread count.
 fn transcript_at_width(threads: &str) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_rhocalc"))
+    let output = Command::new(env!("CARGO_BIN_EXE_rholang"))
         .current_dir(workspace_root())
         .env_remove("RUST_MIN_STACK")
         .env("TOKIO_WORKER_THREADS", threads)
         .arg("demos/flt-lookahead/04-divergence.rho")
         .output()
-        .expect("the rhocalc binary must run");
+        .expect("the rholang binary must run");
     transcript(&output)
 }
 
@@ -495,7 +495,7 @@ fn every_run_sheet_command_line_is_driven_by_this_test() {
     let invocations: Vec<&str> = shell
         .iter()
         .copied()
-        .filter(|line| line.contains("target/debug/rhocalc"))
+        .filter(|line| line.contains("target/debug/rholang"))
         .collect();
     assert!(!invocations.is_empty(), "the run sheet must show how to run the demo");
     for invocation in invocations.iter() {
@@ -550,7 +550,7 @@ fn no_run_sheet_command_line_raises_the_stack() {
 fn the_run_sheet_transcript_is_the_observed_output() {
     let sheet = std::fs::read_to_string(workspace_root().join(DEMO_DIR).join("RUN-SHEET.md"))
         .expect("the run sheet must be readable");
-    let observed = transcript(&rhocalc(PROGRAM));
+    let observed = transcript(&rholang(PROGRAM));
     for line in [
         r#"    [0] ⟦(1 (1 (1 (1 (1 0)))))⟧"#,
         "  lookahead: 2 request(s) served · ^spec-success: 2 · ^spec-failure: 0 · ^spec-truncated: 0",

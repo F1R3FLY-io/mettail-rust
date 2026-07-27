@@ -1,7 +1,7 @@
 //! M-RHO.1 transport-pure COMM oracle.
 //!
 //! These tests exercise the Rho-native path directly on the host `RhoRuntime`.
-//! Each program is a source-text rendering of a transport-pure rhocalc COMM
+//! Each program is a source-text rendering of a transport-pure rholang COMM
 //! member from `docs/design/rho-flip/01-mrho1-execution-contract.md`.
 //! Process-valued payloads are grounded as sentinel sends to the public `OUT`
 //! channel; successful COMM is observed by the resting sentinel data.

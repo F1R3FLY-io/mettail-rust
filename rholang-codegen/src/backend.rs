@@ -292,7 +292,7 @@ fn guard_pred_obligation_kind(pred: &BehavioralPred) -> RhoGuardObligationKind {
 ///
 /// ★ It is a DECLARATION, never an inference. Nothing here reads the rule's syntax form, so no
 /// `"where"` literal and no parameter *name* is load-bearing — recognition by spelling is the
-/// drift this tree forbids, and `rhocalc/formula.rs` states the rule outright:
+/// drift this tree forbids, and `rholang/formula.rs` states the rule outright:
 /// *"Recognition is by CONSTRUCTOR, never by spelling."*
 fn collect_term_guard_obligations(
     rule: &GrammarRule,

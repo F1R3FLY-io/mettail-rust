@@ -38,7 +38,7 @@
 //! default `runtime-report` feature exposes the generic `Language`
 //! report-adapter and Dovetail+Rho installer surface. Generated language
 //! fixtures, the RhoCalc AST-runtime helper, and source-text oracle helpers
-//! remain opt-in through `rhocalc-runtime` and `source-oracle`.
+//! remain opt-in through `rholang-runtime` and `source-oracle`.
 
 #![forbid(unsafe_code)]
 
@@ -54,7 +54,7 @@ pub mod bench_support;
 #[cfg(feature = "bench-naive-baseline")]
 pub mod e6a_support;
 /// Tier-3 held-fold trampoline: Dovetail-backed fold contracts for folds over COMM-received values.
-#[cfg(feature = "rhocalc-runtime")]
+#[cfg(feature = "rholang-runtime")]
 pub mod fold_contract;
 /// COMPILE-TIME GUARD DISCHARGE (D0): deciding a binder-closed `where`-guard at lowering and
 /// recording the decision by OMITTING `Receive.condition` — which f1r3node's `check_commit`
@@ -69,7 +69,7 @@ pub mod guard_discharge;
 /// vocabulary the surface encoder (`mettail_languages::rhocalc::guard_substrate`) does, so both
 /// legs of a guard's life ask the same procedures.
 pub mod guard_par_substrate;
-/// The `[*]` / `[n]` lookahead **ABI** — the seam between the lowered surface (`rhocalc_ast`'s
+/// The `[*]` / `[n]` lookahead **ABI** — the seam between the lowered surface (`rholang_ast`'s
 /// `PLookahead*` arms) and the branching engine ([`speculation`]). Owns the reserved request /
 /// result channel names, the two request-seed builders, and the fail-closed unserved-request
 /// readback that makes a missing engine loud instead of silent.
@@ -90,13 +90,13 @@ pub mod native_contract;
 /// The module header carries the full argument, and `render_par_text`'s contract — total,
 /// deterministic, bounded — is what replaced the prost `Debug` dumps that used to go there.
 pub mod observation;
-#[cfg(feature = "rhocalc-runtime")]
-pub mod rhocalc_ast;
+#[cfg(feature = "rholang-runtime")]
+pub mod rholang_ast;
 /// M-1b: the FORMULA compiler — a RhoCalc `Proc` read as a Rholang PATTERN
 /// (§18.1). The right operand of `matches` goes through here; the left operand
-/// and everything else goes through [`rhocalc_ast`].
-#[cfg(feature = "rhocalc-runtime")]
-pub mod rhocalc_formula;
+/// and everything else goes through [`rholang_ast`].
+#[cfg(feature = "rholang-runtime")]
+pub mod rholang_formula;
 pub mod run;
 /// **Stage 1 of the `[*]` speculation space fork** — `SpeculativeSandbox`: a fresh in-memory
 /// tuplespace whose reducer STAGES every produce/consume so nothing fires until a rendezvous is
@@ -151,7 +151,7 @@ pub use guard_discharge::{
     GuardDischarge, GuardDischargeReport, GuardRouting, GuardStaticallyFalse, LoweringOptions,
     GUARD_DISCHARGE_TARGET,
 };
-pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOCALC_BAG_ABI_TAG};
+pub use mettail_rholang_codegen::{REFLECTED_TERM_ABI_PREFIX, RHOLANG_BAG_ABI_TAG};
 pub use native_contract::{
     native_definition, native_definitions_for, par_to_ground_term, NativeContractError,
 };
@@ -160,17 +160,17 @@ pub use observation::{
     par_as_runtime_observation_value, render_observation_text, render_observation_text_with,
     render_par_text, RENDER_BUDGET_CHARS,
 };
-#[cfg(feature = "rhocalc-runtime")]
-pub use rhocalc_ast::{
-    clear_guard_discharge_report, dovetail_rho_backed_rhocalc, lower_rhocalc_name,
-    lower_rhocalc_proc, lower_rhocalc_proc_with_options, lower_rhocalc_proc_with_resolver,
-    lower_rhocalc_proc_with_resolver_and_options, lower_rhocalc_term,
-    lower_rhocalc_term_with_folds, rho_runtime_backed_rhocalc_ints,
-    rho_runtime_backed_rhocalc_strings, rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def,
-    rhocalc_observe_ints_invocation, rhocalc_observe_strings_invocation,
-    rhocalc_observe_values_invocation, rhocalc_planned_rho_backend, take_guard_discharge_report,
-    RhocalcAstLowerError, RhocalcAstRuntimeLanguage, RhocalcInvocationMapper,
-    RhocalcRuntimeBackedLanguage, RhocalcRuntimeBackedLanguageResult,
+#[cfg(feature = "rholang-runtime")]
+pub use rholang_ast::{
+    clear_guard_discharge_report, dovetail_rho_backed_rholang, lower_rholang_name,
+    lower_rholang_proc, lower_rholang_proc_with_options, lower_rholang_proc_with_resolver,
+    lower_rholang_proc_with_resolver_and_options, lower_rholang_term,
+    lower_rholang_term_with_folds, rho_runtime_backed_rholang_ints,
+    rho_runtime_backed_rholang_strings, rho_runtime_backed_rholang_values, rholang_ast_runtime_def,
+    rholang_observe_ints_invocation, rholang_observe_strings_invocation,
+    rholang_observe_values_invocation, rholang_planned_rho_backend, take_guard_discharge_report,
+    RholangAstLowerError, RholangAstRuntimeLanguage, RholangInvocationMapper,
+    RholangRuntimeBackedLanguage, RholangRuntimeBackedLanguageResult,
 };
 #[cfg(feature = "runtime-report")]
 pub use run::{

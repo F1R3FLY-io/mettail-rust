@@ -3,9 +3,9 @@
 //  destructures it with typed holes, and reconstructs it, all on the f1r3node Rholang reducer.
 //
 //  Run me with the RhoCalc interpreter:
-//    rhocalc demos/flt-foreign-exchange/foreign-exchange.rho
+//    rholang demos/flt-foreign-exchange/foreign-exchange.rho
 //
-//  FOREIGN LANGUAGE TERMS ARE A RHOCALC GRAMMAR FEATURE
+//  FOREIGN LANGUAGE TERMS ARE A RHOLANG GRAMMAR FEATURE
 //  ────────────────────────────────────────────────────
 //  RhoCalc (MeTTaIL's Rholang-1.4 surface) can carry a term of ANOTHER language verbatim. The
 //  opener `lambda`…`` embeds a guest term written in the untyped λ-calculus; the text between the

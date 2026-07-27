@@ -31,7 +31,7 @@
 //! | [`an_unregistered_guest_is_refused_loudly`] | ★ a foreign subject with no evaluator is a typed refusal, NOT an inert exploration that hands the subject back as a "normal form" |
 //! | [`omega_reports_the_guest_evaluator_giving_up`] | a branch that reached quiescence WITHOUT computing is a trace-keyed FAILURE, not silence |
 //! | [`installing_the_server_changes_nothing_a_lookahead_free_program_observes`] | ★ the server is INERT for a program that contains no `[*]` — two installed continuations on channels nothing sends to |
-#![cfg(all(feature = "rhocalc-runtime", feature = "lambda-runtime"))]
+#![cfg(all(feature = "rholang-runtime", feature = "lambda-runtime"))]
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -51,7 +51,7 @@ use mettail_rholang_codegen::drive_fuel_channel;
 use mettail_rholang_runtime::speculation::search::ErrorCode;
 use mettail_rholang_runtime::speculation::server::{LookaheadEngine, SpeculationGuest};
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc_with_resolver, par_as_runtime_observation_value,
+    lower_rholang_proc_with_resolver, par_as_runtime_observation_value,
     run_normalized_par_with_lookahead_engine, PlannedRhoBackend,
 };
 use mettail_runtime::{clear_var_cache, Language, RuntimeObservationValue};
@@ -97,7 +97,7 @@ fn lambda_backend() -> (PlannedRhoBackend, String) {
     (PlannedRhoBackend::from_plan(plan), fingerprint)
 }
 
-/// The engine the `rhocalc` interpreter installs: the Lambda guest, driven by its own in-Rho
+/// The engine the `rholang` interpreter installs: the Lambda guest, driven by its own in-Rho
 /// quiescence driver inside every speculative sandbox.
 fn lambda_engine() -> LookaheadEngine {
     let (backend, fingerprint) = lambda_backend();
@@ -116,7 +116,7 @@ fn lower(source: &str) -> Par {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source)
         .unwrap_or_else(|err| panic!("X7 source must parse: {source}\n{err}"));
-    lower_rhocalc_proc_with_resolver(&proc, guest_resolver())
+    lower_rholang_proc_with_resolver(&proc, guest_resolver())
         .unwrap_or_else(|err| panic!("X7 source must lower: {source}\n{err:?}"))
 }
 
@@ -448,7 +448,7 @@ async fn an_unregistered_guest_is_refused_loudly() {
 ///
 /// The server is two *installed* continuations on two reserved quoted channels. A program
 /// that sends on neither cannot interact with them — but "cannot" is a claim about f1r3node's
-/// installed-continuation semantics, and the `rhocalc` interpreter now routes **every**
+/// installed-continuation semantics, and the `rholang` interpreter now routes **every**
 /// process through the server-bearing runtime. So the claim is measured rather than reasoned:
 /// the corpus below is the demo shapes that present tonight, run both ways, asserted equal
 /// datum-for-datum.

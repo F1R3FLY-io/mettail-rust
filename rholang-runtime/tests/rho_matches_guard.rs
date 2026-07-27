@@ -5,7 +5,7 @@
 //!
 //! `t matches φ` compiles to ONE
 //! `ExprInstance::EMatchesBody(EMatches{ target: ⟦t⟧, pattern: ⟦φ⟧ })`, where
-//! `⟦φ⟧` is produced by `rholang-runtime/src/rhocalc_formula.rs` (§18.1's table)
+//! `⟦φ⟧` is produced by `rholang-runtime/src/rholang_formula.rs` (§18.1's table)
 //! and the match itself is decided by the reducer's OWN spatial matcher through
 //! the `SpatialMatch` seam landed by M-1a (f1r3node `99b7b1c4`). MeTTaIL
 //! contributes a pattern COMPILER and no matcher, so what these tests establish
@@ -41,15 +41,15 @@
 //!   goldens for `matches` / `PPar`.
 //! * `languages/tests/rhocalc_tests.rs::matches_*` — the host evaluator.
 
-#![cfg(feature = "rhocalc-runtime")]
+#![cfg(feature = "rholang-runtime")]
 
 use std::collections::HashMap;
 
 use mettail_languages::rhocalc::formula::{classify, FormulaShape};
 use mettail_languages::rhocalc::Proc;
-use mettail_rholang_runtime::rhocalc_formula::{lower_formula, lower_formula_in_env};
+use mettail_rholang_runtime::rholang_formula::{lower_formula, lower_formula_in_env};
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc, run_normalized_par_for_oracle_and_read_par_channels, RhocalcAstLowerError,
+    lower_rholang_proc, run_normalized_par_for_oracle_and_read_par_channels, RholangAstLowerError,
 };
 use mettail_runtime::clear_var_cache;
 use models::rhoapi::connective::ConnectiveInstance;
@@ -60,13 +60,13 @@ use models::rhoapi::Par;
 fn parse(source: &str) -> Proc {
     clear_var_cache();
     Proc::parse_via_wpda(source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"))
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err:?}"))
 }
 
 fn parse_lower(source: &str) -> Par {
     let proc = parse(source);
-    lower_rhocalc_proc(&proc)
-        .unwrap_or_else(|err| panic!("rhocalc lowering failed for {source:?}: {err:?}"))
+    lower_rholang_proc(&proc)
+        .unwrap_or_else(|err| panic!("rholang lowering failed for {source:?}: {err:?}"))
 }
 
 /// The verdict of one guarded receive, read from a single quiescent store.
@@ -467,7 +467,7 @@ fn an_unlowerable_sub_term_surfaces_as_a_typed_error_not_a_placeholder() {
     // a term operand of a formula exercises exactly this path.
     let formula = parse(r#"@"a"!(PPar(true, true))"#);
     match lower_formula(&formula) {
-        Err(RhocalcAstLowerError::UnsupportedProc(message)) => assert!(
+        Err(RholangAstLowerError::UnsupportedProc(message)) => assert!(
             message.contains("PPar"),
             "the typed error must name the offending construct, got {message:?}"
         ),
@@ -482,8 +482,8 @@ fn ppar_in_term_position_fails_closed() {
     // `PPar(φ,ψ)` denotes a SPLIT assertion, not a process. Lowering it as an
     // ordinary parallel composition would look like it worked while meaning
     // something else, so term position is a typed error.
-    match lower_rhocalc_proc(&parse("PPar(true, true)")) {
-        Err(RhocalcAstLowerError::UnsupportedProc(message)) => {
+    match lower_rholang_proc(&parse("PPar(true, true)")) {
+        Err(RholangAstLowerError::UnsupportedProc(message)) => {
             assert!(message.contains("PPar"), "the error must name `PPar`, got {message:?}");
             assert!(
                 message.contains("matches"),
@@ -522,7 +522,7 @@ fn the_environment_free_entry_agrees_with_the_empty_environment() {
     let formula = parse(r#"(PPar(@"a"!(1), true) or not false)"#);
     let direct = lower_formula(&formula).expect("compiles");
     let threaded =
-        lower_formula_in_env(&formula, &mettail_rholang_runtime::rhocalc_ast::BoundEnv::new())
+        lower_formula_in_env(&formula, &mettail_rholang_runtime::rholang_ast::BoundEnv::new())
             .expect("compiles");
     assert_eq!(direct, threaded);
 }

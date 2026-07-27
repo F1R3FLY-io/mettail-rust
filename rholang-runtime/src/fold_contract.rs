@@ -44,7 +44,7 @@ use rholang::rust::interpreter::contract_call::ContractCall;
 use rholang::rust::interpreter::errors::InterpreterError;
 use rholang::rust::interpreter::system_processes::Definition;
 
-use crate::rhocalc_ast::{lower_rhocalc_proc, RhocalcAstLowerError};
+use crate::rholang_ast::{lower_rholang_proc, RholangAstLowerError};
 
 /// Which width/precision native cast a fold site runs. Captured *statically* at lift time (the
 /// rule + the ground width literal), so the contract handler is a pure function of the runtime
@@ -86,7 +86,7 @@ impl FoldKind {
 /// `GInt`/`GBool`/`GString` plus `GDouble`/`GBigInt`/`GBigRat`/`GFixedPoint` (the send-time
 /// evaluation of a `float`/`fixed`/`bigint`/`bigrat` operand delivers those shapes). Each decode
 /// arm is the exact inverse of the corresponding literal lowering arm in
-/// `rhocalc_ast::lower_proc` (`new_gdouble_expr`/`new_gbigint_expr`/`new_gbigrat_expr`/
+/// `rholang_ast::lower_proc` (`new_gdouble_expr`/`new_gbigint_expr`/`new_gbigrat_expr`/
 /// `new_gfixedpoint_expr` over signed big-endian two's-complement bytes).
 pub fn par_ground_to_proc(par: &Par) -> Option<Proc> {
     // A value leaf is a Par carrying exactly one ground `Expr` (no sends/receives/news/…).
@@ -137,7 +137,7 @@ pub fn par_ground_to_proc(par: &Par) -> Option<Proc> {
 ///
 /// This calls the *identical* native-fold body the rule `![{…}]` runs (`proc_int_bin` etc.), so it
 /// is the fold oracle, not an approximation: `int(5, 8) → 5`. The result `Proc` is then lowered back
-/// to a closed value-leaf `Par` via the existing [`lower_rhocalc_proc`]. The unary precision casts
+/// to a closed value-leaf `Par` via the existing [`lower_rholang_proc`]. The unary precision casts
 /// ([`FoldKind::BigIntCast`]/[`FoldKind::BigRatCast`]) ignore `width` (spec-recorded as 0).
 pub fn fold_eval(operand: &Par, kind: FoldKind, width: i64) -> Result<Par, FoldEvalError> {
     let operand_proc = par_ground_to_proc(operand).ok_or(FoldEvalError::OperandNotGround)?;
@@ -149,7 +149,7 @@ pub fn fold_eval(operand: &Par, kind: FoldKind, width: i64) -> Result<Par, FoldE
         FoldKind::BigIntCast => mettail_runtime::proc_bigint_unary::<Proc>(&operand_proc),
         FoldKind::BigRatCast => mettail_runtime::proc_bigrat_unary::<Proc>(&operand_proc),
     };
-    lower_rhocalc_proc(&result_proc).map_err(FoldEvalError::Lower)
+    lower_rholang_proc(&result_proc).map_err(FoldEvalError::Lower)
 }
 
 /// The static spec of one fold site (held or ground): the fold kind + ground width + a per-term
@@ -279,7 +279,7 @@ pub enum FoldEvalError {
     /// `GInt`/`GBool`/`GString`/`GDouble`/`GBigInt`/`GBigRat`/`GFixedPoint` leaf).
     OperandNotGround,
     /// The fold's result `Proc` failed to lower back to a `Par`.
-    Lower(RhocalcAstLowerError),
+    Lower(RholangAstLowerError),
 }
 
 impl std::fmt::Display for FoldEvalError {

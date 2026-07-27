@@ -1,4 +1,4 @@
-//! CI gate for the `rhocalc` interpreter binary (`src/bin/rhocalc.rs`).
+//! CI gate for the `rholang` interpreter binary (`src/bin/rholang.rs`).
 //!
 //! Runs the built binary on the committed demo `.rho` files and asserts the RhoCalc programs —
 //! which exercise the grammar's Foreign Language Term feature — actually evaluate on the f1r3node
@@ -12,7 +12,7 @@
 //!  * `foreign-exchange.rho` — a PROCESS whose send/receive rendezvous fires as one COMM; the two
 //!    typed `${x}` holes capture ⟦I⟧, ⟦K⟧ and the re-quote reconstructs App(I, K), resting on
 //!    `@"OUT"` as `(λ.0 λ.λ.1)`.
-#![cfg(all(feature = "rhocalc-runtime", feature = "lambda-runtime"))]
+#![cfg(all(feature = "rholang-runtime", feature = "lambda-runtime"))]
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -24,19 +24,19 @@ fn demo_path(file_name: &str) -> PathBuf {
         .join(file_name)
 }
 
-/// Run the built `rhocalc` binary on a demo file, capturing its output.
+/// Run the built `rholang` binary on a demo file, capturing its output.
 fn run_interpreter(demo_file: &str) -> Output {
     run_interpreter_with(demo_file, &[])
 }
 
-/// Run the built `rhocalc` binary on a demo file with extra flags.
+/// Run the built `rholang` binary on a demo file with extra flags.
 fn run_interpreter_with(demo_file: &str, flags: &[&str]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rhocalc"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rholang"));
     command.args(flags).arg(demo_path(demo_file));
     command
         .env("RUST_MIN_STACK", "8388608")
         .output()
-        .expect("the rhocalc binary must run")
+        .expect("the rholang binary must run")
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn k_combinator_demo_beta_reduces_to_identity() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "rhocalc exited non-zero on k-combinator.rho\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        "rholang exited non-zero on k-combinator.rho\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     // (K I) K β-reduces on the reducer to the identity I = λ.0 (K discards its second argument).
     assert!(
@@ -72,7 +72,7 @@ fn foreign_exchange_demo_binds_typed_holes_and_reconstructs() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "rhocalc exited non-zero on foreign-exchange.rho\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        "rholang exited non-zero on foreign-exchange.rho\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     // The COMM fires; the two typed holes ${f}, ${k} capture ⟦I⟧, ⟦K⟧ and the re-quote
     // reconstructs App(I, K), which renders as (λ.0 λ.λ.1) on @"OUT".
@@ -98,7 +98,7 @@ fn demos_retain_their_comments_on_the_comments_channel() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             output.status.success(),
-            "rhocalc exited non-zero on {demo}\nstdout:\n{stdout}\nstderr:\n{}",
+            "rholang exited non-zero on {demo}\nstdout:\n{stdout}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(
@@ -117,7 +117,7 @@ fn emit_comments_dumps_the_retained_channel_with_positions() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
-        "rhocalc --emit-comments exited non-zero\nstdout:\n{stdout}"
+        "rholang --emit-comments exited non-zero\nstdout:\n{stdout}"
     );
     // The demo's header opens on line 1, column 1 with a box-drawing rule — proof that the
     // position is the TRUE source position and that non-ASCII comment text survives intact.

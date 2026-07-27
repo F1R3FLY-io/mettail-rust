@@ -1,7 +1,7 @@
-//! `rhocalc` — a RhoCalc (Rholang 1.4) interpreter over the f1r3node reducer.
+//! `rholang` — a RhoCalc (Rholang 1.4) interpreter over the f1r3node reducer.
 //!
 //! It takes a RhoCalc source-file PATH, parses it with the GENERATED RhoCalc parser
-//! (`Proc::parse`), lowers it to a normalized `rhoapi::Par` (`lower_rhocalc_proc_with_resolver`),
+//! (`Proc::parse`), lowers it to a normalized `rhoapi::Par` (`lower_rholang_proc_with_resolver`),
 //! and EVALUATES it on the real f1r3node Rholang reducer — no host/Dovetail simulation.
 //!
 //! ## Evaluation: a term reduces to its normal form; a process runs to rest
@@ -35,7 +35,7 @@
 //! pre-parse strip, while the comment TEXT and its source `Range` survive in
 //! `LexResult.streams["COMMENTS"]`.
 //!
-//! The interpreter reads them back with [`comments_on_channel`] (`rhocalc::lex_with_streams` →
+//! The interpreter reads them back with [`comments_on_channel`] (`rholang::lex_with_streams` →
 //! [`mettail_prattail::LexResult::tokens_on_channel`]) and reports the count, which is the proof
 //! that retention is live end-to-end. `--emit-comments` dumps them with their positions.
 //!
@@ -66,19 +66,19 @@ use mettail_rholang_runtime::lookahead::{
 use mettail_rholang_runtime::speculation::search::ErrorCode;
 use mettail_rholang_runtime::speculation::server::{LookaheadEngine, SpeculationGuest};
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc_with_resolver, par_as_runtime_observation_value,
+    lower_rholang_proc_with_resolver, par_as_runtime_observation_value,
     render_observation_text_with, run_normalized_par_with_lookahead_engine,
-    DriveObservationChannels, PlannedRhoBackend, RhocalcAstLowerError,
+    DriveObservationChannels, PlannedRhoBackend, RholangAstLowerError,
 };
 use mettail_runtime::{clear_var_cache, Language, RuntimeObservationValue};
 use models::rhoapi::Par;
 
 const USAGE: &str = "\
-rhocalc — RhoCalc (Rholang 1.4) interpreter over the f1r3node reducer
+rholang — RhoCalc (Rholang 1.4) interpreter over the f1r3node reducer
 
 USAGE:
-    rhocalc [--emit-comments] <SOURCE.rho>
-    rhocalc --help
+    rholang [--emit-comments] <SOURCE.rho>
+    rholang --help
 
 OPTIONS:
     --emit-comments   dump every comment retained on the COMMENTS channel with its source position.
@@ -191,7 +191,7 @@ enum InterpError {
     Usage,
     Io { path: PathBuf, source: std::io::Error },
     Parse(String),
-    Lower(RhocalcAstLowerError),
+    Lower(RholangAstLowerError),
     Reduce(String),
     DriverError(String),
     Stuck(String),
@@ -235,23 +235,23 @@ impl InterpError {
     }
 }
 
-/// Map each `RhocalcAstLowerError` variant to a specific, actionable message. The FLT-resolver miss
+/// Map each `RholangAstLowerError` variant to a specific, actionable message. The FLT-resolver miss
 /// (`UnresolvedFltTag`) gets the `unknown guest language ⌜tag⌝` message.
-fn report_lower(err: &RhocalcAstLowerError) -> ExitCode {
+fn report_lower(err: &RholangAstLowerError) -> ExitCode {
     match err {
-        RhocalcAstLowerError::UnresolvedFltTag(tag) => {
+        RholangAstLowerError::UnresolvedFltTag(tag) => {
             eprintln!("error: unknown guest language ⌜{tag}⌝");
             eprintln!("  the RhoCalc program embeds a Foreign Language Term with opener `{tag}`,");
             eprintln!("  but no guest is registered for it. an opener is the LOWER-CASED name of");
             eprintln!("  the guest grammar; registered: {}", registered_openers().join(", "));
             ExitCode::from(65)
         },
-        RhocalcAstLowerError::FltGuestHasNoFingerprint(tag) => {
+        RholangAstLowerError::FltGuestHasNoFingerprint(tag) => {
             eprintln!("error: FLT guest ⌜{tag}⌝ exposes no definition fingerprint");
             eprintln!("  its reflected tags cannot be minted — the guest has no lowered identity.");
             ExitCode::from(70)
         },
-        RhocalcAstLowerError::FltReflect(message) => {
+        RholangAstLowerError::FltReflect(message) => {
             eprintln!("error: the FLT guest could not reflect the embedded term");
             eprintln!(
                 "  (a category mismatch, a malformed hole envelope, or an unfilled construction hole)"
@@ -809,7 +809,7 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
     let source = std::fs::read_to_string(path)
         .map_err(|source| InterpError::Io { path: path.to_path_buf(), source })?;
 
-    println!("rhocalc — RhoCalc (Rholang 1.4) interpreter");
+    println!("rholang — RhoCalc (Rholang 1.4) interpreter");
     println!("source: {}", path.display());
 
     // Task #18: comments are LEXED, not stripped. They are routed to the `COMMENTS` channel, kept
@@ -854,7 +854,7 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
     //
     // Every other production caller of the RhoCalc parser already uses `parse_via_wpda` (it is
     // "the disambiguated best-parse entry the production AST-first lowering path uses" —
-    // `rho_rhocalc_conformance.rs`); this binary was the sole outlier. The display defect itself
+    // `rho_rholang_conformance.rs`); this binary was the sole outlier. The display defect itself
     // is upstream in the display codegen and is reported separately; using the production entry
     // removes it from this path entirely rather than compensating for it downstream.
     let proc = Proc::parse_via_wpda(&source).map_err(|err| InterpError::Parse(err.to_string()))?;
@@ -877,7 +877,7 @@ async fn interpret(path: &Path, emit_comments: bool) -> Result<(), InterpError> 
     }
 
     let program =
-        lower_rhocalc_proc_with_resolver(&proc, guest_resolver()).map_err(InterpError::Lower)?;
+        lower_rholang_proc_with_resolver(&proc, guest_resolver()).map_err(InterpError::Lower)?;
 
     // Dispatch on the lowered program's shape: a bare term (no send/receive/new) evaluates to its
     // normal form; anything with process structure runs to rest.

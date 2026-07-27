@@ -12,21 +12,21 @@ description = "M-RHO bridge: binds the generated Rholang VM to f1r3node-rust's R
 # Threading/scheduling are OWNED BY f1r3node (eval_par/RSpace, tokio). Depends
 # ONE-WAY on f1r3node-rust (proven one-way in
 # formal/rocq/rho_bridge/theories/BridgeInertness.v). The runtime is always
-# integrated; only the heavy generated rhocalc language is feature-gated below.
+# integrated; only the heavy generated rholang language is feature-gated below.
 
 [lib]
 name = "mettail_rholang_runtime"
 
 [features]
 # Rholang integration is a FIRST-CLASS, default-on citizen (MeTTaIL == Rholang 1.4):
-# the default surface compiles the AST-first rhocalc lowering + the source-oracle
-# helpers so the end-to-end Rholang-VM integration tests (rho_rhocalc_ast,
+# the default surface compiles the AST-first rholang lowering + the source-oracle
+# helpers so the end-to-end Rholang-VM integration tests (rho_rholang_ast,
 # rho_comm_oracle, rho_guard_oracle, rho_structured_ast_send) build and run on every
-# default `cargo nextest --workspace`. `rhocalc-runtime` transitively enables
+# default `cargo nextest --workspace`. `rholang-runtime` transitively enables
 # `runtime-report`. The opt-in feature names below are retained only so a
 # `--no-default-features` build can still drop the heavy generated-language surface.
 default = [
-    "rhocalc-runtime",
+    "rholang-runtime",
     "source-oracle",
     "swap-demo-runtime",
     "ac-demo-runtime",
@@ -53,16 +53,16 @@ runtime-report = []
 # report while a deferred exec builds ≥ 1. Production builds never enable this; the crate's own
 # unit tests see the counter via `cfg(test)` without it.
 dstage-instrumentation = ["runtime-report"]
-# Pulls in the generated rhocalc language for the production-shaped AST-first
-# rhocalc-to-Rho runtime wrapper. The generated values are `rhoapi::Par`, never
+# Pulls in the generated rholang language for the production-shaped AST-first
+# rholang-to-Rho runtime wrapper. The generated values are `rhoapi::Par`, never
 # Rholang source text that has to be reparsed.
-rhocalc-runtime = [
+rholang-runtime = [
     "runtime-report",
     "dep:mettail-ast",
     "dep:mettail-languages",
     "dep:syn",
     "mettail-languages/rhocalc",
-    # The two-stage Dovetail+Rho RhoCalc wrapper (`dovetail_rho_backed_rhocalc`) needs the generated
+    # The two-stage Dovetail+Rho RhoCalc wrapper (`dovetail_rho_backed_rholang`) needs the generated
     # `RhoCalcLanguage::dovetail_report_for` / `dovetail_normal_term` (E2), which are emitted only
     # under the language crate's `dovetail-codegen` feature.
     "mettail-languages/dovetail-codegen",
@@ -174,7 +174,7 @@ lambda-runtime = [
     "mettail-languages/dovetail-codegen",
     "mettail-languages/rho-codegen",
 ]
-# Pulls in the PRODUCTION `Calculator` language so the `rhocalc` interpreter can register it as the
+# Pulls in the PRODUCTION `Calculator` language so the `rholang` interpreter can register it as the
 # `calc` Foreign Language Term guest. A bare `calc`…`` term is evaluated on the reducer through the
 # E3 FOLD DATAFLOW (`CalculatorLanguage::rho_fold_dataflow_invocation_to` — `rho-codegen`), which
 # wires the parsed expression tree through one installed Rholang contract per operator node, so
@@ -311,8 +311,8 @@ dovetail-codegen = [
     "dep:dovetail",
 ]
 # Backward-compatible test/oracle feature name. New production code should use
-# `rhocalc-runtime` directly.
-oracle-rhocalc = ["rhocalc-runtime"]
+# `rholang-runtime` directly.
+oracle-rholang = ["rholang-runtime"]
 # Enables hand-authored Rholang source evaluation helpers used only by
 # source-oracle regression tests. Generated backend execution remains AST-first:
 # the production boundary is `ValidatedRhoProgram` / `PlannedRhoBackend`, not
@@ -425,7 +425,7 @@ async-trait = "0.1"
 # canonical MeTTaIL numerics so the trusted native fold runs on the machine-delivered operand.
 # Same version the `runtime` crate's canonical numeric types are built on.
 num-bigint = "0.4"
-# M-2 (the explicit-stack lowering driver, `rhocalc_ast::drive`). The driver MATERIALISES a
+# M-2 (the explicit-stack lowering driver, `rholang_ast::drive`). The driver MATERIALISES a
 # handful of nodes mid-traversal — a desugared send head, a held fold's operand and its
 # fold-lifted body, an unbound `new` body, a receive's pattern process — and must hand out
 # `&'drive Proc` for them while still accepting further allocations. That is exactly a typed
@@ -487,19 +487,19 @@ dovetail = { package = "dovetail", path = "../dovetail" }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[test]]
-name = "rho_rhocalc_ast"
-path = "tests/rho_rhocalc_ast.rs"
-required-features = ["rhocalc-runtime"]
+name = "rho_rholang_ast"
+path = "tests/rho_rholang_ast.rs"
+required-features = ["rholang-runtime"]
 
 # The RhoCalc ⟷ Rholang DIFFERENTIAL CONFORMANCE suite (option C, Stage 0): asserts
 # `fold(e) ≡ reduce(lower(e))` across the ground-data algebra, and carries the divergence
 # ledger (A–H) as witness/target test pairs. Needs both evaluators — the generated RhoCalc
 # language with its Dovetail fold bodies AND the real f1r3node reducer — which is exactly the
-# `rhocalc-runtime` surface (it forwards `mettail-languages/{rhocalc,dovetail-codegen}`).
+# `rholang-runtime` surface (it forwards `mettail-languages/{rholang,dovetail-codegen}`).
 [[test]]
-name = "rho_rhocalc_conformance"
-path = "tests/rho_rhocalc_conformance.rs"
-required-features = ["rhocalc-runtime"]
+name = "rho_rholang_conformance"
+path = "tests/rho_rholang_conformance.rs"
+required-features = ["rholang-runtime"]
 
 [[test]]
 name = "rho_structured_ast_send"
@@ -768,40 +768,40 @@ path = "tests/rho_guard_oracle.rs"
 required-features = ["source-oracle"]
 
 # M-0: the `implies` connective end-to-end on the real reducer. Needs the GENERATED
-# RhoCalc parser + `lower_rhocalc_proc` (`rhocalc-runtime`), not the source oracle:
+# RhoCalc parser + `lower_rholang_proc` (`rholang-runtime`), not the source oracle:
 # `implies` is RhoCalc surface syntax that f1r3node's own Rholang parser does not know.
 [[test]]
 name = "rho_implies_guard"
 path = "tests/rho_implies_guard.rs"
-required-features = ["rhocalc-runtime"]
+required-features = ["rholang-runtime"]
 
 # M-1b: the spatial surface (`matches`, `PPar`) + the formula compiler, on the real
 # reducer. Same feature gate as `rho_implies_guard`: `matches`/`PPar` are RhoCalc
 # surface syntax that f1r3node's own Rholang parser does not know, so the test needs
-# the GENERATED parser + `lower_rhocalc_proc` (`rhocalc-runtime`).
+# the GENERATED parser + `lower_rholang_proc` (`rholang-runtime`).
 [[test]]
 name = "rho_matches_guard"
 path = "tests/rho_matches_guard.rs"
-required-features = ["rhocalc-runtime"]
+required-features = ["rholang-runtime"]
 
 # M-1b: the host-vs-machine agreement lock for `matches` — the standing obligation
 # on the two-evaluator design.
 [[test]]
 name = "rho_matches_differential"
 path = "tests/rho_matches_differential.rs"
-required-features = ["rhocalc-runtime"]
+required-features = ["rholang-runtime"]
 
-# The `rhocalc` interpreter binary. It parses RhoCalc (Rholang 1.4) source with the GENERATED
-# parser, lowers it (`lower_rhocalc_proc_with_resolver`), and evaluates on the f1r3node reducer.
+# The `rholang` interpreter binary. It parses RhoCalc (Rholang 1.4) source with the GENERATED
+# parser, lowers it (`lower_rholang_proc_with_resolver`), and evaluates on the f1r3node reducer.
 # The RhoCalc grammar supports Foreign Language Terms, so the interpreter bundles the `lambda` guest
 # (the production LambdaLanguage) to lower programs that embed λ-terms — hence `lambda-runtime`;
-# `rhocalc-runtime` provides the generated `Proc` parser.
+# `rholang-runtime` provides the generated `Proc` parser.
 [[bin]]
-name = "rhocalc"
-path = "src/bin/rhocalc.rs"
-required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
+name = "rholang"
+path = "src/bin/rholang.rs"
+required-features = ["rholang-runtime", "lambda-runtime", "calculator-runtime"]
 
-# CI gate for the CHURCH DESK demo (`demos/flt-church-desk/`): drives the built `rhocalc` binary
+# CI gate for the CHURCH DESK demo (`demos/flt-church-desk/`): drives the built `rholang` binary
 # with the run sheet's own command lines and asserts, per beat, what the audience sees — the
 # Calculator guest's `14`, the Church numeral 12 and its 21-firing ^fired ledger, Omega's fuel
 # report, the two `where` desks (one changed token, a different answer, the refused numerals left
@@ -811,9 +811,9 @@ required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
 [[test]]
 name = "church_desk_demo"
 path = "tests/church_desk_demo.rs"
-required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
+required-features = ["rholang-runtime", "lambda-runtime", "calculator-runtime"]
 
-# CI gate for the COMPUTED DESK demo (`demos/flt-lookahead/`): drives the built `rhocalc` binary
+# CI gate for the COMPUTED DESK demo (`demos/flt-lookahead/`): drives the built `rholang` binary
 # on the committed `[*]` program and asserts the audience's observable — the BODY of a Church
 # numeral the machine β-reduced inside a speculative tuplespace, and the `2 request(s) served`
 # line that says the lookahead actually ran. Two of its cells assert the demo's CLAIM rather than
@@ -824,32 +824,32 @@ required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
 [[test]]
 name = "lookahead_demo"
 path = "tests/lookahead_demo.rs"
-required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
+required-features = ["rholang-runtime", "lambda-runtime", "calculator-runtime"]
 
-# CI gate for the `rhocalc` binary: runs it on the committed demo `.rho` file and asserts the
+# CI gate for the `rholang` binary: runs it on the committed demo `.rho` file and asserts the
 # RhoCalc program (which exercises the grammar's FLT feature) reduces on the reducer — the COMM
 # fires, the typed `${x}` holes bind, and the re-quote reconstructs App(I, K) = (λ.0 λ.λ.1) on OUT.
 [[test]]
-name = "rhocalc_bin"
-path = "tests/rhocalc_bin.rs"
-required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
+name = "rholang_bin"
+path = "tests/rholang_bin.rs"
+required-features = ["rholang-runtime", "lambda-runtime", "calculator-runtime"]
 
 # `where`-guard expression lowering + the monadic receive arity, through the production parse and
 # lowering path. Pins BOTH directions of the guard matrix (a true guard fires, a false guard does
 # not and leaves its datum resting), the send-position diagnostics that share the root, and the
 # structural invariant that no `Receive.condition` operand carries process structure.
 [[test]]
-name = "rhocalc_guard_lowering"
-path = "tests/rhocalc_guard_lowering.rs"
-required-features = ["rhocalc-runtime"]
+name = "rholang_guard_lowering"
+path = "tests/rholang_guard_lowering.rs"
+required-features = ["rholang-runtime"]
 
-# The same matrix through the `rhocalc` BINARY. A library test cannot catch a regression of the
+# The same matrix through the `rholang` BINARY. A library test cannot catch a regression of the
 # binary's PARSE ENTRY (`parse_via_wpda`, never `Proc::parse` — whose display round-trip is not
 # term-preserving for a projection operand), because it never goes through it.
 [[test]]
-name = "rhocalc_bin_guards"
-path = "tests/rhocalc_bin_guards.rs"
-required-features = ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"]
+name = "rholang_bin_guards"
+path = "tests/rholang_bin_guards.rs"
+required-features = ["rholang-runtime", "lambda-runtime", "calculator-runtime"]
 
 # Diagnostic probe for the Stage 2 branching engine: the SHAPE of the speculative
 # reduction graph (per-level frontier sizes, out-degrees, configuration merges, wall
@@ -878,4 +878,4 @@ required-features = ["runtime-report"]
 [[bin]]
 name = "stack_depth_probe"
 path = "src/bin/stack_depth_probe.rs"
-required-features = ["rhocalc-runtime"]
+required-features = ["rholang-runtime"]

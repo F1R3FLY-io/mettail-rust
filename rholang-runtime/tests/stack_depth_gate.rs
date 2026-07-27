@@ -1,6 +1,6 @@
 //! # The Θ(depth) regression gate for the RhoCalc **lowering**
 //!
-//! **The defect this gate exists for.** `rhocalc_ast::lower_proc` translates a
+//! **The defect this gate exists for.** `rholang_ast::lower_proc` translates a
 //! parsed RhoCalc `Proc` into a normalized `rhoapi::Par`. Before Stage M it did
 //! so by *host recursion*: one native frame per nesting level of the term. A
 //! 30-byte program — `@"OUT"!([[[[…[1]…]]]])` — therefore aborted the process,
@@ -10,14 +10,14 @@
 //! Located under `gdb` on 2026-07-27:
 //!
 //! ```text
-//! Thread 1 "rhocalc" received signal SIGSEGV, Segmentation fault.
-//! mettail_rholang_runtime::rhocalc_ast::lower_proc () at rholang-runtime/src/rhocalc_ast.rs:931
+//! Thread 1 "rholang" received signal SIGSEGV, Segmentation fault.
+//! mettail_rholang_runtime::rholang_ast::lower_proc () at rholang-runtime/src/rholang_ast.rs:931
 //! Backtrace stopped: Cannot access memory        ← the guard page
 //! ```
 //!
 //! ## ★ Why `RUST_MIN_STACK` is INERT on this path, and why this gate does not use it
 //!
-//! `rholang-runtime/src/bin/rhocalc.rs` is `#[tokio::main] async fn main`, so
+//! `rholang-runtime/src/bin/rholang.rs` is `#[tokio::main] async fn main`, so
 //! parsing and lowering run on the process's **main** thread. `RUST_MIN_STACK`
 //! is read only by `std::thread`'s spawn path — it cannot resize a main thread,
 //! whose size is fixed by `ulimit -s` before `main` is entered. A sweep of
@@ -93,7 +93,7 @@
 //! * **`Proc` (the input) is already safe.** The `language!` macro generates a
 //!   hand-written *iterative* `Drop` for the whole AST family — a pooled
 //!   `DropTask` worklist with a re-entrancy flag
-//!   (`target/generated/rhocalc/iterative_drop.rs`). So `drop(term)` is O(1) in
+//!   (`target/generated/rholang/iterative_drop.rs`). So `drop(term)` is O(1) in
 //!   stack and needs nothing from this file. (It also means a `Proc` cannot be
 //!   destructured by value at all — `E0509`, cannot move out of a type that
 //!   implements `Drop` — so a hand-rolled teardown here is not merely redundant,
@@ -106,7 +106,7 @@
 //! ★ Worth stating because it frames Stage M: mettail's AST family had already
 //! been converted to heap-bounded traversals. The **lowering** — the bridge from
 //! that family to `rhoapi::Par` — had not.
-#![cfg(feature = "rhocalc-runtime")]
+#![cfg(feature = "rholang-runtime")]
 
 
 // ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ fn runs_within(stack: usize, depth: usize, subject_name: &str) -> bool {
         // silently read as a fault.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => panic!(
             "stack_depth_gate: the probe binary is missing at {PROBE}. Build it with \
-             `--features rhocalc-runtime`."
+             `--features rholang-runtime`."
         ),
         Err(_) => false,
     }
@@ -228,7 +228,7 @@ fn assert_depth_independent(name: &str, stack: usize) {
             runs_within(stack, depth, name),
             "DEPTH-INDEPENDENCE GATE FAILED for `{}` at depth {} with a {} KiB stack.\n\
              This traversal's native stack grows with term nesting depth. The conversion\n\
-             pattern is the explicit (node, Phase) worklist in `rhocalc_ast::lower_proc`\n\
+             pattern is the explicit (node, Phase) worklist in `rholang_ast::lower_proc`\n\
              (Stage M-2) and `prattail/src/sppf_realize.rs`.",
             name,
             depth,
@@ -362,7 +362,7 @@ fn ceiling(debug: usize, release: usize) -> usize {
 /// Lowering traversals converted to a heap-bounded (explicit worklist) form.
 /// Membership of these lists is the deliverable; they only ever grow.
 ///
-/// ★ **M-2 landed.** `rhocalc_ast::drive` replaced the whole 87-member recursion component —
+/// ★ **M-2 landed.** `rholang_ast::drive` replaced the whole 87-member recursion component —
 /// `lower_proc` ⇄ `lower_list` / `lower_name` / `lower_method` / `lower_binary_expr` /
 /// `lower_pfor_user` / `lower_body_lifting_folds` / `lower_pattern_proc` / `lower_formula_in_env`
 /// and the 68 `lower_arm_*` frames M-1 created — with one explicit `Job`/`Kont` worklist, in the
@@ -415,7 +415,7 @@ fn lowering_is_depth_independent() {
 
 /// ★ **THE RESIDUE — every Θ(depth) traversal M-2 does NOT fix, with its number and its owner.**
 ///
-/// The whole `rhocalc` binary went from **7,277 to 2,567 B/level** on its main thread (release,
+/// The whole `rholang` binary went from **7,277 to 2,567 B/level** on its main thread (release,
 /// bisected `ulimit -s` at depths 100 and 400, `RUST_MIN_STACK` pinned so only the main thread
 /// binds). The gate's own lowering subjects went to **0**. The 2,567 that remain are *four other
 /// traversals*, and none of them is reachable by the pushdown transform this conversion applied:
@@ -444,7 +444,7 @@ fn lowering_is_depth_independent() {
 /// static-falsity judgement `lower_proc`'s `Matches` arm consults before lowering, which is a
 /// mutually recursive pair in another crate.
 ///
-/// **"The lowering is fixed" and "`rhocalc` is depth-independent" are different claims, and M-2
+/// **"The lowering is fixed" and "`rholang` is depth-independent" are different claims, and M-2
 /// only makes the first.** Each row above needs its own conversion and its own move into
 /// [`lowering_is_depth_independent`]. A subject leaves this list by being converted, never by
 /// having its ceiling raised.
@@ -541,7 +541,7 @@ fn parser_theta_depth_tripwire() {
 }
 
 /// The reported reproducer, end-to-end (parse **and** lower), at a depth far past
-/// the one that faulted, on the stack the `rhocalc` binary's MAIN thread actually
+/// the one that faulted, on the stack the `rholang` binary's MAIN thread actually
 /// gets (`ulimit -s` default, 8 MiB).
 ///
 /// This is the statement of the bug in one assertion: `@"OUT"!([[…[1]…]])` at

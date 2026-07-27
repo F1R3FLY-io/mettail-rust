@@ -1,4 +1,4 @@
-//! PathMapLit — path-keyed map wrapper for Rhocalc `Pathmap` literals.
+//! PathMapLit — path-keyed map wrapper for Rholang `Pathmap` literals.
 //!
 //! Stored as [`HashMapLit`] so Ascent relations keep deterministic `Hash` / `Ord` / `BoundTerm`.
 //! Language-level path operations also use the `pathmap` crate trie via

@@ -143,7 +143,7 @@ impl AnchorLanguage {
             AnchorLanguage::Lambda => "lambda",
             AnchorLanguage::Ambient => "ambient",
             AnchorLanguage::Calculator => "calculator",
-            AnchorLanguage::RhoCalc => "rhocalc",
+            AnchorLanguage::RhoCalc => "rholang",
         }
     }
 

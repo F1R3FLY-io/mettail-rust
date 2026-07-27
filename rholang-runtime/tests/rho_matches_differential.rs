@@ -44,21 +44,21 @@
 //! containment argument in `formula::host_matches_verdict`), so success may be
 //! reported and failure may not.
 
-#![cfg(feature = "rhocalc-runtime")]
+#![cfg(feature = "rholang-runtime")]
 
 use mettail_languages::rhocalc::formula::{
     classify, host_matches_verdict, is_statically_false, is_statically_true, FormulaShape,
 };
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc, run_normalized_par_for_oracle_and_read_par_channels,
+    lower_rholang_proc, run_normalized_par_for_oracle_and_read_par_channels,
 };
 use mettail_runtime::clear_var_cache;
 
 fn parse(source: &str) -> Proc {
     clear_var_cache();
     Proc::parse_via_wpda(source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"))
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err:?}"))
 }
 
 /// The MACHINE verdict for `target matches formula`, obtained by running the
@@ -77,9 +77,9 @@ async fn machine_verdict(target: &str, formula: &str) -> bool {
     );
     clear_var_cache();
     let proc = Proc::parse_via_wpda(&source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"));
-    let par = lower_rhocalc_proc(&proc)
-        .unwrap_or_else(|err| panic!("rhocalc lowering failed for {source:?}: {err:?}"));
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err:?}"));
+    let par = lower_rholang_proc(&proc)
+        .unwrap_or_else(|err| panic!("rholang lowering failed for {source:?}: {err:?}"));
     let observed = run_normalized_par_for_oracle_and_read_par_channels(&par, &["OUT", "c"])
         .await
         .unwrap_or_else(|err| panic!("guarded receive failed for {source:?}: {err}"));

@@ -23,7 +23,7 @@ use mettail_rholang_codegen::{
     PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
 use mettail_rholang_runtime::{
-    drive_cross_check, lower_rhocalc_proc_with_resolver,
+    drive_cross_check, lower_rholang_proc_with_resolver,
     run_normalized_par_for_oracle_and_read_runtime_values, DriveObservationChannels,
     PlannedRhoBackend,
 };
@@ -107,7 +107,7 @@ fn beat0_from_source_construction_reflects_app_id_k() {
     );
 
     let proc = Proc::parse(APP_ID_K_BODY).expect("the FLT construction parses as a RhoCalc Proc");
-    let lowered = lower_rhocalc_proc_with_resolver(&proc, lambda_resolver())
+    let lowered = lower_rholang_proc_with_resolver(&proc, lambda_resolver())
         .expect("the PFlt construction arm lowers via the lam-registered guest");
 
     assert_eq!(
@@ -149,7 +149,7 @@ fn oid() -> RuntimeObservationValue {
 /// reading the `RuntimeObservationValue`s published to `@"OUT"`.
 async fn out_values_from_source(program_src: &str) -> Vec<RuntimeObservationValue> {
     let proc = Proc::parse(program_src).expect("the from-source FLT program parses");
-    let program = lower_rhocalc_proc_with_resolver(&proc, lambda_resolver())
+    let program = lower_rholang_proc_with_resolver(&proc, lambda_resolver())
         .expect("the from-source FLT program lowers via the lam-registered guest");
     run_normalized_par_for_oracle_and_read_runtime_values(&program, "OUT")
         .await
@@ -242,7 +242,7 @@ async fn beat4_from_source_subject_drives_to_konst() {
     let (backend, fp) = lambda_backend();
 
     let proc = Proc::parse(APP_ID_K_BODY).expect("the FLT subject parses");
-    let subject = lower_rhocalc_proc_with_resolver(&proc, lambda_resolver())
+    let subject = lower_rholang_proc_with_resolver(&proc, lambda_resolver())
         .expect("the FLT subject lowers from source");
     let seed = rho_net_drive_call_par(&fp, subject, "OUT");
     let channels = DriveObservationChannels::for_fingerprint(&fp, "OUT");
@@ -306,7 +306,7 @@ async fn beat3_from_source_pattern_rejects_counterfeit() {
     let receive_proc =
         Proc::parse("for( @lambda`(${f}, lam a. lam b. a)` <- @\"fltX\" ){ @\"OUT\"!(f) }")
             .expect("the source receive parses");
-    let receive = lower_rhocalc_proc_with_resolver(&receive_proc, lambda_resolver())
+    let receive = lower_rholang_proc_with_resolver(&receive_proc, lambda_resolver())
         .expect("the source receive lowers");
     let program: Par = producer.append(receive);
 

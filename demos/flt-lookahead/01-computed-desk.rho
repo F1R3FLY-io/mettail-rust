@@ -22,7 +22,7 @@
 //
 // HOW TO RUN
 // ──────────
-//   target/debug/rhocalc demos/flt-lookahead/01-computed-desk.rho
+//   target/debug/rholang demos/flt-lookahead/01-computed-desk.rho
 //
 // WHAT HAPPENS, IN ONE ROUND
 // ──────────────────────────

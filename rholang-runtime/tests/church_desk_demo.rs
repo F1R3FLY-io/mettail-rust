@@ -1,6 +1,6 @@
 //! CI gate for the **Church Desk** demo (`demos/flt-church-desk/`).
 //!
-//! The demo's vehicle is the `rhocalc` interpreter binary run on committed `.rho` files, so this
+//! The demo's vehicle is the `rholang` interpreter binary run on committed `.rho` files, so this
 //! file drives that binary with the run sheet's own command lines and asserts, per beat, what the
 //! audience sees. Without it the run sheet is a hand-run narrative that rots silently.
 //!
@@ -8,8 +8,8 @@
 //!
 //! | layer | vehicle | answers |
 //! |---|---|---|
-//! | interpreter transcript | `CARGO_BIN_EXE_rhocalc` on the committed `.rho` files | what the AUDIENCE sees: the value, the normal form, the `^fired` ledger, the fuel report |
-//! | runtime readback | `lower_rhocalc_proc_with_resolver` + multi-channel `get_data` | what RESTS — the candidates the guard and the pattern REFUSED, which the interpreter's single-channel `@"OUT"` view cannot show |
+//! | interpreter transcript | `CARGO_BIN_EXE_rholang` on the committed `.rho` files | what the AUDIENCE sees: the value, the normal form, the `^fired` ledger, the fuel report |
+//! | runtime readback | `lower_rholang_proc_with_resolver` + multi-channel `get_data` | what RESTS — the candidates the guard and the pattern REFUSED, which the interpreter's single-channel `@"OUT"` view cannot show |
 //! | script integrity | `RUN-SHEET.md` parsing | every command line in the sheet is driven here |
 //! | determinism | three identical runs per beat | the presenter's transcript is reproducible, not a lucky schedule |
 //!
@@ -37,7 +37,7 @@
 //! the datum under test, and a change to the reflected wire format can neither make these tests
 //! pass vacuously nor fail spuriously.
 #![cfg(all(
-    feature = "rhocalc-runtime",
+    feature = "rholang-runtime",
     feature = "lambda-runtime",
     feature = "calculator-runtime"
 ))]
@@ -51,7 +51,7 @@ use mettail_languages::lambda::LambdaLanguage;
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_codegen::{FltReflect, FltRegistry, FltResolve};
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc_with_resolver, run_normalized_par_for_oracle_and_read_runtime_value_channels,
+    lower_rholang_proc_with_resolver, run_normalized_par_for_oracle_and_read_runtime_value_channels,
 };
 use mettail_runtime::{clear_var_cache, Language};
 
@@ -63,8 +63,8 @@ use mettail_runtime::{clear_var_cache, Language};
 const DEMO_DIR: &str = "demos/flt-church-desk";
 
 /// The build line the run sheet tells the presenter to run.
-const BUILD_COMMAND: &str = "cargo build -p rholang-runtime --bin rhocalc --features \
-     \"rhocalc-runtime lambda-runtime calculator-runtime\"";
+const BUILD_COMMAND: &str = "cargo build -p rholang-runtime --bin rholang --features \
+     \"rholang-runtime lambda-runtime calculator-runtime\"";
 
 /// The environment-variable prefix every run line in this sheet **used to** carry, kept as a
 /// named constant so the gate below can assert its ABSENCE by name rather than by a string
@@ -76,14 +76,14 @@ const BUILD_COMMAND: &str = "cargo build -p rholang-runtime --bin rhocalc --feat
 /// would silently re-break, and a gate that names the knob is what makes the re-break loud.
 const RETIRED_STACK_PREFIX: &str = "RUST_MIN_STACK";
 
-const BEAT_0_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/calculator.rho";
+const BEAT_0_RUN: &str = "target/debug/rholang demos/flt-church-desk/calculator.rho";
 const BEAT_1_SHOW: &str = "tail -1 demos/flt-church-desk/arithmetic.rho";
-const BEAT_1_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/arithmetic.rho";
-const BEAT_2_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/divergence.rho";
-const BEAT_3_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/desk-keeps-five.rho";
-const BEAT_4_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/desk-keeps-six.rho";
+const BEAT_1_RUN: &str = "target/debug/rholang demos/flt-church-desk/arithmetic.rho";
+const BEAT_2_RUN: &str = "target/debug/rholang demos/flt-church-desk/divergence.rho";
+const BEAT_3_RUN: &str = "target/debug/rholang demos/flt-church-desk/desk-keeps-five.rho";
+const BEAT_4_RUN: &str = "target/debug/rholang demos/flt-church-desk/desk-keeps-six.rho";
 const BEAT_5_SHOW: &str = "tail -7 demos/flt-church-desk/destructure.rho";
-const BEAT_5_RUN: &str = "target/debug/rhocalc demos/flt-church-desk/destructure.rho";
+const BEAT_5_RUN: &str = "target/debug/rholang demos/flt-church-desk/destructure.rho";
 
 /// Every command line this file drives, in sheet order.
 /// [`every_run_sheet_command_line_is_driven_by_this_test`] compares this against the sheet, so a
@@ -133,7 +133,7 @@ fn demo_file(name: &str) -> PathBuf {
     workspace_root().join(DEMO_DIR).join(name)
 }
 
-/// Run the built `rhocalc` binary on one committed demo file, in exactly the environment the run
+/// Run the built `rholang` binary on one committed demo file, in exactly the environment the run
 /// sheet now tells a presenter to use: the ambient one, with `RUST_MIN_STACK` explicitly REMOVED.
 ///
 /// `env_remove` rather than "just don't set it": the test process may itself have been launched
@@ -142,22 +142,22 @@ fn demo_file(name: &str) -> PathBuf {
 /// presenter will not have, and the transcript gate would then certify output that a presenter
 /// cannot reproduce — the precise failure mode Stage M is removing from this page.
 fn run_demo(name: &str) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rhocalc"))
+    Command::new(env!("CARGO_BIN_EXE_rholang"))
         .arg(demo_file(name))
         .env_remove("RUST_MIN_STACK")
         .current_dir(workspace_root())
         .output()
-        .unwrap_or_else(|err| panic!("the rhocalc binary must run on {name}: {err}"))
+        .unwrap_or_else(|err| panic!("the rholang binary must run on {name}: {err}"))
 }
 
 /// The binary's STDOUT for one demo file.
 fn transcript(name: &str) -> String {
-    String::from_utf8(run_demo(name).stdout).expect("rhocalc writes UTF-8 to stdout")
+    String::from_utf8(run_demo(name).stdout).expect("rholang writes UTF-8 to stdout")
 }
 
 /// The binary's STDERR for one demo file (the fail-closed reports land here).
 fn diagnostic(name: &str) -> String {
-    String::from_utf8(run_demo(name).stderr).expect("rhocalc writes UTF-8 to stderr")
+    String::from_utf8(run_demo(name).stderr).expect("rholang writes UTF-8 to stderr")
 }
 
 /// The `⟦…⟧` observations the interpreter printed, in order. Deliberately parses only the
@@ -211,7 +211,7 @@ async fn rest_on_channels(program: &str, channels: &[&str]) -> Vec<(String, Vec<
     clear_var_cache();
     let proc = Proc::parse_via_wpda(program)
         .unwrap_or_else(|err| panic!("the demo program must parse: {err:?}"));
-    let par = lower_rhocalc_proc_with_resolver(&proc, guest_resolver())
+    let par = lower_rholang_proc_with_resolver(&proc, guest_resolver())
         .unwrap_or_else(|err| panic!("the demo program must lower: {err:?}"));
     let observed = run_normalized_par_for_oracle_and_read_runtime_value_channels(&par, channels)
         .await
@@ -632,12 +632,12 @@ fn every_run_sheet_command_line_is_driven_by_this_test() {
 /// who follows the sheet ends up with the binary this test gates.
 #[test]
 fn the_run_sheet_build_line_names_the_features_the_binary_requires() {
-    for feature in ["rhocalc-runtime", "lambda-runtime", "calculator-runtime"] {
+    for feature in ["rholang-runtime", "lambda-runtime", "calculator-runtime"] {
         assert!(BUILD_COMMAND.contains(feature), "the sheet's build line must enable {feature}");
     }
     assert!(
-        BUILD_COMMAND.contains("--bin rhocalc"),
-        "and it must build the rhocalc bin target"
+        BUILD_COMMAND.contains("--bin rholang"),
+        "and it must build the rholang bin target"
     );
     assert!(
         run_sheet_commands().contains(&BUILD_COMMAND.to_string()),
@@ -659,7 +659,7 @@ fn the_run_sheet_build_line_names_the_features_the_binary_requires() {
 ///    to put the prefix back on the sheet. That must fail the build, loudly, and name the real
 ///    gate (`stack_depth_gate.rs`) instead.
 /// 2. **The prefix was never a correct remedy here anyway.** `RUST_MIN_STACK` is read only by
-///    `std::thread`'s spawn path, so it cannot resize a *main* thread — and `rhocalc.rs` is
+///    `std::thread`'s spawn path, so it cannot resize a *main* thread — and `rholang.rs` is
 ///    `#[tokio::main] async fn main`, which is where parsing and lowering run. On those beats the
 ///    prefix was inert. A sheet that recommends an inert knob teaches a presenter to mis-diagnose.
 #[test]
@@ -691,12 +691,12 @@ fn every_committed_demo_runs_at_the_default_stack() {
         "desk-keeps-six.rho",
         "destructure.rho",
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_rhocalc"))
+        let output = Command::new(env!("CARGO_BIN_EXE_rholang"))
             .arg(demo_file(name))
             .env_remove("RUST_MIN_STACK")
             .current_dir(workspace_root())
             .output()
-            .unwrap_or_else(|err| panic!("the rhocalc binary must run on {name}: {err}"));
+            .unwrap_or_else(|err| panic!("the rholang binary must run on {name}: {err}"));
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             !stderr.contains("overflowed its stack"),
@@ -740,7 +740,7 @@ fn every_transcript_in_the_run_sheet_is_the_observed_output() {
         }
         let printed = lines[start..end].join("\n");
 
-        let observed = if let Some(rest) = command.strip_prefix("target/debug/rhocalc ") {
+        let observed = if let Some(rest) = command.strip_prefix("target/debug/rholang ") {
             let demo = rest
                 .strip_prefix(&format!("{DEMO_DIR}/"))
                 .unwrap_or_else(|| panic!("the sheet runs demo files from {DEMO_DIR}: {command}"));

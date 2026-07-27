@@ -2,7 +2,7 @@
 //  CONTRACT A — a foreign-language term, driven to its normal form BY THE RHOLANG MACHINE.
 //
 //  Run me with the RhoCalc interpreter:
-//    target/debug/rhocalc demos/flt-assay-desk/contract-a.rho
+//    target/debug/rholang demos/flt-assay-desk/contract-a.rho
 //
 //  WHAT THIS FILE IS
 //  ─────────────────

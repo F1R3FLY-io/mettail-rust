@@ -9,7 +9,7 @@
 //! ```
 //!
 //! and BOTH halves of that identity were already emitted by
-//! `rhocalc_ast::lower_proc` and already decided by `rho-pure-eval`
+//! `rholang_ast::lower_proc` and already decided by `rho-pure-eval`
 //! (`eval.rs`'s `ENotBody` arm and its `EOrBody` → `bool_binop("||", …)` arm).
 //! So there is no new `ExprInstance`, no new evaluator arm, and no
 //! consensus-visible wire change to review.
@@ -17,7 +17,7 @@
 //! Everything here runs on the production guard path, not a host simulation:
 //!
 //! ```text
-//!   RhoCalc source ──Proc::parse_via_wpda──▶ Proc ──lower_rhocalc_proc──▶ Par
+//!   RhoCalc source ──Proc::parse_via_wpda──▶ Proc ──lower_rholang_proc──▶ Par
 //!        │                                                                 │
 //!        │  (f1r3node's own Rholang parser is    Receive.condition ◀────────┘
 //!        │   NEVER invoked on this path)                  │
@@ -61,16 +61,16 @@
 //! `languages/tests/rhocalc_tests.rs::implies_*` — the two suites are the two
 //! halves of the two-evaluator agreement obligation.
 
-#![cfg(feature = "rhocalc-runtime")]
+#![cfg(feature = "rholang-runtime")]
 
 use std::collections::HashMap;
 
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_runtime::fold_contract::fold_definitions_for;
-use mettail_rholang_runtime::rhocalc_ast::{clear_held_fold_sites, take_held_fold_sites};
+use mettail_rholang_runtime::rholang_ast::{clear_held_fold_sites, take_held_fold_sites};
 use mettail_rholang_runtime::run::run_installed_program_with_call_definitions_and_read_runtime_values;
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc, lower_rhocalc_proc_with_options,
+    lower_rholang_proc, lower_rholang_proc_with_options,
     run_normalized_par_for_oracle_and_read_runtime_value_channels, LoweringOptions,
 };
 use mettail_runtime::{clear_var_cache, RuntimeObservationValue};
@@ -82,9 +82,9 @@ use models::rhoapi::Par;
 fn parse_lower(source: &str) -> Par {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"));
-    lower_rhocalc_proc(&proc)
-        .unwrap_or_else(|err| panic!("rhocalc lowering failed for {source:?}: {err:?}"))
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err:?}"));
+    lower_rholang_proc(&proc)
+        .unwrap_or_else(|err| panic!("rholang lowering failed for {source:?}: {err:?}"))
 }
 
 /// Evaluate a RhoCalc program that may contain width folds, materializing every
@@ -97,9 +97,9 @@ async fn run_with_folds(source: &str) -> (usize, Vec<RuntimeObservationValue>) {
     clear_var_cache();
     clear_held_fold_sites();
     let proc = Proc::parse_via_wpda(source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"));
-    let par = lower_rhocalc_proc(&proc)
-        .unwrap_or_else(|err| panic!("rhocalc lowering failed for {source:?}: {err:?}"));
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err:?}"));
+    let par = lower_rholang_proc(&proc)
+        .unwrap_or_else(|err| panic!("rholang lowering failed for {source:?}: {err:?}"));
     let sites = take_held_fold_sites();
     let fold_count = sites.len();
     let observed = run_installed_program_with_call_definitions_and_read_runtime_values(
@@ -117,7 +117,7 @@ async fn run_with_folds(source: &str) -> (usize, Vec<RuntimeObservationValue>) {
 /// The machine's boolean verdict for the propositional expression `formula`,
 /// observed by sending it to `@"OUT"` and reading the resting value.
 ///
-/// `lower_rhocalc_proc` does NOT normalize, so a `![…]` host constant fold never
+/// `lower_rholang_proc` does NOT normalize, so a `![…]` host constant fold never
 /// runs on this path: the `EOrBody`/`ENotBody` tree really is evaluated by the
 /// machine.
 ///
@@ -187,9 +187,9 @@ async fn guarded_receive_without_discharge(guard: &str, datum: &str) -> (Vec<Str
     let source = guarded_source(guard, datum);
     clear_var_cache();
     let proc = Proc::parse_via_wpda(&source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"));
-    let par = lower_rhocalc_proc_with_options(&proc, LoweringOptions::NO_DISCHARGE)
-        .unwrap_or_else(|err| panic!("rhocalc lowering failed for {source:?}: {err:?}"));
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err:?}"));
+    let par = lower_rholang_proc_with_options(&proc, LoweringOptions::NO_DISCHARGE)
+        .unwrap_or_else(|err| panic!("rholang lowering failed for {source:?}: {err:?}"));
     assert!(
         par.receives
             .first()
@@ -414,7 +414,7 @@ async fn comparison_binds_tighter_than_implies() {
 #[tokio::test]
 async fn a_fold_nested_inside_an_implies_is_lifted_not_dropped() {
     // ★ The regression this test exists for. `implies` had to be added to ALL
-    // THREE fold-traversal helpers in `rhocalc_ast.rs`:
+    // THREE fold-traversal helpers in `rholang_ast.rs`:
     //
     //   `find_fold`      — finds the innermost liftable fold (miss ⇒ never lifted)
     //   `replace_fold`   — substitutes `*r` for it       (miss ⇒ never trampolined)
@@ -557,7 +557,7 @@ fn the_discharge_classification_of_every_guard_in_this_suite_is_pinned() {
         clear_var_cache();
         let proc = Proc::parse_via_wpda(&source).expect("parse");
         let par =
-            lower_rhocalc_proc_with_options(&proc, LoweringOptions::PRODUCTION).expect("lower");
+            lower_rholang_proc_with_options(&proc, LoweringOptions::PRODUCTION).expect("lower");
         par.receives
             .first()
             .is_some_and(|receive| receive.condition.is_some())

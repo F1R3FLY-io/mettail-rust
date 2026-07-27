@@ -8,7 +8,7 @@
 //! | # | Implementation | Where | Who runs it |
 //! |---|---|---|---|
 //! | ① | the `![{ … }]` **fold bodies** | `languages/src/rhocalc.rs` | MeTTaIL's Dovetail/e-graph (REPL, simulation) |
-//! | ② | the **lowering** to `rhoapi::Par` | `rholang-runtime/src/rhocalc_ast.rs` | f1r3node's real reducer (`rholang/…/reduce.rs`) |
+//! | ② | the **lowering** to `rhoapi::Par` | `rholang-runtime/src/rholang_ast.rs` | f1r3node's real reducer (`rholang/…/reduce.rs`) |
 //!
 //! Two implementations of one algebra can — and demonstrably **do** — diverge. This suite is the
 //! *measurement instrument* for that divergence and the *acceptance gate* for the refactor that
@@ -26,10 +26,10 @@
 //!                    │  `![{…}]` native bodies                │──▶ RhoCalc surface display
 //!   parse(e) ──▶ Proc┤                                        │            ║
 //!    (ONE parse)     │                                        │            ║  must be EQUAL
-//!                    │  lower_rhocalc_proc ▸ rhoapi::Par      │            ║
+//!                    │  lower_rholang_proc ▸ rhoapi::Par      │            ║
 //!                    └──────────────── ② reduce ──────────────┘──▶ RuntimeObservationValue
 //!                                                                          ║
-//!                                                        render_as_rhocalc ╝
+//!                                                        render_as_rholang ╝
 //! ```
 //!
 //! Both sides start from the **same** parsed `Proc`, so a parser/disambiguation difference can
@@ -42,13 +42,13 @@
 //! includes `locally_free` while the hand-written `PartialEq` ignores it — *"the wart is
 //! load-bearing … do NOT 'fix' it"* — and MeTTaIL's collections and e-graph require `Ord` ⟷ `Eq`
 //! agreement. So the two sides keep different carriers, and conformance is asserted on the
-//! **observable value rendered in RhoCalc surface syntax**. [`render_as_rhocalc`] is that adapter;
+//! **observable value rendered in RhoCalc surface syntax**. [`render_as_rholang`] is that adapter;
 //! it is part of the specification, not a convenience.
 //!
 //! ### The reducer is NORMATIVE
 //!
 //! Where the two disagree, `rholang/src/rust/interpreter/reduce.rs` (the consensus semantics) is
-//! right and RhoCalc is wrong — "rhocalc IS rholang". Every divergence below is therefore recorded
+//! right and RhoCalc is wrong — "rholang IS rholang". Every divergence below is therefore recorded
 //! as a pair:
 //!
 //! * a **witness** test (runs, green) that pins TODAY's divergent behaviour with citations to both
@@ -130,7 +130,7 @@
 //! `I` and `J`, the `nth` panic + index-carrier halves of `C`, the fold-vs-redex `error` poisoning
 //! (`*(@(1)) == 1` ⟹ `error`), the never-lowered nullary folds (`Map()` never became `{}`), and
 //! the join-row whole-message binder (`for(@x <- c1 & …)` bound the payload LIST). The vacuity
-//! guarantee itself is pinned by `rhocalc_tests.rs::comparator_integrity`.
+//! guarantee itself is pinned by `rholang_tests.rs::comparator_integrity`.
 //!
 //! This suite still compares with `assert_eq!` on an explicitly written expected value and never
 //! through a fuzzy helper.
@@ -168,9 +168,9 @@ use std::sync::Arc;
 
 use mettail_languages::rhocalc::{Name, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner, Str};
 use mettail_rholang_runtime::fold_contract::fold_definitions_for;
-use mettail_rholang_runtime::rhocalc_ast::{clear_held_fold_sites, take_held_fold_sites};
+use mettail_rholang_runtime::rholang_ast::{clear_held_fold_sites, take_held_fold_sites};
 use mettail_rholang_runtime::run::run_installed_program_with_call_definitions_and_read_runtime_values;
-use mettail_rholang_runtime::{lower_rhocalc_proc, RhocalcAstLowerError, RHOCALC_BAG_ABI_TAG};
+use mettail_rholang_runtime::{lower_rholang_proc, RholangAstLowerError, RHOLANG_BAG_ABI_TAG};
 use mettail_runtime::{clear_var_cache, RuntimeObservationValue};
 use models::rhoapi::Par;
 
@@ -188,11 +188,11 @@ const DOVETAIL_NODES: usize = 4_000_000;
 const COMM_STEP_BOUND: usize = 64;
 
 /// The ONE parse both sides share. `parse_via_wpda` is the disambiguated best-parse entry the
-/// production AST-first lowering path uses (`rholang-runtime/tests/rho_rhocalc_ast.rs::parse_lower`).
+/// production AST-first lowering path uses (`rholang-runtime/tests/rho_rholang_ast.rs::parse_lower`).
 fn parse(source: &str) -> Proc {
     clear_var_cache();
     Proc::parse_via_wpda(source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err}"))
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err}"))
 }
 
 /// ① the FOLD side: reduce `proc` to a Dovetail normal form and render it in RhoCalc surface
@@ -204,7 +204,7 @@ fn parse(source: &str) -> Proc {
 fn fold(proc: &Proc) -> Result<String, String> {
     let owned = proc.clone();
     std::thread::Builder::new()
-        .name("rhocalc-fold".into())
+        .name("rholang-fold".into())
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             let term = RhoCalcTerm(RhoCalcTermInner::Proc(owned));
@@ -212,7 +212,7 @@ fn fold(proc: &Proc) -> Result<String, String> {
                 .map(|normal_form| normal_form.to_string())
                 .map_err(|err| format!("dovetail: {err}"))
         })
-        .expect("spawn the rhocalc fold worker")
+        .expect("spawn the rholang fold worker")
         .join()
         .unwrap_or_else(|_| unreachable!("a fold panic aborts the process; it never unwinds here"))
 }
@@ -227,7 +227,7 @@ fn fold(proc: &Proc) -> Result<String, String> {
 fn fold_program(proc: &Proc) -> Result<String, String> {
     let owned = proc.clone();
     std::thread::Builder::new()
-        .name("rhocalc-fold-program".into())
+        .name("rholang-fold-program".into())
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             let mut current = owned;
@@ -251,7 +251,7 @@ fn fold_program(proc: &Proc) -> Result<String, String> {
             }
             Err(format!("comm+fold fixpoint did not settle within {COMM_STEP_BOUND} steps"))
         })
-        .expect("spawn the rhocalc program-fold worker")
+        .expect("spawn the rholang program-fold worker")
         .join()
         .unwrap_or_else(|_| unreachable!("a fold panic aborts the process; it never unwinds here"))
 }
@@ -287,7 +287,7 @@ async fn reduce(proc: &Proc) -> Result<Vec<RuntimeObservationValue>, String> {
 /// [`reduce`] for a program that already carries its own sends/receives.
 async fn reduce_program(program: &Proc) -> Result<Vec<RuntimeObservationValue>, String> {
     clear_held_fold_sites();
-    let par = lower_rhocalc_proc(program).map_err(|err| lower_error_message(&err))?;
+    let par = lower_rholang_proc(program).map_err(|err| lower_error_message(&err))?;
     let definitions = fold_definitions_for(&take_held_fold_sites())
         .expect("#36 S4/S5: the band allocation is pairwise distinct for a single language");
     run_installed_program_with_call_definitions_and_read_runtime_values(
@@ -301,11 +301,11 @@ async fn reduce_program(program: &Proc) -> Result<Vec<RuntimeObservationValue>, 
 }
 
 /// A stable, greppable rendering of a lowering failure: `unsupported: <named construct>` for the
-/// fail-closed `UnsupportedProc` arm (`rholang-runtime/src/rhocalc_ast.rs::unsupported_construct_name`),
+/// fail-closed `UnsupportedProc` arm (`rholang-runtime/src/rholang_ast.rs::unsupported_construct_name`),
 /// the debug form otherwise.
-fn lower_error_message(err: &RhocalcAstLowerError) -> String {
+fn lower_error_message(err: &RholangAstLowerError) -> String {
     match err {
-        RhocalcAstLowerError::UnsupportedProc(name) => format!("unsupported: {name}"),
+        RholangAstLowerError::UnsupportedProc(name) => format!("unsupported: {name}"),
         other => format!("lower: {other:?}"),
     }
 }
@@ -321,7 +321,7 @@ fn lower_error_message(err: &RhocalcAstLowerError) -> String {
 /// value by value, which `rhoapi` ground datum RhoCalc considers to *be* which RhoCalc value.
 /// Deliberately total-by-panic on the shapes this suite does not yet specify, so an unspecified
 /// carrier can never be silently accepted as conformant.
-fn render_as_rhocalc(value: &RuntimeObservationValue) -> String {
+fn render_as_rholang(value: &RuntimeObservationValue) -> String {
     match value {
         // The `Int` category ⟷ `ExprInstance::GInt`. ★ CORRECTED 2026-07-25 (divergence I):
         // this is the carrier of a PLAIN RhoCalc integer literal — `1`, `1i32`, `1i64`, `1u32`
@@ -363,8 +363,8 @@ fn render_as_rhocalc(value: &RuntimeObservationValue) -> String {
                 .iter()
                 .map(|(key, mapped)| format!(
                     "{}:{}",
-                    render_as_rhocalc(key),
-                    render_as_rhocalc(mapped)
+                    render_as_rholang(key),
+                    render_as_rholang(mapped)
                 ))
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -373,14 +373,14 @@ fn render_as_rhocalc(value: &RuntimeObservationValue) -> String {
             format!("({})", render_all(items).join(", "))
         },
         other => panic!(
-            "render_as_rhocalc: no RhoCalc surface form is specified for {other:?}; \
+            "render_as_rholang: no RhoCalc surface form is specified for {other:?}; \
              add one deliberately rather than letting an unspecified carrier pass as conformant"
         ),
     }
 }
 
 fn render_all(values: &[RuntimeObservationValue]) -> Vec<String> {
-    values.iter().map(render_as_rhocalc).collect()
+    values.iter().map(render_as_rholang).collect()
 }
 
 /// Lowercase hex of a byte slice — the readable form of a `GByteArray` observation. (`languages`
@@ -440,7 +440,7 @@ async fn assert_conformant(source: &str, expected: &str) {
     let [value] = observed.as_slice() else {
         panic!("{source:?}: expected exactly one observation on @\"OUT\", got {observed:?}");
     };
-    let rendered = render_as_rhocalc(value);
+    let rendered = render_as_rholang(value);
     assert_eq!(
         rendered, expected,
         "{source:?}: the Rholang REDUCER (f1r3node reduce.rs) disagrees with the specified value \
@@ -526,7 +526,7 @@ async fn conformance_fixed_point_arithmetic_at_equal_scale() {
 
 /// String concatenation via `+` on **statically ground** operands. The runtime-bound case is
 /// divergence **B**; the parity here is bought by a lowering shim
-/// (`rholang-runtime/src/rhocalc_ast.rs:930-942`, `is_single_gstring_value`) that rewrites `+` to
+/// (`rholang-runtime/src/rholang_ast.rs:930-942`, `is_single_gstring_value`) that rewrites `+` to
 /// Rholang's `++` (`EPlusPlus`) only when both operands are already `GString` leaves.
 #[tokio::test(flavor = "multi_thread")]
 async fn conformance_ground_string_concat() {
@@ -555,7 +555,7 @@ async fn conformance_collection_equality() {
 }
 
 /// A rendezvous that carries a value: the payload is evaluated by the machine after the COMM, so
-/// this pins that `lower_rhocalc_proc` + the reducer agree with the fold's COMM+normalize
+/// this pins that `lower_rholang_proc` + the reducer agree with the fold's COMM+normalize
 /// fixpoint on a *runtime-bound* integer operand. (The string twin of this shape is divergence
 /// **B**.)
 #[tokio::test(flavor = "multi_thread")]
@@ -566,7 +566,7 @@ async fn conformance_runtime_bound_integer_add_after_comm() {
         .await
         .expect("the program runs to rest");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["3".to_string()],
         "the machine evaluates `s + 2` on the COMM-delivered operand"
     );
@@ -619,7 +619,7 @@ async fn divergence_a_witness_int_overflow_folds_to_the_error_term() {
 
     let observed = reduce(&proc).await.expect("the machine evaluates the sum");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec![i64::MIN.to_string()],
         "A: the consensus reducer wraps (reduce.rs:3106 wrapping_add)"
     );
@@ -717,7 +717,7 @@ async fn divergence_a_target_int_overflow_inherits_the_f1r3node_evaluator() {
         };
         assert_eq!(
             folded,
-            render_as_rhocalc(value),
+            render_as_rholang(value),
             "A: {source:?} — RhoCalc must inherit the f1r3node evaluator it routes to, \
              not contribute a third behaviour"
         );
@@ -741,9 +741,9 @@ async fn divergence_a2_target_int_division_by_zero_fails_closed() {
 ///
 /// Rholang's `EPlus` has no `GString` arm — `reduce.rs::combine_plus` (3100-3187) ends in
 /// `OperatorNotDefined`; concatenation is `++` (`EPlusPlus`, `reduce.rs:2760-2775`). RhoCalc's
-/// surface uses `+`, so `rholang-runtime/src/rhocalc_ast.rs:930-942` bridges the gap with a shim
+/// surface uses `+`, so `rholang-runtime/src/rholang_ast.rs:930-942` bridges the gap with a shim
 /// that emits `EPlusPlus` **iff** `is_single_gstring_value` holds of the *already-lowered* operand
-/// `Par`s (`rhocalc_ast.rs:1107-1121`) — a purely static test.
+/// `Par`s (`rholang_ast.rs:1107-1121`) — a purely static test.
 ///
 /// The `§17.11-B` inventory predicted that for a COMM-bound operand the FOLD would concatenate
 /// while the machine errored. **Measurement partially refutes that.** For
@@ -803,7 +803,7 @@ async fn divergence_b_witness_runtime_bound_string_add_diverges_by_static_shape(
         .await
         .expect("the ground twin concatenates");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec![r#""hello world""#.to_string()]
     );
 }
@@ -834,11 +834,11 @@ async fn divergence_b_target_string_add_is_position_independent() {
         (Ok(ground_values), Ok(bound_values)) => assert_eq!(
             ground_values
                 .iter()
-                .map(render_as_rhocalc)
+                .map(render_as_rholang)
                 .collect::<Vec<_>>(),
             bound_values
                 .iter()
-                .map(render_as_rhocalc)
+                .map(render_as_rholang)
                 .collect::<Vec<_>>(),
             "B: `+` on strings must not depend on when the operand became known"
         ),
@@ -976,7 +976,7 @@ async fn divergence_d_target_fixed_scale_policy_is_the_reducers() {
             };
             assert_eq!(
                 folded,
-                render_as_rhocalc(value),
+                render_as_rholang(value),
                 "D: the fold must adopt the reducer's fixed-point scale policy"
             );
         },
@@ -993,13 +993,13 @@ async fn divergence_d_target_fixed_scale_policy_is_the_reducers() {
 /// **Divergences E + F — CLOSED by C2 (2026-07-25).**
 ///
 /// `.toByteArray()` is now f1r3node's own `toByteArray`: the lowering emits
-/// `EMethod("toByteArray")` (`rholang-runtime/src/rhocalc_ast.rs::lower_method`) and the reducer
+/// `EMethod("toByteArray")` (`rholang-runtime/src/rholang_ast.rs::lower_method`) and the reducer
 /// evaluates it (`reduce.rs:4137-4160` — `eval_expr` + `substitute`, then `p.encode_to_vec()`),
 /// returning a real `GByteArray`.
 ///
 /// ### What was retired, and why the goldens changed
 ///
-/// `languages/src/rhocalc/wire.rs` + `languages/proto/rhocalc_wire.proto` + `languages/build.rs`
+/// `languages/src/rhocalc/wire.rs` + `languages/proto/rholang_wire.proto` + `languages/build.rs`
 /// were a hand-maintained **fork** of f1r3node's `rhoapi` schema (7 of its 62 messages), compiled
 /// by `protoc` into a *second* `rhoapi::Par` type in the same workspace. Three independent defects
 /// made it unsalvageable rather than merely redundant:
@@ -1105,8 +1105,8 @@ async fn c2_closed_to_byte_array_uses_the_machines_canonical_order() {
 /// **The `Bag` carrier survives `.toByteArray()` — a C2 side-benefit worth pinning.**
 ///
 /// `Bag` is a MeTTaIL-only category (no Rholang analog), so `lower_bag`
-/// (`rholang-runtime/src/rhocalc_ast.rs`) represents it as an `EList` tagged with
-/// `RHOCALC_BAG_ABI_TAG` (`mettail.rhocalc.bag.v1`, visible in the bytes below) carrying
+/// (`rholang-runtime/src/rholang_ast.rs`) represents it as an `EList` tagged with
+/// `RHOLANG_BAG_ABI_TAG` (`mettail.rholang.bag.v1`, visible in the bytes below) carrying
 /// `(element, count)` pairs. The retired fork instead **expanded the multiset** into a bare
 /// `EList` of repeated elements, discarding both the tag and the count structure — so its bytes
 /// decoded back to a *list*, not a bag. Routing through `EMethod` means the bytes are the encoding
@@ -1121,7 +1121,7 @@ async fn c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag() {
     };
     let encoded = hex_of(bytes);
     assert!(
-        encoded.contains(&hex_of(RHOCALC_BAG_ABI_TAG.as_bytes())),
+        encoded.contains(&hex_of(RHOLANG_BAG_ABI_TAG.as_bytes())),
         "the bag ABI tag must ride the encoding, got {encoded}"
     );
     assert_eq!(
@@ -1129,7 +1129,14 @@ async fn c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag() {
         // ★ RE-MEASURED 2026-07-25 (divergence I): the ELEMENT leaves are now `GInt` (`2a 02 10`)
         // rather than `GBigInt` (`9a 02`); the `(element, count)` pair structure and the ABI tag
         // are unchanged. The counts were always `GInt`, so each pair is now homogeneous.
-        "2a50a2014d0a1e3a1c0a1a0a180a166d65747461696c2e72686f63616c632e6261672e76310a2b2a29\
+        //
+        // ★ RE-PINNED 2026-07-27 (task #22, the `rhocalc` → `rholang` rename): the tag bytes
+        // `72686f63616c63` ("rhocalc") became `72686f6c616e67` ("rholang"). This is the ONLY
+        // byte-level site of the ABI tag — textual substitution reaches the constant and the
+        // `&str` literal but not a hex TRANSCRIPT of them, so this line is hand-re-pinned. The
+        // two names are both 7 bytes, so every surrounding protobuf length prefix is unchanged
+        // and the rest of the encoding is byte-identical to the 2026-07-25 measurement.
+        "2a50a2014d0a1e3a1c0a1a0a180a166d65747461696c2e72686f6c616e672e6261672e76310a2b2a29\
          a201260a112a0fa2010c0a042a0210020a042a0210020a112a0fa2010c0a042a0210040a042a021004"
     );
 }
@@ -1141,7 +1148,7 @@ async fn c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag() {
 /// `rhoapi` already declares `e_pathmap_body = 32` and `e_zipper_body = 33`, and
 /// `rholang/src/rust/interpreter/reduce.rs` already implements
 /// `readZipper/writeZipper/descendTo/getLeaf/getSubtrie/graft/joinInto/ascend/childCount/…`. But
-/// `rholang-runtime/src/rhocalc_ast.rs::lower_pathmap` (line 2317) lowers `Pathmap` to **`EMap`**,
+/// `rholang-runtime/src/rholang_ast.rs::lower_pathmap` (line 2317) lowers `Pathmap` to **`EMap`**,
 /// discarding the trie structure, so the ~8 pathmap and ~15 zipper methods implemented MeTTaIL-side
 /// (`languages/src/rhocalc/{pathmap,zipper}.rs`) never reach their native counterpart.
 ///
@@ -1179,7 +1186,7 @@ async fn divergence_g_witness_pathmap_lowers_to_emap_and_zippers_are_unsupported
         .await
         .expect("get routes and answers");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["2".to_string()]
     );
 
@@ -1223,7 +1230,7 @@ async fn divergence_g_witness_pathmap_lowers_to_emap_and_zippers_are_unsupported
 ///
 /// The `#[ignore]` reason has been corrected too. G is NOT blocked on a lowering that simply has
 /// not been written; it is blocked on a semantic decision, because `EPathMap` has no value slot for
-/// RhoCalc's `{| k : v |}` to land in. See the C1b block in `rholang-runtime/src/rhocalc_ast.rs`.
+/// RhoCalc's `{| k : v |}` to land in. See the C1b block in `rholang-runtime/src/rholang_ast.rs`.
 ///
 /// ★★ AMENDED AGAIN (2026-07-27) — **half of the stated blocker is gone.** The reason above used to
 /// name a SECOND blocker: *"RhoCalc keys are BARE, the shape whose walk does not terminate on the
@@ -1447,7 +1454,7 @@ async fn divergence_j_target_empty_send_does_not_satisfy_an_arity_one_receive() 
 
 /// The MeTTaIL-only operations, pinned as fail-closed on the machine with a *named* construct.
 /// The naming is the contract: nothing silently host-evaluates
-/// (`rholang-runtime/src/rhocalc_ast.rs::unsupported_construct_name`).
+/// (`rholang-runtime/src/rholang_ast.rs::unsupported_construct_name`).
 ///
 /// *Amend when C3 lands:* each of these becomes a system-process `Definition` invocation, so the
 /// machine answers instead of rejecting — but the answer still comes from the SAME single Rust
@@ -1463,7 +1470,7 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
         // side-condition — *"a signed payload renders a leading `-`, so a pattern that does not
         // accept one cannot be given a tail"* — was the ONLY reason `BigRat` had no `r` tail while
         // `BigInt` has had its `n` tail since Stage C. With `-?` in place the tail is emitted, so a
-        // rational renders `1/2r`. `98d861a3` re-baselined the three `rhocalc_tests.rs` goldens
+        // rational renders `1/2r`. `98d861a3` re-baselined the three `rholang_tests.rs` goldens
         // this moved and MISSED this fourth one, in a different file.
         //
         // ★ RE-DERIVED A SECOND TIME (2026-07-27), and the asymmetry the note below recorded is
@@ -1475,7 +1482,7 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
         // widened `BigRat`'s pattern with `(/(…)r)?`, and the already-grammar-derived composite
         // arm then WRITES the spelling it can read: `fraction(1, 2)` ⇒ `1r/2r`.
         //
-        // ⚠ That commit re-baselined the three `rhocalc_tests.rs` goldens the change moved and,
+        // ⚠ That commit re-baselined the three `rholang_tests.rs` goldens the change moved and,
         // exactly as `98d861a3` did before it, MISSED this fourth one in a different file. The
         // golden is updated, NOT relaxed — `1r/2r` is the surface that round-trips.
         ("fraction(1, 2)", "1r/2r", "unsupported: fraction(a, b) rational constructor"),
@@ -1515,7 +1522,7 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
 /// that routing would make `#{1|2|2}#.size()` "answer the tagged list's pair count instead of the
 /// multiset cardinality — a SILENTLY WRONG answer". Measured 2026-07-26, that is **false**:
 /// `size_method` (`reduce.rs:7829`) accepts only `EMapBody`/`ESetBody`, so the lowered bag —
-/// `EList[GPrivate(RHOCALC_BAG_ABI_TAG), EList[pairs]]` — is refused by name and type.
+/// `EList[GPrivate(RHOLANG_BAG_ABI_TAG), EList[pairs]]` — is refused by name and type.
 ///
 /// The hazard the note was reaching for is real, but it lives on the two routed methods that DO
 /// accept `EListBody` (`length`, `nth`), and those are gated at the lowering; see
@@ -1573,7 +1580,7 @@ async fn c1_bag_encoding_is_rejected_by_every_routed_method() {
 ///
 /// Every other routed method accepts only `EMapBody`/`ESetBody`/`EPathmapBody` and so refuses the
 /// encoding by itself — measured in [`c1_bag_encoding_is_rejected_by_every_routed_method`]. The
-/// gate ([`receiver_is_literal_bag`] in `rhocalc_ast.rs`) covers the case decidable at lowering
+/// gate ([`receiver_is_literal_bag`] in `rholang_ast.rs`) covers the case decidable at lowering
 /// time; `concat` checks BOTH operands, since either position can supply the bag.
 #[tokio::test(flavor = "multi_thread")]
 async fn c1_bag_length_and_nth_are_gated_at_lowering() {
@@ -1620,7 +1627,7 @@ async fn c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime() {
     assert_eq!(fold(&proc).expect("the fold converges"), "3", "the fold measures the MULTISET");
     let observed = reduce(&proc).await.expect("the machine reduces");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["2".to_string()],
         "C1 residue: the machine measures the 2-element bag ABI ENCODING. If this is now 3, C3 \
          landed — promote this witness to a conformance row"
@@ -1691,7 +1698,7 @@ async fn c1_pathmap_methods_answer_through_the_emap_encoding() {
         );
         let observed = reduce(&proc).await.expect("the machine reduces");
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![machine_answer.to_string()],
             "G: {source:?} — the machine answers through the EMap encoding"
         );
@@ -1710,7 +1717,7 @@ async fn c1_pathmap_methods_answer_through_the_emap_encoding() {
         assert_eq!(fold(&proc).expect("the fold converges"), fold_answer);
         let observed = reduce(&proc).await.expect("the machine reduces");
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![machine_answer.to_string()],
             "G: {source:?} — the machine cannot return a Pathmap it has no carrier for"
         );
@@ -1754,7 +1761,7 @@ async fn c1_length_on_a_map_is_fold_only() {
 /// mapping would have silently widened the operation. See
 /// [`c4_restrict_is_not_restriction_and_meet_is_intersection`] and
 /// [`c4_get_subtrie_at_is_read_zipper_at_then_get_subtrie`] for the measurements, and the
-/// `unsupported_construct_name` block in `rhocalc_ast.rs` for why all three are nevertheless still
+/// `unsupported_construct_name` block in `rholang_ast.rs` for why all three are nevertheless still
 /// held: they are decided by the C4 carrier question, not by the mapping.
 ///
 /// Each error names the construct and the reason it is held.
@@ -1885,7 +1892,7 @@ async fn c1_routed_methods_see_through_a_comm() {
         let proc = parse(program);
         let observed = reduce_program(&proc).await.expect("the machine reduces");
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected.to_string()],
             "C1: {program:?} — a COMM-bound receiver must dispatch exactly like a literal one"
         );
@@ -1973,7 +1980,7 @@ async fn divergence_l_witness_collection_order_is_lexicographic_in_the_fold() {
         );
         let observed = reduce(&proc).await.expect("the literal lowers");
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![machine_order.to_string()],
             "L: {source:?} — the reducer orders by ScoredTerm VALUE"
         );
@@ -1991,7 +1998,7 @@ async fn divergence_l_witness_collection_order_is_lexicographic_in_the_fold() {
             .await
             .expect("the routed method reduces");
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![machine_order.to_string()],
             "L: {source:?} — a routed result carries the reducer's canonical order"
         );
@@ -2012,7 +2019,7 @@ async fn divergence_l_witness_collection_order_is_lexicographic_in_the_fold() {
 /// [`render_fixed_point`] implements RhoCalc's `Fixed` surface form; pin it directly so a
 /// conformance failure is never mis-attributed to the adapter.
 #[test]
-fn render_fixed_point_matches_the_rhocalc_surface_form() {
+fn render_fixed_point_matches_the_rholang_surface_form() {
     assert_eq!(render_fixed_point(&[3], 0), "3p0");
     assert_eq!(render_fixed_point(&[33], 1), "3.3p1");
     assert_eq!(render_fixed_point(&[100], 2), "1.00p2");
@@ -2022,38 +2029,38 @@ fn render_fixed_point_matches_the_rhocalc_surface_form() {
     assert_eq!(render_fixed_point(&[0xCD], 1), "-5.1p1"); // 0xCD = -51
 }
 
-/// The ground-scalar arms of [`render_as_rhocalc`].
+/// The ground-scalar arms of [`render_as_rholang`].
 #[test]
-fn render_as_rhocalc_matches_the_rhocalc_surface_form() {
-    assert_eq!(render_as_rhocalc(&RuntimeObservationValue::Int(-3)), "-3");
+fn render_as_rholang_matches_the_rholang_surface_form() {
+    assert_eq!(render_as_rholang(&RuntimeObservationValue::Int(-3)), "-3");
     // ★ The `n` tail (divergence I, Stage C): `GBigInt`'s RhoCalc surface form REQUIRES it —
     // `-7` is the surface form of the `Int` `-7`, a different carrier.
-    assert_eq!(render_as_rhocalc(&RuntimeObservationValue::BigIntBytes(vec![249])), "-7n");
-    assert_eq!(render_as_rhocalc(&RuntimeObservationValue::Bool(false)), "false");
+    assert_eq!(render_as_rholang(&RuntimeObservationValue::BigIntBytes(vec![249])), "-7n");
+    assert_eq!(render_as_rholang(&RuntimeObservationValue::Bool(false)), "false");
     assert_eq!(
-        render_as_rhocalc(&RuntimeObservationValue::Text("a\"b".to_string())),
+        render_as_rholang(&RuntimeObservationValue::Text("a\"b".to_string())),
         "\"a\\\"b\""
     );
     assert_eq!(
-        render_as_rhocalc(&RuntimeObservationValue::DoubleBits(4.0_f64.to_bits())),
+        render_as_rholang(&RuntimeObservationValue::DoubleBits(4.0_f64.to_bits())),
         "4.0"
     );
     assert_eq!(
-        render_as_rhocalc(&RuntimeObservationValue::List(vec![
+        render_as_rholang(&RuntimeObservationValue::List(vec![
             RuntimeObservationValue::Int(1),
             RuntimeObservationValue::Int(2),
         ])),
         "[1, 2]"
     );
     assert_eq!(
-        render_as_rhocalc(&RuntimeObservationValue::List(vec![
+        render_as_rholang(&RuntimeObservationValue::List(vec![
             RuntimeObservationValue::BigIntBytes(vec![1]),
             RuntimeObservationValue::BigIntBytes(vec![2]),
         ])),
         "[1n, 2n]"
     );
     assert_eq!(
-        render_as_rhocalc(&RuntimeObservationValue::Map(vec![(
+        render_as_rholang(&RuntimeObservationValue::Map(vec![(
             RuntimeObservationValue::Int(1),
             RuntimeObservationValue::Int(10),
         )])),
@@ -2189,7 +2196,7 @@ async fn divergence_k_witness_guard_lane_blocks_a_comm_the_machine_fires() {
              replaced by its target twin. Got {residue:?}"
         );
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![r#""fired""#.to_string()],
             "K: the MACHINE fires {guard:?} on {datum:?} — that is the whole point of the \
              divergence, and if it stops firing the reducer's guard semantics changed"
@@ -2199,7 +2206,7 @@ async fn divergence_k_witness_guard_lane_blocks_a_comm_the_machine_fires() {
 
 /// **Divergence K (target) — the guard lane's normal form agrees with the machine.**
 ///
-/// The reducer is NORMATIVE ("rhocalc IS rholang"), so where the two disagree the host is
+/// The reducer is NORMATIVE ("rholang IS rholang"), so where the two disagree the host is
 /// wrong. This asserts the property the witness above measures the absence of: for a guard
 /// the machine decides, the fold's residue reflects the same decision.
 ///
@@ -2229,7 +2236,7 @@ async fn divergence_k_target_guard_lane_normal_form_agrees_with_the_machine() {
             !observed.is_empty(),
             "K: fold and machine must agree on whether {guard:?} fires on {datum:?}; \
              fold residue {residue:?} vs machine {:?}",
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>()
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>()
         );
     }
 }
@@ -2314,7 +2321,7 @@ async fn divergence_k_target_guard_lane_normal_form_agrees_with_the_machine() {
 /// ## Why the strictness argument does not transfer
 ///
 /// A formula is never EVALUATED. `t matches φ` lowers to one `EMatches{target, pattern}`
-/// (`rhocalc_ast.rs`'s `Matches` arm): the target is evaluated, the pattern is handed verbatim to
+/// (`rholang_ast.rs`'s `Matches` arm): the target is evaluated, the pattern is handed verbatim to
 /// the reducer's spatial matcher, and `ConnOrBody` there is a `find_map` over the disjuncts
 /// (f1r3node `rholang/src/rust/interpreter/matcher/spatial_matcher.rs`) — a disjunct that does not
 /// match simply yields `None` from the closure and the search moves on. **There is no error
@@ -2398,7 +2405,7 @@ async fn formula_level_disjunction_agrees_where_the_guard_level_or_diverges() {
             fires,
             "the MACHINE must {} {guard:?} on {datum:?} — got {:?}",
             if fires { "fire" } else { "rest" },
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>()
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>()
         );
     }
 
@@ -2415,7 +2422,7 @@ async fn formula_level_disjunction_agrees_where_the_guard_level_or_diverges() {
          target twin. Got {residue:?}"
     );
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec![r#""fired""#.to_string()],
         "divergence K: the MACHINE fires the guard-level twin, which is what makes the host's \
          decline a divergence rather than a shared abstention"
@@ -2482,7 +2489,7 @@ fn zipper_elist(items: Vec<Par>) -> Par {
 }
 
 /// `target.name(arguments)` as the reducer sees it — byte-identical in shape to what
-/// `rhocalc_ast.rs::lower_method` emits for the routed zipper family.
+/// `rholang_ast.rs::lower_method` emits for the routed zipper family.
 fn zipper_method(name: &str, target: Par, arguments: Vec<Par>) -> Par {
     zipper_expr_par(ZExprInstance::EMethodBody(ZEMethod {
         method_name: name.to_string(),
@@ -2499,7 +2506,7 @@ fn zipper_method(name: &str, target: Par, arguments: Vec<Par>) -> Par {
 async fn reduce_expression(expression: Par) -> Result<Vec<RuntimeObservationValue>, String> {
     clear_held_fold_sites();
     let scaffold = parse(r#"@("OUT")!(Nil)"#);
-    let mut par = lower_rhocalc_proc(&scaffold).expect("the @(\"OUT\")!(Nil) scaffold lowers");
+    let mut par = lower_rholang_proc(&scaffold).expect("the @(\"OUT\")!(Nil) scaffold lowers");
     assert_eq!(par.sends.len(), 1, "the scaffold must lower to exactly one send");
     par.sends[0].data = vec![expression];
     let definitions =
@@ -2640,7 +2647,7 @@ async fn c1_zipper_walk_exhaustion_terminates_within_leaf_count() {
             .await
             .unwrap_or_else(|err| panic!("{label}: leafCount() at the root must reduce: {err}"));
         assert_eq!(
-            counted.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            counted.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected_leaf_count.to_string()],
             "{label}: leafCount() is the walk bound at THIS root — the map's cardinality at the \
              root, and the BRANCH's count at a prefix"
@@ -2656,7 +2663,7 @@ async fn c1_zipper_walk_exhaustion_terminates_within_leaf_count() {
                 .unwrap_or_else(|err| {
                     panic!("{label}: `walk == Nil` must reduce to a Bool at step {steps}: {err}")
                 });
-            let rendered = observed.iter().map(render_as_rhocalc).collect::<Vec<_>>();
+            let rendered = observed.iter().map(render_as_rholang).collect::<Vec<_>>();
             assert_eq!(
                 rendered.len(),
                 1,
@@ -2695,7 +2702,7 @@ async fn c1_zipper_walk_exhaustion_terminates_within_leaf_count() {
                     .unwrap_or_else(|err| {
                         panic!("{label} step {steps}: getPath() must reduce: {err}")
                     });
-            let rendered = observed.iter().map(render_as_rhocalc).collect::<Vec<_>>();
+            let rendered = observed.iter().map(render_as_rholang).collect::<Vec<_>>();
             assert_eq!(rendered.len(), 1, "{label} step {steps}: expected one observation");
             if let Some(previous) = previous {
                 assert_ne!(
@@ -2728,7 +2735,7 @@ async fn c1_zipper_counted_walk_visits_every_leaf_once_in_order() {
             .await
             .unwrap_or_else(|err| panic!("getPath() after {steps} steps must reduce: {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected_path.to_string()],
             "step {steps}: the depth-first leaf order is a documented part of the contract"
         );
@@ -2781,7 +2788,7 @@ async fn c1_zipper_walk_cannot_continue_past_exhaustion() {
         .await
         .expect("the exhaustion sentinel must reduce to a Bool");
     assert_eq!(
-        sentinel.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        sentinel.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["true".to_string()],
         "★ `walk == Nil` IS the exhaustion test, and it must answer — a walk body that follows the \
          documented contract never reaches the accessor raises below"
@@ -2837,7 +2844,7 @@ async fn c1_zipper_walk_cannot_continue_past_exhaustion() {
 /// answers `Nil`, RhoCalc's `.toNextLeaf()` leaves the term unreduced. A stuck term still DISPLAYS
 /// the method call, which is how "stuck" is observed here.
 #[tokio::test(flavor = "multi_thread")]
-async fn c1_rhocalc_side_still_reports_exhaustion_as_stuck() {
+async fn c1_rholang_side_still_reports_exhaustion_as_stuck() {
     // Two entries, so the third step is one past the end.
     let source = "{| 1 : 10, 2 : 20 |}.readZipper().toNextLeaf().toNextLeaf().toNextLeaf()";
     let residue = fold(&parse(source)).expect("the fold converges");
@@ -2861,7 +2868,7 @@ async fn c1_rhocalc_side_still_reports_exhaustion_as_stuck() {
 /// RhoCalc's `w.setLeaf(full, v)` writes at an ABSOLUTE PATH ARGUMENT while Rholang's
 /// `z.setLeaf(v)` writes at the zipper's FOCUS and takes one argument — the same name, a different
 /// operation, and an arity mismatch that would otherwise have shipped as a latent bug. It is left
-/// fail-closed and named in `rhocalc_ast.rs::unsupported_construct_name`.
+/// fail-closed and named in `rholang_ast.rs::unsupported_construct_name`.
 ///
 /// Each row uses EXACTLY the arity `lower_proc` emits, so a future edit that changes an argument
 /// list fails here rather than in someone's program. Rows that answer an observable value assert
@@ -2889,7 +2896,7 @@ async fn c1b_routed_zipper_family_matches_the_interpreter_arity() {
             .await
             .unwrap_or_else(|err| panic!("C1b {label}: must reduce, got {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected.to_string()],
             "C1b {label}: the routed name/arity must reach the interpreter's own implementation"
         );
@@ -2993,7 +3000,7 @@ async fn c4_the_native_carrier_has_no_value_slot() {
             .await
             .unwrap_or_else(|err| panic!("leaf {steps}: the comparison must reduce: {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec!["true".to_string()],
             "C4-1: at leaf {steps} the carrier's key and value must be THE SAME TERM. A `false` \
              here would mean the carrier grew a value slot, and C4's whole blocking argument would \
@@ -3010,7 +3017,7 @@ async fn c4_the_native_carrier_has_no_value_slot() {
     .await
     .expect("atPath on the native carrier reduces");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec![r#"["b"]"#.to_string()],
         "C4-1: `atPath` is the carrier's `get`, and what it returns is the KEY ITSELF"
     );
@@ -3085,7 +3092,7 @@ async fn c4_set_leaf_appends_an_element_and_ignores_the_focus() {
     let after = |segment: &str| zipper_method("setLeaf", write_at(segment), vec![new_element()]);
     let count_of = |map: Par| zipper_method("leafCount", map, Vec::new());
     let rendered = |values: Vec<RuntimeObservationValue>| {
-        values.iter().map(render_as_rhocalc).collect::<Vec<_>>()
+        values.iter().map(render_as_rholang).collect::<Vec<_>>()
     };
 
     // ① The map GREW. A focus-write would have replaced the entry at `["b"]` and left the count at
@@ -3238,7 +3245,7 @@ async fn c4_restrict_is_not_restriction_and_meet_is_intersection() {
             .await
             .unwrap_or_else(|err| panic!("C4-4 {label}: must reduce: {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected_count.to_string()],
             "C4-4 {label}: `restriction` is PREFIX containment and `intersection` is EXACT \
              membership. RhoCalc's `restrict` is exact, so `restriction` is the WRONG target."
@@ -3256,7 +3263,7 @@ async fn c4_restrict_is_not_restriction_and_meet_is_intersection() {
         .await
         .unwrap_or_else(|err| panic!("C4-4 {method}: atPath must reduce: {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![r#"["a", "x"]"#.to_string()],
             "C4-4 {method}: the kept entry is the common key"
         );
@@ -3298,7 +3305,7 @@ async fn c4_get_subtrie_at_is_read_zipper_at_then_get_subtrie() {
                 .await
                 .unwrap_or_else(|err| panic!("C4-5 {label}: must reduce: {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected_count.to_string()],
             "C4-5 {label}: `readZipperAt({segment:?}).getSubtrie()` scopes to the branch"
         );
@@ -3314,7 +3321,7 @@ async fn c4_get_subtrie_at_is_read_zipper_at_then_get_subtrie() {
     .await
     .expect("C4-5: the absolute address must reduce");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec![r#"["a", "x"]"#.to_string()],
         "C4-5: the subtrie retains ABSOLUTE paths — a caller expecting relative ones would be off \
          by the prefix on every entry"
@@ -3414,7 +3421,7 @@ async fn c4_a_bare_element_reads_back_as_itself() {
             .await
             .unwrap_or_else(|err| panic!("C4-6 {label}: must reduce: {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected.to_string()],
             "C4-6 {label}: the cursor names the BARE entry — `[1]` here is the singleton LIST, a \
              different entry"
@@ -3433,7 +3440,7 @@ async fn c4_a_bare_element_reads_back_as_itself() {
         .await
         .unwrap_or_else(|err| panic!("C4-6 getLeaf at step {steps}: must reduce: {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected.clone()],
             "C4-6 getLeaf at step {steps}: the walk's own cursor must read its element back"
         );
@@ -3446,7 +3453,7 @@ async fn c4_a_bare_element_reads_back_as_itself() {
         .await
         .unwrap_or_else(|err| panic!("C4-6 atPath({steps}): must reduce: {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected],
             "C4-6 atPath({steps}): the BARE key addresses the entry it was inserted under"
         );
@@ -3472,7 +3479,7 @@ async fn c4_a_bare_element_reads_back_as_itself() {
         .await
         .expect("C4-6 pre-fix control: getPath must reduce");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["[1]".to_string()],
         "C4-6 pre-fix control: a SPLIT cursor over the same segments reports the LIST — this is \
          the exact value the retired witness asserted for the walk's own cursor"
@@ -3485,7 +3492,7 @@ async fn c4_a_bare_element_reads_back_as_itself() {
     .await
     .expect("C4-6 pre-fix control: the Nil comparison must reduce");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["true".to_string()],
         "C4-6 pre-fix control: the split key `030200` is not in this map, so the guessing reader \
          still answers Nil. If THIS ever flips, the arm stopped being spent and ② is vacuous"
@@ -3502,7 +3509,7 @@ async fn c4_a_bare_element_reads_back_as_itself() {
     .await
     .expect("C4-6: the one-segment list comparison must reduce");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["true".to_string()],
         "C4-6: `atPath([1])` must MISS — the bare `1` and the list `[1]` are different entries, and \
          conflating them is what `entry_key_at` removed"
@@ -3518,7 +3525,7 @@ async fn c4_a_bare_element_reads_back_as_itself() {
     .await
     .expect("C4-6 control: must reduce");
     assert_eq!(
-        observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec![r#"["b"]"#.to_string()],
         "C4-6 control: a GROUND-LIST element still reads back through the split arm — the fix moved \
          ZERO bytes on this shape"
@@ -3582,7 +3589,7 @@ async fn c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil() {
         .await
         .expect("leafCount at the prefix reduces");
     assert_eq!(
-        counted.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        counted.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["2".to_string()],
         "C4-7: `leafCount()` at `[\"a\"]` counts the BRANCH"
     );
@@ -3600,7 +3607,7 @@ async fn c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil() {
                 .await
                 .unwrap_or_else(|err| panic!("C4-7 step {steps}: must reduce: {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected_path.to_string()],
             "C4-7 step {steps}: steps 3 and 4 are OUTSIDE the branch — that is the trap. If this \
              ever reports `Nil` or an error at step 3, the walk became branch-scoped and this test \
@@ -3611,7 +3618,7 @@ async fn c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil() {
             .await
             .unwrap_or_else(|err| panic!("C4-7 step {steps}: the Nil test must reduce: {err}"));
         assert_eq!(
-            is_nil.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            is_nil.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec!["false".to_string()],
             "C4-7 step {steps}: `Nil` is NOT the branch sentinel — a walk-until-Nil from a prefix \
              does not stop at the branch boundary"
@@ -3623,7 +3630,7 @@ async fn c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil() {
         .await
         .expect("the fifth step's Nil test reduces");
     assert_eq!(
-        is_nil.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        is_nil.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["true".to_string()],
         "C4-7: the walk from a prefix is MAP-scoped — it exhausts at the map's count + 1"
     );
@@ -3637,7 +3644,7 @@ async fn c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil() {
             .await
             .unwrap_or_else(|err| panic!("C4-7 safe idiom step {steps}: must reduce: {err}"));
         assert_eq!(
-            observed.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected.to_string()],
             "C4-7 safe idiom: `getSubtrie().readZipper()` IS `Nil`-terminable at the branch \
              boundary — this is the enumeration to reach for when the bound is not carried"
@@ -3706,7 +3713,7 @@ async fn c4_a_bare_element_walk_visits_every_element_in_order() {
         .await
         .expect("leafCount reduces");
     assert_eq!(
-        counted.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        counted.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["3".to_string()],
         "C4-8: the map holds three entries, and a counted walk over it now reads three DISTINCT \
          ones"
@@ -3718,7 +3725,7 @@ async fn c4_a_bare_element_walk_visits_every_element_in_order() {
             .await
             .unwrap_or_else(|err| panic!("C4-8 step {steps}: getPath must reduce: {err}"));
         assert_eq!(
-            path.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            path.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec![expected_path.to_string()],
             "C4-8 step {steps}: the walk must ADVANCE, and must report the BARE element. `[{}]` \
              here would be the retired fixed point wearing a new rendering",
@@ -3729,7 +3736,7 @@ async fn c4_a_bare_element_walk_visits_every_element_in_order() {
             .await
             .unwrap_or_else(|err| panic!("C4-8 step {steps}: the Nil test must reduce: {err}"));
         assert_eq!(
-            is_nil.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+            is_nil.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec!["false".to_string()],
             "C4-8 step {steps}: an entry the count promised must not be exhausted early"
         );
@@ -3743,7 +3750,7 @@ async fn c4_a_bare_element_walk_visits_every_element_in_order() {
         .await
         .expect("C4-8: the exhaustion test at leafCount() + 1 must reduce");
     assert_eq!(
-        is_nil.iter().map(render_as_rhocalc).collect::<Vec<_>>(),
+        is_nil.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["true".to_string()],
         "C4-8: `walk until Nil` over a bare-element pathmap TERMINATES — this is the assertion the \
          retired witness recorded as false at six consecutive steps"

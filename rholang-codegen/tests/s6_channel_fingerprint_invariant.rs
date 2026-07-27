@@ -628,7 +628,7 @@ fn the_only_unscoped_names_are_the_configured_out_channel() {
 ///
 /// Before S6 this intersection was non-empty for any two languages sharing a constructor
 /// name or a site string; `@"ac:PPar"` alone collided by default between any two process
-/// calculi, since `PPar` is the name `rhocalc` and every AC/Ambient demo actually use.
+/// calculi, since `PPar` is the name `rholang` and every AC/Ambient demo actually use.
 #[test]
 fn two_co_installed_languages_share_no_channel_name() {
     let (lambda_fp, lambda) = sweep(SWEPT_LANGUAGES[0].1);

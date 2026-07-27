@@ -36,7 +36,7 @@
 //!     it answers `false`, while `where x != 43` answers `true` for the same wrong reason. That
 //!     asymmetry — `!=` firing while `==` does not — is this suite's sharpest witness.
 //!
-//! The `rhocalc` binary was the SOLE production caller of `Proc::parse`; every other production
+//! The `rholang` binary was the SOLE production caller of `Proc::parse`; every other production
 //! caller already used `parse_via_wpda`. This suite exercises the same production entry.
 //!
 //! ## Defect 2 — the monadic receive arity (`canonicalize_arity_pattern`)
@@ -53,11 +53,11 @@
 //! with a literal appearing in the guard or the datum (a boolean `false` or a numeric `1` both
 //! match inside an un-fired residual). [`harness_has_teeth`] proves the detector separates a
 //! known firing from a known non-firing before any other row is trusted.
-#![cfg(feature = "rhocalc-runtime")]
+#![cfg(feature = "rholang-runtime")]
 
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc_with_options, run_normalized_par_for_oracle_and_read_runtime_values,
+    lower_rholang_proc_with_options, run_normalized_par_for_oracle_and_read_runtime_values,
     LoweringOptions,
 };
 use mettail_runtime::{clear_var_cache, RuntimeObservationValue};
@@ -72,12 +72,12 @@ const FIRED_MARKER: &str = "ZQFIREDZQ";
 fn parse(source: &str) -> Proc {
     clear_var_cache();
     Proc::parse_via_wpda(source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"))
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err:?}"))
 }
 
 fn lower_with(source: &str, options: LoweringOptions) -> Par {
-    lower_rhocalc_proc_with_options(&parse(source), options)
-        .unwrap_or_else(|err| panic!("rhocalc lowering failed for {source:?}: {err:?}"))
+    lower_rholang_proc_with_options(&parse(source), options)
+        .unwrap_or_else(|err| panic!("rholang lowering failed for {source:?}: {err:?}"))
 }
 
 fn lower(source: &str) -> Par {
@@ -370,14 +370,14 @@ async fn a_scalar_ground_pattern_does_not_match_a_listed_send() {
 /// fixed by the token patterns alone was the string-entry `@`-projection isolation prologue, which
 /// short-circuited the single-winner facade for an input that is ITSELF a whole σ-led span (a bare
 /// `-7`, or `@"OUT"!(-7)` on its own) — see the module header of
-/// `rhocalc_ground_literal_conformance.rs`. A REAL program is never such a span: the numeral is
+/// `rholang_ground_literal_conformance.rs`. A REAL program is never such a span: the numeral is
 /// nested inside a larger term, the prologue did not frame it, and the walker's election decided.
 /// That is exactly why this behavioural row closed on the token patterns alone, while the
 /// whole-input artifact rows had to wait for the projection helper's token-boundary repair
 /// (`macros/src/gen/runtime/wpda_codegen/lit_boundary.rs`, 2026-07-26).
 ///
 /// ⚠ This test is NOT a substitute for the artifact matrix, and passing it is NOT conformance —
-/// `rhocalc_ground_literal_conformance.rs::a_firing_comm_does_not_witness_artifact_conformance`
+/// `rholang_ground_literal_conformance.rs::a_firing_comm_does_not_witness_artifact_conformance`
 /// exhibits two spellings that both COMMIT while carrying DIFFERENT artifacts. The artifact
 /// assertion below is what makes this row's pass mean what it says.
 #[tokio::test]

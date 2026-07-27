@@ -1,6 +1,6 @@
-//! AST-first rhocalc lowering into the Rho machine.
+//! AST-first rholang lowering into the Rho machine.
 //!
-//! The examples are written as rhocalc source for readability, parsed by the
+//! The examples are written as rholang source for readability, parsed by the
 //! MeTTaIL/WPDA parser, and lowered directly to normalized `rhoapi::Par`.
 //! Rholang source text is not generated or parsed on this path.
 
@@ -16,12 +16,12 @@ use mettail_rholang_codegen::{
 };
 use mettail_rholang_runtime::fold_contract::FoldKind;
 use mettail_rholang_runtime::{
-    dovetail_rho_backed_rhocalc, lower_rhocalc_proc, lower_rhocalc_term,
-    lower_rhocalc_term_with_folds, rho_runtime_backed_rhocalc_strings,
-    rho_runtime_backed_rhocalc_values, rhocalc_ast_runtime_def, run_normalized_par_for_oracle,
+    dovetail_rho_backed_rholang, lower_rholang_proc, lower_rholang_term,
+    lower_rholang_term_with_folds, rho_runtime_backed_rholang_strings,
+    rho_runtime_backed_rholang_values, rholang_ast_runtime_def, run_normalized_par_for_oracle,
     run_normalized_par_for_oracle_and_read_runtime_values,
-    run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend, RhocalcAstLowerError,
-    RHOCALC_BAG_ABI_TAG,
+    run_normalized_par_for_oracle_and_read_strings, PlannedRhoBackend, RholangAstLowerError,
+    RHOLANG_BAG_ABI_TAG,
 };
 use mettail_runtime::{
     clear_var_cache, Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue,
@@ -36,9 +36,9 @@ use prost::Message;
 fn parse_lower(source: &str) -> Par {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source)
-        .unwrap_or_else(|err| panic!("rhocalc WPDA parse failed for {source:?}: {err:?}"));
-    lower_rhocalc_proc(&proc)
-        .unwrap_or_else(|err| panic!("rhocalc AST lowering failed for {source:?}: {err:?}"))
+        .unwrap_or_else(|err| panic!("rholang WPDA parse failed for {source:?}: {err:?}"));
+    lower_rholang_proc(&proc)
+        .unwrap_or_else(|err| panic!("rholang AST lowering failed for {source:?}: {err:?}"))
 }
 
 /// Coverage requirements derived from the language-aware rejected-rule classifier.
@@ -51,7 +51,7 @@ fn rho_default_coverage_requirements(def: &LanguageDef) -> RhoDefaultBackendRequ
     let dispositions = suggest_rejected_rule_dispositions(def, &lowering);
     RhoDefaultBackendRequirements {
         coverage: RhoCoverageEvidence::CoveredRejectedRules(dispositions),
-        // DERIVED, mirroring the production planner (`rhocalc_ast::rho_default_coverage_requirements`).
+        // DERIVED, mirroring the production planner (`rholang_ast::rho_default_coverage_requirements`).
         // `NoGuardObligations` asserts the language induces none, which stopped being true when
         // RhoCalc declared its `where` slots as semantic predicates.
         guard_coverage: RhoGuardCoverageEvidence::CoveredGuardObligations(
@@ -60,11 +60,11 @@ fn rho_default_coverage_requirements(def: &LanguageDef) -> RhoDefaultBackendRequ
     }
 }
 
-fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
+fn rholang_dynamic_backend() -> PlannedRhoBackend {
     // Build the dynamic Rho backend from the REAL reconstructed RhoCalc
     // augmented definition, so its fingerprint equals the generated
     // `RhoCalcLanguage` fingerprint and installs on the real identity.
-    let def = rhocalc_ast_runtime_def();
+    let def = rholang_ast_runtime_def();
     let plan = plan_rho_default_backend(&def, rho_default_coverage_requirements(&def))
         .expect("real RhoCalc def must pass the Rho-default gate with Rho-native coverage");
     assert_eq!(
@@ -77,7 +77,7 @@ fn rhocalc_dynamic_backend() -> PlannedRhoBackend {
 
 fn wrong_name_dynamic_backend() -> PlannedRhoBackend {
     // Reconstruct the real RhoCalc source but rename it so the plan's
-    // `language_name()` no longer matches `RhocalcAstRuntimeLanguage`. The
+    // `language_name()` no longer matches `RholangAstRuntimeLanguage`. The
     // install must then fail with a name-level `LanguagePlanMismatch`.
     use mettail_languages::rhocalc::RhoCalcLanguage;
     let source = RhoCalcLanguage
@@ -109,7 +109,7 @@ async fn read_strings(source: &str) -> Vec<String> {
     let par = parse_lower(source);
     let mut values = run_normalized_par_for_oracle_and_read_strings(&par, "OUT")
         .await
-        .unwrap_or_else(|err| panic!("lowered rhocalc execution failed for {source:?}: {err}"));
+        .unwrap_or_else(|err| panic!("lowered rholang execution failed for {source:?}: {err}"));
     values.sort();
     values
 }
@@ -117,14 +117,14 @@ async fn read_strings(source: &str) -> Vec<String> {
 async fn read_strings_from_par(par: &Par) -> Vec<String> {
     let mut values = run_normalized_par_for_oracle_and_read_strings(par, "OUT")
         .await
-        .expect("lowered rhocalc execution failed");
+        .expect("lowered rholang execution failed");
     values.sort();
     values
 }
 
 async fn observe_runtime_values(payload: Proc) -> Vec<RuntimeObservationValue> {
-    let call = lower_rhocalc_proc(&output_to_out(payload)).expect("payload output should lower");
-    rhocalc_dynamic_backend()
+    let call = lower_rholang_proc(&output_to_out(payload)).expect("payload output should lower");
+    rholang_dynamic_backend()
         .run_with_call_and_observe_runtime_values(&call, "OUT")
         .await
         .expect("structured runtime observation should execute")
@@ -147,7 +147,7 @@ async fn ambiguous_term_lowers_every_distinct_proc_alternative() {
         RhoCalcTermInner::Proc(right),
     ]));
 
-    let par = lower_rhocalc_term(&term).expect("ambiguous Proc term should lower");
+    let par = lower_rholang_term(&term).expect("ambiguous Proc term should lower");
 
     assert_eq!(read_strings_from_par(&par).await, vec!["left".to_string(), "right".to_string()]);
 }
@@ -160,7 +160,7 @@ async fn ambiguous_term_deduplicates_exact_semantic_proc_alternatives() {
         RhoCalcTermInner::Proc(duplicated),
     ]));
 
-    let par = lower_rhocalc_term(&term).expect("duplicate Proc alternatives should lower once");
+    let par = lower_rholang_term(&term).expect("duplicate Proc alternatives should lower once");
 
     assert_eq!(read_strings_from_par(&par).await, vec!["same".to_string()]);
 }
@@ -172,25 +172,25 @@ fn ambiguous_term_rejects_cross_category_alternative_instead_of_dropping_it() {
         RhoCalcTermInner::Name(quoted_name("not-a-proc")),
     ]));
 
-    let err = lower_rhocalc_term(&term)
+    let err = lower_rholang_term(&term)
         .expect_err("cross-category ambiguity must not silently drop non-Proc alternatives");
 
-    assert_eq!(err, RhocalcAstLowerError::ExpectedProcTerm);
+    assert_eq!(err, RholangAstLowerError::ExpectedProcTerm);
 }
 
 // End-to-end: the generated `RhoCalcLanguage` (defined by the `language!` macro)
 // driven through the public `Language` trait and evaluated on the REAL
 // f1r3node-rust Rholang interpreter, this variant focusing on the observed VALUE.
 //
-// `rho_runtime_backed_rhocalc_values` installs RhoCalc as a Rho-backed `Language`
+// `rho_runtime_backed_rholang_values` installs RhoCalc as a Rho-backed `Language`
 // whose plan fingerprint matches the generated `RhoCalcLanguage` (built by
-// `rhocalc_dynamic_backend`), so the test exercises the real language identity
+// `rholang_dynamic_backend`), so the test exercises the real language identity
 // rather than an ad-hoc fragment. The term is parsed by the generated parser,
 // lowered to `rhoapi::Par`, and reduced on an in-memory `RhoRuntime`/RSpace.
 #[test]
-fn rhocalc_language_default_report_observes_runtime_values() {
+fn rholang_language_default_report_observes_runtime_values() {
     // Install the Rho-backed language; "OUT" is the channel results are read from.
-    let language = rho_runtime_backed_rhocalc_values(rhocalc_dynamic_backend(), "OUT")
+    let language = rho_runtime_backed_rholang_values(rholang_dynamic_backend(), "OUT")
         .expect("dynamic RhoCalc plan should install through the public AST helper");
     // Parse a COMM example through the generated language's parser:
     //   receiver `(@("c")?x).{*(x)}` listens on channel @("c"), binds x, and drops
@@ -199,7 +199,7 @@ fn rhocalc_language_default_report_observes_runtime_values() {
     // After the rendezvous, `*(x)` runs that process, emitting "p" on OUT.
     let term = language
         .parse_term(r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#)
-        .expect("rhocalc source must parse through the generated language");
+        .expect("rholang source must parse through the generated language");
 
     // Lower the parsed term to `rhoapi::Par` and run it on the Rholang interpreter,
     // collecting the structured observation report.
@@ -222,13 +222,13 @@ fn rhocalc_language_default_report_observes_runtime_values() {
 // through the normalized-AST path (a `Par` artifact), never generated Rholang
 // source text. Hence the name "...executes parsed process as ast call".
 #[test]
-fn rhocalc_language_default_report_executes_parsed_process_as_ast_call() {
-    let language = rho_runtime_backed_rhocalc_strings(rhocalc_dynamic_backend(), "OUT")
+fn rholang_language_default_report_executes_parsed_process_as_ast_call() {
+    let language = rho_runtime_backed_rholang_strings(rholang_dynamic_backend(), "OUT")
         .expect("dynamic RhoCalc plan should install through the public AST helper");
     // Reuse the single-channel COMM example; it reduces to "p" on OUT.
     let term = language
         .parse_term(r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#)
-        .expect("rhocalc source must parse through the generated language");
+        .expect("rholang source must parse through the generated language");
 
     // The generated language must declare (and support) the Rho machine as its
     // default runtime backend.
@@ -257,7 +257,7 @@ fn held_fold_over_comm_received_value_execs_to_the_folded_value() {
     // machine and the result lands on OUT — proving the held-fold contract is registered AND driven
     // on the exec path (not just the stepper), and that the general C[*r] continuation lift works.
     let language =
-        dovetail_rho_backed_rhocalc("OUT").expect("the dovetail+Rho RhoCalc wrapper installs");
+        dovetail_rho_backed_rholang("OUT").expect("the dovetail+Rho RhoCalc wrapper installs");
     let term = language
         .parse_term(r#"{ for(x <- @("c")){ @("OUT")!(int(*(x), 8)) } | @("c")!(int(5,8)) }"#)
         .expect("the held-fold-in-send term parses");
@@ -274,7 +274,7 @@ fn held_fold_over_comm_received_value_execs_to_the_folded_value() {
 #[test]
 fn pure_fold_reports_through_rho_machine_observation() {
     let language =
-        dovetail_rho_backed_rhocalc("OUT").expect("the dovetail+Rho RhoCalc wrapper installs");
+        dovetail_rho_backed_rholang("OUT").expect("the dovetail+Rho RhoCalc wrapper installs");
     let term = RhoCalcTerm(RhoCalcTermInner::Proc(Proc::IntBinProc(
         Arc::new(Proc::CastInt(Arc::new(Int::NumLit(5)))),
         Arc::new(Int::NumLit(8)),
@@ -291,8 +291,8 @@ fn pure_fold_reports_through_rho_machine_observation() {
 }
 
 #[test]
-fn public_rhocalc_helper_installs_dynamic_ast_runtime_fragment() {
-    let result = rho_runtime_backed_rhocalc_values(rhocalc_dynamic_backend(), "OUT");
+fn public_rholang_helper_installs_dynamic_ast_runtime_fragment() {
+    let result = rho_runtime_backed_rholang_values(rholang_dynamic_backend(), "OUT");
 
     if let Err(err) = result {
         panic!(
@@ -302,8 +302,8 @@ fn public_rhocalc_helper_installs_dynamic_ast_runtime_fragment() {
 }
 
 #[test]
-fn public_rhocalc_helper_rejects_wrong_language_identity() {
-    let result = rho_runtime_backed_rhocalc_values(wrong_name_dynamic_backend(), "OUT");
+fn public_rholang_helper_rejects_wrong_language_identity() {
+    let result = rho_runtime_backed_rholang_values(wrong_name_dynamic_backend(), "OUT");
 
     let err = match result {
         Ok(_) => panic!("wrong language plan must not install on RhoCalc AST runtime"),
@@ -318,7 +318,7 @@ fn public_rhocalc_helper_rejects_wrong_language_identity() {
 }
 
 #[tokio::test]
-async fn runtime_value_observation_preserves_rhocalc_list_map_and_bag_payloads() {
+async fn runtime_value_observation_preserves_rholang_list_map_and_bag_payloads() {
     let list_values = observe_runtime_values(Proc::CastList(Arc::new(List::ListLit(vec![
         Proc::CastInt(Arc::new(Int::NumLit(1))),
         Proc::CastStr(Arc::new(Str::StringLit("two".to_string()))),
@@ -399,7 +399,7 @@ async fn new_name_scope_lowers_to_private_rho_binding() {
 
     run_normalized_par_for_oracle(&par)
         .await
-        .unwrap_or_else(|err| panic!("lowered new-scope rhocalc failed: {err}"));
+        .unwrap_or_else(|err| panic!("lowered new-scope rholang failed: {err}"));
     assert!(
         run_normalized_par_for_oracle_and_read_strings(&par, "OUT")
             .await
@@ -426,7 +426,7 @@ fn list_literal_lowers_to_elist_ast_preserving_order() {
         Proc::CastStr(Arc::new(Str::StringLit("two".to_string()))),
     ])));
 
-    let par = lower_rhocalc_proc(&proc).expect("list literal should lower");
+    let par = lower_rholang_proc(&proc).expect("list literal should lower");
     let ExprInstance::EListBody(list) = only_expr(&par) else {
         panic!("expected EListBody");
     };
@@ -445,7 +445,7 @@ fn map_literal_lowers_to_emap_ast() {
     );
     let proc = Proc::CastMap(Arc::new(Map::MapLit(entries)));
 
-    let par = lower_rhocalc_proc(&proc).expect("map literal should lower");
+    let par = lower_rholang_proc(&proc).expect("map literal should lower");
     let ExprInstance::EMapBody(map) = only_expr(&par) else {
         panic!("expected EMapBody");
     };
@@ -472,13 +472,13 @@ fn bag_literal_lowers_to_tagged_elist_preserving_multiplicity() {
     bag.insert(alpha);
     let proc = Proc::CastBag(Arc::new(Bag::BagLit(bag)));
 
-    let par = lower_rhocalc_proc(&proc).expect("bag literal should lower");
+    let par = lower_rholang_proc(&proc).expect("bag literal should lower");
     let outer = only_list(&par);
 
     assert_eq!(outer.ps.len(), 2);
     assert_eq!(
         outer.ps[0],
-        GPrivateBuilder::new_par_from_string(RHOCALC_BAG_ABI_TAG.to_string())
+        GPrivateBuilder::new_par_from_string(RHOLANG_BAG_ABI_TAG.to_string())
     );
 
     let entries = only_list(&outer.ps[1]);
@@ -511,7 +511,7 @@ fn gint_par_needle(value: i64) -> Vec<u8> {
 
 /// The `GBigInt` twin of [`gint_par_needle`] — signed big-endian two's-complement bytes.
 ///
-/// ★ CORRECTED 2026-07-25 (divergence I). The comment that stood here said "plain rhocalc integer
+/// ★ CORRECTED 2026-07-25 (divergence I). The comment that stood here said "plain rholang integer
 /// literals lex to `BigInt` (the Rholang 1.4 arbitrary-precision default)". That was FALSE:
 /// f1r3node's `normalize_ground` maps a bare numeral to `GInt`, and only the `…n` spelling to
 /// `GBigInt`. RhoCalc's grammar now agrees, so plain operands ride as `GInt` and this needle is
@@ -588,7 +588,7 @@ async fn a_s4_ground_width_fold_value_is_computed_by_the_fold_contract_at_comm_t
         .parse_term(r#"@("OUT")!(int(2 + 3, 8))"#)
         .expect("the width-fold send parses");
     let (par, specs) =
-        lower_rhocalc_term_with_folds(term.as_ref()).expect("the ground fold lifts and lowers");
+        lower_rholang_term_with_folds(term.as_ref()).expect("the ground fold lifts and lowers");
 
     // The lift recorded exactly one Int-width-8 fold site.
     assert_eq!(specs.len(), 1, "one fold ⇒ one fold-contract spec");
@@ -624,7 +624,7 @@ async fn a_s4_ground_width_fold_value_is_computed_by_the_fold_contract_at_comm_t
     // (3) With the production wrapper the drained fold Definition is registered and the machine
     // computes the fold at COMM time.
     let language =
-        dovetail_rho_backed_rhocalc("OUT").expect("the dovetail+Rho RhoCalc wrapper installs");
+        dovetail_rho_backed_rholang("OUT").expect("the dovetail+Rho RhoCalc wrapper installs");
     let exec_term = language
         .parse_term(r#"int(2 + 3, 8)"#)
         .expect("the pure width-fold term parses");
@@ -649,10 +649,10 @@ async fn a_s4_ground_width_fold_value_is_computed_by_the_fold_contract_at_comm_t
 fn a_s4_unlowerable_construct_fails_closed_with_a_named_typed_error() {
     clear_var_cache();
     let proc = Proc::parse_via_wpda("5 bitand 3").expect("the bitand term parses");
-    let err = lower_rhocalc_proc(&proc)
+    let err = lower_rholang_proc(&proc)
         .expect_err("bitand has no Rholang bitwise Expr; the lowering must fail closed");
     match err {
-        RhocalcAstLowerError::UnsupportedProc(name) => {
+        RholangAstLowerError::UnsupportedProc(name) => {
             assert!(name.contains("bitand"), "the typed error names the construct, got {name:?}");
         },
         other => panic!("expected a typed UnsupportedProc naming the construct, got {other:?}"),

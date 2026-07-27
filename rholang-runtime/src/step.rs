@@ -788,10 +788,10 @@ fn format_comm(
     }
 }
 
-#[cfg(all(test, feature = "rhocalc-runtime"))]
+#[cfg(all(test, feature = "rholang-runtime"))]
 mod tests {
     use super::*;
-    use crate::rhocalc_ast::lower_rhocalc_term;
+    use crate::rholang_ast::lower_rholang_term;
     use mettail_languages::rhocalc::{Int, Proc, RhoCalcLanguage, RhoCalcTerm, RhoCalcTermInner};
     use mettail_runtime::Language;
 
@@ -799,12 +799,12 @@ mod tests {
     /// `@"OUT"!("p")` — exactly one rendezvous fires.
     // Guarded-receive sugar `(@("c")?x).{p}` was superseded by main's `for(x <- c){p}`
     // (RhoCalc → Rholang 1.4 merge). `(c?x).{p} ≡ for(x <- c){p}`; the sibling oracle
-    // `tests/rho_rhocalc_ast.rs` uses the same `for(...)` form.
+    // `tests/rho_rholang_ast.rs` uses the same `for(...)` form.
     const COMM_SRC: &str = r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#;
 
     fn lower(src: &str) -> Par {
-        let term = RhoCalcLanguage.parse_term(src).expect("parse rhocalc term");
-        lower_rhocalc_term(term.as_ref()).expect("lower rhocalc term to a Par")
+        let term = RhoCalcLanguage.parse_term(src).expect("parse rholang term");
+        lower_rholang_term(term.as_ref()).expect("lower rholang term to a Par")
     }
 
     fn drive(par: Par) -> Vec<RuntimeReductionStep> {
@@ -894,8 +894,8 @@ mod tests {
     fn wrapper_start_reduction_stepper_drives_a_comm_term() {
         // End-to-end through the production RhoCalc wrapper: `Language::start_reduction_stepper`
         // runs the D-stage + F-stage lowering and hands back a live stepper over the program Par.
-        use crate::rhocalc_ast::dovetail_rho_backed_rhocalc;
-        let language = dovetail_rho_backed_rhocalc("OUT").expect("build RhoCalc wrapper");
+        use crate::rholang_ast::dovetail_rho_backed_rholang;
+        let language = dovetail_rho_backed_rholang("OUT").expect("build RhoCalc wrapper");
         let term = RhoCalcLanguage
             .parse_term(COMM_SRC)
             .expect("parse COMM term");
@@ -919,7 +919,7 @@ mod tests {
         let term = RhoCalcLanguage
             .parse_term(r#"{ for(x <- @("c")){ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
             .expect("parse");
-        let (par, specs) = crate::rhocalc_ast::lower_rhocalc_term_with_folds(term.as_ref())
+        let (par, specs) = crate::rholang_ast::lower_rholang_term_with_folds(term.as_ref())
             .expect("both folds lift, so lowering succeeds");
         assert_eq!(specs.len(), 2, "held fold + ground fold ⇒ two fold-contract specs (A-S4)");
         for spec in &specs {
@@ -935,8 +935,8 @@ mod tests {
         // on Dovetail. The lowering lifts it to a fold-contract trampoline; stepping must show the
         // receive/send COMM AND the fold-contract COMM(s), proving the held fold reduces on the Rho
         // machine.
-        use crate::rhocalc_ast::dovetail_rho_backed_rhocalc;
-        let language = dovetail_rho_backed_rhocalc("OUT").expect("build RhoCalc wrapper");
+        use crate::rholang_ast::dovetail_rho_backed_rholang;
+        let language = dovetail_rho_backed_rholang("OUT").expect("build RhoCalc wrapper");
         let term = RhoCalcLanguage
             .parse_term(r#"{ for(x <- @("c")){ int(*(x), 8) } | @("c")!(int(5,8)) }"#)
             .expect("parse held-fold term");
@@ -961,8 +961,8 @@ mod tests {
         // SHOWS the machine computing it: the fold-contract COMM step(s) first (the trampoline
         // rendezvous that produces the folded value), then the terminal output observing the
         // machine-computed result on OUT.
-        use crate::rhocalc_ast::dovetail_rho_backed_rhocalc;
-        let language = dovetail_rho_backed_rhocalc("OUT").expect("build RhoCalc wrapper");
+        use crate::rholang_ast::dovetail_rho_backed_rholang;
+        let language = dovetail_rho_backed_rholang("OUT").expect("build RhoCalc wrapper");
         let term = pure_int_fold_term(5, 8);
         let mut stepper = language
             .start_reduction_stepper(&term)

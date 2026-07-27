@@ -7,7 +7,7 @@
 //!
 //! ## The question
 //!
-//! Today `rhocalc` dispatches on the lowered program's shape: a **bare term** (no send/receive/new)
+//! Today `rholang` dispatches on the lowered program's shape: a **bare term** (no send/receive/new)
 //! evaluates to its normal form through the in-Rho `^drive` quiescence driver; anything with
 //! process structure runs to rest with the driver **absent**. So an FLT inside a process is inert,
 //! and a program cannot collect results it computed — only results someone transcribed.
@@ -25,7 +25,7 @@
 //! `PPar` head). That is a statement about ONE drive over a par-shaped *subject*. `[*]` seeds one
 //! drive **per send**, which is a different shape: two independent seeds, two independent subjects.
 //! [`two_inprocess_drives_in_one_program_both_deliver`] measures whether those collide.
-#![cfg(all(feature = "rhocalc-runtime", feature = "lambda-runtime"))]
+#![cfg(all(feature = "rholang-runtime", feature = "lambda-runtime"))]
 
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ use mettail_rholang_codegen::{
     RhoDefaultBackendRequirements, RhoGuardCoverageEvidence,
 };
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc_with_resolver, DriveObservationChannels, PlannedRhoBackend,
+    lower_rholang_proc_with_resolver, DriveObservationChannels, PlannedRhoBackend,
 };
 use mettail_runtime::{clear_var_cache, Language};
 use models::rhoapi::Par;
@@ -73,7 +73,7 @@ fn lower_source(source: &str) -> Par {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source)
         .unwrap_or_else(|err| panic!("probe source must parse: {source}\n{err}"));
-    lower_rhocalc_proc_with_resolver(&proc, guest_resolver())
+    lower_rholang_proc_with_resolver(&proc, guest_resolver())
         .unwrap_or_else(|err| panic!("probe source must lower: {source}\n{err:?}"))
 }
 

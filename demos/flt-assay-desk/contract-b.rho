@@ -2,7 +2,7 @@
 //  CONTRACT B — a second foreign-language term, driven to a DIFFERENT normal form.
 //
 //  Run me with the RhoCalc interpreter:
-//    target/debug/rhocalc demos/flt-assay-desk/contract-b.rho
+//    target/debug/rholang demos/flt-assay-desk/contract-b.rho
 //
 //  THE TERM — the mirror combinator discards its FIRST argument
 //  ────────────────────────────────────────────────────────────

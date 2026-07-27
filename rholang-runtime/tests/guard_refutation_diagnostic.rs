@@ -27,13 +27,13 @@
 //! which *does* change the artifact — soundly, because an omitted guard and a guard that
 //! evaluates `true` drive `check_commit` to the identical verdict.
 
-#![cfg(feature = "rhocalc-runtime")]
+#![cfg(feature = "rholang-runtime")]
 
 use std::sync::{Arc, Mutex};
 
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_runtime::{
-    clear_guard_discharge_report, lower_rhocalc_proc_with_options, take_guard_discharge_report,
+    clear_guard_discharge_report, lower_rholang_proc_with_options, take_guard_discharge_report,
     LoweringOptions, GUARD_DISCHARGE_TARGET,
 };
 use mettail_runtime::clear_var_cache;
@@ -149,12 +149,12 @@ fn lower_capturing(
 ) -> (Par, Vec<CapturedEvent>, mettail_rholang_runtime::GuardDischargeReport) {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"));
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err:?}"));
     let sink = EventSink::default();
     let (par, report) = with_default(sink.clone(), || {
         clear_guard_discharge_report();
-        let par = lower_rhocalc_proc_with_options(&proc, options)
-            .unwrap_or_else(|err| panic!("rhocalc lowering failed for {source:?}: {err:?}"));
+        let par = lower_rholang_proc_with_options(&proc, options)
+            .unwrap_or_else(|err| panic!("rholang lowering failed for {source:?}: {err:?}"));
         (par, take_guard_discharge_report())
     });
     (par, sink.events(), report)
@@ -165,10 +165,10 @@ fn lower_capturing(
 fn lower_both(source: &str) -> (Par, Par) {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source)
-        .unwrap_or_else(|err| panic!("rhocalc parse failed for {source:?}: {err:?}"));
-    let on = lower_rhocalc_proc_with_options(&proc, LoweringOptions::PRODUCTION)
+        .unwrap_or_else(|err| panic!("rholang parse failed for {source:?}: {err:?}"));
+    let on = lower_rholang_proc_with_options(&proc, LoweringOptions::PRODUCTION)
         .unwrap_or_else(|err| panic!("lowering failed: {err:?}"));
-    let off = lower_rhocalc_proc_with_options(&proc, LoweringOptions::NO_DISCHARGE)
+    let off = lower_rholang_proc_with_options(&proc, LoweringOptions::NO_DISCHARGE)
         .unwrap_or_else(|err| panic!("lowering failed: {err:?}"));
     (on, off)
 }

@@ -1,6 +1,6 @@
 //! CI gate for the **Foreign Assay Desk** demo (`demos/flt-assay-desk/`).
 //!
-//! The demo's vehicle is the `rhocalc` interpreter binary run on committed `.rho` files, so this
+//! The demo's vehicle is the `rholang` interpreter binary run on committed `.rho` files, so this
 //! file drives that binary with the run sheet's own command lines and asserts, per beat, what the
 //! audience sees. Without it the run sheet is a hand-run narrative that rots silently.
 //!
@@ -8,8 +8,8 @@
 //!
 //! | layer | vehicle | answers |
 //! |---|---|---|
-//! | interpreter transcript | `CARGO_BIN_EXE_rhocalc` on the committed `.rho` files | what the AUDIENCE sees: the normal form, the `^fired` ledger, the accepted result, the empty OUT |
-//! | runtime readback | `lower_rhocalc_proc_with_resolver` + multi-channel `get_data` | what RESTS — the two REJECTED results still on `@"assay"`, which the interpreter's single-channel `@"OUT"` view cannot show |
+//! | interpreter transcript | `CARGO_BIN_EXE_rholang` on the committed `.rho` files | what the AUDIENCE sees: the normal form, the `^fired` ledger, the accepted result, the empty OUT |
+//! | runtime readback | `lower_rholang_proc_with_resolver` + multi-channel `get_data` | what RESTS — the two REJECTED results still on `@"assay"`, which the interpreter's single-channel `@"OUT"` view cannot show |
 //! | script integrity | `RUN-SHEET.md` parsing | every command line in the sheet is driven here |
 //! | determinism | repeated identical runs | the presenter's transcript is reproducible, not a lucky schedule |
 //!
@@ -46,7 +46,7 @@
 //! receive at all and reads back what rests — so the expectation is minted by the same reflection
 //! path as the datum under test, and a change to the reflected wire format cannot make these
 //! tests pass vacuously or fail spuriously.
-#![cfg(all(feature = "rhocalc-runtime", feature = "lambda-runtime"))]
+#![cfg(all(feature = "rholang-runtime", feature = "lambda-runtime"))]
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -56,7 +56,7 @@ use mettail_languages::lambda::LambdaLanguage;
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_codegen::{FltRegistry, FltResolve};
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc_with_resolver, run_normalized_par_for_oracle_and_read_runtime_value_channels,
+    lower_rholang_proc_with_resolver, run_normalized_par_for_oracle_and_read_runtime_value_channels,
 };
 use mettail_runtime::clear_var_cache;
 
@@ -68,21 +68,21 @@ use mettail_runtime::clear_var_cache;
 const DEMO_DIR: &str = "demos/flt-assay-desk";
 
 /// The build line the run sheet tells the presenter to run. Asserted against the features the
-/// `rhocalc` bin target actually requires, so the sheet cannot tell a presenter to build
+/// `rholang` bin target actually requires, so the sheet cannot tell a presenter to build
 /// something that will not produce this test's binary.
 const BUILD_COMMAND: &str =
-    "cargo build -p rholang-runtime --bin rhocalc --features \"rhocalc-runtime lambda-runtime calculator-runtime\"";
+    "cargo build -p rholang-runtime --bin rholang --features \"rholang-runtime lambda-runtime calculator-runtime\"";
 
 const BEAT_1_SHOW_A: &str = "tail -1 demos/flt-assay-desk/contract-a.rho";
-const BEAT_1_RUN_A: &str = "target/debug/rhocalc demos/flt-assay-desk/contract-a.rho";
-const BEAT_2_RUN_B: &str = "target/debug/rhocalc demos/flt-assay-desk/contract-b.rho";
-const BEAT_2_RUN_C: &str = "target/debug/rhocalc demos/flt-assay-desk/contract-c.rho";
+const BEAT_1_RUN_A: &str = "target/debug/rholang demos/flt-assay-desk/contract-a.rho";
+const BEAT_2_RUN_B: &str = "target/debug/rholang demos/flt-assay-desk/contract-b.rho";
+const BEAT_2_RUN_C: &str = "target/debug/rholang demos/flt-assay-desk/contract-c.rho";
 const BEAT_3_SHOW_DESK: &str = "tail -7 demos/flt-assay-desk/desk-accepts-constant.rho";
-const BEAT_3_RUN_DESK: &str = "target/debug/rhocalc demos/flt-assay-desk/desk-accepts-constant.rho";
-const BEAT_4_RUN_DESK: &str = "target/debug/rhocalc demos/flt-assay-desk/desk-accepts-identity.rho";
+const BEAT_3_RUN_DESK: &str = "target/debug/rholang demos/flt-assay-desk/desk-accepts-constant.rho";
+const BEAT_4_RUN_DESK: &str = "target/debug/rholang demos/flt-assay-desk/desk-accepts-identity.rho";
 const BEAT_5A_RUN_DESK: &str =
-    "target/debug/rhocalc demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho";
-const BEAT_5_RUN_DESK: &str = "target/debug/rhocalc demos/flt-assay-desk/desk-accepts-nothing.rho";
+    "target/debug/rholang demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho";
+const BEAT_5_RUN_DESK: &str = "target/debug/rholang demos/flt-assay-desk/desk-accepts-nothing.rho";
 
 /// Contract C **as it arrives**: the application `(I K)`, whose normal form is the constant
 /// combinator but which is not itself the constant combinator.
@@ -136,14 +136,14 @@ fn demo_file(name: &str) -> PathBuf {
     workspace_root().join(DEMO_DIR).join(name)
 }
 
-/// Run the built `rhocalc` binary on a demo file from the workspace root, capturing its output.
+/// Run the built `rholang` binary on a demo file from the workspace root, capturing its output.
 fn run_interpreter(demo: &str) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rhocalc"))
+    Command::new(env!("CARGO_BIN_EXE_rholang"))
         .arg(format!("{DEMO_DIR}/{demo}"))
         .current_dir(workspace_root())
         .env("RUST_MIN_STACK", "8388608")
         .output()
-        .expect("the rhocalc binary must run")
+        .expect("the rholang binary must run")
 }
 
 /// The interpreter's stdout for a demo file, with a non-zero exit reported as a failure that
@@ -154,7 +154,7 @@ fn transcript(demo: &str) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "rhocalc exited non-zero on {demo}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        "rholang exited non-zero on {demo}\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     stdout
 }
@@ -197,7 +197,7 @@ async fn rest_on_channels(program: &str, channels: &[&str]) -> Vec<(String, Vec<
     clear_var_cache();
     let proc = Proc::parse_via_wpda(program)
         .unwrap_or_else(|err| panic!("the demo program must parse: {err:?}"));
-    let par = lower_rhocalc_proc_with_resolver(&proc, guest_resolver())
+    let par = lower_rholang_proc_with_resolver(&proc, guest_resolver())
         .unwrap_or_else(|err| panic!("the demo program must lower: {err:?}"));
     let observed = run_normalized_par_for_oracle_and_read_runtime_value_channels(&par, channels)
         .await
@@ -371,11 +371,11 @@ fn each_desk_payload_is_the_normal_form_its_contract_reduced_to() {
     ] {
         std::fs::write(&scratch, format!("lambda`{payload}`\n"))
             .expect("the probe term must be writable to a temporary file");
-        let output = Command::new(env!("CARGO_BIN_EXE_rhocalc"))
+        let output = Command::new(env!("CARGO_BIN_EXE_rholang"))
             .arg(&scratch)
             .env("RUST_MIN_STACK", "8388608")
             .output()
-            .expect("the rhocalc binary must run");
+            .expect("the rholang binary must run");
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         assert!(output.status.success(), "the probe term must evaluate\nstdout:\n{stdout}");
         assert_eq!(
@@ -852,7 +852,7 @@ fn every_transcript_in_the_run_sheet_is_the_observed_output() {
         pairs.iter().map(|(command, _)| command).collect::<Vec<_>>()
     );
     for (command, expected) in pairs {
-        let observed = if let Some(path) = command.strip_prefix("target/debug/rhocalc ") {
+        let observed = if let Some(path) = command.strip_prefix("target/debug/rholang ") {
             let demo = path
                 .strip_prefix(&format!("{DEMO_DIR}/"))
                 .unwrap_or_else(|| panic!("the sheet runs demo files from {DEMO_DIR}: {command}"));
@@ -887,10 +887,10 @@ fn every_transcript_in_the_run_sheet_is_the_observed_output() {
 #[test]
 fn the_run_sheet_build_line_names_the_features_the_binary_requires() {
     assert!(
-        BUILD_COMMAND.contains("--bin rhocalc")
-            && BUILD_COMMAND.contains("rhocalc-runtime")
+        BUILD_COMMAND.contains("--bin rholang")
+            && BUILD_COMMAND.contains("rholang-runtime")
             && BUILD_COMMAND.contains("lambda-runtime"),
-        "the sheet's build line must build the rhocalc bin with both required features"
+        "the sheet's build line must build the rholang bin with both required features"
     );
     assert!(
         run_sheet_commands().contains(&BUILD_COMMAND.to_string()),

@@ -1736,7 +1736,7 @@ pub(crate) fn lower_rhs(
 /// `mettail.term.{fingerprint}.{label}`, deterministic per
 /// `(language_fingerprint, constructor_label)`. Being carried by a `GPrivate`
 /// unforgeable (not a `GString`), it is collision-free with any user `GString`
-/// term data. Mirrors the rhocalc bag ABI tag ([`crate::RHOCALC_BAG_ABI_TAG`]).
+/// term data. Mirrors the rholang bag ABI tag ([`crate::RHOLANG_BAG_ABI_TAG`]).
 ///
 /// ## The parse invariant, stated once (S1)
 ///
@@ -3404,7 +3404,7 @@ pub fn collapse_capture_location(language_fingerprint: &str, root_location: &str
 /// ★ Keyed by the BARE constructor label, this was the family that collided WITHOUT an
 /// attacker and without even a shared site string: two languages that each declare an AC
 /// constructor named `PPar` shared `@"ac:PPar"`, and `PPar` is the actual name used in
-/// `rhocalc` and in every AC/Ambient demo. Co-installing two process calculi collided here
+/// `rholang` and in every AC/Ambient demo. Co-installing two process calculi collided here
 /// BY DEFAULT.
 pub fn ac_soup_channel(language_fingerprint: &str, op: &str) -> String {
     crate::rho_net::scoped_channel_name("ac", language_fingerprint, op)
@@ -3781,9 +3781,9 @@ fn collapse_publish(
 ///
 /// A LHS-bound variable reflects to its σ-tuple De Bruijn index (the slice-1
 /// `lower_rhs` index logic: first-occurrence formal `i` → `BoundVar(k − i)`). The
-/// `GPrivate` head tag is built exactly like the rhocalc bag ABI tag via
+/// `GPrivate` head tag is built exactly like the rholang bag ABI tag via
 /// [`GPrivateBuilder::new_par_from_string`], and the `EList`'s `locally_free` is
-/// the union of the tag's and every child's — mirroring `lower_rhocalc`'s bag
+/// the union of the tag's and every child's — mirroring `lower_rholang`'s bag
 /// construction. The decoder counterpart (a future `decode_reflected_term`) will
 /// live beside `rholang_runtime::run::par_as_runtime_observation_value`; it is
 /// not part of this codegen slice.

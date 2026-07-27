@@ -380,7 +380,7 @@ mod rho {
     use mettail_rholang_runtime::{
         build_fold_dataflow_invocation_from_contract, build_rho_net_drive_invocation_from_contract,
         build_rho_net_injection_invocation_from_contract,
-        build_rho_net_replay_invocation_from_contracts, dovetail_rho_backed_rhocalc,
+        build_rho_net_replay_invocation_from_contracts, dovetail_rho_backed_rholang,
         install_dovetail_rho_runtime_backend_lazy, DriveNfScan, PlannedRhoBackend,
         RhoBackendInvocation, RhoInvocationDeferral,
     };
@@ -424,8 +424,8 @@ mod rho {
 
     /// RhoCalc → two-stage Dovetail+Rholang backend (re-exported from rholang-runtime, beside the
     /// AST-first lowering it depends on).
-    pub fn rhocalc_backed() -> Result<Box<dyn Language>> {
-        dovetail_rho_backed_rhocalc(OUT).map_err(|err| anyhow!("{err}"))
+    pub fn rholang_backed() -> Result<Box<dyn Language>> {
+        dovetail_rho_backed_rholang(OUT).map_err(|err| anyhow!("{err}"))
     }
 
     /// The Calculator Dovetail D-stage report producer (the bare fn `install_dovetail_…` wraps).
@@ -1012,4 +1012,4 @@ mod rho {
 // Task #11 (extended 2026-07-26): only the PRODUCTION languages are re-exported now — see the
 // note on the Dovetail-only list above.
 #[cfg(feature = "rho-languages")]
-pub use rho::{ambient_backed, calculator_backed, lambda_backed, rhocalc_backed};
+pub use rho::{ambient_backed, calculator_backed, lambda_backed, rholang_backed};

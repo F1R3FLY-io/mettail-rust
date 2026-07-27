@@ -14,7 +14,7 @@ demo path: the presenter runs one interpreter binary on seven committed `.rho` f
 > output is the observed one, pinned. Every file produced byte-identical output on every run:
 > six consecutive full passes over the first six files, then three more over all seven.
 > The whole script is a CI gate: `rholang-runtime/tests/assay_desk_demo.rs` drives the built
-> `rhocalc` binary with these exact command lines and asserts each beat's observable, plus a
+> `rholang` binary with these exact command lines and asserts each beat's observable, plus a
 > runtime-level readback for the "…and the refused results are still on the book" half that the
 > interpreter's single-channel `@"OUT"` view cannot show. A command line added or respelled here
 > without matching coverage there fails the build
@@ -77,17 +77,17 @@ Two mechanisms are stacked in that one receive, and they do different jobs:
 ## Setup (do this before the audience arrives)
 
 ```
-$ cargo build -p rholang-runtime --bin rhocalc --features "rhocalc-runtime lambda-runtime calculator-runtime"
+$ cargo build -p rholang-runtime --bin rholang --features "rholang-runtime lambda-runtime calculator-runtime"
 ```
 
-Both features are required by the `rhocalc` bin target: `rhocalc-runtime` pulls in the generated
+Both features are required by the `rholang` bin target: `rholang-runtime` pulls in the generated
 RhoCalc language and its AST-first lowering, `lambda-runtime` pulls in the production
 `LambdaLanguage` that the interpreter registers as the `lambda` guest. The build takes several
 minutes cold. Everything after this is instant.
 
-CI drives the same binary through `env!("CARGO_BIN_EXE_rhocalc")`, so the presenter's binary and
+CI drives the same binary through `env!("CARGO_BIN_EXE_rholang")`, so the presenter's binary and
 the gated one are built from one source. A `--release` build behaves identically, but it lands at
-`target/release/rhocalc`, so the command lines below would need that path instead — the debug
+`target/release/rholang`, so the command lines below would need that path instead — the debug
 binary is what this page is written against, and every run of it completes in well under a second.
 
 Run every command from the workspace root.
@@ -118,11 +118,11 @@ lambda`((lam a. lam b. a, lam x. x), lam a. lam b. a)`
 **Now run it.**
 
 ```
-$ target/debug/rhocalc demos/flt-assay-desk/contract-a.rho
+$ target/debug/rholang demos/flt-assay-desk/contract-a.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/contract-a.rho
 comments: 36 retained on the COMMENTS channel
 mode: term → reducing to normal form on the f1r3node reducer
@@ -154,11 +154,11 @@ mode: term → reducing to normal form on the f1r3node reducer
 ## Beat 2 — Two more terms, two more answers (1 min)
 
 ```
-$ target/debug/rhocalc demos/flt-assay-desk/contract-b.rho
+$ target/debug/rholang demos/flt-assay-desk/contract-b.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/contract-b.rho
 comments: 25 retained on the COMMENTS channel
 mode: term → reducing to normal form on the f1r3node reducer
@@ -172,11 +172,11 @@ Contract B is `(C I) C` where `C = lam a. lam b. b` keeps its **second** argumen
 image of Contract A, the same two β steps, a different answer: $`\lambda.\lambda.0`$.
 
 ```
-$ target/debug/rhocalc demos/flt-assay-desk/contract-c.rho
+$ target/debug/rholang demos/flt-assay-desk/contract-c.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/contract-c.rho
 comments: 27 retained on the COMMENTS channel
 mode: term → reducing to normal form on the f1r3node reducer
@@ -232,11 +232,11 @@ for(@lambda`${r}` <- @"assay" where lambda`${r}` == lambda`lam a. lam b. a`) {
 **Now run it.**
 
 ```
-$ target/debug/rhocalc demos/flt-assay-desk/desk-accepts-constant.rho
+$ target/debug/rholang demos/flt-assay-desk/desk-accepts-constant.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/desk-accepts-constant.rho
 comments: 53 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -266,11 +266,11 @@ still being there.)
 clause compares against. Same three data, same channel, same receive pattern.
 
 ```
-$ target/debug/rhocalc demos/flt-assay-desk/desk-accepts-identity.rho
+$ target/debug/rholang demos/flt-assay-desk/desk-accepts-identity.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/desk-accepts-identity.rho
 comments: 24 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -309,11 +309,11 @@ combinator. Only the datum changed:
 | here | `` lambda`(lam x. x, lam a. lam b. a)` `` | Contract C **as it arrives** — the application `(I K)` |
 
 ```
-$ target/debug/rhocalc demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho
+$ target/debug/rholang demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/desk-refuses-the-unreduced-arrival.rho
 comments: 35 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")
@@ -335,11 +335,11 @@ Back to the three reduced results, same pattern; the guard now names the *three*
 combinator `lam a. lam b. lam c. a`, which is not the normal form of any contract.
 
 ```
-$ target/debug/rhocalc demos/flt-assay-desk/desk-accepts-nothing.rho
+$ target/debug/rholang demos/flt-assay-desk/desk-accepts-nothing.rho
 ```
 
 ```
-rhocalc — RhoCalc (Rholang 1.4) interpreter
+rholang — RhoCalc (Rholang 1.4) interpreter
 source: demos/flt-assay-desk/desk-accepts-nothing.rho
 comments: 30 retained on the COMMENTS channel
 mode: process → running to rest on the f1r3node reducer (observing @"OUT")

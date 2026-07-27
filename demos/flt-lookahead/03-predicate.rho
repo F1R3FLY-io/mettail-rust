@@ -9,7 +9,7 @@
 //
 // THE FOUR INPUTS, AND WHAT EACH REDUCES TO
 // ─────────────────────────────────────────
-// Each was also run on its own to confirm the reduction (`rhocalc` on the bare term):
+// Each was also run on its own to confirm the reduction (`rholang` on the bare term):
 //
 //   #   source                              is              reduces to             β steps
 //   ──  ──────────────────────────────────  ──────────────  ─────────────────────  ───────
@@ -65,7 +65,7 @@
 //
 // HOW TO RUN
 // ──────────
-//   RUST_MIN_STACK=134217728 target/debug/rhocalc demos/flt-lookahead/03-predicate.rho
+//   RUST_MIN_STACK=134217728 target/debug/rholang demos/flt-lookahead/03-predicate.rho
 //
 // EXPECT: @"OUT" carries ⟦λ.λ.0⟧ and the run reports `lookahead: 4 request(s) served`,
 // `^spec-failure: 0`, `^spec-truncated: 0`.

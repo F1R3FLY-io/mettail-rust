@@ -12,7 +12,7 @@
 //! | layer | vehicle | answers |
 //! |---|---|---|
 //! | REPL transcript | `CARGO_BIN_EXE_repl` + the sheet's command lines | what the AUDIENCE sees: the `OUT:` line, the backend/artifact, the step trace, the typed refusal |
-//! | runtime readback | `lower_rhocalc_proc` + multi-channel `get_data` | what RESTS — the vetoed datum still on `@"offer"`, which the REPL's single-channel `OUT` view cannot show |
+//! | runtime readback | `lower_rholang_proc` + multi-channel `get_data` | what RESTS — the vetoed datum still on `@"offer"`, which the REPL's single-channel `OUT` view cannot show |
 //! | script integrity | `RUN-SHEET.md` / `settlement.env` parsing | every command line in the sheet is driven here; every name the env file binds is used by the sheet |
 //!
 //! The two layers are complementary, not redundant: "the guard vetoed" is `OUT: []` on the
@@ -80,7 +80,7 @@ use std::process::{Command, Stdio};
 
 use mettail_languages::rhocalc::Proc;
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc, run_normalized_par_for_oracle_and_read_runtime_value_channels,
+    lower_rholang_proc, run_normalized_par_for_oracle_and_read_runtime_value_channels,
     run_rholang_source_sequence_for_oracle_and_read_ints,
 };
 use mettail_runtime::clear_var_cache;
@@ -331,7 +331,7 @@ async fn rest_on_channels(program: &str, channels: &[&str]) -> Vec<(String, Vec<
     clear_var_cache();
     let proc = Proc::parse_via_wpda(program)
         .unwrap_or_else(|err| panic!("the demo program must parse: {program:?}: {err:?}"));
-    let par = lower_rhocalc_proc(&proc)
+    let par = lower_rholang_proc(&proc)
         .unwrap_or_else(|err| panic!("the demo program must lower: {program:?}: {err:?}"));
     let observed = run_normalized_par_for_oracle_and_read_runtime_value_channels(&par, channels)
         .await
@@ -786,7 +786,7 @@ fn the_shipped_guard_spellings_parse_and_lower() {
         clear_var_cache();
         let proc = Proc::parse_via_wpda(&term)
             .unwrap_or_else(|err| panic!("settlement.env {name} must parse: {term:?}: {err:?}"));
-        lower_rhocalc_proc(&proc)
+        lower_rholang_proc(&proc)
             .unwrap_or_else(|err| panic!("settlement.env {name} must lower: {term:?}: {err:?}"));
     }
 }

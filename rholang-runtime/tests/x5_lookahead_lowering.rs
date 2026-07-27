@@ -1,6 +1,6 @@
 //! X5 — what `x!(P)[*]` and `x!(P)[n]` **lower to**, and the fail-closed guarantee.
 //!
-//! The parse half is measured by `languages/tests/x4_rhocalc_lookahead_parse.rs`; the in-process
+//! The parse half is measured by `languages/tests/x4_rholang_lookahead_parse.rs`; the in-process
 //! evaluation substrate by `x3_inprocess_lookahead_probe.rs`. This file is the lowering, and its
 //! central assertion is a **negative** one.
 //!
@@ -17,7 +17,7 @@
 //! [`an_unserved_lookahead_request_rests_and_is_reported`] asserts that with no engine installed
 //! the program produces **nothing on the reply channel and a loud resting request**, rather than
 //! quietly falling back to anything.
-#![cfg(all(feature = "rhocalc-runtime", feature = "lambda-runtime"))]
+#![cfg(all(feature = "rholang-runtime", feature = "lambda-runtime"))]
 
 use std::sync::Arc;
 
@@ -28,8 +28,8 @@ use mettail_rholang_runtime::lookahead::{
     spec_all_request, spec_n_request, SPEC_ALL_CHANNEL, SPEC_N_CHANNEL, SPEC_REQUEST_CHANNELS,
 };
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc_with_resolver,
-    run_normalized_par_for_oracle_and_read_runtime_value_channels, RhocalcAstLowerError,
+    lower_rholang_proc_with_resolver,
+    run_normalized_par_for_oracle_and_read_runtime_value_channels, RholangAstLowerError,
 };
 use mettail_runtime::clear_var_cache;
 use models::rhoapi::Par;
@@ -38,11 +38,11 @@ fn guest_resolver() -> Arc<dyn FltResolve> {
     Arc::new(FltRegistry::new().with_guest("lambda", Box::new(LambdaLanguage)))
 }
 
-fn lower(source: &str) -> Result<Par, RhocalcAstLowerError> {
+fn lower(source: &str) -> Result<Par, RholangAstLowerError> {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source)
         .unwrap_or_else(|err| panic!("X5 source must parse: {source}\n{err}"));
-    lower_rhocalc_proc_with_resolver(&proc, guest_resolver())
+    lower_rholang_proc_with_resolver(&proc, guest_resolver())
 }
 
 fn lower_ok(source: &str) -> Par {
@@ -177,7 +177,7 @@ fn a_non_send_operand_is_rejected_with_a_typed_error() {
         [(r#"@"r"!!(Nil)[*]"#, "a persistent send (`!!`)"), ("[1][*]", "a list literal")]
     {
         match lower(source) {
-            Err(RhocalcAstLowerError::LookaheadOperandNotASend(found)) => {
+            Err(RholangAstLowerError::LookaheadOperandNotASend(found)) => {
                 println!("X5 rejected {source:?} → operand is {found}");
                 assert_eq!(found, what, "{source:?} must name its operand precisely");
             },
@@ -190,7 +190,7 @@ fn a_non_send_operand_is_rejected_with_a_typed_error() {
 fn a_non_ground_or_negative_bound_is_rejected_with_a_typed_error() {
     for source in [r#"@"r"!(Nil)[-1]"#, r#"@"r"!(Nil)[Nil]"#] {
         match lower(source) {
-            Err(RhocalcAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(found)) => {
+            Err(RholangAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(found)) => {
                 println!("X5 rejected bound in {source:?} → {found}");
             },
             other => panic!("{source:?} must be rejected as an unusable bound, got {other:?}"),

@@ -2,7 +2,7 @@
 //  THE ASSAY DESK, SAME SET, DIFFERENT PREDICATE — the guard is what chooses.
 //
 //  Run me with the RhoCalc interpreter:
-//    target/debug/rhocalc demos/flt-assay-desk/desk-accepts-identity.rho
+//    target/debug/rholang demos/flt-assay-desk/desk-accepts-identity.rho
 //
 //  This file is `desk-accepts-constant.rho` with ONE token changed: the term on the right of
 //  the `==` in the `where` clause. The three resting results are identical, the receive pattern

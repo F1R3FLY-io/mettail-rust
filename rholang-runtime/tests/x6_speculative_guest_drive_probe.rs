@@ -11,7 +11,7 @@
 //! Nothing here is a shortcut: the drive seed is the guest's *evaluator*, injected into the
 //! **sandbox**, where every COMM is enumerated by BFS over `E(S)`. It is not the host-side
 //! single-path `^drive` run that `x5_lookahead_lowering.rs` forbids the LOWERING from emitting.
-#![cfg(all(feature = "rhocalc-runtime", feature = "lambda-runtime"))]
+#![cfg(all(feature = "rholang-runtime", feature = "lambda-runtime"))]
 
 use std::sync::Arc;
 
@@ -28,7 +28,7 @@ use mettail_rholang_runtime::speculation::service::{
     LeafProjection, LookaheadRequest, LookaheadService,
 };
 use mettail_rholang_runtime::{
-    lower_rhocalc_proc_with_resolver, par_as_runtime_observation_value, PlannedRhoBackend,
+    lower_rholang_proc_with_resolver, par_as_runtime_observation_value, PlannedRhoBackend,
 };
 use mettail_runtime::{clear_var_cache, Language};
 use models::rhoapi::Par;
@@ -66,7 +66,7 @@ fn lower_source(source: &str) -> Par {
     clear_var_cache();
     let proc = Proc::parse_via_wpda(source)
         .unwrap_or_else(|err| panic!("probe source must parse: {source}\n{err}"));
-    lower_rhocalc_proc_with_resolver(&proc, guest_resolver())
+    lower_rholang_proc_with_resolver(&proc, guest_resolver())
         .unwrap_or_else(|err| panic!("probe source must lower: {source}\n{err:?}"))
 }
 

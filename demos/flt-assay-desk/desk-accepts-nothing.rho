@@ -3,7 +3,7 @@
 //  rests.
 //
 //  Run me with the RhoCalc interpreter:
-//    target/debug/rhocalc demos/flt-assay-desk/desk-accepts-nothing.rho
+//    target/debug/rholang demos/flt-assay-desk/desk-accepts-nothing.rho
 //
 //  Same three resting results, same pattern, same channel. The only change is the term the
 //  `where` clause compares against: the THREE-argument constant combinator

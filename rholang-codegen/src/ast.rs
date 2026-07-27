@@ -126,7 +126,7 @@ impl RhoAstLiteral {
                 let entries =
                     new_elist_par(encoded_entries, Vec::new(), false, None, Vec::new(), false);
                 let tag =
-                    GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string());
+                    GPrivateBuilder::new_par_from_string(crate::RHOLANG_BAG_ABI_TAG.to_string());
                 Ok(new_elist_par(vec![tag, entries], Vec::new(), false, None, Vec::new(), false))
             },
         }
@@ -427,7 +427,7 @@ mod tests {
         assert_eq!(bag.ps.len(), 2);
         assert_eq!(
             bag.ps[0],
-            GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string())
+            GPrivateBuilder::new_par_from_string(crate::RHOLANG_BAG_ABI_TAG.to_string())
         );
     }
 

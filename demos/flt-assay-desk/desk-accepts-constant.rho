@@ -2,7 +2,7 @@
 //  THE ASSAY DESK — three foreign results rest on one channel; a `where` guard picks ONE.
 //
 //  Run me with the RhoCalc interpreter:
-//    target/debug/rhocalc demos/flt-assay-desk/desk-accepts-constant.rho
+//    target/debug/rholang demos/flt-assay-desk/desk-accepts-constant.rho
 //
 //  WHAT RESTS ON @"assay"
 //  ──────────────────────

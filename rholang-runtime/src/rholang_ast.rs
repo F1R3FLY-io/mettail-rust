@@ -1,7 +1,7 @@
-//! AST-first lowering from MeTTaIL's `rhocalc` terms to normalized Rholang `Par`.
+//! AST-first lowering from MeTTaIL's `rholang` terms to normalized Rholang `Par`.
 //!
 //! This module is an oracle/integration bridge for the Rho machine backend. It
-//! consumes MeTTaIL/WPDA-produced `rhocalc` AST values and constructs
+//! consumes MeTTaIL/WPDA-produced `rholang` AST values and constructs
 //! `rhoapi::Par` directly. Rholang-looking strings in docs/tests are reader
 //! annotations only; they are never parsed on this execution path.
 
@@ -62,10 +62,10 @@ const FREE_PROC_OUTPUT: &str = "mtl#out";
 /// FLT-free lowering is byte-identical to the pre-L9-6 pipeline; the resolver is
 /// consulted ONLY by the `PFlt` arm (L9-6b).
 ///
-/// `pub(crate)` since M-1b: the formula compiler ([`crate::rhocalc_formula`])
+/// `pub(crate)` since M-1b: the formula compiler ([`crate::rholang_formula`])
 /// lowers a formula's sub-TERMS with [`lower_proc_in_env`], which needs the same
 /// live binder environment the surrounding term lowering is using. The fields
-/// stay private to this module — `rhocalc_formula` only ever threads the value
+/// stay private to this module — `rholang_formula` only ever threads the value
 /// through.
 #[derive(Clone)]
 pub struct BoundEnv {
@@ -152,7 +152,7 @@ impl BoundEnv {
 
     /// M-1b: this environment, switched into PATTERN mode.
     ///
-    /// The ONLY caller is `rhocalc_formula::lower_formula_in_env`'s
+    /// The ONLY caller is `rholang_formula::lower_formula_in_env`'s
     /// `FormulaShape::Term` arm. Binders and FLT holes are carried over unchanged —
     /// a formula may legitimately reference the receive's bound variables, and
     /// those must still resolve to their `BoundVar`s; it is only the UNBOUND
@@ -248,7 +248,7 @@ enum ReceiveSlot {
 ///
 /// RhoCalc is a standalone language (no `extends`/`includes`/`mixins`), so the
 /// reconstruction is exact (see [`reconstruct_language_def`]).
-pub fn rhocalc_ast_runtime_def() -> mettail_ast::language::LanguageDef {
+pub fn rholang_ast_runtime_def() -> mettail_ast::language::LanguageDef {
     let source = RhoCalcLanguage
         .metadata()
         .definition_source()
@@ -258,20 +258,20 @@ pub fn rhocalc_ast_runtime_def() -> mettail_ast::language::LanguageDef {
 }
 
 /// Invocation mapper used by the RhoCalc runtime-backed wrapper helpers.
-pub type RhocalcInvocationMapper =
+pub type RholangInvocationMapper =
     Box<dyn Fn(&dyn Term) -> Result<crate::backend::RhoMachineInvocation, String> + Send + Sync>;
 
 /// Rho-default wrapper type used by the RhoCalc helper constructors.
-pub type RhocalcRuntimeBackedLanguage =
-    crate::backend::RhoRuntimeBackedLanguage<RhocalcAstRuntimeLanguage, RhocalcInvocationMapper>;
+pub type RholangRuntimeBackedLanguage =
+    crate::backend::RhoRuntimeBackedLanguage<RholangAstRuntimeLanguage, RholangInvocationMapper>;
 
 /// Fallible RhoCalc runtime-backed wrapper construction result.
-pub type RhocalcRuntimeBackedLanguageResult =
-    Result<RhocalcRuntimeBackedLanguage, crate::backend::RhoRuntimeBackedLanguageError>;
+pub type RholangRuntimeBackedLanguageResult =
+    Result<RholangRuntimeBackedLanguage, crate::backend::RhoRuntimeBackedLanguageError>;
 
-/// Fallible rhocalc-to-Rholang-AST lowering error.
+/// Fallible rholang-to-Rholang-AST lowering error.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RhocalcAstLowerError {
+pub enum RholangAstLowerError {
     ExpectedRhoCalcTerm,
     ExpectedProcTerm,
     UnsupportedProc(&'static str),
@@ -315,13 +315,13 @@ pub enum RhocalcAstLowerError {
 /// handling, type inference, AND metadata (including the definition
 /// fingerprint) to the generated `RhoCalcLanguage`. It exposes the real RhoCalc
 /// identity — the dynamic Rho backend plan is built from the reconstructed real
-/// `LanguageDef` ([`rhocalc_ast_runtime_def`]), so installation matches on the
+/// `LanguageDef` ([`rholang_ast_runtime_def`]), so installation matches on the
 /// genuine fingerprint rather than a reduced fragment. It does not forward the
 /// generated Ascent oracle; raw `run_ascent` remains fail-closed and reference
 /// comparison stays behind explicit oracle features.
-pub struct RhocalcAstRuntimeLanguage;
+pub struct RholangAstRuntimeLanguage;
 
-impl Language for RhocalcAstRuntimeLanguage {
+impl Language for RholangAstRuntimeLanguage {
     fn name(&self) -> &'static str {
         RhoCalcLanguage.name()
     }
@@ -430,14 +430,14 @@ impl Language for RhocalcAstRuntimeLanguage {
     }
 }
 
-fn rhocalc_invocation_stage(
-    mapper: RhocalcInvocationMapper,
+fn rholang_invocation_stage(
+    mapper: RholangInvocationMapper,
 ) -> Result<
-    crate::backend::RhoInvocationCompilerStage<RhocalcInvocationMapper>,
+    crate::backend::RhoInvocationCompilerStage<RholangInvocationMapper>,
     crate::backend::RhoRuntimeBackedLanguageError,
 > {
-    let language_name = RhocalcAstRuntimeLanguage.name();
-    let fingerprint = RhocalcAstRuntimeLanguage
+    let language_name = RholangAstRuntimeLanguage.name();
+    let fingerprint = RholangAstRuntimeLanguage
         .metadata()
         .definition_fingerprint()
         .ok_or_else(|| {
@@ -450,11 +450,11 @@ fn rhocalc_invocation_stage(
 
 /// Build a Rho runtime invocation that executes a parsed `RhoCalcLanguage`
 /// process and observes strings from `out_channel`.
-pub fn rhocalc_observe_strings_invocation(
+pub fn rholang_observe_strings_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
 ) -> Result<crate::backend::RhoMachineInvocation, String> {
-    let call = lower_rhocalc_term(term)
+    let call = lower_rholang_term(term)
         .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
     Ok(crate::backend::RhoMachineInvocation::RunWithCallAndObserveStrings {
         call,
@@ -464,11 +464,11 @@ pub fn rhocalc_observe_strings_invocation(
 
 /// Build a Rho runtime invocation that executes a parsed `RhoCalcLanguage`
 /// process and observes integers from `out_channel`.
-pub fn rhocalc_observe_ints_invocation(
+pub fn rholang_observe_ints_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
 ) -> Result<crate::backend::RhoMachineInvocation, String> {
-    let call = lower_rhocalc_term(term)
+    let call = lower_rholang_term(term)
         .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
     Ok(crate::backend::RhoMachineInvocation::RunWithCallAndObserveInts {
         call,
@@ -478,11 +478,11 @@ pub fn rhocalc_observe_ints_invocation(
 
 /// Build a Rho runtime invocation that executes a parsed `RhoCalcLanguage`
 /// process and observes closed Rho ground values from `out_channel`.
-pub fn rhocalc_observe_values_invocation(
+pub fn rholang_observe_values_invocation(
     term: &dyn Term,
     out_channel: impl Into<String>,
 ) -> Result<crate::backend::RhoMachineInvocation, String> {
-    let call = lower_rhocalc_term(term)
+    let call = lower_rholang_term(term)
         .map_err(|err| format!("failed to lower RhoCalc process to Rholang AST: {err:?}"))?;
     Ok(crate::backend::RhoMachineInvocation::RunWithCallAndObserveRuntimeValues {
         call,
@@ -492,48 +492,48 @@ pub fn rhocalc_observe_values_invocation(
 
 /// Wrap RhoCalc as an AST-first Rho-default language whose default report
 /// observes strings on `out_channel`.
-pub fn rho_runtime_backed_rhocalc_strings(
+pub fn rho_runtime_backed_rholang_strings(
     backend: crate::backend::PlannedRhoBackend,
     out_channel: impl Into<String>,
-) -> RhocalcRuntimeBackedLanguageResult {
+) -> RholangRuntimeBackedLanguageResult {
     let out_channel = out_channel.into();
-    let mapper: RhocalcInvocationMapper =
-        Box::new(move |term| rhocalc_observe_strings_invocation(term, out_channel.clone()));
-    let invocation = rhocalc_invocation_stage(mapper)?;
-    crate::backend::RhoRuntimeBackedLanguage::new(RhocalcAstRuntimeLanguage, backend, invocation)
+    let mapper: RholangInvocationMapper =
+        Box::new(move |term| rholang_observe_strings_invocation(term, out_channel.clone()));
+    let invocation = rholang_invocation_stage(mapper)?;
+    crate::backend::RhoRuntimeBackedLanguage::new(RholangAstRuntimeLanguage, backend, invocation)
 }
 
 /// Wrap RhoCalc as an AST-first Rho-default language whose default report
 /// observes integers on `out_channel`.
-pub fn rho_runtime_backed_rhocalc_ints(
+pub fn rho_runtime_backed_rholang_ints(
     backend: crate::backend::PlannedRhoBackend,
     out_channel: impl Into<String>,
-) -> RhocalcRuntimeBackedLanguageResult {
+) -> RholangRuntimeBackedLanguageResult {
     let out_channel = out_channel.into();
-    let mapper: RhocalcInvocationMapper =
-        Box::new(move |term| rhocalc_observe_ints_invocation(term, out_channel.clone()));
-    let invocation = rhocalc_invocation_stage(mapper)?;
-    crate::backend::RhoRuntimeBackedLanguage::new(RhocalcAstRuntimeLanguage, backend, invocation)
+    let mapper: RholangInvocationMapper =
+        Box::new(move |term| rholang_observe_ints_invocation(term, out_channel.clone()));
+    let invocation = rholang_invocation_stage(mapper)?;
+    crate::backend::RhoRuntimeBackedLanguage::new(RholangAstRuntimeLanguage, backend, invocation)
 }
 
 /// Wrap RhoCalc as an AST-first Rho-default language whose default report
 /// observes closed Rho ground values on `out_channel`.
-pub fn rho_runtime_backed_rhocalc_values(
+pub fn rho_runtime_backed_rholang_values(
     backend: crate::backend::PlannedRhoBackend,
     out_channel: impl Into<String>,
-) -> RhocalcRuntimeBackedLanguageResult {
+) -> RholangRuntimeBackedLanguageResult {
     let out_channel = out_channel.into();
-    let mapper: RhocalcInvocationMapper =
-        Box::new(move |term| rhocalc_observe_values_invocation(term, out_channel.clone()));
-    let invocation = rhocalc_invocation_stage(mapper)?;
-    crate::backend::RhoRuntimeBackedLanguage::new(RhocalcAstRuntimeLanguage, backend, invocation)
+    let mapper: RholangInvocationMapper =
+        Box::new(move |term| rholang_observe_values_invocation(term, out_channel.clone()));
+    let invocation = rholang_invocation_stage(mapper)?;
+    crate::backend::RhoRuntimeBackedLanguage::new(RholangAstRuntimeLanguage, backend, invocation)
 }
 
 /// Coverage requirements derived from the language-aware rejected-rule classifier.
 /// Structural constructors are covered by generated Rho AST contracts; native/eval and unsupported
 /// scalar operators are covered by Rho-native system-process rules. Labels are de-duplicated because
 /// the same label can recur across categories and `RhoCoverageEvidence` forbids duplicate
-/// dispositions. (Mirrors the `rho_rhocalc_ast` test helper, promoted for the production wrapper
+/// dispositions. (Mirrors the `rho_rholang_ast` test helper, promoted for the production wrapper
 /// builder.)
 fn rho_default_coverage_requirements(
     def: &mettail_ast::language::LanguageDef,
@@ -554,27 +554,27 @@ fn rho_default_coverage_requirements(
 }
 
 /// Build the RhoCalc [`crate::backend::PlannedRhoBackend`] from the REAL reconstructed RhoCalc
-/// augmented `LanguageDef` ([`rhocalc_ast_runtime_def`]) — so its fingerprint equals the generated
+/// augmented `LanguageDef` ([`rholang_ast_runtime_def`]) — so its fingerprint equals the generated
 /// `RhoCalcLanguage` identity and the wrapper installs on the real RhoCalc.
-pub fn rhocalc_planned_rho_backend() -> Result<crate::backend::PlannedRhoBackend, String> {
-    let def = rhocalc_ast_runtime_def();
+pub fn rholang_planned_rho_backend() -> Result<crate::backend::PlannedRhoBackend, String> {
+    let def = rholang_ast_runtime_def();
     let plan = plan_rho_default_backend(&def, rho_default_coverage_requirements(&def))
         .map_err(|err| format!("RhoCalc Rho-default backend planning failed: {err:?}"))?;
     Ok(crate::backend::PlannedRhoBackend::from_plan(plan))
 }
 
 /// Bounds for the RhoCalc Dovetail D-stage (mirror the generated `dovetail_compiler_stage`).
-const RHOCALC_DOVETAIL_MAX_ITERS: usize = 64;
-const RHOCALC_DOVETAIL_MAX_NODES: usize = 1_000_000;
+const RHOLANG_DOVETAIL_MAX_ITERS: usize = 64;
+const RHOLANG_DOVETAIL_MAX_NODES: usize = 1_000_000;
 
 /// The Dovetail D-stage report producer for RhoCalc (the bare fn
 /// [`crate::backend::install_dovetail_rho_runtime_backend`] wraps): saturate the term to a runtime
 /// report — native folds reduce; COMM/`new` remain Rho-machine work for the invocation stage.
-fn rhocalc_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+fn rholang_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
     RhoCalcLanguage::dovetail_report_for(
         term,
-        RHOCALC_DOVETAIL_MAX_ITERS,
-        RHOCALC_DOVETAIL_MAX_NODES,
+        RHOLANG_DOVETAIL_MAX_ITERS,
+        RHOLANG_DOVETAIL_MAX_NODES,
     )
 }
 
@@ -582,12 +582,12 @@ fn rhocalc_dovetail_report(term: &dyn Term) -> Result<RuntimeDovetailRunReport, 
 /// graph (Increment 4): each node is a whole program state in source syntax, each edge a one-step
 /// rewrite successor (structural `Exec`/`QuoteDrop`/`Extrude` + folds; COMM is not a Dovetail
 /// structural rewrite), and a node with no successor is a normal form. Reached only via the `step` path
-/// (`Language::run_step_backend_report`); production `exec` uses `rhocalc_dovetail_report`.
-fn rhocalc_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
+/// (`Language::run_step_backend_report`); production `exec` uses `rholang_dovetail_report`.
+fn rholang_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunReport, String> {
     RhoCalcLanguage::dovetail_step_graph(
         term,
-        RHOCALC_DOVETAIL_MAX_ITERS,
-        RHOCALC_DOVETAIL_MAX_NODES,
+        RHOLANG_DOVETAIL_MAX_ITERS,
+        RHOLANG_DOVETAIL_MAX_NODES,
     )
 }
 
@@ -636,11 +636,11 @@ fn rhocalc_dovetail_step_graph(term: &dyn Term) -> Result<RuntimeDovetailRunRepo
 /// byte-identical `Par` the post-lowering [`observe_pure_value_call`] wrap produced (the wrap
 /// commutes with lowering: `lower(@("OUT")!(v)) == observe_pure_value_call(lower(v), "OUT")`),
 /// which remains in place for the multi-alternative and lowers-to-pure cases.
-fn rhocalc_backend_invocation(
+fn rholang_backend_invocation(
     term: &dyn Term,
     out_channel: &str,
 ) -> Result<crate::backend::RhoBackendInvocation, String> {
-    let call = lower_rhocalc_exec_term(term, out_channel).map_err(|err| {
+    let call = lower_rholang_exec_term(term, out_channel).map_err(|err| {
         format!(
             "RhoCalc term could not be lowered to the Rho machine \
              (A-S4 fail-closed lowering; no host fold-normalization fallback): {err:?}"
@@ -660,15 +660,15 @@ fn rhocalc_backend_invocation(
 }
 
 /// Lower a term for EXEC, wrapping a single-alternative pure VALUE term as `@(out_channel)!(term)`
-/// at the AST level first — see [`rhocalc_backend_invocation`]. Multi-alternative (ambiguous)
+/// at the AST level first — see [`rholang_backend_invocation`]. Multi-alternative (ambiguous)
 /// terms keep the historical par-level wrap ([`observe_pure_value_call`], applied by the caller):
 /// per-alternative AST wrapping would change the observation shape (one send per alternative
 /// instead of one send of the union), so it is not applied there.
-fn lower_rhocalc_exec_term(
+fn lower_rholang_exec_term(
     term: &dyn Term,
     out_channel: &str,
-) -> Result<Par, RhocalcAstLowerError> {
-    let alternatives = rhocalc_proc_alternatives_from_term(term)?;
+) -> Result<Par, RholangAstLowerError> {
+    let alternatives = rholang_proc_alternatives_from_term(term)?;
     if let [only] = alternatives.as_slice() {
         if !proc_has_machine_effects(only) {
             let wrapped = wrap_pure_value_term(only, out_channel);
@@ -683,7 +683,7 @@ fn lower_rhocalc_exec_term(
         // EFFECTFUL, so its trampolined result would rest in the space unobserved — a silent
         // value drop. Fail closed instead (honest, typed) until an ambiguous-value observation
         // shape is designed.
-        return Err(RhocalcAstLowerError::UnsupportedProc(
+        return Err(RholangAstLowerError::UnsupportedProc(
             "ambiguous pure-value term containing a width/precision fold",
         ));
     }
@@ -746,7 +746,7 @@ fn name_has_machine_effects(name: &Name) -> bool {
 ///
 /// One-way pipeline (no bidirectional bridge; see
 /// `docs/architecture/rho-native-integration/09-term-level-reduction-split.md`): the **F-stage**
-/// lowers the term to a normalized `Par` ([`rhocalc_backend_invocation`]: PURE structural AST
+/// lowers the term to a normalized `Par` ([`rholang_backend_invocation`]: PURE structural AST
 /// lowering — A-S4 deleted the E2 `dovetail_normal_term` fold-normalization fallback, the last
 /// host-evaluation lane) and routes every lowerable result through the real Rho machine. A term
 /// carrying a send/receive/`new` runs as that process; arithmetic runs as the machine's metered
@@ -761,31 +761,31 @@ fn name_has_machine_effects(name: &Name) -> bool {
 /// the wrapper builds the checked report (surfacing the eager pipeline's D-stage error text for
 /// budget-blown/malformed reports) and re-runs the SAME lowering as the report-carrying
 /// fallback — whose error message is then the eager pipeline's F-stage message, byte-identical.
-pub fn dovetail_rho_backed_rhocalc(
+pub fn dovetail_rho_backed_rholang(
     out_channel: impl Into<String>,
 ) -> Result<Box<dyn Language>, String> {
     let out_channel = out_channel.into();
-    let backend = rhocalc_planned_rho_backend()?;
+    let backend = rholang_planned_rho_backend()?;
     let invocation_free = {
         let out_channel = out_channel.clone();
         move |term: &dyn Term| -> Result<
             crate::backend::RhoBackendInvocation,
             crate::backend::RhoInvocationDeferral,
         > {
-            rhocalc_backend_invocation(term, &out_channel)
+            rholang_backend_invocation(term, &out_channel)
                 .map_err(|detail| crate::backend::RhoInvocationDeferral::GateReject { detail })
         }
     };
     let invocation = move |term: &dyn Term,
                            _report: &RuntimeDovetailRunReport|
           -> Result<crate::backend::RhoBackendInvocation, String> {
-        rhocalc_backend_invocation(term, &out_channel)
+        rholang_backend_invocation(term, &out_channel)
     };
     let language = crate::backend::install_dovetail_rho_runtime_backend_lazy(
-        RhocalcAstRuntimeLanguage,
+        RholangAstRuntimeLanguage,
         backend,
-        rhocalc_dovetail_report,
-        rhocalc_dovetail_step_graph,
+        rholang_dovetail_report,
+        rholang_dovetail_step_graph,
         invocation_free,
         invocation,
     )
@@ -801,18 +801,18 @@ fn observe_pure_value_call(value: Par, out_channel: &str) -> Par {
     send_par(new_gstring_par(out_channel.to_string(), Vec::new(), false), vec![value])
 }
 
-/// Lower a rhocalc process into normalized Rholang `Par`.
+/// Lower a rholang process into normalized Rholang `Par`.
 ///
 /// A-S4: width/precision folds ANYWHERE in the process (top level, send payloads, receive
 /// bodies, `new` bodies — ground or COMM-held operands alike) lift into fold-contract
 /// trampolines the machine drives; the host computes no fold values. Callers that execute the
 /// result must register the recorded fold `Definition`s (the `clear_held_fold_sites` /
-/// `take_held_fold_sites` bracket, or [`lower_rhocalc_term_with_folds`]).
-pub fn lower_rhocalc_proc(proc: &Proc) -> Result<Par, RhocalcAstLowerError> {
-    lower_rhocalc_proc_with_options(proc, LoweringOptions::PRODUCTION)
+/// `take_held_fold_sites` bracket, or [`lower_rholang_term_with_folds`]).
+pub fn lower_rholang_proc(proc: &Proc) -> Result<Par, RholangAstLowerError> {
+    lower_rholang_proc_with_options(proc, LoweringOptions::PRODUCTION)
 }
 
-/// [`lower_rhocalc_proc`] under explicit compilation [`LoweringOptions`] (S-D0).
+/// [`lower_rholang_proc`] under explicit compilation [`LoweringOptions`] (S-D0).
 ///
 /// The only option today is `guard_discharge`. With
 /// [`LoweringOptions::NO_DISCHARGE`](crate::guard_discharge::LoweringOptions::NO_DISCHARGE) the
@@ -820,10 +820,10 @@ pub fn lower_rhocalc_proc(proc: &Proc) -> Result<Par, RhocalcAstLowerError> {
 /// is what the guard test harnesses rely on: they exist to exercise the RUNTIME guard
 /// evaluator, and a discharged guard is one the runtime never sees. The discharge-ON arm is
 /// covered by the parallel differential suite (`guard_discharge_corpus.rs`).
-pub fn lower_rhocalc_proc_with_options(
+pub fn lower_rholang_proc_with_options(
     proc: &Proc,
     options: LoweringOptions,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     drive(Seed::Body(proc), &BoundEnv::with_options(options))
 }
 
@@ -831,22 +831,22 @@ pub fn lower_rhocalc_proc_with_options(
 /// elaborate (construction position → [`reflect_flt_construction`]; receive-pattern
 /// position → [`reflect_flt_pattern`]) via the guest each opener `tag` selects. With
 /// the empty ([`EmptyFltResolver`]) default this is byte-identical to
-/// [`lower_rhocalc_proc`]; a populated [`mettail_rholang_codegen::FltRegistry`]
+/// [`lower_rholang_proc`]; a populated [`mettail_rholang_codegen::FltRegistry`]
 /// (`"lambda"` → `LambdaLanguage`, …) is what drives the Foreign-Exchange demo from
 /// source.
-pub fn lower_rhocalc_proc_with_resolver(
+pub fn lower_rholang_proc_with_resolver(
     proc: &Proc,
     resolver: Arc<dyn FltResolve>,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     drive(Seed::Body(proc), &BoundEnv::with_resolver(resolver))
 }
 
-/// [`lower_rhocalc_proc_with_resolver`] under explicit compilation [`LoweringOptions`] (S-D0).
-pub fn lower_rhocalc_proc_with_resolver_and_options(
+/// [`lower_rholang_proc_with_resolver`] under explicit compilation [`LoweringOptions`] (S-D0).
+pub fn lower_rholang_proc_with_resolver_and_options(
     proc: &Proc,
     resolver: Arc<dyn FltResolve>,
     options: LoweringOptions,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     drive(Seed::Body(proc), &BoundEnv::with_resolver_and_options(resolver, options))
 }
 
@@ -855,28 +855,28 @@ pub fn lower_rhocalc_proc_with_resolver_and_options(
 /// Ambiguous generated terms are preserved as parallel branches after exact
 /// semantic-key deduplication. This prevents the runtime backend from silently
 /// choosing the first parse alternative.
-pub fn lower_rhocalc_term(term: &dyn Term) -> Result<Par, RhocalcAstLowerError> {
-    let alternatives = rhocalc_proc_alternatives_from_term(term)?;
+pub fn lower_rholang_term(term: &dyn Term) -> Result<Par, RholangAstLowerError> {
+    let alternatives = rholang_proc_alternatives_from_term(term)?;
     lower_proc_alternatives(alternatives)
 }
 
-/// Lower a rhocalc name into the normalized Rholang `Par` representation used
+/// Lower a rholang name into the normalized Rholang `Par` representation used
 /// for channels.
-pub fn lower_rhocalc_name(name: &Name) -> Result<Par, RhocalcAstLowerError> {
+pub fn lower_rholang_name(name: &Name) -> Result<Par, RholangAstLowerError> {
     drive(Seed::Name(name), &BoundEnv::new())
 }
 
-fn rhocalc_proc_alternatives_from_term(
+fn rholang_proc_alternatives_from_term(
     term: &dyn Term,
-) -> Result<Vec<&Proc>, RhocalcAstLowerError> {
+) -> Result<Vec<&Proc>, RholangAstLowerError> {
     let typed = term
         .as_any()
         .downcast_ref::<RhoCalcTerm>()
-        .ok_or(RhocalcAstLowerError::ExpectedRhoCalcTerm)?;
+        .ok_or(RholangAstLowerError::ExpectedRhoCalcTerm)?;
     let mut alternatives = Vec::new();
     collect_proc_alternatives(&typed.0, &mut alternatives)?;
     if alternatives.is_empty() {
-        Err(RhocalcAstLowerError::ExpectedProcTerm)
+        Err(RholangAstLowerError::ExpectedProcTerm)
     } else {
         Ok(alternatives)
     }
@@ -926,7 +926,7 @@ fn rhocalc_proc_alternatives_from_term(
 fn collect_proc_alternatives<'a>(
     inner: &'a RhoCalcTermInner,
     alternatives: &mut Vec<&'a Proc>,
-) -> Result<(), RhocalcAstLowerError> {
+) -> Result<(), RholangAstLowerError> {
     let mut work: Vec<&'a RhoCalcTermInner> = vec![inner];
     while let Some(node) = work.pop() {
         match node {
@@ -937,7 +937,7 @@ fn collect_proc_alternatives<'a>(
             },
             // Pre-order failure, exactly as the recursive form: alternatives collected
             // before the offending node stay collected, and the first bad node decides.
-            _ => return Err(RhocalcAstLowerError::ExpectedProcTerm),
+            _ => return Err(RholangAstLowerError::ExpectedProcTerm),
         }
     }
     Ok(())
@@ -945,17 +945,17 @@ fn collect_proc_alternatives<'a>(
 
 fn lower_proc_alternatives<'a>(
     alternatives: impl IntoIterator<Item = &'a Proc>,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     let mut seen = BTreeSet::new();
     let mut lowered = Vec::new();
     for proc in alternatives {
-        if seen.insert(rhocalc_proc_semantic_key(proc)) {
-            lowered.push(lower_rhocalc_proc(proc)?);
+        if seen.insert(rholang_proc_semantic_key(proc)) {
+            lowered.push(lower_rholang_proc(proc)?);
         }
     }
 
     match lowered.len() {
-        0 => Err(RhocalcAstLowerError::ExpectedProcTerm),
+        0 => Err(RholangAstLowerError::ExpectedProcTerm),
         1 => Ok(lowered.pop().expect("checked len == 1")),
         _ => Ok(lowered
             .into_iter()
@@ -963,32 +963,32 @@ fn lower_proc_alternatives<'a>(
     }
 }
 
-fn rhocalc_proc_semantic_key(proc: &Proc) -> Vec<u8> {
+fn rholang_proc_semantic_key(proc: &Proc) -> Vec<u8> {
     let mut hasher = FramedSemanticKeyHasher::default();
     proc.semantic_hash(&mut hasher);
     hasher.into_key()
 }
 
 /// M-1b: the crate-visible alias the formula compiler
-/// ([`crate::rhocalc_formula::lower_formula_in_env`]) calls for a
+/// ([`crate::rholang_formula::lower_formula_in_env`]) calls for a
 /// [`mettail_languages::rhocalc::formula::FormulaShape::Term`] — an ordinary term
 /// read as a pattern.
 ///
 /// Delegating rather than duplicating is the whole point: a pattern and the term
 /// it is meant to match are then lowered by literally the same code, so
 /// `t matches t` cannot fail through a lowering asymmetry.
-pub fn lower_proc_in_env(proc: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+pub fn lower_proc_in_env(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     drive(Seed::Proc(proc), env)
 }
 
 /// M-2 — the crate entry the formula compiler uses for a whole FORMULA.
 ///
-/// `rhocalc_formula::lower_formula_in_env` is the 87th member of this file's recursion
+/// `rholang_formula::lower_formula_in_env` is the 87th member of this file's recursion
 /// component (§4.1 of the audit), so it cannot be driven by its own recursion without
 /// leaving a reachable Θ(depth) path: `t matches (φ and (ψ and (…)))` nests through it.
 /// It therefore delegates here, and the driver carries [`Job::Formula`] in its work
 /// alphabet.
-pub(crate) fn drive_formula(formula: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+pub(crate) fn drive_formula(formula: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     drive(Seed::Formula(formula), env)
 }
 
@@ -1056,7 +1056,7 @@ pub(crate) fn drive_formula(formula: &Proc, env: &BoundEnv) -> Result<Par, Rhoca
 enum Seed<'a> {
     Proc(&'a Proc),
     /// A whole program: a binder body, so that a top-level held fold lifts to its trampoline
-    /// before anything is lowered. Every `lower_rhocalc_proc*` entry point starts here.
+    /// before anything is lowered. Every `lower_rholang_proc*` entry point starts here.
     Body(&'a Proc),
     Name(&'a Name),
     Formula(&'a Proc),
@@ -1110,7 +1110,7 @@ impl<'a> EnvArena<'a> {
         self.derived.push(env);
         EnvId(
             u32::try_from(self.derived.len())
-                .expect("rhocalc lowering: more than 2^32 binder sites in one term"),
+                .expect("rholang lowering: more than 2^32 binder sites in one term"),
         )
     }
 }
@@ -1248,7 +1248,7 @@ enum Job<'a> {
     /// `lower_pattern_proc` — a receive pattern, whose free variables become binders in
     /// `pattern_states[slot]`.
     Pattern(&'a Proc, u32),
-    /// `rhocalc_formula::lower_formula_in_env` — a spatial formula, compiled to a pattern.
+    /// `rholang_formula::lower_formula_in_env` — a spatial formula, compiled to a pattern.
     Formula(&'a Proc, EnvId),
     /// Run a continuation over the values its children left.
     Combine(Kont<'a>),
@@ -1544,7 +1544,7 @@ impl<'a> Stacks<'a> {
     fn pop_value(&mut self) -> Par {
         self.values
             .pop()
-            .expect("rhocalc lowering: continuation popped more values than its arity")
+            .expect("rholang lowering: continuation popped more values than its arity")
     }
 
     /// Pop the last `n` values, LEFT TO RIGHT. Children are pushed in reverse and therefore
@@ -1555,7 +1555,7 @@ impl<'a> Stacks<'a> {
             .values
             .len()
             .checked_sub(n)
-            .expect("rhocalc lowering: continuation popped more values than its arity");
+            .expect("rholang lowering: continuation popped more values than its arity");
         self.values.split_off(start)
     }
 
@@ -1594,7 +1594,7 @@ impl<'a> Stacks<'a> {
         debug_assert_eq!(
             self.values.len() + self.enters + self.konts,
             1 + self.kont_arity,
-            "rhocalc lowering: deficit invariant violated — |V|={} D={} |C|={} Σarity={}",
+            "rholang lowering: deficit invariant violated — |V|={} D={} |C|={} Σarity={}",
             self.values.len(),
             self.enters,
             self.konts,
@@ -1654,7 +1654,7 @@ impl<'a> Drive<'a> {
         debug_assert_eq!(
             children.len(),
             kont.arity(),
-            "rhocalc lowering: a continuation was pushed with a child count that disagrees \
+            "rholang lowering: a continuation was pushed with a child count that disagrees \
              with Kont::arity"
         );
         self.stacks.push(Job::Combine(kont));
@@ -1665,7 +1665,7 @@ impl<'a> Drive<'a> {
 }
 
 /// Run the machine to its final configuration.
-fn drive(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn drive(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     let arena: Arena<Arc<Proc>> = Arena::new();
     let seed_job = match seed {
         Seed::Proc(proc) => Job::Proc(proc, ROOT_ENV),
@@ -1698,7 +1698,7 @@ fn drive(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RhocalcAstLowerErro
     debug_assert_eq!(
         drive.stacks.values.len(),
         1,
-        "rhocalc lowering: the machine halted with {} values, not 1",
+        "rholang lowering: the machine halted with {} values, not 1",
         drive.stacks.values.len()
     );
     Ok(drive.stacks.pop_value())
@@ -1714,7 +1714,7 @@ fn drive(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RhocalcAstLowerErro
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 impl<'a> Drive<'a> {
-    fn enter_proc(&mut self, proc: &'a Proc, env: EnvId) -> Result<(), RhocalcAstLowerError> {
+    fn enter_proc(&mut self, proc: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
         // A-S4: exec submits the RAW parse tree (no pre-normalization), so the send-sugar nodes
         // (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, …) arrive unfolded. Desugar the HEAD node to
         // its canonical channel-first form first — a pure structural rearrangement (the same
@@ -1816,7 +1816,7 @@ impl<'a> Drive<'a> {
                     items.iter().map(|item| Job::Proc(item, env)),
                 ),
                 _ => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc("computed list process"));
+                    return Err(RholangAstLowerError::UnsupportedProc("computed list process"));
                 },
             },
             Proc::CastBag(value) => match value.as_ref() {
@@ -1826,7 +1826,7 @@ impl<'a> Drive<'a> {
                     let mut counts = Vec::with_capacity(entries.len());
                     for (_, count) in &entries {
                         counts.push(i64::try_from(*count).map_err(|_| {
-                            RhocalcAstLowerError::UnsupportedProc("bag multiplicity exceeds i64")
+                            RholangAstLowerError::UnsupportedProc("bag multiplicity exceeds i64")
                         })?);
                     }
                     self.push_children(
@@ -1835,7 +1835,7 @@ impl<'a> Drive<'a> {
                     );
                 },
                 _ => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc("computed bag process"));
+                    return Err(RholangAstLowerError::UnsupportedProc("computed bag process"));
                 },
             },
             Proc::CastMap(value) => match value.as_ref() {
@@ -1850,7 +1850,7 @@ impl<'a> Drive<'a> {
                     self.push_children(Kont::MapLit(pair_count), children);
                 },
                 _ => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc("computed map process"));
+                    return Err(RholangAstLowerError::UnsupportedProc("computed map process"));
                 },
             },
             Proc::CastSet(value) => match value.as_ref() {
@@ -1863,7 +1863,7 @@ impl<'a> Drive<'a> {
                     );
                 },
                 _ => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc("computed set process"));
+                    return Err(RholangAstLowerError::UnsupportedProc("computed set process"));
                 },
             },
             Proc::CastPathmap(value) => match value.as_ref() {
@@ -1879,7 +1879,7 @@ impl<'a> Drive<'a> {
                     self.push_children(Kont::PathmapLit(pair_count), children);
                 },
                 _ => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc("computed pathmap process"));
+                    return Err(RholangAstLowerError::UnsupportedProc("computed pathmap process"));
                 },
             },
             Proc::CastBytes(value) => self.stacks.value(lower_arm_cast_bytes(value)?),
@@ -1951,7 +1951,7 @@ impl<'a> Drive<'a> {
             // RECEIVER'S SYNTAX, before anything is lowered — same order as the recursive form.
             Proc::LLength(l) => match receiver_is_literal_bag(l.as_ref()) {
                 true => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                    return Err(RholangAstLowerError::UnsupportedProc(
                         "#{…}#.length() bag cardinality (no Rholang analog — the machine would \
                          measure the 2-element bag ABI encoding, not the multiset; C3 residue)",
                     ));
@@ -1960,7 +1960,7 @@ impl<'a> Drive<'a> {
             },
             Proc::LNth(l, i) => match receiver_is_literal_bag(l.as_ref()) {
                 true => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                    return Err(RholangAstLowerError::UnsupportedProc(
                         "#{…}#.nth(i) bag indexing (no Rholang analog — the machine would index \
                          the 2-element bag ABI encoding, not the multiset; C3 residue)",
                     ));
@@ -1970,7 +1970,7 @@ impl<'a> Drive<'a> {
             Proc::LConcat(l, r) => {
                 match receiver_is_literal_bag(l.as_ref()) || receiver_is_literal_bag(r.as_ref()) {
                     true => {
-                        return Err(RhocalcAstLowerError::UnsupportedProc(
+                        return Err(RholangAstLowerError::UnsupportedProc(
                             "#{…}#.concat(…) bag concatenation (no Rholang analog — `++` would \
                              concatenate the 2-element bag ABI encodings, tags and all; C3 \
                              residue)",
@@ -2051,7 +2051,7 @@ impl<'a> Drive<'a> {
         &mut self,
         operand: &'a Proc,
         env: EnvId,
-    ) -> Result<(Job<'a>, Job<'a>), RhocalcAstLowerError> {
+    ) -> Result<(Job<'a>, Job<'a>), RholangAstLowerError> {
         let mut operand = operand;
         while let Some(desugared) = desugar_send_node(operand) {
             operand = self.keep(Arc::new(desugared));
@@ -2066,24 +2066,24 @@ impl<'a> Drive<'a> {
                 Job::Proc(payload.as_ref(), env),
             )),
             Proc::PPersistOutput(..) | Proc::PPersistOutputShort(..) => Err(
-                RhocalcAstLowerError::LookaheadOperandNotASend("a persistent send (`!!`)"),
+                RholangAstLowerError::LookaheadOperandNotASend("a persistent send (`!!`)"),
             ),
-            Proc::PZero => Err(RhocalcAstLowerError::LookaheadOperandNotASend("Nil")),
-            Proc::PForUser(..) => Err(RhocalcAstLowerError::LookaheadOperandNotASend("a receive")),
+            Proc::PZero => Err(RholangAstLowerError::LookaheadOperandNotASend("Nil")),
+            Proc::PForUser(..) => Err(RholangAstLowerError::LookaheadOperandNotASend("a receive")),
             Proc::PPar(..) | Proc::PParInfix(..) => Err(
-                RhocalcAstLowerError::LookaheadOperandNotASend("a parallel composition"),
+                RholangAstLowerError::LookaheadOperandNotASend("a parallel composition"),
             ),
-            Proc::CastList(..) => Err(RhocalcAstLowerError::LookaheadOperandNotASend(
+            Proc::CastList(..) => Err(RholangAstLowerError::LookaheadOperandNotASend(
                 "a list literal",
             )),
-            _ => Err(RhocalcAstLowerError::LookaheadOperandNotASend(
+            _ => Err(RholangAstLowerError::LookaheadOperandNotASend(
                 "a non-send process",
             )),
         }
     }
 
     /// `lower_name` / `lower_drop`.
-    fn enter_name(&mut self, name: &'a Name, env: EnvId) -> Result<(), RhocalcAstLowerError> {
+    fn enter_name(&mut self, name: &'a Name, env: EnvId) -> Result<(), RholangAstLowerError> {
         match name {
             // `@P` full quote — the channel IS the lowered process.
             Name::NQuote(proc) => self.stacks.push(Job::Proc(proc.as_ref(), env)),
@@ -2098,8 +2098,8 @@ impl<'a> Drive<'a> {
                 self.stacks.value(par);
             },
             _ => {
-                return Err(RhocalcAstLowerError::UnsupportedName(
-                    "computed rhocalc name",
+                return Err(RholangAstLowerError::UnsupportedName(
+                    "computed rholang name",
                 ));
             },
         }
@@ -2113,7 +2113,7 @@ impl<'a> Drive<'a> {
     /// where the recursive form wrote it. Order matters: the operand's own subtree may register
     /// further sites (a `new` inside an operand), and the site index is `HELD_FOLD_SITES.len()`
     /// at the moment of registration.
-    fn enter_body(&mut self, body: &'a Proc, env: EnvId) -> Result<(), RhocalcAstLowerError> {
+    fn enter_body(&mut self, body: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
         let Some((operand, kind, width)) = find_fold(body) else {
             self.stacks.push(Job::Proc(body, env));
             return Ok(());
@@ -2147,7 +2147,7 @@ impl<'a> Drive<'a> {
     }
 
     /// `lower_pattern_proc` — a receive pattern, whose free variables become binders.
-    fn enter_pattern(&mut self, pat: &'a Proc, slot: u32) -> Result<(), RhocalcAstLowerError> {
+    fn enter_pattern(&mut self, pat: &'a Proc, slot: u32) -> Result<(), RholangAstLowerError> {
         match pat {
             Proc::PVar(ordvar) => match &ordvar.0 {
                 Var::Free(free_var) => {
@@ -2158,7 +2158,7 @@ impl<'a> Drive<'a> {
                     self.stacks.value(new_freevar_par(index, Vec::new()));
                 },
                 Var::Bound(_) => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                    return Err(RholangAstLowerError::UnsupportedProc(
                         "bound var in receive pattern",
                     ));
                 },
@@ -2169,7 +2169,7 @@ impl<'a> Drive<'a> {
                     items.iter().map(|item| Job::Pattern(item, slot)),
                 ),
                 _ => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                    return Err(RholangAstLowerError::UnsupportedProc(
                         "computed list receive pattern",
                     ));
                 },
@@ -2186,7 +2186,7 @@ impl<'a> Drive<'a> {
                     self.push_children(Kont::PatMapLit(pair_count), children);
                 },
                 _ => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                    return Err(RholangAstLowerError::UnsupportedProc(
                         "computed map receive pattern",
                     ));
                 },
@@ -2201,7 +2201,7 @@ impl<'a> Drive<'a> {
                     );
                 },
                 _ => {
-                    return Err(RhocalcAstLowerError::UnsupportedProc(
+                    return Err(RholangAstLowerError::UnsupportedProc(
                         "computed set receive pattern",
                     ));
                 },
@@ -2217,12 +2217,12 @@ impl<'a> Drive<'a> {
         Ok(())
     }
 
-    /// `rhocalc_formula::lower_formula_in_env` — compile a spatial formula to a pattern.
-    fn enter_formula(&mut self, formula: &'a Proc, env: EnvId) -> Result<(), RhocalcAstLowerError> {
+    /// `rholang_formula::lower_formula_in_env` — compile a spatial formula to a pattern.
+    fn enter_formula(&mut self, formula: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
         use mettail_languages::rhocalc::formula::{classify, FormulaShape};
         match classify(formula) {
-            FormulaShape::Verum => self.stacks.value(crate::rhocalc_formula::verum_pattern()),
-            FormulaShape::Falsum => self.stacks.value(crate::rhocalc_formula::falsum_pattern()),
+            FormulaShape::Verum => self.stacks.value(crate::rholang_formula::verum_pattern()),
+            FormulaShape::Falsum => self.stacks.value(crate::rholang_formula::falsum_pattern()),
             FormulaShape::Conjunction(left, right) => self.push_children(
                 Kont::FormulaAnd,
                 [Job::Formula(left, env), Job::Formula(right, env)],
@@ -2263,7 +2263,7 @@ impl<'a> Drive<'a> {
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 impl<'a> Drive<'a> {
-    fn combine(&mut self, kont: Kont<'a>) -> Result<(), RhocalcAstLowerError> {
+    fn combine(&mut self, kont: Kont<'a>) -> Result<(), RholangAstLowerError> {
         match kont {
             Kont::ParFold(n) => {
                 let parts = self.stacks.pop_values(n);
@@ -2396,7 +2396,7 @@ impl<'a> Drive<'a> {
                     connective_used,
                 ));
             },
-            // A `Bag` becomes `EList[GPrivate(RHOCALC_BAG_ABI_TAG), EList[pairs]]` — always
+            // A `Bag` becomes `EList[GPrivate(RHOLANG_BAG_ABI_TAG), EList[pairs]]` — always
             // exactly 2 elements. That ABI shape is what the routed-method carrier map in
             // `lower_proc`'s C1 block reasons about.
             Kont::BagLit(counts) => {
@@ -2426,7 +2426,7 @@ impl<'a> Drive<'a> {
                     pairs_locally_free,
                     pairs_connective,
                 );
-                let tag = GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string());
+                let tag = GPrivateBuilder::new_par_from_string(crate::RHOLANG_BAG_ABI_TAG.to_string());
                 let locally_free = union(tag.locally_free.clone(), pairs.locally_free.clone());
                 let connective_used = tag.connective_used || pairs.connective_used;
                 self.stacks.value(new_elist_par(
@@ -2571,7 +2571,7 @@ impl<'a> Drive<'a> {
                 let right = self.stacks.pop_value();
                 let left = self.stacks.pop_value();
                 let operands = [left, right];
-                self.stacks.value(crate::rhocalc_formula::connective_par(
+                self.stacks.value(crate::rholang_formula::connective_par(
                     models::rust::utils::new_conn_and_body_par(operands.to_vec(), Vec::new(), true),
                     &operands,
                 ));
@@ -2580,20 +2580,20 @@ impl<'a> Drive<'a> {
                 let right = self.stacks.pop_value();
                 let left = self.stacks.pop_value();
                 let operands = [left, right];
-                self.stacks.value(crate::rhocalc_formula::connective_par(
+                self.stacks.value(crate::rholang_formula::connective_par(
                     models::rust::utils::new_conn_or_body_par(operands.to_vec(), Vec::new(), true),
                     &operands,
                 ));
             },
             Kont::FormulaNot => {
                 let inner = self.stacks.pop_value();
-                self.stacks.value(crate::rhocalc_formula::negated(inner));
+                self.stacks.value(crate::rholang_formula::negated(inner));
             },
             Kont::FormulaImplies => {
                 let consequent = self.stacks.pop_value();
                 let antecedent = self.stacks.pop_value();
-                let operands = [crate::rhocalc_formula::negated(antecedent), consequent];
-                self.stacks.value(crate::rhocalc_formula::connective_par(
+                let operands = [crate::rholang_formula::negated(antecedent), consequent];
+                self.stacks.value(crate::rholang_formula::connective_par(
                     models::rust::utils::new_conn_or_body_par(operands.to_vec(), Vec::new(), true),
                     &operands,
                 ));
@@ -2625,14 +2625,14 @@ impl<'a> Drive<'a> {
         rows: &'a [ForRow],
         body: &'a Proc,
         env: EnvId,
-    ) -> Result<(), RhocalcAstLowerError> {
+    ) -> Result<(), RholangAstLowerError> {
         if rows.is_empty() {
             self.stacks.push(Job::Body(body, env));
             return Ok(());
         }
         let (binds, persistent, cond) = decompose_for_row_borrowed(&rows[0])?;
         if binds.is_empty() {
-            return Err(RhocalcAstLowerError::EmptyInputJoin);
+            return Err(RholangAstLowerError::EmptyInputJoin);
         }
         let binds_rho = Vec::with_capacity(binds.len());
         self.schedule_bind_source(Box::new(ForState {
@@ -2655,11 +2655,11 @@ impl<'a> Drive<'a> {
     fn schedule_bind_source(
         &mut self,
         state: Box<ForState<'a>>,
-    ) -> Result<(), RhocalcAstLowerError> {
+    ) -> Result<(), RholangAstLowerError> {
         match state.next_bind < state.binds.len() {
             true => {
                 let channel = bind_channel_name(state.binds[state.next_bind])
-                    .ok_or(RhocalcAstLowerError::UnsupportedProc("for-row channel"))?;
+                    .ok_or(RholangAstLowerError::UnsupportedProc("for-row channel"))?;
                 let env = state.env;
                 self.push_children(Kont::ForSource(state), [Job::Name(channel, env)]);
                 Ok(())
@@ -2668,7 +2668,7 @@ impl<'a> Drive<'a> {
         }
     }
 
-    fn for_source(&mut self, mut state: Box<ForState<'a>>) -> Result<(), RhocalcAstLowerError> {
+    fn for_source(&mut self, mut state: Box<ForState<'a>>) -> Result<(), RholangAstLowerError> {
         let source = self.stacks.pop_value();
         let bind = state.binds[state.next_bind];
 
@@ -2703,10 +2703,10 @@ impl<'a> Drive<'a> {
         }
 
         let pat_proc = bind_pattern_proc(bind)
-            .ok_or(RhocalcAstLowerError::UnsupportedProc("for-row pattern"))?;
+            .ok_or(RholangAstLowerError::UnsupportedProc("for-row pattern"))?;
         let pat_proc = self.keep(Arc::new(pat_proc));
         let slot = u32::try_from(self.pattern_states.len())
-            .expect("rhocalc lowering: more than 2^32 receive binds in one term");
+            .expect("rholang lowering: more than 2^32 receive binds in one term");
         self.pattern_states.push(PatternState::default());
         state.pending_source = Some(source);
         self.push_children(
@@ -2720,12 +2720,12 @@ impl<'a> Drive<'a> {
         &mut self,
         mut state: Box<ForState<'a>>,
         slot: u32,
-    ) -> Result<(), RhocalcAstLowerError> {
+    ) -> Result<(), RholangAstLowerError> {
         let pat_par = self.stacks.pop_value();
         let source = state
             .pending_source
             .take()
-            .expect("rhocalc lowering: a receive pattern ran without its source");
+            .expect("rholang lowering: a receive pattern ran without its source");
         let bind_binders = std::mem::take(&mut self.pattern_states[slot as usize].binders);
         let free_count = bind_binders.len() as i32;
         for binder in bind_binders {
@@ -2750,7 +2750,7 @@ impl<'a> Drive<'a> {
     fn schedule_for_body(
         &mut self,
         mut state: Box<ForState<'a>>,
-    ) -> Result<(), RhocalcAstLowerError> {
+    ) -> Result<(), RholangAstLowerError> {
         let extended = self
             .envs
             .push(self.env(state.env).extend_slots(&state.slots));
@@ -2774,7 +2774,7 @@ impl<'a> Drive<'a> {
         &mut self,
         state: Box<ForState<'a>>,
         condition: Option<Par>,
-    ) -> Result<(), RhocalcAstLowerError> {
+    ) -> Result<(), RholangAstLowerError> {
         let ForState {
             env,
             persistent,
@@ -2785,7 +2785,7 @@ impl<'a> Drive<'a> {
             ..
         } = *state;
         let lowered_body =
-            lowered_body.expect("rhocalc lowering: a receive assembled without its continuation");
+            lowered_body.expect("rholang lowering: a receive assembled without its continuation");
 
         // S-D0: a `where` guard the compile-time authority can REFUTE is omitted from the
         // emitted `Par` rather than left for the runtime evaluator to decide again.
@@ -2849,7 +2849,7 @@ impl<'a> Drive<'a> {
 /// shapes are rejected.
 fn decompose_for_row_borrowed(
     row: &ForRow,
-) -> Result<(Vec<&InputBind>, bool, Option<&Proc>), RhocalcAstLowerError> {
+) -> Result<(Vec<&InputBind>, bool, Option<&Proc>), RholangAstLowerError> {
     match row {
         ForRow::ForRowSingleNoWhere(b) => {
             let binds = vec![b.as_ref()];
@@ -2875,7 +2875,7 @@ fn decompose_for_row_borrowed(
             let persistent = binds.iter().any(|bind| is_persistent_bind(bind));
             Ok((binds, persistent, Some(cond.as_ref())))
         },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("non-ground for-row")),
+        _ => Err(RholangAstLowerError::UnsupportedProc("non-ground for-row")),
     }
 }
 
@@ -2935,7 +2935,7 @@ fn method_par(method_name: &str, target_par: Par, argument_pars: Vec<Par>) -> Pa
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_p_zero() -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_p_zero() -> Result<Par, RholangAstLowerError> {
     Ok(Par::default())
 }
 
@@ -2951,7 +2951,7 @@ fn lower_arm_p_zero() -> Result<Par, RhocalcAstLowerError> {
 fn lower_arm_p_flt(
     node: &std::sync::Arc<mettail_runtime::FltNode>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_flt_construction(node.as_ref(), env)
 }
 
@@ -3009,7 +3009,7 @@ fn lower_arm_p_flt(
 fn lower_arm_cast_int(
     value: &std::sync::Arc<Int>,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_int_value(value.as_ref(), env)
 }
 
@@ -3018,10 +3018,10 @@ fn lower_arm_cast_int(
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_cast_bool(value: &std::sync::Arc<Bool>) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_cast_bool(value: &std::sync::Arc<Bool>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
         Bool::BoolLit(literal) => Ok(new_gbool_par(*literal, Vec::new(), false)),
-        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+        _ => Err(RholangAstLowerError::UnsupportedProc(
             "non-literal boolean expression (Bool category)",
         )),
     }
@@ -3032,10 +3032,10 @@ fn lower_arm_cast_bool(value: &std::sync::Arc<Bool>) -> Result<Par, RhocalcAstLo
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_cast_str(value: &std::sync::Arc<Str>) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_cast_str(value: &std::sync::Arc<Str>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
         Str::StringLit(literal) => Ok(new_gstring_par(literal.clone(), Vec::new(), false)),
-        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+        _ => Err(RholangAstLowerError::UnsupportedProc(
             "non-literal string expression (Str category)",
         )),
     }
@@ -3049,7 +3049,7 @@ fn lower_arm_cast_str(value: &std::sync::Arc<Str>) -> Result<Par, RhocalcAstLowe
 fn lower_arm_p_var(
     var: &mettail_runtime::OrdVar,
     env: &BoundEnv,
-) -> Result<Par, RhocalcAstLowerError> {
+) -> Result<Par, RholangAstLowerError> {
     lower_proc_var(var, env)
 }
 
@@ -3058,8 +3058,8 @@ fn lower_arm_p_var(
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_err() -> Result<Par, RhocalcAstLowerError> {
-    Err(RhocalcAstLowerError::UnsupportedProc("error process"))
+fn lower_arm_err() -> Result<Par, RholangAstLowerError> {
+    Err(RholangAstLowerError::UnsupportedProc("error process"))
 }
 
 /// The `Proc::CastBigRat(value)` arm.
@@ -3067,7 +3067,7 @@ fn lower_arm_err() -> Result<Par, RhocalcAstLowerError> {
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_cast_big_rat(value: &std::sync::Arc<BigRat>) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_cast_big_rat(value: &std::sync::Arc<BigRat>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
         BigRat::RatLit(literal) => {
             let rational = literal.get();
@@ -3076,7 +3076,7 @@ fn lower_arm_cast_big_rat(value: &std::sync::Arc<BigRat>) -> Result<Par, Rhocalc
                 rational.denom().to_signed_bytes_be(),
             )))
         },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+        _ => Err(RholangAstLowerError::UnsupportedProc(
             "non-literal big-rational expression (BigRat category)",
         )),
     }
@@ -3087,13 +3087,13 @@ fn lower_arm_cast_big_rat(value: &std::sync::Arc<BigRat>) -> Result<Par, Rhocalc
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_cast_fixed(value: &std::sync::Arc<Fixed>) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_cast_fixed(value: &std::sync::Arc<Fixed>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
         Fixed::FixedLit(literal) => Ok(expr_par(new_gfixedpoint_expr(
             literal.unscaled().to_signed_bytes_be(),
             literal.places(),
         ))),
-        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+        _ => Err(RholangAstLowerError::UnsupportedProc(
             "non-literal fixed-point expression (Fixed category)",
         )),
     }
@@ -3104,10 +3104,10 @@ fn lower_arm_cast_fixed(value: &std::sync::Arc<Fixed>) -> Result<Par, RhocalcAst
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_cast_float(value: &std::sync::Arc<Float>) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_cast_float(value: &std::sync::Arc<Float>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
         Float::FloatLit(literal) => Ok(expr_par(new_gdouble_expr(literal.get()))),
-        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+        _ => Err(RholangAstLowerError::UnsupportedProc(
             "non-literal float expression (Float category)",
         )),
     }
@@ -3118,12 +3118,12 @@ fn lower_arm_cast_float(value: &std::sync::Arc<Float>) -> Result<Par, RhocalcAst
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_cast_big_int(value: &std::sync::Arc<BigInt>) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_cast_big_int(value: &std::sync::Arc<BigInt>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
         BigInt::NumLit(literal) => {
             Ok(expr_par(new_gbigint_expr(literal.get().to_signed_bytes_be())))
         },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+        _ => Err(RholangAstLowerError::UnsupportedProc(
             "non-literal big-integer expression (BigInt category)",
         )),
     }
@@ -3134,10 +3134,10 @@ fn lower_arm_cast_big_int(value: &std::sync::Arc<BigInt>) -> Result<Par, Rhocalc
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_cast_u_int32(value: &std::sync::Arc<UInt32>) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_cast_u_int32(value: &std::sync::Arc<UInt32>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
         UInt32::NumLit(literal) => Ok(new_gint_par(i64::from(*literal), Vec::new(), false)),
-        _ => Err(RhocalcAstLowerError::UnsupportedProc(
+        _ => Err(RholangAstLowerError::UnsupportedProc(
             "non-literal u32 expression (UInt32 category)",
         )),
     }
@@ -3168,12 +3168,12 @@ fn lower_arm_cast_u_int32(value: &std::sync::Arc<UInt32>) -> Result<Par, Rhocalc
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_cast_bytes(value: &std::sync::Arc<Bytes>) -> Result<Par, RhocalcAstLowerError> {
+fn lower_arm_cast_bytes(value: &std::sync::Arc<Bytes>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
         // RhoCalc `Bytes` is a `String`-backed literal (`![String] as Bytes`); lower the ground
         // literal to a Rholang `GString` (mirrors `CastStr`). Non-ground bytes are unsupported.
         Bytes::StringLit(string) => Ok(new_gstring_par(string.clone(), Vec::new(), false)),
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("non-ground bytes process")),
+        _ => Err(RholangAstLowerError::UnsupportedProc("non-ground bytes process")),
     }
 }
 
@@ -3182,8 +3182,8 @@ fn lower_arm_cast_bytes(value: &std::sync::Arc<Bytes>) -> Result<Par, RhocalcAst
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_int_bin_proc() -> Result<Par, RhocalcAstLowerError> {
-    Err(RhocalcAstLowerError::UnsupportedProc(
+fn lower_arm_int_bin_proc() -> Result<Par, RholangAstLowerError> {
+    Err(RholangAstLowerError::UnsupportedProc(
         "int(a, w) width fold outside a fold-liftable position (or non-ground width)",
     ))
 }
@@ -3193,8 +3193,8 @@ fn lower_arm_int_bin_proc() -> Result<Par, RhocalcAstLowerError> {
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_u_int_bin_proc() -> Result<Par, RhocalcAstLowerError> {
-    Err(RhocalcAstLowerError::UnsupportedProc(
+fn lower_arm_u_int_bin_proc() -> Result<Par, RholangAstLowerError> {
+    Err(RholangAstLowerError::UnsupportedProc(
         "uint(a, w) width fold outside a fold-liftable position (or non-ground width)",
     ))
 }
@@ -3204,8 +3204,8 @@ fn lower_arm_u_int_bin_proc() -> Result<Par, RhocalcAstLowerError> {
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_float_bin_proc() -> Result<Par, RhocalcAstLowerError> {
-    Err(RhocalcAstLowerError::UnsupportedProc(
+fn lower_arm_float_bin_proc() -> Result<Par, RholangAstLowerError> {
+    Err(RholangAstLowerError::UnsupportedProc(
         "float(a, w) width fold outside a fold-liftable position (or non-ground width)",
     ))
 }
@@ -3215,8 +3215,8 @@ fn lower_arm_float_bin_proc() -> Result<Par, RhocalcAstLowerError> {
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_fixed_bin_proc() -> Result<Par, RhocalcAstLowerError> {
-    Err(RhocalcAstLowerError::UnsupportedProc(
+fn lower_arm_fixed_bin_proc() -> Result<Par, RholangAstLowerError> {
+    Err(RholangAstLowerError::UnsupportedProc(
         "fixed(a, w) width fold outside a fold-liftable position (or non-ground width)",
     ))
 }
@@ -3226,8 +3226,8 @@ fn lower_arm_fixed_bin_proc() -> Result<Par, RhocalcAstLowerError> {
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_bigint_cast_proc() -> Result<Par, RhocalcAstLowerError> {
-    Err(RhocalcAstLowerError::UnsupportedProc(
+fn lower_arm_bigint_cast_proc() -> Result<Par, RholangAstLowerError> {
+    Err(RholangAstLowerError::UnsupportedProc(
         "bigint(a) precision cast outside a fold-liftable position",
     ))
 }
@@ -3237,8 +3237,8 @@ fn lower_arm_bigint_cast_proc() -> Result<Par, RhocalcAstLowerError> {
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_bigrat_cast_proc() -> Result<Par, RhocalcAstLowerError> {
-    Err(RhocalcAstLowerError::UnsupportedProc(
+fn lower_arm_bigrat_cast_proc() -> Result<Par, RholangAstLowerError> {
+    Err(RholangAstLowerError::UnsupportedProc(
         "bigrat(a) precision cast outside a fold-liftable position",
     ))
 }
@@ -3316,8 +3316,8 @@ fn lower_arm_bigrat_cast_proc() -> Result<Par, RhocalcAstLowerError> {
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_spatial_p_par() -> Result<Par, RhocalcAstLowerError> {
-    Err(RhocalcAstLowerError::UnsupportedProc(
+fn lower_arm_spatial_p_par() -> Result<Par, RholangAstLowerError> {
+    Err(RholangAstLowerError::UnsupportedProc(
         "PPar(a, b) outside a `matches` formula (the spatial connective is a pattern former, \
              not a term former; write `{ a | b }` for parallel composition)",
     ))
@@ -3468,8 +3468,8 @@ fn lower_arm_spatial_p_par() -> Result<Par, RhocalcAstLowerError> {
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
 /// reasoning behind them, are documented at the call site.
 #[inline(never)]
-fn lower_arm_unsupported(other: &Proc) -> Result<Par, RhocalcAstLowerError> {
-    Err(RhocalcAstLowerError::UnsupportedProc(unsupported_construct_name(other)))
+fn lower_arm_unsupported(other: &Proc) -> Result<Par, RholangAstLowerError> {
+    Err(RholangAstLowerError::UnsupportedProc(unsupported_construct_name(other)))
 }
 
 /// The static construct name for the A-S4 fail-closed lowering error — every `Proc` variant the
@@ -3608,7 +3608,7 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         Proc::ToStr(..) => "str(a) string conversion",
         Proc::CastReadZipper(..) => "read-zipper literal",
         Proc::CastWriteZipper(..) => "write-zipper literal",
-        _ => "computed rhocalc expression",
+        _ => "computed rholang expression",
     }
 }
 
@@ -3657,7 +3657,7 @@ fn binary_expr_par(
 /// the machine would be handed the bag ENCODING rather than a bag?
 ///
 /// A `Bag` has no Rholang analog. [`lower_bag`] encodes it as
-/// `EList[GPrivate(RHOCALC_BAG_ABI_TAG), EList[pairs]]` — an `EList` of **exactly two** elements,
+/// `EList[GPrivate(RHOLANG_BAG_ABI_TAG), EList[pairs]]` — an `EList` of **exactly two** elements,
 /// whatever the multiset's cardinality. Most routed methods are safe from this by construction
 /// (`size`, `union`, `diff`, `contains`, `keys`, … accept only `EMapBody`/`ESetBody`/`EPathmapBody`
 /// and so reject the encoding outright), but `length` and `nth` accept `EListBody` and would
@@ -3671,7 +3671,7 @@ fn binary_expr_par(
 /// projected out of another collection (`[#{1|2|2}#].nth(0).length()`). Deciding those would
 /// require type inference over RhoCalc, and no shape check reaches them; this is the same class as
 /// divergence B. The residue is MEASURED and pinned rather than assumed, by
-/// `rho_rhocalc_conformance.rs::c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime`.
+/// `rho_rholang_conformance.rs::c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime`.
 ///
 /// Closing it completely needs **C3** (a bag-aware `length`/`nth` injected as a system-process
 /// `Definition`, so the machine has a real bag algebra instead of an encoding) — it is NOT
@@ -3694,7 +3694,7 @@ fn receiver_is_literal_bag(proc: &Proc) -> bool {
 ///
 /// `++` accepts `EList`, so a lowered `Bag` would be concatenated as the 2-element tagged list it
 /// is encoded as: `#{1|2}#.concat(#{3}#)` would answer a 4-element list containing two
-/// `RHOCALC_BAG_ABI_TAG` unforgeables, where the fold body answers `error`. Both operands are
+/// `RHOLANG_BAG_ABI_TAG` unforgeables, where the fold body answers `error`. Both operands are
 /// checked because either position can supply the bag. See [`receiver_is_literal_bag`] for how far
 /// the gate reaches and why it cannot reach further.
 /// Assemble a unary Rholang `Expr` `Par` from an already-lowered operand `Par` (the `ENeg`/`ENot`
@@ -3772,7 +3772,7 @@ fn is_single_gstring_value(par: &Par) -> bool {
 /// `1 + 1`, the boolean and relational connectives, and the casts are all ALREADY conformant:
 /// f1r3node leaves them unevaluated in pattern position too, so their non-matching is Rholang's
 /// own semantics rather than a defect. Measured end-to-end in
-/// `rhocalc_ground_literal_conformance.rs` against f1r3node's own `Compiler::source_to_adt`.
+/// `rholang_ground_literal_conformance.rs` against f1r3node's own `Compiler::source_to_adt`.
 ///
 /// ── ⚠ WHY IT MUST NOT BE FIXED HERE ────────────────────────────────────────────────────────────
 ///
@@ -3780,7 +3780,7 @@ fn is_single_gstring_value(par: &Par) -> bool {
 /// WRONG, by measurement: by lowering time the adjacency is already gone — `-7`, `- 7` and `-(7)`
 /// all parse to the identical `NegProc(CastInt(NumLit(7)))`. A fold here would fix the abutted
 /// spellings and simultaneously BREAK `- 7` / `-(7)` / `- 7n` / `- 1.5f64`, which conform today.
-/// That trades one divergence for another; `rhocalc_ground_literal_conformance.rs::
+/// That trades one divergence for another; `rholang_ground_literal_conformance.rs::
 /// adjacency_is_honoured` is the guard that makes the mistake fail loudly.
 ///
 /// ── WHERE THE FIX WENT (two defects; NEITHER alone was sufficient) ─────────────────────────────
@@ -3831,7 +3831,7 @@ fn is_single_gstring_value(par: &Par) -> bool {
 ///     so no asymmetry arises and `lower_proc_in_env`'s single-lowering invariant is untouched.
 ///
 /// Pinned per row and per position (bare / send / pattern) in
-/// `rholang-runtime/tests/rhocalc_ground_literal_conformance.rs`.
+/// `rholang-runtime/tests/rholang_ground_literal_conformance.rs`.
 /// ★ M-2 (found while enumerating the component, and NOT a member of it).
 ///
 /// `Int::NegInt` nests, so `- - - … - 5` gave this function its own Θ(depth) native-stack
@@ -3845,7 +3845,7 @@ fn is_single_gstring_value(par: &Par) -> bool {
 /// literal, then re-apply the signs outermost-last so the `ENeg` nesting — and therefore the
 /// `locally_free`/`connective_used` propagation `unary_expr_par` performs at each level — is
 /// byte-identical.
-fn lower_int_value(value: &Int, _env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_int_value(value: &Int, _env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     let mut signs = 0usize;
     let mut value = value;
     while let Int::NegInt(inner) = value {
@@ -3853,7 +3853,7 @@ fn lower_int_value(value: &Int, _env: &BoundEnv) -> Result<Par, RhocalcAstLowerE
         value = inner.as_ref();
     }
     let Int::NumLit(literal) = value else {
-        return Err(RhocalcAstLowerError::UnsupportedProc(
+        return Err(RholangAstLowerError::UnsupportedProc(
             "non-literal integer expression (Int category)",
         ));
     };
@@ -3876,7 +3876,7 @@ fn lower_int_value(value: &Int, _env: &BoundEnv) -> Result<Par, RhocalcAstLowerE
 // See `crate::fold_contract` and `formal/rocq/rho_bridge/theories/HeldFoldContractSound.v`.
 
 thread_local! {
-    // Fold sites collected during ONE lowering (cleared per `lower_rhocalc_term_with_folds`).
+    // Fold sites collected during ONE lowering (cleared per `lower_rholang_term_with_folds`).
     // Mirrors the thread-local var-cache pattern in `mettail_runtime::binding` — single-threaded
     // lowering-session state, no locks.
     static HELD_FOLD_SITES: std::cell::RefCell<Vec<FoldSpec>> =
@@ -3886,7 +3886,7 @@ thread_local! {
 /// ★ #36 S5 — the language fingerprint every held-fold site is scoped to.
 ///
 /// Held folds are lifted out of RhoCalc AST lowering, so the owning language is
-/// [`RhocalcAstRuntimeLanguage`] and its fingerprint is a constant of the build. It is read
+/// [`RholangAstRuntimeLanguage`] and its fingerprint is a constant of the build. It is read
 /// through the same `metadata().definition_fingerprint()` accessor every other emission path
 /// uses, so the fold band can never disagree with the reflect-tag ABI about which language a
 /// site belongs to.
@@ -3894,15 +3894,15 @@ thread_local! {
 /// A language whose metadata exposes no fingerprint has no identity to scope by; rather than
 /// silently falling back to an unscoped band (which is the defect S5 removes) the sites are
 /// scoped to the language NAME, which is still definition-specific and still keeps two
-/// co-installed languages apart. `RhocalcAstRuntimeLanguage` always exposes one — it forwards
+/// co-installed languages apart. `RholangAstRuntimeLanguage` always exposes one — it forwards
 /// the generated `RhoCalcLanguage`'s — so the fallback is unreachable in this build and exists
 /// only so the derivation is total.
 fn held_fold_language_fingerprint() -> String {
-    RhocalcAstRuntimeLanguage
+    RholangAstRuntimeLanguage
         .metadata()
         .definition_fingerprint()
         .map(|fingerprint| fingerprint.to_string())
-        .unwrap_or_else(|| format!("mettail-langname:{}", RhocalcAstRuntimeLanguage.name()))
+        .unwrap_or_else(|| format!("mettail-langname:{}", RholangAstRuntimeLanguage.name()))
 }
 
 /// A liftable fold node's static spec pieces: `(operand, kind, width)`. `None` if `proc` is not a
@@ -4179,19 +4179,19 @@ fn replace_fold_in_name(name: &Name, r_drop: &Proc, replaced: &mut bool) -> Name
 /// Lower a term to a `Par` PLUS the fold contract `Definition` specs its trampolines need (A-S4:
 /// every width/precision fold lifts — ground or COMM-held). The `Par` already targets the fold
 /// channels; the caller registers the contracts via the runtime's `extra_system_processes` seam.
-/// Equivalent to `lower_rhocalc_term` when the term has no folds (empty `Vec`).
-pub fn lower_rhocalc_term_with_folds(
+/// Equivalent to `lower_rholang_term` when the term has no folds (empty `Vec`).
+pub fn lower_rholang_term_with_folds(
     term: &dyn Term,
-) -> Result<(Par, Vec<FoldSpec>), RhocalcAstLowerError> {
+) -> Result<(Par, Vec<FoldSpec>), RholangAstLowerError> {
     clear_held_fold_sites();
-    let par = lower_rhocalc_term(term)?;
+    let par = lower_rholang_term(term)?;
     Ok((par, take_held_fold_sites()))
 }
 
 /// Clear the fold-site session state. Call before a lowering whose fold contracts you intend to
 /// collect with [`take_held_fold_sites`], so stale sites from a prior lowering don't leak. Used by
 /// the wrapper's `start_reduction_stepper` / the exec path, which lower through the invocation
-/// compiler (not [`lower_rhocalc_term_with_folds`] directly).
+/// compiler (not [`lower_rholang_term_with_folds`] directly).
 pub fn clear_held_fold_sites() {
     HELD_FOLD_SITES.with(|sites| sites.borrow_mut().clear());
 }
@@ -4262,12 +4262,12 @@ fn record_guard_outcome(outcome: guard_discharge::GuardDischarge, guard: &Proc) 
 /// term and are rejected as unsupported.
 fn decompose_for_row(
     row: &ForRow,
-) -> Result<(Vec<InputBind>, bool, Option<Proc>), RhocalcAstLowerError> {
+) -> Result<(Vec<InputBind>, bool, Option<Proc>), RholangAstLowerError> {
     // `ForRow`/`InputBind` derive `Drop`; never move fields out — match by reference and clone.
     //
     // ROOT-P Layer F: the persistent-SPECIFIC ForRow arms (ForRowSinglePersistent*,
     // ForRowPersistent*, ForRowSingleEmptyPersistent*) and their `persistent_first`
-    // helper were REMOVED with the now-deleted grammar rules (rhocalc.rs). A `<=`
+    // helper were REMOVED with the now-deleted grammar rules (rholang.rs). A `<=`
     // head now lowers via the general arms below over a persistent InputBind
     // (InputBindPersistent / InputBindEmptyPersistent); `is_persistent_bind`
     // recovers the persistence flag from the bind itself — byte-identical result
@@ -4297,7 +4297,7 @@ fn decompose_for_row(
             let persistent = binds.iter().any(is_persistent_bind);
             Ok((binds, persistent, Some(cond.as_ref().clone())))
         },
-        _ => Err(RhocalcAstLowerError::UnsupportedProc("non-ground for-row")),
+        _ => Err(RholangAstLowerError::UnsupportedProc("non-ground for-row")),
     }
 }
 
@@ -4357,20 +4357,20 @@ fn mk_proc_list(items: Vec<Proc>) -> Proc {
 /// Non-negative because `n` counts COMMs and a negative count denotes nothing; `0` is admitted
 /// and is meaningful — it explores nothing and truncates immediately, which is the identity of
 /// the bounded family and a useful probe.
-fn lookahead_bound(bound: &Proc) -> Result<i64, RhocalcAstLowerError> {
+fn lookahead_bound(bound: &Proc) -> Result<i64, RholangAstLowerError> {
     match bound {
         Proc::CastInt(value) => match value.as_ref() {
             Int::NumLit(literal) if *literal >= 0 => Ok(*literal),
             Int::NumLit(literal) => {
-                Err(RhocalcAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
+                Err(RholangAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
                     "negative bound {literal}"
                 )))
             },
-            other => Err(RhocalcAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
+            other => Err(RholangAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
                 "{other:?}"
             ))),
         },
-        other => Err(RhocalcAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
+        other => Err(RholangAstLowerError::LookaheadBoundNotAGroundNonNegativeInt(format!(
             "{other:?}"
         ))),
     }
@@ -4578,7 +4578,7 @@ fn is_empty_bind(bind: &InputBind) -> bool {
     )
 }
 
-fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match &var.0 {
         Var::Free(free_var) => {
             if let Some(index) = env.binders.get(free_var) {
@@ -4596,11 +4596,11 @@ fn lower_name_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerEr
                 Ok(new_gstring_par(format!("{FREE_NAME_PREFIX}{name}"), Vec::new(), false))
             }
         },
-        Var::Bound(_) => Err(RhocalcAstLowerError::UnsupportedName("unopened bound name variable")),
+        Var::Bound(_) => Err(RholangAstLowerError::UnsupportedName("unopened bound name variable")),
     }
 }
 
-fn lower_proc_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_proc_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match &var.0 {
         Var::Free(free_var) => {
             if let Some(index) = env.binders.get(free_var) {
@@ -4624,7 +4624,7 @@ fn lower_proc_var(var: &OrdVar, env: &BoundEnv) -> Result<Par, RhocalcAstLowerEr
             }
         },
         Var::Bound(_) => {
-            Err(RhocalcAstLowerError::UnsupportedProc("unopened bound process variable"))
+            Err(RholangAstLowerError::UnsupportedProc("unopened bound process variable"))
         },
     }
 }
@@ -4694,20 +4694,20 @@ fn flt_holes_of(node: &FltNode) -> Vec<FltHole> {
 fn flt_resolve_and_reflect(
     node: &FltNode,
     env: &BoundEnv,
-) -> Result<(GroundTerm, String), RhocalcAstLowerError> {
+) -> Result<(GroundTerm, String), RholangAstLowerError> {
     let guest = env
         .resolver
         .resolve(&node.tag)
-        .ok_or_else(|| RhocalcAstLowerError::UnresolvedFltTag(node.tag.clone()))?;
+        .ok_or_else(|| RholangAstLowerError::UnresolvedFltTag(node.tag.clone()))?;
     let fingerprint = guest
         .metadata()
         .definition_fingerprint()
-        .ok_or_else(|| RhocalcAstLowerError::FltGuestHasNoFingerprint(node.tag.clone()))?
+        .ok_or_else(|| RholangAstLowerError::FltGuestHasNoFingerprint(node.tag.clone()))?
         .to_string();
     let guest_body = flt_body_to_guest_syntax(&node.body_src);
     let ground = guest
         .parse_and_reflect_flt(&guest_body)
-        .map_err(RhocalcAstLowerError::FltReflect)?;
+        .map_err(RholangAstLowerError::FltReflect)?;
     Ok((ground, fingerprint))
 }
 
@@ -4719,12 +4719,12 @@ fn flt_resolve_and_reflect(
 /// hole-bearing node's `⌜^nog⌝` marker from the FILLED subtree — never a stale
 /// `⌜^gnd⌝` — so a binder-carrying fill drives β. A hole-FREE `PFlt` (a spelled-out
 /// subject) has an empty fill map and reflects to its exact ground image.
-fn lower_flt_construction(node: &FltNode, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
+fn lower_flt_construction(node: &FltNode, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     let (ground, fingerprint) = flt_resolve_and_reflect(node, env)?;
     let mut fills: BTreeMap<String, Par> = BTreeMap::new();
     for hole in &node.holes {
         let level = env.flt_hole_level(&hole.name).ok_or_else(|| {
-            RhocalcAstLowerError::FltReflect(format!(
+            RholangAstLowerError::FltReflect(format!(
                 "construction hole ${{{}}} is not bound by an enclosing FLT pattern",
                 hole.name
             ))
@@ -4742,7 +4742,7 @@ fn lower_flt_construction(node: &FltNode, env: &BoundEnv) -> Result<Par, Rhocalc
         );
     }
     reflect_flt_construction(&ground, &fills, &fingerprint)
-        .map_err(|error| RhocalcAstLowerError::FltReflect(error.to_string()))
+        .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))
 }
 
 /// L9-6b/#14 PATTERN arm: reflect a `PFlt` receive pattern to its marked `Par`
@@ -4755,13 +4755,13 @@ fn lower_flt_construction(node: &FltNode, env: &BoundEnv) -> Result<Par, Rhocalc
 fn lower_flt_pattern(
     node: &FltNode,
     env: &BoundEnv,
-) -> Result<(Par, i32, Vec<String>), RhocalcAstLowerError> {
+) -> Result<(Par, i32, Vec<String>), RholangAstLowerError> {
     let (ground, fingerprint) = flt_resolve_and_reflect(node, env)?;
     let holes = flt_holes_of(node);
     let FltPatternReflection {
         pattern, free_count, mut hole_bindings, ..
     } = reflect_flt_pattern(&ground, &holes, &fingerprint)
-        .map_err(|error| RhocalcAstLowerError::FltReflect(error.to_string()))?;
+        .map_err(|error| RholangAstLowerError::FltReflect(error.to_string()))?;
     // `hole_bindings` is `(name, FreeVar level)` in first-appearance order; sort by
     // level to index it positionally (defensive — first-appearance already IS level
     // order), then project to the names.
@@ -4773,10 +4773,10 @@ fn lower_flt_pattern(
     Ok((pattern, free_count, hole_names))
 }
 
-fn pretty_var_name(var: &FreeVar<String>) -> Result<&str, RhocalcAstLowerError> {
+fn pretty_var_name(var: &FreeVar<String>) -> Result<&str, RholangAstLowerError> {
     var.pretty_name
         .as_deref()
-        .ok_or(RhocalcAstLowerError::FreeVarWithoutName)
+        .ok_or(RholangAstLowerError::FreeVarWithoutName)
 }
 
 fn extend_env(env: &BoundEnv, binders: &[Binder<String>]) -> BoundEnv {
@@ -4911,7 +4911,7 @@ mod alternative_collection_tests {
     fn collect_recursive<'a>(
         inner: &'a RhoCalcTermInner,
         alternatives: &mut Vec<&'a Proc>,
-    ) -> Result<(), RhocalcAstLowerError> {
+    ) -> Result<(), RholangAstLowerError> {
         match inner {
             RhoCalcTermInner::Proc(proc) => {
                 alternatives.push(proc);
@@ -4923,7 +4923,7 @@ mod alternative_collection_tests {
                 }
                 Ok(())
             },
-            _ => Err(RhocalcAstLowerError::ExpectedProcTerm),
+            _ => Err(RholangAstLowerError::ExpectedProcTerm),
         }
     }
 

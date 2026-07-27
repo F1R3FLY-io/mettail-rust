@@ -130,13 +130,13 @@ fn list_body(par: &Par) -> Option<&models::rhoapi::EList> {
     }
 }
 
-fn decode_rhocalc_bag(
+fn decode_rholang_bag(
     list: &models::rhoapi::EList,
 ) -> Option<Vec<(RuntimeObservationValue, usize)>> {
     let [tag, entries] = list.ps.as_slice() else {
         return None;
     };
-    let expected_tag = GPrivateBuilder::new_par_from_string(crate::RHOCALC_BAG_ABI_TAG.to_string());
+    let expected_tag = GPrivateBuilder::new_par_from_string(crate::RHOLANG_BAG_ABI_TAG.to_string());
     if tag != &expected_tag {
         return None;
     }
@@ -284,7 +284,7 @@ fn private_name_tag(par: &Par) -> Option<String> {
 }
 
 /// Decode a reflected constructor term list into a structural
-/// [`RuntimeObservationValue::Term`], mirroring [`decode_rhocalc_bag`].
+/// [`RuntimeObservationValue::Term`], mirroring [`decode_rholang_bag`].
 ///
 /// The reflected-term ABI (codegen `reflect_ground_term_par` / the RHS reflector)
 /// is `EList[GPrivate("mettail.term.{fingerprint}.{label}"), children…]`. This
@@ -331,7 +331,7 @@ fn decode_reflected_term(list: &models::rhoapi::EList) -> Option<RuntimeObservat
 ///
 /// This deliberately rejects arbitrary process bodies. Runtime observations are
 /// public resting data values: scalars, unforgeable names, closed collection
-/// bodies, and rhocalc's tagged bag ABI.
+/// bodies, and rholang's tagged bag ABI.
 pub fn par_as_runtime_observation_value(par: &Par) -> Option<RuntimeObservationValue> {
     if let Some(value) = par_as_unforgeable_observation(par) {
         return Some(value);
@@ -373,12 +373,12 @@ pub fn par_as_runtime_observation_value(par: &Par) -> Option<RuntimeObservationV
         }),
         ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
             // Try the reflected-term ABI first (head = a `mettail.term.` private
-            // name), then the rhocalc bag ABI (head = the bag tag), else a plain
+            // name), then the rholang bag ABI (head = the bag tag), else a plain
             // list. The three head shapes are disjoint, so ordering only decides
             // which decoder claims a match, never correctness.
             if let Some(term) = decode_reflected_term(list) {
                 Some(term)
-            } else if let Some(entries) = decode_rhocalc_bag(list) {
+            } else if let Some(entries) = decode_rholang_bag(list) {
                 Some(RuntimeObservationValue::Bag(entries))
             } else {
                 Some(RuntimeObservationValue::List(decode_runtime_values(&list.ps)?))

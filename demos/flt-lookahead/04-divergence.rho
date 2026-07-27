@@ -47,7 +47,7 @@
 //
 // HOW TO RUN
 // ──────────
-//   target/debug/rhocalc demos/flt-lookahead/04-divergence.rho
+//   target/debug/rholang demos/flt-lookahead/04-divergence.rho
 
 @"results"!(lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
 @"results"!(lambda`(lam x. (x, x), lam x. (x, x))`)[*] |

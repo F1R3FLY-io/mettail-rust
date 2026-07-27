@@ -56,8 +56,8 @@
 //!
 //! [`lower_formula`] is **total on `&Proc`**: `classify` is exhaustive, every
 //! connective shape has a compilation arm, and the residual `Term` shape
-//! delegates to `rhocalc_ast::lower_proc_in_env`, which is itself total (it
-//! returns `Ok`, or a typed [`RhocalcAstLowerError`] — never a panic). There is
+//! delegates to `rholang_ast::lower_proc_in_env`, which is itself total (it
+//! returns `Ok`, or a typed [`RholangAstLowerError`] — never a panic). There is
 //! no `todo!`, no `unimplemented!`, no placeholder value, and no shape that falls
 //! off the end.
 //!
@@ -76,18 +76,18 @@ use models::rust::utils::{
     new_conn_not_body_par, new_wildcard_par, union,
 };
 
-use crate::rhocalc_ast::{BoundEnv, RhocalcAstLowerError};
+use crate::rholang_ast::{BoundEnv, RholangAstLowerError};
 
 /// §18.1 — compile a formula to the Rholang pattern that decides it.
 ///
 /// The public, environment-free entry: the formula is treated as a CLOSED
 /// pattern, which is the shape a `matches` written outside any receive has.
 /// Inside the recursive term lowering — where a formula may reference the
-/// receive's bound variables — `rhocalc_ast` calls [`lower_formula_in_env`] with
+/// receive's bound variables — `rholang_ast` calls [`lower_formula_in_env`] with
 /// the live binder environment instead.
 ///
 /// Total: see the module header.
-pub fn lower_formula(formula: &Proc) -> Result<Par, RhocalcAstLowerError> {
+pub fn lower_formula(formula: &Proc) -> Result<Par, RholangAstLowerError> {
     lower_formula_in_env(formula, &BoundEnv::new())
 }
 
@@ -98,8 +98,8 @@ pub fn lower_formula(formula: &Proc) -> Result<Par, RhocalcAstLowerError> {
 /// become the corresponding `BoundVar`, exactly as it would outside a pattern.
 /// (The pattern's own FREE variables are binders and are not resolved — that is
 /// `lower_proc_var`'s existing free-variable arm, unchanged here.)
-pub fn lower_formula_in_env(formula: &Proc, env: &BoundEnv) -> Result<Par, RhocalcAstLowerError> {
-    // ★ M-2: this function is the 87th member of `rhocalc_ast`'s recursion component, so it
+pub fn lower_formula_in_env(formula: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
+    // ★ M-2: this function is the 87th member of `rholang_ast`'s recursion component, so it
     // does NOT drive its own recursion. `t matches (φ and (ψ and (…)))` nests through the
     // connective arms, and `FormulaShape::Term` re-enters `lower_proc` — both unbounded — so
     // running the formula walk here would leave a reachable Θ(depth) native-stack path no
@@ -109,9 +109,9 @@ pub fn lower_formula_in_env(formula: &Proc, env: &BoundEnv) -> Result<Par, Rhoca
     //
     // The assemblers below (`verum_pattern`, `falsum_pattern`, `negated`, `connective_par`) are
     // the post-order halves and are `pub(crate)` for that reason; the recursive form is kept
-    // verbatim in `rhocalc_ast::recursive_oracle` and is compared against this path by
+    // verbatim in `rholang_ast::recursive_oracle` and is compared against this path by
     // `driver_matches_the_recursive_oracle`.
-    crate::rhocalc_ast::drive_formula(formula, env)
+    crate::rholang_ast::drive_formula(formula, env)
 }
 
 /// `⊤` — the pattern satisfied by every term.
@@ -148,7 +148,7 @@ pub(crate) fn negated(operand: Par) -> Par {
 /// Recomputing it here as the union over the operands keeps a compiled formula's
 /// footprint equal to the union of its parts' — the same invariant `Par::append`
 /// maintains for parallel composition, and the same one `binary_expr_par` /
-/// `unary_expr_par` maintain in `rhocalc_ast`.
+/// `unary_expr_par` maintain in `rholang_ast`.
 ///
 /// `connective_used` is forced to `true`: a `Par` carrying a connective IS a
 /// pattern, unconditionally.
