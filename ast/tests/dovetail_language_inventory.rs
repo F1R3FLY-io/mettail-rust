@@ -248,18 +248,10 @@ fn read_repo_file(relative: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-fn rocq_inventory_names(source: &str) -> BTreeSet<String> {
-    let marker = "inventory_name := \"";
-    source
-        .lines()
-        .filter_map(|line| {
-            let start = line.find(marker)? + marker.len();
-            let rest = &line[start..];
-            let end = rest.find('"')?;
-            Some(rest[..end].to_owned())
-        })
-        .collect()
-}
+// `rocq_inventory_names` was removed with the name-level equality it served (task #69 S5):
+// it scraped `inventory_name := "…"` out of `LanguageDefInventory.v` purely so this audit
+// could compare name SETS. The mechanical inventory is generated now, and nothing else
+// called it.
 
 fn rocq_current_requirement_names(source: &str) -> BTreeSet<String> {
     let marker = "Definition current_mettail_rewrite_requirements";
@@ -613,10 +605,6 @@ fn current_language_defs_have_dovetail_requirement_inventory() {
         collect_language_macros(&file.items, &mut languages);
     }
 
-    let rocq_inventory =
-        read_repo_file("dovetail/formal/rocq/theories/Requirements/LanguageDefInventory.v");
-    let rocq_names = rocq_inventory_names(&rocq_inventory);
-
     assert!(!languages.is_empty(), "expected at least one in-repo language! definition");
 
     // Parse-only fixtures (syntax/lex demonstrations that declare
@@ -650,16 +638,21 @@ fn current_language_defs_have_dovetail_requirement_inventory() {
         production.len(),
         "duplicate in-repo production language! names discovered"
     );
-    assert_eq!(
-        language_names, rocq_names,
-        "AST LanguageDef parser inventory (production languages) must exactly match Rocq LanguageDefInventory"
-    );
-
-    assert_eq!(
-        rocq_names.len(),
-        production.len(),
-        "Rocq LanguageDefInventory and parsed production language! inventory have different cardinality"
-    );
+    // ── NAME-LEVEL EQUALITY IS GONE (task #69 S5) ────────────────────────────────
+    //
+    // This used to assert that the parsed production name set EQUALLED the names written
+    // out in `LanguageDefInventory.v`, and that the two had the same cardinality. Adding a
+    // language whose requirements were already covered therefore failed a Rocq-facing test
+    // for a purely clerical reason, since the proofs in that file depend on the
+    // REQUIREMENTS and never on the names. The mechanical inventory is now derived into
+    // `LanguageDefInventoryGenerated.v` (see
+    // `dovetail/tests/language_inventory.rs::generated_rocq_inventory_matches_the_discovered_sources`),
+    // and what is asserted below is the property with formal content: every requirement
+    // this parser observes is inside the taxonomy Rocq proves covered.
+    //
+    // The duplicate-name check above SURVIVES, and is now the only name-level assertion
+    // here. It is about this repository's own coherence rather than about Rocq, and it is
+    // the parser-side counterpart to `ast::registry`'s duplicate-registration error.
 
     assert!(
         source_files.len() >= languages.len(),

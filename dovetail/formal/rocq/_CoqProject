@@ -26,6 +26,7 @@ theories/InsideWeights/InsideWeightSccClosure.v
 theories/Rigail/NewtonSccAdequacy.v
 theories/Saturation/DovetailSaturation.v
 theories/Requirements/MeTTaILRewriteCoverage.v
+theories/Requirements/LanguageDefInventoryGenerated.v
 theories/Requirements/LanguageDefInventory.v
 theories/Lowering/PatternLoweringSoundness.v
 theories/Lowering/CollectionAcLowering.v

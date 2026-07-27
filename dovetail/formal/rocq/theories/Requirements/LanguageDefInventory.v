@@ -14,6 +14,7 @@ From Stdlib Require Import List.
 From Stdlib Require Import String.
 
 From Dovetail.Requirements Require Import MeTTaILRewriteCoverage.
+From Dovetail.Requirements Require Import LanguageDefInventoryGenerated.
 
 Import ListNotations.
 Open Scope string_scope.
@@ -298,5 +299,78 @@ Section LanguageDefInventory.
        [subst; simpl; discriminate |]).
     contradiction.
   Qed.
+
+  (* ══════════════════════════════════════════════════════════════════════════
+     The MECHANICALLY DERIVED inventory (task #69 S5)
+     ══════════════════════════════════════════════════════════════════════════
+
+     `generated_language_inventory` (LanguageDefInventoryGenerated.v) is produced by
+     `dovetail/tests/language_inventory.rs` from the `language!` declarations themselves
+     and regenerated with `METTAIL_BLESS=1`. Everything above this point is hand-written:
+     the record, the named requirement surfaces, and the coverage proofs.
+
+     ★ Why the split. Both Rust audits used to assert that their discovered NAME SET
+     equalled the names written out in `current_language_inventory`. Adding a language
+     whose requirements were already covered therefore failed a Rocq-facing test for a
+     purely clerical reason — no proof below depends on a name — and the remedy was to
+     paste a line into this file. Deriving the mechanical half makes such an addition
+     INERT, while a language carrying a NEW requirement still fails loudly, and in the
+     strongest available way: the generated file names a constructor that does not exist
+     and stops compiling until `MeTTaILRewriteCoverage.v` grows the requirement and gives
+     it a covering capability.
+
+     ★ What the theorem below is worth, exactly. `requirement_in_current` is decided by
+     computation against `current_mettail_rewrite_requirements`, which today lists every
+     constructor — so the theorem is not currently a constraint on WHICH requirements may
+     appear. It is a constraint on the list being CURRENT: it is what would break if that
+     list were ever narrowed to a proper subset (its evident purpose, being named
+     "current") while some language still declared a requirement outside it. The check
+     that bites today is the one above it — compilation. Both are stated here rather than
+     leaving the reader to assume the theorem is deeper than it is. *)
+
+  Definition requirement_eq_dec (a b : RewriteRequirement) : {a = b} + {a <> b}.
+  Proof. decide equality. Defined.
+
+  Definition requirement_eqb (a b : RewriteRequirement) : bool :=
+    if requirement_eq_dec a b then true else false.
+
+  Lemma requirement_eqb_true : forall a b, requirement_eqb a b = true -> a = b.
+  Proof.
+    intros a b H. unfold requirement_eqb in H.
+    destruct (requirement_eq_dec a b) as [Heq | Hneq].
+    - exact Heq.
+    - discriminate H.
+  Qed.
+
+  Definition requirement_in_current (r : RewriteRequirement) : bool :=
+    existsb (requirement_eqb r) current_mettail_rewrite_requirements.
+
+  Definition generated_entry_is_current (entry : string * list RewriteRequirement) : bool :=
+    forallb requirement_in_current (snd entry).
+
+  Definition generated_inventory_is_current : bool :=
+    forallb generated_entry_is_current generated_language_inventory.
+
+  Theorem generated_inventory_requirements_are_current :
+    generated_inventory_is_current = true.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (* The Prop-level consequence: every requirement any DERIVED entry declares is one the
+     capability taxonomy covers. This is what the executable audit's
+     `aggregate_requirements ⊆ formal_requirements` assertion mirrors on the Rust side. *)
+  Theorem generated_inventory_requirements_are_covered : forall entry r,
+    In entry generated_language_inventory ->
+    In r (snd entry) ->
+    requirement_covered r.
+  Proof.
+    intros entry r _ _.
+    apply every_requirement_constructor_is_covered.
+  Qed.
+
+  (* The derived inventory is not empty — a generator that rendered nothing would make
+     `generated_inventory_requirements_are_current` hold vacuously. *)
+  Theorem generated_inventory_is_nonempty :
+    generated_language_inventory <> [].
+  Proof. simpl. discriminate. Qed.
 
 End LanguageDefInventory.

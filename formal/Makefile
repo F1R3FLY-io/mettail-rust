@@ -153,6 +153,7 @@ rocq-dovetail-refinement: require-capped
 
 rocq-dovetail-requirements: require-capped
 	$(MAKE) -C ../dovetail/formal/rocq theories/Requirements/MeTTaILRewriteCoverage.vo
+	$(MAKE) -C ../dovetail/formal/rocq theories/Requirements/LanguageDefInventoryGenerated.vo
 	$(MAKE) -C ../dovetail/formal/rocq theories/Requirements/LanguageDefInventory.vo
 	$(MAKE) -C ../dovetail/formal/rocq theories/Lowering/PatternLoweringSoundness.vo
 
