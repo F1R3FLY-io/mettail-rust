@@ -1,10 +1,13 @@
-// ★★ THE PREDICATE — the same four computed results, a different question asked of them.
+// ★★ THE PREDICATE — the same four computed results, a different question asked of them,
+//                     and the one surviving answer collected TWICE.
 //
 // `02-the-desk.rho` selected by SHAPE: the pattern required the body to be an application of
 // the outer binder, which admits Church numerals and refuses Church booleans.
 //
 // This program keeps the same pool and asks a SEMANTIC question instead. The pattern binds the
-// whole computed term; the `where` clause is a predicate the substrate decides.
+// whole computed term; the `where` clause is a predicate the substrate decides. It then asks
+// that SAME question a second time on a different channel — the provenance wire — so the value
+// arrives by two independent routes and the two answers can be compared.
 //
 //
 // THE FOUR INPUTS, AND WHAT EACH REDUCES TO
@@ -35,7 +38,7 @@
 //
 //
 // READING THE OUTPUT — de Bruijn indices, 0 = INNERMOST binder
-// ───────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────
 //   λt.λf. f   body names the INNER binder  → index 0 → ⟦λ.λ.0⟧ = FALSE
 //   λt.λf. t   body names the OUTER binder, one binder out
 //                                          → index 1 → ⟦λ.λ.1⟧ = TRUE
@@ -51,7 +54,7 @@
 //
 //   #1 Church 5  REFUSED — wrong shape entirely (body is an application, not a variable)
 //   #2 Church 6  REFUSED — likewise
-//   #3 FALSE     ★ ACCEPTED — published to @"OUT" as ⟦λ.λ.0⟧
+//   #3 FALSE     ★ ACCEPTED — published to @"OUT", once per route
 //   #4 TRUE      REFUSED — ⟦λ.λ.1⟧ vs ⟦λ.λ.0⟧: ONE INDEX APART
 //
 // #4 is the sharpest rejection in the set. It has the same arity and the same structure as the
@@ -63,11 +66,85 @@
 // instead — same pool, same computation, different answer.
 //
 //
+// ★★ TWO ROUTES TO THE SAME VALUE — the reply channel and the provenance wire
+// ──────────────────────────────────────────────────────────────────────────
+// A served `[*]` publishes each computed branch TWICE — two separate data, deposited on two
+// different channels, which answer two different questions:
+//
+//   channel           datum                the question it answers
+//   ────────────────  ───────────────────  ────────────────────────────────────────────────
+//   @"results"        the bare term        "what did the program compute?"
+//   @"^spec-success"  [trace, [term…]]     "which branch computed it, and how did it get
+//                                          there?"
+//
+// This file reads BOTH, under the SAME predicate, and publishes what each yields. The two
+// observations on @"OUT" are the same value — and that agreement is *computed*, not asserted
+// here: the terms are equal by the substrate's own `==`, which is how it was checked.
+//
+// ★ WHY THE SECOND RECEIVE STILL FINDS ITS MATCH — it is not competing for the first one's
+// datum. The two receives consume from two different channels, and the branch was published to
+// both, so the first receive taking the bare term off @"results" leaves the provenance pair on
+// @"^spec-success" untouched. Neither route can starve the other; delete either one and the
+// remaining one behaves identically.
+//
+// ★ …AND WHY THE SECOND RECEIVE NAMES NO POOL. @"^spec-success" is ONE channel for the whole
+// run, fixed by the runtime, not a per-request channel derived from the `[*]`'s subject. There
+// is no mapping from it back to @"results", and none is needed here: every `[*]` in this file
+// targets @"results", so every datum resting on the provenance wire came from this pool.
+//
+// ⚠ That correspondence is CONTEXTUAL, not encoded — the datum carries a trace and the terms,
+// and nothing that names the channel the request replied on. A program that speculated onto two
+// different reply channels would see both sets of branches interleaved on @"^spec-success" with
+// no field to tell them apart, and would have to discriminate on the terms themselves, as the
+// guard below does. A `[*]` whose reply channel is read by nobody still publishes here.
+//
+// ⚠ The provenance datum is a two-element PAIR, not a flat list. The trace is one `EList` of
+// step digests; the branch's terms are their OWN `EList` nested beside it. The pattern
+//
+//     @[trace, [term]]
+//
+// says exactly that, and the inner list is written as a singleton because λ-calculus is
+// CONFLUENT: every path of a λ program reaches the same normal form, so a branch projects
+// exactly one term. All four branches present that shape — swap the guard for any of the other
+// three computed values and that branch is the one that settles — so the guard, not the
+// pattern's arity, is what selects.
+//
+// The body then rebuilds the FIPS `success` ENTRY from the pair. The FIPS's rule is that an
+// extra list is *concatenated to the end of the trace*, and its own reader takes the leaf as
+// the entry's last element:
+//
+//     entry = trace.concat([term])          the FIPS entry, built here from the wire pair
+//     leaf  = entry.nth(entry.length() - 1) the FIPS reader's own projection
+//
+// So the trace route's value travels through a list construction, a concatenation, a length
+// and an index before it lands — and still lands on the term the reply channel delivered
+// directly. `.nth` is TOTAL: an out-of-range index is a recoverable `error` term, so a wrong
+// index would fail loudly here rather than quietly print something plausible.
+//
+// ⚠⚠ A `where` guard MUST NOT contain a method call. `terms.nth(0) == lambda`lam t. lam f. f``
+// looks like the natural way to write this predicate and is the one to avoid: a lowered guard
+// is decided by `rho-pure-eval` inside the rspace matcher, which answers
+// `UnsupportedExpression { kind: "EMethodBody" }` for ANY method, and the matcher commits only
+// on `GBool(true)`. The receive therefore NEVER fires, the datum just rests, and the program
+// still exits 0 — a filter that looks like it works and admits nothing. Bind what the guard
+// needs in the PATTERN, as above, and compare it directly.
+//
+//
+// WHAT THE COUNTERS DO
+// ────────────────────
+// `^spec-success: N` counts the provenance data still RESTING at the end, not the number of
+// branches explored. Four branches are published and this program consumes one, so it reports
+// 3 where beats 1, 2 and 4 report every branch they published. There is no peek in this
+// grammar — `<-` and `<=` are the only receive arrows — so reading provenance necessarily
+// consumes it.
+//
+//
 // HOW TO RUN
 // ──────────
-//   RUST_MIN_STACK=134217728 target/debug/rholang demos/flt-lookahead/03-predicate.rho
+//   target/debug/rholang demos/flt-lookahead/03-predicate.rho
 //
-// EXPECT: @"OUT" carries ⟦λ.λ.0⟧ and the run reports `lookahead: 4 request(s) served`,
+// EXPECT: @"OUT" carries ⟦λ.λ.0⟧ TWICE — once from the reply channel, once rebuilt from the
+// trace — and the run reports `lookahead: 4 request(s) served`, `^spec-success: 3`,
 // `^spec-failure: 0`, `^spec-truncated: 0`.
 
 @"results"!(lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`)[*] |
@@ -76,5 +153,9 @@
 @"results"!(lambda`((lam p. lam q. ((p, q), p), lam t. lam f. t), lam t. lam f. t)`)[*] |
 
 for(@lambda`${r}` <- @"results" where lambda`${r}` == lambda`lam t. lam f. f`) {
-  @"OUT"!(lambda`${r}`)
+  @"OUT"!(r)
+} |
+
+for(@[trace, [term]] <- @"^spec-success" where term == lambda`lam t. lam f. f`) {
+  @"OUT"!(trace.concat([term]).nth(trace.concat([term]).length() - 1))
 }

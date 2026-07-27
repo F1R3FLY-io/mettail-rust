@@ -105,20 +105,48 @@ sub-term of a λ-term.
 $ target/debug/rholang demos/flt-lookahead/03-predicate.rho
 ```
 ```
-  @"OUT" observations (1):
+  @"OUT" observations (2):
     [0] ⟦λ.λ.0⟧
-  lookahead: 4 request(s) served · ^spec-success: 4 · ^spec-failure: 0 · ^spec-truncated: 0
+    [1] ⟦λ.λ.0⟧
+  lookahead: 4 request(s) served · ^spec-success: 3 · ^spec-failure: 0 · ^spec-truncated: 0
 ```
 
 The **same four programs, the same pool** — and a different question. Here the pattern binds the
 whole computed term and a `where` clause decides:
 
 ```
-for(@lambda`${r}` <- @"results" where lambda`${r}` == lambda`lam t. lam f. f`) { … }
+for(@lambda`${r}` <- @"results" where lambda`${r}` == lambda`lam t. lam f. f`) { @"OUT"!(r) }
 ```
 
 `⟦λ.λ.0⟧` is FALSE. The predicate accepted the one boolean it asked for and refused both numerals
 *and* the other boolean. The three refused results are still resting.
+
+### …and the same answer collected a second way
+
+**Two observations, one value.** A served `[*]` publishes each branch twice — the bare term on the
+reply channel, and a provenance pair `[trace, [term…]]` on `@"^spec-success"` — so this beat asks
+the *same* predicate on the *other* channel and republishes what it finds:
+
+```
+for(@[trace, [term]] <- @"^spec-success" where term == lambda`lam t. lam f. f`) {
+  @"OUT"!(trace.concat([term]).nth(trace.concat([term]).length() - 1))
+}
+```
+
+The body rebuilds the FIPS `success` **entry** from the wire pair — the FIPS's rule is that an
+extra list is *concatenated to the end of the trace* — and reads its leaf as the last element.
+That value travels through a list construction, a concatenation, a length and an index, and still
+lands on the term the reply channel delivered directly. The equality is decided by the substrate,
+not by the eye: routing both through a join and publishing `a == b` prints `⟦true⟧`.
+
+**Point at `^spec-success: 3`.** The other three beats report every branch they published; this one
+reports one fewer than the four it served, because the counter is *what is still resting* and this
+beat consumed one. Rholang has no peek — `<-` and `<=` are the only arrows — so reading provenance
+necessarily consumes it.
+
+⚠ `@"^spec-success"` is **one channel for the whole run**, not a per-request channel. It carries no
+field naming the reply channel a request answered on, so the correspondence with `@"results"` holds
+here only because every `[*]` in the file targets `@"results"`.
 
 **Beats 2 and 3 together are the argument.** Same computed pool; one selects by structure and gets
 a numeral, the other selects by predicate and gets a boolean. A filter that admitted everything, or

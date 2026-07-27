@@ -183,8 +183,21 @@ impl LookaheadRequest {
 /// One branch's report on the `success` wire: `[trace, term]`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BranchReport {
-    /// The wire form: an `EList` of the branch's step digests followed by the
-    /// branch's term(s) — ready to be published as one datum.
+    /// The wire form: the two-element `EList` `[trace, [term…]]` — ready to be
+    /// published as one datum. The trace is its own `EList` of step digests and
+    /// the projected terms are their own `EList` **nested inside** it; a
+    /// consumer therefore destructures `[trace, terms]` and indexes `terms`.
+    ///
+    /// ⚠ This doc used to say *"an `EList` of the branch's step digests followed
+    /// by the branch's term(s)"* — i.e. the FLAT, concatenated shape. That is
+    /// the FIPS `success`-map ENTRY ([`super::delivery::success_entry`]), not
+    /// what this field holds, and the two are not interchangeable: the flat
+    /// reading makes the datum's length the trace length plus the term count,
+    /// while it is always exactly 2. The wrong reading reached a demo before it
+    /// was caught, so the correction is recorded rather than merely applied.
+    /// `pair` (below) is the constructor, and
+    /// `tests/x8_publication_is_scheduler_invariant.rs` destructures `ps[1]` as
+    /// the term list.
     pub datum: Par,
     /// The branch's handle name — [`trace_digest`] of its trace. Stable across
     /// re-derivation and the key [`LookaheadService::resume`] takes.
