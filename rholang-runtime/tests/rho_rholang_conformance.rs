@@ -915,8 +915,18 @@ async fn divergence_c_closed_nth_is_total_and_carrier_agnostic() {
 /// The FOLD half closed earlier (see [`divergence_c_closed_nth_is_total_and_carrier_agnostic`]);
 /// the remaining half required the machine to be the one answering, and that is what **C1** did:
 /// `EMethodBody(EMethod { method_name: "nth", … })` against the reducer's own method table
-/// (`reduce.rs:8464`). Out-of-bounds is now the reducer's recoverable error rather than a
-/// MeTTaIL-side `error` term, which is the normative behaviour.
+/// (`reduce.rs:9023` — MEASURED 2026-07-28; the ":8464" that stood here was stale).
+///
+/// ⚠ **THE TWO LANES DISAGREE OUT OF DOMAIN, AND THAT IS THE RULING, NOT A DEFECT.** For an
+/// in-domain index the fold and the machine answer the same value. For an out-of-range index they
+/// do not: the FOLD answers the `error` term (`v.get(n).cloned().unwrap_or(Proc::Err)`), while the
+/// MACHINE raises the recoverable `ReduceError("Error: index out of bound: n")` asserted below.
+/// The reducer's answer is the normative one — that is what routing MEANS — so the fold's `error`
+/// is the MeTTaIL-side approximation of a condition the machine reports as a reduction error.
+///
+/// The consequence for any method that mirrors `nth`: "agrees with the fold" is a claim to be
+/// checked WITHIN a lane (`[].last()` must answer what `[].nth(0)` answers **in the fold**, and
+/// what `[].nth(0)` answers **on the machine**), never across the two.
 #[tokio::test(flavor = "multi_thread")]
 async fn divergence_c_target_nth_is_the_reducers_nth() {
     // A plain (BigInt) index works, on both sides.
@@ -930,6 +940,106 @@ async fn divergence_c_target_nth_is_the_reducers_nth() {
         err.contains("index out of bound"),
         "C: expected Rholang's `index out of bound` error, got {err:?}"
     );
+}
+
+// ── `last` — routed 2026-07-28, and it EXECUTES ──────────────────────────────────────────────────
+//
+// ★ THE RED THESE REPLACED. Before `method_table` gained its `last` key, both tests below failed,
+// and the failure was NOT "the value was wrong" — it was
+//
+//     unsupported: l.last() list method (no Rholang analog; C3 residue)
+//
+// raised by `rholang_ast.rs::unsupported_construct_name` BEFORE any Par reached the reducer. Three
+// outcomes have to stay distinguishable and each has a different signature:
+//
+//   • "the read failed"        → the observation list is empty or the harness errors elsewhere;
+//   • "it was never routed"    → `unsupported: …` (the LOWERING refused — the state before this
+//                                change) or `reduce: … Unimplemented method: last` (the lowering
+//                                emitted an `EMethod` the interpreter has no key for);
+//   • "the value was wrong"    → the machine answers, and the answer is not the last element.
+//
+// The tests below assert an ANSWER, so the first two signatures fail them loudly, and the
+// discriminator separates the third.
+
+/// ★★ **`[1, 2, 3].last()` RUNS ON THE RHO MACHINE AND OBSERVES `3` — and `last` is not `first`.**
+///
+/// Not that it parses; not that it folds. `assert_conformant` lowers the term, evaluates it on the
+/// real f1r3node reducer, and reads the value resting on `@"OUT"` — while also requiring the fold
+/// to agree, so a mutual drift still fails.
+///
+/// ⚠ **The discriminator is in this test on purpose.** `[111, 222, 333].last()` is `333` while the
+/// **same list**'s `.nth(0)` is `111`. A `[1].last() == 1` assertion would pass under BOTH the
+/// last-element and first-element readings and would assert nothing; keeping both halves in ONE
+/// test means they cannot drift into separate files and separate fates.
+#[tokio::test(flavor = "multi_thread")]
+async fn last_executes_on_the_machine_and_is_not_the_first_element() {
+    // The row that used to sit in `c3_residue_mettail_only_operations_fail_closed_and_named`
+    // asserting the machine REFUSED this program. It now answers.
+    assert_conformant("[1, 2, 3].last()", "3").await;
+
+    // ★ The discriminator: head ≠ last, on the SAME list, both on the machine.
+    assert_conformant("[111, 222, 333].last()", "333").await;
+    assert_conformant("[111, 222, 333].nth(0)", "111").await;
+
+    // …and stated as an inequality too, so the pair cannot be "fixed" by making both 333.
+    let last = reduce(&parse("[111, 222, 333].last()"))
+        .await
+        .expect("`last` must execute on the machine");
+    let head = reduce(&parse("[111, 222, 333].nth(0)"))
+        .await
+        .expect("`nth` executes on the machine");
+    // MEASURED 2026-07-28 on the machine: `.last()` => `333`, `.nth(0)` => `111`.
+    assert_ne!(
+        render_as_rholang(&last[0]),
+        render_as_rholang(&head[0]),
+        "if `last` and `nth(0)` coincide on a 3-element list the fixture is vacuous"
+    );
+}
+
+/// **`[].last()` on the machine, asserted BESIDE `[].nth(0)`.**
+///
+/// The two are compared for EQUALITY of the machine's error, not each matched against a pattern —
+/// `last_method` computes `len - 1` with `saturating_sub` and hands `0` to the same `local_nth`
+/// that `nth` calls, so on the empty list they are literally the same call and a divergence means
+/// someone broke the sharing.
+///
+/// ⚠ **Lane discipline.** The FOLD answers the `error` term for both programs; the MACHINE raises
+/// a recoverable out-of-bounds reduction error for both. Those two lane answers differ, and that
+/// difference is `nth`'s documented, normative behaviour (see
+/// [`divergence_c_target_nth_is_the_reducers_nth`]) — inherited here rather than re-litigated.
+/// What is asserted is agreement *within* each lane.
+#[tokio::test(flavor = "multi_thread")]
+async fn last_on_the_empty_list_agrees_with_nth_zero_on_the_machine() {
+    // ① the MACHINE lane: identical recoverable errors.
+    let last_error = reduce(&parse("[].last()"))
+        .await
+        .expect_err("the empty list has no last element");
+    let nth_error = reduce(&parse("[].nth(0)"))
+        .await
+        .expect_err("the empty list has no element 0 either");
+    // MEASURED 2026-07-28 on the machine: both are, byte for byte,
+    //     reduce: inj: ReduceError("Error: index out of bound: 0")
+    assert_eq!(
+        last_error, nth_error,
+        "`[].last()` and `[].nth(0)` must be indistinguishable on the machine — they share \
+         `local_nth`, so a difference here means the sharing was broken"
+    );
+    assert!(
+        last_error.contains("index out of bound: 0"),
+        "the empty-list answer must be the RECOVERABLE out-of-bounds error, never a panic and \
+         never a silent value, got {last_error:?}"
+    );
+    // ★ Anti-vacuity: `expect_err` above would also be satisfied by the OLD lowering refusal, so
+    // pin that the refusal is gone and the term really did reach the reducer.
+    assert!(
+        !last_error.starts_with("unsupported: "),
+        "this must be the REDUCER's error, not the lowering's refusal — got {last_error:?}, \
+         which is the pre-routing signature"
+    );
+
+    // ② the FOLD lane: identical `error` terms.
+    assert_eq!(fold(&parse("[].last()")).expect("the fold converges"), "error");
+    assert_eq!(fold(&parse("[].nth(0)")).expect("the fold converges"), "error");
 }
 
 // ── D — `Fixed` scale mismatch ───────────────────────────────────────────────────────────────────
@@ -1494,27 +1604,19 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
             "[10]",
             "unsupported: m.values() map method (no Rholang analog; C3 residue)",
         ),
-        // `.last()` — `method_table` has `nth` and `length` but no `last`, so there is nothing
-        // to route to. It exists because upstream Rholang cannot reach a list's FINAL element by
-        // pattern: every collection remainder in `rholang-tree-sitter/grammar.js` is TRAILING, so
-        // `[x, ..._]` binds the head and `[..._, x]` does not parse. The lookahead FIPS writes
-        // `trace.last()` literally, so the projection has to exist somewhere; today that
-        // somewhere is the fold body, and the machine fails closed NAMING it.
+        // ★★ `.last()` WAS PINNED HERE AS RESIDUE, AND HAS MOVED OUT DELIBERATELY (2026-07-28).
         //
-        // The fold answer is `3` and NOT `1`: the fixture's head and last element differ, so this
-        // row also witnesses that `last` is not `first`.
-        (
-            "[1, 2, 3].last()",
-            "3",
-            "unsupported: l.last() list method (no Rholang analog; C3 residue)",
-        ),
-        // …and the empty list, whose answer is INHERITED from `nth`'s totality rather than
-        // chosen: out-of-domain access is the `error` term, never a panic and never a new variant.
-        (
-            "[].last()",
-            "error",
-            "unsupported: l.last() list method (no Rholang analog; C3 residue)",
-        ),
+        // Two rows stood here — `[1, 2, 3].last()` and `[].last()` — each asserting the machine
+        // refused with `"unsupported: l.last() list method (no Rholang analog; C3 residue)"`.
+        // They were correct while `method_table` had no `last` key. It now has one
+        // (`reduce.rs::last_method`), so `last` ROUTES, the machine ANSWERS, and residue rows for
+        // it would be false. They were not deleted quietly: both moved to
+        // [`last_executes_on_the_machine_and_is_not_the_first_element`] and
+        // [`last_on_the_empty_list_agrees_with_nth_zero_on_the_machine`], where the same two
+        // programs are asserted against the machine's ANSWER instead of its refusal.
+        //
+        // A green suite must not be able to hide that transition, which is why the move is
+        // recorded here rather than left as an absence.
         ("5 bitand 3", "1", "unsupported: bitand bitwise-and (no Rholang bitwise Expr)"),
         ("bool(1p0)", "true", "unsupported: bool(a) boolean conversion"),
         (r#"str(1.5p1)"#, r#""1.5p1""#, "unsupported: str(a) string conversion"),
@@ -1598,6 +1700,12 @@ async fn c1_bag_encoding_is_rejected_by_every_routed_method() {
 /// | `length` | `length_method` (7893) | **yes** | `2` — tag + pairs — not the cardinality `3` |
 /// | `nth` | `nth_method` (4078) | **yes** | the ABI tag, or the pairs list |
 /// | `concat` | `combine_plus_plus` | **yes** | a 4-element list carrying TWO ABI tags |
+/// | `last` | `last_method` (4449) | **yes** | the PAIRS LIST — the encoding's 2nd element |
+///
+/// ⚠ The `last` row was added on 2026-07-28 when `last` became routed. Routing an operation that
+/// accepts `EListBody` ADDS a way to measure the bag ABI encoding, so the gate had to grow with
+/// it; a routed `last` without the gate would answer `#{…}#.last()` with the encoding's pairs
+/// list, which is plausible and wrong.
 ///
 /// Every other routed method accepts only `EMapBody`/`ESetBody`/`EPathmapBody` and so refuses the
 /// encoding by itself — measured in [`c1_bag_encoding_is_rejected_by_every_routed_method`]. The
@@ -1611,6 +1719,8 @@ async fn c1_bag_length_and_nth_are_gated_at_lowering() {
         ("#{1 | 2 | 2}#.concat(#{3}#)", "bag concatenation"),
         // the bag in the RIGHT operand only — the gate is not left-biased
         ("[1, 2].concat(#{3}#)", "bag concatenation"),
+        // `last` joined the gate when it became routed (2026-07-28)
+        ("#{1 | 2 | 2}#.last()", "bag final-element access"),
     ] {
         let proc = parse(source);
         let error = reduce(&proc).await.expect_err("the bag gate must fire");

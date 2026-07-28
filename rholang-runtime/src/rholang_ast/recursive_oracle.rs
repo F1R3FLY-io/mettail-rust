@@ -206,10 +206,10 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         // ── C1 — the collection method surface (landed 2026-07-26) ──────────────────────────
         //
         // Each arm names a key of `reduce.rs::method_table` (`method_table` is at
-        // `rholang/src/rust/interpreter/reduce.rs:8464` in the pinned `../f1r3node-rust-mettail`
-        // worktree; the stale citation "8197-8256" that stood here predated several edits). The
-        // reducer dispatches on the EVALUATED receiver, so a COMM-bound receiver works exactly
-        // like a literal one.
+        // `rholang/src/rust/interpreter/reduce.rs:9023` in the pinned `../f1r3node-rust-mettail`
+        // worktree — MEASURED 2026-07-28; the citations "8197-8256" and ":8464" that stood here
+        // in turn each predated several edits). The reducer dispatches on the EVALUATED receiver,
+        // so a COMM-bound receiver works exactly like a literal one.
         //
         // ★ SOUNDNESS RESTS ON A MEASURED CARRIER MAP, NOT ON THE METHOD NAME.
         //
@@ -235,14 +235,15 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         //   add       ESet                                7378   —
         //   length    EList, GString, GByteArray          7893   ⚠ Bag→EList ACCEPTED ⇒ GATED
         //   nth       EList, ETuple, GByteArray           4078   ⚠ Bag→EList ACCEPTED ⇒ GATED
+        //   last      EList, ETuple, GByteArray           4449   ⚠ Bag→EList ACCEPTED ⇒ GATED
         //
         // The note that stood here asserted that routing would make `#{1|2|2}#.size()` answer the
         // tagged list's pair count. That is FALSE and was the reason C1 was held: `size_method`
         // (reduce.rs:7829) accepts only `EMapBody`/`ESetBody`, so a lowered `Bag` fails closed
         // with `MethodNotDefined { method: "size", other_type: "List" }`. The hazard is real but
-        // lives on `length` and `nth` — the two routed methods that DO accept `EListBody` — and
-        // those two are gated by [`lower_length`] / [`lower_nth`]. Measured, not hypothesized:
-        // `rho_rholang_conformance.rs::c1_bag_encoding_is_rejected_by_every_routed_method`.
+        // lives on `length`, `nth` and `last` — the routed methods that DO accept `EListBody` —
+        // and those are gated by [`lower_length`] / [`lower_nth`] / [`lower_last`]. Measured, not
+        // hypothesized: `rho_rholang_conformance.rs::c1_bag_encoding_is_rejected_by_every_routed_method`.
         Proc::MGet(m, k) => lower_arm_m_get(m, k, env),
         Proc::MSet(m, k, v) => lower_arm_m_set(m, k, v, env),
         Proc::MContains(m, k) => lower_arm_m_contains(m, k, env),
@@ -254,6 +255,15 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         Proc::SAdd(s, e) => lower_arm_s_add(s, e, env),
         Proc::LLength(l) => lower_arm_l_length(l, env),
         Proc::LNth(l, i) => lower_arm_l_nth(l, i, env),
+        // `last` — ROUTED as of 2026-07-28, having been C3 residue since it landed. The
+        // `method_table` gained a `last` key (`reduce.rs::last_method`, registered at :9026
+        // immediately after `nth`), so there is now something to route TO and the projection no
+        // longer has to live only in the fold body.
+        //
+        // ⚠ The routed method is NATIVE, not the desugaring `l.last()` ⇒ `l.nth(l.length()-1)`:
+        // that rewrite names the receiver twice and so EVALUATES it twice, and duplicated
+        // evaluation is duplicated gas. `last_method` evaluates the receiver once and projects.
+        Proc::LLast(l) => lower_arm_l_last(l, env),
         // `concat` is the one C1 method with NO `method_table` key: Rholang spells list/string
         // concatenation as the `++` OPERATOR (`EPlusPlus`), not as a method. Routing to `++`
         // still hands the operation to the reducer's own evaluator — the single-evaluator
@@ -880,6 +890,14 @@ fn lower_arm_l_nth(
 }
 
 #[inline(never)]
+fn lower_arm_l_last(
+    l: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RholangAstLowerError> {
+    lower_last(l.as_ref(), env)
+}
+
+#[inline(never)]
 fn lower_arm_l_concat(
     l: &std::sync::Arc<Proc>,
     r: &std::sync::Arc<Proc>,
@@ -1133,6 +1151,23 @@ fn lower_nth(target: &Proc, index: &Proc, env: &BoundEnv) -> Result<Par, Rholang
              bag ABI encoding, not the multiset; C3 residue)",
         )),
         false => lower_method("nth", target, &[index], env),
+    }
+}
+
+/// `l.last()` ⇒ `EMethod("last")`, with the SAME bag gate `nth` takes.
+///
+/// `last_method` accepts `EListBody`, and a `Bag` lowers to the 2-element ABI encoding
+/// `EList[GPrivate(tag), EList[pairs]]` — so an ungated `#{1|2|2}#.last()` would answer the
+/// PAIRS LIST (the encoding's second element), which is plausible and wrong, exactly the hazard
+/// [`lower_length`] and [`lower_nth`] were gated for. `last` is the fourth `EList`-accepting
+/// routed operation and takes the identical gate.
+fn lower_last(target: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
+    match receiver_is_literal_bag(target) {
+        true => Err(RholangAstLowerError::UnsupportedProc(
+            "#{…}#.last() bag final-element access (no Rholang analog — the machine would index \
+             the 2-element bag ABI encoding, not the multiset; C3 residue)",
+        )),
+        false => lower_method("last", target, &[], env),
     }
 }
 
@@ -1916,14 +1951,18 @@ mod differential {
         ("@\"OUT\"!([1, 2].nth(0))", "LNth", Expect::Lowers),
         ("@\"OUT\"!([1].concat([2]))", "LConcat", Expect::Lowers),
         ("@\"OUT\"!(1.toByteArray())", "MToByteArray", Expect::Lowers),
-        // `.last()` is C3 residue, not a routed method: `method_table` has `nth` and `length`
-        // but no `last`, so the lowering fails closed naming the construct rather than
-        // inventing a consensus implementation for it.
-        ("@\"OUT\"!([1, 2].last())", "LLast (C3 residue)", Expect::Fails),
-        // ── the C3 bag gates: three routed operations that must FAIL on a bag receiver ──────
+        // ★ MOVED DELIBERATELY, 2026-07-28: this row read `Expect::Fails` and pinned `.last()`
+        // as C3 residue. `method_table` gained a `last` key (`reduce.rs::last_method`), so the
+        // construct now ROUTES and the row is inverted rather than deleted — a green suite must
+        // not be able to hide the transition.
+        ("@\"OUT\"!([1, 2].last())", "LLast (routed)", Expect::Lowers),
+        // ── the C3 bag gates: four routed operations that must FAIL on a bag receiver ──────
         ("@\"OUT\"!(#{1 | 2}#.length())", "LLength bag gate", Expect::Fails),
         ("@\"OUT\"!(#{1 | 2}#.nth(0))", "LNth bag gate", Expect::Fails),
         ("@\"OUT\"!(#{1}#.concat(#{2}#))", "LConcat bag gate", Expect::Fails),
+        // `last` accepts `EList` exactly as `nth` does, so routing it added a FOURTH way to
+        // measure the bag ABI encoding; it takes the same gate.
+        ("@\"OUT\"!(#{1 | 2}#.last())", "LLast bag gate", Expect::Fails),
         // ── binders ─────────────────────────────────────────────────────────────────────────
         ("new c in { @\"OUT\"!(1) }", "PNew", Expect::Lowers),
         ("new c in { c!(1) }", "PNew, binder referenced", Expect::Lowers),

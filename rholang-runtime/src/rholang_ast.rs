@@ -1956,10 +1956,11 @@ impl<'a> Drive<'a> {
             Proc::MKeys(m) => self.method("keys", m, &[], env),
             Proc::BDiff(a, b) => self.method("diff", a, &[b], env),
             Proc::SAdd(s, e) => self.method("add", s, &[e], env),
-            // ⚠ `length`/`nth`/`concat` are the three routed operations whose interpreter
+            // ⚠ `length`/`nth`/`last`/`concat` are the FOUR routed operations whose interpreter
             // implementation ACCEPTS an `EList`, so they would compute over a lowered `Bag`'s
             // 2-element ABI encoding and answer something plausible and wrong. Gated on the
             // RECEIVER'S SYNTAX, before anything is lowered — same order as the recursive form.
+            // (`last` joined the set on 2026-07-28, when `method_table` gained its `last` key.)
             Proc::LLength(l) => match receiver_is_literal_bag(l.as_ref()) {
                 true => {
                     return Err(RholangAstLowerError::UnsupportedProc(
@@ -1977,6 +1978,24 @@ impl<'a> Drive<'a> {
                     ));
                 },
                 false => self.method("nth", l, &[i], env),
+            },
+            // `last` — ROUTED 2026-07-28 (was C3 residue). `last_method` accepts `EListBody`
+            // exactly as `nth_method` does, so it takes the identical bag gate: ungated,
+            // `#{1|2|2}#.last()` would answer the ABI encoding's SECOND element (the pairs
+            // list), which is plausible and wrong.
+            //
+            // ⚠ The routed method is NATIVE, not `l.nth(l.length() - 1)`: that desugaring names
+            // the receiver twice and so evaluates it twice, and duplicated evaluation is
+            // duplicated gas.
+            Proc::LLast(l) => match receiver_is_literal_bag(l.as_ref()) {
+                true => {
+                    return Err(RholangAstLowerError::UnsupportedProc(
+                        "#{…}#.last() bag final-element access (no Rholang analog — the machine \
+                         would index the 2-element bag ABI encoding, not the multiset; C3 \
+                         residue)",
+                    ));
+                },
+                false => self.method("last", l, &[], env),
             },
             Proc::LConcat(l, r) => {
                 match receiver_is_literal_bag(l.as_ref()) || receiver_is_literal_bag(r.as_ref()) {
@@ -3511,10 +3530,16 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         // ── The C1 residue: methods with NO counterpart in `reduce.rs::method_table` ────────
         //
         // Everything here was checked against the interpreter's table by name (that table is at
-        // `rholang/src/rust/interpreter/reduce.rs:8464` in `../f1r3node-rust-mettail`). These six
-        // have no key there, so there is nothing to route TO — the fold body is the only
-        // implementation that exists, and routing would have to invent one. They stay fail-closed
-        // and named, which is the A-S4 contract.
+        // `rholang/src/rust/interpreter/reduce.rs:9023` in `../f1r3node-rust-mettail` — MEASURED
+        // 2026-07-28; the ":8464" that stood here was stale). Each has no key there, so there is
+        // nothing to route TO — the fold body is the only implementation that exists, and routing
+        // would have to invent one. They stay fail-closed and named, which is the A-S4 contract.
+        //
+        // ⚠ A COUNT was deliberately NOT restated here. The wording that stood ("These six")
+        // did not match the block, which carried EIGHT no-key constructs plus `WZSetLeaf` (whose
+        // name IS a key, for a different operation); the numeral had gone stale silently across
+        // the C4 amendment. A count that no test derives is a comment that rots, so it is gone
+        // rather than re-guessed.
         //
         // `.values()` — the table provides `keys` but not `values`; a Rholang Map's values are
         // reachable only via `toList`/`get`.
@@ -3522,20 +3547,29 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         // `.count(e)` / `.remove(e)` — Bag multiplicity operations. Rholang has no multiset.
         Proc::BCount(..) => "b.count(e) bag method (no Rholang analog; C3 residue)",
         Proc::BRemove(..) => "b.remove(e) bag method (no Rholang analog; C3 residue)",
-        // `.last()` — the table has `nth` and `length` but no `last` (checked by name against
-        // `method_table`, which sits at `reduce.rs:9023` in the pinned `../f1r3node-rust-mettail`;
-        // `nth` is registered at :9025 and `length` at :9080). `last()` exists because upstream
-        // cannot reach a list's final element by PATTERN — every collection remainder in
-        // `rholang-tree-sitter/grammar.js` is TRAILING, so `[..._, x]` does not parse — and the
-        // lookahead FIPS writes `trace.last()` literally. It is therefore a MeTTaIL-only
-        // projection with no counterpart to route to, and it stays fail-closed and named.
+        // ── DISABLED, not deleted: `.last()` became ROUTED on 2026-07-28 ───────────────────
         //
-        // ⚠ It is fail-closed rather than DESUGARED, and that is a decision worth naming: the
-        // rewrite `l.last()` ⇒ `l.nth(l.length() - 1)` is expressible entirely in routed methods
-        // and would run on the machine today, but it evaluates the receiver TWICE. Duplicated
-        // evaluation is duplicated gas, and gas is F1r3node's to price, not MeTTaIL's — so the
-        // rewrite is a cross-system decision to be presented, not taken here.
-        Proc::LLast(..) => "l.last() list method (no Rholang analog; C3 residue)",
+        // This arm named a fail-closed error from the day `last()` landed until the interpreter's
+        // `method_table` gained a `last` key (`reduce.rs::last_method`, registered at :9026
+        // immediately after `nth` at :9025). There is now something to route TO, so `lower_proc`
+        // handles `Proc::LLast` in its C1 block and this arm became unreachable. Kept commented,
+        // exactly as the 31 arms C1 superseded below are, so the transition stays legible and the
+        // prior error string — quoted verbatim by tests and by the `recursive_oracle` corpus —
+        // remains findable by grep:
+        //
+        //   Proc::LLast(..) => "l.last() list method (no Rholang analog; C3 residue)",
+        //
+        // ⚠ The routed method is NATIVE, and that is the whole point. The alternative was the
+        // desugaring `l.last()` ⇒ `l.nth(l.length() - 1)`, which is expressible entirely in
+        // methods that already existed and would have run on the machine without any interpreter
+        // change — but it names the receiver TWICE, so the receiver is EVALUATED twice, and
+        // duplicated evaluation is duplicated gas. `last_method` evaluates the receiver once and
+        // projects at `len - 1` through the same bounds-checked `local_nth` that `nth` uses.
+        //
+        // ★ ADDITIVE. No program that does not call `last()` is affected, and before the
+        // `method_table` key existed `last()` did not execute at all — it failed closed here —
+        // so no existing behaviour changed. Upstream Rholang has no `last`, so no upstream
+        // program can observe the difference either.
         // `.subtract(q)` — no `subtract` key at all.
         Proc::PSubtract(..) => "p.subtract(q) pathmap method (no Rholang analog; C3 residue)",
         // `.restrict(q)` / `.meet(q)` / `.getSubtrieAt(p)`
@@ -3674,8 +3708,9 @@ fn binary_expr_par(
 ///
 /// This is the mechanism of "option C — different carriers, ONE evaluator". Instead of Rholang
 /// carrying a second implementation of a method Rholang already has, the method name is handed to
-/// the reducer's own method table (`rholang/src/rust/interpreter/reduce.rs::method_table`,
-/// 8197-8256), which dispatches on the *evaluated* receiver. Consequences that matter:
+/// the reducer's own method table (`rholang/src/rust/interpreter/reduce.rs::method_table`, at
+/// :9023 — MEASURED 2026-07-28; the "8197-8256" that stood here was stale), which dispatches on
+/// the *evaluated* receiver. Consequences that matter:
 ///
 /// * the semantics are the consensus semantics, by construction — there is nothing left to
 ///   diverge from;

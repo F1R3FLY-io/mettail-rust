@@ -2218,11 +2218,20 @@ language! {
         // (`FIPS/approved/2026-01-08-Lookahead/2026-01-08-Lookahead.md:70`, again at `:157`) — so
         // this is FIPS conformance, not an invention.
         //
-        // Conservativity: upstream has no `last`, and `last` is not reserved by adding one — the
-        // terminal is reachable only after a `.`, exactly as `length`/`nth`/`keys` are, so `last`
-        // remains usable as an ordinary name. Every upstream program still parses the same and
-        // means the same. Pinned by `languages/tests/rholang_tests.rs::native_ops::list::
-        // last_is_still_available_as_an_ordinary_name`.
+        // Conservativity, MEASURED and NARROWER than first claimed. The paragraph that stood here
+        // asserted that `last` "remains usable as an ordinary name" and cited a fixture
+        // (`last_is_still_available_as_an_ordinary_name`) that does not exist under that name —
+        // because when it was written it FAILED. Every method terminal is keyword-reserved, and
+        // has been since the method-call surface landed: `last`, `nth`, `length`, `keys` and
+        // `concat` are all rejected as bare identifiers, while `notamethod` is accepted (the
+        // positive control). `last` therefore JOINS an existing reservation set rather than
+        // creating one or becoming a special case.
+        //
+        // The claim that survives is the true, narrower one: no upstream program that does not
+        // use a METHOD NAME as a bare identifier is affected. Pinned by
+        // `languages/tests/rholang_tests.rs::native_ops::list::
+        // last_joins_the_reserved_method_names_and_is_not_a_special_case`, which carries the
+        // measurement table. The residual reservation defect is LOGGED, not fixed here.
         //
         // ⚠ TOTALITY IS INHERITED FROM `LNth`, NOT CHOSEN HERE. `LNth` (directly above) is TOTAL:
         // a non-list receiver, a non-integer index and an index past the end all answer the
@@ -2234,14 +2243,29 @@ language! {
         // the Cranelift-compiled frames of `[profile.dev] codegen-backend = "cranelift"` aborts
         // the process, so `.expect(…)`/indexing here would kill the test binary rather than fail.
         //
-        // ⚠ MACHINE PATH: `last` is NOT a key of the interpreter's `method_table`
-        // (`rholang/src/rust/interpreter/reduce.rs:9023-9081` in the pinned
-        // `../f1r3node-rust-mettail`; `nth` and `length` are there, `last` is not). There is
-        // therefore nothing to route to, and routing would have to INVENT a consensus
-        // implementation — so `LLast` joins the C3 residue: the fold body below is the single
-        // implementation, and the machine fails closed NAMING the construct
-        // (`rholang-runtime/src/rholang_ast.rs::unsupported_construct_name`), pinned by
-        // `rho_rholang_conformance.rs::c3_residue_mettail_only_operations_fail_closed_and_named`.
+        // ★ MACHINE PATH: ROUTED as of 2026-07-28. `last` IS a key of the interpreter's
+        // `method_table` (`rholang/src/rust/interpreter/reduce.rs:9023-9089` in the pinned
+        // `../f1r3node-rust-mettail`: `nth` at :9025, `last` at :9026, `length` at :9088), so
+        // `l.last()` lowers to `EMethod("last")` and the REDUCER answers. This paragraph
+        // previously recorded the opposite — that there was nothing to route to and `LLast` was
+        // therefore C3 residue, fail-closed and named. That was true until the key existed.
+        //
+        // ⚠ The interpreter method is NATIVE, not the desugaring `l.last()` ⇒
+        // `l.nth(l.length() - 1)`. The desugaring is expressible entirely in methods that already
+        // existed and would have run with no interpreter change at all, but it names the receiver
+        // TWICE, so the receiver is EVALUATED twice — and duplicated evaluation is duplicated gas.
+        // `last_method` evaluates the receiver ONCE and projects at `len - 1` through the same
+        // bounds-checked `local_nth` helper `nth_method` uses, which is also why `[].last()` and
+        // `[].nth(0)` cannot answer differently on the machine: they are the same call.
+        //
+        // ⚠ LANE DISCIPLINE. Routing does NOT make the fold body dead, and it does not make the
+        // two lanes identical out of domain: the FOLD answers the `error` term below, while the
+        // MACHINE raises a recoverable `index out of bound` reduction error — exactly the split
+        // `LNth` already has, where the reducer's answer is the normative one. Agreement is a
+        // within-lane property. Pinned on the machine by
+        // `rho_rholang_conformance.rs::last_executes_on_the_machine_and_is_not_the_first_element`
+        // and `::last_on_the_empty_list_agrees_with_nth_zero_on_the_machine`; the bag ABI gate
+        // that routing required is pinned by `::c1_bag_length_and_nth_are_gated_at_lowering`.
         LLast . l:Proc
         |- l "." "last" "(" ")" : Proc ![{
             match &l {
