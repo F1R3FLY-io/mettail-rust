@@ -37,9 +37,61 @@
 //! Disposition gate: emitted iff the language declares equations AND has no
 //! `RhoNativeJoin` obligation (no host RSpace). Ambient qualifies; rholang /
 //! guarded_rho route their binders/COMM to the host and are NOT emitted.
+//!
+//! ★★ A-S5.4c — THE CONVERSE ADMISSION: EVERY FLOAT ARM IS LICENSED BY A
+//! DECLARED EQUATION.
+//!
+//! The disposition gate above says WHETHER a language gets a handler. It says
+//! nothing about WHICH constructors that handler may float across, and until
+//! A-S5.4c nothing did: the arms were derived from
+//! `collect_category_variants(proc_cat, language)` — the primary category's TERM
+//! FORMERS — so the handler floated the binder outward through EVERY constructor
+//! of the category, licensed or not. For Ambient the term formers and the
+//! declared float equations coincide (`InNew`/`OutNew`/`OpenNew`/`AmbNew` +
+//! `ScopeExtrusion` name exactly `PIn`/`POut`/`POpen`/`PAmb`/`PPar`), which is
+//! why the surplus was invisible. For Pi they do not, and the surplus was not
+//! merely surplus:
+//!
+//! * `Pi` declares `ScopeExt` (a `PPar` collection float), `NewComm` and
+//!   `RepUnfold`; it declares NO prefix float at all;
+//! * the generated handler nonetheless emitted prefix float arms for `POut` AND
+//!   for `PRep`;
+//! * ★★ the `PRep` arm is `!(νx.P) ⟶ νx.(!P)`, which is UNSOUND in the
+//!   π-calculus. The left creates a FRESH NAME PER REPLICA; the right SHARES ONE
+//!   NAME across all replicas, so two replicas that could not interact become
+//!   able to. This is NOT a capture-avoidance side condition, so no amount of
+//!   `unbind` freshening repairs it — the A-S5.4a soundness argument below is an
+//!   α-conversion argument, and α-conversion has nothing to say about
+//!   replication. The justification did not cover the arm it was justifying.
+//!
+//! The repair is the CONVERSE of the A-S5.4b equations gate. That gate
+//! (`rho_net_lower::equations_boundary_canonicalizable`) asks whether every
+//! declared EQUATION is a recognized float; this asks whether every emitted ARM
+//! is a declared equation. Both directions are needed and only one existed.
+//!
+//! The arms are therefore now read off `float_satellite_table` — the SAME
+//! equation-derived table the in-Rho `^float` receiver family derives its
+//! `^float-hoist:{C}` / `^float-merge:{op}` satellites from
+//! (`rho_net_float::float_program_par`). One derivation, two consumers: the host
+//! NF and the in-Rho lane float across exactly the same constructors BY
+//! CONSTRUCTION, and a language gets a float it did not declare in neither.
+//! `generated_float_arms_are_exactly_the_declared_float_equations` pins the
+//! converse over every bundled language, and
+//! `rep_float_arm_is_not_emitted_without_a_declared_float_equation` pins the
+//! π-calculus instance directly.
+//!
+//! ⚠ NOT covered by A-S5.4c (logged, deliberately out of its scope): the binder
+//! arm's `__bcn_close_new_run_canonical` reorders an adjacent binder run into the
+//! α-canonical order, which is an application of binder-binder COMMUTATION
+//! (`NewComm`), and it is applied whether or not the language declares that
+//! equation. Every float-bearing bundled language does declare it (Ambient
+//! `NewComm`, Pi `NewComm`), so nothing in the corpus is affected today; a future
+//! language that declares a float without a commutation would get the reordering
+//! unlicensed, which is the same defect one arm over.
 
 use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
 use mettail_ast::language::LanguageDef;
+use mettail_rholang_codegen::float_satellite_table;
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashSet;
@@ -113,6 +165,13 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
     let binder_label = surface_single_binder_label(language)
         .expect("should_emit_binder_congruence guarantees a surface single binder");
 
+    // ★ A-S5.4c (module docs): the LICENCE. Every float arm below must name a
+    // constructor this language declared a float equation for — the converse of
+    // the A-S5.4b equations gate. Derived by the same per-equation recognizer
+    // walk the in-Rho `^float` satellites are derived from, so the two lanes
+    // float across identical constructors by construction.
+    let declared_floats = float_satellite_table(language);
+
     // Build the per-variant float arms.
     let mut arms: Vec<TokenStream> = Vec::new();
 
@@ -140,11 +199,13 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                     }
                 });
             },
-            // A surface prefix `C(N.., P)` with exactly one primary-category field:
-            // ALWAYS float a `new` out of P (A-S5.4a unconditional unbind-first
-            // float — the pre-A-S5.4a `is_fresh` gate against the original binder
-            // is dropped; `unbind` freshens, so the float is capture-safe by
-            // construction and never stalls).
+            // A surface prefix `C(N.., P)` with exactly one primary-category field
+            // AND a DECLARED prefix float equation naming `C` (A-S5.4c): float a
+            // `new` out of P unconditionally (A-S5.4a unbind-first float — the
+            // pre-A-S5.4a `is_fresh` gate against the original binder is dropped;
+            // `unbind` freshens, so the float is capture-safe by construction and
+            // never stalls). Unconditional AT a licensed site; no site is licensed
+            // by the mere existence of the constructor.
             VariantKind::Regular { label, fields } if user_labels.contains(&label.to_string()) => {
                 let proc_field_positions: Vec<usize> = fields
                     .iter()
@@ -159,6 +220,24 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                     continue;
                 }
                 let body_pos = proc_field_positions[0];
+                // ★ A-S5.4c: the licence. `float_index`/`arity` are matched too, not
+                // just the constructor name — the recognizer records WHICH argument
+                // the equation floats out of, and an arm that floated a different
+                // field would be a different (undeclared) congruence. The shape
+                // agreement is not an accident: `rho_net_lower::float_constructor_shape`
+                // computes `primary_field_index` by this exact filter (AM-6e), so a
+                // recognized prefix equation always names this `body_pos`.
+                if !declared_floats
+                    .hoist
+                    .iter()
+                    .any(|(constructor, float_index, arity)| {
+                        *constructor == label.to_string()
+                            && *float_index == body_pos
+                            && *arity == fields.len()
+                    })
+                {
+                    continue;
+                }
                 let binds: Vec<syn::Ident> = (0..fields.len())
                     .map(|i| quote::format_ident!("__f{}", i))
                     .collect();
@@ -210,14 +289,18 @@ pub fn generate_binder_congruence(language: &LanguageDef) -> TokenStream {
                     }
                 });
             },
-            // The parallel bag (`PPar`): scope-extrude the FIRST `new` member
+            // The parallel bag (`PPar`), WHEN a collection float equation declares
+            // it (A-S5.4c — Ambient's `ScopeExtrusion`, Pi's `ScopeExt`, both the
+            // C-G (Struct Res Par) shape): scope-extrude the FIRST `new` member
             // outward unconditionally (A-S5.4a — the pre-A-S5.4a `is_fresh`
             // residual gate is dropped; `unbind` freshens, so extrusion is
             // capture-safe by construction). Successive `new`s are pulled into
             // the canonical run by the enclosing fixpoint + binder-arm
             // run-collection.
             VariantKind::Collection { label, element_cat, .. }
-                if user_labels.contains(&label.to_string()) && *element_cat == proc_cat =>
+                if user_labels.contains(&label.to_string())
+                    && *element_cat == proc_cat
+                    && declared_floats.merge_ops.contains(&label.to_string()) =>
             {
                 // AM-2: the generated auto-flatten insert (`insert_into_<label>`,
                 // term_ops/normalize.rs — the host mirror of `add_flattened_bag`)
@@ -627,11 +710,26 @@ mod tests {
         }
     }
 
-    /// The bundled corpus fact the A-S5.4b admission rests on: Ambient is the ONLY float-handler
-    /// language (equations + host-less + surface single binder), and its corrected equation set is
-    /// boundary-canonicalizable — the production admission the a_s5c suite pins end-to-end.
+    /// The bundled corpus fact the A-S5.4b admission rests on, restated over the COMPLETE corpus.
+    /// TWO languages bear the host float handler (equations + host-less + surface single binder):
+    /// the production Ambient and the production Pi. They are NOT interchangeable, and the
+    /// difference is the point of A-S5.4b:
+    ///
+    /// * Ambient's equations are wholly float-discharged, so `equations_boundary_canonicalizable`
+    ///   ADMITS it and the in-Rho lane installs the `^float` family for it;
+    /// * Pi's are not — `RepUnfold . |- (PRep P) = (PPar {P, (PRep P)})` is a replication
+    ///   unfolding, no kind of binder float — so the in-Rho lane correctly REFUSES Pi.
+    ///
+    /// ★ That refusal is what made the host-side defect visible: the two lanes disagreed about
+    /// Pi, and the lane that derived from the DECLARATIONS was the one that was right. Pinning
+    /// both dispositions here keeps the asymmetry deliberate instead of incidental.
+    ///
+    /// ⚠ Until this corpus was completed (the previous commit) this test asserted `["ambient"]`
+    /// and passed — over a table that did not contain Pi. It is the expected-value list that is
+    /// pinned here, deliberately, as a tripwire for a NEW float-bearing language; the SUBJECT
+    /// list it ranges over is the thing that must never again be narrower than it claims.
     #[test]
-    fn ambient_is_the_only_bundled_float_handler_language_and_is_canonicalizable() {
+    fn bundled_float_handler_languages_are_ambient_and_pi_with_only_ambient_canonicalizable() {
         let float_bearing: Vec<&str> = BUNDLED_LANGUAGES
             .iter()
             .filter(|(name, source)| should_emit_binder_congruence(&bundled_def(name, source)))
@@ -639,17 +737,135 @@ mod tests {
             .collect();
         assert_eq!(
             float_bearing,
-            ["ambient"],
-            "the float handler's bundled corpus is exactly the production Ambient"
+            ["ambient", "pi"],
+            "the host float handler's bundled corpus is exactly the production Ambient and Pi"
         );
-        let ambient = BUNDLED_LANGUAGES
-            .iter()
-            .find(|(name, _)| *name == "ambient")
-            .map(|(name, source)| bundled_def(name, source))
-            .expect("ambient is bundled");
+        let bundled = |wanted: &str| {
+            BUNDLED_LANGUAGES
+                .iter()
+                .find(|(name, _)| *name == wanted)
+                .map(|(name, source)| bundled_def(name, source))
+                .unwrap_or_else(|| panic!("{wanted} is bundled"))
+        };
         assert!(
-            equations_boundary_canonicalizable(&ambient),
+            equations_boundary_canonicalizable(&bundled("ambient")),
             "the production Ambient's corrected equations are fully float-discharged"
+        );
+        assert!(
+            !equations_boundary_canonicalizable(&bundled("pi")),
+            "Pi's RepUnfold is not a binder float, so the in-Rho lane must refuse Pi — if this \
+             ever admits, the ^float family would be installed for a language whose equational \
+             theory it cannot discharge"
+        );
+    }
+
+    /// ★★ A-S5.4c THE CONVERSE ADMISSION (module docs): for every bundled language that bears the
+    /// handler, the generated float arms are EXACTLY the constructors its declared equations
+    /// license — no constructor floated without an equation, and no declared float missing an arm.
+    ///
+    /// This is the direction nothing checked. `equations_boundary_canonicalizable` checks that
+    /// every declared EQUATION is a recognized float; this checks that every emitted ARM is a
+    /// declared equation. Pi failed it: `ScopeExt` licenses `PPar` and nothing else, yet the
+    /// handler emitted prefix float arms for `POut` and for `PRep` — the latter being
+    /// `!(νx.P) ⟶ νx.(!P)`, unsound in the π-calculus.
+    ///
+    /// The check reads the GENERATED ARTIFACT (the match-arm head `Cat :: Label (` in the emitted
+    /// token stream) rather than re-running the generator's own arm selection, so it is a
+    /// comparison of the code against the declaration and not a tautology.
+    #[test]
+    fn generated_float_arms_are_exactly_the_declared_float_equations() {
+        for (name, source) in BUNDLED_LANGUAGES {
+            let def = bundled_def(name, source);
+            if !should_emit_binder_congruence(&def) {
+                continue;
+            }
+            let primary = def
+                .types
+                .first()
+                .expect("a float-handler language has a primary category")
+                .name
+                .to_string();
+            let binder = surface_single_binder_label(&def)
+                .expect("a float-handler language has a surface single binder")
+                .to_string();
+            let declared = float_satellite_table(&def);
+            let tokens = generate_binder_congruence(&def).to_string();
+            for rule in def.terms.iter().filter(|rule| rule.category == primary) {
+                let label = rule.label.to_string();
+                // The binder's own arm is the recursion/run-canonicalization arm, not a float
+                // ACROSS a constructor; it is licensed by the handler existing at all.
+                if label == binder {
+                    continue;
+                }
+                let licensed = declared
+                    .hoist
+                    .iter()
+                    .any(|(constructor, _, _)| *constructor == label)
+                    || declared.merge_ops.contains(&label);
+                // The emitted arm head, e.g. `Proc :: PRep (`. The trailing ` (` is load-bearing:
+                // without it `PIn` would match inside `PInputs`.
+                let emitted = tokens.contains(&format!("{primary} :: {label} ("));
+                assert_eq!(
+                    emitted,
+                    licensed,
+                    "{name}: {primary}::{label} — the generated float handler {} an arm for it, \
+                     and the declared equations {} a float for it. A float arm with no equation \
+                     is a congruence the language never authorised (A-S5.4c); a declared float \
+                     with no arm is a normal form that misses redexes.",
+                    if emitted { "HAS" } else { "has NO" },
+                    if licensed { "DO declare" } else { "declare NO" },
+                );
+            }
+        }
+    }
+
+    /// ★★ A-S5.4c, the π-calculus instance, stated as the smallest grammar that triggers it: a
+    /// language declaring ONLY the `PPar` collection float (`ScopeExt`) must not get a float arm
+    /// for its replication constructor. `PRep`'s arm is `!(νx.P) ⟶ νx.(!P)`, which does not hold
+    /// in the π-calculus — the left creates a fresh name per replica, the right shares one name
+    /// across all replicas — and it is not a capture-avoidance failure, so the A-S5.4a
+    /// freshen-then-float argument cannot license it.
+    ///
+    /// The fixture is modelled on `languages/tests/definitions/refinementsmoke.rs` (a minimal
+    /// synthetic grammar) but lives inline: it exists to be fed to `generate_binder_congruence`,
+    /// never to be compiled as a language, so a file under `tests/definitions/` would add a
+    /// `#[path]`-less orphan for no gain.
+    #[test]
+    fn rep_float_arm_is_not_emitted_without_a_declared_float_equation() {
+        const REP_FLOAT_GATE: &str = r#"
+            name: RepFloatGate,
+            types { P Name },
+            terms {
+                PZero . P ::= "0" ;
+                PRep . P ::= "!" P ;
+                PNew . ^x.p:[Name -> P] |- "new" "(" x "," p ")" : P ;
+                PPar . P ::= HashBag(P) sep "|" delim "{" "}" ;
+            },
+            equations {
+                ScopeExt . | x # ...rest
+                         |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest})) ;
+            },
+            rewrites { }
+        "#;
+        let def = reconstruct_language_def(REP_FLOAT_GATE)
+            .expect("the RepFloatGate fixture reconstructs");
+        assert!(
+            should_emit_binder_congruence(&def),
+            "the fixture declares equations, is host-less and has a surface single binder, so it \
+             does bear the handler — the arm set is what is under test, not the disposition"
+        );
+        let tokens = generate_binder_congruence(&def).to_string();
+        assert!(
+            !tokens.contains("PRep"),
+            "A-S5.4c: RepFloatGate declares a float for PPar and for nothing else, so the \
+             generated normal form must not float `new` out of PRep — `!(new x. P)` is NOT \
+             `new x. !P` in the pi-calculus (fresh name per replica vs one name shared across \
+             every replica), and freshening cannot repair it"
+        );
+        assert!(
+            tokens.contains("P :: PPar ("),
+            "the DECLARED float (ScopeExt over PPar) must still be emitted — the converse \
+             admission restricts the arms to the declarations, it does not drop them"
         );
     }
 
@@ -658,23 +874,37 @@ mod tests {
     /// unbind-first float — a conditional (gated) float would re-open the refuted F1
     /// incompleteness, so the generated handler must carry NO `is_fresh` gate and must
     /// freshen-then-float through moniker `unbind`.
+    ///
+    /// ⚠ This ranged over Ambient alone and therefore inherited the corpus blind spot the
+    /// previous commit closed — it would have said nothing about a second float-bearing language.
+    /// It now ranges over every language that bears the handler, derived from the corpus rather
+    /// than named. (A-S5.4c does not weaken what is asserted here: the float is still
+    /// unconditional AT the sites the equations license; what changed is which sites those are.)
     #[test]
     fn generated_float_is_unconditional_no_is_fresh_gate() {
-        let ambient = BUNDLED_LANGUAGES
-            .iter()
-            .find(|(name, _)| *name == "ambient")
-            .map(|(name, source)| bundled_def(name, source))
-            .expect("ambient is bundled");
-        assert!(should_emit_binder_congruence(&ambient), "ambient generates the float handler");
-        let tokens = generate_binder_congruence(&ambient).to_string();
+        let mut checked = 0usize;
+        for (name, source) in BUNDLED_LANGUAGES {
+            let def = bundled_def(name, source);
+            if !should_emit_binder_congruence(&def) {
+                continue;
+            }
+            checked += 1;
+            let tokens = generate_binder_congruence(&def).to_string();
+            assert!(
+                !tokens.contains("is_fresh"),
+                "A-S5.4a regression on {name}: the generated float must be UNCONDITIONAL (no \
+                 is_fresh gate) — the A-S5.4b equations-gate admission is unsound over a \
+                 conditional float"
+            );
+            assert!(
+                tokens.contains("unbind"),
+                "{name}: the unconditional float freshen-then-floats through moniker unbind"
+            );
+        }
         assert!(
-            !tokens.contains("is_fresh"),
-            "A-S5.4a regression: the generated float must be UNCONDITIONAL (no is_fresh gate) — \
-             the A-S5.4b equations-gate admission is unsound over a conditional float"
-        );
-        assert!(
-            tokens.contains("unbind"),
-            "the unconditional float freshen-then-floats through moniker unbind"
+            checked >= 2,
+            "this check is only worth running over a corpus that actually contains float-handler \
+             languages; {checked} were found, so it has gone vacuous again"
         );
     }
 }

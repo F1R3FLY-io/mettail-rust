@@ -7318,20 +7318,35 @@ pub fn equations_boundary_canonicalizable(def: &LanguageDef) -> bool {
 /// derives NO satellite — the Q-NC user decision: in-Rho NewComm reordering is DELIBERATELY
 /// omitted (the host's α-canonical-key minimization is not Match-expressible; redex exposure
 /// is NewComm-invariant), so the float NF is unique UP TO the NewComm run permutation.
+///
+/// ★ A-S5.4c — TWO CONSUMERS, ONE DERIVATION. This is no longer only the in-Rho family's
+/// table; it is the table of the float congruences a language actually DECLARES, and the
+/// generated HOST binder-congruence normal form
+/// (`macros/src/gen/runtime/binder_congruence.rs`) now emits one float arm per entry. Hence
+/// `pub`. Consumer 2 is why: the host NF used to derive its arms from the primary category's
+/// TERM FORMERS instead, floating the binder outward through every constructor of the category
+/// whether or not an equation licensed it. For Ambient the two sets coincide; for Pi they did
+/// not, and the surplus included `PRep` — a float out of replication (`!(νx.P) ⟶ νx.!P`),
+/// UNSOUND in the π-calculus (fresh name per replica on the left, one name shared across all
+/// replicas on the right) and not repairable by freshening, because it is not a
+/// capture-avoidance failure. Deriving both consumers here is the structural fix.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct FloatSatelliteTable {
-    /// The `^float-hoist:{C}` satellites: `(constructor, float_index, arity)` per recognized
-    /// prefix float equation.
-    pub(crate) hoist: Vec<(String, usize, usize)>,
-    /// The `^float-merge:{op}` satellites: the bag op per recognized collection float
-    /// equation.
-    pub(crate) merge_ops: Vec<String>,
+pub struct FloatSatelliteTable {
+    /// The recognized PREFIX floats: `(constructor, float_index, arity)` per equation — the
+    /// `^float-hoist:{C}` satellite in-Rho, the prefix float arm on the host.
+    pub hoist: Vec<(String, usize, usize)>,
+    /// The recognized COLLECTION floats: the bag op per equation — the `^float-merge:{op}`
+    /// satellite in-Rho, the bag-extrusion float arm on the host.
+    pub merge_ops: Vec<String>,
 }
 
 /// Derive the [`FloatSatelliteTable`] of `def`'s declared float equations (A-S5.8). Total:
-/// unrecognized/commutation equations contribute nothing — callers gate on
-/// [`equations_boundary_canonicalizable`] ∧ [`language_has_float_handler`] before emitting.
-pub(crate) fn float_satellite_table(def: &LanguageDef) -> FloatSatelliteTable {
+/// unrecognized/commutation equations contribute nothing. The in-Rho consumer gates on
+/// [`equations_boundary_canonicalizable`] ∧ [`language_has_float_handler`] before emitting; the
+/// host consumer (A-S5.4c) does NOT — a language whose equations are not WHOLLY float-discharged
+/// (Pi, whose `RepUnfold` is no float) still gets a host NF, just one restricted to the floats it
+/// does declare — which is exactly why this table is TOTAL rather than an `Option`.
+pub fn float_satellite_table(def: &LanguageDef) -> FloatSatelliteTable {
     let mut table = FloatSatelliteTable::default();
     let Some(binder_label) = float_surface_binder_label(def) else {
         return table;
