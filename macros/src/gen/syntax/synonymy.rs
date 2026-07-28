@@ -123,6 +123,44 @@ pub(crate) fn nullary_filler_surfaces(language: &LanguageDef) -> BTreeMap<String
     filler
 }
 
+/// The surface a NON-GROUND filler uses. A single lower-case identifier parses as the category's
+/// variable in every grammar in this repository, and — unlike any nullary constructor — it is
+/// OPAQUE to evaluation.
+pub(crate) const VARIABLE_FILLER_SURFACE: &str = "a";
+
+/// [`nullary_filler_surfaces`], with a VARIABLE substituted for every category that can spell one.
+///
+/// ★ WHY A GROUND SAMPLE CANNOT EXPRESS A SHAPE (2026-07-28, measured).
+///
+/// `nullary_filler_surfaces` yields a GROUND term (`Nil`, `@Nil`, `{}`), and a ground argument is
+/// exactly what a `fold` rule consumes. Parsing a sample built from ground fillers therefore does
+/// not yield the constructor the sample was written for — it yields that constructor's VALUE:
+///
+/// ```text
+///   sample      "- Nil . get ( Nil )"          intended shape  MGet(NegProc(…), …)
+///   parses to   MGet(error, Nil)               NegProc(PZero) folded away before the gate looked
+/// ```
+///
+/// A gate that measures `error` where it meant to measure `NegProc` reports nothing about
+/// `NegProc`. This was not hypothetical: the first depth-2 sigil-operand table was built from
+/// ground fillers and stayed GREEN under a controlled A/B that re-enabled the very defect it was
+/// written to reject. Folds are demand-gated on ground operands (`runtime::is_ground_operand`), so
+/// one variable in the sample is enough to make the whole shape survive to the gate.
+///
+/// Categories with a `native_type` keep their ground filler: a bare identifier is not dispatchable
+/// into a literal-typed category, and emitting one there produces unparseable surfaces — the same
+/// rule `category_emits_parseable_auto_var` states for test generators.
+pub(crate) fn nonground_filler_surfaces(language: &LanguageDef) -> BTreeMap<String, String> {
+    let mut filler = nullary_filler_surfaces(language);
+    for lang_type in &language.types {
+        if lang_type.native_type.is_some() {
+            continue;
+        }
+        filler.insert(lang_type.name.to_string(), VARIABLE_FILLER_SURFACE.to_string());
+    }
+    filler
+}
+
 /// One PARSEABLE SAMPLE SURFACE for `rule`: its own syntax pattern with every parameter replaced
 /// by its category's [`nullary_filler_surfaces`] entry.
 ///
@@ -141,6 +179,57 @@ pub(crate) fn sample_surface_for(
             SyntaxExpr::Literal(l) => parts.push(l.clone()),
             SyntaxExpr::Param(p) => {
                 let pname = p.to_string();
+                let pcat = tc.iter().find_map(|tp| match tp {
+                    TermParam::Simple {
+                        name,
+                        ty: mettail_ast::types::TypeExpr::Base(cat),
+                    } if name.to_string() == pname => Some(cat.to_string()),
+                    _ => None,
+                })?;
+                parts.push(filler.get(&pcat)?.clone());
+            },
+            _ => return None,
+        }
+    }
+    Some(parts.join(" "))
+}
+
+/// One sample surface for `rule` in which the **leading operand slot** carries `lead`, and every
+/// other parameter carries its category's [`nullary_filler_surfaces`] entry.
+///
+/// ★ WHY A SECOND SAMPLER EXISTS. [`sample_surface_for`] is DEPTH-1: every parameter becomes a
+/// nullary filler, and a nullary constructor is self-delimiting by construction. A predicate that
+/// RECURSES into a child — `Cat::__at_sigil_operand_needs_wrap` asks
+/// `__renders_sigil_led_primary` of the leading operand — therefore has one of its branches
+/// outside the depth-1 sample space entirely: no depth-1 sample can put a prefix application, an
+/// infix, or a send in the slot the recursion reads. That blind spot let
+/// `Display(NQuote(MGet(NegProc(a), PZero)))` emit the unparseable `@-a.get(Nil)` while the
+/// depth-1 gate stayed green (2026-07-28). This sampler restores coverage by varying exactly the
+/// slot the recursion descends into.
+///
+/// `None` under the same conditions as [`sample_surface_for`], plus when `rule` is not
+/// operand-leading (`sp[0]` is not a `Param`) — there is no leading operand slot to fill.
+pub(crate) fn sample_surface_with_lead(
+    rule: &GrammarRule,
+    filler: &BTreeMap<String, String>,
+    lead: &str,
+) -> Option<String> {
+    let sp = rule.syntax_pattern.as_ref()?;
+    let tc = rule.term_context.as_ref()?;
+    let SyntaxExpr::Param(lead_param) = sp.first()? else {
+        return None;
+    };
+    let lead_param = lead_param.to_string();
+    let mut parts: Vec<String> = Vec::with_capacity(sp.len());
+    for e in sp {
+        match e {
+            SyntaxExpr::Literal(l) => parts.push(l.clone()),
+            SyntaxExpr::Param(p) => {
+                let pname = p.to_string();
+                if pname == lead_param {
+                    parts.push(lead.to_string());
+                    continue;
+                }
                 let pcat = tc.iter().find_map(|tp| match tp {
                     TermParam::Simple {
                         name,
