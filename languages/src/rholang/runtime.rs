@@ -154,8 +154,40 @@ pub(crate) fn normalize_collection_element(elem: &Proc) -> Proc {
     }
 }
 
-pub(crate) fn mk_output(name: &super::Name, items: Vec<Proc>, persistent: bool) -> Proc {
-    let payload = std::sync::Arc::new(mk_proc_list(items));
+/// Build `name!(items…)` / `name!!(items…)` under Rholang's SEND ARITY CONVENTION.
+///
+/// A send carries exactly ONE datum `Par`, so the surface arity is encoded into that datum —
+/// and the encoding is three-way, not two-way:
+///
+/// | surface       | items | datum      | matching bind             |
+/// |---------------|-------|------------|---------------------------|
+/// | `c!()`        | 0     | `⟦[]⟧`     | `for(<- c)`               |
+/// | `c!(p)`       | 1     | `⟦p⟧`      | `for(@p <- c)` — VERBATIM |
+/// | `c!(a, b, …)` | ≥2    | `⟦[a,b,…]⟧`| `for(@a, @b… <- c)`       |
+///
+/// The MONADIC row is the one that is easy to get wrong, because `[p]` looks like a harmless
+/// normalization of `p` — and it is, on the term-equality path, where
+/// `runtime::canon_scalar_payload` maps a scalar payload to its one-element list precisely so
+/// the two spellings compare equal. It is NOT harmless on the LOWERING path, which lowers the
+/// payload as written: a `[p]` datum is matched by `for(@[p] <- c)` and NOT by `for(@p <- c)`.
+///
+/// This function previously wrapped unconditionally, which made a 1-item send unmatchable by
+/// the monadic bind it is meant for. The only surface that reaches it is the zero-argument
+/// query bind `c!?()`, whose expansion `c!(*r)` carries exactly one item (the private return
+/// channel) — so `for(p <- c!?()){…}` sent a datum no ordinary responder `for(@r <- c){…}`
+/// could receive. Every `!?` shape test compares through the canon, where the two spellings are
+/// the same key, so none of them could see it.
+///
+/// The convention mirrors `rholang-runtime`'s `desugar_surface_sugar_node`, which is where the
+/// same three rows are applied to the parsed send spellings (`POutputEmpty` → `[]`,
+/// `POutput` → verbatim, `POutput2Plus` → list).
+pub(crate) fn mk_output(name: &super::Name, mut items: Vec<Proc>, persistent: bool) -> Proc {
+    let payload = std::sync::Arc::new(match items.len() {
+        1 => items
+            .pop()
+            .expect("a 1-element payload vector has an element"),
+        _ => mk_proc_list(items),
+    });
     if persistent {
         Proc::PPersistOutput(std::sync::Arc::new(name.clone()), payload)
     } else {

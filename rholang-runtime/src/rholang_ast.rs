@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use crate::fold_contract::{fold_channel, FoldKind, FoldSpec};
 use crate::guard_discharge::{self, GuardDischargeReport, LoweringOptions};
-use mettail_languages::rholang::receive::eval_guard_bool;
+use mettail_languages::rholang::receive::{
+    desugar_for_rows, eval_guard_bool, pfor_user_still_has_query_rows,
+};
 use mettail_languages::rholang::{
     Bag, BigInt, BigRat, Bool, Bytes, Fixed, Float, ForRow, InputBind, Int, List, Map, Name,
     Pathmap, Proc, RholangLanguage, RholangTerm, RholangTermInner, Set, Str, UInt32,
@@ -708,7 +710,7 @@ fn wrap_pure_value_term(value: &Proc, out_channel: &str) -> Proc {
 /// `false`; process constructs report `true`. Send sugar is desugared first so every send shape
 /// is seen as a send. A free proc variable lowers to an `mtl#out` send, hence `true`.
 fn proc_has_machine_effects(proc: &Proc) -> bool {
-    if let Some(desugared) = desugar_send_node(proc) {
+    if let Some(desugared) = desugar_surface_sugar_node(proc) {
         return proc_has_machine_effects(&desugared);
     }
     match proc {
@@ -1725,19 +1727,18 @@ fn drive(seed: Seed<'_>, root_env: &BoundEnv) -> Result<Par, RholangAstLowerErro
 
 impl<'a> Drive<'a> {
     fn enter_proc(&mut self, proc: &'a Proc, env: EnvId) -> Result<(), RholangAstLowerError> {
-        // A-S4: exec submits the RAW parse tree (no pre-normalization), so the send-sugar nodes
-        // (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, …) arrive unfolded. Desugar the HEAD node to
-        // its canonical channel-first form first — a pure structural rearrangement (the same
-        // constructor rewrite the rule's `fold` body performs, no value computation) — then
-        // lower that.
+        // A-S4: exec submits the RAW parse tree (no pre-normalization), so the surface-sugar
+        // nodes (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, and the `!?` query binds) arrive
+        // unfolded. Desugar the HEAD node to the core form it denotes first — a pure structural
+        // rearrangement, no value computation — then lower that.
         //
         // A LOOP rather than the recursive form's tail call. It is equivalent for a different
-        // reason than it looks: `desugar_send_node` never returns a node that is itself
-        // desugarable (its outputs are `POutput`/`PPersistOutput`/`PPar`, none of which it
-        // matches), so the recursion was one deep — but writing it as a loop means the machine
-        // does not have to KNOW that, and a new sugar rule cannot reintroduce a frame.
+        // reason than it looks: `desugar_surface_sugar_node` never returns a node that is
+        // itself desugarable (its outputs are `POutput`/`PPersistOutput`/`PPar`/`PNew`, none of
+        // which it matches), so the recursion was one deep — but writing it as a loop means the
+        // machine does not have to KNOW that, and a new sugar rule cannot reintroduce a frame.
         let mut proc = proc;
-        while let Some(desugared) = desugar_send_node(proc) {
+        while let Some(desugared) = desugar_surface_sugar_node(proc) {
             proc = self.keep(Arc::new(desugared));
         }
 
@@ -2056,8 +2057,16 @@ impl<'a> Drive<'a> {
         operand: &'a Proc,
         env: EnvId,
     ) -> Result<(Job<'a>, Job<'a>), RholangAstLowerError> {
+        // A RECEIVE is diagnosed before expansion, not after. `desugar_surface_sugar_node`
+        // rewrites a `!?`-carrying `for` into the `new`-scoped `send | receive` it denotes, and
+        // that `new` would then be reported by the catch-all as "a non-send process" — true,
+        // but useless. A receive is not a send under ANY spelling, so the specific diagnostic
+        // is owed to every spelling of it.
+        if matches!(operand, Proc::PForUser(..)) {
+            return Err(RholangAstLowerError::LookaheadOperandNotASend("a receive"));
+        }
         let mut operand = operand;
-        while let Some(desugared) = desugar_send_node(operand) {
+        while let Some(desugared) = desugar_surface_sugar_node(operand) {
             operand = self.keep(Arc::new(desugared));
         }
         match operand {
@@ -2756,11 +2765,23 @@ impl<'a> Drive<'a> {
             .push(self.env(state.env).extend_slots(&state.slots));
         state.extended_env = extended;
         let job = match state.rows.len() > 1 {
-            // More rows in THIS `for`: they nest as this row's continuation.
+            // More rows in THIS `for`: they nest as this row's continuation. These rows are
+            // query-free by construction — `enter_proc` expanded every row of this `for`
+            // together before scheduling it.
             true => Job::ForRows(&state.rows[1..], state.body, extended),
             false => match state.body {
                 // The body is itself a `for`: its rows nest under this one's binders.
-                Proc::PForUser(rest_rows, rest_body) => {
+                //
+                // ⚠ This shortcut hands the inner rows straight to `enter_for_rows`, bypassing
+                // `enter_proc` — and with it the surface-sugar expansion. It is therefore valid
+                // only when the inner `for` IS already a receive. A body carrying a `!?` query
+                // bind denotes a `new`-scoped `send | receive`, not a receive, so it takes the
+                // ordinary `Job::Body` route (→ `enter_body` → `enter_proc`) and is expanded
+                // there. Without this guard `for(a <- x){ for(b <- y!?(1)){…} }` would keep the
+                // exact inert reading the outer form was just fixed to lose.
+                Proc::PForUser(rest_rows, rest_body)
+                    if !pfor_user_still_has_query_rows(rest_rows) =>
+                {
                     Job::ForRows(rest_rows.as_slice(), rest_body.as_ref(), extended)
                 },
                 other => Job::Body(other, extended),
@@ -3931,7 +3952,7 @@ fn liftable_fold_parts(proc: &Proc) -> Option<(&Proc, FoldKind, i64)> {
 /// Returns `(operand, kind, width)`. Send sugar is desugared in place so folds inside sugar
 /// payloads (`c!(int(5,8), 7)`) are found; the traversal mirrors [`replace_fold`] exactly.
 fn find_fold(proc: &Proc) -> Option<(Proc, FoldKind, i64)> {
-    if let Some(desugared) = desugar_send_node(proc) {
+    if let Some(desugared) = desugar_surface_sugar_node(proc) {
         return find_fold(&desugared);
     }
     match proc {
@@ -4030,7 +4051,7 @@ fn replace_fold(proc: &Proc, r_drop: &Proc, replaced: &mut bool) -> Proc {
     if *replaced {
         return proc.clone();
     }
-    if let Some(desugared) = desugar_send_node(proc) {
+    if let Some(desugared) = desugar_surface_sugar_node(proc) {
         return replace_fold(&desugared, r_drop, replaced);
     }
     match proc {
@@ -4345,7 +4366,7 @@ fn mk_proc_list(items: Vec<Proc>) -> Proc {
 /// Split a lookahead's operand into `(reply channel, reflected subject)`.
 ///
 /// The operand must be a **send**. Every send SUGAR is admitted, because the operand is first run
-/// through [`desugar_send_node`] — the same canonicalization `lower_proc` performs on its head
+/// through [`desugar_surface_sugar_node`] — the same canonicalization `lower_proc` performs on its head
 /// node — so `@"r"!(P)[*]`, `r!(P)[*]`, `@Nil!(P)[*]` and the polyadic forms all reach the same
 /// two arms rather than only the one shape the demo happens to use.
 ///
@@ -4377,7 +4398,36 @@ fn lookahead_bound(bound: &Proc) -> Result<i64, RholangAstLowerError> {
     }
 }
 
-fn desugar_send_node(proc: &Proc) -> Option<Proc> {
+/// Rewrite ONE surface-sugar node to the core form it denotes, or `None` if `proc` is already
+/// core. Node-local: the children are untouched, because the driver reaches them itself.
+///
+/// This is where a Rholang surface abbreviation stops being an abbreviation. `enter_proc` runs
+/// it to fixpoint on every `Proc` it visits, so a rule added here is applied at every depth for
+/// free — and a surface form NOT handled here reaches the lowering arms verbatim, where it is
+/// lowered as whatever core node it structurally resembles.
+///
+/// ## ⚠ That last sentence is not hypothetical — it is how `!?` came to do nothing
+///
+/// A query bind `for(p <- x!?(a,b))` means "send `(r, a, b)` to the service `x` on a private
+/// return channel `r`, and receive the reply on `r`". Its expansion — `receive::desugar_for_rows`
+/// — was correct, was tested, and was *called*: by `Proc::term_eq`, through
+/// `rholang/runtime.rs::normalize_send_sugar_canon`. But `term_eq` builds a COMPARISON KEY. The
+/// expanded program was computed, compared against, and dropped; the program that ran was the
+/// unexpanded one, in which `InputBindQuery(lhs, n, args)` resembles an ordinary receive closely
+/// enough that `bind_channel_name` reads `n` as the channel, `args` is discarded, and **no
+/// request send is ever emitted**. The receive then rests forever on a channel nobody sends to —
+/// silently, and with a zero exit code, because resting is what a receive with no partner is
+/// supposed to do.
+///
+/// The grammar had already declared the expansion as the `PForUser` rule's action
+/// (`languages/src/rholang.rs`, `![{ receive::desugar_for_rows(rows, body) }] fold`), but the
+/// `fold` marker routes an action to the logic-relation metadata, not to the WPDA parser's
+/// semantic action — `desugar_for_rows` does not appear in the generated `wpda.rs` at all — so
+/// no expansion reached the term the parser built. Expanding HERE, in the hook every other
+/// surface sugar already goes through, is what puts the expansion on the path into execution
+/// rather than beside it. There is no second implementation: this arm calls the very function
+/// the comparison path calls.
+fn desugar_surface_sugar_node(proc: &Proc) -> Option<Proc> {
     let quote = |p: &Arc<Proc>| Arc::new(Name::NQuote(p.clone()));
     let quote_nil = || Arc::new(Name::NQuote(Arc::new(Proc::PZero)));
     let quote_name =
@@ -4415,6 +4465,18 @@ fn desugar_send_node(proc: &Proc) -> Option<Proc> {
         Proc::PPersistOutputShort2Plus(p, a, bs) => Proc::PPersistOutput(quote(p), list1(a, bs)),
         // Internal `__ppar(…)` constructor exposure: the multiset it denotes.
         Proc::PParInternal(parts) => Proc::PPar(parts.clone()),
+        // `!?` query binds: `for(p <- x!?(a, b)){B}` denotes
+        // `new r in { x!(*r, a, b) | for(p <- r){B} }` — one fresh private return channel per
+        // query bind, all of a `for`'s rows expanded together under one `new`.
+        //
+        // TERMINATION of `enter_proc`'s fixpoint loop: the result is a `PNew`, which this
+        // function does not match, so the loop makes at most one pass here. That holds because
+        // `desugar_for_rows` expands EVERY bind `pfor_user_still_has_query_rows` reports —
+        // both are `receive::as_query_bind` over the same rows, which is why the classifier
+        // exists.
+        Proc::PForUser(rows, body) if pfor_user_still_has_query_rows(rows) => {
+            desugar_for_rows(rows.clone(), body.as_ref())
+        },
         _ => return None,
     })
 }
@@ -4434,7 +4496,7 @@ fn name_pattern_to_proc(name_pat: &Name) -> Proc {
 ///
 /// The arity convention is fixed by the SEND side and this function's only job is to mirror it.
 /// `lower_proc`'s `POutput` arm emits `send_par(chan, vec![payload])` — a send always carries
-/// EXACTLY ONE datum `Par` — and [`desugar_send_node`] encodes the non-scalar arities INTO that one
+/// EXACTLY ONE datum `Par` — and [`desugar_surface_sugar_node`] encodes the non-scalar arities INTO that one
 /// datum as a list:
 ///
 /// | send form   | datum                | matching bind form   | pattern              |

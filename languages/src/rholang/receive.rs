@@ -807,27 +807,109 @@ fn mk_query_send(channel: &Name, ret: &Name, args: &[Proc]) -> Proc {
     crate::rholang::runtime::mk_output(channel, items, false)
 }
 
+/// A `!?` QUERY BIND, decomposed into the three pieces its expansion needs: the receive
+/// pattern, the service channel, and the request arguments.
+///
+/// ## Why this exists rather than two independent matches
+///
+/// The `!?` surface has exactly three spellings, and until 2026-07-28 the expansion covered
+/// two of them while the residue guard [`pfor_user_still_has_query_rows`] covered the same
+/// two — its doc comment claiming a third (`InputBindQuotedQuery`) that neither the guard nor
+/// the rewriter actually handled. `@p <- x!?(…)` therefore stayed inert with nothing to report
+/// it, because the only witness that would have noticed was written from the same incomplete
+/// list.
+///
+/// Routing BOTH the rewriter and the guard through this one classifier makes that class of
+/// divergence unrepresentable:
+///
+/// - a form the guard reports but the rewriter cannot expand would leave residue the lowering
+///   driver's fixpoint loop (`rholang-runtime/src/rholang_ast.rs`, `enter_proc`) re-offers
+///   forever;
+/// - a form the rewriter could expand but the guard does not report is exactly the inert
+///   feature this type was introduced to close.
+///
+/// The lifetime is the classified bind's: nothing is cloned to ask the question, so the guard
+/// stays allocation-free on the lowering path.
+enum QueryBind<'a> {
+    /// `lhs <- n!?(args…)` (`InputBindQuery`). Receive twin: `InputBind(lhs, r)`.
+    Plain {
+        lhs: &'a std::sync::Arc<Name>,
+        channel: &'a Name,
+        args: &'a [Proc],
+    },
+    /// `<- n!?(args…)` (`InputBindEmptyQuery`). Receive twin: `InputBindEmpty(r)`.
+    Empty { channel: &'a Name, args: &'a [Proc] },
+    /// `@pat <- n!?(args…)` (`InputBindQuotedQuery`). Receive twin: `InputBindQuoted(pat, r)`.
+    Quoted {
+        pat: &'a std::sync::Arc<Proc>,
+        channel: &'a Name,
+        args: &'a [Proc],
+    },
+}
+
+/// Classify `bind` as one of the `!?` query surfaces, or `None` for an ordinary bind.
+///
+/// THE single source of truth for "is this a query bind?" — see [`QueryBind`]. The set of arms
+/// here is gated against the grammar itself by `languages/tests/rholang_query_bind_forms.rs`,
+/// which enumerates every `InputBind` rule whose declared syntax carries `!?(` out of the
+/// language metadata and fails if one of them is not covered below.
+fn as_query_bind(bind: &InputBind) -> Option<QueryBind<'_>> {
+    match bind {
+        InputBind::InputBindQuery(lhs, channel, args) => {
+            Some(QueryBind::Plain { lhs, channel: channel.as_ref(), args })
+        },
+        InputBind::InputBindEmptyQuery(channel, args) => {
+            Some(QueryBind::Empty { channel: channel.as_ref(), args })
+        },
+        InputBind::InputBindQuotedQuery(pat, channel, args) => {
+            Some(QueryBind::Quoted { pat, channel: channel.as_ref(), args })
+        },
+        _ => None,
+    }
+}
+
+/// True if `bind` is one of the `!?` query surfaces — i.e. if [`desugar_query_bind`] will
+/// rewrite it. Derived from [`as_query_bind`], so the answer cannot disagree with the rewrite.
+pub fn is_query_bind(bind: &InputBind) -> bool {
+    as_query_bind(bind).is_some()
+}
+
+/// Expand one query bind into `(receive twin, [(private return binder, request send)])`, or
+/// `None` if `bind` is not a query bind.
+///
+/// Returns an OWNED result so the borrow of `bind` ends at the call — which is what lets
+/// [`desugar_query_bind`] hand the original bind back by move in the non-query case.
+fn expand_query_bind(
+    bind: &InputBind,
+    counter: &mut usize,
+) -> Option<(InputBind, Vec<(Binder<String>, Proc)>)> {
+    let query = as_query_bind(bind)?;
+    let (binder, ret_name) = fresh_query_return(counter);
+    let ret = std::sync::Arc::new(ret_name.clone());
+    // Each arm pairs a query surface with the ORDINARY receive surface that has the same
+    // pattern shape, so the expansion changes only WHERE the datum comes from (the private
+    // return channel) and never HOW it is matched.
+    let (recv_bind, channel, args) = match query {
+        QueryBind::Plain { lhs, channel, args } => {
+            (InputBind::InputBind(lhs.clone(), ret), channel, args)
+        },
+        QueryBind::Empty { channel, args } => (InputBind::InputBindEmpty(ret), channel, args),
+        QueryBind::Quoted { pat, channel, args } => {
+            (InputBind::InputBindQuoted(pat.clone(), ret), channel, args)
+        },
+    };
+    Some((recv_bind, vec![(binder, mk_query_send(channel, &ret_name, args))]))
+}
+
 fn desugar_query_bind(
     bind: InputBind,
     counter: &mut usize,
 ) -> (InputBind, Vec<(Binder<String>, Proc)>) {
     // `InputBind` implements `Drop` (generated), so we cannot move fields out by
-    // destructuring; match by reference and clone the captured fields instead.
-    match &bind {
-        InputBind::InputBindQuery(lhs, channel, args) => {
-            let (binder, ret_name) = fresh_query_return(counter);
-            let recv_bind =
-                InputBind::InputBind(lhs.clone(), std::sync::Arc::new(ret_name.clone()));
-            let send = mk_query_send(channel.as_ref(), &ret_name, args);
-            (recv_bind, vec![(binder, send)])
-        },
-        InputBind::InputBindEmptyQuery(channel, args) => {
-            let (binder, ret_name) = fresh_query_return(counter);
-            let recv_bind = InputBind::InputBindEmpty(std::sync::Arc::new(ret_name.clone()));
-            let send = mk_query_send(channel.as_ref(), &ret_name, args);
-            (recv_bind, vec![(binder, send)])
-        },
-        _ => (bind, vec![]),
+    // destructuring; classify by reference and clone the captured fields instead.
+    match expand_query_bind(&bind, counter) {
+        Some(expanded) => expanded,
+        None => (bind, vec![]),
     }
 }
 
@@ -875,41 +957,34 @@ fn desugar_row_query_binds(
     }
 }
 
-/// True if any `ForRow` still uses `InputBindQuery` / `InputBindQuotedQuery` (parse-time
-/// fold should have removed these; this supports a `fold_proc` idempotent pass).
+/// The `InputBind`s a `ForRow` carries, as `(head, tail)` in surface order.
+///
+/// The λ-calculus `ForRow` variants (`FVar` / `Lam*` / `Apply*` / …, auto-injected per
+/// category) carry no binds and yield `(None, &[])`. Sharing this accessor between the residue
+/// guard and the rewriter keeps them agreeing about WHICH rows have binds, the way
+/// [`as_query_bind`] keeps them agreeing about which binds are queries.
+fn for_row_binds(row: &ForRow) -> (Option<&InputBind>, &[InputBind]) {
+    match row {
+        ForRow::ForRowSingleNoWhere(b) | ForRow::ForRowSingleWhere(b, _) => (Some(b.as_ref()), &[]),
+        ForRow::ForRowNoWhere(b, bs) | ForRow::ForRowWhere(b, bs, _) => {
+            (Some(b.as_ref()), bs.as_slice())
+        },
+        _ => (None, &[]),
+    }
+}
+
+/// True if any `ForRow` still carries an unexpanded `!?` query bind — `InputBindQuery`,
+/// `InputBindEmptyQuery`, or `InputBindQuotedQuery`.
+///
+/// The verdict is [`is_query_bind`] over every bind of every row, so it reports exactly the
+/// rows [`desugar_for_rows`] will rewrite: it cannot under-report (which is how
+/// `@p <- x!?(…)` stayed inert — the previous hand-written matcher named
+/// `InputBindQuotedQuery` in its doc comment and omitted it from all four of its arms) and it
+/// cannot over-report (which would spin the lowering driver's expansion fixpoint).
 pub fn pfor_user_still_has_query_rows(rows: &[ForRow]) -> bool {
-    rows.iter().any(|row| match row {
-        ForRow::ForRowSingleNoWhere(b) => matches!(
-            b.as_ref(),
-            InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
-        ),
-        ForRow::ForRowSingleWhere(b, _) => matches!(
-            b.as_ref(),
-            InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
-        ),
-        ForRow::ForRowNoWhere(b, bs) => {
-            matches!(
-                b.as_ref(),
-                InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
-            ) || bs.iter().any(|ib| {
-                matches!(
-                    ib,
-                    InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
-                )
-            })
-        },
-        ForRow::ForRowWhere(b, bs, _) => {
-            matches!(
-                b.as_ref(),
-                InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
-            ) || bs.iter().any(|ib| {
-                matches!(
-                    ib,
-                    InputBind::InputBindQuery(_, _, _) | InputBind::InputBindEmptyQuery(_, _)
-                )
-            })
-        },
-        _ => false,
+    rows.iter().any(|row| {
+        let (head, tail) = for_row_binds(row);
+        head.is_some_and(is_query_bind) || tail.iter().any(is_query_bind)
     })
 }
 

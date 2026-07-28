@@ -43,7 +43,7 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
     // (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, …) arrive unfolded. Desugar the HEAD node to its
     // canonical channel-first form first — a pure structural rearrangement (the same constructor
     // rewrite the rule's `fold` body performs, no value computation) — then lower that.
-    if let Some(desugared) = desugar_send_node(proc) {
+    if let Some(desugared) = desugar_surface_sugar_node(proc) {
         return lower_proc(&desugared, env);
     }
     match proc {
@@ -1472,7 +1472,13 @@ fn lower_pfor_user(
     // The continuation is lowered under the extended env: a nested row recurses; otherwise this is
     // the innermost user body, where held folds are lifted into Dovetail trampolines.
     let lowered_body = match &continuation {
-        Proc::PForUser(rest_rows, rest_body) => {
+        // The nesting shortcut goes straight to `lower_pfor_user`, bypassing `lower_proc` and
+        // with it the surface-sugar expansion, so it is valid only when the inner `for` IS
+        // already a receive. A `!?` query bind denotes a `new`-scoped `send | receive`; it
+        // takes the ordinary body route and is expanded at `lower_proc`'s head. This mirrors
+        // the driver's guard in `schedule_for_body` — the two must agree here or the
+        // differential is comparing two different languages.
+        Proc::PForUser(rest_rows, rest_body) if !pfor_user_still_has_query_rows(rest_rows) => {
             lower_pfor_user(rest_rows, rest_body.as_ref(), &extended_env)?
         },
         other => lower_body_lifting_folds(other, &extended_env)?,
@@ -1674,7 +1680,12 @@ fn lower_lookahead_operand(
     operand: &Proc,
     env: &BoundEnv,
 ) -> Result<(Par, Par), RholangAstLowerError> {
-    if let Some(desugared) = desugar_send_node(operand) {
+    // A receive is diagnosed BEFORE expansion — see the driver's `lookahead_operand`, whose
+    // error precedence this twin exists to check.
+    if matches!(operand, Proc::PForUser(..)) {
+        return Err(RholangAstLowerError::LookaheadOperandNotASend("a receive"));
+    }
+    if let Some(desugared) = desugar_surface_sugar_node(operand) {
         return lower_lookahead_operand(&desugared, env);
     }
     match operand {
@@ -1825,7 +1836,7 @@ mod differential {
     ///
     /// Sources are Rholang SURFACE, parsed by the same WPDA parser production uses, so the
     /// corpus exercises the raw parse-tree shapes (`POutputShort`, `POutput2Plus`,
-    /// `PParInternal`, …) that `desugar_send_node` rewrites — the arms a hand-built `Proc`
+    /// `PParInternal`, …) that `desugar_surface_sugar_node` rewrites — the arms a hand-built `Proc`
     /// corpus would never reach.
     const CORPUS: &[(&str, &str, Expect)] = &[
         // ── leaves ──────────────────────────────────────────────────────────────────────────
@@ -1931,6 +1942,67 @@ mod differential {
         (
             "for(x <- @\"c\") { for(y <- @\"d\") { @\"OUT\"!(*x) } }",
             "PForUser, body is itself a receive",
+            Expect::Lowers,
+        ),
+        // `!?` QUERY BINDS — expanded by `desugar_surface_sugar_node` into
+        // `new r in { svc!(*r, args…) | for(pat <- r){body} }`. The driver and this oracle
+        // expand at DIFFERENT places (the driver's `enter_proc` head loop; the oracle's
+        // `lower_proc` head), and both must additionally decline the nested-body shortcut for a
+        // query-carrying inner `for` — three chances to disagree, which is what these rows
+        // check. All three surfaces appear, in both the row-head and `&`-join-tail positions.
+        (
+            "for(x <- @\"c\"!?(1)) { @\"OUT\"!(*x) }",
+            "InputBindQuery ▸ query-bind expansion",
+            Expect::Lowers,
+        ),
+        (
+            "for(@x <- @\"c\"!?(1)) { @\"OUT\"!(x) }",
+            "InputBindQuotedQuery ▸ query-bind expansion",
+            Expect::Lowers,
+        ),
+        (
+            "for(<- @\"c\"!?(1)) { @\"OUT\"!(1) }",
+            "InputBindEmptyQuery ▸ query-bind expansion",
+            Expect::Lowers,
+        ),
+        (
+            "for(x <- @\"c\"!?()) { @\"OUT\"!(*x) }",
+            "InputBindQuery ▸ zero-argument (MONADIC request arity)",
+            Expect::Lowers,
+        ),
+        (
+            "for(x <- @\"c\"!?(1, 2, 3)) { @\"OUT\"!(*x) }",
+            "InputBindQuery ▸ multi-argument request",
+            Expect::Lowers,
+        ),
+        (
+            "for(x <- @\"a\" & y <- @\"b\"!?(1)) { @\"OUT\"!(*x) }",
+            "query bind in the `&`-join TAIL (an ordinary head must not mask it)",
+            Expect::Lowers,
+        ),
+        (
+            "for(x <- @\"a\"!?(1) & y <- @\"b\"!?(2)) { @\"OUT\"!(*x) }",
+            "two query binds in one row ▸ two private return channels under one `new`",
+            Expect::Lowers,
+        ),
+        (
+            "for(x <- @\"a\"!?(1); y <- @\"b\") { @\"OUT\"!(*x) }",
+            "query bind in the first of two rows (the continuation nest)",
+            Expect::Lowers,
+        ),
+        (
+            "for(x <- @\"c\") { for(y <- @\"d\"!?(1)) { @\"OUT\"!(*y) } }",
+            "query bind in a receive BODY ▸ the nested-`for` shortcut must decline it",
+            Expect::Lowers,
+        ),
+        (
+            "new k in { for(x <- @\"c\"!?(1)) { k!(*x) } }",
+            "query bind under an outer `new` (binder-level threading)",
+            Expect::Lowers,
+        ),
+        (
+            "for(x <- @\"c\"!?(1) where 1 < 2) { @\"OUT\"!(*x) }",
+            "query bind with a `where` guard",
             Expect::Lowers,
         ),
         (

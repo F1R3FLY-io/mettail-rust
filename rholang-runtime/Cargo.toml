@@ -843,6 +843,18 @@ name = "rholang_guard_lowering"
 path = "tests/rholang_guard_lowering.rs"
 required-features = ["rholang-runtime"]
 
+# The `!?` QUERY BIND end to end. `for(p <- svc!?(a…)){B}` is request/response sugar for
+# `new r in { svc!(*r, a…) | for(p <- r){B} }`; until 2026-07-28 the expansion was computed only
+# as a `term_eq` comparison key and thrown away, so the running program emitted NO request send
+# and every query rested forever — silently, with exit code 0. Every program in this suite
+# carries its own positive control in the same run, every responder relays on the private return
+# channel rather than publishing directly, and the covered set of `!?` surfaces is read out of
+# the language metadata so a new grammar rule cannot be added without covering it.
+[[test]]
+name = "rholang_query_bind"
+path = "tests/rholang_query_bind.rs"
+required-features = ["rholang-runtime"]
+
 # The same matrix through the `rholang` BINARY. A library test cannot catch a regression of the
 # binary's PARSE ENTRY (`parse_via_wpda`, never `Proc::parse` — whose display round-trip is not
 # term-preserving for a projection operand), because it never goes through it.
