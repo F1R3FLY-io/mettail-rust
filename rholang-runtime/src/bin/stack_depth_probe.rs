@@ -50,8 +50,8 @@
 use std::sync::Arc;
 
 use mettail_languages::rholang::{Int, List, Proc};
-use mettail_runtime::{Binder, Scope};
 use mettail_rholang_runtime::rholang_ast::{lower_proc_in_env, BoundEnv};
+use mettail_runtime::{Binder, Scope};
 use models::rust::rholang::par_children::dismantle;
 
 // ---------------------------------------------------------------------------
@@ -268,10 +268,7 @@ fn render_body(depth: usize) {
     let par = lower_proc_in_env(&term, &env).expect("stack_depth_probe: lowering failed");
     let rendered = mettail_rholang_runtime::observation::render_par_text(&par);
     // Consume the rendering so it cannot be optimized away.
-    assert!(
-        !rendered.is_empty(),
-        "stack_depth_probe: the renderer produced nothing"
-    );
+    assert!(!rendered.is_empty(), "stack_depth_probe: the renderer produced nothing");
     dismantle(par);
     drop(term);
 }

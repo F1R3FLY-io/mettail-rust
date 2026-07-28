@@ -108,7 +108,6 @@
 //! that family to `rhoapi::Par` — had not.
 #![cfg(feature = "rholang-runtime")]
 
-
 // ---------------------------------------------------------------------------
 // the probe mechanism
 //
@@ -155,10 +154,7 @@ fn runs_within(stack: usize, depth: usize, subject_name: &str) -> bool {
             if libc::setrlimit(libc::RLIMIT_STACK, &stack_limit) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            let no_core = libc::rlimit {
-                rlim_cur: 0,
-                rlim_max: 0,
-            };
+            let no_core = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
             if libc::setrlimit(libc::RLIMIT_CORE, &no_core) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
@@ -316,7 +312,11 @@ fn assert_no_slope_over_baseline(name: &str, baseline: &str, lo_param: usize, hi
         lo / 1024,
         hi / 1024
     );
-    println!("  {name} − {baseline}: O(1) — {} KiB at {lo_param}, {} KiB at {hi_param}", lo / 1024, hi / 1024);
+    println!(
+        "  {name} − {baseline}: O(1) — {} KiB at {lo_param}, {} KiB at {hi_param}",
+        lo / 1024,
+        hi / 1024
+    );
 }
 
 /// **Tripwire for traversals not yet converted.** Bisects the minimum stack at
@@ -392,13 +392,8 @@ fn ceiling(debug: usize, release: usize) -> usize {
 /// two traversals measures neither.
 #[test]
 fn lowering_is_depth_independent() {
-    let converted_depth: &[&str] = &[
-        "lower_leak",
-        "lower_depth",
-        "lower_add",
-        "lower_par",
-        "lower_neg",
-    ];
+    let converted_depth: &[&str] =
+        &["lower_leak", "lower_depth", "lower_add", "lower_par", "lower_neg"];
     let converted_width: &[&str] = &["lower_width"];
 
     for name in converted_depth {
