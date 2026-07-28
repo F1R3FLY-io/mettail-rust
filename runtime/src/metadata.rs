@@ -161,6 +161,63 @@ pub trait LanguageMetadata: 'static + Send + Sync {
         &[]
     }
 
+    /// ★ The LOWERING DISPOSITION INVENTORY: one entry per declared construct
+    /// (equation, rewrite, fold) that the generated runtime lowering considered.
+    ///
+    /// Before this existed, lowering answered with a `Vec<TokenStream>` of rules
+    /// plus a `Vec<String>` of excuses, and the excuse vector was dropped at four
+    /// of its five consumption sites. With no disposition record, three distinct
+    /// outcomes — *lowered here*, *lowered by another lane*, *lowered nowhere* —
+    /// were indistinguishable to every downstream reader, including every test.
+    /// A construct that silently vanished looked exactly like a construct another
+    /// lane covered.
+    ///
+    /// [`LoweringDispositionDef`] makes the three outcomes four and makes them
+    /// distinguishable:
+    ///
+    /// | outcome | meaning |
+    /// |---|---|
+    /// | [`Delivered`](LoweringOutcomeKind::Delivered) | lowered by the reporting lane; `detail` is the emitted rule label |
+    /// | [`DeliveredElsewhere`](LoweringOutcomeKind::DeliveredElsewhere) | lowered by another lane, named in `lane` |
+    /// | [`Suppressed`](LoweringOutcomeKind::Suppressed) | deliberately not lowered, for the recorded reason |
+    /// | [`Declined`](LoweringOutcomeKind::Declined) | lowered NOWHERE — `detail` says why |
+    ///
+    /// The distinction between the middle two and the last is the whole point: a
+    /// congruence rewrite is `DeliveredElsewhere { lane: EGraphCongruenceClosure }`
+    /// and is NOT a defect, while a rewrite whose LHS never lowered is `Declined`
+    /// and is. A boolean cannot express that difference; this can.
+    ///
+    /// Defaults to the empty slice so hand-written `LanguageMetadata` impls remain
+    /// valid.
+    fn lowering_dispositions(&self) -> &'static [LoweringDispositionDef] {
+        &[]
+    }
+
+    /// The subset of [`Self::lowering_dispositions`] that is lowered NOWHERE.
+    ///
+    /// This is the assertable declination set: a golden test pins it per language,
+    /// so an addition — a construct that newly stops being lowered — turns the
+    /// suite red naming the construct.
+    fn declined_lowerings(&self) -> Vec<&'static LoweringDispositionDef> {
+        self.lowering_dispositions()
+            .iter()
+            .filter(|disposition| disposition.is_declined())
+            .collect()
+    }
+
+    /// The subset of [`Self::declined_lowerings`] whose construct the GENERATOR
+    /// injected rather than the language author writing it.
+    ///
+    /// A declination here is categorically different from accepted debt: the
+    /// generator emitted a construct its own lowering cannot consume, which is a
+    /// self-inflicted wound rather than an unimplemented feature.
+    fn generator_bug_lowerings(&self) -> Vec<&'static LoweringDispositionDef> {
+        self.lowering_dispositions()
+            .iter()
+            .filter(|disposition| disposition.is_generator_bug())
+            .collect()
+    }
+
     /// Get the primary type (first type in the language)
     fn primary_type(&self) -> &'static TypeDef {
         self.types()
@@ -339,6 +396,215 @@ impl RewriteDef {
     /// Check if this is a base rewrite (no premise)
     pub fn is_base(&self) -> bool {
         self.premise.is_none()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lowering dispositions
+//
+// The vocabulary a generated language uses to say what happened to each declared
+// construct when the runtime lowering ran. See
+// [`LanguageMetadata::lowering_dispositions`] for the motivation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The lane that covers a construct the reporting lane did not lower itself.
+///
+/// ★ The four `Rho*` variants are the SAME four the Rho backend already names in
+/// `mettail_rholang_codegen::backend::RhoRejectedRuleDispositionKind`; that enum
+/// maps into this one totally through its `lowering_lane` method, and a test in
+/// `rholang-codegen` pins the correspondence. The remaining variants are the
+/// Dovetail-side lanes that vocabulary lacked — the lanes that were, until this
+/// type existed, expressible only as *silence*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LoweringLane {
+    /// The e-graph congruence closure. A congruence rewrite `S ~> T ⊢ C[S] ~> C[T]`
+    /// needs no lowered rule of its own: after the premise-free kernel rewrite has
+    /// merged the child e-class, congruence closure propagates the merge through
+    /// every enclosing e-node. Emitting an explicit rule would duplicate it.
+    EGraphCongruenceClosure,
+    /// The typed native-rule dispatcher's substitution arm — a β-style rewrite whose
+    /// contractum a generated `substitute_*`/`multi_substitute_*` computes.
+    TypedNativeSubstitution,
+    /// The typed native-rule dispatcher's communication arm — a single-receive
+    /// COMM rewrite whose non-linear AC LHS binds over a binder element.
+    TypedNativeComm,
+    /// The typed native-rule dispatcher's structural associative-commutative arm.
+    TypedNativeStructuralAc,
+    /// The typed native-rule dispatcher's depth-2 nested structural-AC arm.
+    TypedNativeNestedStructuralAc,
+    /// The typed native-rule dispatcher's fold arm — a `![…]` body run natively.
+    TypedNativeFold,
+    /// The host-side native evaluator reached before structural saturation
+    /// (`complete_native_dovetail_report_for_language`).
+    HostNativeEvaluation,
+    /// The generated binder-congruence normal form, which floats binders outward
+    /// before the in-engine reduction instead of lowering the float equations.
+    BinderCongruenceFloat,
+    /// Rho: a verified native system process installed as Rho-machine work.
+    RhoNativeSystemProcess,
+    /// Rho: a verified host-side semantic-predicate handler.
+    RhoNativeHandler,
+    /// Rho: a verified external contract supplied by the host runtime.
+    RhoExternalContract,
+    /// Rho: a non-scalar Rho AST contract generated by another lowering.
+    RhoAstContract,
+}
+
+impl LoweringLane {
+    /// The stable, assertable spelling of this lane. Golden tests compare against
+    /// these strings, so they are part of the type's contract.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::EGraphCongruenceClosure => "EGraphCongruenceClosure",
+            Self::TypedNativeSubstitution => "TypedNativeSubstitution",
+            Self::TypedNativeComm => "TypedNativeComm",
+            Self::TypedNativeStructuralAc => "TypedNativeStructuralAc",
+            Self::TypedNativeNestedStructuralAc => "TypedNativeNestedStructuralAc",
+            Self::TypedNativeFold => "TypedNativeFold",
+            Self::HostNativeEvaluation => "HostNativeEvaluation",
+            Self::BinderCongruenceFloat => "BinderCongruenceFloat",
+            Self::RhoNativeSystemProcess => "RhoNativeSystemProcess",
+            Self::RhoNativeHandler => "RhoNativeHandler",
+            Self::RhoExternalContract => "RhoExternalContract",
+            Self::RhoAstContract => "RhoAstContract",
+        }
+    }
+}
+
+/// What happened to a declared construct under lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LoweringOutcomeKind {
+    /// Lowered by the reporting lane. `detail` is the emitted rule label.
+    Delivered,
+    /// Lowered by the lane named in [`LoweringDispositionDef::lane`].
+    DeliveredElsewhere,
+    /// Deliberately not lowered on any lane. `detail` is the recorded decision.
+    Suppressed,
+    /// Lowered NOWHERE. `detail` is why lowering refused it.
+    Declined,
+}
+
+impl LoweringOutcomeKind {
+    /// The stable, assertable spelling of this outcome.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Delivered => "Delivered",
+            Self::DeliveredElsewhere => "DeliveredElsewhere",
+            Self::Suppressed => "Suppressed",
+            Self::Declined => "Declined",
+        }
+    }
+}
+
+/// The class of declared construct a disposition describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LoweredConstructKind {
+    /// An `equations { }` entry. Each orientation (forward and reverse) gets its
+    /// own disposition, because the two orientations can differ.
+    Equation,
+    /// A `rewrites { }` entry.
+    Rewrite,
+    /// A `terms { }` entry carrying `![…] fold`.
+    Fold,
+}
+
+impl LoweredConstructKind {
+    /// The lower-case noun used when rendering a construct
+    /// (`equation \`par_comm\``). This spelling is load-bearing: the legacy
+    /// runtime diagnostic string is `"{noun} `{construct}` {detail}"`.
+    pub const fn noun(&self) -> &'static str {
+        match self {
+            Self::Equation => "equation",
+            Self::Rewrite => "rewrite",
+            Self::Fold => "fold",
+        }
+    }
+}
+
+/// Who wrote the construct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LoweredConstructOrigin {
+    /// Written by the language author inside `language! { }`.
+    Declared,
+    /// Injected by the generator (`mettail_ast::auto_inject`).
+    ///
+    /// ★ A [`Declined`](LoweringOutcomeKind::Declined) disposition on an
+    /// auto-injected construct is categorically different from accepted debt: the
+    /// generator emitted a construct its own lowering cannot consume. It is a
+    /// generator bug, and [`LoweringDispositionDef::is_generator_bug`] says so.
+    AutoInjected,
+}
+
+impl LoweredConstructOrigin {
+    /// The stable, assertable spelling of this origin.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Declared => "Declared",
+            Self::AutoInjected => "AutoInjected",
+        }
+    }
+}
+
+/// One construct's disposition under the generated runtime lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoweringDispositionDef {
+    /// Which class of construct this is.
+    pub construct_kind: LoweredConstructKind,
+
+    /// The construct's declared name (an equation/rewrite name, or a fold's
+    /// constructor label). Not qualified by the language.
+    pub construct: &'static str,
+
+    /// Whether the language author wrote it or the generator injected it.
+    pub origin: LoweredConstructOrigin,
+
+    /// What happened.
+    pub outcome: LoweringOutcomeKind,
+
+    /// `Delivered` → the emitted rule label. `Suppressed`/`Declined` → the reason.
+    /// `DeliveredElsewhere` → a short note; the lane itself is in [`Self::lane`].
+    pub detail: &'static str,
+
+    /// The covering lane, present exactly when the outcome is
+    /// [`DeliveredElsewhere`](LoweringOutcomeKind::DeliveredElsewhere).
+    pub lane: Option<LoweringLane>,
+}
+
+impl LoweringDispositionDef {
+    /// Whether this construct is lowered nowhere.
+    pub const fn is_declined(&self) -> bool {
+        matches!(self.outcome, LoweringOutcomeKind::Declined)
+    }
+
+    /// Whether this is a declination of a construct the GENERATOR injected — a
+    /// generator bug rather than accepted debt.
+    pub const fn is_generator_bug(&self) -> bool {
+        self.is_declined() && matches!(self.origin, LoweredConstructOrigin::AutoInjected)
+    }
+
+    /// The construct rendered as it appears in diagnostics: ``equation `foo` ``.
+    pub fn qualified_construct(&self) -> String {
+        format!("{} `{}`", self.construct_kind.noun(), self.construct)
+    }
+
+    /// A one-line, stable rendering used by golden tests and the REPL.
+    ///
+    /// `equation `foo` :: Declined :: has side conditions`
+    pub fn summary(&self) -> String {
+        match self.lane {
+            Some(lane) => format!(
+                "{} :: {} :: {}",
+                self.qualified_construct(),
+                self.outcome.as_str(),
+                lane.as_str(),
+            ),
+            None => format!(
+                "{} :: {} :: {}",
+                self.qualified_construct(),
+                self.outcome.as_str(),
+                self.detail,
+            ),
+        }
     }
 }
 

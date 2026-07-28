@@ -149,9 +149,21 @@ pub fn language(input: TokenStream) -> TokenStream {
     let freshness_fns = generate_freshness_functions(&language_def);
     stage!("generate_freshness_functions.done");
 
+    stage!("lowering_disposition_inventory.start");
+    // Task #94: derive the LOWERING-DISPOSITION INVENTORY once, here, and hand it to the
+    // metadata generator. One entry per declared equation orientation, rewrite, and fold,
+    // recording whether the runtime lowering delivered it, delegated it to a named lane,
+    // suppressed it by an explicit decision, or declined it outright. Deriving it at the top
+    // level — rather than inside whichever report generator happens to run — is what makes the
+    // published inventory and the lowering that produced it the same computation.
+    let lowering_dispositions =
+        gen::runtime::dovetail_report::lowering_disposition_inventory(&language_def);
+    stage!("lowering_disposition_inventory.done");
+
     stage!("generate_metadata.start");
     // Generate metadata for REPL introspection
-    let metadata_code = generate_metadata(&language_def, &definition_source_str);
+    let metadata_code =
+        generate_metadata(&language_def, &definition_source_str, &lowering_dispositions);
     stage!("generate_metadata.done");
 
     stage!("generate_language_impl.start");

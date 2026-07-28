@@ -7479,6 +7479,91 @@ fn is_binder_float_equation(def: &LanguageDef, equation: &Equation, binder_label
         || is_float_across_constructor_equation(def, equation, binder_label)
 }
 
+/// Task #94: how the BINDER-FLOAT lane disposes of one declared equation.
+///
+/// The Dovetail structural lowering cannot lower a binder-shaped equation — its LHS carries a
+/// `Lambda` metapattern, which `pattern_to_dovetail` fails closed on. Until this classifier
+/// existed, every such equation looked identical from outside: an entry in a dropped
+/// `Vec<String>`. But the three cases are not the same thing at all, and conflating them is
+/// exactly the defect Task #94 names:
+///
+///   * [`Self::FloatAcrossConstructor`] — the generated binder-congruence normal form
+///     (`macros/src/gen/runtime/binder_congruence.rs`) DISCHARGES this equation by floating the
+///     binder outward before reduction. It is delivered, just on another lane.
+///   * [`Self::BinderCommutation`] — `NewComm`. In-Rho reordering is DELIBERATELY omitted (the
+///     user's Q-NC decision; see [`float_satellite_table`]): the host's α-canonical-key
+///     minimization is not Match-expressible, and redex exposure is NewComm-invariant, so the
+///     float normal form is unique UP TO the NewComm run permutation. It is suppressed by
+///     decision, not declined by omission.
+///   * [`Self::NotFloatFamily`] — genuinely nothing here covers it.
+///
+/// Total and side-effect-free; reads the SAME recognizer walk `equations_boundary_canonicalizable`
+/// admits with, so it can never claim coverage the float handler does not provide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EquationFloatDisposition {
+    /// Not a recognized member of the binder-float family (or the language has no generated
+    /// float handler at all).
+    NotFloatFamily,
+    /// Family (ii): FLOAT-ACROSS-CONSTRUCTOR — discharged by the generated float handler.
+    FloatAcrossConstructor,
+    /// Family (i): BINDER-BINDER COMMUTATION (`NewComm`) — deliberately derives no satellite.
+    BinderCommutation,
+}
+
+/// Classify one declared equation against the binder-float lane
+/// ([`EquationFloatDisposition`]).
+///
+/// ★ FAILS CLOSED IN THREE PLACES, because a wrong answer here is a *false claim of coverage*
+/// — the one failure mode a disposition record must never have:
+///
+///   1. a language with no generated float handler ([`language_has_float_handler`]) yields
+///      `NotFloatFamily` for every equation;
+///   2. so does a language with no surface single-binder constructor
+///      ([`float_surface_binder_label`]);
+///   3. ★ and a recognized float equation whose classification is NOT PRESENT in the emitted
+///      [`float_satellite_table`] also yields `NotFloatFamily`.
+///
+/// Point 3 is not paranoia. `float_satellite_table` DEDUPLICATES hoists by constructor, so two
+/// equations that float across the same constructor at DIFFERENT argument positions derive one
+/// satellite between them, and the generated handler therefore floats only one of them. Merely
+/// *recognizing* the second as float-shaped would attribute it to a lane that does not carry
+/// it. Requiring the exact `(constructor, float_index, arity)` triple — or, for the collection
+/// form, the exact bag operator — to appear in the emitted table ties the claim to the arm that
+/// actually exists.
+pub fn classify_equation_float_disposition(
+    def: &LanguageDef,
+    equation: &Equation,
+) -> EquationFloatDisposition {
+    if !language_has_float_handler(def) {
+        return EquationFloatDisposition::NotFloatFamily;
+    }
+    let Some(binder_label) = float_surface_binder_label(def) else {
+        return EquationFloatDisposition::NotFloatFamily;
+    };
+    if is_binder_commutation_equation(equation, &binder_label) {
+        return EquationFloatDisposition::BinderCommutation;
+    }
+    let Some(classification) =
+        classify_float_across_constructor_equation(def, equation, &binder_label)
+    else {
+        return EquationFloatDisposition::NotFloatFamily;
+    };
+    let table = float_satellite_table(def);
+    let emitted = match &classification {
+        FloatAcrossClassification::Prefix { constructor, float_index, arity } => {
+            table.hoist.iter().any(|(label, index, count)| {
+                label == constructor && index == float_index && count == arity
+            })
+        },
+        FloatAcrossClassification::Collection { op } => table.merge_ops.contains(op),
+    };
+    if emitted {
+        EquationFloatDisposition::FloatAcrossConstructor
+    } else {
+        EquationFloatDisposition::NotFloatFamily
+    }
+}
+
 /// Family (i): BINDER-BINDER COMMUTATION — both sides the single surface binder nested over
 /// itself, same body variable, swapped binders, premise-free (`NewComm` = C-G (Struct Res Res)).
 fn is_binder_commutation_equation(equation: &Equation, binder_label: &str) -> bool {

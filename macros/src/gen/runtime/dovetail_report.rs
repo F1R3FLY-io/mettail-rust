@@ -15,7 +15,9 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Ident, LitStr};
 
+use crate::gen::runtime::disposition::{LoweringDisposition, LoweringOutcome};
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use mettail_runtime::{LoweredConstructKind, LoweredConstructOrigin, LoweringLane};
 
 pub(crate) mod ac;
 pub(crate) mod op_enum;
@@ -1469,23 +1471,49 @@ fn premise_supported(premise: &Premise) -> bool {
     }
 }
 
+/// The disposition-recording lowering of ONE declared equation.
+///
+/// An equation lowers to up to TWO structural rules — a forward orientation and a reverse one
+/// — and the two can fare differently, so each gets its own disposition. Every branch below
+/// records one: the old code recorded a `String` on three of the six and recorded *nothing* on
+/// the other three, which is precisely how an equation could stop being lowered without any
+/// reader being able to tell.
+///
+/// The `Ok(_) => { … }` arms are the interesting ones. They are reached when the pattern lowers
+/// perfectly well but the side is a bare metavariable, in which case that orientation is
+/// deliberately not emitted — a rule `?x ⟶ f(?x)` matches every e-class and would rewrite the
+/// whole e-graph. That is a legitimate decision, so it is [`LoweringOutcome::Suppressed`] rather
+/// than [`LoweringOutcome::Declined`]; but it was previously invisible, and the OTHER
+/// orientation may well have been declined, which is how an equation could vanish entirely
+/// while every recorded excuse mentioned only one of its two halves.
 fn lower_equation(
     language: &LanguageDef,
     eq: &Equation,
     enum_id: Option<&Ident>,
-) -> (Vec<TokenStream>, Vec<String>) {
+) -> (Vec<TokenStream>, Vec<LoweringDisposition>) {
     let mut out = Vec::new();
-    let mut unsupported = Vec::new();
+    let mut dispositions = Vec::new();
+    let declined = |reason: String| {
+        LoweringDisposition::declined(
+            LoweredConstructKind::Equation,
+            eq.name.to_string(),
+            LoweredConstructOrigin::Declared,
+            reason,
+            true,
+        )
+    };
     if !eq.premises.iter().all(premise_supported) {
-        unsupported.push(format!("equation `{}` has side conditions", eq.name));
-        return (out, unsupported);
+        // Both orientations die together: the premise is a property of the equation.
+        dispositions.push(declined("has side conditions".to_string()));
+        return (out, dispositions);
     }
 
     match pattern_to_dovetail(language, &eq.left, enum_id) {
         Ok(left) if !eq.left.is_just_variable() => {
             match pattern_to_dovetail(language, &eq.right, enum_id) {
                 Ok(right) => {
-                    let label = lit(&format!("{}::equation::{}::forward", language.name, eq.name));
+                    let label_text = format!("{}::equation::{}::forward", language.name, eq.name);
+                    let label = lit(&label_text);
                     out.push(quote! {
                         ::dovetail::rules::RewriteRule {
                             lhs: #left,
@@ -1493,19 +1521,32 @@ fn lower_equation(
                             label: Some(#label.to_string()),
                         }
                     });
+                    dispositions.push(LoweringDisposition::delivered(
+                        LoweredConstructKind::Equation,
+                        eq.name.to_string(),
+                        LoweredConstructOrigin::Declared,
+                        label_text,
+                    ));
                 },
-                Err(reason) => unsupported.push(format!("equation `{}` RHS: {reason}", eq.name)),
+                Err(reason) => dispositions.push(declined(format!("RHS: {reason}"))),
             }
         },
-        Ok(_) => {},
-        Err(reason) => unsupported.push(format!("equation `{}` LHS: {reason}", eq.name)),
+        Ok(_) => dispositions.push(LoweringDisposition::suppressed(
+            LoweredConstructKind::Equation,
+            eq.name.to_string(),
+            LoweredConstructOrigin::Declared,
+            "forward orientation elided: the LHS is a bare metavariable, so the rule would \
+             match every e-class",
+        )),
+        Err(reason) => dispositions.push(declined(format!("LHS: {reason}"))),
     }
 
     match pattern_to_dovetail(language, &eq.right, enum_id) {
         Ok(right) if !eq.right.is_just_variable() => {
             match pattern_to_dovetail(language, &eq.left, enum_id) {
                 Ok(left) => {
-                    let label = lit(&format!("{}::equation::{}::reverse", language.name, eq.name));
+                    let label_text = format!("{}::equation::{}::reverse", language.name, eq.name);
+                    let label = lit(&label_text);
                     out.push(quote! {
                         ::dovetail::rules::RewriteRule {
                             lhs: #right,
@@ -1513,32 +1554,84 @@ fn lower_equation(
                             label: Some(#label.to_string()),
                         }
                     });
+                    dispositions.push(LoweringDisposition::delivered(
+                        LoweredConstructKind::Equation,
+                        eq.name.to_string(),
+                        LoweredConstructOrigin::Declared,
+                        label_text,
+                    ));
                 },
-                Err(reason) => {
-                    unsupported.push(format!("equation `{}` reverse RHS: {reason}", eq.name))
-                },
+                Err(reason) => dispositions.push(declined(format!("reverse RHS: {reason}"))),
             }
         },
-        Ok(_) => {},
-        Err(reason) => unsupported.push(format!("equation `{}` reverse LHS: {reason}", eq.name)),
+        Ok(_) => dispositions.push(LoweringDisposition::suppressed(
+            LoweredConstructKind::Equation,
+            eq.name.to_string(),
+            LoweredConstructOrigin::Declared,
+            "reverse orientation elided: the RHS is a bare metavariable, so the reversed rule \
+             would match every e-class",
+        )),
+        Err(reason) => dispositions.push(declined(format!("reverse LHS: {reason}"))),
     }
 
-    (out, unsupported)
+    (out, dispositions)
 }
 
+/// The disposition-recording lowering of ONE declared rewrite.
+///
+/// ★ THE ANTI-VACUITY POINT OF THE WHOLE MECHANISM LIVES HERE. Five of this function's
+/// early returns used to be `return (Vec::new(), Vec::new())` — no rule, no excuse — and they
+/// are the OVERWHELMING MAJORITY case: for the bundled Rholang, 400 of 461 declared rewrites
+/// leave through the congruence branch alone. Those five returns are correct: another lane
+/// really does cover the rewrite. But because they were spelled the same way as a silent drop,
+/// no test could distinguish "covered elsewhere" from "covered nowhere", and turning silence
+/// into an error would have produced 400 false positives.
+///
+/// Each of the five now returns [`LoweringOutcome::DeliveredElsewhere`] naming the covering
+/// lane, so the distinction is a fact in the generated metadata rather than a comment.
 fn lower_rewrite(
     language: &LanguageDef,
     rw: &RewriteRule,
     enum_id: Option<&Ident>,
-) -> (Vec<TokenStream>, Vec<String>) {
+) -> (Vec<TokenStream>, Vec<LoweringDisposition>) {
+    let origin = if rw.is_auto_injected {
+        LoweredConstructOrigin::AutoInjected
+    } else {
+        LoweredConstructOrigin::Declared
+    };
+    let elsewhere = |lane: LoweringLane, note: &str| {
+        vec![LoweringDisposition::delivered_elsewhere(
+            LoweredConstructKind::Rewrite,
+            rw.name.to_string(),
+            origin,
+            lane,
+            note,
+        )]
+    };
+    let declined = |reason: String| {
+        vec![LoweringDisposition::declined(
+            LoweredConstructKind::Rewrite,
+            rw.name.to_string(),
+            origin,
+            reason,
+            true,
+        )]
+    };
     if !rw.premises.iter().all(premise_supported) {
-        return (Vec::new(), vec![format!("rewrite `{}` has side conditions", rw.name)]);
+        return (Vec::new(), declined("has side conditions".to_string()));
     }
     if rw.is_congruence_rule() {
         // The e-graph congruence closure supplies context closure after the
         // premise-free kernel rewrite has merged the child e-class, so explicit
         // generated congruence rules are not emitted as separate Dovetail data.
-        return (Vec::new(), Vec::new());
+        return (
+            Vec::new(),
+            elsewhere(
+                LoweringLane::EGraphCongruenceClosure,
+                "congruence closure propagates the kernel rewrite's child-e-class merge \
+                 through every enclosing e-node, so an explicit rule would duplicate it",
+            ),
+        );
     }
     // (E1.3) A substitution rewrite is NOT a structural `RewriteRule` — it is lowered as a
     // native rule + dispatcher arm by `typed_report::generate_native_rules_and_dispatch`
@@ -1549,7 +1642,14 @@ fn lower_rewrite(
     // `needs_typed_dovetail_path`. (Gated on `enum_id.is_some()` defensively so the String
     // path's behavior is byte-identical.)
     if enum_id.is_some() && is_substitution_rewrite(language, rw).is_some() {
-        return (Vec::new(), Vec::new());
+        return (
+            Vec::new(),
+            elsewhere(
+                LoweringLane::TypedNativeSubstitution,
+                "lowered as a native rule + dispatcher arm whose contractum a generated \
+                 `substitute_*`/`multi_substitute_*` computes",
+            ),
+        );
     }
     // (A-3) A Comm rewrite is likewise NOT a structural `RewriteRule` — it is lowered as a typed
     // native rule + dispatch arm (`typed_report`), so it emits NOTHING here and adds NOTHING to
@@ -1557,7 +1657,14 @@ fn lower_rewrite(
     // never routes a Comm rewrite (`needs_typed_dovetail_path` routes it typed), so this is
     // defensively byte-identical for the String path.
     if enum_id.is_some() && is_comm_rewrite(language, rw).is_some() {
-        return (Vec::new(), Vec::new());
+        return (
+            Vec::new(),
+            elsewhere(
+                LoweringLane::TypedNativeComm,
+                "lowered as a native rule + dispatch arm: a non-linear AC LHS over a binder \
+                 element whose RHS nests a substitution in an AC bag",
+            ),
+        );
     }
     // (Stage 3d) A structural non-linear AC rewrite (Ambient `OpenRule`) is likewise NOT a structural
     // `RewriteRule` — it is lowered as a typed native rule + dispatch arm (`typed_report`), so it
@@ -1565,7 +1672,14 @@ fn lower_rewrite(
     // never routes a structural-AC rewrite (it stays a String-path AC `RewriteRule` for the untyped
     // binder-handler `Ambient`), so this is defensively byte-identical for the String path.
     if enum_id.is_some() && is_structural_ac_rewrite(language, rw).is_some() {
-        return (Vec::new(), Vec::new());
+        return (
+            Vec::new(),
+            elsewhere(
+                LoweringLane::TypedNativeStructuralAc,
+                "lowered as a native rule + dispatch arm: a flat structural non-linear AC \
+                 rewrite",
+            ),
+        );
     }
     // (Stage 4) A DEPTH-2 nested structural non-linear AC rewrite (Ambient `InRule`/`OutRule`) is
     // likewise NOT a structural `RewriteRule` — it is lowered as a typed native rule + dispatch arm
@@ -1574,7 +1688,14 @@ fn lower_rewrite(
     // `RewriteRule` for the untyped binder-handler `Ambient`), so this is defensively byte-identical
     // for the String path.
     if enum_id.is_some() && is_nested_structural_ac_rewrite(language, rw).is_some() {
-        return (Vec::new(), Vec::new());
+        return (
+            Vec::new(),
+            elsewhere(
+                LoweringLane::TypedNativeNestedStructuralAc,
+                "lowered as a native rule + dispatch arm: a depth-2 nested structural \
+                 non-linear AC rewrite",
+            ),
+        );
     }
 
     match (
@@ -1582,7 +1703,8 @@ fn lower_rewrite(
         pattern_to_dovetail(language, &rw.right, enum_id),
     ) {
         (Ok(lhs), Ok(rhs)) => {
-            let label = lit(&format!("{}::rewrite::{}", language.name, rw.name));
+            let label_text = format!("{}::rewrite::{}", language.name, rw.name);
+            let label = lit(&label_text);
             (
                 vec![quote! {
                     ::dovetail::rules::RewriteRule {
@@ -1591,29 +1713,165 @@ fn lower_rewrite(
                         label: Some(#label.to_string()),
                     }
                 }],
-                Vec::new(),
+                vec![LoweringDisposition::delivered(
+                    LoweredConstructKind::Rewrite,
+                    rw.name.to_string(),
+                    origin,
+                    label_text,
+                )],
             )
         },
-        (Err(reason), _) => (Vec::new(), vec![format!("rewrite `{}` LHS: {reason}", rw.name)]),
-        (_, Err(reason)) => (Vec::new(), vec![format!("rewrite `{}` RHS: {reason}", rw.name)]),
+        (Err(reason), _) => (Vec::new(), declined(format!("LHS: {reason}"))),
+        (_, Err(reason)) => (Vec::new(), declined(format!("RHS: {reason}"))),
     }
 }
 
-fn rule_block(language: &LanguageDef, enum_id: Option<&Ident>) -> (TokenStream, Vec<String>) {
+/// The structural rule vector for a language, plus ★ THE DISPOSITION OF EVERY DECLARED
+/// EQUATION AND REWRITE that produced it.
+///
+/// This function is the single PRODUCER of lowering outcomes; it has five consumers, and four
+/// of them used to write `let (rules, _unsupported) = rule_block(…)`. The second return value
+/// is no longer a list of excuses that a consumer may reasonably ignore — it is the complete
+/// record of what became of every construct, which is exactly what a consumer must not drop.
+///
+/// One post-pass runs over the equations: a `Declined` equation is offered to the BINDER-FLOAT
+/// lane ([`reclassify_binder_float_equations`]) before the answer is final, because an equation
+/// whose LHS carries a `Lambda` metapattern is refused *here* while being discharged in full by
+/// the generated binder-congruence normal form.
+fn rule_block(
+    language: &LanguageDef,
+    enum_id: Option<&Ident>,
+) -> (TokenStream, Vec<LoweringDisposition>) {
     let mut rules = Vec::new();
-    let mut unsupported = Vec::new();
+    let mut dispositions = Vec::new();
     for eq in &language.equations {
-        let (lowered, rejected) = lower_equation(language, eq, enum_id);
+        let (lowered, mut recorded) = lower_equation(language, eq, enum_id);
         rules.extend(lowered);
-        unsupported.extend(rejected);
+        reclassify_binder_float_equations(language, eq, &mut recorded);
+        dispositions.append(&mut recorded);
     }
     for rw in &language.rewrites {
-        let (lowered, rejected) = lower_rewrite(language, rw, enum_id);
+        let (lowered, mut recorded) = lower_rewrite(language, rw, enum_id);
         rules.extend(lowered);
-        unsupported.extend(rejected);
+        dispositions.append(&mut recorded);
     }
 
-    (quote! { vec![#(#rules),*] }, unsupported)
+    (quote! { vec![#(#rules),*] }, dispositions)
+}
+
+/// ★ THE LOWERING-DISPOSITION INVENTORY of a language — the single derivation every consumer
+/// shares, and the one the generated metadata publishes.
+///
+/// One entry per declared equation ORIENTATION (an equation lowers forward and reverse
+/// independently, and the two can fare differently), one per declared rewrite, and one per
+/// declared `fold`. The `enum_id` presence must match the path the language actually takes,
+/// because five of `lower_rewrite`'s branches are typed-path-only: on the `EGraph<String>` path
+/// a substitution/Comm/structural-AC rewrite is lowered structurally rather than handed to the
+/// typed native dispatcher, so claiming the native lane covers it would be a lie for exactly
+/// the languages that do not have one.
+///
+/// The fold half is path-dependent for the same reason, and in the same direction:
+///
+///   * TYPED path — [`typed_report::collect_fold_rules`] walks the folds and says, per fold,
+///     whether the native dispatcher took it;
+///   * `EGraph<String>` path — the report generator never walks folds at all. Every fold that
+///     reaches this path has a NATIVE output category (a non-native-output fold forces the
+///     typed path through `needs_typed_dovetail_path`), so it is run by the host native
+///     evaluator that `complete_native_dovetail_report_for_language` reaches before structural
+///     saturation. That is [`LoweringLane::HostNativeEvaluation`], and it is delivery, not
+///     silence.
+pub(crate) fn lowering_disposition_inventory(language: &LanguageDef) -> Vec<LoweringDisposition> {
+    let typed = needs_typed_dovetail_path(language);
+    let enum_id = typed.then(|| op_enum::op_enum_ident(language));
+    let (_rules, mut dispositions) = rule_block(language, enum_id.as_ref());
+
+    if typed {
+        let (_folds, fold_dispositions) = typed_report::collect_fold_rules(language);
+        dispositions.extend(fold_dispositions);
+    } else {
+        for rule in &language.terms {
+            if rule.eval_mode != Some(mettail_ast::types::EvalMode::Fold) {
+                continue;
+            }
+            dispositions.push(LoweringDisposition::delivered_elsewhere(
+                LoweredConstructKind::Fold,
+                rule.label.to_string(),
+                LoweredConstructOrigin::Declared,
+                LoweringLane::HostNativeEvaluation,
+                "run by the host native evaluator reached before structural saturation; every \
+                 fold on this path has a native output category, because a non-native-output \
+                 fold routes the language to the typed path",
+            ));
+        }
+    }
+
+    crate::gen::runtime::disposition::assert_every_construct_disposed(
+        language,
+        &dispositions,
+        true,
+        "lowering_disposition_inventory",
+    );
+    dispositions
+}
+
+/// Re-attribute an equation the structural lowering declined, when the BINDER-FLOAT lane
+/// covers it.
+///
+/// A binder-shaped equation (`ν x. ν y. P = ν y. ν x. P`, or a float-across-constructor law
+/// such as `C(…, ν x. P, …) = ν x. C(…, P, …)`) cannot lower structurally: its pattern carries
+/// a `Lambda` metapattern, on which `pattern_to_dovetail` fails closed. Recording that as a
+/// declination is *wrong* in two different ways at once, and the two wrongs are different from
+/// each other:
+///
+///   * a FLOAT-ACROSS-CONSTRUCTOR law is discharged in full by the generated binder-congruence
+///     normal form, which floats binders outward before the in-engine reduction runs — so it is
+///     [`LoweringLane::BinderCongruenceFloat`]'s, delivered;
+///   * a BINDER-BINDER COMMUTATION law (`NewComm`) is deliberately left underived. The host's
+///     α-canonical-key minimization is not Match-expressible and redex exposure is
+///     NewComm-invariant, so the float normal form is unique *up to* the NewComm run
+///     permutation and reordering buys nothing. That is a recorded decision (Q-NC), not an
+///     omission — hence [`LoweringOutcome::Suppressed`], with the decision named.
+///
+/// `classify_equation_float_disposition` fails closed on any language for which the float
+/// handler is not generated, so this can never claim coverage from a handler that does not
+/// exist.
+fn reclassify_binder_float_equations(
+    language: &LanguageDef,
+    eq: &Equation,
+    dispositions: &mut [LoweringDisposition],
+) {
+    use mettail_rholang_codegen::rho_net_lower::{
+        classify_equation_float_disposition, EquationFloatDisposition,
+    };
+
+    let float = classify_equation_float_disposition(language, eq);
+    if float == EquationFloatDisposition::NotFloatFamily {
+        return;
+    }
+    for disposition in dispositions.iter_mut() {
+        if !disposition.is_declined() {
+            continue;
+        }
+        disposition.legacy_diagnostic = false;
+        disposition.outcome = match float {
+            EquationFloatDisposition::FloatAcrossConstructor => {
+                LoweringOutcome::DeliveredElsewhere {
+                    lane: LoweringLane::BinderCongruenceFloat,
+                    note: "discharged by the generated binder-congruence normal form, which \
+                           floats binders outward before the in-engine reduction"
+                        .to_string(),
+                }
+            },
+            EquationFloatDisposition::BinderCommutation => LoweringOutcome::Suppressed {
+                reason: "user decision Q-NC: in-Rho binder-commutation reordering is \
+                         deliberately omitted — the host's alpha-canonical-key minimization is \
+                         not Match-expressible, and redex exposure is commutation-invariant, so \
+                         the float normal form is unique up to the commutation run permutation"
+                    .to_string(),
+            },
+            EquationFloatDisposition::NotFloatFamily => continue,
+        };
+    }
 }
 
 /// Generate feature-gated helpers that compile generated typed AST terms into
@@ -1634,8 +1892,26 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
         .iter()
         .map(|ty| category_lowering(language, &ty.name))
         .collect();
-    let (rules, unsupported) = rule_block(language, None);
-    let unsupported_lits: Vec<LitStr> = unsupported.iter().map(|s| lit(s)).collect();
+    // ★ PRODUCTION CONSUMER 1 of 4. This is the ONE site that historically did anything at
+    // all with the second return value, and even here it only reached the generated code on
+    // languages without a binder-congruence float (`should_emit_binder` blanks `native_gate`
+    // below).
+    // `legacy_unsupported_messages` reconstructs exactly the strings the old
+    // `unsupported: Vec<String>` carried — in declaration order, from the `Declined`
+    // dispositions that carry a legacy diagnostic — so this generated body is byte-identical
+    // to the one that shipped before dispositions existed.
+    let (rules, dispositions) = rule_block(language, None);
+    crate::gen::runtime::disposition::assert_every_construct_disposed(
+        language,
+        &dispositions,
+        false,
+        "generate_dovetail_report (EGraph<String> path)",
+    );
+    let unsupported_lits: Vec<LitStr> =
+        crate::gen::runtime::disposition::legacy_unsupported_messages(&dispositions)
+            .iter()
+            .map(|message| lit(message))
+            .collect();
     let primary_type = language
         .types
         .first()
@@ -1957,6 +2233,18 @@ mod tests {
         syn::parse_str(fragment).expect("test language fragment must parse")
     }
 
+    /// The constructs `rule_block` lowered NOWHERE.
+    ///
+    /// The pre-disposition assertions in this module read `assert!(unsupported.is_empty())`,
+    /// which conflated "lowered here" with "lowered on another lane" — both produced an empty
+    /// vector. The declination subset is the honest restatement of what those assertions meant.
+    fn declined_dispositions(dispositions: &[LoweringDisposition]) -> Vec<&LoweringDisposition> {
+        dispositions
+            .iter()
+            .filter(|disposition| disposition.is_declined())
+            .collect()
+    }
+
     #[test]
     fn generated_report_uses_structured_constructor_rules() {
         let language = parse(
@@ -1976,12 +2264,29 @@ mod tests {
         );
 
         let tokens = generate_dovetail_report(&language).to_string();
-        let (_, unsupported) = rule_block(&language, None);
+        // ★ UNIT-TEST CONSUMER. `rule_block` now answers with the disposition of every
+        // construct, so "nothing was rejected" is the DECLINED subset being empty — the whole
+        // vector is never empty, because `AToB` is `Delivered`.
+        let (_, dispositions) = rule_block(&language, None);
+        let declined = declined_dispositions(&dispositions);
         assert!(tokens.contains("dovetail_report_for"));
         assert!(tokens.contains("DovetailSmoke"));
         assert!(tokens.contains("AToB"));
         assert!(tokens.contains("funded_best"));
-        assert!(unsupported.is_empty(), "unexpected unsupported rules: {unsupported:?}");
+        assert!(declined.is_empty(), "unexpected declined rules: {declined:?}");
+        // Positive control on that zero: the rewrite really was seen, and really was lowered
+        // here — not merely absent from the declination list because nothing was inspected.
+        assert!(
+            dispositions.iter().any(|disposition| {
+                disposition.construct == "AToB"
+                    && matches!(
+                        disposition.outcome,
+                        LoweringOutcome::Delivered { ref label }
+                            if label == "DovetailSmoke::rewrite::AToB"
+                    )
+            }),
+            "AToB must be recorded as Delivered: {dispositions:?}",
+        );
     }
 
     #[test]
@@ -2071,10 +2376,19 @@ mod tests {
             "#,
         );
 
-        let (_, unsupported) = rule_block(&language, None);
+        // ★ UNIT-TEST CONSUMER.
+        let (_, dispositions) = rule_block(&language, None);
+        let declined = declined_dispositions(&dispositions);
         assert!(
-            unsupported.is_empty(),
-            "AC bag rewrite must lower, not be rejected: {unsupported:?}"
+            declined.is_empty(),
+            "AC bag rewrite must lower, not be rejected: {declined:?}"
+        );
+        assert!(
+            dispositions.iter().any(|disposition| {
+                disposition.construct == "OpenRule"
+                    && matches!(disposition.outcome, LoweringOutcome::Delivered { .. })
+            }),
+            "OpenRule must be recorded as Delivered on the String path: {dispositions:?}",
         );
 
         let tokens = generate_dovetail_report(&language).to_string();
@@ -2123,10 +2437,30 @@ mod tests {
         );
 
         let enum_id = op_enum::op_enum_ident(&language);
-        let (_, unsupported) = rule_block(&language, Some(&enum_id));
+        // ★ UNIT-TEST CONSUMER. This test's own comment already had to SAY IN PROSE what
+        // the return value could not: "`rule_block` therefore reports it as NEITHER unsupported
+        // (not rejected) NOR a structural rule (it is native)". That sentence exists only
+        // because the old return type could express "not rejected" and "not lowered here" only
+        // as the same empty vector. The disposition says it directly, and is asserted.
+        let (_, dispositions) = rule_block(&language, Some(&enum_id));
+        let declined = declined_dispositions(&dispositions);
         assert!(
-            unsupported.is_empty(),
-            "the typed AC bag rewrite must lower (native lane), not be rejected: {unsupported:?}"
+            declined.is_empty(),
+            "the typed AC bag rewrite must lower (native lane), not be rejected: {declined:?}"
+        );
+        assert!(
+            dispositions.iter().any(|disposition| {
+                disposition.construct == "OpenRule"
+                    && matches!(
+                        disposition.outcome,
+                        LoweringOutcome::DeliveredElsewhere {
+                            lane: LoweringLane::TypedNativeStructuralAc,
+                            ..
+                        }
+                    )
+            }),
+            "OpenRule must be attributed to the typed structural-AC native lane, not merely \
+             absent: {dispositions:?}",
         );
 
         // The whole typed report carries the structural-AC NATIVE rule, whose AcApp LHS uses the

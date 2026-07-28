@@ -173,10 +173,20 @@ fn turing_halted_configuration_is_a_normal_form() {
     );
 }
 
-/// The `shift_right` helper is a native fold: it reduces the moved tape rather
-/// than leaving an un-evaluated helper node behind.
+/// Applying the helper to a bare tape matches no TRANSITION entry — the transition
+/// table is keyed on `Cf`, and a bare `Tape` is not a configuration.
+///
+/// ⚠ RENAMED (Task #94, 2026-07-28). This test was called `turing_shift_right_folds`
+/// and its doc-comment claimed "it reduces the moved tape rather than leaving an
+/// un-evaluated helper node behind". It asserted neither of those things: it checked
+/// `complete=true` and that no `D_q0` entry fired, both of which hold of a helper that
+/// never reduces at all. Measured, `shift_right([0],1,[1,0])` produces
+/// `firings=[]` and leaves `Turing::Tape::shift_right` in the report — so the test
+/// passed while the property in its name was FALSE. The honest statement of what it
+/// actually checks is below; the property its old name claimed is pinned, with the
+/// reason it fails, in [`turing_head_never_moves_because_shift_right_is_declined`].
 #[test]
-fn turing_shift_right_folds() {
+fn turing_bare_tape_matches_no_transition_entry() {
     let (labels, rendered) = firings("shift_right([0],1,[1,0])");
     assert!(
         rendered.contains("complete=true"),
@@ -185,5 +195,105 @@ fn turing_shift_right_folds() {
     assert!(
         !labels.iter().any(|l| l.contains("D_q0")),
         "no transition applies to a bare tape; report: {rendered}"
+    );
+}
+
+/// ★★ ACCEPTED DEBT, NAMED (Task #94; the substantive repair is Task #101).
+///
+/// `shift_right` — the declared right-move helper, i.e. the entire mechanism by which
+/// this machine's head advances — **is lowered nowhere**, so the tape never changes and
+/// every derivation has length ≤ 1. The language named `Turing` cannot compute more than
+/// one step.
+///
+/// # Why, exactly
+///
+/// `shift_right . l:Vec(Sym), h:Sym, r:Vec(Sym)` is annotated `fold` and carries a real
+/// `![…]` body computing the zipper move. Both fold lanes refuse it, independently, for
+/// the same reason — its first parameter's type is a `TypeExpr::Collection`, not a
+/// `TypeExpr::Base`:
+///
+/// * the native-eval lane skips the whole `Tape` category, which has no native type;
+/// * the typed lane's fold gate (`if !all_simple { continue }`) drops the rule.
+///
+/// The generated artifact of that refusal was `__is_fold_redex ≡ false` plus an empty
+/// dispatch — **a declination rendered as a silent identity**, with no diagnostic
+/// anywhere. That silence is what Task #94 removed: the refusal is now a `Declined`
+/// entry in the language's lowering-disposition inventory, naming the construct and the
+/// parameter whose shape refused it.
+///
+/// # What this test does, and what it will do next
+///
+/// It asserts BOTH halves together — the recorded cause and its measured consequence —
+/// so they can only move together:
+///
+///   (a) the inventory records `fold shift_right` as `Declined`, for the collection
+///       parameter;
+///   (b) the paper's own configuration therefore yields exactly ONE firing, and the
+///       reduct still carries an unreduced `shift_right` node.
+///
+/// The multi-step assertion this SHOULD make was written and run against this tree; it
+/// fails with `labels=["Turing::rewrite::D_q0_0"]` — one firing — and, applied directly,
+/// `shift_right([0],1,[1,0])` yields `firings=[]`. When Task #101 makes collection
+/// parameters foldable, (a) fails FIRST and names the construct that changed, which is
+/// the signal to replace this test with that multi-step assertion.
+#[test]
+fn turing_head_never_moves_because_shift_right_is_declined() {
+    use mettail_runtime::{LanguageMetadata, LoweredConstructKind};
+
+    // ── (a) the recorded cause ────────────────────────────────────────────────
+    let meta = TuringLanguage.metadata();
+    let inventory = meta.lowering_dispositions();
+    assert!(
+        !inventory.is_empty(),
+        "an empty inventory would make every assertion below vacuous",
+    );
+    let shift_right: Vec<_> = inventory
+        .iter()
+        .filter(|d| {
+            d.construct_kind == LoweredConstructKind::Fold && d.construct == "shift_right"
+        })
+        .collect();
+    assert_eq!(
+        shift_right.len(),
+        1,
+        "`shift_right` must have exactly one disposition; inventory: {inventory:?}",
+    );
+    assert!(
+        shift_right[0].is_declined(),
+        "★ Task #101 SIGNAL: `shift_right` is no longer Declined. The head move may now \
+         execute — replace this test with the multi-step derivation assertion it \
+         describes. Disposition: {}",
+        shift_right[0].summary(),
+    );
+    assert!(
+        shift_right[0].detail.contains("`l:Vec(Sym)`"),
+        "the declination must name the collection parameter that refused the fold: {}",
+        shift_right[0].summary(),
+    );
+
+    // ── (b) the measured consequence ──────────────────────────────────────────
+    // The paper's own configuration (`omnibus.tex:1949`).
+    let (labels, rendered) = firings("(q0 , <[] | 0 | [0,1]>)");
+    assert_eq!(
+        labels,
+        vec!["Turing::rewrite::D_q0_0".to_string()],
+        "★ exactly ONE firing: the transition entry fires, and the head move it names \
+         does not. This is the whole defect, measured. report: {rendered}",
+    );
+    assert!(
+        !labels.iter().any(|l| l.contains("shift_right")),
+        "no fold fires for the head move; report: {rendered}",
+    );
+
+    // Applied directly, the declared helper reduces not at all — no firing, and the
+    // helper node survives in the report.
+    let (bare_labels, bare_rendered) = firings("shift_right([0],1,[1,0])");
+    assert!(
+        bare_labels.is_empty(),
+        "a declined fold fires zero times; report: {bare_rendered}",
+    );
+    assert!(
+        bare_rendered.contains("Turing::Tape::shift_right"),
+        "the unreduced helper node survives into the report; report: {bare_rendered}",
     );
 }

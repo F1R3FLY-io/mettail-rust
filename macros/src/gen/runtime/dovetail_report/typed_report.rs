@@ -19,8 +19,11 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
+use mettail_runtime::{LoweredConstructKind, LoweredConstructOrigin};
+
 use super::op_enum::{self, op_enum_ident, op_variant_ident};
 use super::reconstruct::{self, build_fn};
+use crate::gen::runtime::disposition::LoweringDisposition;
 use super::{
     category_lowering_fn, is_comm_rewrite, is_nested_structural_ac_rewrite,
     is_structural_ac_rewrite, is_substitution_rewrite, lit, pattern_to_dovetail, rule_block,
@@ -30,7 +33,7 @@ use super::{
 use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
 
 /// A fold rule lowered to a native rewrite + dispatcher arm.
-struct FoldRule<'a> {
+pub(super) struct FoldRule<'a> {
     op_id: u32,
     output_cat: Ident,
     op_variant: Ident,
@@ -66,21 +69,59 @@ struct FoldParam {
 /// The folds lowered as native rules: `eval_mode == Fold`, every param a `Simple`/`Base` typed
 /// parameter, and at least one OBJECT (non-native) param (so a child must be reconstructed —
 /// pure-native folds keep the existing `try_eval` path). Stable `op_id` = declaration index.
-fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
+///
+/// ★ RETURNS THE DISPOSITION OF EVERY DECLARED FOLD ALONGSIDE THE LOWERED ONES. The three
+/// `continue`s below are silent drops with no diagnostic anywhere — not even a runtime `Err`.
+/// The third of them, `if !all_simple { continue }`, drops every fold with a `Vec(T)` or
+/// `HashBag(T)` parameter, which is 12 of Rholang's folds and Turing's `shift_right`. A reader
+/// of the generated code cannot distinguish those from folds the language never declared.
+///
+/// The disposition vector is produced by THIS WALK, not by a parallel one: a second traversal
+/// that re-derived the same gates would be free to drift from them, and the defect being fixed
+/// here is precisely a record that drifted from the thing it claimed to describe.
+pub(super) fn collect_fold_rules(
+    language: &LanguageDef,
+) -> (Vec<FoldRule<'_>>, Vec<LoweringDisposition>) {
     let mut out = Vec::new();
+    let mut dispositions = Vec::new();
     let mut op_id = 0u32;
     for rule in &language.terms {
         if rule.eval_mode != Some(EvalMode::Fold) {
+            // Not a fold at all — there is no fold construct here to have a disposition.
             continue;
         }
+        let declined = |reason: String| {
+            LoweringDisposition::declined(
+                LoweredConstructKind::Fold,
+                rule.label.to_string(),
+                LoweredConstructOrigin::Declared,
+                reason,
+                // Folds never reached the legacy `unsupported` diagnostic: the fold gate lives
+                // on the typed path, which discarded its `unsupported` vector wholesale. These
+                // declinations are newly surfaced, so they must not perturb the generated
+                // String-path message.
+                false,
+            )
+        };
         let Some(body) = rule.rust_code.as_ref().map(|rc| &rc.code) else {
+            dispositions.push(declined(
+                "declared `fold` but carries no `![…]` Rust body to run".to_string(),
+            ));
             continue;
         };
         let Some(ctx) = rule.term_context.as_ref() else {
+            dispositions.push(declined(
+                "declared `fold` but has no term context, so its operands cannot be bound"
+                    .to_string(),
+            ));
             continue;
         };
         let mut params = Vec::new();
         let mut all_simple = true;
+        // The parameter whose shape refused the fold, for the declination message. Recorded
+        // where the refusal happens so the reason names the actual offender rather than
+        // restating the gate.
+        let mut refusing_param: Option<String> = None;
         for p in ctx {
             match p {
                 TermParam::Simple { name, ty: TypeExpr::Base(category) } => {
@@ -100,8 +141,9 @@ fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
                         bind,
                     });
                 },
-                _ => {
+                other => {
                     all_simple = false;
+                    refusing_param = Some(describe_term_param(other));
                     break;
                 },
             }
@@ -127,11 +169,26 @@ fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
         // (`map_size_empty`, `map_set_chain_reduces_to_literal`, …), whose comments record the
         // symptom this guard caused.
         if !all_simple {
+            // ★ THE FOLD GATE. Every `Vec(T)` / `HashBag(T)` parameter lands here, and until
+            // now it landed here silently: no rule, no diagnostic, no runtime error, nothing in
+            // the generated source to read. The fold simply never fired, and the language's
+            // surface syntax kept advertising it.
+            dispositions.push(declined(format!(
+                "parameter {} is not a `Simple`/`Base` typed parameter; collection and \
+                 higher-order fold operands need collection-comprehension lowering",
+                refusing_param.unwrap_or_else(|| "<unknown>".to_string()),
+            )));
             continue;
         }
         let out_lt = language.get_type(&rule.category);
         let is_pure_native_arith = params.iter().all(|p| matches!(p.bind, BindKind::Scalar))
             && out_lt.map_or(false, |t| t.native_type.is_some() && t.collection_kind.is_none());
+        dispositions.push(LoweringDisposition::delivered(
+            LoweredConstructKind::Fold,
+            rule.label.to_string(),
+            LoweredConstructOrigin::Declared,
+            format!("{}::fold::{}", language.name, op_variant_ident(&rule.category, &rule.label)),
+        ));
         out.push(FoldRule {
             op_id,
             output_cat: rule.category.clone(),
@@ -142,7 +199,32 @@ fn collect_fold_rules(language: &LanguageDef) -> Vec<FoldRule<'_>> {
         });
         op_id += 1;
     }
-    out
+    (out, dispositions)
+}
+
+/// A short, stable rendering of a fold parameter the gate refused, for the declination reason.
+///
+/// Names the parameter AND the shape that refused it, so the inventory entry is actionable
+/// without opening the grammar: `` `l:Vec(Sym)` `` reads very differently from
+/// `` `?cond` (a guard slot) ``, and both used to produce the same silence. Exhaustive over
+/// [`TermParam`] with no wildcard, so a new parameter shape must be described here before it
+/// can be dropped by the gate.
+fn describe_term_param(param: &TermParam) -> String {
+    match param {
+        TermParam::Simple { name, ty } => format!("`{name}:{ty}`"),
+        TermParam::Abstraction { binder, body, ty } => {
+            format!("`^{binder}.{body}:{ty}` (a binder abstraction)")
+        },
+        TermParam::MultiAbstraction { binder, body, ty } => {
+            format!("`^[{binder}].{body}:{ty}` (a multi-binder abstraction)")
+        },
+        TermParam::GuardBody { name } => format!("`?{name}:Guard` (a semantic-predicate slot)"),
+        TermParam::Optional { params } => {
+            let inner =
+                params.iter().map(describe_term_param).collect::<Vec<_>>().join(", ");
+            format!("`#opt({inner})` (an optional group)")
+        },
+    }
 }
 
 /// (E1.3) A substitution rewrite ([`SubstRewrite`]) lowered to a native rule + dispatcher arm,
@@ -1264,7 +1346,7 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
         .map(|ty| reconstruct::category_reconstruct(language, &ty.name))
         .collect();
 
-    let folds = collect_fold_rules(language);
+    let (folds, fold_dispositions) = collect_fold_rules(language);
     // (E1.3) Substitution rules share the native op-id counter with the folds (ids start at
     // `folds.len()`), so the helpers (redex-head set) and the native-rule/dispatcher generator
     // both see folds ∪ substitution rules.
@@ -1300,7 +1382,18 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
         &structural_acs,
         &nested_structural_acs,
     );
-    let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
+    // ★ PRODUCTION CONSUMER 2 of 4. This site used to read `let (rules_expr, _unsupported)`:
+    // the whole record of what became of every equation and rewrite was bound to `_` and
+    // dropped. It is now merged with this walk's fold dispositions and checked for
+    // completeness, so a construct cannot leave the lowering without an account of itself.
+    let (rules_expr, mut dispositions) = rule_block(language, Some(&enum_id));
+    dispositions.extend(fold_dispositions);
+    crate::gen::runtime::disposition::assert_every_construct_disposed(
+        language,
+        &dispositions,
+        true,
+        "generate_dovetail_normal_term (typed path)",
+    );
 
     let primary_cat = &language.types.first().expect("language has a type").name;
     let primary_add = category_lowering_fn(primary_cat);
@@ -1557,7 +1650,7 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
         .map(|ty| reconstruct::category_reconstruct(language, &ty.name))
         .collect();
 
-    let folds = collect_fold_rules(language);
+    let (folds, fold_dispositions) = collect_fold_rules(language);
     let substs = collect_substitution_rules(language, folds.len());
     // (A-3) Comm rewrites share the native op-id counter with the folds ∪ substitution rules (ids
     // start at `folds.len() + substs.len()`), so the helpers (redex-head set) and the
@@ -1590,7 +1683,16 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
         &structural_acs,
         &nested_structural_acs,
     );
-    let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
+    // ★ PRODUCTION CONSUMER 3 of 4. Same discard, same fix: the step graph lowers the same
+    // rule set as the report, so it must account for the same constructs.
+    let (rules_expr, mut dispositions) = rule_block(language, Some(&enum_id));
+    dispositions.extend(fold_dispositions);
+    crate::gen::runtime::disposition::assert_every_construct_disposed(
+        language,
+        &dispositions,
+        true,
+        "generate_step_graph (typed path)",
+    );
 
     let primary_cat = &language.types.first().expect("language has a type").name;
     let primary_add = category_lowering_fn(primary_cat);
@@ -2037,7 +2139,7 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
         .map(|ty| reconstruct::category_reconstruct(language, &ty.name))
         .collect();
 
-    let folds = collect_fold_rules(language);
+    let (folds, fold_dispositions) = collect_fold_rules(language);
     // (E1.3) Substitution rules share the native op-id counter with the folds (ids start at
     // `folds.len()`), so the helpers (redex-head set) and the native-rule/dispatcher generator
     // both see folds ∪ substitution rules.
@@ -2073,9 +2175,23 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
         &structural_acs,
         &nested_structural_acs,
     );
-    // Typed structural rules (congruence is automatic; Comm/Extrude rules that belong to the
-    // RhoNativeJoin boundary land in the dropped `unsupported` — NON-FATAL on the fold path).
-    let (rules_expr, _unsupported) = rule_block(language, Some(&enum_id));
+    // Typed structural rules. Congruence is automatic (the e-graph closure carries it); the
+    // Comm/Extrude rules that belong to the RhoNativeJoin boundary are lowered on the typed
+    // native lane. Both used to be indistinguishable from a construct nothing lowered.
+    // ★ PRODUCTION CONSUMER 4 of 4. The comment above this line used to end "land in the
+    // dropped `unsupported` — NON-FATAL on the fold path", which is an accurate description of
+    // a record being thrown away and a decision being taken on the strength of it. Nothing is
+    // dropped now: the equation/rewrite dispositions merge with this walk's fold dispositions,
+    // the merged set is checked for completeness, and the SAME derivation is what
+    // `lowering_disposition_inventory` publishes into the language's metadata.
+    let (rules_expr, mut dispositions) = rule_block(language, Some(&enum_id));
+    dispositions.extend(fold_dispositions);
+    crate::gen::runtime::disposition::assert_every_construct_disposed(
+        language,
+        &dispositions,
+        true,
+        "generate_typed_dovetail_report (typed path)",
+    );
 
     let primary_cat = &language.types.first().expect("language has a type").name;
     let primary_add = category_lowering_fn(primary_cat);

@@ -36,6 +36,26 @@ pub enum RhoRejectedRuleDispositionKind {
     RhoAstContract,
 }
 
+impl RhoRejectedRuleDispositionKind {
+    /// The runtime-facing [`LoweringLane`] this Rho disposition kind names.
+    ///
+    /// ★ ONE VOCABULARY, TWO CRATES. This enum was the only place in the tree that
+    /// could say *which lane covers a construct I did not lower*; the Dovetail
+    /// lowering had nothing but a `Vec<String>` of excuses. Rather than duplicate
+    /// the idea, [`mettail_runtime::LoweringLane`] adopted these four names
+    /// verbatim and added the Dovetail-side lanes, and this total mapping is the
+    /// bridge. `rho_disposition_kinds_map_onto_lowering_lanes` pins it, so the two
+    /// spellings cannot drift.
+    pub const fn lowering_lane(&self) -> mettail_runtime::LoweringLane {
+        match self {
+            Self::RhoNativeSystemProcess => mettail_runtime::LoweringLane::RhoNativeSystemProcess,
+            Self::NativeHandler => mettail_runtime::LoweringLane::RhoNativeHandler,
+            Self::ExternalContract => mettail_runtime::LoweringLane::RhoExternalContract,
+            Self::RhoAstContract => mettail_runtime::LoweringLane::RhoAstContract,
+        }
+    }
+}
+
 /// Class of predicated-type / guard obligation induced by a `LanguageDef`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RhoGuardObligationKind {
@@ -2087,5 +2107,59 @@ mod tests {
             }])
         );
         assert_eq!(err.decision.blockers, vec![RhoFlipBlocker::Coverage]);
+    }
+
+    /// ★ ONE VOCABULARY, TWO CRATES (Task #94). `RhoRejectedRuleDispositionKind` was the
+    /// only enum in the tree naming *which lane covers a construct this lane did not
+    /// lower*. `mettail_runtime::LoweringLane` adopted its four names rather than
+    /// inventing a parallel spelling, and
+    /// [`RhoRejectedRuleDispositionKind::lowering_lane`] is the bridge.
+    ///
+    /// This test is EXHAUSTIVE over the Rho enum (the `match` below has no wildcard, so
+    /// adding a fifth Rho kind fails to compile until it is mapped) and pins each mapped
+    /// lane's stable string, so a rename on either side is caught here rather than
+    /// silently changing what a golden inventory asserts.
+    #[test]
+    fn rho_disposition_kinds_map_onto_lowering_lanes() {
+        use mettail_runtime::LoweringLane;
+
+        for kind in [
+            RhoRejectedRuleDispositionKind::RhoNativeSystemProcess,
+            RhoRejectedRuleDispositionKind::NativeHandler,
+            RhoRejectedRuleDispositionKind::ExternalContract,
+            RhoRejectedRuleDispositionKind::RhoAstContract,
+        ] {
+            // No wildcard arm: a new Rho disposition kind must be given a lane.
+            let expected = match kind {
+                RhoRejectedRuleDispositionKind::RhoNativeSystemProcess => {
+                    LoweringLane::RhoNativeSystemProcess
+                },
+                RhoRejectedRuleDispositionKind::NativeHandler => LoweringLane::RhoNativeHandler,
+                RhoRejectedRuleDispositionKind::ExternalContract => {
+                    LoweringLane::RhoExternalContract
+                },
+                RhoRejectedRuleDispositionKind::RhoAstContract => LoweringLane::RhoAstContract,
+            };
+            assert_eq!(kind.lowering_lane(), expected, "lane mapping for {kind:?}");
+        }
+
+        assert_eq!(
+            RhoRejectedRuleDispositionKind::RhoNativeSystemProcess
+                .lowering_lane()
+                .as_str(),
+            "RhoNativeSystemProcess",
+        );
+        assert_eq!(
+            RhoRejectedRuleDispositionKind::NativeHandler.lowering_lane().as_str(),
+            "RhoNativeHandler",
+        );
+        assert_eq!(
+            RhoRejectedRuleDispositionKind::ExternalContract.lowering_lane().as_str(),
+            "RhoExternalContract",
+        );
+        assert_eq!(
+            RhoRejectedRuleDispositionKind::RhoAstContract.lowering_lane().as_str(),
+            "RhoAstContract",
+        );
     }
 }

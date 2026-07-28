@@ -43,6 +43,7 @@ Definition generated_language_inventory : list (string * list RewriteRequirement
   ("appsubst", [ReqDirectionalRewrite; ReqCongruencePremise; ReqBinderPattern; ReqSubstitutionPattern]);
   ("basemath", [ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler]);
   ("bicongdemo", [ReqDirectionalRewrite; ReqCongruencePremise]);
+  ("binderlawdemo", [ReqEquation; ReqBinderPattern]);
   ("calculator", [ReqEquation; ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler; ReqCollectionPattern; ReqMapPattern; ReqSubstitutionPattern]);
   ("class2hashmapsmoke", [ReqCollectionPattern; ReqMapPattern]);
   ("class2multi", [ReqCollectionPattern]);
@@ -51,6 +52,7 @@ Definition generated_language_inventory : list (string * list RewriteRequirement
   ("class3multi", [ReqCollectionPattern; ReqZipPattern; ReqBinderPattern]);
   ("class3opt", [ReqCollectionPattern; ReqZipPattern; ReqBinderPattern; ReqRhoCommHandlerContract]);
   ("commdemo", [ReqDirectionalRewrite; ReqCollectionPattern; ReqBinderPattern; ReqSubstitutionPattern; ReqRhoCommHandlerContract]);
+  ("congruencelanedemo", [ReqDirectionalRewrite; ReqCongruencePremise]);
   ("ctxdemo", [ReqDirectionalRewrite; ReqCongruencePremise]);
   ("discoverycanary", [ReqFoldNativeHandler]);
   ("extmath", [ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler]);
@@ -74,5 +76,6 @@ Definition generated_language_inventory : list (string * list RewriteRequirement
   ("refinementsmoke", [ReqEnvRelationPremise]);
   ("rholang", [ReqEquation; ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler; ReqFreshnessPremise; ReqEnvRelationPremise; ReqBehavioralGuard; ReqSyntheticInjectionGuard; ReqCollectionPattern; ReqMapPattern; ReqBinderPattern; ReqSubstitutionPattern; ReqRhoCommHandlerContract; ReqRhoResourceGuardContract]);
   ("swapdemo", [ReqDirectionalRewrite]);
-  ("turing", [ReqDirectionalRewrite; ReqFoldNativeHandler; ReqCollectionPattern])
+  ("turing", [ReqDirectionalRewrite; ReqFoldNativeHandler; ReqCollectionPattern]);
+  ("typeddropdemo", [ReqEquation; ReqFoldNativeHandler; ReqFreshnessPremise; ReqCollectionPattern; ReqBinderPattern])
 ].

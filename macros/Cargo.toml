@@ -36,6 +36,13 @@ moniker = { workspace = true }
 indexmap = { workspace = true }
 mettail-ast = { package = "ast", path = "../ast" }
 mettail-rholang-codegen = { package = "rholang-codegen", path = "../rholang-codegen" }
+# Task #94: the LOWERING-DISPOSITION vocabulary (`LoweringDispositionDef`, `LoweringLane`,
+# `LoweredConstructKind`, …) lives in `mettail-runtime` because the GENERATED metadata returns
+# it as `&'static [LoweringDispositionDef]`. The macro computes dispositions at expansion time
+# in exactly that vocabulary rather than in a parallel copy, so the two representations cannot
+# drift. Already in the dependency closure through `mettail-rholang-codegen`; this makes the
+# edge direct so `gen::runtime::disposition` can name the types.
+mettail-runtime = { package = "runtime", path = "../runtime" }
 mettail-prattail = { package = "prattail", path = "../prattail" }
 ascent_syntax_export = { workspace = true }
 pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }

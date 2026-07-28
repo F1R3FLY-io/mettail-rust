@@ -6,6 +6,7 @@
 //! - `environment` - `{Name}Env` for storing variable bindings
 
 pub mod binder_congruence;
+pub mod disposition;
 pub mod dovetail_report;
 pub mod environment;
 pub mod guard_codegen;

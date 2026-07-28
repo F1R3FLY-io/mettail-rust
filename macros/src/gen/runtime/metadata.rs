@@ -34,7 +34,20 @@ fn collection_type_name(coll_type: &CollectionType) -> &'static str {
 /// augmented `LanguageDef` can be reconstructed at runtime
 /// (`mettail_ast::auto_inject::reconstruct_language_def`), reproducing the same
 /// `definition_fingerprint`.
-pub fn generate_metadata(language: &LanguageDef, definition_source: &str) -> TokenStream {
+///
+/// `lowering_dispositions` is the language's LOWERING-DISPOSITION INVENTORY
+/// (`dovetail_report::lowering_disposition_inventory`) — one entry per declared
+/// equation orientation, rewrite, and fold, saying whether the runtime lowering
+/// delivered it, delegated it to a named lane, suppressed it by decision, or
+/// declined it outright. It is emitted here rather than recomputed at each use
+/// so there is exactly ONE derivation of what became of a language's declared
+/// semantics, reachable from a running program through
+/// `LanguageMetadata::lowering_dispositions`.
+pub fn generate_metadata(
+    language: &LanguageDef,
+    definition_source: &str,
+    lowering_dispositions: &[crate::gen::runtime::disposition::LoweringDisposition],
+) -> TokenStream {
     let name = &language.name;
     let name_str = name.to_string();
     let name_lit = LitStr::new(&name_str, name.span());
@@ -74,6 +87,11 @@ pub fn generate_metadata(language: &LanguageDef, definition_source: &str) -> Tok
     let channel_defs = generate_channel_defs(language);
     let join_pattern_defs = generate_join_pattern_defs(language);
     let connective_defs = generate_connective_defs(language);
+
+    // Task #94: the lowering-disposition inventory, emitted verbatim from the one
+    // derivation every lowering consumer shares.
+    let lowering_disposition_defs =
+        crate::gen::runtime::disposition::emit_disposition_defs(lowering_dispositions);
 
     quote! {
         /// Static metadata for the #name language
@@ -136,6 +154,12 @@ pub fn generate_metadata(language: &LanguageDef, definition_source: &str) -> Tok
 
             fn connectives(&self) -> &'static [mettail_runtime::ConnectiveDef] {
                 #connective_defs
+            }
+
+            fn lowering_dispositions(&self)
+                -> &'static [mettail_runtime::LoweringDispositionDef]
+            {
+                #lowering_disposition_defs
             }
         }
     }
