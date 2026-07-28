@@ -1,0 +1,70 @@
+// ★★ THE QUERY BIND — a request, a private return channel, and a reply, in ONE LINE.
+//
+// `!?` is Rholang's request/response sugar. Written at the call site it is one row of a `for`:
+//
+//     for(price <- @"quote"!?(14)) { … }
+//
+// and it means, exactly:
+//
+//     new r in { @"quote"!(*r, 14) | for(price <- r) { … } }
+//
+//   * `new r` MINTS a return channel nobody else can name;
+//   * `@"quote"!(*r, 14)` SENDS the request — the return channel first, then the arguments;
+//   * `for(price <- r)` RECEIVES the reply on that private channel.
+//
+// The send is the leg that matters. Until 2026-07-28 the expansion was computed and then
+// THROWN AWAY, so the program that ran still held the raw query row — which resembles an
+// ordinary receive closely enough that the lowering read `@"quote"` as the receive channel,
+// dropped the arguments, and emitted NO REQUEST SEND AT ALL. The receive then waited forever
+// on a channel nobody sends to.
+//
+//
+// ★ WHY THIS FILE CARRIES THREE ROWS AND NOT ONE
+// ──────────────────────────────────────────────
+// A receive with no partner is SUPPOSED to rest. So the defect raised nothing, printed
+// nothing, and exited zero — byte-identical to a correct program whose service happens not to
+// reply. Silence is not evidence. Three rows run here, in one process, so that each reading is
+// refuted by something else in the same run:
+//
+//   row                        publishes            what its outcome rules out
+//   ─────────────────────────  ───────────────────  ──────────────────────────────────────────
+//   the CONTROL (ordinary      "the desk is open"   "the harness cannot see @"OUT" at all"
+//     send/receive pair)
+//   the QUERY (`!?`)           42                   "the round trip did not happen"
+//   the CLOSED DESK (`!?` to   nothing              "any `!?` row publishes unconditionally"
+//     a service that is absent)
+//
+// Read the outcome as a TRIPLE. Two observations and no third is the pass; one observation is
+// a broken round trip; three observations would mean a query answered itself.
+//
+//
+// ★ 42 IS COMPUTED, NOT TRANSCRIBED
+// ─────────────────────────────────
+// Search this file for `42`: it appears in this comment and nowhere in the program. The desk
+// receives `14` and replies `cents * 3`; the reducer performs the multiplication on the
+// f1r3node machine and 42 is what rests on @"OUT". Change the `14` and the answer moves.
+//
+// ★ THE DESK NEVER PUBLISHES TO @"OUT" ITSELF — it replies on whatever return channel arrived.
+// So an observation on @"OUT" is reachable ONLY through the complete round trip: the request
+// send, the reply on the private channel, and the query row's own receive firing. A desk that
+// published directly would look identical whether the return channel worked or not.
+//
+// ★ THE DESK PINS THE ARGUMENT BY PATTERN — `@cents` is the second field of the request, so a
+// reply also witnesses that the argument travelled. An expansion that forwarded only the
+// return channel would leave this desk resting forever.
+//
+// EXPECT: TWO observations — the control's greeting, and 42. The closed desk publishes
+// nothing, and that is the third fact.
+
+@"open"!("the desk is open") |
+
+for(@greeting <- @"open") {
+
+  @"OUT"!(greeting) |
+
+  for(@reply, @cents <- @"quote") { @reply!(cents * 3) } |
+
+  for(price <- @"quote"!?(14)) { @"OUT"!(*price) } |
+
+  for(unanswered <- @"closed"!?(14)) { @"OUT"!("A CLOSED DESK ANSWERED") }
+}

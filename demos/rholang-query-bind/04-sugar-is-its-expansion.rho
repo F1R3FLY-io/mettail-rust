@@ -1,0 +1,55 @@
+// ★★ THE SUGAR IS ITS EXPANSION — asked twice, of one desk, and the substrate decides.
+//
+// Beats 01–03 show that `!?` works. This one shows that it is nothing more than what it claims
+// to be. The same question is put to the SAME desk twice in the same run, by two routes:
+//
+//   route          written                                        who mints the return channel
+//   ─────────────  ─────────────────────────────────────────────  ───────────────────────────
+//   the SUGAR      for(sugar <- @"area"!?(7)) { … }               the expansion
+//   the EXPANSION  new manual in { @"area"!(*manual, 7) |         the program, by hand
+//                                  for(@byhand <- manual) { … } }
+//
+// and the two answers are compared BY THE REDUCER, not by the eye: the published list's third
+// element is `*sugar == byhand`, an equality the machine evaluates on the two values it
+// actually holds.
+//
+// ★ THE DESK IS PERSISTENT — `<=`, not `<-`. One request would consume an ordinary receive and
+// leave the other route waiting forever. `<=` re-installs the desk after each reply, so both
+// routes are served by ONE definition. That is also why the comparison is meaningful: the two
+// answers come from the same code, so a difference could only come from the plumbing.
+//
+// ★ WHY THIS BEAT EXISTS. The defect this directory documents was that the expansion was
+// COMPUTED AND DISCARDED — the right program was built and then not used. So "the sugar
+// expands correctly" and "the expansion is what runs" are two different claims, and only the
+// second one is about the running program. Here the hand-written expansion is in the source,
+// beside the sugar, reaching the same desk. If `!?` lowered to anything else, the two values
+// would have to agree by coincidence.
+//
+// ★ 49 AND `true` ARE BOTH COMPUTED. `49` is `7 * 7`, performed by the reducer at reply time;
+// `true` is the reducer's own `==` over the two received values. Neither appears in the
+// program. A guard that could not decide would publish nothing; one that answered `false`
+// would publish `false` — the beat can fail in a visible direction.
+//
+// ★ THE NESTING IS THE CAUSALITY. The hand-written expansion sits INSIDE the sugar's body, so
+// it is sent only after the sugar's reply has arrived. The comparison therefore cannot run
+// before both answers exist, and the single published datum keeps the transcript byte-exact.
+//
+// EXPECT: TWO observations — the control's greeting, and [49, 49, true].
+
+@"open"!("asked twice, of one desk") |
+
+for(@greeting <- @"open") {
+
+  @"OUT"!(greeting) |
+
+  for(@reply, @side <= @"area") { @reply!(side * side) } |
+
+  for(sugar <- @"area"!?(7)) {
+    new manual in {
+      @"area"!(*manual, 7) |
+      for(@byhand <- manual) {
+        @"OUT"!([*sugar, byhand, *sugar == byhand])
+      }
+    }
+  }
+}

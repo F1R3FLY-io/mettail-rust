@@ -1,0 +1,59 @@
+// ★★ EVERY SURFACE THE GRAMMAR DECLARES — three `!?` rules and both arities, in one run.
+//
+// `!?` is not one rule. Rholang's grammar declares THREE `InputBind` rules whose syntax
+// carries `!?(`, and they differ in what the reply binds:
+//
+//   rule                    written                      the reply binds
+//   ──────────────────────  ───────────────────────────  ─────────────────────────────────────
+//   InputBindQuery          for(p <- svc!?(a…))          a NAME — the body dereferences it, *p
+//   InputBindQuotedQuery    for(@q <- svc!?(a…))         a PROCESS — the body uses it directly
+//   InputBindEmptyQuery     for(<- svc!?(a…))            NOTHING — the body running IS the reply
+//
+// and the argument list has its own arity axis: `svc!?()` with no arguments at all must send a
+// MONADIC request carrying the return channel and nothing else, so an ordinary `for(@r <- svc)`
+// responder matches it.
+//
+// ★ WHY ALL FOUR ARE IN ONE FILE. The three rules were fixed on 2026-07-28, and the quoted one
+// stayed inert even AFTER the first fix landed: the rewriter handled the plain and empty forms
+// and fell through on the quoted form, while the guard meant to report the omission omitted it
+// from all four of its arms. A demo that showed one surface would have looked exactly the same.
+// Here the four outcomes are read together, and any one of them missing is visible.
+//
+//
+// THE FOUR DESKS — none of them publishes to @"OUT"; each replies on the return channel that
+// arrived, so every observation below required a complete round trip.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+//   @"sum"      pins TWO arguments by pattern, replies with their sum
+//   @"product"  pins TWO arguments by pattern, replies with their product
+//   @"square"   pins ONE argument by pattern, replies with its square
+//   @"ping"     pins ONE argument by pattern, replies with an EMPTY message
+//
+// ★ THE THREE NUMBERS ARE COMPUTED. `42`, `54` and `169` appear nowhere in the program — only
+// the operands do. The reducer performs `+`, `*` and `*` on the f1r3node machine, and what
+// rests on @"OUT" is what it produced.
+//
+// ★ THE EMPTY SURFACE IS THE ONE EXCEPTION, AND IT IS AN HONEST ONE. Nothing is bound, so
+// nothing CAN be computed from the reply; the observation is that the body ran at all, which
+// it does only when the empty reply lands on the private return channel. Its marker is
+// therefore a string, and it is the only published value in this directory that is not an
+// arithmetic result.
+//
+// EXPECT: FIVE observations — the control's greeting, 42, 54, 169, and the empty surface's
+// marker. Read them as a set; the arrival order is the reducer's business.
+
+@"open"!("four surfaces, one desk") |
+
+for(@greeting <- @"open") {
+
+  @"OUT"!(greeting) |
+
+  for(@reply, @a, @b <- @"sum")     { @reply!(a + b) } |
+  for(@reply, @a, @b <- @"product") { @reply!(a * b) } |
+  for(@reply <- @"square")          { @reply!(13 * 13) } |
+  for(@reply, @beat <- @"ping")     { @reply!() } |
+
+  for(total <- @"sum"!?(20, 22))          { @"OUT"!(*total) } |
+  for(@area <- @"product"!?(6, 9))        { @"OUT"!(area) } |
+  for(tally <- @"square"!?())             { @"OUT"!(*tally) } |
+  for(<- @"ping"!?("beat"))               { @"OUT"!("the empty reply arrived") }
+}

@@ -826,6 +826,23 @@ name = "lookahead_demo"
 path = "tests/lookahead_demo.rs"
 required-features = ["rholang-runtime", "lambda-runtime", "calculator-runtime"]
 
+# CI gate for the QUERY BIND demo (`demos/rholang-query-bind/`): drives the built `rholang` binary
+# on the four committed `!?` programs and asserts, per beat, what the audience sees — the computed
+# reply that came back on a PRIVATE return channel, all three declared `!?` surfaces plus the
+# zero-argument arity, the two-row join whose list positions prove the return channels were not
+# crossed, and the sugar agreeing with its hand-written expansion under the reducer's own `==`.
+#
+# ★ Three of its cells assert the demo's CLAIM rather than its output, because `!?` was INERT
+# until 2026-07-28 and a program that publishes nothing is indistinguishable from a correct one
+# whose service did not reply: no beat contains a numeral it claims to compute; the closed desk
+# publishes nothing while the control fires; and — the teeth — beat 1 with the `!?` deleted
+# publishes ONLY the control. The covered surface set is read off the language metadata, so a
+# fourth `!?` grammar rule fails the build until the demo shows it.
+[[test]]
+name = "query_bind_demo"
+path = "tests/query_bind_demo.rs"
+required-features = ["rholang-runtime", "lambda-runtime", "calculator-runtime"]
+
 # CI gate for the `rholang` binary: runs it on the committed demo `.rho` file and asserts the
 # Rholang program (which exercises the grammar's FLT feature) reduces on the reducer — the COMM
 # fires, the typed `${x}` holes bind, and the re-quote reconstructs App(I, K) = (λ.0 λ.λ.1) on OUT.

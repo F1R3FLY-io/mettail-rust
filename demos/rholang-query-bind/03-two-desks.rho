@@ -1,0 +1,52 @@
+// ★★ TWO QUERIES, ONE `for` — and each row gets its OWN private return channel.
+//
+// A `for` may carry several rows joined by `&`, and the join is atomic: the body runs when
+// EVERY row has its datum. When two of those rows are `!?` queries, the expansion hoists both
+// requests under a SINGLE `new` with TWO binders:
+//
+//     new r1, r2 in {
+//       @"fee"!(*r1, 500) | @"tax"!(*r2, 500) |
+//       for(@fee <- r1 & @tax <- r2) { … }
+//     }
+//
+// ★ WHY THIS IS NOT THE SAME BEAT AS 01. One return channel per query is a claim about
+// PAIRING, and pairing is invisible when both services answer alike. If the two rows shared a
+// return channel, either reply could satisfy either row — and a demo whose two desks both
+// replied `50` would pass under that defect exactly as it passes without it.
+//
+// So the two desks answer DIFFERENTLY, from the SAME request argument:
+//
+//   desk      request   replies with   value
+//   ────────  ────────  ─────────────  ─────
+//   @"fee"    500       cents / 10     50
+//   @"tax"    500       cents * 2      1000
+//
+// and the body publishes the two replies IN ROW ORDER, inside one list. The POSITIONS are the
+// evidence: `[50, 1000, …]` says the fee row received the fee desk's reply. A shared channel
+// would be free to produce `[1000, 50, …]`, and a demo that printed the two values on separate
+// lines could not tell the two apart at all, because @"OUT" is a multiset and does not preserve
+// the order things were published in.
+//
+// ★ THE THIRD ELEMENT IS COMPUTED FROM BOTH. `fee + tax` is summed by the reducer AFTER the
+// join, so it exists only if BOTH round trips completed. `50`, `1000` and `1050` appear nowhere
+// in the program.
+//
+// ★ ONE OBSERVATION, NOT THREE. The whole settlement is published as a single datum, so the
+// transcript is byte-identical run to run. The alternative — three separate sends — would rest
+// three data on a multiset channel and print them in whatever order the store held them.
+//
+// EXPECT: TWO observations — the control's greeting, and the settled list [50, 1000, 1050].
+
+@"open"!("two desks, one join") |
+
+for(@greeting <- @"open") {
+
+  @"OUT"!(greeting) |
+
+  for(@reply, @cents <- @"fee") { @reply!(cents / 10) } |
+  for(@reply, @cents <- @"tax") { @reply!(cents * 2) } |
+
+  for(@fee <- @"fee"!?(500) & @tax <- @"tax"!?(500)) {
+    @"OUT"!([fee, tax, fee + tax])
+  }
+}
