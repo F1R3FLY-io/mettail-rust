@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4ebee1f7c26472a3ccbd799717fd443bc19361be0a3ca65553db36f9c66af857 # shrinks to term = Choose(Choose(PZero, []), [Choose(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), [])])
+cc 4756f946a6070a449c3d0568c24b0f233e36a568aa3e556d0a663d29d57c06e7 # shrinks to term = Choose(Choose(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), [PZero]), [PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), Choose(Choose(PZero, []), [PZero])])
+cc 3698d656e8b4e4b8c418a616559ce6aaa51db97ddc3d916cb84281ffe1d7e9f2 # shrinks to term = Choose(Choose(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), [PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") })))]), [Choose(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), [PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") })))]), Choose(Choose(PZero, [PZero]), [Choose(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), [PZero, PZero]), PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") })))])])

@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9bfae72a801d1c8f01b47ab5aa3cf9a621f2e5ccead50b27dcbf448e23e16e81 # shrinks to term = PNew(Scope { pattern: Binder(FreeVar { unique_id: UniqueId(61), pretty_name: Some("a6") }), body: PZero })
+cc 38b3d53c001bc4816eb5b8a2ba37fd589c849885d2495dc3a1da9dc6adcd5f03 # shrinks to term = PPar(HashBag { counts: {PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(38), pretty_name: Some("a") }))): 3}, total_count: 3 })
+cc e650096cad602d9d0e020c15ea4b0b231596fbd08770e0bd4393c604e7a3832b # shrinks to term = PIn(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a") }))), PPar(HashBag { counts: {PAmb(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a") }))), PZero): 1, PIn(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a") }))), PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a") })))): 1}, total_count: 2 }))
+cc c4628a0ef770882e9eb63675c8e7d8542e2d71c9bcc24b4c537b4e163f313bc7 # shrinks to term = PPar(HashBag { counts: {PPar(HashBag { counts: {PPar(HashBag { counts: {PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))): 3}, total_count: 3 }): 3}, total_count: 3 }): 3}, total_count: 3 })

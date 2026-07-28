@@ -594,11 +594,21 @@ mod tests {
     /// three guards below — including `pi`, whose generated float handler carried an UNSOUND
     /// replication arm (`!(νx.P) ⟶ νx.!P`) that the guard asserting "Ambient is the ONLY
     /// float-bearing language" structurally could not see. The four are listed now.
-    /// ⚠ The residual risk is unchanged in kind: this is still a hand-written mirror of two
+    /// ⚠ The residual risk was unchanged in kind: this is still a hand-written mirror of two
     /// directory listings, and the next definition added to either can be omitted just as
-    /// silently. The durable repair is to DERIVE the subject list (a `read_dir` completeness
-    /// assertion against `languages/src` + `languages/tests/definitions`, which `include_str!`
-    /// cannot do but a test can), not to maintain it.
+    /// silently. It WAS omitted, three more times — `binder_law_demo`, `congruence_lane_demo`
+    /// and `typed_drop_demo` — and two of the three bear the float handler, so the guard below
+    /// again asserted a two-element answer over a domain that did not contain the whole
+    /// question.
+    ///
+    /// ★ THE DURABLE REPAIR THIS NOTE ASKED FOR NOW EXISTS, and it is where the three omissions
+    /// were found: `ast/tests/language_name_keyed_artifacts.rs` performs exactly the prescribed
+    /// `read_dir` completeness assertion against `languages/src` + `languages/tests/definitions`,
+    /// in both directions (a key whose file no longer declares a `language!`, and a declaring
+    /// file with no key). `include_str!` cannot do it; that test can, and does. This table
+    /// remains hand-written — a `const` cannot read a directory — but it is no longer the only
+    /// thing standing between a new definition and silent exclusion, and an omission is now a
+    /// failing test rather than a shrinking domain.
     const BUNDLED_LANGUAGES: &[(&str, &str)] = &[
         (
             "acbagdemo",
@@ -615,6 +625,24 @@ mod tests {
         (
             "bicongdemo",
             include_str!("../../../../languages/tests/definitions/bicongdemo.rs"),
+        ),
+        // The three entries below closed a live instance of exactly the FAILS-OPEN hazard
+        // the note above predicts: each declares a `language!` and none was listed, so all
+        // three sat outside every guard this table feeds. They were found by
+        // `ast/tests/language_name_keyed_artifacts.rs`, which is the `read_dir`
+        // completeness assertion the note asks for — the table is no longer the only thing
+        // standing between a new definition and silent exclusion.
+        (
+            "binder_law_demo",
+            include_str!("../../../../languages/tests/definitions/binder_law_demo.rs"),
+        ),
+        (
+            "congruence_lane_demo",
+            include_str!("../../../../languages/tests/definitions/congruence_lane_demo.rs"),
+        ),
+        (
+            "typed_drop_demo",
+            include_str!("../../../../languages/tests/definitions/typed_drop_demo.rs"),
         ),
         ("calculator", include_str!("../../../../languages/src/calculator.rs")),
         (
@@ -724,10 +752,39 @@ mod tests {
     /// Pi, and the lane that derived from the DECLARATIONS was the one that was right. Pinning
     /// both dispositions here keeps the asymmetry deliberate instead of incidental.
     ///
-    /// ⚠ Until this corpus was completed (the previous commit) this test asserted `["ambient"]`
-    /// and passed — over a table that did not contain Pi. It is the expected-value list that is
-    /// pinned here, deliberately, as a tripwire for a NEW float-bearing language; the SUBJECT
-    /// list it ranges over is the thing that must never again be narrower than it claims.
+    /// ⚠ Until this corpus was completed (`359220f3`) this test asserted `["ambient"]` and passed
+    /// — over a table that did not contain Pi. It is the expected-value list that is pinned here,
+    /// deliberately, as a tripwire for a NEW float-bearing language; the SUBJECT list it ranges
+    /// over is the thing that must never again be narrower than it claims.
+    ///
+    /// ⚠⚠ IT HAPPENED A SECOND TIME, and this is the record of it. The completion in `359220f3`
+    /// added the four PRODUCTION grammars (`json`, `monoid`, `pi`, `turing`) and stopped there;
+    /// three TEST-HOSTED definitions — `binder_law_demo`, `congruence_lane_demo` and
+    /// `typed_drop_demo` — were still absent, so this test again asserted a two-element answer
+    /// over a domain that did not contain the whole question. Two of the three bear the handler.
+    /// They were surfaced by `ast/tests/language_name_keyed_artifacts.rs`, the `read_dir`
+    /// completeness assertion the corpus note above asks for, which now fails whenever a
+    /// definition file declares a `language!` and is not listed. The lesson the second
+    /// occurrence teaches, which the first did not, is that "complete the list" is not a repair
+    /// — DERIVING the list is; the note's own prescription was right and had simply not been
+    /// carried out.
+    ///
+    /// # Why the demonstration grammars bear it, and why that is not a defect
+    ///
+    /// `BinderLawDemo` and `TypedDropDemo` are Task #94 declination demonstrations. Each declares
+    /// `Nu . ^x.body:[Term -> Term]` — a surface single binder over the primary category — plus
+    /// non-empty equations and no `RhoNativeJoin` obligation, which are exactly the three
+    /// conditions of [`should_emit_binder_congruence`]. So the handler is emitted, correctly.
+    /// Their equations (`PairComm`, `FreshSwap`) are NOT float laws — the binder sits at the root
+    /// of neither side — so [`equations_boundary_canonicalizable`] REFUSES both, exactly as it
+    /// refuses Pi, and no `^float` family is installed for a theory it cannot discharge. The
+    /// converse admission below independently confirms the emitted arm set is empty for them.
+    /// `CongruenceLaneDemo`, the third newly-listed definition, does not bear the handler at all.
+    ///
+    /// The claim this test defends is therefore split in two, because the two halves have
+    /// different lifetimes: the PRODUCTION claim (Ambient and Pi and nothing else) is a
+    /// statement about the shipped language set and must stay exact; the corpus-wide list is a
+    /// tripwire over everything bundled, demonstrations included.
     #[test]
     fn bundled_float_handler_languages_are_ambient_and_pi_with_only_ambient_canonicalizable() {
         let float_bearing: Vec<&str> = BUNDLED_LANGUAGES
@@ -737,9 +794,25 @@ mod tests {
             .collect();
         assert_eq!(
             float_bearing,
-            ["ambient", "pi"],
-            "the host float handler's bundled corpus is exactly the production Ambient and Pi"
+            ["ambient", "binder_law_demo", "typed_drop_demo", "pi"],
+            "the host float handler's bundled corpus is exactly the production Ambient and Pi \
+             plus the two Task #94 declination demonstrations, each of which declares a surface \
+             single binder over its primary category alongside non-empty equations"
         );
+
+        // The PRODUCTION half, stated separately so it stays exact as demonstration grammars
+        // come and go. `languages/src/` is the shipped set; `languages/tests/definitions/` is not.
+        const PRODUCTION_FLOAT_BEARING: &[&str] = &["ambient", "pi"];
+        const DEMONSTRATION_FLOAT_BEARING: &[&str] = &["binder_law_demo", "typed_drop_demo"];
+        for name in &float_bearing {
+            assert!(
+                PRODUCTION_FLOAT_BEARING.contains(name)
+                    || DEMONSTRATION_FLOAT_BEARING.contains(name),
+                "`{name}` bears the host float handler and is in neither the production nor the \
+                 demonstration list; classify it deliberately rather than letting the set drift"
+            );
+        }
+
         let bundled = |wanted: &str| {
             BUNDLED_LANGUAGES
                 .iter()
@@ -757,6 +830,15 @@ mod tests {
              ever admits, the ^float family would be installed for a language whose equational \
              theory it cannot discharge"
         );
+        for demo in DEMONSTRATION_FLOAT_BEARING {
+            assert!(
+                !equations_boundary_canonicalizable(&bundled(demo)),
+                "`{demo}`'s equations put the binder at the root of neither side, so they are \
+                 not float laws and the in-Rho lane must refuse it exactly as it refuses Pi — if \
+                 this ever admits, the ^float family would be installed over a theory it cannot \
+                 discharge, which is the Pi defect recurring under a different name"
+            );
+        }
     }
 
     /// ★★ A-S5.4c THE CONVERSE ADMISSION (module docs): for every bundled language that bears the

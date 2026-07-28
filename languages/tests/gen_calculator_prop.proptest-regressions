@@ -1,0 +1,18 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9b64dcbd8882433a0ed91bfa0064515dbab73a168a4e3699be9bfec9a06f62ad # shrinks to term = GtStr(Concat(Concat(StringLit("ae"), StringLit("aaa")), Concat(StringLit("a"), StringLit("aaaaaaa"))), AddStr(AddStr(StringLit("bxwa"), StringLit("haaa")), Concat(StringLit("a"), StringLit("aaaaaaa"))))
+cc 966b86e06085e4b9871d7c7c370cd6558e397d920d6caddf45dd43a44768b553 # shrinks to term = BoolToUInt32(EqInt(Tern(Err, NumLit(475223836), Err), DivInt(CastErrInt, Err)))
+cc 9c8a9bf9fa8b23af0717837cba86ce72746fea27f12873b86b7644ebbe21664c # shrinks to term = BoolToInt(LtEqInt(Neg(Err), Fact(Err)))
+cc 6655eef3551c5d63a23e028e7786f9814a641349250fb0cac8bdffc9bf82ed75 # shrinks to term = NeInt(LenList(KeysMap(MapLit(HashMapLit({})))), BoolToInt(And(BoolLit(false), BoolLit(true))))
+cc b79988dabdf309ac950bcdffa27e9e80ae2c944793474490336c991ed96879ce # shrinks to term = GtEqInt(Tern(AddInt(NumLit(0), Err), BitNotInt(Err), FloatToInt(CastErrFloat)), Err)
+cc 33ee3dd75713058d83ee16522cf93b909a4614e3276201c176114023dd7ce517 # shrinks to term = AddFixed(AddFixed(NegFixed(CastErrFixed), BitNotFixed(FixedLit(Fixed(0/1)))), FixedBin(ProcUInt32(CastErrUInt32), Err))
+cc c1685875c8662d63ef3f8085a30ea87ad80221f82e62397face71cd1dc57b911 # shrinks to term = ProcBigRat(BitAndBigRat(BitAndBigRat(RatLit(Ratio { numer: 0, denom: 1 }), RatLit(Ratio { numer: 0, denom: 1 })), BigratCast(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(51), pretty_name: Some("a") }))))))
+cc 28ad1a5a21dbac4caef32ff93a83ac62b056e86dec92f1be7c62815c7bbf8271 # shrinks to term = AddBigRat(RatLit(Ratio { numer: 0, denom: 1 }), BigratCast(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") })))))
+cc 0be7f6367e06ccf4d41dc047cc18c6e76df9ff14ab821698f48de068525ee5d1 # shrinks to term = GtEqBool(GtEqBool(GtEqBool(BoolLit(true), BoolLit(true)), GtEqBool(BoolLit(true), BoolLit(true))), GtEqBool(GtEqBool(BoolLit(true), BoolLit(true)), GtEqBool(BoolLit(true), BoolLit(true))))
+cc cdf91c397202ae497ef6dec68764b3eec85f9603fd0ba3980cf5b7a0d9a5ee64 # shrinks to term = BoolToFloat(EqFixed(AddFixed(FixedLit(Fixed(0/1)), FixedLit(Fixed(-2147483648/1))), SubFixed(CastErrFixed, CastErrFixed)))
+cc b35c625b1da7b4dfcdddbfc5a8c36d4c034e57a0544764b58cf4ccdeb0a799fe # shrinks to term = MulBigRat(AddBigRat(RatLit(Ratio { numer: 0, denom: 1 }), BigratCast(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(37), pretty_name: Some("a") }))))), Err)
+cc 9a9da5768e9356ec09d7fdf86fd3f8f3d36508ed1aa4b45b849f154091a82825 # shrinks to term = MulBigRat(MulBigRat(AddBigRat(RatLit(Ratio { numer: 0, denom: 1 }), RatLit(Ratio { numer: 0, denom: 1 })), RatLit(Ratio { numer: 0, denom: 1 })), BitAndBigRat(FixedToBigRat(FixedLit(Fixed(0/1))), FixedToBigRat(FixedLit(Fixed(0/1)))))

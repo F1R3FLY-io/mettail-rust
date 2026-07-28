@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e23be3330d1108d91361e6b614df26ebf22b0dbc06e958e70d27c78b7e714ee6 # shrinks to term = ChooseMap(PZero, HashMapLit({PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))): ChooseMap(ChooseMap(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), HashMapLit({PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))): PZero, PZero: PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") })))})), HashMapLit({PZero: ChooseMap(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), HashMapLit({PZero: PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))): PZero}))}))}))

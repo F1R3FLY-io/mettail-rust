@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2538b26e7753db1d337d8f8fd8826cd9bf15983a7c8d1e84e642bb3517f4823d # shrinks to term = ChooseMaybe(PZero, None)

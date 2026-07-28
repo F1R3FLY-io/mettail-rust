@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc db9db422b3959106c03dd3f5c2aabd867ab88e58d1ba0fb7f381746485034868 # shrinks to term = Pair([PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(33), pretty_name: Some("a") })))], [PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(33), pretty_name: Some("a") })))])
+cc d483302efbab620b3f814cbf6dc164b1b047532c73af03332cd2049f3e6f007c # shrinks to term = Pair([PZero], [PZero])

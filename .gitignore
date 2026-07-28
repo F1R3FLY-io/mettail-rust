@@ -107,10 +107,52 @@ perf-profiles/
 .lia.cache
 .nia.cache
 
+# ── `*.regressions` — the SIMULATION runner's seed cache. NOT the proptest corpus. ──
+# `simulation/src/runner.rs` appends a bare hex seed per failing simulation run
+# (`append_regression_seed`) and REMOVES it again as soon as that seed passes
+# (`remove_passing_regression_seed`). It is therefore a self-pruning working set, not a
+# durable record: a seed that stops reproducing deletes itself. Nothing is lost by not
+# tracking it. Written to `simulate_{lang}.regressions` at the workspace root by
+# `macros/src/gen/test_gen/simulation_binary.rs:206`.
+#
+# ⚠ Its name is one token away from `*.proptest-regressions` below, and that similarity is
+# part of how the proptest corpora stayed hidden for so long: a reader who has already
+# accepted "regressions files are regenerable scratch" carries that belief onto a rule that
+# governs a completely different artifact. The two rules are deliberately NOT merged, and
+# the block below states why the opposite policy applies there.
 *.regressions
 prattail-parser-*.rs
 
-*.proptest-regressions
+# ── proptest counterexample corpora — TRACKED DELIBERATELY, both layouts ──
+#
+# A proptest corpus is a list of seeds for inputs that ONCE FALSIFIED A PROPERTY, with the
+# shrunk counterexample recorded beside each. It is NOT regenerable on demand: reproducing
+# one means re-running the random search that found it, which may take an unbounded number
+# of cases or may never recur at all once the surrounding grammar drifts. proptest says so
+# itself, in the header it writes into every one of these files verbatim:
+#
+#     "It is recommended to check this file in to source control so that
+#      everyone who runs the test benefits from these saved cases."
+#
+# Two DISTINCT on-disk layouts exist in this repository, and a rule for one does not cover
+# the other. Both are un-ignored here, by name:
+#
+#   LAYOUT B — `<proptest_corpus_dir>/gen_<lang>_prop.proptest-regressions`
+#     The pinned `FileFailurePersistence::Direct` form emitted by
+#     `macros/src/gen/test_gen/mod.rs::proptest_config_expr`. `proptest_corpus_dir` is
+#     declared in `[package.metadata.mettail]` (see `ast::manifest`); it is
+#     `languages/tests` today. ⚠ The file name is keyed on the LANGUAGE NAME, not on the
+#     test file — every generated property test of a language shares ONE corpus — so
+#     renaming a language STRANDS its corpus silently. `languages/tests/corpus_name_guard.rs`
+#     is the guard that makes that loud.
+#
+#   LAYOUT A — `<crate>/proptest-regressions/<module path>.txt`
+#     proptest's DEFAULT `FileFailurePersistence::SourceParallel` form, derived from
+#     `file!()`. Used by every hand-written `proptest!` block (macros/, prattail/,
+#     rholang-runtime/).
+!*.proptest-regressions
+!**/proptest-regressions/
+!**/proptest-regressions/**
 
 # Rustc internal compiler error reports (rustc panics; user-local)
 rustc-ice-*.txt

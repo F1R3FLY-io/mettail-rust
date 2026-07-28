@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a241e2edc4aeebb499b90069779619afd206dac5e977cbce7b40beb5962ff1b8 # shrinks to term = NegNum(NumLit(1296911694))
+cc e55c3e0f76c450afcf7f77131d07fb218d219147918271b992f7879a5f43f827 # shrinks to term = PredToNum(EqNum(PredToNum(BoolLit(true)), PredToNum(BoolLit(true))))
+cc ec7bec4ce46db364d17cca03084c568d44f55dadbc618237e6f6aa475d1870ac # shrinks to term = CastNum(AddNum(PredToNum(BoolLit(true)), AddNum(NumLit(1275159884), NumLit(1699479909))))
+cc bac9d5a7392970edfb33ab4b9964ed880b13b9ca08fdc80ec56b3f634eeecc14 # shrinks to term = AndPred(EqNum(NegNum(NumLit(0)), NumLit(0)), BoolLit(false))
+cc c2a4d37839b38fb8a897fa5d95f45c634784b4813a6b8b3b740852178a8e3630 # shrinks to term = EqNum(NegNum(ExprToNum(EVar(OrdVar(Free(FreeVar { unique_id: UniqueId(115), pretty_name: Some("a") }))))), PredToNum(AndPred(BoolLit(true), BoolLit(false))))

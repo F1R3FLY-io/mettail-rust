@@ -1,0 +1,12 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b99239f2be9615d0e06bb121d41addb3d5839aadca0bc4fbdd01035c9177969c # shrinks to term = PPar(HashBag { counts: {PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(62), pretty_name: Some("a") }))): 2}, total_count: 2 })
+cc e0fadd71f9ee4b4df177076c69d995576e88f246776830995717437431e84109 # shrinks to term = NQuote(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(32), pretty_name: Some("a") }))))
+cc 54597bb61dd57800c1bbee58aecce18d6415534082d11bebcb603c3a3330cc59 # shrinks to term = NQuote(POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(2), pretty_name: Some("a") }))), POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(2), pretty_name: Some("a") }))), PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(2), pretty_name: Some("a") }))))))
+cc c5575211fd5a309bd511454a1dd6f7a205159827662dc6834f5b9147e212752b # shrinks to term = PPar(HashBag { counts: {PPar(HashBag { counts: {PPar(HashBag { counts: {PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))): 1}, total_count: 1 }): 1}, total_count: 1 }): 1}, total_count: 1 })
+cc 487b65229ebb05629118f5fc365067eec3a7ca2cf6a4713942614dbf398eb828 # shrinks to term = POutput(NQuote(POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))))), POutput(NQuote(PNil), POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PNil)))
+cc f7157b253f6c18941cf6b5815d295497f28ff57330933a4cd58c2185cd97ccc7 # shrinks to term = PPar(HashBag { counts: {PPar(HashBag { counts: {PPar(HashBag { counts: {PNil: 1}, total_count: 1 }): 1, PPar(HashBag { counts: {}, total_count: 0 }): 1}, total_count: 2 }): 1, POutput(NQuote(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") })))), PNil): 1}, total_count: 2 })

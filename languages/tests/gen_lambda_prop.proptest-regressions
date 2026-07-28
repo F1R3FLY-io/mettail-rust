@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 26e407afd81f0052b974f06ea693f77b40edaa0c3e76df80010c4706fb32b5cb # shrinks to term = Lam(Scope { pattern: Binder(FreeVar { unique_id: UniqueId(82), pretty_name: Some("a6") }), body: TVar(OrdVar(Free(FreeVar { unique_id: UniqueId(79), pretty_name: Some("a") }))) })

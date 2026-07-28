@@ -1,0 +1,81 @@
+# SUPERSEDED: merged into `gen_rholang_prop.proptest-regressions` — DO NOT DELETE.
+#
+# `RhoCalc` was renamed `Rholang`. proptest derives this file's name from the LANGUAGE NAME
+# (`macros/src/gen/test_gen/mod.rs::proptest_config_expr`, `gen_{lang_lower}_prop`), so
+# after the rename nothing opened this file again and its 52 recorded counterexamples
+# stopped being replayed — silently, with the file still sitting in the directory listing
+# reading as covered.
+#
+# All 52 seeds below, with their `# shrinks to` text, are now ALSO present in
+# `gen_rholang_prop.proptest-regressions`, which the live `Rholang` grammar reads. The
+# merge was collision-free by measurement: the two corpora shared zero seeds.
+#
+# This file is retained for PROVENANCE, not for replay. A shrunk counterexample is not
+# regenerable on demand — reproducing one means re-running the random search that first
+# found it, with no guarantee the same input is ever drawn again — so the record of where
+# these 52 came from is kept rather than discarded.
+#
+# `ast/tests/language_name_keyed_artifacts.rs::every_prop_corpus_names_a_live_language`
+# recognises this `# SUPERSEDED:` header and stops reporting the file as stranded. Any
+# OTHER corpus naming a language that no `language!` declares still fails that guard.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# Original file content follows, unmodified:
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e212e5533f5d85db728095d6e0f475c04d3d25341dabea7bd6de90a5968df755 # shrinks to term = NumLit(488447261)
+cc b1c422685c88bfb74a4f18ff86070093effe9c8a049dd99067bea9e46ed485cd # shrinks to term = CastBigInt(NumLit(1393251083))
+cc 46cd9097509a704a72860e78805ba8742b02d1681d53a99670df3b8c67a76392 # shrinks to term = NQuote(CastUInt32(NumLit(318881811)))
+cc a98e28482ce179f938523a753b8230fcc908ef30875d070ed37a0817b0dbfc97 # shrinks to term = CastInt(NumLit(2160916369174765053))
+cc 158eb7b9d551a69f3b398a8fed342b6affe49e465efdf95e2c0f2eea8c66a1c7 # shrinks to term = PPar(HashBag { counts: {Err: 1, PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(94), pretty_name: Some("a") }))): 1}, total_count: 2 })
+cc b996675ed0c7a7a670a0687e39d3d368bf0da05104ed547d5fdbd33e05e2326f # shrinks to term = BitNot(PZero)
+cc efb4d761385d14d957e6d5f4ba3aa98458685c55cfb45291e77e3596112937d8 # shrinks to term = NQuote(POutput(NQuote(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(344), pretty_name: Some("a") })))), POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(344), pretty_name: Some("a") }))), PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(344), pretty_name: Some("a") }))))))
+cc 9b8d92b24169e1e1b894afece11865a36e02f086d852f11036ab75cd395db1a4 # shrinks to term = NQuote(LtEq(POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PZero), POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PZero)))
+cc e30600258f8e442dcde12fb315ad527ae50948f1ccf091a45bf440d77169e273 # shrinks to term = Or(BigintCastProc(KeysMap(PZero)), POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), KeysMap(PZero)))
+cc 455d04f4a3339b26b238e09810662a5edaee813e25f4ca14b0cb6da1a2798a57 # shrinks to term = PInputs([NQuote(CastBigRat(RatLit(Ratio { numer: -2136931322, denom: 1 })))], Scope { pattern: [Binder(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a0") })], body: PPar(HashBag { counts: {CastBigRat(RatLit(Ratio { numer: -2136931322, denom: 1 })): 1}, total_count: 1 }) })
+cc 528a4a002581a89cf60acd697a8533741c48576c2061acec220932d0b4970e98 # shrinks to term = POutput(NQuoteNil, POutputShort(POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(4), pretty_name: Some("a") }))), PathmapEmpty), PPersistOutputNil(MapEmpty)))
+cc e37b9bae7def93860e808aac4e3bea6dc5e7382f4e156a792b9da582aff6670e # shrinks to term = POutput(NQuoteShort(PParInfix(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PathmapEmpty)), PParInfix(CastUInt32(NumLit(405349895)), POutput(NQuoteNil, Err)))
+cc 3f094e7afdaeb28822c9d41828f3ae134f5ad5049bc9f0d927bf9cc4c9666761 # shrinks to term = NQuote(WZSetLeaf(PPar(HashBag { counts: {PZero: 1, PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a") }))): 1}, total_count: 2 }), POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a") }))), PZero), FractionProc(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a") }))), PZero)))
+cc 1a7cc34c8670538225596cfeb5921538019e7a380fe1b2fd5c8992a45c0fd98b # shrinks to term = InputBindQuery(NQuote(Mul(MapEmpty, MapEmpty)), NQuote(Mul(MapEmpty, MapEmpty)), [Mul(Mul(MapEmpty, MapEmpty), Mul(MapEmpty, MapEmpty))])
+cc a92be7635c16495126caeb043f1793c5caa9191c9f66a0ea5a58df54187e2c08 # shrinks to term = BitOr(NegProc(WZRemoveLeaf(PZero)), POutput(NParen(NQuoteNil), NegProc(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a") }))))))
+cc d5d2383d2b208ff0250cc4d98b9fe30eb020f0d7403c3fd59cd45172abcfbc73 # shrinks to term = NQuote(PForUser([ForRowNoWhere(IVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a") }))), [])], BDiff(MapEmpty, Err)))
+cc 3be0c67f04efea5640435662485454742a4a1b597cdd05ce35a3b4bdc75b1f46 # shrinks to term = POutput(NQuote(CastSet(SetLit(HashSetLit({})))), POutput(NQuote(MapEmpty), POutput(NQuoteNil, MapEmpty)))
+cc 03346dafed0ede2a05d17dae92d88bcbb31119f1787237777df2d0f4fa9ee2ee # shrinks to term = NQuoteShort(POutput2Plus(NQuoteShort(PathmapEmpty), CastPathmap(PathmapLit(PathMapLit(HashMapLit({})))), [CastMap(MapLit(HashMapLit({})))]))
+cc 2fdc4c86795d3287dd70bfbded6f800e7fe91b30874101e048cff1424e4850a4 # shrinks to term = UIntBinProc(POutput2Plus(NParen(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(3), pretty_name: Some("a") })))), POutput2Plus(NQuoteNil, PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(3), pretty_name: Some("a") }))), [PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(3), pretty_name: Some("a") })))]), [POutput2Plus(NQuoteNil, PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(3), pretty_name: Some("a") }))), [PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(3), pretty_name: Some("a") })))]), UIntBinProc(PathmapEmpty, NumLit(8152392471429717442)), WZSetLeaf(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(3), pretty_name: Some("a") }))), PathmapEmpty, PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(3), pretty_name: Some("a") }))))]), UInt32ToInt(BoolToUInt32(BoolLit(false))))
+cc 8539fd7e0cc7e3592dd9d857c8eada7d26773bbf3396027c1e7a12ded50d6f00 # shrinks to term = MSet(PGetSubtrie(IntBinProc(PZero, NumLit(0))), PParInfix(PForUser([], PZero), POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), MapEmpty)), IntBinProc(PZero, NumLit(792633534417207296)))
+cc 039a06c89511b661f1673b3fed5590361a0daa4f546630db6663644eb2194b5c # shrinks to term = NQuoteShort(PPar(HashBag { counts: {POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PZero): 1}, total_count: 1 }))
+cc 6d3cb929c00deff18eab1ab47c17c2e3f8221934408a27ae076591518171c20c # shrinks to term = POutput2Plus(NParen(NQuoteShort(Err)), CastFixed(FixedLit(Fixed(-2147483648/1))), [MSize(POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))), PZero)), CastBigRat(IntToBigRat(NumLit(967646845041)))])
+cc b3ba427429a5f16f31770c94b1dc4e99476c3b236fa7428b6a42ff7ed270d24c # shrinks to term = NQuote(IntBinProc(POutputEmpty(NQuoteNil), UInt32ToInt(NumLit(3822638370))))
+cc b381e12c138cae552714b60d6de693abf958a1f9b8bc025b7883df2bfb02d38a # shrinks to term = NQuoteShort(PPersistOutput2Plus(NQuoteShort(MapEmpty), PPersistOutput2Plus(NQuoteNil, MapEmpty, []), []))
+cc eabf9162d1f425d1fdc21cf3802812dae47ecac6f9382a56f222c2aa49a5454e # shrinks to term = And(Or(PPersistOutputShort(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(9), pretty_name: Some("a") }))), PZero), CastList(ListLit([]))), And(Or(PathmapEmpty, PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(9), pretty_name: Some("a") })))), PForUser([FVar(OrdVar(Free(FreeVar { unique_id: UniqueId(9), pretty_name: Some("a") }))), FVar(OrdVar(Free(FreeVar { unique_id: UniqueId(9), pretty_name: Some("a") }))), FVar(OrdVar(Free(FreeVar { unique_id: UniqueId(9), pretty_name: Some("a") })))], PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(9), pretty_name: Some("a") }))))))
+cc d0714a588a685641f38e732b430880ee7081aaa2d1258804ca221bf9a8ae2289 # shrinks to term = InputBindPersistent(NQuote(Lt(PPersistOutputNilEmpty, PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(0), pretty_name: Some("a") }))))), NQuote(Lt(MapEmpty, PPersistOutputNilEmpty)))
+cc 385bc458d99f87a55c25a646754f7e39add86285529c966451cb01e7ae36d53c # shrinks to term = ForRowWhere(InputBindQuoted(RZAscendOne(PZero), NQuoteNil), [InputBindQuotedQuery(Not(PZero), NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1224), pretty_name: Some("a") }))), []), InputBindEmptyQuery(NQuoteShort(POutputNilEmpty), [CastBool(BoolLit(false)), GtEq(MapEmpty, PPersistOutputNilEmpty)])], PZero)
+cc 5f06b23eb0e1656173613b44cf9aac975aeacda99d0014f1a47ea608fba0e916 # shrinks to term = ForRowSingleNoWhere(InputBindEmptyQuery(NQuoteNil, [CastSet(SetLit(HashSetLit({}))), PPersistOutputEmpty(NQuoteNil)]))
+cc d29e4ed1d77b970043aaa97b1356cd06237bab05d29cd1d4fb0f9b102c3ca206 # shrinks to term = IntBinProc(POutputShort(CastBool(BoolLit(false)), PZero), NumLit(2498927616))
+cc 291081f6331884ee8da18a2ef67b64a54ee540915e585b5943c459f05a56c171 # shrinks to term = FractionProc(CastUInt32(BoolToUInt32(BoolLit(false))), POutput(NQuoteNil, CastUInt32(NumLit(846790729))))
+cc 1ea68f081c51e379a565f624b67d7ea9fc8d1747574e51a4fb174706c8978a09 # shrinks to term = InputBindQuotedPersistent(LNth(POutputShort2Plus(PZero, PZero, [PZero, PZero]), ToBool(PZero)), NQuote(NegProc(MapEmpty)))
+cc b5b31efeaa6f3b927c744abba4153bfcb5d80dbe8599288694eca65998a33d11 # shrinks to term = InputBind(NQuote(CastList(ListLit([]))), NQuoteShort(WZJoinInto(MapEmpty, PathmapEmpty)))
+cc dc0f824e280bcdf6ca74dacb4e4ffd734d39330098950c3a5baaf7be1a83cf66 # shrinks to term = ForRowSingleNoWhere(InputBindQuery(NParen(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(788), pretty_name: Some("a") })))), NParen(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(788), pretty_name: Some("a") })))), [Not(MapEmpty)]))
+cc a293b4367ab74525c2de717889912c366bb271e669bcb2499e414bc2d00691cb # shrinks to term = NQuote(POutput2Plus(NQuoteNil, CastList(ListLit([])), [BigratCastProc(MapEmpty), RZAscendOne(PZero)]))
+cc d0c9823918d12a13891b15bf8be8d62e6774ac84dd4678b9874b569e24a9c323 # shrinks to term = IntBinProc(GtEq(GtEq(PZero, PZero), LtEq(PPersistOutputNilEmpty, PathmapEmpty)), NegInt(UInt32ToInt(NumLit(2905357887))))
+cc f0bf93cdd672abf4cb40a4217fe9dcf443f9ef53ef074b774367b979df62f321 # shrinks to term = ForRowWhere(InputBindPolyadic(NParen(NQuoteNil), [NQuoteShort(MapEmpty)], NParen(NQuoteNil)), [], MValues(FixedBinProc(POutputNilEmpty, NumLit(6967741428829650031))))
+cc 5ca53b06127ea50f939db0432af3452dec7ffa6d76ca6eae6681f55212a63ca5 # shrinks to term = NQuote(IntBinProc(POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(797), pretty_name: Some("a") }))), PPersistOutputNilEmpty), NegInt(NumLit(1613346182411829711))))
+cc 3f60980a5f271d72bfb7c3f1bd5edf15ec9d255a63dda67bbbed887d3162a309 # shrinks to term = InputBindQuery(NQuoteShort(CastFixed(FixedLit(Fixed(-855638016/1)))), NQuoteShort(CastFixed(FixedLit(Fixed(-855638016/1)))), [])
+cc 1726453d27fa34a9b20dac8010da343fbfe19abee6c42c868540e3858412393c # shrinks to term = BitNot(POutput(NParen(NQuoteNil), POutput(NQuoteNil, PZero)))
+cc 8a7690081f679a66ff7a676fd568699397c22c0a66ceefc4044387f20a60f6d1 # shrinks to term = InputBindEmptyQuery(NQuote(POutputNilEmpty), [])
+cc 5dc592973c7b477c2fc3efd4fd180563b3c5187d566b0731fa63d4284d872762 # shrinks to term = ForRowWhere(InputBindPolyadic(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(127), pretty_name: Some("a") }))), [NQuoteNil, NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(127), pretty_name: Some("a") })))], NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(127), pretty_name: Some("a") })))), [InputBindQuery(NQuoteNil, NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(127), pretty_name: Some("a") }))), [PZero, MSize(PZero)]), InputBindPolyadic(NQuote(POutputNilEmpty), [NQuote(POutputNilEmpty), NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(127), pretty_name: Some("a") })))], NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(127), pretty_name: Some("a") }))))], PPersistOutput2Plus(NQuoteNil, FloatBinProc(PZero, NumLit(3314650748809248789)), []))
+cc 4849f6a058be425ad0c8950ad5da85269eb69734b59cb9aa101ea258b946d602 # shrinks to term = InputBindQuotedQuery(POutput(NQuote(POutputNilEmpty), Err), NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(780), pretty_name: Some("a") }))), [])
+cc c78da8380113f4ea7d1f4b8e466e456f3dbbd3550f787b965171f3602ec8ac3d # shrinks to term = Not(POutputQuoted(NQuote(POutputNilEmpty), Not(Err)))
+cc 2686dc3aafdd58aeac851b4a2631a7c413c35514d70592a666ddd5045d73ef82 # shrinks to term = POutput2Plus(NQuote(POutput(NQuoteNil, PZero)), PNew(Scope { pattern: [Binder(FreeVar { unique_id: UniqueId(45), pretty_name: Some("a0") }), Binder(FreeVar { unique_id: UniqueId(46), pretty_name: Some("a1") })], body: PZero }), [])
+cc 11e7b82d78e123ebe26de6bc87146b70a560dd039067319a347fd644abb9cb23 # shrinks to term = NQuote(POutput2Plus(NParen(NQuoteNil), PNew(Scope { pattern: [Binder(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a0") }), Binder(FreeVar { unique_id: UniqueId(2), pretty_name: Some("a1") })], body: PZero }), []))
+cc ca9f298056e019ffcf7b25c2773d154d0ed594265172fc39cc6e4a5ec610253d # shrinks to term = InputBindPolyadic(NQuoteShort(PNew(Scope { pattern: [Binder(FreeVar { unique_id: UniqueId(2), pretty_name: Some("a0") }), Binder(FreeVar { unique_id: UniqueId(4), pretty_name: Some("a1") })], body: PZero })), [], NQuoteNil)
+cc 681d60d86b87a32a1daf099097a929afd50c77670e738afad42b8319ac1b839e # shrinks to term = POutputShort2Plus(MSet(NegProc(Err), POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(77), pretty_name: Some("a") }))), PZero), PZero), PZero, [])
+cc 9987ac0377201e9c91878fa79c18fc00400e609af2116f0d385876dc510c84a0 # shrinks to term = PMeet(LNth(POutputQuotedEmpty(NQuoteNil), POutput(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(1), pretty_name: Some("a") }))), PZero)), PZero)
+cc 382add9ea7f5ea86a01a400ac3cdc428ee0743e9850ef8979bfef2f7c3c58644 # shrinks to term = InputBind(NParen(NQuote(Err)), NQuoteNil)
+cc 81fdf83bbc0525527f4422b31710a7cd6d48998605c18ecb6da076ab9fb1689b # shrinks to term = PParInfix(CastInt(NegInt(NumLit(0))), POutput(NParen(NQuoteNil), PZero))
+cc 6351fa0bd4bd57621beff076d618aff3a3530b03e58ba678737ac47c8da0a615 # shrinks to term = InputBindQuotedPersistent(POutput2Plus(NParen(NQuoteNil), CastPathmap(PathmapLit(PathMapLit(HashMapLit({})))), []), NQuoteNil)
+cc d0996c5897a6ca66c401d176f63e6abeeb41a2778f522a3871dcc52804a17f68 # shrinks to term = NQuote(Eq(PDrop(NQuoteNil), PZero))

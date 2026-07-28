@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 55243275cb0735e73e5aac1dc35a6344001526af1fa8b51a26b6f6833124b4b1 # shrinks to term = Or(And(Not(BoolLit(false)), And(BoolLit(true), BoolLit(false))), And(Not(BoolLit(false)), And(BoolLit(true), BoolLit(false))))
+cc 7c310f4aea81c44ae1de305caa4d4952498c5b775d1a521902572e30a0f5341e # shrinks to term = SubInt(AddInt(Neg(NumLit(2080078972)), AddInt(NumLit(75727876), NumLit(2080078972))), AddInt(Neg(NumLit(2080078972)), AddInt(NumLit(75727876), NumLit(2080078972))))
+cc d3275d6953e2fb4f4ede533e4a612cacca453e19134401bf79e3984632118db9 # shrinks to term = Not(BoolLit(true))
+cc 79ffe0cbd6058576ad3de297479bec321f14c2f15569c8853c7eea1d92d4d03d # shrinks to term = Neg(NumLit(1280068684))
+cc c241cec83bfc578f43c5ea1d35f50110ca4ee8a8f2985d6d2adae01062a096b1 # shrinks to term = BoolToInt(Or(And(BoolLit(true), BoolLit(false)), And(BoolLit(true), BoolLit(false))))

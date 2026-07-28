@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 1beb13f20de71f472a9dbe92e4d019396387727e0238bd2e0606141a8b616500 # shrinks to blueprint = Blueprint { data: [(7, [0, 1])], continuations: [] }, left_seed = 1975084938108235344, right_seed = 5325277032162912311
+cc d0d964d312cb5a4ac9a95484f9498e1586158d06b9afcca48d30b6edfa4747b0 # shrinks to blueprint = Blueprint { data: [(7, [0, 1])], continuations: [([0], [(0, false, false)]), ([0], [(0, false, false), (0, false, true)])] }, left_seed = 66386669701651024, right_seed = 5147443557981590012
+cc f33244d988d8adf0941c28e409cf5b92868ca7cbc0bf2489fa04eaf250ab6650 # shrinks to blueprint = Blueprint { data: [(7, [0, 1])], continuations: [([0], [(1, true, false), (1, true, true)])] }, left_seed = 351989959022981567, right_seed = 1549762917972644042
