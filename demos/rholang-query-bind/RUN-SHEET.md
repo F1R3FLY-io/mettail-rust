@@ -221,9 +221,13 @@ both callers — is asked the same question twice in the same run:
 | the **sugar** | `for(sugar <- @"area"!?(7)) { … }` | the expansion |
 | the **expansion** | `new manual in { @"area"!(*manual, 7) \| for(@byhand <- manual) { … } }` | the program, by hand |
 
-and the two answers are compared **by the reducer**: the list's third element is
+and the two answers are compared **by the reducer**: the published list's third element is
 `*sugar == byhand`, an equality the machine evaluates over the two values it is actually holding.
-`⟦true⟧` is a computed verdict, not a claim on this page.
+The `true` inside `⟦[49, 49, true]⟧` is a **computed verdict**, not a claim on this page — and
+`*sugar` exercises a second thing worth pointing at, since `*` is the drop sigil rather than
+multiplication here: the row parses as `(*sugar) == byhand`, which is the sigil-led-prefix
+precedence `5a5cc9b0` settled on 2026-07-28. A parse of `*(sugar == byhand)` would not answer
+`true`.
 
 **Why this beat exists.** The defect was that the right program was *built and then not used*. So
 "the sugar expands correctly" and "the expansion is what runs" are two different claims, and only
