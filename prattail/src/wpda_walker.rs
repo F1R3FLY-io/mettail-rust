@@ -24893,6 +24893,48 @@ mod task16_chain_peek_memo_tests {
         );
     }
 
+    /// The single recorded counterexample of `prattail/proptest-regressions/wpda_walker.txt`,
+    /// promoted: `cc 484b8cf0d245a16b7ad31a232dff51c0f0ab77d1bd8164c0d72732b2180854e5` —
+    /// `seq = []`, the EMPTY token sequence.
+    ///
+    /// ★ Why an empty sequence is not a trivial case. The property sweeps `pos` over
+    /// `0..=src.len()`, so on the empty source it checks exactly ONE position — `pos == 0`,
+    /// which is simultaneously the first position and the end of input. Every off-by-one in
+    /// the memo's end-of-input handling lands there, and no non-empty input reaches it with
+    /// both roles at once. It is the smallest input that can distinguish "the memo agrees
+    /// with the oracle" from "the memo agrees with the oracle wherever there is a token".
+    ///
+    /// The memo is cleared per `min`, exactly as the property does, because
+    /// `chain_peek_memo_clear` is process-global state and a stale entry from a previous
+    /// `min` would make the comparison meaningless.
+    #[test]
+    fn the_recorded_empty_sequence_memo_equals_the_oracle() {
+        let seq: Vec<String> = Vec::new();
+        assert_eq!(
+            format!("{seq:?}"),
+            "[]",
+            "the reconstructed sequence is not the one the corpus recorded"
+        );
+
+        let src = MockChainSource { toks: seq };
+        assert_eq!(src.len(), 0, "the recorded case is the EMPTY source");
+
+        let mut positions_checked = 0usize;
+        for min in [0usize, 1, 2, 3] {
+            chain_peek_memo_clear();
+            for pos in 0..=src.len() {
+                let oracle = peek_ternary_chain_uncached(&src, pos, "?", ":", min);
+                let memo = memo_bool(&src, pos, "?", ":", min);
+                assert_eq!(oracle, memo, "pos={pos} min={min} seq={:?}", src.toks);
+                positions_checked += 1;
+            }
+        }
+        assert_eq!(
+            positions_checked, 4,
+            "the empty source must be probed at exactly one position per `min`"
+        );
+    }
+
     proptest::proptest! {
         #![proptest_config(proptest::prelude::ProptestConfig::with_cases(400))]
         // Arbitrary token strings over a small alphabet incl. the operators and

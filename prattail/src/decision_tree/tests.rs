@@ -2543,6 +2543,91 @@ mod prop_tests {
             let _ = std::fs::remove_file(&path);
         }
 
+    }
+
+    // ── the recorded counterexample, PROMOTED ────────────────────────────────────────
+    //
+    // The single entry of `prattail/proptest-regressions/decision_tree.txt`, written out as
+    // a named test. proptest replays the seed, but only as an anonymous number.
+    //
+    // ★ WHY THIS PARTICULAR INPUT IS THE INTERESTING ONE. Both entries carry the SAME name
+    // (`"Phs"`) with the same hash and DIFFERENT code, and the two codes differ only in
+    // whitespace placement — `"  aaa"` (leading) against `"aaaa "` (trailing). That is the
+    // dedup path: `record` and `category_code.insert` run only for the FIRST occurrence, so
+    // the round trip must return the FIRST code and not the second, and must not be
+    // confused by codes that a trimming implementation would collapse together. A
+    // single-entry or distinct-name input exercises neither.
+
+    /// The recorded triple list, verbatim.
+    fn recorded_entries() -> Vec<(String, u128, String)> {
+        vec![
+            ("Phs".to_string(), 0u128, "  aaa".to_string()),
+            ("Phs".to_string(), 0u128, "aaaa ".to_string()),
+        ]
+    }
+
+    /// ★ ANTI-VACUITY: the reconstructed entries ARE the recorded ones.
+    #[test]
+    fn the_recorded_incremental_entries_are_what_the_corpus_recorded() {
+        assert_eq!(
+            format!("{:?}", recorded_entries()),
+            r#"[("Phs", 0, "  aaa"), ("Phs", 0, "aaaa ")]"#,
+            "the reconstructed entry list is not the one \
+             `prattail/proptest-regressions/decision_tree.txt` recorded"
+        );
+    }
+
+    /// `cc 6c118d633e0fafae86469a8c29d573fbe3fef9aa31d89029abed2d93e6a79eaa` — the
+    /// incremental round trip on the recorded entries.
+    ///
+    /// ⚠ The temp path carries a test-specific suffix as well as the process id. The
+    /// property above keys its file on `std::process::id()` ALONE, which is unique under
+    /// `cargo nextest` (a process per test) and NOT under `cargo test` (a process per
+    /// binary): two tests writing that path concurrently would race. Adding the suffix here
+    /// keeps this test correct under both harnesses instead of inheriting the hazard.
+    #[test]
+    fn the_recorded_entries_survive_an_incremental_round_trip() {
+        let entries = recorded_entries();
+        let path = std::env::temp_dir().join(format!(
+            "prattail_promoted_decision_tree_rt_{}",
+            std::process::id()
+        ));
+        let mut state = IncrementalState { version: CACHE_VERSION, ..Default::default() };
+
+        let mut seen = std::collections::HashSet::new();
+        for (name, hash, code) in &entries {
+            if seen.insert(name.clone()) {
+                state.record(name, *hash);
+                state.category_code.insert(name.clone(), code.clone());
+            }
+        }
+        assert_eq!(seen.len(), 1, "the recorded entries share one name; the dedup is the point");
+
+        state.save(&path).expect("save should succeed");
+        let loaded = IncrementalState::load(&path).expect("load should succeed");
+        assert!(loaded.is_valid());
+
+        let mut checked = std::collections::HashSet::new();
+        for (name, hash, code) in &entries {
+            if checked.insert(name.clone()) {
+                assert!(loaded.is_unchanged(name, *hash), "hash mismatch for {name}");
+                assert_eq!(loaded.category_code.get(name).expect("code"), code);
+            }
+        }
+        // The SECOND code must not have overwritten the first — the dedup discipline the
+        // recorded input is shaped to catch.
+        assert_eq!(
+            loaded.category_code.get("Phs").expect("code"),
+            "  aaa",
+            "the later duplicate overwrote the first-occurrence code"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
         #[test]
         fn prop_content_hash_deterministic(
             rule_count in 1usize..5,
