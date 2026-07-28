@@ -22,11 +22,13 @@
 //!  │   ★ The propositional content of the one residue row is measured directly instead, by │
 //!  │     `every_propositional_atom_resolves_in_its_own_var_map`.                            │
 //!  ├──────────────────────────────────────────────────────────────────────────────────────┤
-//!  │ GATE 2  ★ THE DIFFERENTIAL                                                            │
-//!  │   `eval_guard_disposition_via_substrate` must agree with `eval_guard_disposition` on   │
-//!  │   EVERY corpus guard. This is what licenses swapping the three eager-COMM call sites   │
-//!  │   from the Rust fold to the substrate: the swap is behaviour-preserving, proven row    │
-//!  │   by row, not asserted.                                                                │
+//!  │ GATE 2  ★ THE DIFFERENTIAL — RE-DERIVED                                               │
+//!  │   `eval_guard_disposition_via_substrate` and `eval_guard_disposition` must agree on    │
+//!  │   every corpus guard EXCEPT on one DERIVED class — the guards whose encoding still     │
+//!  │   carries a binder the payload did not supply — where the substrate declines and the   │
+//!  │   Rust fold short-circuits to a verdict. On that class the substrate is the conformant │
+//!  │   one, and the gate asserts BOTH halves: agreement on the complement, and the exact,   │
+//!  │   named, direction-checked disagreement on the class.                                  │
 //!  └──────────────────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -498,39 +500,158 @@ fn differential_corpus() -> Vec<(&'static str, Proc)> {
     corpus
 }
 
-/// ★ THE DIFFERENTIAL. The substrate-derived decider and the Rust fold must agree on every
-/// corpus guard — which is what makes swapping the three eager-COMM call sites a
-/// behaviour-preserving change rather than a semantics change.
+/// ★ **THE ONE ROW-CLASS THE TWO DECIDERS NO LONGER AGREE ON, and why the gate asserts the
+/// disagreement instead of hiding it.**
+///
+/// ```text
+///   guard                    fold      substrate     reducer
+///   false and (x == 0)       Blocks    Declines      rests
+///   true  or  (x == 0)       Fires     Declines      RESTS   ← the fold fires; the machine does not
+///   false implies (x == 0)   Fires     Declines      RESTS   ← same, through `(not a) or b`
+/// ```
+///
+/// `receive::eval_guard_disposition` short-circuits: its `Or` arm answers `Fires` on a
+/// decided-true left operand without ever looking at the right one, and its `Implies` arm
+/// answers `Fires` on a refuted antecedent. The reducer does **not**:
+/// `f1r3node/rholang/src/rust/interpreter/reduce.rs:1970` binds *both* operands of `EAnd`/`EOr`
+/// with `?` before combining, and `rho_pure_eval` answers `Err(operator_mismatch_binary)` for a
+/// non-`GBool` operand. An unresolved binder is not a `GBool`, so the whole connective errors,
+/// `guard_passes` maps that to *no COMM*, and the process rests.
+///
+/// ★ **The reducer is normative**, so on this class the SUBSTRATE is the conformant decider and
+/// the fold is not. `guard_substrate::surface_guard_disposition`'s step 1 was made a verdict
+/// (rather than a diagnosis) for exactly this reason; `guard_residual_binder_is_normative.rs`
+/// holds the measurement and the RED.
+///
+/// The membership rule is **computed, not tabulated**: a row is in the class iff
+/// `encode_guard(g).vars` is non-empty. [`the_disagreement_class_is_exactly_the_residual_binder_class`]
+/// checks that the enumerated names below coincide with the computed class rather than being an
+/// allowlist that can drift.
+const RESIDUAL_BINDER_DISAGREEMENTS: &[(&str, GuardDisposition)] = &[
+    ("and F?", GuardDisposition::Blocks),
+    ("or T?", GuardDisposition::Fires),
+    ("implies F?", GuardDisposition::Fires),
+];
+
+/// ★ **THE DIFFERENTIAL, RE-DERIVED.** Both halves are asserted, so the gate can still fail in
+/// either direction:
+///
+/// * **agreement on the complement** — every corpus guard outside the residual-binder class must
+///   still get the same answer from both deciders. This is the half that was there before, and
+///   it is untouched: it fails if any other divergence appears.
+/// * **the exact disagreement on the class** — the rows where the two differ must be *exactly*
+///   the three named in [`RESIDUAL_BINDER_DISAGREEMENTS`], with exactly the recorded fold
+///   verdicts. It fails if a fourth appears, if one of the three stops disagreeing (which is what
+///   would happen if the residual-binder guard were removed and the substrate went back to
+///   firing them), or if the fold's answer changes.
+///
+/// A differential that cannot disagree is worthless; this one is checked against a set that is
+/// non-empty by assertion and bounded by assertion.
 #[test]
-fn the_substrate_decider_agrees_with_the_rust_fold_on_the_whole_corpus() {
+fn the_substrate_decider_agrees_with_the_rust_fold_outside_the_residual_binder_class() {
     let corpus = differential_corpus();
-    let mut disagreements: Vec<String> = Vec::new();
+    let mut observed: Vec<(&str, GuardDisposition, GuardDisposition)> = Vec::new();
 
     for (name, guard) in &corpus {
         let fold = eval_guard_disposition(guard);
         let substrate = eval_guard_disposition_via_substrate(guard);
         if fold != substrate {
-            disagreements
-                .push(format!("  {name:<22} fold={fold:?} substrate={substrate:?}  guard={guard}"));
+            observed.push((name, fold, substrate));
         }
     }
 
-    assert!(
-        disagreements.is_empty(),
-        "the substrate decider and the Rust fold disagree on {} of {} corpus guards:\n{}",
-        disagreements.len(),
-        corpus.len(),
-        disagreements.join("\n")
+    // ── the exact disagreement set, by name and by verdict pair ──
+    let rendered: Vec<(&str, GuardDisposition)> = observed
+        .iter()
+        .map(|(name, fold, _)| (*name, *fold))
+        .collect();
+    assert_eq!(
+        rendered,
+        RESIDUAL_BINDER_DISAGREEMENTS.to_vec(),
+        "the two deciders must differ on EXACTLY the residual-binder rows. Observed:\n{}",
+        observed
+            .iter()
+            .map(|(n, f, s)| format!("  {n:<22} fold={f:?} substrate={s:?}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
+
+    // ── …and on every one of them the substrate must be the DECLINING side ──
+    for (name, fold, substrate) in &observed {
+        assert_eq!(
+            *substrate,
+            GuardDisposition::Declines,
+            "{name}: the substrate's answer on a residual-binder guard is DECLINE — not an \
+             error, and not a decided `false`"
+        );
+        assert_ne!(*fold, *substrate, "{name}: recorded as a disagreement, so it must be one");
+    }
+
     println!(
-        "\n★ DIFFERENTIAL: {} corpus guards, 0 disagreements between the Rust fold and the \
-         substrate-derived decider.\n",
-        corpus.len()
+        "\n★ DIFFERENTIAL: {} corpus guards; {} agreements, {} disagreements — all of them the \
+         residual-binder class, all of them the substrate declining where the fold \
+         short-circuits.\n",
+        corpus.len(),
+        corpus.len() - observed.len(),
+        observed.len()
     );
+}
+
+/// ★ **The exception set is a DERIVED CLASS, not an allowlist.**
+///
+/// Every disagreeing row's encoding still carries a binder, every row whose encoding carries a
+/// binder is declined by the substrate, and the disagreeing rows are precisely those of them on
+/// which the fold nevertheless reached a verdict. Tabulating the exception instead of deriving
+/// it is how a gate drifts, so the table above is checked against the rule rather than trusted.
+#[test]
+fn the_disagreement_class_is_exactly_the_residual_binder_class() {
+    let corpus = differential_corpus();
+    let mut derived: Vec<&str> = Vec::new();
+
+    for (name, guard) in &corpus {
+        let has_residual_binder = !encode_guard(guard).vars.is_empty();
+        let fold = eval_guard_disposition(guard);
+        let substrate = eval_guard_disposition_via_substrate(guard);
+
+        match has_residual_binder {
+            // ★ The rule, applied to every row: a guard the payload did not fully supply is
+            // refused, whatever the connectives settle the formula to.
+            true => {
+                assert_eq!(
+                    substrate,
+                    GuardDisposition::Declines,
+                    "{name}: `{guard}` still mentions a binder, and the reducer rests on it"
+                );
+                if fold != substrate {
+                    derived.push(name);
+                }
+            },
+            // …and a guard with no residual binder is decided by the same rules as before, so it
+            // cannot be in the exception set.
+            false => assert_eq!(
+                fold, substrate,
+                "{name}: `{guard}` has no residual binder, so the two deciders must still agree"
+            ),
+        }
+    }
+
+    let tabulated: Vec<&str> = RESIDUAL_BINDER_DISAGREEMENTS
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    assert_eq!(
+        derived, tabulated,
+        "the derived exception class and the tabulated one must coincide"
+    );
+    assert!(!derived.is_empty(), "an empty exception class would make the gate vacuous");
 }
 
 /// The corpus is not trivially small, and it exercises all three dispositions — otherwise the
 /// differential above could pass vacuously.
+///
+/// ★ Both deciders are measured, not just the substrate: the differential compares two answers,
+/// so a corpus that pinned only one of them to three dispositions could still be blind to a
+/// whole disposition on the other side.
 #[test]
 fn the_differential_corpus_exercises_all_three_dispositions() {
     let corpus = differential_corpus();
@@ -541,7 +662,13 @@ fn the_differential_corpus_exercises_all_three_dispositions() {
             corpus
                 .iter()
                 .any(|(_, g)| eval_guard_disposition_via_substrate(g) == expected),
-            "the corpus must contain at least one {expected:?} row"
+            "the corpus must contain at least one substrate-{expected:?} row"
+        );
+        assert!(
+            corpus
+                .iter()
+                .any(|(_, g)| eval_guard_disposition(g) == expected),
+            "the corpus must contain at least one fold-{expected:?} row"
         );
     }
 }

@@ -691,6 +691,12 @@ fn from_verdict(verdict: Option<bool>) -> Sat3 {
 /// its binders are gone and its operands are ground — which is exactly the *run-time* half of
 /// the rule ("…at run time otherwise").
 ///
+/// ★ When a binder is **not** gone — the payload did not supply it — this answers
+/// [`GuardDisposition::Declines`], and it does so even where the substrate's short-circuits make
+/// the formula constant-true. That is [`surface_guard_disposition`]'s step 1, and it is there
+/// because the reducer errors on the unresolved operand and **rests**. See that function's
+/// "STEP 1 IS A VERDICT-CHANGING SOUNDNESS GUARD" section.
+///
 /// ⚠ Because the caller supplies only the substituted guard, the refusal's
 /// [`RefusalProvenance`] is computed against that image; see
 /// [`surface_guard_disposition`]'s "the written guard" section for what that costs and for the
@@ -774,37 +780,70 @@ impl SurfaceGuardDisposition {
 /// indistinguishable from a guard that was never decided at all. This function answers the same
 /// verdict and, when there is no verdict, **what stopped it**.
 ///
-/// # ⚠ The verdict is BYTE-IDENTICAL to the one this lane already returned
+/// # ★★ STEP 1 IS A VERDICT-CHANGING SOUNDNESS GUARD, NOT A DIAGNOSIS
 ///
-/// The three-step enumeration below is a **diagnosis of a refusal that has already happened**,
-/// not a set of early returns: [`ground_verdict_with`] is called first, exactly as before and
-/// with exactly the same arguments, and the steps run only on the [`Sat3::DontKnow`] branch.
-/// Nothing that fired before fires differently, and nothing that blocked before declines
-/// instead. That matters here more than usual, because this lane is pinned to agree with
-/// `receive::eval_guard_disposition` on the whole corpus by
-/// `languages/tests/rholang_guard_substrate_wire.rs`, and a verdict change would be a change to
-/// which COMMs fire.
+/// **THE REDUCER IS NORMATIVE.** `f1r3node/rholang/src/rust/interpreter/reduce.rs:1970` binds
+/// **both** operands of `EAnd`/`EOr` with `?` before combining them — unconditionally, with no
+/// short-circuit — and its pure twin `rho_pure_eval::eval` does the same, answering
+/// `Err(operator_mismatch_binary)` for a non-`GBool` operand. An operand that still mentions a
+/// binder the payload did not supply is not a `GBool`: it is an error. The error propagates out
+/// of the whole connective, `guard_passes` maps it to *no COMM*, and the **process rests** — the
+/// receive and the send both remain, and the datum stays available for a later match.
 ///
-/// ⚠⚠ **This is deliberately NOT the lowered lane's control flow, and the difference is a
-/// KNOWN, MEASURED, UNRESOLVED divergence — not an oversight.** `substrate_guard_disposition`
-/// returns [`GuardRefusalCause::ResidualBinder`] *before* it consults the ground leg whenever
-/// `encoding.vars` is non-empty, and sweeps **every** set-aside fragment before it too. Those
-/// early returns are not observability: they change the verdict, and they exist because that
-/// lane's reference semantics (`rho_pure_eval`) is strict in both operands of `EAnd`/`EOr` and
-/// maps any error to guard-fail, so a short-circuit that discards an unanswerable operand would
-/// fire a COMM the reducer rests on. This lane's own reference — `eval_guard_disposition` —
-/// short-circuits, so adopting the early returns here would change verdicts and break the
-/// differential gate. Which of the two is right is a question about the surface interpreter's
-/// conformance to the reducer, and it is **not** settled by plumbing a diagnosis through.
-/// See the module-level note in `docs/` and the campaign report for the measured witnesses.
+/// `Proc::Implies` is not a third case: it lowers to `(not a) or b` (`rholang_ast::lower_proc`,
+/// `Kont::Implies`), so on the machine it is an `EOr` and inherits the same discipline.
+///
+/// This lane's substrate, by contrast, short-circuits **twice over**:
+///
+/// | mechanism | example | what it discards |
+/// |---|---|---|
+/// | `GuardFormula::or`'s CONSTRUCTOR collapse `(True, _) ⟼ True` | `true or (y == 2)` | the disjunct, before any ground check runs — the formula is literally `True` |
+/// | [`ground_verdict_with`]'s left-strict EVALUATOR short-circuit | `(1 == 1) or (y == 2)`, `false implies (y == 2)` | the operand, after the formula kept it |
+///
+/// Each of those fired a COMM the reducer rests on. That is unsoundness in the **firing**
+/// direction, which no fail-closed policy excuses, so step 1 now runs **before** the ground leg
+/// and refuses the whole guard whenever `encoding.vars` is non-empty — exactly as
+/// `substrate_guard_disposition` has always done over the lowered `Par`. The two lanes are once
+/// again the same shape as well as the same decider.
+///
+/// ★ **The check consults `encoding.vars`, NOT the formula, and it must.** `true or (y == 2)`
+/// encodes to the formula `True` with no atoms at all, while `encoding.vars` still names `y$…`:
+/// the residual binder is gone from the formula before any ground procedure runs. A fix that
+/// inspected `formula.atoms()` would find nothing to refuse. This is the same reasoning
+/// `substrate_guard_disposition` gives for sweeping `encoding.opaque` rather than
+/// `formula.atoms()` in its own step 2.
+///
+/// ## ⚠ What this cost, and what it deliberately did NOT change
+///
+/// The change is **conservative in one direction only**: strictly fewer COMMs fire, never more.
+/// `languages/tests/guard_residual_binder_is_normative.rs` holds the measurement — of 15
+/// residual-binder shapes, 3 used to fire (`true or (y == 2)`, `(1 == 1) or (y == 2)`,
+/// `false implies (y == 2)`), 1 used to claim a decided `false` (`false and (y == 2)`), and 11
+/// were already declining by the left-strict discipline.
+///
+/// It also **broke the differential** in `languages/tests/rholang_guard_substrate_wire.rs`:
+/// `receive::eval_guard_disposition` short-circuits identically, so it still fires those rows.
+/// The gate was **re-derived, not weakened** — it now asserts the exact, named disagreement set
+/// and asserts agreement everywhere else, so it can still fail in both directions.
+///
+/// ⚠⚠ **The refusal is scoped to the RESIDUAL-BINDER class and is NOT extended to
+/// `encoding.opaque`.** The lowered lane may sweep its opaque fragments because its delegate
+/// *is* `rho_pure_eval`, so *"the delegate could not decide it"* ⟺ *"the machine errors on it"*.
+/// This lane's delegates — `formula::host_matches_verdict` and
+/// `runtime::compare_collection_equality` — decline fragments the machine decides **totally**
+/// (the separating conjunction is exactly such a fragment). Sweeping them here would refuse
+/// guards the machine fires, which is divergence **K** of
+/// `rholang-runtime/tests/rho_rholang_conformance.rs` made worse, in the resting direction. K is
+/// `DontKnow ∨ Sat` and this defect was `Sat ∨ DontKnow`; they are different input classes and
+/// neither remedy subsumes the other.
 ///
 /// # The three steps, and what each one names
 ///
-/// | step | what stopped the decider | [`GuardRefusalCause`] |
-/// |---|---|---|
-/// | 1 | `encoding.vars` is non-empty — a binder the substitution could not reach | [`ResidualBinder`](GuardRefusalCause::ResidualBinder) |
-/// | 2 | a set-aside fragment the delegated decider could not answer | [`Unsupported`](GuardRefusalCause::Unsupported), [`NotABoolean`](GuardRefusalCause::NotABoolean), [`UnresolvedReference`](GuardRefusalCause::UnresolvedReference) |
-/// | 3 | [`ground_verdict_with`] left the ground formula undecided | [`FormulaUndecided`](GuardRefusalCause::FormulaUndecided) |
+/// | step | when it runs | what stopped the decider | [`GuardRefusalCause`] |
+/// |---|---|---|---|
+/// | 1 | ★ **before** the ground leg | `encoding.vars` is non-empty — a binder the substitution could not reach | [`ResidualBinder`](GuardRefusalCause::ResidualBinder) |
+/// | 2 | on the [`Sat3::DontKnow`] branch | a set-aside fragment the delegated decider could not answer | [`Unsupported`](GuardRefusalCause::Unsupported), [`NotABoolean`](GuardRefusalCause::NotABoolean), [`UnresolvedReference`](GuardRefusalCause::UnresolvedReference) |
+/// | 3 | on the [`Sat3::DontKnow`] branch | [`ground_verdict_with`] left the ground formula undecided | [`FormulaUndecided`](GuardRefusalCause::FormulaUndecided) |
 ///
 /// The order is the lowered lane's, arm for arm, so the two lanes name the same fact the same
 /// way when they see it.
@@ -833,6 +872,26 @@ impl SurfaceGuardDisposition {
 /// costs the silence this whole vocabulary exists to remove.
 pub fn surface_guard_disposition(written: &Proc, substituted: &Proc) -> SurfaceGuardDisposition {
     let encoding = encode_guard(substituted);
+
+    // ── ★ 1. A binder the substitution could not reach — BEFORE the ground leg. ────────────
+    //
+    // Not a diagnosis: a VERDICT. The reducer evaluates both operands of every connective and
+    // errors on an unresolved binder, so a guard that still mentions one rests on the machine
+    // however the substrate's short-circuits settle the formula. Consulting `encoding.vars` is
+    // the only place the fact survives — `GuardFormula::or` has already discarded the offending
+    // disjunct from the formula by the time this runs.
+    //
+    // `refusal_for` is reused rather than a refusal being built here, so there is exactly ONE
+    // construction site for a `ResidualBinder` on this lane: `diagnose`'s step 1 is its first
+    // arm, and a non-empty `vars` reaches it unconditionally.
+    match encoding.vars.is_empty() {
+        true => {},
+        false => {
+            return SurfaceGuardDisposition::Undecided(refusal_for(&encoding, written, substituted))
+        },
+    }
+
+    // ── 2. The substrate decides what is left. ────────────────────────────────────────────
     let assignment = ground_assignment(&encoding);
     let mut resolver = GuardAtomResolver { encoding: &encoding };
     let verdict = ground_verdict_with(
@@ -854,6 +913,13 @@ pub fn surface_guard_disposition(written: &Proc, substituted: &Proc) -> SurfaceG
 /// Why [`surface_guard_disposition`] reached no verdict, in the lowered lane's step order.
 ///
 /// Total by construction: step 3 is unconditional, so every refusal gets a cause.
+///
+/// ⚠ Called from **two** places in [`surface_guard_disposition`], and the split is what makes
+/// step 1 a verdict rather than a diagnosis: once from the `encoding.vars`-non-empty guard that
+/// runs *before* the ground leg, and once from the [`Sat3::DontKnow`] branch *after* it. The two
+/// call sites are disjoint — the second is only reached with an empty `vars` — so
+/// [`diagnose`]'s step 1 answers the first and its steps 2–3 answer the second, with no cause
+/// constructed twice.
 fn refusal_for(encoding: &GuardEncoding, written: &Proc, substituted: &Proc) -> GuardRefusal {
     match diagnose(encoding) {
         // ── 1 & the always-`Term` half of 2 ────────────────────────────────────────────────
@@ -906,6 +972,17 @@ fn refusal_for(encoding: &GuardEncoding, written: &Proc, substituted: &Proc) -> 
 /// or `None` when nothing in the encoding does (step 3's territory).
 ///
 /// Returns the offending fragment alongside the cause so the caller can name it.
+///
+/// ⚠ This function is a **classifier**, not the control flow: whether step 1 changes a verdict
+/// is decided by [`surface_guard_disposition`], which consults `encoding.vars` before the ground
+/// leg. Step 1 is kept here as well — rather than moved out — because [`refusal_for`] must stay
+/// total over both call sites, and because the *provenance* rule for a residual binder
+/// (always `Term`) belongs beside the other causes it is compared against.
+///
+/// ★ Step 1 is also what makes the second call site's answer honest: reaching this function
+/// from the [`Sat3::DontKnow`] branch with a non-empty `vars` is impossible, so a
+/// `ResidualBinder` never masquerades as a diagnosis of a formula the substrate merely failed to
+/// settle.
 fn diagnose(encoding: &GuardEncoding) -> Option<(GuardRefusalCause, Option<Arc<Proc>>)> {
     // ── 1. A binder the substitution could not reach. ──────────────────────────────────────
     if !encoding.vars.is_empty() {
@@ -1031,9 +1108,15 @@ const REFUSAL_GUARD_BUDGET: usize = 512;
 
 /// The assignment for an already-substituted guard: empty.
 ///
-/// A substituted guard has no binders left, so nothing needs binding — but the assignment is
-/// still sized to the var map so that a *residual* binder (one the substitution could not
-/// reach) reads as unbound and yields `DontKnow`, never a silent default.
+/// A substituted guard has no binders left, so nothing needs binding — and the assignment is
+/// still sized to the var map so that an unbound slot reads as unbound and yields `DontKnow`,
+/// never a silent default.
+///
+/// ⚠ Since [`surface_guard_disposition`]'s step 1 became a verdict, every caller reaching here
+/// has an **empty** `vars`, so this is always `GuardAssignment::with_len(0)`. It is written
+/// against the var map rather than as a constant because that is a property of the *caller's*
+/// control flow: the sizing is what would keep a residual binder undecided if the guard above
+/// were ever removed, and a hard-coded zero would silently answer a default instead.
 fn ground_assignment(encoding: &GuardEncoding) -> GuardAssignment {
     GuardAssignment::with_len(encoding.vars.len())
 }
