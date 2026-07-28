@@ -3522,6 +3522,20 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         // `.count(e)` / `.remove(e)` — Bag multiplicity operations. Rholang has no multiset.
         Proc::BCount(..) => "b.count(e) bag method (no Rholang analog; C3 residue)",
         Proc::BRemove(..) => "b.remove(e) bag method (no Rholang analog; C3 residue)",
+        // `.last()` — the table has `nth` and `length` but no `last` (checked by name against
+        // `method_table`, which sits at `reduce.rs:9023` in the pinned `../f1r3node-rust-mettail`;
+        // `nth` is registered at :9025 and `length` at :9080). `last()` exists because upstream
+        // cannot reach a list's final element by PATTERN — every collection remainder in
+        // `rholang-tree-sitter/grammar.js` is TRAILING, so `[..._, x]` does not parse — and the
+        // lookahead FIPS writes `trace.last()` literally. It is therefore a MeTTaIL-only
+        // projection with no counterpart to route to, and it stays fail-closed and named.
+        //
+        // ⚠ It is fail-closed rather than DESUGARED, and that is a decision worth naming: the
+        // rewrite `l.last()` ⇒ `l.nth(l.length() - 1)` is expressible entirely in routed methods
+        // and would run on the machine today, but it evaluates the receiver TWICE. Duplicated
+        // evaluation is duplicated gas, and gas is F1r3node's to price, not MeTTaIL's — so the
+        // rewrite is a cross-system decision to be presented, not taken here.
+        Proc::LLast(..) => "l.last() list method (no Rholang analog; C3 residue)",
         // `.subtract(q)` — no `subtract` key at all.
         Proc::PSubtract(..) => "p.subtract(q) pathmap method (no Rholang analog; C3 residue)",
         // `.restrict(q)` / `.meet(q)` / `.getSubtrieAt(p)`

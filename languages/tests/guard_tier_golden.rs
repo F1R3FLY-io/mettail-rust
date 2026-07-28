@@ -212,10 +212,43 @@ fn calculator_guard_tiers() {
 /// re-derived from the two rule declarations above, not fitted to the observed output —
 /// the cross-check inside `assert_tier_tuple` re-counts the structural fields from the raw
 /// metadata and would reject a fitted number.
+///
+/// ★ `List.last()` (2026-07-28, RE-DERIVED not relaxed). Adding the FIPS-mandated `last()`
+/// projection contributes **+1 T1 and +2 T2**, and the split is worth spelling out because
+/// the two halves come from two different declarations:
+///
+/// ```text
+///     LLast     . l:Proc |- l "." "last" "(" ")" : Proc ![{ … }] fold;
+///     LLastCong .        | S ~> T |- (LLast S) ~> (LLast T);
+/// ```
+///
+/// * **T1 239 → 240.** `LLast` declares exactly ONE operand, the receiver `l:Proc` — a
+///   non-binder, non-`Guard` field, and a non-scalar category decided by the structural
+///   classifier on the `True` skeleton, exactly like every other unary collection method
+///   (`LLength`, `MKeys`, `RZGetLeaf`). The `fold` action contributes nothing: an `![…]`
+///   body is not a field, and it is not a rewrite condition either — which is precisely why
+///   the three trie-enumeration rules above moved T1 while leaving T2 alone.
+/// * **T2 283 → 285, i.e. +2 from ONE rule.** A congruence contributes to BOTH behavioral
+///   sums, because `T2 == (Σ rewrite conditions) + (congruence premises) + (binder fields)`
+///   and the generated `RewriteDef` for `LLastCong` carries
+///   `conditions: &["S ~> T"]` *and* `premise: Some(("S", "T"))`. It is counted once in each
+///   sum. This is not special pleading for `last`: every congruence in this grammar has that
+///   shape — the immediately adjacent `LConcatCongL` is byte-identical in structure — and it
+///   is the same double-count that makes Calculator's T2 read "219 rewrite conditions + 216
+///   congruence premises". `LLast` declares no binder and no freshness condition, so nothing
+///   else moves.
+/// * **total 522 → 525**, and `522 + 1 + 2 == 525 == 240 + 285` closes the arithmetic.
+///   T3/T4 stay 0 (no unbounded quantifier is introduced), so `worst` stays T2.
+///
+/// The numbers were derived from the two declarations and then CONFIRMED against the
+/// generated `metadata.rs` (`TermDef "LLast"` has one non-binder field; `RewriteDef
+/// "LLastCong"` has one condition and one premise) — not read off the failure message. The
+/// cross-check inside `assert_tier_tuple` independently re-counts both from raw metadata and
+/// would reject a fitted number.
 #[test]
 fn rholang_guard_tiers() {
     let meta = mettail_languages::rholang::RholangLanguage.metadata();
-    assert_tier_tuple(meta, 522, 239, 283, 0, 0, T2);
+    assert_tier_tuple(meta, 525, 240, 285, 0, 0, T2);
 }
 
 /// **Ambient** — mobile ambients over `Proc`/`Name` (both non-scalar; no native

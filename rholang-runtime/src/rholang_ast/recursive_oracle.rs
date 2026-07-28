@@ -1916,6 +1916,10 @@ mod differential {
         ("@\"OUT\"!([1, 2].nth(0))", "LNth", Expect::Lowers),
         ("@\"OUT\"!([1].concat([2]))", "LConcat", Expect::Lowers),
         ("@\"OUT\"!(1.toByteArray())", "MToByteArray", Expect::Lowers),
+        // `.last()` is C3 residue, not a routed method: `method_table` has `nth` and `length`
+        // but no `last`, so the lowering fails closed naming the construct rather than
+        // inventing a consensus implementation for it.
+        ("@\"OUT\"!([1, 2].last())", "LLast (C3 residue)", Expect::Fails),
         // ── the C3 bag gates: three routed operations that must FAIL on a bag receiver ──────
         ("@\"OUT\"!(#{1 | 2}#.length())", "LLength bag gate", Expect::Fails),
         ("@\"OUT\"!(#{1 | 2}#.nth(0))", "LNth bag gate", Expect::Fails),

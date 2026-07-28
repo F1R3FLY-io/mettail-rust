@@ -5144,7 +5144,7 @@ mod tests {
     /// A-M5 census errata pins: every OTHER bundled mixfix cohort stays
     /// unfactored with the recorded reason — Name `,` (rep-part-0 ⇒
     /// EmptySequence ×2), Name `<-` (1-member slice ⇒ LoneRootChild), the
-    /// Proc `.` cohort (43 distinct method names ⇒ 43 LoneRootChild), and
+    /// Proc `.` cohort (44 distinct method names ⇒ 44 LoneRootChild), and
     /// InputBind `&`/`where` (rep-part-0 ×2 / singleton).
     ///
     /// Census delta (2026-07-26): the trie-enumeration surface added
@@ -5153,6 +5153,18 @@ mod tests {
     /// The pinned PROPERTY is unchanged: each method name is distinct, so each
     /// remains its own `LoneRootChild` singleton and the cohort still yields
     /// zero factorable groups. Only the census count moves.
+    ///
+    /// Census delta (2026-07-28): `List.last()` — the FIPS-mandated projection
+    /// onto a list's final element, `LLast . l:Proc |- l "." "last" "(" ")"` —
+    /// is a fourth such nullary method, so the Proc `.` cohort grows 43 → 44.
+    /// The pinned PROPERTY is again untouched, and that is the whole content of
+    /// this pin: `last` is a name no other method shares, so it factors against
+    /// nothing, stays its own `LoneRootChild` singleton, and leaves the cohort
+    /// at zero factorable groups. The two assertions that carry the property —
+    /// `dot.groups.is_empty()` and the all-`LoneRootChild` check — are unchanged
+    /// and still assert exactly what they did; `slice.len()` and
+    /// `singletons.len()` move TOGETHER, from 43 to 44, which is itself the
+    /// evidence that the new method added a singleton rather than a group.
     #[test]
     fn rholang_mixfix_other_cohorts_stay_unfactored() {
         let def = rholang();
@@ -5182,8 +5194,8 @@ mod tests {
         assert_eq!(query.singletons[0].reason, SingletonReason::LoneRootChild);
         let dot = bucket(proc_src, ".");
         assert!(dot.groups.is_empty());
-        assert_eq!(dot.slice.len(), 43, "the 43-method cohort");
-        assert_eq!(dot.singletons.len(), 43);
+        assert_eq!(dot.slice.len(), 44, "the 44-method cohort");
+        assert_eq!(dot.singletons.len(), 44);
         assert!(dot
             .singletons
             .iter()

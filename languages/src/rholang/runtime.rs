@@ -545,6 +545,7 @@ fn normalize_send_sugar_canon(p: &Proc) -> Proc {
         Proc::MValues(a) => Proc::MValues(rc(a)),
         Proc::LLength(a) => Proc::LLength(rc(a)),
         Proc::LNth(a, b) => Proc::LNth(rc(a), rc(b)),
+        Proc::LLast(a) => Proc::LLast(rc(a)),
         Proc::LConcat(a, b) => Proc::LConcat(rc(a), rc(b)),
         Proc::BCount(a, b) => Proc::BCount(rc(a), rc(b)),
         Proc::BDiff(a, b) => Proc::BDiff(rc(a), rc(b)),

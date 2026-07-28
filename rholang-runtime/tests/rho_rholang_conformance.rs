@@ -1494,6 +1494,27 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
             "[10]",
             "unsupported: m.values() map method (no Rholang analog; C3 residue)",
         ),
+        // `.last()` — `method_table` has `nth` and `length` but no `last`, so there is nothing
+        // to route to. It exists because upstream Rholang cannot reach a list's FINAL element by
+        // pattern: every collection remainder in `rholang-tree-sitter/grammar.js` is TRAILING, so
+        // `[x, ..._]` binds the head and `[..._, x]` does not parse. The lookahead FIPS writes
+        // `trace.last()` literally, so the projection has to exist somewhere; today that
+        // somewhere is the fold body, and the machine fails closed NAMING it.
+        //
+        // The fold answer is `3` and NOT `1`: the fixture's head and last element differ, so this
+        // row also witnesses that `last` is not `first`.
+        (
+            "[1, 2, 3].last()",
+            "3",
+            "unsupported: l.last() list method (no Rholang analog; C3 residue)",
+        ),
+        // …and the empty list, whose answer is INHERITED from `nth`'s totality rather than
+        // chosen: out-of-domain access is the `error` term, never a panic and never a new variant.
+        (
+            "[].last()",
+            "error",
+            "unsupported: l.last() list method (no Rholang analog; C3 residue)",
+        ),
         ("5 bitand 3", "1", "unsupported: bitand bitwise-and (no Rholang bitwise Expr)"),
         ("bool(1p0)", "true", "unsupported: bool(a) boolean conversion"),
         (r#"str(1.5p1)"#, r#""1.5p1""#, "unsupported: str(a) string conversion"),

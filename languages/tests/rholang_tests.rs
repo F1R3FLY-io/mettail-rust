@@ -2867,6 +2867,139 @@ mod native_ops {
         fn list_nth_after_concat() {
             assert_reduces_to("[1, 2].concat([3, 4]).nth(2)", "3");
         }
+
+        // ── `l.last()` — the projection upstream Rholang cannot reach by PATTERN ─────────
+        //
+        // Upstream's collection remainder is always TRAILING. All four productions in
+        // `rholang-rs/rholang-tree-sitter/grammar.js` read `commaSep(…), optional(remainder)`
+        // — list (:455), set (:457), map (:459), pathmap (:462) — and ZERO productions place
+        // the remainder first. So `[x, ..._]` binds the FIRST element and `[..._, x]` does not
+        // parse at all: the LAST element of a list is not pattern-reachable. `last()` is the
+        // method form of that missing projection, and the lookahead FIPS writes it literally
+        // (`FIPS/approved/2026-01-08-Lookahead/2026-01-08-Lookahead.md:70,157`).
+
+        #[test]
+        fn list_last_method() {
+            assert_reduces_to("[1, 2, 3].last()", "3");
+        }
+
+        /// The singleton — the one list shape whose head and last element coincide.
+        #[test]
+        fn list_last_method_singleton() {
+            assert_reduces_to("[x].last()", "x");
+        }
+
+        /// ★ **THE DISCRIMINATING FIXTURE: this test fails if `last()` returns the FIRST
+        /// element.**
+        ///
+        /// [`list_last_method_singleton`] passes under BOTH readings — a one-element list cannot
+        /// tell `last` from `first` — so on its own it would be a dead guard. Here the head and
+        /// the last element DIFFER, and the head is asserted alongside it through `nth(0)`, so
+        /// the pair also pins that the two are different projections of one list rather than two
+        /// spellings of one projection.
+        #[test]
+        fn list_last_is_the_last_element_not_the_first() {
+            assert_reduces_to("[111, 222, 333].last()", "333");
+            // the control: the SAME list, projected at the head, must NOT answer 333
+            assert_reduces_to("[111, 222, 333].nth(0)", "111");
+        }
+
+        /// `[].last()` — the empty list has no last element.
+        ///
+        /// ⚠ **The answer is INHERITED from `LNth`, not chosen here.** `LNth` is TOTAL: every
+        /// access outside the carrier's domain answers the `error` term (`Err . |- "error" :
+        /// Proc`) through `…​.cloned().unwrap_or(Proc::Err)`, and "there is no element there" is
+        /// exactly that case. So `[].last()` is `error` — the identical value `[].nth(0)`
+        /// answers, asserted side by side here so the two can never silently drift apart. No new
+        /// error variant exists, and the fold must never panic (see the `LNth` note in
+        /// `languages/src/rholang.rs`: a panic inside a fold body cannot be contained under
+        /// `[profile.dev] codegen-backend = "cranelift"`).
+        #[test]
+        fn list_last_on_the_empty_list_is_the_error_term() {
+            assert_reduces_to("[].last()", "error");
+            // the precedent it follows, in the same test so a change to either side is loud
+            assert_reduces_to("[].nth(0)", "error");
+        }
+
+        /// `last()` survives `Display` and the rendered surface re-parses.
+        ///
+        /// ⚠ **What is asserted is what actually holds.** Display in this workspace is a
+        /// CANONICAL PROJECTION, so `parse(display(t)) == t` is not true in general and is NOT
+        /// claimed. The property pinned here is the one the rest of the suite pins
+        /// (`calculator_grouping_is_inert.rs`, `optional_group_smoke.rs`): the display re-parses,
+        /// and `display ∘ parse ∘ display == display` — display is an idempotent fixed point.
+        #[test]
+        fn list_last_display_round_trips() {
+            fresh();
+            let term = parse("[10, 20, 30].last()");
+            let displayed = format!("{}", term);
+            assert!(
+                displayed.contains(".last()"),
+                "`last()` must survive Display, got {displayed:?}"
+            );
+            fresh();
+            let reparsed = parse(&displayed);
+            assert_eq!(
+                format!("{}", reparsed),
+                displayed,
+                "the rendered surface must re-parse to the same display (idempotence)"
+            );
+        }
+
+        /// **The conservativity claim, CHECKED — and it came back NARROWER than assumed.**
+        ///
+        /// `last()` is meant to be an ADDITIVE extension: upstream Rholang has no `last`, so
+        /// every upstream program should parse the same and mean the same afterwards. The one
+        /// way adding a method could break that is by RESERVING the method name as a keyword,
+        /// and the first draft of this fixture asserted `last` stayed usable as an ordinary
+        /// name. **It does not**, and the measurement (2026-07-28) is recorded here because it
+        /// is a real, PRE-EXISTING defect that `last()` joins rather than creates:
+        ///
+        /// | bare name | parses as an ordinary name? |
+        /// |---|---|
+        /// | `last` | **no** — `1:3: unexpected Ident after parsing` |
+        /// | `nth` | **no** — identical error |
+        /// | `length` | **no** — identical error |
+        /// | `keys` | **no** — identical error |
+        /// | `concat` | **no** — identical error |
+        /// | `notamethod` | yes |
+        ///
+        /// So EVERY method terminal is keyword-reserved, and has been since the method-call
+        /// surface landed — `last` behaves exactly like its four siblings, no better and no
+        /// worse. What this fixture pins is therefore the true statement: `last` joins the
+        /// existing reserved set and does not become a *special* case, and a non-method
+        /// identifier is still unaffected (the positive control, without which the first five
+        /// rows would also "pass" against a parser that rejected everything).
+        ///
+        /// ⚠ **The residual defect is logged, not fixed here** — un-reserving the method surface
+        /// is a lexer change across ~40 method rules and is out of scope for adding one method.
+        /// The conservativity claim that survives is the narrower one: no upstream program that
+        /// does not use a *method name* as a bare identifier is affected, which is what the
+        /// 10850-test suite checks.
+        #[test]
+        fn last_joins_the_reserved_method_names_and_is_not_a_special_case() {
+            let bare_name_program =
+                |name: &str| format!("for(x <- {name}){{*(x)}} | {name}!(7)");
+
+            // `last` is reserved — as its four siblings already were.
+            for reserved in ["last", "nth", "length", "keys", "concat"] {
+                assert!(
+                    Proc::parse(&bare_name_program(reserved)).is_err(),
+                    "`{reserved}` is a method terminal, so it is keyword-reserved as a bare name; \
+                     if this now PARSES the reservation defect was fixed and this pin should be \
+                     re-derived, not deleted"
+                );
+            }
+
+            // ★ The positive control. Without it the loop above would pass against a parser that
+            // rejected every program, and the fixture would assert nothing.
+            let control = bare_name_program("notamethod");
+            assert!(
+                Proc::parse(&control).is_ok(),
+                "a NON-method identifier must still be usable as an ordinary name — if this \
+                 fails, the reservation has widened beyond the method surface: {control}"
+            );
+        }
     }
 
     mod map {

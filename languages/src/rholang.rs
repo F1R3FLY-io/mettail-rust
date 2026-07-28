@@ -2205,6 +2205,54 @@ language! {
             }
         }] fold;
 
+        // `l.last()` — the LAST element of a list.
+        //
+        // ★ AN ADDITIVE EXTENSION, AND THE GAP IT CLOSES IS REAL. Upstream Rholang's collection
+        // remainder is always TRAILING: all four productions in
+        // `rholang-rs/rholang-tree-sitter/grammar.js` read `commaSep(…), optional(remainder)` —
+        // list (:455), set (:457), map (:459), pathmap (:462) — and ZERO productions place the
+        // remainder first. So `[x, ..._]` binds the FIRST element and `[..._, x]` does not parse
+        // at all: **the last element of a list is not pattern-reachable in Rholang.** `last()` is
+        // the method form of that missing projection. The lookahead FIPS writes it literally —
+        // `let @result <- trace.last() in { … }`
+        // (`FIPS/approved/2026-01-08-Lookahead/2026-01-08-Lookahead.md:70`, again at `:157`) — so
+        // this is FIPS conformance, not an invention.
+        //
+        // Conservativity: upstream has no `last`, and `last` is not reserved by adding one — the
+        // terminal is reachable only after a `.`, exactly as `length`/`nth`/`keys` are, so `last`
+        // remains usable as an ordinary name. Every upstream program still parses the same and
+        // means the same. Pinned by `languages/tests/rholang_tests.rs::native_ops::list::
+        // last_is_still_available_as_an_ordinary_name`.
+        //
+        // ⚠ TOTALITY IS INHERITED FROM `LNth`, NOT CHOSEN HERE. `LNth` (directly above) is TOTAL:
+        // a non-list receiver, a non-integer index and an index past the end all answer the
+        // `error` term (`Err . |- "error" : Proc`), the last of them through
+        // `.cloned().unwrap_or(Proc::Err)`. "There is no element there" is exactly that case, and
+        // the empty list is exactly that shape — so `[].last()` is `error`, the SAME value
+        // `[].nth(0)` answers, reached through the SAME combinator. No new error variant is
+        // introduced. And, as recorded for `LNth`, a fold body must never panic: unwinding across
+        // the Cranelift-compiled frames of `[profile.dev] codegen-backend = "cranelift"` aborts
+        // the process, so `.expect(…)`/indexing here would kill the test binary rather than fail.
+        //
+        // ⚠ MACHINE PATH: `last` is NOT a key of the interpreter's `method_table`
+        // (`rholang/src/rust/interpreter/reduce.rs:9023-9081` in the pinned
+        // `../f1r3node-rust-mettail`; `nth` and `length` are there, `last` is not). There is
+        // therefore nothing to route to, and routing would have to INVENT a consensus
+        // implementation — so `LLast` joins the C3 residue: the fold body below is the single
+        // implementation, and the machine fails closed NAMING the construct
+        // (`rholang-runtime/src/rholang_ast.rs::unsupported_construct_name`), pinned by
+        // `rho_rholang_conformance.rs::c3_residue_mettail_only_operations_fail_closed_and_named`.
+        LLast . l:Proc
+        |- l "." "last" "(" ")" : Proc ![{
+            match &l {
+                Proc::CastList(lit) => match lit.as_ref() {
+                    List::ListLit(v) => v.last().cloned().unwrap_or(Proc::Err),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
         LConcat . l:Proc, r:Proc
         |- l "." "concat" "(" r ")" : Proc ![{
             match (&l, &r) {
@@ -3032,6 +3080,10 @@ language! {
 
         LNthCongL . | S ~> T |- (LNth S X) ~> (LNth T X);
         LNthCongR . | S ~> T |- (LNth X S) ~> (LNth X T);
+        // `LLast` is unary, so it takes one congruence — the same shape `LLengthCong` takes.
+        // Without it a receiver that is itself a redex (`[1,2].concat([3,4]).last()`) could never
+        // reduce to the list the fold body needs.
+        LLastCong . | S ~> T |- (LLast S) ~> (LLast T);
         LConcatCongL . | S ~> T |- (LConcat S X) ~> (LConcat T X);
         LConcatCongR . | S ~> T |- (LConcat X S) ~> (LConcat X T);
 
