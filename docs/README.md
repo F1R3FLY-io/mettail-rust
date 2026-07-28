@@ -15,6 +15,7 @@ These documents are actively maintained and should always reflect the current st
 - **`architecture/dovetail/README.md`** - Standalone Dovetail rewrite engine architecture, design, proof, and handoff suite
 - **`architecture/rho-native-integration/README.md`** - Rho-native MeTTaIL / Dovetail / F1r3node integration architecture
 - **`architecture/semantic-predicates/README.md`** - Semantic-predicate symbolic algebra (EBA / SFA / SFT / Heyting tower) and its end-to-end `language!`-to-Rholang integration
+- **`languages/README.md`** - Per-language references: every bundled `language!` specification explained component by component
 - **`contributing.md`** - How to contribute to the project
 
 ---
@@ -117,6 +118,22 @@ Rholang enforcement:
 - **`architecture/semantic-predicates/12-heyting-behavioral-logic.md`** - Why Heyting/intuitionistic logic governs behavioral constraints, bisimulation invariance, and the funding affinity
 - **`architecture/semantic-predicates/references.md`** - Citations, DOI links, and repository-local proof references
 - **`architecture/semantic-predicates/validate.sh`** - Reproducible local validation for the suite
+
+---
+
+## Language Specification References
+
+One page per bundled `language!` specification in `languages/src/`, walking the block
+component by component: what every DSL fragment means, what the macro generates from
+it, and how the result executes — each claim traced to a file and line in the parser,
+the generator, or the generated output:
+
+- **`languages/README.md`** - Suite index: the roster of bundled languages, where to start, page conventions, and the diagramming policy
+- **`languages/lambda.md`** - `Lambda` (the λ-calculus): binders and higher-order abstract syntax, β-reduction via the `eval` meta-operator, and congruence rules as reduction contexts — the recommended first read for the DSL
+- **`languages/validate.sh`** - Reproducible local validation for the suite
+
+Pages for `Monoid`, `Json`, `Turing`, `Pi`, `Ambient`, `Calculator`, and `Rholang` are
+tracked in the suite roster and not yet written.
 
 ---
 

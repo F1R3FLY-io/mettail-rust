@@ -1,0 +1,54 @@
+@startuml
+title One beta step, end to end: `(lam x. x, lam a. lam b. a)` reduces to `lam a. lam b. a`
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequenceArrowThickness 1.2
+skinparam ParticipantPadding 12
+skinparam BoxPadding 12
+skinparam participant {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+participant "**source text**\n`(lam x. x, lam a. lam b. a)`" as SRC #DCFCE7
+participant "**parser.rs**\nPratt / WPDA" as PARSE #DBEAFE
+participant "**set automaton**\npositional matcher" as MATCH #EDE9FE
+participant "**Beta rule**\n`(App (Lam fun) arg)`\n`~> (eval fun arg)`" as BETA #FCE7F3
+participant "**subst.rs**\ncapture-avoiding\nsubstitution engine" as SUBST #FEF3C7
+participant "**normal form**" as NF #DCFCE7
+
+SRC -> PARSE : token stream\n`(` `lam ` `x` `.` `x` `,` `lam ` ... `)`
+PARSE -> MATCH : ""App(Lam(Scope(x, TVar x)),""\n""    Lam(Scope(a, Lam(Scope(b, TVar a)))))""
+
+group Match the redex (symbol-once descent)
+  MATCH -> MATCH : head is `App`, arity 2
+  MATCH -> MATCH : descend child 0 -> head is `Lam`, arity 1
+  MATCH -> MATCH : capture child 0's **Scope** as `fun`\n(binder AND body, not the opened body)
+  MATCH -> MATCH : capture child 1 as `arg`
+end
+
+MATCH -> BETA : sigma = { fun |-> Scope(x, TVar x),\n            arg |-> Lam(Scope(a, Lam(Scope(b, TVar a)))) }
+
+BETA -> SUBST : RHS `(eval fun arg)` is the two-argument form\n-> `MultiSubst { scope: fun, replacements: [arg] }`
+
+group Contract: <latex>(\lambda x.\,M)\,N \;\rightsquigarrow\; M[N/x]</latex>
+  SUBST -> SUBST : `unbind` the scope (FRESHENS the binder)
+  SUBST -> SUBST : walk the body, replacing bound occurrences of `x` by `arg`
+  SUBST -> SUBST : body is exactly the bound occurrence -> result is `arg`
+end
+
+SUBST -> NF : ""Lam(Scope(a, Lam(Scope(b, TVar a))))""
+NF -> NF : no `App` node remains -> no rule matches -> **normal form**
+
+note over NF
+  Printed by display.rs as `lam a . lam b . a` — the K combinator.
+end note
+
+note over MATCH, BETA
+  `Beta` has an EMPTY premise list (`Beta . |- ...`), so it fires on
+  SHAPE ALONE. The three congruence rules carry a `S ~> T` premise
+  and are what license firing at a NON-ROOT position.
+end note
+
+@enduml

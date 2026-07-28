@@ -1,0 +1,43 @@
+@startuml
+title What each congruence rule buys: the reduction contexts of `lam y. (lam x. x, y)`
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "**Lam**  (binder `y`)\nthe root of `lam y. (lam x. x, y)`" as ROOT #DBEAFE
+
+rectangle "**App**\nthe body, `(lam x. x, y)`\n<b>THE REDEX</b>" as APP #FCE7F3
+
+rectangle "**Lam**  (binder `x`)\nchild 0 — the function `lam x. x`" as FUN #DCFCE7
+rectangle "**TVar y**\nchild 1 — the argument `y`" as ARG #FEF3C7
+
+ROOT -down-> APP : descend under the binder\n**licensed by `LamCong`**\n`| S ~> T |- (Lam ^x.S) ~> (Lam ^x.T)`
+APP -down-> FUN : descend into the function position\n**licensed by `AppCongL`**\n`| M0 ~> M1 |- (App M0 N) ~> (App M1 N)`
+APP -down-> ARG : descend into the argument position\n**licensed by `AppCongR`**\n`| N0 ~> N1 |- (App M N0) ~> (App M N1)`
+
+note right of APP
+  `Beta` fires HERE, contracting
+  <latex>(\lambda x.\,x)\,y \rightsquigarrow y</latex>,
+  so the whole term steps to `lam y. y`.
+
+  Without `LamCong` the engine could
+  never reach this node: the redex sits
+  UNDER a binder, and the term would be
+  (incorrectly) reported as a normal form.
+end note
+
+legend right
+|= Rule | = What dropping it would give you |
+|<#EDE9FE> **LamCong** | weak reduction — no reduction under <latex>\lambda</latex> |
+|<#EDE9FE> **AppCongR** | (with a value restriction) call-by-name-ish disciplines |
+|<#EDE9FE> **AppCongL** | no reduction of the operator |
+|<#EDE9FE> all three present | **full (strong) beta-reduction** — reduce anywhere, nondeterministically |
+endlegend
+
+@enduml

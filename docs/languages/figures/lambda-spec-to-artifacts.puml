@@ -1,0 +1,54 @@
+@startuml
+title The four blocks of `language! { name: Lambda, ... }` and what each one produces
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #9CA3AF
+}
+
+rectangle "**languages/src/lambda.rs**\nthe specification (12 lines)" as SPEC #F3F4F6 {
+  rectangle "**name: Lambda**\nthe language identifier" as NAME #E0E7FF
+  rectangle "**types { Term }**\nthe sorts (categories)" as TYPES #DBEAFE
+  rectangle "**terms { Lam, App }**\nsignature <latex>\\Sigma</latex> + concrete syntax" as TERMS #DCFCE7
+  rectangle "**equations { }**\nequational theory <latex>E = \\varnothing</latex>" as EQNS #FEF3C7
+  rectangle "**rewrites { Beta, AppCongL,\nAppCongR, LamCong }**\nrewrite system <latex>R</latex>" as REWS #FCE7F3
+}
+
+rectangle "**macros/** — the `language!` proc-macro\nparse -> validate -> codegen" as MACRO #EDE9FE
+
+rectangle "**target/generated/lambda/** (38 modules)" as GEN #F3F4F6 {
+  rectangle "**ast_enums.rs**\n`enum Term { Lam, App,`\n`TVar, LamTerm, MLamTerm,`\n`ApplyTerm, MApplyTerm }`" as AST #DBEAFE
+  rectangle "**parser.rs** (Pratt / WPDA)\n**display.rs**\n**subst.rs** (capture-avoiding)\n**semantic_hash.rs**" as SURF #DCFCE7
+  rectangle "**dovetail_report.rs**\ne-graph rules\n(congruences NOT emitted:\nclosure is intrinsic)" as DOVE #EDE9FE
+  rectangle "**rho_net_invocation.rs**\nin-Rho set-automaton net\n(BaseRewrite vs\nContextualRewrite)" as RHO #FCE7F3
+  rectangle "**metadata.rs**\nfingerprint + reflected\ntypes/terms/equations/rewrites" as META #FEF3C7
+}
+
+rectangle "**languages/tests/gen_lambda_*.rs**\nunit / rewrite / prop / analytical\n(auto-generated, one test per rule)" as TESTS #FEE2E2
+
+SPEC -down-> MACRO
+MACRO -down-> GEN
+GEN -down-> TESTS
+
+NAME .right.> META : names every\ngenerated item
+TYPES .right.> AST : one enum per sort\n+ auto `TVar`
+TERMS .right.> AST : one variant per rule
+TERMS .right.> SURF : productions,\nprinters, subst
+EQNS .right.> DOVE : forward + reverse\nrule pair each
+REWS .right.> DOVE : non-congruence rules
+REWS .right.> RHO : all rules, classified
+
+note bottom of TESTS
+  Every artifact is regenerated on each compile of the
+  specification; nothing here is hand-edited.
+end note
+
+@enduml

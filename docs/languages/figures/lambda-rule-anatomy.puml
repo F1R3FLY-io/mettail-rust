@@ -1,0 +1,58 @@
+@startuml
+title Anatomy of one `terms` rule: `Lam . ^x.body:[Term -> Term] |- "lam " x "." body : Term ;`
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "SOURCE TEXT" as SRC #F3F4F6 {
+  rectangle "**Lam**\nlabel" as L_LABEL #E0E7FF
+  rectangle "**^x.body:[Term -> Term]**\nterm context (metasyntax)" as L_CTX #DBEAFE
+  rectangle "**|-**\nturnstile" as L_TURN #F3F4F6
+  rectangle "**\"lam \" x \".\" body**\nconcrete syntax (object syntax)" as L_SYN #DCFCE7
+  rectangle "**: Term**\nresult sort" as L_CAT #FEF3C7
+}
+
+rectangle "PARSED (ast/src/grammar.rs)" as PARSED #F3F4F6 {
+  rectangle "`GrammarRule.label = Lam`" as P_LABEL #E0E7FF
+  rectangle "`TermParam::Abstraction {`\n`  binder: x,`\n`  body:   body,`\n`  ty: TypeExpr::Arrow {`\n`    domain:   Term,`\n`    codomain: Term } }`" as P_CTX #DBEAFE
+  rectangle "`vec![`\n`  SyntaxExpr::Literal(\"lam \"),`\n`  SyntaxExpr::Param(x),`\n`  SyntaxExpr::Literal(\".\"),`\n`  SyntaxExpr::Param(body) ]`" as P_SYN #DCFCE7
+  rectangle "`GrammarRule.category = Term`" as P_CAT #FEF3C7
+}
+
+rectangle "GENERATED RUST" as OUT #F3F4F6 {
+  rectangle "`Term::Lam(`\n`  Scope< Binder<String>,`\n`         Arc<Term> > )`\n\nmoniker `Scope` = binder + body as one\nalpha-equivalence-respecting value" as O_AST #DBEAFE
+  rectangle "parser production:\n`Fixed(\"lam \")` ->\n`ConsumeAndPush(rule_at(Term, Lam, 1))`\n\ndisplay: `\"lam \" + name + \" . \" + body`" as O_SURF #DCFCE7
+  rectangle "`FieldDef { name: \"^x.body\",`\n`  ty: \"[Term -> Term]\",`\n`  is_binder: true }`" as O_META #FEF3C7
+}
+
+L_LABEL -down-> P_LABEL
+L_CTX   -down-> P_CTX
+L_SYN   -down-> P_SYN
+L_CAT   -down-> P_CAT
+
+P_LABEL -down-> O_AST
+P_CTX   -down-> O_AST
+P_SYN   -down-> O_SURF
+P_CAT   -down-> O_META
+
+note right of L_TURN
+  Everything LEFT of `|-` is metasyntax:
+  the abstract arguments and their
+  BINDING STRUCTURE.
+  Everything RIGHT of `|-` is object
+  syntax: what a programmer types.
+end note
+
+note bottom of O_AST
+  The single `[Term -> Term]` abstraction is also what makes the macro
+  auto-inject the higher-order plumbing variants `LamTerm`, `MLamTerm`,
+  `ApplyTerm`, `MApplyTerm` into `enum Term`.
+end note
+
+@enduml
