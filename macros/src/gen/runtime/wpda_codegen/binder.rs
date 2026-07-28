@@ -1439,6 +1439,41 @@ pub(crate) fn emit_binder_rule_body(
                             }
                         }
                     },
+                    // ⚠⚠ MEASURED: THIS ARM IS CURRENTLY UNREACHABLE AT RUNTIME, AND THAT —
+                    // not the op, not the gate, not the slot — IS WHY `m:Ident` DOES NOT
+                    // WORK. Do not re-litigate the settled parts before reading this.
+                    //
+                    // `emit_binder_rule_body` emits into the generated
+                    // `binder_rule_c<cat>_r<rule>` dispatcher, which the engine calls ONLY
+                    // from `WpdaState::BinderRule`. A rule like
+                    // `Tagged . m:Ident |- "tag" m : Num` has NO BINDER, so the walker
+                    // never enters that state and this fork is never executed. Proven by
+                    // instrumenting the emitted gate directly: with an `eprintln!` on
+                    // every `GuardedConsumeTokenKindAndReplace { kind_name: "Ident" }`
+                    // evaluation, a full fixture run produced ZERO hits while the
+                    // generated parser demonstrably contains the fork and calls
+                    // `binder_rule_c0_r2`.
+                    //
+                    // That single fact explains every symptom recorded on #131:
+                    //   · the arg slot held `Term { type_name: "RealizedTerm" }` — the
+                    //     rule was parsed by the ORDINARY path, which knows nothing of the
+                    //     ident position and descends into a category there;
+                    //   · both `...AndReplace` and `...AndPush` failed BYTE-IDENTICALLY —
+                    //     an unexecuted fork cannot depend on its action kind;
+                    //   · `# . f ( )` failed at EVERY arity — nothing to do with `Sep`.
+                    //
+                    // ⚠ The lexer is NOT the cause and must not be blamed: `extract_terminals`
+                    // sets `BuiltinNeeds { ident: true, .. }` UNCONDITIONALLY
+                    // (`prattail/src/lexer.rs:760`), so the `Ident` accept state always
+                    // exists. Independently, the pre-fix run produced `Tagged("")`, which
+                    // required consuming `abc`.
+                    //
+                    // ⇒ THE REMAINING WORK is routing: a rule carrying an `IdentTextCapture`
+                    // must reach a dispatcher the engine actually calls for a binder-free
+                    // rule, OR such a rule must enter `WpdaState::BinderRule`. Note the 33
+                    // languages that DO capture tokens mid-rule use
+                    // `GuardedConsumeTokenKindAndPush` emitted from `forks.rs`, NOT from
+                    // this binder-rule body — that is the routing to compare against.
                     BinderPosition::IdentTextCapture { .. } => {
                         // `m:Ident` — the builtin-kind twin of the TokenKindCapture arm
                         // directly above. Same single-branch Fork, same position advance;
