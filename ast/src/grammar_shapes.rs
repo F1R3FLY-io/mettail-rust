@@ -292,23 +292,27 @@ pub fn classify_inert_grouping_shape(rule: &GrammarRule) -> Option<InertGrouping
     if tc.len() != 1 || sp.len() != 3 {
         return None;
     }
-    let (param, ty) = match &tc[0] {
-        TermParam::Simple { name, ty } => (name.to_string(), ty),
+    // `Ident` compares by symbol, so the two guards below are allocation-free. The
+    // parameter is rendered ONCE, after both have passed, rather than stringifying every
+    // ident this classifier looks at — it is called for every rule of every language.
+    let (param_ident, ty) = match &tc[0] {
+        TermParam::Simple { name, ty } => (name, ty),
         _ => return None,
     };
     match ty {
-        TypeExpr::Base(t) if t.to_string() == rule.category.to_string() => {},
+        TypeExpr::Base(t) if *t == rule.category => {},
         _ => return None,
     }
     let (open, close) = match (&sp[0], &sp[1], &sp[2]) {
         (SyntaxExpr::Literal(o), SyntaxExpr::Param(p), SyntaxExpr::Literal(c))
-            if p.to_string() == param =>
+            if p == param_ident =>
         {
             (o.clone(), c.clone())
         },
         _ => return None,
     };
     // The body must be the IDENTITY on that parameter.
+    let param = param_ident.to_string();
     let mut params = HashSet::with_capacity(1);
     params.insert(param.clone());
     let body = unwrap_single_expr(code)?;

@@ -465,11 +465,7 @@ pub fn render_observation_text_with(
         (FREE_VAR_REFLECT_LABEL, [name]) => child(name),
         _ if children.is_empty() => constructor.clone(),
         _ => {
-            let inner = children
-                .iter()
-                .map(|c| child(c))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let inner = children.iter().map(child).collect::<Vec<_>>().join(", ");
             format!("{constructor}({inner})")
         },
     }

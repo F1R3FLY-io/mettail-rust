@@ -1298,7 +1298,23 @@ enum Kont<'a> {
     SpecN { bound: i64 },
     /// `lower_body_lifting_folds`' trampoline: `new(ret){ fold!(operand, ret) | for(r <- ret){ … } }`
     /// over `(operand, for_body)`.
-    HeldFold { channel: Par },
+    ///
+    /// `Box`ed for the reason [`ForState`] is, and the measurement is the same shape. A
+    /// `Par` is 248 bytes; the next-largest `Kont` is [`Kont::Method`] at 24. Inline, this
+    /// one field therefore set the width of EVERY `Kont`, hence of [`Job::Combine`], hence
+    /// of every element of both stacks — 248 bytes moved per push and per pop of work that
+    /// needs 24. Boxed, `Kont` is 32 bytes and `Job` is 40.
+    ///
+    /// The trade is one heap allocation against that, and it is not close: the allocation
+    /// happens once per HELD-FOLD SITE, of which the overwhelming majority of programs
+    /// have none, while the width is paid on every node of every term. MEASURED on a
+    /// six-program lowering benchmark containing NO held folds at all — the case where
+    /// boxing can only cost and never pay — the change was a 3.06 % IMPROVEMENT:
+    /// 123.97 µs → 120.18 µs per iteration, Welch t = 29.8, p ≈ 6e-195, n = 1200 per arm
+    /// over three interleaved rounds on a pinned core. Clippy's literal suggestion,
+    /// `Combine(Box<Kont>)`, is the opposite trade — an allocation on the HOT path to hide
+    /// a cold variant's width — and must not be taken.
+    HeldFold { channel: Box<Par> },
     /// Stage A of `lower_pfor_user`: the SOURCE of `binds[next_bind]` is on the value stack.
     ForSource(Box<ForState<'a>>),
     /// Stage B: the PATTERN of `binds[next_bind]` is on the value stack.
@@ -2124,7 +2140,7 @@ impl<'a> Drive<'a> {
             .push(extend_env(self.env(env_new), &[Binder(r_var)]));
         let operand = self.keep(Arc::new(operand));
         self.push_children(
-            Kont::HeldFold { channel },
+            Kont::HeldFold { channel: Box::new(channel) },
             [Job::Proc(operand, env_new), Job::Body(transformed, env_for)],
         );
         Ok(())
@@ -2457,7 +2473,7 @@ impl<'a> Drive<'a> {
                 let for_body = self.stacks.pop_value();
                 let operand_par = self.stacks.pop_value();
                 let ret_channel = new_boundvar_par(0, Vec::new(), false);
-                let send = send_par(channel, vec![operand_par, ret_channel.clone()]);
+                let send = send_par(*channel, vec![operand_par, ret_channel.clone()]);
                 let bind = ReceiveBind {
                     patterns: vec![new_freevar_par(0, Vec::new())],
                     source: Some(ret_channel),
@@ -5005,5 +5021,41 @@ mod alternative_collection_tests {
         let mut collected = Vec::new();
         collect_proc_alternatives(&shape, &mut collected).expect("every leaf is a Proc");
         assert_eq!(as_ints(&collected), vec![1, 2, 3, 4]);
+    }
+
+    /// One oversized field must not set the width of every work item.
+    ///
+    /// `Job` and `Kont` are the element types of the driver's two stacks, so their size is
+    /// paid on every push and every pop of every term the machine lowers — while the
+    /// payloads that would inflate them ([`ForState`], and the `Par` in
+    /// [`Kont::HeldFold`]) belong to STAGES that occur at most once per `for` row or per
+    /// held-fold site. Both are behind a `Box` for that reason, and this is the statement
+    /// that says so in numbers rather than in a comment nobody re-checks.
+    ///
+    /// The bound is a ceiling with headroom, not a fixture: it admits a new small variant
+    /// without ceremony and fails the moment a large payload is inlined again. When it
+    /// fires, box the offending field — do NOT raise the bound, and do NOT take clippy's
+    /// literal suggestion of `Combine(Box<Kont>)`, which would put an allocation on the
+    /// hot path to hide a cold variant's width.
+    #[test]
+    fn the_work_item_stays_narrow() {
+        use std::mem::size_of;
+        // Captured unless `--nocapture`, so this is the measurement on demand rather than
+        // noise: `cargo test -p rholang-runtime --lib the_work_item_stays_narrow --
+        // --nocapture` prints the current widths.
+        println!(
+            "Job = {} bytes, Kont = {} bytes, Par = {} bytes",
+            size_of::<Job<'_>>(),
+            size_of::<Kont<'_>>(),
+            size_of::<Par>(),
+        );
+        assert!(
+            size_of::<Job<'_>>() <= 64,
+            "Job is {} bytes; something large was inlined into it (or into Kont, at {} \
+             bytes, which Job::Combine carries)",
+            size_of::<Job<'_>>(),
+            size_of::<Kont<'_>>(),
+        );
+        assert!(size_of::<Kont<'_>>() <= 64, "Kont is {} bytes", size_of::<Kont<'_>>());
     }
 }
