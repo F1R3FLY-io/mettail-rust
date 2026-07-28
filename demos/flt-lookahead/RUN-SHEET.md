@@ -9,8 +9,19 @@
 Nothing in these programs spells an answer. Every value that appears arrives because the machine
 computed it.
 
-> Status: **VALIDATED end to end, 2026-07-26.** Every command below was run three times against a
-> freshly built binary; output was byte-identical on every run.
+> Status: **VALIDATED end to end, 2026-07-26; RE-VALIDATED 2026-07-28.** Every command below was
+> run three times against a freshly built binary; output was byte-identical on every run.
+>
+> ★ **The 2026-07-28 re-validation was a differential, not a re-read.** Twenty-one defects closed
+> that day across two repositories. All four beats were run against a binary built **before** any
+> of them and one built **after**, and every transcript — including beat 4's trace digest
+> `0x4f13e762…`, which is the field that is supposed to be a function of the program alone — was
+> byte-identical modulo the binary's own name line. The four changes with a plausible route to
+> this page were the guard-substrate residual-binder fix (`69c66cd1`), the `@`-sigil display fix
+> (`5a5cc9b0`), the binder-congruence float-arm restriction (`359220f3`), and the
+> operator-precedence overhaul (`3ff1c98b`…`ce887d0b`); none of the four moved a byte here. The
+> precedence work in particular cannot: a census over every `.rho` file in `demos/` finds exactly
+> one arithmetic expression in the whole corpus, and it is in `flt-church-desk`, not here.
 
 ## Setup — before the audience arrives
 

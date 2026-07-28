@@ -10,9 +10,21 @@ channel.
 Everything below is stock Rholang plus the bundled `lambda` guest. There is no Rust harness in the
 demo path: the presenter runs one interpreter binary on seven committed `.rho` files.
 
-> Status: **VALIDATED end to end, 2026-07-26** — every command on this page was run and every
-> output is the observed one, pinned. Every file produced byte-identical output on every run:
-> six consecutive full passes over the first six files, then three more over all seven.
+> Status: **VALIDATED end to end, 2026-07-26; RE-VALIDATED 2026-07-28** — every command on this
+> page was run and every output is the observed one, pinned. Every file produced byte-identical
+> output on every run: six consecutive full passes over the first six files, then three more over
+> all seven.
+>
+> ★ **The 2026-07-28 re-validation was a differential.** Twenty-one defects closed that day across
+> two repositories, four of which could in principle reach this page: a guard-substrate fix that
+> makes a **residual binder rest the COMM** rather than fire it (`69c66cd1`), a display fix for
+> **sigil-led prefix applications** (`5a5cc9b0`), a binder-congruence fix restricting Pi's float
+> arms to the **declared** equations (`359220f3`), and the operator-precedence overhaul
+> (`3ff1c98b`…`ce887d0b`). All seven files were run against a binary built before any of them and
+> one built after; every transcript was byte-identical modulo the binary's own name line. Every
+> guard on this page re-quotes a **whole-term** hole (`` lambda`${r}` ``), which is why
+> `69c66cd1` leaves them alone — the shape it declines is a guard whose hole sits *under guest
+> binders*, and no beat here has one.
 > The whole script is a CI gate: `rholang-runtime/tests/assay_desk_demo.rs` drives the built
 > `rholang` binary with these exact command lines and asserts each beat's observable, plus a
 > runtime-level readback for the "…and the refused results are still on the book" half that the
@@ -485,3 +497,6 @@ expected outputs, and their tests are agnostic to the provenance of the resting 
   (`k-combinator.rho`).
 * `demos/rholang-settlement/` — `where` guards over ground data in the REPL, and the account of
   defect D1 and its repair (`repl/tests/settlement_demo.rs`).
+* `demos/rholang-query-bind/` — no FLT at all: Rholang's own `!?` request/response sugar, a
+  private return channel per query, and the round trip that was **inert** until 2026-07-28
+  (`rholang-runtime/tests/query_bind_demo.rs`).

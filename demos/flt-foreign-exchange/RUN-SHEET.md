@@ -20,6 +20,72 @@ changes; a pinning test twin (`rholang-runtime/tests/flt_abi_over_rspace.rs`) do
 validation (the task-#8 integration-test pattern). Outputs marked **(to validate)** are pinned
 in the build window before presenting.
 
+---
+
+## ★ What is committed today — added 2026-07-28
+
+⚠ **This page's load-bearing premise has expired in the good direction.** It opens by saying the
+runtime ingredients exist and "**only the surface syntax is missing**". The surface syntax has
+since landed: `` lambda`…` `` openers with `${x}` typed-AST holes, in both construction and
+pattern position, and the interpreter binary — not a demo-local `flt_demo` bin — runs `.rho`
+files directly. The beats below are still the design, and their `(to validate)` markers still
+mean what they say at the **ABI** level. What follows is what a presenter can run *today*, in the
+landed surface notation, measured.
+
+Both files run through the same binary and setup line as the sibling desks:
+
+```
+cargo build -p rholang-runtime --bin rholang --features "rholang-runtime lambda-runtime calculator-runtime"
+```
+
+### `foreign-exchange.rho` — Beat 1's claim, in surface syntax
+
+An FLT built by one process, shipped over a channel **the program mints** (`new flt in { … }`, so
+no string in the source can name it), destructured by a pattern carrying **two** typed holes, and
+rebuilt from the captured holes:
+
+```
+$ target/debug/rholang demos/flt-foreign-exchange/foreign-exchange.rho
+```
+```
+mode: process → running to rest on the f1r3node reducer (observing @"OUT")
+  @"OUT" observations (1):
+    [0] ⟦(λ.0 λ.λ.1)⟧
+```
+
+`⟦(λ.0 λ.λ.1)⟧` is `(I, K)` in de Bruijn form: `λ.0` is `lam x. x` and `λ.λ.1` is
+`lam a. lam b. a`. Both holes bound, both re-quoted, and the application rebuilt — this is
+Beat 1's destructure plus Beat 4's construction-position fill, without the hand-built `Par`s.
+
+### `k-combinator.rho` — Beat 4's claim, in surface syntax
+
+`K I K` driven to β-normal form by the in-Rho quiescence driver, with the machine's own receipt:
+
+```
+$ target/debug/rholang demos/flt-foreign-exchange/k-combinator.rho
+```
+```
+mode: term → reducing to normal form on the f1r3node reducer
+  normal form on @"OUT" (1):
+    [0] ⟦λ.0⟧
+  ^fired ledger: ["Beta", "Beta"]   (2 in-Rho rewrite firing(s))
+  ^drive-err: 0 datum(a) · ^drive-fuel: 0 datum(a)   (both empty ⟹ terminated by quiescence)
+```
+
+$`K\,I\,K \to (\lambda b.\,I)\,K \to I`$ — two $`\beta`$ steps, and the `^fired` ledger says
+exactly two. The ledger is the answer to "did the *machine* do this?": a host-side reduction
+would leave it empty. `^drive-err: 0 · ^drive-fuel: 0` says it stopped at a normal form rather
+than at a budget.
+
+> Measured 2026-07-28 against a binary built before that day's twenty-one defect fixes and one
+> built after; both transcripts byte-identical modulo the binary's own name line. Neither file
+> contains arithmetic, so the day's operator-precedence overhaul cannot reach them.
+
+⚠ **Neither file is CI-gated.** `flt-church-desk`, `flt-assay-desk`, `flt-lookahead` and
+`rholang-query-bind` each have a gate driving their run sheet's own command lines; this directory
+has none, so the two transcripts above are pinned by this page alone and can rot. That is the gap
+to close before this demo is presented from this page rather than from the sibling desks.
+
 **Notation** (display only): `⌜X⌝` = the unforgeable GPrivate tag for label X
 (`mettail.term.{fp}.X` — deterministic per language fingerprint, unforgeable *from within the
 tuplespace surface*: no syntax can spell a GPrivate and the matcher compares them by identity);

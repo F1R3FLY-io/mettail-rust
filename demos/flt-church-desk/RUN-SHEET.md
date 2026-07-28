@@ -9,9 +9,18 @@ the foreign term** takes one apart, binding a foreign sub-term out into Rholang.
 Everything below is stock Rholang plus two bundled guests. There is no Rust harness in the demo
 path: the presenter runs one interpreter binary on six committed `.rho` files.
 
-> Status: **VALIDATED end to end, 2026-07-26** — every command on this page was run and every
-> output below is the observed one. Each of the six files produced byte-identical output on three
-> consecutive runs of a freshly built binary.
+> Status: **VALIDATED end to end, 2026-07-26; RE-VALIDATED 2026-07-28** — every command on this
+> page was run and every output below is the observed one. Each of the six files produced
+> byte-identical output on three consecutive runs of a freshly built binary.
+>
+> ★ **The 2026-07-28 re-validation was a differential, not a re-read.** Twenty-one defects closed
+> that day across two repositories — among them an operator-precedence overhaul that rewrote the
+> Calculator's binding-power ladder (`f586e138`), a display fix for sigil-led prefix applications
+> (`5a5cc9b0`), a binder-congruence fix restricting Pi's float arms to the declared equations
+> (`359220f3`), and a guard-substrate fix that makes a residual binder rest the COMM
+> (`69c66cd1`). All six files were run against **both** a binary built before any of them and one
+> built after, and every transcript was byte-identical modulo the binary's own name line. Beat 0
+> is the one that could have moved, and did not: see its note.
 > The whole script is a CI gate: `rholang-runtime/tests/church_desk_demo.rs` drives the built
 > `rholang` binary with these exact command lines and asserts each beat's observable, plus a
 > runtime-level readback for the "…and the refused terms are still on the channel" half that the
@@ -38,7 +47,7 @@ and the interpreter derives it from the language itself rather than from a hand-
 | grammar | opener | what a bare term of it does |
 |---|---|---|
 | `CalculatorLanguage` | `` calculator`…` `` | evaluates to a **value** through the E3 fold dataflow — one installed Rholang contract per operator node |
-| `LambdaLanguage` | `` lambda`…` `` | reduces to its **normal form** through the in-Rho quiescence driver — every `$\beta$` step a committed COMM |
+| `LambdaLanguage` | `` lambda`…` `` | reduces to its **normal form** through the in-Rho quiescence driver — every $`\beta`$ step a committed COMM |
 
 ## The shape
 
@@ -145,6 +154,17 @@ Say: **"That is not Rholang. It is the Calculator grammar, embedded verbatim, an
 evaluated it."** Two things worth landing:
 
 1. **`14`, not `20`.** Operator precedence came from the *guest's* grammar, not from a re-parse.
+
+   > ★ **Re-measured 2026-07-28, and this is the only arithmetic in the whole demo corpus.**
+   > `f586e138` rewrote the Calculator's binding-power ladder that day: comparisons collapsed from
+   > six levels to one, `*` and `/` were made to *share* a level (`6 * 3 / 2` was answering `6`
+   > and must answer `9`), `and` was made tighter than `or` (`false and false or true` was
+   > answering `false`), and `bitand` tighter than `bitor` (`1 bitand 2 bitor 4` was answering
+   > `0`). A census over every `.rho` file and every run sheet in `demos/` finds exactly one
+   > arithmetic expression — this one — and `+` versus `*` is a relation the overhaul did not
+   > touch, so `14` is unchanged. It was re-run against a pre-overhaul binary and a post-overhaul
+   > binary to establish that rather than to assume it.
+
 2. **Nothing was string-spliced.** The text between the back-ticks went to the Calculator's own
    reflector as a typed AST. That is the No-Injection guarantee, and it is why an FLT is safe in a
    way that string interpolation is not.
@@ -166,10 +186,10 @@ $ tail -1 demos/flt-church-desk/arithmetic.rho
 lambda`((lam m. lam n. lam f. (m, (n, f)), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, x)), lam f. lam x. (f, (f, x)))), ((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, x))))`
 ```
 
-That is `$\mathrm{mult}\;(\mathrm{plus}\;1\;2)\;(\mathrm{plus}\;2\;2)$` — in other words
-`$3 \times 4$` — written in the untyped `$\lambda$`-calculus, where `(f, a)` is application. The
-`$\lambda$`-calculus has no numbers, so a number is **encoded as a function**: the Church numeral
-`$n$` is the function that applies its first argument `$n$` times.
+That is $`\mathrm{mult}\;(\mathrm{plus}\;1\;2)\;(\mathrm{plus}\;2\;2)`$ — in other words
+$`3 \times 4`$ — written in the untyped $`\lambda`$-calculus, where `(f, a)` is application. The
+$`\lambda`$-calculus has no numbers, so a number is **encoded as a function**: the Church numeral
+$`n`$ is the function that applies its first argument $`n`$ times.
 
 ```math
 \overline{n} \;=\; \lambda f.\, \lambda x.\, \underbrace{f\,(f\,(\cdots (f}_{n \text{ times}}\;x)\cdots))
@@ -201,10 +221,10 @@ mode: term → reducing to normal form on the f1r3node reducer
 
 Three things to point at, in order:
 
-1. **`= Church numeral 12`.** `$3 \times 4 = 12$`, arrived at with no arithmetic operation anywhere
-   in the system — only `$\beta$`-reduction. The interpreter *names* the shape it sees; it does not
+1. **`= Church numeral 12`.** $`3 \times 4 = 12`$, arrived at with no arithmetic operation anywhere
+   in the system — only $`\beta`$-reduction. The interpreter *names* the shape it sees; it does not
    compute it. Count the `1`s in the normal form and there are twelve.
-2. **★ `(21 in-Rho rewrite firing(s))` — this is the receipt.** Twenty-one `$\beta$` steps fired,
+2. **★ `(21 in-Rho rewrite firing(s))` — this is the receipt.** Twenty-one $`\beta`$ steps fired,
    each one a **committed communication on RSpace**. This line is the answer to "how do I know the
    Rholang machine did this, and not some host-side interpreter?": a host reduction would leave the
    ledger empty. Every entry is `"Beta"` — no other rewrite family contributed.
@@ -229,7 +249,7 @@ error: the term did not reach a normal form — reduction fuel exhausted
   stuck redex(es): ⟦(λ.(0 0) λ.(0 0))⟧
 ```
 
-`$\Omega = (\lambda x.\, x\,x)(\lambda x.\, x\,x)$` `$\beta$`-reduces to **itself**, forever. The
+$`\Omega = (\lambda x.\, x\,x)(\lambda x.\, x\,x)`$ $`\beta`$-reduces to **itself**, forever. The
 in-Rho driver is fuel-bounded, so it stops — and the important part is what it does then:
 
 * it **names the redex** it could not finish, on the `^drive-fuel` channel;
@@ -328,7 +348,7 @@ for(@lambda`lam f. lam x. ${body}` <- @"results") {
 
 Look at the receive pattern. It is itself a foreign term — and its hole is **not** the whole term.
 `${body}` sits **under two guest binders**, at depth 2. So the pattern says two things at once:
-*match only λ-terms shaped* `$\lambda f.\,\lambda x.\,\_$`, *and bind whatever is in that
+*match only λ-terms shaped* $`\lambda f.\,\lambda x.\,\_`$, *and bind whatever is in that
 position*. Three terms are resting; only the first has the shape.
 
 ```
@@ -346,7 +366,7 @@ mode: process → running to rest on the f1r3node reducer (observing @"OUT")
 
 What came out is the numeral's **body**, not the numeral: the two binders were stripped away by the
 match, and the five applications that remain are the answer's shape. **The structural match is the
-decode.** Read `(1 (1 (1 (1 (1 0)))))` as `$f\,(f\,(f\,(f\,(f\;x))))$` — five applications, so the
+decode.** Read `(1 (1 (1 (1 (1 0)))))` as $`f\,(f\,(f\,(f\,(f\;x))))`$ — five applications, so the
 term was Church 5. The `1`s and `0` are de Bruijn indices: `1` is the outer binder `f`, `0` the
 inner binder `x`.
 

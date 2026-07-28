@@ -19,6 +19,22 @@ run match on trace content. Every beat below reproduces identically over consecu
 > ★ **No live defects.** Beat 3's third command used to be nondeterministic (defect D1); the
 > matcher was repaired on 2026-07-26 and the beat is deterministic. Every expected output on
 > this page is now unqualified.
+>
+> ★ **RE-VALIDATED 2026-07-28 — and this page carries the only mixed-precedence arithmetic in
+> `demos/`.** Twenty-one defects closed that day across two repositories, among them an
+> operator-precedence overhaul (`3ff1c98b`…`ce887d0b`) that rewrote every bundled language's
+> binding-power ladder: Rholang's eighteen operators went from eighteen levels to nine, matching
+> `rholang-rs/rholang-tree-sitter/grammar.js` exactly. A census over every `.rho` file and every
+> run sheet in `demos/` finds the only expressions that mix operators of *different* levels
+> here — `px * qty <= 500u32` and `@("OUT")!(px * qty)` in `settlement.env`, `100u32 / q >= 1u32`
+> in Beat 5, `false implies false` / `true implies false` in Beat 3b — so this is the page the
+> overhaul could have moved. It did not: `*` and `/` still bind tighter than every comparison,
+> and `implies` was not re-levelled at all. All 24 cells of `repl/tests/settlement_demo.rs` pass
+> at `6eec833d`, including the four that drive exactly those expressions
+> (`beat_1_arithmetic_is_computed_by_the_machine`,
+> `beat_4_the_cross_channel_join_settles_or_refuses_atomically`,
+> `beat_5_division_by_zero_inside_a_guard_is_a_veto_not_a_crash`,
+> `beat_3b_the_vacuous_guard_commits_and_the_refuted_one_never_does`).
 
 Launch (the repl package takes a startup language):
 
