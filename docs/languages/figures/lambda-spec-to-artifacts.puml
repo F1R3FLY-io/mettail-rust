@@ -24,7 +24,7 @@ rectangle "**languages/src/lambda.rs**\nthe specification (12 lines)" as SPEC #F
 
 rectangle "**macros/** — the `language!` proc-macro\nparse -> validate -> codegen" as MACRO #EDE9FE
 
-rectangle "**target/generated/lambda/** (38 modules)" as GEN #F3F4F6 {
+rectangle "**target/generated/lambda/** (43 modules)" as GEN #F3F4F6 {
   rectangle "**ast_enums.rs**\n`enum Term { Lam, App,`\n`TVar, LamTerm, MLamTerm,`\n`ApplyTerm, MApplyTerm }`" as AST #DBEAFE
   rectangle "**parser.rs** (Pratt / WPDA)\n**display.rs**\n**subst.rs** (capture-avoiding)\n**semantic_hash.rs**" as SURF #DCFCE7
   rectangle "**dovetail_report.rs**\ne-graph rules\n(congruences NOT emitted:\nclosure is intrinsic)" as DOVE #EDE9FE

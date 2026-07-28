@@ -4,9 +4,16 @@ Last updated: 2026-07-27 · part of the [Language Specification References](READ
 
 **Subject:** `languages/src/lambda.rs`
 **Audience:** anyone reading a MeTTaIL `language!` block for the first time
-**Method:** every claim below was checked against the DSL parser, the code generator, and the
-*actual generated output* in `target/generated/lambda/`; §9 gives the file-and-line provenance for
-each one.
+**Method:** every claim below was checked against the DSL (domain-specific language) parser, the
+code generator, and the *actual generated output* in `target/generated/lambda/`; §9 gives the
+file-and-line provenance for each one.
+
+> ⚠ **A source comment is not evidence.** Anchoring a claim to `file:line` proves only that
+> somebody once wrote that sentence there — it does not prove the sentence is still true. This page
+> shipped one such claim: §4.1 asserted that the higher-order variants are demand-driven, faithfully
+> transcribed from a comment that the code stopped honouring when the gating was reverted. Where a
+> claim here rests on a comment, it has been re-anchored to something checkable — generated output,
+> an exhaustive `match`, a test assertion, or a counterexample language — and §9 names which.
 
 Lambda is the smallest complete specification in the tree — 12 lines covering one sort, two
 constructors, no equations, and four rewrite rules — which makes it the recommended first read for
@@ -62,8 +69,8 @@ language! {
 }
 ```
 
-Twelve lines of specification. They compile to **38 generated modules** and four generated test
-files.
+Twelve lines of specification. They compile to **43 generated modules** — counted as
+`ls target/generated/lambda/*.rs | wc -l`, not from any comment — plus four generated test files.
 
 ### Notation used in this document
 
@@ -79,6 +86,13 @@ files.
 | **OSLF** | Operational Semantics in Logical Form — the theory the toolchain implements ([OSLF-2017](#references)) |
 | **HOL** | higher-order logic / higher-order abstract syntax — here, the meta-level abstraction machinery |
 | **AST** | abstract syntax tree |
+| **DSL** | domain-specific language — here, the `language!` surface this page reads |
+| **WPDA** | weighted pushdown automaton — the parser machine MeTTaIL generates, a Pratt operator-precedence core driving a weighted stack automaton |
+| **REPL** | read–eval–print loop — the interactive front end (`repl/`) that executes a specification |
+| **BNF** | Backus–Naur form — the classical notation for context-free grammar productions |
+| **BNFC** | the BNF Converter, a grammar-to-parser generator whose `Label . Category ::= …` rule shape MeTTaIL still accepts as a legacy alternative |
+| **LHS** | left-hand side of a rule — the pattern a term must match for the rule to fire |
+| **RHS** | right-hand side of a rule — the term the matched region is replaced by |
 | **α-equivalence** | equality of terms up to consistent renaming of bound variables |
 | **β-reduction** | the rule $`(\lambda x.\,M)\,N \rightsquigarrow M[N/x]`$ |
 | **η / extensionality** | the equation $`\lambda x.\,(M\,x) = M`$ when $`x`$ is not free in $`M`$ |
@@ -172,7 +186,7 @@ changes, invalidating exactly the artifacts that depended on it.
 
 ## 4. `types { Term }` — the sorts
 
-```rust
+```text
 types {
     // Proc
     // Name
@@ -216,8 +230,33 @@ pub enum Term {
 #### `TVar` — the auto-injected variable form
 
 Expanded: **T**erm **Var**iable. Every sort that does not declare an explicit `Var` rule receives
-one automatically. The name comes from `generate_var_label`: *the first letter of the sort name,
-upper-cased, followed by* `Var`. `Term` → `TVar`; a sort named `Proc` would yield `PVar`.
+one automatically. The name comes from `generate_var_label`, which is the whole of the rule:
+
+**Algorithm 1 (`generate_var_label` — naming a sort's auto-injected variable form).**
+
+```pseudocode
+input : sort_name, the identifier of a declared sort
+output: the label of that sort's injected variable variant
+
+1  if sort_name is empty then
+2      head ← 'V'                                  // defensive fallback; unreachable
+3  else                                            // for a parsed identifier
+4      head ← uppercase(first character of sort_name)
+5  return concatenate(head, "Var")
+```
+
+Line 4 takes the *first character only*, so the label stays short and stable when the tail of a
+sort's name changes. Line 5 appends the fixed suffix `Var`, which is what makes an injected variant
+recognisable at a glance. Applying the rule: `Term` gives `TVar`; a sort named `Proc` would give
+`PVar`. Lines 1–2 are a defensive fallback — the parser never yields an empty sort identifier, so
+`'V'` is chosen for a case that cannot arise.
+
+The rule is **purely local**: it looks at one name and consults nothing else, and there is no
+collision guard anywhere in the macro. Two sorts whose names share a first letter — `Term` and
+`Tape`, say — would therefore both be assigned the label `TVar`, and the clash surfaces as a
+duplicate-variant error from `rustc` against the generated `enum`, not as a diagnostic from
+`language!`. Lambda has one sort, so the question does not arise here; it is worth knowing before
+you add a second sort to a language of your own.
 
 `TVar` is what a bare identifier in source text parses to. It carries an `OrdVar` — a moniker
 `Var` (free or bound) equipped with a total order so that hashing and comparison are deterministic
@@ -233,10 +272,45 @@ abstractions during matching and substitution. They are emphatically **not** you
 `Lam` and `App`: `Term::Lam` is the λ of the language you are defining; `Term::LamTerm` is the
 engine's own abstraction machinery over that language.
 
-They appear because `compute_hol_domain_pairs` flags the pair `(Term, Term)` — your `Lam` rule
-structurally declares a `[Term -> Term]` abstraction. Remove the binder parameter and none of the
-four would be emitted. (Before the HOL-B optimisation the macro emitted these for *every*
-(category, domain) pair, i.e. $`O(|\text{categories}|^2)`$ variants; they are now demand-driven.)
+They appear because `compute_hol_domain_pairs` yields the pair `(Term, Term)`. It is tempting — and
+the comment above its call site at `macros/src/gen/types/enums.rs:129-134` still says so — to read
+this as *demand-driven*: the pair is flagged because your `Lam` rule structurally declares a
+`[Term -> Term]` abstraction, and removing the binder would remove the variants.
+
+> ⚠ **That reading is wrong, and Lambda is the worst possible place to notice it.**
+> `compute_hol_domain_pairs` (`macros/src/logic/common.rs:36-45`) is a nested loop over
+> `language.types` × `language.types` that inserts **every** pair unconditionally. There is no
+> flagging left in it. The HOL-B gating described by the call-site comment was **reverted**, for
+> the reason its own doc-comment gives: gating the enum emission while other emitters still
+> referenced the ungated set produced dangling references — *"96+ compile errors across
+> rholang/guardedrho on the merge"* — so the code now emits the full cross-product deliberately.
+>
+> Lambda cannot expose this, because it has exactly one sort: the cross-product
+> $`\{\mathrm{Term}\} \times \{\mathrm{Term}\}`$ *is* the single pair `(Term, Term)`, so
+> demand-driven and exhaustive predict the same output here.
+
+**The witness is `Monoid`.** It declares one sort `M`, no binder anywhere in the file — no `^`
+parameter, no arrow type — and three equations over an empty `rewrites` block. Under the
+demand-driven reading it should receive no higher-order variants at all. What
+`target/generated/monoid/ast_enums.rs` actually contains is:
+
+```rust
+#[derive(Clone, mettail_runtime::BoundTerm)]
+pub enum M {
+    Unit,                                                    // ← Monoid's own
+    Mul(std::sync::Arc<M>, std::sync::Arc<M>),               // ← Monoid's own
+    MVar(mettail_runtime::OrdVar),                           // ← auto: the variable form
+    LamM(mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<M>>),
+    MLamM(mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<M>>),
+    ApplyM(std::sync::Arc<M>, std::sync::Arc<M>),
+    MApplyM(std::sync::Arc<M>, Vec<M>),                      // ← all four, with no binder
+}
+```
+
+All four, from a specification with no binder. So the true rule is: **a language with $`n`$ sorts
+receives $`4n^2`$ higher-order variants, whatever its binding structure** — $`O(n^2)`$, not
+demand-driven. Lambda's four are $`4 \cdot 1^2`$, and they would still be there if you deleted the
+`Lam` rule entirely.
 
 #### Representation notes
 
@@ -313,7 +387,7 @@ not.
 
 **What it generates:**
 
-```rust
+```text
 Lam(Scope<Binder<String>, Arc<Term>>)
 ```
 
@@ -343,10 +417,12 @@ it is written* `(⟨fun⟩,⟨arg⟩)` *; the result is a* `Term`*."*
 
 **Why the comma, rather than juxtaposition?** Application in textbook λ-calculus is written by
 juxtaposition, `f a`. Encoding that in this grammar would require an infix operator whose token is
-*nothing at all*, which needs its own binding-power discipline in the Pratt/WPDA parser and
+*nothing at all*, which needs its own binding-power discipline in the Pratt/WPDA parser
+([Pratt 1973](#references)) and
 introduces genuine ambiguity against every other production. The parenthesised, comma-separated
 form keeps every production's first token unambiguous. The WPDA parity test pins the exact
-behaviour: `Fixed("lam ")` → `PrefixDispatch: ConsumeAndPush(rule_at(Term, Lam, 1))`.
+behaviour: the token `Fixed("lam ")` dispatches as
+`PrefixDispatch: ConsumeAndPush(rule_at(Term, Lam, 1))`.
 
 ### 5.3 Everything else the `terms` block drives
 
@@ -362,7 +438,8 @@ enum SubstTask {
     VisitTerm { src: *const Term, slot: usize, op_idx: usize },
     AssembleTerm_Lam { slot: usize, cloned_pattern: Binder<String>, body_slot: usize },
     AssembleTerm_App { slot: usize, f0_slot: usize, f1_slot: usize },
-    …
+    // … one `AssembleTerm_<Label>` arm per constructor, including the
+    // auto-injected `TVar` and the four HOL variants.
 }
 ```
 
@@ -400,7 +477,7 @@ The comment is an open design question: should **η-conversion** be part of the 
 
 Written in this DSL it would read:
 
-```rust
+```text
 Eta . | x # M |- (Lam ^x.(App M x)) = M;
 ```
 
@@ -409,10 +486,10 @@ operator (`Premise::Freshness`).
 
 **Two things to know before adding it.**
 
-1. **β without η is the standard choice** for a reduction-oriented presentation. η is an
-   extensionality principle about *observational* equality; it is not needed to compute, and
-   including it complicates confluence arguments and normal-form talk. That is presumably why the
-   line is a question mark rather than a rule.
+1. **β without η is the standard choice** for a reduction-oriented presentation
+   ([Barendregt 1984](#references), ch. 3). η is an extensionality principle about *observational*
+   equality; it is not needed to compute, and including it complicates confluence arguments and
+   normal-form talk. That is presumably why the line is a question mark rather than a rule.
 2. **The freshness premise is not supported on the current Dovetail structural path.**
    `premise_supported` is exhaustive over every `Premise` variant and accepts *only*
    `Premise::Congruence`; `Freshness`, `RelationQuery`, `ForAll`, `BehavioralGuard` and
@@ -441,11 +518,12 @@ Two abbreviated forms appear in this file and are worth spelling out:
 
 | Written | Means |
 |---|---|
-| `Beta . \|- …` | `\|-` immediately after the dot ⇒ **both** the type context and the premise list are empty — an unconditional rule |
-| `AppCongL . \| M0 ~> M1 \|- …` | nothing before the `\|` ⇒ empty *type* context; `M0 ~> M1` is the single premise |
+| `Beta . \|- …` | `\|-` immediately after the dot means **both** the type context and the premise list are empty — an unconditional rule |
+| `AppCongL . \| M0 ~> M1 \|- …` | nothing before the `\|` means an empty *type* context; `M0 ~> M1` is the single premise |
 
 > **Critical:** rewrite patterns are written in **abstract syntax**, as prefix S-expressions
-> `(Constructor arg₁ arg₂ …)` — *never* in the concrete syntax defined by `terms`. `(App M N)` is
+> $`(\mathrm{Constructor}\ \mathit{arg}_1\ \mathit{arg}_2\ \dots)`$ — *never* in the concrete
+> syntax defined by `terms`. `(App M N)` is
 > the AST node; the text a programmer types for it is `(M , N)`. Confusing the two is the single
 > most common misreading of this block.
 
@@ -495,16 +573,45 @@ normal form — for `(lam x. x, lam a. lam b. a)`. Source:
 
 #### How `Beta` executes
 
-Compile time: the LHS pattern is interned into the **positional set automaton**. The serializer
-emits a location-rooted receive whose match has an `App`-arity-2 *nested* case — descend child 0,
-match a `Lam`-arity-1 head, collapse the `Lam` body as `fun`, bind child 1 as `arg`, and fire the
-substitution
+Compile time: the LHS pattern is interned into the **positional set automaton** of
+[SET-AUTOMATON-LOCATE-2021](#references), whose defining property is that it visits each subject
+symbol exactly once while locating every match. The serializer
+emits a location-rooted receive whose match has an `App`-arity-2 *nested* case. Run time is then
+one pass of the following.
 
-```math
-\sigma \;=\; \{\, \mathit{fun} \mapsto \text{body},\ \ \mathit{arg} \mapsto \text{argument} \,\}
+**Algorithm 2 (firing `Beta` at a position).**
+
+```pseudocode
+input : t, the subject term rooted at some position p
+output: the contracted term, or NO-MATCH
+
+ 1  if head(t) ≠ App or arity(t) ≠ 2 then          // shape test, one symbol
+ 2      return NO-MATCH
+ 3  f ← child(t, 0)
+ 4  if head(f) ≠ Lam or arity(f) ≠ 1 then          // nested shape test
+ 5      return NO-MATCH
+ 6  fun ← child(f, 0)                              // the WHOLE Scope, not the body
+ 7  arg ← child(t, 1)
+ 8  σ   ← { fun ↦ fun, arg ↦ arg }                 // the firing substitution
+ 9  (x, body) ← unbind(σ[fun])                     // FRESHENS x before body is exposed
+10  return substitute(body, x ↦ σ[arg])
 ```
 
-on the `Beta` rule's channel.
+Lines 1–5 are the whole of the match, and they are why the set automaton can visit each subject
+symbol once: each test looks at one head and one arity, and failure at either line rules the
+position out without descending further. Line 6 is the subtlety §5.1 warned about — `Lam` has a
+single field, so `child(f, 0)` is the entire `Scope`, binder and body together, which is exactly
+what the RHS's `eval` expects. Line 8 records the two bindings the rule names; written out,
+
+```math
+\sigma \;=\; \{\, \mathit{fun} \mapsto \text{the scope},\ \ \mathit{arg} \mapsto \text{the argument} \,\}
+```
+
+is what travels on the `Beta` rule's channel. Line 9 is where capture-avoidance is bought:
+`unbind` freshens the binder, so the name `x` that line 10 substitutes for cannot collide with any
+free name already inside `arg`. Line 10 is an ordinary capture-avoiding substitution over a body
+whose binder is now guaranteed fresh — which is why no side condition appears in the rule as
+written.
 
 Because the RHS is a *top-level substitution*, `Beta` is routed to the **native lane**
 (`typed_report::generate_native_rules_and_dispatch`) rather than being emitted as a structural
@@ -514,7 +621,7 @@ form as silent communications. The single observable communication *is* the β f
 
 ### 7.2 The three congruence rules
 
-```rust
+```text
 AppCongL . | M0 ~> M1 |- (App M0 N) ~> (App M1 N);
 AppCongR . | N0 ~> N1 |- (App M N0) ~> (App M N1);
 LamCong  . | S  ~> T  |- (Lam ^x.S)  ~> (Lam ^x.T);
@@ -593,17 +700,18 @@ by moniker `Scope`s rather than axiomatised as an equation.
 
 ### 8.1 Concrete syntax cheat-sheet
 
-Taken from the golden corpus in `repl/tests/a_s5_6_exec_goldens.rs`, so these are exactly the
-strings the REPL executes:
+Every string below is **test-pinned**, and the last column says by which test — so each row is
+checkable independently rather than resting on one blanket attribution. Four come from the A-S5.6
+golden corpus; two are pinned elsewhere, which is why the corpus alone is not cited for all six.
 
-| Source text | AST | Note |
-|---|---|---|
-| `lam x. x` | `Lam(x. TVar x)` | the identity combinator **I** |
-| `lam a. lam b. a` | `Lam(a. Lam(b. TVar a))` | the **K** combinator; already a normal form |
-| `(lam x. x, lam a. lam b. a)` | `App(Lam …, Lam …)` | a single β step ⇒ `lam a. lam b. a` |
-| `lam y. (lam x. x, y)` | redex under a binder | needs `LamCong` ⇒ `lam y. y` |
-| `((lam x. (x,x)), (lam x. (x,x)))` | **Ω** | diverges — the non-termination witness |
-| `(lam x. x, (lam x. x, (lam x. x, (lam x. x, lam a. lam b. a))))` | a 4-chain | four successive β steps |
+| Source text | AST | Note | Pinned by |
+|---|---|---|---|
+| `lam x. x` | `Lam(x. TVar x)` | the identity combinator **I** | `languages/tests/fix_a_alpha_canonical_semantic_key.rs:31` |
+| `lam a. lam b. a` | `Lam(a. Lam(b. TVar a))` | the **K** combinator; already a normal form | `repl/tests/a_s5_6_exec_goldens.rs:75` |
+| `(lam x. x, lam a. lam b. a)` | `App(Lam …, Lam …)` | a single β step, reaching `lam a. lam b. a` | `repl/tests/a_s5_6_exec_goldens.rs:68` |
+| `lam y. (lam x. x, y)` | redex under a binder | needs `LamCong`, reaching `lam y. y` | `repl/tests/a_s5_6_exec_goldens.rs:74` |
+| `((lam x. (x,x)), (lam x. (x,x)))` | **Ω** | diverges — the non-termination witness | `repl/tests/a_s5_6_exec_goldens.rs:348`; `languages/tests/lambda_dovetail.rs:128` |
+| `(lam x. x, (lam x. x, (lam x. x, (lam x. x, lam a. lam b. a))))` | a 4-chain | four successive β steps | `repl/tests/a_s5_6_exec_goldens.rs:70-72` |
 
 ### 8.2 A reduction, step by step
 
@@ -631,10 +739,13 @@ Subject: `(lam x. x, lam a. lam b. a)`.
 | `terms` rule production, judgement vs. legacy style | `ast/src/grammar.rs:617` (`parse_grammar_rule`), `:725` (`parse_grammar_rule_new`) |
 | `^x.body` / `^[xs].body` / `?g:Guard` / `*opt(…)` parameter forms | `ast/src/grammar.rs:870` (`parse_term_param`) |
 | `[A -> B]` is `TypeExpr::Arrow`; `A*` is `MultiBinder` | `ast/src/types.rs:24-34`, `:96-172` |
-| quoted string ⇒ literal, bare identifier ⇒ parameter reference | `ast/src/grammar.rs:970-1014` (`parse_syntax_pattern`) |
+| a quoted string is a literal, a bare identifier is a parameter reference | `ast/src/grammar.rs:970-1014` (`parse_syntax_pattern`) |
 | `types` block forms (plain / `![T] as C` / collections) | `ast/src/language/parse.rs:457` (`parse_types`) |
 | auto-injected `Var` variant and its naming rule | `macros/src/gen/types/enums.rs:121-127`; `macros/src/gen/mod.rs:2162` (`generate_var_label`) |
-| auto-injected `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}`, gated by `compute_hol_domain_pairs` | `macros/src/gen/types/enums.rs:129-182` |
+| Algorithm 1, including the `'V'` empty-name fallback and the absence of any collision guard | `macros/src/gen/mod.rs:2162-2171`; no call site in `macros/src/gen/` or `ast/src/` performs a duplicate-label check |
+| Algorithm 2's shape tests, capture order, and `unbind`-before-substitute discipline | `macros/src/gen/runtime/dovetail_report.rs:1543-1549`; `ast/src/language/parse.rs:2981-3042` (`eval` lowering) |
+| auto-injected `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}` | `macros/src/gen/types/enums.rs:129-182` |
+| the variants are the **full cross-product**, not demand-driven — and the call-site comment that says otherwise is stale | behaviour: `macros/src/logic/common.rs:36-45` inserts every `(cat, domain)` pair unconditionally. Witness: `languages/src/monoid.rs` declares no binder, yet `target/generated/monoid/ast_enums.rs:6-11` contains `LamM` / `MLamM` / `ApplyM` / `MApplyM`. The reversion rationale is in `common.rs`'s own doc-comment |
 | `Arc` children, iterative `Clone`/`Hash`/`Ord`/`Debug` rationale | `macros/src/gen/types/enums.rs:184-201` |
 | generated `enum Term` for this language | `target/generated/lambda/ast_enums.rs` |
 | `Display` renders `"lam " + name + " . " + body`; `App` renders `( fun , arg )` | `target/generated/lambda/display.rs:68-103` |
@@ -645,7 +756,7 @@ Subject: `(lam x. x, lam a. lam b. a)`.
 | `eval` arities and their lowerings | `ast/src/language/parse.rs:2981-3042` |
 | pattern-level `^x.S` is `PatternTerm::Lambda` | `ast/src/language/parse.rs:3077-3082` |
 | equations emit forward **and** reverse e-graph rules | `macros/src/gen/runtime/dovetail_report.rs:1472` (`lower_equation`) |
-| only congruence premises are supported on the structural path | `macros/src/gen/runtime/dovetail_report.rs:1456` (`premise_supported`) |
+| only congruence premises are supported on the structural path | behaviour: `macros/src/gen/runtime/dovetail_report.rs:1462-1469` — the `match` is exhaustive with no catch-all, and `Congruence` is the single `true` arm. Pinned by `premise_supported_is_exhaustive_and_only_congruence` (`:2148`) |
 | congruence rules emit no Dovetail data (closure is intrinsic) | `macros/src/gen/runtime/dovetail_report.rs:1537` |
 | substitution rewrites go to the native lane, not the structural one | `macros/src/gen/runtime/dovetail_report.rs:1543-1549` |
 | `BaseRewrite` vs `ContextualRewrite` classification | `rholang-codegen/src/rho_net.rs:551-568` (`add_rewrites`) |
@@ -671,9 +782,13 @@ Subject: `(lam x. x, lam a. lam b. a)`.
    is one bar.
 5. **The commented `Proc` and `Name` sorts are dead text**, not a TODO. They are ρ-calculus
    residue.
-6. **The four auto-injected HOL variants exist solely because of the one binder parameter**, and
-   they are meta-level. Do not confuse `Term::LamTerm` (engine machinery) with `Term::Lam` (your
-   λ).
+6. **The four auto-injected HOL variants are *not* caused by the binder parameter.** They are the
+   full $`n \times n`$ cross-product over the sorts, emitted whatever the binding structure —
+   `Monoid`, which declares no binder at all, receives all four. Lambda's single sort hides this,
+   since a one-element cross-product looks exactly like demand-driven emission. They are also
+   meta-level: do not confuse `Term::LamTerm` (engine machinery) with `Term::Lam` (your λ).
+   ⚠ The comment at `macros/src/gen/types/enums.rs:129-134` still describes the reverted
+   demand-driven behaviour; `macros/src/logic/common.rs:36-45` is what runs.
 7. **Adding an η equation is not free.** Its freshness premise is unsupported on the current
    Dovetail structural path, so the language would fail closed rather than silently mis-reduce.
 8. **`"lam "` carries a trailing space** in the literal. That is cosmetic — lexing is
@@ -686,15 +801,66 @@ Subject: `(lam x. x, lam a. lam b. a)`.
 
 ## References
 
-- **OSLF-2017** — Operational Semantics in Logical Form; the theory the toolchain implements. See
-  `docs/architecture/rho-native-integration/references.md#oslf-2017`.
-- **RHO-2005** — the core $`\rho`$-calculus, quoting, and COMM.
-  `docs/architecture/rho-native-integration/references.md#rho-2005`.
-- **SET-AUTOMATON-LOCATE-2021**, **SET-AUTOMATON-MATCHING-2022** — the symbol-once positional set
-  automaton used to locate redexes. `…/references.md`.
-- Barendregt, H. P., *The Lambda Calculus: Its Syntax and Semantics*, Studies in Logic vol. 103,
-  North-Holland, 1984 — the standard reference for β, η, and reduction strategies.
-- In-repo companions: `docs/architecture/rho-native-integration/19-in-rho-binder-beta-substitution.md`
-  (β and substitution in Rho), `…/27-oslf-language-to-rholang-compilation.md` (how a `language!`
-  block becomes an installed `Par`), `docs/examples/rholang/01-language-spec.md` (the same
-  block-by-block treatment for Rholang), `readme_dev.md` (the DSL guide).
+Each entry gives the work, what this page uses it for, and a resolvable DOI. The suite-wide
+register — with fuller annotations for every key used here — is
+[`../architecture/rho-native-integration/references.md`](../architecture/rho-native-integration/references.md).
+
+- **OSLF-2017** — Stay, M., and Meredith, L. G. 2017. *Representing Operational Semantics with
+  Enriched Lawvere Theories.* arXiv:1704.03080.
+  DOI: [10.48550/arXiv.1704.03080](https://doi.org/10.48550/arXiv.1704.03080).
+  Used for: the $`(\Sigma, E, R)`$ presentation this page reads — sorts as syntactic categories,
+  constructors as morphisms, equations as commuting diagrams, rewrites as hom-graph edges.
+  Register entry: [OSLF-2017](../architecture/rho-native-integration/references.md#oslf-2017).
+
+- **RHO-2005** — Meredith, L. G., and Radestock, M. 2005. *A Reflective Higher-Order Calculus.*
+  Electronic Notes in Theoretical Computer Science.
+  DOI: [10.1016/j.entcs.2005.05.016](https://doi.org/10.1016/j.entcs.2005.05.016).
+  Used for: the $`\rho`$-calculus whose process/name split explains the commented-out `Proc` and
+  `Name` sorts of §4, and the COMM reduction the in-Rho backend of §7.1 rides.
+  Register entry: [RHO-2005](../architecture/rho-native-integration/references.md#rho-2005).
+
+- **SET-AUTOMATON-LOCATE-2021** — Erkens, R., and Groote, J. F. 2021. *A Set Automaton to Locate
+  All Pattern Matches in a Term.* In *Theoretical Aspects of Computing* (ICTAC 2021), Lecture Notes
+  in Computer Science (LNCS) 12819, pp. 67–85. Springer.
+  DOI: [10.1007/978-3-030-85315-0_5](https://doi.org/10.1007/978-3-030-85315-0_5).
+  Used for: the symbol-once locate discipline that Algorithm 2's lines 1–5 implement.
+  Register entry:
+  [SET-AUTOMATON-LOCATE-2021](../architecture/rho-native-integration/references.md#set-automaton-locate-2021).
+
+- **SET-AUTOMATON-MATCHING-2022** — Bouwman, M., and Erkens, R. 2022. *Term Rewriting Based on Set
+  Automaton Matching.* arXiv:2202.08687.
+  DOI: [10.48550/arXiv.2202.08687](https://doi.org/10.48550/arXiv.2202.08687).
+  Used for: turning a located match into a rewrite — the step from Algorithm 2's line 8 to line 10.
+  Register entry:
+  [SET-AUTOMATON-MATCHING-2022](../architecture/rho-native-integration/references.md#set-automaton-matching-2022).
+
+- **Barendregt 1984** — Barendregt, H. P. *The Lambda Calculus: Its Syntax and Semantics.* Studies
+  in Logic and the Foundations of Mathematics, vol. 103. North-Holland. ISBN 978-0-444-87508-2.
+  DOI (ch. 3, *Classical Lambda Calculus*, pp. 131–150, which is where β and η conversion are
+  developed): [10.1016/B978-0-444-87508-2.50014-9](https://doi.org/10.1016/B978-0-444-87508-2.50014-9).
+  Used for: the standard statements of β and η, and the reduction-strategy vocabulary §7.2 uses
+  when it calls Lambda's relation *full (strong)* reduction.
+
+- **Pratt 1973** — Pratt, V. R. *Top Down Operator Precedence.* In *Principles of Programming
+  Languages* (POPL '73), pp. 41–51. Association for Computing Machinery (ACM).
+  DOI: [10.1145/512927.512931](https://doi.org/10.1145/512927.512931).
+  Used for: the operator-precedence dispatch model — null and left denotations selected by token
+  and binding power — that the generated WPDA parser of §5.2 is built on.
+
+- **de Bruijn 1972** — de Bruijn, N. G. *Lambda Calculus Notation with Nameless Dummies.*
+  Indagationes Mathematicae 34(5): 381–392.
+  DOI: [10.1016/1385-7258(72)90034-0](https://doi.org/10.1016/1385-7258%2872%2990034-0).
+  Used for: the nameless representation that makes the in-Rho `^subst` cascade of §7.1 an
+  arithmetic condition on indices rather than a freshness search.
+  Register entry: [DEBRUIJN-1972](../architecture/rho-native-integration/references.md#debruijn-1972).
+
+### In-repo companions
+
+- [`../architecture/rho-native-integration/19-in-rho-binder-beta-substitution.md`](../architecture/rho-native-integration/19-in-rho-binder-beta-substitution.md)
+  — β and substitution as they execute in Rho.
+- [`../architecture/rho-native-integration/27-oslf-language-to-rholang-compilation.md`](../architecture/rho-native-integration/27-oslf-language-to-rholang-compilation.md)
+  — how a `language!` block becomes an installed `Par`.
+- [`../examples/rholang/01-language-spec.md`](../examples/rholang/01-language-spec.md)
+  — the same block-by-block treatment applied to Rholang.
+- [`../../readme_dev.md`](../../readme_dev.md)
+  — the DSL guide: every block, its syntax, and the codegen path that consumes it.

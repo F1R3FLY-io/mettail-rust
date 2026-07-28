@@ -1,0 +1,77 @@
+@startuml
+title Anatomy of a page in this suite: the seven required parts, and what each one is answerable to
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #9CA3AF
+}
+
+rectangle "**THE SPECIFICATION**\n`languages/src/<lang>.rs`" as SPEC #F3F4F6 {
+  rectangle "**name / types**\nthe sorts" as S_TYPES #DBEAFE
+  rectangle "**terms**\nsignature <latex>\\Sigma</latex>\n+ concrete syntax" as S_TERMS #DCFCE7
+  rectangle "**equations**\ntheory <latex>E</latex>" as S_EQNS #FEF3C7
+  rectangle "**rewrites**\nsystem <latex>R</latex>" as S_REWS #FCE7F3
+}
+
+rectangle "**THE PAGE**\n`docs/languages/<lang>.md`" as PAGE #F3F4F6 {
+  rectangle "**1. Header**\nsubject file, audience,\nand the METHOD by which\nclaims were verified" as P_HEAD #E0E7FF
+  rectangle "**2. Table of contents**\nworking in-document anchors" as P_TOC #E0E7FF
+  rectangle "**3. Notation table**\nevery symbol, acronym and\nkey term, BEFORE first use" as P_NOTE #EDE9FE
+  rectangle "**4. One section per block**\nin the order the macro parses them,\nwith a fragment-by-fragment table\nper rule form" as P_BLOCKS #DBEAFE
+  rectangle "**5. The whole specification**\nthe <latex>(\\Sigma, E, R)</latex> triple,\na TEST-PINNED cheat-sheet,\nand a worked reduction" as P_WHOLE #DCFCE7
+  rectangle "**6. Provenance table**\nevery claim mapped to\n`file:line`" as P_PROV #FEF3C7
+  rectangle "**7. Gotchas**\nthe misreadings the page\nexists to prevent" as P_GOTCHA #FEE2E2
+  rectangle "**References**\nDOI-bearing citations\n+ in-repo companions" as P_REFS #EDE9FE
+}
+
+rectangle "**THE EVIDENCE**\nwhat a claim may point at" as EVID #F3F4F6 {
+  rectangle "the DSL parser\n`ast/src/`" as E_PARSE #DBEAFE
+  rectangle "the code generator\n`macros/src/gen/`" as E_GEN #EDE9FE
+  rectangle "the GENERATED OUTPUT\n`target/generated/<lang>/`" as E_OUT #DCFCE7
+  rectangle "a pinned test\n`languages/tests/`, `repl/tests/`" as E_TEST #FEF3C7
+}
+
+rectangle "**THE GATE**\n`docs/languages/validate.sh`\n17 mechanised checks" as GATE #FCE7F3
+
+S_TYPES -right-> P_BLOCKS
+S_TERMS -right-> P_BLOCKS
+S_EQNS  -right-> P_BLOCKS
+S_REWS  -right-> P_BLOCKS
+
+P_HEAD   .down.> E_PARSE : declares the method
+P_BLOCKS .down.> E_GEN   : what the macro emits
+P_WHOLE  .down.> E_OUT   : what it emitted HERE
+P_PROV   .down.> E_TEST  : and what pins it
+
+PAGE -down-> GATE : must pass before it lands
+
+note right of P_NOTE
+  Mechanised: an all-caps token that is
+  not an English word must be expanded
+  at or before its first use.
+end note
+
+note right of P_WHOLE
+  Mechanised: every algorithm appears as
+  a captioned ""```pseudocode"" block
+  (**Algorithm N (Name).**) followed by
+  prose explaining its steps — Knuth's
+  literate form, not a code dump.
+end note
+
+note bottom of GATE
+  A guideline nobody checks is a guideline that silently rots.
+  This suite already proved it: all four of lambda.md's SVGs sat
+  on disk at ZERO BYTES while their .puml sources had real content.
+  The check that catches it existed. It had never been run.
+end note
+
+@enduml

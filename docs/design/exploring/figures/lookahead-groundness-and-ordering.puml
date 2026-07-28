@@ -1,0 +1,79 @@
+@startuml
+title Delivery: the groundness switch, and the ordering hazard it opens
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowThickness 1.2
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #9CA3AF
+}
+
+start
+
+:the search delivers entries
+""[ step_0, …, step_{k-1}, leaf ]"";
+note right #DBEAFE
+  The ENTRY SHAPE does not change.
+  It is already the FIPS's, already
+  ""deliver""'s, already the codec's
+  split-eligible form.
+end note
+
+if (which ""LeafProjection""?) then ([RestingOn]\nover a data-term guest)
+  #DCFCE7:leaf is an ""EList""/""ETuple""
+  of ground literals;
+  #DCFCE7:**GROUND**
+  ""eval_stable_par"" admits it;
+  note right #DCFCE7
+    This is the FIPS's headline use case.
+    It gets ""serialized_paths"": canonical
+    identity, NO producer sort obligation,
+    and wire-level prefix structure.
+  end note
+  #DCFCE7:""combine_epathmap"" canonicalises
+  to **TRIE ORDER**;
+else ([Configuration]\nor a truncated branch)
+  #FEF3C7:leaf is a REIFIED PROCESS
+  (""reify"" output, or
+  ""(handle, frontier, ⟦config⟧)"");
+  #FEF3C7:**NOT GROUND**
+  it carries sends/receives/
+  free variables;
+  #FEE2E2:⚠ ""combine_epathmap"" then
+  **PRESERVES ENTRY ORDER**
+  — branch enumeration order
+  becomes OBSERVABLE;
+  note right #FEE2E2
+    **THE ONE THING THAT WOULD SILENTLY
+    BREAK CONSENSUS.** Today ""deliver""
+    avoids it by using ""ESet"", because
+    ""ParSet"" sorts and is therefore canonical.
+  end note
+  #DCFCE7:**FIX** — producer-side ordering:
+  sort each entry with ""ParSortMatcher"",
+  build the trie over the SORTED entries,
+  read back in trie order;
+  note right #DCFCE7
+    Zero consensus change.
+    ⚠ The trie must be built over the
+    SORTED entries — sorting can change
+    an entry, and therefore its key.
+  end note
+endif
+
+#EDE9FE:three maps, never merged
+""success"" · ""truncated"" · ""failure""
+<i>they differ in GROUNDNESS, and a union
+would be non-ground whenever any member is</i>;
+
+#FCE7F3:gate: ""x8_publication_is_scheduler_invariant""
+must be run against the new shape before merge;
+
+stop
+
+@enduml
