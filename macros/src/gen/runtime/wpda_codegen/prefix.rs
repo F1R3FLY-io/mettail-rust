@@ -296,7 +296,26 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
             ) = (&sp[0], &sp[1])
             {
                 if let mettail_ast::grammar::TermParam::Simple { name: param_name, ty } = &tc[0] {
-                    if syn_name == param_name {
+                    // ⚠ AN `Ident` OPERAND IS NOT A CROSS-CATEGORY SOURCE. Without this
+                    // guard, `Tagged . m:Ident |- "tag" m : Num` matched the
+                    // `Literal + Param` shape and classified as `CrossCatPrefixUnary`,
+                    // whose prefix arm routes the trigger to
+                    // `WpdaState::CrossCatDelegate` and DESCENDS INTO A CATEGORY. Three
+                    // consequences, all measured on #131: the walker never entered
+                    // `WpdaState::BinderRule`, so the `IdentTextCapture` fork emitted into
+                    // `binder_rule_c<cat>_r<rule>` was never executed (an instrumented gate
+                    // logged ZERO hits); the action's arg slot instead held the delegate's
+                    // `Term { type_name: "RealizedTerm" }`; and both fork-action twins
+                    // failed byte-identically, because an unexecuted fork cannot depend on
+                    // its action kind.
+                    //
+                    // Falling through leaves the rule to `classify_binder_in`, which admits
+                    // it (its `sp[0]` IS a `Literal` trigger) and routes it to
+                    // `UnifiedDescriptor::BinderPrefix` → `WpdaState::BinderRule` — the
+                    // dispatcher that actually calls the capture fork.
+                    if ty.is_ident_text() {
+                        // fall through to the binder-rule classification below
+                    } else if syn_name == param_name {
                         if let mettail_ast::types::TypeExpr::Base(source_ident) = ty {
                             let source_cat = source_ident.to_string();
                             if source_cat != rule.category.to_string() {

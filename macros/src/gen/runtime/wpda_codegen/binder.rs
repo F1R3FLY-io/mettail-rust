@@ -1439,7 +1439,25 @@ pub(crate) fn emit_binder_rule_body(
                             }
                         }
                     },
-                    // ⚠⚠ MEASURED: THIS ARM IS CURRENTLY UNREACHABLE AT RUNTIME, AND THAT —
+                    // ★★ IF YOU ARE ADDING A NEW CAPTURE KIND, READ THIS FIRST.
+                    //
+                    // GREP FOR *PRODUCERS*, NOT FOR THE SYMBOL. A symbol existing is not a
+                    // path working. This one arm cost three rounds to exactly that mistake:
+                    //   1. `ActionArg::Ident` + `as_ident()` both existed, so the capture
+                    //      was specced as "zero prattail change" — but NO fork op produced
+                    //      an `ActionArg::Ident`; every ident routed through `BinderScope`.
+                    //   2. `GuardedConsumeTokenKindAndReplace` existed and was assumed
+                    //      exercised — a producer count across all 49 generated parsers
+                    //      found 1 (this fixture) against 33 for the `...AndPush` twin.
+                    //   3. This dispatcher existed and was called — but never for a
+                    //      BINDER-FREE rule, so the fork below was emitted and never run.
+                    //
+                    // The cheap check that would have caught all three, in one command:
+                    //   grep -l '<Symbol>' target/generated/*/wpda.rs | wc -l
+                    // Zero or one producer (where the one is your own fixture) means the
+                    // path is dead, not that you are holding it wrong.
+                    //
+                    // ⚠ MEASURED: THIS ARM WAS UNREACHABLE AT RUNTIME, AND THAT —
                     // not the op, not the gate, not the slot — IS WHY `m:Ident` DOES NOT
                     // WORK. Do not re-litigate the settled parts before reading this.
                     //
