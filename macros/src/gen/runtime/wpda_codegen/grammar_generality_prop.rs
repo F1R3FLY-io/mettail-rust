@@ -1880,3 +1880,149 @@ proptest! {
         }
     }
 }
+
+
+#[cfg(test)]
+mod corpus_hygiene {
+    //! What the archived `grammar_generality_prop` corpus actually contains.
+    //!
+    //! Its three entries are each 4.5–6 KB of `syn`-typed `LanguageDef` `Debug`. They are
+    //! NOT promoted to reconstructed terms, and the reason is recorded here rather than left
+    //! as an absence — see `the_archived_entries_are_not_reconstructible_from_their_debug`.
+    //!
+    //! One fact about them IS cheap, mechanical and worth pinning, and it is below.
+
+    /// Replace every `bytes(a..b)` with `bytes(_)`.
+    ///
+    /// `proc_macro2::Span`'s `Debug` prints the byte range the token occupied IN THE
+    /// COMPILING SOURCE. It is a property of where a `parse_quote!` happened to sit during
+    /// one compilation, not of the grammar the counterexample describes — the same role
+    /// `UniqueId` plays for `moniker`, and normalised for the same reason.
+    fn normalize_spans(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut rest = s;
+        while let Some(i) = rest.find("bytes(") {
+            out.push_str(&rest[..i]);
+            let after = &rest[i + "bytes(".len()..];
+            match after.find(')') {
+                Some(j) if after[..j].chars().all(|c| c.is_ascii_digit() || c == '.') => {
+                    out.push_str("bytes(_)");
+                    rest = &after[j + 1..];
+                },
+                _ => {
+                    out.push_str("bytes(");
+                    rest = after;
+                },
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
+    fn archived_entries() -> Vec<(&'static str, &'static str)> {
+        include_str!(
+            "../../../../../macros/proptest-regressions/gen/runtime/wpda_codegen/grammar_generality_prop.txt"
+        )
+        .lines()
+        .filter_map(|l| l.strip_prefix("cc ")?.split_once(" # shrinks to "))
+        .collect()
+    }
+
+    /// ★ TWO OF THE THREE ARCHIVED SEEDS ARE THE SAME COUNTEREXAMPLE.
+    ///
+    /// Entries 0 and 1 differ at exactly one place in 4,485 characters: a `Span`'s recorded
+    /// byte range, `bytes(26637..26640)` against `bytes(363162..363165)`. Normalise the
+    /// spans and the two are character-for-character identical.
+    ///
+    /// # Why that matters rather than being trivia
+    ///
+    /// proptest replays every `cc` line before generating novel cases, so one of these two
+    /// costs a replay of a grammar already being replayed, on a property configured for 96
+    /// and 48 cases. More importantly it is a MEASUREMENT of the corpus's real content: this
+    /// file records two distinct counterexamples, not three, and any statement about the
+    /// archive's coverage that counts three is wrong.
+    ///
+    /// Neither entry is deleted. Corpus lines are cheap and the seeds differ, so both may
+    /// still explore different pre-shrink inputs; what is fixed here is the RECORD of what
+    /// they contain.
+    #[test]
+    fn two_of_the_three_archived_seeds_are_one_counterexample_modulo_spans() {
+        let entries = archived_entries();
+        assert_eq!(entries.len(), 3, "the archived corpus no longer holds three entries");
+
+        let normalized: Vec<String> =
+            entries.iter().map(|(_, text)| normalize_spans(text)).collect();
+
+        assert_eq!(
+            normalized[0], normalized[1],
+            "entries 0 and 1 were recorded as the same counterexample modulo source spans; \
+             they no longer are, so the corpus now holds three DISTINCT cases and any \
+             coverage claim based on two must be re-derived"
+        );
+        assert_ne!(
+            normalized[0], normalized[2],
+            "entry 2 is the archive's second distinct counterexample; if it has become a \
+             duplicate too, the corpus records only ONE case"
+        );
+
+        // And the difference really is only the spans — i.e. the raw texts DO differ, so the
+        // assertion above is not passing because the two lines are byte-identical for some
+        // unrelated reason.
+        assert_ne!(
+            entries[0].1, entries[1].1,
+            "entries 0 and 1 are byte-identical, which is a different (and worse) defect \
+             than the span-only divergence this test was written to record"
+        );
+        assert_ne!(entries[0].0, entries[1].0, "the two seeds must still be distinct");
+    }
+
+    /// ★ WHY THESE THREE ENTRIES ARE NOT PROMOTED TO RECONSTRUCTED TERMS.
+    ///
+    /// Every other corpus in this campaign was promoted by rebuilding the recorded value and
+    /// asserting its `Debug` against the archive. That is not available here, and the
+    /// obstacle was measured rather than assumed:
+    ///
+    /// - the recorded value is a `LanguageDef` — 4.5–6 KB of `syn` types per entry
+    ///   (`Type::Path { qself: None, path: Path { segments: [PathSegment { ident: Ident {
+    ///   sym: i64, span: bytes(..) }, .. }] } }` and so on). Hand-transcribing it is exactly
+    ///   the transcription hazard this campaign has already been bitten by twice;
+    /// - the generator does not draw a `LanguageDef` directly. `arb_language_def` draws a
+    ///   `Vec<RuleSpec>` — a small INDEX enum — and runs it through `realize` plus
+    ///   `witness_spine`. So the natural exact promotion is to recover the SPEC VECTOR and
+    ///   let the existing code rebuild the grammar, with `Debug` equality as the search
+    ///   criterion, giving a reconstruction that is correct by construction;
+    /// - that search was RUN and did not succeed: an exhaustive sweep of 2,820 single specs
+    ///   and all 2,820² ordered pairs (~8.0M realisations, 455 s) matched neither entry 2
+    ///   nor the six-term entries 0/1, and the empty spec vector does not reproduce them
+    ///   either. So the archived grammars are not in the image of the spec pool as this
+    ///   search enumerated it — the pool omits `RuleSpec` variants, or the vectors are
+    ///   longer than two, or both.
+    ///
+    /// What is NOT claimed: that they are unreconstructible in principle. The measurement
+    /// bounds the cheap route and no further. Finishing this means either enumerating every
+    /// `RuleSpec` variant and searching wider, or writing a `syn`-aware reader for the
+    /// recorded `Debug` — the same shape as `testkit::ctor` but for `LanguageDef` rather
+    /// than for generated language terms.
+    ///
+    /// This test pins the entries' SIZE, so the "too large to transcribe" premise cannot
+    /// quietly stop being true without anyone noticing.
+    #[test]
+    fn the_archived_entries_are_not_reconstructible_from_their_debug() {
+        let entries = archived_entries();
+        for (index, (seed, text)) in entries.iter().enumerate() {
+            assert!(
+                text.len() > 4000,
+                "archived entry {index} (cc {}…) is now {} characters. The reason these are \
+                 recorded rather than reconstructed is that they are 4.5–6 KB of `syn` types; \
+                 if one has shrunk to something transcribable, promote it properly.",
+                &seed[..16],
+                text.len()
+            );
+            assert!(
+                text.starts_with("lang = LanguageDef {"),
+                "archived entry {index} no longer binds a `LanguageDef`; the ruling above \
+                 describes a shape it no longer has"
+            );
+        }
+    }
+}
