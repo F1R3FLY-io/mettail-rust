@@ -502,6 +502,20 @@ mod tests {
     /// from its own `hosted_in`; it is hand-maintained on purpose. The enforcement is that a
     /// definition which moves without its entry being updated fails the `macros` build
     /// immediately and by name — loud and unmissable, never silent drift.
+    ///
+    /// ⚠ THAT ENFORCEMENT ONLY CATCHES A MOVE, NEVER AN ADDITION. A definition that is simply
+    /// never listed compiles fine and is silently outside every guard below — the table fails
+    /// OPEN, reporting success over a shrinking domain as the language set grows. It did:
+    /// `json`, `monoid`, `pi` and `turing` were added to `languages/src/` (production, per this
+    /// comment's own claim) and never added here, so half the production corpus sat outside the
+    /// three guards below — including `pi`, whose generated float handler carried an UNSOUND
+    /// replication arm (`!(νx.P) ⟶ νx.!P`) that the guard asserting "Ambient is the ONLY
+    /// float-bearing language" structurally could not see. The four are listed now.
+    /// ⚠ The residual risk is unchanged in kind: this is still a hand-written mirror of two
+    /// directory listings, and the next definition added to either can be omitted just as
+    /// silently. The durable repair is to DERIVE the subject list (a `read_dir` completeness
+    /// assertion against `languages/src` + `languages/tests/definitions`, which `include_str!`
+    /// cannot do but a test can), not to maintain it.
     const BUNDLED_LANGUAGES: &[(&str, &str)] = &[
         (
             "acbagdemo",
@@ -562,12 +576,14 @@ mod tests {
             "inoutdemo",
             include_str!("../../../../languages/tests/definitions/inoutdemo.rs"),
         ),
+        ("json", include_str!("../../../../languages/src/json.rs")),
         (
             "lambdademo",
             include_str!("../../../../languages/tests/definitions/lambdademo.rs"),
         ),
         ("lambda", include_str!("../../../../languages/src/lambda.rs")),
         ("led_test", include_str!("../../../../languages/tests/definitions/led_test.rs")),
+        ("monoid", include_str!("../../../../languages/src/monoid.rs")),
         (
             "nativedemo",
             include_str!("../../../../languages/tests/definitions/nativedemo.rs"),
@@ -578,6 +594,7 @@ mod tests {
         ),
         ("nlacdemo", include_str!("../../../../languages/tests/definitions/nlacdemo.rs")),
         ("optsmoke", include_str!("../../../../languages/tests/definitions/optsmoke.rs")),
+        ("pi", include_str!("../../../../languages/src/pi.rs")),
         (
             "refinementsmoke",
             include_str!("../../../../languages/tests/definitions/refinementsmoke.rs"),
@@ -588,6 +605,7 @@ mod tests {
         ),
         ("rholang", include_str!("../../../../languages/src/rholang.rs")),
         ("swapdemo", include_str!("../../../../languages/tests/definitions/swapdemo.rs")),
+        ("turing", include_str!("../../../../languages/src/turing.rs")),
     ];
 
     /// A-S5.4b CROSS-CRATE AGREEMENT (design v2 §3.2): for EVERY bundled language definition, the
