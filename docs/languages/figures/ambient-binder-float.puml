@@ -1,0 +1,108 @@
+@startuml
+title How the six equations actually execute: the unconditional nu-float to a normal form
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+start
+
+:**a term arrives at the seam**
+""Language::try_direct_eval"" or
+""dovetail_report_for""; <<#DBEAFE>>
+note right #DBEAFE
+  Gate (""should_emit_binder_congruence"",
+  macros/src/gen/runtime/binder_congruence.rs:59):
+  the handler is emitted iff the language
+  (1) declares equations,
+  (2) has NO ""RhoNativeJoin"" host obligation,
+  (3) has a surface SINGLE-binder constructor.
+  Ambient satisfies all three; Rholang fails (2).
+end note
+
+repeat
+  :**one bottom-up float pass** (""__bcn_float_pass""); <<#F3F4F6>>
+
+  partition "prefix and ambient arms - InNew, OutNew, OpenNew, AmbNew" {
+    :normalise the body;
+    if (is the normalised body a ""PNew""?) then (yes)
+      :""scope.unbind()"" - **freshen** the binder to a
+      process-global gensym, then open the scope; <<#FEF3C7>>
+      note right #FEF3C7
+        The freshness premise <latex>x \# N</latex> is NOT checked.
+        It is discharged **by construction**: a globally
+        fresh binder cannot occur free in any pre-existing
+        sibling or field, so re-closing captures nothing.
+        The generated ""is_fresh"" in freshness.rs survives
+        as a live public API with no caller.
+      end note
+      :rebuild the prefix INSIDE the scope; <<#FEF3C7>>
+      :""Scope::new"" - re-close, recomputing the
+      de Bruijn coordinates locally; <<#FEF3C7>>
+    else (no)
+      :leave the node as it is;
+    endif
+  }
+
+  partition "bag arm - ScopeExtrusion" {
+    if (does some bag member normalise to a ""PNew""?) then (yes)
+      :remove that member; the remaining
+      multiset is the residual; <<#DCFCE7>>
+      :""unbind"" the member's scope; <<#DCFCE7>>
+      :**splice** the opened body into the widened
+      bag via ""insert_into_ppar""; <<#FEE2E2>>
+      note right #FEE2E2
+        **AM-2, the flatness obligation.** If the opened body
+        is itself a ""PPar"", pushing it as ONE element yields
+        <latex>\{\{A,B\},C\}</latex>. Cardelli-Gordon dissolves that by
+        (Struct Par Assoc) - a law this fragment absorbs only
+        REPRESENTATIONALLY, so nothing would ever flatten it
+        and sibling redexes would stay hidden. The splice is
+        what keeps the bag flat.
+      end note
+      :re-close the widened bag under
+      the freshened binder; <<#DCFCE7>>
+    else (no)
+      :rebuild the bag from
+      the normalised members;
+    endif
+  }
+
+  partition "restriction arm - NewComm" {
+    :collect the maximal run of adjacent ""PNew"" binders; <<#EDE9FE>>
+    :re-close the run in the permutation that MINIMISES
+    the alpha-canonical semantic key (runs longer
+    than 6 binders are left in declaration order); <<#EDE9FE>>
+    note right #EDE9FE
+      (Struct Res Res) realised as a CANONICAL ORDER
+      rather than as a rewrite: two terms differing only
+      by the order of a nu-run reach the SAME normal
+      form, so the equation holds by construction.
+    end note
+  }
+
+repeat while (did this pass change the term? (""BoundTerm::term_eq"")) is (yes, fuel remains)
+-> no - fixpoint reached;
+
+:**restriction-normal form**: every ""new"" has floated
+as far outward as it can go, and the soup
+underneath is FLAT; <<#DBEAFE>>
+
+if (did anything change at all?) then (yes)
+  :""Some(nf)"" - the floated term is what enters the
+  Dovetail e-graph, where the three capability
+  rules match the soup; <<#DCFCE7>>
+  :**redexes that were split across a restriction
+  are now syntactically adjacent, and fire**; <<#DCFCE7>>
+else (no)
+  :""None"" - the fail-closed seam is preserved:
+  no progress is claimed; <<#FEE2E2>>
+endif
+
+stop
+
+@enduml

@@ -1,0 +1,61 @@
+@startuml
+title The seven blocks of `language! { name: Turing, ... }` and what each one produces
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #9CA3AF
+}
+
+rectangle "**languages/src/turing.rs:119-191**\nthe specification (73 lines of block)" as SPEC #F3F4F6 {
+  rectangle "**name: Turing**  `:120`\nthe language identifier" as NAME #E0E7FF
+  rectangle "**options { }**  `:122-126`\n`emit_tests` / `emit_simulator` /\n`emit_blockly` all **false**" as OPTS #FEF3C7
+  rectangle "**types { }**  `:128-135`\n`Config` `Tape` `State` `Sym`\n+ `![u32] as UInt32`" as TYPES #DBEAFE
+  rectangle "**literals { }**  `:137-144`\none regex lexer class,\none `eval:` block" as LITS #DCFCE7
+  rectangle "**terms { }**  `:146-179`\n10 productions;\nsignature <latex>\Sigma</latex> + concrete syntax" as TERMS #DCFCE7
+  rectangle "**equations { }**  `:181`\nequational theory <latex>E = \varnothing</latex>" as EQNS #FEF3C7
+  rectangle "**rewrites { }**  `:183-190`\n`D_q0_0`, `D_q0_1`;\nrewrite system <latex>R</latex>" as REWS #FCE7F3
+}
+
+rectangle "**macros/** — the `language!` proc-macro\nparse -> validate -> codegen -> spill to `target/`" as MACRO #EDE9FE
+
+rectangle "**target/generated/turing/** — 38 files, 76 924 lines" as GEN #F3F4F6 {
+  rectangle "**ast_enums.rs**\n5 enums, **116 variants**\n(10 declared + 5 `Var`\n+ 1 `NumLit` + 100 HOL)" as AST #DBEAFE
+  rectangle "**parser.rs** (WPDA, 6 745 lines)\n**wpda.rs** (scan sites + actions)\n**display.rs**, **subst.rs**,\n**semantic_hash.rs**, **normalize.rs**" as SURF #DCFCE7
+  rectangle "**dovetail_report.rs**\n2 `RewriteRule` values in ONE\n`CompiledRuleSet`; **0 native rules**;\n`__is_fold_redex` is constantly `false`" as DOVE #EDE9FE
+  rectangle "**rho_net_invocation.rs**\nin-Rho reflection —\n`Tp` and `shift_right` REJECT\n(no positional ground image)" as RHO #FEE2E2
+  rectangle "**metadata.rs**\nfingerprint\n`mettail-langdef-v1:4df25f04b8b20f67`\n+ reflected types/terms/rewrites" as META #FEF3C7
+}
+
+rectangle "**NOTHING is written outside `target/`**\nno `languages/tests/gen_turing_*.rs`,\nno `languages/src/bin/simulate_turing.rs`,\nno `languages/src/generated/turing-*.ts`" as NOFILES #FEF3C7
+
+SPEC -down-> MACRO
+MACRO -down-> GEN
+GEN -down-> NOFILES
+
+NAME  .right.> META : names every\ngenerated item
+OPTS  .right.> META : the three `false`s are\nthe file-writing switches
+TYPES .right.> AST : one enum per sort,\nplus the auto `Var`
+LITS  .right.> SURF : the `UInt32` scan site\n(`wpda.rs:4533-4562`)
+TERMS .right.> AST : one variant per production
+TERMS .right.> SURF : productions, printers,\nsubstitution, hashing
+EQNS  .right.> DOVE : nothing — the block is empty
+REWS  .right.> DOVE : both transition entries,\nlowered as structural rules
+REWS  .right.> RHO : classified, then rejected\nat the reflection boundary
+
+note bottom of NOFILES
+  Those three `false`s are not cosmetic. `emit_simulator: true` would make the
+  macro write `languages/src/bin/simulate_turing.rs` on every compile, and cargo's
+  edition-2021 auto-discovery would adopt it as a binary target with no
+  `required-features = ["strategies"]` gate — so a default `cargo build -p languages`
+  would fail on a file nobody wrote (`languages/src/turing.rs:24-34`).
+end note
+
+@enduml

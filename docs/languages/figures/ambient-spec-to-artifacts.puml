@@ -1,0 +1,53 @@
+@startuml
+title Ambient: the four declared blocks and the three lanes that execute them
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam ArrowColor #374151
+skinparam ArrowFontColor #374151
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "**languages/src/ambient.rs** — the declaration" as SPEC #FFFFFF {
+  rectangle "**types**\n""Proc""   ""Name""\nlines 11-14" as TYPES #DBEAFE
+  rectangle "**terms**\n7 constructors\n6 BNFC-style + 1 judgement\nlines 15-28" as TERMS #DCFCE7
+  rectangle "**equations**\n6 structural-congruence laws\n5 carry a freshness premise\nlines 35-49" as EQNS #FEF3C7
+  rectangle "**rewrites**\n3 capability rules\n+ 3 congruence rules\nlines 50-74" as RWS #FCE7F3
+}
+
+rectangle "**target/generated/ambient/** — the emitted implementation" as GEN #FFFFFF {
+  rectangle """ast_enums.rs""\n""enum Proc"" (16 variants)\n""enum Name"" (9 variants)" as AST #DBEAFE
+  rectangle """parser.rs"" + ""wpda.rs"" + ""display.rs""\nthe surface grammar and its inverse" as PARSER #DCFCE7
+  rectangle """binder_congruence.rs""\n""binder_congruence_nf"" —\nthe nu-float normaliser" as FLOAT #FEF3C7
+  rectangle """dovetail_report.rs""\n3 ""RewriteRule"" values\n(""InRule"" / ""OutRule"" / ""OpenRule"")" as DOVE #FCE7F3
+  rectangle """rho_net_invocation.rs""\nthe in-Rho set-automaton lowering" as RHO #EDE9FE
+  rectangle """metadata.rs""\nreflected spec + fingerprint\n""71c57c22672af39e""" as META #F3F4F6
+}
+
+TYPES -[#2563EB]-> AST : one enum per sort,\nplus ""PVar"" / ""NVar"" and\nthe HOL plumbing
+TERMS -[#16A34A]-> AST : one variant per constructor
+TERMS -[#16A34A]-> PARSER : concrete syntax
+TERMS -[#16A34A]-> DOVE : constructor op labels
+
+EQNS -[#CA8A04]-> FLOAT : ALL SIX equations are\ndischarged HERE, by construction
+EQNS -[#CA8A04]-> RHO : also lowered as\n""StructuralCongruence"" rules
+EQNS -[#DC2626,dashed]-> DOVE : **NOTHING** is emitted —\nfreshness premises and binder\npatterns both fail closed
+
+RWS -[#DB2777]-> DOVE : the 3 capability rules\nlower to AC bag patterns
+RWS -[#DB2777]-> RHO : ""BaseRewrite"" (capabilities) /\n""ContextualRewrite"" (congruences)
+RWS -[#DC2626,dashed]-> DOVE : the 3 congruence rules emit\nnothing — e-graph congruence\nclosure supplies them
+
+SPEC -[#6B7280]-> META : normalised source + fingerprint
+
+note bottom of DOVE #FEE2E2
+  The **red dashed** edges are the load-bearing surprise of this
+  specification: the Dovetail e-graph receives **three** rules from
+  a nine-rule theory. The other six are not lost — they are
+  discharged by the float (equations) or intrinsic to the
+  e-graph (congruences). See section 9.
+end note
+
+@enduml

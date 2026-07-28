@@ -1,0 +1,72 @@
+@startuml
+title `-3!` — a genuine ambiguity, PRESERVED rather than disambiguated early
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #9CA3AF
+}
+
+rectangle "**SOURCE TEXT** `-3!`" as SRC #F3F4F6
+
+rectangle "**LEX DAG** — the sign is at a FORK" as LEX #DCFCE7 {
+  rectangle "edge A: one token\n`Int` literal `-3`\n(the `Int` pattern begins `-?`)" as LEX_A #A7F3D0
+  rectangle "edge B: two tokens\nkeyword `-`, then `Int` literal `3`" as LEX_B #A7F3D0
+}
+
+rectangle "**PARSE FOREST** — <latex>Int</latex>-category readings" as SPPF #DBEAFE {
+  rectangle "**Fact(NumLit(-3))**\n<latex>(-3)! = -6</latex>\nsign inside the numeral" as R1 #BFDBFE
+  rectangle "**Neg(Fact(NumLit(3)))**\n<latex>-(3!) = -6</latex>\npostfix `!` (<latex>\ell = 37</latex>) binds\ntighter than prefix `-` (<latex>35</latex>)" as R2 #BFDBFE
+}
+
+rectangle "**LANGUAGE-LEVEL readings** (`CalculatorLanguage::parse`)" as LANG #EDE9FE {
+  rectangle "**Fact(Neg(NumLit(3)))**\nreachable through a\ncross-category wrapper" as R3 #DDD6FE
+}
+
+rectangle "**ELECTION** — only for the SINGLE-result entry point\n`__mettail_wpda_select_min_weight_realizing`:\nglobal argmin over `LexicographicWeight`\n<latex>(\mathrm{primary},\ \mathrm{open\_len},\ \mathrm{lex\_alt},\ \mathrm{src\_idx},\ \mathrm{rule\_idx})</latex>" as ELECT #FEF3C7
+
+rectangle "**BOTH readings survive** on the multi-result facades\n`Int::parse_via_wpda_all` and `…_all_with_weights`\n(exactly 2 `Int` alternatives — asserted, not observed)" as KEEP #DCFCE7
+
+SRC -down-> LEX_A : maximal munch keeps\nBOTH edges in the DAG
+SRC -down-> LEX_B
+
+LEX_A -down-> R1
+LEX_B -down-> R2
+LEX_B -down-> R3 : with a `Proc` / `BigInt` /\n`BigRat` injection in scope
+
+R1 -down-> ELECT
+R2 -down-> ELECT
+R1 -down-> KEEP
+R2 -down-> KEEP
+
+note right of KEEP
+  **Why this is a feature.**
+  The two `Int` readings DENOTE THE SAME NUMBER, so
+  collapsing them at the lexer would remove an
+  ambiguity rather than a meaning — and the project's
+  standing rule is that an ambiguity belongs in the
+  lattice.
+
+  Removing it also had a measured cost: without the
+  leading `-?` on the `Int` pattern, <latex>i32{::}\mathrm{MIN}</latex> had NO
+  surface at all. Its <latex>\mathrm{display}</latex> is `-2147483648`, and the
+  operator spelling does not exist for it, because
+  `Neg`'s operand `2147483648` overflows <latex>i32</latex>.
+end note
+
+note bottom of ELECT
+  The election is GLOBAL — it minimises over the whole
+  derivation, so it can legitimately move as the
+  expression grows. What the literal-domain invariant
+  guarantees is that no motion of it can change the
+  SPELLING of any token.
+end note
+
+@enduml

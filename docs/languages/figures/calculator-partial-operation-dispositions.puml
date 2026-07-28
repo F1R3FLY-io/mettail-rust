@@ -1,0 +1,67 @@
+@startuml
+title `5 / 0` — one term, three execution lanes, three different (and each correct) dispositions
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequenceArrowThickness 1.2
+skinparam ParticipantPadding 14
+skinparam BoxPadding 12
+skinparam participant {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #9CA3AF
+}
+
+participant "**source text**\n`5 / 0`" as SRC #DCFCE7
+participant "**wpda.rs**\nWPDA parser" as PARSE #DCFCE7
+participant "**safeify**\n`macros/src/gen/native/`\n`rust_code_rewrite.rs`" as SAFE #EDE9FE
+participant "**SafeArith**\n`runtime/src/safe_arith.rs`\n`safe_div` = `checked_div`" as ARITH #EDE9FE
+participant "**eval.rs**\ndirect evaluation" as EVAL #FEF3C7
+participant "**dovetail_report.rs**\ne-graph saturation" as DOVE #FCE7F3
+participant "**rho_fold_dataflow.rs**\nRho-machine lowering" as RHO #FCE7F3
+
+SRC -> PARSE : token stream `5` `/` `0`
+PARSE -> SAFE : ""DivInt(NumLit(5), NumLit(0))""\n(parsing ALWAYS succeeds — partiality is\na REDUCTION property, not a syntax one)
+
+note over SAFE
+  The declared body is `![a / b]`. `safeify` rewrote it at
+  macro-expansion time into
+  <latex>\mathtt{SafeArith::safe\_div}(a,b)\;?</latex>
+  so the `?` short-circuits the whole body to `None`.
+end note
+
+SAFE -> ARITH : ""safe_div(5, 0)""
+ARITH --> SAFE : ""None""   (<latex>\mathtt{checked\_div}</latex> is `None` on a zero divisor,\nand on <latex>i32{::}\mathrm{MIN} / (-1)</latex>)
+
+group Lane 1 — direct evaluation (`Int::eval` / `Int::try_eval`)
+  SAFE -> EVAL : the arm returns `None`
+  EVAL --> EVAL : ""try_eval()"" yields ""None""
+  EVAL --> EVAL : ""eval()"" is ""try_eval().expect(…)""\n<b>⇒ PANIC</b>: "Cannot evaluate expression …"
+end
+
+group Lane 2 — e-graph saturation (Dovetail)
+  SAFE -> DOVE : the native dispatcher arm returns `None`
+  DOVE --> DOVE : the fold rule DOES NOT FIRE —\nno new e-class is added
+  DOVE --> DOVE : ""DivInt(NumLit 5, NumLit 0)"" is a\n<b>STUCK TERM</b>: a normal form with no value
+end
+
+group Lane 3 — the Rho machine (production `exec`)
+  SAFE -> RHO : lowering attempt
+  RHO --> RHO : disposition =\n""BlockedBySemanticPredicate(SafeEvaluationDeclined)""
+  RHO --> RHO : the report-free fast path DEFERS; the wrapper\nLAZILY builds the checked Dovetail report as the\n<b>observational payload</b> (backend `Dovetail`,\nartifact `DovetailRunReport`)
+end
+
+note over EVAL, RHO
+  **Nothing anywhere produces an error TERM.** `Int::Err` (surface `error`)
+  and `CastErrInt` (surface `cast_error_int`) are PARSEABLE, INERT normal
+  forms; the generated Calculator constructs neither. `Int::Err` is pushed
+  only by the WPDA literal action when the token `error` is read, and
+  `CastResult::err()` — the sink that would produce them — is emitted only
+  for OBJECT-output cast languages. Calculator's casts are all
+  NATIVE-output, which "defers on `None`".
+end note
+
+@enduml

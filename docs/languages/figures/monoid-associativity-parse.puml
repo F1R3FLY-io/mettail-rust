@@ -1,0 +1,74 @@
+@startuml
+title The two bracketings of `x * y * z` are DISTINCT terms; only one is reachable by parsing
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #92400E
+  BackgroundColor #FEF9C3
+  FontColor #111827
+}
+
+rectangle "SURFACE `x * y * z`" as SRC #DCFCE7
+
+rectangle PARSE #EDE9FE [
+  <b>WPDA parse
+  infix_bp_m("*") = [(l_bp = 2, r_bp = 3, ...)]
+  right operand parsed at floor <latex>3 > 2</latex>,
+  so the second "*" cannot be absorbed
+]
+
+rectangle "LEFT-NESTED (what parsing yields)" as LEFT #DBEAFE {
+  rectangle "Mul" as L0 #BFDBFE
+  rectangle "Mul" as L1 #BFDBFE
+  rectangle "MVar x" as LX #E0E7FF
+  rectangle "MVar y" as LY #E0E7FF
+  rectangle "MVar z" as LZ #E0E7FF
+  L0 --> L1 : child 0
+  L0 --> LZ : child 1
+  L1 --> LX : child 0
+  L1 --> LY : child 1
+}
+
+rectangle "RIGHT-NESTED (only constructible directly,\nor via explicit parentheses)" as RIGHT #DBEAFE {
+  rectangle "Mul " as R0 #BFDBFE
+  rectangle "Mul  " as R1 #BFDBFE
+  rectangle "MVar x " as RX #E0E7FF
+  rectangle "MVar y " as RY #E0E7FF
+  rectangle "MVar z " as RZ #E0E7FF
+  R0 --> RX : child 0
+  R0 --> R1 : child 1
+  R1 --> RY : child 0
+  R1 --> RZ : child 1
+}
+
+rectangle "Display re-derives the brackets from the SAME table\n`needs_parens = (own l_bp = 2) < (inherited min_bp)`\nleft child inherits 2  ->  2 < 2 is false  ->  bare\nright child inherits 3  ->  2 < 3 is true   ->  parenthesised" as DISP #FCE7F3
+
+rectangle "prints `x * y * z`" as PL #DCFCE7
+rectangle "prints `x * (y * z)`" as PR #DCFCE7
+
+rectangle "STRUCTURAL EQUALITY (`iterative_cmp.rs`)\ncompares child 0 with child 0 and child 1 with child 1\n\n<latex>\mathrm{Mul}(\mathrm{Mul}(x,y),z) \;\neq\; \mathrm{Mul}(x,\mathrm{Mul}(y,z))</latex>" as EQ #FEE2E2
+
+SRC   --> PARSE
+PARSE --> L0 : yields the LEFT-nested tree
+L0    --> DISP : as the LEFT child of nothing\n(inherited min_bp = 0)
+R0    --> DISP : as the RIGHT child of a Mul\n(inherited min_bp = 3)
+DISP  --> PL : left-nested
+DISP  --> PR : right-nested
+L0    --> EQ
+R0    --> EQ
+
+note bottom of EQ
+  Associativity is NOT realised here. It is realised
+  ONLY inside the Dovetail e-graph, and only for the
+  duration of one `dovetail_report_for` call - see
+  the equation-lowering and saturation figures.
+end note
+
+@enduml

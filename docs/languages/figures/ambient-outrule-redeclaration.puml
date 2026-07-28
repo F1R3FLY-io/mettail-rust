@@ -1,0 +1,42 @@
+@startuml
+title The OutRule redeclaration (A-S5.4b): restoring C-G (Red Out)
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam defaultTextAlignment left
+skinparam ArrowColor #374151
+skinparam ArrowFontColor #111827
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+rectangle "**THE NORM** — Cardelli-Gordon (Red Out)\n<latex>m[\,n[out\ m.\,P \mid Q] \mid R\,] \;\rightarrow\; n[P \mid Q] \mid m[R]</latex>\nthe residual <latex>R</latex> stays INSIDE <latex>m</latex>" as NORM #DBEAFE
+
+rectangle "**RETIRED** — the pre-A-S5.4b declaration\nthe ""R"" element was ejected THROUGH the\nmembrane and spliced at TOP level" as OLD #FEE2E2 {
+  rectangle "**Defect 1 — boundary ejection.**\nA 3-element parent body fired TWICE,\nonce per choice of the ejected ""R"".\nNot derivable from C-G's congruence\nplus reduction: it moves a process\nACROSS an ambient boundary that no\nrule authorises it to cross." as OLD_D1 #FFFFFF
+  rectangle "**Defect 2 — the stuck singleton.**\n""m[{n[{out(m,0)}]}]"" fired NOTHING:\nthe shape demanded a separate ""R""\nelement. C-G fires it by taking\n<latex>R = 0</latex> via (Struct Zero Par) — a law\nthis fragment does not declare." as OLD_D2 #FFFFFF
+}
+
+rectangle "**CURRENT** — ambient.rs:64\n""OutRule . |- (PAmb M (PPar {(PAmb N (PPar {(POut M P), ...rest1})), ...rest2}))""\n""    ~> (PPar {(PAmb N (PPar {P, ...rest1})), (PAmb M (PPar {...rest2}))});""" as NEW #DCFCE7 {
+  rectangle """...rest2"" is the WHOLE residual and\nrides back INSIDE ""M"" on the RHS —\n(Red Out) verbatim, modulo the\nbag-body convention." as NEW_F1 #FFFFFF
+  rectangle "An EMPTY ""...rest2"" is legal, so the\nsingleton fires to <latex>\{n[\{P\}],\ m[\{\}]\}</latex>.\n""m[{}]"" versus the paper's <latex>m[0]</latex> is the\nDOCUMENTED empty-bag-for-zero deviation." as NEW_F2 #FEF3C7
+}
+
+rectangle "**THE PINS** — languages/tests/ambient_out_rule_host_semantics.rs" as PINS #EDE9FE {
+  rectangle "singleton body fires **exactly once**\n(was: 0 firings)" as PIN1 #FFFFFF
+  rectangle "3-element body fires **exactly once**\n(was: 2 ejection firings)" as PIN2 #FFFFFF
+  rectangle "2-element body still fires once —\nthe regression subject on which the\ntwo forms coincide, which is exactly\nwhy the corpus HID the divergence" as PIN3 #FEF3C7
+}
+
+NORM -[#DC2626,thickness=2]-> OLD : **diverged**
+NORM -[#16A34A,thickness=2]-> NEW : **restored**
+OLD -[#6B7280,dashed]-> NEW : redeclared\n(a BREAKING semantics change:\nthe rewrite fingerprint moved)
+NEW -[#7C3AED]-> PINS : pinned by firing COUNTS,\nnot by pretty strings
+
+note bottom of PINS #EDE9FE
+  ""AmbientInOutFiring.v"" (""inout_step_sound"" / ""inout_step_complete"")
+  was re-proved against the corrected shape, zero admissions.
+end note
+
+@enduml

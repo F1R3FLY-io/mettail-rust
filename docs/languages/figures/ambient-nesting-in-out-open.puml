@@ -1,0 +1,91 @@
+@startuml
+title The three capabilities as movements of a nesting tree (spatial view, before and after)
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam ArrowColor #374151
+skinparam ArrowFontColor #111827
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam frame {
+  BorderColor #6B7280
+  FontColor #111827
+}
+
+legend top
+  |<#DBEAFE>| an **ambient boundary** — a named, nestable place |
+  |<#DCFCE7>| the **moving / acting** process, the one exercising the capability |
+  |<#FEF3C7>| a **residual** sibling process that rides along unchanged |
+  |<#EDE9FE>| the **top level** — the bag the whole term sits in |
+endlegend
+
+frame "IN — a sibling becomes a child. C-G (Red In); ""InRule"", ambient.rs:53-54" as F_IN #F9FAFB {
+  rectangle "top level" as IN_BEFORE #EDE9FE {
+    rectangle "n[ ... ]" as IN_N1 #DBEAFE {
+      rectangle "in(m, P)" as IN_CAP #DCFCE7
+      rectangle "...rest1" as IN_R1 #FEF3C7
+    }
+    rectangle "m[ ... ]" as IN_M1 #DBEAFE {
+      rectangle "R" as IN_R #FEF3C7
+    }
+    rectangle "...rest2" as IN_R2 #FEF3C7
+  }
+  rectangle "top level" as IN_AFTER #EDE9FE {
+    rectangle "m[ ... ]" as IN_M2 #DBEAFE {
+      rectangle "n[ ... ]" as IN_N2 #DBEAFE {
+        rectangle "P" as IN_P #DCFCE7
+        rectangle "...rest1" as IN_R1B #FEF3C7
+      }
+      rectangle "R" as IN_RB #FEF3C7
+    }
+    rectangle "...rest2" as IN_R2B #FEF3C7
+  }
+  IN_BEFORE -[#2563EB,thickness=2]-> IN_AFTER : **n dives into m**\nthe capability is consumed;\n<latex>n</latex> keeps its contents
+}
+
+frame "OUT — a child becomes a sibling of its parent. C-G (Red Out); ""OutRule"", ambient.rs:64" as F_OUT #F9FAFB {
+  rectangle "top level" as OUT_BEFORE #EDE9FE {
+    rectangle "m[ ... ]" as OUT_M1 #DBEAFE {
+      rectangle "n[ ... ]" as OUT_N1 #DBEAFE {
+        rectangle "out(m, P)" as OUT_CAP #DCFCE7
+        rectangle "...rest1" as OUT_R1 #FEF3C7
+      }
+      rectangle "...rest2" as OUT_R2 #FEF3C7
+    }
+  }
+  rectangle "top level" as OUT_AFTER #EDE9FE {
+    rectangle "n[ ... ]" as OUT_N2 #DBEAFE {
+      rectangle "P" as OUT_P #DCFCE7
+      rectangle "...rest1" as OUT_R1B #FEF3C7
+    }
+    rectangle "m[ ... ]" as OUT_M2 #DBEAFE {
+      rectangle "...rest2" as OUT_R2B #FEF3C7
+    }
+  }
+  OUT_BEFORE -[#2563EB,thickness=2]-> OUT_AFTER : **n surfaces out of m**\n""...rest2"" STAYS INSIDE m —\nthe A-S5.4b correction
+}
+
+frame "OPEN — a boundary is DISSOLVED. C-G (Red Open); ""OpenRule"", ambient.rs:67-68" as F_OPEN #F9FAFB {
+  rectangle "top level" as OP_BEFORE #EDE9FE {
+    rectangle "open(n, P)" as OP_CAP #DCFCE7
+    rectangle "n[ ... ]" as OP_N1 #DBEAFE {
+      rectangle "Q" as OP_Q #FEF3C7
+    }
+    rectangle "...rest" as OP_R #FEF3C7
+  }
+  rectangle "top level" as OP_AFTER #EDE9FE {
+    rectangle "P" as OP_P #DCFCE7
+    rectangle "Q  //(now unprotected)//" as OP_QB #FEE2E2
+    rectangle "...rest" as OP_RB #FEF3C7
+  }
+  OP_BEFORE -[#DC2626,thickness=2]-> OP_AFTER : **the n boundary is gone**\nQ is spliced into the caller's\nlevel — see section 10, Security
+}
+
+' Reading order: IN, then OUT, then OPEN.
+IN_AFTER -[hidden]-> OUT_BEFORE
+OUT_AFTER -[hidden]-> OP_BEFORE
+
+@enduml

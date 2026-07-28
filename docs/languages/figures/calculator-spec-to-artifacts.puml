@@ -1,0 +1,70 @@
+@startuml
+title The five blocks of `language! { name: Calculator, ... }` and what each one produces
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #9CA3AF
+}
+
+rectangle "**languages/src/calculator.rs**\nthe specification (789 lines)" as SPEC #F3F4F6 {
+  rectangle "**name: Calculator**\nthe language identifier\n+ the fingerprint seed" as NAME #E0E7FF
+  rectangle "**types { 12 sorts }**\n1 algebraic (`Proc`)\n8 native payload carriers\n3 collection sorts" as TYPES #DBEAFE
+  rectangle "**literals { 8 lexer classes }**\n`pattern:` regex + `eval:` acceptor\nper numeric / Bool / Str category" as LITS #DCFCE7
+  rectangle "**terms { 147 rules }**\nsignature <latex>\Sigma</latex> + concrete syntax\n+ `![rust]` bodies + `fold`/`step`" as TERMS #DCFCE7
+  rectangle "**equations { }**\n<latex>E = \varnothing</latex>" as EQNS #FEF3C7
+  rectangle "**rewrites { 208 rules }**\nall congruences —\nno base rewrite at all" as REWS #FCE7F3
+}
+
+rectangle "**ast/src/auto_inject.rs**\nlossless-promotion auto-injection\n(runs AFTER composition,\nBEFORE codegen)" as INJECT #FEF3C7
+
+rectangle "**macros/** — the `language!` proc-macro\nparse <latex>\rightarrow</latex> validate <latex>\rightarrow</latex> codegen" as MACRO #EDE9FE
+
+rectangle "**target/generated/calculator/** (45 modules)" as GEN #F3F4F6 {
+  rectangle "**ast_enums.rs**\n12 enums; 22 `<X>To<Y>`\ncross-category variants" as AST #DBEAFE
+  rectangle "**wpda.rs** (54 858 lines)\nthe WPDA engine tables:\n`infix_bp_*` / `postfix_bp_*` /\n`mixfix_bp_*` + literal actions" as WPDA #DCFCE7
+  rectangle "**display.rs**\nprecedence-aware printer\n(`needs_parens = bp < min_bp`)" as DISP #DCFCE7
+  rectangle "**eval.rs**\niterative `try_eval` / `eval`\nover safe arithmetic" as EVAL #EDE9FE
+  rectangle "**dovetail_report.rs**\n65 `fold` rules as e-graph\n`NativeRule`s + dispatcher" as DOVE #EDE9FE
+  rectangle "**rho_fold_dataflow.rs**\nscalar dataflow lowering\nfor the Rho machine" as RHO #FCE7F3
+  rectangle "**metadata.rs**\nfingerprint `4db60beac95dc0be`\n155 terms / 0 equations /\n224 rewrites / 12 types" as META #FEF3C7
+}
+
+rectangle "**languages/tests/gen_calculator_*.rs**\nunit / rewrite / prop / analytical\n(auto-generated)" as TESTS #FEE2E2
+
+SPEC -down-> INJECT
+INJECT -down-> MACRO : +8 terms\n+16 rewrites
+MACRO -down-> GEN
+GEN -down-> TESTS
+
+NAME .right.> META : names every\ngenerated item
+TYPES .right.> AST : one enum per sort
+LITS .right.> WPDA : one literal acceptor\nper category
+TERMS .right.> WPDA : binding powers from\nDECLARATION ORDER
+TERMS .right.> DISP : the same binding powers,\nas paren thresholds
+TERMS .right.> EVAL : `![rust]` bodies,\nsafe-arithmetic rewritten
+TERMS .right.> DOVE : the `fold` subset only
+TERMS .right.> RHO : scalar-shaped folds
+REWS .right.> DOVE : congruence closure is\nINTRINSIC — nothing emitted
+
+note bottom of INJECT
+  Every lossless promotion edge among the declared native kinds
+  becomes a surface-less injection `<Source>To<Target>` plus its
+  congruence: `BigIntToBigRat`, `BoolToBigInt`, `BoolToBigRat`,
+  `BoolToUInt32`, `FixedToBigRat`, `FloatToBigRat`,
+  `UInt32ToBigInt`, `UInt32ToBigRat`.
+end note
+
+note bottom of TESTS
+  Every artifact is regenerated on each compile of the
+  specification; nothing here is hand-edited.
+end note
+
+@enduml

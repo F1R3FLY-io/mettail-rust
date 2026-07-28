@@ -1,0 +1,68 @@
+@startuml
+title Why the head never moves: `shift_right` is declared `fold`, and BOTH fold lanes reject it
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  BackgroundColor #F9FAFB
+}
+
+start
+:`shift_right . l:Vec(Sym), h:Sym, r:Vec(Sym)`\n`  |- ... : Tape ![{ ...body... }] fold ;`\n`languages/src/turing.rs:168-178`; <<#DCFCE7>>
+note right
+  The body is real, correct Rust and says exactly
+  what the paper's helper says: push `h` onto the
+  left context, take the first cell of `r` as the
+  new head, or `Sym::Blank` if `r` is empty.
+end note
+
+split
+
+  :**LANE 1 — the native `.eval()` path**; <<#E0E7FF>>
+  :`generate_eval_method` walks `language.types`\n`macros/src/gen/native/eval.rs:336-346`; <<#DBEAFE>>
+  if (does the OUTPUT category carry\na native Rust payload?) then (yes)
+    :emit `eval` / `try_eval` /\n`try_fold_to_literal`; <<#DCFCE7>>
+  else (**no** — `Tape` has\n`native_type: None`)
+    :`continue` — the whole `Tape`\ncategory is SKIPPED; <<#FEE2E2>>
+    :the `![{ ... }]` body is never\nemitted into `eval.rs`; <<#FEE2E2>>
+  endif
+
+split again
+
+  :**LANE 2 — the Dovetail native-rule lane**; <<#E0E7FF>>
+  :`collect_fold_rules` walks `language.terms`\n`macros/src/gen/runtime/dovetail_report/typed_report.rs:69-135`; <<#DBEAFE>>
+  if (is EVERY parameter\n`TermParam::Simple` with a\n`TypeExpr::Base` type?) then (yes)
+    :lower to a `NativeRule` and\nregister a dispatcher arm; <<#DCFCE7>>
+  else (**no** — `l` and `r` are\n`TypeExpr::Collection`)
+    :`all_simple = false` -> `continue`\n(`:103-107`, `:129-131`); <<#FEE2E2>>
+    :`native_rules` stays EMPTY and the\ndispatcher degenerates to\n`match __op { _ => None }`; <<#FEE2E2>>
+  endif
+
+end split
+
+:**`Tape::shift_right` is an inert constructor.**\n`__is_fold_redex` is `false` for every op\n(`target/generated/turing/dovetail_report.rs:3923-3925`),\nso the extractor does not even prefer a moved tape\nover an unmoved one — `__weigh` is <latex>1.0</latex> everywhere; <<#FEE2E2>>
+stop
+
+note right
+  CONSEQUENCE, stated plainly. Write <latex>\mathrm{SR}</latex> for the
+  `shift_right` node. `D_q0_0` rewrites
+  <latex>(q_0, \langle L \mid 0 \mid R\rangle)</latex> into
+  <latex>(q_1, \mathrm{SR}(L, 1, R))</latex>, and that term is a
+  normal form: the write survives only as an unevaluated
+  helper node.
+  **THE TAPE NEVER CHANGES AND THE HEAD NEVER MOVES.**
+  Nothing is silently wrong — no rule fires that should not,
+  and the report is honest. The helper simply has no
+  reduction rule anywhere in the generated system.
+end note
+
+@enduml

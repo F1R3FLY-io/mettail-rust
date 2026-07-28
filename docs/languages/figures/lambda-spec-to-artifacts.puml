@@ -17,8 +17,8 @@ skinparam note {
 rectangle "**languages/src/lambda.rs**\nthe specification (12 lines)" as SPEC #F3F4F6 {
   rectangle "**name: Lambda**\nthe language identifier" as NAME #E0E7FF
   rectangle "**types { Term }**\nthe sorts (categories)" as TYPES #DBEAFE
-  rectangle "**terms { Lam, App }**\nsignature <latex>\\Sigma</latex> + concrete syntax" as TERMS #DCFCE7
-  rectangle "**equations { }**\nequational theory <latex>E = \\varnothing</latex>" as EQNS #FEF3C7
+  rectangle "**terms { Lam, App }**\nsignature <latex>\Sigma</latex> + concrete syntax" as TERMS #DCFCE7
+  rectangle "**equations { }**\nequational theory <latex>E = \varnothing</latex>" as EQNS #FEF3C7
   rectangle "**rewrites { Beta, AppCongL,\nAppCongR, LamCong }**\nrewrite system <latex>R</latex>" as REWS #FCE7F3
 }
 

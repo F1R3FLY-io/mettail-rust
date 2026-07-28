@@ -1,0 +1,55 @@
+@startuml
+title Security: what the three capabilities give away, and the two defences the fragment has
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam defaultTextAlignment left
+skinparam ArrowColor #374151
+skinparam ArrowFontColor #111827
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam actor {
+  BorderColor #991B1B
+  FontColor #7F1D1D
+}
+
+actor "**hostile process**\nany term a peer can\nplace beside yours" as ADV #FEE2E2
+
+rectangle "**The asset**\n""victim[{ secret }]""\na named boundary with\nsomething inside it" as ASSET #DBEAFE
+
+rectangle "**Threat 1 — DISSOLUTION**\n""{ open(victim, X) | victim[{secret}] }""\n<latex>\;\rightarrow\;</latex> ""{ X | secret }""" as T1 #FEE2E2
+rectangle "**Threat 2 — INTRUSION**\n""{ mole[{in(victim, X)}] | victim[{secret}] }""\n<latex>\;\rightarrow\;</latex> ""victim[{ mole[{X}] | secret }]""" as T2 #FEE2E2
+rectangle "**Threat 3 — EXFILTRATION**\n""victim[{ mole[{out(victim, X)}] | secret }]""\n<latex>\;\rightarrow\;</latex> ""{ mole[{X}] | victim[{secret}] }""" as T3 #FEE2E2
+
+ADV -[#DC2626,thickness=2]-> T1
+ADV -[#DC2626,thickness=2]-> T2
+ADV -[#DC2626,thickness=2]-> T3
+T1 -[#DC2626]-> ASSET : the boundary is **gone** and\n""secret"" is spliced into the\nattacker's own level
+T2 -[#DC2626]-> ASSET : the attacker is now **inside**\nthe boundary, positioned to\nrun any further capability
+T3 -[#DC2626]-> ASSET : a subverted child **carries\nstate out** past the boundary
+
+rectangle "**Defence 1 — the name is the capability**\nEvery rule matches on NAME EQUALITY.\n""OpenRule"" binds ONE pattern variable ""N""\nto both the ""POpen"" channel and the ""PAmb""\nname, so it fires only when they are the\nSAME name (ambient.rs:67-68).\nA name you never publish is a boundary\nnobody can name." as D1 #DCFCE7
+
+rectangle "**Defence 2 — restriction makes names unguessable**\n""new(x, ...)"" (""PNew"", ambient.rs:25) binds ""x""\nin a moniker ""Scope"". Identity is the ""FreeVar"",\nnot the printed name, and ""unbind"" freshens on\nevery open, so a restricted name cannot be\nforged by spelling it.\nThis is why the firewall idiom works: publish\n""in"" but never ""open""." as D2 #DCFCE7
+
+D1 -[#16A34A,thickness=2]-> T1 : blocks — wrong name, no match
+D1 -[#16A34A,thickness=2]-> T2 : blocks
+D2 -[#16A34A,thickness=2]-> T1 : blocks — the name is not\nin the attacker's scope
+
+note bottom of D2 #FEF3C7
+  **What the fragment does NOT defend against, and you must know it.**
+  * There is no //co-capability//: a Safe-Ambients-style <latex>\overline{in}\ n</latex>
+    that lets a boundary CONSENT to being entered does not exist here.
+    Knowledge of the name is sufficient authority.
+  * ""open"" is authority to **destroy** a boundary, not merely to read it.
+    Handing out a name hands out all three capabilities at once; the
+    fragment cannot express "may enter but may not open".
+  * The reduction relation is **non-confluent** by design. Two ambients
+    racing to enter the same parent, or two ""open""s on same-named
+    siblings, have several valid normal forms — the in-Rho suite pins
+    MEMBERSHIP in an enumerated valid-NF set, never a unique NF.
+end note
+
+@enduml

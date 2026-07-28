@@ -1,0 +1,82 @@
+@startuml
+title One token, three rules: how `!` resolves to PRep, POut or POutAsync
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
+}
+
+start
+
+:the lexer yields ""TokenKind::Fixed(\"!\")"";
+
+if (is there a completed left operand?) then (**no** — `!` is in LEADING position)
+  :**PRep** — replication ""!p""\nProc rule index 6; <<#DCFCE7>>
+  note right #DCFCE7
+    Dispatched by the PREFIX table of the
+    ""Proc"" category (src_idx 0): the pair
+    ""(0u16, 6u16)"" maps to the leading
+    literal ""!"" in the generated WPDA.
+
+    ""Proc"" declares NO infix, postfix or
+    mixfix entry for ""!"" at all — its
+    ""infix_bp_proc"", ""postfix_bp_proc"" and
+    ""mixfix_bp_proc"" tables are empty.
+  end note
+  stop
+else (**yes** — of category ""Name"")
+endif
+
+:consult the ""Name"" category's continuation tables\n(src_idx 1) — BOTH have an entry for ""!"";
+
+split
+  :""mixfix_bp_name(\"!\") = [(2, 0, 3)]""\nleft_bp 2, result category ""Proc"", rule 3;
+  :candidate **POut**\n""n \"!\" m \".\" p"" — SYNCHRONOUS,\ncarries a continuation; <<#FEF3C7>>
+split again
+  :""infix_bp_name(\"!\") = [(4, 5, 0, 4)]""\nleft_bp 4, right_bp 5, result ""Proc"", rule 4;
+  :candidate **POutAsync**\n""n \"!\" m"" — ASYNCHRONOUS,\nno continuation; <<#FEF3C7>>
+end split
+
+:BOTH candidates stay live —\nthe parser does NOT commit at ""!""; <<#EDE9FE>>
+
+note right #EDE9FE
+  ""POutAsync""'s syntax is a proper PREFIX of
+  ""POut""'s: the two agree on ""n ! m"" and
+  diverge only afterwards. No amount of
+  precedence can separate them at the ""!"",
+  so the WPDA carries both alternatives and
+  lets the INPUT decide. This is the house
+  rule — never disambiguate early.
+end note
+
+if (what follows the second ""Name""?) then (a ""."" and a process)
+  :**POut** wins — ""c!c.0""; <<#DCFCE7>>
+  note right #DCFCE7
+    Pinned by ""pi_output_prefix_parses""
+    (languages/tests/pi.rs:144).
+  end note
+  stop
+else (the operand ends)
+  :**POutAsync** wins — ""c!c""; <<#DCFCE7>>
+  note right #DCFCE7
+    Pinned by ""pi_comm_async_fires""
+    (languages/tests/pi.rs:275), whose
+    subject is ""{ in(c,y).0 | c!c }"".
+  end note
+  stop
+endif
+
+legend right
+|= Colour |= Meaning |
+|<#DCFCE7> green | a committed surface rule |
+|<#FEF3C7> amber | a live candidate, not yet committed |
+|<#EDE9FE> violet | the parser state in which ambiguity is deliberately preserved |
+endlegend
+
+@enduml

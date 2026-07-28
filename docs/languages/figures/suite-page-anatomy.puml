@@ -16,7 +16,7 @@ skinparam note {
 
 rectangle "**THE SPECIFICATION**\n`languages/src/<lang>.rs`" as SPEC #F3F4F6 {
   rectangle "**name / types**\nthe sorts" as S_TYPES #DBEAFE
-  rectangle "**terms**\nsignature <latex>\\Sigma</latex>\n+ concrete syntax" as S_TERMS #DCFCE7
+  rectangle "**terms**\nsignature <latex>\Sigma</latex>\n+ concrete syntax" as S_TERMS #DCFCE7
   rectangle "**equations**\ntheory <latex>E</latex>" as S_EQNS #FEF3C7
   rectangle "**rewrites**\nsystem <latex>R</latex>" as S_REWS #FCE7F3
 }
@@ -26,7 +26,7 @@ rectangle "**THE PAGE**\n`docs/languages/<lang>.md`" as PAGE #F3F4F6 {
   rectangle "**2. Table of contents**\nworking in-document anchors" as P_TOC #E0E7FF
   rectangle "**3. Notation table**\nevery symbol, acronym and\nkey term, BEFORE first use" as P_NOTE #EDE9FE
   rectangle "**4. One section per block**\nin the order the macro parses them,\nwith a fragment-by-fragment table\nper rule form" as P_BLOCKS #DBEAFE
-  rectangle "**5. The whole specification**\nthe <latex>(\\Sigma, E, R)</latex> triple,\na TEST-PINNED cheat-sheet,\nand a worked reduction" as P_WHOLE #DCFCE7
+  rectangle "**5. The whole specification**\nthe <latex>(\Sigma, E, R)</latex> triple,\na TEST-PINNED cheat-sheet,\nand a worked reduction" as P_WHOLE #DCFCE7
   rectangle "**6. Provenance table**\nevery claim mapped to\n`file:line`" as P_PROV #FEF3C7
   rectangle "**7. Gotchas**\nthe misreadings the page\nexists to prevent" as P_GOTCHA #FEE2E2
   rectangle "**References**\nDOI-bearing citations\n+ in-repo companions" as P_REFS #EDE9FE

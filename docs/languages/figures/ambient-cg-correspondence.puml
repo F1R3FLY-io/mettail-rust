@@ -1,0 +1,69 @@
+@startuml
+title Cardelli-Gordon <i>Mobile Ambients</i> mapped onto the Ambient declaration
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam defaultTextAlignment left
+skinparam ArrowColor #374151
+skinparam ArrowFontColor #374151
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+legend top
+  |<#DCFCE7>| **verbatim** — the paper's construct, declared unchanged |
+  |<#FEF3C7>| **extension** — NOT in the paper; a deliberate divergence |
+  |<#FEE2E2>| **absent** — in the paper, NOT in this fragment |
+endlegend
+
+rectangle "**Cardelli-Gordon (1998/2000)**\nthe normative calculus" as PAPER #F9FAFB {
+  rectangle "<latex>(\nu n)P</latex>\nrestriction" as P_RES #FFFFFF
+  rectangle "<latex>0</latex>\ninactivity" as P_ZERO #FFFFFF
+  rectangle "<latex>P \mid Q</latex>\ncomposition" as P_PAR #FFFFFF
+  rectangle "<latex>!P</latex>\nreplication" as P_REPL #FFFFFF
+  rectangle "<latex>n[P]</latex>\nambient" as P_AMB #FFFFFF
+  rectangle "<latex>M.P</latex>\naction (capability prefix)" as P_ACT #FFFFFF
+  rectangle "<latex>in\ n</latex> / <latex>out\ n</latex> / <latex>open\ n</latex>\ncapabilities" as P_CAP #FFFFFF
+}
+
+rectangle "**languages/src/ambient.rs**\nthe declaration" as SPEC #F9FAFB {
+  rectangle "**PNew**  ""^x.p:[Name -> Proc]""\n""new(x, p)""   line 25" as S_NEW #DCFCE7
+  rectangle "**PZero**  the single terminal ""0""\nline 16" as S_ZERO #DCFCE7
+  rectangle "**PPar**  ""HashBag(Proc)"", separator ""|"",\ndelimiters ""{"" ""}""   line 27" as S_PAR #DCFCE7
+  rectangle "//no replication constructor//\nthe fragment is replication-free" as S_REPL #FEE2E2
+  rectangle "**PAmb**  ""Name"" then a literal ""["",\nthen ""Proc"", then ""]""   line 22" as S_AMB #DCFCE7
+  rectangle "**PIn** / **POut** / **POpen**\n""in(N,P)"" ""out(N,P)"" ""open(N,P)""\nlines 18-20" as S_CAP #FEF3C7
+}
+
+P_RES -[#16A34A]-> S_NEW : verbatim
+P_ZERO -[#16A34A]-> S_ZERO : verbatim
+P_PAR -[#16A34A]-> S_PAR : verbatim, with\ncomm/assoc **representational**\nin the ""HashBag""
+P_REPL -[#DC2626,dashed]-> S_REPL : **absent**
+P_AMB -[#16A34A]-> S_AMB : verbatim
+
+P_ACT -[#CA8A04]-> S_CAP : **fused**
+P_CAP -[#CA8A04]-> S_CAP : **fused**
+
+note right of S_CAP #FEF3C7
+  **EXTENSION (fusion).** The paper factors an action into a
+  //capability// <latex>M</latex> and a //prefix// <latex>M.P</latex>, so <latex>M</latex> is a
+  first-class term that can be composed (<latex>M.M'</latex>) and, in the
+  full calculus of the paper's section 3, communicated as a value.
+  This declaration fuses the two: ""PIn"" / ""POut"" / ""POpen"" are
+  ternary //process// formers taking a ""Name"" and a continuation.
+  **What it buys:** every capability is a distinct AST head, so
+  the set automaton dispatches on the head symbol alone.
+  **What it costs:** no capability variable, no <latex>M.M'</latex> path
+  composition, no capability-valued communication.
+end note
+
+note right of S_REPL #FEE2E2
+  **Consequence, and it is a favourable one:** the one nu-float
+  the paper explicitly flags as INVALID —
+  <latex>!(\nu n)P \not\equiv (\nu n)!P</latex> — cannot even be stated here.
+  The unconditional float of section 7.4 is sound partly
+  because replication is structurally absent.
+end note
+
+@enduml

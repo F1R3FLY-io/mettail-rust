@@ -1,0 +1,95 @@
+@startuml
+title End to end: `e * x * e` from source text to a complete Dovetail report
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam sequence {
+  ParticipantBorderColor #1F2937
+  ParticipantFontColor #111827
+  LifeLineBorderColor #9CA3AF
+  ActorBorderColor #1F2937
+}
+skinparam note {
+  BorderColor #92400E
+  BackgroundColor #FEF9C3
+  FontColor #111827
+}
+
+actor "caller\n(conformance test / REPL)" as USER #DCFCE7
+participant "`MonoidLanguage`\n`language_struct.rs`" as LANG #DBEAFE
+participant "WPDA parser\n`wpda.rs` + `parser.rs`" as PARSER #DCFCE7
+participant "`mettail_dovetail_runtime`\nnative fast path" as NATIVE #FCE7F3
+participant "`EGraph<String>`\n`dovetail::egraph`" as EG #EDE9FE
+participant "`CompiledRuleSet`\n4 rules from 3 equations" as RULES #FEF3C7
+participant "`Extractor`\n`funded_best`" as EX #EDE9FE
+
+USER -> LANG : `parse_term("e * x * e")`
+activate LANG
+LANG -> PARSER : `M::parse`
+activate PARSER
+PARSER --> LANG : <latex>\mathrm{Mul}(\mathrm{Mul}(e, x),\, e)</latex>\n(left-nested: <latex>l_{bp}=2 < r_{bp}=3</latex>)
+deactivate PARSER
+LANG --> USER : `MonoidTerm`
+deactivate LANG
+
+USER -> LANG : `dovetail_report_for(term, max_iters = 32, max_nodes = 100 000)`
+activate LANG
+
+LANG -> NATIVE : `complete_native_dovetail_report_for_language`
+activate NATIVE
+NATIVE -> NATIVE : `try_direct_eval` -> `None`\n(no `![T] as C` payload sort exists)
+NATIVE -> NATIVE : `normalize_term` -> structurally identical\n`normalized.term_eq(term)` is `true`
+NATIVE --> LANG : `Err(DirectEvaluationUnavailable)`\nDISCARDED by `if let Ok(...)`
+deactivate NATIVE
+
+note over LANG #DBEAFE
+  The native lane is for FOLDING languages.
+  Monoid has no native payloads and no rewrites,
+  so control always reaches the STRUCTURAL lane.
+end note
+
+LANG -> EG : `__mettail_dovetail_add_m` walks the term
+activate EG
+EG --> LANG : root e-class; both `e` leaves\nhash-cons to ONE class
+deactivate EG
+
+LANG -> RULES : `OnceLock::get_or_init`
+activate RULES
+RULES --> LANG : Assoc::forward, Assoc::reverse,\nUnitL::forward, UnitR::forward
+deactivate RULES
+
+LANG -> EG : `saturate_compiled(rules, 32)`
+activate EG
+loop until no merge occurs (or `max_iters` / `max_nodes`)
+  EG -> RULES : positional set-automaton search for each lhs
+  RULES --> EG : matches <latex>(root, \sigma)</latex>
+  EG -> EG : `instantiate(rhs, sigma)` then\n`merge(root, rhs_id)`  -- UNDIRECTED
+  EG -> EG : `rebuild()` restores congruence:\nequal children force equal parents
+end
+EG --> LANG : `SatReport { outcome: Converged, rule_firings }`
+deactivate EG
+
+alt outcome is not Converged
+  LANG --> USER : `Err("saturation ... stopped before convergence")`
+end
+
+LANG -> EX : `funded_best(find(root))` with uniform\n`TropicalWeight(0.0)`
+activate EX
+EX --> LANG : derivation + `ExtractionCompleteness`
+deactivate EX
+
+LANG -> LANG : `report_from_extraction_with_rule_firings`\n`project_dovetail_report` then `validate_shape`
+LANG --> USER : `RuntimeDovetailRunReport`\n`is_complete() == true`,\nfirings name UnitL / UnitR / Assoc
+deactivate LANG
+
+note over EX #FEF3C7
+  Extraction, not saturation, is what turns the
+  QUOTIENT back into a TERM: saturation only adds
+  equalities, so the report's chosen representative
+  is the extractor's funded-best choice, not a
+  normal form computed by rewriting.
+end note
+
+@enduml

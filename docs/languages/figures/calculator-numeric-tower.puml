@@ -1,0 +1,83 @@
+@startuml
+title The numeric tower: eight carriers, twelve declared casts, eight auto-injected promotions
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #9CA3AF
+}
+
+rectangle "**Bool**\n`![bool]`\nliteral `true` `false` `yeap` `nope`" as BOOL #FEF3C7
+rectangle "**Int**\n`![i32]`\nliteral `-?<digits>(i32)?`" as INT #DBEAFE
+rectangle "**UInt32**\n`![u32]`\nliteral `<digits>u32`" as U32 #DBEAFE
+rectangle "**Fixed**\n`![CanonicalFixedPoint]`\nliteral `-?<digits>p<scale>`" as FIX #DCFCE7
+rectangle "**Float**\n`![f64]`\nliteral `-?<d>.<d>(e±<d>)?(f64)?`" as FLT #DCFCE7
+rectangle "**BigInt**\n`![CanonicalBigInt]`\nliteral `-?<digits>n`\n+ unsuffixed <latex>i32</latex> overflow" as BIG #EDE9FE
+rectangle "**BigRat**\n`![CanonicalBigRat]`\nliteral `<d>r` or `<d>r/<d>r`\n**the top of the lattice**" as RAT #FCE7F3
+rectangle "**Str**\n`![str]`\nliteral `\" … \"`\n**no lossless target**" as STR #E0E7FF
+
+rectangle "**Proc**\nthe one ALGEBRAIC sort — the\nunion carrier for collections\n(`ProcInt`, `ProcBigRat`, …)" as PROC #F3F4F6
+
+BOOL -[#16A34A,thickness=2]-> U32   : **auto** `BoolToUInt32`
+BOOL -[#16A34A,thickness=2]-> BIG   : **auto** `BoolToBigInt`
+BOOL -[#16A34A,thickness=2]-> RAT   : **auto** `BoolToBigRat`
+U32  -[#16A34A,thickness=2]-> BIG   : **auto** `UInt32ToBigInt`
+U32  -[#16A34A,thickness=2]-> RAT   : **auto** `UInt32ToBigRat`
+FLT  -[#16A34A,thickness=2]-> RAT   : **auto** `FloatToBigRat`
+FIX  -[#16A34A,thickness=2]-> RAT   : **auto** `FixedToBigRat`
+BIG  -[#16A34A,thickness=2]-> RAT   : **auto** `BigIntToBigRat`
+
+INT  -[#2563EB,thickness=2]-> BIG   : **declared** `IntToBigInt`
+INT  -[#2563EB,thickness=2]-> RAT   : **declared** `IntToBigRat`
+
+BOOL -[#DB2777,dashed]-> INT  : `int(a)` **BoolToInt**
+FLT  -[#DB2777,dashed]-> INT  : `int(a)` **FloatToInt**
+STR  -[#DB2777,dashed]-> INT  : `int(a)` **StrToInt**
+INT  -[#DB2777,dashed]-> FLT  : `float(a)` **IntToFloat**
+BOOL -[#DB2777,dashed]-> FLT  : `float(a)` **BoolToFloat**
+STR  -[#DB2777,dashed]-> FLT  : `float(a)` **StrToFloat**
+INT  -[#DB2777,dashed]-> STR  : `str(a)` **IntToStr**
+BOOL -[#DB2777,dashed]-> STR  : `str(a)` **BoolToStr**
+FLT  -[#DB2777,dashed]-> STR  : `str(a)` **FloatToStr**
+INT  -[#DB2777,dashed]-> BOOL : `bool(a)` **IntToBool**
+FLT  -[#DB2777,dashed]-> BOOL : `bool(a)` **FloatToBool**
+STR  -[#DB2777,dashed]-> BOOL : `bool(a)` **StrToBool**
+
+PROC -[#7C3AED,dotted]-> INT  : `int(a, m)` **IntBin**
+PROC -[#7C3AED,dotted]-> U32  : `uint(a, m)` **UIntBin**
+PROC -[#7C3AED,dotted]-> FLT  : `float(a, m)` **FloatBin**
+PROC -[#7C3AED,dotted]-> FIX  : `fixed(a, m)` **FixedBin**
+PROC -[#7C3AED,dotted]-> BIG  : `bigint(a)` **BigintCast**
+PROC -[#7C3AED,dotted]-> RAT  : `bigrat(a)` **BigratCast**
+
+note bottom of RAT
+  Every lossless edge terminates at `BigRat`
+  (<latex>\mathbb{Z} \subset \mathbb{Q}</latex> and the dyadic-scaled fixed-point
+  values <latex>\subset \mathbb{Q}</latex>), which is why the
+  round-trip property is stated there and
+  why <latex>\mathrm{display}</latex> is not injective there.
+end note
+
+note bottom of PROC
+  `Proc` is the DOMAIN of the width-bearing
+  casts and the element type of `List`, `Bag`
+  and `Map`. It has no literal of its own —
+  every value enters through a `Proc<X>`
+  injection.
+end note
+
+legend right
+|= Edge style | = Kind | = Surface | = Emitted by |
+|<#DCFCE7> solid green | lossless auto-injection | **none** (transparent) | `ast/src/auto_inject.rs` |
+|<#DBEAFE> solid blue | declared injection | **none** (transparent) | `calculator.rs:252-253` |
+|<#FCE7F3> dashed pink | declared unary cast | `int(a)` / `float(a)` / `str(a)` / `bool(a)` | `calculator.rs:354-369` |
+|<#EDE9FE> dotted purple | numeric cast (width-bearing or unary) | `int(a, m)` … `bigrat(a)` | `calculator.rs:501-518` |
+endlegend
+
+@enduml

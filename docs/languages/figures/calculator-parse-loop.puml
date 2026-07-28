@@ -1,0 +1,68 @@
+@startuml
+title The generated parse loop: precedence climbing as a WPDA state machine
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowThickness 1.2
+skinparam state {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #9CA3AF
+}
+
+[*] --> Ready
+
+state "**Ready** { min_bp }" as Ready #DBEAFE : category entry;\nthe caller's precedence FLOOR
+state "**PrefixDispatch** { pos, cur_bp }" as Prefix #DCFCE7 : choose a production from\nthe token at `pos`
+state "**InfixLoop** { cur_bp }" as Infix #DCFCE7 : the Pratt loop — absorb\noperators that CLEAR the floor
+state "**AmbiguityFanout**" as Fan #EDE9FE : two or more productions\nadmissible: FORK the\ngraph-structured stack
+state "**Saturating**" as Sat #EDE9FE : run every live cursor;\nmerge equal configurations\nby the semiring <latex>\oplus</latex>
+state "**Accepted**" as Acc #FEF3C7 : one shared packed parse\nforest (SPPF) of ALL readings
+state "**Elected**" as Elect #FEF3C7 : single-result entry points take\nthe argmin over derivation weight
+state "**Failed**" as Fail #FEE2E2 : no cursor survives
+
+Ready --> Prefix : install `cur_bp := min_bp`
+
+Prefix --> Infix : exactly one production matches\n(literal, keyword, prefix operator,\ngrouping `(`, or cross-category delegate)
+Prefix --> Fan : two or more match\n(e.g. the `-3` lex fork)
+Prefix --> Fail : none match
+
+Fan --> Sat
+Sat --> Infix : each surviving cursor resumes\nits own `InfixLoop`
+Sat --> Fail : every cursor dies
+
+Infix --> Prefix : **absorb**: the next token is an operator with\n<latex>\ell \ge \mathrm{cur\_bp}</latex> — consume it and parse the right\noperand at the NEW floor <latex>r</latex>
+Infix --> Infix : **postfix**: <latex>\ell \ge \mathrm{cur\_bp}</latex> and the rule takes no\nright operand — wrap the accumulated term
+Infix --> Acc : **stop**: no operator clears the floor,\nor input is exhausted
+
+Acc --> Elect : `Cat::parse` / `Cat::parse_via_wpda`
+Acc --> [*] : `Cat::parse_via_wpda_all`\n(**every** reading is returned)
+Elect --> [*]
+
+note right of Infix
+  **The whole of precedence and associativity lives in
+  one comparison.** For an operator with binding powers
+  <latex>(\ell, r)</latex>:
+
+  * absorb iff <latex>\ell \ge \mathrm{cur\_bp}</latex>;
+  * parse the right operand at floor <latex>r</latex>.
+
+  Left-associative operators get <latex>(p, p+1)</latex>, so the same
+  operator's <latex>\ell = p</latex> fails <latex>p \ge p+1</latex> and cannot
+  re-absorb.
+  Right-associative operators get <latex>(p+1, p)</latex>, so
+  <latex>p+1 \ge p</latex> holds and they CAN re-absorb.
+  That single inequality is the entire difference.
+end note
+
+note bottom of Elect
+  <latex>\mathrm{LexicographicWeight} = (\mathrm{primary},\ \mathrm{open\_len},\ \mathrm{lex\_alt\_idx},\ \mathrm{src\_idx},\ \mathrm{rule\_idx})</latex>
+  compared in that order. `primary` is a tropical (shortest-path) cost;
+  `open_len` prefers the LONGER matched open token (maximal munch) but only
+  on a primary tie; `src_idx` and `rule_idx` are declaration-order tiebreaks.
+end note
+
+@enduml

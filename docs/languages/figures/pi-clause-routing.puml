@@ -1,0 +1,108 @@
+@startuml
+title Where each Pi clause goes: the lowering decision procedure, and the exit each of the seven clauses takes
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
+}
+
+start
+
+:a clause of the ""equations"" or ""rewrites"" block;
+
+if (every premise satisfies\n""premise_supported""?\n<i>only</i> ""Premise::Congruence"" is true\n(dovetail_report.rs:1456)) then (no)
+  :**DECLARED, NOT LOWERED**\nrecorded in ""unsupported"";\nno e-graph rule, no native rule; <<#FEE2E2>>
+  note right #FEE2E2
+    **""ScopeExt""** exits here.
+    Its premise is ""x # ...rest"" —
+    a ""Premise::Freshness"", which
+    returns ""false"" (:1464).
+    Scope extrusion is instead
+    realised as a NORMAL FORM by
+    ""binder_congruence_nf"" — see
+    figure ""pi-scope-extrusion"".
+  end note
+  stop
+else (yes)
+endif
+
+if (is it an equation?) then (yes)
+  if (do both sides lower via\n""pattern_to_dovetail""?) then (no)
+    :**DECLARED, NOT LOWERED**\n""lambda patterns require binder lowering""\n(dovetail_report.rs:1392); <<#FEE2E2>>
+    note right #FEE2E2
+      **""NewComm""** exits here.
+      Both of its sides are
+      ""(PNew ^x.(PNew ^y.P))"" —
+      a ""PatternTerm::Lambda"", which
+      the structural lowering
+      declines. Binder permutation
+      is instead realised by
+      ""__bcn_close_new_run_canonical"".
+    end note
+    stop
+  else (yes)
+    :emit **TWO** ""dovetail::rules::RewriteRule""s,\n""::forward"" and ""::reverse""\n(lower_equation, :1488 / :1508); <<#DBEAFE>>
+    note right #DBEAFE
+      **""RepUnfold""** exits here.
+      Verified in the generated output:
+      ""Pi::equation::RepUnfold::forward""
+      ""Pi::equation::RepUnfold::reverse""
+    end note
+    stop
+  endif
+else (no — a rewrite)
+endif
+
+if (""is_congruence_rule()""?) then (yes)
+  :emit **NOTHING**\ncongruence closure is intrinsic\nto the e-graph (:1537); <<#EDE9FE>>
+  note right #EDE9FE
+    **""ParCong""** and **""NewCong""**
+    exit here. They are still the
+    normative statement of the
+    reduction contexts; the engine
+    simply satisfies them for free.
+  end note
+  stop
+else (no)
+endif
+
+if (""is_comm_rewrite""?\n(dovetail_report.rs:609)) then (yes)
+  :emit a typed ""NativeRule"" + a dispatch arm\non the **COMM lane** (typed_report.rs:1046); <<#DCFCE7>>
+  note right #DCFCE7
+    **""Comm""** (op 0) and
+    **""CommAsync""** (op 1) exit here.
+    Both are labelled
+    ""Pi::rewrite::<name>"" in the
+    generated rule set.
+  end note
+  stop
+else (no)
+endif
+
+:the remaining classifiers —\n""is_substitution_rewrite"", ""is_structural_ac_rewrite"" —\nor the structural e-graph lowering; <<#EDE9FE>>
+note right #EDE9FE
+  No Pi clause reaches this exit.
+  Each of the other lanes declines
+  Pi's ""Comm"" by shape: the
+  substitution lane requires the
+  substitution to be the WHOLE RHS,
+  and the structural-AC lane admits
+  only reducts with NO substitution.
+end note
+stop
+
+legend right
+|= Colour |= Meaning |
+|<#DBEAFE> blue | executable e-graph data (a bidirectional ""RewriteRule"") |
+|<#DCFCE7> green | executable native data (a ""NativeRule"" plus its dispatch arm) |
+|<#EDE9FE> violet | engine-supplied — nothing is emitted because nothing need be |
+|<#FEE2E2> red | declared in the specification, NOT lowered onto this lane |
+endlegend
+
+@enduml

@@ -1,0 +1,75 @@
+@startuml
+title The tape is a ZIPPER, and its left context is stored REVERSED: `<[1,_] | 0 | [0,1]>`
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  BackgroundColor #F9FAFB
+}
+
+rectangle "SURFACE SYNTAX  (`terms` rule `Tp`, `languages/src/turing.rs:161-162`)" as SURF #F3F4F6 {
+  rectangle "`<`  `[` 1 `,` _ `]`  `|`  0  `|`  `[` 0 `,` 1 `]`  `>`" as S_TXT #DCFCE7
+}
+
+rectangle "THE TAPE AS THE READER IMAGINES IT  (head marked)" as STRIP #F3F4F6 {
+  rectangle "...\nunvisited" as C_FARL #E5E7EB
+  rectangle "**_**\ncell -2\n`l[1]`" as C_L2 #DBEAFE
+  rectangle "**1**\ncell -1\n`l[0]`" as C_L1 #DBEAFE
+  rectangle "**0**\ncell 0\n**HEAD**  `h`" as C_H #FCE7F3
+  rectangle "**0**\ncell +1\n`r[0]`" as C_R1 #DCFCE7
+  rectangle "**1**\ncell +2\n`r[1]`" as C_R2 #DCFCE7
+  rectangle "**_**\ncell +3\nsupplied ON DEMAND" as C_FARR #FEF3C7
+}
+
+C_FARL -right[hidden]-> C_L2
+C_L2   -right[hidden]-> C_L1
+C_L1   -right[hidden]-> C_H
+C_H    -right[hidden]-> C_R1
+C_R1   -right[hidden]-> C_R2
+C_R2   -right[hidden]-> C_FARR
+
+rectangle "GENERATED AST  (`target/generated/turing/ast_enums.rs:63`)" as AST #F3F4F6 {
+  rectangle "`Tape::Tp(`\n`   vec![One, Blank],`   <- `l` : the left context, NEAREST CELL FIRST\n`   Arc::new(Zero),`   <- `h` : the scanned symbol\n`   vec![Zero, One] )`  <- `r` : the right context, NEAREST CELL FIRST" as A_TP #DBEAFE
+}
+
+rectangle "INSIDE THE REWRITE ENGINE  (`dovetail_report.rs:1004-1018`)" as EG #F3F4F6 {
+  rectangle "`ENode(Tape_Tp, [`\n`   FieldOpaque(<the text [One, Blank]>),`\n`   <the Sym e-class for Zero>,`\n`   FieldOpaque(<the text [Zero, One]>) ])`" as E_TP #EDE9FE
+}
+
+S_TXT -down-> C_H : parsed by `parser.rs`
+C_H   -down-> A_TP
+A_TP  -down-> E_TP : `__mettail_dovetail_add_tape`
+
+note right of C_L1
+  `l[0]` is the cell IMMEDIATELY LEFT of the head,
+  so reading the strip leftwards walks `l` FORWARDS.
+  Printing reverses nothing: `display.rs:377-392` joins
+  `l` in slot order, so the surface `[1,_]` means
+  "1 is adjacent to the head, _ is one further out".
+end note
+
+note right of C_FARR
+  <latex>\text{cell} +3</latex> does not exist in the value.
+  The only code that would materialise it is the
+  declared body of `shift_right`
+  (`languages/src/turing.rs:173-176`):
+  `r.split_first()` yields `(Sym::Blank, vec![])`
+  when `r` is empty. That body never runs.
+end note
+
+note bottom of E_TP
+  Both `Vec(Sym)` fields collapse to ONE OPAQUE DEBUG STRING each.
+  The engine cannot see into a tape context, cannot match inside it,
+  and has no inverse for it — which is why `__mettail_dovetail_build_tape_d`
+  emits no arm for `Tape_Tp` and every reconstruction of a `Tape` returns
+  `None` (`dovetail_report.rs:2734-3020`).
+end note
+
+@enduml

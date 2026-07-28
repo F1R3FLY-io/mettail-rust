@@ -1,0 +1,63 @@
+@startuml
+title Scope extrusion, mechanised: the restriction's containment BEFORE and AFTER the float pass
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.4
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam package {
+  BorderColor #6D28D9
+  FontColor #111827
+}
+
+package "BEFORE — the restriction binds only its own component" as BEFORE #F8FAFC {
+  rectangle "**PPar** — the AC bag\n<latex>\{\,(\nu c)P \;\mid\; Q\,\}</latex>" as B_PAR #DBEAFE {
+    rectangle "**PNew**  binder ""c""\nthe restriction's scope" as B_NEW #EDE9FE {
+      rectangle "**P**\n""c"" is IN scope here" as B_P #DCFCE7
+    }
+    rectangle "**Q**\n""c"" is OUT of scope here —\nany ""c"" in Q is a DIFFERENT, free name" as B_Q #FEF3C7
+  }
+}
+
+package "AFTER — the restriction binds the whole composition" as AFTER #F8FAFC {
+  rectangle "**PNew**  binder ""c'"" (FRESH)\nthe restriction's scope" as A_NEW #EDE9FE {
+    rectangle "**PPar** — the AC bag\n<latex>(\nu c')\{\,P' \;\mid\; Q\,\}</latex>" as A_PAR #DBEAFE {
+      rectangle "**P'**\n= P with ""c"" renamed to ""c'""" as A_P #DCFCE7
+      rectangle "**Q**\nUNCHANGED — and now inside\nthe scope of ""c'"", harmlessly,\nbecause ""c'"" is fresh" as A_Q #FEF3C7
+    }
+  }
+}
+
+B_PAR -right[#BE185D,thickness=2]-> A_NEW : **the float pass**\n""Proc::__bcn_float_pass"" —\nsee ""binder_congruence.rs""
+
+note bottom of BEFORE #FEE2E2
+  This is the shape the declared equation ""ScopeExt"" names:
+  ""(PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest}))""
+  under the premise ""x # ...rest"".
+
+  That equation is **NOT lowered** onto the e-graph: its
+  ""Premise::Freshness"" fails ""premise_supported"".
+end note
+
+note bottom of AFTER #DCFCE7
+  The float discharges the SAME law operationally, and the
+  premise ""x # ...rest"" is not TESTED — it is made TRUE.
+  ""Scope::unbind"" freshens the binder before the body is
+  ever exposed, so the floated restriction cannot capture
+  anything in the residual. Freshening ENFORCES the side
+  condition that the declarative reading merely ASSUMES.
+end note
+
+legend right
+|= Region |= Reading |
+|<#EDE9FE> violet | the extent of a ""PNew"" restriction — what the binder governs |
+|<#DBEAFE> blue | the ""PPar"" AC bag (a ""HashBag"" — unordered, auto-flattening) |
+|<#DCFCE7> green | the component the restriction originally bound |
+|<#FEF3C7> amber | the residual the restriction is floated PAST |
+endlegend
+
+@enduml

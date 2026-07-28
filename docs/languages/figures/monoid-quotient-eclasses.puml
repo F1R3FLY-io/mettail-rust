@@ -1,0 +1,70 @@
+@startuml
+title The saturation fixpoint for `e * x * e`: two e-classes, and both of them are cyclic
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam nodesep 18
+skinparam ranksep 34
+skinparam note {
+  BorderColor #92400E
+  BackgroundColor #FEF9C3
+  FontColor #111827
+}
+
+rectangle "BEFORE saturation - the term as read in\n`__mettail_dovetail_add_m` (4 e-classes)" as BEFORE #F3F4F6 {
+  rectangle "c0\n`Unit`" as B_E #DBEAFE
+  rectangle "c1\n`MVar x`" as B_X #DBEAFE
+  rectangle "c2\n`Mul[c0, c1]`" as B_EX #BFDBFE
+  rectangle "c3  (ROOT)\n`Mul[c2, c0]`" as B_ROOT #93C5FD
+  B_EX --> B_E : child 0
+  B_EX --> B_X : child 1
+  B_ROOT --> B_EX : child 0
+  B_ROOT --> B_E : child 1
+}
+
+rectangle "AFTER saturation - the fixpoint (2 e-classes)" as AFTER #F3F4F6 {
+  rectangle "**E**  the unit class\ne-nodes: `Unit`, `Mul[E, E]`\nmeaning: <latex>e \;=\; e \cdot e</latex>" as A_E #FEF3C7
+  rectangle "**A**  the root's class\ne-nodes: `MVar x`, `Mul[E, A]`, `Mul[A, E]`\nmeaning: <latex>x \;=\; e \cdot x \;=\; x \cdot e \;=\; (e \cdot x) \cdot e</latex>" as A_A #DCFCE7
+  A_A --> A_E : `Mul[E, A]` child 0\n`Mul[A, E]` child 1
+  A_A --> A_A : `Mul[E, A]` child 1\n`Mul[A, E]` child 0\n**BACK-EDGE**
+  A_E --> A_E : `Mul[E, E]` both children\n**BACK-EDGE**
+}
+
+rectangle "WHAT EACH RULE CONTRIBUTED" as WHY #EDE9FE {
+  rectangle "`UnitL::forward`\n<latex>e \cdot x \;\rightsquigarrow\; x</latex>\nmerged c2 into c1" as W_UL #DDD6FE
+  rectangle "`UnitR::forward`\n<latex>x \cdot e \;\rightsquigarrow\; x</latex>\nmerged the ROOT c3 in too" as W_UR #DDD6FE
+  rectangle "`Assoc::forward` / `Assoc::reverse`\nre-bracket within A; they add\n`Mul[E, E]`, which `UnitL` then\nfolds into E" as W_AS #DDD6FE
+  rectangle "`rebuild()` - CONGRUENCE\nonce c2 = c1, the node `Mul[c2, c0]`\ncanonicalises to `Mul[A, E]`;\nequal children force equal parents" as W_CONG #C4B5FD
+  W_UL -[hidden]right- W_UR
+  W_AS -[hidden]right- W_CONG
+}
+
+rectangle "EXTRACTION\n`Extractor::funded_best` with uniform `TropicalWeight(0.0)`" as EXTRACT #FCE7F3 {
+  rectangle "A contains the ACYCLIC e-node `MVar x`,\nso a finite funded derivation exists and\n`ExtractionCompleteness::Complete` is reachable.\n\nWithout an acyclic member the recursion guard\nwould cut the back-edge and the run would be\nreported `BoundedByCycleCut`." as X_NOTE #FBCFE8
+}
+
+BEFORE -down-> WHY : `saturate_compiled(rules, max_iters)`
+WHY -down-> AFTER : fixpoint reached, `SaturationOutcome::Converged`
+AFTER -down-> EXTRACT
+
+note right of AFTER
+  The fixpoint is order-independent: nodes and
+  equalities only ever GROW, so the saturation
+  operator is monotone and its least fixpoint is
+  unique. Which INTERMEDIATE merges happen in
+  which iteration is an implementation detail;
+  the two classes here are not.
+
+  Note also what did NOT happen: no rule rewrote
+  the stored `M` value. The Rust term is still
+  <latex>\mathrm{Mul}(\mathrm{Mul}(e,x),e)</latex> after the call. The
+  quotient lives in the e-graph and dies with it.
+end note
+
+@enduml

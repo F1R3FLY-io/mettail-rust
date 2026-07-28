@@ -1,0 +1,80 @@
+@startuml
+title Names in Pi versus names in Rholang: which arrows the two signatures actually contain
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam class {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam package {
+  BorderColor #6D28D9
+  FontColor #111827
+}
+hide empty members
+
+package "Pi — names are ATOMIC (languages/src/pi.rs)" as PIPKG #F8FAFC {
+  class "Proc" as PI_PROC #DBEAFE {
+    PZero : <latex>\to \mathrm{Proc}</latex>
+    PNew : <latex>[\mathrm{Name} \to \mathrm{Proc}] \to \mathrm{Proc}</latex>
+    PIn : <latex>\mathrm{Name} \times [\mathrm{Name} \to \mathrm{Proc}] \to \mathrm{Proc}</latex>
+    POut : <latex>\mathrm{Name} \times \mathrm{Name} \times \mathrm{Proc} \to \mathrm{Proc}</latex>
+    POutAsync : <latex>\mathrm{Name} \times \mathrm{Name} \to \mathrm{Proc}</latex>
+    PPar : <latex>\mathrm{HashBag}(\mathrm{Proc}) \to \mathrm{Proc}</latex>
+    PRep : <latex>\mathrm{Proc} \to \mathrm{Proc}</latex>
+  }
+  class "Name" as PI_NAME #FEE2E2 {
+    NVar  (auto-injected)
+    -- NO declared constructor --
+    zero ""TermDef""s of category Name
+  }
+}
+
+package "Rholang — names REFLECT processes (languages/src/rholang.rs)" as RHOPKG #F8FAFC {
+  class "Proc" as RHO_PROC #DBEAFE {
+    PZero, PPar, PNew, PForUser, POutput, ...
+    **PDrop** : <latex>\mathrm{Name} \to \mathrm{Proc}</latex>   (:439)
+  }
+  class "Name" as RHO_NAME #DCFCE7 {
+    NVar  (auto-injected)
+    **NQuote** : <latex>\mathrm{Proc} \to \mathrm{Name}</latex>   (:854)
+  }
+}
+
+PI_NAME -[#1D4ED8,thickness=2]-> PI_PROC : names OCCUR in processes\n(as subjects and objects)
+PI_PROC -[#DC2626,thickness=2,dashed]-> PI_NAME : **NO SUCH ARROW**\nnothing builds a Name\nfrom a Proc
+
+RHO_NAME -[#1D4ED8,thickness=2]-> RHO_PROC : names occur in processes...
+RHO_PROC -[#15803D,thickness=2]-> RHO_NAME : ...**and** ""@(p)"" QUOTES a\nprocess INTO a name
+RHO_NAME -[#15803D,thickness=2]-> RHO_PROC : ""*n"" DROPS a name\nback into a process
+
+note bottom of PI_NAME #FEE2E2
+  A Pi name can only ever be a VARIABLE — free, or bound
+  by a ""PNew"" restriction or a ""PIn"" receive. The sort is
+  declared (""types { Proc Name }"") but has no term former,
+  so the set of closed names is EMPTY and the two sorts
+  are disjoint. This is Milner's discipline exactly:
+  names are atoms, distinct from processes.
+end note
+
+note bottom of RHO_NAME #DCFCE7
+  The two green arrows close a CYCLE, and that cycle is
+  the whole of reflection. The specification states the
+  laws that govern it directly:
+    ""QuoteDrop . |- (NQuote (PDrop N)) = N ;""   (:2943)
+    ""Exec     . |- (PDrop (NQuote P)) ~> P;""    (:2954)
+  i.e. ""@(*N) = N"" and ""*(@P) ~> P"" in surface syntax.
+  Pi can state neither law, because it cannot even
+  write the terms: it has no ""@"" and no ""*"".
+end note
+
+legend right
+|= Arrow |= Meaning |
+|<#DBEAFE> blue | a sort OCCURS in the other's constructors |
+|<#DCFCE7> green | a constructor CROSSES the sorts — the reflective pair |
+|<#FEE2E2> red dashed | an arrow the signature does NOT contain |
+endlegend
+
+@enduml

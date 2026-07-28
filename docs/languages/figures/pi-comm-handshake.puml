@@ -1,0 +1,67 @@
+@startuml
+title One synchronous COMM, end to end: `{ in(c,y).0 | c!c.0 }` reduces to `{ 0 | 0 }`
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam sequenceArrowThickness 1.2
+skinparam ParticipantPadding 12
+skinparam BoxPadding 12
+skinparam participant {
+  BorderColor #1F2937
+  FontColor #111827
+}
+
+participant "**source text**\n`{ in(c,y).0 | c!c.0 }`" as SRC #DCFCE7
+participant "**parser.rs**\nPratt / WPDA" as PARSE #DBEAFE
+participant "**AC matcher**\nPattern::ac(Proc_PPar, ..., rest)" as MATCH #EDE9FE
+participant "**Comm rule**\nop 0, label\nPi::rewrite::Comm" as COMM #FCE7F3
+participant "**dispatch arm**\ncomm_dispatch_arm" as ARM #FEF3C7
+participant "**e-graph**\ndovetail::EGraph" as EG #DBEAFE
+
+SRC -> PARSE : token stream\n`{` `in` `(` `c` `,` `y` `)` `.` `0` `|` `c` `!` `c` `.` `0` `}`
+PARSE -> MATCH : ""PPar(HashBag{ PIn(NVar c, Scope(y, PZero)),""\n""              POut(NVar c, NVar c, PZero) })""
+
+note over PARSE
+  ""insert_into_ppar"" flattens nested ""PPar"" on the way in, and
+  ""HashBag"" is an unordered multiset — so associativity and
+  commutativity of parallel composition hold BY CONSTRUCTION and
+  need no equation.
+end note
+
+group Match the redex — one AcApp pattern, two element patterns, one remainder
+  MATCH -> MATCH : element 0: ""Pattern::app(Proc_PIn,""\n""  [var("n"), leaf(BinderArity(1)), var("p")])""
+  MATCH -> MATCH : element 1: ""Pattern::app(Proc_POut,""\n""  [var("n"), var("m"), var("q")])""
+  MATCH -> MATCH : **non-linear guard**: `n` occurs in BOTH elements,\nso the re-bind check enforces <latex>n \equiv n</latex> by e-class equality
+  MATCH -> MATCH : everything unmatched binds to the remainder ""rest""
+end
+
+MATCH -> COMM : sigma = { n |-> `c`, p |-> body of the receive,\n            m |-> `c`, q |-> `0`, rest |-> {} }
+
+group Contract — the interaction cut <latex>c?y.P \mid c!m.Q \longrightarrow P\{m/y\} \mid Q</latex>
+  COMM -> ARM : fire op 0
+  ARM -> EG : gate: is sigma[p] a fold value, sigma[m] in normal form?
+  EG --> ARM : yes — extract the 1-best derivation of each
+  ARM -> ARM : rebuild the receive body under a **FRESH** binder\n(""Binder(FreeVar::fresh_unnamed())""), then ""unbind""
+  ARM -> ARM : ""__reduct = open_body.substitute_name(&b.0, &arg)""\n= <latex>P\{m/y\}</latex>, capture-avoiding by construction
+  ARM -> EG : ""instantiate(Pattern::ac(Proc_PPar,""\n""  [var("__comm_reduct"), var("q")], Some("rest")))""
+end
+
+EG -> EG : the reduct bag is merged with the redex bag's e-class;\n""resolve_rewrite_justifications"" records the firing
+EG -> SRC : report names the rule **""Comm""**
+
+note over ARM, EG #FEF3C7
+  The reduct has **TWO** fixed elements because the output
+  ""n!m.q"" is SYNCHRONOUS and carries a continuation ""q"".
+  ""CommAsync"" is the same lane with ONE fixed element,
+  ""[var("__comm_reduct")]"", because ""POutAsync"" has no
+  continuation. The lane admits any arity <latex>m \geq 1</latex>: exactly one
+  host-computed substitution plus <latex>m-1</latex> sigma-delivered variables.
+end note
+
+note over MATCH #FEE2E2
+  Fail-closed: a sigma-delivered reduct element may never be a
+  binder SCOPE. Splicing a raw binder body into the reduct
+  would let the bound name escape its restriction.
+end note
+
+@enduml

@@ -1,0 +1,88 @@
+@startuml
+title `lower_equation` (macros/src/gen/runtime/dovetail_report.rs:1472) - why 3 equations become 4 rules
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
+  DiamondBackgroundColor #DBEAFE
+  BackgroundColor<<equation>> #FEF3C7
+  BackgroundColor<<failure>> #FEE2E2
+  BackgroundColor<<engine>> #EDE9FE
+  BackgroundColor<<inert>> #E5E7EB
+  BackgroundColor<<result>> #DCFCE7
+}
+skinparam note {
+  BorderColor #92400E
+  BackgroundColor #FEF9C3
+  FontColor #111827
+}
+
+start
+:one `Equation` from `equations { }`
+<latex>\mathit{lhs} \;=\; \mathit{rhs}</latex>; <<equation>>
+
+if (every premise satisfies `premise_supported`? (:1479)) then (no)
+  :record "equation has side conditions" in `unsupported`
+  the language FAILS CLOSED - nothing is emitted; <<failure>>
+  stop
+else (yes - Monoid declares no premises at all)
+endif
+
+partition "FORWARD direction (:1484-1502)" {
+  if (`eq.left.is_just_variable()`? (ast/src/pattern.rs:282)) then (yes)
+    :emit nothing, SILENTLY - a bare-variable LHS
+    would match every e-class in the graph; <<inert>>
+  else (no)
+    :`RewriteRule { lhs, rhs }`
+    label `Monoid::equation::NAME::forward`; <<engine>>
+  endif
+}
+
+partition "REVERSE direction (:1504-1524)" {
+  if (`eq.right.is_just_variable()`?) then (yes)
+    :emit nothing, SILENTLY; <<inert>>
+  else (no)
+    :`RewriteRule { lhs: rhs, rhs: lhs }`
+    label `Monoid::equation::NAME::reverse`; <<engine>>
+  endif
+}
+
+:the emitted rules join `__DOVETAIL_COMPILED_RULES`
+(a `OnceLock`, compiled once per process); <<result>>
+stop
+
+note right
+  APPLIED TO MONOID
+
+  Assoc   lhs <latex>(X \cdot Y) \cdot Z</latex>  not a bare var  -> FORWARD
+          rhs <latex>X \cdot (Y \cdot Z)</latex>  not a bare var  -> REVERSE
+  UnitL   lhs <latex>e \cdot X</latex>            not a bare var  -> FORWARD
+          rhs <latex>X</latex>                    IS a bare var   -> DROPPED
+  UnitR   lhs <latex>X \cdot e</latex>            not a bare var  -> FORWARD
+          rhs <latex>X</latex>                    IS a bare var   -> DROPPED
+
+  3 equations  ->  4 rules, not 6. Verified in
+  `target/generated/monoid/dovetail_report.rs:158-194`.
+end note
+
+note left
+  Why dropping the unit REVERSE does not
+  lose the quotient: a rule fires through
+  `apply_structural_matches`
+  (dovetail/src/rules.rs:804-807) as
+  `self.merge(root, rhs_id)` - an UNDIRECTED
+  union. One direction already identifies
+  the two e-classes.
+
+  Keeping <latex>X \rightsquigarrow e \cdot X</latex> would instead
+  manufacture <latex>e \cdot X,\; e \cdot (e \cdot X),\; \ldots</latex>
+  without bound and exhaust the node budget.
+end note
+
+@enduml

@@ -1,0 +1,98 @@
+@startuml
+title The `UInt32` lexeme as a finite automaton (`languages/src/turing.rs:139`)
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam state {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  BackgroundColor #F9FAFB
+}
+
+state "START" as S #DCFCE7
+state "saw <latex>0</latex>\nboth a decimal digit and\na possible radix prefix" as Z #FEF3C7
+
+state "BINARY" as BIN #DBEAFE {
+  state "body\naccepting" as B #DBEAFE
+  state "separator\nNOT accepting" as BS #FCE7F3
+  B --> BS : `_`
+  BS --> B : `[01]`
+  B --> B : `[01]`
+}
+
+state "OCTAL" as OCT #DBEAFE {
+  state "body\naccepting" as O #DBEAFE
+  state "separator\nNOT accepting" as OS #FCE7F3
+  O --> OS : `_`
+  OS --> O : `[0-7]`
+  O --> O : `[0-7]`
+}
+
+state "HEXADECIMAL" as HEX #DBEAFE {
+  state "body\naccepting" as H #DBEAFE
+  state "separator\nNOT accepting" as HS #FCE7F3
+  H --> HS : `_`
+  HS --> H : `[0-9A-Fa-f]`
+  H --> H : `[0-9A-Fa-f]`
+}
+
+state "DECIMAL" as DEC #DBEAFE {
+  state "body\naccepting" as D #DBEAFE
+  state "separator\nNOT accepting" as DS #FCE7F3
+  D --> DS : `_`
+  DS --> D : `[0-9]`
+  D --> D : `[0-9]`
+}
+
+state "suffix <latex>\mathtt{u32}</latex>\nconsumed" as U #EDE9FE
+state "ACCEPT" as A #DCFCE7
+
+[*] --> S
+S --> Z : `0`
+S --> D : `[1-9]`
+
+Z --> B : `b` then one `[01]`
+Z --> O : `o` then one `[0-7]`
+Z --> H : `x` then one `[0-9A-Fa-f]`
+Z --> D : one more `[0-9]`
+Z --> U : `u32`
+
+B --> U : `u32`
+O --> U : `u32`
+H --> U : `u32`
+D --> U : `u32`
+
+U --> A
+A --> [*]
+
+note right of BIN
+  Every radix lane has the SAME shape, because the source
+  pattern repeats the same idiom four times: one digit,
+  then any number of *optionally-separated* further digits.
+  The separator state is **not** accepting and has **no**
+  self-loop, which is exactly why `1_u32` and `1__0u32`
+  are rejected. `_1u32` is rejected for the mirror reason:
+  START has no `_` edge.
+end note
+
+note bottom of U
+  The suffix sits OUTSIDE the alternation group in the source
+  pattern, so it is mandatory for every radix. That is what keeps
+  the surface `q0` unambiguous: `0` alone is not a `UInt32` lexeme,
+  so `q0` can only be the nullary constructor `Q0`, never the
+  indexed former `Q` applied to a literal.
+end note
+
+note bottom of Z
+  A leading `0` is genuinely shared: the same character begins the
+  decimal literal `0u32` and each of the radix prefixes `0b` / `0o` /
+  `0x`. One character of lookahead resolves it, and this is the only
+  place in the token class that needs any.
+end note
+
+@enduml

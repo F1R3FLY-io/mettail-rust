@@ -1,0 +1,63 @@
+@startuml
+title The transition relation Turing actually declares: two entries, both leaving `q0`
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam state {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  BackgroundColor #F9FAFB
+}
+
+[*] --> q0 : a program is written\nin some configuration
+
+state "q0\n`State::Q0`" as q0 #DCFCE7
+state "q1\n`State::Q1`" as q1 #FEE2E2
+state "halt\n`State::Halt`" as halt #FEF3C7
+state "q <latex>n</latex>\n`State::Q(UInt32)`" as qn #E5E7EB
+
+q0 --> q1 : **D_q0_0**  `turing.rs:186-187`\nread <latex>0</latex> / write <latex>1</latex>, move right\n`(Cf Q0 (Tp L Zero R))`\n`~> (Cf Q1 (shift_right L One R))`
+q0 --> halt : **D_q0_1**  `turing.rs:188-189`\nread <latex>1</latex> / write <latex>1</latex>, stay\n`(Cf Q0 (Tp L One R))`\n`~> (Cf Halt (Tp L One R))`
+
+note right of q0
+  **Deterministic BY CONSTRUCTION, not by ordering.**
+  The two left-hand sides differ in the head-symbol
+  position: `Sym_Zero` against `Sym_One`. No
+  configuration matches both. The engine itself
+  performs no selection — it fires EVERY match
+  in every iteration and merges the results
+  (`dovetail/src/rules.rs:804-807`).
+end note
+
+note bottom of q1
+  **DEAD END.** No rewrite has `Q1` on its
+  left-hand side, so nothing can fire here.
+  The machine stops in `q1` for the same
+  reason it stops in `halt`: absence of a rule.
+end note
+
+note bottom of halt
+  **NOT a reserved word.** `Halt` is an ordinary
+  nullary `State` constructor (`turing.rs:151`).
+  The macro, the runtime and the e-graph contain
+  no notion of halting: `State_Halt` occurs 12
+  times in the generated report, every one of them
+  a mechanical op-enum / display / reconstruction
+  arm plus `D_q0_1`'s right-hand side.
+end note
+
+note bottom of qn
+  The paper's INDEXED state former, declared verbatim
+  (`turing.rs:152`) and reachable only by writing it:
+  `q 7u32` parses, prints and hashes. No transition
+  mentions it, because the macro's pattern grammar has
+  no literal form — `(Q 0u32)` cannot be written in a
+  rewrite (`ast/src/pattern.rs:25-51`).
+end note
+
+@enduml

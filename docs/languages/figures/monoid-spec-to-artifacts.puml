@@ -1,0 +1,70 @@
+@startuml
+title Monoid: each `language!` block and the artifacts it drives
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #92400E
+  BackgroundColor #FEF9C3
+  FontColor #111827
+}
+
+rectangle "THE SPECIFICATION\nlanguages/src/monoid.rs (94 lines)" as SPEC #F3F4F6 {
+  rectangle "**name: Monoid**\nlanguage identifier" as B_NAME #E0E7FF
+  rectangle "**options { }**\nemit_tests / emit_simulator /\nemit_blockly = false" as B_OPT #FBCFE8
+  rectangle "**types { M }**\none pure algebraic sort:\nthe CARRIER" as B_TYPES #DBEAFE
+  rectangle "**terms { }**\nUnit (nullary, `::=` form)\nMul  (infix, judgement form)" as B_TERMS #DCFCE7
+  rectangle "**equations { }**\nAssoc / UnitL / UnitR" as B_EQ #FEF3C7
+  rectangle "**rewrites { }**\nEMPTY - rung two stops here" as B_RW #FEE2E2
+}
+
+rectangle "GENERATED\ntarget/generated/monoid/ (38 files, 34 non-empty)" as GEN #F3F4F6 {
+  rectangle "`metadata.rs`\nMonoidMetadata: fingerprint,\nnormalised source, reflected\ntypes/terms/equations/rewrites" as G_META #FEF3C7
+  rectangle "`ast_enums.rs`\n`enum M` = Unit | Mul | MVar\n+ 4 auto-injected HOL variants" as G_AST #DBEAFE
+  rectangle "`wpda.rs` (4 318 lines)\n`parser.rs` (1 476 lines)\n`display.rs`\nsurface in and surface out" as G_SURF #DCFCE7
+  rectangle "`dovetail_report.rs`\n4 e-graph `RewriteRule`s\nfrom the 3 equations" as G_DT #EDE9FE
+  rectangle "`rho_net_invocation.rs`\nin-Rho reflection + MATCH;\nNO sigma-receiver site" as G_RHO #FCE7F3
+  rectangle "`subst.rs` `normalize.rs`\n`iterative_cmp.rs` `semantic_hash.rs`\n`strategies.rs` ... (28 more)" as G_SUP #E5E7EB
+}
+
+rectangle "NOT GENERATED\n(the three `false` switches)" as NOGEN #FEE2E2 {
+  rectangle "no `languages/tests/gen_monoid_*.rs`" as N_TESTS #FECACA
+  rectangle "no `languages/src/bin/simulate_monoid.rs`" as N_SIM #FECACA
+  rectangle "no `languages/src/generated/monoid-*.ts`" as N_BLK #FECACA
+}
+
+B_NAME  -down-> G_META
+B_OPT   -down-> N_TESTS
+B_OPT   -down-> N_SIM
+B_OPT   -down-> N_BLK
+B_TYPES -down-> G_AST
+B_TERMS -down-> G_AST
+B_TERMS -down-> G_SURF
+B_TERMS -down-> G_SUP
+B_EQ    -down-> G_DT
+B_EQ    -down-> G_META
+B_RW    -down-> G_RHO
+
+note right of B_RW
+  An EMPTY `rewrites { }` is not the
+  same as an omitted block: it declares
+  "this theory directs nothing".
+  `metadata.rs` records
+  `fn rewrites(&self) -> &[] `.
+end note
+
+note bottom of G_RHO
+  With no rewrites there is no firing to inject, so
+  `rho_net_invocation_from_dovetail_to_firing` returns
+  "language Monoid has no Rho-net sigma-receiver
+  injection sites". The REPL therefore rides the
+  report-free MATCH path.
+end note
+
+@enduml

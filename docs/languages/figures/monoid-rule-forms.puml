@@ -1,0 +1,109 @@
+@startuml
+title Monoid's `terms` block uses BOTH accepted rule forms
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BorderColor #92400E
+  BackgroundColor #FEF9C3
+  FontColor #111827
+}
+
+rectangle "SOURCE TEXT (monoid.rs:83-84)" as SRC #F3F4F6 {
+  rectangle S_UNIT #DCFCE7 [
+    <b>Unit . M ::= "e" ;
+    LEGACY BNFC FORM
+    label . Category ::= items ;
+  ]
+  rectangle S_MUL #DCFCE7 [
+    <b>Mul . x:M, y:M |- x "*" y : M ;
+    JUDGEMENT FORM
+    label . context |- syntax : Category ;
+  ]
+}
+
+rectangle "DISPATCH (ast/src/grammar.rs:638-648)" as DISP #EDE9FE {
+  rectangle "fork the stream, parse one Ident,\nthen `fork.peek(Token![::])`\n\n`::` present  -> parse_grammar_rule_old  (:665)\n`::` absent   -> parse_grammar_rule_new  (:726)" as D_FORK #DDD6FE
+}
+
+rectangle "PARSED `GrammarRule`" as PARSED #F3F4F6 {
+  rectangle P_UNIT #DBEAFE [
+    label          = Unit
+    category       = M
+    items          = [Terminal("e")]
+    term_context   = None
+    syntax_pattern = None
+    is_right_assoc = false
+  ]
+  rectangle P_MUL #DBEAFE [
+    label          = Mul
+    category       = M
+    items          = [] (converted on demand)
+    term_context   = [Simple{x:M}, Simple{y:M}]
+    syntax_pattern = [Param(x), Literal("*"), Param(y)]
+    is_right_assoc = false
+  ]
+}
+
+rectangle "GENERATED RUST + TABLES" as OUT #F3F4F6 {
+  rectangle O_UNIT #DBEAFE [
+    <b>M::Unit
+    a fieldless variant - the IDENTITY is a
+    CONSTANT, not a distinguished element
+    of a carrier set
+
+    Display: f.write_str("e")
+  ]
+  rectangle O_MUL #DCFCE7 [
+    <b>M::Mul(Arc<M>, Arc<M>)
+    STRICTLY BINARY - arity fixed at 2
+
+    infix_bp_m("*") = [(2, 3, 0, 1)]
+    (left_bp, right_bp, cat, rule)
+
+    Display: left child at min_bp 2,
+    then " * ", then right child at min_bp 3
+  ]
+  rectangle O_META #FEF3C7 [
+    TermDef { name: "Unit", syntax: "e",
+              fields: &[] }
+    TermDef { name: "Mul",  syntax: "x*y",
+              fields: &[x:M, y:M] }
+  ]
+}
+
+S_UNIT -down-> D_FORK
+S_MUL  -down-> D_FORK
+D_FORK -down-> P_UNIT
+D_FORK -down-> P_MUL
+P_UNIT -down-> O_UNIT
+P_MUL  -down-> O_MUL
+P_UNIT -down-> O_META
+P_MUL  -down-> O_META
+
+note right of S_MUL
+  `|-` is the TURNSTILE <latex>\vdash</latex>.
+  Left of it: metasyntax (the abstract
+  arguments and their types).
+  Right of it: object syntax (what a
+  programmer actually types).
+  The legacy `::=` form has no turnstile
+  because it has no separate context.
+end note
+
+note bottom of O_MUL
+  <latex>l_{bp} = 2 < r_{bp} = 3</latex> is exactly the Pratt encoding of
+  LEFT associativity: the right operand is parsed at a floor
+  of 3, so a following `*` (whose left power is 2) cannot be
+  absorbed into it. `x * y * z` therefore parses as
+  <latex>(x \cdot y) \cdot z</latex>. Nothing in the SPEC asked for this - it is
+  the default in `analyze_binding_powers`.
+end note
+
+@enduml

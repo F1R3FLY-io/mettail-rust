@@ -1,0 +1,78 @@
+@startuml
+title The interaction cut, instantiated: from Milner's factoring, through Pi's `Comm` clause, to the generated patterns
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.3
+skinparam rectangle {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam package {
+  BorderColor #6D28D9
+  FontColor #111827
+}
+
+package "LAYER 1 — the schema (†): two introductions meet along matching surfaces" as L1 #F8FAFC {
+  rectangle "**interaction constructor** <latex>K</latex>\nbrings two operands into contact" as T_K #DBEAFE
+  rectangle "**program introduction** <latex>K_p(I, C_p)</latex>\nsurface <latex>I</latex> + program continuation <latex>C_p</latex>" as T_KP #DCFCE7
+  rectangle "**environment introduction** <latex>K_e(J, C_e)</latex>\nsurface <latex>J</latex> + environment continuation <latex>C_e</latex>" as T_KE #FEF3C7
+  rectangle "**contraction** <latex>\mathrm{compute}(I, J, C_p, C_e)</latex>\npartial — defined only when the surfaces match" as T_C #FCE7F3
+}
+
+package "LAYER 2 — the Pi clause that instantiates it" as L2 #F8FAFC {
+  rectangle "<latex>K = </latex> **PPar**\nan AC bag: ""ps:HashBag(Proc)""" as P_K #DBEAFE
+  rectangle "<latex>K_p = </latex> **PIn**\nsurface = the subject ""n"";\ncontinuation = the abstraction <latex>\lambda x.p</latex>" as P_KP #DCFCE7
+  rectangle "<latex>K_e = </latex> **POut**\nsurface = the subject ""n"";\ncontinuations = the pair <latex>(m, q)</latex>" as P_KE #FEF3C7
+  rectangle "contraction = **pseudo-application**\n<latex>p\{m/x\} \;\mid\; q</latex>\nwritten ""(eval ^x.p m)"" and ""q"" in the reduct bag" as P_C #FCE7F3
+}
+
+package "LAYER 3 — the generated data that executes it" as L3 #F8FAFC {
+  rectangle """Pattern::ac(PiDovetailOp::Proc_PPar, [...], Some(\"rest\"))""\nthe AcApp whose remainder absorbs every non-participant" as G_K #DBEAFE
+  rectangle "**element 0** — ""Pattern::app(Proc_PIn,""\n""  [var(n), leaf(BinderArity(1)), var(p)])""" as G_KP #DCFCE7
+  rectangle "**element 1** — ""Pattern::app(Proc_POut,""\n""  [var(n), var(m), var(q)])""" as G_KE #FEF3C7
+  rectangle "**op 0 dispatch arm**\n""open_body.substitute_name(&b.0, &arg)""\nspliced as ""[var(__comm_reduct), var(q)]""" as G_C #FCE7F3
+}
+
+T_K -[#1D4ED8,thickness=2]-> P_K
+T_KP -[#15803D,thickness=2]-> P_KP
+T_KE -[#B45309,thickness=2]-> P_KE
+T_C -[#BE185D,thickness=2]-> P_C
+
+P_K -[#1D4ED8,thickness=2]-> G_K
+P_KP -[#15803D,thickness=2]-> G_KP
+P_KE -[#B45309,thickness=2]-> G_KE
+P_C -[#BE185D,thickness=2]-> G_C
+
+note right of T_C #EDE9FE
+  <latex>\dfrac{(C_p', C_e') = \mathrm{compute}(I, J, C_p, C_e)}{K(K_p(I, C_p),\, K_e(J, C_e)) \longrightarrow K'(C_p', C_e')}</latex>
+end note
+
+note right of P_KE #FEE2E2
+  **The surface match is the only guard.**
+  Because ""n"" occurs in BOTH elements, the AC
+  matcher's re-bind check enforces <latex>n \equiv n</latex> by
+  e-class equality. An input on ""c"" and an
+  output on ""d"" therefore produce no match
+  and no firing — the term simply rests.
+end note
+
+note right of G_C #DCFCE7
+  **Binding is not the point.** Pseudo-application
+  factors into the substitution <latex>p\{m/x\}</latex> — by which a
+  datum migrates through a binder — and the release
+  of the environment's residual <latex>q</latex>. Pi's asynchronous
+  ""CommAsync"" has the same cut with an EMPTY release,
+  so its reduct is the arity-1 ""[var(__comm_reduct)]"".
+end note
+
+legend right
+|= Colour |= Role across all three layers |
+|<#DBEAFE> blue | the interaction constructor — where contact happens |
+|<#DCFCE7> green | the program side: the receive, its subject and its abstraction |
+|<#FEF3C7> amber | the environment side: the send, its subject and its objects |
+|<#FCE7F3> pink | the contraction that combines the two continuations |
+endlegend
+
+@enduml

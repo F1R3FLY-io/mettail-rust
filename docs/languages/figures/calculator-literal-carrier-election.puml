@@ -1,0 +1,99 @@
+@startuml
+title How a numeral elects its carrier — and the coupling defect the current rule removes
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowThickness 1.2
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+}
+skinparam note {
+  BackgroundColor #F9FAFB
+  BorderColor #9CA3AF
+}
+
+start
+
+:**numeral TEXT** arrives at the lexer,
+e.g. `0`, `0u32`, `3000000000`, `3r/4r`; <<#DCFCE7>>
+
+:the lex DAG offers one edge per literal
+`pattern:` whose regex matches at this span
+(maximal munch — ties STAY in the DAG); <<#DCFCE7>>
+
+partition "acceptor — one `eval` per category, and nothing else decides" {
+  if (**UInt32** `eval` accepts?
+`IntSuffix::from_text(text) == U32`) then (yes)
+    :carrier = **UInt32**; <<#DBEAFE>>
+  elseif (**Int** `eval` accepts?
+`parse_int_lit(text, Some(I32))`) then (yes)
+    :carrier = **Int**; <<#DBEAFE>>
+  elseif (**BigInt** `eval` accepts?
+trailing `n`, OR unsuffixed and
+outside the <latex>i32</latex> range) then (yes)
+    :carrier = **BigInt**; <<#DBEAFE>>
+  elseif (**BigRat** `eval` accepts?
+`parse_rational_lit` — needs an `r`) then (yes)
+    :carrier = **BigRat**; <<#DBEAFE>>
+  elseif (**Fixed** `eval` accepts?
+`parse_fixed_lit` — needs `p<scale>`) then (yes)
+    :carrier = **Fixed**; <<#DBEAFE>>
+  elseif (**Float** `eval` accepts?
+`parse_float_lit` — needs `.` or `e`) then (yes)
+    :carrier = **Float**; <<#DBEAFE>>
+  else (none accept)
+    :**no literal carrier** — the span is not a
+numeral of this language. `5000000000u32`
+fails closed: it carries the declared tail
+but overflows the declared width; <<#FEE2E2>>
+    stop
+  endif
+}
+
+:**I1 — the carrier is now fixed.**
+It is a function of the TEXT alone: no context,
+no parentheses, no neighbouring factor; <<#FEF3C7>>
+
+:a cross-category promotion may still WRAP the
+literal (`IntToBigRat(NumLit 7)`) so it reaches the
+surrounding operator's category — but wrapping never
+changes which carrier holds the value; <<#EDE9FE>>
+
+:the whole-derivation elector
+`__mettail_wpda_select_min_weight_realizing`
+takes the argmin over `LexicographicWeight`; <<#EDE9FE>>
+
+:**I3 — the election may move freely, but no reading
+it can choose RE-SPELLS a token.** Readings may differ
+in inert `( … )` grouping — they may not differ in the
+spelling of any numeral; <<#FEF3C7>>
+
+stop
+
+note right
+  **THE DEFECT THIS RULE REPLACED** (closed 2026-07-27).
+
+  `UInt32`'s `eval` was `parse_int_lit(text, None)` — a
+  UNIVERSAL ACCEPTOR — while its `pattern` demanded a
+  `u32` tail and its `Display` always wrote one:
+
+  <latex>\mathtt{UInt32{::}parse}(\text{"7"}) = \mathtt{NumLit}(7)</latex>
+  <latex>\mathrm{display}(\mathtt{NumLit}(7)) = \text{"7u32"}</latex>
+
+  A term whose display is NOT the surface it was parsed
+  from then sat in the forest, so a GLOBAL argmin could
+  pick it — and appending a third factor changed which
+  of four readings won:
+
+    `(0 + 0) * 0u32`
+       ⇒ `IntToBigRat(AddInt 0 0)`      surface stable
+    `(0 + 0) * 0u32 * (0p0 bitand 0p0)`
+       ⇒ `UInt32ToBigRat(AddUInt32 0 0)`
+       ⇒ `(0u32 + 0u32) * 0u32 * …`     surface MOVED
+
+  The root was the ACCEPTOR, not the elector: an `eval`
+  strictly wider than its own declared `pattern`.
+end note
+
+@enduml

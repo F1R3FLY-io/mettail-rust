@@ -1,0 +1,75 @@
+@startuml
+title One transition, end to end: `(q0 , <[] | 0 | [0,1]>)` through the Dovetail path
+
+skinparam backgroundColor #FEFEFE
+skinparam shadowing false
+skinparam ArrowColor #374151
+skinparam ArrowThickness 1.2
+skinparam activity {
+  BorderColor #1F2937
+  FontColor #111827
+  DiamondBorderColor #1F2937
+  DiamondFontColor #111827
+}
+skinparam note {
+  BorderColor #1F2937
+  BackgroundColor #F9FAFB
+}
+
+|#DCFCE7|Surface|
+start
+:read the source text\n`(q0 , <[] | 0 | [0,1]>)`;
+
+|#DBEAFE|WPDA parser|
+:try ALL FIVE category parsers\n(`language_struct.rs:17-112`);
+:only `Config` succeeds ->\n`Cf(Q0, Tp([], Zero, [Zero, One]))`;
+
+|#EDE9FE|E-graph injection|
+:`__mettail_dovetail_add_config`\nadds one e-node per constructor;
+:each `Vec(Sym)` field becomes\n`FieldOpaque(format!("{:?}", field))`\n(`dovetail_report.rs:1007-1010`);
+
+|#EDE9FE|Set automaton|
+:both left-hand sides are AC-free, so\n`compile_positional_segments` puts them in\nONE segment with ONE compiled automaton\n(`dovetail/src/rules.rs:437-466`);
+:`batched_segment_matches` traverses the graph ONCE\nand demultiplexes hits back to their rule by `PatternId`\n(`dovetail/src/rules.rs:775-787`);
+
+|#FCE7F3|Rule application|
+if (head symbol under `Tp`) then (`Sym_Zero`)
+  :**D_q0_0** matches with\n<latex>\sigma = \{L \mapsto [\,],\; R \mapsto [0,1]\}</latex>;
+elseif (head symbol under `Tp`) then (`Sym_One`)
+  :**D_q0_1** matches with the same\n<latex>L</latex> and <latex>R</latex> bindings;
+else (neither)
+  :no rule matches — the configuration\nis already a normal form;
+  |#FEF3C7|Report|
+  :`rule_firings` is EMPTY\n(pinned by `languages/tests/turing.rs:167-174`);
+  stop
+endif
+
+|#FCE7F3|Rule application|
+:instantiate the right-hand side and\n**MERGE** it with the matched class —\na rewrite is a UNION, not a replacement\n(`dovetail/src/rules.rs:804-807`);
+:record the firing under the paper's own label\n`Turing::rewrite::D_q0_0`;
+
+|#EDE9FE|Saturation|
+:iterate to convergence. The merged class now holds BOTH\nthe pre- and the post-transition node, so re-matching\nproduces no new merge and saturation stops;
+
+|#FEF3C7|Report|
+:`dovetail_report_for` returns\n`rule_firings = [D_q0_0]`, `completeness = Complete`;
+
+|#EDE9FE|Extraction|
+:`funded_best` takes the 1-best derivation under the\ntropical semiring. `__weigh` is CONSTANT <latex>1.0</latex> here\nbecause `__is_fold_redex` is `false` for every op\n(`dovetail_report.rs:3923-3940`);
+
+|#FEE2E2|Reconstruction|
+:`dovetail_normal_term` calls\n`__mettail_dovetail_build_tape_d`;
+:no arm exists for `Tape_Tp` or `Tape_shift_right` —\ntheir `FieldOpaque` children have no inverse;
+:**fail closed**: `Err("... reconstruction ... failed (stuck term)")`;
+stop
+
+note right
+  This is why the conformance suite proves the dynamics from
+  RULE FIRINGS and not from a reconstructed normal form
+  (`languages/tests/turing.rs:10-21`): the reduction happened,
+  but this language's shapes cannot be read back out of the
+  e-graph. The same non-invertibility makes the in-Rho backend
+  reject the language: `repl/src/rho_backends.rs:16`.
+end note
+
+@enduml
