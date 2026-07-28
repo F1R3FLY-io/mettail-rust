@@ -14,6 +14,12 @@
 
 pub mod alpha;
 pub mod analytical;
+/// ★ COUNTEREXAMPLE PROMOTION — reads a proptest corpus's `# shrinks to` text back into a
+/// term and writes it as valid Rust. The recorded text is NOT Rust (`Arc` erased, enum
+/// qualification erased and ambiguous, `Scope`/`HashBag` shapes synthesized), and replaying
+/// the recorded seed does not reproduce the shrunk term — proptest persists the PRE-shrink
+/// seed beside the POST-shrink text. See the module docs for the measurement.
+pub mod ctor;
 pub mod program;
 pub mod properties;
 pub mod runtime_report;

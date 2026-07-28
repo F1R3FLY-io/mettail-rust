@@ -93,6 +93,35 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     //   <ws>/target/generated/<lang>/<name>.rs
     let ast_enums = spill_and_include(&lang_name, "ast_enums", generate_ast_enums(language));
     let debug_impl = spill_and_include(&lang_name, "debug", generate_debug(language));
+
+    // The CONSTRUCTOR SCHEMA — `debug`'s inverse, written but deliberately NOT included.
+    //
+    // `debug` prints a term as text that is not Rust: `Arc` erased, enum qualification erased
+    // and ambiguous (`NumLit` lives in three Calculator enums with three payload types),
+    // `Scope { pattern, body }` and `HashBag { counts, total_count }` synthesized rather than
+    // constructible. This pass emits the field-type table that lets a TOOL read such text back
+    // — the proptest corpus's `# shrinks to` line is the only complete record of a shrunk
+    // counterexample, and replaying the recorded seed does NOT reproduce it (proptest persists
+    // the PRE-shrink seed beside the POST-shrink text).
+    //
+    // It is written with `write_lang_module` rather than `spill_and_include` because its
+    // consumer reads it from disk, exactly as the Blockly front end reads `<lang>-blocks.ts`
+    // from the same directory. Including a 263-variant table in every Rholang build to serve a
+    // tool that runs occasionally would charge every compile for it. A write failure is a
+    // warning, not an error: a missing schema costs a tool its input, never a build its
+    // correctness.
+    {
+        let source = crate::logic::writer::format_rust_source(&syntax::rust_ctor::generate_rust_ctor(
+            language,
+        ));
+        if let Err(e) = crate::logic::writer::write_lang_module(&lang_name, "rust_ctor", &source) {
+            eprintln!(
+                "  ({}) WARNING: could not write rust_ctor.rs ({}) — the constructor schema \
+                 will be missing and `testkit`'s corpus harvester cannot run for this language",
+                lang_name, e
+            );
+        }
+    }
     let flatten_helpers =
         spill_and_include(&lang_name, "flatten", generate_flatten_helpers(language));
     let normalize_impl = spill_and_include(
