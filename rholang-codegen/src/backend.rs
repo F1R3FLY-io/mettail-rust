@@ -1186,6 +1186,14 @@ pub struct RhoDefaultBackendPlanError {
 }
 
 /// Lower `def` and build the Rho-default backend plan if every flip gate passes.
+// `result_large_err` is wrong HERE — the work it asks for is already done. Every heavy
+// element of `RhoDefaultBackendPlanError` is ALREADY boxed (two `Box<T>` + eight
+// `Box<[T]>`); its residual 144 bytes is ten pointers, eight of them fat, and it crossed
+// clippy's 128-byte threshold only when the tenth field (`rho_net_validation_errors`) was
+// added. The one remaining move is `Result<_, Box<Self>>`, which would put an allocation on
+// a diagnostic-only path and force every caller to deref to read the very fields the type
+// exists to expose.
+#[allow(clippy::result_large_err)]
 pub fn plan_rho_default_backend(
     def: &LanguageDef,
     requirements: RhoDefaultBackendRequirements,
@@ -1832,7 +1840,7 @@ mod tests {
         };
 
         // A usable quality produces no blocker.
-        assert!(guard_quality_blockers_for(&[usable.clone()]).is_empty());
+        assert!(guard_quality_blockers_for(std::slice::from_ref(&usable)).is_empty());
 
         // The Unknown quality produces exactly one GuardQuality blocker, and it
         // blocks the flip even with all Boolean gates passing + a clean report.

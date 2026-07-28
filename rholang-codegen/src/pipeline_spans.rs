@@ -327,14 +327,15 @@ impl Drop for PhaseSpanGuard {
                         parent.child_ns = parent.child_ns.saturating_add(elapsed);
                     }
                 },
-                Some(alien) => {
+                Some(_alien) => {
                     // LIFO violation: this guard's span is not the top of the stack.
                     // Guards are stack variables of the instrumented functions, so this
                     // can only happen when begin/take ran INSIDE the pipeline. Count it
                     // loudly (both the popped alien and this guard's span are lost) and
-                    // do not guess an attribution.
+                    // do not guess an attribution. The popped span is plain data with no
+                    // `Drop` impl, so it is discarded by BINDING (`_alien`) — an explicit
+                    // `drop(alien)` claimed a destructor runs here and none does.
                     window.mismatched += 2;
-                    drop(alien);
                 },
                 None => {
                     // A fresh window began while this guard was open: its span belongs

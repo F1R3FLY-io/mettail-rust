@@ -2116,9 +2116,7 @@ pub fn rho_net_contextual_injection_sites(def: &LanguageDef) -> Vec<RhoNetContex
             .input_channels
             .get(1..)
             .unwrap_or(&[])
-            .iter()
-            .cloned()
-            .collect();
+            .to_vec();
         if premise_channels.is_empty() {
             continue;
         }
@@ -2497,7 +2495,7 @@ pub fn rho_net_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetAcMatchEntry> {
         let Some(rewrite) = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == site.rule_label)
+            .find(|rewrite| rewrite.name == site.rule_label)
         else {
             continue;
         };
@@ -2603,7 +2601,7 @@ pub fn rho_net_contextual_match_entries(def: &LanguageDef) -> Vec<RhoNetContextu
             let hole_positions = def
                 .rewrites
                 .iter()
-                .find(|rewrite| rewrite.name.to_string() == site.rule_label)
+                .find(|rewrite| rewrite.name == site.rule_label)
                 .map(|rewrite| {
                     rewrite
                         .premises
@@ -2634,7 +2632,7 @@ pub fn rho_net_contextual_match_entries(def: &LanguageDef) -> Vec<RhoNetContextu
 /// match driver into the hole's location site, so the derivation matches `collect_redex_sites`.
 fn contextual_source_path(pattern: &Pattern, source: &str) -> Option<Vec<(String, usize)>> {
     match pattern {
-        Pattern::Term(PatternTerm::Var(id)) if id.to_string() == source => Some(Vec::new()),
+        Pattern::Term(PatternTerm::Var(id)) if id == source => Some(Vec::new()),
         Pattern::Term(PatternTerm::Apply { constructor, args }) => {
             for (index, arg) in args.iter().enumerate() {
                 if let Some(mut suffix) = contextual_source_path(arg, source) {
@@ -2667,7 +2665,7 @@ pub fn reconstruct_contractum(
     let rewrite = def
         .rewrites
         .iter()
-        .find(|rewrite| rewrite.name.to_string() == rule_label)
+        .find(|rewrite| rewrite.name == rule_label)
         .ok_or_else(|| format!("contextual contractum: no rewrite named {rule_label}"))?;
     let bindings: HashMap<&str, &GroundTerm> = sigma
         .iter()
@@ -3221,7 +3219,7 @@ pub fn contextual_contract_call(
     let mut call = Par::default();
     for (index, (channel, hole)) in premise_channels
         .iter()
-        .zip(reduced_holes.into_iter())
+        .zip(reduced_holes)
         .enumerate()
     {
         // The last premise send also carries the dynamic out channel (a quoted GString name,
@@ -4747,7 +4745,7 @@ pub(crate) fn ac_effective_bare_var_kind(
 /// Returns `None` when `op` is not a constructor over a collection parameter under EITHER form — so
 /// a non-collection or unknown constructor is never mis-classified as a HashBag.
 pub(crate) fn resolve_constructor_collection_type(def: &LanguageDef, op: &str) -> Option<CollectionType> {
-    let rule = def.terms.iter().find(|rule| rule.label.to_string() == op)?;
+    let rule = def.terms.iter().find(|rule| rule.label == op)?;
     rule.term_context
         .as_ref()
         .and_then(|params| {
@@ -5166,22 +5164,35 @@ fn comm_element_pattern(element: &CommElement, nl_level: usize, language_fingerp
     new_elist_par(items, Vec::new(), true, None, Vec::new(), true)
 }
 
-/// The non-linear consistency `Receive.condition` for a Comm receiver: the conjunction (`EAnd`) of
-/// `EEq(BoundVar, BoundVar)` over each repeated variable's occurrence slot pairs — for the
-/// canonical single shared channel with two occurrences, exactly one conjunct
-/// `EEq(BoundVar(N_recv), BoundVar(N_send))`. Child `i`'s slot at free level `l` is
-/// `BoundVar(COMM_FREE_COUNT - 1 - l)` (the receive binds flattened, so body + condition share the
-/// reverse De Bruijn frame). Mirrors `rho_net_automaton::consistency_guard`, kept self-contained.
-fn comm_consistency_condition(occurrence_levels: &[usize]) -> Par {
-    nonlinear_consistency_condition(occurrence_levels, COMM_FREE_COUNT)
-}
+// DISABLED (never called; superseded by D10) — and it is not merely dead, it is a TRAP.
+//
+//     /// The non-linear consistency `Receive.condition` for a Comm receiver: the conjunction
+//     /// (`EAnd`) of `EEq(BoundVar, BoundVar)` over each repeated variable's occurrence slot
+//     /// pairs — for the canonical single shared channel with two occurrences, exactly one
+//     /// conjunct `EEq(BoundVar(N_recv), BoundVar(N_send))`. Child `i`'s slot at free level
+//     /// `l` is `BoundVar(COMM_FREE_COUNT - 1 - l)` (the receive binds flattened, so body +
+//     /// condition share the reverse De Bruijn frame). Mirrors
+//     /// `rho_net_automaton::consistency_guard`, kept self-contained.
+//     fn comm_consistency_condition(occurrence_levels: &[usize]) -> Par {
+//         nonlinear_consistency_condition(occurrence_levels, COMM_FREE_COUNT)
+//     }
+//
+// It hardcodes `COMM_FREE_COUNT`, which is the ASYNCHRONOUS (`m = 1`) frame width. The D10
+// generalization made the Comm receiver's width depend on the reduct count:
+// [`comm_receiver_par`] computes `free_count = k + 1 + m + 1` and calls
+// [`nonlinear_consistency_condition`] with it directly, so `COMM_FREE_COUNT` now survives only
+// as the `m = 1` invariant its `debug_assert!` pins. A future caller reaching for the obvious
+// name would silently build a synchronous (`m ≥ 2`) receiver's guard against the `m = 1` frame
+// — every `BoundVar(free_count - 1 - l)` off by `m - 1`. Kept commented rather than deleted so
+// the reason survives; restore it ONLY with `free_count` as a parameter, at which point it is
+// `nonlinear_consistency_condition` itself.
 
 /// The non-linear consistency `Receive.condition` for a receiver whose flattened receive binds
 /// `free_count` slots: the conjunction (`EAnd`) of `EEq(BoundVar, BoundVar)` over each repeated
 /// variable's occurrence slot pairs. Child slot at free level `l` is `BoundVar(free_count - 1 - l)`
 /// (the receive binds flattened, so body + condition share the reverse De Bruijn frame). Shared by
-/// the Comm receiver ([`comm_consistency_condition`], `free_count = COMM_FREE_COUNT`) and the
-/// structural-AC receiver ([`structural_ac_receiver_par`]).
+/// the Comm receiver ([`comm_receiver_par`], `free_count = k + 1 + m + 1` — `COMM_FREE_COUNT` only
+/// at `m = 1`) and the structural-AC receiver ([`structural_ac_receiver_par`]).
 ///
 /// `pub(crate)`: the A-S5.5 driver AC arms (`crate::rho_net_drive`) ride the SAME
 /// conjunction as a `MatchCase.guard` (evaluated in the case env, which shares the
@@ -6004,7 +6015,7 @@ pub fn rho_net_structural_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetStruc
         let Some(rewrite) = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == site.rule_label)
+            .find(|rewrite| rewrite.name == site.rule_label)
         else {
             continue;
         };
@@ -6181,6 +6192,7 @@ fn structural_ac_match_element_pattern(
 ///   * each DISTINCT structural reduct var's argument `FreeVar(k+1+j)` (bound WHERE it occurs as an
 ///     element argument — the RHS element `r_j`), a reduct that IS the channel var riding slot `0`;
 ///   * the residual soup to `rest` (`FreeVar(k)`).
+///
 /// The `condition` fires the COMM only when all channel slots are name-equal
 /// ([`nonlinear_consistency_condition`]); the body splices `out!( @"ac:op"!(r0) | … | rest )` — one
 /// send per RHS reduct occurrence (multiplicity-preserving) — from the bag-bound slots. Guard + body
@@ -6777,7 +6789,7 @@ fn collect_pattern_lhs_vars(pattern: &Pattern, out: &mut HashSet<String>) {
 fn find_var_ident(pattern: &Pattern, name: &str) -> Option<Ident> {
     match pattern {
         Pattern::Term(PatternTerm::Var(ident)) => {
-            (ident.to_string() == name).then(|| ident.clone())
+            (ident == name).then(|| ident.clone())
         },
         Pattern::Term(PatternTerm::Apply { args, .. }) => {
             args.iter().find_map(|arg| find_var_ident(arg, name))
@@ -7331,6 +7343,12 @@ pub(crate) fn float_satellite_table(def: &LanguageDef) -> FloatSatelliteTable {
                     table.hoist.push((constructor, float_index, arity));
                 }
             },
+            // `collapsible_match` is wrong HERE, and provably so: its suggestion moves the
+            // dedup test into a match GUARD, and guarded arms do not count toward
+            // exhaustivity — the rewrite stops compiling with E0004 (`Collection` no longer
+            // covered). `cargo clippy --fix` applied it, failed to build, and reverted the
+            // whole crate's fixes. The `if` stays in the arm BODY.
+            #[allow(clippy::collapsible_match)]
             Some(FloatAcrossClassification::Collection { op }) => {
                 if !table.merge_ops.contains(&op) {
                     table.merge_ops.push(op);
@@ -7375,7 +7393,7 @@ fn float_surface_binder_label(def: &LanguageDef) -> Option<String> {
     let primary = def.types.first()?.name.to_string();
     def.terms
         .iter()
-        .filter(|rule| rule.category.to_string() == primary)
+        .filter(|rule| rule.category == primary)
         .find_map(|rule| {
             single_binder_body_category(rule)
                 .filter(|body_category| *body_category == primary)
@@ -7629,7 +7647,7 @@ fn float_across_prefix(
             let Pattern::Term(PatternTerm::Var(b_var)) = b_arg else {
                 return None;
             };
-            if b_var.to_string() != body_var.to_string() {
+            if b_var != body_var {
                 return None;
             }
             if float_position.replace((index, body_var.to_string())).is_some() {
@@ -7642,7 +7660,7 @@ fn float_across_prefix(
             else {
                 return None;
             };
-            if c_var.to_string() != b_var.to_string() {
+            if c_var != b_var {
                 return None;
             }
             floated_past.push(c_var.to_string());
@@ -7689,7 +7707,7 @@ fn float_across_collection(
     if c_elements.len() != b_elements.len() {
         return None;
     }
-    if c_rest.map(ToString::to_string) != b_rest.map(ToString::to_string) {
+    if c_rest != b_rest {
         return None;
     }
     let mut float_position: Option<(usize, String)> = None;
@@ -7705,7 +7723,7 @@ fn float_across_collection(
             let Pattern::Term(PatternTerm::Var(b_var)) = b_element else {
                 return None;
             };
-            if b_var.to_string() != body_var.to_string() {
+            if b_var != body_var {
                 return None;
             }
             if float_position.replace((index, body_var.to_string())).is_some() {
@@ -7717,7 +7735,7 @@ fn float_across_collection(
             else {
                 return None;
             };
-            if c_var.to_string() != b_var.to_string() {
+            if c_var != b_var {
                 return None;
             }
             floated_past.push(c_var.to_string());
@@ -7765,15 +7783,13 @@ fn premises_are_exactly_float_freshness(
         let Premise::Freshness(FreshnessCondition { var, term }) = premise else {
             return false;
         };
-        if var.to_string() != binder_name {
+        if var != binder_name {
             return false;
         }
         let recognized = match term {
-            FreshnessTarget::Var(target) => {
-                floated_past.iter().any(|name| *name == target.to_string())
-            },
+            FreshnessTarget::Var(target) => floated_past.iter().any(|name| target == name),
             FreshnessTarget::CollectionRest(target) => {
-                floated_past_rest == Some(target.to_string().as_str())
+                floated_past_rest.is_some_and(|rest| target == rest)
             },
         };
         if !recognized {
@@ -7785,7 +7801,7 @@ fn premises_are_exactly_float_freshness(
             matches!(
                 premise,
                 Premise::Freshness(FreshnessCondition { var, term: FreshnessTarget::Var(target) })
-                    if var.to_string() == binder_name && target.to_string() == *name
+                    if var == binder_name && target == name
             )
         })
     };
@@ -7796,7 +7812,7 @@ fn premises_are_exactly_float_freshness(
                 Premise::Freshness(FreshnessCondition {
                     var,
                     term: FreshnessTarget::CollectionRest(target),
-                }) if var.to_string() == binder_name && target.to_string() == name
+                }) if var == binder_name && target == name
             )
         })
     };
@@ -7838,7 +7854,7 @@ fn float_constructor_shape(def: &LanguageDef, label: &Ident) -> FloatConstructor
         return FloatConstructorShape::Other;
     };
     // The handler emits arms for primary-category variants only.
-    if rule.category.to_string() != primary {
+    if rule.category != primary {
         return FloatConstructorShape::Other;
     }
     // A binder rule (either declaration route) is the binder arm, never a float-across target.
@@ -8571,7 +8587,7 @@ pub fn rho_net_nested_structural_ac_match_entries(
         let Some(rewrite) = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == site.rule_label)
+            .find(|rewrite| rewrite.name == site.rule_label)
         else {
             continue;
         };
@@ -10193,7 +10209,7 @@ mod tests {
         let comm_rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "Comm")
+            .find(|rewrite| rewrite.name == "Comm")
             .expect("MiniRhoFor has a Comm rewrite");
         let shape = comm_rule_shape(
             &comm_rewrite.left,
@@ -10345,7 +10361,7 @@ mod tests {
         let comm_rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "Comm")
+            .find(|rewrite| rewrite.name == "Comm")
             .expect("MiniPiSync has a Comm rewrite");
         let shape = comm_rule_shape(
             &comm_rewrite.left,
@@ -10379,7 +10395,7 @@ mod tests {
         let comm_rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "Comm")
+            .find(|rewrite| rewrite.name == "Comm")
             .expect("MiniPiSync has a Comm rewrite");
         let receiver = comm_rule_receiver(
             &comm_rewrite.left,
@@ -10601,7 +10617,7 @@ mod tests {
         let open_rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "OpenRule")
+            .find(|rewrite| rewrite.name == "OpenRule")
             .expect("MiniAmbient has an OpenRule rewrite");
         let shape = structural_ac_rule_shape(
             &open_rewrite.left,
@@ -10678,7 +10694,7 @@ mod tests {
         let in_rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "InRule")
+            .find(|rewrite| rewrite.name == "InRule")
             .expect("MiniInOut has an InRule rewrite");
         let shape = nested_structural_ac_rule_shape(&in_rewrite.left, &in_rewrite.right, &def)
             .expect("InRule must be recognized as a nested structural-AC shape");
@@ -10695,7 +10711,7 @@ mod tests {
         let open_rewrite = open_def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "OpenRule")
+            .find(|rewrite| rewrite.name == "OpenRule")
             .expect("OpenRule present");
         assert!(
             nested_structural_ac_rule_shape(&open_rewrite.left, &open_rewrite.right, &open_def)
@@ -10712,7 +10728,7 @@ mod tests {
         let out_rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "OutRule")
+            .find(|rewrite| rewrite.name == "OutRule")
             .expect("MiniInOut has an OutRule rewrite");
         let shape = nested_structural_ac_rule_shape(&out_rewrite.left, &out_rewrite.right, &def)
             .expect("OutRule (wrapper-rooted) must be recognized as a nested structural-AC shape");
@@ -10767,7 +10783,7 @@ mod tests {
         let out_rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "OutRule")
+            .find(|rewrite| rewrite.name == "OutRule")
             .expect("the redeclared OutRule is present");
         let shape = nested_structural_ac_rule_shape(&out_rewrite.left, &out_rewrite.right, &def)
             .expect("the redeclared (Red Out) OutRule must be recognized");
@@ -10912,7 +10928,7 @@ mod tests {
         let swap = def
             .equations
             .iter()
-            .find(|equation| equation.name.to_string() == "Swap")
+            .find(|equation| equation.name == "Swap")
             .expect("the Swap equation is present");
         assert!(
             !is_binder_float_equation(&def, swap, "PNew"),
@@ -10943,7 +10959,7 @@ mod tests {
             let in_new = def
                 .equations
                 .iter()
-                .find(|equation| equation.name.to_string() == "InNew")
+                .find(|equation| equation.name == "InNew")
                 .expect("InNew present");
             assert!(
                 !is_binder_float_equation(&def, in_new, "PNew"),
@@ -10976,7 +10992,7 @@ mod tests {
         let bind_new = def
             .equations
             .iter()
-            .find(|equation| equation.name.to_string() == "BindNew")
+            .find(|equation| equation.name == "BindNew")
             .expect("BindNew present");
         assert!(
             !is_binder_float_equation(&def, bind_new, "PNew"),
@@ -11015,7 +11031,7 @@ mod tests {
         let both_new = def
             .equations
             .iter()
-            .find(|equation| equation.name.to_string() == "BothNew")
+            .find(|equation| equation.name == "BothNew")
             .expect("BothNew present");
         assert!(
             !is_binder_float_equation(&def, both_new, "PNew"),
@@ -11449,7 +11465,7 @@ mod tests {
         let comm_rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "Comm")
+            .find(|rewrite| rewrite.name == "Comm")
             .expect("MiniRhoFor has a Comm rewrite");
         assert!(
             structural_ac_rule_shape(
@@ -11473,7 +11489,7 @@ mod tests {
         let open_rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "OpenRule")
+            .find(|rewrite| rewrite.name == "OpenRule")
             .expect("MiniAmbient has an OpenRule rewrite");
 
         let receiver = structural_ac_rule_receiver(
@@ -11616,7 +11632,7 @@ mod tests {
         let rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "Beta")
+            .find(|rewrite| rewrite.name == "Beta")
             .expect("the Beta rewrite exists");
         let (vars, scope, repl) = subst_rule_shape(&rewrite.left, &rewrite.right)
             .expect("Beta is a substitution rewrite");
@@ -11698,7 +11714,7 @@ mod tests {
         let term = def
             .terms
             .iter()
-            .find(|term| term.label.to_string() == "PowInt")
+            .find(|term| term.label == "PowInt")
             .expect("the PowInt term exists");
         assert_eq!(
             native_rule_shape(term).as_deref(),
@@ -11830,12 +11846,12 @@ mod tests {
         let pow = def
             .terms
             .iter()
-            .find(|term| term.label.to_string() == "PowInt")
+            .find(|term| term.label == "PowInt")
             .expect("PowInt exists");
         let fact = def
             .terms
             .iter()
-            .find(|term| term.label.to_string() == "FactInt")
+            .find(|term| term.label == "FactInt")
             .expect("FactInt exists");
         assert_eq!(
             native_rule_shape(pow).as_deref(),
@@ -12691,7 +12707,7 @@ mod tests {
                 .expect("Wrap(T) reflects");
         let c_ctx = new_gstring_par("c_ctx".to_string(), Vec::new(), false);
 
-        let join = contextual_join_receiver_par(context_rhs.clone(), &[c_ctx.clone()]);
+        let join = contextual_join_receiver_par(context_rhs.clone(), std::slice::from_ref(&c_ctx));
         let sigma = sigma_receiver_par(1, context_rhs, c_ctx);
         assert_eq!(join, sigma, "the unary contextual join is the k=1 σ-receiver frame");
 

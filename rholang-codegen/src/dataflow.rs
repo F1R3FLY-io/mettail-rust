@@ -99,6 +99,15 @@ impl core::fmt::Display for RhoFoldDataflowPredicateBlock {
 /// free variable). `BlockedBySemanticPredicate` means the shape is Rho-lowerable, but a semantic
 /// predicate such as safe arithmetic declined it. That distinction is what lets the runtime audit
 /// keep shape rejection separate from the paper's allowed semantic-predicate boundary.
+// `large_enum_variant` is wrong HERE. Its cost model is "the enum's width is paid many
+// times, so shrink it for the common small variant" — but this disposition is never stored
+// in a collection anywhere in the workspace: it is returned once per fold-lowering attempt
+// and destructured immediately at each of its four consumers (`repl::rho_backends`, the
+// `rholang` binary, and two test walks). And its LARGE variant is the SUCCESS variant, so
+// `Run(Box<…>)` would put a heap allocation on the admitted path to save a 280-byte move on
+// the rejected one. The constructors are emitted by `macros/src/gen/runtime/rho_dataflow.rs`
+// into every language's generated code, so the churn would also be workspace-wide.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum RhoFoldDataflowDisposition {
     Run(RhoFoldDataflowInvocation),

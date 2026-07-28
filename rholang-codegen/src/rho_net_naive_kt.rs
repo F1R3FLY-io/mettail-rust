@@ -582,7 +582,7 @@ fn collect_entry_sites(
 /// invariant (`accept_channels` is built in lockstep with the compiled entries
 /// and retained together), so a miss is an internal-coherence bug, not an
 /// input-dependent failure.
-fn entry_accept_channel<'r>(ruleset: &'r InRhoMatchingRuleset, pid: PatternId) -> &'r str {
+fn entry_accept_channel(ruleset: &InRhoMatchingRuleset, pid: PatternId) -> &str {
     ruleset
         .accept_channels
         .iter()

@@ -302,7 +302,7 @@ pub fn drive_admissible(def: &LanguageDef, ruleset: &InRhoMatchingRuleset) -> Dr
             .iter()
             .filter(|entry| {
                 let carrier_transcribes = def.rewrites.iter().any(|rewrite| {
-                    rewrite.name.to_string() == entry.rule_label
+                    rewrite.name == entry.rule_label
                         && !crate::rho_net_lower::congruence_only_premises(&rewrite.premises)
                         && matches!(
                             lower_lhs_vars(&rewrite.left),
@@ -651,14 +651,25 @@ pub(crate) struct DriveAcArm {
 
 /// A compiled driver redex arm of either family, in the documented deterministic order
 /// (positional first, then nested-AC, then structural-AC; declaration order within each).
+///
+/// BOTH payloads are boxed, symmetrically, and the symmetry is the point. `DriveRedexArm`
+/// is 456 bytes and `DriveAcArm` is 824, so an unboxed sum is 832 bytes per element — and
+/// the three vectors it is assembled from (`positional_arms` / `nested_ac_arms` /
+/// `structural_ac_arms`, each `Vec::with_capacity(rules.len())`, then concatenated) are
+/// HOMOGENEOUS, so every positional rule paid 376 bytes for a variant its vector never
+/// holds. Boxing only the larger payload just moves the complaint to the other variant
+/// (measured: `large_enum_variant` re-fired on `Positional` at 456 vs 8) and makes the
+/// total WORSE whenever AC rules outnumber positional ones. Boxing both makes the element
+/// 16 bytes, pays exactly one allocation per rule at lowering time, and leaves no variant
+/// subsidising the other.
 #[derive(Debug, Clone)]
 pub(crate) enum DriveArm {
     /// A positional/subst σ-ABI arm (A-S5.2) — fires `accept!(σ…, r)` through the
     /// EXISTING installed σ-receiver.
-    Positional(DriveRedexArm),
+    Positional(Box<DriveRedexArm>),
     /// An AC carrier-ABI arm (A-S5.5) — fires `⌜^drive-ac:R⌝!(t, r)` through the
     /// fixed-channel persistent AC-carrier receiver.
-    AcCarrier(DriveAcArm),
+    AcCarrier(Box<DriveAcArm>),
 }
 
 /// The unified RHS/operand description one AC carrier receiver is built from — the
@@ -1460,7 +1471,10 @@ pub enum FiringEmission {
     /// E-1: a per-(entry, rule) precompiled scion bundle `Par`, emitted INSTEAD of the
     /// redrive `for` — it publishes the contractum's pre-analyzed drive decomposition
     /// (known-RHS structure never re-scanned; only RHS variable positions re-enter
-    /// `^drive`). THE SEAM, deliberately constructed nowhere. Contract a bundle must
+    /// `^drive`). THE SEAM: constructed ONLY by a scion-selected arm
+    /// ([`fuel_gated_firing`], gated on `arm.scion`); production lowers under `AllRedrive`
+    /// (`arm.scion == false`), so `ContractumRedrive` is the path every emitted byte takes
+    /// today. Contract a bundle must
     /// satisfy: (a) compiled against the firing frame the emitter builds (`r` =
     /// `BoundVar(0)` inside the `new r` scope, `fuel`/`ret` at the enclosing arm frame);
     /// (b) the SM-7 seam invariant — for every schedule, the value ultimately reaching
@@ -1472,8 +1486,12 @@ pub enum FiringEmission {
     /// confluent cells; valid-NF-set membership + ledger consistency on non-confluent
     /// cells. The acceptance surface of §5.2 binds it.
     ScionBundle {
-        /// The precompiled emission `Par`.
-        bundle: Par,
+        /// The precompiled emission `Par`, BOXED: a `Par` is 248 bytes and the variant that
+        /// production actually takes (`ContractumRedrive`) carries none of it, so the
+        /// unboxed field widened every `FiringEmission` local to 248 bytes to serve the
+        /// arm-gated E-1 path. Both consumers ([`firing_emission_node`] and its carrier-ABI
+        /// twin) already clone the `Par` out, so the indirection costs them nothing.
+        bundle: Box<Par>,
     },
 }
 
@@ -1550,7 +1568,9 @@ pub(crate) fn firing_emission_node(
         // recovers its free-set from `locally_free` (a plain `ground` would zero it, corrupting
         // the enclosing `Match`-case COMM). The `^fired:` ledger is RETAINED — it is the
         // treatment arm's ONLY firing observable (`fired_labels()`, SM-3).
-        FiringEmission::ScionBundle { bundle } => par2(ledger(), node_from_par(bundle.clone())),
+        FiringEmission::ScionBundle { bundle } => {
+            par2(ledger(), node_from_par(bundle.as_ref().clone()))
+        },
     }
 }
 
@@ -1652,7 +1672,9 @@ fn ac_firing_emission_node(
         // contractum from the frame slots directly — NO `new r`, NO carrier round-trip; the
         // `^fired:` ledger is retained (`fired_labels()`, SM-3). (AC-carrier scion bundles are
         // the L4 / W-D stage; the seam accepts them here under the SM-7 invariant.)
-        FiringEmission::ScionBundle { bundle } => par2(ledger(), node_from_par(bundle.clone())),
+        FiringEmission::ScionBundle { bundle } => {
+            par2(ledger(), node_from_par(bundle.as_ref().clone()))
+        },
     }
 }
 
@@ -1987,9 +2009,9 @@ pub(crate) fn drive_lowering(
             match build_drive_ac_arm(rewrite, def, fingerprint) {
                 Ok(arm) => {
                     if is_nested {
-                        nested_ac_arms.push(DriveArm::AcCarrier(arm));
+                        nested_ac_arms.push(DriveArm::AcCarrier(Box::new(arm)));
                     } else {
-                        structural_ac_arms.push(DriveArm::AcCarrier(arm));
+                        structural_ac_arms.push(DriveArm::AcCarrier(Box::new(arm)));
                     }
                 },
                 Err(error) => {
@@ -2044,13 +2066,13 @@ pub(crate) fn drive_lowering(
                 if def
                     .terms
                     .iter()
-                    .any(|term| term.label == constructor.to_string() && is_binder_term(term))
+                    .any(|term| term.label == *constructor && is_binder_term(term))
         );
         // E-1: scion-select a positional `BaseRewrite` arm iff the policy asks for it (β
         // `SubstRewrite` never scions). The actual bundle build (and its fail-closed
         // fallback to `ContractumRedrive`) happens in-frame at `fuel_gated_firing`.
         let scion = matches!(policy, ScionPolicy::StructuralScion) && !is_subst_beta;
-        positional_arms.push(DriveArm::Positional(DriveRedexArm {
+        positional_arms.push(DriveArm::Positional(Box::new(DriveRedexArm {
             rule_label: rewrite.name.to_string(),
             accept_channel: accept_channel.clone(),
             sigma_vars: order,
@@ -2059,7 +2081,7 @@ pub(crate) fn drive_lowering(
             pattern,
             root_is_binder,
             scion,
-        }));
+        })));
     }
     let mut arms = positional_arms;
     arms.extend(nested_ac_arms);
@@ -2171,7 +2193,7 @@ fn scion_could_unify(lhs: &Pattern, sub: &Pattern) -> bool {
             Pattern::Term(PatternTerm::Apply { constructor: c1, args: a1 }),
             Pattern::Term(PatternTerm::Apply { constructor: c2, args: a2 }),
         ) => {
-            c1.to_string() == c2.to_string()
+            c1 == c2
                 && a1.len() == a2.len()
                 && a1.iter().zip(a2).all(|(x, y)| scion_could_unify(x, y))
         },
@@ -2561,7 +2583,7 @@ fn fuel_gated_firing(
     // so this is inert and the emission is byte-identical.
     let emission = if arm.scion {
         match scion_bundle_for_rule(&arm.rhs, &arm.sigma_vars, all_arms, fingerprint, env, "fuel", "ret") {
-            Ok(bundle) => FiringEmission::ScionBundle { bundle: bundle.par },
+            Ok(bundle) => FiringEmission::ScionBundle { bundle: Box::new(bundle.par) },
             Err(_) => FiringEmission::ContractumRedrive,
         }
     } else {
@@ -2766,13 +2788,13 @@ pub(crate) fn drive_program_par(
                     // Concurrent child drives — descent copies fuel, NEVER decrements
                     // (per-path semantics, plan v2 §4.2).
                     let mut composed: Option<Node> = None;
-                    for i in 0..arity {
+                    for (i, ret_name) in ret_names.iter().enumerate() {
                         let call = send(
                             ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
                             vec![
                                 carrier.child_payload(&env, i),
                                 env.var("fuel"),
-                                env.var(&ret_names[i]),
+                                env.var(ret_name),
                             ],
                         );
                         composed = Some(match composed {
@@ -3601,7 +3623,7 @@ mod tests {
         let rewrite = def
             .rewrites
             .iter()
-            .find(|rewrite| rewrite.name.to_string() == "Seal")
+            .find(|rewrite| rewrite.name == "Seal")
             .expect("the Seal rewrite exists");
         let arm = build_drive_ac_arm(rewrite, &def, "fp-witness")
             .expect("the Seal rewrite transcribes to a driver AC-carrier arm");

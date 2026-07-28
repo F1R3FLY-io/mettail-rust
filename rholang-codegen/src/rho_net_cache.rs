@@ -419,6 +419,13 @@ mod tests {
         .expect("the fresh-thread probe completes");
     }
 
+    /// What one force-order thread reports back: the lowered language name, the ruleset's
+    /// fingerprint, the deferred rule labels, and the installed program's debug rendering
+    /// (or the derivation error). Deliberately a POSITIONAL tuple — the whole point is to
+    /// compare every observable at once with a single `assert_eq!` across the six orders,
+    /// which named fields would turn into four assertions that can drift apart.
+    type ForceOrderObservation = (String, String, Vec<String>, Result<String, String>);
+
     #[test]
     fn force_order_is_invariant() {
         // EM-10's payoff: any accessor order derives identical values (pure pipeline fns,
@@ -427,7 +434,7 @@ mod tests {
         // agree across all six orders.
         let orders: [[u8; 3]; 6] =
             [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
-        let observations: Vec<(String, String, Vec<String>, Result<String, String>)> = orders
+        let observations: Vec<ForceOrderObservation> = orders
             .into_iter()
             .map(|order| {
                 std::thread::spawn(move || {

@@ -1142,15 +1142,17 @@ mod tests {
 
     const STORE_APPEND_FRAGMENT: &str = "MX0 . |- (R0 (S (S x))) ~> (Wrap x) ;";
 
+    /// Everything [`seeded_append_run`] hands back, in order: the seed report, the append
+    /// report, the backend's `(key, fragment-bytes)` entries, the ladder accounting, and
+    /// the content-dedup hit count. Every component is `Send`, which is what lets a caller
+    /// compute the whole run on a fresh thread (fresh artifact cache) and carry the result
+    /// across the `join`; the artifacts themselves are `!Send` and stay on that thread.
+    type SeededAppendRun =
+        (SeedReport, AppendReport, Vec<(Vec<u8>, Vec<u8>)>, LadderAccounting, u64);
+
     /// Seed + append one rewrite through BOTH the incremental pipeline and the
     /// store under backend `B`; return the `Send`-safe observables.
-    fn seeded_append_run<B: FragmentStoreBackend>() -> (
-        SeedReport,
-        AppendReport,
-        Vec<(Vec<u8>, Vec<u8>)>,
-        LadderAccounting,
-        u64,
-    ) {
+    fn seeded_append_run<B: FragmentStoreBackend>() -> SeededAppendRun {
         let base = cached_in_rho_artifacts(STORE_BASE_SOURCE).expect("the base derives");
         let mut store: ConstructionFragmentStore<B> = ConstructionFragmentStore::new();
         let seed = store.seed_from_artifacts(&base).expect("the base seeds");

@@ -1033,7 +1033,7 @@ pub fn rule_lhs_root_constructor(def: &LanguageDef, rule_label: &str) -> Result<
     let rewrite = def
         .rewrites
         .iter()
-        .find(|rewrite| rewrite.name.to_string() == rule_label)
+        .find(|rewrite| rewrite.name == rule_label)
         .ok_or_else(|| format!("in-Rho match root check: no rewrite named {rule_label}"))?;
     match &rewrite.left {
         Pattern::Term(PatternTerm::Apply { constructor, .. }) => Ok(constructor.to_string()),
@@ -1061,7 +1061,7 @@ pub fn reconstruct_redex_subject(
     let rewrite = def
         .rewrites
         .iter()
-        .find(|rewrite| rewrite.name.to_string() == rule_label)
+        .find(|rewrite| rewrite.name == rule_label)
         .ok_or_else(|| format!("in-Rho match subject: no rewrite named {rule_label}"))?;
     let bindings: HashMap<&str, &GroundTerm> = sigma
         .iter()
