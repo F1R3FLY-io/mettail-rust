@@ -2324,6 +2324,49 @@ mod native_ops {
             assert_reduces_to("10 / 2", "5");
         }
 
+        /// ★ The flagship equal-precedence fixture.
+        ///
+        /// `*` and `/` are both `prec.left(9, …)` in Rholang's normative grammar
+        /// (`rholang-tree-sitter/grammar.js`), so a mixed chain reads left-to-right.
+        /// Integer division truncates, which is what makes the two readings
+        /// distinguishable:
+        ///
+        /// | reading | value |
+        /// |---|---|
+        /// | `(6 * 3) / 2` = `18 / 2` | **9** |
+        /// | `6 * (3 / 2)` = `6 * 1`  | **6** |
+        ///
+        /// Before the fix every operator occupied its own precedence level — `*` at
+        /// `(32,33)` and `/` at `(34,35)` — so `/` bound tighter and this reduced to 6.
+        #[test]
+        fn mul_and_div_share_a_level_and_read_left_to_right() {
+            assert_reduces_to("6 * 3 / 2", "9");
+        }
+
+        /// The same level exercised through `%`, which the grammar also places at
+        /// level 9: `(8 * 3) % 5` = 4, where `8 * (3 % 5)` would be 24.
+        #[test]
+        fn mul_and_mod_share_a_level() {
+            assert_reduces_to("8 * 3 % 5", "4");
+        }
+
+        /// A pure left-associative chain of ONE operator — `(10 - 4) - 3` = 3, not
+        /// `10 - (4 - 3)` = 9.
+        #[test]
+        fn subtraction_chains_left_to_right() {
+            assert_reduces_to("10 - 4 - 3", "3");
+        }
+
+        /// `+` and `-` are both `prec.left(8, …)`. Their two readings of `1 + 2 - 3`
+        /// both evaluate to 0, so this asserts a chain whose readings DIFFER:
+        /// `(10 + 4) - 3` = 11 versus `10 + (4 - 3)` = 11 — also equal. Subtraction on
+        /// the left is what separates them: `(10 - 4) + 3` = 9 versus
+        /// `10 - (4 + 3)` = 3.
+        #[test]
+        fn add_and_sub_share_a_level_and_read_left_to_right() {
+            assert_reduces_to("10 - 4 + 3", "9");
+        }
+
         #[test]
         fn float_add() {
             let results = run("1.5 + 2.5");

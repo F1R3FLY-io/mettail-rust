@@ -1685,6 +1685,72 @@ fn simulator_regression_bool_prefix_tokens() {
 /// input. `parse_via_wpda_all` may legitimately return `Err` (no derivation)
 /// for an input — that is sound (zero alts); the probe fails ONLY if a
 /// SURVIVING alt has yield != input.
+/// The token sequence of `s` with grouping parentheses and whitespace removed.
+///
+/// ★ Why the comparison ignores parentheses (2026-07-28).
+///
+/// The fabrication this probe exists to catch is a **syntactic-cast keyword** — `int`,
+/// `float`, `bool`, `str`, `bigrat`, `fraction` — appearing in a derivation's yield when
+/// it is absent from the input. Every one of those is an identifier, so every one of them
+/// survives this stripping and is still caught; `pass2c_probe_still_catches_the_original_
+/// fabrication` below is the standing witness of that.
+///
+/// What the stripping tolerates is the printer's canonical DISAMBIGUATING parentheses,
+/// which the original probe's own doc comment already named as the intended tolerance
+/// ("every alt re-displays to the input modulo the parser's canonical disambiguating
+/// parens") before adding the parenthetical claim "(These re-display with the SAME token
+/// sequence as the input.)". That claim was true, but only by accident of the ladder:
+/// `>` in `Bool` was `(4,5)` and `<` in `Str` was `(6,7)`, so a `LtStr` nested in a
+/// `GtBool`'s right operand cleared the inherited floor of 5 with its own `ℓ = 6` and
+/// printed bare. Collapsing the six comparison levels into one put both at `(2,3)`, so
+/// `ℓ = 2` no longer clears the floor of 3 and the printer brackets.
+///
+/// The bracket is the printer being MORE correct, not less: `y != true > x < "qua"` is
+/// genuinely ambiguous — this very probe recovers six readings of it — and emitting the
+/// bracket is how `Display` names the one it holds. Grouping is inert in Calculator
+/// (`languages/tests/calculator_grouping_is_inert.rs`), so a fabricated `(` changes no
+/// denotation, which is exactly why it is the one terminal this probe may ignore.
+fn cast_keyword_yield(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(c, '(' | ')' | ' ' | '\t'))
+        .collect()
+}
+
+/// ★ ANTI-VACUITY CONTROL for `cast_keyword_yield`.
+///
+/// The relaxation above is only safe if the comparison still rejects the ORIGINAL
+/// Pass-2c defect. That defect displayed `bool(0)` as `bool(float(0))` — a fabricated
+/// `float` keyword. This test pins that the comparison rejects it, and accepts a
+/// difference of grouping parentheses alone. Without this witness, a future widening of
+/// `cast_keyword_yield` could silently render the whole probe inert.
+#[test]
+fn pass2c_probe_still_catches_the_original_fabrication() {
+    // The historical bug: a fabricated syntactic-cast keyword must NOT compare equal.
+    assert_ne!(
+        cast_keyword_yield("bool(float(0))"),
+        cast_keyword_yield("bool(0)"),
+        "the comparison must still reject the original Pass-2c fabrication — a derivation \
+         that invents a `float` cast keyword absent from the input"
+    );
+    assert_ne!(
+        cast_keyword_yield("int(str(a))"),
+        cast_keyword_yield("int(a)"),
+        "a fabricated `str` cast must be rejected too"
+    );
+    // Grouping parentheses alone must compare equal — the tolerance being claimed.
+    assert_eq!(
+        cast_keyword_yield(r#"int(y != true > (x < "qua"))"#),
+        cast_keyword_yield(r#"int(y != true > x < "qua")"#),
+        "a difference of grouping parentheses alone must be tolerated"
+    );
+    // …and a fabricated OPERATOR or operand must still be rejected.
+    assert_ne!(
+        cast_keyword_yield("int(a + b)"),
+        cast_keyword_yield("int(a)"),
+        "a fabricated operator must be rejected"
+    );
+}
+
 #[test]
 fn pass2c_token_soundness_probe() {
     use mettail_languages::calculator::{Bool, Float, Int, Str};
@@ -1695,11 +1761,15 @@ fn pass2c_token_soundness_probe() {
                 for (i, t) in alts.iter().enumerate() {
                     let displayed = format!("{}", t);
                     assert_eq!(
-                        displayed, $input,
+                        cast_keyword_yield(&displayed),
+                        cast_keyword_yield($input),
                         "TOKEN-SOUNDNESS VIOLATION: parse_via_wpda_all({:?}) alt #{} \
-                         re-displays as {:?} (yield != input) — a derivation fabricated \
-                         terminals absent from the input. The Pass-2c span backstop regressed.",
-                        $input, i, displayed,
+                         re-displays as {:?} (yield != input, ignoring grouping parens) — a \
+                         derivation fabricated terminals absent from the input. The Pass-2c \
+                         span backstop regressed.",
+                        $input,
+                        i,
+                        displayed,
                     );
                 }
             }
@@ -1721,10 +1791,12 @@ fn pass2c_token_soundness_probe() {
     probe!(Int, "int(int(3))");
     // Sig-B Blocker-3 M7.3 (2026-06-01): the SPAN-ANCHORED var-first Bool casts
     // (the §1.2 left-assoc fold) must be TOKEN-SOUND — every alt re-displays to
-    // the input modulo the parser's canonical disambiguating parens. The probe
-    // compares against the input verbatim; the var-first Bool casts whose
-    // closure path is the span-anchored drain must NOT fabricate a syntactic-cast
-    // keyword. (These re-display with the SAME token sequence as the input.)
+    // the input modulo the parser's canonical disambiguating parens, which is what
+    // `cast_keyword_yield` normalises away. The var-first Bool casts whose closure
+    // path is the span-anchored drain must NOT fabricate a syntactic-cast keyword.
+    // (Since 2026-07-28 these DO re-display with an extra pair of grouping parens:
+    // both comparisons now sit at (2,3) in their respective ladders, so the nested
+    // `LtStr` no longer clears its inherited floor. See `cast_keyword_yield`.)
     probe!(Int, r#"int(y != true > x < "qua")"#);
     probe!(Int, r#"int(y and b == y < "x")"#);
 }
