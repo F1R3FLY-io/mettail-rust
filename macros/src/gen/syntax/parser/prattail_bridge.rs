@@ -146,6 +146,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
             category: lt.name.to_string(),
             syntax,
             associativity: Associativity::Left,
+            shares_level_with_previous: false,
             prefix_precedence: None,
             has_rust_code: false,
             rust_code: None,
@@ -566,6 +567,7 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
         } else {
             Associativity::Left
         },
+        shares_level_with_previous: rule.shares_level_with_previous,
         prefix_precedence: rule.prefix_bp,
         has_rust_code: rule.rust_code.is_some(),
         rust_code: rule.rust_code.as_ref().map(|rc| {

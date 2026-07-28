@@ -126,6 +126,7 @@ pub(crate) fn build_per_category_rules(
             rust_code: None,
             eval_mode: None,
             is_right_assoc: false,
+            shares_level_with_previous: false,
             prefix_bp: None,
             tier_directive: None,
             // Literal-pattern shape synthesis is a foundational rule
@@ -207,6 +208,7 @@ pub(crate) fn build_per_category_rules(
             rust_code: None,
             eval_mode: None,
             is_right_assoc: false,
+            shares_level_with_previous: false,
             prefix_bp: None,
             tier_directive: None,
             // Collection-literal synthesis (List/Bag/Map) is a foundational
@@ -277,6 +279,7 @@ pub(crate) fn build_per_category_rules(
             rust_code: None,
             eval_mode: None,
             is_right_assoc: false,
+            shares_level_with_previous: false,
             prefix_bp: None,
             tier_directive: None,
             // Var-rule synthesis is a foundational rule (mirrors macro
@@ -384,6 +387,7 @@ pub(crate) fn build_per_category_rules(
                     rust_code: None,
                     eval_mode: None,
                     is_right_assoc: false,
+                    shares_level_with_previous: false,
                     prefix_bp: None,
                     tier_directive: None,
                     is_auto_injected: false,
@@ -429,6 +433,7 @@ pub(crate) fn build_per_category_rules(
                     rust_code: None,
                     eval_mode: None,
                     is_right_assoc: false,
+                    shares_level_with_previous: false,
                     prefix_bp: None,
                     tier_directive: None,
                     is_auto_injected: false,
@@ -503,6 +508,7 @@ pub(crate) fn build_per_category_rules(
                     rust_code: None,
                     eval_mode: None,
                     is_right_assoc: false,
+                    shares_level_with_previous: false,
                     prefix_bp: None,
                     tier_directive: None,
                     is_auto_injected: false,

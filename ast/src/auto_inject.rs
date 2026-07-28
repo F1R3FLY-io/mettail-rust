@@ -570,6 +570,9 @@ fn make_injection_rule(source_cat: &str, target_cat: &str) -> GrammarRule {
         rust_code: None,
         eval_mode: None,
         is_right_assoc: false,
+        // A cross-category injection is a unary promotion (`v : Source ⊢ v : Target`),
+        // never an infix operator, so it never reaches a precedence level to share.
+        shares_level_with_previous: false,
         prefix_bp: None,
         tier_directive: None,
         // Stage 3.13b (2026-05-01): provenance flag — synthetic rule
@@ -701,6 +704,7 @@ mod tests {
             rust_code: None,
             eval_mode: None,
             is_right_assoc: false,
+            shares_level_with_previous: false,
             prefix_bp: None,
             tier_directive: None,
             is_auto_injected: false,

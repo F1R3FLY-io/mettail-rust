@@ -326,6 +326,7 @@ pub(crate) fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBund
                 category: r.category.clone(),
                 result_category: r.category.clone(),
                 associativity: r.associativity,
+                shares_level_with_previous: r.shares_level_with_previous,
                 is_cross_category: r.is_cross_category,
                 is_postfix: r.is_postfix,
                 is_mixfix,

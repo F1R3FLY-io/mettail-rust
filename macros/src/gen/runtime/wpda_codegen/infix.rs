@@ -124,6 +124,7 @@ fn classify_judgement(
                         } else {
                             Associativity::Left
                         },
+                        shares_level_with_previous: rule.shares_level_with_previous,
                         is_cross_category,
                         is_postfix: false,
                         is_mixfix: false,
@@ -150,7 +151,13 @@ fn classify_judgement(
                     terminal: op.clone(),
                     category: t1_str,
                     result_category: result_cat,
+                    // A postfix operator has no right operand, so it has no
+                    // associativity to declare; `analyze_binding_powers` lays every
+                    // postfix operator out in a separate pass ABOVE the whole infix
+                    // range, where neither this field nor `shares_level_with_previous`
+                    // is read.
                     associativity: Associativity::Left,
+                    shares_level_with_previous: false,
                     is_cross_category,
                     is_postfix: true,
                     is_mixfix: false,
@@ -347,7 +354,11 @@ fn classify_postfix_mixfix(
             terminal: trigger,
             category: lhs_cat,
             result_category: result_cat,
+            // A NULLARY mixfix (`n "!" "(" ")"`) has no operand after the trigger, so it
+            // has no right edge for a chain to nest into and associativity is not
+            // observable in its surface. See `classify_mixfix` for the shape where it is.
             associativity: Associativity::Left,
+            shares_level_with_previous: rule.shares_level_with_previous,
             is_cross_category,
             is_postfix: false,
             is_mixfix: true,
@@ -367,7 +378,11 @@ fn classify_postfix_mixfix(
         terminal: trigger,
         category: lhs_cat,
         result_category: result_cat,
+        // A postfix-mixfix (`n "!" "(" q ")"`) closes with a literal, so its final
+        // operand is delimited and the rule has no open right edge — associativity is
+        // not observable. `classify_mixfix` handles the shape where it is.
         associativity: Associativity::Left,
+        shares_level_with_previous: rule.shares_level_with_previous,
         is_cross_category,
         is_postfix: false,
         // Treated as mixfix for downstream dispatch — the widened
@@ -448,12 +463,34 @@ fn classify_mixfix(
     let lhs_cat = base_type_name(lhs_ty)?;
     let result_cat = rule.category.to_string();
     let is_cross_category = lhs_cat != result_cat;
+
+    // ★ MIXFIX ASSOCIATIVITY (2026-07-28) — this used to be a hard-coded
+    // `Associativity::Left`, which silently DROPPED a declared `right` on every mixfix
+    // rule. `Tern` (`c "?" t ":" e … step right` in Calculator) is exactly such a rule,
+    // and `macros/src/gen/syntax/display.rs` honours the declaration, so the printer and
+    // this table disagreed about what the same grammar meant.
+    //
+    // Associativity is a property of the rule's RIGHT EDGE — it decides how a chain of
+    // the operator nests, which is only observable when the FINAL operand is open on the
+    // right. It is derived here rather than assumed: a mixfix whose last part is followed
+    // by a literal (`n "!" "(" q ")"`) is self-delimiting, and `right` on such a rule has
+    // no chain to re-nest. The ternary's last part (`e`) has no following terminal, so it
+    // does, and `1 ? 2 : 0 ? 3 : 4` reads `1 ? 2 : (0 ? 3 : 4)`.
+    let has_open_right_edge = parts
+        .last()
+        .is_some_and(|part| part.following_terminals.is_empty());
+
     Some(InfixRuleInfo {
         label: rule.label.to_string(),
         terminal: trigger,
         category: lhs_cat,
         result_category: result_cat,
-        associativity: Associativity::Left,
+        associativity: if rule.is_right_assoc && has_open_right_edge {
+            Associativity::Right
+        } else {
+            Associativity::Left
+        },
+        shares_level_with_previous: rule.shares_level_with_previous,
         is_cross_category,
         is_postfix: false,
         is_mixfix: true,

@@ -258,6 +258,7 @@ fn make_rule(label: &str, category: &str, syntax: Vec<SyntaxItemSpec>, is_infix:
         syntax,
         is_infix,
         associativity: Associativity::Left,
+        shares_level_with_previous: false,
         is_var: false,
         is_literal: false,
         has_binder: false,

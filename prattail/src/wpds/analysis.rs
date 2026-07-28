@@ -333,6 +333,10 @@ pub fn analyze_wpds_from_bundle(
             category: category.clone(),
             syntax: syntax.clone(),
             associativity: crate::binding_power::Associativity::Left,
+            // Reconstructed from a syntax-only triple, which carries neither the DSL's
+            // `right` nor its `same` annotation — the same provenance loss noted for
+            // `is_auto_injected` below. Both default to the unannotated reading.
+            shares_level_with_previous: false,
             prefix_precedence: None,
             has_rust_code: false,
             rust_code: None,

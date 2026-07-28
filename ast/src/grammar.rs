@@ -250,6 +250,44 @@ pub struct GrammarRule {
     /// Whether this rule is right-associative (default: left).
     /// Annotated with `right` keyword after eval mode in the DSL.
     pub is_right_assoc: bool,
+    /// ★ PRECEDENCE LEVELS (2026-07-28): this rule shares the PRECEDENCE LEVEL of the
+    /// preceding non-postfix infix rule of the same category, instead of opening a new
+    /// (tighter) one. Annotated with the bare `same` keyword after the eval mode,
+    /// alongside `right`, `prefix(N)`, and `canonical`.
+    ///
+    /// # Why a marker and not a number
+    ///
+    /// Before this flag, `prattail::binding_power::analyze_binding_powers` advanced its
+    /// precedence counter once per RULE, in both associativity arms. Rule `i` of a
+    /// category therefore received `left_bp ∈ {2 + 2i, 3 + 2i}`, and two rules `i < j`
+    /// could share a `left_bp` only if `3 + 2i = 2 + 2j`, i.e. `2(j − i) = 1` — impossible
+    /// by parity. Declaration order was consequently a strict TOTAL order by construction:
+    /// the grammar could not say that `*` and `/` bind equally tightly, so `6 * 3 / 2`
+    /// parsed as `6 * (3 / 2)`.
+    ///
+    /// `same` restores the missing relation — "no tighter than the previous rule" — while
+    /// keeping DECLARATION ORDER the single source of truth for the ordering itself. An
+    /// absolute `@prec(n)` was rejected: it admits partial specifications, renumbering
+    /// churn, and two rules that disagree about which level a number denotes, none of
+    /// which a relative marker can express.
+    ///
+    /// # It is orthogonal to associativity
+    ///
+    /// `same` composes with `right` on the SAME rule, which is not a nicety but a hard
+    /// requirement of the language being modelled: Rholang's normative tree-sitter grammar
+    /// (`rholang-tree-sitter/grammar.js`) declares level 6 with MIXED associativity —
+    /// `matches: prec.right(6, …)` beside `eq: prec.left(6, …)` and
+    /// `neq: prec.left(6, …)`. A design that attached one associativity per level could
+    /// not express Rholang's own grammar. Associativity is therefore per-OPERATOR and
+    /// precedence is per-LEVEL, and the two never interact.
+    ///
+    /// # Meaning when there is no previous rule
+    ///
+    /// `same` on the first non-postfix infix rule of a category has nothing to share with
+    /// and is ignored (the rule opens the category's first level). It is not an error,
+    /// because rules reach the analyzer from several synthesis paths whose relative order
+    /// is not author-visible; a hard failure there would be a trap rather than a guard.
+    pub shares_level_with_previous: bool,
     /// Explicit prefix binding power for unary prefix operators.
     /// Annotated with `prefix(N)` after eval mode and `right` in the DSL.
     /// When `None`, falls back to `max_infix_bp + 2`.
@@ -356,6 +394,7 @@ pub struct GrammarRule {
 /// | `term_context`, `syntax_pattern` | `None` | the old (BNFC) shape |
 /// | `rust_code`, `eval_mode` | `None` | no HOL body, hence no fold/step mode |
 /// | `is_right_assoc` | `false` | left-associative unless the rule says `right` |
+/// | `shares_level_with_previous` | `false` | opens its own precedence level unless the rule says `same` |
 /// | `prefix_bp` | `None` | prefix binding power falls back to `max_infix_bp + 2` |
 /// | `tier_directive` | `None` | no `#[tier(…)]`; the analyzer's classification stands |
 /// | `is_auto_injected` | `false` | user-written, not emitted by auto-injection |
@@ -403,6 +442,7 @@ pub fn rule_fixture(label: Ident, category: Ident) -> GrammarRule {
         rust_code: None,
         eval_mode: None,
         is_right_assoc: false,
+        shares_level_with_previous: false,
         prefix_bp: None,
         tier_directive: None,
         is_auto_injected: false,
@@ -714,6 +754,7 @@ fn parse_grammar_rule_old(label: Ident, input: ParseStream) -> SynResult<Grammar
         rust_code: None,
         eval_mode: None,
         is_right_assoc: false,
+        shares_level_with_previous: false,
         prefix_bp: None,
         tier_directive: None,
         is_auto_injected: false,
@@ -765,12 +806,12 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
                     _ => unreachable!(),
                 }
             },
-            "right" | "prefix" | "canonical" => None, // handled below
+            "right" | "prefix" | "canonical" | "same" => None, // handled below
             _ => {
                 let bad = input.parse::<syn::Ident>()?;
                 return Err(syn::Error::new(
                     bad.span(),
-                    "expected 'fold', 'step', 'right', 'prefix(N)', 'canonical', or ';'",
+                    "expected 'fold', 'step', 'right', 'prefix(N)', 'canonical', 'same', or ';'",
                 ));
             },
         }
@@ -778,12 +819,16 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
         None
     };
 
-    // Parse optional annotations after eval mode: `right`, `prefix(N)`, `canonical`
+    // Parse optional annotations after eval mode: `right`, `prefix(N)`, `canonical`, `same`
     let mut is_right_assoc = false;
     let mut prefix_bp = None;
     // ★ SURFACE SYNONYMY (2026-07-26) — see `GrammarRule::is_canonical_synonym` for what
     // this declares and why it cannot be inferred.
     let mut is_canonical_synonym = false;
+    // ★ PRECEDENCE LEVELS (2026-07-28) — see `GrammarRule::shares_level_with_previous`.
+    // Order-independent with respect to `right`: `same right` and `right same` are the same
+    // declaration, because precedence and associativity are orthogonal.
+    let mut shares_level_with_previous = false;
 
     while input.peek(syn::Ident) {
         let fork = input.fork();
@@ -791,6 +836,9 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
             if kw == "right" {
                 let _ = input.parse::<syn::Ident>()?; // consume
                 is_right_assoc = true;
+            } else if kw == "same" {
+                let _ = input.parse::<syn::Ident>()?; // consume
+                shares_level_with_previous = true;
             } else if kw == "prefix" {
                 let _ = input.parse::<syn::Ident>()?; // consume "prefix"
                                                       // Parse (N)
@@ -805,7 +853,8 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
             } else {
                 return Err(syn::Error::new(
                     kw.span(),
-                    "expected 'right', 'prefix(N)', 'canonical', or ';' after evaluation mode",
+                    "expected 'right', 'prefix(N)', 'canonical', 'same', or ';' after \
+                     evaluation mode",
                 ));
             }
         } else {
@@ -829,6 +878,7 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
         rust_code,
         eval_mode,
         is_right_assoc,
+        shares_level_with_previous,
         prefix_bp,
         tier_directive: None,
         is_auto_injected: false,

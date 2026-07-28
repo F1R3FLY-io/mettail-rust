@@ -524,14 +524,14 @@ impl Default for BindingPowerTable {
 /// `analyze_binding_powers` reserves between max-infix and first-postfix
 /// (postfix starts at `max_infix_bp + 4`).
 ///
-/// **Why +2 (not +1):** matches the existing Display behavior at
-/// `macros/src/gen/syntax/display.rs:174` and the legacy recursive-descent
-/// path at `prattail/src/pipeline.rs:1259` — both already use `+2`.
+/// **Why +2 (not +1):** matches the existing Display behavior in
+/// `macros/src/gen/syntax/display.rs` and the legacy recursive-descent path in
+/// `prattail/src/pipeline/state.rs` — both already use `+2`.
 /// Standardizing to `+2` is zero-regression. Margin above max-infix also
 /// provides defense-in-depth against off-by-one bugs in BP comparisons.
 ///
 /// **Consumers:**
-/// - `prattail/src/pipeline.rs::generate_parser` — RDRuleInfo emission
+/// - `prattail/src/pipeline/state.rs` — RDRuleInfo emission (`prefix_bp`)
 /// - `macros/src/gen/syntax/display.rs::build_bp_lookup` — Display paren elision
 /// - `macros/src/gen/runtime/wpda_codegen/binder.rs:708,1004` — WPDS ParamParse arms
 ///   (Stage 3.27d G-PREFIX-BP installs `cur_bp = compute_prefix_bp(...)` here)
@@ -581,9 +581,33 @@ pub fn compute_prefix_bp(
 /// - New syntax: syntax_pattern is [Param, Literal, Param] with both params
 ///   having the same type as the result category
 ///
-/// Precedence is assigned by declaration order: first-declared infix operator
-/// gets the lowest precedence. Operators within the same precedence group
-/// are left-associative by default.
+/// # Precedence levels
+///
+/// Precedence is assigned by declaration order: the first-declared infix operator of a
+/// category gets the loosest level, and each subsequent rule opens the next tighter one —
+/// UNLESS it is marked `same` ([`InfixRuleInfo::shares_level_with_previous`]), in which
+/// case it joins its predecessor's level instead. The counter therefore advances once per
+/// LEVEL, not once per rule.
+///
+/// This is the repair of a defect that made equal precedence unrepresentable. Both
+/// associativity arms below used to advance the counter, so rule `i` of a category
+/// received `left_bp ∈ {2 + 2i, 3 + 2i}`; two rules `i < j` could share a `left_bp` only
+/// if `3 + 2i = 2 + 2j`, i.e. `2(j − i) = 1`, which no integers satisfy. Every operator
+/// was thus provably distinct in precedence and declaration order was a strict TOTAL
+/// order by construction — so `6 * 3 / 2` could only parse as `6 * (3 / 2)`.
+///
+/// # Precedence and associativity are independent
+///
+/// A level is a set of operators, and each operator carries its OWN associativity within
+/// it. The encoding makes this exact: at level `p`, a left-associative operator gets
+/// `(ℓ, r) = (p, p + 1)` and a right-associative one gets `(p + 1, p)`. Both have
+/// `min(ℓ, r) = p` — the level — while the ORDER of the pair carries the associativity.
+/// Downstream consumers already read the level as `min(left_bp, right_bp)`
+/// (`macros/.../wpda_codegen/facade.rs`).
+///
+/// Mixed associativity within one level is therefore expressible, and must be: Rholang's
+/// normative grammar declares `matches` as `prec.right(6, …)` alongside `eq`/`neq` as
+/// `prec.left(6, …)`.
 ///
 /// Postfix operators are assigned binding powers above all non-postfix operators
 /// in a second pass, ensuring they always bind tighter than infix operators
@@ -608,21 +632,32 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
     // 2. Postfix operators above the non-postfix range, leaving a gap for
     //    unary prefix (which gets max_non_postfix_bp + 2 in lib.rs)
     for cat_rules in by_category.values() {
-        let mut precedence: u8 = 2; // Start at 2 to leave room for 0 (entry) and 1
+        // The level of the rule currently being assigned. Starts at 2 to leave room for
+        // 0 (entry) and 1. A level occupies exactly two binding-power slots — `p` and
+        // `p + 1` — so the next level is `p + 2`.
+        let mut precedence: u8 = 2;
+        // Whether any non-postfix rule has been assigned yet in this category. `same` on
+        // the FIRST such rule has no predecessor to share with, so it opens the first
+        // level like an unmarked rule would; see `GrammarRule::shares_level_with_previous`
+        // for why that is silently permitted rather than rejected.
+        let mut level_is_open = false;
 
-        // First pass: non-postfix operators (regular infix + mixfix)
+        // First pass: non-postfix operators (regular infix + mixfix), in declaration
+        // order. The counter advances once per LEVEL — a `same`-marked rule joins the
+        // level its predecessor opened instead of starting a tighter one.
         for rule in cat_rules.iter().filter(|r| !r.is_postfix) {
+            if level_is_open && !rule.shares_level_with_previous {
+                precedence += 2;
+            }
+            level_is_open = true;
+
+            // Precedence selects the level; associativity only decides which end of the
+            // level's two slots faces left. `min(left_bp, right_bp) == precedence` holds
+            // for both arms, which is what lets operators of DIFFERENT associativity
+            // share one level.
             let (left_bp, right_bp) = match rule.associativity {
-                Associativity::Left => {
-                    let bp = (precedence, precedence + 1);
-                    precedence += 2;
-                    bp
-                },
-                Associativity::Right => {
-                    let bp = (precedence + 1, precedence);
-                    precedence += 2;
-                    bp
-                },
+                Associativity::Left => (precedence, precedence + 1),
+                Associativity::Right => (precedence + 1, precedence),
             };
 
             table.operators.push(InfixOperator {
@@ -643,10 +678,21 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
         // Second pass: postfix operators start above non-postfix + prefix gap.
         // Layout (Stage 3.27d-pre standardized 2026-04-30, PREFIX_BP_OFFSET=2):
         //   [infix at 2..max_infix_bp] [prefix at max_infix_bp+2] [postfix at max_infix_bp+4..]
-        // where `precedence` after the infix loop = max_infix_bp + 1.
         // Prefix BP is computed by `compute_prefix_bp()` and installed at codegen
         // time in WPDS binder.rs:708,1004 ParamParse arms (Stage 3.27d work).
-        let mut postfix_prec = precedence + 2;
+        //
+        // ★ The infix loop no longer leaves `precedence` one slot PAST the last level —
+        // it advances lazily, before each new level, so that a `same`-marked rule can
+        // join the level already assigned. `first_free_bp` reconstructs the value the
+        // loop used to end on (`max_infix_bp + 1`, or the untouched initial 2 when the
+        // category declares no non-postfix operator at all), keeping this layout — and
+        // every prefix/postfix binding power derived from it — exactly as it was.
+        let first_free_bp = if level_is_open {
+            precedence + 2
+        } else {
+            precedence
+        };
+        let mut postfix_prec = first_free_bp + 2;
         for rule in cat_rules.iter().filter(|r| r.is_postfix) {
             table.operators.push(InfixOperator {
                 terminal: rule.terminal.clone(),
@@ -682,6 +728,21 @@ pub struct InfixRuleInfo {
     pub result_category: String,
     /// Associativity (default: Left).
     pub associativity: Associativity,
+    /// ★ PRECEDENCE LEVELS (2026-07-28): share the PRECEDENCE LEVEL of the preceding
+    /// non-postfix rule of this category rather than opening a new, tighter one.
+    ///
+    /// Carries the grammar DSL's `same` annotation
+    /// (`mettail_ast::grammar::GrammarRule::shares_level_with_previous`) into
+    /// [`analyze_binding_powers`], which is the ONLY consumer. Ignored on the first
+    /// non-postfix rule of a category (nothing to share with) and on every postfix rule
+    /// (postfix operators are laid out in a separate pass, above the whole infix range).
+    ///
+    /// This is deliberately NOT an absolute level number: declaration order remains the
+    /// single source of truth for the ORDER, and this flag supplies only the missing
+    /// "no tighter than its predecessor" relation. See the field's documentation on
+    /// `GrammarRule` for the parity argument that shows why the relation could not be
+    /// expressed before it existed.
+    pub shares_level_with_previous: bool,
     /// Whether this is a cross-category operator.
     pub is_cross_category: bool,
     /// Whether this is a postfix operator.
@@ -714,6 +775,7 @@ mod tests {
             category: category.to_string(),
             result_category: category.to_string(),
             associativity: assoc,
+            shares_level_with_previous: false,
             is_cross_category: false,
             is_postfix: false,
             is_mixfix: false,
@@ -1224,6 +1286,7 @@ mod tests {
                 category: "Int".to_string(),
                 result_category: "Int".to_string(),
                 associativity: Associativity::Left,
+                shares_level_with_previous: false,
                 is_cross_category: false,
                 is_postfix: true,
                 is_mixfix: false,

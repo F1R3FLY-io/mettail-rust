@@ -742,10 +742,8 @@ impl<T> LexResult<T> {
         upper: usize,
     ) -> &[(T, runtime_types::Range)] {
         let buffer = self.tokens_on_channel(channel);
-        let first =
-            buffer.partition_point(|(_, range)| range.start.byte_offset < lower);
-        let last =
-            buffer.partition_point(|(_, range)| range.start.byte_offset < upper);
+        let first = buffer.partition_point(|(_, range)| range.start.byte_offset < lower);
+        let last = buffer.partition_point(|(_, range)| range.start.byte_offset < upper);
         &buffer[first..last]
     }
 }
@@ -829,14 +827,20 @@ impl Default for ReservationPolicy {
     /// per-language opt-in (`options { reserved_keywords: auto }`), which
     /// keeps every existing language's generated lexer byte-identical.
     fn default() -> Self {
-        ReservationPolicy { mode: ReservationMode::None, contextual: std::collections::HashSet::new() }
+        ReservationPolicy {
+            mode: ReservationMode::None,
+            contextual: std::collections::HashSet::new(),
+        }
     }
 }
 
 impl ReservationPolicy {
     /// Reserve every identifier-shaped keyword (no per-terminal opt-outs).
     pub fn auto() -> Self {
-        ReservationPolicy { mode: ReservationMode::Auto, contextual: std::collections::HashSet::new() }
+        ReservationPolicy {
+            mode: ReservationMode::Auto,
+            contextual: std::collections::HashSet::new(),
+        }
     }
 
     /// Reserve nothing (full ambiguity retained).
@@ -1049,6 +1053,15 @@ pub struct RuleSpec {
     pub is_infix: bool,
     /// Associativity (only meaningful for infix rules).
     pub associativity: Associativity,
+    /// ★ PRECEDENCE LEVELS (2026-07-28): share the preceding infix rule's precedence
+    /// level rather than opening a new, tighter one (the DSL's `same` annotation).
+    ///
+    /// Orthogonal to `associativity`: a level is a SET of operators and each member keeps
+    /// its own associativity, which is what lets Rholang's level 6 hold right-associative
+    /// `matches` beside left-associative `==` and `!=`. Consumed only by
+    /// [`binding_power::analyze_binding_powers`]; see
+    /// [`binding_power::InfixRuleInfo::shares_level_with_previous`].
+    pub shares_level_with_previous: bool,
     /// Whether this is a variable rule.
     pub is_var: bool,
     /// Whether this is a literal rule.
@@ -1196,6 +1209,10 @@ pub struct RuleSpecInput {
     pub syntax: Vec<SyntaxItemSpec>,
     /// Associativity (only meaningful for infix rules).
     pub associativity: Associativity,
+    /// ★ PRECEDENCE LEVELS (2026-07-28): share the preceding infix rule's precedence
+    /// level rather than opening a new, tighter one (the DSL's `same` annotation).
+    /// See [`RuleSpec::shares_level_with_previous`].
+    pub shares_level_with_previous: bool,
     /// Explicit prefix binding power for unary prefix operators.
     pub prefix_precedence: Option<u8>,
     /// Whether this has a Rust code block (HOL native).
@@ -1268,6 +1285,7 @@ impl LanguageSpec {
                     is_cast: c.is_cast,
                     cast_source_category: c.cast_source_category,
                     associativity: input.associativity,
+                    shares_level_with_previous: input.shares_level_with_previous,
                     prefix_precedence: input.prefix_precedence,
                     has_rust_code: input.has_rust_code,
                     rust_code: input.rust_code,
@@ -1330,6 +1348,7 @@ impl RuleSpec {
             is_cast: c.is_cast,
             cast_source_category: c.cast_source_category,
             associativity: Associativity::Left,
+            shares_level_with_previous: false,
             prefix_precedence: None,
             has_rust_code: false,
             rust_code: None,
