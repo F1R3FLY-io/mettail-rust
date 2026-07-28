@@ -58,7 +58,7 @@ language! {
 
         // ── Cross-category: Num × Num → Pred ──
         EqNum . a:Num, b:Num |- a "==" b : Pred ![a == b] step;
-        NeNum . a:Num, b:Num |- a "!=" b : Pred ![a != b] step;
+        NeNum . a:Num, b:Num |- a "!=" b : Pred ![a != b] step same;
 
         // ── Num (constituent) operators ──
         AddNum . a:Num, b:Num |- a "+" b : Num ![a + b] step;

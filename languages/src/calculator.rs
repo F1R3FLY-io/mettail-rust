@@ -257,10 +257,10 @@ language! {
         }] step;
         AddBigRat . a:BigRat, b:BigRat |- a "+" b : BigRat ![a + b] fold;
         MulBigRat . a:BigRat, b:BigRat |- a "*" b : BigRat ![a * b] fold;
-        DivBigRat . a:BigRat, b:BigRat |- a "/" b : BigRat ![a / b] fold;
+        DivBigRat . a:BigRat, b:BigRat |- a "/" b : BigRat ![a / b] fold same;
         NegBigRat . a:BigRat |- "-" a : BigRat ![(-a)] fold;
-        BitAndBigRat . a:BigRat, b:BigRat |- a "bitand" b : BigRat ![a.bitand_aligned(b)] fold;
         BitOrBigRat . a:BigRat, b:BigRat |- a "bitor" b : BigRat ![a.bitor_aligned(b)] fold;
+        BitAndBigRat . a:BigRat, b:BigRat |- a "bitand" b : BigRat ![a.bitand_aligned(b)] fold;
         BitNotBigRat . a:BigRat |- "bitnot" a : BigRat ![a.bitnot()] fold;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
@@ -269,54 +269,58 @@ language! {
         EqFloat . a:Float, b:Float |- a "==" b : Bool ![a == b] step;
         EqBool . a:Bool, b:Bool |- a "==" b : Bool ![a == b] step;
         EqStr . a:Str, b:Str |- a "==" b : Bool ![a == b] step;
-        GtInt . a:Int, b:Int |- a ">" b : Bool ![a > b] step;
-        GtFloat . a:Float, b:Float |- a ">" b : Bool ![a > b] step;
-        GtBool . a:Bool, b:Bool |- a ">" b : Bool ![a & !b] step;
-        GtStr . a:Str, b:Str |- a ">" b : Bool ![a > b] step;
-        LtInt . a:Int, b:Int |- a "<" b : Bool ![a < b] step;
-        LtFloat . a:Float, b:Float |- a "<" b : Bool ![a < b] step;
-        LtBool . a:Bool, b:Bool |- a "<" b : Bool ![!a & b] step;
-        LtStr . a:Str, b:Str |- a "<" b : Bool ![a < b] step;
-        LtEqInt . a:Int, b:Int |- a "<=" b : Bool ![a <= b] step;
-        LtEqFloat . a:Float, b:Float |- a "<=" b : Bool ![a <= b] step;
-        LtEqBool . a:Bool, b:Bool |- a "<=" b : Bool ![a <= b] step;
-        LtEqStr . a:Str, b:Str |- a "<=" b : Bool ![a <= b] step;
-        GtEqInt . a:Int, b:Int |- a ">=" b : Bool ![a >= b] step;
-        GtEqFloat . a:Float, b:Float |- a ">=" b : Bool ![a >= b] step;
-        GtEqBool . a:Bool, b:Bool |- a ">=" b : Bool ![a >= b] step;
-        GtEqStr . a:Str, b:Str |- a ">=" b : Bool ![a >= b] step;
-        NeInt . a:Int, b:Int |- a "!=" b : Bool ![a != b] step;
-        NeFloat . a:Float, b:Float |- a "!=" b : Bool ![a != b] step;
-        NeBool . a:Bool, b:Bool |- a "!=" b : Bool ![a != b] step;
-        NeStr . a:Str, b:Str |- a "!=" b : Bool ![a != b] step;
+        GtInt . a:Int, b:Int |- a ">" b : Bool ![a > b] step same;
+        GtFloat . a:Float, b:Float |- a ">" b : Bool ![a > b] step same;
+        GtBool . a:Bool, b:Bool |- a ">" b : Bool ![a & !b] step same;
+        GtStr . a:Str, b:Str |- a ">" b : Bool ![a > b] step same;
+        LtInt . a:Int, b:Int |- a "<" b : Bool ![a < b] step same;
+        LtFloat . a:Float, b:Float |- a "<" b : Bool ![a < b] step same;
+        LtBool . a:Bool, b:Bool |- a "<" b : Bool ![!a & b] step same;
+        LtStr . a:Str, b:Str |- a "<" b : Bool ![a < b] step same;
+        LtEqInt . a:Int, b:Int |- a "<=" b : Bool ![a <= b] step same;
+        LtEqFloat . a:Float, b:Float |- a "<=" b : Bool ![a <= b] step same;
+        LtEqBool . a:Bool, b:Bool |- a "<=" b : Bool ![a <= b] step same;
+        LtEqStr . a:Str, b:Str |- a "<=" b : Bool ![a <= b] step same;
+        GtEqInt . a:Int, b:Int |- a ">=" b : Bool ![a >= b] step same;
+        GtEqFloat . a:Float, b:Float |- a ">=" b : Bool ![a >= b] step same;
+        GtEqBool . a:Bool, b:Bool |- a ">=" b : Bool ![a >= b] step same;
+        GtEqStr . a:Str, b:Str |- a ">=" b : Bool ![a >= b] step same;
+        NeInt . a:Int, b:Int |- a "!=" b : Bool ![a != b] step same;
+        NeFloat . a:Float, b:Float |- a "!=" b : Bool ![a != b] step same;
+        NeBool . a:Bool, b:Bool |- a "!=" b : Bool ![a != b] step same;
+        NeStr . a:Str, b:Str |- a "!=" b : Bool ![a != b] step same;
         EqFixed . a:Fixed, b:Fixed |- a "==" b : Bool ![a == b] step;
-        GtFixed . a:Fixed, b:Fixed |- a ">" b : Bool ![a > b] step;
-        LtFixed . a:Fixed, b:Fixed |- a "<" b : Bool ![a < b] step;
-        LtEqFixed . a:Fixed, b:Fixed |- a "<=" b : Bool ![a <= b] step;
-        GtEqFixed . a:Fixed, b:Fixed |- a ">=" b : Bool ![a >= b] step;
-        NeFixed . a:Fixed, b:Fixed |- a "!=" b : Bool ![a != b] step;
+        GtFixed . a:Fixed, b:Fixed |- a ">" b : Bool ![a > b] step same;
+        LtFixed . a:Fixed, b:Fixed |- a "<" b : Bool ![a < b] step same;
+        LtEqFixed . a:Fixed, b:Fixed |- a "<=" b : Bool ![a <= b] step same;
+        GtEqFixed . a:Fixed, b:Fixed |- a ">=" b : Bool ![a >= b] step same;
+        NeFixed . a:Fixed, b:Fixed |- a "!=" b : Bool ![a != b] step same;
         // Boolean operations
         Not . a:Bool |- "not" a : Bool ![{match a {
             true => false,
             false => true,
         }}] step;
-        And . a:Bool, b:Bool |- a "and" b : Bool ![a && b] step;
+        // Connectives, loosest first: `or` < `xor` < `and`. Declaration order IS
+        // precedence order, so this sequence is the ladder. `and` binding tighter than
+        // `or` is the universal convention (`a or b and c` = `a or (b and c)`); `xor`
+        // sits between them, mirroring C's bitwise `& > ^ > |`.
         Or . a:Bool, b:Bool |- a "or" b : Bool ![a || b] step;
         Xor . a:Bool, b:Bool |- a "xor" b : Bool ![a ^ b] step;
+        And . a:Bool, b:Bool |- a "and" b : Bool ![a && b] step;
         // String operations
         Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
         Concat . a:Str, b:Str |- a "++" b : Str ![[a, b].concat()] step;
-        AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
+        AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step same;
         //
         AddUInt32 . a:UInt32, b:UInt32 |- a "+" b : UInt32 ![a + b] fold;
-        BitAndUInt32 . a:UInt32, b:UInt32 |- a "bitand" b : UInt32 ![a & b] fold;
         BitOrUInt32 . a:UInt32, b:UInt32 |- a "bitor" b : UInt32 ![a | b] fold;
+        BitAndUInt32 . a:UInt32, b:UInt32 |- a "bitand" b : UInt32 ![a & b] fold;
         BitNotUInt32 . a:UInt32 |- "bitnot" a : UInt32 ![!a] fold;
         AddBigInt . a:BigInt, b:BigInt |- a "+" b : BigInt ![a + b] fold;
-        SubBigInt . a:BigInt, b:BigInt |- a "-" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() - b.get())] fold;
+        SubBigInt . a:BigInt, b:BigInt |- a "-" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() - b.get())] fold same;
         NegBigInt . a:BigInt |- "-" a : BigInt ![mettail_runtime::CanonicalBigInt::from(-a.get())] fold;
-        BitAndBigInt . a:BigInt, b:BigInt |- a "bitand" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() & b.get())] fold;
         BitOrBigInt . a:BigInt, b:BigInt |- a "bitor" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() | b.get())] fold;
+        BitAndBigInt . a:BigInt, b:BigInt |- a "bitand" b : BigInt ![mettail_runtime::CanonicalBigInt::from(a.get() & b.get())] fold;
         BitNotBigInt . a:BigInt |- "bitnot" a : BigInt ![mettail_runtime::CanonicalBigInt::from(!a.get())] fold;
         // Int operations
         // Int arithmetic: simple forms — the `language!` macro's `safeify`
@@ -325,13 +329,13 @@ language! {
         // into `SafeArith`/`SafeFloat` calls that return `None` on overflow
         // or NaN, so we do not need manual `checked_*` invocations here.
         AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
-        SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
+        SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold same;
         MulInt . a:Int, b:Int |- a "*" b : Int ![a * b] fold;
-        DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold;
-        ModInt . a:Int, b:Int |- a "%" b : Int ![a % b] fold;
+        DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold same;
+        ModInt . a:Int, b:Int |- a "%" b : Int ![a % b] fold same;
         PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step right;
-        BitAndInt . a:Int, b:Int |- a "bitand" b : Int ![a & b] fold;
         BitOrInt . a:Int, b:Int |- a "bitor" b : Int ![a | b] fold;
+        BitAndInt . a:Int, b:Int |- a "bitand" b : Int ![a & b] fold;
         BitNotInt . a:Int |- "bitnot" a : Int ![!a] fold;
         Neg . a:Int |- "-" a : Int ![(-a)] fold;
         Fact . a:Int |- a "!" : Int ![{
@@ -341,9 +345,9 @@ language! {
         }] step;
         // Float operations
         AddFloat . a:Float, b:Float |- a "+" b : Float ![a + b] fold;
-        SubFloat . a:Float, b:Float |- a "-" b : Float ![a - b] fold;
+        SubFloat . a:Float, b:Float |- a "-" b : Float ![a - b] fold same;
         MulFloat . a:Float, b:Float |- a "*" b : Float ![a * b] fold;
-        DivFloat . a:Float, b:Float |- a "/" b : Float ![a / b] fold;
+        DivFloat . a:Float, b:Float |- a "/" b : Float ![a / b] fold same;
         PowFloat . a:Float, b:Float |- a "^" b : Float ![a.powf(b)] step right;
         NegFloat . a:Float |- "-" a : Float ![{ mettail_runtime::CanonicalFloat64::from(-a.get()) }] fold;
         SinFloat . a:Float |- "sin" "(" a ")" : Float ![a.sin()] step;
@@ -372,13 +376,13 @@ language! {
 
         // Fixed-point arithmetic (from main)
         AddFixed . a:Fixed, b:Fixed |- a "+" b : Fixed ![a + b] fold;
-        SubFixed . a:Fixed, b:Fixed |- a "-" b : Fixed ![a - b] fold;
+        SubFixed . a:Fixed, b:Fixed |- a "-" b : Fixed ![a - b] fold same;
         MulFixed . a:Fixed, b:Fixed |- a "*" b : Fixed ![a * b] fold;
-        DivFixed . a:Fixed, b:Fixed |- a "/" b : Fixed ![a / b] fold;
-        ModFixed . a:Fixed, b:Fixed |- a "%" b : Fixed ![a % b] fold;
+        DivFixed . a:Fixed, b:Fixed |- a "/" b : Fixed ![a / b] fold same;
+        ModFixed . a:Fixed, b:Fixed |- a "%" b : Fixed ![a % b] fold same;
         NegFixed . a:Fixed |- "-" a : Fixed ![(-a)] fold;
-        BitAndFixed . a:Fixed, b:Fixed |- a "bitand" b : Fixed ![a & b] fold;
         BitOrFixed . a:Fixed, b:Fixed |- a "bitor" b : Fixed ![a | b] fold;
+        BitAndFixed . a:Fixed, b:Fixed |- a "bitand" b : Fixed ![a & b] fold;
         BitNotFixed . a:Fixed |- "bitnot" a : Fixed ![mettail_runtime::CanonicalFixedPoint::new(!a.unscaled().clone(), a.places())] fold;
     ProcToBool . a:Proc |- "bool" "(" a ")" : Bool ![{
             match a {

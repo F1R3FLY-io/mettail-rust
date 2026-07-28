@@ -11,7 +11,7 @@ language! {
     },
     terms {
         Add . a:Num, b:Num |- a "+" b : Num ![a + b] fold;
-        Sub . a:Num, b:Num |- a "-" b : Num ![a - b] fold;
+        Sub . a:Num, b:Num |- a "-" b : Num ![a - b] fold same;
     },
     equations {
     },

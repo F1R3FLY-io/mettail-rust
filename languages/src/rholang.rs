@@ -1306,7 +1306,7 @@ language! {
         // `receive::eval_guard_bool` (which delegates to the generated
         // `Proc::match_pattern` on the fragment it can decide SOUNDLY, and answers
         // "undecided" otherwise) and on the machine by `rho_pure_eval`.
-        Matches . a:Proc, p:Proc |- a "matches" p : Proc ;
+        Matches . a:Proc, p:Proc |- a "matches" p : Proc right;
 
         // M-1b — the paper's SPATIAL connective `PPar(φ, ψ)` (omnibus :2010),
         // spelled VERBATIM (notation delta N6 is retired for this form). It is
@@ -1387,7 +1387,7 @@ language! {
                     }
                 },
             }}
-        ] fold;
+        ] fold same;
 
         Ne . a:Proc, b:Proc |- a "!=" b : Proc ![
             { match (&a, &b) {
@@ -1435,7 +1435,7 @@ language! {
                     }
                 },
             }}
-        ] fold;
+        ] fold same;
 
         Gt . a:Proc, b:Proc |- a ">" b : Proc ![
             { match (&a, &b) {
@@ -1513,7 +1513,7 @@ language! {
                     Proc::Lt(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
                 }),
             }}
-        ] fold;
+        ] fold same;
 
         GtEq . a:Proc, b:Proc |- a ">=" b : Proc ![
             { match (&a, &b) {
@@ -1552,7 +1552,7 @@ language! {
                     Proc::GtEq(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
                 }),
             }}
-        ] fold;
+        ] fold same;
 
         LtEq . a:Proc, b:Proc |- a "<=" b : Proc ![
             { match (&a, &b) {
@@ -1591,7 +1591,7 @@ language! {
                     Proc::LtEq(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
                 }),
             }}
-        ] fold;
+        ] fold same;
 
         // Arithmetic (tighter than == and and/or)
         // ── Arithmetic: a failed operation answers the `error` term, never a value ──────────
@@ -1715,7 +1715,7 @@ language! {
                     Proc::Sub(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
                 }),
             }}
-        ] fold;
+        ] fold same;
 
         Mul . a:Proc, b:Proc |- a "*" b : Proc ![
             { match (&a, &b) {
@@ -1830,7 +1830,7 @@ language! {
                     Proc::Div(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
                 }),
             }}
-        ] fold;
+        ] fold same;
 
         Mod . a:Proc, b:Proc |- a "%" b : Proc ![
             { match (&a, &b) {
@@ -1872,7 +1872,7 @@ language! {
                     Proc::Mod(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))
                 }),
             }}
-        ] fold;
+        ] fold same;
 
         NegProc . a:Proc |- "-" a : Proc ![
             { match &a {
