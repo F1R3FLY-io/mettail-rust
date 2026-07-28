@@ -63,14 +63,25 @@ pub fn write_simulation_binary(language: &LanguageDef) -> TokenStream {
     let macro_ident = format_ident!("{}_simulation_main", lang_lower);
     let arb_ident = format_ident!("arb_{}", primary_cat_lower);
     let include = crate::logic::writer::include_stmt(&path);
+    // ⚠ Every `\n` here ends in a `\` continuation, and the two invocation forms are a
+    // markdown LIST. Both are load-bearing, and for the same reason: a `\n\n` without a
+    // continuation leaves this file's own source indentation inside the rendered doc, and
+    // markdown reads a blank line followed by a ≥4-space indent as a CODE BLOCK, which
+    // rustdoc compiles as Rust. This `format!` did exactly that, and because the macro
+    // expands once per language it turned into SIXTEEN doctests of rustc parsing English
+    // — invisible to `cargo nextest`, which does not run doctests. Keep prose at the left
+    // margin and enumerate with a real list; `dovetail/tests/doc_fence_justification.rs`
+    // now fails on any doc comment, hand-written or emitted, that does otherwise.
     let doc = format!(
-        "Simulation CLI entry point for `{}`.\n\n         Invoke ONCE, from the crate root of `languages/src/bin/simulate_{}.rs`, passing \
-         the path of the module the definition lives in:\n\
-         `{}_simulation_main!(mettail_languages::{});` for a library-hosted language, or \
-         `{}_simulation_main!(crate::{});` after `#[path] mod {};` for a test-hosted one.\n\n         Expands to the `fn main` and clap argument struct; the body itself is included \
-         from `target/generated/{}/simulate.rs`.",
-        lang_name, lang_lower, lang_lower, lang_lower, lang_lower, lang_lower, lang_lower,
-        lang_lower,
+        "Simulation CLI entry point for `{lang_name}`.\n\n\
+         Invoke ONCE, from the crate root of `languages/src/bin/simulate_{lang_lower}.rs`, \
+         passing the path of the module the definition lives in:\n\
+         - library-hosted language: \
+         `{lang_lower}_simulation_main!(mettail_languages::{lang_lower});`\n\
+         - test-hosted language, after `#[path] mod {lang_lower};`: \
+         `{lang_lower}_simulation_main!(crate::{lang_lower});`\n\n\
+         Expands to the `fn main` and clap argument struct; the body itself is included \
+         from `target/generated/{lang_lower}/simulate.rs`.",
     );
 
     quote! {
