@@ -18,6 +18,31 @@ pub enum NonTerminalKind {
     StringLiteral,
     /// Float literal (`FloatLiteral`) — stored as canonical float, not boxed
     FloatLiteral,
+    /// Identifier TEXT (`Ident`) — stored as a bare `std::string::String`, not boxed.
+    ///
+    /// The builtin `Ident` token class given a first-class mid-rule surface: a position
+    /// that consumes ONE `Token::Ident` and carries its text INERTLY, with none of
+    /// [`Self::Var`]'s binder semantics. The distinction is the whole point — `Var`
+    /// lowers to `mettail_runtime::OrdVar`, which `subst` canonicalises under unify, so a
+    /// `Var`-typed method name inside `new nth in { … }` would be CAPTURED by the binder.
+    /// An `Ident`-typed field is a `String` and no substitution can see it.
+    ///
+    /// Both Rholang oracles spell the method name with their `var` TOKEN
+    /// (BNFC `rholang_mercury.cf:41` `PMethod. Proc11 ::= Proc11 "." Var "(" [Proc] ")"`,
+    /// tree-sitter `grammar.js:293-298` `field('name', $.var)`) — a lexical class, not a
+    /// binding construct, which is exactly what this kind models.
+    ///
+    /// ⚠ MEASURED ALTERNATIVE, REJECTED. The other way to reach a mid-rule String is a
+    /// declared `tokens { }` kind consumed by a `m@Kind` capture. For a kind co-extensive
+    /// with `Ident` that is not free: measured on Rholang, declaring it alone moved the
+    /// lexer's multi-accept DFA states from 4/474 (0.8 %) to 379/475 (79.8 %) and
+    /// alt-accept edges from 482 to 1234 (×2.56), because `subset.rs`'s reservation
+    /// `retain` deletes only `TokenKind::Ident` and cannot delete a `Custom` co-accept.
+    /// Parse time over the shipped 11-input corpus regressed geomean ×2.49, worst ×8.59
+    /// (`{p | q}`), with inputs containing no identifier flat at ×1.03 as the control.
+    /// It is also LESS conformant: a `Custom` kind co-accepts at reserved-keyword states
+    /// too, so `x.new()` would parse, where both oracles reject it.
+    Ident,
     /// A reference to a user-defined category (e.g., `Proc`, `Name`, `Expr`)
     Category,
 }
@@ -32,6 +57,7 @@ impl NonTerminalKind {
             "Boolean" => Self::Boolean,
             "StringLiteral" => Self::StringLiteral,
             "FloatLiteral" => Self::FloatLiteral,
+            "Ident" => Self::Ident,
             _ => Self::Category,
         }
     }

@@ -3529,6 +3529,28 @@ fn extract_multi_binder_category(ty: &TypeExpr) -> Ident {
 /// Create FieldInfo from a TypeExpr
 fn field_info_from_type_expr(ty: &TypeExpr) -> FieldInfo {
     match ty {
+        // An `m:Ident` param is an OPAQUE STRING LEAF, not a category to descend into.
+        // Routed here — before the generic `Base` arm — because `Ident` is a builtin token
+        // class with no enum to visit: left as `category: Ident, opaque_leaf: None` the
+        // iterative walkers emit `NormTask::VisitIdent` / `AnySubstTerm::WrapIdent` /
+        // `CmpTask::CmpIdent` / `DisplayTask::DisplayIdent` / `DropTask::DropIdent` /
+        // `SemanticHashTask::SemHashIdent` and call `is_ground()`/`term_depth()` on a
+        // `String` — MEASURED as 35 compile errors across eight walkers on the first build
+        // of a language using the param.
+        //
+        // It reuses `OpaqueLeafKind::TokenText` rather than adding a kind: that kind means
+        // "an opaque `String` leaf", which is exactly what this is. The two differ only in
+        // PROVENANCE (a declared `tokens { }` kind via `as_token_text()` vs the builtin
+        // `Ident` via `as_ident()`), and provenance is settled in the walker/action layer
+        // (`BinderPosition::IdentTextCapture`), not here. Sharing the kind is what makes
+        // every term op — Eq/Hash/Ord/subst/normalize/display/semantic_hash — treat a
+        // method name inertly with no new match arm anywhere.
+        TypeExpr::Base(ident)
+            if mettail_ast::grammar::NonTerminalKind::classify(&ident.to_string())
+                == mettail_ast::grammar::NonTerminalKind::Ident =>
+        {
+            field_info_for_token_capture()
+        },
         TypeExpr::Base(ident) => FieldInfo {
             category: ident.clone(),
             is_collection: false,

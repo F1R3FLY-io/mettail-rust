@@ -1072,7 +1072,13 @@ fn convert_grammar_items(
             },
             GrammarItem::NonTerminal { ident: nt, kind } => {
                 let nt_str = nt.to_string();
-                if matches!(kind, NonTerminalKind::Var) || nt_str == "Ident" {
+                // `Ident` now classifies as its own builtin kind (it used to reach this
+                // arm only through the `nt_str == "Ident"` string test), so match the
+                // kind. The string test is retained: it is what an UNDECLARED `Ident`
+                // reference resolved through before the kind existed, and both routes
+                // must keep producing the same `IdentCapture`.
+                if matches!(kind, NonTerminalKind::Var | NonTerminalKind::Ident) || nt_str == "Ident"
+                {
                     items.push(SyntaxItemSpec::IdentCapture { param_name: nt_str.to_lowercase() });
                 } else if cat_names.contains(&nt_str) {
                     items.push(SyntaxItemSpec::NonTerminal {

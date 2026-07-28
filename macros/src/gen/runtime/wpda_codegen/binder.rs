@@ -112,6 +112,20 @@ pub enum BinderPosition {
     /// structural clone of the `Literal` position), binding its text as the
     /// `param_name` action arg (`ActionArgKind::TokenText`). No binder scope.
     TokenKindCapture { kind_name: String, param_name: String },
+    /// An `m:Ident` param — consume ONE builtin `Token::Ident` and bind its TEXT as the
+    /// `param_name` action arg ([`ActionArgKind::IdentText`]). No binder scope, no new
+    /// token kind, no lexical co-accept.
+    ///
+    /// Emits the EXISTING walker op `ForkActionKind::ConsumeIdentAndReplace {
+    /// start_scope: false }` (`prattail/src/wpda_walker.rs:2612`), which interns the token
+    /// as an `ActionArg::Ident`; the action body reads it back through the existing
+    /// `ActionArg::as_ident()` (`prattail/src/wpda_runtime.rs:2821`). Because both halves
+    /// already existed, giving `Ident` a mid-rule surface required ZERO prattail change.
+    ///
+    /// Structural twin of [`Self::TokenKindCapture`], and deliberately NOT
+    /// [`Self::BinderIdent`]: a binder ident opens a scope, which is precisely the
+    /// semantics an inert identifier field must not have.
+    IdentTextCapture { param_name: String },
     /// L9-4: `*flt(node, open, close)` — consume a whole guest region (opener →
     /// GuestChunk/Hole run → closer) in one action (`ConsumeGuestBodyAndReplace`
     /// mid-rule / `ConsumeGuestBodyAndPush` leading), binding the assembled
@@ -262,6 +276,17 @@ pub enum ActionArgKind {
     /// text, extracted via `as_token_text()` (the proven native-literal path)
     /// and bound as a `String` action arg / AST field.
     TokenText { param_name: String },
+    /// `ActionArg::Ident { name }` — the TEXT of one consumed builtin `Token::Ident`,
+    /// extracted via `as_ident()` and bound as a `String` action arg / AST field.
+    ///
+    /// The builtin-kind twin of [`Self::TokenText`]: same `String` destination, different
+    /// source token class. `TokenText` reads a DECLARED `tokens { }` kind
+    /// (`ActionArg::Token`, pushed by `GuardedConsumeTokenKindAndReplace`); this reads the
+    /// generic `Ident` (`ActionArg::Ident`, pushed by `ConsumeIdentAndReplace`). Keeping
+    /// them distinct is what lets an `Ident`-typed param avoid declaring a new token kind
+    /// — measured to move Rholang's multi-accept DFA states 0.8 % → 79.8 % and parse time
+    /// geomean ×2.49 — while still landing an inert `String` in the AST.
+    IdentText { param_name: String },
     /// L9-4: `ActionArg::GuestBody(GuestBodyData)` — an assembled FLT guest
     /// body, extracted via `as_guest_body()` and lowered to an
     /// `Arc<mettail_runtime::FltNode>` action arg / AST field.
@@ -634,6 +659,18 @@ pub(crate) fn classify_binder_in(
                             slot_idx: 0,
                         });
                         action_args.push(ActionArgKind::BinderName);
+                    },
+                    // `m:Ident` is NOT a nonterminal to descend into — there is no `Ident`
+                    // category to parse. It is one builtin `Token::Ident` consumed in
+                    // place, its text bound inertly. Routed BEFORE the generic
+                    // `Simple`/`Body` arm, which would otherwise emit a `ParamParse` for a
+                    // category that does not exist.
+                    ParamKind::Body { cat } | ParamKind::Simple { cat }
+                        if mettail_ast::grammar::NonTerminalKind::classify(cat)
+                            == mettail_ast::grammar::NonTerminalKind::Ident =>
+                    {
+                        positions.push(BinderPosition::IdentTextCapture { param_name: n.clone() });
+                        action_args.push(ActionArgKind::IdentText { param_name: n.clone() });
                     },
                     ParamKind::Body { cat } | ParamKind::Simple { cat } => {
                         positions.push(BinderPosition::ParamParse {
@@ -1089,8 +1126,12 @@ fn first_param_cat_from_positions(positions: &[BinderPosition]) -> Option<&str> 
                     return Some(cat);
                 }
             },
+            // `IdentTextCapture` joins the no-category group: it consumes a TOKEN, not a
+            // nonterminal, so it contributes no parseable category to this lookup —
+            // exactly as `TokenKindCapture` and `BinderIdent` do not.
             BinderPosition::Literal(_)
             | BinderPosition::TokenKindCapture { .. }
+            | BinderPosition::IdentTextCapture { .. }
             | BinderPosition::GuestBodyCapture { .. }
             | BinderPosition::BinderIdent
             | BinderPosition::GuardSlot => {},
@@ -1391,6 +1432,38 @@ pub(crate) fn emit_binder_rule_body(
                                         action_kind:
                                             mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
                                                 kind_name: #kind_name.to_string(),
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
+                        }
+                    },
+                    BinderPosition::IdentTextCapture { .. } => {
+                        // `m:Ident` — the builtin-kind twin of the TokenKindCapture arm
+                        // directly above. Same single-branch Fork, same position advance;
+                        // the action is the EXISTING `ConsumeIdentAndReplace` op with
+                        // `start_scope: false`, so the ident's text is interned as an
+                        // `ActionArg::Ident` leaf and NO binder scope is opened. `false`
+                        // is the whole distinction from `BinderIdent`: an inert name must
+                        // not bind, or `new nth in { l.nth(0) }` would capture it.
+                        quote! {
+                            (#result_src_idx, #rule_idx, #pos) => {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: StackSymbolV2::rule_at(
+                                            #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
+                                        ),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::BinderRule {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            body_src_idx: *_body_src_idx,
+                                            outer_bp: *outer_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeIdentAndReplace {
+                                                start_scope: false,
                                             },
                                     }],
                                     consume_trigger: false,
@@ -2799,6 +2872,38 @@ pub(crate) fn emit_optional_group_body(
                         // constructed, so this contributes no dispatch arm.
                         BinderPosition::TokenKindCapture { .. }
                         | BinderPosition::GuestBodyCapture { .. } => quote! {},
+                        // An `m:Ident` INSIDE an `#opt(...)` group. Unlike the two capture
+                        // kinds above this emits a REAL arm rather than nothing: the
+                        // opt-group value extraction has a matching `IdentText` arm
+                        // (`Option<String>` via `as_ident()`), so an inert dispatch here
+                        // would leave that extraction permanently unreachable — the group
+                        // would never advance past the ident and the `Some(..)` branch
+                        // could not be produced. Structural clone of the `Literal` arm
+                        // below, swapping the text guard for the ident consume.
+                        BinderPosition::IdentTextCapture { .. } => quote! {
+                            (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
+                                return WpdaStepAction::Fork {
+                                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                                        symbol: StackSymbolV2::optional_group_at(
+                                            #result_src_idx, #rule_idx, #next_sp, *outer_bp,
+                                        ),
+                                        weight: lex_one(),
+                                        new_state: WpdaState::OptionalGroup {
+                                            result_src_idx: #result_src_idx,
+                                            rule_idx: #rule_idx,
+                                            group_idx: #group_idx_byte,
+                                            sub_pos: #next_sp,
+                                            outer_bp: *outer_bp,
+                                        },
+                                        action_kind:
+                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeIdentAndReplace {
+                                                start_scope: false,
+                                            },
+                                    }],
+                                    consume_trigger: false,
+                                };
+                            }
+                        },
                         BinderPosition::Literal(text) => quote! {
                             (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
@@ -3080,6 +3185,19 @@ pub(crate) fn emit_binder_action_entry(
                 });
                 field_names.push(quote! { #var });
             },
+            ActionArgKind::IdentText { .. } => {
+                // The consumed builtin `Token::Ident` arrives as `ActionArg::Ident`; bind
+                // its name as a bare `String` via `as_ident()`. Structurally identical to
+                // the `TokenText` arm above — only the accessor differs, because the two
+                // arrive in different `ActionArg` variants.
+                extracts.push(quote! {
+                    let #var: String = match iter.next() {
+                        Some(a) => a.as_ident().map(|s| s.to_string()).unwrap_or_default(),
+                        None => return,
+                    };
+                });
+                field_names.push(quote! { #var });
+            },
             ActionArgKind::GuestBody { .. } => {
                 // L9-4: the assembled guest body arrives as
                 // `ActionArg::GuestBody(GuestBodyData)` (prattail primitives);
@@ -3206,6 +3324,17 @@ pub(crate) fn emit_binder_action_entry(
                                     Some(inner_iter) => inner_iter
                                         .next()
                                         .and_then(|a| a.as_token_text().map(|s| s.to_string())),
+                                    None => None,
+                                };
+                        },
+                        // The `Ident`-capture twin inside an `#opt(...)` group: same
+                        // `Option<String>` destination, `as_ident()` accessor.
+                        ActionArgKind::IdentText { .. } => quote! {
+                            let #inner_var: Option<String> =
+                                match #opt_var.as_mut() {
+                                    Some(inner_iter) => inner_iter
+                                        .next()
+                                        .and_then(|a| a.as_ident().map(|s| s.to_string())),
                                     None => None,
                                 };
                         },

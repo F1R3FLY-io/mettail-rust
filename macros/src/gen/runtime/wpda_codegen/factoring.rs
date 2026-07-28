@@ -548,8 +548,13 @@ fn binder_items(
             // L9-3 token-kind capture: terminate mergeability (leaf-side only,
             // plan §2). A custom-kind capture consumes a distinct kind, so a
             // rule carrying one does not merge into the shared spine trie.
+            // `IdentTextCapture` terminates mergeability for the SAME reason
+            // `TokenKindCapture` does — it consumes a token the shared spine trie has no
+            // node for. It is listed explicitly rather than folded into a wildcard so a
+            // future position variant still fails this match loudly.
             BinderPosition::ParamParse { collection: Some(_), .. }
             | BinderPosition::TokenKindCapture { .. }
+            | BinderPosition::IdentTextCapture { .. }
             | BinderPosition::GuestBodyCapture { .. }
             | BinderPosition::BinderIdent
             | BinderPosition::BinderListLoop { .. }

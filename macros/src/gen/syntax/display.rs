@@ -3556,6 +3556,27 @@ fn generate_engine_syntax_pattern_arm_inner(
                     let child_bp = child_bp_map.get(&name).copied().unwrap_or(0u8);
                     if let Some(ty) = param_types.get(&name) {
                         match ty {
+                            // An `m:Ident` param is an OPAQUE STRING LEAF: write its text
+                            // verbatim through the engine's existing `WriteString` task.
+                            // It has no `Display<Cat>` task because there is no `Ident`
+                            // category to visit, and it carries NO binding-power argument
+                            // because a bare identifier is atomic — no precedence context
+                            // can ever require it to be parenthesised.
+                            //
+                            // ⚠ Deliberately NOT the `StringLiteral` rendering, which
+                            // quotes and escapes. A method name must round-trip as the
+                            // bare token the lexer produced (`l.nth(0)`, never
+                            // `l."nth"(0)`), or `parse ∘ display` stops being stable —
+                            // pinned by `ident_param_capture::ident_param_display_round_trips`.
+                            TypeExpr::Base(cat_ident)
+                                if mettail_ast::grammar::NonTerminalKind::classify(
+                                    &cat_ident.to_string(),
+                                ) == mettail_ast::grammar::NonTerminalKind::Ident =>
+                            {
+                                forward_ops.push(quote! {
+                                    stack.push(DisplayTask::WriteString(#field_ident.clone()));
+                                });
+                            },
                             TypeExpr::Base(cat_ident) => {
                                 let task_variant = format_ident!("Display{}", cat_ident);
                                 let child_bp = if forwards_projection_param.as_deref()

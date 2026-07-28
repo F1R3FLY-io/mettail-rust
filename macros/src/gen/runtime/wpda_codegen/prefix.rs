@@ -348,6 +348,12 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
                     AtomicShape::NonAtomic
                 }
             },
+            // A rule whose ENTIRE body is one `Ident` is not an atomic literal rule: it
+            // would accept any identifier as a whole term of the category, which is what
+            // `NonTerminalKind::Var` exists for (and which carries the binder semantics an
+            // inert `Ident` must not have). `Ident` is a MID-RULE position kind; a
+            // single-item `Ident` rule has no atomic shape.
+            NonTerminalKind::Ident => AtomicShape::NonAtomic,
             NonTerminalKind::Category => {
                 // LiteralPatterned detection: rule body is a single category
                 // reference AND that category has a `from_literals` TokenDef

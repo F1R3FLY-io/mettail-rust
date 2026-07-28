@@ -636,6 +636,13 @@ fn type_expr_to_field_type(
             NonTerminalKind::Integer => quote! { i64 },
             NonTerminalKind::Boolean => quote! { bool },
             NonTerminalKind::StringLiteral => quote! { std::string::String },
+            // An `Ident`-typed param is the token's TEXT, carried inertly. It is the SAME
+            // Rust type as `StringLiteral` on purpose — every String-field seam (Eq/Hash/
+            // Ord/subst/normalize/semantic_hash/Display) already treats it as an opaque
+            // leaf, so no term operation can bind, capture, or rename it. Deliberately NOT
+            // `OrdVar`: see `NonTerminalKind::Ident`'s doc for why binder semantics here
+            // would let `new nth in { … }` capture a method name.
+            NonTerminalKind::Ident => quote! { std::string::String },
             NonTerminalKind::FloatLiteral => language_category
                 .and_then(|(lang, cat)| {
                     lang.types
