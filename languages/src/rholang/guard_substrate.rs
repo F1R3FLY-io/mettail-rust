@@ -208,8 +208,18 @@ impl Encoder {
             // A guard that IS a variable reads it as a proposition. If the payload turns out to
             // be some other sort, the sort-checked ground leg answers `DontKnow` and the policy
             // point blocks — so the reading is safe even when it is wrong.
+            //
+            // ★ The propositional letter is the binder's NAME, never its index. `Prop`'s own
+            // documentation fixes that keyspace: the ground leg resolves each atom through
+            // `GuardVarMap::index_of`, a map keyed by the name `intern` was called with. The
+            // `intern` call is still made — it is what REGISTERS the name so the lookup can
+            // succeed, and what keeps two binders sharing a pretty name distinct — but its
+            // return value is an index and an index is not a key here.
             Proc::PVar(var) => match var_key(var) {
-                Some(key) => GuardFormula::Prop(prop_var(&self.vars.intern(&key).to_string())),
+                Some(key) => {
+                    self.vars.intern(&key);
+                    GuardFormula::Prop(prop_var(&key))
+                },
                 None => self.opaque_atom(cond, GuardAtomKind::Uncovered),
             },
 
@@ -306,10 +316,22 @@ impl Encoder {
     }
 
     fn prop_compare(&mut self, op: CmpOp, idx: usize, literal: bool) -> GuardFormula {
-        let atom = GuardFormula::Prop(prop_var(&idx.to_string()));
-        match (op, literal) {
-            (CmpOp::Eq, true) | (CmpOp::Ne, false) => atom,
-            (CmpOp::Eq, false) | (CmpOp::Ne, true) => GuardFormula::not(atom),
+        // ★ The letter is the binder's NAME (see the `Proc::PVar` arm): the ground leg resolves
+        // it through `GuardVarMap::index_of`, which is keyed by name, so an index written here
+        // would be undecidable for every payload. `idx` was produced by `intern`, so the name is
+        // always present; the `None` arm can only be reached by a corrupted map, and it answers
+        // with the run-time-exact form rather than guessing.
+        //
+        // The name is copied out before the match so that the borrow of `self.vars` ends here
+        // rather than spanning the arms.
+        let name = self.vars.name(idx).map(str::to_string);
+        match (name, op, literal) {
+            (Some(name), CmpOp::Eq, true) | (Some(name), CmpOp::Ne, false) => {
+                GuardFormula::Prop(prop_var(&name))
+            },
+            (Some(name), CmpOp::Eq, false) | (Some(name), CmpOp::Ne, true) => {
+                GuardFormula::not(GuardFormula::Prop(prop_var(&name)))
+            },
             // `<`/`>` on booleans is `false < true`; it has no propositional encoding, so it
             // takes the run-time-exact route.
             _ => GuardFormula::ScalarRel {
@@ -752,6 +774,27 @@ mod tests {
         let encoding = encode_guard(&var("b"));
         assert!(encoding.reaches_substrate());
         assert!(matches!(encoding.formula, GuardFormula::Prop(_)));
+
+        // ★ THE ASSERTION THAT MAKES THE SHAPE CHECK ABOVE MEAN SOMETHING.
+        //
+        // `GuardFormula::Prop`'s own documentation fixes the keyspace: a `BooleanTest::Atom`
+        // name is a BINDER NAME, never an index, because `GuardAssignment::truth_assignment`
+        // resolves each required atom through `GuardVarMap::index_of` — whose keys are the
+        // names `intern` was called with. An atom the var map cannot resolve makes the ground
+        // leg answer `DontKnow` for a reason that has nothing to do with the payload, and the
+        // `matches!` above passes for such an atom just as happily as for a sound one.
+        let names = encoding.formula.prop_names();
+        assert!(!names.is_empty(), "a propositional guard must carry at least one atom");
+        for name in &names {
+            assert!(
+                encoding.vars.index_of(name).is_some(),
+                "the propositional atom {:?} must resolve in this encoding's own var map \
+                 (which holds {:?}); an atom outside that keyspace is undecidable at the ground \
+                 leg no matter what the payload binds",
+                name,
+                encoding.vars.names()
+            );
+        }
     }
 
     // ── The encoder never guesses ────────────────────────────────────────────

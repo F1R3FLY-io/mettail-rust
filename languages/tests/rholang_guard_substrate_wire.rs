@@ -6,14 +6,21 @@
 //!  ┌──────────────────────────────────────────────────────────────────────────────────────┐
 //!  │ GATE 1  THE TALLY                                                                    │
 //!  │   for each of the 19 Rholang `where`-guard FORMS, does the guard reach Dovetail/SFT?  │
-//!  │   Two axes are counted separately and both are printed, because they answer two       │
+//!  │   Three axes are counted separately and all are printed, because they answer three    │
 //!  │   different questions:                                                                │
 //!  │     · SYMBOLIC  — the encoder produces a `GuardFormula` with NO opaque atom, so the   │
 //!  │                   substrate's own procedures (Presburger / KAT / a scalar algebra)    │
 //!  │                   decide it.                                                          │
-//!  │     · DECIDED   — the whole wire returns a verdict, counting the DELEGATED structural  │
-//!  │                   leg (Dovetail's structural core), which is the documented           │
-//!  │                   disposition for a `StructuralPattern` obligation.                   │
+//!  │     · DECIDED, own ground instance — ★ THE HONEST HEADLINE. The wire returns a        │
+//!  │                   verdict on an instance OF THAT FORM, counting the DELEGATED          │
+//!  │                   structural leg (Dovetail's structural core).                        │
+//!  │     · DECIDED, all ground instances — the same, plus the rows whose ground instance   │
+//!  │                   is a substitution RESIDUE rather than an instance of the form. See  │
+//!  │                   `RESIDUE_GROUND_FORMS`: a bound variable is gone after substitution, │
+//!  │                   so its "ground instance" is the payload's form, and crediting that  │
+//!  │                   verdict to the bound-variable form would overstate the coverage.    │
+//!  │   ★ The propositional content of the one residue row is measured directly instead, by │
+//!  │     `every_propositional_atom_resolves_in_its_own_var_map`.                            │
 //!  ├──────────────────────────────────────────────────────────────────────────────────────┤
 //!  │ GATE 2  ★ THE DIFFERENTIAL                                                            │
 //!  │   `eval_guard_disposition_via_substrate` must agree with `eval_guard_disposition` on   │
@@ -108,7 +115,12 @@ const FORMS: &[Form] = &[
     Form {
         name: "atom: bound variable",
         open: || var("b"),
-        // A bound variable is GONE after substitution; the ground instance is what it becomes.
+        // ★ A bound variable is GONE after substitution, so this form has no ground instance of
+        // its own: what a COMM faces where `where b` was written is the payload `b` was bound
+        // to, and `true` is an instance of the BOOLEAN-LITERAL form. The row is therefore listed
+        // in `RESIDUE_GROUND_FORMS` and the tally refuses to credit its verdict to this form.
+        // The open instance is the one that carries this form's content, and it is measured by
+        // `every_propositional_atom_resolves_in_its_own_var_map` below.
         ground: || boolean(true),
     },
     // ── The 4 connectives ───────────────────────────────────────────────────────────────────
@@ -203,6 +215,22 @@ const FORMS: &[Form] = &[
 /// atom classes.
 const EXPECTED_FORM_COUNT: usize = 19;
 
+/// ★ The forms whose GROUND instance is a substitution **residue** rather than an instance of
+/// the form itself.
+///
+/// The DECIDED axis measures the ground instance, because that is what a COMM faces. For every
+/// other form the ground instance still *contains* the form — `and` is measured on
+/// `true and true`, `+` on `2 + 1 < 10`. A bound variable has no such instance: substitution
+/// replaces it with its payload, so the guard the wire actually decides is the payload's form,
+/// not this one.
+///
+/// Counting that verdict toward "the bound-variable form was decided" would attribute a decision
+/// to a form the wire never saw. The tally therefore reports two numbers — the total over ground
+/// instances, and the honest total over forms whose ground instance is their own — and
+/// [`the_residue_rows_are_residues_because_the_form_itself_declines`] proves the residue is
+/// necessary rather than convenient.
+const RESIDUE_GROUND_FORMS: &[&str] = &["atom: bound variable"];
+
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // GATE 1 — the tally
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -223,6 +251,7 @@ fn the_form_enumeration_is_the_grammars_own() {
 fn every_guard_form_reaches_dovetail_sft() {
     let mut symbolic = 0usize;
     let mut decided = 0usize;
+    let mut decided_as_own_form = 0usize;
     let mut rows: Vec<String> = Vec::with_capacity(FORMS.len());
 
     for form in FORMS {
@@ -233,37 +262,63 @@ fn every_guard_form_reaches_dovetail_sft() {
         let reaches_symbolically = encoding.reaches_substrate();
         let verdict = eval_guard_disposition_via_substrate(&ground);
         let is_decided = !matches!(verdict, GuardDisposition::Declines);
+        // ★ Is the thing that was decided an instance of THIS form, or its substitution residue?
+        let is_residue = RESIDUE_GROUND_FORMS.contains(&form.name);
 
         symbolic += usize::from(reaches_symbolically);
         decided += usize::from(is_decided);
+        decided_as_own_form += usize::from(is_decided && !is_residue);
 
         rows.push(format!(
-            "  {:<24} symbolic={:<5} decided={:<5} verdict={:?}",
-            form.name, reaches_symbolically, is_decided, verdict
+            "  {:<24} symbolic={:<5} decided={:<5} ground={:<8} verdict={:?}",
+            form.name,
+            reaches_symbolically,
+            is_decided,
+            match is_residue {
+                true => "residue",
+                false => "own",
+            },
+            verdict
         ));
     }
 
+    let residues = RESIDUE_GROUND_FORMS.len();
     println!("\n★ THE WIRE — guard forms reaching Dovetail/SFT");
     for row in &rows {
         println!("{row}");
     }
     println!(
         "  ────────────────────────────────────────────────────────────────\n  \
-         SYMBOLIC (substrate's own procedures decide it): {symbolic}/{}\n  \
-         DECIDED  (the wire answers, incl. the delegated structural leg): {decided}/{}\n",
-        FORMS.len(),
-        FORMS.len()
+         SYMBOLIC (substrate's own procedures decide it):                   {symbolic}/{total}\n  \
+         DECIDED  (own ground instance — ★ THE HONEST HEADLINE):            {decided_as_own_form}/{total}\n  \
+         DECIDED  (all ground instances, incl. {residues} substitution residue):  {decided}/{total}\n  \
+         ─ the residue row(s): {RESIDUE_GROUND_FORMS:?} — substitution leaves no instance of the\n  \
+         form behind, so the verdict belongs to the payload's form, not to this one.\n",
+        total = FORMS.len()
     );
 
-    // Every form must be DECIDED by the wire. This is the campaign's headline number and it
-    // must be total: a `where` clause is a semantic predicate, and the substrate (with its
-    // delegated structural leg) is what evaluates it.
+    // Every ground instance the wire is handed must be DECIDED. A `where` clause is a semantic
+    // predicate, and the substrate (with its delegated structural leg) is what evaluates it.
     assert_eq!(
         decided,
         FORMS.len(),
-        "every guard form must be decided by the wire; {} of {} were not",
+        "every ground instance must be decided by the wire; {} of {} were not",
         FORMS.len() - decided,
         FORMS.len()
+    );
+
+    // ★ THE HONEST HEADLINE. `decided` above counts one row whose ground instance is not an
+    // instance of its form at all, so it overstates by exactly the residue count. The number the
+    // campaign may quote for "guard forms the wire decides" is this one.
+    assert_eq!(
+        decided_as_own_form,
+        FORMS.len() - residues,
+        "{} of {} forms are decided on a ground instance of their own; the other {} are \
+         substitution residues ({:?}) and may not be counted as the form's own decision",
+        decided_as_own_form,
+        FORMS.len(),
+        residues,
+        RESIDUE_GROUND_FORMS
     );
 
     // The SYMBOLIC axis is honestly lower: `matches` is a structural question routed to the
@@ -287,6 +342,68 @@ fn the_symbolic_shortfall_is_exactly_matches_div_and_mod() {
         .map(|form| form.name)
         .collect();
     assert_eq!(shortfall, vec!["matches", "/", "%"]);
+}
+
+/// ★ **THE ASSERTION THAT WOULD HAVE CAUGHT THE KEYSPACE DEFECT** — every propositional atom
+/// this encoder emits must resolve in the very var map it ships alongside.
+///
+/// `GuardFormula::Prop`'s documentation fixes the keyspace in as many words: `BooleanTest::Atom`
+/// names are *binder names*, not indices, because `GuardAssignment::truth_assignment` resolves
+/// each required atom through `GuardVarMap::index_of` — a `BTreeMap<String, usize>` keyed by the
+/// name that was interned. An atom written into the *index* keyspace (`"0"`) and read out of the
+/// *name* keyspace (`"b$1"`) makes `index_of` return `None`, `?` short-circuit, and the whole
+/// ground leg answer `DontKnow` — for a reason that has nothing to do with the payload.
+///
+/// Nothing else in this file catches that. `reaches_substrate()` returns `true` for
+/// `GuardFormula::Prop(_)` unconditionally, and the DECIDED axis measures the ground instance,
+/// which for the only propositional form is a substitution residue carrying no atom at all.
+#[test]
+fn every_propositional_atom_resolves_in_its_own_var_map() {
+    let mut atoms_checked = 0usize;
+
+    for form in FORMS {
+        let encoding = encode_guard(&(form.open)());
+        for name in encoding.formula.prop_names() {
+            atoms_checked += 1;
+            assert!(
+                encoding.vars.index_of(&name).is_some(),
+                "form {:?}: the propositional atom {:?} does not resolve in the encoding's own \
+                 var map (which holds {:?}). `truth_assignment` looks atoms up by BINDER NAME, \
+                 so an unresolvable atom is undecidable at the ground leg for every payload.",
+                form.name,
+                name,
+                encoding.vars.names()
+            );
+        }
+    }
+
+    // The sweep above is only evidence if it swept something.
+    assert!(
+        atoms_checked > 0,
+        "no form emitted a propositional atom — this gate would then prove nothing; the \
+         bound-variable form must encode as GuardFormula::Prop"
+    );
+}
+
+/// The residue rows in [`RESIDUE_GROUND_FORMS`] are residues out of necessity, not convenience:
+/// the form's OWN instance is honestly undecidable at COMM time, which is precisely why the row
+/// has to be measured on what substitution leaves behind.
+#[test]
+fn the_residue_rows_are_residues_because_the_form_itself_declines() {
+    for form in FORMS
+        .iter()
+        .filter(|form| RESIDUE_GROUND_FORMS.contains(&form.name))
+    {
+        let open = (form.open)();
+        assert_eq!(
+            eval_guard_disposition_via_substrate(&open),
+            GuardDisposition::Declines,
+            "form {:?} is listed as having a residue ground instance, which is only honest if \
+             its own instance cannot be decided — an unsubstituted binder has no value, so the \
+             substrate must decline it (fail-closed) rather than answer",
+            form.name
+        );
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════

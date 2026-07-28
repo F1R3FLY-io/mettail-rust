@@ -1890,16 +1890,67 @@ mod tests {
         assert_eq!(ground_verdict(&other, &assignment, &vars, cfg()), Sat3::Unsat);
     }
 
+    /// The propositional ground leg, on a **hand-built** assignment.
+    ///
+    /// ⚠ **The assignment shape here is not production-reachable, and that is deliberate.** Both
+    /// production callers of the ground leg — `guard_substrate::eval_guard_disposition_via_substrate`
+    /// and `guard_par_substrate::substrate_guard_disposition` — pass an all-unbound
+    /// `GuardAssignment::with_len(..)`, because the architecture SUBSTITUTES FIRST and then
+    /// evaluates a ground guard (see `substrate_guard_verdict`'s "★ SUBSTITUTE FIRST" section
+    /// for why a non-empty assignment was disqualified on soundness grounds). `bind` therefore
+    /// appears only in tests. This test consequently covers the *algebra* — that a bound
+    /// boolean is read correctly, and under `Not` too — and must not be read as evidence that
+    /// any production path evaluates a `Prop` atom against a bound value.
+    ///
+    /// What it *does* pin for production is the KEYSPACE, below: the atom name must be a name
+    /// the var map resolves. That is the contract every encoder has to honour, and it is the
+    /// one this test can state without a production-shaped assignment.
     #[test]
-    fn a_propositional_guard_evaluates_on_a_concrete_payload() {
+    fn a_propositional_guard_evaluates_on_a_concrete_payload_via_a_test_only_assignment() {
         let vars = one_var_map("b");
         let mut assignment = GuardAssignment::with_len(1);
         assignment.bind(0, GuardValue::Bool(true));
         let formula = GuardFormula::Prop(prop_var("b"));
+
+        // ★ The keyspace assertion. `truth_assignment` resolves each required atom through
+        // `GuardVarMap::index_of`, so an atom outside the map's key set can only ever produce
+        // `DontKnow` — silently, and for every payload.
+        for name in formula.prop_names() {
+            assert!(
+                vars.index_of(&name).is_some(),
+                "the propositional atom {name:?} must resolve in the var map it is evaluated \
+                 against; `BooleanTest::Atom` names are BINDER NAMES, not indices"
+            );
+        }
+
         assert_eq!(ground_verdict(&formula, &assignment, &vars, cfg()), Sat3::Sat);
         assert_eq!(
             ground_verdict(&GuardFormula::not(formula), &assignment, &vars, cfg()),
             Sat3::Unsat
+        );
+    }
+
+    /// ★ The trap, pinned from the other side: an atom keyed by the binder's **index** rather
+    /// than its **name** is undecidable even when the slot is bound.
+    ///
+    /// This is the exact defect that sat in all four production encoder sites until 2026-07-28:
+    /// they wrote `prop_var(&vars.intern(&key).to_string())` — the stringified index `"0"` —
+    /// into a formula whose reader looks names up in a `BTreeMap<String, usize>` keyed by `"b"`.
+    /// The verdict silently degraded to `DontKnow` for every payload. Keeping the negative case
+    /// here fixes the keyspace in both directions: `truth_assignment` must NOT grow an
+    /// index-parsing fallback, and no encoder may resume writing indices.
+    #[test]
+    fn an_index_keyed_propositional_atom_is_undecidable_even_when_bound() {
+        let vars = one_var_map("b");
+        let mut assignment = GuardAssignment::with_len(1);
+        assignment.bind(0, GuardValue::Bool(true));
+
+        let index_keyed = GuardFormula::Prop(prop_var("0"));
+        assert_eq!(vars.index_of("0"), None, "\"0\" is an index, and indices are not names");
+        assert_eq!(
+            ground_verdict(&index_keyed, &assignment, &vars, cfg()),
+            Sat3::DontKnow,
+            "an atom outside the var map's keyspace must be undecided, not silently false"
         );
     }
 

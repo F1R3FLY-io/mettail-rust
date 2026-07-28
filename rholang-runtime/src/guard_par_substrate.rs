@@ -235,6 +235,19 @@ enum Operand {
     Uncovered,
 }
 
+/// The propositional atom for the binder called `name`.
+///
+/// ★ The argument is a binder **name** — `bound$i` or `free$i`, exactly as [`ParEncoder::var_index`]
+/// minted it for [`GuardVarMap::intern`] — and never a substrate index.
+/// [`GuardFormula::Prop`]'s documentation fixes that keyspace: the ground leg resolves each
+/// required atom through [`GuardVarMap::index_of`], a map keyed by name, so an atom carrying a
+/// stringified index resolves to nothing and degrades the whole guard to [`Sat3::DontKnow`] —
+/// silently, and for every payload. Both emitters go through this function so the keyspace is
+/// decided in one place.
+fn prop_atom(name: &str) -> GuardFormula {
+    GuardFormula::Prop(mettail_prattail::guard_formula::prop_var(name))
+}
+
 struct ParEncoder {
     vars: GuardVarMap,
     /// The fragment behind each opaque atom, indexed by the atom's id.
@@ -308,9 +321,21 @@ impl ParEncoder {
             },
 
             // ── A bare variable used as a boolean. ───────────────────────────────────────
+            //
+            // ★ The propositional letter is the binder's NAME (`bound$i` / `free$i`, as minted
+            // by `var_index`), never its index. `GuardFormula::Prop`'s documentation fixes that
+            // keyspace: the ground leg resolves each atom through `GuardVarMap::index_of`, whose
+            // keys are the names `intern` was called with, so an index here is undecidable for
+            // every payload. `idx` came from `intern`, so the name is always present; the `None`
+            // arm can only be reached by a corrupted map, and it fails closed to an opaque atom.
             ExprInstance::EVarBody(EVar { v }) => match self.var_index(v.as_ref()) {
                 Some(idx) => {
-                    GuardFormula::Prop(mettail_prattail::guard_formula::prop_var(&idx.to_string()))
+                    // Copied out so the borrow of `self.vars` ends before the `&mut self` call.
+                    let name = self.vars.name(idx).map(str::to_string);
+                    match name {
+                        Some(name) => prop_atom(&name),
+                        None => self.atom_for(whole, GuardAtomKind::Uncovered),
+                    }
                 },
                 None => self.atom_for(whole, GuardAtomKind::Uncovered),
             },
@@ -434,10 +459,16 @@ impl ParEncoder {
     }
 
     fn prop_compare(&mut self, op: CmpOp, idx: usize, literal: bool) -> GuardFormula {
-        let atom = GuardFormula::Prop(mettail_prattail::guard_formula::prop_var(&idx.to_string()));
-        match (op, literal) {
-            (CmpOp::Eq, true) | (CmpOp::Ne, false) => atom,
-            (CmpOp::Eq, false) | (CmpOp::Ne, true) => GuardFormula::not(atom),
+        // ★ The letter is the binder's NAME (see the `EVarBody` arm): the ground leg resolves it
+        // through `GuardVarMap::index_of`, which is keyed by name, so an index written here
+        // would be undecidable for every payload. The name is copied out before the match so
+        // that the borrow of `self.vars` ends here rather than spanning the arms.
+        let name = self.vars.name(idx).map(str::to_string);
+        match (name, op, literal) {
+            (Some(name), CmpOp::Eq, true) | (Some(name), CmpOp::Ne, false) => prop_atom(&name),
+            (Some(name), CmpOp::Eq, false) | (Some(name), CmpOp::Ne, true) => {
+                GuardFormula::not(prop_atom(&name))
+            },
             _ => GuardFormula::ScalarRel {
                 op,
                 left: ScalarOperand::Var(idx),
