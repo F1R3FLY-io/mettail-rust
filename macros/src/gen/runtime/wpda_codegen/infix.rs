@@ -1146,11 +1146,29 @@ fn emit_mixfix_parts_fn(
                 continue;
             }
             let part_idx = part_idx as u8;
+            // ⚠ SIBLING OF THE #131 ROOT, HARDENED. This is the same fails-open shape as
+            // `semantic_actions.rs`'s `lookup_cat_idx(..).unwrap_or(0)`, which resolved
+            // the unknown category `Ident` to index 0 — the FIRST declared category — and
+            // made an action advertise "slot N expects a `Num` term" while its extractor
+            // read identifier text. Here the consequence would be a mixfix part that
+            // SUB-PARSES THE WRONG CATEGORY: silently wrong, never a diagnostic.
+            //
+            // An `Ident` part cannot reach this line today — `classify_postfix_mixfix`
+            // panics on an operand-leading `Ident` capture before the table is built — so
+            // this hardening is provably inert, and `cargo check -p languages` completing
+            // across all 49 languages is the measurement that says so.
             let operand_src_idx = categories
                 .iter()
                 .position(|c| c == &part.operand_category)
                 .map(|i| i as u16)
-                .unwrap_or(0);
+                .unwrap_or_else(|| {
+                    panic!(
+                        "mettail: mixfix part `{}` of rule `{}` names the category `{}`, \
+                         which is not declared. Defaulting to category 0 would silently \
+                         sub-parse the WRONG category. Report this as a macro bug.",
+                        part.param_name, rule_idx, part.operand_category,
+                    )
+                });
             let preceding_lits: Vec<TokenStream> = part
                 .preceding_terminals
                 .iter()
