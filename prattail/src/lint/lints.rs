@@ -1121,9 +1121,47 @@ fn tree_rules_for_token(ctx: &LintContext, category: &str, token: &str) -> Vec<S
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// G10: Ambiguous Associativity
+// G10: Mixed Associativity Within One Precedence Level
 // ══════════════════════════════════════════════════════════════════════════════
 
+/// Report precedence levels that hold operators of BOTH associativities.
+///
+/// # What this used to do, and why it could never fire
+///
+/// This lint grouped operators by `left_bp` and reported a group whose members disagreed
+/// about associativity. That predicate was unsatisfiable by construction:
+///
+/// - a LEFT-associative operator at level `p` is encoded `(ℓ, r) = (p, p + 1)`, so
+///   `ℓ = p`;
+/// - a RIGHT-associative operator at level `p` is encoded `(p + 1, p)`, so `ℓ = p + 1`;
+/// - levels begin at 2 and advance by 2, so every level `p` is EVEN.
+///
+/// Hence left-associative operators always have an even `left_bp` and right-associative
+/// ones always have an odd `left_bp`. Two operators sharing a `left_bp` share its parity,
+/// therefore share their associativity, therefore never satisfy `has_mixed`. The lint was
+/// dead, and its two unit tests hand-built `left_bp: 2` twice with differing `right_bp` —
+/// a shape [`analyze_binding_powers`](crate::binding_power::analyze_binding_powers) cannot
+/// emit — so they tested a fiction rather than the analyzer.
+///
+/// The key is now the LEVEL, `min(left_bp, right_bp)`, which is the same reading every
+/// other consumer uses and which is equal for both encodings above. The lint can now fire.
+///
+/// # Why it is a Note and not a Warning
+///
+/// Mixed associativity within a level is **legal and sometimes mandatory**. Rholang's
+/// normative grammar declares `matches` as `prec.right(6, …)` beside `eq` and `neq` as
+/// `prec.left(6, …)` — three operators, one level, two associativities. A grammar that
+/// models Rholang MUST express it.
+///
+/// Nor is it ambiguous. In an LR parser `%left`/`%right` are properties of a level and a
+/// disagreement is a genuine conflict; in a Pratt parser the `(ℓ, r)` pair determines a
+/// unique reading for every input. What remains is that the reading is easy to MISREAD:
+/// at a level `p` holding left-associative `==` and right-associative `matches`, both
+/// `a == b matches c` and `a matches b == c` group to the right, because the
+/// right-associative operator's `ℓ = p + 1` clears the `min_bp = p + 1` its
+/// left-associative neighbour installs. That is worth stating and not worth failing over,
+/// so the diagnostic reports the levelling and the resulting nesting instead of alleging
+/// an ambiguity that does not exist.
 pub(crate) fn lint_g10_ambiguous_associativity(
     ctx: &LintContext,
     diagnostics: &mut Vec<LintDiagnostic>,
@@ -1133,13 +1171,30 @@ pub(crate) fn lint_g10_ambiguous_associativity(
     for cat in &category_names {
         let ops = ctx.bp_table.operators_for_category(cat);
 
-        // Group by left_bp (same precedence level)
-        let mut bp_to_ops: HashMap<u8, Vec<&crate::binding_power::InfixOperator>> = HashMap::new();
-        for op in &ops {
-            bp_to_ops.entry(op.left_bp).or_default().push(op);
+        // Group by PRECEDENCE LEVEL, `min(left_bp, right_bp)` — equal for the left
+        // encoding `(p, p+1)` and the right encoding `(p+1, p)`, which is precisely what
+        // makes a mixed level detectable.
+        //
+        // Postfix operators are excluded: they have no right operand, so they have no
+        // associativity to disagree about. Their `right_bp` is an unused 0, which would
+        // otherwise collapse every one of them onto a spurious level 0 and make them all
+        // read as right-associative.
+        let mut level_to_ops: HashMap<u8, Vec<&crate::binding_power::InfixOperator>> =
+            HashMap::new();
+        for op in ops.iter().filter(|op| !op.is_postfix) {
+            level_to_ops
+                .entry(op.left_bp.min(op.right_bp))
+                .or_default()
+                .push(op);
         }
 
-        for (left_bp, group) in &bp_to_ops {
+        // Deterministic order: `HashMap` iteration is not stable across runs, and a
+        // diagnostic stream that reorders between builds is not diffable.
+        let mut levels: Vec<(&u8, &Vec<&crate::binding_power::InfixOperator>)> =
+            level_to_ops.iter().collect();
+        levels.sort_by_key(|(level, _)| **level);
+
+        for (level, group) in levels {
             if group.len() < 2 {
                 continue;
             }
@@ -1147,25 +1202,42 @@ pub(crate) fn lint_g10_ambiguous_associativity(
             let first_assoc = group[0].associativity();
             let has_mixed = group.iter().any(|op| op.associativity() != first_assoc);
             if has_mixed {
-                let op_names: Vec<&str> = group.iter().map(|op| op.terminal.as_str()).collect();
+                let mut right: Vec<&str> = group
+                    .iter()
+                    .filter(|op| op.associativity() == crate::binding_power::Associativity::Right)
+                    .map(|op| op.terminal.as_str())
+                    .collect();
+                let mut left: Vec<&str> = group
+                    .iter()
+                    .filter(|op| op.associativity() == crate::binding_power::Associativity::Left)
+                    .map(|op| op.terminal.as_str())
+                    .collect();
+                right.sort_unstable();
+                left.sort_unstable();
+
                 diagnostics.push(LintDiagnostic {
                     id: DiagnosticId::G10,
-                    name: "ambiguous-associativity",
-                    severity: LintSeverity::Warning,
+                    name: "mixed-associativity-level",
+                    severity: LintSeverity::Note,
                     category: Some(cat.clone()),
                     rule: None,
                     message: format!(
-                        "same-precedence operators [{}] in category `{}` (left_bp={}) \
-                         have different associativity",
-                        op_names.join(", "),
+                        "precedence level {} of category `{}` holds both \
+                         right-associative [{}] and left-associative [{}] operators",
+                        level,
                         cat,
-                        left_bp,
+                        right.join(", "),
+                        left.join(", "),
                     ),
-                    hint: Some(
-                        "use explicit precedence levels to separate operators with \
-                         different associativity"
-                            .to_string(),
-                    ),
+                    hint: Some(format!(
+                        "this is legal and unambiguous — every input has one reading. Note \
+                         that a chain mixing them nests to the RIGHT in both directions, \
+                         because a right-associative operator's left binding power exceeds \
+                         the level. Declare the operators on separate levels if that is not \
+                         intended; keep them together if it is (Rholang's `matches` shares \
+                         level {} with `==` and `!=` by design).",
+                        level
+                    )),
                     grammar_name: Some(ctx.grammar_name.to_string()),
                     source_location: None,
                 });

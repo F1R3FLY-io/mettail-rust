@@ -1,5 +1,5 @@
 use super::*;
-use crate::binding_power::{BindingPowerTable, InfixOperator};
+use crate::binding_power::{Associativity, BindingPowerTable, InfixOperator};
 use crate::grammar::ir::RDRuleInfo;
 use crate::grammar::ir::{CastRule, CrossCategoryRule};
 use crate::pipeline::CategoryInfo;
@@ -806,81 +806,115 @@ fn g09_self_balanced_terminal() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// G10: Ambiguous Associativity
+// G10: Mixed Associativity Within One Precedence Level
 // ══════════════════════════════════════════════════════════════════════
+//
+// ★ These tests drive the REAL assigner, `analyze_binding_powers`.
+//
+// They previously hand-built `InfixOperator`s with `left_bp: 2` on both operators and
+// differing `right_bp` — a shape the assigner cannot emit, because a right-associative
+// operator at level `p` is encoded `(p + 1, p)`, never `(p, p - 1)`. The lint was keyed
+// on `left_bp`, so it could only have fired on that impossible shape, and the suite
+// reported a dead lint as covered. Building the table through the assigner is what makes
+// the coverage real: if the encoding or the lint's key drifts apart again, these fail.
 
-#[test]
-fn g10_fires_on_mixed_associativity() {
-    let mut b = CtxBuilder::new();
-    b.categories.push(cat_info("Int", None, true));
-    b.bp_table.operators.push(InfixOperator {
-        terminal: "+".to_string(),
-        category: "Int".to_string(),
-        result_category: "Int".to_string(),
-        left_bp: 2,
-        right_bp: 3,
-        label: "Add".to_string(),
-        is_cross_category: false,
-        is_postfix: false,
-        is_mixfix: false,
-        mixfix_parts: vec![],
-        nullary_literals: vec![],
-    });
-    b.bp_table.operators.push(InfixOperator {
-        terminal: "-".to_string(),
-        category: "Int".to_string(),
-        result_category: "Int".to_string(),
-        left_bp: 2,
-        right_bp: 1, // Right-associative at same left_bp
-        label: "Sub".to_string(),
-        is_cross_category: false,
-        is_postfix: false,
-        is_mixfix: false,
-        mixfix_parts: vec![],
-        nullary_literals: vec![],
-    });
-
-    let mut diags = Vec::new();
-    lint_g10_ambiguous_associativity(&b.ctx(), &mut diags);
-
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].id, DiagnosticId::G10);
+/// Build a `(label, terminal, associativity, shares_level)` rule list into a real
+/// binding-power table via the production assigner.
+fn analyzed_table(
+    rules: &[(&str, &str, Associativity, bool)],
+) -> crate::binding_power::BindingPowerTable {
+    let infos: Vec<crate::binding_power::InfixRuleInfo> = rules
+        .iter()
+        .map(|(label, terminal, assoc, same)| crate::binding_power::InfixRuleInfo {
+            label: label.to_string(),
+            terminal: terminal.to_string(),
+            category: "Int".to_string(),
+            result_category: "Int".to_string(),
+            associativity: *assoc,
+            shares_level_with_previous: *same,
+            is_cross_category: false,
+            is_postfix: false,
+            is_mixfix: false,
+            mixfix_parts: Vec::new(),
+            nullary_literals: Vec::new(),
+        })
+        .collect();
+    crate::binding_power::analyze_binding_powers(&infos)
 }
 
+/// The Rholang shape: one level holding right-associative `matches` beside
+/// left-associative `==` and `!=`.
 #[test]
-fn g10_does_not_fire_on_same_associativity() {
+fn g10_fires_on_a_level_holding_both_associativities() {
     let mut b = CtxBuilder::new();
     b.categories.push(cat_info("Int", None, true));
-    b.bp_table.operators.push(InfixOperator {
-        terminal: "+".to_string(),
-        category: "Int".to_string(),
-        result_category: "Int".to_string(),
-        left_bp: 2,
-        right_bp: 3,
-        label: "Add".to_string(),
-        is_cross_category: false,
-        is_postfix: false,
-        is_mixfix: false,
-        mixfix_parts: vec![],
-        nullary_literals: vec![],
-    });
-    b.bp_table.operators.push(InfixOperator {
-        terminal: "-".to_string(),
-        category: "Int".to_string(),
-        result_category: "Int".to_string(),
-        left_bp: 2,
-        right_bp: 3, // Same left-assoc
-        label: "Sub".to_string(),
-        is_cross_category: false,
-        is_postfix: false,
-        is_mixfix: false,
-        mixfix_parts: vec![],
-        nullary_literals: vec![],
-    });
+    b.bp_table = analyzed_table(&[
+        ("Matches", "matches", Associativity::Right, false),
+        ("Eq", "==", Associativity::Left, true),
+        ("Ne", "!=", Associativity::Left, true),
+    ]);
+
+    // Precondition: the assigner really did put all three on ONE level. Without this the
+    // assertion below could pass for the wrong reason.
+    let ops = b.bp_table.operators_for_category("Int");
+    let levels: Vec<u8> = ops.iter().map(|op| op.left_bp.min(op.right_bp)).collect();
+    assert!(
+        levels.windows(2).all(|w| w[0] == w[1]),
+        "`same` must place all three operators on one level; got {levels:?}"
+    );
 
     let mut diags = Vec::new();
     lint_g10_ambiguous_associativity(&b.ctx(), &mut diags);
-    assert!(diags.is_empty());
+
+    assert_eq!(diags.len(), 1, "expected exactly one diagnostic: {diags:?}");
+    assert_eq!(diags[0].id, DiagnosticId::G10);
+    assert_eq!(
+        diags[0].severity,
+        LintSeverity::Note,
+        "mixed associativity within a level is legal and unambiguous — Rholang's grammar \
+         mandates it — so this must not be a Warning"
+    );
+    assert!(
+        diags[0].message.contains("matches"),
+        "the diagnostic must name the right-associative operator: {}",
+        diags[0].message
+    );
+}
+
+/// A level whose operators agree must stay silent — the ordinary case, and the one that
+/// would flood every grammar with notes if the predicate were wrong.
+#[test]
+fn g10_does_not_fire_on_a_level_of_one_associativity() {
+    let mut b = CtxBuilder::new();
+    b.categories.push(cat_info("Int", None, true));
+    b.bp_table = analyzed_table(&[
+        ("Add", "+", Associativity::Left, false),
+        ("Sub", "-", Associativity::Left, true),
+        ("Mul", "*", Associativity::Left, false),
+        ("Div", "/", Associativity::Left, true),
+    ]);
+
+    let mut diags = Vec::new();
+    lint_g10_ambiguous_associativity(&b.ctx(), &mut diags);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+}
+
+/// Operators of different associativity on DIFFERENT levels must stay silent: `^` is
+/// right-associative and tighter than `*`, which is the commonest arrangement in any
+/// arithmetic grammar and must never be reported.
+#[test]
+fn g10_does_not_fire_when_associativities_differ_across_levels() {
+    let mut b = CtxBuilder::new();
+    b.categories.push(cat_info("Int", None, true));
+    b.bp_table = analyzed_table(&[
+        ("Mul", "*", Associativity::Left, false),
+        ("Div", "/", Associativity::Left, true),
+        ("Pow", "^", Associativity::Right, false),
+    ]);
+
+    let mut diags = Vec::new();
+    lint_g10_ambiguous_associativity(&b.ctx(), &mut diags);
+    assert!(diags.is_empty(), "`^` on its own level must not be reported: {diags:?}");
 }
 
 // ══════════════════════════════════════════════════════════════════════
