@@ -414,6 +414,42 @@ fn classify_mixfix(
                         return None;
                     }
                     if param_idx > 0 {
+                        // ★★ AN OPERAND-LEADING RULE CANNOT YET CARRY AN `Ident` CAPTURE,
+                        // AND IT MUST SAY SO RATHER THAN BUILD AN UNPARSEABLE RULE.
+                        //
+                        // `MixfixPart` has NO representation for a token consumption —
+                        // every part is a CATEGORY operand (`operand_category`) or a
+                        // repetition of them (`MixfixRep`). Left alone, `base_type_name`
+                        // happily yields `"Ident"` and the walker then tries to SUB-PARSE
+                        // a category that does not exist, so the rule silently has no
+                        // realizable reading: `# . f ( )` fails at every arity with a
+                        // diagnostic that never mentions `Ident`.
+                        //
+                        // That silence is the same fails-open class this whole task has
+                        // been chasing (a `RealizedTerm` coerced to `""`, a fork emitted
+                        // into a dispatcher never called). Failing at MACRO-EXPANSION time
+                        // names the limitation at the grammar that triggers it.
+                        //
+                        // ⚠ THIS IS THE SHAPE RHOLANG'S COLLAPSED `EMethodCall` NEEDS
+                        // (`recv "." name "(" args ")"`), so #132's collapse is blocked on
+                        // lifting it. The fix is structural, not a guard: `MixfixPart`
+                        // needs a token-capture part kind plus walker support to consume
+                        // it — a `prattail/` change, sized accordingly. A LITERAL-leading
+                        // rule (`Tagged . m:Ident |- "tag" m`) is unaffected: it routes
+                        // through `classify_binder_in` → `BinderPrefix` →
+                        // `WpdaState::BinderRule` and works today.
+                        if pty.is_ident_text() {
+                            panic!(
+                                "mettail: rule `{}` places an `Ident` capture (`{p}`) in an \
+                                 OPERAND-LEADING (infix/postfix) rule. `MixfixPart` has no \
+                                 token-capture kind, so the parser would sub-parse a \
+                                 non-existent category `Ident` and the rule could never \
+                                 match. Put the capture in a LITERAL-leading rule, or \
+                                 implement the token-capture part kind. Report as macro bug \
+                                 if you believe this rule shape should be supported.",
+                                rule.label,
+                            );
+                        }
                         let cat = base_type_name(pty)?;
                         // L12 follow-up B6 (2026-05-07): widened from
                         // `following_terminal: Option<String>` to vectors.
