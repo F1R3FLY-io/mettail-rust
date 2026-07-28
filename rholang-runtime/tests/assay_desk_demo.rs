@@ -330,7 +330,7 @@ fn beat_2_contract_c_drives_to_the_constant_combinator_in_one_firing() {
 /// could select the right rendering for the wrong reason.
 #[test]
 fn the_three_contracts_have_three_distinct_normal_forms() {
-    let mut forms = vec![
+    let mut forms = [
         out_observations(&transcript("contract-a.rho")),
         out_observations(&transcript("contract-b.rho")),
         out_observations(&transcript("contract-c.rho")),

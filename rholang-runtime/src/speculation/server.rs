@@ -994,7 +994,7 @@ mod tests {
             parse_request(&[subject.clone(), bound, reply.clone()], true).expect("the `[n]` shape");
         assert_eq!(lookahead, Lookahead::Steps(7));
 
-        assert!(parse_request(&[subject.clone()], false).is_err(), "arity 1 is not a request");
+        assert!(parse_request(std::slice::from_ref(&subject), false).is_err(), "arity 1 is not a request");
         assert!(
             parse_request(&[subject.clone(), reply.clone(), reply.clone()], true).is_err(),
             "a non-integer bound must be refused, never coerced"

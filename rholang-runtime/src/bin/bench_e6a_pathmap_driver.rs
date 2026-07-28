@@ -23,6 +23,13 @@
 //! Every rep runs on FRESH counting runtime(s) (per-step for `lambda_chain`),
 //! under a per-rep tokio timeout and a panic guard.
 
+// `dead_code` is wrong HERE: `workloads.rs` is ONE support module shared by FOUR
+// consumers through `#[path]` (this file, the sibling bench, and the two driver
+// bins), and each needs a different subset of the workload registry. The lint sees
+// only this consumer, so every item the OTHER three use reads as dead. The module
+// is not a dependency because a `[dev-dependencies]` crate cannot be shared with a
+// `src/bin` target — one source, four consumers.
+#[allow(dead_code)]
 #[path = "../../benches/support/workloads.rs"]
 mod workloads;
 

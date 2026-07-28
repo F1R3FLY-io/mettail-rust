@@ -151,10 +151,10 @@ impl TauChannelClassifier {
 
     fn classify_channel(&self, channel: &Par) -> Option<RuntimeTauClass> {
         if let Some(tag) = channel_gprivate_string(channel) {
-            if self.drive_tags.iter().any(|drive| *drive == tag) {
+            if self.drive_tags.contains(&tag) {
                 return Some(RuntimeTauClass::Drive);
             }
-            if self.subst_tags.iter().any(|subst| *subst == tag) {
+            if self.subst_tags.contains(&tag) {
                 return Some(RuntimeTauClass::Subst);
             }
             if tag.starts_with(&self.ac_tag_prefix) {
@@ -176,7 +176,7 @@ impl TauChannelClassifier {
             return None;
         }
         let name = channel_gstring(channel)?;
-        if self.drive_strings.iter().any(|drive| *drive == name) {
+        if self.drive_strings.contains(&name) {
             return Some(RuntimeTauClass::Drive);
         }
         None

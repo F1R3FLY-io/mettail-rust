@@ -886,11 +886,11 @@ fn main() -> ExitCode {
                 }
             },
         };
-        if recorded {
-            if writeln!(sink, "{line}").is_err() {
-                eprintln!("cannot write a rep line");
-                return ExitCode::FAILURE;
-            }
+        // `writeln!` runs only when `recorded` — `&&` short-circuits, exactly as the
+        // nested `if` it replaces did.
+        if recorded && writeln!(sink, "{line}").is_err() {
+            eprintln!("cannot write a rep line");
+            return ExitCode::FAILURE;
         }
     }
     if sink.flush().is_err() {

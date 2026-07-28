@@ -512,7 +512,7 @@ async fn d2_reinstall_erases_a_previous_runs_effects() {
     // ── run a program that leaves obvious residue ────────────────────────
     // `RSpace` is `Clone` and every field is `Arc`-shared, so the runtime and
     // this test observe the SAME store.
-    let mut runtime = create_rho_runtime(
+    let runtime = create_rho_runtime(
         space.clone(),
         Arc::new(HashMap::new()),
         false,
@@ -595,7 +595,7 @@ async fn d3_reinstall_of_the_empty_state_returns_a_pristine_sandbox() {
     let space = fresh_sandbox().await;
     install(&space, fixture_state()).await;
 
-    let mut runtime = create_rho_runtime(
+    let runtime = create_rho_runtime(
         space.clone(),
         Arc::new(HashMap::new()),
         false,

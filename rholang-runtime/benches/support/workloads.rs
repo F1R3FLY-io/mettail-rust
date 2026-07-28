@@ -409,7 +409,7 @@ impl WorkloadKind {
                  wrap_swap_ctx_depth_two_fails_closed_on_both_emitters unit test)"
             ));
         }
-        if self == WorkloadKind::MultiRuleShared && (n < 100 || n % 100 == 0) {
+        if self == WorkloadKind::MultiRuleShared && (n < 100 || n.is_multiple_of(100)) {
             return Err(format!(
                 "multi_rule_shared sizes encode n = 100·r + s (r = n/100 rules ≥ 1, \
                  s = n%100 shared-chain depth in 1..=99): {n} decodes to r = {} s = {}",

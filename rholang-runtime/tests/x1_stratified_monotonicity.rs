@@ -599,7 +599,7 @@ fn guard_first_bound_at_most_45() -> Par {
         expr_instance: Some(ExprInstance::ELteBody(models::rhoapi::ELte {
             p1: Some(models::rust::utils::new_boundvar_par(
                 0,
-                models::create_bit_vector(&vec![0]),
+                models::create_bit_vector(&[0]),
                 false,
             )),
             p2: Some(new_gint_par(45, Vec::new(), false)),
@@ -698,7 +698,7 @@ async fn run_speculative(par: Par) -> SpeculativeRun {
     let staged_produces = space.staged_produces.clone();
     let staged_consumes = space.staged_consumes.clone();
 
-    let mut runtime = create_rho_runtime(
+    let runtime = create_rho_runtime(
         space,
         Arc::new(HashMap::new()),
         false,
@@ -735,7 +735,7 @@ async fn run_ordinary(par: Par) -> OrdinaryRun {
     let space = RecordingSpace::new(inner.clone());
     let ledger = space.fired.clone();
 
-    let mut runtime = create_rho_runtime(
+    let runtime = create_rho_runtime(
         space,
         Arc::new(HashMap::new()),
         false,
@@ -1564,11 +1564,11 @@ fn confluent_new_fan(width: usize) -> Par {
                 chan: Some(chan(&format!("x1-rand-{index}"))),
                 data: vec![models::rust::utils::new_boundvar_par(
                     0,
-                    models::create_bit_vector(&vec![0]),
+                    models::create_bit_vector(&[0]),
                     false,
                 )],
                 persistent: false,
-                locally_free: models::create_bit_vector(&vec![0]),
+                locally_free: models::create_bit_vector(&[0]),
                 connective_used: false,
             }]),
             Vec::new(),      // uri

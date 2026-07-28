@@ -1473,7 +1473,7 @@ thread_local! {
     /// read by [`kont_trace`]; `cfg(test)` only, so the production drive carries no
     /// instrumentation at all.
     static KONT_TRACE: RefCell<std::collections::BTreeSet<&'static str>> =
-        RefCell::new(std::collections::BTreeSet::new());
+        const { RefCell::new(std::collections::BTreeSet::new()) };
 }
 
 /// Lower `proc` and merge the continuations the drive pushed into `seen`.
@@ -1879,7 +1879,7 @@ impl<'a> Drive<'a> {
             Proc::CastPathmap(value) => match value.as_ref() {
                 Pathmap::PathmapLit(entries) => {
                     let mut entries: Vec<(&Proc, &Proc)> = entries.iter().collect();
-                    entries.sort_by(|(key_a, _), (key_b, _)| key_a.cmp(key_b));
+                    entries.sort_by_key(|(key_a, _)| *key_a);
                     let mut children = Vec::with_capacity(2 * entries.len());
                     let pair_count = entries.len();
                     for (key, value) in entries {
@@ -2480,7 +2480,7 @@ impl<'a> Drive<'a> {
                     remainder: None,
                     free_count: 1,
                 };
-                let recv_locally_free = receive_locally_free(&[bind.clone()], &for_body, 1);
+                let recv_locally_free = receive_locally_free(std::slice::from_ref(&bind), &for_body, 1);
                 let recv = new_receive_par(
                     vec![bind],
                     for_body,

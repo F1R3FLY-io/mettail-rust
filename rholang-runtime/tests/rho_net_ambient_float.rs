@@ -339,7 +339,7 @@ fn run_permutation_equal(a: &Value, b: &Value) -> bool {
     let mut i = 0usize;
     while i < run_a {
         if c[i] < i {
-            if i % 2 == 0 {
+            if i.is_multiple_of(2) {
                 indices.swap(0, i);
             } else {
                 indices.swap(c[i], i);

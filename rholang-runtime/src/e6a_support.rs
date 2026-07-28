@@ -226,7 +226,7 @@ fn ground_tuple(inner: Par) -> Par {
 /// A `Par` carrying one method call `target.method_name(args…)`, free in the
 /// De Bruijn indices `free`.
 fn method_par(target: Par, method_name: &str, arguments: Vec<Par>, free: &[usize]) -> Par {
-    let bits = create_bit_vector(&free.to_vec());
+    let bits = create_bit_vector(free);
     Par {
         exprs: vec![Expr {
             expr_instance: Some(ExprInstance::EMethodBody(EMethod {
@@ -1190,7 +1190,7 @@ pub async fn drive_e6a_treatment(
         all_sites.extend(
             sites
                 .iter()
-                .filter(|site| site_filter.map_or(true, |filter| filter.contains(*site)))
+                .filter(|site| site_filter.is_none_or(|filter| filter.contains(*site)))
                 .cloned(),
         );
         machine_sites.insert(op.clone(), sites);
@@ -1225,7 +1225,7 @@ pub async fn drive_e6a_treatment(
             .expect("every entry root op has a discovery readback entry");
         for site in sites
             .iter()
-            .filter(|site| site_filter.map_or(true, |filter| filter.contains(*site)))
+            .filter(|site| site_filter.is_none_or(|filter| filter.contains(*site)))
         {
             phase2 = phase2.append(
                 entry_query_match_par(

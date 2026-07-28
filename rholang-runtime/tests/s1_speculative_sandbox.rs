@@ -198,9 +198,9 @@ fn forwarding_receive(source: &str, target: &str) -> Par {
         None,
         Par::default().with_sends(vec![Send {
             chan: Some(chan(target)),
-            data: vec![new_boundvar_par(0, models::create_bit_vector(&vec![0]), false)],
+            data: vec![new_boundvar_par(0, models::create_bit_vector(&[0]), false)],
             persistent: false,
-            locally_free: models::create_bit_vector(&vec![0]),
+            locally_free: models::create_bit_vector(&[0]),
             connective_used: false,
         }]),
     )
@@ -239,7 +239,7 @@ fn receive_with_body(
 fn guard_first_bound_at_most_45() -> Par {
     Par::default().with_exprs(vec![Expr {
         expr_instance: Some(ExprInstance::ELteBody(models::rhoapi::ELte {
-            p1: Some(new_boundvar_par(0, models::create_bit_vector(&vec![0]), false)),
+            p1: Some(new_boundvar_par(0, models::create_bit_vector(&[0]), false)),
             p2: Some(new_gint_par(45, Vec::new(), false)),
         })),
     }])

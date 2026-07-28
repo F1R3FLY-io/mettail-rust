@@ -925,14 +925,11 @@ fn undecided_cause(condition: &Par, payloads: &[Par]) -> String {
     use mettail_rholang_runtime::guard_par_substrate::{encode_par_guard, substitute_bound_pars};
     let substituted = substitute_bound_pars(condition, payloads);
     let encoding = encode_par_guard(&substituted);
-    match encoding.vars.is_empty() {
-        false => {
-            return format!(
-                "RESIDUAL BINDER — {} slot(s) the substitution could not reach",
-                encoding.vars.len()
-            )
-        },
-        true => {},
+    if !encoding.vars.is_empty() {
+        return format!(
+            "RESIDUAL BINDER — {} slot(s) the substitution could not reach",
+            encoding.vars.len()
+        );
     }
     for (index, fragment) in encoding.opaque.iter().enumerate() {
         if machine_verdict(fragment).is_none() {

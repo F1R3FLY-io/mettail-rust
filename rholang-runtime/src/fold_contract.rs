@@ -198,9 +198,13 @@ pub fn fold_channel(site_index: u8, language_fingerprint: &str) -> Par {
 /// operand and `produce`s the result on `ack` — driving the lifted `for(@r <- ret){…}`. Built
 /// MeTTaIL-side, injected as data.
 pub fn fold_definition(spec: &FoldSpec) -> Definition {
+    // `kind` and `width` are copied out so the `move` handler captures the `Copy` values
+    // instead of borrowing `spec`. `site_index` needed no such copy and was bound without
+    // ever being read (`unused_variables` caught it): the only two things that consume it —
+    // `spec.channel()` and `spec.body_ref()` — are evaluated EAGERLY in the struct literal
+    // below, outside the closure, so the handler never asks which site it serves.
     let kind = spec.kind;
     let width = spec.width;
-    let site_index = spec.site_index;
     Definition {
         urn: fold_urn(spec),
         fixed_channel: spec.channel(),

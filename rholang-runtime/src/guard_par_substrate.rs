@@ -2512,7 +2512,7 @@ mod tests {
             remainder: None,
         }));
         let guard = eq(bound(0), list(vec![gint(1)]));
-        let substituted = substitute_bound_pars(&guard, &[payload.clone()]);
+        let substituted = substitute_bound_pars(&guard, std::slice::from_ref(&payload));
         let EI::EEqBody(EEq { p1, .. }) = substituted.exprs[0]
             .expr_instance
             .clone()
