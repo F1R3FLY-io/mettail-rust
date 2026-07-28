@@ -1264,19 +1264,13 @@ fn emit_native(declared: &str, node: &DebugNode) -> Result<String, EmitError> {
                 found: describe(other),
             }),
         },
+        // `CanonicalBigInt`'s `Debug` DELEGATES to the inner `BigInt`, so the text is a bare
+        // integer with no wrapper to peel. Only `From<BigInt>` exists — there is no
+        // `From<i64>` — so the literal is widened explicitly.
         "CanonicalBigInt" => match node {
             DebugNode::Int(n) => Ok(format!(
-                "mettail_runtime::CanonicalBigInt::from({n}i64)"
+                "mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from({n}i64))"
             )),
-            DebugNode::Call { head, args } if args.len() == 1 => match &args[0] {
-                DebugNode::Int(n) => Ok(format!(
-                    "mettail_runtime::CanonicalBigInt::from({n}i64) /* {head} */"
-                )),
-                other => Err(EmitError::ShapeMismatch {
-                    expected: "an integer inside the big-integer wrapper".to_string(),
-                    found: describe(other),
-                }),
-            },
             other => Err(EmitError::ShapeMismatch {
                 expected: "a big-integer literal".to_string(),
                 found: describe(other),
@@ -1285,44 +1279,58 @@ fn emit_native(declared: &str, node: &DebugNode) -> Result<String, EmitError> {
         // `Ratio`'s derived `Debug` is `Ratio { numer: a, denom: b }` and its fields are
         // private, so `Ratio::new` is the only way in. `CanonicalFixedPoint` prints `a/b`,
         // which parses as DIVISION in Rust — objection 5 of five.
+        // `CanonicalBigRat`'s `Debug` delegates to `Ratio<BigInt>`, whose DERIVED `Debug` is
+        // `Ratio { numer: a, denom: b }`. Its fields are private, so `Ratio::new` is the only
+        // way in — objection 4 of five, verbatim.
         "CanonicalBigRat" | "BigRational" | "Ratio" => match node {
             DebugNode::Struct { head, fields } if head == "Ratio" => {
                 let numer = int_field(fields, "numer")?;
                 let denom = int_field(fields, "denom")?;
                 Ok(format!(
-                    "mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new({numer}.into(), {denom}.into()))"
+                    "mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new(num_bigint::BigInt::from({numer}i64), num_bigint::BigInt::from({denom}i64)))"
                 ))
             },
             DebugNode::Ratio(n, d) => Ok(format!(
-                "mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new({n}.into(), {d}.into()))"
+                "mettail_runtime::CanonicalBigRat::from(num_rational::BigRational::new(num_bigint::BigInt::from({n}i64), num_bigint::BigInt::from({d}i64)))"
             )),
             other => Err(EmitError::ShapeMismatch {
                 expected: "`Ratio { numer: .., denom: .. }` or `a/b`".to_string(),
                 found: describe(other),
             }),
         },
-        "CanonicalFixedPoint" => match node {
-            DebugNode::Call { head, args } if head == "Fixed" && args.len() == 1 => {
-                match &args[0] {
-                    DebugNode::Ratio(n, d) => Ok(format!(
-                        "mettail_runtime::CanonicalFixedPoint::from_parts({n}i64, {d}i64)"
-                    )),
-                    DebugNode::Int(n) => Ok(format!(
-                        "mettail_runtime::CanonicalFixedPoint::from_parts({n}i64, 1i64)"
-                    )),
-                    other => Err(EmitError::ShapeMismatch {
+        // `CanonicalFixedPoint`'s hand-written `Debug` is
+        // `write!(f, "Fixed({}/{})", unscaled, 10^places)`, so the DENOMINATOR is a power of
+        // ten and the constructor wants the EXPONENT, not the denominator itself. `a/b`
+        // would parse as division in Rust — objection 5 of five.
+        "CanonicalFixedPoint" => {
+            let (unscaled, denom) = match node {
+                DebugNode::Call { head, args } if head == "Fixed" && args.len() == 1 => {
+                    match &args[0] {
+                        DebugNode::Ratio(n, d) => (*n, *d),
+                        DebugNode::Int(n) => (*n, 1),
+                        other => {
+                            return Err(EmitError::ShapeMismatch {
+                                expected: "`Fixed(a/b)`".to_string(),
+                                found: describe(other),
+                            })
+                        },
+                    }
+                },
+                DebugNode::Ratio(n, d) => (*n, *d),
+                other => {
+                    return Err(EmitError::ShapeMismatch {
                         expected: "`Fixed(a/b)`".to_string(),
                         found: describe(other),
-                    }),
-                }
-            },
-            DebugNode::Ratio(n, d) => Ok(format!(
-                "mettail_runtime::CanonicalFixedPoint::from_parts({n}i64, {d}i64)"
-            )),
-            other => Err(EmitError::ShapeMismatch {
-                expected: "`Fixed(a/b)`".to_string(),
-                found: describe(other),
-            }),
+                    })
+                },
+            };
+            let places = power_of_ten_exponent(denom).ok_or_else(|| EmitError::ShapeMismatch {
+                expected: "a `Fixed(a/10^p)` denominator that is a power of ten".to_string(),
+                found: format!("the denominator {denom}"),
+            })?;
+            Ok(format!(
+                "mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from({unscaled}i64), {places}u32)"
+            ))
         },
         other => Err(EmitError::UnsupportedFieldType {
             descriptor: format!("native type `{other}` (declared `{declared}`)"),
@@ -1365,6 +1373,20 @@ fn unwrap_lit_container<'a>(
             other => return Ok(other),
         }
     }
+}
+
+/// `p` such that `10^p == value`, or `None` if `value` is not a power of ten.
+fn power_of_ten_exponent(value: i128) -> Option<u32> {
+    if value <= 0 {
+        return None;
+    }
+    let mut remaining = value;
+    let mut exponent = 0u32;
+    while remaining % 10 == 0 {
+        remaining /= 10;
+        exponent += 1;
+    }
+    (remaining == 1).then_some(exponent)
 }
 
 fn field_named<'a>(
@@ -1599,4 +1621,96 @@ pub fn render_bindings(bindings: &[Binding]) -> String {
         render_into(&binding.value, &mut out);
     }
     out
+}
+
+/// Canonicalise a `Debug` text so it is a function of the TERM and nothing else.
+///
+/// # The defect this exists to remove
+///
+/// `HashBag`, `HashSetLit` and `HashMapLit` print their entries in HASH ORDER. The hash of a
+/// term containing a `FreeVar` depends on that variable's `unique_id`, which is drawn from a
+/// process-global counter — so the SAME term prints its bag entries in different orders
+/// depending on how many variables the process happened to create first.
+///
+/// Measured: `languages/tests/promoted_corpus_ambient.rs` has a term whose `PPar` bag holds
+/// a `PAmb` and a `PIn`. It printed them in the recorded order on its own, and in the
+/// opposite order once a mutation to an EARLIER test in the same binary shifted the counter.
+/// A promoted test asserting raw text equality would therefore be a flake that fires on
+/// unrelated edits — which is worse than no test, because it trains a reader to re-run
+/// rather than to look.
+///
+/// # What is quotiented out, and what is not
+///
+/// Exactly two things: `UniqueId(n)` (see [`normalize_unique_ids`]) and the ORDER of
+/// entries inside a brace group. Both are properties of the process, not of the term:
+/// `HashBag` is a multiset and its `PartialEq` does not depend on iteration order. Every
+/// other byte — every constructor, every field name, every multiplicity, every literal —
+/// still has to match exactly, so the anti-vacuity property is untouched.
+///
+/// Sorting is by the entries' own rendered text, which is total and deterministic.
+pub fn canonicalize_debug(text: &str) -> String {
+    let normalized = normalize_unique_ids(text);
+    match parse_debug_value(&normalized) {
+        Ok(node) => render_debug(&sort_brace_groups(node)),
+        // Not a parseable `Debug` value: return the normalised text unchanged rather than
+        // guessing. A promoted test comparing two unparseable texts still compares them.
+        Err(_) => normalized,
+    }
+}
+
+/// [`canonicalize_debug`] over a whole `name = value, …` payload.
+pub fn canonicalize_shrinks_to(text: &str) -> String {
+    let normalized = normalize_unique_ids(text);
+    match parse_shrinks_to(&normalized) {
+        Ok(bindings) => {
+            let sorted: Vec<Binding> = bindings
+                .into_iter()
+                .map(|b| Binding { name: b.name, value: sort_brace_groups(b.value) })
+                .collect();
+            render_bindings(&sorted)
+        },
+        Err(_) => normalized,
+    }
+}
+
+fn sort_brace_groups(node: DebugNode) -> DebugNode {
+    match node {
+        DebugNode::Call { head, args } => DebugNode::Call {
+            head,
+            args: args.into_iter().map(sort_brace_groups).collect(),
+        },
+        DebugNode::Struct { head, fields } => DebugNode::Struct {
+            head,
+            fields: fields
+                .into_iter()
+                .map(|(name, value)| (name, sort_brace_groups(value)))
+                .collect(),
+        },
+        // A LIST is ordered by construction (`Vec`), so its order is part of the term and is
+        // left alone. Only brace groups — the hash containers — are sorted.
+        DebugNode::List(items) => {
+            DebugNode::List(items.into_iter().map(sort_brace_groups).collect())
+        },
+        DebugNode::Tuple(items) => {
+            DebugNode::Tuple(items.into_iter().map(sort_brace_groups).collect())
+        },
+        DebugNode::Set(items) => {
+            let mut sorted: Vec<DebugNode> = items.into_iter().map(sort_brace_groups).collect();
+            sorted.sort_by_key(render_debug);
+            DebugNode::Set(sorted)
+        },
+        DebugNode::Map(entries) => {
+            let mut sorted: Vec<(DebugNode, DebugNode)> = entries
+                .into_iter()
+                .map(|(k, v)| (sort_brace_groups(k), sort_brace_groups(v)))
+                .collect();
+            sorted.sort_by_key(|(k, v)| (render_debug(k), render_debug(v)));
+            DebugNode::Map(sorted)
+        },
+        DebugNode::Named { name, value } => DebugNode::Named {
+            name,
+            value: Box::new(sort_brace_groups(*value)),
+        },
+        leaf => leaf,
+    }
 }

@@ -44,7 +44,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::process::ExitCode;
 
-use mettail_testkit::ctor::{emit_category, normalize_unique_ids, parse_shrinks_to, Schema};
+use mettail_testkit::ctor::{canonicalize_debug, emit_category, parse_shrinks_to, Schema};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -195,9 +195,9 @@ fn main() -> ExitCode {
 
 fn emit_test(index: usize, seed: &str, recorded: &str, hits: &[(String, String)]) {
     let (category, source) = &hits[0];
-    let normalized = normalize_unique_ids(recorded);
     // `term = ` is the proptest binding prefix; the ORACLE is the value text alone.
-    let oracle = normalized.strip_prefix("term = ").unwrap_or(&normalized);
+    let value_text = recorded.strip_prefix("term = ").unwrap_or(recorded);
+    let oracle = canonicalize_debug(value_text);
 
     println!("/// Corpus entry {index} — seed `cc {seed}`.");
     println!("///");
@@ -225,12 +225,14 @@ fn emit_test(index: usize, seed: &str, recorded: &str, hits: &[(String, String)]
     println!("    // 2 — ANTI-VACUITY. The reconstructed term's normalised Debug must equal the");
     println!("    //     text the corpus recorded, character for character. This is what makes");
     println!("    //     \"passes because it built the wrong term\" impossible. Only");
-    println!("    //     `UniqueId(n)` is normalised: it comes from a process-global counter and");
-    println!("    //     is not a property of the term (`FreeVar` equality is by unique_id alone,");
-    println!("    //     and the name determines the identity through the var cache).");
-    println!("    let recorded = {};", rust_str_literal(oracle));
+    println!("    //     `UniqueId(n)` and the ORDER of hash-container entries are quotiented");
+    println!("    //     out, and both are properties of the PROCESS rather than of the term:");
+    println!("    //     `UniqueId` comes from a global counter (and `FreeVar` equality is by");
+    println!("    //     unique_id alone, with the name fixing the identity through the var");
+    println!("    //     cache), and a `HashBag` is a multiset whose `PartialEq` ignores order.");
+    println!("    let recorded = {};", rust_str_literal(&oracle));
     println!("    assert_eq!(");
-    println!("        normalize_unique_ids(&format!(\"{{:?}}\", term)),");
+    println!("        canonicalize_debug(&format!(\"{{:?}}\", term)),");
     println!("        recorded,");
     println!("        \"the reconstructed term is not the recorded counterexample\"");
     println!("    );");
