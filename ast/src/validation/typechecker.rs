@@ -156,6 +156,12 @@ impl TypeChecker {
                 let _ = self.infer_type_from_pattern(second, context)?;
                 Ok("?".to_string())
             },
+            // The whole pattern denotes the COLLECTION (it is `args` with one position
+            // rewritten), so its type is the collection's, not the element's.
+            Pattern::IndexedVec { element, .. } => {
+                let _ = self.infer_type_from_pattern(element, context)?;
+                Ok("?".to_string())
+            },
         }
     }
 

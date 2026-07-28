@@ -62,6 +62,13 @@ pub fn convert_lhs_pattern(p: &Pattern) -> Result<DvPattern<String>, PatternConv
         Pattern::Collection { .. } | Pattern::Map { .. } | Pattern::Zip { .. } => {
             Err(PatternConvertReject::CollectionSearch)
         },
+        // Ordered indexed access is not constructor-rooted either. It is grouped with the
+        // search rejects because the set automaton has no positional-family entry for
+        // "one element of a `Vec`" — NOT because it is AC-searchable. The ordered/AC
+        // distinction is carried on the lowering side by
+        // `UnsupportedFamily::IndexedVecOrdered`, which must never be conflated with
+        // `CollectionAc` (that one is licensed to permute).
+        Pattern::IndexedVec { .. } => Err(PatternConvertReject::CollectionSearch),
     }
 }
 
@@ -152,6 +159,7 @@ fn convert_subst_lhs(
         Pattern::Collection { .. } | Pattern::Map { .. } | Pattern::Zip { .. } => {
             Err(PatternConvertReject::CollectionSearch)
         },
+        Pattern::IndexedVec { .. } => Err(PatternConvertReject::CollectionSearch),
     }
 }
 

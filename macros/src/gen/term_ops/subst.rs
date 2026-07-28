@@ -1268,6 +1268,15 @@ fn generate_var_visit_arm(cat: &Ident, label: &Ident, language: &LanguageDef) ->
         let mettail_ast::grammar::TermParam::Simple { ty, .. } = &tc[0] else {
             continue;
         };
+        // An `Ident` param is identifier TEXT, not a source CATEGORY, so a rule like
+        // `Tagged . m:Ident |- "tag" m : Num` is NOT a cross-category cast — there is no
+        // `env.ident` map to substitute from, and `SubstOp::EnvIdent` names a variant
+        // that is never declared (`env_variants` above is built from `language.types`,
+        // and `Ident` is not among them). Without this the arm below emits both
+        // `SubstOp::EnvIdent { .. }` and `let _: &Ident;` against types that do not exist.
+        if ty.is_ident_text() {
+            continue;
+        }
         let mettail_ast::types::TypeExpr::Base(source_ident) = ty else {
             continue;
         };

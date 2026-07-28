@@ -854,6 +854,10 @@ fn pattern_to_user_syntax(pattern: &Pattern, language: &LanguageDef) -> String {
             let second_str = pattern_to_user_syntax(second, language);
             format!("*zip({}, {})", first_str, second_str)
         },
+        // Renders back as the surface syntax the user wrote.
+        Pattern::IndexedVec { collection, index, element } => {
+            format!("{}[{} := {}]", collection, index, pattern_to_user_syntax(element, language))
+        },
     }
 }
 

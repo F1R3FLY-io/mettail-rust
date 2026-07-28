@@ -1,0 +1,20 @@
+# ── RELOCATED from `prattail/proptest-regressions/automata/lex_weight.txt` (2026-07-28) ──
+#
+# proptest names a corpus after the source file that declares the property. These seeds
+# were recorded when the `LexicographicWeight` axioms lived in
+# `prattail/src/automata/lex_weight.rs`; that file is now a five-line re-export facade and
+# the algebra — with every property — lives in `rigail/src/lex_weight.rs`. Beside THAT file
+# there was no corpus at all, so these seeds had stopped being replayed by anything. A
+# stranded corpus does not error; it silently stops contributing.
+#
+# The original is retained at its old path, marked SUPERSEDED, so nothing is lost.
+# The entries below are byte-identical to it.
+#
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8a3ffdd5af5bb3816fc792ec736e2734b725a5fcdfee30809a250a8494797e04 # shrinks to a = LexWeight(primary=TropicalWeight(0.0), src=0, rule=0), b = LexWeight(primary=TropicalWeight(744.7), src=0, rule=0), c = LexWeight(primary=TropicalWeight(810.6), src=0, rule=0)
+cc 8644278121536c8b10f7687e71471734e8f1ba9f7d14be9d11768b7afe2a19fd # shrinks to a = LexWeight(primary=TropicalWeight(895.9), src=0, rule=0), b = LexWeight(primary=TropicalWeight(287.4), src=0, rule=0), c = LexWeight(primary=TropicalWeight(477.5), src=0, rule=0)

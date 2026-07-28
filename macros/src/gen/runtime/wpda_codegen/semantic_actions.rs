@@ -1390,6 +1390,22 @@ fn emit_infix_action_entry(
                 } else {
                     info.mixfix_parts[i - 1].operand_category.clone()
                 };
+                // An `Ident` operand is identifier TEXT, not a Term of some category
+                // `Ident`. Its `ActionArg` is `ActionArg::Ident { name, .. }`, pushed by
+                // the fork's `ConsumeIdentAndReplace { start_scope: false }`, and is read
+                // back with `as_ident()` — `into_term_arc::<Ident>()` would name a type
+                // that does not exist AND could never match that arg shape.
+                if mettail_ast::grammar::NonTerminalKind::classify(&cat_str)
+                    == mettail_ast::grammar::NonTerminalKind::Ident
+                {
+                    return quote! {
+                        let #var: std::string::String =
+                            match iter.next().as_ref().and_then(|a| a.as_ident()) {
+                                Some(v) => v.to_string(),
+                                None => return,
+                            };
+                    };
+                }
                 let cat = format_ident!("{}", cat_str);
                 quote! {
                     let #var = match iter.next().and_then(|a| a.into_term_arc::<#cat>()) {

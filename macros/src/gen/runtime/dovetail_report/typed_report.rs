@@ -124,6 +124,31 @@ pub(super) fn collect_fold_rules(
         let mut refusing_param: Option<String> = None;
         for p in ctx {
             match p {
+                // ★ An `Ident` param REFUSES the fold, and this is a real limitation, not
+                // a formality. The fold body is lowered against the DOVETAIL DERIVATION,
+                // and each param is bound by calling that category's
+                // `__mettail_dovetail_build_<cat>_d` reconstructor. An `Ident` field has
+                // no such reconstructor because it is not a category — and it cannot
+                // simply be given one: an opaque-leaf capture is lowered to a LOSSY
+                // e-graph leaf (`format!("{}::{:?}", …)`, see `reconstruct.rs`'s
+                // `is_plain_category_field` doc), so the identifier's TEXT is not
+                // recoverable from the derivation at all.
+                //
+                // Declining names the offender in the lowering inventory rather than
+                // emitting a call to a function that does not exist. ⚠ CONSEQUENCE FOR
+                // ANY DESIGN THAT WANTS A FOLD TO READ A CAPTURED NAME (a single
+                // `EMethodCall`-style rule dispatching on its method name): it needs the
+                // opaque leaf to become INVERTIBLE for `TokenText` first. That is a
+                // derivation-lowering change, not a codegen tweak, and this gate is where
+                // its absence becomes visible instead of becoming a broken build.
+                TermParam::Simple { name, ty } if ty.is_ident_text() => {
+                    all_simple = false;
+                    refusing_param = Some(format!(
+                        "`{name}:{ty}` (identifier text is not recoverable from the \
+                         Dovetail derivation — the opaque-leaf lowering is lossy)"
+                    ));
+                    break;
+                },
                 TermParam::Simple { name, ty: TypeExpr::Base(category) } => {
                     let lt = language.get_type(category);
                     let native_type = lt.and_then(|t| t.native_type.as_ref());

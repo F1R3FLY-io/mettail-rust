@@ -1656,9 +1656,17 @@ fn generate_sigil_operand_wrap_gate(
         else {
             continue;
         };
-        let Some(TermParam::Simple { ty: TypeExpr::Base(opcat), .. }) = tc.get(op_idx) else {
+        let Some(TermParam::Simple { ty: opcat_ty @ TypeExpr::Base(opcat), .. }) = tc.get(op_idx)
+        else {
             continue;
         };
+        // An `Ident` operand is identifier TEXT, not a category, so it is not a gate
+        // operand: there is no `Ident` enum to `parse(surface)` back into, and the whole
+        // notion of "does this operand need wrapping at this precedence?" is vacuous for a
+        // bare identifier, which is atomic and can never need parenthesising.
+        if opcat_ty.is_ident_text() {
+            continue;
+        }
         let opcat = opcat.to_string();
         // Render the frame either side of the operand slot, filling the other params from the
         // requested regime.

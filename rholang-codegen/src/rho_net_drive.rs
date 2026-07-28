@@ -1815,6 +1815,11 @@ fn transcribe_lhs_pattern(
         ),
         Pattern::Map { .. } => Err("a map (AC) LHS is not driver-supported this stage".to_string()),
         Pattern::Zip { .. } => Err("a zip (AC) LHS is not driver-supported this stage".to_string()),
+        Pattern::IndexedVec { .. } => Err(
+            "an indexed-vec (ORDERED) LHS is not driver-supported this stage — and it must \
+             not be routed to the AC carrier, which may permute the payload"
+                .to_string(),
+        ),
     }
 }
 

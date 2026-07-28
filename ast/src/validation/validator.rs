@@ -426,6 +426,7 @@ fn validate_pattern(pattern: &Pattern, language: &LanguageDef) -> Result<(), Val
             validate_pattern(second, language)?;
             Ok(())
         },
+        Pattern::IndexedVec { element, .. } => validate_pattern(element, language),
     }
 }
 
@@ -592,6 +593,11 @@ fn collect_pattern_vars(pattern: &Pattern, vars: &mut HashSet<String>) {
         Pattern::Zip { first, second } => {
             collect_pattern_vars(first, vars);
             collect_pattern_vars(second, vars);
+        },
+        Pattern::IndexedVec { collection, index, element } => {
+            vars.insert(collection.to_string());
+            vars.insert(index.to_string());
+            collect_pattern_vars(element, vars);
         },
     }
 }

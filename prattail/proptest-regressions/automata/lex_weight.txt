@@ -1,8 +1,20 @@
+# ── SUPERSEDED (2026-07-28): RELOCATED to `rigail/proptest-regressions/lex_weight.txt` ──
+#
+# `prattail/src/automata/lex_weight.rs` is now a five-line re-export facade; the properties
+# these seeds belong to live in `rigail/src/lex_weight.rs`, and proptest looks for a corpus
+# beside the file that DECLARES the property. Sitting here, these seeds were replayed by
+# nothing at all.
+#
+# The file is RETAINED rather than deleted so the provenance survives and the move is
+# reversible. Its entries are commented out below so they are not counted twice by corpus
+# inventories; the live copy carries them byte-identically. Both are also promoted to named
+# tests in `rigail/src/lex_weight.rs`.
+#
 # Seeds for failure cases proptest has generated in the past. It is
 # automatically read and these particular cases re-run before any
 # novel cases are generated.
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 8a3ffdd5af5bb3816fc792ec736e2734b725a5fcdfee30809a250a8494797e04 # shrinks to a = LexWeight(primary=TropicalWeight(0.0), src=0, rule=0), b = LexWeight(primary=TropicalWeight(744.7), src=0, rule=0), c = LexWeight(primary=TropicalWeight(810.6), src=0, rule=0)
-cc 8644278121536c8b10f7687e71471734e8f1ba9f7d14be9d11768b7afe2a19fd # shrinks to a = LexWeight(primary=TropicalWeight(895.9), src=0, rule=0), b = LexWeight(primary=TropicalWeight(287.4), src=0, rule=0), c = LexWeight(primary=TropicalWeight(477.5), src=0, rule=0)
+# cc 8a3ffdd5af5bb3816fc792ec736e2734b725a5fcdfee30809a250a8494797e04 # shrinks to a = LexWeight(primary=TropicalWeight(0.0), src=0, rule=0), b = LexWeight(primary=TropicalWeight(744.7), src=0, rule=0), c = LexWeight(primary=TropicalWeight(810.6), src=0, rule=0)
+# cc 8644278121536c8b10f7687e71471734e8f1ba9f7d14be9d11768b7afe2a19fd # shrinks to a = LexWeight(primary=TropicalWeight(895.9), src=0, rule=0), b = LexWeight(primary=TropicalWeight(287.4), src=0, rule=0), c = LexWeight(primary=TropicalWeight(477.5), src=0, rule=0)

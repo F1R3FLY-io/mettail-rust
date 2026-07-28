@@ -60,6 +60,17 @@ use crate::rho_net::{
 pub enum UnsupportedFamily {
     /// A collection literal `{P, Q, ...rest}` (associative-commutative match).
     CollectionAc,
+    /// An indexed positional element `args[i := S]` over an ORDERED (`Vec`) payload.
+    ///
+    /// ⚠ DELIBERATELY NOT [`Self::CollectionAc`]. That variant is routed into the A-S5.5
+    /// AC-CARRIER transcription (`rho_net_drive.rs:366`, `rho_net_lower.rs:943`), whose
+    /// matching is ASSOCIATIVE-COMMUTATIVE — it is licensed to PERMUTE the payload. An
+    /// indexed `Vec` element is the exact opposite: its whole purpose is that position is
+    /// PRESERVED, so every other argument stays where it was. Reusing the AC rejection
+    /// would hand an ordered pattern to a carrier allowed to reorder it — a semantic bug
+    /// no type would catch. Failing closed under its own name keeps the limitation
+    /// visible and stops the wrong carrier from claiming it.
+    IndexedVecOrdered,
     /// A `xs.#map(|x| body)` collection map.
     MapAc,
     /// A `#zip(first, second)` correlated collection pattern.
@@ -1660,6 +1671,7 @@ fn collect_lhs_vars(
         Pattern::Collection { .. } => Err(UnsupportedFamily::CollectionAc),
         Pattern::Map { .. } => Err(UnsupportedFamily::MapAc),
         Pattern::Zip { .. } => Err(UnsupportedFamily::ZipAc),
+        Pattern::IndexedVec { .. } => Err(UnsupportedFamily::IndexedVecOrdered),
     }
 }
 
@@ -4155,6 +4167,10 @@ fn reflect_term_par_env(
         Pattern::Collection { .. } => Err(UnsupportedFamily::CollectionAc),
         Pattern::Map { .. } => Err(UnsupportedFamily::MapAc),
         Pattern::Zip { .. } => Err(UnsupportedFamily::ZipAc),
+        // Ordered indexed access has no reflected image for the same reason a bare
+        // collection has none — no enclosing constructor supplies an `op`. It must not
+        // borrow the AC rejection; see `UnsupportedFamily::IndexedVecOrdered`.
+        Pattern::IndexedVec { .. } => Err(UnsupportedFamily::IndexedVecOrdered),
     }
 }
 
@@ -4336,6 +4352,7 @@ fn pattern_binder_or_collection_family(pattern: &Pattern) -> Option<UnsupportedF
         Pattern::Collection { .. } => Some(UnsupportedFamily::CollectionAc),
         Pattern::Map { .. } => Some(UnsupportedFamily::MapAc),
         Pattern::Zip { .. } => Some(UnsupportedFamily::ZipAc),
+        Pattern::IndexedVec { .. } => Some(UnsupportedFamily::IndexedVecOrdered),
     }
 }
 

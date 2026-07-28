@@ -806,6 +806,18 @@ fn write_pattern(pattern: &Pattern, out: &mut String) {
             write_pattern(second, out);
             out.push(')');
         },
+        // Distinct prefix so no other pattern shape can collide with this one's canonical
+        // form; both binders are part of the identity because `args[i:=S]` and
+        // `args[j:=S]` differ as patterns (the index is usable on the RHS).
+        Pattern::IndexedVec { collection, index, element } => {
+            out.push_str("pidx(");
+            out.push_str(&collection.to_string());
+            out.push(',');
+            out.push_str(&index.to_string());
+            out.push(',');
+            write_pattern(element, out);
+            out.push(')');
+        },
     }
 }
 

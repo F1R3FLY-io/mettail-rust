@@ -64,6 +64,39 @@ pub enum TypeExpr {
     Map { key: Box<TypeExpr>, value: Box<TypeExpr> },
 }
 
+impl TypeExpr {
+    /// True when this type is the builtin `Ident` — identifier TEXT, lowered to a bare
+    /// `String`, NOT a grammar category.
+    ///
+    /// ★ THE PREDICATE EVERY CATEGORY-DRIVEN GENERATOR NEEDS, AND WHY IT EXISTS ONCE
+    ///
+    /// A generator that walks rule params to answer "which categories does this rule
+    /// touch?" will, on seeing `m:Ident`, conclude `Ident` is a category and emit code
+    /// naming a type that was never declared — `SubstOp::EnvIdent`,
+    /// `into_term_arc::<Ident>()`, `Ident::parse(surface)`,
+    /// `__mettail_dovetail_build_ident_d`. Each is a *correct* deduction from a *wrong*
+    /// premise, which is why the failures are numerous, scattered, and identical in
+    /// shape: they are one bug wearing eight coats.
+    ///
+    /// Naming the concept ONCE is what stops the ninth coat. Enumerating siblings by
+    /// grepping for a symptom finds only the sites that happen to have been exercised;
+    /// a named predicate makes the question "is this type a category?" answerable at
+    /// every site that asks it, including sites written after this one.
+    ///
+    /// [`crate::grammar::NonTerminalKind::classify`] is the single source of truth for
+    /// what the name `Ident` means; this method exists so callers holding a
+    /// [`TypeExpr`] need not reach through it by hand.
+    #[must_use]
+    pub fn is_ident_text(&self) -> bool {
+        matches!(
+            self,
+            TypeExpr::Base(id)
+                if crate::grammar::NonTerminalKind::classify(&id.to_string())
+                    == crate::grammar::NonTerminalKind::Ident
+        )
+    }
+}
+
 impl std::fmt::Display for TypeExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

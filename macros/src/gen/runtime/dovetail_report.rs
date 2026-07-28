@@ -344,7 +344,12 @@ fn find_binder_scope(
 /// reject an AC-collection-nested substitution-rewrite LHS — MF4).
 fn pattern_contains_collection(pattern: &AstPattern) -> bool {
     match pattern {
-        AstPattern::Collection { .. } | AstPattern::Map { .. } | AstPattern::Zip { .. } => true,
+        AstPattern::Collection { .. }
+        | AstPattern::Map { .. }
+        | AstPattern::Zip { .. }
+        // An indexed element IS a collection touch: the rule reaches into a `Vec`
+        // payload, so it needs the same collection-comprehension lowering path.
+        | AstPattern::IndexedVec { .. } => true,
         AstPattern::Term(term) => match term {
             PatternTerm::Apply { args, .. } => args.iter().any(pattern_contains_collection),
             PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
@@ -939,6 +944,7 @@ fn pattern_contains_substitution(pattern: &AstPattern) -> bool {
         AstPattern::Zip { first, second } => {
             pattern_contains_substitution(first) || pattern_contains_substitution(second)
         },
+        AstPattern::IndexedVec { element, .. } => pattern_contains_substitution(element),
     }
 }
 
@@ -1349,6 +1355,9 @@ fn pattern_to_dovetail(
         },
         AstPattern::Zip { .. } => {
             Err("zip metapatterns require collection-comprehension lowering".into())
+        },
+        AstPattern::IndexedVec { .. } => {
+            Err("indexed-vec metapatterns require collection-comprehension lowering".into())
         },
     }
 }

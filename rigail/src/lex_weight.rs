@@ -995,6 +995,167 @@ mod tests {
         }
     }
 
+    // ─── the recorded counterexamples, PROMOTED ──────────────────────────────
+    //
+    // The two entries of `prattail/proptest-regressions/automata/lex_weight.txt`, written
+    // out as named tests.
+    //
+    // ★ THAT CORPUS IS ORPHANED, AND THAT IS WHY THIS SECTION EXISTS.
+    //
+    // proptest names a corpus after the SOURCE FILE that declares the property, so those
+    // seeds were written when these axioms lived in `prattail/src/automata/lex_weight.rs`.
+    // That file is now a five-line re-export facade — the whole algebra, and every property
+    // above, moved here to `rigail`. `rigail/proptest-regressions/` does not exist. So the
+    // corpus is in a crate that no longer declares the property, and NOTHING REPLAYS IT:
+    // proptest looks beside `rigail/src/lex_weight.rs` and finds nothing, while the file
+    // that does exist sits beside a module with no tests in it.
+    //
+    // This is the same failure the `gen_rhocalc_prop` corpus had — seeds stranded by a
+    // rename — reached by a different route: a code MOVE rather than a language rename. The
+    // pattern is worth naming, because neither is visible as a failure. A stranded corpus
+    // does not error; it silently stops contributing, and the suite goes on passing.
+    //
+    // # The recorded text is in a SUPERSEDED Debug format, and no information is lost
+    //
+    // The entries read `LexWeight(primary=…, src=0, rule=0)` — three fields. The current
+    // `Debug` writes five: `open_len` (GEN-2 longest-open) and `lex_alt` (L1
+    // lex-alternative) were added to the struct after these seeds were recorded.
+    //
+    // Nothing has to be guessed to reconstruct them, and the reason is exact rather than
+    // convenient: the generator that produced them, `finite_weight()`, builds every value
+    // through `LexicographicWeight::from_cost(cost, src, rule)`, and `from_cost` sets
+    // `open_len: 0` and `lex_alt_idx: 0` unconditionally. The generator's image therefore
+    // never contained a non-default value in either field — which is precisely why the
+    // three-field format was lossless while it was in use. Reconstructing through the same
+    // constructor reproduces the recorded weights EXACTLY.
+    //
+    // Each test asserts all five fields, so the two that the old format omitted are pinned
+    // rather than assumed: if a future change gave `from_cost` a non-zero `open_len`, these
+    // tests would go red instead of quietly reinterpreting the archive.
+    //
+    // # What is asserted about the algebra
+    //
+    // The corpus does not record WHICH property a seed falsified — a corpus is per-FILE, and
+    // this file declares five three-argument axioms. Rather than guess, each triple is put
+    // through ALL of them. That is strictly stronger than replaying the original, and it
+    // needs no guess to be sound.
+
+    /// The two recorded triples, reconstructed through the generator's own constructor.
+    ///
+    /// Returned as `(label, a, b, c)` so a failure names the entry it came from.
+    fn recorded_triples() -> [(&'static str, LexicographicWeight, LexicographicWeight,
+                              LexicographicWeight); 2] {
+        [
+            (
+                "cc 8a3ffdd5af5bb3816fc792ec736e2734b725a5fcdfee30809a250a8494797e04",
+                LexicographicWeight::from_cost(0.0, 0, 0),
+                LexicographicWeight::from_cost(744.7, 0, 0),
+                LexicographicWeight::from_cost(810.6, 0, 0),
+            ),
+            (
+                "cc 8644278121536c8b10f7687e71471734e8f1ba9f7d14be9d11768b7afe2a19fd",
+                LexicographicWeight::from_cost(895.9, 0, 0),
+                LexicographicWeight::from_cost(287.4, 0, 0),
+                LexicographicWeight::from_cost(477.5, 0, 0),
+            ),
+        ]
+    }
+
+    /// ★ ANTI-VACUITY: the reconstructed weights ARE the recorded ones.
+    ///
+    /// Every field the corpus recorded is checked against its recorded value, and the two
+    /// fields the superseded format omitted are checked against the defaults that made the
+    /// omission lossless. Without this, the axiom tests below would be asserting the algebra
+    /// over whatever `from_cost` happened to produce, and would pass whether or not they had
+    /// anything to do with the archive.
+    #[test]
+    fn the_promoted_triples_are_the_recorded_ones() {
+        let expected: [[(f64, u16, u16); 3]; 2] = [
+            [(0.0, 0, 0), (744.7, 0, 0), (810.6, 0, 0)],
+            [(895.9, 0, 0), (287.4, 0, 0), (477.5, 0, 0)],
+        ];
+        for ((label, a, b, c), row) in recorded_triples().into_iter().zip(expected) {
+            for (weight, (primary, src, rule)) in [a, b, c].into_iter().zip(row) {
+                assert_eq!(
+                    weight.primary.0, primary,
+                    "{label}: primary does not match the recorded text"
+                );
+                assert_eq!(weight.src_idx, src, "{label}: src does not match the recorded text");
+                assert_eq!(
+                    weight.rule_idx, rule,
+                    "{label}: rule does not match the recorded text"
+                );
+                // The two fields the three-field format omitted. They are asserted, not
+                // assumed: the omission was lossless only because `from_cost` pins them.
+                assert_eq!(
+                    weight.open_len, 0,
+                    "{label}: `from_cost` no longer yields `open_len = 0`, so the archived \
+                     three-field text is no longer a complete record of what the generator \
+                     produced — the archive needs migrating, not reinterpreting"
+                );
+                assert_eq!(
+                    weight.lex_alt_idx, 0,
+                    "{label}: `from_cost` no longer yields `lex_alt_idx = 0` — see the \
+                     `open_len` message"
+                );
+            }
+        }
+    }
+
+    /// Every three-argument semiring axiom this file declares, on both recorded triples.
+    #[test]
+    fn the_recorded_triples_satisfy_every_three_argument_axiom() {
+        for (label, a, b, c) in recorded_triples() {
+            // ⊕ is associative.
+            assert_eq!(
+                a.plus(&b).plus(&c),
+                a.plus(&b.plus(&c)),
+                "{label}: ⊕ associativity"
+            );
+
+            // ⊗ is associative up to the same ε the property test uses; exact equality does
+            // not hold because tropical ⊗ adds `f64` costs. The tolerance is copied from
+            // `axiom_times_associative_approx` rather than chosen here, so the two cannot
+            // drift apart silently.
+            let times_lhs = a.times(&b).times(&c);
+            let times_rhs = a.times(&b.times(&c));
+            assert!(
+                times_lhs.approx_eq(&times_rhs, 1e-6),
+                "{label}: ⊗ associativity (mod fp ε=1e-6): lhs = {times_lhs:?}, rhs = \
+                 {times_rhs:?}"
+            );
+
+            // ⊗ distributes over ⊕ on both sides.
+            assert_eq!(
+                a.times(&b.plus(&c)),
+                a.times(&b).plus(&a.times(&c)),
+                "{label}: left distributivity"
+            );
+            assert_eq!(
+                a.plus(&b).times(&c),
+                a.times(&c).plus(&b.times(&c)),
+                "{label}: right distributivity"
+            );
+
+            // Left projection, which `axiom_times_left_projection_when_a_nonidentity` draws
+            // from `nonidentity_finite_weight()`. Entry 0's `a` has primary `0.0`, which IS
+            // the multiplicative identity, so the axiom's own precondition excludes it. It is
+            // asserted under that precondition rather than skipped, so the exclusion is
+            // visible in the code instead of being a silent gap.
+            if a != LexicographicWeight::one() {
+                let projected = a.times(&b);
+                assert_eq!(
+                    projected.src_idx, a.src_idx,
+                    "{label}: ⊗ did not project the left operand's src"
+                );
+                assert_eq!(
+                    projected.rule_idx, a.rule_idx,
+                    "{label}: ⊗ did not project the left operand's rule"
+                );
+            }
+        }
+    }
+
     // Phase F.13 H12 Stage 1.5.3b: hand-picked semantic test.
     #[test]
     fn delta_recovers_per_packing_weight() {

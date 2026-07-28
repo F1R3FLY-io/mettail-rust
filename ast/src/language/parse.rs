@@ -3112,6 +3112,34 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
     } else {
         // Just a variable - but check for chained metasyntax like `var.#map(...)`
         let var = input.parse::<Ident>()?;
+
+        // Indexed positional element: `args[i := S]`. Recognised HERE, immediately after
+        // the collection's name, because `[` can follow a bare pattern variable in no
+        // other position — the pattern grammar has no indexing and no array literal, so
+        // there is nothing to disambiguate against and no existing rule changes meaning.
+        if input.peek(syn::token::Bracket) {
+            let idx_content;
+            syn::bracketed!(idx_content in input);
+            let index = idx_content.parse::<Ident>()?;
+            // `:=` is two syn tokens; there is no `Token![:=]`. Spelling it as assignment
+            // rather than `,` keeps the direction readable — the element is REPLACED at
+            // that position, and on the LHS the same syntax reads as "binds at".
+            idx_content.parse::<Token![:]>()?;
+            idx_content.parse::<Token![=]>()?;
+            let element = parse_pattern(&idx_content)?;
+            if !idx_content.is_empty() {
+                return Err(idx_content.error(
+                    "expected `]` after `collection[index := pattern]` — the indexed form \
+                     takes exactly one index binder and one element pattern",
+                ));
+            }
+            return Ok(Pattern::IndexedVec {
+                collection: var,
+                index,
+                element: Box::new(element),
+            });
+        }
+
         let base = Pattern::Term(PatternTerm::Var(var));
 
         // Check for chained method-style metasyntax: var.#map(...)

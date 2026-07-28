@@ -103,6 +103,42 @@ pub enum Pattern {
         /// Second collection (extracted on LHS, paired on RHS)
         second: Box<Pattern>,
     },
+
+    /// Indexed positional element: `args[i := S]`.
+    ///
+    /// ★ ONE ELEMENT OF AN ORDERED COLLECTION, AT A BOUND POSITION
+    ///
+    /// LHS: iterate `args` positionally, bind the index to `i` and the element to the
+    /// sub-pattern `S`, leaving every other element untouched.
+    /// RHS: rebuild `args` with position `i` replaced by the sub-pattern's construction.
+    ///
+    /// This is the missing dual of [`Self::Collection`]. `Collection` matches an
+    /// ORDER-FREE payload (`HashBag`/`HashSet`) — it may permute elements freely, which
+    /// is exactly why it cannot express "the third argument stepped and the rest stayed
+    /// put". A `Vec` payload is ORDERED, and a congruence over one argument of an
+    /// argument list must preserve the other arguments' positions exactly.
+    ///
+    /// ⚠ WHY THIS IS NOT A CONVENIENCE. Before it, a rewrite rule could only reach a
+    /// `Vec` payload as a WHOLE (bind the entire `Vec` to one variable), so there was no
+    /// way to write "some element reduces". MEASURED CONSEQUENCE: **24 `Vec`-payload
+    /// rules across the 49 shipped language definitions, and not one of them carries an
+    /// element congruence** — every one of them is a term whose payload can contain a
+    /// redex that can never fire. The single collection congruence that does exist in
+    /// Rholang (`ParCong`) works only because `PPar` is a `HashBag` and could therefore
+    /// use [`Self::Collection`].
+    ///
+    /// The index binder `i` is a genuine pattern variable: it is bound by the match and
+    /// is in scope on the RHS, which is what lets the RHS say "the same position".
+    /// Writing the RHS with a *different* index variable is how one would express a
+    /// permutation, and the codegen does not special-case the two being equal.
+    IndexedVec {
+        /// The `Vec`-typed field being indexed (`args`).
+        collection: Ident,
+        /// Binder for the position (`i`) — bound on the LHS, usable on the RHS.
+        index: Ident,
+        /// Sub-pattern matched against / constructed at that position (`S`).
+        element: Box<Pattern>,
+    },
 }
 
 // ============================================================================
@@ -214,6 +250,8 @@ impl Pattern {
             },
             Pattern::Map { collection, .. } => collection.span(),
             Pattern::Zip { first, .. } => first.span(),
+            // The collection name is the leftmost token of `args[i := S]`.
+            Pattern::IndexedVec { collection, .. } => collection.span(),
         }
     }
 
@@ -239,6 +277,9 @@ impl Pattern {
                 first.collect_constructor_labels(labels);
                 second.collect_constructor_labels(labels);
             },
+            // Only the element sub-pattern can name a constructor; `collection` and
+            // `index` are plain variables.
+            Pattern::IndexedVec { element, .. } => element.collect_constructor_labels(labels),
         }
     }
 
@@ -272,6 +313,15 @@ impl Pattern {
                 vars.extend(second.free_vars());
                 vars
             },
+            // `collection` and `index` are both vars here, exactly as `Collection`'s
+            // `rest` is: each is a binder when the pattern is read as a MATCH and a use
+            // when it is read as a CONSTRUCTION, and `free_vars` serves both readings.
+            Pattern::IndexedVec { collection, index, element } => {
+                let mut vars = element.free_vars();
+                vars.insert(collection.to_string());
+                vars.insert(index.to_string());
+                vars
+            },
         }
     }
 
@@ -302,6 +352,9 @@ impl Pattern {
             },
             // Map and Zip involve iteration over collections — never ground
             Pattern::Map { .. } | Pattern::Zip { .. } => false,
+            // Never ground: it quantifies over the positions of a `Vec`, so it matches a
+            // family of terms, not one shape.
+            Pattern::IndexedVec { .. } => false,
         }
     }
 
@@ -334,6 +387,9 @@ impl Pattern {
                 // Zip produces a collection of tuples - category depends on first
                 first.category(language)
             },
+            // Like `Collection`, it denotes the whole payload and takes its category from
+            // the enclosing `Apply`, which is what knows the field's declared type.
+            Pattern::IndexedVec { .. } => None,
         }
     }
 
@@ -376,6 +432,15 @@ impl Pattern {
             Pattern::Zip { first, second } => {
                 first.collect_var_occurrences(counts);
                 second.collect_var_occurrences(counts);
+            },
+            // `collection` and `index` each occur once, mirroring how `Collection` counts
+            // its `rest`. The count drives duplicate-variable detection (a var occurring
+            // twice on the LHS must match EQUAL subterms), and both of these do occur as
+            // ordinary variables, so undercounting them would silently disable that check.
+            Pattern::IndexedVec { collection, index, element } => {
+                *counts.entry(collection.to_string()).or_insert(0) += 1;
+                *counts.entry(index.to_string()).or_insert(0) += 1;
+                element.collect_var_occurrences(counts);
             },
         }
     }
@@ -986,6 +1051,28 @@ impl Pattern {
                     );
                 }
             },
+            // ★ NOT LOWERED HERE, AND THAT IS NOT AN OMISSION.
+            //
+            // `generate_clauses` emits `AscentClauses` for the ASCENT backend, which was
+            // RETIRED (the `AscentClauses` type has no reference anywhere outside this
+            // file — the live rewrite lowering is Dovetail, in
+            // `macros/src/gen/runtime/dovetail_report/`). Writing an indexed-`Vec`
+            // lowering here would be code no caller can reach and no test can exercise,
+            // which is precisely the kind of unverifiable "implementation" that hides a
+            // defect.
+            //
+            // Refusing loudly is the honest behavior, and it matches the existing
+            // precedent for a pattern a backend cannot express (`dovetail_report.rs`'s
+            // `AstPattern::Zip => Err(...)`). If the Ascent backend is ever revived, this
+            // is the exact site to implement, and it will announce itself rather than
+            // silently matching nothing.
+            Pattern::IndexedVec { collection, index, .. } => {
+                panic!(
+                    "mettail: indexed-vec pattern `{collection}[{index} := …]` reached the \
+                     RETIRED Ascent clause generator. The live rewrite backend is Dovetail; \
+                     this path has no caller. Report this as a macro bug."
+                );
+            },
         }
     }
 }
@@ -1514,6 +1601,16 @@ impl Pattern {
             },
             Pattern::Zip { first, second } => {
                 self.generate_zip_rhs(first, second, bindings, language)
+            },
+            // Retired-Ascent RHS construction — the mirror of the LHS refusal in
+            // `generate_clauses`. See that arm for why an unreachable backend is not
+            // implemented rather than filled in with untestable code.
+            Pattern::IndexedVec { collection, index, .. } => {
+                panic!(
+                    "mettail: indexed-vec pattern `{collection}[{index} := …]` reached the \
+                     RETIRED Ascent RHS generator. The live rewrite backend is Dovetail; \
+                     this path has no caller. Report this as a macro bug."
+                );
             },
         }
     }
