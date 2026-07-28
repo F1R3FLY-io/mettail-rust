@@ -753,6 +753,55 @@ mod publication_law {
         }
     }
 
+    /// ★★ THE LAW, as a function of its three inputs. See the module header.
+    ///
+    /// Extracted from the `proptest!` body so the property AND the promoted counterexamples
+    /// below run the SAME assertions. Duplicating the body would let the two drift, and the
+    /// direction of drift is the bad one: a promoted regression test that silently stops
+    /// checking what the property checks still passes.
+    #[track_caller]
+    fn the_law(blueprint: &Blueprint, left_seed: u64, right_seed: u64) {
+        let left = realize(blueprint, left_seed);
+        let right = realize(blueprint, right_seed);
+
+        // ── the ANTECEDENT, established rather than assumed ──────────────────────────
+        assert_eq!(
+            content_fingerprint(&left),
+            content_fingerprint(&right),
+            "the two realisations must be the SAME configuration — if this fails the \
+             generator is wrong and everything below it would be vacuous"
+        );
+
+        // ── 1. `reify` ───────────────────────────────────────────────────────────────
+        let left_reified = reify(&left).expect("a fixture configuration reifies");
+        let right_reified = reify(&right).expect("a fixture configuration reifies");
+        assert_eq!(
+            left_reified.encode_to_vec(),
+            right_reified.encode_to_vec(),
+            "★ two configurations with one identity published two different processes"
+        );
+
+        // ── 2. `resting_on`, on every channel the blueprint names ────────────────────
+        for chan in every_channel(blueprint) {
+            let left_resting: Vec<Vec<u8>> =
+                resting_on(&left, &chan).iter().map(|par| par.encode_to_vec()).collect();
+            let right_resting: Vec<Vec<u8>> =
+                resting_on(&right, &chan).iter().map(|par| par.encode_to_vec()).collect();
+            assert_eq!(
+                left_resting, right_resting,
+                "★ the projection onto one channel depended on the store order — and the \
+                 reply datum at position i is minted with `split_short(i)`"
+            );
+        }
+
+        // ── 3. `deliver` ─────────────────────────────────────────────────────────────
+        assert_eq!(
+            delivered(&left),
+            delivered(&right),
+            "★ the three FIPS collections differed for one configuration"
+        );
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
@@ -763,46 +812,99 @@ mod publication_law {
             left_seed in any::<u64>(),
             right_seed in any::<u64>(),
         ) {
-            let left = realize(&blueprint, left_seed);
-            let right = realize(&blueprint, right_seed);
+            the_law(&blueprint, left_seed, right_seed);
+        }
+    }
 
-            // ── the ANTECEDENT, established rather than assumed ──────────────────────────
-            prop_assert_eq!(
-                content_fingerprint(&left),
-                content_fingerprint(&right),
-                "the two realisations must be the SAME configuration — if this fails the \
-                 generator is wrong and everything below it would be vacuous"
+    // ── the recorded counterexamples, PROMOTED ───────────────────────────────────────
+    //
+    // The three entries of `rholang-runtime/proptest-regressions/speculation/delivery.txt`,
+    // written out as named tests. proptest replays those seeds, but only as anonymous
+    // numbers: a failure prints a blob and nobody can cite or run one of them alone.
+    //
+    // Each carries its `Blueprint` and BOTH `u64` seeds verbatim from the record. The seeds
+    // are not incidental — the law's whole content is that the publication does not depend
+    // on them, and `realize` uses each to permute the store, so a promoted test that dropped
+    // them would be testing that a configuration equals itself. That is exactly the vacuous
+    // form this suite already guards against elsewhere.
+    //
+    // Anti-vacuity here is structural rather than a `Debug` comparison: `Blueprint` is a
+    // plain data record with public fields, so the literal below IS the recorded text, field
+    // for field, and `the_recorded_blueprints_are_what_the_corpus_recorded` re-derives its
+    // `Debug` and compares. The three entries are also genuinely different SHAPES — no
+    // continuations, two continuation groups, and one group with a persist/peek pair — which
+    // is why all three are kept rather than folded into one.
+
+    /// The three recorded cases: `(seed label, blueprint, left_seed, right_seed)`.
+    fn recorded_cases() -> Vec<(&'static str, Blueprint, u64, u64)> {
+        vec![
+            (
+                "cc 1beb13f20de71f472a9dbe92e4d019396387727e0238bd2e0606141a8b616500",
+                Blueprint { data: vec![(7, vec![0, 1])], continuations: vec![] },
+                1_975_084_938_108_235_344,
+                5_325_277_032_162_912_311,
+            ),
+            (
+                "cc d0d964d312cb5a4ac9a95484f9498e1586158d06b9afcca48d30b6edfa4747b0",
+                Blueprint {
+                    data: vec![(7, vec![0, 1])],
+                    continuations: vec![
+                        (vec![0], vec![(0, false, false)]),
+                        (vec![0], vec![(0, false, false), (0, false, true)]),
+                    ],
+                },
+                66_386_669_701_651_024,
+                514_744_355_798_159_001,
+            ),
+            (
+                "cc f33244d988d8adf0941c28e409cf5b92868ca7cbc0bf2489fa04eaf250ab6650",
+                Blueprint {
+                    data: vec![(7, vec![0, 1])],
+                    continuations: vec![(vec![0], vec![(1, true, false), (1, true, true)])],
+                },
+                351_989_959_022_981_567,
+                1_549_762_917_972_644_042,
+            ),
+        ]
+    }
+
+    /// ★ ANTI-VACUITY: the reconstructed blueprints ARE the recorded ones.
+    ///
+    /// `Blueprint` derives `Debug`, so the recorded text is reproduced exactly and compared.
+    /// Without this the law tests below would be exercising whatever blueprint happened to be
+    /// written here, and would pass whether or not it had anything to do with the archive.
+    #[test]
+    fn the_recorded_blueprints_are_what_the_corpus_recorded() {
+        let expected = [
+            "Blueprint { data: [(7, [0, 1])], continuations: [] }",
+            "Blueprint { data: [(7, [0, 1])], continuations: [([0], [(0, false, false)]), \
+             ([0], [(0, false, false), (0, false, true)])] }",
+            "Blueprint { data: [(7, [0, 1])], continuations: [([0], [(1, true, false), (1, \
+             true, true)])] }",
+        ];
+        let expected_seeds = [
+            (1_975_084_938_108_235_344u64, 5_325_277_032_162_912_311u64),
+            (66_386_669_701_651_024, 514_744_355_798_159_001),
+            (351_989_959_022_981_567, 1_549_762_917_972_644_042),
+        ];
+        for (((label, blueprint, l, r), want), (wl, wr)) in
+            recorded_cases().into_iter().zip(expected).zip(expected_seeds)
+        {
+            assert_eq!(
+                format!("{blueprint:?}"),
+                want,
+                "{label}: the reconstructed blueprint is not the recorded one"
             );
+            assert_eq!((l, r), (wl, wr), "{label}: the recorded seeds do not match");
+        }
+    }
 
-            // ── 1. `reify` ───────────────────────────────────────────────────────────────
-            let left_reified = reify(&left).expect("a fixture configuration reifies");
-            let right_reified = reify(&right).expect("a fixture configuration reifies");
-            prop_assert_eq!(
-                left_reified.encode_to_vec(),
-                right_reified.encode_to_vec(),
-                "★ two configurations with one identity published two different processes"
-            );
-
-            // ── 2. `resting_on`, on every channel the blueprint names ────────────────────
-            for chan in every_channel(&blueprint) {
-                let left_resting: Vec<Vec<u8>> =
-                    resting_on(&left, &chan).iter().map(|par| par.encode_to_vec()).collect();
-                let right_resting: Vec<Vec<u8>> =
-                    resting_on(&right, &chan).iter().map(|par| par.encode_to_vec()).collect();
-                prop_assert_eq!(
-                    left_resting,
-                    right_resting,
-                    "★ the projection onto one channel depended on the store order — and the \
-                     reply datum at position i is minted with `split_short(i)`"
-                );
-            }
-
-            // ── 3. `deliver` ─────────────────────────────────────────────────────────────
-            prop_assert_eq!(
-                delivered(&left),
-                delivered(&right),
-                "★ the three FIPS collections differed for one configuration"
-            );
+    /// Every recorded case satisfies THE LAW — the same assertions the property runs.
+    #[test]
+    fn the_recorded_cases_satisfy_the_law() {
+        for (label, blueprint, left_seed, right_seed) in recorded_cases() {
+            eprintln!("── {label} ──");
+            the_law(&blueprint, left_seed, right_seed);
         }
     }
 

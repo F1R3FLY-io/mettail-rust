@@ -617,3 +617,123 @@ fn emitted_sources_are_balanced() {
         "only {checked} emitted sources were checked; this test is measuring almost nothing"
     );
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Promoted tests cite REAL seeds
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// ★ Every `cc <64 hex>` a source file cites must be a seed some corpus actually records.
+///
+/// # Why this exists — a defect it was written in response to
+///
+/// While promoting `rholang-runtime/proptest-regressions/speculation/delivery.txt`, two of
+/// the three seed labels were written from memory instead of from the file, and both were
+/// wrong. The tests still PASSED: a seed label is documentation, nothing reads it, and the
+/// terms beside it were correct. A reader tracing a failure back to its corpus entry would
+/// have searched for a hash that exists nowhere.
+///
+/// That is the failure mode this whole campaign is about — a record that looks like
+/// provenance and is not. It is cheap to make mechanical, so it is made mechanical: the
+/// citation is checked against the corpora, repository-wide, for every promoted test in
+/// every crate.
+///
+/// # Scope
+///
+/// Any `cc ` followed by exactly 64 hex digits, in any `.rs` file outside `target/`. That is
+/// proptest's own seed syntax, so a false positive would have to be a 64-hex-digit string
+/// deliberately preceded by `cc ` — and if one ever appears, it is far more likely to be a
+/// miscopied seed than a coincidence.
+#[test]
+fn every_seed_a_source_file_cites_is_a_seed_some_corpus_records() {
+    // ── every seed the corpora record ──
+    let mut recorded: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut corpora = 0usize;
+    let mut pending = vec![repo_root()];
+    let mut sources: Vec<PathBuf> = Vec::new();
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.expect("dir entry").path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if path.is_dir() {
+                if name.starts_with('.') || matches!(name, "target" | "scratchpad" | "scratch") {
+                    continue;
+                }
+                pending.push(path);
+                continue;
+            }
+            let is_corpus = name.ends_with(".proptest-regressions")
+                || (name.ends_with(".txt")
+                    && path.ancestors().any(|a| {
+                        a.file_name().and_then(|n| n.to_str()) == Some("proptest-regressions")
+                    }));
+            if is_corpus {
+                corpora += 1;
+                let text = fs::read_to_string(&path).unwrap_or_default();
+                for line in text.lines() {
+                    // A SUPERSEDED corpus comments its entries out with `# cc …`; those are
+                    // still legitimate citation targets, so the marker is stripped first.
+                    let line = line.trim_start_matches("# ").trim();
+                    if let Some(rest) = line.strip_prefix("cc ") {
+                        if let Some(seed) = rest.split_whitespace().next() {
+                            recorded.insert(seed.to_string());
+                        }
+                    }
+                }
+            } else if name.ends_with(".rs") {
+                sources.push(path);
+            }
+        }
+    }
+
+    assert!(
+        corpora >= 15,
+        "only {corpora} corpus files were found; the sweep is not reaching them and this \
+         test would accept any citation at all"
+    );
+
+    // ── every seed a source file cites ──
+    let mut cited = 0usize;
+    let mut dangling: Vec<String> = Vec::new();
+    for path in &sources {
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        for (lineno, line) in text.lines().enumerate() {
+            let mut rest = line;
+            while let Some(idx) = rest.find("cc ") {
+                let after = &rest[idx + 3..];
+                let hex: String =
+                    after.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+                rest = &after[hex.len().min(after.len())..];
+                if hex.len() != 64 {
+                    continue;
+                }
+                cited += 1;
+                if !recorded.contains(&hex) {
+                    dangling.push(format!(
+                        "{}:{} cites `cc {}…`, which NO corpus records",
+                        path.display(),
+                        lineno + 1,
+                        &hex[..16]
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        cited >= 30,
+        "only {cited} seed citations were found across the repository's sources; the \
+         promoted tests are not being scanned and this test would prove nothing"
+    );
+    assert!(
+        dangling.is_empty(),
+        "{} seed citation(s) name a seed that no corpus records — a citation that looks \
+         like provenance and is not:\n  {}",
+        dangling.len(),
+        dangling.join("\n  ")
+    );
+}
