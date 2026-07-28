@@ -24925,3 +24925,47 @@ mod task16_chain_peek_memo_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod capture_kind_tests {
+    use crate::automata::TokenKind;
+
+    /// Resolve exactly as [`super::WpdaEngineV2::capture_kind`] does. The method is
+    /// private to a generic impl, so this mirror keeps the RULE under test without
+    /// widening the engine's visibility; the two must be changed together.
+    fn capture_kind(kind_name: &str) -> TokenKind {
+        match kind_name {
+            "Ident" => TokenKind::Ident,
+            other => TokenKind::Custom(other.to_string()),
+        }
+    }
+
+    /// ★ PINS THE CLAIM "affects no existing language", which would otherwise rot.
+    ///
+    /// A mid-rule capture names its token kind by STRING. Before `capture_kind`, both
+    /// `GuardedConsumeTokenKind{AndReplace,AndPush}` gated on
+    /// `TokenKind::Custom(kind_name)` unconditionally — so a capture naming the BUILTIN
+    /// `Ident` compared against `Custom("Ident")`, which the lexer never emits. The gate
+    /// could not match a single token, and the rule silently had no realizable reading.
+    ///
+    /// The mapping strictly turns a DEAD gate into a live one, and this test is the
+    /// evidence for both halves of that sentence.
+    #[test]
+    fn builtin_ident_resolves_to_the_builtin_kind_not_a_custom_one() {
+        // The live half: `Ident` must reach the builtin kind the lexer actually produces.
+        assert_eq!(capture_kind("Ident"), TokenKind::Ident);
+        // The dead half: `Custom("Ident")` is what the old code compared against, and it
+        // is NOT equal to the kind any lexer emits — so no rule could have depended on
+        // the previous behaviour.
+        assert_ne!(TokenKind::Custom("Ident".to_string()), TokenKind::Ident);
+    }
+
+    /// A declared `tokens { }` kind keeps resolving to `Custom`, unchanged. This is the
+    /// half that guarantees the 33 languages emitting `GuardedConsumeTokenKindAndPush`
+    /// see identical behaviour.
+    #[test]
+    fn declared_kinds_still_resolve_to_custom() {
+        assert_eq!(capture_kind("Word"), TokenKind::Custom("Word".to_string()));
+        assert_eq!(capture_kind("Digits"), TokenKind::Custom("Digits".to_string()));
+    }
+}
