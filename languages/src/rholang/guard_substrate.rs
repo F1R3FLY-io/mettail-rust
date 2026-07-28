@@ -63,6 +63,9 @@ use mettail_prattail::guard_formula::{
     GuardAtom, GuardAtomKind, GuardFormula, GuardSiteKind, GuardValue, GuardVarMap, LinearForm,
     ScalarOperand, StaticVerdict, CONSENSUS_SUBSTRATE_CONFIG,
 };
+use mettail_prattail::guard_refusal::{
+    GuardRefusal, GuardRefusalCause, GuardRefusalClass, RefusalProvenance,
+};
 use mettail_prattail::presburger::LinearConstraint;
 use mettail_runtime::{OrdVar, Var};
 use num_bigint::BigInt as NumBigInt;
@@ -90,7 +93,46 @@ pub struct GuardEncoding {
     ///
     /// Keeping the fragment here (rather than inside `prattail`) is what makes it *impossible*
     /// for the substrate crate to grow a matcher of its own — it never sees a `Proc`.
-    pub opaque: Vec<Arc<Proc>>,
+    pub opaque: Vec<OpaqueFragment>,
+}
+
+/// One guard fragment the encoder set aside, with the two facts a refusal needs about it.
+///
+/// The `kind` says which decider owns the fragment; the [`position`](Self::position) says
+/// whether it stood where a *verdict* was required. Both are recorded at the moment the encoder
+/// sets the fragment aside, because both are things the encoder knows and a later walk over the
+/// fragment alone would have to guess — `x * y` is an unanswerable **predicate** inside
+/// `x * y == 6` and is simply **not a predicate** when it is the whole guard, and the two are
+/// the same `Proc`.
+#[derive(Clone, Debug)]
+pub struct OpaqueFragment {
+    /// The guard fragment, verbatim.
+    pub term: Arc<Proc>,
+    /// Which decider the fragment belongs to.
+    pub kind: GuardAtomKind,
+    /// Whether the fragment stood in a position that required a verdict.
+    pub position: OpaquePosition,
+}
+
+/// Where an opaque fragment was set aside — the fact that separates *"the decider had a
+/// predicate and no procedure for it"* from *"this was never a predicate at all"*.
+///
+/// ★ This is the surface lane's answer to the question `guard_par_substrate::never_a_predicate`
+/// answers by an exhaustive walk over `ExprInstance`. It is recorded rather than re-derived
+/// because [`Encoder::formula`] has **already** made the distinction: its verdict-producing arms
+/// (`matches`, the six comparisons, a bare binder read as a proposition) are exactly the
+/// predicate positions, and its `other` catch-all is exactly the complement. Re-deriving the
+/// split with a second walk over `Proc` would be a second classifier free to drift from the
+/// first — and drift across lanes is the mechanism this whole refusal vocabulary exists to
+/// remove.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OpaquePosition {
+    /// The fragment stands where a verdict was required: a verdict-producing arm set it aside
+    /// because it had no procedure for it. Refusing here is a *coverage* fact.
+    Predicate,
+    /// The fragment is not one of the verdict-producing constructors, so no payload makes it a
+    /// verdict. Refusing here is a *sort* fact.
+    NotAPredicate,
 }
 
 impl GuardEncoding {
@@ -101,7 +143,9 @@ impl GuardEncoding {
 
     /// The fragment behind an opaque atom.
     pub fn fragment(&self, atom: GuardAtom) -> Option<&Proc> {
-        self.opaque.get(atom.id as usize).map(Arc::as_ref)
+        self.opaque
+            .get(atom.id as usize)
+            .map(|fragment| fragment.term.as_ref())
     }
 
     /// The static verdict for this guard, over the CONSENSUS substrate domain.
@@ -153,7 +197,7 @@ pub fn encode_guard_with_binders(cond: &Proc, binders: &[String]) -> GuardEncodi
 
 struct Encoder {
     vars: GuardVarMap,
-    opaque: Vec<Arc<Proc>>,
+    opaque: Vec<OpaqueFragment>,
 }
 
 /// One side of a comparison, classified.
@@ -183,7 +227,7 @@ impl Encoder {
                 Bool::BoolLit(true) => GuardFormula::True,
                 Bool::BoolLit(false) => GuardFormula::False,
                 #[allow(unreachable_patterns)]
-                _ => self.opaque_atom(cond, GuardAtomKind::Uncovered),
+                _ => self.opaque_atom(cond, GuardAtomKind::Uncovered, OpaquePosition::Predicate),
             },
 
             // ── The connectives ──────────────────────────────────────────────
@@ -201,7 +245,9 @@ impl Encoder {
             Proc::GtEq(a, b) => self.comparison(CmpOp::Ge, a, b, cond),
 
             // ── The spatial atom — DELEGATED, never decided here ─────────────
-            Proc::Matches(_, _) => self.opaque_atom(cond, GuardAtomKind::Spatial),
+            Proc::Matches(_, _) => {
+                self.opaque_atom(cond, GuardAtomKind::Spatial, OpaquePosition::Predicate)
+            },
 
             // ── A bare binder used as a boolean ──────────────────────────────
             //
@@ -220,11 +266,13 @@ impl Encoder {
                     self.vars.intern(&key);
                     GuardFormula::Prop(prop_var(&key))
                 },
-                None => self.opaque_atom(cond, GuardAtomKind::Uncovered),
+                None => self.opaque_atom(cond, GuardAtomKind::Uncovered, OpaquePosition::Predicate),
             },
 
             // ── Everything else ──────────────────────────────────────────────
-            other => self.opaque_atom(cond, classify_uncovered(other)),
+            other => {
+                self.opaque_atom(cond, classify_uncovered(other), OpaquePosition::NotAPredicate)
+            },
         }
     }
 
@@ -287,13 +335,15 @@ impl Encoder {
             },
 
             // ── Structural and uncovered. ────────────────────────────────────
-            (Operand::Structural, _) | (_, Operand::Structural) => {
-                self.opaque_atom(whole, GuardAtomKind::StructuralEquality)
-            },
+            (Operand::Structural, _) | (_, Operand::Structural) => self.opaque_atom(
+                whole,
+                GuardAtomKind::StructuralEquality,
+                OpaquePosition::Predicate,
+            ),
             (Operand::NonLinear, _) | (_, Operand::NonLinear) => {
-                self.opaque_atom(whole, GuardAtomKind::NonLinear)
+                self.opaque_atom(whole, GuardAtomKind::NonLinear, OpaquePosition::Predicate)
             },
-            _ => self.opaque_atom(whole, GuardAtomKind::Uncovered),
+            _ => self.opaque_atom(whole, GuardAtomKind::Uncovered, OpaquePosition::Predicate),
         }
     }
 
@@ -311,7 +361,7 @@ impl Encoder {
             Some(pred) => GuardFormula::Linear(pred),
             // The only failure mode is an `i64` overflow while normalizing the coefficients.
             // Wrapping would encode a DIFFERENT constraint, so the encoder refuses instead.
-            None => self.opaque_atom(whole, GuardAtomKind::NonLinear),
+            None => self.opaque_atom(whole, GuardAtomKind::NonLinear, OpaquePosition::Predicate),
         }
     }
 
@@ -493,9 +543,26 @@ impl Encoder {
 
     // ── Opaque atoms ────────────────────────────────────────────────────────
 
-    fn opaque_atom(&mut self, fragment: &Proc, kind: GuardAtomKind) -> GuardFormula {
+    /// Set a fragment aside as an opaque atom, recording BOTH facts a refusal needs: which
+    /// decider owns it, and whether it stood where a verdict was required.
+    ///
+    /// `position` is a parameter rather than something derived from `kind` because the two are
+    /// independent: [`GuardAtomKind::NonLinear`] arrives from an operand of a comparison (a
+    /// predicate the encoder could not represent) *and* from the `other` catch-all (a bare
+    /// `x * y` guard, which is not a predicate at all). A caller that had to guess would
+    /// reproduce, one arm at a time, exactly the conflation the refusal vocabulary removes.
+    fn opaque_atom(
+        &mut self,
+        fragment: &Proc,
+        kind: GuardAtomKind,
+        position: OpaquePosition,
+    ) -> GuardFormula {
         let id = self.opaque.len() as u32;
-        self.opaque.push(Arc::new(fragment.clone()));
+        self.opaque.push(OpaqueFragment {
+            term: Arc::new(fragment.clone()),
+            kind,
+            position,
+        });
         GuardFormula::Atom(GuardAtom { id, kind })
     }
 }
@@ -615,34 +682,30 @@ fn from_verdict(verdict: Option<bool>) -> Sat3 {
 
 /// **The host `where`-guard decision, derived from the substrate.**
 ///
-/// This is the function the eager-COMM sites call. It is not a second evaluator: it encodes the
-/// guard into [`GuardFormula`] and asks the substrate, delegating only the structural atoms the
-/// substrate deliberately has no procedure for.
+/// This is the function the eager-COMM sites call. It is not a second evaluator: it is a
+/// **projection of [`surface_guard_disposition`]**, which is where the decision actually
+/// happens. `Declines` is `Undecided(_)` with the refusal thrown away, so the two cannot
+/// disagree about which COMMs fire.
 ///
 /// The guard reaching this function has already been substituted with the arrived payload, so
 /// its binders are gone and its operands are ground — which is exactly the *run-time* half of
 /// the rule ("…at run time otherwise").
 ///
+/// ⚠ Because the caller supplies only the substituted guard, the refusal's
+/// [`RefusalProvenance`] is computed against that image; see
+/// [`surface_guard_disposition`]'s "the written guard" section for what that costs and for the
+/// call that avoids it.
+///
 /// [`Sat3::DontKnow`] maps to [`GuardDisposition::Declines`], which is what
 /// [`mettail_prattail::guard_formula::dont_know_policy`] selects (fail-closed): the COMM does
 /// not fire, and the receiver and the send both remain.
 pub fn eval_guard_disposition_via_substrate(cond: &Proc) -> GuardDisposition {
-    let encoding = encode_guard(cond);
-    let assignment = ground_assignment(&encoding);
-    let mut resolver = GuardAtomResolver { encoding: &encoding };
-    let verdict = ground_verdict_with(
-        &encoding.formula,
-        &assignment,
-        &encoding.vars,
-        CONSENSUS_SUBSTRATE_CONFIG,
-        &mut |atom| resolver.resolve(atom),
-    );
-    match verdict {
-        Sat3::Sat => GuardDisposition::Fires,
-        Sat3::Unsat => GuardDisposition::Blocks,
+    match surface_guard_disposition(cond, cond) {
+        SurfaceGuardDisposition::Admits => GuardDisposition::Fires,
+        SurfaceGuardDisposition::Refutes => GuardDisposition::Blocks,
         // The policy point's answer, spelled out at the site so a future change to
         // `dont_know_policy` is visible here rather than silent.
-        Sat3::DontKnow => {
+        SurfaceGuardDisposition::Undecided(_) => {
             match mettail_prattail::guard_formula::dont_know_policy(GuardSiteKind::ReceiveWhere) {
                 mettail_prattail::guard_formula::DontKnowPolicy::FailClosedBlock => {
                     GuardDisposition::Declines
@@ -654,6 +717,317 @@ pub fn eval_guard_disposition_via_substrate(cond: &Proc) -> GuardDisposition {
         },
     }
 }
+
+/// ★ **The surface lane's COMM-time disposition** — three facts where there used to be one bit.
+///
+/// The exact twin of `guard_par_substrate::SubstrateGuardDisposition`, and the names are the
+/// same on purpose so the tree has ONE guard vocabulary:
+///
+/// | this lane | lowered lane | host fold |
+/// |---|---|---|
+/// | [`Admits`](Self::Admits) | `SubstrateGuardDisposition::Admits` | `GuardDisposition::Fires` |
+/// | [`Refutes`](Self::Refutes) | `SubstrateGuardDisposition::Refutes` | `GuardDisposition::Blocks` |
+/// | [`Undecided`](Self::Undecided) | `SubstrateGuardDisposition::Undecided` | `GuardDisposition::Declines` |
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SurfaceGuardDisposition {
+    /// The substrate decided the guard holds — the COMM fires.
+    Admits,
+    /// The substrate decided the guard does not hold — an ordinary, correct non-fire.
+    Refutes,
+    /// ★ No verdict was reached. The COMM still does not fire; what has changed is that this is
+    /// no longer spelled the same way as [`Refutes`](Self::Refutes).
+    Undecided(GuardRefusal),
+}
+
+impl SurfaceGuardDisposition {
+    /// The fire verdict: `true` only for [`Admits`](Self::Admits).
+    ///
+    /// ⚠ Unchanged from before the refusal vocabulary existed — see [`GuardRefusalClass`] for
+    /// why fail-closed is correct and why it is not what was being fixed.
+    pub const fn commits(&self) -> bool {
+        matches!(self, SurfaceGuardDisposition::Admits)
+    }
+
+    /// The three-valued verdict this disposition projects to.
+    pub const fn verdict(&self) -> Sat3 {
+        match self {
+            SurfaceGuardDisposition::Admits => Sat3::Sat,
+            SurfaceGuardDisposition::Refutes => Sat3::Unsat,
+            SurfaceGuardDisposition::Undecided(_) => Sat3::DontKnow,
+        }
+    }
+
+    /// The refusal, when there is one.
+    pub const fn refusal(&self) -> Option<&GuardRefusal> {
+        match self {
+            SurfaceGuardDisposition::Undecided(refusal) => Some(refusal),
+            _ => None,
+        }
+    }
+}
+
+/// ★ **THE surface `where`-guard decider, with the reason attached.**
+///
+/// [`Sat3`] has one symbol, [`Sat3::DontKnow`], for every way this lane can fail to reach a
+/// verdict, and `dont_know_policy` then spells that symbol `false`. That is correct as a COMM
+/// verdict and wrong as an *observation*: it makes a guard that was evaluated and REFUTED
+/// indistinguishable from a guard that was never decided at all. This function answers the same
+/// verdict and, when there is no verdict, **what stopped it**.
+///
+/// # ⚠ The verdict is BYTE-IDENTICAL to the one this lane already returned
+///
+/// The three-step enumeration below is a **diagnosis of a refusal that has already happened**,
+/// not a set of early returns: [`ground_verdict_with`] is called first, exactly as before and
+/// with exactly the same arguments, and the steps run only on the [`Sat3::DontKnow`] branch.
+/// Nothing that fired before fires differently, and nothing that blocked before declines
+/// instead. That matters here more than usual, because this lane is pinned to agree with
+/// `receive::eval_guard_disposition` on the whole corpus by
+/// `languages/tests/rholang_guard_substrate_wire.rs`, and a verdict change would be a change to
+/// which COMMs fire.
+///
+/// ⚠⚠ **This is deliberately NOT the lowered lane's control flow, and the difference is a
+/// KNOWN, MEASURED, UNRESOLVED divergence — not an oversight.** `substrate_guard_disposition`
+/// returns [`GuardRefusalCause::ResidualBinder`] *before* it consults the ground leg whenever
+/// `encoding.vars` is non-empty, and sweeps **every** set-aside fragment before it too. Those
+/// early returns are not observability: they change the verdict, and they exist because that
+/// lane's reference semantics (`rho_pure_eval`) is strict in both operands of `EAnd`/`EOr` and
+/// maps any error to guard-fail, so a short-circuit that discards an unanswerable operand would
+/// fire a COMM the reducer rests on. This lane's own reference — `eval_guard_disposition` —
+/// short-circuits, so adopting the early returns here would change verdicts and break the
+/// differential gate. Which of the two is right is a question about the surface interpreter's
+/// conformance to the reducer, and it is **not** settled by plumbing a diagnosis through.
+/// See the module-level note in `docs/` and the campaign report for the measured witnesses.
+///
+/// # The three steps, and what each one names
+///
+/// | step | what stopped the decider | [`GuardRefusalCause`] |
+/// |---|---|---|
+/// | 1 | `encoding.vars` is non-empty — a binder the substitution could not reach | [`ResidualBinder`](GuardRefusalCause::ResidualBinder) |
+/// | 2 | a set-aside fragment the delegated decider could not answer | [`Unsupported`](GuardRefusalCause::Unsupported), [`NotABoolean`](GuardRefusalCause::NotABoolean), [`UnresolvedReference`](GuardRefusalCause::UnresolvedReference) |
+/// | 3 | [`ground_verdict_with`] left the ground formula undecided | [`FormulaUndecided`](GuardRefusalCause::FormulaUndecided) |
+///
+/// The order is the lowered lane's, arm for arm, so the two lanes name the same fact the same
+/// way when they see it.
+///
+/// ## ★ Which causes this lane can reach, and which it CANNOT
+///
+/// [`GuardRefusalCause::EvaluationFailed`] and [`GuardRefusalCause::Malformed`] are **not
+/// reachable here**, and that is a property of the delegated deciders rather than a gap in this
+/// function. The lowered lane reads them off `rho_pure_eval`'s `EvalError` channel; this lane's
+/// delegates — `formula::host_matches_verdict` and `runtime::compare_collection_equality` —
+/// answer `Option<bool>`, which has no error channel to read. A division by zero inside a
+/// surface guard is folded by the encoder into an opaque atom and arrives here as
+/// [`Unsupported`], not as a failure, because nothing on this lane ever *ran* and failed.
+/// Manufacturing the two causes anyway would be inventing evidence.
+///
+/// # The written guard
+///
+/// `written` is the guard **as the author typed it**; `substituted` is its image under the
+/// arrived payload. Holding both is what makes [`RefusalProvenance`] *computed* rather than
+/// guessed: an obstruction present in `written` obstructs every payload
+/// ([`Term`](RefusalProvenance::Term)); one that appears only in `substituted` came in with
+/// this datum ([`Datum`](RefusalProvenance::Datum)). A caller that has only the image — such as
+/// [`eval_guard_disposition_via_substrate`] — passes it for both, which biases every computed
+/// provenance toward `Term`, i.e. toward the louder class. Failing loud on a refusal that was
+/// really data-dependent costs a spurious diagnostic; failing quiet on a genuine decider gap
+/// costs the silence this whole vocabulary exists to remove.
+pub fn surface_guard_disposition(written: &Proc, substituted: &Proc) -> SurfaceGuardDisposition {
+    let encoding = encode_guard(substituted);
+    let assignment = ground_assignment(&encoding);
+    let mut resolver = GuardAtomResolver { encoding: &encoding };
+    let verdict = ground_verdict_with(
+        &encoding.formula,
+        &assignment,
+        &encoding.vars,
+        CONSENSUS_SUBSTRATE_CONFIG,
+        &mut |atom| resolver.resolve(atom),
+    );
+    match verdict {
+        Sat3::Sat => SurfaceGuardDisposition::Admits,
+        Sat3::Unsat => SurfaceGuardDisposition::Refutes,
+        Sat3::DontKnow => {
+            SurfaceGuardDisposition::Undecided(refusal_for(&encoding, written, substituted))
+        },
+    }
+}
+
+/// Why [`surface_guard_disposition`] reached no verdict, in the lowered lane's step order.
+///
+/// Total by construction: step 3 is unconditional, so every refusal gets a cause.
+fn refusal_for(encoding: &GuardEncoding, written: &Proc, substituted: &Proc) -> GuardRefusal {
+    match diagnose(encoding) {
+        // ── 1 & the always-`Term` half of 2 ────────────────────────────────────────────────
+        //
+        // A binder that survived substitution is one no payload supplies: substitution has
+        // ALREADY applied every binding this receive will ever get. The same holds for a
+        // reference the encoder could not even name. Neither becomes answerable under a
+        // different payload, so neither needs the written guard consulted.
+        Some((
+            cause @ (GuardRefusalCause::ResidualBinder { .. }
+            | GuardRefusalCause::UnresolvedReference { .. }),
+            _,
+        )) => GuardRefusal::new(cause, RefusalProvenance::Term, render_proc_text(substituted)),
+
+        // ── 2, the computed half ───────────────────────────────────────────────────────────
+        //
+        // ★ The provenance is decided by asking the WRITTEN guard the same question, and
+        // comparing the *cause* rather than tabulating a per-variant answer. Tabulating is what
+        // lets a gate drift; this way a new cause is classified by the one rule that classifies
+        // every other.
+        Some((cause, _)) => {
+            let in_term = matches!(
+                diagnose(&encode_guard(written)),
+                Some((written_cause, _)) if discriminant_of(&written_cause) == discriminant_of(&cause)
+            );
+            let provenance = match in_term {
+                true => RefusalProvenance::Term,
+                false => RefusalProvenance::Datum,
+            };
+            // A `Term` obstruction is the same under every payload, so the guard AS WRITTEN is
+            // what to name. A `Datum` one is not in the written guard at all, so naming it
+            // would point the author at a term that is fine.
+            let named = match provenance {
+                RefusalProvenance::Term => written,
+                RefusalProvenance::Datum => substituted,
+            };
+            GuardRefusal::new(cause, provenance, render_proc_text(named))
+        },
+
+        // ── 3. The substrate's own ground procedures gave up. ──────────────────────────────
+        None => GuardRefusal::new(
+            GuardRefusalCause::FormulaUndecided,
+            RefusalProvenance::Term,
+            render_proc_text(substituted),
+        ),
+    }
+}
+
+/// Steps 1 and 2, run against one encoding: the first thing that stops this lane deciding it,
+/// or `None` when nothing in the encoding does (step 3's territory).
+///
+/// Returns the offending fragment alongside the cause so the caller can name it.
+fn diagnose(encoding: &GuardEncoding) -> Option<(GuardRefusalCause, Option<Arc<Proc>>)> {
+    // ── 1. A binder the substitution could not reach. ──────────────────────────────────────
+    if !encoding.vars.is_empty() {
+        return Some((
+            GuardRefusalCause::ResidualBinder { slots: encoding.vars.names().to_vec() },
+            None,
+        ));
+    }
+
+    // ── 2. The first set-aside fragment the delegated deciders could not answer. ───────────
+    //
+    // ⚠ The sweep is over `encoding.opaque` and not over `encoding.formula.atoms()`, because
+    // `GuardFormula::{and,or,implies,not}` collapse at CONSTRUCTION time: `true or ⟨opaque⟩` is
+    // built as `True`, and the fragment is gone from the formula while still being the thing
+    // the author has to be told about. This is the same sweep domain
+    // `substrate_guard_disposition` gives its own step 2, and for the same reason.
+    let mut resolver = GuardAtomResolver { encoding };
+    for (id, fragment) in encoding.opaque.iter().enumerate() {
+        let atom = GuardAtom { id: id as u32, kind: fragment.kind };
+        match resolver.resolve(atom) {
+            Sat3::Sat | Sat3::Unsat => continue,
+            Sat3::DontKnow => return Some((fragment_cause(fragment), Some(fragment.term.clone()))),
+        }
+    }
+    None
+}
+
+/// The cause for one set-aside fragment the delegated deciders could not answer.
+///
+/// ★ Exhaustive over [`OpaquePosition`] and over [`GuardAtomKind`] with **no catch-all**: a new
+/// atom kind must be classified here or this stops compiling. An unclassified kind falling
+/// through to one answer would rebuild, one variant at a time, exactly the collapsed set this
+/// vocabulary removes.
+fn fragment_cause(fragment: &OpaqueFragment) -> GuardRefusalCause {
+    match fragment.position {
+        // The fragment is not one of the verdict-producing constructors. No payload makes
+        // `x + 1` or `0` a verdict — that is a fact about the guard's SORT, and it is the same
+        // fact `guard_par_substrate::never_a_predicate` reports as `NotABoolean`.
+        OpaquePosition::NotAPredicate => GuardRefusalCause::NotABoolean,
+
+        // The fragment stood where a verdict was required, so the decider had a predicate and
+        // no procedure for it — a COVERAGE fact. The node names come from the atom kind, which
+        // is the surface lane's own classification of which decider owns the fragment.
+        OpaquePosition::Predicate => match fragment.kind {
+            // ⚠ A bare binder the encoder could not key. `var_key` is total over `Var` today,
+            // so this is unreachable — and it is kept, and kept LOUD, because "unreachable" is
+            // a property of `var_key`'s two arms and a third `Var` variant would revive it
+            // silently. Row 5 of the cause table: row 1's fact, other route.
+            GuardAtomKind::Uncovered if matches!(fragment.term.as_ref(), Proc::PVar(_)) => {
+                GuardRefusalCause::UnresolvedReference { slot: render_proc_text(&fragment.term) }
+            },
+            kind => GuardRefusalCause::Unsupported { nodes: vec![undecidable_node_name(kind)] },
+        },
+    }
+}
+
+/// The author-facing name of the construct an atom kind stands for.
+///
+/// Exhaustive with no catch-all, for the same reason
+/// `rho_pure_eval::decidable::unsupported_kind` is: a new kind must be named here rather than
+/// silently joining whichever phrase the fall-through happened to give.
+fn undecidable_node_name(kind: GuardAtomKind) -> String {
+    match kind {
+        GuardAtomKind::Spatial => "spatial match (`matches`)",
+        GuardAtomKind::StructuralEquality => "structural equality on a collection",
+        GuardAtomKind::NonLinear => "non-linear integer arithmetic (`*`, `/`, `%`)",
+        GuardAtomKind::ProcessShaped => "a process in guard position",
+        GuardAtomKind::Uncovered => "a construct outside the encoder's coverage",
+    }
+    .to_string()
+}
+
+/// Cause identity **up to payload**: two causes are the same obstruction when they are the same
+/// variant carrying the same names, which is exactly what "is this already in the written
+/// guard?" has to compare.
+fn discriminant_of(
+    cause: &GuardRefusalCause,
+) -> (std::mem::Discriminant<GuardRefusalCause>, String) {
+    let detail = match cause {
+        GuardRefusalCause::Unsupported { nodes } => nodes.join(", "),
+        GuardRefusalCause::ResidualBinder { slots } => slots.join(", "),
+        GuardRefusalCause::UnresolvedReference { slot } => slot.clone(),
+        GuardRefusalCause::EvaluationFailed { .. }
+        | GuardRefusalCause::NotABoolean
+        | GuardRefusalCause::Malformed
+        | GuardRefusalCause::FormulaUndecided => String::new(),
+    };
+    (std::mem::discriminant(cause), detail)
+}
+
+/// The surface lane's rendering of a guard term, meeting [`GuardRefusal::guard`]'s contract:
+/// total, deterministic, and bounded.
+///
+/// ★ Unlike the lowered lane — whose `Par` is a protobuf with no stable printer, so
+/// `render_par_text` falls back to an opaque hash — the surface `Proc` has a `Display` that IS
+/// the surface syntax. The author gets the guard back in the notation they wrote it in.
+///
+/// Bounded by truncation at [`REFUSAL_GUARD_BUDGET`] bytes on a **character** boundary, with a
+/// fixed marker: a guard term is author-written and small, but "bounded" must be a property of
+/// the function rather than of the inputs it has been given so far, because this text reaches a
+/// diagnostic channel.
+fn render_proc_text(proc: &Proc) -> String {
+    let rendered = proc.to_string();
+    match rendered.len() <= REFUSAL_GUARD_BUDGET {
+        true => rendered,
+        false => {
+            // `floor_char_boundary` is unstable, so the boundary is found by the stable
+            // `is_char_boundary` walk. It terminates: byte 0 is always a boundary.
+            let mut cut = REFUSAL_GUARD_BUDGET;
+            while !rendered.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            format!("{}…", &rendered[..cut])
+        },
+    }
+}
+
+/// The byte budget [`render_proc_text`] truncates a guard rendering at.
+///
+/// Large enough that no guard in the corpus is truncated (the longest is well under 200 bytes),
+/// small enough that a pathological term cannot flood a diagnostic channel.
+const REFUSAL_GUARD_BUDGET: usize = 512;
 
 /// The assignment for an already-substituted guard: empty.
 ///

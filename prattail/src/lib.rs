@@ -306,6 +306,12 @@ pub mod any_algebra;
 /// procedures and the `Sat3::DontKnow` policy seam.
 pub mod guard_formula;
 
+/// ★ The refusal vocabulary shared by BOTH run-time guard legs — the types that
+/// make "the guard is false" and "the guard could not be decided" two different
+/// objects. Lives here because `rholang-runtime` depends on `languages`, so the
+/// two lanes' only common ancestor is `prattail`; see the module docs.
+pub mod guard_refusal;
+
 /// The algebra tower (`RejectSafeAlgebra` ⊃ `HeytingAlgebra` ⊃ classical
 /// `BooleanAlgebra`): keeps semi-decidable (behavioral) algebras from being used
 /// where classical complement is required. `Sat3`, `Classical<A>` bridge.
