@@ -26,7 +26,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use mettail_testkit::ctor::{
-    emit_category, normalize_unique_ids, parse_shrinks_to, render_bindings, EmitError, Schema,
+    emit_category, normalize_unique_ids, parse_shrinks_to, render_bindings, EmitError, FieldSpec,
+    Schema,
 };
 
 fn repo_root() -> PathBuf {
@@ -364,32 +365,136 @@ fn emission_is_refused_by_categories_that_do_not_admit_the_term() {
     );
 }
 
-/// The two constructors this campaign found to have LEFT the Rholang grammar are reported
-/// as `UnknownConstructor`, not as some vaguer failure.
+/// ★ THE DISPOSITION RECORD for the two constructors that have LEFT the Rholang grammar.
 ///
-/// This is the signal the tiering policy runs on: `UnknownConstructor` means "no successor
-/// is even a candidate", which is Tier-3, whereas a shape mismatch means the emitter needs
-/// work and the entry must NOT be tiered away.
+/// A corpus entry whose constructor no longer exists cannot be promoted as written, and
+/// "cannot be promoted" is not a reason to drop it. Each such entry gets a TIER, and this
+/// test is where the tiers are written down and enforced. The rulings below are evidence-
+/// backed, not judgement calls, and the evidence is named so a future reader can check it
+/// rather than trust it.
+///
+/// # `KeysMap` → `MKeys` — **TIER 2** (renamed; successor identified)
+///
+/// Commit `5ec4cf47` "Refactors canonical collection methods" (2026-05-18) changed, in one
+/// diff and in the same file:
+///
+/// | before (`5ec4cf47^`) | after (`5ec4cf47`) |
+/// |---|---|
+/// | `KeysMap . m:Proc \|- "__keysMap" "(" m ")" : Proc` | `MKeys . m:Proc` |
+/// | `KeysMapCong . \| S ~> T \|- (KeysMap S) ~> (KeysMap T);` | `MKeysCong . \| S ~> T \|- (MKeys S) ~> (MKeys T);` |
+///
+/// Same arity (one `Proc`), same result category (`Proc`), and the congruence rule renamed
+/// in lockstep with no change of shape. The SURFACE moved from `__keysMap(m)` to the
+/// Rholang-style `m.keys()` (sibling commit `a0465b9f`, "Introduces rholang-like syntax for
+/// the map collection"), but a surface change is not an operator change: the operator is
+/// "the keys of a map" before and after. That is what makes this a rename rather than a
+/// replacement, and it is the whole of the Tier-2 test.
+///
+/// ⚠ `KeysMap` still exists in `languages/src/calculator.rs` with a DIFFERENT signature
+/// (`m:Map |- "keys" "(" m ")" : List`). Departure is per-LANGUAGE, which is why the schema
+/// is read per-language and not repo-wide.
+///
+/// # `PInputs` — **TIER 3** (no successor confirmable)
+///
+/// Commit `363470c7` "Initial FOR implementation" (2026-04-17) removed
+/// `PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]` together with its `Comm` rule, and
+/// added the `ForRow` / `PForUser` family in the same diff. That is a RESTRUCTURING, not a
+/// rename, and the difference is load-bearing:
+///
+/// - `PInputs` was ONE constructor holding a vector of names and a SINGLE multi-binder scope
+///   covering all of them;
+/// - the successor spreads the same information across three levels — `PForUser(Vec<ForRow>,
+///   Proc)`, each `ForRow` holding `&`-joined binds with an optional `where` guard, each
+///   `InputBind` carrying its OWN name and its own pattern.
+///
+/// The binder LAYOUT therefore differs, and translating the archived term means deciding
+/// how one multi-binder scope maps onto per-bind patterns. That is a semantic judgement
+/// about where names are bound, and getting it wrong yields a term that looks right and
+/// binds differently — which the `Debug` oracle would not catch, because the reconstructed
+/// term would be self-consistently wrong. `PForUser` is also strictly MORE general (guards,
+/// multiple rows), so there is no unique inverse to pick.
+///
+/// "Semantically the same operator" is therefore not confirmable, and Tier 3 is the honest
+/// answer. The entry stays in the corpus, unpromoted, with this record as its disposition.
+///
+/// # What this test enforces
+///
+/// Both rulings are guarded so that a REINSTATEMENT cannot pass unnoticed: if either name
+/// returns to the grammar, this goes red and the message says what to do. That is the whole
+/// safety property a Tier-2/Tier-3 archive needs — the risk of archiving is not that the
+/// entry is lost, it is that the constructor comes back and nobody reinstates the entry.
 #[test]
-fn a_departed_constructor_is_reported_as_such() {
+fn the_departed_constructors_have_their_recorded_disposition() {
     let schemas = generated_schemas();
     let Some((_, rholang)) = schemas.iter().find(|(name, _)| name == "rholang") else {
         eprintln!("note: Rholang has not been compiled in this tree; vacuous by construction.");
         return;
     };
 
-    for departed in ["PInputs", "KeysMap"] {
+    // ── Both: still departed. A reinstatement must not pass unnoticed. ──
+    for (departed, tier, action) in [
+        (
+            "PInputs",
+            3,
+            "promote the archived entry directly, and DELETE the Tier-3 ruling above — the \
+             reason for it (no confirmable successor) has expired",
+        ),
+        (
+            "KeysMap",
+            2,
+            "the Tier-2 rename `KeysMap` → `MKeys` has been undone; promote the archived \
+             entry under `KeysMap` and drop the substitution",
+        ),
+    ] {
         assert!(
             !rholang.has_label_anywhere(departed),
-            "`{departed}` is declared by {:?} in the current Rholang grammar. If it has been \
-             REINSTATED, the archived counterexample that uses it must be reinstated with it — \
-             that is what this assertion is for.",
+            "`{departed}` (Tier {tier}) is declared by {:?} in the CURRENT Rholang grammar. \
+             It has been REINSTATED, so its archived counterexample must be reinstated with \
+             it: {action}.",
             rholang.categories_declaring(departed)
         );
     }
 
-    // And the emitter must SAY so, rather than failing with a shape complaint that would
-    // send a reader looking for a bug in the parser.
+    // ── Tier 2: the SUCCESSOR must still be there, with the shape that made the ruling. ──
+    //
+    // This is the half a rename-archive usually forgets. Recording "`KeysMap` became
+    // `MKeys`" is worthless if `MKeys` can later change arity, change category, or vanish
+    // without the record noticing — the archived entry would then be translated into
+    // something that no longer means what it meant. The ruling is only sound while the
+    // successor still has the shape the evidence showed, so that is asserted, not assumed.
+    let mkeys = rholang
+        .variants
+        .get(&("Proc".to_string(), "MKeys".to_string()))
+        .unwrap_or_else(|| {
+            panic!(
+                "the Tier-2 successor `Proc::MKeys` is GONE. `KeysMap` was archived on the \
+                 evidence that commit 5ec4cf47 renamed it to `MKeys` with the same arity and \
+                 category; with the successor removed that ruling no longer holds and the \
+                 archived entry needs a fresh disposition. Categories currently declaring \
+                 `MKeys`: {:?}",
+                rholang.categories_declaring("MKeys")
+            )
+        });
+    assert_eq!(
+        mkeys.fields.len(),
+        1,
+        "`MKeys` now takes {} field(s), not the single `m:Proc` that made `KeysMap` → \
+         `MKeys` a RENAME rather than a replacement. The Tier-2 ruling rested on the arity \
+         matching; re-derive it.",
+        mkeys.fields.len()
+    );
+    assert_eq!(
+        mkeys.fields[0],
+        FieldSpec::Cat("Proc".to_string()),
+        "`MKeys`'s single field is no longer a nested `Proc`. See the arity message."
+    );
+
+    // ── Tier 3: the emitter must SAY "unknown constructor". ──
+    //
+    // Not a shape complaint, which would send a reader looking for a bug in the parser. The
+    // tiering policy runs on this distinction: `UnknownConstructor` means "no successor is
+    // even a candidate", while a shape mismatch means the EMITTER needs work and the entry
+    // must not be tiered away at all.
     let node = mettail_testkit::ctor::parse_debug_value("PInputs(PZero)")
         .expect("a syntactically well-formed call");
     match emit_category(rholang, "Proc", &node) {
@@ -398,6 +503,37 @@ fn a_departed_constructor_is_reported_as_such() {
             "a departed constructor must be reported as `UnknownConstructor`, got {other:?}"
         ),
     }
+
+    // ── Tier 2, end to end: the archived term EMITS once the rename is applied. ──
+    //
+    // The ruling claims `KeysMap` and `MKeys` are the same operator. If that is true then
+    // substituting the name into the archived text must produce a term this grammar accepts
+    // — and if it does not, the ruling is wrong and this says so immediately. The text is
+    // corpus entry 47 verbatim, with the one substitution.
+    //
+    // ⚠ WHAT THIS DOES *NOT* PROVE, stated because the boundary is easy to overclaim.
+    // Emission is type-directed, so this shows a successor of the right SHAPE exists and the
+    // whole archived term type-checks around it. It does not single out `MKeys` among its
+    // siblings: `Proc::MValues` has the identical schema entry (`regular cat:Proc`), and
+    // substituting IT passes this assertion too. Measured, while red-teaming this very test
+    // — the first mutation chosen for the RED proof was `MValues`, and it stayed green.
+    //
+    // The evidence that the successor is `MKeys` SPECIFICALLY is the `5ec4cf47` diff in the
+    // doc comment above, where the rename and its congruence rule change together in one
+    // commit. A schema cannot carry that; only the history can. The assertion below is the
+    // half that CAN be mechanised, and the doc comment is the half that cannot.
+    let renamed = "Or(BigintCastProc(MKeys(PZero)), POutput(NVar(OrdVar(Free(FreeVar { \
+                   unique_id: UniqueId(0), pretty_name: Some(\"a\") }))), MKeys(PZero)))";
+    let node = mettail_testkit::ctor::parse_debug_value(renamed)
+        .expect("the renamed archive text parses");
+    emit_category(rholang, "Proc", &node).unwrap_or_else(|e| {
+        panic!(
+            "the Tier-2 rename does not round-trip: with `KeysMap` replaced by `MKeys`, \
+             archived corpus entry 47 still does not emit under `Proc` ({e}). The ruling \
+             that the two are the same operator is therefore not supported end to end and \
+             must be re-derived."
+        )
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
