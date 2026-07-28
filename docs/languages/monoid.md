@@ -440,7 +440,9 @@ specification and is checked in [§9](#9-where-the-algebra-and-the-implementatio
 ### 6.3 How the parser decides associativity
 
 This is where a reader looking for "associativity" will first go, so it is worth following the whole
-chain. Nothing in the specification mentions associativity; the parser gets it from a **default**.
+chain. Nothing in the specification mentions associativity; the parser gets it from a **default**,
+and that default is **left**. It is a default in the strict sense — an explicitly declared `right`
+is always honoured, and nothing else in the pipeline may override the declaration.
 
 1. `classify_judgement` sees two `Simple` params and a three-element pattern
    `[Param, Literal, Param]` whose two parameter types are equal, so it classifies `Mul` as a plain
@@ -450,7 +452,11 @@ chain. Nothing in the specification mentions associativity; the parser gets it f
 2. `analyze_binding_powers` walks each category's infix rules in declaration order starting at
    `precedence = 2`, and for a left-associative rule assigns
    $`(l_{bp}, r_{bp}) = (\mathit{precedence},\, \mathit{precedence}+1)`$.
-   `Mul` is the only infix rule in `M`, so it gets $`(2, 3)`$.
+   `Mul` is the only infix rule in `M`, so it gets $`(2, 3)`$. (The counter advances once per
+   precedence **level** rather than once per rule — a rule annotated `same` joins its
+   predecessor's level. `Monoid` declares one infix rule and no annotation, so neither
+   mechanism is exercised here; see `docs/languages/calculator.md` §8.1 for a category that
+   uses both.)
 3. That number pair is frozen into the generated tables — `infix_bp_m("*") -> [(2u8, 3u8, 0u16, 1u16)]`,
    and the parallel `LexAltRuleKind::InfixOp { l_bp: 2u8, r_bp: 3u8, ... }` used at the infix-loop
    fork site.

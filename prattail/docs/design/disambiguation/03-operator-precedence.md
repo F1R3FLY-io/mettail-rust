@@ -121,8 +121,8 @@ The counter advances once per **level**, not once per rule. Two facts follow:
 
 > **Historical note.** Until 2026-07-28 both associativity branches ended in
 > `precedence += 2`, so no branch left the counter unchanged. Rule `i` then received
-> `left_bp ∈ {2 + 2i, 3 + 2i}`, and two rules `i < j` could share a `left_bp` only if
-> `3 + 2i = 2 + 2j`, i.e. `2(j − i) = 1` — unsatisfiable. Equal precedence was therefore
+> $`\ell \in \{2 + 2i,\; 3 + 2i\}`$, and two rules $`i < j`$ could share an $`\ell`$ only if
+> $`3 + 2i = 2 + 2j`$, i.e. $`2(j - i) = 1`$ — unsatisfiable. Equal precedence was therefore
 > not merely unused but **unrepresentable**, and the worked trace in §3.2 below described
 > a table the assigner could not emit. The `same` annotation is what makes that trace
 > real.

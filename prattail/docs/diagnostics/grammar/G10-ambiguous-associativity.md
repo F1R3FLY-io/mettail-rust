@@ -14,12 +14,12 @@ it produces is easy to misread, not because anything is wrong.
 ### The encoding
 
 In a Pratt parser, precedence and associativity are carried by one pair of numbers. For an
-operator on level `$p$`:
+operator on level $`p`$:
 
-| Associativity | `$(\ell, r)$` | `$\min(\ell, r)$` |
+| Associativity | $`(\ell, r)`$ | $`\min(\ell, r)`$ |
 |---|---|---|
-| Left  | `$(p,\; p+1)$` | `$p$` |
-| Right | `$(p+1,\; p)$` | `$p$` |
+| Left  | $`(p,\; p+1)`$ | $`p`$ |
+| Right | $`(p+1,\; p)`$ | $`p`$ |
 
 Both encodings have the same **minimum**, which is the level; they differ only in the
 **order** of the pair, which is the associativity. Precedence and associativity are
@@ -41,22 +41,22 @@ associativity to each level could not model Rholang, so MeTTaIL's cannot be one.
 
 In an LR parser, `%left`/`%right` are properties of a precedence *level*, and a
 disagreement inside one level is a genuine shift/reduce conflict. A Pratt parser has no
-such notion: the `$(\ell, r)$` pair determines exactly one reading for every input. There
+such notion: the $`(\ell, r)`$ pair determines exactly one reading for every input. There
 is nothing for the parser to be ambiguous about.
 
 ### What is worth knowing
 
-A chain that mixes the two nests to the **right in both directions**. Let level `$p$` hold
+A chain that mixes the two nests to the **right in both directions**. Let level $`p`$ hold
 left-associative `==` and right-associative `matches`.
 
-- `a == b matches c` — `==` is absorbed, then parses its right operand at floor `$p+1$`.
-  There it meets `matches` with `$\ell = p+1$`, and `$p+1 \ge p+1$` holds, so `matches` is
+- `a == b matches c` — `==` is absorbed, then parses its right operand at floor $`p+1`$.
+  There it meets `matches` with $`\ell = p+1`$, and $`p+1 \ge p+1`$ holds, so `matches` is
   absorbed **into `==`'s right operand**: `a == (b matches c)`.
-- `a matches b == c` — `matches` is absorbed, then parses its right operand at floor `$p$`.
-  There it meets `==` with `$\ell = p$`, and `$p \ge p$` holds, so `==` is absorbed into
+- `a matches b == c` — `matches` is absorbed, then parses its right operand at floor $`p`$.
+  There it meets `==` with $`\ell = p`$, and $`p \ge p`$ holds, so `==` is absorbed into
   `matches`'s right operand: `a matches (b == c)`.
 
-The right-associative operator's `$\ell = p+1$` is what clears the floor its
+The right-associative operator's $`\ell = p+1`$ is what clears the floor its
 left-associative neighbour installs. If that is the intended reading — as it is in
 Rholang — nothing needs to change.
 
@@ -65,7 +65,7 @@ Rholang — nothing needs to change.
 The lint fires when **all** of the following hold for a category:
 
 1. Two or more **non-postfix** infix operators share a precedence level, where the level
-   is `$\min(\ell, r)$`. Postfix operators are excluded: they consume no right operand, so
+   is $`\min(\ell, r)`$. Postfix operators are excluded: they consume no right operand, so
    they have no associativity to disagree about, and their unused `right_bp` of `0` would
    otherwise collapse every one of them onto a spurious level `0`.
 2. Within that level, `InfixOperator::associativity()` is not constant.
@@ -77,13 +77,13 @@ diffable.
 >
 > G10 previously grouped operators by `left_bp` rather than by level. That predicate was
 > unsatisfiable by construction. Levels begin at 2 and advance by 2, so every level is
-> **even**; a left-associative operator therefore has an even `$\ell = p$` and a
-> right-associative one an odd `$\ell = p+1$`. Two operators sharing a `left_bp` share its
+> **even**; a left-associative operator therefore has an even $`\ell = p`$ and a
+> right-associative one an odd $`\ell = p+1`$. Two operators sharing a `left_bp` share its
 > parity, hence share their associativity, hence never differ.
 >
 > The lint's two unit tests hand-constructed `left_bp: 2` on both operators with differing
 > `right_bp` — a shape `analyze_binding_powers` cannot emit, since a right-associative
-> operator at level `$p$` is `$(p+1,\, p)$` and never `$(p,\, p-1)$`. The suite reported a
+> operator at level $`p`$ is $`(p+1,\, p)`$ and never $`(p,\, p-1)`$. The suite reported a
 > dead lint as covered. Both tests now build their tables through the real assigner
 > (`prattail/src/lint/tests.rs`), so the coverage is real.
 >

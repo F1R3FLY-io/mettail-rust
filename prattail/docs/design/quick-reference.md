@@ -776,9 +776,13 @@ BP is deduced per-category from declaration order. The algorithm in
 
 - **Pass 1 (non-postfix):** Iterates non-postfix operators in declaration
   order. A running `precedence` counter starts at 2 (reserving 0 for entry
-  and 1 for lowest-priority operands). Each operator consumes two levels
-  (`precedence += 2`). Left-associative operators get `(precedence,
-  precedence + 1)`; right-associative get `(precedence + 1, precedence)`.
+  and 1 for lowest-priority operands). The counter advances once per
+  **LEVEL** (`precedence += 2`), not once per rule: a rule annotated `same`
+  joins the level its predecessor opened instead of starting a tighter one.
+  Left-associative operators get `(precedence, precedence + 1)`;
+  right-associative get `(precedence + 1, precedence)`. Both have
+  `min(left_bp, right_bp) == precedence`, so one level may hold operators of
+  BOTH associativities — which Rholang's grammar requires.
 - **Pass 2 (postfix):** Starts at `postfix_prec = precedence + 2`, leaving
   a gap of 2 above the non-postfix range for unary prefix. Each postfix
   operator gets `left_bp = postfix_prec + 1, right_bp = 0`, then
@@ -810,9 +814,25 @@ rules (source: `macros/src/ast/grammar.rs:97–340`):
    Neg . a:Int |- "-" a : Int prefix(5);
    ```
 
-Both annotations can appear on the same rule in any order. When neither is
-present, the operator defaults to left-associative with the implicit BP
-from its declaration position.
+3. **`same`** — places the rule on the precedence level its predecessor
+   opened, instead of opening a new, tighter one. This is the only way to
+   express that two operators bind EQUALLY tightly; declaration order alone
+   is a strict total order and cannot state a tie.
+   ```rust
+   MulInt . a:Int, b:Int |- a "*" b : Int ![a * b] fold;
+   DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold same;
+   ```
+
+The annotations can appear on the same rule in any order, and `same` and
+`right` are orthogonal — the first chooses the level, the second chooses that
+operator's associativity within it, so `same right` and `right same` are the
+same declaration.
+
+**When no associativity annotation is present, the operator is LEFT-associative.**
+That default applies uniformly: to a chain of one operator (`1 + 2 + 3` reads
+`(1 + 2) + 3`), and to two unannotated operators sharing a level (`6 * 3 / 2`
+reads `(6 * 3) / 2`). An explicitly declared `right` is always honoured, even on
+a rule that shares its level with left-associative operators.
 
 Cross-ref: [`binding-powers/03-explicit-specification.md`](binding-powers/03-explicit-specification.md)
 

@@ -139,16 +139,16 @@ Let a category declare *n* non-postfix infix operators partitioned into *L* prec
 \text{Right-associative:}\quad (\ell, r) = (2k + 3,\; 2k + 2)
 ```
 
-Both satisfy `$\min(\ell, r) = 2k + 2$`, which is how a consumer recovers the level, and
+Both satisfy $`\min(\ell, r) = 2k + 2`$, which is how a consumer recovers the level, and
 they differ only in the ORDER of the pair, which is how a consumer recovers the
 associativity. The two are independent, so a single level may hold operators of both
 kinds — as Rholang's level 6 does, with right-associative `matches` beside
 left-associative `==` and `!=`.
 
 > **Historical note (2026-07-28).** Both branches used to end in `precedence ← precedence
-> + 2`, so `L = n` always. Rule *i* then received `$\ell \in \{2 + 2i,\; 3 + 2i\}$`, and
-> two rules `$i < j$` could share an `$\ell$` only if `$3 + 2i = 2 + 2j$`, i.e.
-> `$2(j - i) = 1$` — unsatisfiable over the integers. Equal precedence was therefore
+> + 2`, so `L = n` always. Rule *i* then received $`\ell \in \{2 + 2i,\; 3 + 2i\}`$, and
+> two rules $`i < j`$ could share an $`\ell`$ only if $`3 + 2i = 2 + 2j`$, i.e.
+> $`2(j - i) = 1`$ — unsatisfiable over the integers. Equal precedence was therefore
 > **unrepresentable**, not merely unused: no grammar could express that `*` and `/` bind
 > equally tightly, and `6 * 3 / 2` parsed as `6 * (3 / 2)`.
 

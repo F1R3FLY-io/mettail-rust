@@ -460,8 +460,31 @@ terms {
 
 ### Associativity
 
-By default, all infix operators are **left-associative**:
+**The default is LEFT, and it is a default — never an override.** An operator that
+declares no associativity is left-associative, so a chain of it reads left-to-right:
+
 - `1 + 2 + 3` parses as `(1 + 2) + 3`
+
+This holds for operators that share a precedence level as well as for a chain of one
+operator. Two operators on the same level, neither declaring an associativity, read
+left-to-right between themselves:
+
+- `6 * 3 / 2` parses as `(6 * 3) / 2` — `*` and `/` share a level and both default to left
+
+**An explicitly declared associativity is always HONORED**, including on a rule that
+shares a level with left-associative operators. Precedence selects the level;
+associativity is a property of the individual operator. See
+[Associativity is per-operator, not per-level](#associativity-is-per-operator-not-per-level).
+
+> **Corrected 2026-07-28.** The default was always documented as left, but it was not
+> uniformly *applied*: the mixfix classifier
+> (`macros/src/gen/runtime/wpda_codegen/infix.rs`) hard-coded `Associativity::Left` and
+> silently discarded a declared `right` on every mixfix rule, while `Display` honoured it.
+> A ternary declared `right` therefore printed right-associatively and parsed
+> left-associatively. Associativity is now derived from the rule's right edge: a mixfix
+> whose final operand is followed by a literal (`n "!" "(" q ")"`) is self-delimiting and
+> has no chain to re-nest, so only an OPEN right edge can honour `right` — and for those,
+> it now does.
 
 Right-associativity is specified with the `right` keyword at the end of the rule,
 after the eval mode annotation (if present):
@@ -480,13 +503,41 @@ The `right` keyword can be combined with eval mode and `prefix(N)` annotations:
 Label . params |- syntax : Cat ![code] mode right prefix(N);
 ```
 
+#### Associativity is per-operator, not per-level
+
+Operators that share a precedence level keep their OWN associativity. This is not a
+convenience — Rholang's normative grammar
+(`rholang-rs/rholang-tree-sitter/grammar.js`) requires it:
+
+```js
+matches: $ => prec.right(6, seq($._proc, 'matches', $._proc)),
+eq:      $ => prec.left(6,  seq($._proc, '==',      $._proc)),
+neq:     $ => prec.left(6,  seq($._proc, '!=',      $._proc)),
+```
+
+Three operators, one level, two associativities. Diagnostic
+[G10](../diagnostics/grammar/G10-ambiguous-associativity.md) reports such a level as a
+**Note** — legal and unambiguous, merely easy to misread.
+
 #### Binding Power Encoding
 
-The binding power (BP) pairs encode associativity:
-- Left-associative: `(2n, 2n+1)` -- the left side binds tighter, so the right
-  operand recurses at a higher minimum BP than the left saw
-- Right-associative: `(2n+1, 2n)` -- the right side binds tighter, so the right
-  operand recurses at the same level as the left, allowing right nesting
+The binding power (BP) pairs encode BOTH, and keep them separable. For an operator on
+level $`p`$:
+
+| Associativity | $`(\ell, r)`$ | $`\min(\ell, r)`$ |
+|---|---|---|
+| Left (the default) | $`(p,\; p+1)`$ | $`p`$ |
+| Right (`right`) | $`(p+1,\; p)`$ | $`p`$ |
+
+- **Left-associative** $`(p,\; p+1)`$ — the right operand recurses at a HIGHER minimum
+  BP than the operator's own $`\ell`$, so the same operator (and every other member of
+  its level) is refused entry there and the chain nests leftward.
+- **Right-associative** $`(p+1,\; p)`$ — the right operand recurses at the SAME level,
+  so the operator can re-enter and the chain nests rightward.
+
+The **minimum** of the pair is the level and is identical for both; only the ORDER
+differs. That is exactly why one level can hold operators of both kinds, and it is how
+every consumer recovers the level.
 
 #### Parsing Example
 

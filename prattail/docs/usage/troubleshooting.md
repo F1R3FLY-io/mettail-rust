@@ -258,11 +258,54 @@ terms {
 
 **Symptom:** `2 ^ 3 ^ 4` parses as `(2 ^ 3) ^ 4` instead of `2 ^ (3 ^ 4)`.
 
-**Cause:** All operators default to left-associativity. For right-associativity,
-the `associativity` field on `RuleSpec` must be set to `Associativity::Right`.
+**Cause:** Associativity defaults to **left**, and the rule did not declare otherwise.
+The default applies to every operator that does not carry `right` — including one that
+shares a precedence level with others.
 
-**Fix:** Set associativity in the rule specification (this is done at the
-`RuleSpec` level, which is set during macro expansion).
+**Fix:** Add the `right` keyword to the rule, after the eval mode if one is present:
+
+```
+PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step right;
+```
+
+Do **not** reach for `RuleSpec::associativity` directly. That field is populated from the
+DSL annotation during macro expansion, and setting it anywhere else desynchronises the
+parser from `Display`, which reads the same analyzer.
+
+### Wrong Associativity on a Mixfix Operator
+
+**Symptom:** a mixfix rule (a ternary `c "?" t ":" e`, say) declares `right`, and
+`Display` brackets it right-associatively, but the parser nests it to the LEFT.
+
+**Cause (fixed 2026-07-28):** the mixfix classifier hard-coded `Associativity::Left`,
+discarding a declared `right` on every mixfix rule. `Display` honoured the declaration,
+so printer and parser disagreed about what the same grammar meant.
+
+**Fix:** none needed — the declaration is now honoured. Note that it can only be honoured
+where it is *observable*: associativity is a property of the rule's RIGHT EDGE, so a
+mixfix that closes with a literal (`n "!" "(" q ")"`) is self-delimiting and has no chain
+to re-nest. Such a rule stays left-associative regardless of the annotation, because there
+is no reading for `right` to select.
+
+### Two Operators That Should Tie, Do Not
+
+**Symptom:** `6 * 3 / 2` evaluates to 6 rather than 9; `1 + 2 - 3` parses as
+`Add(1, Sub(2, 3))` rather than `Sub(Add(1, 2), 3)`.
+
+**Cause:** every unannotated rule opens a NEW, tighter precedence level, so operators
+that should tie are ordered by declaration position instead.
+
+**Fix:** mark the later rules `same`, which places them on the level their predecessor
+opened:
+
+```
+MulInt . a:Int, b:Int |- a "*" b : Int ![a * b] fold;
+DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold same;
+ModInt . a:Int, b:Int |- a "%" b : Int ![a % b] fold same;
+```
+
+`same` and `right` are orthogonal and may appear on the same rule in either order: the
+first sets the level, the second sets that operator's associativity within it.
 
 ---
 

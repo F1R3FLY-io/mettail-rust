@@ -280,8 +280,8 @@ operators. Declaration order supplies the ordering; `same` supplies the ties.
 > **This section previously described `same` as an unimplemented extension point.** It was
 > implemented on 2026-07-28, because the gap it left was not cosmetic: without it,
 > `analyze_binding_powers` advanced its counter in both associativity branches, so rule
-> `$i$` received `$\ell \in \{2 + 2i,\; 3 + 2i\}$` and two rules `$i < j$` could share an
-> `$\ell$` only if `$2(j - i) = 1$`. Equal precedence was **unrepresentable**, and
+> $`i`$ received $`\ell \in \{2 + 2i,\; 3 + 2i\}`$ and two rules $`i < j`$ could share an
+> $`\ell`$ only if $`2(j - i) = 1`$. Equal precedence was **unrepresentable**, and
 > `6 * 3 / 2` parsed as `6 * (3 / 2)`. See
 > `prattail/docs/design/binding-powers/02-implicit-deduction.md` §3.
 
