@@ -533,7 +533,8 @@ fn binder_items(
                 });
             },
             BinderPosition::ParamParse { cat, collection: None } => {
-                let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
+                let cat_src_idx = lookup_src_idx(cat, categories)
+                        .unwrap_or_else(|| panic!("mettail: unresolvable category `{cat}` in a ParamParse position — every category param is validated against the declared type list, so this is a macro bug, not a grammar error"));
                 // The SAME lookup `emit_binder_rule_body` emits: per-(cat,
                 // rule) — `classify_unary_prefix_shape` rules map to their
                 // prefix bp, everything else falls back to 0 (red-team AV2:

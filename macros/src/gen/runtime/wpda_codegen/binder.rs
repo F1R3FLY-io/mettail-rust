@@ -1462,8 +1462,8 @@ pub(crate) fn emit_binder_rule_body(
                                             outer_bp: *outer_bp,
                                         },
                                         action_kind:
-                                            mettail_prattail::wpda_walker::ForkActionKind::ConsumeIdentAndReplace {
-                                                start_scope: false,
+                                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
+                                                kind_name: "Ident".to_string(),
                                             },
                                     }],
                                     consume_trigger: false,
@@ -1827,7 +1827,8 @@ pub(crate) fn emit_binder_rule_body(
                         }
                     },
                     BinderPosition::ParamParse { cat, collection } => {
-                        let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
+                        let cat_src_idx = lookup_src_idx(cat, categories)
+                        .unwrap_or_else(|| panic!("mettail: unresolvable category `{cat}` in a ParamParse position — every category param is validated against the declared type list, so this is a macro bug, not a grammar error"));
                         // Stage 3.27d (G-PREFIX-BP, 2026-04-30): for unary-prefix
                         // rules, install `cur_bp = prefix_bp` so the operand sub-parse
                         // cannot be stolen by lower-precedence trailing infix.
@@ -2676,7 +2677,8 @@ pub(crate) fn emit_binder_list_loop_body(
                                     // CollectionMarker push. The Class-2-in-*opt
                                     // CollectionMarker push case lives in
                                     // `emit_optional_group_body`, not here.
-                                    let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
+                                    let cat_src_idx = lookup_src_idx(cat, categories)
+                        .unwrap_or_else(|| panic!("mettail: unresolvable category `{cat}` in a ParamParse position — every category param is validated against the declared type list, so this is a macro bug, not a grammar error"));
                                     quote! {
                                         (#result_src_idx, #rule_idx, #cur_sp) => {
                                             return WpdaStepAction::ReplaceAndPush {
@@ -2933,7 +2935,8 @@ pub(crate) fn emit_optional_group_body(
                             }
                         },
                         BinderPosition::ParamParse { cat, collection } => {
-                            let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
+                            let cat_src_idx = lookup_src_idx(cat, categories)
+                        .unwrap_or_else(|| panic!("mettail: unresolvable category `{cat}` in a ParamParse position — every category param is validated against the declared type list, so this is a macro bug, not a grammar error"));
                             match collection {
                                 None => quote! {
                                     (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {

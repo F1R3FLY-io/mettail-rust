@@ -11353,6 +11353,28 @@ where
     /// hashed the state alone and would collide all `Unwinding` folds across
     /// rules). 31-bit collision risk carried by the debug side-map
     /// (`CgllPureRun::slot_seen`).
+    /// Resolve a capture's declared kind NAME to the [`TokenKind`] its gate must match.
+    ///
+    /// ★ WHY THIS IS NOT SIMPLY `TokenKind::Custom(name)`
+    ///
+    /// A mid-rule capture position names its token kind by string. For a kind declared in
+    /// a language's `tokens { }` block that name IS a `TokenKind::Custom`. But the builtin
+    /// identifier class is `TokenKind::Ident`, NOT `TokenKind::Custom("Ident")` — the lexer
+    /// never produces the latter — so a capture naming `Ident` could never match a single
+    /// token and the rule silently had no realizable reading at end of input.
+    ///
+    /// ⚠ THIS CANNOT CHANGE ANY EXISTING LANGUAGE. `Ident` is a builtin non-terminal name,
+    /// so no `tokens { }` block can declare a kind called `Ident`; and even if one could,
+    /// a `Custom("Ident")` gate matches nothing the lexer emits today, so no rule can
+    /// currently depend on the old behaviour. The mapping strictly turns a dead gate into
+    /// a live one.
+    fn capture_kind(kind_name: &str) -> TokenKind {
+        match kind_name {
+            "Ident" => TokenKind::Ident,
+            other => TokenKind::Custom(other.to_string()),
+        }
+    }
+
     fn cgll_pure_slot_hash(cur_sym: &StackSymbolV2, state: &WpdaState) -> u32 {
         let ident = Self::cgll_pure_state_slot_ident(state);
         // Bit 31 = the binarized-Symbol namespace; bit 30 = the amendment-6
@@ -19441,12 +19463,12 @@ where
                 // match, intern the token as an ActionArg::Token leaf
                 // (pushed_via_push_ident=false) and continue with the branch's
                 // symbol/state at the next position.
-                if tokens.peek_kind(pos_after) != Some(TokenKind::Custom(kind_name.clone())) {
+                if tokens.peek_kind(pos_after) != Some(Self::capture_kind(&kind_name)) {
                     return;
                 }
                 let text = tokens.peek_text(pos_after).unwrap_or("");
                 let leaf = self.sppf.intern_terminal(
-                    TokenKind::Custom(kind_name.clone()),
+                    Self::capture_kind(&kind_name),
                     crate::sppf::PosOrSynth::Real(pos_after as u32),
                     Some(text),
                     false,
@@ -19469,12 +19491,12 @@ where
                 // frame. Mirrors `PushWithTriggerTerminal`'s push, but with the
                 // `GuardedConsumeTokenKindAndReplace` kind-gate + `ActionArg::
                 // Token` intern, and it ADVANCES past the consumed token.
-                if tokens.peek_kind(pos_after) != Some(TokenKind::Custom(kind_name.clone())) {
+                if tokens.peek_kind(pos_after) != Some(Self::capture_kind(&kind_name)) {
                     return;
                 }
                 let text = tokens.peek_text(pos_after).unwrap_or("");
                 let leaf = self.sppf.intern_terminal(
-                    TokenKind::Custom(kind_name.clone()),
+                    Self::capture_kind(&kind_name),
                     crate::sppf::PosOrSynth::Real(pos_after as u32),
                     Some(text),
                     false,
@@ -22160,11 +22182,46 @@ mod tests {
 
 
 
-    static REALIZE_LAZY_ACTION_CALLS: std::sync::atomic::AtomicUsize =
-        std::sync::atomic::AtomicUsize::new(0);
+    // ⚠ PER-THREAD, not a process-global atomic. `cargo test` runs a binary's
+    // tests as threads in ONE process (`cargo nextest` forks a process per
+    // test), so an `AtomicUsize` here is shared by every test in this binary.
+    // Both things the test below asserts — the CALL COUNT and the realized
+    // VALUES, which are the counter's readings — would then depend on which
+    // neighbours happened to be running, and the assertion would be green under
+    // nextest and flaky under `cargo test`.
+    //
+    // It is single-writer TODAY only because exactly one test installs
+    // `CountingRealizeEngine`; that is an accident of the current test set, not
+    // an invariant, and nothing would report its loss. A thread-local makes the
+    // isolation structural: the realize walk runs synchronously on the calling
+    // test's thread, so per-thread IS per-test.
+    //
+    // Same remedy, same reasoning as `models/tests/wire_encode_space.rs` in
+    // f1r3node, where a global allocation counter was counting other test
+    // threads' allocations (it passed at `--test-threads=1` and failed in the
+    // full suite). `const`-initialised `Cell<usize>` has no destructor and so
+    // registers no TLS teardown hook.
+    thread_local! {
+        static REALIZE_LAZY_ACTION_CALLS: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+    }
+
+    /// Calls recorded ON THIS THREAD.
+    fn realize_lazy_action_calls() -> usize {
+        REALIZE_LAZY_ACTION_CALLS.with(std::cell::Cell::get)
+    }
+
+    /// Reset the count ON THIS THREAD.
+    fn reset_realize_lazy_action_calls() {
+        REALIZE_LAZY_ACTION_CALLS.with(|c| c.set(0));
+    }
 
     fn counting_realize_action(b: &mut SemanticBuilder, _args: Vec<ActionArg>) {
-        let next = REALIZE_LAZY_ACTION_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let next = REALIZE_LAZY_ACTION_CALLS.with(|c| {
+            let next = c.get() + 1;
+            c.set(next);
+            next
+        });
         b.push_term::<i64>(next as i64);
     }
 
@@ -22214,7 +22271,7 @@ mod tests {
 
     #[test]
     fn capped_realization_forces_only_demanded_root_packings() {
-        REALIZE_LAZY_ACTION_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        reset_realize_lazy_action_calls();
         let mut walker: WpdaWalker<LexicographicWeight, _> =
             WpdaWalker::new(CountingRealizeEngine, 0);
         let root = install_counting_realize_ambiguous_root(&mut walker);
@@ -22228,7 +22285,7 @@ mod tests {
         );
         assert_eq!(first.len(), 1);
         assert_eq!(
-            REALIZE_LAZY_ACTION_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            realize_lazy_action_calls(),
             1,
             "cap=1 must not realize the second root packing"
         );
@@ -22238,7 +22295,7 @@ mod tests {
         assert_eq!(*first_value, 1);
         assert_eq!(first[0].1, lex(1.0, 0, 0));
 
-        REALIZE_LAZY_ACTION_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
+        reset_realize_lazy_action_calls();
         let all = walker.realize_root_to_terms_with_weights(
             root,
             Some(2),
@@ -22246,7 +22303,7 @@ mod tests {
         );
         assert_eq!(all.len(), 2);
         assert_eq!(
-            REALIZE_LAZY_ACTION_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            realize_lazy_action_calls(),
             2,
             "larger demand should still realize later alternatives"
         );
