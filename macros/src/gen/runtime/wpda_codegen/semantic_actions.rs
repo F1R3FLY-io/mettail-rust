@@ -1318,6 +1318,20 @@ fn emit_infix_action_entry(
             // ANY_CAT (u16::MAX) — mirroring the binder/collection drain args.
             if part.repetition.is_some() {
                 v.push(u16::MAX);
+            } else if mettail_ast::grammar::NonTerminalKind::classify(&part.operand_category)
+                == mettail_ast::grammar::NonTerminalKind::Ident
+            {
+                // ★ An `Ident` operand's arg is identifier TEXT, not a Term, so — exactly
+                // like the `*sep` repetition arg above — its expected category is ANY_CAT.
+                //
+                // ⚠ WITHOUT THIS THE RULE CANNOT PARSE AT ALL, and the reason is a silent
+                // default: `lookup_cat_idx` ends in `.unwrap_or(0)`, and `Ident` is not in
+                // `categories`, so it resolved to index 0 — the FIRST declared category.
+                // The action entry then advertised "slot 1 expects a `Num` term" while the
+                // extractor at that slot read `as_ident()`. The arg-shape gate rejected
+                // every reading, surfacing as "no accepting branch reached end of input"
+                // with nothing naming `Ident` anywhere in the diagnostic.
+                v.push(u16::MAX);
             } else {
                 v.push(lookup_cat_idx(&part.operand_category));
             }

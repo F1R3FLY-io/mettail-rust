@@ -3192,7 +3192,29 @@ pub(crate) fn emit_binder_action_entry(
                 // arrive in different `ActionArg` variants.
                 extracts.push(quote! {
                     let #var: String = match iter.next() {
-                        Some(a) => a.as_ident().map(|s| s.to_string()).unwrap_or_default(),
+                        Some(a) => match a.as_ident() {
+                            Some(s) => s.to_string(),
+                            // ⚠ A consumed `Token::Ident` reaches the args stack as
+                            // `ActionArg::Ident` ONLY when the SPPF terminal was interned
+                            // with `pushed_via_push_ident = true`
+                            // (`wpda_walker.rs:8305-8318` branches on that discriminator,
+                            // NOT on `TokenKind::Ident`). Any other origin delivers
+                            // `ActionArg::Token { kind: Ident, .. }` carrying the same
+                            // text, so accept it rather than losing the name.
+                            None => match a.as_token_text() {
+                                Some(s) => s.to_string(),
+                                // NEVER `unwrap_or_default()`. That silently yielded an
+                                // EMPTY name and built a well-formed term with a blank
+                                // field — it survived a full build, a green type-check and
+                                // eight walkers before a fixture caught it. Worse, the
+                                // blank was never the ident at all: the slot held a
+                                // `Term { type_name: "RealizedTerm" }`, so the default was
+                                // masking a WRONG READING, not a missing string. Failing
+                                // the action makes the wrong reading unrealizable, which
+                                // is what lets the correct one win.
+                                None => return,
+                            },
+                        },
                         None => return,
                     };
                 });
