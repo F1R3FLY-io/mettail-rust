@@ -125,7 +125,16 @@ fn collection_all_ground(name: TokenStream, coll_type: &CollectionType) -> Token
 
 /// Generate the `is_ground` check for a single field, dispatching to
 /// `collection_all_ground` for collection fields.
-fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
+///
+/// `None` means the field is ground UNCONDITIONALLY — there is no runtime question to
+/// ask about it. Returning `Some(quote! { true })` instead would be the same value but
+/// not the same emission: the callers join these with `&&`, so a variant whose fields
+/// are all unconditional produced the literal tautology `true && true` in the generated
+/// source, which is `clippy::eq_op` — a DENY-by-default lint. It fired for real, at
+/// `target/generated/l9modaltoy/is_ground.rs:25`. Absent conjuncts drop out of the join
+/// instead, and the callers' existing "no checks at all" branch already emits the single
+/// `true` that case wants.
+fn field_ground_check(field: &FieldInfo, name: &Ident) -> Option<TokenStream> {
     // Phase 3A-C1 (predicated types): a `BehavioralPred` field is
     // always trivially "ground" from the host-category perspective.
     // Variables inside a predicate (e.g., `halts(y)` referencing a
@@ -135,26 +144,25 @@ fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
     // L9-3: a token-text capture (`String`) is a ground leaf — a token's text
     // contains no host-category free variables (mirrors the predicate leaf).
     if field.is_predicate || field.is_opaque_leaf() {
-        return quote! { true };
+        return None;
     }
-    let _ = name;
     if field.is_optional {
         // Phase 4 #3 (2026-05-12): Optional-Collection — None is
         // trivially ground; Some(c) is ground iff every element is.
         if field.is_collection {
             let coll_type = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
             let inner = collection_all_ground(quote! { __c }, coll_type);
-            return quote! { #name.as_ref().map(|__c| #inner).unwrap_or(true) };
+            return Some(quote! { #name.as_ref().map(|__c| #inner).unwrap_or(true) });
         }
         // Opt-Group: None is trivially ground (no variables); Some(b)
         // is ground iff inner is ground.
-        return quote! { #name.as_ref().map(|__b| __b.is_ground()).unwrap_or(true) };
+        return Some(quote! { #name.as_ref().map(|__b| __b.is_ground()).unwrap_or(true) });
     }
     if field.is_collection {
         let coll_type = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
-        collection_all_ground(quote! { #name }, coll_type)
+        Some(collection_all_ground(quote! { #name }, coll_type))
     } else {
-        quote! { #name.is_ground() }
+        Some(quote! { #name.is_ground() })
     }
 }
 
@@ -169,10 +177,11 @@ fn generate_regular_arm(category: &Ident, label: &Ident, fields: &[FieldInfo]) -
     let checks: Vec<TokenStream> = fields
         .iter()
         .zip(field_names.iter())
-        .map(|(field, name)| field_ground_check(field, name))
+        .filter_map(|(field, name)| field_ground_check(field, name))
         .collect();
 
-    // If there are no checks (shouldn't happen for Regular, but be safe), return true
+    // Every field unconditionally ground (all predicate / opaque-leaf fields), so there
+    // is nothing to conjoin — the arm is the single literal, never `true && true`.
     let body = if checks.is_empty() {
         quote! { true }
     } else {
@@ -204,7 +213,7 @@ fn generate_binder_arm(
     let field_checks: Vec<TokenStream> = pre_scope_fields
         .iter()
         .zip(field_names.iter())
-        .map(|(field, name)| field_ground_check(field, name))
+        .filter_map(|(field, name)| field_ground_check(field, name))
         .collect();
 
     let pattern = if field_names.is_empty() {
@@ -240,6 +249,44 @@ mod tests {
             generated.contains("k . is_ground") && generated.contains("v . is_ground"),
             "HashMap groundness must inspect both keys and values: {}",
             generated,
+        );
+    }
+
+    /// A field that is ground UNCONDITIONALLY must contribute NO conjunct.
+    ///
+    /// Regression for the deny-by-default `clippy::eq_op` that reached
+    /// `target/generated/l9modaltoy/is_ground.rs:25` as the literal `true && true`: a
+    /// two-field variant whose fields are both opaque-capture leaves. If
+    /// `field_ground_check` ever answers `Some(true)` again, the `&&`-join reintroduces
+    /// the tautology, and a lint gate over the generated tree would then be a hard
+    /// failure rather than a warning.
+    #[test]
+    fn unconditionally_ground_fields_contribute_no_conjunct() {
+        let leaf = FieldInfo {
+            category: format_ident!("String"),
+            is_collection: false,
+            coll_type: None,
+            is_predicate: false,
+            is_optional: false,
+            opaque_leaf: Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText),
+        };
+        let name = format_ident!("f0");
+        assert!(
+            field_ground_check(&leaf, &name).is_none(),
+            "an opaque-capture leaf is ground with no runtime question to ask, so it must \
+             drop out of the `&&` join rather than emit a literal `true`",
+        );
+
+        let arm = generate_regular_arm(
+            &format_ident!("Num"),
+            &format_ident!("Two"),
+            &[leaf.clone(), leaf],
+        )
+        .to_string();
+        assert!(
+            !arm.contains("true && true"),
+            "an all-unconditional variant must emit ONE `true`, not a `true && true` \
+             tautology (clippy::eq_op is deny-by-default): {arm}",
         );
     }
 
