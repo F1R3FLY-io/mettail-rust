@@ -1,5 +1,5 @@
 @startuml
-title One token stream, two candidate readings of `6 * 3 / 2` — declaration order decides
+title One token stream, two candidate readings of `6 * 3 / 2` — a SHARED level decides
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -16,64 +16,74 @@ skinparam note {
 
 rectangle "**TOKEN STREAM** (identical for both readings)\n`6`   `*`   `3`   `/`   `2`" as TOK #F3F4F6
 
-rectangle "READING A — **ELECTED**" as A #DCFCE7 {
-  rectangle "**MulInt** · `*` · <latex>(\ell,r) = (20,21)</latex>" as A_MUL #DBEAFE
+rectangle "READING A — **ELECTED** (left-to-right)" as A #DCFCE7 {
+  rectangle "**DivInt** · `/` · <latex>(\ell,r) = (8,9)</latex>" as A_DIV #DBEAFE
+  rectangle "**MulInt** · `*` · <latex>(\ell,r) = (8,9)</latex>" as A_MUL #DBEAFE
   rectangle "**NumLit 6**" as A_6 #E0E7FF
-  rectangle "**DivInt** · `/` · <latex>(\ell,r) = (22,23)</latex>" as A_DIV #DBEAFE
   rectangle "**NumLit 3**" as A_3 #E0E7FF
   rectangle "**NumLit 2**" as A_2 #E0E7FF
-  rectangle "value <latex>= 6 \times \lfloor 3/2 \rfloor = 6 \times 1 = 6</latex>\nre-printed surface: `6 * 3 / 2` (**unchanged**)" as A_VAL #FEF3C7
+  rectangle "value <latex>= \lfloor (6 \times 3)/2 \rfloor = \lfloor 18/2 \rfloor = 9</latex>\nre-printed surface: `6 * 3 / 2` (**unchanged**)" as A_VAL #FEF3C7
 }
 
 rectangle "READING B — **NEVER BUILT**" as B #FEE2E2 {
-  rectangle "--**DivInt** `/` outermost--" as B_DIV #FCA5A5
-  rectangle "--**MulInt** `*` inner--" as B_MUL #FCA5A5
+  rectangle "--**MulInt** `*` outermost--" as B_MUL #FCA5A5
+  rectangle "--**DivInt** `/` inner--" as B_DIV #FCA5A5
   rectangle "--**NumLit 6**--" as B_6 #FECACA
   rectangle "--**NumLit 3**--" as B_3 #FECACA
   rectangle "--**NumLit 2**--" as B_2 #FECACA
-  rectangle "would be <latex>\lfloor (6 \times 3)/2 \rfloor = 9</latex>\nre-printed surface: `(6 * 3) / 2` (**bracketed**)" as B_VAL #FEF3C7
+  rectangle "would be <latex>6 \times \lfloor 3/2 \rfloor = 6 \times 1 = 6</latex>\nre-printed surface: `6 * (3 / 2)` (**bracketed**)" as B_VAL #FEF3C7
 }
 
 TOK -down-> A_MUL : precedence climbing\nabsorbs `*` at floor 0
-TOK -down-> B_DIV : the conventional\nleft-to-right reading
+TOK -down-> B_MUL : the right-nested reading
 
 A_MUL -down-> A_6 : child 0
-A_MUL -down-> A_DIV : child 1, parsed at floor <latex>r = 21</latex>;\n`/` has <latex>\ell = 22 \ge 21</latex>, so it IS absorbed here
-A_DIV -down-> A_3
+A_MUL -down-> A_3 : child 1, parsed at floor <latex>r = 9</latex>;\n`/` has <latex>\ell = 8 < 9</latex>, so it is NOT absorbed here
+A_DIV -down-> A_MUL : `/` re-enters the OUTER loop and takes\nthe completed `6 * 3` as its left operand
 A_DIV -down-> A_2
 A_DIV -down-> A_VAL
 
-B_DIV -down-> B_MUL
 B_MUL -down-> B_6
-B_MUL -down-> B_3
+B_MUL -down-> B_DIV
+B_DIV -down-> B_3
 B_DIV -down-> B_2
-B_DIV -down-> B_VAL
+B_MUL -down-> B_VAL
 
-note right of B_DIV
-  To build this, the `*` sub-parse would have
-  to STOP before `/`. It cannot: the gate is
-  <latex>\ell(\mathtt{/}) \ge \mathrm{floor}</latex>, i.e. <latex>22 \ge 21</latex>, which holds.
+note right of B_MUL
+  To build this, `/` would have to be absorbed
+  into the RIGHT OPERAND of `*`. It cannot: the
+  gate is <latex>\ell(\mathtt{/}) \ge \mathrm{floor}</latex>, i.e. <latex>8 \ge 9</latex>, which
+  is FALSE.
 
-  The reading is therefore not merely
-  out-ranked in the weight ordering — it never
-  enters the shared packed parse forest at all.
+  This is the general mechanism of LEFT
+  associativity. Every member of a level offers
+  <latex>\ell = p</latex> and demands <latex>r = p+1</latex> of its right
+  operand, and <latex>p < p+1</latex>, so no member can ever
+  nest inside another member's right operand.
 end note
 
 note right of A_VAL
   The printer agrees, and that agreement is
   the check. `display.rs` writes reading A as
-  `6 * 3 / 2` (no bracket: <latex>\ell(\mathtt{/}) = 22 \ge 21</latex>)
-  and reading B as `(6 * 3) / 2`
-  (bracket forced: <latex>\ell(*) = 20 < 22</latex>).
+  `6 * 3 / 2` (no bracket: the LEFT child's
+  <latex>\ell = 8</latex> meets its inherited floor of 8)
+  and reading B as `6 * (3 / 2)`
+  (bracket forced: the RIGHT child's <latex>\ell = 8</latex>
+  fails its inherited floor of 9).
   Parser and printer partition the two
   readings by the SAME numbers.
 end note
 
 legend bottom
-  `*` is declared at `languages/src/calculator.rs:329`, `/` at `:330`.
-  `analyze_binding_powers` walks the declaration order and hands out
-  <latex>2, 4, 6, \ldots</latex> — so the LATER-declared operator binds TIGHTER.
-  Swapping the two source lines swaps the elected reading.
+  `*` opens the multiplicative level; `/` and `%` carry the `same` annotation,
+  so all three share it. `analyze_binding_powers` advances its counter once per
+  LEVEL, handing out <latex>2, 4, 6, \ldots</latex> — an UNANNOTATED rule binds tighter than
+  the one before it, and a `same`-annotated rule ties with it.
+
+  HISTORICAL: until 2026-07-28 the counter advanced once per RULE in BOTH
+  associativity arms, so equal precedence was unrepresentable — rules
+  <latex>i < j</latex> could share an <latex>\ell</latex> only if <latex>2(j-i) = 1</latex>. `*` was <latex>(20,21)</latex> and `/`
+  was <latex>(22,23)</latex>, reading B was the ELECTED one, and `6 * 3 / 2` evaluated to 6.
 endlegend
 
 @enduml

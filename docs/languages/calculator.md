@@ -654,16 +654,20 @@ procedure ASSIGN-BINDING-POWERS(rules):
 
 ⟨2. First pass: non-postfix operators, in declaration order⟩ =
     p := 2                                         # 0 and 1 are reserved for category entry
+    level_is_open := false
     for each rule in bucket where not rule.is_postfix, in DECLARATION ORDER:
+        if level_is_open and not rule.shares_level_with_previous:
+            p := p + 2                             # open the NEXT, tighter level
+        level_is_open := true
         if rule.associativity = LEFT:              # the default
             (left_bp, right_bp) := (p, p + 1)
         else:                                      # the rule carried `right`
             (left_bp, right_bp) := (p + 1, p)
         emit (rule.terminal, left_bp, right_bp)
-        p := p + 2
 
 ⟨3. Second pass: postfix operators, above them all⟩ =
-    q := p + 2                                     # p is max_infix_bp + 1; leave a 2-slot gap
+    first_free := if level_is_open then p + 2 else p    # = max_infix_bp + 1
+    q := first_free + 2                            # leave a 2-slot gap for prefix
     for each rule in bucket where rule.is_postfix, in DECLARATION ORDER:
         emit (rule.terminal, left_bp := q + 1)     # postfix consumes no right operand
         q := q + 2
@@ -675,9 +679,40 @@ is bucketed under `Int`, not `Bool`, because the binding power is consumed by th
 result category turns out to be is a later question. The consequence is the one the ladder below
 makes visible — **declaring a comparison shifts every arithmetic operator declared after it**.
 
-**Chunk 2 — the two facts that fall straight out.** *Earlier-declared binds looser*, because `p` only
-increases. And *associativity is one swap*: a left-associative operator gets $`\ell < r`$, a
-right-associative one gets $`\ell > r`$, and nothing else in the machine distinguishes them.
+**Chunk 2 — the three facts that fall straight out.** *Earlier-declared binds no tighter*, because
+`p` only increases. *Associativity is one swap*: a left-associative operator gets $`\ell < r`$, a
+right-associative one gets $`\ell > r`$, and nothing else in the machine distinguishes them. And
+*the counter advances once per LEVEL, not once per rule* — a rule annotated `same` reuses the `p`
+its predecessor opened.
+
+**Chunk 2a — why `same` had to exist.** Until 2026-07-28 both associativity arms ended in
+`p := p + 2`, so no branch left `p` unchanged. Rule $`i`$ of a category then received
+$`\ell \in \{2 + 2i,\; 3 + 2i\}`$, and two rules $`i < j`$ could share an $`\ell`$ only if
+$`3 + 2i = 2 + 2j`$, i.e.
+
+```math
+2(j - i) = 1,
+```
+
+which no integers satisfy. Every operator in a category was therefore **provably distinct** in
+precedence, and declaration order was a strict *total* order by construction. The grammar had no way
+to say that `*` and `/` bind equally tightly, so `6 * 3 / 2` could only parse as `6 * (3 / 2)`. The
+`same` annotation supplies the missing relation — *no tighter than the previous rule* — while
+leaving declaration order as the single source of truth for the ordering itself.
+
+**Chunk 2b — precedence and associativity are independent.** A level is a *set* of operators, and
+each member keeps its own associativity. The encoding makes this exact: at level $`p`$ a
+left-associative operator is $`(p,\, p+1)`$ and a right-associative one is $`(p+1,\, p)`$, so both
+satisfy
+
+```math
+\min(\ell,\, r) = p,
+```
+
+which is how every downstream consumer recovers the level, while the *order* of the pair carries the
+associativity. Mixed associativity within one level is therefore expressible — and it must be:
+Rholang's normative grammar declares `matches` as `prec.right(6, …)` beside `==` and `!=` as
+`prec.left(6, …)`. A design that attached one associativity per level could not model Rholang.
 
 **Chunk 3 — the gap is deliberate.** Postfix starts two slots above the last infix rather than one,
 and the slot that is skipped is where the **prefix** binding power lives. Prefix rules never appear
@@ -723,24 +758,44 @@ $`(\ell,\, r,\, \texttt{result\_src\_idx},\, \texttt{rule\_idx})`$:
 ```rust
 fn infix_bp_int(terminal: &str) -> &'static [(u8, u8, u16, u16)] {
     match terminal {
-        "==" => &[( 4,  5, 7, 0)],   ">" => &[( 6,  7, 7,  4)],
-        "<"  => &[( 8,  9, 7, 8)],   "<=" => &[(10, 11, 7, 12)],
-        ">=" => &[(12, 13, 7, 16)],  "!=" => &[(14, 15, 7, 20)],
-        "+"  => &[(16, 17, 2, 4)],   "-"  => &[(18, 19, 2,  5)],
-        "*"  => &[(20, 21, 2, 6)],   "/"  => &[(22, 23, 2,  7)],
-        "%"  => &[(24, 25, 2, 8)],   "^"  => &[(27, 26, 2,  9)],
-        "bitand" => &[(28, 29, 2, 10)], "bitor" => &[(30, 31, 2, 11)],
-        "~"  => &[(32, 33, 2, 19)],
+        "==" => &[( 4,  5, 7,  0)],  ">"  => &[( 4,  5, 7,  4)],
+        "<"  => &[( 4,  5, 7,  8)],  "<=" => &[( 4,  5, 7, 12)],
+        ">=" => &[( 4,  5, 7, 16)],  "!=" => &[( 4,  5, 7, 20)],
+        "+"  => &[( 6,  7, 2,  4)],  "-"  => &[( 6,  7, 2,  5)],
+        "*"  => &[( 8,  9, 2,  6)],  "/"  => &[( 8,  9, 2,  7)],
+        "%"  => &[( 8,  9, 2,  8)],  "^"  => &[(11, 10, 2,  9)],
+        "bitor" => &[(12, 13, 2, 10)], "bitand" => &[(14, 15, 2, 11)],
+        "~"  => &[(16, 17, 2, 19)],
         _ => &[],
     }
 }
 fn postfix_bp_int(terminal: &str) -> &'static [(u8, u16, u16)] {
-    match terminal { "!" => &[(37, 2, 14)], _ => &[] }
+    match terminal { "!" => &[(21, 2, 14)], _ => &[] }
 }
 fn mixfix_bp_int(terminal: &str) -> &'static [(u8, u16, u16)] {
-    match terminal { "?" => &[(2, 2, 2)], _ => &[] }
+    match terminal { "?" => &[(3, 2, 2)], _ => &[] }
 }
 ```
+
+Nine levels, not fifteen. Reading $`\min(\ell, r)`$ down the table gives the ladder
+
+| level | operators | associativity | why they are together |
+|---|---|---|---|
+| 2 | `?` `:` | **right** (declared) | the ternary; `1 ? 2 : 0 ? 3 : 4` = `1 ? 2 : (0 ? 3 : 4)` |
+| 4 | `==` `!=` `<` `<=` `>` `>=` | left | comparisons are one relation family |
+| 6 | `+` `-` | left | additive |
+| 8 | `*` `/` `%` | left | multiplicative |
+| 10 | `^` | **right** (declared) | exponentiation, tighter than `*` and `/` |
+| 12 | `bitor` | left | mirrors `or` |
+| 14 | `bitand` | left | mirrors `and`, tighter than `bitor` |
+| 16 | `~` | left | a bespoke test operator with no conventional peer |
+| 21 | `!` | — | postfix, above the whole infix range (Algorithm 1, chunk 3) |
+
+The ternary's $`(\ell, r) = (3, 2)`$ is the right-associative encoding at level 2: $`\ell > r`$, and
+$`\min(3,2) = 2`$ is still the level. Before 2026-07-28 it read $`(2, \ldots)`$ — left — because the
+mixfix classifier hard-coded `Associativity::Left` and silently discarded the rule's declared
+`right`, while `Display` honoured it. Parser and printer disagreed about what the same grammar
+meant; they no longer do.
 
 `result_src_idx` indexes `WPDA_CATEGORIES`, whose first eight entries are `Proc`, `BigRat`, `Int`,
 `UInt32`, `Fixed`, `Float`, `BigInt`, `Bool` — so `2` is `Int` and `7` is `Bool`, confirming that the
@@ -828,42 +883,66 @@ from the table above is given in full.
 
 | Declaration | Term | Reading it forces | Value |
 |---|---|---|---|
-| `Fact` is **postfix** (bp 37) | `3 + 5!` | `AddInt(3, Fact(5))` | 123 |
-| … and postfix sits above `^` (27) | `3! ^ 2` | `PowInt(Fact(3), 2)` | 36 |
-| `Neg` is **prefix** (bp 35) | `-3 + 5` | `AddInt(Neg 3, 5)`, not `Neg(AddInt(3,5))` | 2 |
+| `Fact` is **postfix** (bp 21) | `3 + 5!` | `AddInt(3, Fact(5))` | 123 |
+| … and postfix sits above `^` (11) | `3! ^ 2` | `PowInt(Fact(3), 2)` | 36 |
+| `Neg` is **prefix** (bp 19) | `-3 + 5` | `AddInt(Neg 3, 5)`, not `Neg(AddInt(3,5))` | 2 |
 | … and prefix sits above `^` | `-3 ^ 2` | `PowInt(-3, 2)`, not `Neg(PowInt(3,2))` | 9 |
 | `PowInt` carries `right` | `2 ^ 3 ^ 2` | `PowInt(2, PowInt(3,2))` | 512 |
 | `Tern` is declared **first** in `Int` | `1 + 0 ? 3 + 4 : 5` | `Tern(AddInt(1,0), AddInt(3,4), 5)` | 7 |
 | `Tern` carries `right` | `0 ? 2 : 1 ? 3 : 4` | `Tern(0, 2, Tern(1,3,4))` | 3 |
 | `Not` is **prefix** in `Bool` | `not true and false` | `And(Not true, false)` | `false` |
 | `(` `)` is **inert** | `(3 + 2)!` | `Fact(AddInt(3,2))` | 120 |
-| `/` is declared **after** `*` | `6 * 3 / 2` | `MulInt(6, DivInt(3,2))` — **derived** | 6, not 9 |
+| `/` carries `same`, so it shares `*`'s level | `6 * 3 / 2` | `DivInt(MulInt(6,3), 2)` | 9 |
+| `-` carries `same`, so it shares `+`'s level | `10 - 4 + 3` | `AddInt(SubInt(10,4), 3)` | 9 |
+| `and` is declared **after** `or` | `false and false or true` | `Or(And(false,false), true)` | `true` |
+| `bitand` is declared **after** `bitor` | `1 bitand 2 bitor 4` | `BitOrInt(BitAndInt(1,2), 4)` | 4 |
 
-The last row is the one to be careful about, and it deserves its own figure.
+The equal-precedence rows deserve their own figure, because the reading they produce is the one a
+reader has to *derive* rather than read off a total order.
 
-![Figure 6 — one token stream, two readings, one struck out](figures/calculator-two-readings.svg)
+![Figure 6 — one level, two operators, left-to-right](figures/calculator-two-readings.svg)
 
-*Figure 6. `6 * 3 / 2`. Source:
+*Figure 6. `6 * 3 / 2` under a shared level. Source:
 [figures/calculator-two-readings.puml](figures/calculator-two-readings.puml).*
 
-**The derivation.** `*` has $`(\ell, r) = (20, 21)`$ and `/` has $`(22, 23)`$. Parsing `6 * 3 / 2` at
-floor 0: the loop absorbs `*` (since $`20 \ge 0`$) and parses the right operand at floor 21. There it
-reads `3`, then meets `/` with $`\ell = 22`$, and $`22 \ge 21`$ holds — so `/` is absorbed **into the
-right operand of `*`**. The result is `MulInt(6, DivInt(3, 2))`. The conventional
-$`(6 \times 3)/2 = 9`$ reading would require the `*` sub-parse to stop before `/`, which the gate
-does not permit; it is not merely out-ranked, it is never built. Integer division truncates, so
-$`6 \times \lfloor 3/2 \rfloor = 6`$ while $`\lfloor (6 \times 3)/2 \rfloor = 9`$: the two readings
-disagree, and the elected one is the first.
+**The derivation.** `*` and `/` both have $`(\ell, r) = (8, 9)`$. Parsing `6 * 3 / 2` at floor 0: the
+loop absorbs `*` (since $`8 \ge 0`$) and parses the right operand at floor $`r = 9`$. There it reads
+`3`, then meets `/` with $`\ell = 8`$, and $`8 \ge 9`$ is **false** — so `/` is *not* absorbed into
+the right operand. The sub-parse returns `3`, the loop folds `MulInt(6, 3)`, and the outer iteration
+then absorbs `/` with the fold as its left operand. The result is `DivInt(MulInt(6, 3), 2)`.
+
+This is the general mechanism for left-associativity, and it is worth stating once: at a shared level
+$`p`$, every member offers $`\ell = p`$ and demands $`r = p + 1`$ of its right operand. Since
+$`p < p + 1`$, no member of the level can ever be absorbed into another member's right operand, so
+each one closes the fold to its left and the chain nests leftward. A right-associative member of the
+same level offers $`\ell = p + 1`$ instead, which *does* clear the floor — which is exactly why
+mixed-associativity levels nest rightward in both directions, and why Rholang's level 6 is worth a
+diagnostic note (`G10`) even though it is unambiguous.
+
+Integer division truncates, so the two readings disagree numerically:
+$`\lfloor (6 \times 3)/2 \rfloor = 9`$ while $`6 \times \lfloor 3/2 \rfloor = 6`$. That disagreement
+is what makes `6 * 3 / 2` a usable test fixture, and it is pinned in
+`languages/tests/operator_precedence_conformance.rs`.
+
+> **Historical note.** Until 2026-07-28 this section documented the *opposite* reading, and Figure 6
+> existed to depict it: `*` was $`(20,21)`$ and `/` was $`(22,23)`$, so `/` bound tighter and
+> `6 * 3 / 2` evaluated to **6**. That was not a decision but an artefact — `analyze_binding_powers`
+> advanced its counter once per rule in both associativity arms, so equal precedence was
+> unrepresentable (see §8.1, chunk 2a, for the parity argument). The figure has been redrawn to show
+> the level-sharing reading; the defect it used to illustrate is preserved in this note rather than
+> in a diagram, because a figure whose only purpose is to depict a fixed bug invites being read as
+> current behaviour.
 
 The printer corroborates independently, which is the check that this is a property of the language
-and not of one path: `display.rs` renders `MulInt(6, DivInt(3,2))` as `6 * 3 / 2` (the child clears
-its inherited floor of 21, so no bracket) and `DivInt(MulInt(6,3), 2)` as `(6 * 3) / 2` (the child's
-$`\ell = 20`$ fails the inherited floor of 22, so a bracket is forced). Parser and printer partition
-the two readings by the same numbers.
+and not of one path: `display.rs` renders `DivInt(MulInt(6,3), 2)` as `6 * 3 / 2` (the left child's
+$`\ell = 8`$ meets its inherited floor of 8, so no bracket) and `MulInt(6, DivInt(3,2))` as
+`6 * (3 / 2)` (the right child's $`\ell = 8`$ fails the inherited floor of 9, so a bracket is
+forced). Parser and printer partition the two readings by the same numbers.
 
-The same reasoning applies to `-` versus `+` and `%` versus `/`, though there the two readings agree
-numerically: `1 + 2 - 3` reads `AddInt(1, SubInt(2,3))`, which is $`0`$ either way. The disagreement
-is visible only in the printed form — `SubInt(AddInt(1,2), 3)` prints `(1 + 2) - 3`.
+The same reasoning applies to `+` and `-`, though there a chain of the form `1 + 2 - 3` evaluates to
+$`0`$ under both readings — which is why the test for it asserts the **tree** and not the value.
+`1 + 2 - 3` now parses as `SubInt(AddInt(1,2), 3)`, structurally equal to the explicitly grouped
+`(1 + 2) - 3`.
 
 ### 8.5 Why declaration order, and not a `precedence { }` block
 
@@ -873,15 +952,45 @@ in the repository as a rejected extension point.
 - **One source of truth.** The `terms` block already fixes the signature and the surface. Adding a
   second, independent ordering would let the two disagree, and a grammar whose printer and parser
   disagree about precedence is a grammar whose round-trip is unanalysable.
-- **Total by construction.** Declaration order is a total order on a finite list, so every pair of
-  operators in a category is comparable and no ambiguity can arise from an *unspecified* relative
+- **Total by construction.** Declaration order is a total *pre*order on a finite list: every pair of
+  operators in a category is comparable, and no ambiguity can arise from an *unspecified* relative
   precedence. A `precedence { level … }` block would admit partial specifications.
 - **Deterministic and diffable.** The binding-power table is a pure function of the source text, so
   the generated tables are byte-reproducible and a precedence change shows up as a source diff.
-- **The cost is real and is paid knowingly.** The reader must know that `+ - * / %` are five distinct
-  levels here, not two. An explicit `@prec(n)` annotation is designed but unimplemented; the `right`
-  and `prefix(N)` suffixes are the escape hatches that exist today, and `prefix(N)` is what Rholang
-  uses to cap a quotation's operand.
+
+**The one relation declaration order cannot express, and how `same` supplies it.** A total order
+says which of two operators binds tighter; it cannot say that *neither* does. That is a real gap and
+not a stylistic one — `*` and `/` must bind equally tightly or `6 * 3 / 2` reads wrongly (§8.4) —
+and it went unnoticed for as long as it did precisely because the assigner made the gap invisible:
+it could only ever *produce* a strict total order, so no table ever exhibited the missing relation.
+
+The `same` annotation adds exactly that one relation and nothing else:
+
+```text
+MulInt . a:Int, b:Int |- a "*" b : Int ![a * b] fold;
+DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold same;   // no tighter than `*`
+ModInt . a:Int, b:Int |- a "%" b : Int ![a % b] fold same;   // no tighter than `/`
+```
+
+Declaration order still supplies the ordering; `same` supplies only the ties. The result is a total
+*preorder* — a sequence of levels, each an unordered set of operators — which is precisely the
+structure Pratt binding powers encode, and precisely the structure a precedence table in a language
+reference has always been.
+
+An absolute `@prec(n)` was reconsidered at this point and rejected again, for reasons the relative
+marker avoids by construction: it admits partial specifications, forces renumbering churn when a
+level is inserted, and lets two rules disagree about which level a number denotes. `same` cannot
+express any of those states — it has no operand to get wrong.
+
+- **It composes with `right`, per rule.** `same` sets the level; `right` sets the associativity; they
+  never interact. This is not an elegance argument but a requirement: Rholang's normative grammar
+  declares `matches` as `prec.right(6, …)` alongside `==` and `!=` as `prec.left(6, …)`, so a design
+  that attached one associativity to each level could not model the language MeTTaIL exists to
+  implement.
+- **The remaining cost is paid knowingly.** The reader must still know that declaration order is
+  what orders the levels, and that a rule with no annotation opens a new, tighter one. The `right`,
+  `prefix(N)`, `canonical` and `same` suffixes are the whole annotation vocabulary; `prefix(N)` is
+  what Rholang uses to cap a quotation's operand.
 
 ---
 
@@ -899,7 +1008,7 @@ forest holds **exactly two** `Int`-category readings:
 | Reading | Why it exists | Value |
 |---|---|---|
 | `Fact(NumLit(-3))` | the sign is inside the numeral token | $`(-3)! `$ |
-| `Neg(Fact(NumLit(3)))` | postfix `!` (37) binds tighter than prefix `-` (35) | $`-(3!)`$ |
+| `Neg(Fact(NumLit(3)))` | postfix `!` (21) binds tighter than prefix `-` (19) | $`-(3!)`$ |
 
 At the *language* level a third reading appears, `Fact(Neg(NumLit(3)))`, reachable through a
 cross-category wrapper. All three denote the same number.
@@ -1486,11 +1595,13 @@ Subject: `3 + 5!`.
 
 ## 16. Gotchas
 
-1. **Precedence is declaration order, and `+ - * / %` are five distinct levels.** `-` binds tighter
-   than `+`; `/` and `%` bind tighter than `*`. For `+`/`-` the two readings agree numerically; for
-   `*`/`/` on integers they do not. Bracket when in doubt.
+1. **Precedence is declaration order; `same` is what makes two operators tie.** An unannotated rule
+   opens a new, *tighter* level than the rule before it. `+ -` share one level and `* / %` share
+   another, because `-`, `/` and `%` carry `same`. Drop a `same` and you silently split a level:
+   before 2026-07-28 every one of these was its own level, and `6 * 3 / 2` evaluated to **6**.
 2. **`bitand` and `bitor` bind *tighter* than `+` and `*`,** the opposite of C. `1 + 2 bitand 3`
-   reads `1 + (2 bitand 3)`.
+   reads `1 + (2 bitand 3)`. Between themselves they nest like `and`/`or` — `bitand` is tighter —
+   so `1 bitand 2 bitor 4` reads `(1 bitand 2) bitor 4`.
 3. **A cross-category operator occupies its *operand* category's precedence slot.** `EqInt : Bool`
    sits in `Int`'s ladder. Declaring a comparison shifts every arithmetic operator declared after it.
 4. **A literal's domain is its `eval`, not its `pattern`.** The pattern decides what the lexer

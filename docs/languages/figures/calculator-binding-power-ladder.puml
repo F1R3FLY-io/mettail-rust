@@ -1,5 +1,5 @@
 @startuml
-title The `Int` binding-power ladder — derived entirely from DECLARATION ORDER
+title The `Int` binding-power ladder — LEVELS from declaration order, ties from `same`
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -16,63 +16,86 @@ skinparam note {
 
 rectangle "LOOSEST — binds least tightly" as TOP #FEE2E2
 
-rectangle "**mixfix** · `c ? t : e` · **Tern**\n<latex>(\ell,r) = (3,2)</latex> · RIGHT-associative\ndeclared FIRST among `Int` operators" as L_TERN #FEF3C7
+rectangle "**level 2** · mixfix · `c ? t : e` · **Tern**\n<latex>(\ell,r) = (3,2)</latex> · RIGHT-associative (declared `right`)\ndeclared FIRST among `Int` operators" as L_TERN #FEF3C7
 
-rectangle "**cross-category comparisons** · operand `Int`, result `Bool`\n`==` <latex>(4,5)</latex> · `>` <latex>(6,7)</latex> · `<` <latex>(8,9)</latex>\n`<=` <latex>(10,11)</latex> · `>=` <latex>(12,13)</latex> · `!=` <latex>(14,15)</latex>" as L_CMP #EDE9FE
+rectangle "**level 4** · cross-category comparisons · operand `Int`, result `Bool`\n`==` `>` `<` `<=` `>=` `!=` — ALL <latex>(4,5)</latex> · LEFT-associative\nfive of the six carry `same`" as L_CMP #EDE9FE
 
-rectangle "**arithmetic** · all LEFT-associative\n`+` <latex>(16,17)</latex> · `-` <latex>(18,19)</latex> · `*` <latex>(20,21)</latex>\n`/` <latex>(22,23)</latex> · `%` <latex>(24,25)</latex>" as L_ARITH #DBEAFE
+rectangle "**level 6** · additive · LEFT-associative\n`+` `-` — both <latex>(6,7)</latex>\n`-` carries `same`" as L_ADD #DBEAFE
 
-rectangle "**power** · `^` · **PowInt**\n<latex>(\ell,r) = (27,26)</latex> · RIGHT-associative\n<latex>\ell > r</latex> is exactly what makes it right-associative" as L_POW #DCFCE7
+rectangle "**level 8** · multiplicative · LEFT-associative\n`*` `/` `%` — all <latex>(8,9)</latex>\n`/` and `%` carry `same`" as L_MUL #DBEAFE
 
-rectangle "**bitwise + custom** · LEFT-associative\n`bitand` <latex>(28,29)</latex> · `bitor` <latex>(30,31)</latex> · `~` <latex>(32,33)</latex>" as L_BIT #DBEAFE
+rectangle "**level 10** · power · `^` · **PowInt**\n<latex>(\ell,r) = (11,10)</latex> · RIGHT-associative\n<latex>\ell > r</latex> is exactly what makes it right-associative" as L_POW #DCFCE7
 
-rectangle "**unary prefix** · `-` (**Neg**), `bitnot` (**BitNotInt**)\noperand floor <latex>= 35 = \max_{\mathrm{infix}} + 2</latex>" as L_PRE #DCFCE7
+rectangle "**levels 12, 14** · bitwise · LEFT-associative\n`bitor` <latex>(12,13)</latex> · `bitand` <latex>(14,15)</latex>\n`bitand` binds TIGHTER, mirroring `and`/`or`" as L_BIT #DBEAFE
 
-rectangle "**postfix** · `!` · **Fact**\n<latex>\ell = 37 = \max_{\mathrm{infix}} + 4</latex>" as L_POST #DCFCE7
+rectangle "**level 16** · custom · `~` · **CustomOp**\n<latex>(16,17)</latex> · sole member of its level" as L_CUSTOM #DBEAFE
 
-rectangle "**atom** · literal / variable / `( … )` group\n`atomic_child_bp(Int)` <latex>= 38 = \max_{\mathrm{bp}} + 1</latex>" as L_ATOM #E0E7FF
+rectangle "**unary prefix** · `-` (**Neg**), `bitnot` (**BitNotInt**)\noperand floor <latex>= 19 = \max_{\mathrm{infix}} + 2</latex>" as L_PRE #DCFCE7
+
+rectangle "**postfix** · `!` · **Fact**\n<latex>\ell = 21 = \max_{\mathrm{infix}} + 4</latex>" as L_POST #DCFCE7
+
+rectangle "**atom** · literal / variable / `( … )` group\n`atomic_child_bp(Int)` <latex>= \max_{\mathrm{bp}} + 1</latex>" as L_ATOM #E0E7FF
 
 rectangle "TIGHTEST — binds most tightly" as BOT #FEE2E2
 
 TOP -down-> L_TERN
-L_TERN -down-> L_CMP : next declared
-L_CMP -down-> L_ARITH : next declared
-L_ARITH -down-> L_POW : next declared
-L_POW -down-> L_BIT : next declared
-L_BIT -down-> L_PRE : the +2 gap
+L_TERN -down-> L_CMP : next LEVEL (<latex>p := p+2</latex>)
+L_CMP -down-> L_ADD : next LEVEL
+L_ADD -down-> L_MUL : next LEVEL
+L_MUL -down-> L_POW : next LEVEL
+L_POW -down-> L_BIT : next LEVEL
+L_BIT -down-> L_CUSTOM : next LEVEL
+L_CUSTOM -down-> L_PRE : the +2 gap
 L_PRE -down-> L_POST : the +4 gap
 L_POST -down-> L_ATOM
 L_ATOM -down-> BOT
 
-note right of L_ARITH
-  **THE TRAP.** `-` binds TIGHTER than `+`, and
-  `/` and `%` bind TIGHTER than `*`, because
-  `analyze_binding_powers` hands out
-  <latex>2, 4, 6, \ldots</latex> in DECLARATION ORDER — it does
-  not know that `+` and `-` are conventionally
-  one level. `a * b / c` therefore reads
-  `a * (b / c)`.
+note right of L_MUL
+  **EQUAL PRECEDENCE, LEFT-TO-RIGHT.**
+  All three offer <latex>\ell = 8</latex> and demand <latex>r = 9</latex>.
+  Since <latex>8 < 9</latex>, none can be absorbed into
+  another's right operand, so the chain nests
+  LEFTWARD: `6 * 3 / 2` reads `(6 * 3) / 2` = 9.
+
+  Before 2026-07-28 the counter advanced once
+  per RULE, so `*` was <latex>(20,21)</latex> and `/` was
+  <latex>(22,23)</latex> — `/` bound tighter and the same
+  input evaluated to 6.
 end note
 
 note right of L_CMP
   Grouped by the OPERAND category, not the
   result: `EqInt : Bool` still occupies an
   `Int` slot, so declaring a comparison
-  shifts every arithmetic operator declared
+  shifts every arithmetic LEVEL declared
   after it.
 end note
 
 note right of L_BIT
-  **ALSO A TRAP.** `bitand` / `bitor` bind
-  TIGHTER than `+` and `*` here — the
+  **A TRAP THAT REMAINS.** `bitand` / `bitor`
+  bind TIGHTER than `+` and `*` here — the
   opposite of C. `1 + 2 bitand 3` reads
-  `1 + (2 bitand 3)`.
+  `1 + (2 bitand 3)`. Their placement relative
+  to arithmetic is an OPEN QUESTION; only the
+  inversion between them was corrected.
+end note
+
+note right of L_POW
+  **RIGHT-ASSOCIATIVITY SURVIVES LEVELLING.**
+  Precedence selects the level; associativity
+  only decides which end of the level's two
+  slots faces left. <latex>\min(11,10) = 10</latex> is the
+  level, and <latex>\ell > r</latex> is the associativity.
+  The two are independent, which is what lets
+  Rholang's level 6 hold right-associative
+  `matches` beside left-associative `==`.
 end note
 
 legend bottom
 |= Component | = Meaning |
 |<#DBEAFE> <latex>\ell</latex> (`left_bp`) | the floor an operator must CLEAR to be absorbed by the loop |
 |<#DBEAFE> <latex>r</latex> (`right_bp`) | the floor the operator INSTALLS for its own right operand |
+|<#EDE9FE> <latex>\min(\ell, r)</latex> | the PRECEDENCE LEVEL — equal for both associativities |
 |<#DCFCE7> <latex>\ell < r</latex> | left-associative — the same operator cannot re-absorb |
 |<#FEF3C7> <latex>\ell > r</latex> | right-associative — the same operator CAN re-absorb |
 endlegend

@@ -76,17 +76,23 @@ FUNCTION analyze_binding_powers(rules: [InfixRuleInfo]) → BindingPowerTable:
     by_category ← group rules by category (preserving declaration order)
 
     FOR EACH category in by_category:
-        precedence ← 2                              ▷ Reserve 0 (entry), 1 (padding)
+        precedence    ← 2                           ▷ Reserve 0 (entry), 1 (padding)
+        level_is_open ← FALSE
 
         ▷ ─── Pass 1: Non-postfix operators ────────
         FOR EACH rule in category WHERE NOT rule.is_postfix:
+            ▷ Advance once per LEVEL, not once per rule. A rule marked `same`
+            ▷ joins the level its predecessor opened.
+            IF level_is_open AND NOT rule.shares_level_with_previous:
+                precedence ← precedence + 2
+            level_is_open ← TRUE
+
             IF rule.associativity = Left:
                 left_bp  ← precedence
                 right_bp ← precedence + 1
             ELSE:  ▷ Right-associative
                 left_bp  ← precedence + 1
                 right_bp ← precedence
-            precedence ← precedence + 2
 
             table.add(InfixOperator {
                 terminal:  rule.terminal,
@@ -99,7 +105,10 @@ FUNCTION analyze_binding_powers(rules: [InfixRuleInfo]) → BindingPowerTable:
             })
 
         ▷ ─── Pass 2: Postfix operators ────────────
-        postfix_prec ← precedence + 2               ▷ Gap for prefix BP
+        ▷ Pass 1 advances lazily, so `precedence` ends ON the last level rather
+        ▷ than one past it. Reconstruct the first free slot before adding the gap.
+        first_free   ← IF level_is_open THEN precedence + 2 ELSE precedence
+        postfix_prec ← first_free + 2               ▷ Gap for prefix BP
 
         FOR EACH rule in category WHERE rule.is_postfix:
             table.add(InfixOperator {
@@ -116,16 +125,32 @@ FUNCTION analyze_binding_powers(rules: [InfixRuleInfo]) → BindingPowerTable:
 
 ### 3.2 Mathematical Formulas
 
-For a category with *n* non-postfix infix operators and *m* postfix operators,
-at precedence levels 0, 1, ..., n-1 for non-postfix and n, n+1, ..., n+m-1
-for postfix:
+Let a category declare *n* non-postfix infix operators partitioned into *L* precedence
+**levels** (levels, not rules — a `same`-annotated rule joins its predecessor's level, so
+`L ≤ n`, with equality exactly when no rule carries `same`), and *m* postfix operators.
 
-**Non-postfix operator at level *k* (0 ≤ k < n):**
+**Non-postfix operator on level *k* (0 ≤ k < L):**
 
+```math
+\text{Left-associative:}\quad  (\ell, r) = (2k + 2,\; 2k + 3)
 ```
-Left-associative:   (left_bp, right_bp) = (2k + 2,  2k + 3)
-Right-associative:  (left_bp, right_bp) = (2k + 3,  2k + 2)
+
+```math
+\text{Right-associative:}\quad (\ell, r) = (2k + 3,\; 2k + 2)
 ```
+
+Both satisfy `$\min(\ell, r) = 2k + 2$`, which is how a consumer recovers the level, and
+they differ only in the ORDER of the pair, which is how a consumer recovers the
+associativity. The two are independent, so a single level may hold operators of both
+kinds — as Rholang's level 6 does, with right-associative `matches` beside
+left-associative `==` and `!=`.
+
+> **Historical note (2026-07-28).** Both branches used to end in `precedence ← precedence
+> + 2`, so `L = n` always. Rule *i* then received `$\ell \in \{2 + 2i,\; 3 + 2i\}$`, and
+> two rules `$i < j$` could share an `$\ell$` only if `$3 + 2i = 2 + 2j$`, i.e.
+> `$2(j - i) = 1$` — unsatisfiable over the integers. Equal precedence was therefore
+> **unrepresentable**, not merely unused: no grammar could express that `*` and `/` bind
+> equally tightly, and `6 * 3 / 2` parsed as `6 * (3 / 2)`.
 
 **Max non-postfix BP** (after pass 1):
 

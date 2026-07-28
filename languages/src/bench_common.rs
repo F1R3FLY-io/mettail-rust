@@ -50,7 +50,16 @@ pub fn gen_mixed_precedence(n: usize) -> String {
     result
 }
 
-/// Alternating left-assoc operators at same precedence: "1 + 2 - 3 + 4 - ..."
+/// Alternating left-associative operators at the SAME precedence level:
+/// `"1 + 2 - 3 + 4 - ..."`.
+///
+/// `+` and `-` genuinely share one level (`-` carries `same` in every bundled
+/// spec that declares both), so this really does exercise a same-level chain and
+/// the left-associative fold it produces. Before 2026-07-28 the claim was written
+/// from intent and was false: `analyze_binding_powers` advanced its counter once
+/// per RULE, so `+` and `-` occupied DIFFERENT levels and this generator produced
+/// a right-nested descending chain rather than the flat left-associative one the
+/// benchmark means to measure.
 pub fn gen_alternating_add_sub(n: usize) -> String {
     if n == 0 {
         return "0".to_string();

@@ -88,25 +88,48 @@ left_bp ≥ min_bp  →  BIND   (current operator wins, extend expression)
 
 ## 3. Precedence Disambiguation
 
-Different operators have different BP magnitudes. Operators declared later in
-the grammar get higher binding power values (bind tighter).
+Different operators may have different BP magnitudes. Operators declared later in the
+grammar get higher binding power values (bind tighter) — unless they carry the `same`
+annotation, which places them on the level their predecessor opened.
 
 ### 3.1 BP Assignment Algorithm
 
-PraTTaIL assigns BPs automatically from declaration order (`binding_power.rs`,
-lines 210-280):
+PraTTaIL assigns BPs automatically from declaration order
+(`prattail/src/binding_power.rs`, `analyze_binding_powers`):
 
 ```
 Starting precedence = 2  (reserves 0 for entry, 1 for future use)
+level_is_open = false
 
 For each operator in declaration order (non-postfix first pass):
-  Left-associative:  bp = (precedence, precedence + 1); precedence += 2
-  Right-associative: bp = (precedence + 1, precedence); precedence += 2
+  if level_is_open and not operator.shares_level_with_previous:
+      precedence += 2                              # open the next, TIGHTER level
+  level_is_open = true
+
+  Left-associative:  bp = (precedence, precedence + 1)
+  Right-associative: bp = (precedence + 1, precedence)
 ```
+
+The counter advances once per **level**, not once per rule. Two facts follow:
+
+- `min(left_bp, right_bp)` is the level, for both associativities. That is how every
+  consumer recovers it.
+- Associativity is per-**operator**, and therefore one level may hold operators of both
+  kinds. Rholang's normative grammar requires this: `matches` is `prec.right(6, …)`
+  while `==` and `!=` are `prec.left(6, …)`. Diagnostic `G10` reports such a level as a
+  Note — it is legal and unambiguous, merely easy to misread.
+
+> **Historical note.** Until 2026-07-28 both associativity branches ended in
+> `precedence += 2`, so no branch left the counter unchanged. Rule `i` then received
+> `left_bp ∈ {2 + 2i, 3 + 2i}`, and two rules `i < j` could share a `left_bp` only if
+> `3 + 2i = 2 + 2j`, i.e. `2(j − i) = 1` — unsatisfiable. Equal precedence was therefore
+> not merely unused but **unrepresentable**, and the worked trace in §3.2 below described
+> a table the assigner could not emit. The `same` annotation is what makes that trace
+> real.
 
 ### 3.2 Worked Trace: `"1 + 2 * 3 - 4"`
 
-Assume `+` and `-` are at precedence level 2, `*` at level 4 (declared later):
+`+` and `-` share precedence level 2 — `-` is declared with `same` — and `*` opens level 4:
 
 ```
 Operator BPs:

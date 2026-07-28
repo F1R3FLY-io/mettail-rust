@@ -261,57 +261,43 @@ In `prediction.rs`, ensure `CharLit` is handled in `generate_first_set_check()`:
 
 ## 4. User-Defined Precedence Annotations
 
-Currently, precedence is assigned by **declaration order**: the first infix operator
-declared in a category gets the lowest precedence, the second gets higher, and so on.
-Associativity is specified via the rule's `associativity` field.
+Precedence is assigned by **declaration order** plus one relative annotation. The first
+infix rule declared in a category opens the loosest precedence **level**; each subsequent
+rule opens the next, tighter level — unless it carries `same`, in which case it joins the
+level its predecessor opened. Associativity is separate and per-rule (`right`; the default
+is left).
 
-### Extending to Explicit Precedence Levels
-
-**Step 1: Add precedence to RuleSpec**
-
-File: `/home/dylon/Workspace/f1r3fly.io/mettail-rust/prattail/src/lib.rs`
-
-```rust
-pub struct RuleSpec {
-    // ... existing fields ...
-    /// Explicit precedence level (if specified by user). Higher = binds tighter.
-    pub precedence: Option<u8>,
-}
+```
+MulInt . a:Int, b:Int |- a "*" b : Int ![a * b] fold;        // opens a level
+DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold same;   // joins it
+ModInt . a:Int, b:Int |- a "%" b : Int ![a % b] fold same;   // joins it
+PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step right;  // next level, right
 ```
 
-**Step 2: Use explicit precedence in binding power analysis**
+The result is a total **preorder**: a sequence of levels, each an unordered set of
+operators. Declaration order supplies the ordering; `same` supplies the ties.
 
-File: `/home/dylon/Workspace/f1r3fly.io/mettail-rust/prattail/src/binding_power.rs`
+> **This section previously described `same` as an unimplemented extension point.** It was
+> implemented on 2026-07-28, because the gap it left was not cosmetic: without it,
+> `analyze_binding_powers` advanced its counter in both associativity branches, so rule
+> `$i$` received `$\ell \in \{2 + 2i,\; 3 + 2i\}$` and two rules `$i < j$` could share an
+> `$\ell$` only if `$2(j - i) = 1$`. Equal precedence was **unrepresentable**, and
+> `6 * 3 / 2` parsed as `6 * (3 / 2)`. See
+> `prattail/docs/design/binding-powers/02-implicit-deduction.md` §3.
 
-Modify `analyze_binding_powers()`:
+### Why a relative marker rather than absolute levels
 
-```rust
-pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
-    // ... group by category ...
+Two absolute designs were considered and rejected. Both are recorded here because they
+keep being proposed.
 
-    for (_category, cat_rules) in &by_category {
-        // Sort by explicit precedence if present, then by declaration order
-        let mut sorted_rules = cat_rules.clone();
-        sorted_rules.sort_by_key(|r| r.precedence.unwrap_or(u8::MAX));
-
-        let mut precedence: u8 = 2;
-        for rule in sorted_rules {
-            // ... assign (left_bp, right_bp) as before ...
-        }
-    }
-}
-```
-
-**Step 3: Add the macro DSL syntax**
-
-In the `language!` macro, allow precedence annotations:
+**`@prec(n)` per rule:**
 
 ```
 Add . a:Int, b:Int |- a "+" b : Int  @prec(1);
 Mul . a:Int, b:Int |- a "*" b : Int  @prec(2);
 ```
 
-Or use a precedence group syntax:
+**A `precedence { }` block:**
 
 ```
 precedence {
@@ -321,10 +307,48 @@ precedence {
 }
 ```
 
-**Step 4: Propagate through InfixRuleInfo**
+| Property | `same` | `@prec(n)` | `precedence { }` block |
+|---|---|---|---|
+| Total by construction | yes — every rule has a predecessor or opens the first level | no — a rule may omit `@prec` | no — a rule may be unlisted |
+| Renumbering churn on insert | none | every tighter level | every tighter level |
+| Two rules can disagree about a level | impossible — no operand | yes | yes |
+| Second source of truth for ordering | no | yes | yes — the block and `terms` can disagree |
+| Associativity stays per-operator | yes | yes | **no** — `level 3 right` attaches it to the level |
 
-Add `precedence: Option<u8>` to `InfixRuleInfo` and map it from `RuleSpec` in
-`generate_parser()`.
+The last row is disqualifying rather than merely inconvenient. Rholang's normative grammar
+declares `matches` as `prec.right(6, …)` beside `==` and `!=` as `prec.left(6, …)`: one
+level, two associativities. A `precedence { level n <assoc> { … } }` block cannot express
+that, so it cannot express the language MeTTaIL exists to implement.
+
+### If an absolute scheme is nevertheless wanted
+
+It must be **additive** — `same` continues to mean what it means, and an absolute
+annotation only overrides it — and it must keep associativity attached to the rule, never
+to the level.
+
+**Step 1** — add the field beside the existing one on `RuleSpec` and `RuleSpecInput`
+(`prattail/src/lib.rs`), so it travels the same path:
+
+```rust
+pub struct RuleSpec {
+    // ... existing fields ...
+    pub shares_level_with_previous: bool,
+    /// Explicit level, overriding the relative marker. Higher = binds tighter.
+    pub precedence: Option<u8>,
+}
+```
+
+**Step 2** — consume it in `analyze_binding_powers` (`prattail/src/binding_power.rs`),
+which is the ONLY assigner. Both the parser codegen and `Display` call it, which is what
+keeps them from disagreeing; an override applied anywhere else would reintroduce exactly
+the parser/printer split that the mixfix associativity bug caused.
+
+**Step 3** — surface it in the DSL alongside `right`, `prefix(N)`, `canonical` and `same`
+(`ast/src/grammar.rs`), and carry it on `GrammarRule`.
+
+**Step 4** — populate it at every `InfixRuleInfo` construction site. Adding a
+non-`Option` field is deliberately a compile error at each one, so the compiler enumerates
+the sites rather than leaving a silent default behind.
 
 ---
 
