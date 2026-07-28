@@ -148,7 +148,7 @@ fn write_language(language: &LanguageDef, out: &mut String) {
     push_ident(out, &language.name);
     out.push_str(");options[");
     let mut options = language.options.iter().collect::<Vec<_>>();
-    options.sort_by(|(left, _), (right, _)| left.cmp(right));
+    options.sort_by_key(|(left, _)| *left);
     for (key, value) in options {
         out.push_str(key);
         out.push('=');

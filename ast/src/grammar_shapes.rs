@@ -105,7 +105,7 @@ pub fn classify_unary_prefix_shape(rule: &GrammarRule) -> Option<UnaryPrefixShap
         _ => return None,
     };
 
-    if operand_category != rule.category.to_string() {
+    if rule.category != operand_category {
         return None;
     }
 
@@ -115,7 +115,7 @@ pub fn classify_unary_prefix_shape(rule: &GrammarRule) -> Option<UnaryPrefixShap
     };
 
     match &sp[1] {
-        SyntaxExpr::Param(p) if p.to_string() == param_name => {},
+        SyntaxExpr::Param(p) if *p == param_name => {},
         _ => return None,
     }
 
@@ -159,7 +159,7 @@ pub fn classify_simple_projection_shape(rule: &GrammarRule) -> Option<SimpleProj
     }
 
     match &sp[0] {
-        SyntaxExpr::Param(p) if p.to_string() == param_name => {},
+        SyntaxExpr::Param(p) if *p == param_name => {},
         _ => return None,
     }
 
@@ -182,6 +182,7 @@ pub fn classify_simple_projection_shape(rule: &GrammarRule) -> Option<SimpleProj
 ///   - smart-pointer wraps `Arc::new(…)` / `Box::new(…)` / `Rc::new(…)`,
 ///   - nullary-variant paths (e.g. `Proc::PZero`), and
 ///   - `param.clone()` leaves over the rule's own parameters,
+///
 ///   rooted at a constructor of the rule's OWN category whose variant is NOT
 ///   the rule's own label (so a self-reconstruction / identity fold is rejected
 ///   and reconstruction terminates).

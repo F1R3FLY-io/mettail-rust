@@ -7,6 +7,10 @@ use std::path::{Path, PathBuf};
 /// Pulled in by `#[path]` rather than as a dependency: `dovetail` has exactly one
 /// workspace dependency (`rigail`) by design, and this audit must not be the thing that
 /// breaks that. The file is `ast`'s module of the same name — one source, two consumers.
+// `dead_code` is wrong HERE: this consumer needs only `language_roots`, while
+// `proptest_corpus_dir` and `find_workspace_root` are live in the other consumer (`ast`),
+// where the same file is a normal module and the lint still guards them.
+#[allow(dead_code)]
 #[path = "../../ast/src/manifest.rs"]
 mod manifest;
 

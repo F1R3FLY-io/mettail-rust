@@ -267,6 +267,7 @@ pub struct GrammarRule {
     /// - Stage 3.13b W05 lint refinement (future) to distinguish synthetic-
     ///   induced ambiguity (Note severity) from user-authored ambiguity
     ///   (Warning severity).
+    ///
     /// Default `false` for parsed rules; set `true` only by `make_injection_rule`.
     pub is_auto_injected: bool,
     /// Stage 3.27a (2026-05-04): doc-comment text (joined with `\n`)
@@ -1432,15 +1433,15 @@ pub fn convert_term_context_to_items(
 /// Conversion rules:
 /// - `GrammarItem::Terminal(text)` → `SyntaxExpr::Literal(text)` only.
 /// - `GrammarItem::NonTerminal { ident, kind: Category }` → fresh `pN`
-///   param: `TermParam::Simple { name: pN, ty: TypeExpr::Base(ident) }`
-///   + `SyntaxExpr::Param(pN)`. If preceded by a pending `Binder`, instead
+///   param: `TermParam::Simple { name: pN, ty: TypeExpr::Base(ident) }` +
+///   `SyntaxExpr::Param(pN)`. If preceded by a pending `Binder`, instead
 ///   form an `Abstraction { binder, body, ty: Arrow{domain, codomain} }`.
 /// - `GrammarItem::Binder { category }` → flag pending; pair with next
 ///   NonTerminal as Abstraction.
 /// - `GrammarItem::Collection { coll_type, element_type, separator,
 ///   delimiters: Some((open, close)) }` →
-///   `TermParam::Simple { name: "elems", ty: Collection {...} }`
-///   + `[Literal(open), Op(Sep), Literal(close)]`. Collections without
+///   `TermParam::Simple { name: "elems", ty: Collection {...} }` +
+///   `[Literal(open), Op(Sep), Literal(close)]`. Collections without
 ///   delimiters are out-of-scope (rare; return early without modifying).
 ///
 /// Early-return conditions (function leaves rule unchanged):

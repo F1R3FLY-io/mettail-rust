@@ -92,15 +92,20 @@ impl Parse for LanguageDef {
         };
 
         // Parse: tokens { ... } (optional)
-        let (mut token_defs, mode_defs, sync_constraints, tree_invariants) = if input.peek(Ident) {
+        let TokensBlock {
+            mut token_defs,
+            mode_defs,
+            sync_constraints,
+            tree_invariants,
+        } = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
             if lookahead == "tokens" {
                 parse_tokens(input)?
             } else {
-                (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+                TokensBlock::default()
             }
         } else {
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+            TokensBlock::default()
         };
 
         // Validate every literals{} name is declared in types{}.
@@ -1332,13 +1337,28 @@ fn parse_tree_invariants_block(input: ParseStream) -> SynResult<Vec<TreeInvarian
     Ok(invariants)
 }
 
+/// Everything a `tokens { … }` block contributes to the language definition.
+///
+/// Named rather than returned as a bare 4-tuple. The block began as
+/// `(token_defs, mode_defs)` and grew two more parallel vectors; at that width a
+/// positional tuple stops documenting itself, and `let (_, _, _, x) = …` at a call
+/// site says nothing about what `x` is. `Default` gives the two "no `tokens` block
+/// present" fall-throughs one spelling instead of a four-element `Vec::new()` litany
+/// that has to be kept the right length by hand. This is also the factoring
+/// `clippy::type_complexity` asks for.
+#[derive(Default)]
+struct TokensBlock {
+    token_defs: Vec<TokenDef>,
+    mode_defs: Vec<ModeDef>,
+    sync_constraints: Vec<SyncConstraint>,
+    tree_invariants: Vec<TreeInvariant>,
+}
+
 /// Parse the `tokens { ... }` block.
 ///
 /// Contains token definitions (default mode), named mode blocks,
 /// optional `sync { ... }` block, and optional `tree_invariants { ... }` block.
-fn parse_tokens(
-    input: ParseStream,
-) -> SynResult<(Vec<TokenDef>, Vec<ModeDef>, Vec<SyncConstraint>, Vec<TreeInvariant>)> {
+fn parse_tokens(input: ParseStream) -> SynResult<TokensBlock> {
     let tokens_ident = input.parse::<Ident>()?;
     if tokens_ident != "tokens" {
         return Err(syn::Error::new(tokens_ident.span(), "expected 'tokens'"));
@@ -1401,12 +1421,21 @@ fn parse_tokens(
         let _ = input.parse::<Token![,]>()?;
     }
 
-    Ok((token_defs, mode_defs, sync_constraints, tree_invariants_vec))
+    Ok(TokensBlock {
+        token_defs,
+        mode_defs,
+        sync_constraints,
+        tree_invariants: tree_invariants_vec,
+    })
 }
 
 /// Public wrapper for `parse_tokens` for use by `fragment.rs`.
 pub fn parse_tokens_public(input: ParseStream) -> SynResult<(Vec<TokenDef>, Vec<ModeDef>)> {
-    let (token_defs, mode_defs, _, _) = parse_tokens(input)?;
+    let TokensBlock {
+        token_defs,
+        mode_defs,
+        ..
+    } = parse_tokens(input)?;
     Ok((token_defs, mode_defs))
 }
 

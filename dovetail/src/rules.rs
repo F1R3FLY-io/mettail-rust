@@ -171,6 +171,28 @@ pub struct RewriteRule<L> {
 /// closures live in the rule data itself.
 pub type NativeOpId = u32;
 
+/// The one compiled-in escape hatch a [`NativeRule`] fires through: given the
+/// rule's [`NativeOpId`], the e-graph, and the match substitution `σ`, compute
+/// the result e-class — or `None` when the redex does not reduce here (a
+/// variable or otherwise-stuck child, or a failed funded admission).
+///
+/// This is the *language-specific* half of the "rules are DATA" split: the
+/// engine holds only the [`NativeOpId`] tag, and one generated dispatcher per
+/// language interprets it. It is named rather than spelled out at each of the
+/// three use sites so the signature has a single definition to change, and so
+/// `clippy::type_complexity` has a factored type to point at.
+///
+/// Written unsized (`dyn`), so callers pass it as `&NativeDispatch<'_, L>`. The
+/// lifetime parameter is NOT decoration: a `dyn` type alias fixes its object
+/// lifetime bound where the ALIAS is written, and the default there is
+/// `'static` — not the borrow's lifetime, as it would be in the `&dyn Fn(…)`
+/// these sites spelled before. Omitting `'a` therefore silently demands
+/// `'static` dispatchers and rejects the borrowing closures the fold tests and
+/// the generated `dovetail_report_for` build (`E0373`: "closure may outlive the
+/// current function"). Naming it restores the original, strictly-more-general
+/// contract.
+pub type NativeDispatch<'a, L> = dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId> + 'a;
+
 /// A native-computed rewrite rule `lhs ~> ⟨native op⟩`.
 ///
 /// Where a [`RewriteRule`] rewrites `lhs` to a *structural* [`Pattern`] RHS, a
@@ -811,7 +833,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         &mut self,
         rule: &NativeRule<L>,
         matches: Vec<(EClassId, Subst)>,
-        dispatch: &dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId>,
+        dispatch: &NativeDispatch<'_, L>,
         justifications: &mut Vec<RewriteJustification>,
     ) -> RuleApplication {
         let before_nodes = self.node_count();
@@ -936,7 +958,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         &mut self,
         rules: &[RewriteRule<L>],
         native_rules: &[NativeRule<L>],
-        dispatch: &dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId>,
+        dispatch: &NativeDispatch<'_, L>,
         max_iters: usize,
     ) -> SatReport {
         let compiled = CompiledRuleSet::new(rules.to_vec(), native_rules.to_vec());
@@ -953,7 +975,7 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
     pub fn saturate_compiled_with_native(
         &mut self,
         compiled: &CompiledRuleSet<L>,
-        dispatch: &dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId>,
+        dispatch: &NativeDispatch<'_, L>,
         max_iters: usize,
     ) -> SatReport {
         let mut stats = SatStats::default();

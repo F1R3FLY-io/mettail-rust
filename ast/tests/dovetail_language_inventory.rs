@@ -592,7 +592,7 @@ fn current_language_defs_have_dovetail_requirement_inventory() {
     let source_files = language_files();
     for path in &source_files {
         let source =
-            fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
         // A file that declares a `language!` necessarily contains that text, so this
         // gate cannot hide a definition — it only spares `syn` the generated test
         // binaries and simulators the widened root now walks. Anything that passes the

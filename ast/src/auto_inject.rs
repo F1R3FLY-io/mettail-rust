@@ -760,7 +760,7 @@ mod tests {
         let int_to_big = output
             .terms
             .iter()
-            .find(|r| r.label.to_string() == "IntToBigInt")
+            .find(|r| r.label == "IntToBigInt")
             .expect("IntToBigInt should be emitted");
 
         let shape = classify_simple_projection_shape(int_to_big)
@@ -840,7 +840,7 @@ mod tests {
         let cong = output
             .rewrites
             .iter()
-            .find(|r| r.name.to_string() == "IntToBigIntCong")
+            .find(|r| r.name == "IntToBigIntCong")
             .expect("cong rule");
         assert!(cong.is_congruence_rule(), "synthetic cong must satisfy is_congruence_rule()",);
     }
@@ -856,7 +856,7 @@ mod tests {
         let cong = output
             .rewrites
             .iter()
-            .find(|r| r.name.to_string() == "IntToBigIntCong")
+            .find(|r| r.name == "IntToBigIntCong")
             .expect("cong rule");
         assert!(cong.is_auto_injected, "synthetic cong must have is_auto_injected = true");
     }
@@ -935,7 +935,7 @@ mod tests {
         let synthetic_count = output
             .rewrites
             .iter()
-            .filter(|r| r.name.to_string() == "IntToBigIntCong" && r.is_auto_injected)
+            .filter(|r| r.name == "IntToBigIntCong" && r.is_auto_injected)
             .count();
         assert_eq!(
             synthetic_count, 0,

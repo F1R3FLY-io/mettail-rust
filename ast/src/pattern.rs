@@ -2458,7 +2458,7 @@ fn try_detect_cancellation(
         Pattern::Term(PatternTerm::Var(v)) => v,
         _ => return None,
     };
-    if inner_var.to_string() != var_name.to_string() {
+    if var_name != inner_var {
         return None;
     }
 

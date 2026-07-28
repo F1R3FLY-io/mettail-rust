@@ -18,7 +18,7 @@
 //! | **logic** | Relations: union by name, error if param types differ. Content: concatenate TokenStreams |
 //! | **options** | Extension values override base for matching keys |
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::language::GuardSlotDecl;
@@ -519,7 +519,7 @@ fn merge_terms(
                 },
                 DuplicateStrategy::Override => {
                     // Remove the base rule and add the extension's
-                    result.retain(|r| r.label.to_string() != label);
+                    result.retain(|r| r.label != label);
                     labels.insert(label, rule.category.to_string());
                     result.push(rule.clone());
                 },
@@ -544,30 +544,34 @@ fn merge_equations(
     strategy: DuplicateStrategy,
     errors: &mut Vec<MergeError>,
 ) -> Vec<Equation> {
-    let mut names: HashMap<String, ()> = HashMap::with_capacity(base.len());
+    // A `HashMap<String, ()>` is a SET spelled as a map: nothing ever reads the unit
+    // value. Saying so directly drops the dead payload and is why `clippy::map_entry`
+    // no longer applies — the entry API it wants would force a `slot.key().clone()`
+    // in the `Error` arm below, which needs the name by VALUE.
+    let mut names: HashSet<String> = HashSet::with_capacity(base.len());
     let mut result: Vec<Equation> = Vec::with_capacity(base.len() + extension.len());
 
     for eq in base {
         let name = eq.name.to_string();
-        names.insert(name, ());
+        names.insert(name);
         result.push(eq.clone());
     }
 
     for eq in extension {
         let name = eq.name.to_string();
-        if names.contains_key(&name) {
+        if names.contains(&name) {
             match strategy {
                 DuplicateStrategy::Error => {
                     errors.push(MergeError::DuplicateEquationName { name });
                 },
                 DuplicateStrategy::Override => {
-                    result.retain(|e| e.name.to_string() != name);
-                    names.insert(name, ());
+                    result.retain(|e| e.name != name);
+                    names.insert(name);
                     result.push(eq.clone());
                 },
             }
         } else {
-            names.insert(name, ());
+            names.insert(name);
             result.push(eq.clone());
         }
     }
@@ -586,30 +590,32 @@ fn merge_rewrites(
     strategy: DuplicateStrategy,
     errors: &mut Vec<MergeError>,
 ) -> Vec<RewriteRule> {
-    let mut names: HashMap<String, ()> = HashMap::with_capacity(base.len());
+    // Same as `merge_equations`: a set, not a map. See the note there for why the
+    // entry API `clippy::map_entry` suggests is the wrong shape for this loop.
+    let mut names: HashSet<String> = HashSet::with_capacity(base.len());
     let mut result: Vec<RewriteRule> = Vec::with_capacity(base.len() + extension.len());
 
     for rw in base {
         let name = rw.name.to_string();
-        names.insert(name, ());
+        names.insert(name);
         result.push(rw.clone());
     }
 
     for rw in extension {
         let name = rw.name.to_string();
-        if names.contains_key(&name) {
+        if names.contains(&name) {
             match strategy {
                 DuplicateStrategy::Error => {
                     errors.push(MergeError::DuplicateRewriteName { name });
                 },
                 DuplicateStrategy::Override => {
-                    result.retain(|r| r.name.to_string() != name);
-                    names.insert(name, ());
+                    result.retain(|r| r.name != name);
+                    names.insert(name);
                     result.push(rw.clone());
                 },
             }
         } else {
-            names.insert(name, ());
+            names.insert(name);
             result.push(rw.clone());
         }
     }
@@ -702,30 +708,36 @@ fn merge_token_defs(
     extension: &[TokenDef],
     strategy: DuplicateStrategy,
 ) -> Vec<TokenDef> {
-    let mut by_name: HashMap<String, usize> = HashMap::with_capacity(base.len());
+    // Membership is the ONLY question asked of this structure, so it is a set. It was a
+    // `HashMap<String, usize>` whose index no reader consumed — and could not have,
+    // because the `Override` arm below rewrites `result` without updating the index,
+    // leaving every overridden entry's position stale. Storing a value that is both dead
+    // and wrong invites a future `by_name[&name]` to be silently incorrect; the set
+    // cannot be misread. It is also why `clippy::map_entry` no longer applies.
+    let mut names: HashSet<String> = HashSet::with_capacity(base.len());
     let mut result: Vec<TokenDef> = Vec::with_capacity(base.len() + extension.len());
 
-    for (idx, td) in base.iter().enumerate() {
+    for td in base {
         let name = td.name.to_string();
-        by_name.insert(name, idx);
+        names.insert(name);
         result.push(td.clone());
     }
 
     for td in extension {
         let name = td.name.to_string();
-        if by_name.contains_key(&name) {
+        if names.contains(&name) {
             match strategy {
                 DuplicateStrategy::Error => {
                     // Token name conflicts are non-fatal in extends mode;
                     // the base definition is kept (same behavior as types).
                 },
                 DuplicateStrategy::Override => {
-                    result.retain(|t| t.name.to_string() != name);
+                    result.retain(|t| t.name != name);
                     result.push(td.clone());
                 },
             }
         } else {
-            by_name.insert(name, result.len());
+            names.insert(name);
             result.push(td.clone());
         }
     }
@@ -1031,7 +1043,7 @@ mod tests {
         let pzero_count = result
             .terms
             .iter()
-            .filter(|r| r.label.to_string() == "PZero")
+            .filter(|r| r.label == "PZero")
             .count();
         assert_eq!(pzero_count, 1);
     }
@@ -1197,7 +1209,7 @@ mod tests {
         let shared: Vec<&GrammarRule> = def
             .terms
             .iter()
-            .filter(|rule| rule.label.to_string() == "Shared")
+            .filter(|rule| rule.label == "Shared")
             .collect();
         assert_eq!(shared.len(), 1);
         assert_eq!(shared[0].category.to_string(), "Int");
