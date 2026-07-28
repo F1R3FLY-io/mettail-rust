@@ -68,6 +68,7 @@ use mettail_rholang_runtime::{
     lower_rholang_proc, run_normalized_par_for_oracle_and_read_runtime_values,
 };
 use mettail_runtime::{clear_var_cache, Language, RuntimeObservationValue};
+use prost::Message;
 use std::sync::Arc;
 
 /// The control marker every program publishes through an ordinary send/receive pair. Its
@@ -358,18 +359,72 @@ fn expansion_leaves_no_query_rows_behind() {
         };
         let (_, body) = scope.clone().unbind::<String>();
         let mut receives = 0usize;
-        if let Proc::PPar(parts) = body.as_ref() {
-            for part in parts.iter_elements() {
-                if let Proc::PForUser(inner_rows, _) = part {
-                    receives += 1;
-                    assert!(
-                        !pfor_user_still_has_query_rows(inner_rows),
-                        "{source:?} left an unexpanded query row behind: {inner_rows:?}"
-                    );
-                }
+        for part in parallel_members(body.as_ref()) {
+            if let Proc::PForUser(inner_rows, _) = part {
+                receives += 1;
+                assert!(
+                    !pfor_user_still_has_query_rows(inner_rows),
+                    "{source:?} left an unexpanded query row behind: {inner_rows:?}"
+                );
             }
         }
         assert_eq!(receives, 1, "{source:?} must expand to exactly one receive: {body:?}");
+    }
+}
+
+/// Flatten a parallel composition into its members, in composition order.
+///
+/// The expansion emits a right-nested `PParInfix` chain rather than a `PPar` bag (see
+/// `desugar_for_rows`); both spellings are read here so this walk describes "a parallel
+/// composition" rather than one representation of one.
+fn parallel_members(proc: &Proc) -> Vec<&Proc> {
+    let mut out = Vec::new();
+    let mut stack = vec![proc];
+    while let Some(part) = stack.pop() {
+        match part {
+            Proc::PParInfix(left, right) => {
+                stack.push(right.as_ref());
+                stack.push(left.as_ref());
+            },
+            Proc::PPar(parts) => stack.extend(parts.iter_elements()),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// ★ Lowering is a FUNCTION OF THE TERM: the same source lowers to the same bytes, every time.
+///
+/// This is the property the expansion broke, and the M-2 driver/oracle differential is what
+/// caught it — on `for(x <- @"a"!?(1) & y <- @"b"!?(2)){…}`, whose two lowerings differed by a
+/// swap of the two request sends and in nothing else.
+///
+/// The cause was representational. `PPar` is a `HashBag`, i.e. a `HashMap` keyed by the member
+/// terms, so it serializes in HASH order; each request send carries a return channel minted from
+/// a process-global counter, so two lowerings of one term hash differently and order differently.
+/// The ids themselves never reach the `Par` — `Scope::new` binds them into de Bruijn indices,
+/// which is precisely why only the ORDER moved and why nothing noticed until the expansion began
+/// running on the lowering path at all.
+///
+/// Asserted here against the driver alone, so the property stands on its own rather than being a
+/// corollary of two implementations agreeing.
+#[test]
+fn lowering_a_query_bind_is_a_function_of_the_term() {
+    for source in [
+        r#"for(x <- @"a"!?(1) & y <- @"b"!?(2)) { @"OUT"!(*x) }"#,
+        r#"for(x <- @"a"!?(1); y <- @"b"!?(2)) { @"OUT"!(*x) }"#,
+        r#"for(x <- @"a"!?(1) & y <- @"b"!?(2) & z <- @"c"!?(3)) { @"OUT"!(*x) }"#,
+        r#"for(p <- @"svc"!?(1)) { @"OUT"!(*p) }"#,
+    ] {
+        let first = lower_rholang_proc(&parse(source)).expect("must lower");
+        let second = lower_rholang_proc(&parse(source)).expect("must lower");
+        assert_eq!(
+            first.encode_to_vec(),
+            second.encode_to_vec(),
+            "two lowerings of {source:?} produced different bytes — the emitted `Par` depends on \
+             something other than the term (the freshly-minted return-channel ids are the only \
+             candidate, and they must not reach the output)"
+        );
     }
 }
 

@@ -850,7 +850,8 @@ enum QueryBind<'a> {
 /// Classify `bind` as one of the `!?` query surfaces, or `None` for an ordinary bind.
 ///
 /// THE single source of truth for "is this a query bind?" — see [`QueryBind`]. The set of arms
-/// here is gated against the grammar itself by `languages/tests/rholang_query_bind_forms.rs`,
+/// here is gated against the grammar itself by
+/// `rholang-runtime/tests/rholang_query_bind.rs::the_classifier_recognises_every_declared_query_surface`,
 /// which enumerates every `InputBind` rule whose declared syntax carries `!?(` out of the
 /// language metadata and fails if one of them is not covered below.
 fn as_query_bind(bind: &InputBind) -> Option<QueryBind<'_>> {
@@ -1008,17 +1009,41 @@ pub fn desugar_for_rows(rows: Vec<ForRow>, body: &Proc) -> Proc {
         return receive_proc;
     }
 
-    let mut bag = HashBag::new();
-    for (_, send) in &query_binders_and_sends {
-        Proc::insert_into_ppar(&mut bag, send.clone());
-    }
-    Proc::insert_into_ppar(&mut bag, receive_proc);
-
+    // ★ The composition is a right-nested `PParInfix` CHAIN in source order —
+    // `send₀ | (send₁ | (… | receive))` — NOT a `PPar` bag, and the difference is
+    // DETERMINISM, not taste.
+    //
+    // `PPar` is `HashBag`, i.e. `HashMap<Proc, usize, FxHasher>`, so its iteration order
+    // follows element HASHES. Each send here carries `*rₖ`, a return channel minted by
+    // `FreeVar::fresh_named` from a process-global counter — so two lowerings of the SAME term
+    // hash to different values and the bag serializes its members in a different order. The
+    // emitted `Par` was therefore not a function of the term: lowering
+    // `for(x <- @"a"!?(1) & y <- @"b"!?(2)){…}` twice produced two byte strings differing by a
+    // swap of the two request sends. (The ids themselves never leak — `Scope::new` binds them,
+    // so they lower to de Bruijn indices — which is exactly why ONLY the order differed, and
+    // why this was invisible until the expansion started running on the lowering path.)
+    //
+    // Measured by the M-2 driver/oracle differential, whose contract is byte-identical output:
+    // the two implementations mint their fresh ids at different points in the global sequence,
+    // so they saw different bag orders for the same term.
+    //
+    // `PParInfix` is a first-class parallel composition for every consumer — the lowering
+    // driver (`Kont::ParPair` → `Par::append`, documented as "exactly what lowering the folded
+    // `PPar` bag would produce"), the fold-lifting traversal (`find_fold`/`replace_fold` carry
+    // both arms), and `runtime::normalize_send_sugar_canon`, which folds it back into a bag via
+    // `merge_pp_parallel` so term-equality still sees the multiset. What it adds is a fixed
+    // left-to-right order that no hash can perturb.
     let binders: Vec<Binder<String>> = query_binders_and_sends
-        .into_iter()
-        .map(|(b, _)| b)
+        .iter()
+        .map(|(binder, _)| binder.clone())
         .collect();
-    Proc::PNew(Scope::new(binders, std::sync::Arc::new(Proc::PPar(bag))))
+    let composed = query_binders_and_sends
+        .into_iter()
+        .rev()
+        .fold(receive_proc, |acc, (_, send)| {
+            Proc::PParInfix(std::sync::Arc::new(send), std::sync::Arc::new(acc))
+        });
+    Proc::PNew(Scope::new(binders, std::sync::Arc::new(composed)))
 }
 
 pub(crate) fn channel_names_from_row(b: &InputBind, bs: &[InputBind]) -> Option<Vec<Name>> {
