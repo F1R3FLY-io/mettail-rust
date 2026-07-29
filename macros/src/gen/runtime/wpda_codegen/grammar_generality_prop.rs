@@ -1976,6 +1976,77 @@ mod corpus_hygiene {
         assert_ne!(entries[0].0, entries[1].0, "the two seeds must still be distinct");
     }
 
+    /// ★★ THE TIER RULING for all three archived entries: **TIER 3** — reconstruction is not
+    /// confirmable.
+    ///
+    /// | seed | distinct case | tier |
+    /// |---|---|---|
+    /// | `cc 7f0fc00330697657c106c75d3a58bd5f0e02e927bcd89f6de5dea9093ee0cd79` | case A | 3 |
+    /// | `cc 9ab1cf7567da4df3548469cfede637146ea59d2e4d28cb2d53ca0cf2de7f871c` | case A (span-duplicate of the above) | 3 |
+    /// | `cc f016bbb7091846e305ef8b184498cd2357bf005c1a6e7ac3cbceaf8d3193cdbb` | case B | 3 |
+    ///
+    /// # Why Tier 3 and not "unclassified"
+    ///
+    /// "Not reconstructed" is a description, not a disposition, and the tier policy has no
+    /// escape hatch for entries that resist the cheap route — leaving them unclassified is
+    /// precisely the silent gap the whole campaign exists to remove.
+    ///
+    /// The policy's Tier-3 test is *"is a faithful reconstruction CONFIRMABLE?"*, and it is
+    /// the same test that settled `PInputs` in `testkit/tests/ctor_engine.rs`. There the
+    /// obstacle was semantic: the successor's binder layout differed, so a guess would have
+    /// produced a term that looked right and bound differently — something the `Debug` oracle
+    /// cannot discriminate. Here the obstacle is evidential: the exact route was RUN and did
+    /// not succeed (see the sibling test), and the remaining routes — hand-transcribing 4.5–6
+    /// KB of `syn` types, or writing a `syn`-aware reader — either reintroduce the
+    /// transcription hazard this campaign has already been bitten by twice, or are a separate
+    /// piece of engineering. Different obstacle, same verdict: do not assert what cannot be
+    /// confirmed.
+    ///
+    /// # What Tier 3 obliges, and what it does not
+    ///
+    /// It does NOT mean discarded. The entries stay in the corpus, proptest still replays
+    /// them, and the reinstatement guard below fires if the premise of the ruling expires —
+    /// exactly as `PInputs`'s does. Tier 3 is a statement about what the SUITE asserts, not
+    /// about what the corpus keeps.
+    ///
+    /// # The reinstatement guard
+    ///
+    /// A Tier-3 ruling rots if the thing that made reconstruction unconfirmable quietly goes
+    /// away. For `PInputs` that trigger is the constructor returning to the grammar; here it
+    /// is the entries becoming small enough to transcribe safely, or the corpus changing
+    /// under the ruling. Both are asserted by
+    /// [`the_archived_entries_are_not_reconstructible_from_their_debug`], which pins the size
+    /// and the `lang = LanguageDef {` shape, and by
+    /// [`two_of_the_three_archived_seeds_are_one_counterexample_modulo_spans`], which pins
+    /// the case count. This test pins the SEEDS themselves, so an entry cannot be swapped for
+    /// a different one underneath a ruling made about the old one.
+    #[test]
+    fn the_archived_entries_carry_their_tier_3_ruling() {
+        let entries = archived_entries();
+        let ruled: [&str; 3] = [
+            "7f0fc00330697657c106c75d3a58bd5f0e02e927bcd89f6de5dea9093ee0cd79",
+            "9ab1cf7567da4df3548469cfede637146ea59d2e4d28cb2d53ca0cf2de7f871c",
+            "f016bbb7091846e305ef8b184498cd2357bf005c1a6e7ac3cbceaf8d3193cdbb",
+        ];
+        assert_eq!(
+            entries.len(),
+            ruled.len(),
+            "the archived corpus holds {} entries but the Tier-3 ruling names {}. Every \
+             recorded entry must carry a disposition — an unruled entry is the silent gap \
+             the tier policy exists to remove.",
+            entries.len(),
+            ruled.len()
+        );
+        for (index, ((seed, _), want)) in entries.iter().zip(ruled).enumerate() {
+            assert_eq!(
+                *seed, want,
+                "archived entry {index} is not the seed the Tier-3 ruling was made about. A \
+                 ruling names the entry it rules; if the corpus has been regenerated, the \
+                 ruling must be re-derived rather than inherited."
+            );
+        }
+    }
+
     /// ★ WHY THESE THREE ENTRIES ARE NOT PROMOTED TO RECONSTRUCTED TERMS.
     ///
     /// Every other corpus in this campaign was promoted by rebuilding the recorded value and

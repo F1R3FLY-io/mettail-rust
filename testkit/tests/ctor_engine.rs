@@ -737,3 +737,194 @@ fn every_seed_a_source_file_cites_is_a_seed_some_corpus_records() {
         dangling.join("\n  ")
     );
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ★★ THE CENSUS — every recorded counterexample carries a disposition
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A corpus whose entries are deliberately NOT accounted for by a source-file citation.
+///
+/// An exemption is a debt with a name on it, not a shrug: it states the corpus, the exact
+/// number of entries, and why. The count is asserted, so an exemption cannot quietly grow to
+/// cover entries nobody decided about.
+struct Exemption {
+    /// Path suffix identifying the corpus, relative to the repository root.
+    corpus: &'static str,
+    /// How many entries the exemption covers. Asserted exactly.
+    entries: usize,
+    /// Why. Read by a human when the assertion fires.
+    reason: &'static str,
+}
+
+/// The complete exemption table. Everything not listed here must be cited by a source file.
+const EXEMPTIONS: &[Exemption] = &[Exemption {
+    corpus: "languages/tests/gen_rholang_prop.proptest-regressions",
+    entries: 53,
+    reason: "BLOCKED, not undecided. 51 of the 53 emit today and are pre-generated, but \
+             Rholang's method rules are mid-collapse (#122/#123, itself blocked on #131 and \
+             #132-B), and promoting against an AST that is about to change would bake in \
+             constructor names chosen to be replaced. The remaining 2 are `PInputs` (Tier 3) \
+             and `KeysMap` (Tier 2 → `MKeys`), both ruled and guarded in \
+             `the_departed_constructors_have_their_recorded_disposition`.",
+}];
+
+/// ★★ TOTALITY: every seed in every corpus is either CITED by a source file or EXEMPTED.
+///
+/// # Why a census rather than a count of what was done
+///
+/// Every other test in this campaign proves something about the entries that WERE handled.
+/// None of them can see an entry that nobody looked at — and an entry nobody looked at is
+/// indistinguishable, from inside the suite, from an entry that did not exist. That is the
+/// same shape as the defect this whole campaign started from: 101 counterexamples that were
+/// never tracked, and 52 that were never read.
+///
+/// So the accounting is inverted. Instead of counting promotions, this walks the CORPORA and
+/// requires every recorded seed to have a disposition somewhere:
+///
+/// - **cited** — some `.rs` file names the seed. That covers a promoted test, a Tier-2
+///   migration record, and a Tier-3 ruling alike, because each of them names the entry it is
+///   about. A citation is exactly the claim "a human decided about this entry", and
+///   [`every_seed_a_source_file_cites_is_a_seed_some_corpus_records`] proves citations point
+///   at real seeds, so the two tests close the loop in both directions;
+/// - **exempted** — listed in [`EXEMPTIONS`] with a count and a reason.
+///
+/// Anything else is an entry nobody decided about, and this fails.
+///
+/// # The exemptions are also checked for STALENESS
+///
+/// An exemption whose entries have since been cited is a lie that reads like caution; it
+/// would let a future entry hide behind a debt that was already paid. So an exemption whose
+/// corpus is fully cited fails too, with instructions to delete it.
+#[test]
+fn every_recorded_counterexample_carries_a_disposition() {
+    let root = repo_root();
+
+    // ── every seed, and the corpus it came from ──
+    let mut seeds: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut pending = vec![root.clone()];
+    let mut sources: Vec<PathBuf> = Vec::new();
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.expect("dir entry").path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if path.is_dir() {
+                if name.starts_with('.') || matches!(name, "target" | "scratchpad" | "scratch") {
+                    continue;
+                }
+                pending.push(path);
+                continue;
+            }
+            let is_corpus = name.ends_with(".proptest-regressions")
+                || (name.ends_with(".txt")
+                    && path.ancestors().any(|a| {
+                        a.file_name().and_then(|n| n.to_str()) == Some("proptest-regressions")
+                    }));
+            if is_corpus {
+                let relative = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string();
+                for line in fs::read_to_string(&path).unwrap_or_default().lines() {
+                    // A SUPERSEDED corpus comments its entries out; they still need a
+                    // disposition, so the marker is stripped rather than treated as absence.
+                    let line = line.trim().trim_start_matches("# ").trim();
+                    if let Some(rest) = line.strip_prefix("cc ") {
+                        if let Some(seed) = rest.split_whitespace().next() {
+                            // A seed recorded in two corpora (the rhocalc→rholang merge) is
+                            // one counterexample; the first corpus seen owns it.
+                            seeds.entry(seed.to_string()).or_insert(relative.clone());
+                        }
+                    }
+                }
+            } else if name.ends_with(".rs") {
+                sources.push(path);
+            }
+        }
+    }
+
+    assert!(
+        seeds.len() >= 100,
+        "only {} recorded seeds were found; the sweep is not reaching the corpora and this \
+         census would certify an empty tree",
+        seeds.len()
+    );
+
+    // ── every seed some source file cites ──
+    let mut cited: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for path in &sources {
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let mut rest = text.as_str();
+        while let Some(idx) = rest.find("cc ") {
+            let after = &rest[idx + 3..];
+            let hex: String = after.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+            rest = &after[hex.len()..];
+            if hex.len() == 64 {
+                cited.insert(hex);
+            }
+        }
+    }
+
+    // ── the exemptions must be exact, and must still be needed ──
+    for exemption in EXEMPTIONS {
+        let covered: Vec<&String> = seeds
+            .iter()
+            .filter(|(_, corpus)| corpus.as_str() == exemption.corpus)
+            .map(|(seed, _)| seed)
+            .collect();
+        assert_eq!(
+            covered.len(),
+            exemption.entries,
+            "the exemption for `{}` declares {} entries but the corpus now holds {}. An \
+             exemption must not silently widen to cover entries nobody decided about — \
+             re-derive it. Reason on record: {}",
+            exemption.corpus,
+            exemption.entries,
+            covered.len(),
+            exemption.reason
+        );
+        let uncited = covered.iter().filter(|s| !cited.contains(**s)).count();
+        assert!(
+            uncited > 0,
+            "the exemption for `{}` is STALE: all {} of its entries are now cited by a \
+             source file, so the debt has been paid. DELETE the exemption — an exemption \
+             that covers nothing still lets a future entry hide behind it.",
+            exemption.corpus,
+            covered.len()
+        );
+    }
+
+    // ── totality ──
+    let exempt_corpora: std::collections::HashSet<&str> =
+        EXEMPTIONS.iter().map(|e| e.corpus).collect();
+    let undisposed: Vec<String> = seeds
+        .iter()
+        .filter(|(seed, corpus)| {
+            !cited.contains(*seed) && !exempt_corpora.contains(corpus.as_str())
+        })
+        .map(|(seed, corpus)| format!("{corpus}: cc {}…", &seed[..16]))
+        .collect();
+
+    assert!(
+        undisposed.is_empty(),
+        "{} recorded counterexample(s) carry NO disposition — neither cited by a source \
+         file (promoted, Tier-2 migration record, or Tier-3 ruling) nor listed in \
+         `EXEMPTIONS`. An entry nobody decided about is indistinguishable, from inside the \
+         suite, from an entry that does not exist:\n  {}",
+        undisposed.len(),
+        undisposed.join("\n  ")
+    );
+
+    let exempt_count: usize = EXEMPTIONS.iter().map(|e| e.entries).sum();
+    eprintln!(
+        "── CENSUS: {} recorded counterexamples — {} disposed by citation, {} exempted ──",
+        seeds.len(),
+        seeds.len() - exempt_count,
+        exempt_count
+    );
+}
