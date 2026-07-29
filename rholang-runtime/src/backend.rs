@@ -1375,32 +1375,67 @@ fn run_rho_invocation_blocking(
         .map_err(|_| "Rho backend runtime worker panicked".to_string())?
 }
 
-/// A-S2 test-only instrumentation: a process-global counter of
+/// A-S2 test-only instrumentation: a THREAD-SCOPED counter of
 /// [`checked_complete_dovetail_report`] invocations, so the zero-D-stage tests can assert that
 /// an ADMITTED exec never builds a Dovetail report (count delta 0) while a deferred exec does
 /// (delta ≥ 1). Compiled only under `cfg(test)` (this crate's own unit tests) or the
 /// `dstage-instrumentation` feature (downstream integration tests, e.g. the REPL's); production
-/// builds carry no counter and no atomic traffic. Counters are process-global — deterministic
-/// under `cargo nextest` (process-per-test) — so callers should assert DELTAS around their own
-/// exec calls.
+/// builds carry no counter at all.
+///
+/// # Why the counter is per-thread and not process-global (defect #145)
+///
+/// It *was* a process-global `AtomicUsize`. Under `cargo nextest` that is exact, because nextest
+/// gives every test its own process; under in-process `cargo test` it is NOT, because libtest
+/// runs a binary's tests concurrently on many threads of ONE process. A `before`/`after` bracket
+/// then straddles whatever a NEIGHBOURING test happened to do in between, and a neighbour that
+/// legitimately builds a report (the deferral tests, which assert delta ≥ 1) makes an admitted
+/// test's delta-0 assertion fail. That is not a hypothetical: `repl/tests/zero_dstage_exec.rs`
+/// was live-red under `cargo test --workspace` with `left: 1` (Calculator) and `left: 2`
+/// (Lambda, Ambient) — exactly one and two foreign reports — while `cargo nextest run` stayed
+/// green. The two runners disagreed because the isolation was the runner's, not the code's.
+///
+/// Two fixes were available. Serializing the affected test file behind a `Mutex` costs real
+/// wall-clock time, and — decisively — fixes only the file that remembers to take the lock: the
+/// same latent bug sits in this module's own unit tests below and in
+/// `rholang-runtime/tests/rho_net_native_firing.rs`, and any future counter user would inherit
+/// it again. Thread-scoping the counter fixes the CLASS, costs nothing, and needs no
+/// cooperation from callers.
+///
+/// # Why thread-scoping is sound here
+///
+/// The D-stage is built SYNCHRONOUSLY on the thread that called `run_backend_report` /
+/// `run_step_backend_report`: every `checked_complete_dovetail_report` call site is in one of
+/// those two method bodies. What gets handed to another thread is the machine execution
+/// ([`run_rho_invocation_blocking`] spawns a worker for `invocation.execute`), and the Rho
+/// machine never builds a Dovetail report. So a bracket taken on a test's own thread observes
+/// exactly that test's own D-stage work — under libtest's parallel harness (one fresh thread per
+/// test) and under `--test-threads=1` (all tests on one thread, but strictly sequentially, so
+/// nothing else can increment inside the bracket) alike.
+///
+/// The accessor is named for that scope. A short name that merely said
+/// `dovetail_report_invocations` would keep reading as "the process built N reports", which is
+/// the very misreading that produced #145.
 #[cfg(any(test, feature = "dstage-instrumentation"))]
 pub mod dstage_instrumentation {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::cell::Cell;
 
-    static DOVETAIL_REPORT_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
-
-    /// How many times `checked_complete_dovetail_report` (the D-stage build+check) has run in
-    /// this process.
-    pub fn dovetail_report_invocations() -> usize {
-        DOVETAIL_REPORT_INVOCATIONS.load(Ordering::SeqCst)
+    thread_local! {
+        static DOVETAIL_REPORT_INVOCATIONS: Cell<usize> = const { Cell::new(0) };
     }
 
-    /// Record one D-stage build+check. Only [`super::checked_complete_dovetail_report`]
-    /// (feature `runtime-report`) calls this; the `allow` keeps a
-    /// `dstage-instrumentation`-without-`runtime-report` build warning-free.
+    /// How many times `checked_complete_dovetail_report` (the D-stage build+check) has run **on
+    /// the calling thread**. Callers assert DELTAS around their own exec calls; a delta taken on
+    /// the thread that performed the exec is exact regardless of what any other thread is doing.
+    pub fn dovetail_report_invocations_on_this_thread() -> usize {
+        DOVETAIL_REPORT_INVOCATIONS.with(Cell::get)
+    }
+
+    /// Record one D-stage build+check against the CURRENT thread's count. Only
+    /// [`super::checked_complete_dovetail_report`] (feature `runtime-report`) calls this; the
+    /// `allow` keeps a `dstage-instrumentation`-without-`runtime-report` build warning-free.
     #[cfg_attr(not(feature = "runtime-report"), allow(dead_code))]
     pub(crate) fn record_dovetail_report_invocation() {
-        DOVETAIL_REPORT_INVOCATIONS.fetch_add(1, Ordering::SeqCst);
+        DOVETAIL_REPORT_INVOCATIONS.with(|count| count.set(count.get() + 1));
     }
 }
 
@@ -3578,11 +3613,11 @@ mod tests {
         .expect("the lazy Dovetail+Rho wrapper installs");
         let term = language.parse_term("2 + 3").expect("mini parse");
 
-        let before = dstage_instrumentation::dovetail_report_invocations();
+        let before = dstage_instrumentation::dovetail_report_invocations_on_this_thread();
         let report = language
             .run_default_backend_report(term.as_ref())
             .expect("the admitted exec executes with NO D-stage");
-        let after = dstage_instrumentation::dovetail_report_invocations();
+        let after = dstage_instrumentation::dovetail_report_invocations_on_this_thread();
 
         assert_eq!(after - before, 0, "the admitted path built a Dovetail report");
         assert_eq!(report.backend(), RuntimeBackend::RhoMachine);
@@ -3611,11 +3646,11 @@ mod tests {
         .expect("the lazy Dovetail+Rho wrapper installs");
         let term = language.parse_term("2 + 3").expect("mini parse");
 
-        let before = dstage_instrumentation::dovetail_report_invocations();
+        let before = dstage_instrumentation::dovetail_report_invocations_on_this_thread();
         let report = language
             .run_default_backend_report(term.as_ref())
             .expect("the predicate deferral resolves to the LAZILY checked Dovetail report");
-        let after = dstage_instrumentation::dovetail_report_invocations();
+        let after = dstage_instrumentation::dovetail_report_invocations_on_this_thread();
 
         assert!(after - before >= 1, "the predicate path must build the report lazily");
         assert_eq!(report.backend(), RuntimeBackend::Dovetail);
@@ -3642,11 +3677,11 @@ mod tests {
         .expect("the lazy Dovetail+Rho wrapper installs");
         let term = language.parse_term("2 + 3").expect("mini parse");
 
-        let before = dstage_instrumentation::dovetail_report_invocations();
+        let before = dstage_instrumentation::dovetail_report_invocations_on_this_thread();
         let report = language
             .run_default_backend_report(term.as_ref())
             .expect("the gate-reject deferral executes through the report-carrying fallback");
-        let after = dstage_instrumentation::dovetail_report_invocations();
+        let after = dstage_instrumentation::dovetail_report_invocations_on_this_thread();
 
         assert!(after - before >= 1, "the gate-reject path must build the report lazily");
         assert_eq!(report.backend(), RuntimeBackend::RhoMachine);

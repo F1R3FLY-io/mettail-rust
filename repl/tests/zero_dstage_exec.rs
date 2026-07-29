@@ -5,7 +5,7 @@
 //! invocation directly, and `checked_complete_dovetail_report` (the D-stage build+check) never
 //! runs. Only a typed deferral — a semantic predicate or a gate reject — may build the report,
 //! LAZILY. This suite asserts both directions with the `dstage-instrumentation` counter
-//! (`mettail_rholang_runtime::dstage_instrumentation`, a process-global count of
+//! (`mettail_rholang_runtime::dstage_instrumentation`, a per-thread count of
 //! `checked_complete_dovetail_report` invocations):
 //!
 //! - admitted SwapDemo (in-Rho locate-all match), Calculator (E3 fold dataflow), and Rholang
@@ -15,12 +15,24 @@
 //! - a gate-rejected shape (Calculator free-variable term, not lowerable to scalar dataflow):
 //!   counter delta ≥ 1 and the eager pipeline's exact rejection text.
 //!
-//! Counter discipline: the counter is process-global, so every assertion is a DELTA around this
-//! test's own calls. Under `cargo nextest` each test runs in its own process, so deltas are
-//! exact; under in-process `cargo test` the deltas remain sound for the 0-assertions because
-//! they bracket only this test's exec (other tests' D-stage runs can only INCREASE a
-//! non-bracketed counter — which is why each admitted assertion reads the counter immediately
-//! around its own exec and every deferred assertion is `≥ 1`).
+//! Counter discipline: every assertion is a DELTA around this test's own exec call, and the
+//! counter is scoped to the CALLING THREAD, so the delta is exact under both runners.
+//!
+//! ⚠ That paragraph used to say something different, and false: that a process-global counter's
+//! 0-assertions "remain sound … under in-process `cargo test`", on the reasoning that other
+//! tests "can only INCREASE a non-bracketed counter". The reasoning was wrong, and the tests
+//! below were live-red because
+//! of it: libtest runs one binary's tests concurrently on many threads of ONE process, so a
+//! neighbour's increment lands INSIDE this test's bracket, not outside it. The deferral tests at
+//! the bottom of this very file assert delta ≥ 1 — they are *required* to build reports — so
+//! `admitted_calculator_…` failed with `left: 1` and the two A-S5.6 tests with `left: 2`:
+//! exactly the one and two foreign reports their neighbours had just produced. The
+//! 0-assertions were sound only under `--test-threads=1`, and `cargo nextest` hid the defect
+//! entirely by giving each test its own process. Defect #145 fixed this in the instrumentation
+//! rather than here — `dovetail_report_invocations_on_this_thread` counts only the D-stage work
+//! done on the caller's thread, which is where `checked_complete_dovetail_report` always runs
+//! (the Rho machine execution is what gets spawned, and it builds no reports). No test in this
+//! file needs to take a lock or run serially, and the fix covers every other counter user too.
 //!
 //! A-S3 (native dispatch boundary tightening): the zero-D-stage NATIVE exec MECHANISM probes
 //! live in the RUNTIME suites (`rholang-runtime/tests/rho_net_native_firing.rs`
@@ -53,7 +65,7 @@ use mettail_rholang_codegen::{
     RhoFoldDataflowDisposition, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
     PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
 };
-use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations;
+use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations_on_this_thread;
 use mettail_runtime::{Language, RuntimeBackend, RuntimeBackendArtifact, RuntimeObservationValue};
 use models::rhoapi::Par;
 use prost::Message;
@@ -78,11 +90,11 @@ fn term_obs(constructor: &str, children: Vec<RuntimeObservationValue>) -> Runtim
 //         .parse_term("swap(A, B)")
 //         .expect("swap(A, B) parses");
 //
-//     let before = dovetail_report_invocations();
+//     let before = dovetail_report_invocations_on_this_thread();
 //     let report = language
 //         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
 //         .expect("the admitted SwapDemo exec runs report-free in Rho");
-//     let after = dovetail_report_invocations();
+//     let after = dovetail_report_invocations_on_this_thread();
 //
 //     assert_eq!(
 //         after - before,
@@ -116,11 +128,11 @@ fn term_obs(constructor: &str, children: Vec<RuntimeObservationValue>) -> Runtim
 //         .parse_term("pair(swap(A, B), swap(B, A))")
 //         .expect("the two-redex term parses");
 //
-//     let before = dovetail_report_invocations();
+//     let before = dovetail_report_invocations_on_this_thread();
 //     let report = language
 //         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
 //         .expect("the multi-redex SwapDemo exec runs report-free in Rho");
-//     let after = dovetail_report_invocations();
+//     let after = dovetail_report_invocations_on_this_thread();
 //
 //     assert_eq!(after - before, 0, "locate-all admitted execs build ZERO Dovetail reports");
 //     let out = report
@@ -137,11 +149,11 @@ fn admitted_calculator_exec_builds_no_dovetail_report() {
     let language = calculator_backed().expect("Calculator lazy backend installs");
     let term = language.parse_term("2 + 3").expect("2 + 3 parses");
 
-    let before = dovetail_report_invocations();
+    let before = dovetail_report_invocations_on_this_thread();
     let report = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
         .expect("the admitted Calculator exec runs report-free on the Rho dataflow");
-    let after = dovetail_report_invocations();
+    let after = dovetail_report_invocations_on_this_thread();
 
     assert_eq!(
         after - before,
@@ -169,11 +181,11 @@ fn admitted_rholang_exec_builds_no_dovetail_report() {
         .parse_term(r#"{ for(x <- @("c")){*(x)} | @("c")!(@("OUT")!("p")) }"#)
         .expect("the Rholang COMM example parses");
 
-    let before = dovetail_report_invocations();
+    let before = dovetail_report_invocations_on_this_thread();
     let report = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
         .expect("the admitted Rholang exec runs report-free on the Rho machine");
-    let after = dovetail_report_invocations();
+    let after = dovetail_report_invocations_on_this_thread();
 
     assert_eq!(
         after - before,
@@ -202,11 +214,11 @@ fn a_s5_6_admitted_lambda_exec_builds_no_dovetail_report() {
         .parse_term("(lam x. x, lam a. lam b. a)")
         .expect("the single-β subject parses");
 
-    let before = dovetail_report_invocations();
+    let before = dovetail_report_invocations_on_this_thread();
     let report = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
         .expect("the admitted Lambda exec drives to NF in-Rho");
-    let after = dovetail_report_invocations();
+    let after = dovetail_report_invocations_on_this_thread();
 
     assert_eq!(
         after - before,
@@ -251,11 +263,11 @@ fn a_s5_6_admitted_ambient_exec_builds_no_dovetail_report() {
         .parse_term("{open(n, a[{0}]) | n[{b[{0}]}]}")
         .expect("the open subject parses");
 
-    let before = dovetail_report_invocations();
+    let before = dovetail_report_invocations_on_this_thread();
     let report = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
         .expect("the admitted Ambient exec drives to quiescence in-Rho");
-    let after = dovetail_report_invocations();
+    let after = dovetail_report_invocations_on_this_thread();
 
     assert_eq!(
         after - before,
@@ -302,11 +314,11 @@ fn a_s5_6_admitted_ambient_exec_builds_no_dovetail_report() {
 //         .parse_term("#{A | B | C}#")
 //         .expect("the AC bag subject parses");
 //
-//     let before = dovetail_report_invocations();
+//     let before = dovetail_report_invocations_on_this_thread();
 //     let report = language
 //         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
 //         .expect("the admitted AcDemo exec runs report-free in Rho");
-//     let after = dovetail_report_invocations();
+//     let after = dovetail_report_invocations_on_this_thread();
 //
 //     assert_eq!(
 //         after - before,
@@ -343,11 +355,11 @@ fn a_s5_6_admitted_ambient_exec_builds_no_dovetail_report() {
 //     let language = ctxdemo_backed().expect("CtxDemo lazy backend installs");
 //     let term = language.parse_term("swap(A, B)").expect("the flat Flip subject parses");
 //
-//     let before = dovetail_report_invocations();
+//     let before = dovetail_report_invocations_on_this_thread();
 //     let report = language
 //         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
 //         .expect("the admitted CtxDemo exec runs report-free in Rho");
-//     let after = dovetail_report_invocations();
+//     let after = dovetail_report_invocations_on_this_thread();
 //
 //     assert_eq!(
 //         after - before,
@@ -383,11 +395,11 @@ fn a_s5_6_admitted_ambient_exec_builds_no_dovetail_report() {
 //     let language = nativefolddemo_backed().expect("NativeFoldDemo lazy backend installs");
 //     let term = language.parse_term("2 + 3").expect("the native redex parses");
 //
-//     let before = dovetail_report_invocations();
+//     let before = dovetail_report_invocations_on_this_thread();
 //     let report = language
 //         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
 //         .expect("the admitted NativeFoldDemo exec runs report-free on the machine");
-//     let after = dovetail_report_invocations();
+//     let after = dovetail_report_invocations_on_this_thread();
 //
 //     assert_eq!(
 //         after - before,
@@ -465,11 +477,11 @@ fn a_s4_calculator_call_par_does_not_embed_the_result_literal() {
 
     // The MACHINE computes 14 (zero D-stage): the production wrapper execs the same raw tree.
     let language = calculator_backed().expect("Calculator lazy backend installs");
-    let before = dovetail_report_invocations();
+    let before = dovetail_report_invocations_on_this_thread();
     let report = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
         .expect("the raw arithmetic exec runs report-free on the Rho dataflow");
-    let after = dovetail_report_invocations();
+    let after = dovetail_report_invocations_on_this_thread();
     assert_eq!(after - before, 0, "the admitted raw-tree exec builds ZERO Dovetail reports");
     let out = report
         .observations_for_channel("OUT")
@@ -490,11 +502,11 @@ fn a_s4_admitted_rholang_arithmetic_exec_computes_on_machine_with_no_dovetail_re
     let language = rholang_backed().expect("Rholang lazy backend installs");
     let term = language.parse_term("1 + 2").expect("1 + 2 parses");
 
-    let before = dovetail_report_invocations();
+    let before = dovetail_report_invocations_on_this_thread();
     let report = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
         .expect("the raw Rholang arithmetic exec runs report-free on the Rho machine");
-    let after = dovetail_report_invocations();
+    let after = dovetail_report_invocations_on_this_thread();
 
     assert_eq!(
         after - before,
@@ -528,11 +540,11 @@ fn semantic_predicate_blocked_calculator_exec_builds_the_lazy_report() {
     let language = calculator_backed().expect("Calculator lazy backend installs");
     let term = language.parse_term("5 / 0").expect("5 / 0 parses");
 
-    let before = dovetail_report_invocations();
+    let before = dovetail_report_invocations_on_this_thread();
     let report = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
         .expect("the semantic-predicate deferral resolves to the checked Dovetail report");
-    let after = dovetail_report_invocations();
+    let after = dovetail_report_invocations_on_this_thread();
 
     assert!(
         after - before >= 1,
@@ -560,11 +572,11 @@ fn gate_rejected_calculator_exec_builds_the_lazy_report_and_keeps_the_rejection_
         .parse_term("x + 1")
         .expect("the free-variable term parses");
 
-    let before = dovetail_report_invocations();
+    let before = dovetail_report_invocations_on_this_thread();
     let err = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
         .expect_err("a non-lowerable term still fails at the Rho-default boundary");
-    let after = dovetail_report_invocations();
+    let after = dovetail_report_invocations_on_this_thread();
 
     assert!(
         after - before >= 1,

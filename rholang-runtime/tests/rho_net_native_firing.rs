@@ -499,7 +499,7 @@ async fn a_s3_wrong_sigma_probe_handler_computes_from_the_delivered_operands() {
 #[cfg(feature = "dstage-instrumentation")]
 #[test]
 fn a_s3_admitted_native_exec_builds_no_dovetail_report() {
-    use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations;
+    use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations_on_this_thread;
     use mettail_rholang_runtime::{
         install_dovetail_rho_runtime_backend_lazy, RhoBackendInvocation, RhoInvocationDeferral,
     };
@@ -544,11 +544,11 @@ fn a_s3_admitted_native_exec_builds_no_dovetail_report() {
         .parse_term("2 ^ 3")
         .expect("NativeDemo must parse the native redex 2 ^ 3");
 
-    let before = dovetail_report_invocations();
+    let before = dovetail_report_invocations_on_this_thread();
     let report = language
         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
         .expect("the admitted native exec runs report-free on the Rho machine");
-    let after = dovetail_report_invocations();
+    let after = dovetail_report_invocations_on_this_thread();
 
     assert_eq!(
         after - before,

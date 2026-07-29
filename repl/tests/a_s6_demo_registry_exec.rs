@@ -53,7 +53,7 @@
 // #![cfg(feature = "rho-languages")]
 //
 // use mettail_repl::build_registry;
-// use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations;
+// use mettail_rholang_runtime::dstage_instrumentation::dovetail_report_invocations_on_this_thread;
 // use mettail_runtime::{RuntimeBackend, RuntimeObservationValue};
 //
 // fn term_obs(constructor: &str, children: Vec<RuntimeObservationValue>) -> RuntimeObservationValue {
@@ -78,11 +78,11 @@
 //     let term = language
 //         .parse_term(subject)
 //         .unwrap_or_else(|err| panic!("{name} must parse {subject:?}: {err}"));
-//     let before = dovetail_report_invocations();
+//     let before = dovetail_report_invocations_on_this_thread();
 //     let report = language
 //         .run_backend_report(RuntimeBackend::RhoMachine, term.as_ref())
 //         .unwrap_or_else(|err| panic!("{name} exec of {subject:?} must run on the machine: {err}"));
-//     let delta = dovetail_report_invocations() - before;
+//     let delta = dovetail_report_invocations_on_this_thread() - before;
 //     assert_eq!(report.backend(), RuntimeBackend::RhoMachine, "{name} ran on the Rho machine");
 //     let out = report
 //         .observations_for_channel(channel)

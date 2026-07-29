@@ -47,11 +47,16 @@ default = [
 # `render_par_text`, whose output the `[*]` request server `produce`s onto the LIVE tuplespace,
 # so a feature-conditional rendering would be two builds writing different bytes for one deploy.
 runtime-report = []
-# A-S2 test-only instrumentation: exposes `backend::dstage_instrumentation` (a process-global
+# A-S2 test-only instrumentation: exposes `backend::dstage_instrumentation` (a THREAD-SCOPED
 # counter of `checked_complete_dovetail_report` invocations) so downstream integration tests
 # (e.g. the REPL's zero-D-stage exec suite) can assert that an ADMITTED exec builds no Dovetail
 # report while a deferred exec builds ≥ 1. Production builds never enable this; the crate's own
 # unit tests see the counter via `cfg(test)` without it.
+# ★ Per-thread, not process-global (defect #145): libtest runs one binary's tests concurrently
+# on many threads of ONE process, so a process-global counter let a neighbouring test's report
+# land inside another test's before/after bracket — live-red under `cargo test`, invisible under
+# `cargo nextest`'s process-per-test. The D-stage always runs on the caller's thread, so a
+# thread-scoped delta is exact under both runners. See the module doc in `src/backend.rs`.
 dstage-instrumentation = ["runtime-report"]
 # Pulls in the generated rholang language for the production-shaped AST-first
 # rholang-to-Rho runtime wrapper. The generated values are `rhoapi::Par`, never
