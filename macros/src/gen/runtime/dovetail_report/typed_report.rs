@@ -71,8 +71,25 @@ enum FoldLhsShape {
     /// `Pattern::ac(op, vec![], Some(param))` — the `k = 0` sub-multiset selection, whose single
     /// split is `(∅, whole bag)`, so `rest` binds the WHOLE bag.
     ///
-    /// Used by an AC whole-constructor collection (`PParInternal . ps:HashBag(Proc)`), whose
-    /// typed lowering is an n-ary bag node of unbounded arity.
+    /// Used by an AC whole-constructor collection — a rule whose SOLE parameter is a `HashBag`
+    /// and which declares a `fold` — whose typed lowering is an n-ary bag node of unbounded
+    /// arity. Shape: `Label . ps:HashBag(Cat) |- … : Cat ![{ … }] fold;`.
+    ///
+    /// ⚠ NO LIVE INSTANCE REMAINS IN THE CORPUS (measured 2026-07-29). The tree's only one was
+    /// Rholang's `PParInternal . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")"`, deleted
+    /// that day as a vestige of the pre-braced `PPar` grammar. Every surviving `HashBag`
+    /// whole-constructor — Rholang's `PPar`, Pi's `PPar`, and the `ambdemo` / `acdemo` /
+    /// `commdemo` family — declares NO fold, so none of them reaches this branch: the shape is
+    /// chosen inside the fold walk, from `BindKind::AcCollection`, and a rule without a fold is
+    /// never a candidate. Do NOT re-point the example at `Proc_PPar`; the grammar shape matches
+    /// but the lowering shape does not, and the claim would be false.
+    ///
+    /// The branch is nonetheless live code, not dead: it is the general answer for any future
+    /// AC whole-bag fold, and `Pattern::app` cannot substitute for it (being arity-exact, it
+    /// would match only a ONE-ELEMENT bag — see the `lhs_shape` selection below). The
+    /// neighbouring refusals are recorded in `languages/tests/definitions/map_param_refusal_demo.rs`:
+    /// a `HashMap` fold parameter is refused by carrier, and a `HashSet` one cannot be declared
+    /// at all.
     AcWholeBag {
         /// The parameter name `rest` binds — the pattern-variable key the dispatcher reads out
         /// of the match substitution.
@@ -936,13 +953,22 @@ fn generate_native_rules_and_dispatch(
                     // readiness-gated, and the reason is a category error rather than a missing
                     // safety net. `rest` binds the complement of the `k = 0` selection, i.e.
                     // THE REDEX ROOT ITSELF: that class necessarily contains the fold's own
-                    // head op (`Proc_PParInternal`), which is by construction in
-                    // `redex_heads`, so `__is_value_op` is necessarily false and
-                    // `__class_is_fold_value` would defer the fold FOREVER. The class needs no
-                    // proof of matchability — the rule that just matched it IS the proof. The
-                    // first firing of `PParInternal` is the evidence, and if this reasoning
-                    // were wrong that fold would never fire and its tests would go red
-                    // immediately.
+                    // head op, which is by construction in `redex_heads`, so `__is_value_op`
+                    // is necessarily false and `__class_is_fold_value` would defer the fold
+                    // FOREVER. The class needs no proof of matchability — the rule that just
+                    // matched it IS the proof.
+                    //
+                    // ⚠ THE EVIDENCE THIS ARGUMENT USED TO CITE IS GONE (2026-07-29). It read
+                    // "the first firing of `PParInternal` is the evidence, and if this
+                    // reasoning were wrong that fold would never fire and its tests would go
+                    // red immediately". Rholang's `PParInternal` was the corpus's ONLY AC
+                    // whole-bag fold, and it has been deleted as a vestige of the pre-braced
+                    // `PPar` grammar — so the reasoning above is now UNWITNESSED: correct as
+                    // stated, but with no live fold whose firing would falsify it. Anyone
+                    // declaring the next AC whole-bag fold (`ps:HashBag(Cat)` sole parameter
+                    // plus `![{…}] fold`) restores the witness and should say so here. See
+                    // `FoldLhsShape::AcWholeBag` for why no surviving `HashBag` constructor —
+                    // `PPar` included — reaches this path.
                     //
                     // An `OrderedCollection` param KEEPS the gate and SATISFIES it: a
                     // `FieldSeq<Elem>` leaf is a spine sentinel, in neither the redex-head set
@@ -1726,12 +1752,15 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
     // completeness, so a construct cannot leave the lowering without an account of itself.
     let (rules_expr, mut dispositions) = rule_block(language, Some(&enum_id));
     dispositions.extend(fold_dispositions);
-    crate::gen::runtime::disposition::assert_every_construct_disposed(
-        language,
-        &dispositions,
-        true,
-        "generate_dovetail_normal_term (typed path)",
-    );
+    // ★ #141 G9 — EMPTY unless a declared construct left the lowering with no
+    // disposition, in which case it is a `compile_error!` naming the constructs.
+    let disposition_refusal =
+        crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
+            language,
+            &dispositions,
+            true,
+            "generate_dovetail_normal_term (typed path)",
+        );
 
     let primary_cat = &language.types.first().expect("language has a type").name;
     let primary_add = category_lowering_fn(primary_cat);
@@ -1894,6 +1923,9 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
     // `__roots` element type differs (tuple vs bare) between the multi/single arms, so the
     // empty-check is shared but uses the appropriate iterator emptiness.
     quote! {
+        // ★ #141 G9 — the disposition census's refusal. EMPTY unless a declared
+        // construct left this lowering with no account of itself.
+        #disposition_refusal
         /// (E2.2) Reduce `term` to a typed Dovetail normal form and reconstruct it as a typed
         /// AST term. Same saturation as `dovetail_report_for`, but returns the reduced
         /// `<Lang>Term` (boxed) instead of a runtime report. Fail-closed: `Err` on
@@ -2024,12 +2056,15 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
     // rule set as the report, so it must account for the same constructs.
     let (rules_expr, mut dispositions) = rule_block(language, Some(&enum_id));
     dispositions.extend(fold_dispositions);
-    crate::gen::runtime::disposition::assert_every_construct_disposed(
-        language,
-        &dispositions,
-        true,
-        "generate_step_graph (typed path)",
-    );
+    // ★ #141 G9 — EMPTY unless a declared construct left the lowering with no
+    // disposition, in which case it is a `compile_error!` naming the constructs.
+    let disposition_refusal =
+        crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
+            language,
+            &dispositions,
+            true,
+            "generate_step_graph (typed path)",
+        );
 
     let primary_cat = &language.types.first().expect("language has a type").name;
     let primary_add = category_lowering_fn(primary_cat);
@@ -2169,6 +2204,9 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
     };
 
     quote! {
+        // ★ #141 G9 — the disposition census's refusal. EMPTY unless a declared
+        // construct left this lowering with no account of itself.
+        #disposition_refusal
         /// (Increment 4) Build the navigable one-step REWRITE-step graph for `term` and project it
         /// as a [`RuntimeDovetailRunReport`] whose `graph_kind` is
         /// [`RuntimeDovetailGraphKind::Rewrite`]. Each term record is a whole program STATE rendered
@@ -2522,12 +2560,15 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     // `lowering_disposition_inventory` publishes into the language's metadata.
     let (rules_expr, mut dispositions) = rule_block(language, Some(&enum_id));
     dispositions.extend(fold_dispositions);
-    crate::gen::runtime::disposition::assert_every_construct_disposed(
-        language,
-        &dispositions,
-        true,
-        "generate_typed_dovetail_report (typed path)",
-    );
+    // ★ #141 G9 — EMPTY unless a declared construct left the lowering with no
+    // disposition, in which case it is a `compile_error!` naming the constructs.
+    let disposition_refusal =
+        crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
+            language,
+            &dispositions,
+            true,
+            "generate_typed_dovetail_report (typed path)",
+        );
 
     let primary_cat = &language.types.first().expect("language has a type").name;
     let primary_add = category_lowering_fn(primary_cat);
@@ -2730,6 +2771,9 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
         };
 
     quote! {
+        // ★ #141 G9 — the disposition census's refusal. EMPTY unless a declared
+        // construct left this lowering with no account of itself.
+        #disposition_refusal
         // `op_enum_decl` carries `#[cfg(feature = "dovetail-codegen")]` on each of its items.
         #op_enum_decl
 

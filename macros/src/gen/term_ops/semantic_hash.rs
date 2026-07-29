@@ -731,6 +731,7 @@ fn variant_label(variant: &VariantKind) -> &Ident {
         | VariantKind::Regular { label, .. }
         | VariantKind::Collection { label, .. }
         | VariantKind::Binder { label, .. }
+        | VariantKind::Refused { label, .. }
         | VariantKind::MultiBinder { label, .. } => label,
     }
 }
@@ -802,8 +803,20 @@ fn generate_fold_alias_arm(
                 }
             }
         },
-        // `build_fold_alias_arm` only admits Nullary / all-Simple Regular variants.
-        _ => unreachable!("fold-alias variant must be Nullary or Regular"),
+        // ★ #141 G9. "`build_fold_alias_arm` only admits Nullary / all-Simple
+        // Regular variants" is a claim about the CALLER'S filter, held by nothing
+        // here. This function yields the arm's tokens, so the refusal is the arm.
+        other => {
+            let label = variant_label(other);
+            let message = format!(
+                "mettail internal error: the fold-alias `semantic_hash` arm for `{label}` \
+                 was asked to lower a variant that is neither nullary nor an all-simple \
+                 regular constructor, which its caller's admission filter is supposed to \
+                 exclude. The filter and this emitter have drifted apart. This is a macro \
+                 bug, not a grammar bug — please report it."
+            );
+            quote! { compile_error!(#message); }
+        },
     }
 }
 
@@ -849,6 +862,9 @@ fn generate_semantic_variant_arm(
     // combined with the inner-enum category tag, globally unique. Matches
     // derive(Hash) per-node cost (1 byte) instead of 4-12 bytes.
     match variant {
+        // ★ #141 G5 — a classification that refuses carries its diagnostic into
+        // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
+        VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
         VariantKind::Nullary { label } => {
             quote! {
                 #category::#label => {

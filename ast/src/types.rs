@@ -176,11 +176,26 @@ fn parse_type_atom(input: ParseStream) -> SynResult<TypeExpr> {
                 }
 
                 let element: TypeExpr = parse_type_expr(&content)?;
+                // ★ #141 G5. The `unreachable!()` rested on the enclosing
+                // `if` having already tested the same three names — a claim about
+                // two lists staying in step, held by nothing. `parse_type_expr`
+                // returns `syn::Result`, so the refusal is a spanned parse error.
                 let coll_type = match ident_str.as_str() {
                     "Vec" => CollectionType::Vec,
                     "HashBag" => CollectionType::HashBag,
                     "HashSet" => CollectionType::HashSet,
-                    _ => unreachable!(),
+                    other => {
+                        return Err(syn::Error::new(
+                            ident.span(),
+                            format!(
+                                "mettail internal error: the collection-type lookahead \
+                                 accepted `{other}` but this parser builds a \
+                                 `CollectionType` only for `Vec`, `HashBag` and \
+                                 `HashSet`, so the two have drifted apart. This is a \
+                                 macro bug, not a grammar bug — please report it."
+                            ),
+                        ));
+                    },
                 };
 
                 return Ok(TypeExpr::Collection { coll_type, element: Box::new(element) });

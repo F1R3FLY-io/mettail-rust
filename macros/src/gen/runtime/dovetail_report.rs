@@ -1308,6 +1308,8 @@ fn category_lowering(language: &LanguageDef, category: &Ident) -> TokenStream {
     let arms: Vec<TokenStream> = collect_category_variants(category, language)
         .into_iter()
         .map(|variant| match variant {
+            // ★ #141 G5 — see `VariantKind::Refused`.
+            VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
             VariantKind::Var { label } => {
                 let owner = lit(&format!("{}::{}::{}", language.name, category, label));
                 quote! {
@@ -1834,7 +1836,14 @@ fn rule_block(
 ///     evaluator that `complete_native_dovetail_report_for_language` reaches before structural
 ///     saturation. That is [`LoweringLane::HostNativeEvaluation`], and it is delivery, not
 ///     silence.
-pub(crate) fn lowering_disposition_inventory(language: &LanguageDef) -> Vec<LoweringDisposition> {
+///
+/// ★ #141 G9 — also returns the census REFUSAL (`compile_error!` tokens, EMPTY
+/// when every declared construct is disposed). This function's product is a
+/// macro-time record, so it has no output of its own to hang a diagnostic on; the
+/// boundary (`macros/src/lib.rs`) splices what it returns into the expansion.
+pub(crate) fn lowering_disposition_inventory(
+    language: &LanguageDef,
+) -> (Vec<LoweringDisposition>, TokenStream) {
     let typed = needs_typed_dovetail_path(language);
     let enum_id = typed.then(|| op_enum::op_enum_ident(language));
     let (_rules, mut dispositions) = rule_block(language, enum_id.as_ref());
@@ -1859,13 +1868,13 @@ pub(crate) fn lowering_disposition_inventory(language: &LanguageDef) -> Vec<Lowe
         }
     }
 
-    crate::gen::runtime::disposition::assert_every_construct_disposed(
+    let refusal = crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
         language,
         &dispositions,
         true,
         "lowering_disposition_inventory",
     );
-    dispositions
+    (dispositions, refusal)
 }
 
 /// Re-attribute an equation the structural lowering declined, when the BINDER-FLOAT lane
@@ -1955,12 +1964,15 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     // dispositions that carry a legacy diagnostic — so this generated body is byte-identical
     // to the one that shipped before dispositions existed.
     let (rules, dispositions) = rule_block(language, None);
-    crate::gen::runtime::disposition::assert_every_construct_disposed(
-        language,
-        &dispositions,
-        false,
-        "generate_dovetail_report (EGraph<String> path)",
-    );
+    // ★ #141 G9 — EMPTY unless a declared construct left the lowering with no
+    // disposition, in which case it is a `compile_error!` naming the constructs.
+    let disposition_refusal =
+        crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
+            language,
+            &dispositions,
+            false,
+            "generate_dovetail_report (EGraph<String> path)",
+        );
     let unsupported_lits: Vec<LitStr> =
         crate::gen::runtime::disposition::legacy_unsupported_messages(&dispositions)
             .iter()
@@ -2180,6 +2192,9 @@ pub fn generate_dovetail_report(language: &LanguageDef) -> TokenStream {
     };
 
     quote! {
+        // ★ #141 G9 — the disposition census's refusal. EMPTY unless a declared
+        // construct left this lowering with no account of itself.
+        #disposition_refusal
         #[cfg(feature = "dovetail-codegen")]
         impl #language_struct {
             /// Compile this language's generated typed AST into a checked

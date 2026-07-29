@@ -62,6 +62,9 @@ pub fn generate_term_depth_methods(language: &LanguageDef) -> TokenStream {
 /// Generate a single match arm for one variant of a category.
 fn generate_depth_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
     match variant {
+        // ★ #141 G5 — a classification that refuses carries its diagnostic into
+        // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
+        VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
         VariantKind::Var { label } => {
             quote! { #category::#label(_) => 0 }
         },

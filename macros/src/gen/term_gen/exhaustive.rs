@@ -223,7 +223,16 @@ fn generate_depth_0_cases(
                 .iter()
                 .any(|item| matches!(item, GrammarItem::Collection { .. }))
         {
-            let samples = ident_samples(language);
+            // Statement position inside the emitted case body: the refusal takes
+            // the case's place, so the generator emits a diagnostic instead of a
+            // walk over a pool it could not build.
+            let samples = match ident_samples(language) {
+                Ok(samples) => samples,
+                Err(message) => {
+                    cases.push(quote! { compile_error!(#message); });
+                    continue;
+                },
+            };
             let vars: Vec<Ident> = (0..ident_only_cats.len())
                 .map(|i| quote::format_ident!("__ident{}", i))
                 .collect();
@@ -626,7 +635,10 @@ fn generate_ident_bearing_case(
         return None;
     }
 
-    let samples = ident_samples(language);
+    let samples = match ident_samples(language) {
+        Ok(samples) => samples,
+        Err(message) => return Some(quote! { compile_error!(#message); }),
+    };
     let arg_vars: Vec<Ident> = (0..arg_cats.len())
         .map(|i| quote::format_ident!("arg{}", i))
         .collect();
@@ -791,9 +803,12 @@ fn generate_binder_constructor_case(
     }
 
     // Find the body category
-    let body_cat = match &rule.items[body_idx] {
-        GrammarItem::NonTerminal { ident: cat, .. } => cat,
-        _ => panic!("Body should be a NonTerminal"),
+    // ★ #141 G5 — see `crate::gen::shape_refusal`.
+    let GrammarItem::NonTerminal { ident: body_cat, .. } = &rule.items[body_idx] else {
+        return crate::gen::shape_refusal(
+            &rule.label,
+            "declares a binding whose body index does not point at a non-terminal item",
+        );
     };
 
     // Find non-body arguments
@@ -1138,7 +1153,7 @@ fn generate_collection_constructor_case(
 ///
 /// (#101 sibling) The CONTAINER decides the payload's shape. This emitter used to build a
 /// `HashBag` unconditionally, which is correct for the `HashBag` constructors the corpus
-/// contains (`PPar`, `PParInternal`) and does not compile for an ORDERED one
+/// contains (`PPar`) and does not compile for an ORDERED one
 /// (`Boxed . xs:Vec(Term) |- … : Term`), whose AST field is a `Vec<Term>`. The corpus has zero
 /// ordered whole-constructor collections, so branching here is byte-identical for every
 /// existing language and repairs a shape that could not previously be declared at all.

@@ -295,11 +295,28 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
     // gets a WPDS facade emitted by `wpda_codegen` (synthetic.rs ensures
     // even reference-only categories like Ambient's `Name` get a Var rule).
     // Asserting here keeps the macro/wpda_codegen invariant explicit.
-    debug_assert_eq!(
-        wpda_categories.len(),
-        language.types.len(),
-        "wpda_categories must mirror language.types — check wpda_codegen::collect_category_names_with_literals",
-    );
+    // ★ #141 G9. `debug_assert_eq!` compiles out in release AND is mute in dev: a
+    // proc-macro panic prints nothing under this workspace's cranelift dev backend
+    // (#141 RED-0), so this invariant was checked in exactly one configuration and
+    // announced in none. It is now a `compile_error!` in the emitted facade, which
+    // holds in every profile.
+    let wpda_category_census_refusal: TokenStream = match wpda_categories.len()
+        == language.types.len()
+    {
+        true => TokenStream::new(),
+        false => {
+            let message = format!(
+                "mettail internal error: language `{}` declares {} categories but the WPDS \
+                 facade collected {} — `wpda_categories` must mirror `language.types`. \
+                 Check `wpda_codegen::collect_category_names_with_literals`. This is a \
+                 macro bug, not a grammar bug — please report it.",
+                language.name,
+                language.types.len(),
+                wpda_categories.len(),
+            );
+            quote::quote_spanned!(language.name.span() => compile_error!(#message);)
+        },
+    };
 
     // P2 ISOLATION+COMBINE (Plan a7986200): src_idx-ordered category names
     // (`language.types` order, matching the WPDS facade's `categories`), for
@@ -313,11 +330,23 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
         .map(|t| {
             let cat = &t.name;
             let cat_str = cat.to_string();
-            debug_assert!(
-                wpda_categories.contains(&cat_str),
-                "category `{}` missing from wpda_categories",
-                cat_str,
-            );
+            // ★ #141 G9 — the per-category twin of the census above; same
+            // reasoning, and this closure yields the category's tokens, so the
+            // refusal is spliced beside them rather than replacing them (the facade
+            // still needs its other categories to report their own problems).
+            let category_census_refusal: TokenStream = match wpda_categories.contains(&cat_str) {
+                true => TokenStream::new(),
+                false => {
+                    let message = format!(
+                        "mettail internal error: category `{cat_str}` is declared by language \
+                         `{}` but is missing from the WPDS facade's category set, so no \
+                         parser entry can be emitted for it. This is a macro bug, not a \
+                         grammar bug — please report it.",
+                        language.name,
+                    );
+                    quote::quote_spanned!(cat.span() => compile_error!(#message);)
+                },
+            };
 
             // P2 ISOLATION+COMBINE (Plan a7986200): if this category is an
             // isolation-enabled `.*sep` shape, emit the guarded string-entry
@@ -1965,11 +1994,19 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
 
                     #wfst_methods
                 }
+
+                // ★ #141 G9 — this category's census refusal. EMPTY unless the
+                // WPDS facade's category set and `language.types` disagree.
+                #category_census_refusal
             }
         })
         .collect();
 
-    quote! { #(#impls)* }
+    quote! {
+        // ★ #141 G9 — the whole-language census refusal; see its derivation above.
+        #wpda_category_census_refusal
+        #(#impls)*
+    }
 }
 
 // =============================================================================
@@ -2405,6 +2442,43 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
         | NativeType::Usize
         | NativeType::CanonicalBigInt => quote::format_ident!("NumLit"),
     }
+}
+
+/// A `compile_error!` for a rule whose AST SHAPE contradicts what the parser and
+/// `validate_language` are supposed to have guaranteed before codegen ran.
+///
+/// # ★ #141 G5 — why these convert even though they look unreachable
+///
+/// Every site that uses this used to read `_ => panic!("Body index doesn't point
+/// to a NonTerminal")` or a near-twin. The claim behind each is that
+/// `GrammarRule::bindings` always indexes a `GrammarItem::Binder` and a
+/// `GrammarItem::NonTerminal`, which the parser establishes when it BUILDS the
+/// bindings list (`ast/src/grammar.rs`) and which no validator re-checks. So the
+/// invariant is a construction invariant of one function, held across a crate
+/// boundary, with nothing asserting it — and the justification for leaving the
+/// panics would be a totality proof that does not exist.
+///
+/// The cost of converting is one line per site; the cost of not converting is
+/// that when one of them fires, the author sees `fatal runtime error: Rust cannot
+/// catch foreign exceptions` and a `SIGABRT` with no message at all, because a
+/// `panic!` inside a proc macro under this workspace's cranelift dev backend
+/// prints nothing (#141 RED-0, 2026-07-29).
+///
+/// The wording follows `prattail_bridge::unexpected_option_shape`, the tree's
+/// existing precedent for "two components' accepted domains have drifted apart":
+/// name the rule, name what was expected, and say it is a macro bug so the
+/// reader does not go looking for a mistake in their grammar.
+pub(crate) fn shape_refusal(
+    rule_label: &syn::Ident,
+    expected: &str,
+) -> proc_macro2::TokenStream {
+    let message = format!(
+        "mettail internal error: rule `{rule_label}` reached codegen with an AST shape \
+         that {expected}. The parser builds this structure and the validator accepts it, \
+         so the two have drifted apart from what this emitter requires. This is a macro \
+         bug, not a grammar bug — please report it."
+    );
+    quote::quote_spanned!(rule_label.span() => compile_error!(#message);)
 }
 
 /// Task #14 gate-1 support: a field-empty `LanguageDef` for emitter unit

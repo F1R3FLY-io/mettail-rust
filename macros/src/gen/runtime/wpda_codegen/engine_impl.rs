@@ -360,6 +360,14 @@ pub(crate) fn emit_engine_impl_full(
     let s1_trigger_spine_owner_fn = &s1_spine.trigger_spine_owner_fn;
     let s1_spine_members_fn = &s1_spine.spine_members_fn;
     let s1_spine_weight_rule_fn = &s1_spine.spine_weight_rule_fn;
+    // ★ #141 G8 — the factoring model's ENCODING-LIMIT refusals. EMPTY for every
+    // grammar whose spine factoring encodes, which is every shipped one, so the
+    // generated module is byte-identical wherever there is nothing to refuse.
+    // Non-empty, it is a run of `compile_error!` items that fails the build with
+    // a message naming the category and the ceiling — the outcome the `assert!`s
+    // it replaces could not deliver, because a proc-macro panic under this
+    // workspace's cranelift dev backend prints nothing at all (#141 RED-0).
+    let s1_refusals = &s1_spine.refusals;
 
     // ── S1-FACTORING F5-2: the InfixLoop mixfix loop-v2 + the spliced
     // MixfixLiteralRun spine prelude (plan f5_mixfix_cohorts_plan.md §2). ──
@@ -607,6 +615,8 @@ pub(crate) fn emit_engine_impl_full(
         // spine ids, identity otherwise). Emitted ONLY when factored groups
         // exist; the lex-fork emission references it only in that case.
         #s1_spine_weight_rule_fn
+
+        #s1_refusals
 
         // Task #15 (frame-bound peel, 2026-07-14): module-level imports so the
         // peeled BinderRule/PrefixDispatch helper methods (in the inherent impl

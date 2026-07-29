@@ -345,6 +345,10 @@ fn generate_assemble_variant_decl(
         | VariantKind::CollectionLiteral { .. }
         | VariantKind::Nullary { .. } => None,
 
+        // ★ #141 G5 — `Some`, never `None`: `None` means "no arm for this
+        // variant", which would DISCARD the refusal. See `VariantKind::Refused`.
+        VariantKind::Refused { message, .. } => Some(quote! { compile_error!(#message); }),
+
         VariantKind::Regular { label, fields } => {
             let label_str = label.to_string();
 
@@ -744,6 +748,9 @@ fn generate_visit_variant_arm(
     let wrap = format_ident!("Wrap{}", cat);
 
     match variant {
+        // ★ #141 G5 — a classification that refuses carries its diagnostic into
+        // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
+        VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
         VariantKind::Var { label } => {
             quote! {
                 #cat::#label(v) => {
@@ -1469,6 +1476,10 @@ fn generate_assemble_arm(
         | VariantKind::Literal { .. }
         | VariantKind::CollectionLiteral { .. }
         | VariantKind::Nullary { .. } => None,
+
+        // ★ #141 G5 — `Some`, never `None`: `None` means "no arm for this
+        // variant", which would DISCARD the refusal. See `VariantKind::Refused`.
+        VariantKind::Refused { message, .. } => Some(quote! { compile_error!(#message); }),
 
         VariantKind::Regular { label, fields } => {
             let label_str = label.to_string();

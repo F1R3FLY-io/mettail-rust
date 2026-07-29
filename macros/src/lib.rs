@@ -243,7 +243,11 @@ pub(crate) fn expand_language(input: proc_macro2::TokenStream) -> proc_macro2::T
     // suppressed it by an explicit decision, or declined it outright. Deriving it at the top
     // level — rather than inside whichever report generator happens to run — is what makes the
     // published inventory and the lowering that produced it the same computation.
-    let lowering_dispositions =
+    // ★ #141 G9 — the inventory's completeness census refuses by returning tokens.
+    // EMPTY for every language whose declared constructs are all accounted for,
+    // which is every shipped one; non-empty it is a `compile_error!` naming the
+    // constructs that left the lowering without a disposition.
+    let (lowering_dispositions, disposition_refusal) =
         gen::runtime::dovetail_report::lowering_disposition_inventory(&language_def);
     stage!("lowering_disposition_inventory.done");
 
@@ -345,6 +349,9 @@ pub(crate) fn expand_language(input: proc_macro2::TokenStream) -> proc_macro2::T
     let strategies_include = spill_and_include(&lang_name, "strategies", public_strategies);
 
     quote::quote! {
+        // ★ #141 G9 — the lowering-disposition census's refusal. EMPTY for every
+        // language whose declared constructs are all accounted for.
+        #disposition_refusal
         #ast_include
         #freshness_include
         #metadata_include

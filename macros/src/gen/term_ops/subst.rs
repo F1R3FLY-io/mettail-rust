@@ -82,6 +82,21 @@ pub(crate) const COLLECTION_LITERAL_KIND_GATE: bool = true;
 /// Abstracts over both old (BNFC) and new (judgement) syntax.
 #[derive(Debug, Clone)]
 pub(crate) enum VariantKind {
+    /// ★ #141 G5 — a rule whose AST SHAPE contradicts what the parser built.
+    ///
+    /// `rule_to_variant_kind` used to `panic!("Binding index doesn't point to a
+    /// Binder")` when `GrammarRule::bindings` indexed an item that was not a
+    /// binder (or not a non-terminal body). That invariant is established when
+    /// `ast/src/grammar.rs` BUILDS the bindings list and is re-checked by
+    /// nothing, so the panic was an unproved claim — and a mute one, since a
+    /// proc-macro panic under this workspace's cranelift dev backend prints
+    /// nothing at all (#141 RED-0).
+    ///
+    /// It is a DISCRIMINANT rather than a side channel for the same reason this
+    /// enum's `CollectionLiteral` is: the exhaustiveness checker performs the
+    /// census. Every consumer of a classification must now say what it does with
+    /// one that refuses, and cannot silently treat it as some other shape.
+    Refused { label: Ident, message: String },
     /// Variable variant: PVar(OrdVar)
     Var { label: Ident },
     /// Literal variant: NumLit(i32)
@@ -651,6 +666,9 @@ fn generate_assemble_variant_decl(
     language: &LanguageDef,
 ) -> Option<TokenStream> {
     match variant {
+        // ★ #141 G5 — `Some`, never `None`: `None` here means "this variant
+        // contributes no arm", which would DISCARD the refusal.
+        VariantKind::Refused { message, .. } => Some(quote! { compile_error!(#message); }),
         VariantKind::Var { .. } | VariantKind::Nullary { .. } => None,
 
         // Stage 0 identity: `CollectionLiteral` delegates to the `Literal` body,
@@ -990,6 +1008,9 @@ fn generate_visit_variant_arm(
     language: &LanguageDef,
 ) -> TokenStream {
     match variant {
+        // ★ #141 G5 — a classification that refuses carries its diagnostic into
+        // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
+        VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
         VariantKind::Var { label } => generate_var_visit_arm(cat, label, language),
         // Stage 0 identity: `generate_literal_visit_arm` already re-derives
         // `collection_literal_info` and routes to the recursing arm itself.
@@ -1953,6 +1974,8 @@ fn generate_assemble_arm_for_variant(
     language: &LanguageDef,
 ) -> Option<TokenStream> {
     match variant {
+        // ★ #141 G5 — see the twin above; `Some` so the refusal is not discarded.
+        VariantKind::Refused { message, .. } => Some(quote! { compile_error!(#message); }),
         VariantKind::Var { .. } | VariantKind::Nullary { .. } => None,
         // Stage 0 identity: same body for both discriminants.
         VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
@@ -3435,15 +3458,32 @@ pub(crate) fn variant_kind_from_items(
         let (binder_idx, body_indices) = &bindings[0];
         let body_idx = body_indices[0];
 
-        let binder_cat = match &items[*binder_idx] {
-            GrammarItem::Binder { category } => category.clone(),
-            _ => panic!("Binding index doesn't point to a Binder"),
+        // ★ #141 G5 — see `VariantKind::Refused`.
+        let GrammarItem::Binder { category: binder_cat } = &items[*binder_idx] else {
+            return VariantKind::Refused {
+                label: label.clone(),
+                message: format!(
+                    "mettail internal error: rule `{label}` declares a binding whose binder \
+                     index does not point at a binder item. The parser builds this \
+                     structure, so it and this classifier have drifted apart. This is a \
+                     macro bug, not a grammar bug — please report it."
+                ),
+            };
         };
+        let binder_cat = binder_cat.clone();
 
-        let body_cat = match &items[body_idx] {
-            GrammarItem::NonTerminal { ident: cat, .. } => cat.clone(),
-            _ => panic!("Body index doesn't point to a NonTerminal"),
+        let GrammarItem::NonTerminal { ident: body_cat, .. } = &items[body_idx] else {
+            return VariantKind::Refused {
+                label: label.clone(),
+                message: format!(
+                    "mettail internal error: rule `{label}` declares a binding whose body \
+                     index does not point at a non-terminal item. The parser builds this \
+                     structure, so it and this classifier have drifted apart. This is a \
+                     macro bug, not a grammar bug — please report it."
+                ),
+            };
         };
+        let body_cat = body_cat.clone();
 
         let pre_scope_fields: Vec<FieldInfo> = items
             .iter()
@@ -3684,6 +3724,124 @@ pub(crate) fn field_infos_from_term_param(param: &TermParam, in_optional: bool) 
             }]
         },
         TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => vec![],
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #141 G5 RED — a rule whose binding metadata contradicts its items REFUSES
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ⚠ No cell expects a panic: each reads the classification the function returns.
+#[cfg(test)]
+mod shape_refusal_red {
+    use super::*;
+    use mettail_ast::grammar::{rule_fixture, GrammarItem, NonTerminalKind};
+    use proc_macro2::Span;
+    use syn::Ident;
+
+    fn id(name: &str) -> Ident {
+        Ident::new(name, Span::call_site())
+    }
+
+    /// A binder rule as ITEMS — a binder at index 0, a body non-terminal at 1,
+    /// and `bindings` saying exactly that. `binder_item` is the ONLY thing the
+    /// mutated and control fixtures differ in.
+    fn binder_rule(binder_item: GrammarItem) -> GrammarRule {
+        GrammarRule {
+            items: vec![
+                binder_item,
+                GrammarItem::NonTerminal { ident: id("Term"), kind: NonTerminalKind::Category },
+            ],
+            bindings: vec![(0usize, vec![1usize])],
+            ..rule_fixture(id("Lam"), id("Term"))
+        }
+    }
+
+    /// ★ THE MUTATION CELL. A `bindings` entry whose binder index points at a
+    /// TERMINAL classifies as `Refused`, carrying a message that names the rule.
+    #[test]
+    fn a_binding_that_does_not_point_at_a_binder_refuses() {
+        let mutated = binder_rule(GrammarItem::Terminal("lambda".to_string()));
+        let control = binder_rule(GrammarItem::Binder { category: id("Term") });
+
+        // The mutation is applied, and is the only difference.
+        assert_eq!(mutated.bindings, control.bindings, "same binding metadata");
+        assert_eq!(mutated.items.len(), control.items.len(), "same item count");
+        assert!(
+            matches!(mutated.items[0], GrammarItem::Terminal(_)),
+            "the mutated fixture's item 0 is a TERMINAL, which is what makes the \
+             binding metadata a lie",
+        );
+
+        let language = crate::gen::empty_language_for_tests();
+        let VariantKind::Refused { label, message } = rule_to_variant_kind(&mutated, &language)
+        else {
+            panic!(
+                "a rule whose binding index does not point at a binder must classify as \
+                 `Refused` — resolving it as some other shape is the silent \
+                 misclassification this discriminant exists to make impossible",
+            );
+        };
+
+        assert_eq!(label, "Lam", "the refusal must carry the rule's LABEL");
+        assert!(
+            message.contains("`Lam`"),
+            "and the message must name it — an index names nothing an author can act \
+             on. Got: {message}",
+        );
+        assert!(
+            message.contains("binder index"),
+            "the message must say WHICH index disagrees with the items, since a rule \
+             has both a binder index and a body index. Got: {message}",
+        );
+        assert!(
+            message.contains("macro bug"),
+            "and it must say the fault is the macro's, so the reader does not go \
+             looking for a mistake in their grammar. Got: {message}",
+        );
+    }
+
+    /// ★ THE MUTATION CELL for the BODY index — a different index, a different
+    /// message. One message for both would not say which to look at.
+    #[test]
+    fn a_binding_whose_body_is_not_a_non_terminal_refuses_differently() {
+        let mut mutated = binder_rule(GrammarItem::Binder { category: id("Term") });
+        mutated.items[1] = GrammarItem::Terminal(".".to_string());
+
+        let language = crate::gen::empty_language_for_tests();
+        let VariantKind::Refused { message, .. } = rule_to_variant_kind(&mutated, &language)
+        else {
+            panic!("a body index that does not point at a non-terminal must refuse");
+        };
+        assert!(
+            message.contains("body index"),
+            "the body-index refusal must be distinguishable from the binder-index one: \
+             {message}",
+        );
+        assert!(
+            !message.contains("binder index"),
+            "…and must not claim the binder index is what went wrong: {message}",
+        );
+    }
+
+    /// ★ THE CONTROL that must NOT discriminate: the well-formed twin still
+    /// classifies as a binder, with the categories it declares.
+    #[test]
+    fn a_well_formed_binder_rule_still_classifies_as_a_binder() {
+        let control = binder_rule(GrammarItem::Binder { category: id("Term") });
+        let language = crate::gen::empty_language_for_tests();
+        match rule_to_variant_kind(&control, &language) {
+            VariantKind::Binder { label, binder_cat, body_cat, .. } => {
+                assert_eq!(label, "Lam", "the control keeps its label");
+                assert_eq!(binder_cat, "Term", "and its binder category");
+                assert_eq!(body_cat, "Term", "and its body category");
+            },
+            other => panic!(
+                "the well-formed twin must still classify as a binder — otherwise the \
+                 cells above prove only that this classifier refuses everything. Got: \
+                 {other:?}"
+            ),
+        }
     }
 }
 

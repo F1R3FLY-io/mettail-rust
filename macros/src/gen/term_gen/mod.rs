@@ -55,20 +55,32 @@ pub(crate) fn is_ident_position(cat: &Ident) -> bool {
 /// the language to declare `a` / `aa` / `aaa` as syntax. The [`terminal_literals`] filter
 /// removes such a candidate if it ever happens.
 ///
-/// Panics (as a proc-macro build error naming the cause) if the language's effective `Ident`
-/// pattern admits NO string at all: that is an ill-formed override, and a silent fallback to
-/// some other name would put an unparseable identifier into every generated term.
-pub(crate) fn ident_samples(language: &LanguageDef) -> Vec<String> {
+/// # Errors
+///
+/// ★ #141 G4. `Err(diagnostic)` when the language's effective `Ident` pattern admits NO string
+/// at all, or when every candidate it admits collides with a grammar terminal. Both are
+/// ill-formed-override conditions, and a silent fallback to some other name would put an
+/// unparseable identifier into every generated term.
+///
+/// Both refusals used to be `panic!`s, and under this workspace's cranelift dev backend a
+/// `panic!` inside a proc macro prints NOTHING — rustc dies with `fatal runtime error: Rust
+/// cannot catch foreign exceptions` and the payload never appears (#141 RED-0, 2026-07-29).
+/// The five call sites now render the message as a `compile_error!`, each in the form its own
+/// emitter can carry (tokens for the three `TokenStream` emitters, generated-source text for
+/// the two that build a `String`).
+pub(crate) fn ident_samples(language: &LanguageDef) -> Result<Vec<String>, String> {
     use crate::gen::test_gen::automaton_walk::classify::effective_pattern_for;
     use crate::gen::test_gen::automaton_walk::nfa_walk::{deterministic_sample, pattern_admits};
 
     let pattern = effective_pattern_for(language, "Ident");
-    let base = deterministic_sample(&pattern).unwrap_or_else(|| {
-        panic!(
-            "the language's effective `Ident` pattern ({pattern:?}) admits no string, so no \
-             identifier can be generated for an `m:Ident` position",
-        )
-    });
+    let Some(base) = deterministic_sample(&pattern) else {
+        return Err(format!(
+            "mettail: the effective `Ident` pattern of language `{}` ({pattern:?}) admits no \
+             string, so no identifier can be generated for an `m:Ident` position. Correct the \
+             `Ident` token override in the `literals {{ … }}` block.",
+            language.name,
+        ));
+    };
     let reserved = terminal_literals(language);
     let mut out = Vec::with_capacity(3);
     for repeat in 1..=3usize {
@@ -81,13 +93,15 @@ pub(crate) fn ident_samples(language: &LanguageDef) -> Vec<String> {
         }
     }
     if out.is_empty() {
-        panic!(
-            "the language's effective `Ident` pattern ({pattern:?}) admits {base:?}, but every \
-             generated candidate collided with a grammar terminal — no identifier can be \
-             generated for an `m:Ident` position",
-        );
+        return Err(format!(
+            "mettail: the effective `Ident` pattern of language `{}` ({pattern:?}) admits \
+             {base:?}, but every generated candidate collided with a grammar terminal — no \
+             identifier can be generated for an `m:Ident` position. Either widen the `Ident` \
+             pattern or stop reserving the candidates it produces as terminals.",
+            language.name,
+        ));
     }
-    out
+    Ok(out)
 }
 
 /// (A4) How many of `rule`'s term-context parameters are builtin `Ident` params (`m:Ident`).
@@ -145,7 +159,12 @@ fn terminal_literals(language: &LanguageDef) -> std::collections::HashSet<String
 /// generated code free of a `gen_range(0..1)` the compiler would warn about and keeps a
 /// one-identifier spec deterministic.
 pub(crate) fn random_ident_expr(language: &LanguageDef) -> TokenStream {
-    let samples = ident_samples(language);
+    // Expression position: `compile_error!` is an expression, so the refusal
+    // substitutes for the `String`-valued expression this would have produced.
+    let samples = match ident_samples(language) {
+        Ok(samples) => samples,
+        Err(message) => return quote! { compile_error!(#message) },
+    };
     if samples.len() == 1 {
         let only = &samples[0];
         return quote! { #only.to_string() };
@@ -278,6 +297,124 @@ pub(crate) fn count_optional_positions(term_context: &[TermParam]) -> (usize, us
         pairs.fold((0, 0), |(at, bt), (a, b)| (at + a, bt + b))
     }
     sum_pairs(term_context.iter().map(count_top))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #141 G4 RED — an `Ident` override that admits nothing REFUSES, readably
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ⚠ No cell expects a panic: each reads the `Result` the function returns.
+#[cfg(test)]
+mod ident_pool_refusal_red {
+    use super::*;
+    use mettail_ast::language::TokenDef;
+    use proc_macro2::Span;
+    use syn::Ident;
+
+    /// A language whose `Ident` token is overridden to `pattern`.
+    ///
+    /// The override is the ONLY thing the fixtures differ in, and
+    /// `effective_pattern_for` reads exactly it, so it is the input
+    /// `ident_samples` walks.
+    fn language_with_ident_pattern(pattern: &str) -> mettail_ast::language::LanguageDef {
+        let mut language = crate::gen::empty_language_for_tests();
+        language.token_defs.push(TokenDef {
+            name: Ident::new("Ident", Span::call_site()),
+            pattern: pattern.to_string(),
+            category: None,
+            rust_code: None,
+            priority: None,
+            push_mode: None,
+            is_pop: false,
+            stream: None,
+            from_literals: false,
+        });
+        language
+    }
+
+    /// ★ THE MUTATION CELL. An `Ident` pattern that admits NO string refuses, and
+    /// the diagnostic names the language and the pattern.
+    #[test]
+    fn an_ident_pattern_that_admits_nothing_refuses() {
+        // The mutation is applied and is the only difference: same fixture, one
+        // pattern string apart.
+        let mutated = language_with_ident_pattern("");
+        let control = language_with_ident_pattern("[a-z]+");
+        assert_eq!(mutated.name, control.name, "same language, one token apart");
+        assert_ne!(
+            mutated.token_defs[0].pattern, control.token_defs[0].pattern,
+            "and the token they differ in is the `Ident` PATTERN, which is what \
+             `ident_samples` walks",
+        );
+
+        let rejection = ident_samples(&mutated).expect_err(
+            "an `Ident` pattern that admits no string must REFUSE: a silent fallback to \
+             some other name would put an unparseable identifier into every generated \
+             term",
+        );
+        assert!(
+            rejection.contains("TestLang"),
+            "the diagnostic must name the LANGUAGE — one `rustc` process expands every \
+             bundled grammar. Got: {rejection}",
+        );
+        assert!(
+            rejection.contains("admits no string"),
+            "…and say WHAT is wrong with the pattern, not merely that something is. \
+             Got: {rejection}",
+        );
+        assert!(
+            rejection.contains("m:Ident"),
+            "…and name the position that needed an identifier, which is what tells the \
+             author where to look. Got: {rejection}",
+        );
+    }
+
+    /// ★ THE CONTROL that must NOT discriminate: a workable override still yields
+    /// a pool, and the pool is non-empty.
+    #[test]
+    fn a_workable_ident_pattern_still_yields_a_pool() {
+        let samples = ident_samples(&language_with_ident_pattern("[a-z]+")).expect(
+            "an `Ident` pattern that admits strings must still produce a pool — \
+             otherwise the cell above proves only that this function refuses \
+             everything",
+        );
+        assert!(!samples.is_empty(), "the pool must be non-empty: {samples:?}");
+        assert!(
+            samples.iter().all(|s| s.chars().all(|c| c.is_ascii_lowercase())),
+            "and every sample must satisfy the declared pattern: {samples:?}",
+        );
+    }
+
+    /// ★ THE SECOND MUTATION CELL — the OTHER refusal. A pattern that admits
+    /// exactly one string which the grammar also reserves as a terminal leaves the
+    /// pool empty, and that is a different message.
+    #[test]
+    fn a_pool_emptied_by_terminal_collisions_refuses_differently() {
+        let mut language = language_with_ident_pattern("x");
+        // `x`, `xx` and `xxx` are the three candidates `ident_samples` derives from
+        // a base sample of `x`; reserving all three empties the pool. Only `x`
+        // matches the pattern, so reserving it suffices.
+        language.terms.push(mettail_ast::grammar::GrammarRule {
+            items: vec![mettail_ast::grammar::GrammarItem::Terminal("x".to_string())],
+            ..mettail_ast::grammar::rule_fixture(
+                Ident::new("XKeyword", Span::call_site()),
+                Ident::new("Term", Span::call_site()),
+            )
+        });
+
+        let rejection = ident_samples(&language)
+            .expect_err("a pool emptied by terminal collisions must refuse");
+        assert!(
+            rejection.contains("collided with a grammar terminal"),
+            "this refusal must be DISTINGUISHABLE from the admits-nothing one — the two \
+             have different fixes. Got: {rejection}",
+        );
+        assert!(
+            !rejection.contains("admits no string"),
+            "…and must not claim the pattern admits nothing, which it does not. Got: \
+             {rejection}",
+        );
+    }
 }
 
 #[cfg(test)]

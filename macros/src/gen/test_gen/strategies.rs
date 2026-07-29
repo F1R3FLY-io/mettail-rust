@@ -38,6 +38,47 @@ use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 
+/// The `CollectionType` a collection field must carry, or the GENERATED-SOURCE
+/// TEXT that refuses.
+///
+/// # Why the refusal is text rather than a `TokenStream`
+///
+/// ★ #141 G4. Four sites in this module read `field.coll_type` on a field that
+/// `field.is_collection` already says is a collection, and all four ended in
+/// `.unwrap_or_else(|| panic!(…))`. Under this workspace's cranelift dev backend
+/// a `panic!` inside a proc macro prints NOTHING — rustc dies with
+/// `fatal runtime error: Rust cannot catch foreign exceptions` and the payload
+/// never appears (#141 RED-0, 2026-07-29) — so all four messages were unreadable.
+///
+/// This module does not build a `TokenStream`; it builds a `String` of Rust
+/// SOURCE which `test_gen` writes to `languages/tests/gen_<lang>_*.rs` and
+/// `rustc` then compiles. The refusal therefore travels as a `compile_error!`
+/// LINE in that source. It is still a token by the time it matters — rustc
+/// expands and reports it, naming the file and line of the generated builder —
+/// and unlike a `panic!` it cannot be swallowed by the backend. What it cannot
+/// carry is a span into the `language!` invocation, so the message names the
+/// category and the rule explicitly instead of pointing at them.
+///
+/// The caller pushes the returned line and substitutes a placeholder expression
+/// for the field, because `compile_error!` fires on expansion regardless of what
+/// the surrounding code does with the slot.
+fn coll_type_or_refusal<'a>(
+    field: &'a FieldInfo,
+    rule_label: &str,
+) -> Result<&'a mettail_ast::types::CollectionType, String> {
+    field.coll_type.as_ref().ok_or_else(|| {
+        format!(
+            "            compile_error!(\"mettail: the collection field of category \
+             `{category}` on rule `{rule_label}` carries no `coll_type`, so the tape \
+             builder cannot know which container to build. Every collection field is \
+             supposed to carry one by construction (`is_collection` and `coll_type` are \
+             set together when the field is synthesised), so this is a MACRO BUG rather \
+             than a grammar bug — please report it.\");\n",
+            category = field.category,
+        )
+    })
+}
+
 /// Check if a category has explicit binder rules (single or multi-binder).
 ///
 /// Categories with binders produce FreeVar-containing terms where identity
@@ -276,10 +317,17 @@ fn collect_spec_only_variants(category: &syn::Ident, language: &LanguageDef) -> 
     // 1. Spec-defined rules from language.terms (includes guarded constructors)
     for rule in language.terms.iter().filter(|r| r.category == *category) {
         // Skip internal-only rules whose surface begins with a `__`-prefixed
-        // terminal (CommWhere `__comm_where`, GuardThen `__guard_then`,
-        // PParInternal `__ppar`): they have no user-facing surface, so generating
-        // them as random terms yields Display strings the parser cannot re-parse.
-        // They still PARSE (for internal AST round-tripping) — just not generated.
+        // terminal (CommWhere `__comm_where`, GuardThen `__guard_then`): they
+        // have no user-facing surface, so generating them as random terms yields
+        // Display strings the parser cannot re-parse. They still PARSE (for
+        // internal AST round-tripping) — just not generated.
+        //
+        // Rholang's `PParInternal` (`__ppar`) was a third such rule until
+        // 2026-07-29, when it was deleted as a vestige of the pre-braced `PPar`
+        // grammar. It is worth naming here because it was also the one rule that
+        // FALSIFIED the "they still PARSE" clause: measured before deletion,
+        // `__ppar(Nil, Nil)` did not parse at all. The clause holds for the two
+        // remaining rules; do not extend it to a new `__` rule without measuring.
         if rule_has_internal_surface(rule) {
             continue;
         }
@@ -360,6 +408,14 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
 
     for variant in &variants {
         match variant {
+            // ★ #141 G5 — generated-source EXPRESSION position: the leaf's build
+            // code is a Rust expression written as text, and `compile_error!(…)`
+            // is an expression. Emitting the leaf with a refusing body keeps the
+            // tape builder's arm count intact and makes the diagnostic what
+            // `rustc` reports for it. See `VariantKind::Refused`.
+            VariantKind::Refused { label, message } => {
+                leaves.push((label.to_string(), format!("compile_error!({message:?})")));
+            },
             VariantKind::Nullary { label } => {
                 let label_str = label.to_string();
                 leaves.push((
@@ -474,20 +530,29 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                         == fields.len()
                 {
                     let label_str = label.to_string();
-                    let samples = crate::gen::term_gen::ident_samples(language);
-                    let args: Vec<String> = (0..fields.len())
-                        .map(|_| {
-                            format!(
-                                "[{}][(reader.next_byte() as usize) % {}].to_string()",
-                                samples
-                                    .iter()
-                                    .map(|s| format!("{s:?}"))
-                                    .collect::<Vec<_>>()
-                                    .join(", "),
-                                samples.len(),
-                            )
-                        })
-                        .collect();
+                    // ★ #141 G4. Generated-source EXPRESSION position: each arg is a
+                    // Rust expression written as text, and `compile_error!(…)` is an
+                    // expression, so the refusal substitutes for the pool lookup in
+                    // every slot. `{:?}` on the message renders it as an escaped Rust
+                    // string literal, which the pattern's `Debug` form needs.
+                    let args: Vec<String> = match crate::gen::term_gen::ident_samples(language) {
+                        Ok(samples) => (0..fields.len())
+                            .map(|_| {
+                                format!(
+                                    "[{}][(reader.next_byte() as usize) % {}].to_string()",
+                                    samples
+                                        .iter()
+                                        .map(|s| format!("{s:?}"))
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                    samples.len(),
+                                )
+                            })
+                            .collect(),
+                        Err(message) => (0..fields.len())
+                            .map(|_| format!("compile_error!({message:?})"))
+                            .collect(),
+                    };
                     leaves.push((
                         label_str.clone(),
                         format!(
@@ -1060,12 +1125,14 @@ fn generate_direct_recursive_build(
                     // Phase 4 #3 (2026-05-12): Optional-Collection — visit
                     // both None and Some(empty Container) arms based on
                     // a tape byte. Spec admits both; generator must too.
-                    let coll_type = field.coll_type.as_ref().unwrap_or_else(|| {
-                        panic!(
-                            "collection field of category `{}` missing coll_type in language! spec",
-                            field.category
-                        )
-                    });
+                    let coll_type = match coll_type_or_refusal(field, &label_str) {
+                        Ok(coll_type) => coll_type,
+                        Err(refusal) => {
+                            code.push_str(&refusal);
+                            field_exprs.push("Default::default()".to_string());
+                            continue;
+                        },
+                    };
                     match coll_type {
                         mettail_ast::types::CollectionType::HashBag => {
                             code.push_str(&format!(
@@ -1129,12 +1196,14 @@ fn generate_direct_recursive_build(
                     // F5: spec-derived coll_type — every collection field
                     // MUST carry coll_type per the language! spec; missing is
                     // a synthetic insertion bug, surfaced loudly.
-                    let coll_type = field.coll_type.as_ref().unwrap_or_else(|| {
-                        panic!(
-                            "collection field of category `{}` missing coll_type in language! spec",
-                            field.category
-                        )
-                    });
+                    let coll_type = match coll_type_or_refusal(field, &label_str) {
+                        Ok(coll_type) => coll_type,
+                        Err(refusal) => {
+                            code.push_str(&refusal);
+                            field_exprs.push("Default::default()".to_string());
+                            continue;
+                        },
+                    };
                     match coll_type {
                         mettail_ast::types::CollectionType::HashBag => {
                             code.push_str(&format!(
@@ -1233,18 +1302,25 @@ fn generate_direct_recursive_build(
                     // that does not type-check, i.e. a BUILD BREAK rather than the silent
                     // coverage loss the sibling sites had. It had never fired only because no
                     // shipped grammar pairs an `m:Ident` param with a category child.
-                    let samples = crate::gen::term_gen::ident_samples(language);
-                    let pool = samples
-                        .iter()
-                        .map(|s| format!("{s:?}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    code.push_str(&format!(
-                        "            let f{i} = [{pool}][(reader.next_byte() as usize) % {n}].to_string();\n",
-                        i = i,
-                        pool = pool,
-                        n = samples.len(),
-                    ));
+                    // ★ #141 G4. Generated-source STATEMENT position: the refusal
+                    // becomes the `let f{i} = …;` binding's initializer, so the
+                    // slot still exists for the constructor call below and the
+                    // diagnostic is what rustc reports for it.
+                    let initializer = match crate::gen::term_gen::ident_samples(language) {
+                        Ok(samples) => {
+                            let pool = samples
+                                .iter()
+                                .map(|s| format!("{s:?}"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!(
+                                "[{pool}][(reader.next_byte() as usize) % {n}].to_string()",
+                                n = samples.len(),
+                            )
+                        },
+                        Err(message) => format!("compile_error!({message:?})"),
+                    };
+                    code.push_str(&format!("            let f{i} = {initializer};\n"));
                     field_exprs.push(format!("f{}", i));
                 } else if is_known {
                     code.push_str(&format!(
@@ -1386,12 +1462,14 @@ fn generate_binder_direct_build(
         // is `Option<Container>` (bare, no Box). Mirrors the Regular path in
         // `generate_constructor_match_arms`.
         if field.is_optional && field.is_collection {
-            let coll_type = field.coll_type.as_ref().unwrap_or_else(|| {
-                panic!(
-                    "collection field of category `{}` missing coll_type in language! spec",
-                    field.category
-                )
-            });
+            let coll_type = match coll_type_or_refusal(field, label) {
+                Ok(coll_type) => coll_type,
+                Err(refusal) => {
+                    code.push_str(&refusal);
+                    pre_scope_exprs.push("Default::default()".to_string());
+                    continue;
+                },
+            };
             match coll_type {
                 mettail_ast::types::CollectionType::HashBag
                 | mettail_ast::types::CollectionType::HashMap
@@ -1464,12 +1542,14 @@ fn generate_binder_direct_build(
         } else if field.is_collection {
             // F5: spec-derived coll_type — every collection field MUST
             // carry coll_type per the language! spec.
-            let coll_type = field.coll_type.as_ref().unwrap_or_else(|| {
-                panic!(
-                    "collection field of category `{}` missing coll_type in language! spec",
-                    field.category
-                )
-            });
+            let coll_type = match coll_type_or_refusal(field, label) {
+                Ok(coll_type) => coll_type,
+                Err(refusal) => {
+                    code.push_str(&refusal);
+                    pre_scope_exprs.push("Default::default()".to_string());
+                    continue;
+                },
+            };
             match coll_type {
                 mettail_ast::types::CollectionType::Vec => {
                     code.push_str(&format!(

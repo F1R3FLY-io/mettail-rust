@@ -174,8 +174,16 @@ struct OpVariant {
 /// Collect every op-enum variant for a language: one per `(category, constructor)` across all
 /// categories, plus the spine sentinels (`BinderArity`, `FieldNone`, `FieldOpaque`) the
 /// lowering emits for binder-arity markers and optional/opaque field slots.
-fn collect_op_variants(language: &LanguageDef) -> Vec<OpVariant> {
+///
+/// ★ #141 G5 — also returns the classification REFUSALS (`VariantKind::Refused`)
+/// as `compile_error!` items. A refusing classification declares no op-enum
+/// variant, so without a second return value the diagnostic would have nowhere
+/// to go and the build would fail instead with a cascade of "no variant named …"
+/// errors pointing away from the cause. EMPTY for every grammar whose rules
+/// classify, which is every shipped one.
+fn collect_op_variants(language: &LanguageDef) -> (Vec<OpVariant>, Vec<TokenStream>) {
     let mut variants = Vec::new();
+    let mut refusals: Vec<TokenStream> = Vec::new();
     let mut disc: u32 = 0;
     let mut push = |ident: Ident,
                     payload: Option<TokenStream>,
@@ -198,6 +206,13 @@ fn collect_op_variants(language: &LanguageDef) -> Vec<OpVariant> {
         let cat = category.to_string();
         for variant in collect_category_variants(category, language) {
             match variant {
+                // ★ #141 G5. A classification that refuses declares no op-enum
+                // variant; the diagnostic is emitted beside the enum instead, so
+                // the build fails with the message rather than with a cascade of
+                // "no variant named …" errors. See `VariantKind::Refused`.
+                VariantKind::Refused { message, .. } => {
+                    refusals.push(quote! { compile_error!(#message); });
+                },
                 VariantKind::Var { label } => {
                     let ident = op_variant_ident(category, &label);
                     let display = format!("{lang}::{cat}::{label}");
@@ -316,7 +331,7 @@ fn collect_op_variants(language: &LanguageDef) -> Vec<OpVariant> {
         );
     }
 
-    variants
+    (variants, refusals)
 }
 
 /// (#101) The op-enum variant identifier for the ordered-sequence leaf of an element category:
@@ -385,6 +400,11 @@ pub(crate) fn ordered_seq_element_categories(language: &LanguageDef) -> Vec<Iden
     };
     for rule in &language.terms {
         match rule_to_variant_kind(rule, language) {
+            // ★ #141 G5. This walk collects the element CATEGORIES a lowering
+            // needs; a rule whose classification refuses contributes none, and
+            // the refusal itself is emitted by `op_enum_variants` from the same
+            // classification. See `VariantKind::Refused`.
+            VariantKind::Refused { .. } => {},
             VariantKind::Regular { fields, .. } => {
                 for cat in fields.iter().filter_map(ordered_field_element) {
                     push_unique(cat);
@@ -438,7 +458,12 @@ pub(crate) fn language_has_token_text_leaf(language: &LanguageDef) -> bool {
                 | VariantKind::MultiBinder { pre_scope_fields, .. } => {
                     pre_scope_fields.iter().any(is_token_text)
                 },
-                VariantKind::Var { .. }
+                // ★ #141 G5. The predicate asks "does any variant carry a
+                // token-text field?"; a refusal carries no fields, so the honest
+                // answer is `false` and the refusal is reported by the emitter
+                // that owns it. See `VariantKind::Refused`.
+                VariantKind::Refused { .. }
+                | VariantKind::Var { .. }
                 | VariantKind::Literal { .. }
                 | VariantKind::CollectionLiteral { .. }
                 | VariantKind::Nullary { .. }
@@ -454,7 +479,7 @@ pub(crate) fn language_has_token_text_leaf(language: &LanguageDef) -> bool {
 /// content key (`unsafe` trait: a key disagreeing with `Eq` would silently fail dedup).
 pub(crate) fn generate_dovetail_op_enum(language: &LanguageDef) -> TokenStream {
     let enum_ident = op_enum_ident(language);
-    let variants = collect_op_variants(language);
+    let (variants, op_variant_refusals) = collect_op_variants(language);
 
     let enum_variants = variants.iter().map(|v| {
         let ident = &v.ident;
@@ -526,5 +551,9 @@ pub(crate) fn generate_dovetail_op_enum(language: &LanguageDef) -> TokenStream {
                 }
             }
         }
+
+        // ★ #141 G5 — the classification refusals. EMPTY for every grammar whose
+        // rules classify; non-empty, each is a `compile_error!` naming the rule.
+        #(#op_variant_refusals)*
     }
 }

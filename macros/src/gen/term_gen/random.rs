@@ -795,9 +795,12 @@ fn generate_random_binder_constructor(
     let body_idx = body_indices[0];
 
     // Find body category
-    let body_cat = match &rule.items[body_idx] {
-        GrammarItem::NonTerminal { ident: cat, .. } => cat,
-        _ => panic!("Body should be NonTerminal"),
+    // ★ #141 G5 — see `crate::gen::shape_refusal`.
+    let GrammarItem::NonTerminal { ident: body_cat, .. } = &rule.items[body_idx] else {
+        return crate::gen::shape_refusal(
+            label,
+            "declares a binding whose body index does not point at a non-terminal item",
+        );
     };
 
     // Find non-body, non-binder arguments
@@ -844,9 +847,12 @@ fn generate_random_multi_binder_constructor(
     let body_idx = body_indices[0];
 
     // Find body category
-    let body_cat = match &rule.items[body_idx] {
-        GrammarItem::NonTerminal { ident: cat, .. } => cat,
-        _ => panic!("Body should be NonTerminal"),
+    // ★ #141 G5 — see `crate::gen::shape_refusal`.
+    let GrammarItem::NonTerminal { ident: body_cat, .. } = &rule.items[body_idx] else {
+        return crate::gen::shape_refusal(
+            label,
+            "declares a binding whose body index does not point at a non-terminal item",
+        );
     };
 
     if !is_lang_type(body_cat, language) {

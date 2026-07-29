@@ -152,13 +152,34 @@ pub fn emit_lex_alt_rule_for_fn(
                 .get(cat_src_idx)
                 .and_then(|m| m.get(&rule_idx_u16))
             {
-                assert!(
-                    matches!(shape, AtomicShape::NullaryLiteralRun { .. })
-                        || super::binder::classify_binder_in(rule, _language).is_some(),
-                    "S1-FACTORING A3: grouped rule (cat {cat_src_idx_u16}, rule \
-                     {rule_idx_u16}) is neither NullaryLiteralRun nor binder-classified — \
-                     the lex-alt surface would drift from the factoring model",
-                );
+                // ★ #141 G4/G9 — both S1-FACTORING A3 invariants below refuse as
+                // TOKENS. `prefix_pushes` is a `Vec<TokenStream>` spliced into the
+                // emitted `lex_alt_rules_for_prefix` body, so a `compile_error!`
+                // pushed here fails the build with a message rustc renders. The
+                // `assert!`/`panic!` they replace could not: under this workspace's
+                // cranelift dev backend a proc-macro panic prints nothing at all
+                // (#141 RED-0), so "fails codegen loudly" was false as written.
+                //
+                // Both name the rule by LABEL as well as by the (cat, rule) index
+                // pair the factoring model keys on — the pair identifies the drift
+                // for a maintainer, the label identifies the rule for an author.
+                if !matches!(shape, AtomicShape::NullaryLiteralRun { .. })
+                    && super::binder::classify_binder_in(rule, _language).is_none()
+                {
+                    let message = format!(
+                        "mettail: S1-FACTORING A3 — the grouped rule `{}` (category index \
+                         {cat_src_idx_u16}, rule index {rule_idx_u16}) is neither a \
+                         NullaryLiteralRun nor binder-classified, so the lex-alt surface \
+                         would drift from the factoring model that grouped it. The \
+                         classifier and the factoring model disagree; this is a macro bug, \
+                         not a grammar bug — please report it.",
+                        rule.label,
+                    );
+                    prefix_pushes.push(
+                        quote::quote_spanned!(rule.label.span() => compile_error!(#message);),
+                    );
+                    continue;
+                }
                 if let super::factoring::SpineDisposition::GroupFirst {
                     spine_id,
                     body_src_idx,
@@ -168,10 +189,18 @@ pub fn emit_lex_alt_rule_for_fn(
                     let Some(mettail_ast::grammar::SyntaxExpr::Literal(trigger)) =
                         rule.syntax_pattern.as_ref().and_then(|sp| sp.first())
                     else {
-                        panic!(
-                            "S1-FACTORING A3: grouped rule (cat {cat_src_idx_u16}, rule \
-                             {rule_idx_u16}) has no leading literal trigger",
+                        let message = format!(
+                            "mettail: S1-FACTORING A3 — the grouped rule `{}` (category \
+                             index {cat_src_idx_u16}, rule index {rule_idx_u16}) has no \
+                             leading literal trigger, but a spine group is keyed on one. \
+                             The factoring model and the rule's syntax pattern disagree; \
+                             this is a macro bug, not a grammar bug — please report it.",
+                            rule.label,
                         );
+                        prefix_pushes.push(
+                            quote::quote_spanned!(rule.label.span() => compile_error!(#message);),
+                        );
+                        continue;
                     };
                     let spine_id = *spine_id;
                     let body_src_idx = *body_src_idx;

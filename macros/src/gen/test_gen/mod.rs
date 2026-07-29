@@ -130,11 +130,22 @@ pub fn proptest_config_expr(language: &LanguageDef, cases: u32) -> String {
             dir.join(corpus).to_string_lossy().into_owned(),
             cases
         ),
-        // Fail LOUD rather than silently degrading to a target/-local corpus.
-        Err(e) => panic!(
-            "cannot resolve the proptest corpus directory for language {}: {}",
-            language.name, e
-        ),
+        // ★ #141 G9. Fail LOUD rather than silently degrading to a target/-local
+        // corpus — but as a `compile_error!` in the generated test source, which is
+        // what "loud" requires: a `panic!` inside a proc macro prints NOTHING under
+        // this workspace's cranelift dev backend (#141 RED-0). This function returns
+        // the `ProptestConfig` EXPRESSION as text, and `compile_error!(…)` is an
+        // expression, so the refusal substitutes for it exactly.
+        Err(e) => {
+            let message = format!(
+                "mettail: cannot resolve the proptest corpus directory for language {}: \
+                 {}. The generated proptest suite would otherwise persist its failure \
+                 corpus under `target/`, where the next `cargo clean` discards the \
+                 shrunken counterexamples it exists to keep.",
+                language.name, e,
+            );
+            format!("compile_error!({message:?})")
+        },
     }
 }
 

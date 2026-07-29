@@ -1155,6 +1155,16 @@ fn emit_mixfix_parts_fn(
         else {
             continue;
         };
+        // ★ #141 G3 — the refusals below name the rule by its LABEL and point at
+        // it. `label_index` is built by `build_label_index` from the very
+        // `per_cat` this function is handed, and its value is exactly the
+        // `(cat_i, rule_i)` pair that indexes it, so this cannot miss.
+        let rule_label = op.label.clone();
+        let rule_span = per_cat
+            .get(result_src_idx as usize)
+            .and_then(|rules| rules.get(rule_idx as usize))
+            .map(|rule| rule.label.span())
+            .unwrap_or_else(proc_macro2::Span::call_site);
         // `mixfix_parts_len` counts EVERY part, including a `*sep` repetition
         // part. The repetition part's per-part `mixfix_part(..)` arm is SKIPPED
         // below (Stage S2 ⇒ it returns None ⇒ the walker errors cleanly at the
@@ -1182,11 +1192,21 @@ fn emit_mixfix_parts_fn(
             // `mixfix_parts_len` still counts it (accounting stays accurate).
             if let Some(rep) = &part.repetition {
                 let rep_part_idx = part_idx as u8;
-                let elem_src_idx = categories
-                    .iter()
-                    .position(|c| c == &part.operand_category)
-                    .map(|i| i as u16)
-                    .unwrap_or(0);
+                // ★ #141 G3, AN EIGHTH SIBLING — not on the brief's list of seven,
+                // found by reading the enclosing function rather than the list. This
+                // `.unwrap_or(0)` is the SAME fails-open shape as the operand lookup
+                // twenty lines below, in the same emitter, on the same
+                // `part.operand_category` field: an unresolvable element category
+                // became index 0, the FIRST declared category, and the emitted
+                // `mixfix_rep` row told the CollectionLoop to sub-parse it. Token
+                // position, so it takes the shared resolver.
+                let elem_src_idx = super::binder::cat_idx_tokens(
+                    &part.operand_category,
+                    categories,
+                    "a mixfix `*sep` repetition's element position",
+                    &rule_label,
+                    rule_span,
+                );
                 let separator = &rep.separator;
                 let close_lits: Vec<TokenStream> =
                     rep.close.iter().map(|t| quote! { #t }).collect();
@@ -1221,9 +1241,24 @@ fn emit_mixfix_parts_fn(
             // SUB-PARSES THE WRONG CATEGORY: silently wrong, never a diagnostic.
             //
             // A CAPTURE part legitimately names a non-category (`Ident`), so it takes the
-            // poison instead of the lookup. Every OTHER part must resolve, and the panic
-            // stays: `cargo check -p languages` completing across all 49 languages is the
-            // measurement that says it never fires on a shipped grammar.
+            // poison instead of the lookup. Every OTHER part must resolve.
+            //
+            // ★ #141 G3 — TWO FIXES AT ONE SITE.
+            //
+            // (1) The refusal was a `panic!`. Under this workspace's cranelift dev
+            //     backend a `panic!` inside a proc macro prints NOTHING: rustc dies with
+            //     `fatal runtime error: Rust cannot catch foreign exceptions` and the
+            //     payload never appears (#141 RED-0, 2026-07-29). So the message below
+            //     could not be read even when it fired. It is now a spanned
+            //     `compile_error!` — a TOKEN, rendered by rustc, which the backend
+            //     cannot swallow.
+            //
+            // (2) The message said "mixfix part `{}` of rule `{}`" and passed
+            //     `rule_idx`, AN INTEGER. Even had it printed, `rule 7` names nothing a
+            //     grammar author can act on: `rule_idx` is a position within
+            //     `per_cat[result_src_idx]`, an artefact of codegen ordering. It now
+            //     names the rule by LABEL and points the diagnostic at that label's
+            //     span, which is what `UnresolvedCategory` exists to make uniform.
             //
             // A capture row is emitted with the poison spelled by NAME rather than as
             // the bare literal `65535u16`, so the generated table says what it means at
@@ -1232,22 +1267,13 @@ fn emit_mixfix_parts_fn(
             //                              Some("Ident")))`
             let operand_src_idx: TokenStream = match part.capture_kind.is_some() {
                 true => quote! { MIXFIX_PART_NO_OPERAND },
-                false => {
-                    let idx = categories
-                        .iter()
-                        .position(|c| c == &part.operand_category)
-                        .map(|i| i as u16)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "mettail: mixfix part `{}` of rule `{}` names the category \
-                                 `{}`, which is not declared. Defaulting to category 0 would \
-                                 silently sub-parse the WRONG category. Report this as a \
-                                 macro bug.",
-                                part.param_name, rule_idx, part.operand_category,
-                            )
-                        });
-                    quote! { #idx }
-                },
+                false => super::binder::cat_idx_tokens(
+                    &part.operand_category,
+                    categories,
+                    "a mixfix operand position",
+                    &rule_label,
+                    rule_span,
+                ),
             };
             let preceding_lits: Vec<TokenStream> = part
                 .preceding_terminals
@@ -1501,6 +1527,92 @@ mod tests {
                 .iter()
                 .any(|p| p.operand_category == "Float"),
             "the second (heterogeneous) operand becomes a goal-bounded inner mixfix part",
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // #141 G3 RED — the mixfix operand refusal SPEAKS, and names the RULE
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Two defects at one site. (1) The refusal was a `panic!`, which prints
+    // NOTHING inside a proc macro under this workspace's cranelift dev backend
+    // (#141 RED-0) — so the message could not be read even when it fired. (2) The
+    // message read "mixfix part `{}` of rule `{}`" and passed `rule_idx`, AN
+    // INTEGER: even had it printed, `rule 0` names nothing a grammar author can
+    // act on.
+    //
+    // ⚠ Neither cell expects a panic; both read the emitted tokens.
+
+    /// A one-rule language whose heterogeneous binary `a:Int "+" b:<operand>`
+    /// classifies as a mixfix, so the emitter resolves `<operand>`.
+    fn mixfix_language(operand: &str) -> (LanguageDef, Vec<String>, Vec<Vec<GrammarRule>>) {
+        let mut rule = infix_rule("Mix", "Int", "Int", "+");
+        rule.term_context = Some(vec![simple("a", "Int"), simple("b", operand)]);
+        let mut language = crate::gen::empty_language_for_tests();
+        language.types.push(mettail_ast::language::LangType {
+            name: Ident::new("Int", Span::call_site()),
+            native_type: None,
+            collection_kind: None,
+        });
+        language.terms.push(rule.clone());
+        (language, vec!["Int".to_string()], vec![vec![rule]])
+    }
+
+    /// ★ THE MUTATION CELL. A mixfix operand naming an UNDECLARED category emits a
+    /// `compile_error!` that names the category AND the rule's LABEL.
+    #[test]
+    fn an_undeclared_mixfix_operand_refuses_and_names_the_rule_label() {
+        let (language, categories, per_cat) = mixfix_language("Ghost");
+        let (control_language, _, _) = mixfix_language("Int");
+
+        // The mutation is applied, and is the only difference.
+        assert_ne!(
+            format!("{:?}", language.terms[0].term_context),
+            format!("{:?}", control_language.terms[0].term_context),
+            "the two fixtures differ in exactly the OPERAND CATEGORY, which is what \
+             this emitter resolves",
+        );
+
+        let rendered = emit_bp_tables(&language, &categories, &per_cat).to_string();
+
+        assert!(
+            rendered.contains("compile_error"),
+            "an undeclared mixfix operand must REFUSE as a token rustc renders, not as \
+             a panic the backend swallows. Got: {rendered}",
+        );
+        assert!(
+            rendered.contains("Ghost"),
+            "the diagnostic must name the CATEGORY it could not resolve. Got: {rendered}",
+        );
+        assert!(
+            rendered.contains("`Mix`"),
+            "★ and it must name the RULE BY LABEL. The message it replaces claimed to \
+             name the rule and passed `rule_idx`, an integer — a position within \
+             `per_cat[cat]`, which is an artefact of codegen ordering and names nothing \
+             a grammar author can act on. Got: {rendered}",
+        );
+        assert!(
+            rendered.contains("mixfix operand position"),
+            "…and it must say WHERE, since one rule can name a category in several \
+             positions. Got: {rendered}",
+        );
+    }
+
+    /// ★ THE CONTROL that must NOT discriminate: a DECLARED operand still emits
+    /// its table, with no diagnostic at all.
+    #[test]
+    fn a_declared_mixfix_operand_still_emits_its_table() {
+        let (language, categories, per_cat) = mixfix_language("Int");
+        let rendered = emit_bp_tables(&language, &categories, &per_cat).to_string();
+        assert!(
+            !rendered.contains("compile_error"),
+            "an operand category the language declares must not be refused — otherwise \
+             the cell above proves only that this emitter refuses everything. Got: \
+             {rendered}",
+        );
+        assert!(
+            rendered.contains("mixfix_part"),
+            "and the mixfix part table must still be emitted. Got: {rendered}",
         );
     }
 }

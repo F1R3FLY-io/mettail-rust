@@ -37,6 +37,11 @@ pub fn generate_unit_tests(language: &LanguageDef, _pipeline: &PipelineAnalysis)
         let variant = crate::gen::term_ops::subst::rule_to_variant_kind(rule, language);
 
         let body = match &variant {
+            // ★ #141 G5 — generated-source statement position; see
+            // `VariantKind::Refused`.
+            VariantKind::Refused { message, .. } => {
+                Some(format!("    compile_error!({message:?});\n"))
+            },
             VariantKind::Nullary { label: lbl } => {
                 let lbl_str = lbl.to_string();
                 Some(format!(

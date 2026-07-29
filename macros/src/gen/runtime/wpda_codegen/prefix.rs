@@ -2236,6 +2236,20 @@ fn insert_unified_descriptor(
 /// every member); `GroupRest` derives nothing (no branch is emitted — the
 /// member's row came from its group's `GroupFirst`); undispositioned rules
 /// derive their own row.
+///
+/// ★ #141 G4 — returns `Some(compile_error!)` when the factoring model has
+/// drifted, `None` on every path that records rows normally.
+///
+/// The `panic!` this replaces claimed to make a drift "fail codegen loudly" and
+/// could not: under this workspace's cranelift dev backend a proc-macro panic
+/// prints NOTHING (#141 RED-0, 2026-07-29). This function records into a
+/// macro-time model rather than emitting, so it cannot refuse in place; it hands
+/// the refusal back and each of the four callers splices it into the branch
+/// tokens it was about to emit. `Option<TokenStream>` interpolates as nothing on
+/// the success path, so the emitted bytes are unchanged wherever there is no
+/// drift.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
 fn record_initiating_rule_rows(
     fork_rows: &mut super::fork_emission::ForkEmissionOrdinalModel,
     category_src_idx: u16,
@@ -2244,22 +2258,29 @@ fn record_initiating_rule_rows(
     s1_dispositions: &std::collections::HashMap<u16, super::factoring::SpineDisposition>,
     s1_group_members: &std::collections::HashMap<u16, Vec<u16>>,
     bucket_tag: &str,
-) {
+) -> Option<TokenStream> {
     match s1_dispositions.get(&rule_idx) {
         Some(super::factoring::SpineDisposition::GroupFirst { .. }) => {
-            let members = s1_group_members.get(&rule_idx).unwrap_or_else(|| {
-                panic!(
-                    "task #10 item 1: GroupFirst rule (cat {category_src_idx}, rule \
-                     {rule_idx}) has no group_members entry — factoring drift",
-                )
-            });
+            let Some(members) = s1_group_members.get(&rule_idx) else {
+                let message = format!(
+                    "mettail: task #10 item 1 — the rule at category index \
+                     {category_src_idx}, rule index {rule_idx} is dispositioned \
+                     `GroupFirst` by the S1 factoring model but has no `group_members` \
+                     entry, so the fork emission cannot derive the site-2 rows its \
+                     members are owed. The two halves of the factoring model disagree; \
+                     this is a macro bug, not a grammar bug — please report it.",
+                );
+                return Some(quote! { compile_error!(#message); });
+            };
             for &member in members {
                 fork_rows.record_site2_row(category_src_idx, member, branch_position, bucket_tag);
             }
+            None
         },
-        Some(super::factoring::SpineDisposition::GroupRest) => {},
+        Some(super::factoring::SpineDisposition::GroupRest) => None,
         None => {
             fork_rows.record_site2_row(category_src_idx, rule_idx, branch_position, bucket_tag);
+            None
         },
     }
 }
@@ -2370,11 +2391,33 @@ fn emit_unified_arm(
                 // never reach the SINGLETON (1-descriptor) path — asserted so
                 // a bucketing drift between `factoring::discover_members` and
                 // this insertion chain fails codegen loudly.
-                assert!(
-                    s1_dispositions.get(&rule_idx).is_none(),
-                    "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
-                     reached the singleton BinderPrefix emission",
-                );
+                // ★ #141 G9. The singleton path is unreachable for a GROUPED rule
+                // because a factored group needs ≥2 co-bucketed members — a claim
+                // about `factoring::discover_members` and this insertion chain
+                // bucketing identically, which nothing checks. The `assert!` said it
+                // would "fail codegen loudly" and could not: a proc-macro panic under
+                // this workspace's cranelift dev backend prints nothing at all (#141
+                // RED-0). It is now a `compile_error!` spliced into the arm body — a
+                // token `rustc` renders — and EMPTY on the success path, so the
+                // emitted bytes are unchanged wherever the claim holds.
+                let s1_singleton_refusal: TokenStream = match s1_dispositions
+                    .get(&rule_idx)
+                    .is_none()
+                {
+                    true => TokenStream::new(),
+                    false => {
+                        let message = format!(
+                            "mettail: S1-FACTORING F1 — the rule at category index \
+                             {category_src_idx}, rule index {rule_idx}, is dispositioned \
+                             into a factored spine group but reached the singleton BinderPrefix emission, which \
+                             only an UNGROUPED rule can reach. `factoring::discover_members` \
+                             and the unified-bucket insertion chain have bucketed it \
+                             differently. This is a macro bug, not a grammar bug — please \
+                             report it."
+                        );
+                        quote! { compile_error!(#message); }
+                    },
+                };
                 // Task #10 item 1: singleton = position 0 (grouped members
                 // asserted unreachable above, so the plain row suffices).
                 fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
@@ -2382,6 +2425,7 @@ fn emit_unified_arm(
                     quote! { #pat if #guard },
                     quote! {
                         {
+                        #s1_singleton_refusal
                         return WpdaStepAction::ConsumeAndPush {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
@@ -2414,16 +2458,39 @@ fn emit_unified_arm(
                 // prior literal trigger to push the frame, unlike the mid-rule
                 // capture which only replaces cur_sym), and enters BinderRule for
                 // the remaining mid-rule positions.
-                assert!(
-                    s1_dispositions.get(&rule_idx).is_none(),
-                    "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
-                     reached the singleton LeadingTokenKindCapture emission",
-                );
+                // ★ #141 G9. The singleton path is unreachable for a GROUPED rule
+                // because a factored group needs ≥2 co-bucketed members — a claim
+                // about `factoring::discover_members` and this insertion chain
+                // bucketing identically, which nothing checks. The `assert!` said it
+                // would "fail codegen loudly" and could not: a proc-macro panic under
+                // this workspace's cranelift dev backend prints nothing at all (#141
+                // RED-0). It is now a `compile_error!` spliced into the arm body — a
+                // token `rustc` renders — and EMPTY on the success path, so the
+                // emitted bytes are unchanged wherever the claim holds.
+                let s1_singleton_refusal: TokenStream = match s1_dispositions
+                    .get(&rule_idx)
+                    .is_none()
+                {
+                    true => TokenStream::new(),
+                    false => {
+                        let message = format!(
+                            "mettail: S1-FACTORING F1 — the rule at category index \
+                             {category_src_idx}, rule index {rule_idx}, is dispositioned \
+                             into a factored spine group but reached the singleton LeadingTokenKindCapture emission, which \
+                             only an UNGROUPED rule can reach. `factoring::discover_members` \
+                             and the unified-bucket insertion chain have bucketed it \
+                             differently. This is a macro bug, not a grammar bug — please \
+                             report it."
+                        );
+                        quote! { compile_error!(#message); }
+                    },
+                };
                 fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
                 (
                     quote! { #pat if #guard },
                     quote! {
                         {
+                        #s1_singleton_refusal
                         return WpdaStepAction::Fork {
                             branches: vec![mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: StackSymbolV2::rule_at(
@@ -2461,16 +2528,39 @@ fn emit_unified_arm(
                 // gates peek_kind == Custom(open_kind), scans the whole
                 // opener→body→closer region assembling the FltNode, PUSHES
                 // RuleAt(slot=1), and enters BinderRule.
-                assert!(
-                    s1_dispositions.get(&rule_idx).is_none(),
-                    "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
-                     reached the singleton LeadingGuestBody emission",
-                );
+                // ★ #141 G9. The singleton path is unreachable for a GROUPED rule
+                // because a factored group needs ≥2 co-bucketed members — a claim
+                // about `factoring::discover_members` and this insertion chain
+                // bucketing identically, which nothing checks. The `assert!` said it
+                // would "fail codegen loudly" and could not: a proc-macro panic under
+                // this workspace's cranelift dev backend prints nothing at all (#141
+                // RED-0). It is now a `compile_error!` spliced into the arm body — a
+                // token `rustc` renders — and EMPTY on the success path, so the
+                // emitted bytes are unchanged wherever the claim holds.
+                let s1_singleton_refusal: TokenStream = match s1_dispositions
+                    .get(&rule_idx)
+                    .is_none()
+                {
+                    true => TokenStream::new(),
+                    false => {
+                        let message = format!(
+                            "mettail: S1-FACTORING F1 — the rule at category index \
+                             {category_src_idx}, rule index {rule_idx}, is dispositioned \
+                             into a factored spine group but reached the singleton LeadingGuestBody emission, which \
+                             only an UNGROUPED rule can reach. `factoring::discover_members` \
+                             and the unified-bucket insertion chain have bucketed it \
+                             differently. This is a macro bug, not a grammar bug — please \
+                             report it."
+                        );
+                        quote! { compile_error!(#message); }
+                    },
+                };
                 fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
                 (
                     quote! { #pat if #guard },
                     quote! {
                         {
+                        #s1_singleton_refusal
                         return WpdaStepAction::Fork {
                             branches: vec![mettail_prattail::wpda_walker::ForkBranch {
                                 symbol: StackSymbolV2::rule_at(
@@ -2562,17 +2652,40 @@ fn emit_unified_arm(
                 // S1-FACTORING F1: same singleton-unreachability assert as
                 // the BinderPrefix arm above (groups need ≥2 co-bucketed
                 // members).
-                assert!(
-                    s1_dispositions.get(&rule_idx).is_none(),
-                    "S1-FACTORING F1: grouped rule (cat {category_src_idx}, rule {rule_idx}) \
-                     reached the singleton NullaryLiteralRun emission",
-                );
+                // ★ #141 G9. The singleton path is unreachable for a GROUPED rule
+                // because a factored group needs ≥2 co-bucketed members — a claim
+                // about `factoring::discover_members` and this insertion chain
+                // bucketing identically, which nothing checks. The `assert!` said it
+                // would "fail codegen loudly" and could not: a proc-macro panic under
+                // this workspace's cranelift dev backend prints nothing at all (#141
+                // RED-0). It is now a `compile_error!` spliced into the arm body — a
+                // token `rustc` renders — and EMPTY on the success path, so the
+                // emitted bytes are unchanged wherever the claim holds.
+                let s1_singleton_refusal: TokenStream = match s1_dispositions
+                    .get(&rule_idx)
+                    .is_none()
+                {
+                    true => TokenStream::new(),
+                    false => {
+                        let message = format!(
+                            "mettail: S1-FACTORING F1 — the rule at category index \
+                             {category_src_idx}, rule index {rule_idx}, is dispositioned \
+                             into a factored spine group but reached the singleton NullaryLiteralRun emission, which \
+                             only an UNGROUPED rule can reach. `factoring::discover_members` \
+                             and the unified-bucket insertion chain have bucketed it \
+                             differently. This is a macro bug, not a grammar bug — please \
+                             report it."
+                        );
+                        quote! { compile_error!(#message); }
+                    },
+                };
                 // Task #10 item 1: singleton = position 0.
                 fork_rows.record_site2_row(category_src_idx, rule_idx, 0, &fork_bucket_tag);
                 (
                     quote! { #pat if #guard },
                     quote! {
                         {
+                        #s1_singleton_refusal
                         // GAP-3: 0-operand multi-literal keyword prefix. Consume
                         // the trigger (ConsumeAsTriggerOnly mirrors it to the
                         // SPPF as a TriggerTerminal — the SOLE child under the
@@ -2712,7 +2825,7 @@ fn emit_unified_arm(
                     // Task #10 item 1: disposition-routed rows — GroupFirst
                     // derives every member's row at THIS position; GroupRest
                     // derives nothing; plain rules derive their own row.
-                    record_initiating_rule_rows(
+                    let rows_refusal = record_initiating_rule_rows(
                         fork_rows,
                         category_src_idx,
                         rule_idx,
@@ -2728,7 +2841,7 @@ fn emit_unified_arm(
                     // (GroupRest). The map is EMPTY while `S1_FACTORING ==
                     // false` ⇒ the `None` arm below is the pre-F1
                     // byte-identical emission.
-                    match s1_dispositions.get(&rule_idx) {
+                    let branch = match s1_dispositions.get(&rule_idx) {
                         Some(super::factoring::SpineDisposition::GroupFirst {
                             spine_id,
                             body_src_idx: group_body_src_idx,
@@ -2759,7 +2872,8 @@ fn emit_unified_arm(
                                     },
                             });
                         },
-                    }
+                    };
+                    quote! { #rows_refusal #branch }
                 }
                 UnifiedDescriptor::LeadingTokenKindCapture { rule_idx, body_src_idx, kind_name } => {
                     let rule_idx = *rule_idx;
@@ -2772,7 +2886,7 @@ fn emit_unified_arm(
                     // the leading token IS the trigger, so no prior push exists;
                     // mirrors the singleton path above) instead of the
                     // non-capturing ConsumeAsTriggerOnly the Literal trigger uses.
-                    record_initiating_rule_rows(
+                    let rows_refusal = record_initiating_rule_rows(
                         fork_rows,
                         category_src_idx,
                         rule_idx,
@@ -2782,6 +2896,7 @@ fn emit_unified_arm(
                         &fork_bucket_tag,
                     );
                     quote! {
+                        #rows_refusal
                         __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
@@ -2805,7 +2920,7 @@ fn emit_unified_arm(
                     let body_src_idx = *body_src_idx;
                     // L9-4: leading guest body in a Fork bucket — the ConsumeGuestBodyAndPush
                     // twin of the singleton path (PUSHES the RuleAt frame).
-                    record_initiating_rule_rows(
+                    let rows_refusal = record_initiating_rule_rows(
                         fork_rows,
                         category_src_idx,
                         rule_idx,
@@ -2815,6 +2930,7 @@ fn emit_unified_arm(
                         &fork_bucket_tag,
                     );
                     quote! {
+                        #rows_refusal
                         __pd_branches.push(mettail_prattail::wpda_walker::ForkBranch {
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 1u8, Some(_outer_bp),
@@ -2927,7 +3043,7 @@ fn emit_unified_arm(
                     let rule_idx = *rule_idx;
                     // Task #10 item 1: same disposition-routed rows as the
                     // BinderPrefix arm above.
-                    record_initiating_rule_rows(
+                    let rows_refusal = record_initiating_rule_rows(
                         fork_rows,
                         category_src_idx,
                         rule_idx,
@@ -2943,7 +3059,7 @@ fn emit_unified_arm(
                     // nullary member re-enters its own
                     // `MixfixLiteralRun{kind:2}` tail only at its COMMIT leaf
                     // (amendment A4 typed coordinates).
-                    match s1_dispositions.get(&rule_idx) {
+                    let branch = match s1_dispositions.get(&rule_idx) {
                         Some(super::factoring::SpineDisposition::GroupFirst {
                             spine_id,
                             body_src_idx: group_body_src_idx,
@@ -2982,7 +3098,8 @@ fn emit_unified_arm(
                                     },
                             });
                         },
-                    }
+                    };
+                    quote! { #rows_refusal #branch }
                 }
             })
             .collect();

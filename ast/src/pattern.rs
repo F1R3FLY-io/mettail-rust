@@ -779,19 +779,49 @@ impl Pattern {
                 if let Pattern::Zip { first, second } = collection.as_ref() {
                     // Correlated search: Zip + Map. First is bound; second collects from matches.
 
+                    // ★ #141 G6. All five refusals in this arm are reachable from a
+                    // MALFORMED PATTERN a user can write — `*zip`/`*map` shape is not
+                    // checked before lowering — and they were `panic!`s in a crate
+                    // (`ast`) that is not a proc macro, so nothing rendered them. The
+                    // idiom used instead is the one `PatternTerm::Subst` two hundred
+                    // lines below already uses: push a `compile_error!` into
+                    // `result.clauses` and return. A `compile_error!` is a TOKEN,
+                    // rendered by `rustc`, so unlike a panic it survives the
+                    // cranelift-compiled proc-macro boundary (#141 RED-0).
+                    macro_rules! refuse_zip_map {
+                        ($message:expr) => {{
+                            let message: &str = $message;
+                            result.clauses.push(quote! { compile_error!(#message); });
+                            return;
+                        }};
+                    }
+
                     let Some(ctx) = search_context else {
-                        panic!("Zip+Map pattern requires search_context from enclosing Collection");
+                        refuse_zip_map!(
+                            "mettail: a `*zip(…).*map(…)` pattern is a CORRELATED SEARCH \
+                             over an enclosing collection, so it is only meaningful inside \
+                             one. Wrap it in the collection pattern whose elements it \
+                             searches."
+                        );
                     };
 
                     // Get variable names from first and second
-                    let first_var_name = match first.as_ref() {
-                        Pattern::Term(PatternTerm::Var(v)) => v.to_string(),
-                        _ => panic!("Zip first must be a variable"),
+                    let Pattern::Term(PatternTerm::Var(first_var)) = first.as_ref() else {
+                        refuse_zip_map!(
+                            "mettail: the FIRST argument of `*zip(…, …)` must be a \
+                             variable — it names the already-bound collection the search \
+                             iterates. Bind it with a variable on the left-hand side first."
+                        );
                     };
-                    let second_var_name = match second.as_ref() {
-                        Pattern::Term(PatternTerm::Var(v)) => v.to_string(),
-                        _ => panic!("Zip second must be a variable"),
+                    let first_var_name = first_var.to_string();
+                    let Pattern::Term(PatternTerm::Var(second_var)) = second.as_ref() else {
+                        refuse_zip_map!(
+                            "mettail: the SECOND argument of `*zip(…, …)` must be a \
+                             variable — it names the collection the search COLLECTS into. \
+                             Use a fresh variable there."
+                        );
                     };
+                    let second_var_name = second_var.to_string();
 
                     // first should already be bound - get its binding
                     // remove immutable borrow of result.bindings
@@ -803,7 +833,11 @@ impl Pattern {
                         .clone();
 
                     if params.len() != 2 {
-                        panic!("Zip+Map requires exactly 2 params, got {}", params.len());
+                        refuse_zip_map!(
+                            "mettail: the closure of a `*zip(…, …).*map(|…| …)` takes \
+                             exactly two parameters — one element of the first collection \
+                             and one of the second."
+                        );
                     }
                     let first_param = &params[0]; // bound to each element of first
                     let second_param = &params[1]; // extracted from matching context element
@@ -825,12 +859,16 @@ impl Pattern {
                         },
                     );
 
-                    let (constructor, body_args) = match body.as_ref() {
-                        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
-                            (constructor.clone(), args.clone())
-                        },
-                        _ => panic!("Zip+Map body must be a constructor pattern"),
+                    let Pattern::Term(PatternTerm::Apply { constructor, args: body_args }) =
+                        body.as_ref()
+                    else {
+                        refuse_zip_map!(
+                            "mettail: the body of a `*zip(…, …).*map(|…| …)` must be a \
+                             CONSTRUCTOR pattern — it is the shape each searched element \
+                             is matched against, so it has to name a constructor."
+                        );
                     };
+                    let (constructor, body_args) = (constructor.clone(), body_args.clone());
 
                     // Find which arg position corresponds to first_param and second_param
                     let mut first_param_idx = None;
@@ -1066,12 +1104,17 @@ impl Pattern {
             // `AstPattern::Zip => Err(...)`). If the Ascent backend is ever revived, this
             // is the exact site to implement, and it will announce itself rather than
             // silently matching nothing.
+            // ★ #141 G6. Still a refusal, and still for the reason the paragraph
+            // above gives — but as a `compile_error!` rather than a `panic!`, so it
+            // is READ. `ast` is not a proc-macro crate and a panic here surfaces as
+            // an aborted `rustc` with no message at all.
             Pattern::IndexedVec { collection, index, .. } => {
-                panic!(
+                let message = format!(
                     "mettail: indexed-vec pattern `{collection}[{index} := …]` reached the \
                      RETIRED Ascent clause generator. The live rewrite backend is Dovetail; \
                      this path has no caller. Report this as a macro bug."
                 );
+                result.clauses.push(quote! { compile_error!(#message); });
             },
         }
     }
@@ -1605,12 +1648,15 @@ impl Pattern {
             // Retired-Ascent RHS construction — the mirror of the LHS refusal in
             // `generate_clauses`. See that arm for why an unreachable backend is not
             // implemented rather than filled in with untestable code.
+            // ★ #141 G6 — the RHS twin of the LHS refusal above; same reasoning,
+            // and this function returns the tokens, so the refusal simply IS them.
             Pattern::IndexedVec { collection, index, .. } => {
-                panic!(
+                let message = format!(
                     "mettail: indexed-vec pattern `{collection}[{index} := …]` reached the \
                      RETIRED Ascent RHS generator. The live rewrite backend is Dovetail; \
                      this path has no caller. Report this as a macro bug."
                 );
+                quote! { compile_error!(#message) }
             },
         }
     }
@@ -2350,10 +2396,18 @@ impl PatternTerm {
                                 let expr = &bound_var.expression;
                                 quote! { &#expr }
                             } else {
-                                panic!(
-                                    "Binder {} not found in bindings for MultiSubst",
-                                    binder_name
+                                // ★ #141 G6. Reachable from a rule whose RHS
+                                // multi-substitutes over a binder its LHS never
+                                // bound — a grammar-author mistake, not an internal
+                                // one. This closure yields the argument's tokens, so
+                                // the refusal simply IS the argument.
+                                let message = format!(
+                                    "mettail: the multi-substitution names the binder \
+                                     `{binder_name}`, which no pattern on the left-hand \
+                                     side binds. Bind it on the left before substituting \
+                                     for it on the right."
                                 );
+                                quote! { compile_error!(#message) }
                             }
                         })
                         .collect();

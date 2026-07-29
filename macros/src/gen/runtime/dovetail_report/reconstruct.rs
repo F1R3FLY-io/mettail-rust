@@ -242,10 +242,20 @@ fn reconstruct_child_expr(
                 #seq_build(__d.children.get(#i)?)?
             }
         },
-        ReconstructableField::NotInvertible => unreachable!(
-            "reconstruct_child_expr reached a NotInvertible field; callers gate on \
-             all_fields_invertible first",
-        ),
+        // ★ #141 G9. The gate is `all_fields_invertible`, checked by the CALLER;
+        // this function has no way to know it ran. It returns the child expression's
+        // tokens, so the refusal simply IS the expression.
+        ReconstructableField::NotInvertible => {
+            let message = format!(
+                "mettail internal error: the Dovetail inverse reached a NON-INVERTIBLE \
+                 field of category `{}`, which `all_fields_invertible` is supposed to \
+                 have excluded before this emitter ran. The gate and this emitter have \
+                 drifted apart. This is a macro bug, not a grammar bug — please report \
+                 it.",
+                field.category,
+            );
+            quote! { compile_error!(#message) }
+        },
     }
 }
 
@@ -363,6 +373,10 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
     let mut arms: Vec<TokenStream> = Vec::new();
     for variant in collect_category_variants(category, language) {
         match variant {
+            // ★ #141 G5 — see `VariantKind::Refused`.
+            VariantKind::Refused { message, .. } => {
+                arms.push(quote! { compile_error!(#message); });
+            },
             VariantKind::Var { label }
             | VariantKind::Literal { label }
             | VariantKind::CollectionLiteral { label, .. } => {

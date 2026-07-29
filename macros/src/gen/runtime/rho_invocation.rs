@@ -588,6 +588,8 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
     let arms: Vec<TokenStream> = collect_category_variants(category, language)
         .into_iter()
         .map(|variant| match variant {
+            // ★ #141 G5 — see `VariantKind::Refused`.
+            VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
             VariantKind::Nullary { label } => {
                 let label_lit = lit(&label.to_string());
                 quote! {
@@ -626,9 +628,23 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
                                 ::std::vec::Vec::new(),
                             )
                         },
-                        ReflectField::NotReflectable => unreachable!(
-                            "the arm guard rejects any variant with a NotReflectable field",
-                        ),
+                        // ★ #141 G9. "The arm guard rejects it" is a claim about a
+                        // guard twenty lines up staying in step with this classifier;
+                        // nothing checks it, and an `unreachable!` here is mute (a
+                        // proc-macro panic prints nothing under this workspace's
+                        // cranelift dev backend — #141 RED-0). The closure yields the
+                        // child's tokens, so the refusal simply IS the child.
+                        ReflectField::NotReflectable => {
+                            let message = format!(
+                                "mettail internal error: the in-Rho reflection of \
+                                 constructor `{label}` reached a field with no positional \
+                                 ground image, which the arm guard is supposed to have \
+                                 rejected. The guard and the field classifier have drifted \
+                                 apart. This is a macro bug, not a grammar bug — please \
+                                 report it."
+                            );
+                            quote! { compile_error!(#message) }
+                        },
                     })
                     .collect();
                 quote! {

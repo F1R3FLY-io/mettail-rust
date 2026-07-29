@@ -554,14 +554,20 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
     let body_idx = body_indices[0];
 
     // Get the binder and body categories
-    let _binder_cat = match &rule.items[*binder_idx] {
-        GrammarItem::Binder { category } => category,
-        _ => panic!("Binding index doesn't point to a Binder"),
+    // ★ #141 G5 — see `crate::gen::shape_refusal`. `generate_binder_variant`
+    // returns the variant's tokens, so the refusal simply IS the variant.
+    let GrammarItem::Binder { category: _binder_cat } = &rule.items[*binder_idx] else {
+        return crate::gen::shape_refusal(
+            label,
+            "declares a binding whose binder index does not point at a binder item",
+        );
     };
 
-    let body_cat = match &rule.items[body_idx] {
-        GrammarItem::NonTerminal { ident: cat, .. } => cat,
-        _ => panic!("Body index doesn't point to a NonTerminal"),
+    let GrammarItem::NonTerminal { ident: body_cat, .. } = &rule.items[body_idx] else {
+        return crate::gen::shape_refusal(
+            label,
+            "declares a binding whose body index does not point at a non-terminal item",
+        );
     };
 
     let mut fields = Vec::new();
@@ -600,8 +606,15 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
                     fields.push(quote! { #coll_type_ident<#element_type> });
                 },
                 GrammarItem::Binder { .. } => {
-                    // Should have been skipped above
-                    panic!("Unexpected binder at position {}", i);
+                    // ★ #141 G5. The binder at `binder_idx` is skipped above, so
+                    // reaching here means the rule declares a SECOND binder that
+                    // its single `bindings[0]` entry does not describe.
+                    let _ = i;
+                    return crate::gen::shape_refusal(
+                        label,
+                        "carries a binder item that its declared binding structure does \
+                         not account for (only one binder per rule is lowered)",
+                    );
                 },
                 GrammarItem::Terminal(_) => {
                     // Terminals don't become fields

@@ -136,13 +136,22 @@ pub fn generate_rust_ctor(language: &LanguageDef) -> TokenStream {
     // marker LINES — so the newlines have to survive `prettyplease`. No schema line can contain
     // `"` or `"#`: category names, labels and type descriptors are Rust identifiers, `:` and
     // `-`. The assertion below states that as a checked invariant rather than a hope.
-    assert!(
-        !schema.contains('"'),
-        "the constructor schema for {} contains a double quote, which the raw string literal \
-         delimiter cannot carry; a descriptor grammar changed and this emitter must change with \
-         it",
-        language.name
-    );
+    // ★ #141 G9. A REAL limit of the emission, not an internal agreement: the
+    // schema is carried by a `r#"…"#` literal, so a `"` in a descriptor breaks the
+    // delimiter. It was an `assert!`, which is mute in a proc macro under this
+    // workspace's cranelift dev backend (#141 RED-0); it is now a `compile_error!`
+    // in the emitted tokens, and the `.parse()` below is no longer reached with a
+    // string it cannot tokenize.
+    if schema.contains('"') {
+        let message = format!(
+            "mettail internal error: the constructor schema for language `{}` contains a \
+             double quote, which the `r#\"…\"#` literal that carries it cannot delimit. A \
+             descriptor grammar changed and this emitter must change with it. This is a \
+             macro bug, not a grammar bug — please report it.",
+            language.name,
+        );
+        return quote::quote_spanned!(language.name.span() => compile_error!(#message););
+    }
     let schema_lit: TokenStream = format!("r#\"{schema}\"#")
         .parse()
         .expect("a raw string literal with no embedded `\"#` is a single valid token");
@@ -221,6 +230,11 @@ fn schema_text(language: &LanguageDef) -> String {
 /// ORDER, which is the order [`super::debug`] prints them.
 fn variant_line(category: &str, variant: &VariantKind, language: &LanguageDef) -> String {
     match variant {
+        // ★ #141 G5. This receipt records what the variant walk SAW; a
+        // classification that refuses is a thing it saw, and eliding it would
+        // make the receipt disagree with the emission it is a receipt for.
+        VariantKind::Refused { label, .. } => format!("V {category} {label} refused\n"),
+
         VariantKind::Nullary { label } => format!("V {category} {label} nullary\n"),
 
         VariantKind::Literal { label } => format!("V {category} {label} literal\n"),

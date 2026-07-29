@@ -2845,10 +2845,14 @@ fn generate_engine_binder_arm(rule: &GrammarRule, _language: &LanguageDef) -> To
     let mut regular_field_iter = regular_fields.iter();
 
     // Get the body category from the rule
-    let body_cat = match &rule.items[body_idx] {
-        GrammarItem::NonTerminal { ident: cat, .. } => cat.clone(),
-        _ => panic!("Body index doesn't point to a NonTerminal"),
+    // ★ #141 G5 — see `crate::gen::shape_refusal`.
+    let GrammarItem::NonTerminal { ident: body_cat, .. } = &rule.items[body_idx] else {
+        return crate::gen::shape_refusal(
+            &rule.label,
+            "declares a binding whose body index does not point at a non-terminal item",
+        );
     };
+    let body_cat = body_cat.clone();
     let body_task_variant = format_ident!("Display{}", body_cat);
 
     for (i, item) in rule.items.iter().enumerate() {

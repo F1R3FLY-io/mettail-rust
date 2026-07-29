@@ -477,6 +477,11 @@ pub(crate) struct FactoringBucket {
 pub(crate) struct CategoryFactoring {
     pub category_src_idx: u16,
     pub buckets: Vec<FactoringBucket>,
+    /// ★ #141 G8 — the ENCODING-LIMIT refusals discovered while building this
+    /// category's partition, rendered by `build_spine_emission_from_parts` into
+    /// `SpineEmission::refusals` and spliced into the generated engine module as
+    /// `compile_error!`s. See [`LIMIT_REFUSAL`].
+    pub refusals: Vec<String>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -669,6 +674,28 @@ fn discover_members(
     out
 }
 
+/// The opening of every #141 G8 refusal message.
+///
+/// # Why these are refusals and not asserts
+///
+/// The seventeen `assert!`/`assert_eq!` sites this constant now heads encoded
+/// two things: REAL ENCODING LIMITS of the factored spine (`spine_id_end <
+/// RECOVERY_BASE`, `next_id < 250`, `leaf_depth < u8::MAX`) — which a large
+/// grammar CAN reach — and internal agreements between the discovery walk and
+/// the emission. Both were `assert!`s on the belief that they were unreachable,
+/// and both were MUTE: under this workspace's cranelift dev backend a panic
+/// inside a proc macro prints nothing at all; `rustc` dies with `fatal runtime
+/// error: Rust cannot catch foreign exceptions` (#141 RED-0, 2026-07-29). A
+/// grammar author who hit a spine-id ceiling saw a compiler crash with no
+/// message.
+///
+/// The messages now travel as `String`s in `CategoryFactoring::refusals` /
+/// `MixfixFactoring::refusals`, are turned into `compile_error!` tokens by
+/// `build_spine_emission_from_parts`, and are spliced into the generated engine
+/// module through `SpineEmission::refusals`. `compile_error!` is a TOKEN,
+/// rendered by `rustc`, so the backend cannot swallow it.
+const LIMIT_REFUSAL: &str = "mettail: the S1 spine factoring cannot be encoded —";
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Trie build.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -676,11 +703,27 @@ fn discover_members(
 /// Finalize a member's leaf at `leaf_depth` (post-trigger items consumed
 /// INCLUDING the leaf edge) — typed commit coordinates + identity pos-map
 /// (amendment A4).
-fn finalize_leaf(member: CandidateMember, leaf_depth: usize) -> GroupMember {
-    assert!(
-        leaf_depth < u8::MAX as usize,
-        "S1-FACTORING: leaf depth {leaf_depth} exceeds the u8 marker-position space",
-    );
+fn finalize_leaf(
+    member: CandidateMember,
+    leaf_depth: usize,
+    refusals: &mut Vec<String>,
+) -> GroupMember {
+    // ★ #141 G8. A REAL ENCODING LIMIT: marker positions are `u8`, so a spine
+    // deeper than 254 post-trigger items cannot be addressed. A large grammar
+    // CAN reach it. `refusals` is the same `&mut` sink idiom this function's
+    // caller already uses for `interior_accepts`; the message reaches the user
+    // as a `compile_error!` in the generated engine module, which a `panic!`
+    // inside a cranelift-compiled proc macro never could (#141 RED-0).
+    if leaf_depth >= u8::MAX as usize {
+        refusals.push(format!(
+            "{LIMIT_REFUSAL} the spine leaf for rule index {} sits at depth {leaf_depth}, \
+             but a marker position is a `u8`, so the addressable depth is {} — the \
+             factored spine cannot be encoded. Split the rule's shared prefix, or shorten \
+             the surface it factors through.",
+            member.rule_idx,
+            u8::MAX as usize - 1,
+        ));
+    }
     let depth_u8 = leaf_depth as u8;
     let (commit, pos_map) = match member.kind {
         MemberKind::Binder => (
@@ -710,15 +753,23 @@ fn finalize_leaf(member: CandidateMember, leaf_depth: usize) -> GroupMember {
             // machinery (nullary member at `(2, 0, depth)`; operand members
             // at `(0, completed, following-consumed)`; the FV-1 coordinate
             // law).
-            assert!(
-                member.mixfix_coords.len() > leaf_depth,
-                "S1-FACTORING F5-2: mixfix member (rule {}) has {} recorded \
-                 coords but leafs at depth {leaf_depth} — the discovery walk \
-                 drifted from the item list",
-                member.rule_idx,
-                member.mixfix_coords.len(),
-            );
-            let (kind, completed_idx, sub_pos) = member.mixfix_coords[leaf_depth];
+            // ★ #141 G8. Model drift, not a grammar limit — but the same
+            // treatment, because a `panic!` here is mute and the index below
+            // would panic anyway with no message at all.
+            let (kind, completed_idx, sub_pos) = match member.mixfix_coords.get(leaf_depth) {
+                Some(&coord) => coord,
+                None => {
+                    refusals.push(format!(
+                    "{LIMIT_REFUSAL} the mixfix member at rule index {} recorded {} spine \
+                     coordinates but leafs at depth {leaf_depth}, so the discovery walk and \
+                     the item list disagree. This is a macro bug, not a grammar bug — \
+                     please report it.",
+                        member.rule_idx,
+                        member.mixfix_coords.len(),
+                    ));
+                    (0u8, 0u8, 0u8)
+                },
+            };
             (
                 MemberCommit::MixfixRun {
                     rule_idx: member.rule_idx,
@@ -727,7 +778,15 @@ fn finalize_leaf(member: CandidateMember, leaf_depth: usize) -> GroupMember {
                     sub_pos,
                 },
                 SpinePosMap::Mixfix {
-                    coords_at_depth: member.mixfix_coords[..=leaf_depth].to_vec(),
+                    // `get(..=)` rather than indexing: the refusal above has
+                    // already recorded the disagreement, and a second panic on
+                    // the same condition would say nothing new and print nothing
+                    // at all.
+                    coords_at_depth: member
+                        .mixfix_coords
+                        .get(..=leaf_depth)
+                        .unwrap_or(&[])
+                        .to_vec(),
                 },
             )
         },
@@ -788,6 +847,7 @@ fn build_tree(
     members: Vec<CandidateMember>,
     accept_continue: bool,
     interior_accepts: &mut Vec<u16>,
+    refusals: &mut Vec<String>,
 ) -> Vec<SpineTree> {
     if members.len() == 1 {
         let member = members
@@ -796,7 +856,7 @@ fn build_tree(
             .expect("a len()==1 vector yields its member");
         return vec![SpineTree::Leaf {
             item: edge_item,
-            member: finalize_leaf(member, depth),
+            member: finalize_leaf(member, depth, refusals),
         }];
     }
     // ≥2 members: exhausted members leaf out (or defer, per the stance); the
@@ -810,7 +870,7 @@ fn build_tree(
             if accept_continue {
                 accepts.push(SpineTree::Leaf {
                     item: edge_item.clone(),
-                    member: finalize_leaf(member, depth),
+                    member: finalize_leaf(member, depth, refusals),
                 });
             } else {
                 interior_accepts.push(member.rule_idx);
@@ -828,7 +888,14 @@ fn build_tree(
     }
     let mut children: Vec<SpineTree> = Vec::with_capacity(parts.len());
     for (item, part) in order.into_iter().zip(parts) {
-        children.extend(build_tree(depth + 1, item, part, accept_continue, interior_accepts));
+        children.extend(build_tree(
+            depth + 1,
+            item,
+            part,
+            accept_continue,
+            interior_accepts,
+            refusals,
+        ));
     }
     if children.is_empty() {
         // Every member exhausted at this node (all-twins part, F-10):
@@ -876,6 +943,9 @@ pub(crate) fn build_prefix_factoring_with(
 ) -> Vec<CategoryFactoring> {
     let prefix_bp_map = build_prefix_bp_map(language, per_cat);
     let mut out = Vec::with_capacity(per_cat.len());
+    // ★ #141 G8 — one sink per category, drained into that category's
+    // `CategoryFactoring` (`std::mem::take` at the push below).
+    let mut refusals: Vec<String> = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let category_src_idx = cat_i as u16;
         let members =
@@ -955,7 +1025,14 @@ pub(crate) fn build_prefix_factoring_with(
                         .collect()
                 };
                 let mut interior_accepts: Vec<u16> = Vec::new();
-                let roots = build_tree(1, root_item, part, accept_continue, &mut interior_accepts);
+                let roots = build_tree(
+                    1,
+                    root_item,
+                    part,
+                    accept_continue,
+                    &mut interior_accepts,
+                    &mut refusals,
+                );
                 if !interior_accepts.is_empty() {
                     // Only reachable with `accept_continue == false` (F5-1
                     // dormant stance) — [`build_tree`] leafs exhausted
@@ -984,12 +1061,17 @@ pub(crate) fn build_prefix_factoring_with(
                 // stance twins and proper prefixes were routed to
                 // interior_accepts above, under F5-1 they ARE leaves).
                 let leaf_count: usize = roots.iter().map(SpineTree::leaf_count).sum();
-                assert_eq!(
-                    leaf_count,
-                    member_rule_idxs.len(),
-                    "S1-FACTORING: eligible group leaf count must equal its member count \
-                     (cat {category_src_idx}, trigger {leading_literal:?})",
-                );
+                if leaf_count != member_rule_idxs.len() {
+                    refusals.push(format!(
+                        "{LIMIT_REFUSAL} the eligible group for category index \
+                         {category_src_idx} at trigger {leading_literal:?} built \
+                         {leaf_count} spine leaves for {} members. Every member commits at \
+                         exactly one leaf by construction, so the trie build and the member \
+                         list disagree. This is a macro bug, not a grammar bug — please \
+                         report it.",
+                        member_rule_idxs.len(),
+                    ));
+                }
                 let body_src_idx = body_src_idxs
                     .first()
                     .copied()
@@ -1014,18 +1096,33 @@ pub(crate) fn build_prefix_factoring_with(
         // ★A9: the synthetic spine id space must stay clear of the recovery
         // branch offset space AND the u16 domain.
         let spine_id_end = SPINE_RULE_BASE as u32 + next_spine_ordinal as u32;
-        assert!(
-            spine_id_end < super::forks::RECOVERY_BASE as u32,
-            "S1-FACTORING A9: category {category_src_idx} allocates {next_spine_ordinal} spine \
-             ids ending at {spine_id_end:#06x}, colliding with RECOVERY_BASE {:#06x}",
-            super::forks::RECOVERY_BASE,
-        );
-        assert!(
-            spine_id_end < u16::MAX as u32,
-            "S1-FACTORING A9: category {category_src_idx} spine id space end {spine_id_end:#06x} \
-             overflows u16",
-        );
-        out.push(CategoryFactoring { category_src_idx, buckets });
+        // ★ #141 G8 — the two A9 ceilings, and the clearest case in the file for
+        // refusing rather than asserting: a grammar with enough factorable
+        // prefixes in ONE category reaches them, and what it deserves is a
+        // message naming the category and the ceiling it crossed.
+        if spine_id_end >= super::forks::RECOVERY_BASE as u32 {
+            refusals.push(format!(
+                "{LIMIT_REFUSAL} category index {category_src_idx} allocates \
+                 {next_spine_ordinal} synthetic spine ids, ending at {spine_id_end:#06x}, \
+                 which collides with the recovery-branch id space that begins at {:#06x}. \
+                 Reduce the number of distinct factorable prefixes declared in this \
+                 category.",
+                super::forks::RECOVERY_BASE,
+            ));
+        }
+        if spine_id_end >= u16::MAX as u32 {
+            refusals.push(format!(
+                "{LIMIT_REFUSAL} category index {category_src_idx} ends its synthetic spine \
+                 id space at {spine_id_end:#06x}, which overflows the `u16` a rule index \
+                 is encoded in. Reduce the number of distinct factorable prefixes declared \
+                 in this category.",
+            ));
+        }
+        out.push(CategoryFactoring {
+            category_src_idx,
+            buckets,
+            refusals: std::mem::take(&mut refusals),
+        });
     }
     out
 }
@@ -1076,7 +1173,7 @@ pub(crate) fn emission_partition(
                 singletons,
             })
             .collect();
-        out.push(CategoryFactoring { category_src_idx, buckets });
+        out.push(CategoryFactoring { category_src_idx, buckets, refusals: Vec::new() });
     }
     out
 }
@@ -1201,6 +1298,8 @@ pub(crate) struct MixfixBucket {
 pub(crate) struct MixfixFactoring {
     pub dispatch_cat_src_idx: u16,
     pub buckets: Vec<MixfixBucket>,
+    /// ★ #141 G8 — see [`CategoryFactoring::refusals`].
+    pub refusals: Vec<String>,
 }
 
 /// A discovered mixfix slice member before trie construction.
@@ -1221,13 +1320,6 @@ fn mixfix_member_items(
     op: &mettail_prattail::binding_power::InfixOperator,
     categories: &[String],
 ) -> (Vec<SpineItem>, Vec<(u8, u8, u8)>, bool) {
-    let lookup = |name: &str| -> u16 {
-        categories
-            .iter()
-            .position(|c| c == name)
-            .map(|i| i as u16)
-            .unwrap_or(0)
-    };
     let mut items: Vec<SpineItem> = Vec::new();
     let mut coords: Vec<(u8, u8, u8)> = vec![(2, 0, 0)];
     if op.mixfix_parts.is_empty() {
@@ -1289,10 +1381,31 @@ fn mixfix_member_items(
         // convention, engine_impl kind-2/kind-1 operand arms). Post-operand
         // the Unwinding-MixfixMarker arm reads `marker.bp == part_i` and
         // re-enters at `(0, part_i, 0)`.
-        items.push(SpineItem::ParamParse {
-            cat_src_idx: lookup(&part.operand_category),
-            cur_bp: 0,
-        });
+        //
+        // ★ #141 — sibling 1 of 7. This lookup ended in `.unwrap_or(0)`, exactly
+        // as the comment fifteen lines above warns: an undeclared operand category
+        // became index 0, the FIRST declared category, and the factored cohort
+        // SUB-PARSED THE WRONG CATEGORY with no diagnostic.
+        //
+        // This is a macro-time VALUE position (`SpineItem::ParamParse` is consumed
+        // later in the same expansion), so it takes the discipline `binder_items`
+        // established for its own `ParamParse` arm rather than a token refusal:
+        // DECLINE TO MERGE. `return (…, true)` routes this member to its OWN
+        // un-factored emission, and that emission — `infix::emit_mixfix_parts_fn`,
+        // #141 G3 — resolves the SAME `part.operand_category` through
+        // `binder::cat_idx_tokens` and substitutes a spanned `compile_error!`
+        // naming the category and the rule. The build therefore cannot succeed
+        // with a wrong index; it fails with a message. A category with no index is
+        // more reason to decline merging, not less.
+        let Ok(cat_src_idx) = super::binder::resolve_cat_idx(
+            &part.operand_category,
+            categories,
+            "a mixfix cohort's operand position",
+            &op.label,
+        ) else {
+            return (items, coords, true);
+        };
+        items.push(SpineItem::ParamParse { cat_src_idx, cur_bp: 0 });
         coords.push((0, completed, 0));
         for (j, text) in part.following_terminals.iter().enumerate() {
             items.push(SpineItem::Literal {
@@ -1324,6 +1437,8 @@ pub(crate) fn build_mixfix_factoring(
     // carries ANY operator row — a post-operand divergence literal matching
     // one of these could be absorbed INTO the operand sub-parse.
     let operator_trigger_keys: BTreeSet<(u16, String)> = grouped.keys().cloned().collect();
+    // ★ #141 G8 — the builder-wide encoding-limit sink; see `LIMIT_REFUSAL`.
+    let mut refusals: Vec<String> = Vec::new();
     // Per-RESULT-category ordinal continuation after the prefix groups.
     let mut next_ordinal: Vec<u16> = vec![0; per_cat.len()];
     for cat_fact in prefix_partition {
@@ -1355,15 +1470,20 @@ pub(crate) fn build_mixfix_factoring(
             let total_positions = member_items.len();
             // The member's own action-entry expected_input_cats (mirrors
             // semantic_actions' mixfix arm: LHS cat first, then per part).
-            let lookup = |name: &str| -> u16 {
-                categories
-                    .iter()
-                    .position(|c| c == name)
-                    .map(|i| i as u16)
-                    .unwrap_or(0)
-            };
+            //
+            // ★ #141 — sibling 2 of 7. The `lookup` closure that stood here ended in
+            // `.unwrap_or(0)`, so an undeclared operand category entered the
+            // cohort's `action_for` row as index 0 — the FIRST declared category —
+            // and the arg-shape gate then admitted or rejected readings against a
+            // category the rule never named. Same discipline as the operand lookup
+            // in `mixfix_member_items` above: this is a macro-time VALUE position,
+            // so it DECLINES rather than substituting. Dropping the candidate means
+            // no cohort is formed for this operator, it emits itself, and
+            // `infix::emit_mixfix_parts_fn` (#141 G3) refuses on the same category
+            // with a spanned `compile_error!` naming the rule.
             let mut expected_cats: Vec<u16> = Vec::with_capacity(1 + g.op.mixfix_parts.len());
             expected_cats.push(*dispatch_cat);
+            let mut unresolved_operand = false;
             for part in &g.op.mixfix_parts {
                 // #131: a CAPTURE part's arg is token TEXT, so its expected category is
                 // ANY_CAT — mirroring the repetition arg above and, critically, mirroring
@@ -1374,8 +1494,22 @@ pub(crate) fn build_mixfix_factoring(
                 if part.repetition.is_some() || part.capture_kind.is_some() {
                     expected_cats.push(u16::MAX);
                 } else {
-                    expected_cats.push(lookup(&part.operand_category));
+                    match super::binder::resolve_cat_idx(
+                        &part.operand_category,
+                        categories,
+                        "a mixfix cohort's action entry",
+                        &g.op.label,
+                    ) {
+                        Ok(idx) => expected_cats.push(idx),
+                        Err(_) => {
+                            unresolved_operand = true;
+                            break;
+                        },
+                    }
                 }
+            }
+            if unresolved_operand {
+                continue;
             }
             // Fix-B evidence, EXACTLY as `__method_name_admits` derives it.
             let fixb_literal = match g.op.mixfix_parts.first() {
@@ -1470,6 +1604,7 @@ pub(crate) fn build_mixfix_factoring(
                 part,
                 &operator_trigger_keys,
                 &mut next_ordinal,
+                &mut refusals,
             ) {
                 Ok(group) => groups.push(group),
                 Err(bad) => ineligible.push(bad),
@@ -1511,17 +1646,25 @@ pub(crate) fn build_mixfix_factoring(
     // prefix count; re-assert over the mixfix-extended end).
     for (cat_i, ordinal_end) in next_ordinal.iter().enumerate() {
         let spine_id_end = SPINE_RULE_BASE as u32 + *ordinal_end as u32;
-        assert!(
-            spine_id_end < super::forks::RECOVERY_BASE as u32,
-            "S1-FACTORING F5-2 A9: category {cat_i} mixfix-extended spine ids end at \
-             {spine_id_end:#06x}, colliding with RECOVERY_BASE {:#06x}",
-            super::forks::RECOVERY_BASE,
-        );
-        assert!(
-            spine_id_end < u16::MAX as u32,
-            "S1-FACTORING F5-2 A9: category {cat_i} mixfix-extended spine id end \
-             {spine_id_end:#06x} overflows u16",
-        );
+        // ★ #141 G8 — the mixfix-extended twins of the two A9 ceilings above.
+        // Same real limit, same reachability by a large grammar.
+        if spine_id_end >= super::forks::RECOVERY_BASE as u32 {
+            refusals.push(format!(
+                "{LIMIT_REFUSAL} category index {cat_i} ends its mixfix-extended spine id \
+                 space at {spine_id_end:#06x}, which collides with the recovery-branch id \
+                 space that begins at {:#06x}. Reduce the number of distinct factorable \
+                 mixfix cohorts declared in this category.",
+                super::forks::RECOVERY_BASE,
+            ));
+        }
+        if spine_id_end >= u16::MAX as u32 {
+            refusals.push(format!(
+                "{LIMIT_REFUSAL} category index {cat_i} ends its mixfix-extended spine id \
+                 space at {spine_id_end:#06x}, which overflows the `u16` a rule index is \
+                 encoded in. Reduce the number of distinct factorable mixfix cohorts \
+                 declared in this category.",
+            ));
+        }
     }
 
     let mut out: Vec<MixfixFactoring> = Vec::with_capacity(per_dispatch.len());
@@ -1531,7 +1674,22 @@ pub(crate) fn build_mixfix_factoring(
         let buckets = per_dispatch
             .remove(&cat)
             .expect("dispatch cat key collected from the map");
-        out.push(MixfixFactoring { dispatch_cat_src_idx: cat, buckets });
+        out.push(MixfixFactoring { dispatch_cat_src_idx: cat, buckets, refusals: Vec::new() });
+    }
+    // ★ #141 G8 — the sink is builder-wide (its ceilings are computed over the
+    // SHARED `next_ordinal` allocation, not per dispatch category), so it is
+    // drained onto the FIRST partition entry. When there is none, the refusals
+    // still have to reach the user, so an entry is created to carry them —
+    // `buckets` empty, which every consumer already treats as "no cohorts".
+    if !refusals.is_empty() {
+        match out.first_mut() {
+            Some(first) => first.refusals = refusals,
+            None => out.push(MixfixFactoring {
+                dispatch_cat_src_idx: 0,
+                buckets: Vec::new(),
+                refusals,
+            }),
+        }
     }
     out
 }
@@ -1541,6 +1699,7 @@ fn op_first_nullary_literal(op: &mettail_prattail::binding_power::InfixOperator)
 }
 
 /// Eligibility + trie build for one whole-slice candidate group.
+#[allow(clippy::too_many_arguments)]
 fn build_mixfix_group(
     dispatch_cat: u16,
     trigger: &str,
@@ -1548,6 +1707,7 @@ fn build_mixfix_group(
     part: Vec<MixfixCandidate>,
     operator_trigger_keys: &BTreeSet<(u16, String)>,
     next_ordinal: &mut [u16],
+    refusals: &mut Vec<String>,
 ) -> Result<MixfixGroup, IneligibleGroup> {
     let member_rule_idxs: Vec<u16> = part.iter().map(|c| c.member.rule_idx).collect();
     let member_l_bps: Vec<(u8, u16)> = part.iter().map(|c| (c.l_bp, c.member.rule_idx)).collect();
@@ -1603,12 +1763,18 @@ fn build_mixfix_group(
     // codegen panic, never a silent spine-vs-member prune divergence.
     let fixb_literal = part[0].fixb_literal.clone();
     for cand in &part {
-        assert_eq!(
-            cand.fixb_literal, fixb_literal,
-            "S1-FACTORING F5-2 A-M4: mixfix cohort (dispatch cat {dispatch_cat}, \
-             trigger {trigger:?}) has non-uniform Fix-B first-literal evidence — \
-             spine-prune would diverge from member-prune",
-        );
+        if cand.fixb_literal != fixb_literal {
+            refusals.push(format!(
+                "{LIMIT_REFUSAL} the mixfix cohort at dispatch category index \
+                 {dispatch_cat}, trigger {trigger:?}, has non-uniform Fix-B \
+                 first-literal evidence ({:?} for rule index {} against {fixb_literal:?} \
+                 for the cohort), so the spine's method-name prune would diverge from its \
+                 members'. Uniformity is implied by the shared root item, so this is a \
+                 macro bug, not a grammar bug — please report it.",
+                cand.fixb_literal,
+                cand.member.rule_idx,
+            ));
+        }
     }
     // Trie build — accept_continue is ALWAYS false on the mixfix surface
     // (interior accepts route the WHOLE group to ineligible, F0-style).
@@ -1639,6 +1805,7 @@ fn build_mixfix_group(
         members,
         /* accept_continue = */ false,
         &mut interior_accepts,
+        refusals,
     );
     if !interior_accepts.is_empty() {
         return Err(IneligibleGroup {
@@ -1647,19 +1814,26 @@ fn build_mixfix_group(
         });
     }
     let leaf_count: usize = roots.iter().map(SpineTree::leaf_count).sum();
-    assert_eq!(
-        leaf_count,
-        member_rule_idxs.len(),
-        "S1-FACTORING F5-2: eligible mixfix group leaf count must equal its member \
-         count (dispatch cat {dispatch_cat}, trigger {trigger:?})",
-    );
-    assert_eq!(
-        roots.len(),
-        1,
-        "S1-FACTORING F5-2: a mixfix group is single-root by construction (the root \
-         partition IS the group criterion; dispatch cat {dispatch_cat}, trigger \
-         {trigger:?})",
-    );
+    if leaf_count != member_rule_idxs.len() {
+        refusals.push(format!(
+            "{LIMIT_REFUSAL} the eligible mixfix group at dispatch category index \
+             {dispatch_cat}, trigger {trigger:?}, built {leaf_count} spine leaves for {} \
+             members. Every member commits at exactly one leaf by construction, so the \
+             trie build and the member list disagree. This is a macro bug, not a grammar \
+             bug — please report it.",
+            member_rule_idxs.len(),
+        ));
+    }
+    if roots.len() != 1 {
+        refusals.push(format!(
+            "{LIMIT_REFUSAL} the mixfix group at dispatch category index {dispatch_cat}, \
+             trigger {trigger:?}, has {} spine roots. A mixfix group is single-root by \
+             construction — the root partition IS the group criterion — so the partition \
+             and the trie build disagree. This is a macro bug, not a grammar bug — please \
+             report it.",
+            roots.len(),
+        ));
+    }
     // Spine re-entry key uniqueness: the width-1 spine keeps marker.bp = 0,
     // so ≥2 operands on the SHARED path would collide at `(0, 0, 0)`.
     // Computed directly on the interior coordinates (see
@@ -1805,7 +1979,7 @@ pub(crate) fn mixfix_identity_partition(
         let buckets = per_dispatch
             .remove(&cat)
             .expect("dispatch cat key collected from the map");
-        out.push(MixfixFactoring { dispatch_cat_src_idx: cat, buckets });
+        out.push(MixfixFactoring { dispatch_cat_src_idx: cat, buckets, refusals: Vec::new() });
     }
     out
 }
@@ -1938,6 +2112,15 @@ pub(crate) struct SpineEmission {
     // dead_code: model field read only by the `#[cfg(test)]` assertions.
     #[cfg_attr(not(test), allow(dead_code))]
     pub lex_alt: Vec<SpineLexAlt>,
+    /// ★ #141 G8 — the ENCODING-LIMIT refusals, as `compile_error!` items.
+    ///
+    /// EMPTY on every path where the factoring encodes, which is every shipped
+    /// grammar (`cargo check -p languages --features all-languages,rho-codegen`
+    /// is the measurement). It is spliced into the generated engine module
+    /// beside `spine_weight_rule_fn`, so an unencodable factoring fails the
+    /// build with a message naming the category and the ceiling it crossed
+    /// instead of aborting `rustc` with no output at all.
+    pub refusals: TokenStream,
     /// `fn __s1_spine_weight_rule(cat, rule) -> u16` free fn for the
     /// lex-fork weight stamps (identity for real ids; MIN member for spine
     /// ids — AV5). Emitted only when groups exist.
@@ -2017,20 +2200,31 @@ struct FlatNode<'t> {
 /// fork. Interior roots take ids from 2 in forest order, so a single-root
 /// forest reproduces the F1 id assignment exactly (root = 2, descendants
 /// from 3, preorder).
-fn flatten_forest(roots: &[SpineTree]) -> Vec<FlatNode<'_>> {
-    let mut out: Vec<FlatNode<'_>> = Vec::new();
-    // The F1 "root must be Interior" assert generalizes (plan §6): the
+///
+/// ★ #141 G8 — `refusals` is the same `&mut` sink the trie build uses. The three
+/// invariants below (non-empty forest, ≥2 leaves, and the `u8` node-id ceiling)
+/// were `assert!`s; the last of them is a REAL ENCODING LIMIT a wide group
+/// reaches. See [`LIMIT_REFUSAL`].
+fn flatten_forest<'a>(roots: &'a [SpineTree], refusals: &mut Vec<String>) -> Vec<FlatNode<'a>> {
+    let mut out: Vec<FlatNode<'a>> = Vec::new();
+    // The F1 "root must be Interior" invariant generalizes (plan §6): the
     // forest is non-empty and carries one leaf per member of a ≥2-member
-    // group (the leaf/member equality itself is asserted at build).
-    assert!(
-        !roots.is_empty(),
-        "S1-FACTORING F5-1: an eligible group's forest must be non-empty",
-    );
-    assert!(
-        roots.iter().map(SpineTree::leaf_count).sum::<usize>() >= 2,
-        "S1-FACTORING F5-1: an eligible group's forest must carry ≥2 leaves \
-         (one per member of a ≥2-member group)",
-    );
+    // group (the leaf/member equality itself is checked at build).
+    if roots.is_empty() {
+        refusals.push(format!(
+            "{LIMIT_REFUSAL} an eligible group's spine forest is empty, so there is no \
+             arm for its trigger branch to enter. This is a macro bug, not a grammar bug \
+             — please report it.",
+        ));
+    }
+    let forest_leaves = roots.iter().map(SpineTree::leaf_count).sum::<usize>();
+    if forest_leaves < 2 {
+        refusals.push(format!(
+            "{LIMIT_REFUSAL} an eligible group's spine forest carries {forest_leaves} \
+             leaf/leaves, but a group has ≥2 members and one leaf per member. This is a \
+             macro bug, not a grammar bug — please report it.",
+        ));
+    }
     // Pre-root arm: node 1 consumes the root EDGES; interior roots land on
     // their own arms at ids assigned from 2, leaf roots commit (id 0).
     let mut next_id: u8 = 2;
@@ -2039,11 +2233,18 @@ fn flatten_forest(roots: &[SpineTree]) -> Vec<FlatNode<'_>> {
         let cid = match root {
             SpineTree::Interior { .. } => {
                 let cid = next_id;
-                assert!(
-                    next_id < 250,
-                    "S1-FACTORING F1: spine node-id space exceeded (u8 marker positions)",
-                );
-                next_id += 1;
+                // ★ #141 G8 — a REAL ENCODING LIMIT: marker positions are `u8`
+                // and the id space above 250 is reserved. A wide group reaches
+                // it, and what it deserves is a message rather than a mute abort.
+                if next_id >= 250 {
+                    refusals.push(format!(
+                        "{LIMIT_REFUSAL} a group's spine needs more than 250 interior \
+                         node ids, but a marker position is a `u8` and ids at or above \
+                         250 are reserved. Reduce the number of members sharing this \
+                         prefix, or shorten the surface they share.",
+                    ));
+                }
+                next_id = next_id.saturating_add(1);
                 cid
             },
             SpineTree::Leaf { .. } => 0,
@@ -2067,11 +2268,17 @@ fn flatten_forest(roots: &[SpineTree]) -> Vec<FlatNode<'_>> {
             let cid = match child {
                 SpineTree::Interior { .. } => {
                     let cid = next_id;
-                    assert!(
-                        next_id < 250,
-                        "S1-FACTORING F1: spine node-id space exceeded (u8 marker positions)",
-                    );
-                    next_id += 1;
+                    // ★ #141 G8 — the descendant twin of the pre-root ceiling
+                    // above; same `u8` marker-position limit, same message.
+                    if next_id >= 250 {
+                        refusals.push(format!(
+                            "{LIMIT_REFUSAL} a group's spine needs more than 250 interior \
+                             node ids, but a marker position is a `u8` and ids at or \
+                             above 250 are reserved. Reduce the number of members sharing \
+                             this prefix, or shorten the surface they share.",
+                        ));
+                    }
+                    next_id = next_id.saturating_add(1);
                     cid
                 },
                 // Leaves carry no arm of their own — the parent's arm
@@ -2252,6 +2459,17 @@ pub(crate) fn build_spine_emission_from_parts(
         (0..per_cat.len()).map(|_| HashMap::new()).collect();
     let mut lex_alt: Vec<SpineLexAlt> =
         (0..per_cat.len()).map(|_| SpineLexAlt::default()).collect();
+    // ★ #141 G8 — the model's refusals, rendered once, here, from BOTH
+    // partitions. `emission_partition` / `mixfix_emission_partition` are the
+    // only producers and this is their only consumer, so a refusal cannot be
+    // recorded and then dropped.
+    let refusal_items: Vec<TokenStream> = partition
+        .iter()
+        .flat_map(|cat_fact| cat_fact.refusals.iter())
+        .chain(mixfix_partition.iter().flat_map(|mix| mix.refusals.iter()))
+        .map(|message| quote! { compile_error!(#message); })
+        .collect();
+    let mut emission_refusals: Vec<String> = Vec::new();
     let mut binder_arms: Vec<TokenStream> = Vec::new();
     let mut owner_arms: Vec<TokenStream> = Vec::new();
     let mut member_arms: Vec<TokenStream> = Vec::new();
@@ -2301,7 +2519,7 @@ pub(crate) fn build_spine_emission_from_parts(
                     lex_alt[cat_usize].grouped.insert(m, d);
                 }
                 // ── binder arms ──────────────────────────────────────────
-                for node in flatten_forest(&group.roots) {
+                for node in flatten_forest(&group.roots, &mut emission_refusals) {
                     let node_id = node.node_id;
                     let branches: Vec<TokenStream> = node
                         .children
@@ -2367,8 +2585,8 @@ pub(crate) fn build_spine_emission_from_parts(
                 // action_for spine row (H9): expected_input_cats = the union
                 // of the members' OWN expected_input_cats, derived EXACTLY as
                 // `binder::emit_binder_action_entry` derives each member's row
-                // (`shape.action_args`: `Term(cat)` → category index with the
-                // same `.position(..).unwrap_or(0)` lookup; every non-Term
+                // (`shape.action_args`: `Term(cat)` → category index through the
+                // SHARED resolver; every non-Term
                 // slot → the ANY_CAT sentinel `u16::MAX`). ANY_CAT values are
                 // kept in the union — faithful, and inert at both consumers
                 // (`contains(&body_cat)` never matches `MAX` for a real
@@ -2379,18 +2597,45 @@ pub(crate) fn build_spine_emission_from_parts(
                 // nothing. Arity = u8::MAX poison; action_fn = debug-trap
                 // no-op (the H9 walker asserts fire first in debug; in
                 // release the poison arity elides at every fire path).
+                //
+                // ★ #141 — sibling 3 of 7. The `Term(cat)` arm ended in
+                // `.unwrap_or(0)`: an undeclared member category entered the SPINE's
+                // union as index 0, the FIRST declared category, so the cohort
+                // advertised an input category no member ever names.
+                //
+                // Unlike the two siblings above, DECLINING is not available here —
+                // the members are already committed to this spine and the arm is
+                // being emitted. It does not need to be: this is emitted code, and
+                // the arm body is a BLOCK, so the refusal goes in as a token exactly
+                // where it was discovered. `compile_error!` fires on expansion, not
+                // on the arm being selected at run time, so an unresolvable category
+                // fails the build with a message naming the category and the rule —
+                // and no index at all enters the union.
                 let mut union: Vec<u16> = Vec::new();
+                let mut union_refusals: Vec<TokenStream> = Vec::new();
                 for m in members.iter().copied() {
-                    let Some(shape) = classify_binder_in(&rules[m as usize], language) else {
+                    let member_rule = &rules[m as usize];
+                    let Some(shape) = classify_binder_in(member_rule, language) else {
                         continue; // Nullary member: arity-0 entry, no cats.
                     };
                     for kind in &shape.action_args {
                         let ci = match kind {
-                            ActionArgKind::Term(cat) => categories
-                                .iter()
-                                .position(|c| c == cat)
-                                .map(|i| i as u16)
-                                .unwrap_or(0),
+                            ActionArgKind::Term(cat) => {
+                                match super::binder::resolve_cat_idx(
+                                    cat,
+                                    categories,
+                                    "a spine cohort's action entry",
+                                    &member_rule.label.to_string(),
+                                ) {
+                                    Ok(idx) => idx,
+                                    Err(unresolved) => {
+                                        union_refusals.push(
+                                            unresolved.compile_error(member_rule.label.span()),
+                                        );
+                                        continue;
+                                    },
+                                }
+                            },
                             // binder.rs `any_cat_value` convention: non-Term
                             // slots (BinderName/BinderList/Predicate/...) are
                             // ANY_CAT in the member's own row.
@@ -2403,6 +2648,7 @@ pub(crate) fn build_spine_emission_from_parts(
                 }
                 action_arms.push(quote! {
                     (#cat, #spine_id) => {
+                        #(#union_refusals;)*
                         static SPINE_ENTRY: mettail_prattail::wpda_runtime::ActionEntry =
                             mettail_prattail::wpda_runtime::ActionEntry {
                                 action_fn: |
@@ -2441,11 +2687,18 @@ pub(crate) fn build_spine_emission_from_parts(
                         .map(|sp| matches!(sp.first(), Some(SyntaxExpr::Literal(_))))
                         .unwrap_or(false)
                 });
-                assert!(
-                    lead_conjunction,
-                    "S1-FACTORING A7: group (cat {cat}, spine {spine_id:#06x}) has a member \
-                     without a leading literal trigger — eligibility drifted",
-                );
+                // ★ #141 G8 — emitter position: the refusal joins the same
+                // `lead_arms` vector the row would have gone into.
+                if !lead_conjunction {
+                    let message = format!(
+                        "{LIMIT_REFUSAL} the group at category index {cat}, spine id \
+                         {spine_id:#06x}, has a member with no leading literal trigger, \
+                         but every member of an eligible group is required to have one. \
+                         The eligibility test and the emission disagree; this is a macro \
+                         bug, not a grammar bug — please report it.",
+                    );
+                    lead_arms.push(quote! { compile_error!(#message); });
+                }
                 lead_arms.push(quote! {
                     (#cat, #spine_id) => return true,
                 });
@@ -2538,12 +2791,18 @@ pub(crate) fn build_spine_emission_from_parts(
                         .as_ref()
                         .map(|sp| matches!(sp.first(), Some(SyntaxExpr::Literal(_))))
                         .unwrap_or(false);
-                    assert!(
-                        !leads_with_literal,
-                        "S1-FACTORING F5-2 A7-mixfix: group (result {result_src}, spine \
-                         {spine_id:#06x}) member {m} LEADS with a literal — mixfix \
-                         cohort members are operand-leading by construction",
-                    );
+                    // ★ #141 G8 — emitter position; see the prefix twin above.
+                    if leads_with_literal {
+                        let message = format!(
+                            "{LIMIT_REFUSAL} the mixfix cohort at result category index \
+                             {result_src}, spine id {spine_id:#06x}, has member rule \
+                             index {m} LEADING with a literal, but mixfix cohort members \
+                             are operand-leading by construction. The eligibility test \
+                             and the emission disagree; this is a macro bug, not a \
+                             grammar bug — please report it.",
+                        );
+                        lead_arms.push(quote! { compile_error!(#message); });
+                    }
                 }
                 // min_terminal_span: min over members (honest computation;
                 // 0 = the table default ⇒ row omitted — both real cohorts
@@ -2655,8 +2914,20 @@ pub(crate) fn build_spine_emission_from_parts(
     } else {
         TokenStream::new()
     };
+    let refusals = {
+        let items: Vec<TokenStream> = refusal_items
+            .into_iter()
+            .chain(
+                emission_refusals
+                    .iter()
+                    .map(|message| quote! { compile_error!(#message); }),
+            )
+            .collect();
+        quote! { #(#items)* }
+    };
     SpineEmission {
         dispositions,
+        refusals,
         group_members,
         binder_arms,
         trigger_spine_owner_fn,
@@ -2861,11 +3132,18 @@ fn mixfix_spine_step_arm(
     // ── single-child chain forms ──────────────────────────────────────────
     if children.len() == 1 {
         let (child, child_after) = &children[0];
-        assert!(
-            matches!(child, SpineTree::Interior { .. }),
-            "S1-FACTORING F5-2: a single spine-arm child is Interior by \
-             construction (single-member parts leaf out at the parent)",
-        );
+        // ★ #141 G8 — emitter position (this function returns the arm's
+        // tokens), so the refusal simply IS the arm.
+        if !matches!(child, SpineTree::Interior { .. }) {
+            let message = format!(
+                "{LIMIT_REFUSAL} the single spine-arm child at result category index \
+                 {result_src}, spine id {spine_id:#06x}, is a leaf rather than an \
+                 interior node, but a single-member part leafs out at its PARENT. The \
+                 trie build and the arm emission disagree; this is a macro bug, not a \
+                 grammar bug — please report it.",
+            );
+            return quote! { compile_error!(#message); };
+        }
         match child.item() {
             SpineItem::Literal { text, .. } => {
                 let (_, state) =
@@ -3158,6 +3436,120 @@ pub(crate) fn emit_spine_trigger_branch(
                         mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
                 },
         });
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #141 G8 RED — the encoding limits REFUSE, and say which limit
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ⚠ No cell expects a panic: each reads the `Vec<String>` the sink collects.
+#[cfg(test)]
+mod limit_refusal_red {
+    use super::*;
+
+    fn leaf(rule_idx: u16) -> SpineTree {
+        SpineTree::Leaf {
+            item: SpineItem::Literal { text: "x".to_string(), required_top_cat: None },
+            member: GroupMember {
+                kind: MemberKind::Nullary,
+                rule_idx,
+                leaf_depth: 1,
+                commit: MemberCommit::Nullary { rule_idx, completed_idx: 0, sub_pos: 0 },
+                pos_map: SpinePosMap::Nullary { sub_pos_at_depth: vec![0] },
+                has_post_spine_remainder: false,
+            },
+        }
+    }
+
+    /// ★ THE MUTATION CELL. A forest that carries FEWER leaves than a group has
+    /// members refuses, and the message says which invariant it crossed.
+    #[test]
+    fn a_one_leaf_forest_refuses_instead_of_asserting() {
+        let mut refusals: Vec<String> = Vec::new();
+        let roots = [leaf(0)];
+        let _ = flatten_forest(&roots, &mut refusals);
+
+        assert_eq!(
+            refusals.len(),
+            1,
+            "exactly one invariant is crossed by a one-leaf forest — the ≥2-leaf floor. \
+             Got: {refusals:?}",
+        );
+        let message = &refusals[0];
+        assert!(
+            message.starts_with(LIMIT_REFUSAL),
+            "every G8 refusal opens with the shared prefix so a reader can tell at a \
+             glance that the FACTORING, not their grammar, is what could not be \
+             encoded. Got: {message}",
+        );
+        assert!(
+            message.contains("1 leaf/leaves"),
+            "the message must report the COUNT it saw, which is what distinguishes a \
+             collapsed forest from a merely small one. Got: {message}",
+        );
+        assert!(
+            message.contains("one leaf per member"),
+            "and it must name the invariant, not merely report a number. Got: {message}",
+        );
+    }
+
+    /// ★ THE MUTATION CELL for the EMPTY forest — a different invariant, so a
+    /// different message, and BOTH are reported rather than only the first.
+    #[test]
+    fn an_empty_forest_reports_both_invariants_it_crosses() {
+        let mut refusals: Vec<String> = Vec::new();
+        let _ = flatten_forest(&[], &mut refusals);
+
+        assert_eq!(
+            refusals.len(),
+            2,
+            "an empty forest crosses BOTH the non-emptiness invariant and the ≥2-leaf \
+             floor. An `assert!` reported one per build; a sink reports both. Got: \
+             {refusals:?}",
+        );
+        assert!(
+            refusals.iter().any(|m| m.contains("spine forest is empty")),
+            "the non-emptiness refusal must be present: {refusals:?}",
+        );
+        assert!(
+            refusals.iter().any(|m| m.contains("0 leaf/leaves")),
+            "and so must the leaf-floor refusal: {refusals:?}",
+        );
+    }
+
+    /// ★ THE CONTROL that must NOT discriminate: a well-formed two-leaf forest
+    /// refuses NOTHING and still flattens to its pre-root arm.
+    #[test]
+    fn a_two_leaf_forest_refuses_nothing() {
+        let mut refusals: Vec<String> = Vec::new();
+        let roots = [leaf(0), leaf(1)];
+        let flat = flatten_forest(&roots, &mut refusals);
+
+        assert!(
+            refusals.is_empty(),
+            "a forest that satisfies both invariants must produce NO refusal — \
+             otherwise the cells above prove only that this function refuses \
+             everything. Got: {refusals:?}",
+        );
+        assert_eq!(
+            flat.len(),
+            1,
+            "and it must still emit exactly the synthetic PRE-ROOT arm (node id 1); \
+             two leaf roots carry no arms of their own",
+        );
+        assert_eq!(flat[0].node_id, 1, "the pre-root arm is node id 1");
+    }
+
+    /// ANTI-VACUITY for the shared prefix: it is not the empty string, so
+    /// `starts_with` above is a real assertion.
+    #[test]
+    fn the_shared_refusal_prefix_says_what_could_not_be_encoded() {
+        assert!(
+            LIMIT_REFUSAL.contains("cannot be encoded"),
+            "the prefix must say what went wrong, not merely tag the message",
+        );
+        assert!(!LIMIT_REFUSAL.is_empty(), "an empty prefix makes `starts_with` vacuous");
     }
 }
 

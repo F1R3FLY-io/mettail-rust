@@ -159,7 +159,9 @@ mod carrier_handle {
     /// synthesized `"<owner>::field<i>::collection"` label; giving the typed path an equivalent
     /// would change the e-graph SHAPE of every language that has one, which is a different
     /// change from #101 and is not made here. The corpus has zero HashBag fields today — every
-    /// `HashBag(Proc)` in the tree is a whole-constructor `PPar`/`PParInternal`.)
+    /// `HashBag(Proc)` in the tree is a whole-constructor `PPar`. (Rholang's `PParInternal`
+    /// was a second such constructor until 2026-07-29, when it was deleted as a vestige; the
+    /// "zero HashBag fields" claim is unaffected, since it was a whole-constructor too.)
     /// ⚠ A `Vec` field whose element category has NOT earned a carrier (see
     /// [`super::super::op_enum::ordered_seq_element_categories`] — the generator-synthesized HOL
     /// `MApply<Domain>` forms are the only such fields) resolves to `Opaque`, keeping the exact
@@ -462,6 +464,8 @@ pub(crate) fn category_lowering_typed(language: &LanguageDef, category: &Ident) 
     let arms: Vec<TokenStream> = collect_category_variants(category, language)
         .into_iter()
         .map(|variant| match variant {
+            // ★ #141 G5 — see `VariantKind::Refused`.
+            VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
             VariantKind::Var { label }
             | VariantKind::Literal { label }
             | VariantKind::CollectionLiteral { label, .. } => {
@@ -512,8 +516,8 @@ pub(crate) fn category_lowering_typed(language: &LanguageDef, category: &Ident) 
                     // sequence leaf.
                     //
                     // ⚠ ZERO CORPUS INSTANCES: every `VariantKind::Collection` in the tree is a
-                    // `HashBag` (`PPar`/`PParInternal`). The claim is therefore pinned by the
-                    // live `SeqCarrierDemo` fixture, not by the corpus.
+                    // `HashBag` (`PPar`). The claim is therefore pinned by the live
+                    // `SeqCarrierDemo` fixture, not by the corpus.
                     ResolvedCarrier::OrderedSeq(seq) => {
                         let leaf = ordered_seq_leaf_typed(&seq, quote! { values });
                         quote! {

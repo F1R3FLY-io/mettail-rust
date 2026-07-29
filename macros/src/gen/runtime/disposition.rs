@@ -255,15 +255,21 @@ pub(crate) fn legacy_unsupported_messages(dispositions: &[LoweringDisposition]) 
 /// the fold rules at all (they are the typed path's concern); the inventory adds their
 /// dispositions separately in [`crate::gen::runtime::dovetail_report::lowering_disposition_inventory`].
 ///
-/// Panics — which a proc macro surfaces as a compile error naming the construct — because a
-/// generator that has lost track of a declared construct must not be allowed to emit a language
-/// that claims otherwise.
-pub(crate) fn assert_every_construct_disposed(
+/// ★ #141 G9 — RETURNS the refusal as `compile_error!` tokens (EMPTY when every
+/// declared construct is disposed). It used to `panic!`, and its own doc-comment
+/// said that "a proc macro surfaces [a panic] as a compile error naming the
+/// construct" — which is FALSE on this workspace's cranelift dev backend: the
+/// payload never appears and `rustc` dies with `fatal runtime error: Rust cannot
+/// catch foreign exceptions` (#141 RED-0, 2026-07-29). A generator that has lost
+/// track of a declared construct still must not emit a language that claims
+/// otherwise; the difference is that the author now learns which construct.
+#[must_use]
+pub(crate) fn every_construct_disposed_or_refusal(
     language: &mettail_ast::language::LanguageDef,
     dispositions: &[LoweringDisposition],
     include_folds: bool,
     site: &str,
-) {
+) -> TokenStream {
     use std::collections::HashSet;
 
     let recorded: HashSet<(LoweredConstructKind, &str)> = dispositions
@@ -296,15 +302,28 @@ pub(crate) fn assert_every_construct_disposed(
         }
     }
 
-    assert!(
-        missing.is_empty(),
-        "language `{}`: the lowering at `{site}` produced no disposition for {} declared \
-         construct(s) — {}. Every declared construct must be accounted for; a construct with no \
-         disposition is exactly the silent drop this record exists to make impossible.",
-        language.name,
-        missing.len(),
-        missing.join(", "),
-    );
+    // ★ #141 G9. This is the census that makes a silently-dropped construct
+    // impossible — and it was itself silent: a `panic!` inside a proc macro prints
+    // NOTHING under this workspace's cranelift dev backend (#141 RED-0), so a
+    // dropped construct aborted `rustc` with no message. The refusal is returned as
+    // tokens for the caller to splice, which is the only shape available to a
+    // function whose product is a bookkeeping check rather than emitted code.
+    match missing.is_empty() {
+        true => TokenStream::new(),
+        false => {
+            let message = format!(
+                "mettail internal error: language `{}` — the lowering at `{site}` produced \
+                 no disposition for {} declared construct(s): {}. Every declared construct \
+                 must be accounted for; a construct with no disposition is exactly the \
+                 silent drop this record exists to make impossible. This is a macro bug, \
+                 not a grammar bug — please report it.",
+                language.name,
+                missing.len(),
+                missing.join(", "),
+            );
+            quote::quote_spanned!(language.name.span() => compile_error!(#message);)
+        },
+    }
 }
 
 /// Emit the `&'static [LoweringDispositionDef]` array the generated metadata returns.
@@ -415,6 +434,95 @@ fn lane_tokens(lane: LoweringLane) -> TokenStream {
             quote! { mettail_runtime::LoweringLane::RhoExternalContract }
         },
         LoweringLane::RhoAstContract => quote! { mettail_runtime::LoweringLane::RhoAstContract },
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #141 G9 RED — the completeness census REFUSES by returning tokens
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ⚠ No cell expects a panic: each reads the `TokenStream` the census returns.
+#[cfg(test)]
+mod census_refusal_red {
+    use super::*;
+    use mettail_ast::grammar::rule_fixture;
+    use mettail_ast::language::{Equation, LanguageDef};
+    use mettail_ast::pattern::{Pattern, PatternTerm};
+    use proc_macro2::Span;
+    use syn::Ident;
+
+    fn id(name: &str) -> Ident {
+        Ident::new(name, Span::call_site())
+    }
+
+    /// A language declaring exactly one equation, named `Assoc`.
+    fn language_with_one_equation() -> LanguageDef {
+        let mut language = crate::gen::empty_language_for_tests();
+        language.equations.push(Equation {
+            name: id("Assoc"),
+            type_context: Vec::new(),
+            premises: Vec::new(),
+            left: Pattern::Term(PatternTerm::Var(id("X"))),
+            right: Pattern::Term(PatternTerm::Var(id("Y"))),
+        });
+        let _ = rule_fixture(id("Unused"), id("Term"));
+        language
+    }
+
+    /// ★ THE MUTATION CELL. A declared equation with NO disposition refuses, and
+    /// the diagnostic names the construct, the language and the lowering site.
+    #[test]
+    fn a_construct_with_no_disposition_refuses_and_names_it() {
+        let language = language_with_one_equation();
+        let rendered =
+            every_construct_disposed_or_refusal(&language, &[], false, "a_test_lowering")
+                .to_string();
+
+        assert!(
+            rendered.contains("compile_error"),
+            "a declared construct that left the lowering with no account of itself must \
+             REFUSE — a silent drop is exactly what this record exists to make \
+             impossible. Got: {rendered}",
+        );
+        assert!(
+            rendered.contains("Assoc"),
+            "the diagnostic must name the CONSTRUCT that went missing. Got: {rendered}",
+        );
+        assert!(
+            rendered.contains("TestLang"),
+            "…and the LANGUAGE, since one `rustc` process expands every bundled \
+             grammar. Got: {rendered}",
+        );
+        assert!(
+            rendered.contains("a_test_lowering"),
+            "…and the SITE, since four lowerings share this census and they fail for \
+             different reasons. Got: {rendered}",
+        );
+    }
+
+    /// ★ THE CONTROL that must NOT discriminate: the same language, with the
+    /// equation's dispositions recorded, refuses NOTHING and emits no tokens.
+    #[test]
+    fn a_fully_disposed_language_emits_nothing_at_all() {
+        let language = language_with_one_equation();
+        // The census keys on the equation's NAME, so one delivered record for
+        // `Assoc` is exactly what accounts for it.
+        let dispositions = vec![LoweringDisposition::delivered(
+            LoweredConstructKind::Equation,
+            "Assoc".to_string(),
+            LoweredConstructOrigin::Declared,
+            "TestLang::equation::Assoc::forward".to_string(),
+        )];
+        let rendered =
+            every_construct_disposed_or_refusal(&language, &dispositions, false, "a_test_lowering")
+                .to_string();
+
+        assert!(
+            rendered.is_empty(),
+            "a census that passes must emit NOTHING — anything else moves the generated \
+             bytes of every language and would show up as a mover on the \
+             `target/generated` manifest. Got: {rendered}",
+        );
     }
 }
 

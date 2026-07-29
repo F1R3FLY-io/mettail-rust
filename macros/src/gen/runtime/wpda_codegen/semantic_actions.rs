@@ -98,6 +98,8 @@ pub fn emit_action_for_body(
                     refinement_name.as_deref(),
                     categories,
                     language,
+                    &rule.label.to_string(),
+                    rule.label.span(),
                 ) {
                     arms.push(entry);
                 }
@@ -429,6 +431,68 @@ pub fn emit_sigil_quoted_source_atom_rule_body(
 /// This is the HARD-CONSTRAINT guarantee that the splice's interposed coercion
 /// is never an invented terminal-bearing cast.
 ///
+/// Whether `name` denotes a BUILTIN TOKEN CLASS rather than a declared category.
+///
+/// # ★ #141 — the defect this predicate exists to remove, MEASURED
+///
+/// A single-argument wrapper's source "category" is read off the param's declared
+/// type, and that type may be a builtin token class: `Tagged . m:Ident |- "tag" m
+/// : Num` (`languages/tests/ident_param_capture.rs`) and `Named . m:Ident |- …`
+/// (`languages/tests/definitions/token_text_leaf_demo.rs`) both declare one.
+/// `Ident` is a TOKEN KIND, not a category — the param lowers to a
+/// `std::string::String` field — so such a rule captures text and coerces
+/// NOTHING, and belongs in none of the three coercion tables below.
+///
+/// Both grammars reached the tables anyway, and the `.position(..).unwrap_or(0)`
+/// lookup resolved `Ident` to index 0, THE FIRST DECLARED CATEGORY. So
+/// `TokenTextLeafDemo` published a `Proc → Proc` coercion and `IdentParamToy` a
+/// `Num → Num` one, each attributed to a rule that performs no coercion at all,
+/// with no diagnostic anywhere. ⚠ That is the fails-open shape this campaign is
+/// about, FIRING on shipped grammars — the "no grammar reaches these paths"
+/// negative held only because `cargo check -p languages` does not build
+/// `languages/tests/`, where both live.
+///
+/// Refusing them would be wrong (the grammars are correct); resolving them would
+/// be wrong (there is no category to resolve). The honest answer is that they are
+/// NOT COERCIONS, so they are excluded here — the same treatment
+/// `infix::emit_mixfix_parts_fn` gives a capture part, which "legitimately names
+/// a non-category (`Ident`)" and takes the `MIXFIX_PART_NO_OPERAND` poison rather
+/// than the lookup.
+fn is_builtin_token_class(name: &str) -> bool {
+    mettail_ast::grammar::NonTerminalKind::classify(name).is_builtin()
+}
+
+/// The refusal body for a coercion table that could not resolve a category, or
+/// `None` when there is nothing to refuse.
+///
+/// # Why the three tables share this and why it is shaped as an early return
+///
+/// `emit_single_hop_coercion_body`, `emit_trigger_unary_wrappers_into_body` and
+/// `emit_prefix_cast_into_body` each build a `BTreeMap` keyed on a resolved
+/// SOURCE category and then render it as a `match` EXPRESSION. There is no slot
+/// in a `match` expression to hang a diagnostic on, so the refusal replaces the
+/// whole body — a block whose `compile_error!`s fire at expansion and whose
+/// `fallback` keeps the emitted body parseable in the position it occupies.
+///
+/// ⚠ It is an EARLY RETURN, taken only when `refusals` is non-empty, precisely so
+/// the successful body is emitted byte-for-byte as before. A helper that always
+/// wrapped the body in a block would move every generated file for every
+/// language, which is the opposite of what a refusal-path repair may do.
+fn coercion_table_refusal(
+    refusals: &[TokenStream],
+    fallback: TokenStream,
+) -> Option<TokenStream> {
+    match refusals.is_empty() {
+        true => None,
+        false => Some(quote! {
+            {
+                #(#refusals;)*
+                #fallback
+            }
+        }),
+    }
+}
+
 /// Emitted as a `match (from_cat, to_cat)` returning a `&'static [(u16,u16)]`
 /// (interned per arm), default `&[]`. Sibling of `min_terminal_span`'s
 /// emission. PURE static lookup — no runtime state, O(1).
@@ -444,6 +508,7 @@ pub fn emit_single_hop_coercion_body(
     // accumulate into one arm (Ambiguous).
     let mut table: std::collections::BTreeMap<(u16, u16), Vec<u16>> =
         std::collections::BTreeMap::new();
+    let mut refusals: Vec<TokenStream> = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let to_cat = cat_i as u16;
         for (rule_idx, rule) in rules {
@@ -479,13 +544,33 @@ pub fn emit_single_hop_coercion_body(
             if !is_pass2a {
                 continue;
             }
-            let from_cat = categories
-                .iter()
-                .position(|c| c == &source_cat_name)
-                .map(|i| i as u16)
-                .unwrap_or(0);
+            // ★ #141 — a builtin token class is not a coercion source at all; see
+            // `is_builtin_token_class`.
+            if is_builtin_token_class(&source_cat_name) {
+                continue;
+            }
+            // ★ #141 — sibling 4 of 7. `.unwrap_or(0)` here made an undeclared
+            // SOURCE category key the table at index 0, the first declared
+            // category, so `single_hop_coercion(0, to)` reported a coercion the
+            // grammar never declared — and, worse, could collide with a real
+            // entry for category 0. See `coercion_table_refusal`.
+            let from_cat = match super::binder::resolve_cat_idx(
+                &source_cat_name,
+                categories,
+                "a single-hop coercion's source position",
+                &rule.label.to_string(),
+            ) {
+                Ok(idx) => idx,
+                Err(unresolved) => {
+                    refusals.push(unresolved.compile_error(rule.label.span()));
+                    continue;
+                },
+            };
             table.entry((from_cat, to_cat)).or_default().push(*rule_idx);
         }
+    }
+    if let Some(refusal) = coercion_table_refusal(&refusals, quote! { &[] }) {
+        return refusal;
     }
     let _ = categories;
     if table.is_empty() {
@@ -565,19 +650,37 @@ pub fn emit_trigger_unary_wrappers_into_body(
 ) -> TokenStream {
     let mut table: std::collections::BTreeMap<(u16, u16), Vec<u16>> =
         std::collections::BTreeMap::new();
+    let mut refusals: Vec<TokenStream> = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let to_cat = cat_i as u16;
         for (rule_idx, rule) in rules {
             let Some(source_cat_name) = trigger_unary_wrapper_source_cat(rule) else {
                 continue;
             };
-            let from_cat = categories
-                .iter()
-                .position(|c| c == &source_cat_name)
-                .map(|i| i as u16)
-                .unwrap_or(0);
+            // ★ #141 — see `is_builtin_token_class`: `TokenTextLeafDemo::Named`
+            // and `IdentParamToy::Tagged` both reach here with `Ident`, and both
+            // were silently entering this table at category 0.
+            if is_builtin_token_class(&source_cat_name) {
+                continue;
+            }
+            // ★ #141 — sibling 5 of 7. See `coercion_table_refusal`.
+            let from_cat = match super::binder::resolve_cat_idx(
+                &source_cat_name,
+                categories,
+                "a trigger-unary wrapper's source position",
+                &rule.label.to_string(),
+            ) {
+                Ok(idx) => idx,
+                Err(unresolved) => {
+                    refusals.push(unresolved.compile_error(rule.label.span()));
+                    continue;
+                },
+            };
             table.entry((from_cat, to_cat)).or_default().push(*rule_idx);
         }
+    }
+    if let Some(refusal) = coercion_table_refusal(&refusals, quote! { &[] }) {
+        return refusal;
     }
     if table.is_empty() {
         return quote! { &[] };
@@ -622,6 +725,7 @@ pub fn emit_prefix_cast_into_body(
 ) -> TokenStream {
     // `(from_cat, to_cat) -> rule_idx` (first match wins per pair).
     let mut table: std::collections::BTreeMap<(u16, u16), u16> = std::collections::BTreeMap::new();
+    let mut refusals: Vec<TokenStream> = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let to_cat = cat_i as u16;
         for (rule_idx, rule) in rules {
@@ -631,13 +735,34 @@ pub fn emit_prefix_cast_into_body(
             if source_cat_name == rule.category.to_string() {
                 continue;
             }
-            let from_cat = categories
-                .iter()
-                .position(|c| c == &source_cat_name)
-                .map(|i| i as u16)
-                .unwrap_or(0);
+            // ★ #141 — see `is_builtin_token_class`. This table's `or_insert` made
+            // the same two grammars' `Ident` rows WORSE than spurious: first write
+            // wins, so a `(0, to)` row invented for a token-text capture could
+            // SUPPRESS a real cast out of category 0.
+            if is_builtin_token_class(&source_cat_name) {
+                continue;
+            }
+            // ★ #141 — sibling 6 of 7. See `coercion_table_refusal`. This table
+            // uses `or_insert`, so a `.unwrap_or(0)` collision did not merely add
+            // a spurious row: it could SUPPRESS the real `(0, to_cat)` cast,
+            // because first-write-wins.
+            let from_cat = match super::binder::resolve_cat_idx(
+                &source_cat_name,
+                categories,
+                "a prefix cast's source position",
+                &rule.label.to_string(),
+            ) {
+                Ok(idx) => idx,
+                Err(unresolved) => {
+                    refusals.push(unresolved.compile_error(rule.label.span()));
+                    continue;
+                },
+            };
             table.entry((from_cat, to_cat)).or_insert(*rule_idx);
         }
+    }
+    if let Some(refusal) = coercion_table_refusal(&refusals, quote! { None }) {
+        return refusal;
     }
     let _ = categories;
     if table.is_empty() {
@@ -749,6 +874,12 @@ fn lookup_err_fallback_variant(language: &LanguageDef, cat_name: &str) -> Option
     })
 }
 
+/// `rule_label` / `rule_span` identify the rule whose action entry this is, and
+/// exist for the same reason `emit_binder_action_entry`'s `rule_span` does: the
+/// cross-category shapes below resolve a SOURCE category, and a category that
+/// cannot be resolved must refuse AT THE RULE rather than at the whole
+/// `language!` invocation.
+#[allow(clippy::too_many_arguments)]
 fn emit_action_entry_arm(
     src_idx: u16,
     rule_idx: u16,
@@ -757,6 +888,8 @@ fn emit_action_entry_arm(
     refinement_name: Option<&str>,
     categories: &[String],
     language: &LanguageDef,
+    rule_label: &str,
+    rule_span: proc_macro2::Span,
 ) -> Option<TokenStream> {
     // B13c / Candidate H (2026-05-08): per-shape input/output category
     // metadata for cursor-side type-tag projection. Output cat is always
@@ -837,11 +970,20 @@ fn emit_action_entry_arm(
         // wrap as Cat::wrapper_variant(Box::new(arg)).
         AtomicShape::CrossCatProjection { source_cat_name, wrapper_variant }
         | AtomicShape::CrossCatPrefixUnary { source_cat_name, wrapper_variant, .. } => {
-            let source_src_idx = categories
-                .iter()
-                .position(|c| c == source_cat_name)
-                .map(|i| i as u16)
-                .unwrap_or(0);
+            // ★ #141 — sibling 7 of 7, and the only one of the seven already in a
+            // TOKEN position: the index is interpolated straight into
+            // `expected_input_cats: &[…]`. `.unwrap_or(0)` here is the SAME defect
+            // `binder::emit_binder_action_entry`'s `lookup_cat_idx` had (#141 G2) —
+            // the action advertised a source category the rule never named, and the
+            // arg-shape gate then rejected readings whose parse was correct. Takes
+            // the shared resolver's token form.
+            let source_src_idx = super::binder::cat_idx_tokens(
+                source_cat_name,
+                categories,
+                "a cross-category projection's source position",
+                rule_label,
+                rule_span,
+            );
             (
                 emit_cross_cat_wrap_action(cat_ident, source_cat_name, wrapper_variant),
                 1u8,
@@ -1629,6 +1771,225 @@ fn emit_float_literal_action() -> TokenStream {
             let parsed: f64 = text.parse().unwrap_or(0.0);
             b.push_term::<f64>(parsed);
         }
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #141 Part B RED — the SEVEN `.unwrap_or(0)` siblings, at the three coercion
+// tables that carry four of them
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// All three tables keyed a `BTreeMap` on a SOURCE category resolved with
+// `.position(..).unwrap_or(0)`. An undeclared source silently became index 0 —
+// the FIRST declared category — and the language COMPILED, advertising a coercion
+// the grammar never declared. `emit_prefix_cast_into_body` is worse still: it
+// keys with `or_insert`, so the spurious `(0, to)` row could SUPPRESS the real
+// cast out of category 0 by winning the first write.
+//
+// ⚠ No cell here expects a panic: each reads the tokens the emitter returns.
+#[cfg(test)]
+mod sibling_refusal_red {
+    use super::*;
+    use mettail_ast::grammar::{rule_fixture, GrammarRule, SyntaxExpr, TermParam};
+    use mettail_ast::types::TypeExpr;
+    use proc_macro2::Span;
+    use syn::Ident;
+
+    fn id(name: &str) -> Ident {
+        Ident::new(name, Span::call_site())
+    }
+
+    /// A trigger-bearing unary cast `Cast<Source> . v:<source> |- "cast" v : Wrapped`.
+    ///
+    /// `source` is the ONLY thing the two fixtures below differ in, and it is what
+    /// `trigger_unary_wrapper_source_cat` reads, so it is exactly the input the
+    /// three tables resolve.
+    fn cast_rule(source: &str) -> GrammarRule {
+        GrammarRule {
+            term_context: Some(vec![TermParam::Simple {
+                name: id("v"),
+                ty: TypeExpr::Base(id(source)),
+            }]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("cast".to_string()),
+                SyntaxExpr::Param(id("v")),
+            ]),
+            ..rule_fixture(id("CastFromSource"), id("Wrapped"))
+        }
+    }
+
+    /// A SPAN-TRANSPARENT projection `CastFromSource . v:<source> |- v : Wrapped`.
+    ///
+    /// `emit_single_hop_coercion_body` admits only this shape (`sp.len() == 1`,
+    /// the lone element the param) — the trigger-bearing twin above is its exact
+    /// COMPLEMENT and is what the other two tables read. Both are needed, or one
+    /// of the three cells below would range over an empty table.
+    fn projection_rule(source: &str) -> GrammarRule {
+        GrammarRule {
+            term_context: Some(vec![TermParam::Simple {
+                name: id("v"),
+                ty: TypeExpr::Base(id(source)),
+            }]),
+            syntax_pattern: Some(vec![SyntaxExpr::Param(id("v"))]),
+            ..rule_fixture(id("CastFromSource"), id("Wrapped"))
+        }
+    }
+
+    fn declared_categories() -> Vec<String> {
+        vec!["Wrapped".to_string(), "Real".to_string()]
+    }
+
+    /// The three emitters, by name, each over the rule SHAPE it admits.
+    fn render(source: &str) -> Vec<(&'static str, String)> {
+        let categories = declared_categories();
+        let projection = vec![vec![(0u16, projection_rule(source))]];
+        let cast = vec![vec![(0u16, cast_rule(source))]];
+        let borrow = |owned: &Vec<Vec<(u16, GrammarRule)>>| -> Vec<Vec<(u16, GrammarRule)>> {
+            owned.clone()
+        };
+        let projection = borrow(&projection);
+        let cast = borrow(&cast);
+        let projection_ref: Vec<Vec<(u16, &GrammarRule)>> = projection
+            .iter()
+            .map(|rules| rules.iter().map(|(i, r)| (*i, r)).collect())
+            .collect();
+        let cast_ref: Vec<Vec<(u16, &GrammarRule)>> = cast
+            .iter()
+            .map(|rules| rules.iter().map(|(i, r)| (*i, r)).collect())
+            .collect();
+        let language = crate::gen::empty_language_for_tests();
+        vec![
+            (
+                "single_hop_coercion",
+                emit_single_hop_coercion_body(&categories, &projection_ref, &language).to_string(),
+            ),
+            (
+                "trigger_unary_wrappers_into",
+                emit_trigger_unary_wrappers_into_body(&categories, &cast_ref).to_string(),
+            ),
+            (
+                "prefix_cast_into",
+                emit_prefix_cast_into_body(&categories, &cast_ref).to_string(),
+            ),
+        ]
+    }
+
+    /// ★ THE MUTATION CELL. An UNDECLARED source category refuses, in every table
+    /// that reads one, and the diagnostic names the category and the rule.
+    #[test]
+    fn an_undeclared_source_category_refuses_in_every_coercion_table() {
+        // The mutation really is applied, and is the only difference: the two
+        // fixtures agree on everything but the source category's spelling.
+        let mutated = cast_rule("Ghost");
+        let control = cast_rule("Real");
+        assert_eq!(mutated.label, control.label, "same rule, one token apart");
+        assert_ne!(
+            format!("{:?}", mutated.term_context),
+            format!("{:?}", control.term_context),
+            "and the token they differ in is the SOURCE CATEGORY, which is what \
+             these tables resolve",
+        );
+
+        for (table, rendered) in render("Ghost") {
+            assert!(
+                rendered.contains("compile_error"),
+                "`{table}` must REFUSE an undeclared source category, not resolve it to \
+                 index 0 — the first declared category — and emit a table row for a \
+                 coercion the grammar never declared. Got: {rendered}",
+            );
+            assert!(
+                rendered.contains("Ghost"),
+                "`{table}`'s diagnostic must name the CATEGORY it could not resolve. \
+                 Got: {rendered}",
+            );
+            assert!(
+                rendered.contains("CastFromSource"),
+                "`{table}`'s diagnostic must name the RULE the category appears on — an \
+                 index names nothing an author can act on. Got: {rendered}",
+            );
+            assert!(
+                rendered.contains("Wrapped , Real") || rendered.contains("Wrapped, Real"),
+                "`{table}`'s diagnostic must list the DECLARED categories, because the \
+                 single most common cause is a typo. Got: {rendered}",
+            );
+        }
+    }
+
+    /// ★ THE CONTROL that must NOT discriminate: a DECLARED source still builds
+    /// its row, and emits no diagnostic at all.
+    #[test]
+    fn a_declared_source_category_still_builds_its_row() {
+        for (table, rendered) in render("Real") {
+            assert!(
+                !rendered.contains("compile_error"),
+                "`{table}` must not refuse a source category the language declares — \
+                 otherwise the cell above proves only that these emitters refuse \
+                 everything. Got: {rendered}",
+            );
+            assert!(
+                rendered.contains("match"),
+                "`{table}` must still emit its lookup `match` for a resolvable cast. \
+                 Got: {rendered}",
+            );
+        }
+    }
+
+    /// ★ THE MEASURED FINDING (2026-07-29). A source that is a BUILTIN TOKEN
+    /// CLASS is not a coercion at all — it neither refuses nor enters the table.
+    ///
+    /// This is not a hypothetical: `Tagged . m:Ident |- "tag" m : Num`
+    /// (`languages/tests/ident_param_capture.rs`) and `Named . m:Ident |- …`
+    /// (`languages/tests/definitions/token_text_leaf_demo.rs`) are shipped
+    /// grammars that reach these tables, and `.unwrap_or(0)` was silently
+    /// publishing a `Num → Num` / `Proc → Proc` coercion for each. The cell below
+    /// is a fixture of exactly that shape.
+    #[test]
+    fn an_ident_source_is_not_a_coercion_and_neither_refuses_nor_enters_the_table() {
+        for (table, rendered) in render("Ident") {
+            assert!(
+                !rendered.contains("compile_error"),
+                "`{table}` must not REFUSE `m:Ident`: the grammars that write it are \
+                 correct — `Ident` is a token kind whose param lowers to a `String`, so \
+                 the rule captures text and coerces nothing. Got: {rendered}",
+            );
+            assert!(
+                !rendered.contains("0u16 , 0u16") && !rendered.contains("(0u16, 0u16)"),
+                "…and it must not resolve `Ident` to category 0 either, which is what \
+                 `.unwrap_or(0)` did — publishing a coercion out of THE FIRST DECLARED \
+                 CATEGORY for a rule that performs none. Got: {rendered}",
+            );
+        }
+    }
+
+    /// ANTI-VACUITY for the cell above: `Ident` really is classified as a builtin,
+    /// and `Real` really is not. Without this, the exclusion could be matching
+    /// nothing (or everything) and both halves would pass.
+    #[test]
+    fn the_builtin_token_class_predicate_separates_ident_from_a_real_category() {
+        assert!(
+            is_builtin_token_class("Ident"),
+            "`Ident` is a builtin token kind, which is what excludes it",
+        );
+        assert!(
+            !is_builtin_token_class("Real"),
+            "…and a declared category is not, which is what keeps the exclusion from \
+             swallowing every coercion in the corpus",
+        );
+    }
+
+    /// ANTI-VACUITY: the fixture really does reach the resolving code. If
+    /// `trigger_unary_wrapper_source_cat` stopped recognising this shape, every
+    /// assertion above would range over an empty table and pass for the wrong
+    /// reason.
+    #[test]
+    fn the_fixture_reaches_the_source_category_lookup() {
+        assert_eq!(
+            trigger_unary_wrapper_source_cat(&cast_rule("Real")).as_deref(),
+            Some("Real"),
+            "the fixture must be classified as a trigger-bearing unary wrapper, or the \
+             cells above never reach the lookup they are about",
+        );
     }
 }
 

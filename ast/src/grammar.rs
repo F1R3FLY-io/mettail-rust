@@ -826,10 +826,26 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
         match kw.to_string().as_str() {
             "fold" | "step" => {
                 let mode_ident = input.parse::<syn::Ident>()?;
+                // ★ #141 G5. The `unreachable!()` here was justified by the
+                // OUTER match on a FORK of the same input having already
+                // accepted only `fold` / `step` — a claim about two matches
+                // staying in step, held by nothing. This is a `syn::Result`
+                // parser, so the refusal is a spanned parse error: the idiom the
+                // arm four lines below already uses.
                 match mode_ident.to_string().as_str() {
                     "fold" => Some(EvalMode::Fold),
                     "step" => Some(EvalMode::Step),
-                    _ => unreachable!(),
+                    other => {
+                        return Err(syn::Error::new(
+                            mode_ident.span(),
+                            format!(
+                                "mettail internal error: the evaluation-mode lookahead \
+                                 accepted `{other}` but the parser admits only `fold` and \
+                                 `step`, so the two have drifted apart. This is a macro \
+                                 bug, not a grammar bug — please report it."
+                            ),
+                        ));
+                    },
                 }
             },
             "right" | "prefix" | "canonical" | "same" => None, // handled below
@@ -1585,12 +1601,15 @@ pub fn convert_items_to_term_context(rule: &mut GrammarRule) {
                     sp.push(SyntaxExpr::Param(pname));
                 }
             },
-            // Non-Category NonTerminals (Var/Integer/Boolean/etc.) caused
-            // the early-return above — unreachable here.
-            GrammarItem::NonTerminal { .. } => unreachable!(
-                "convert_items_to_term_context: non-Category NonTerminal \
-                 should have triggered early-return"
-            ),
+            // ★ #141 G5. Non-Category NonTerminals (Var/Integer/Boolean/…) are
+            // supposed to have caused the early-return above. That is a claim
+            // about a gate twenty lines away, held by nothing, and this function
+            // returns `()` — it has no channel to refuse through. So it does what
+            // the gate would have done: LEAVES THE RULE UNCONVERTED (`return`,
+            // not `unreachable!`), which is the same outcome as the early-return
+            // the claim says already happened, and the one shape whose result is
+            // identical whether the claim holds or not.
+            GrammarItem::NonTerminal { .. } => return,
             GrammarItem::Binder { category } => {
                 pending_binder = Some(category.clone());
             },

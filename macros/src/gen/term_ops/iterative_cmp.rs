@@ -167,6 +167,9 @@ fn generate_variant_index_fn(category: &Ident, language: &LanguageDef) -> TokenS
 /// Generate a wildcard match pattern for a variant (matches any payload).
 fn variant_wildcard_pattern(category: &Ident, variant: &VariantKind) -> TokenStream {
     match variant {
+        // ★ #141 G5 — a classification that refuses carries its diagnostic into
+        // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
+        VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
         VariantKind::Nullary { label } => {
             quote! { #category::#label }
         },
@@ -286,6 +289,9 @@ fn generate_eq_variant_arm(
     language: &LanguageDef,
 ) -> TokenStream {
     match variant {
+        // ★ #141 G5 — a classification that refuses carries its diagnostic into
+        // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
+        VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
         VariantKind::Nullary { label } => {
             // Nullary: always equal (discriminant already matched)
             quote! {
@@ -629,6 +635,9 @@ fn generate_cmp_variant_arm(
     language: &LanguageDef,
 ) -> TokenStream {
     match variant {
+        // ★ #141 G5 — a classification that refuses carries its diagnostic into
+        // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
+        VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
         VariantKind::Nullary { label } => {
             // Nullary: always equal
             quote! {

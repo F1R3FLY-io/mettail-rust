@@ -527,6 +527,9 @@ fn generate_iterative_variant_arm(
     language: &LanguageDef,
 ) -> TokenStream {
     match variant {
+        // ★ #141 G5 — a classification that refuses carries its diagnostic into
+        // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
+        VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
         VariantKind::Var { label } => {
             // Var identity: ground Var == pattern Var
             quote! {
