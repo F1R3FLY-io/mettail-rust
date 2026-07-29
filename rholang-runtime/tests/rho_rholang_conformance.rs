@@ -4049,4 +4049,3 @@ async fn c4_a_bare_element_walk_visits_every_element_in_order() {
          retired witness recorded as false at six consecutive steps"
     );
 }
-
