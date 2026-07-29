@@ -2690,14 +2690,31 @@ fn generate_engine_regular_arm(
                             }).collect();
                             items.sort();
                         },
-                        mettail_ast::types::CollectionType::HashMap
-                        | mettail_ast::types::CollectionType::PathMap => quote! {
+                        mettail_ast::types::CollectionType::HashMap => quote! {
                             // HashMap display path is handled separately;
                             // defensive fallback that yields each entry's
                             // Display form. Pilot grammars do not exercise
                             // HashMap-in-binder Class 2.
                             let mut items: Vec<String> = #field_name.iter()
                                 .map(|(k, v)| format!("{} : {}", k, v))
+                                .collect();
+                            items.sort();
+                        },
+                        // #74: a `PathMap` value is a `PathValue`; an `Unset`
+                        // entry renders as the BARE KEY, with no separator.
+                        // (`PathMap` is not admissible as an INLINE binder
+                        // collection type — `binder.rs` rejects it at its
+                        // `_ => return None` collection arm — so this arm is
+                        // unreachable today; it is written correctly rather than
+                        // merely compilably so it stays right if that changes.)
+                        mettail_ast::types::CollectionType::PathMap => quote! {
+                            let mut items: Vec<String> = #field_name.iter()
+                                .map(|(k, v)| match v {
+                                    mettail_runtime::PathValue::Unset => format!("{}", k),
+                                    mettail_runtime::PathValue::Set(inner) => {
+                                        format!("{} : {}", k, inner)
+                                    },
+                                })
                                 .collect();
                             items.sort();
                         },
@@ -3989,8 +4006,7 @@ fn generate_engine_pattern_op(
                         }
                         parts.sort();
                     },
-                    Some(mettail_ast::types::CollectionType::HashMap)
-                    | Some(mettail_ast::types::CollectionType::PathMap) => quote! {
+                    Some(mettail_ast::types::CollectionType::HashMap) => quote! {
                         // HashMap: pair-wise iteration with `:` between
                         // K and V — matches the parse-side `:` consumption
                         // in walker phase 1 (`emit_collection_loop_arm`).
@@ -4000,6 +4016,27 @@ fn generate_engine_pattern_op(
                                 mettail_runtime::group_if_bare_delims(&k.to_string(), #elem_delims),
                                 mettail_runtime::group_if_bare_delims(&v.to_string(), #elem_delims),
                             ));
+                        }
+                        parts.sort();
+                    },
+                    // #74: an `Unset` PathMap entry renders as the bare key.
+                    // (Unreachable for an INLINE binder collection — `PathMap`
+                    // is not an admissible inline collection type.)
+                    Some(mettail_ast::types::CollectionType::PathMap) => quote! {
+                        for (k, v) in #coll_ident.iter() {
+                            let k_s = mettail_runtime::group_if_bare_delims(
+                                &k.to_string(), #elem_delims,
+                            );
+                            parts.push(match v {
+                                mettail_runtime::PathValue::Unset => k_s,
+                                mettail_runtime::PathValue::Set(inner) => format!(
+                                    "{} : {}",
+                                    k_s,
+                                    mettail_runtime::group_if_bare_delims(
+                                        &inner.to_string(), #elem_delims,
+                                    ),
+                                ),
+                            });
                         }
                         parts.sort();
                     },
@@ -4248,10 +4285,25 @@ fn generate_engine_pattern_op(
                                     }
                                     parts.sort();
                                 },
-                                Some(mettail_ast::types::CollectionType::HashMap)
-                                | Some(mettail_ast::types::CollectionType::PathMap) => quote! {
+                                Some(mettail_ast::types::CollectionType::HashMap) => quote! {
                                     for (k, v) in #inner_var.iter() {
                                         parts.push(format!("{} : {}", k, v));
+                                    }
+                                    parts.sort();
+                                },
+                                // #74: an `Unset` PathMap entry renders as the
+                                // bare key. (Unreachable for an INLINE binder
+                                // collection — see the sibling arms.)
+                                Some(mettail_ast::types::CollectionType::PathMap) => quote! {
+                                    for (k, v) in #inner_var.iter() {
+                                        parts.push(match v {
+                                            mettail_runtime::PathValue::Unset => {
+                                                format!("{}", k)
+                                            },
+                                            mettail_runtime::PathValue::Set(inner) => {
+                                                format!("{} : {}", k, inner)
+                                            },
+                                        });
                                     }
                                     parts.sort();
                                 },
@@ -4530,6 +4582,78 @@ fn generate_engine_auto_literal_arm(
             },
             None => nt,
         };
+
+        // ★ #74 (2026-07-29): a `Pathmap`'s entries are `(K, PathValue<V>)`, and
+        // a `PathValue::Unset` entry prints as the BARE KEY — `{| k |}`, with no
+        // `:` and no value. This arm is emitted BEFORE the shared kv body,
+        // because it is the one place where the presence of the separator is a
+        // RUNTIME question rather than a static property of the container.
+        //
+        // ★ This is the self-check for Ruling B. `{| k |}` must be a fixpoint of
+        // `parse ∘ display`: encoding the unset value as `Nil` would print
+        // `{|k:Nil|}` for an input the user wrote as `{|k|}`, so the surface
+        // would not round-trip. That is why "unset ≠ Nil" is a soundness
+        // property here and not a preference.
+        if matches!(
+            collection_kind,
+            Some(mettail_ast::language::CollectionCategory::Pathmap(_))
+        ) {
+            let kv = kv_sep.clone().unwrap_or_else(|| ":".to_string());
+            let sep_with_space = format!("{} ", sep);
+            if let (Some(key_task), Some(val_task)) =
+                (elem_display_task.clone(), value_display_task.clone())
+            {
+                return quote! {
+                    #category::#literal_label(v) => {
+                        let mut entries: Vec<_> = v.iter().collect();
+                        // ⚠ PRE-EXISTING SORT, retained here deliberately. It is
+                        // a Display→parse-visible behaviour that moves goldens,
+                        // so it is retired in its OWN commit with a round-trip
+                        // check rather than folded into the #74/#151 repair.
+                        entries.sort_by(|a, b| format!("{}", a.0).cmp(&format!("{}", b.0)));
+                        // The entries Vec holds REFERENCES into v's storage,
+                        // so addresses inside v are stable across sort.
+                        stack.push(DisplayTask::WriteString(#close.to_string()));
+                        for (i, (k, val)) in entries.iter().enumerate().rev() {
+                            // Tasks are pushed in REVERSE display order, so the
+                            // value and its separator go on first.
+                            if let mettail_runtime::PathValue::Set(__inner) = *val {
+                                stack.push(DisplayTask::#val_task(__inner as *const _, 0u8));
+                                stack.push(DisplayTask::WriteLiteral(#kv));
+                            }
+                            stack.push(DisplayTask::#key_task(*k as *const _, 0u8));
+                            if i > 0 {
+                                stack.push(DisplayTask::WriteString(#sep_with_space.to_string()));
+                            }
+                        }
+                        stack.push(DisplayTask::WriteString(#open.to_string()));
+                    }
+                };
+            }
+            // Fallback for an unknown element category (no DisplayTask to push):
+            // format inline. Same unset discipline.
+            return quote! {
+                #category::#literal_label(v) => {
+                    use std::fmt::Write as _;
+                    let mut s = String::from(#open);
+                    let mut entries: Vec<_> = v.iter().collect();
+                    entries.sort_by(|a, b| format!("{}", a.0).cmp(&format!("{}", b.0)));
+                    for (i, (k, val)) in entries.iter().enumerate() {
+                        if i > 0 { s.push_str(#sep); s.push(' '); }
+                        match val {
+                            mettail_runtime::PathValue::Unset => {
+                                let _ = write!(s, "{}", k);
+                            },
+                            mettail_runtime::PathValue::Set(__inner) => {
+                                let _ = write!(s, "{}{}{}", k, #kv, __inner);
+                            },
+                        }
+                    }
+                    s.push_str(#close);
+                    stack.push(DisplayTask::WriteString(s));
+                }
+            };
+        }
 
         match effective_nt {
             crate::gen::native::NativeType::VecCollection => {

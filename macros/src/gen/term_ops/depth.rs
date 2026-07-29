@@ -110,10 +110,26 @@ fn collection_max_depth(name: TokenStream, coll_type: &CollectionType) -> TokenS
         CollectionType::HashBag => {
             quote! { #name.iter().map(|(x, _count)| x.term_depth()).max().unwrap_or(0) }
         },
-        CollectionType::HashMap | CollectionType::PathMap => {
+        CollectionType::HashMap => {
             quote! {
                 #name.iter()
                     .map(|(k, v)| k.term_depth().max(v.term_depth()))
+                    .max()
+                    .unwrap_or(0)
+            }
+        },
+        // #74: a `PathMap`'s value is a `PathValue<E>`. `Unset` contributes
+        // depth 0 (there is no sub-term); `Set(v)` contributes `v`'s depth.
+        CollectionType::PathMap => {
+            quote! {
+                #name.iter()
+                    .map(|(k, v)| {
+                        let v_depth = match v {
+                            mettail_runtime::PathValue::Unset => 0,
+                            mettail_runtime::PathValue::Set(inner) => inner.term_depth(),
+                        };
+                        k.term_depth().max(v_depth)
+                    })
                     .max()
                     .unwrap_or(0)
             }

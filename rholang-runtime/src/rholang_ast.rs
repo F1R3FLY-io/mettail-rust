@@ -309,6 +309,21 @@ pub enum RholangAstLowerError {
     /// channel) would require the engine to reduce an expression to a number first. That is a
     /// named follow-on, not a silent coercion — an unusable bound fails closed here.
     LookaheadBoundNotAGroundNonNegativeInt(String),
+    /// #74: a pathmap entry whose value is `PathValue::Unset` (`{| k |}`) reached
+    /// the lowering, which targets Rholang's `EMap` — and an `EMap`'s
+    /// `key_value_pair` has a MANDATORY value. "The key is present and bound to
+    /// nothing" is therefore not expressible on the wire yet.
+    ///
+    /// ⚠ The tempting repairs are both wrong and both silent:
+    ///
+    /// - lowering the unset value as `Nil` fabricates a binding the source never
+    ///   wrote, and makes `{\| k \|}` and `{\| k : Nil \|}` the same wire term;
+    /// - dropping the entry loses the key, turning a non-empty pathmap into a
+    ///   shorter one — the sub-multiset ghost this campaign exists to remove.
+    ///
+    /// So it fails closed, NAMING the offending key, until #130 lands the
+    /// pair-valued slot that can carry the distinction.
+    PathmapEntryHasNoValue(String),
 }
 
 /// Rholang language adapter for the AST-first Rho machine runtime path.
@@ -1879,11 +1894,23 @@ impl<'a> Drive<'a> {
             },
             Proc::CastPathmap(value) => match value.as_ref() {
                 Pathmap::PathmapLit(entries) => {
-                    let mut entries: Vec<(&Proc, &Proc)> = entries.iter().collect();
+                    let mut entries: Vec<(&Proc, &mettail_languages::rholang::PathValueProc)> =
+                        entries.iter().collect();
                     entries.sort_by_key(|(key_a, _)| *key_a);
                     let mut children = Vec::with_capacity(2 * entries.len());
                     let pair_count = entries.len();
                     for (key, value) in entries {
+                        // #74 / R8: the target is Rholang's `EMap`, whose
+                        // `key_value_pair` has a MANDATORY value, so an UNSET
+                        // entry is not expressible here. Fail closed NAMING the
+                        // key — never substitute `Nil` (that fabricates a
+                        // binding) and never drop the entry (that loses the key).
+                        // Unblocked by #130's pair-valued slot.
+                        let Some(value) = value.as_ref() else {
+                            return Err(RholangAstLowerError::PathmapEntryHasNoValue(
+                                key.to_string(),
+                            ));
+                        };
                         children.push(Job::Proc(key, env));
                         children.push(Job::Proc(value, env));
                     }

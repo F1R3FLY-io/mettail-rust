@@ -12,6 +12,32 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
 
+/// The FIRST generic argument of a declared collection native type — the
+/// collection's ELEMENT type.
+///
+/// `![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap` declares its payload
+/// as a two-parameter wrapper, but only the first parameter is information: the
+/// second is derived from the container kind (#74 — a `Pathmap`'s value type is
+/// `PathValue<E>`, because a `Pathmap`'s value slot is optional). This extracts
+/// the `E`.
+///
+/// Returns `None` when the native type has no angle-bracketed arguments (a bare
+/// `![HashMap] as Map`-style declaration), in which case the caller falls back to
+/// the language's primary category.
+fn collection_value_elem(native_type: &syn::Type) -> Option<TokenStream> {
+    let syn::Type::Path(type_path) = native_type else {
+        return None;
+    };
+    let seg = type_path.path.segments.last()?;
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    match args.args.first()? {
+        syn::GenericArgument::Type(elem) => Some(quote! { #elem }),
+        _ => None,
+    }
+}
+
 /// Generate just the AST enums (without parser)
 pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
     // Group rules by category
@@ -83,6 +109,37 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                         elem_type.map(|elem_type| {
                             quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
                         })
+                    } else if matches!(collection_kind, CollectionCategory::Pathmap(_)) {
+                        // ★ #74 (2026-07-29). A `Pathmap`'s value slot is
+                        // OPTIONAL: `{| k |}` binds `k` to NOTHING, and that is
+                        // not the same term as `{| k : Nil |}`. So its value type
+                        // is `PathValue<E>` wherever a `Map`'s is `E`.
+                        //
+                        // This is derived from the CONTAINER KIND, not spelled in
+                        // the DSL, because the spec already knew: the parser has
+                        // carried `kv_value_optional = matches!(coll_kind,
+                        // CollectionType::PathMap)` as a compile-time property
+                        // since 2026-06-27. The defect was that the TYPE did not
+                        // reflect it — so a bare entry had to be materialised by
+                        // fabricating a value (the key itself), destroying the
+                        // distinction before any term-op could see it.
+                        //
+                        // The declared `![PathMapLit<Proc, Proc>]` therefore
+                        // supplies only the ELEMENT type; the value type is
+                        // rebuilt around it. No DSL change, no `TypeExpr` change
+                        // (`TypeExpr::Collection` has exactly ONE element slot and
+                        // cannot express a key/value pair at all), and no `unit`
+                        // inhabitant added to any grammar.
+                        collection_value_elem(native_type)
+                            .or_else(|| elem_type.map(|e| quote! { #e }))
+                            .map(|elem| {
+                                quote! {
+                                    mettail_runtime::PathMapLit<
+                                        #elem,
+                                        mettail_runtime::PathValue<#elem>,
+                                    >
+                                }
+                            })
                     } else {
                         Some(quote! { #native_type })
                     }
@@ -98,8 +155,15 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                         CollectionCategory::Set(_) => {
                             quote! { mettail_runtime::HashSetLit<#elem_type> }
                         }
+                        // See the `Pathmap` arm above for why the value type is
+                        // `PathValue<E>` and not `E`.
                         CollectionCategory::Pathmap(_) => {
-                            quote! { mettail_runtime::PathMapLit<#elem_type, #elem_type> }
+                            quote! {
+                                mettail_runtime::PathMapLit<
+                                    #elem_type,
+                                    mettail_runtime::PathValue<#elem_type>,
+                                >
+                            }
                         }
                     })
                 };

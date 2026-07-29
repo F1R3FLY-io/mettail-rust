@@ -2747,6 +2747,129 @@ pub enum ActionArg {
     /// action reads this via [`ActionArg::as_guest_body`] and builds the
     /// `Arc<FltNode>` variant field itself.
     GuestBody(Arc<GuestBodyData>),
+    /// #74 (2026-07-29): the value slot of a **value-optional** kv-collection
+    /// entry that the source left EMPTY — the `{| k |}` shape, where the key is
+    /// present and bound to nothing.
+    ///
+    /// This variant occurs ONLY inside a collection accumulator, at an odd
+    /// (value) index of a `kv_value_optional` slot. It is produced by
+    /// [`crate::wpda_walker::BuilderDelta::PushUnsetCollectionValue`] at parse
+    /// time and by the UNSET-marker arm of the realize-side collection-item loop.
+    ///
+    /// ⚠ It is deliberately NOT an `ActionArg::Term`: the generated finalize
+    /// action must be unable to mistake it for a value the user wrote. It has no
+    /// `into_term` and no downcast — the only thing an action can do with it is
+    /// recognise it and emit `mettail_runtime::PathValue::Unset`.
+    ///
+    /// Before this variant existed, a bare entry was materialised by
+    /// *duplicating the key into the value slot*, which destroyed the
+    /// distinction inside the SPPF before any action could see it. See
+    /// `runtime/src/path_value.rs` for the full rationale.
+    UnsetCollectionValue,
+}
+
+/// #151 (2026-07-29): why a collection flat was refused at the close.
+///
+/// The walker's `CollectionMarker` close is the single point at which a flat
+/// becomes a `CollectionId` — "the only place flats become CollectionIds". Every
+/// gate at that site now returns one of these values instead of falling out of a
+/// bare `continue`, so the refusal carries its reason and the resolver can render
+/// a diagnostic instead of whatever generic error the dying frontier last
+/// produced.
+///
+/// The `kv` flag on [`FlatDisposition::ArityUncovered`] records which arity law
+/// was applied, because the two laws differ:
+///
+/// ```text
+/// non-kv:  items == seps + 1                (a sequence: n elements, n−1 separators)
+/// kv:      items even  ∧  items == 2·(seps+1)   (pairs: 2p items, p−1 pair separators —
+///                                                the `:` is a plain consume and folds
+///                                                NO separator marker)
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlatDisposition {
+    /// The flat is a well-formed reading of this collection slot.
+    Accepted,
+    /// The item/separator counts do not satisfy the slot's arity law.
+    ArityUncovered {
+        items: usize,
+        seps: usize,
+        /// `true` when the kv law was applied (the slot carries a `kv_sep`).
+        kv: bool,
+    },
+    /// An item's category tag is not the slot's declared element category. This
+    /// is a raw cross-category inner `Symbol` spliced pre-wrap: the finalize
+    /// action's downcast would map it to ∅ and silently emit a SHORTER container
+    /// — the sub-multiset ghost. Refused at the source instead.
+    CrossCategory {
+        /// Index into the flat's `items` (kv flats: even = key, odd = value).
+        index: usize,
+        /// The slot's declared element category `src_idx`.
+        expected_src_idx: u16,
+        /// The offending item's category tag.
+        found_tag: u32,
+    },
+    /// An UNSET marker landed in a KEY slot (an even index of a kv flat). A key
+    /// is never optional in any container kind.
+    UnsetInKeySlot { index: usize },
+    /// An UNSET marker landed in a value slot of a container whose values are
+    /// MANDATORY (`HashMap`; `kv_value_optional == false`).
+    UnsetValueForbidden { index: usize },
+}
+
+impl FlatDisposition {
+    /// `true` when the flat may be interned as a `CollectionId`.
+    #[inline]
+    pub fn is_accepted(&self) -> bool {
+        matches!(self, FlatDisposition::Accepted)
+    }
+}
+
+/// The mismatch an [`ActionArg`] downcast rejected, preserved instead of
+/// discarded.
+///
+/// [`ActionArg::into_term`] returns a bare `Option`, which loses *why* the
+/// downcast failed. The generated collection-finalize actions used to convert
+/// that `None` into "skip this element", which is precisely how a reading that is
+/// not in the language became "an accepted, shorter container". They now abandon
+/// the whole term instead, and this struct names what went wrong so the abandon
+/// is a measurement rather than a silence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionArgMismatch {
+    /// `std::any::type_name::<T>()` for the type the caller asked for.
+    pub requested: &'static str,
+    /// The arg's own `type_name` tag, or its variant name for non-`Term` args.
+    pub found: &'static str,
+}
+
+/// Process-global census of collection-finalize actions that abandoned a term
+/// because an element failed to downcast.
+///
+/// The walker's close-time classifier is supposed to have refuted every such flat
+/// already, so this counter is an INVARIANT WITNESS: a test asserts it stays `0`
+/// across the matrix. It is a counter rather than a `panic!` because the
+/// generated actions run inside cranelift-compiled parse workers where a panic is
+/// not an available failure mode; `debug_assert!` carries the invariant in debug
+/// builds and this counter carries it in release.
+pub static COLL_ACTION_DOWNCAST_ABANDON: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Record one collection-finalize abandon (see [`COLL_ACTION_DOWNCAST_ABANDON`]).
+#[inline]
+pub fn note_coll_action_downcast_abandon() {
+    COLL_ACTION_DOWNCAST_ABANDON.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Read the abandon census (see [`COLL_ACTION_DOWNCAST_ABANDON`]).
+#[inline]
+pub fn coll_action_downcast_abandon_count() -> u64 {
+    COLL_ACTION_DOWNCAST_ABANDON.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Reset the abandon census to `0` (test scaffolding).
+#[inline]
+pub fn reset_coll_action_downcast_abandon() {
+    COLL_ACTION_DOWNCAST_ABANDON.store(0, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// L9-4: the primitive contents of an assembled FLT guest body, carried by
@@ -2812,6 +2935,7 @@ impl fmt::Debug for ActionArg {
                 .field("body_src", &node.body_src)
                 .field("holes", &node.holes.len())
                 .finish(),
+            ActionArg::UnsetCollectionValue => f.write_str("UnsetCollectionValue"),
         }
     }
 }
@@ -2852,13 +2976,52 @@ impl ActionArg {
     /// out when the Arc is uniquely owned (zero-copy fast path); falls
     /// back to `(*arc).clone()` when the Arc has been cloned for fanout.
     pub fn into_term<T: 'static + Send + Sync + Clone>(self) -> Option<T> {
+        self.try_into_term().ok()
+    }
+
+    /// The reason-preserving sibling of [`ActionArg::into_term`].
+    ///
+    /// #151 (2026-07-29): the generated collection-finalize actions switched to
+    /// this form so that an element which does not downcast ABANDONS the whole
+    /// term (naming the mismatch) instead of being filtered out of the container.
+    /// A `filter_map(into_term)` is the machinery that turns "this reading is not
+    /// in the language" into "an accepted, shorter container" — the sub-multiset
+    /// ghost. `into_term` is retained verbatim as `try_into_term().ok()` so its
+    /// existing callers are untouched.
+    pub fn try_into_term<T: 'static + Send + Sync + Clone>(
+        self,
+    ) -> Result<T, ActionArgMismatch> {
+        let requested = std::any::type_name::<T>();
         match self {
-            ActionArg::Term { value, .. } => match Arc::downcast::<T>(value) {
-                Ok(arc) => Some(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
-                Err(_) => None,
+            ActionArg::Term { value, type_name } => match Arc::downcast::<T>(value) {
+                Ok(arc) => Ok(Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone())),
+                Err(_) => Err(ActionArgMismatch { requested, found: type_name }),
             },
-            _ => None,
+            other => Err(ActionArgMismatch { requested, found: other.variant_name() }),
         }
+    }
+
+    /// The arg's variant name, for [`ActionArgMismatch::found`] on non-`Term`
+    /// args (whose `type_name` tag does not exist).
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            ActionArg::Token { .. } => "ActionArg::Token",
+            ActionArg::Ident { .. } => "ActionArg::Ident",
+            ActionArg::Term { .. } => "ActionArg::Term",
+            ActionArg::BinderScope(_) => "ActionArg::BinderScope",
+            ActionArg::Collection { .. } => "ActionArg::Collection",
+            ActionArg::CollectionId(_) => "ActionArg::CollectionId",
+            ActionArg::Predicate(_) => "ActionArg::Predicate",
+            ActionArg::Optional(_) => "ActionArg::Optional",
+            ActionArg::GuestBody(_) => "ActionArg::GuestBody",
+            ActionArg::UnsetCollectionValue => "ActionArg::UnsetCollectionValue",
+        }
+    }
+
+    /// #74: `true` for the value slot of a bare `{| k |}` entry.
+    #[inline]
+    pub fn is_unset_collection_value(&self) -> bool {
+        matches!(self, ActionArg::UnsetCollectionValue)
     }
     /// Extract the SHARED `Arc<T>` from a `Term` arg WITHOUT cloning the
     /// pointee (O(1) `Arc::downcast` — just a refcount bump on success).

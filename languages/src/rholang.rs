@@ -35,6 +35,16 @@ pub(crate) mod runtime;
 mod type_inference;
 pub(crate) mod zipper;
 
+/// #74 — the value carried by a rholang pathmap entry.
+///
+/// A pathmap's value slot is OPTIONAL: `{| k |}` binds `k` to nothing, and that
+/// is a different term from `{| k : Nil |}`. The generated
+/// `Pathmap::PathmapLit(PathMapLit<Proc, PathValue<Proc>>)` payload reflects it;
+/// this alias names the value type so downstream crates (the AST lowering, the
+/// oracle) can spell it without importing `PathValue` and re-deriving the
+/// instantiation. See `runtime/src/path_value.rs`.
+pub type PathValueProc = mettail_runtime::PathValue<Proc>;
+
 language! {
     name: Rholang,
 
@@ -1981,8 +1991,12 @@ language! {
 
         PathmapEmpty .
         |- "Pathmap" "(" ")" : Proc ![{
+            // #74: a pathmap's value slot is optional, so the payload's value
+            // type is `PathValue<Proc>` (see `runtime/src/path_value.rs`). An
+            // EMPTY pathmap still has zero entries — `Unset` is a value in a slot
+            // that exists, never an entry that gets invented.
             Proc::CastPathmap(std::sync::Arc::new(Pathmap::PathmapLit(
-                mettail_runtime::PathMapLit::<Proc, Proc>::new(),
+                mettail_runtime::PathMapLit::<Proc, mettail_runtime::PathValue<Proc>>::new(),
             )))
         }] fold;
 
@@ -1996,7 +2010,19 @@ language! {
                 Proc::CastPathmap(inner) => match inner.as_ref() {
                     Pathmap::PathmapLit(ref payload) => {
                         match crate::rholang::pathmap::pathmap_get(payload, &k) {
-                            Ok(Some(v)) => v,
+                            Ok(Some(mettail_runtime::PathValue::Set(v))) => v,
+                            // #74: the key IS present but bound to nothing
+                            // (`{| k |}`). There is no `Proc` that means "no
+                            // value": `Nil` is a value a program can write, and
+                            // `error` would claim the key is absent when it is
+                            // not. STAY STUCK — leave the unreduced `.get(...)`
+                            // node — following the recorded MSet precedent
+                            // (user decision 2026-06-30) for exactly this shape
+                            // of "no honest answer exists yet".
+                            Ok(Some(mettail_runtime::PathValue::Unset)) => Proc::MGet(
+                                std::sync::Arc::new(m.clone()),
+                                std::sync::Arc::new(k.clone()),
+                            ),
                             Ok(None) | Err(()) => Proc::Err,
                         }
                     },
@@ -2019,7 +2045,15 @@ language! {
                 },
                 Proc::CastPathmap(inner) => match inner.as_ref() {
                     Pathmap::PathmapLit(ref payload) => {
-                        match crate::rholang::pathmap::pathmap_put(payload, &k, &v) {
+                        // #74: `.set(k, v)` means "bind k to v", so the value is
+                        // explicitly `Set(v)`. The `Unset` binding is reachable
+                        // only from the LITERAL `{| k |}` — no method fabricates
+                        // one, and none silently drops one either.
+                        match crate::rholang::pathmap::pathmap_put(
+                            payload,
+                            &k,
+                            mettail_runtime::PathValue::Set(v.clone()),
+                        ) {
                             Ok(updated) => Proc::CastPathmap(std::sync::Arc::new(Pathmap::PathmapLit(updated))),
                             // Invalid path encoding (e.g. empty list path) STAYS STUCK
                             // (user decision 2026-06-30): leave the unreduced `.set(...)`
@@ -2601,7 +2635,13 @@ language! {
             match &z {
                 Proc::CastReadZipper(inner) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rholang::zipper::zipper_get_leaf(z.as_ref()) {
-                        Ok(v) => v,
+                        Ok(mettail_runtime::PathValue::Set(v)) => v,
+                        // #74: the leaf EXISTS but nothing is bound to it
+                        // (`{| k |}`). No `Proc` means "no value" — `Nil` is a
+                        // writable value and `error` would claim the leaf is
+                        // absent. Stay stuck, exactly as a failed navigation
+                        // does.
+                        Ok(mettail_runtime::PathValue::Unset) => stuck(),
                         Err(()) => stuck(),
                     },
                     _ => stuck(),
@@ -2840,7 +2880,13 @@ language! {
             match (&w, &full, &v) {
                 (Proc::CastWriteZipper(inner), fp, val) => match inner.as_ref() {
                     WriteZipper::Lit(z) => {
-                        match crate::rholang::zipper::write_zipper_set_leaf(z.as_ref(), fp, val) {
+                        // #74: `setLeaf` binds a value, so it is explicitly
+                        // `Set(v)`; no surface operation writes an `Unset`.
+                        match crate::rholang::zipper::write_zipper_set_leaf(
+                            z.as_ref(),
+                            fp,
+                            mettail_runtime::PathValue::Set((*val).clone()),
+                        ) {
                             Ok(out) => Proc::CastPathmap(std::sync::Arc::new(Pathmap::PathmapLit(out))),
                             Err(()) => Proc::Err,
                         }

@@ -120,8 +120,21 @@ fn collection_all_ground(name: TokenStream, coll_type: &CollectionType) -> Token
         CollectionType::Vec | CollectionType::HashSet => {
             quote! { #name.iter().all(|x| x.is_ground()) }
         },
-        CollectionType::HashMap | CollectionType::PathMap => {
+        CollectionType::HashMap => {
             quote! { #name.iter().all(|(k, v)| k.is_ground() && v.is_ground()) }
+        },
+        // #74: a `PathMap`'s value is a `PathValue<E>`. `Unset` binds nothing,
+        // so it is ground unconditionally; `Set(v)` defers to `v`.
+        CollectionType::PathMap => {
+            quote! {
+                #name.iter().all(|(k, v)| {
+                    k.is_ground()
+                        && match v {
+                            mettail_runtime::PathValue::Unset => true,
+                            mettail_runtime::PathValue::Set(inner) => inner.is_ground(),
+                        }
+                })
+            }
         },
     }
 }

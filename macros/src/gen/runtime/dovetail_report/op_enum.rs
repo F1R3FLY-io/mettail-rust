@@ -74,8 +74,16 @@ fn literal_payload_type(language: &LanguageDef, category: &Ident) -> Option<Toke
             CollectionCategory::Map(_) => {
                 quote! { ::mettail_runtime::HashMapLit<#elem, #elem> }
             },
+            // #74 (2026-07-29): a `Pathmap`'s value slot is OPTIONAL — the
+            // container kind has carried `kv_value_optional = true` since
+            // 2026-06-27 — so its value type is `PathValue<E>` wherever a
+            // `Map`'s is `E`. Derived structurally from the container kind here
+            // (not spelled in the DSL), so the TYPE agrees with what the SPEC
+            // already knew. See `runtime/src/path_value.rs`.
             CollectionCategory::Pathmap(_) => {
-                quote! { ::mettail_runtime::PathMapLit<#elem, #elem> }
+                quote! {
+                    ::mettail_runtime::PathMapLit<#elem, ::mettail_runtime::PathValue<#elem>>
+                }
             },
         });
     }

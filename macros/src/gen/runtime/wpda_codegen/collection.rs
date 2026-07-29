@@ -852,19 +852,30 @@ pub(crate) fn emit_collection_loop_arm(
                             // error — the cursor's collection_stack parity
                             // is odd, so we MUST consume `:` to proceed.
                             //
-                            // Pathmap optional-value (2026-06-27): for a
-                            // value-optional kv-collection (Pathmap), a key
-                            // followed DIRECTLY by the close or an entry
-                            // separator (not the `kv_sep`) is a bare path
-                            // `{| k |}` ≡ `{| k : k |}`. Duplicate the key as
-                            // its own value (DuplicateLastCollectionElement)
-                            // and re-dispatch as kv_phase=0 WITHOUT consuming:
-                            // the arena is now even so the walker's parity
-                            // patch lands kv_phase=0, and the phase-0 dispatch
-                            // resolves the close (finalize) or separator (next
-                            // key) exactly as a value-ful entry would. HashMap
+                            // Pathmap optional-value (2026-06-27; #74 fix
+                            // 2026-07-29): for a value-optional kv-collection
+                            // (Pathmap), a key followed DIRECTLY by the close or
+                            // an entry separator (not the `kv_sep`) is a bare
+                            // path `{| k |}` — the key is present and bound to
+                            // NOTHING. Record that with
+                            // `PushUnsetCollectionValue` and re-dispatch as
+                            // kv_phase=0 WITHOUT consuming: the arena is now
+                            // even so the walker's parity patch lands
+                            // kv_phase=0, and the phase-0 dispatch resolves the
+                            // close (finalize) or separator (next key) exactly
+                            // as a value-ful entry would. HashMap
                             // (kv_value_optional=false) keeps the strict
                             // error — its values are mandatory.
+                            //
+                            // ⚠ This delta USED to be
+                            // `DuplicateLastCollectionElement`, which made
+                            // `{| k |}` ≡ `{| k : k |}` by re-folding the key's
+                            // own SPPF node into the value slot. That is not a
+                            // representation of absence but a fabricated
+                            // presence: it collapsed `{|1|}` and `{|1:1|}` into
+                            // one term and made `Display` print `{|1:1|}` for
+                            // `{|1|}`, so the surface was not a fixpoint of
+                            // `parse ∘ display`.
                             match kv_sep {
                                 Some(expected_kv_sep) => {
                                     // Membership-detect the close / entry
@@ -904,15 +915,16 @@ pub(crate) fn emit_collection_loop_arm(
                                             },
                                         }
                                     } else if __bare_path {
-                                        // Bare path: duplicate the just-parsed
-                                        // key as its value (keeps the arena
-                                        // even-length), then re-enter the loop
-                                        // at kv_phase=0 with the SAME position
-                                        // (non-consuming) so phase-0 handles the
-                                        // close / separator uniformly.
+                                        // Bare path: record that NO value was
+                                        // written for the just-parsed key
+                                        // (keeps the arena even-length), then
+                                        // re-enter the loop at kv_phase=0 with
+                                        // the SAME position (non-consuming) so
+                                        // phase-0 handles the close / separator
+                                        // uniformly.
                                         WpdaStepAction::AdvanceWithEffect {
                                             effect:
-                                                mettail_prattail::wpda_walker::BuilderDelta::DuplicateLastCollectionElement {
+                                                mettail_prattail::wpda_walker::BuilderDelta::PushUnsetCollectionValue {
                                                     id: *slot_idx,
                                                 },
                                             new_state: WpdaState::CollectionLoop {

@@ -133,6 +133,12 @@ pub use hashmap_lit::HashMapLit;
 
 mod pathmap_lit;
 pub use pathmap_lit::PathMapLit;
+/// #74 — the value slot of a value-optional kv collection. `PathValue::Unset`
+/// is how `{| k |}` says "the key is present and bound to nothing"; it is NOT
+/// `Nil`, NOT a sentinel, and NOT the key. See `path_value.rs` for why every
+/// such encoding is unsound.
+pub mod path_value;
+pub use path_value::{path_value_order, write_path_value_tag, PathValue};
 mod pathmap_bridge;
 mod pathmap_codec;
 pub use pathmap::PathMap as RawPathMap;

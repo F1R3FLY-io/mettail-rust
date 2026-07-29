@@ -4,7 +4,7 @@
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-use mettail_runtime::{flatten_segments, unflatten_segments, BoundTerm, PathMapLit, Var};
+use mettail_runtime::{flatten_segments, unflatten_segments, BoundTerm, PathMapLit, PathValue, Var};
 use moniker::{OnBoundFn, OnFreeFn, ScopeState};
 use pathmap::alloc::GlobalAlloc;
 use pathmap::zipper::{
@@ -13,7 +13,7 @@ use pathmap::zipper::{
 };
 use pathmap::PathMap;
 
-use super::pathmap::encode_proc_path_entry;
+use super::pathmap::{encode_proc_path_entry, ProcPathMap};
 use super::{BigInt, Int, List, Proc, Str};
 
 /// Extract a signed integer index/count from a rholang `Proc` that wraps an
@@ -44,11 +44,11 @@ pub(crate) fn proc_to_index(p: &Proc) -> Option<i64> {
 
 /// Immutable read zipper: underlying literal plus absolute encoded focus path from trie root.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct ReadZipperLit(pub PathMapLit<Proc, Proc>, pub Vec<u8>);
+pub struct ReadZipperLit(pub ProcPathMap, pub Vec<u8>);
 
 /// Write zipper token: literal plus encoded prefix where `write_zipper_at_path` is rooted.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct WriteZipperLit(pub PathMapLit<Proc, Proc>, pub Vec<u8>);
+pub struct WriteZipperLit(pub ProcPathMap, pub Vec<u8>);
 
 impl<N> BoundTerm<N> for ReadZipperLit
 where
@@ -114,7 +114,7 @@ impl fmt::Display for WriteZipperLit {
     }
 }
 
-fn pathmap_from_lit(lit: &PathMapLit<Proc, Proc>) -> Result<PathMap<Proc, GlobalAlloc>, ()> {
+fn pathmap_from_lit(lit: &ProcPathMap) -> Result<PathMap<PathValue<Proc>, GlobalAlloc>, ()> {
     mettail_runtime::trie_from_lit(lit, encode_proc_path_entry)
 }
 
@@ -157,14 +157,14 @@ fn pathmap_from_lit(lit: &PathMapLit<Proc, Proc>) -> Result<PathMap<Proc, Global
 /// one child. The brief that reported "toNextSibling is broken" had observed
 /// only the second case.
 fn zipper_relative_read_zipper<'a>(
-    pm: &'a PathMap<Proc, GlobalAlloc>,
+    pm: &'a PathMap<PathValue<Proc>, GlobalAlloc>,
     path: &[u8],
 ) -> impl Zipper
        + ZipperMoving
        + ZipperIteration
-       + ZipperValues<Proc>
+       + ZipperValues<PathValue<Proc>>
        + ZipperAbsolutePath
-       + ZipperSubtries<Proc, GlobalAlloc>
+       + ZipperSubtries<PathValue<Proc>, GlobalAlloc>
        + 'a {
     let mut rz = pm.read_zipper();
     rz.move_to_path(path);
@@ -362,8 +362,8 @@ pub(crate) fn zipper_leaf_count(z: &ReadZipperLit) -> Result<i64, ()> {
 }
 
 pub(crate) fn pathmap_lit_from_pathmap(
-    pm: &PathMap<Proc, GlobalAlloc>,
-) -> Result<PathMapLit<Proc, Proc>, ()> {
+    pm: &PathMap<PathValue<Proc>, GlobalAlloc>,
+) -> Result<ProcPathMap, ()> {
     let mut lit = PathMapLit::new();
     for (kb, v) in pm.iter() {
         let k = proc_key_from_path_bytes(&kb)?;
@@ -379,13 +379,13 @@ fn concat_path_keys(prefix: &[u8], rel: &[u8]) -> Result<Vec<u8>, ()> {
     Ok(flatten_segments(&a))
 }
 
-pub(crate) fn read_zipper_root(lit: &PathMapLit<Proc, Proc>) -> Result<ReadZipperLit, ()> {
+pub(crate) fn read_zipper_root(lit: &ProcPathMap) -> Result<ReadZipperLit, ()> {
     let _ = pathmap_from_lit(lit)?;
     Ok(ReadZipperLit(lit.clone(), Vec::new()))
 }
 
 pub(crate) fn read_zipper_at(
-    lit: &PathMapLit<Proc, Proc>,
+    lit: &ProcPathMap,
     path: &Proc,
 ) -> Result<ReadZipperLit, ()> {
     let _ = pathmap_from_lit(lit)?;
@@ -393,13 +393,13 @@ pub(crate) fn read_zipper_at(
     Ok(ReadZipperLit(lit.clone(), enc))
 }
 
-pub(crate) fn write_zipper_root(lit: &PathMapLit<Proc, Proc>) -> Result<WriteZipperLit, ()> {
+pub(crate) fn write_zipper_root(lit: &ProcPathMap) -> Result<WriteZipperLit, ()> {
     let _ = pathmap_from_lit(lit)?;
     Ok(WriteZipperLit(lit.clone(), Vec::new()))
 }
 
 pub(crate) fn write_zipper_at(
-    lit: &PathMapLit<Proc, Proc>,
+    lit: &ProcPathMap,
     path: &Proc,
 ) -> Result<WriteZipperLit, ()> {
     let _ = pathmap_from_lit(lit)?;
@@ -407,14 +407,14 @@ pub(crate) fn write_zipper_at(
     Ok(WriteZipperLit(lit.clone(), enc))
 }
 
-pub(crate) fn path_get_subtrie(lit: &PathMapLit<Proc, Proc>) -> Result<PathMapLit<Proc, Proc>, ()> {
+pub(crate) fn path_get_subtrie(lit: &ProcPathMap) -> Result<ProcPathMap, ()> {
     path_get_subtrie_at_bytes(lit, &[])
 }
 
 fn path_get_subtrie_at_bytes(
-    lit: &PathMapLit<Proc, Proc>,
+    lit: &ProcPathMap,
     focus: &[u8],
-) -> Result<PathMapLit<Proc, Proc>, ()> {
+) -> Result<ProcPathMap, ()> {
     let pm = pathmap_from_lit(lit)?;
     let z = pm.read_zipper_at_path(focus);
     match z.make_map() {
@@ -424,18 +424,24 @@ fn path_get_subtrie_at_bytes(
 }
 
 pub(crate) fn path_get_subtrie_at(
-    lit: &PathMapLit<Proc, Proc>,
+    lit: &ProcPathMap,
     path: &Proc,
-) -> Result<PathMapLit<Proc, Proc>, ()> {
+) -> Result<ProcPathMap, ()> {
     let enc = encode_proc_path_entry(path)?;
     path_get_subtrie_at_bytes(lit, &enc)
 }
 
-pub(crate) fn zipper_get_subtrie(z: &ReadZipperLit) -> Result<PathMapLit<Proc, Proc>, ()> {
+pub(crate) fn zipper_get_subtrie(z: &ReadZipperLit) -> Result<ProcPathMap, ()> {
     path_get_subtrie_at_bytes(&z.0, &z.1)
 }
 
-pub(crate) fn zipper_get_leaf(z: &ReadZipperLit) -> Result<Proc, ()> {
+/// The leaf value at the zipper's focus.
+///
+/// #74: the result is a [`PathValue`], because a pathmap leaf may exist WITHOUT a
+/// value (`{| k |}`). `Err(())` still means "no leaf here"; `Ok(PathValue::Unset)`
+/// means "a leaf is here, and nothing is bound to it" — a distinction the caller
+/// must preserve rather than flatten into `Nil`.
+pub(crate) fn zipper_get_leaf(z: &ReadZipperLit) -> Result<PathValue<Proc>, ()> {
     let pm = pathmap_from_lit(&z.0)?;
     pm.get_val_at(&z.1).cloned().ok_or(())
 }
@@ -526,21 +532,26 @@ pub(crate) fn zipper_ascend(z: &ReadZipperLit, steps: i64) -> Result<ReadZipperL
     Ok(ReadZipperLit(z.0.clone(), rz.origin_path().to_vec()))
 }
 
+/// Bind the leaf at `full_path` to `val`.
+///
+/// #74: `val` is a [`PathValue`] so the caller states which binding it means. The
+/// surface `setLeaf(z, p, v)` supplies `PathValue::Set(v)`; nothing in the
+/// grammar produces an `Unset` through this door.
 pub(crate) fn write_zipper_set_leaf(
     w: &WriteZipperLit,
     full_path: &Proc,
-    val: &Proc,
-) -> Result<PathMapLit<Proc, Proc>, ()> {
+    val: PathValue<Proc>,
+) -> Result<ProcPathMap, ()> {
     let mut pm = pathmap_from_lit(&w.0)?;
     let enc = encode_proc_path_entry(full_path)?;
-    pm.set_val_at(enc, val.clone());
+    pm.set_val_at(enc, val);
     pathmap_lit_from_pathmap(&pm)
 }
 
 pub(crate) fn write_zipper_set_subtrie(
     w: &WriteZipperLit,
-    rel_lit: &PathMapLit<Proc, Proc>,
-) -> Result<PathMapLit<Proc, Proc>, ()> {
+    rel_lit: &ProcPathMap,
+) -> Result<ProcPathMap, ()> {
     let mut pm = pathmap_from_lit(&w.0)?;
     let rel_pm = pathmap_from_lit(rel_lit)?;
     {
@@ -550,7 +561,7 @@ pub(crate) fn write_zipper_set_subtrie(
     pathmap_lit_from_pathmap(&pm)
 }
 
-pub(crate) fn write_zipper_remove_leaf(w: &WriteZipperLit) -> Result<PathMapLit<Proc, Proc>, ()> {
+pub(crate) fn write_zipper_remove_leaf(w: &WriteZipperLit) -> Result<ProcPathMap, ()> {
     let mut pm = pathmap_from_lit(&w.0)?;
     {
         let mut wz = pm.write_zipper_at_path(&w.1);
@@ -561,7 +572,7 @@ pub(crate) fn write_zipper_remove_leaf(w: &WriteZipperLit) -> Result<PathMapLit<
 
 pub(crate) fn write_zipper_remove_branches(
     w: &WriteZipperLit,
-) -> Result<PathMapLit<Proc, Proc>, ()> {
+) -> Result<ProcPathMap, ()> {
     let mut pm = pathmap_from_lit(&w.0)?;
     {
         let mut wz = pm.write_zipper_at_path(&w.1);
@@ -573,7 +584,7 @@ pub(crate) fn write_zipper_remove_branches(
 pub(crate) fn write_zipper_graft(
     w: &WriteZipperLit,
     src: &ReadZipperLit,
-) -> Result<PathMapLit<Proc, Proc>, ()> {
+) -> Result<ProcPathMap, ()> {
     let mut dest = pathmap_from_lit(&w.0)?;
     let src_pm = pathmap_from_lit(&src.0)?;
     let src_rz = src_pm.read_zipper_at_path(&src.1);
@@ -588,7 +599,7 @@ pub(crate) fn write_zipper_graft(
 pub(crate) fn write_zipper_join_into(
     w: &WriteZipperLit,
     src: &ReadZipperLit,
-) -> Result<PathMapLit<Proc, Proc>, ()> {
+) -> Result<ProcPathMap, ()> {
     let mut dest = pathmap_from_lit(&w.0)?;
     let src_pm = pathmap_from_lit(&src.0)?;
     let rz = src_pm.read_zipper_at_path(&src.1);
@@ -605,9 +616,9 @@ pub(crate) fn write_zipper_join_into(
 mod tests {
     use super::*;
 
-    fn lit_one(k: Proc, v: Proc) -> PathMapLit<Proc, Proc> {
+    fn lit_one(k: Proc, v: Proc) -> ProcPathMap {
         let mut lit = PathMapLit::new();
-        lit.insert(k, v);
+        lit.insert(k, PathValue::Set(v));
         lit
     }
 
@@ -634,8 +645,8 @@ mod tests {
             Proc::CastStr(std::sync::Arc::new(Str::StringLit("users".into()))),
             Proc::CastStr(std::sync::Arc::new(Str::StringLit("bob".into()))),
         ])));
-        lit.insert(k1, Proc::CastInt(std::sync::Arc::new(Int::NumLit(1))));
-        lit.insert(k2, Proc::CastInt(std::sync::Arc::new(Int::NumLit(2))));
+        lit.insert(k1, PathValue::Set(Proc::CastInt(std::sync::Arc::new(Int::NumLit(1)))));
+        lit.insert(k2, PathValue::Set(Proc::CastInt(std::sync::Arc::new(Int::NumLit(2)))));
         let users = Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastStr(
             std::sync::Arc::new(Str::StringLit("users".into())),
         )])));
@@ -656,16 +667,16 @@ mod tests {
     }
 
     /// `[1,2,3]:100, [1,2,4]:200, [2,1]:300` — the shared-prefix fixture.
-    fn walk_db() -> PathMapLit<Proc, Proc> {
+    fn walk_db() -> ProcPathMap {
         let mut lit = PathMapLit::new();
-        lit.insert(key(&[1, 2, 3]), int(100));
-        lit.insert(key(&[1, 2, 4]), int(200));
-        lit.insert(key(&[2, 1]), int(300));
+        lit.insert(key(&[1, 2, 3]), PathValue::Set(int(100)));
+        lit.insert(key(&[1, 2, 4]), PathValue::Set(int(200)));
+        lit.insert(key(&[2, 1]), PathValue::Set(int(300)));
         lit
     }
 
     /// Drive the walk to exhaustion, collecting `(path, leaf)` per step.
-    fn walk_all(lit: &PathMapLit<Proc, Proc>) -> Vec<(String, String)> {
+    fn walk_all(lit: &ProcPathMap) -> Vec<(String, String)> {
         let root = read_zipper_root(lit).expect("root zipper over an encodable literal");
         let total = zipper_leaf_count(&root).expect("leafCount at the root");
         let mut out = Vec::with_capacity(total as usize);
@@ -734,7 +745,7 @@ mod tests {
     #[test]
     fn get_path_is_a_list_at_every_arity() {
         let mut lit = PathMapLit::new();
-        lit.insert(key(&[7]), int(1));
+        lit.insert(key(&[7]), PathValue::Set(int(1)));
         let z = read_zipper_at(&lit, &key(&[7])).expect("zipper at [7]");
         assert_eq!(zipper_get_path(&z).expect("getPath").to_string(), "[7]");
         // The literal-shaped decoder deliberately differs here.
@@ -904,7 +915,7 @@ mod tests {
                 Proc::CastInt(std::sync::Arc::new(Int::NumLit(1))),
                 Proc::CastInt(std::sync::Arc::new(Int::NumLit(1))),
             ]))),
-            Proc::CastInt(std::sync::Arc::new(Int::NumLit(30))),
+            PathValue::Set(Proc::CastInt(std::sync::Arc::new(Int::NumLit(30)))),
         );
         lit.insert(
             Proc::CastList(std::sync::Arc::new(List::ListLit(vec![
@@ -912,7 +923,7 @@ mod tests {
                 Proc::CastInt(std::sync::Arc::new(Int::NumLit(2))),
                 Proc::CastInt(std::sync::Arc::new(Int::NumLit(1))),
             ]))),
-            Proc::CastInt(std::sync::Arc::new(Int::NumLit(35))),
+            PathValue::Set(Proc::CastInt(std::sync::Arc::new(Int::NumLit(35)))),
         );
         let root_branch = Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(
             std::sync::Arc::new(Int::NumLit(1)),
@@ -924,7 +935,7 @@ mod tests {
             Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(
                 std::sync::Arc::new(Int::NumLit(1)),
             )]))),
-            Proc::CastInt(std::sync::Arc::new(Int::NumLit(10))),
+            PathValue::Set(Proc::CastInt(std::sync::Arc::new(Int::NumLit(10)))),
         );
         let leaf = Proc::CastList(std::sync::Arc::new(List::ListLit(vec![Proc::CastInt(
             std::sync::Arc::new(Int::NumLit(1)),

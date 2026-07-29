@@ -1210,9 +1210,9 @@ fn generate_collection_literal_visit_arm(
                 }
             }
         },
-        // Map / Pathmap: interleave key,value into 2N slots (key at even
+        // Map: interleave key,value into 2N slots (key at even
         // offsets, value at odd). Both key and value are `element_cat` (Proc).
-        CollectionType::HashMap | CollectionType::PathMap => quote! {
+        CollectionType::HashMap => quote! {
             #cat::#label(ref coll) => {
                 let elements_start = results.len();
                 for _ in 0..coll.len() {
@@ -1236,6 +1236,40 @@ fn generate_collection_literal_visit_arm(
                         slot: elements_start + pair_idx * 2 + 1,
                         op_idx,
                     });
+                }
+            }
+        },
+        // #74 Pathmap: the same 2N-slot interleave, except the value is a
+        // `PathValue<E>`. An `Unset` value has NO sub-term to visit, so no task
+        // is pushed for its slot and the slot stays `None` — which the assemble
+        // arm reads back as `PathValue::Unset`. Substitution into an unset entry
+        // is the identity, which is correct: it binds nothing.
+        CollectionType::PathMap => quote! {
+            #cat::#label(ref coll) => {
+                let elements_start = results.len();
+                for _ in 0..coll.len() {
+                    results.push(None); // key slot
+                    results.push(None); // value slot (None ⇒ Unset)
+                }
+                let elements_count = results.len() - elements_start;
+                stack.push(SubstTask::#assemble_variant {
+                    slot,
+                    elements_start,
+                    elements_count,
+                });
+                for (pair_idx, (k, v)) in coll.iter().enumerate() {
+                    stack.push(SubstTask::#visit_task {
+                        src: k as *const _,
+                        slot: elements_start + pair_idx * 2,
+                        op_idx,
+                    });
+                    if let mettail_runtime::PathValue::Set(ref inner) = *v {
+                        stack.push(SubstTask::#visit_task {
+                            src: inner as *const _,
+                            slot: elements_start + pair_idx * 2 + 1,
+                            op_idx,
+                        });
+                    }
                 }
             }
         },
@@ -2148,11 +2182,20 @@ fn generate_collection_literal_assemble_arm(
                             AnySubstTerm::#elem_wrap(v) => v,
                             _ => unreachable!("iterative subst: wrong category in pathmap-literal key slot"),
                         };
-                        let v = match results[elements_start + idx + 1].take()
-                            .expect("iterative subst: missing pathmap-literal value")
-                        {
-                            AnySubstTerm::#elem_wrap(v) => v,
-                            _ => unreachable!("iterative subst: wrong category in pathmap-literal value slot"),
+                        // #74: an UNSET value has no sub-term, so the visit arm
+                        // pushed NO task for its slot and the slot is still
+                        // `None`. That is the carrier for `PathValue::Unset` —
+                        // `None` here means "no value was written", NOT "a value
+                        // went missing". A `Set(v)` slot carries the substituted
+                        // sub-term exactly as a `Map` value does.
+                        let v = match results[elements_start + idx + 1].take() {
+                            None => mettail_runtime::PathValue::Unset,
+                            Some(AnySubstTerm::#elem_wrap(v)) => {
+                                mettail_runtime::PathValue::Set(v)
+                            },
+                            Some(_) => unreachable!(
+                                "iterative subst: wrong category in pathmap-literal value slot"
+                            ),
                         };
                         inner.insert(k, v);
                         idx += 2;

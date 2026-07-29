@@ -1393,13 +1393,21 @@ fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RholangAstLow
         Pathmap::PathmapLit(entries) => {
             // A pathmap is key/value like a map; lower to a Rholang `EMap` (mirrors `lower_map`).
             // `PathMapLit` (insertion-order) is sorted by key for a deterministic encoding.
-            let mut entries: Vec<(&Proc, &Proc)> = entries.iter().collect();
+            let mut entries: Vec<(&Proc, &mettail_languages::rholang::PathValueProc)> =
+                entries.iter().collect();
             entries.sort_by(|(key_a, _), (key_b, _)| key_a.cmp(key_b));
 
             let mut pairs = Vec::with_capacity(entries.len());
             let mut locally_free = Vec::new();
             let mut connective_used = false;
             for (key, value) in entries {
+                // #74 / R8: an `EMap`'s `key_value_pair` has a MANDATORY value,
+                // so an UNSET entry cannot be lowered. Fail closed NAMING the
+                // key — `Nil` would fabricate a binding and dropping the entry
+                // would lose the key. Unblocked by #130.
+                let Some(value) = value.as_ref() else {
+                    return Err(RholangAstLowerError::PathmapEntryHasNoValue(key.to_string()));
+                };
                 let key = lower_proc(key, env)?;
                 let value = lower_proc(value, env)?;
                 locally_free = union(

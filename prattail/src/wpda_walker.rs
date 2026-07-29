@@ -3853,10 +3853,28 @@ struct CgllPureStats {
     /// P3.f: collection-separator infix-guard rewrites (element returns at
     /// maximal extent; the marker consumes the separator).
     collsep_guard_rewrites: u64,
-    /// P3.a: bare-path duplicates applied to a MULTI-packing spine (the
-    /// duplicate takes the first packing's tail; nonzero on a green battery
-    /// would mean divergent packing tails at a bare-path site — escalate).
-    coll_kv_dup_multipack: u64,
+    // RETIRED (#74, 2026-07-29): `coll_kv_dup_multipack` counted bare-path
+    // DUPLICATES applied to a multi-packing spine — the duplicate took the first
+    // packing's tail, so a nonzero value meant divergent packing tails at a
+    // bare-path site. `DuplicateLastCollectionElement` is gone: the replacement
+    // (`PushUnsetCollectionValue`) folds a reserved marker leaf and never reads
+    // the spine, so there is no packing-tail choice left to diverge on and the
+    // event this counter counted can no longer occur. Commented out (never
+    // deleted) per the disable policy; its token was removed from the CGLL-PURE
+    // stats line in lockstep, and `coll_kv_unset_pushed` took its place.
+    // coll_kv_dup_multipack: u64,
+    /// #74: bare-path entries that folded an UNSET-VALUE marker (`{| k |}`).
+    /// One per bare entry per surviving lineage.
+    coll_kv_unset_pushed: u64,
+    /// #151: flats refused at the close because an item's category tag is not
+    /// the slot's declared element category. Split out of the aggregate
+    /// `coll_coverage_refuted` so the arity refusals and the category refusals
+    /// are separately observable (the kv arm previously had no category gate at
+    /// all, so this counter was structurally 0 for kv slots).
+    coll_ecat_refuted: u64,
+    /// #74: flats refused at the close because an UNSET marker landed in a KEY
+    /// slot, or in the value slot of a container whose values are mandatory.
+    coll_unset_misplaced: u64,
     effects_skipped: u64,
     recovery_drops: u64,
     weight_drops: u64,
@@ -4046,7 +4064,44 @@ struct CgllPureRun {
     slot_seen: rustc_hash::FxHashMap<u32, (StackSymbolV2, u8)>,
     /// Capped step-trace budget (`PRATTAIL_CGLL_PURE_TRACE`; 0 = off).
     trace_budget: u32,
+    /// #151 Q5: the FIRST close-time collection refusal of this run, retained so
+    /// `resolve` can render a real diagnostic when the parse ends with no
+    /// reading. Capped at one — that is the one the resolver renders, and an
+    /// unbounded record would grow with the frontier.
+    collection_refusal: Option<CollectionRefusal>,
     stats: CgllPureStats,
+}
+
+/// #151 Q5 — a close-time collection refusal, in the shape `resolve` needs to
+/// render it.
+///
+/// The channel already exists: [`crate::runtime_types::ParseError::UnexpectedToken`]
+/// carries `hint: Option<Cow<'static, str>>`, documented as "contextual fix
+/// suggestions … zero-alloc on the happy path". This record supplies the
+/// ingredients:
+///
+/// ```text
+/// 1:4: expected Proc, found @a
+///   hint: a collection element must be a Proc; `@a` is a Name — write `*@a`
+///         to dereference it
+/// ```
+///
+/// `expected` resolves `expected_src_idx` through the engine's category-name
+/// table; `found` is the offending item's source text, sliced from
+/// `item_lo..item_hi`. The `*` hint is justified by the upstream corpus (105
+/// explicit `*` dereferences) and is a SUGGESTION, never a coercion — the parser
+/// does not insert it.
+#[derive(Debug, Clone)]
+pub struct CollectionRefusal {
+    /// Why the flat was refused.
+    pub disposition: crate::wpda_runtime::FlatDisposition,
+    /// The slot's declared element category `src_idx`, when the refusal has one.
+    pub expected_src_idx: Option<u16>,
+    /// Source span of the offending item (byte offsets into the token stream's
+    /// source), for slicing `found` and locating the error.
+    pub item_lo: u32,
+    /// See [`CollectionRefusal::item_lo`].
+    pub item_hi: u32,
 }
 
 impl<W: SemiringRef> std::fmt::Debug for BranchCursor<W>
@@ -4553,17 +4608,35 @@ pub enum BuilderDelta {
         id: u8,
     },
 
-    /// Pathmap optional-value support (2026-06-27): duplicate the LAST element
-    /// of the innermost active collection accumulator (clone its SPPF node id
-    /// and re-push it). Emitted by the `kv_phase == 1` collection-loop arm when
-    /// a value-optional kv-collection (Pathmap) parses a bare path `{| k |}`
-    /// (no `: v`): the key just spliced into the arena is duplicated as the
-    /// value, so the accumulator stays even-length `[k, k]` and the existing
-    /// pair-walking finalize materializes the set-form entry `k → k`. The `id`
-    /// is the static slot_idx debug witness; `apply_effect_to_cursor` resolves
-    /// the runtime innermost slot (`collection_stack_depth - 1`) exactly like
+    /// #74 (2026-07-29): push a distinguished **UNSET** value onto the innermost
+    /// active collection accumulator. Emitted by the `kv_phase == 1`
+    /// collection-loop arm when a value-optional kv-collection (Pathmap) parses a
+    /// bare path `{| k |}` (no `: v`).
+    ///
+    /// The key just spliced into the arena is followed by an UNSET marker, so the
+    /// accumulator stays even-length `[k, UNSET]` — the kv arity gate
+    /// (`items == 2·(seps+1)`) is unchanged — and the finalize action
+    /// materialises `k → PathValue::Unset`.
+    ///
+    /// ## What this replaces, and why a fix in the action was never possible
+    ///
+    /// This delta was `DuplicateLastCollectionElement`, which **re-folded the
+    /// key's own SPPF node as the value**: `{| k |}` became `{| k : k |}`. The
+    /// information "this was a bare element" was destroyed *inside the SPPF*,
+    /// before the finalize action existed — so no amount of care in the action
+    /// could recover it. The fabricated `k → k` binding then made `{|1|}` and
+    /// `{|1:1|}` the same term and made `Display` print `{|1:1|}` for `{|1|}`,
+    /// breaking the `parse ∘ display` fixpoint.
+    ///
+    /// The replacement splices a REALIZE-VISIBLE marker leaf (reserved owner
+    /// `(u16::MAX, u16::MAX - 3)`, disjoint from the separator marker's
+    /// `(u16::MAX, u16::MAX)`, the binder-name marker's `- 1` and the repair
+    /// marker's `- 2`), which the realize-side collection-item loop turns into
+    /// [`crate::wpda_runtime::ActionArg::UnsetCollectionValue`].
+    ///
+    /// The `id` is the static slot_idx debug witness, exactly as for
     /// [`BuilderDelta::SpliceIntoCollection`].
-    DuplicateLastCollectionElement {
+    PushUnsetCollectionValue {
         id: u8,
     },
 
@@ -4665,8 +4738,8 @@ impl std::fmt::Debug for BuilderDelta {
                 .debug_struct("SpliceIntoCollection")
                 .field("id", id)
                 .finish(),
-            BuilderDelta::DuplicateLastCollectionElement { id } => f
-                .debug_struct("DuplicateLastCollectionElement")
+            BuilderDelta::PushUnsetCollectionValue { id } => f
+                .debug_struct("PushUnsetCollectionValue")
                 .field("id", id)
                 .finish(),
             BuilderDelta::StartCollection => f.debug_struct("StartCollection").finish(),
@@ -8919,6 +8992,22 @@ where
                     .collection_items_for_action_children(&action_children, *id)
                     .unwrap_or(&[]);
                 for &item in items {
+                    // #74 (2026-07-29): the reserved UNSET-VALUE marker is the
+                    // ONE collection item that is not a Term and must not refute
+                    // the combo. It occupies the value slot of a bare `{| k |}`
+                    // entry, and the walker's close-time classifier has already
+                    // verified it sits at an odd index of a `kv_value_optional`
+                    // slot (otherwise the flat was refused and never interned).
+                    //
+                    // Without this arm the F-2 gate below would (correctly, for
+                    // every OTHER marker) read "this item realized to no
+                    // ActionArg" as evidence the derivation is invalid: a
+                    // `TriggerTerminal` realizes to `Vec::new()`.
+                    if self.cgll_pure_is_unset_marker(item) {
+                        sb.push_raw_arg(ActionArg::UnsetCollectionValue);
+                        sb.push_to_collection(*id);
+                        continue;
+                    }
                     match memo.get(&item).and_then(|r| r.first()) {
                         Some((ActionArg::Term { value, .. }, _item_w)) => {
                             sb.push_term_arc(Arc::clone(value));
@@ -8968,7 +9057,8 @@ where
                     ActionArg::Optional(_)
                     | ActionArg::Collection { .. }
                     | ActionArg::BinderScope(_)
-                    | ActionArg::GuestBody(_) => {
+                    | ActionArg::GuestBody(_)
+                    | ActionArg::UnsetCollectionValue => {
                         // BinderScope / Collection / Optional / GuestBody arrive
                         // via dedicated push pathways in the walker. For
                         // realization, push as the corresponding direct
@@ -8977,6 +9067,12 @@ where
                         // BinderScope/Collection should rarely appear at
                         // child positions in normal grammars; emit them
                         // via push_raw_arg as a safety fallback.
+                        //
+                        // #74: `UnsetCollectionValue` never legitimately appears
+                        // as a TOP-LEVEL arg — it lives only inside a collection
+                        // accumulator, spliced by the loop above. Forwarding it
+                        // verbatim keeps this loop total without inventing a
+                        // meaning for a shape that does not occur.
                         sb.push_raw_arg(arg.clone());
                     },
                 }
@@ -11583,6 +11679,40 @@ where
         // same pos ⇒ same salted identity).
         let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((sep_pos as u32) << 1);
         self.cgll_pure_fold(slot, d.w, leaf, sep_pos, W::one_ref())
+    }
+
+    /// #74 — fold the reserved UNSET-VALUE marker onto the collection-marker
+    /// frame's `w`-spine, at the position where the source declined to write a
+    /// value (`{| k |}`'s close or entry separator).
+    ///
+    /// Mirrors [`Self::cgll_pure_fold_sep_marker`] exactly, including the
+    /// position salt, differing only in the reserved owner rule
+    /// ([`Self::CGLL_UNSET_MARKER_RULE`]) and in the extra `^ 0x1000_0000` slot
+    /// salt — an unset marker and a separator marker can legitimately be folded
+    /// at the SAME position (`{| k, … |}` folds UNSET then `,` at the comma), and
+    /// without the extra salt the two folds would collide on `(slot, lo, hi)`.
+    /// Bit 28 is used because bit 31 is [`CGLL_BIN_TAG`], bit 30 is
+    /// [`CGLL_WRAP_TAG`], and bit 29 is already the empty-close salt.
+    fn cgll_pure_fold_unset_marker(
+        &mut self,
+        run: &mut CgllPureRun,
+        d: &CgllPureDescriptor,
+        unset_pos: usize,
+    ) -> crate::sppf::SppfId {
+        run.stats.coll_kv_unset_pushed += 1;
+        let leaf = self.sppf.intern_trigger_terminal(
+            // The token kind is irrelevant for the reserved-owner marker
+            // (identity = (kind, pos, owner) and the owner is reserved).
+            TokenKind::Eof,
+            crate::sppf::PosOrSynth::Synthesized(unset_pos as u32),
+            None,
+            u16::MAX,
+            Self::CGLL_UNSET_MARKER_RULE,
+        );
+        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
+            ^ ((unset_pos as u32) << 1)
+            ^ 0x1000_0000;
+        self.cgll_pure_fold(slot, d.w, leaf, unset_pos, W::one_ref())
     }
 
     /// STAGE C / AMENDMENT 6 — the lex-provenance WEIGHT CARRIER. Classic
@@ -14237,6 +14367,200 @@ where
         )
     }
 
+    /// #74 (2026-07-29) — the reserved UNSET-VALUE marker: the value slot of a
+    /// bare `{| k |}` entry in a `kv_value_optional` collection.
+    ///
+    /// Reserved owner `(u16::MAX, u16::MAX - 3)`, disjoint from the separator
+    /// marker's `(u16::MAX, u16::MAX)`, the binder-name marker's `- 1` and the
+    /// repair marker's `- 2`, and impossible for a real rule.
+    ///
+    /// ⚠ Unlike the other three reserved markers, this one is NOT
+    /// realize-invisible. It occupies a genuine item position (so the kv arity
+    /// gate `items == 2·(seps+1)` still holds for a bare entry) and it must reach
+    /// the finalize action, which turns it into
+    /// [`crate::wpda_runtime::ActionArg::UnsetCollectionValue`]. The
+    /// collection-item loop in `realize_packing_call` special-cases it for
+    /// exactly that reason: a `TriggerTerminal` realizes to no `ActionArg`, which
+    /// the ROOT-F F-2 gate would (correctly, for every other marker) read as
+    /// "this item did not realize to a Term ⇒ refute the whole combo".
+    pub(crate) const CGLL_UNSET_MARKER_RULE: u16 = u16::MAX - 3;
+
+    fn cgll_pure_is_unset_marker(&self, id: crate::sppf::SppfId) -> bool {
+        matches!(
+            self.sppf.node(id),
+            Some(crate::sppf::SppfNode::TriggerTerminal {
+                owner_cat: u16::MAX,
+                owner_rule_idx,
+                ..
+            }) if *owner_rule_idx == Self::CGLL_UNSET_MARKER_RULE
+        )
+    }
+
+    /// #151 (2026-07-29) — THE collection-flat classifier. One function, one
+    /// call site: the `CollectionMarker` close, which is "the only place flats
+    /// become CollectionIds". A flat it does not accept is never interned, so the
+    /// polluting packing has no representation to leak downstream.
+    ///
+    /// # The laws, and why `is_kv` is an input rather than a branch
+    ///
+    /// **Arity.** A kv flat interleaves `k v k v …`; the kv `:` consume is a
+    /// plain `ConsumeAndReplace` that folds NO separator marker, so only the
+    /// inter-pair separator (`,`) contributes to `seps`. Hence:
+    ///
+    /// ```text
+    /// non-kv:  items == seps + 1
+    /// kv:      items even  ∧  items == 2·(seps + 1)
+    /// ```
+    ///
+    /// with the empty flat (`items == 0 ∧ seps == 0`) accepted under both — an
+    /// empty container is internally consistent. An ODD kv item count is an
+    /// unpaired key, which the finalize action used to silently drop, ghosting a
+    /// short or empty map (the `CastMap(MapLit({}))` ghost on `{0}`).
+    ///
+    /// **Element category.** An item that is a raw `Symbol` whose category tag is
+    /// not the slot's declared element category is a PRE-WRAP cross-category
+    /// splice: the finalize action's `into_term::<ecat>()` maps it to ∅ and emits
+    /// a SHORTER container — the sub-multiset ghost. Receipts: `{a}` ghosting
+    /// `{}` via a raw `Name` item the `PPar` builder dropped; `{error | a}` →
+    /// `{error}`; `{(1) | 2}` → `{2}`; and — the receipt that retired the
+    /// `if !is_kv` exclusion — `{| @a : @b |}` ghosting the EMPTY pathmap.
+    ///
+    /// The gate does NOT affect an element lineage that legitimately awaits a
+    /// send/mixfix continuation (`{a!(0)}`): its `!`-descent consumes the pending
+    /// `Name` and completes an element-category `Symbol` before any close sees
+    /// the flat.
+    ///
+    /// ⚠ Per-slot element categories differ (rholang's table shows `Some(0)`,
+    /// `Some(1)`, `Some(2)`, `Some(3)` across slots), but key and value within
+    /// ONE slot share a single `element_src_idx`: `CollectionShape` carries a
+    /// single `element_cat`, `CollectionSpec` a single `element_src_idx`, and the
+    /// codegen splices the same category identifier into both the key and the
+    /// value position. This matches upstream, whose `key_value_pair` is
+    /// `seq(field('key', $._proc), ':', field('value', $._proc))` — both `Proc`.
+    ///
+    /// **Unset placement (#74).** The reserved UNSET-VALUE marker
+    /// ([`Self::cgll_pure_is_unset_marker`]) is a legal item ONLY at an ODD index
+    /// of a `kv_value_optional` slot — the value position of a bare `{| k |}`
+    /// entry. In a key position it would mean "a key was omitted", which no
+    /// container kind permits; in a mandatory-value container (`HashMap`) it
+    /// would mean "a `{ k }` entry", which the grammar does not admit either.
+    fn classify_collection_flat(
+        &self,
+        cat_u16: u16,
+        rule_u16: u16,
+        slot_idx: u8,
+        is_kv: bool,
+        items: &[crate::sppf::SppfId],
+        seps: usize,
+    ) -> crate::wpda_runtime::FlatDisposition {
+        use crate::wpda_runtime::FlatDisposition;
+
+        // ── 1. Arity ────────────────────────────────────────────────────────
+        let empty = items.is_empty() && seps == 0;
+        let arity_ok = empty
+            || if is_kv {
+                items.len() % 2 == 0 && items.len() == 2 * (seps + 1)
+            } else {
+                items.len() == seps + 1
+            };
+        if !arity_ok {
+            return FlatDisposition::ArityUncovered { items: items.len(), seps, kv: is_kv };
+        }
+
+        // ── 2. UNSET placement (#74) ────────────────────────────────────────
+        // Read `kv_value_optional` off the slot's own spec; a slot without a
+        // spec cannot have produced an UNSET marker, and an UNSET marker in a
+        // non-kv slot is a key-position marker by definition (every index of a
+        // non-kv flat is an element slot).
+        let value_optional = self
+            .engine
+            .collection_spec(cat_u16, rule_u16, slot_idx)
+            .map(|s| s.kv_value_optional)
+            .unwrap_or(false);
+        for (index, &item) in items.iter().enumerate() {
+            if !self.cgll_pure_is_unset_marker(item) {
+                continue;
+            }
+            // Even index = key slot for a kv flat; every index is an element
+            // slot for a non-kv flat. Both are key-like: a value was never
+            // optional there.
+            if !is_kv || index % 2 == 0 {
+                return FlatDisposition::UnsetInKeySlot { index };
+            }
+            if !value_optional {
+                return FlatDisposition::UnsetValueForbidden { index };
+            }
+        }
+
+        // ── 3. Element category ─────────────────────────────────────────────
+        if let Some(ecat) = self
+            .engine
+            .collection_element_src_idx(cat_u16, rule_u16, slot_idx)
+        {
+            let cat_mask = !(CGLL_BIN_TAG | CGLL_WRAP_TAG);
+            for (index, &item) in items.iter().enumerate() {
+                if let Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) =
+                    self.sppf.node(item)
+                {
+                    let tag = *non_terminal_tag & cat_mask;
+                    if tag != ecat as u32 {
+                        return FlatDisposition::CrossCategory {
+                            index,
+                            expected_src_idx: ecat,
+                            found_tag: tag,
+                        };
+                    }
+                }
+            }
+        }
+
+        FlatDisposition::Accepted
+    }
+
+    /// Q5 (#151) — record a close-time refusal so the end-of-input resolver can
+    /// render a real diagnostic instead of whatever generic error the dying
+    /// frontier last produced.
+    ///
+    /// Capped exactly like the other close diagnostics: only the FIRST refusal is
+    /// retained, because that is the one `resolve` renders and an unbounded
+    /// record would grow with the frontier. `[@a, @b]`, `{| @a : @b |}` and
+    /// `{ @a : @b }` all arrive here through the same classifier and therefore
+    /// produce the same diagnostic SHAPE, differing only in the item text — after
+    /// this fix there is no `is_kv` difference left to be inconsistent about.
+    fn record_collection_refusal(
+        &self,
+        run: &mut CgllPureRun,
+        disposition: &crate::wpda_runtime::FlatDisposition,
+        items: &[crate::sppf::SppfId],
+        pos: usize,
+    ) {
+        use crate::wpda_runtime::FlatDisposition;
+        if run.collection_refusal.is_some() {
+            return;
+        }
+        let (index, expected_src_idx) = match disposition {
+            FlatDisposition::CrossCategory { index, expected_src_idx, .. } => {
+                (*index, Some(*expected_src_idx))
+            },
+            FlatDisposition::UnsetInKeySlot { index }
+            | FlatDisposition::UnsetValueForbidden { index } => (*index, None),
+            // An arity refusal has no single offending item to point at; the
+            // generic "unexpected token" the frontier produces is already the
+            // best available message for it.
+            FlatDisposition::ArityUncovered { .. } | FlatDisposition::Accepted => return,
+        };
+        let (lo, hi) = items
+            .get(index)
+            .and_then(|&it| Some((self.sppf.span_lo(it)?, self.sppf.span_hi(it)?)))
+            .unwrap_or((pos as u32, pos as u32));
+        run.collection_refusal = Some(CollectionRefusal {
+            disposition: disposition.clone(),
+            expected_src_idx,
+            item_lo: lo,
+            item_hi: hi,
+        });
+    }
+
     /// AMENDMENT 1 — the create-after-pop REPLAY resume state, derived from
     /// the popped frame's structured ret-slot (the AV3 resume-state hole's
     /// fix). Mirrors the generated engine's frame-determined pop
@@ -15617,84 +15941,64 @@ where
                         items.push(id);
                     }
                 }
+                // ── #151 (2026-07-29): ONE CLASSIFIER, one call site. ────────
+                //
+                // This used to be two gates joined by `if !is_kv`: an arity gate
+                // that ran for every flat, and an element-category gate that ran
+                // ONLY for non-kv flats. `is_kv` is now an INPUT to the
+                // classifier rather than a branch that skips half of it, so a
+                // kv flat is graded on both laws exactly as a sequence flat is.
+                //
+                // The `if !is_kv` exclusion rested on the premise, recorded at
+                // `collection_element_src_idx`, that "no shipped grammar parses
+                // a kv-map with cross-cat keys/values". Rholang's
+                // `{| @a : @b |}` falsifies it: `@a` is a `Name`, the slot's
+                // declared element category is `Proc`, and the finalize action's
+                // downcast mapped both to ∅ — silently yielding an EMPTY pathmap
+                // for a non-empty literal. Upstream refuses that input outright.
                 if is_kv {
                     run.stats.coll_kv_deferred += 1;
-                    // P3.a kv coverage gate. A kv flat interleaves
-                    // `k v k v …` (the kv `:` consume is a plain
-                    // ConsumeAndReplace — folds NO sep marker; only the
-                    // inter-pair `,` folds one). So a well-covered kv flat
-                    // has items = 2·pairs and pair-seps = pairs − 1:
-                    // `items == 2·(seps+1)`, items even. An ODD item count
-                    // is an unpaired key — the classic Map action silently
-                    // drops it and ghosts an empty/short map (the
-                    // `CastMap(MapLit({}))` ghost on `{0}`) — refute here.
-                    let kv_ok = (items.is_empty() && seps == 0)
-                        || (items.len() % 2 == 0 && items.len() == 2 * (seps + 1));
-                    if !kv_ok {
-                        run.stats.coll_coverage_refuted += 1;
-                        continue;
+                }
+                let disposition = self.classify_collection_flat(
+                    cat_u16, rule_u16, slot_idx, is_kv, &items, seps,
+                );
+                if !disposition.is_accepted() {
+                    match &disposition {
+                        crate::wpda_runtime::FlatDisposition::ArityUncovered { .. } => {
+                            run.stats.coll_coverage_refuted += 1;
+                        },
+                        crate::wpda_runtime::FlatDisposition::CrossCategory { .. } => {
+                            run.stats.coll_coverage_refuted += 1;
+                            run.stats.coll_ecat_refuted += 1;
+                        },
+                        crate::wpda_runtime::FlatDisposition::UnsetInKeySlot { .. }
+                        | crate::wpda_runtime::FlatDisposition::UnsetValueForbidden {
+                            ..
+                        } => {
+                            run.stats.coll_coverage_refuted += 1;
+                            run.stats.coll_unset_misplaced += 1;
+                        },
+                        crate::wpda_runtime::FlatDisposition::Accepted => unreachable!(
+                            "guarded by `!disposition.is_accepted()`"
+                        ),
                     }
-                } else if !(items.is_empty() && seps == 0) && items.len() != seps + 1 {
-                    run.stats.coll_coverage_refuted += 1;
+                    // Q5: record the refusal so `resolve` can render a real
+                    // diagnostic (`expected Proc, found @a`) instead of whatever
+                    // generic error the dying frontier last produced. Capped like
+                    // the other close diagnostics.
+                    self.record_collection_refusal(run, &disposition, &items, d.pos);
                     #[cfg(feature = "walker-trace")]
                     if std::env::var_os("PRATTAIL_CGLL_PURE_COLLDIAG").is_some() {
                         let its: Vec<String> =
                             items.iter().map(|&it| self.sppf_trace_summary(it)).collect();
                         eprintln!(
-                            "CGLL-PURE-COLLREFUTE(arity) cat={cat_u16} rule={rule_u16} \
-                             slot={slot_idx} pos={} seps={seps} items={its:?}",
+                            "CGLL-PURE-COLLREFUTE({disposition:?}) cat={cat_u16} \
+                             rule={rule_u16} slot={slot_idx} pos={} seps={seps} \
+                             items={its:?}",
                             d.pos
                         );
                     }
                     continue;
-                }
-                // ── P3.a ELEMENT-CATEGORY gate (the pure form of classic's
-                // collection-element splice gate — see the
-                // `collection_element_src_idx` doc @~1587: "a raw cross-cat
-                // inner Symbol spliced PRE-WRAP … `into_term::<ecat>()` maps
-                // it to ∅, producing a sub-multiset ghost … refuted at the
-                // source"). The pure analog of "at the source" is HERE, the
-                // only place flats become CollectionIds: a non-kv flat
-                // containing a Symbol item whose category tag != the
-                // declared element category is exactly such a pre-wrap
-                // splice (receipt: `{a}` ghosting `{}` via a raw cat-3 Name
-                // item the PPar builder silently drops; same mechanism for
-                // `{error | a}` → `{error}` and `{(1) | 2}` → `{2}`). The
-                // element lineage that legitimately awaits a send/mixfix
-                // continuation (`{a!(0)}`) is NOT affected: its `!`-descent
-                // consumes the pending Name and completes an ecat Symbol
-                // before any close sees the flat.
-                if !is_kv {
-                    if let Some(ecat) = self
-                        .engine
-                        .collection_element_src_idx(cat_u16, rule_u16, slot_idx)
-                    {
-                        let cat_mask = !(CGLL_BIN_TAG | CGLL_WRAP_TAG);
-                        let cross_cat_item = items.iter().any(|&it| {
-                            matches!(
-                                self.sppf.node(it),
-                                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
-                                    if (*non_terminal_tag & cat_mask) != ecat as u32
-                            )
-                        });
-                        if cross_cat_item {
-                            run.stats.coll_coverage_refuted += 1;
-                            #[cfg(feature = "walker-trace")]
-                            if std::env::var_os("PRATTAIL_CGLL_PURE_COLLDIAG").is_some() {
-                                let its: Vec<String> = items
-                                    .iter()
-                                    .map(|&it| self.sppf_trace_summary(it))
-                                    .collect();
-                                eprintln!(
-                                    "CGLL-PURE-COLLREFUTE(ecat) cat={cat_u16} \
-                                     rule={rule_u16} slot={slot_idx} pos={} ecat={ecat} \
-                                     items={its:?}",
-                                    d.pos
-                                );
-                            }
-                            continue;
-                        }
-                    }
                 }
                 // ── P3.a close diagnostic (stats-gated, mirrors CGLL-PURE-TR):
                 // one line per SURVIVING flat with the per-item node summaries,
@@ -17237,7 +17541,8 @@ where
                  ctx_misses={} d2_lo_fallbacks={} fold_overlap_refuted={} cyclic_roots_refused={} cyclic_tol={} iterchain_witness={} weight_carriers={} \
                  coll_pops_structural={} \
                  coll_closes={} coll_sep_folds={} coll_cov_refuted={} coll_empty={} coll_kv={} \
-                 coll_standalone={} coll_kv_pdiv={} coll_kv_dupmp={} coll_led_splits={} goal_coerce={} opt_fin={} \
+                 coll_standalone={} coll_kv_pdiv={} coll_kv_unset={} coll_ecat_refuted={} \
+                 coll_unset_misplaced={} coll_led_splits={} goal_coerce={} opt_fin={} \
                  effects_skipped={} recovery_drops={} weight_drops={} guard_cc_actions={} \
                  guard1_sites={} guarded_topcat_sites={} unwind_m1={} unwind_m5={} unwind_m234={} d2_retags={} collsep_guard={} \
                  unwind_census={} chain_ctx_div={} grouping_cat_rejects={} \
@@ -17286,7 +17591,12 @@ where
                 s.coll_kv_deferred,
                 s.coll_standalone_fires,
                 s.coll_kv_parity_divergence,
-                s.coll_kv_dup_multipack,
+                // s.coll_kv_dup_multipack, — RETIRED (#74; see the commented-out
+                // field above: the `coll_kv_dupmp={}` token was removed from the
+                // format string in lockstep and replaced by the three below).
+                s.coll_kv_unset_pushed,
+                s.coll_ecat_refuted,
+                s.coll_unset_misplaced,
                 s.coll_led_splits,
                 s.goal_coercions,
                 s.opt_group_finalizes,
@@ -18296,56 +18606,31 @@ where
                     );
                     return;
                 }
-                // P3.a value-optional kv (Pathmap bare path): the engine's
-                // phase-1 arm emits `DuplicateLastCollectionElement` for a
-                // key followed directly by close/sep (`{| k |}` ≡
-                // `{| k : k |}`, collection.rs ~880: duplicate the key as
-                // its own value, re-enter kv_phase=0 non-consuming). Pure
-                // form: re-fold the spine's LAST item onto itself — the
-                // right child of the top spine Intermediate's packing (the
-                // most recent fold), or the whole `w` when the spine is a
-                // single item. Multi-packing spines duplicate per the first
-                // packing (counted, `coll_kv_dup_multipack` — 0 on the
-                // battery; escalate if a term ever shows divergent packing
-                // tails here).
-                if let BuilderDelta::DuplicateLastCollectionElement { .. } = &effect {
-                    let last = match self.sppf.node(d.w) {
-                        Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                            let packs = self.sppf.packings_of(d.w);
-                            if packs.len() > 1 {
-                                run.stats.coll_kv_dup_multipack += 1;
-                            }
-                            packs.first().copied().and_then(|p| {
-                                match self.sppf.node(p) {
-                                    Some(crate::sppf::SppfNode::Packing { children, .. }) => {
-                                        children.last().copied()
-                                    },
-                                    _ => None,
-                                }
-                            })
-                        },
-                        Some(_) => Some(d.w),
-                        None => None,
-                    };
-                    if let Some(last_item) = last {
-                        let lo = self.sppf.span_lo(d.w).unwrap_or(0);
-                        let w2 = self.cgll_pure_get_node_p(
-                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state),
-                            d.w,
-                            last_item,
-                            lo,
-                            d.pos as u32,
-                            W::one_ref(),
-                        );
-                        run.worklist.push_back(CgllPureDescriptor {
-                            state: new_state,
-                            w: w2,
-                            ..d.clone()
-                        });
-                        return;
-                    }
-                    // No spine to duplicate (defensive): fall through to the
-                    // counted no-op below.
+                // #74 value-optional kv (Pathmap bare path): the engine's
+                // phase-1 arm emits `PushUnsetCollectionValue` for a key
+                // followed directly by close/sep (`{| k |}`, collection.rs
+                // ~880: record that no value was written, re-enter kv_phase=0
+                // non-consuming). Pure form: fold the reserved UNSET-VALUE
+                // marker leaf onto the spine, so the arena stays even-length
+                // AND the "no value was written" fact survives into the
+                // finalize action.
+                //
+                // ⚠ This REPLACES `DuplicateLastCollectionElement`, whose pure
+                // form re-folded the spine's LAST item onto itself — fabricating
+                // `k → k`. That destroyed the distinction inside the SPPF, so no
+                // action could recover it (#74). The retired counter
+                // `coll_kv_dup_multipack` (which measured multi-packing spines at
+                // a bare-path site, and was 0 on the battery) has no analogue
+                // here: the marker does not read the spine at all, so there is no
+                // packing-tail choice to diverge on.
+                if let BuilderDelta::PushUnsetCollectionValue { .. } = &effect {
+                    let w2 = self.cgll_pure_fold_unset_marker(run, &d, d.pos);
+                    run.worklist.push_back(CgllPureDescriptor {
+                        state: new_state,
+                        w: w2,
+                        ..d.clone()
+                    });
+                    return;
                 }
                 // B0: non-recovery effects are no-ops (EndBinderScope etc. =
                 // B2 scope discipline) — counted, never silent.
@@ -20086,7 +20371,7 @@ where
                 | BuilderDelta::StartCollection
                 | BuilderDelta::PushCollectionId { .. }
                 | BuilderDelta::SpliceIntoCollection { .. }
-                | BuilderDelta::DuplicateLastCollectionElement { .. } => {
+                | BuilderDelta::PushUnsetCollectionValue { .. } => {
                     debug_assert!(
                         false,
                         "non-recovery BuilderDelta reached commit_winner replay \
@@ -20894,7 +21179,10 @@ where
                 ActionArg::Optional(_)
                 | ActionArg::Collection { .. }
                 | ActionArg::BinderScope(_)
-                | ActionArg::GuestBody(_) => {
+                | ActionArg::GuestBody(_)
+                // #74: never a top-level arg (it lives only inside a collection
+                // accumulator); forwarded verbatim to keep the loop total.
+                | ActionArg::UnsetCollectionValue => {
                     sb.push_raw_arg(arg.clone());
                 },
             }
@@ -21205,7 +21493,10 @@ where
                 ActionArg::Optional(_)
                 | ActionArg::Collection { .. }
                 | ActionArg::BinderScope(_)
-                | ActionArg::GuestBody(_) => {
+                | ActionArg::GuestBody(_)
+                // #74: never a top-level arg (it lives only inside a collection
+                // accumulator); forwarded verbatim to keep the loop total.
+                | ActionArg::UnsetCollectionValue => {
                     sb.push_raw_arg(arg.clone());
                 },
             }

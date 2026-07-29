@@ -3149,7 +3149,57 @@ mod native_ops {
 
         #[test]
         fn pathmap_get() {
-            assert_reduces_to("{| 1 |}.get(1)", "1");
+            assert_reduces_to("{| 1 : 1 |}.get(1)", "1");
+        }
+
+        /// ★ #74 (2026-07-29) — WHY THIS ROW AND ITS NEIGHBOURS NOW SPELL
+        /// `{| k : k |}` INSTEAD OF `{| k |}`.
+        ///
+        /// A bare pathmap entry `{| k |}` means "the key is present and bound to
+        /// NOTHING". Until #74 it was materialised by DUPLICATING the key into
+        /// the value slot, so `{| k |}` and `{| k : k |}` were the same term and
+        /// `{| k |}.get(k)` returned `k`. Every `.get(...)`/`.getLeaf(...)` row in
+        /// this module was written against that shorthand — so each one was
+        /// silently asserting the defect while intending to test a TRIE
+        /// OPERATION (union / graft / joinInto / setSubtrie / descendTo).
+        ///
+        /// The rows were therefore rewritten to spell the value they always
+        /// meant (`{| k : k |}`), which preserves their operation coverage
+        /// exactly. Nothing was weakened: `.contains(...)` rows keep the BARE
+        /// form (an unset key IS present, so they were always correct), and this
+        /// row plus [`pathmap_bare_key_is_present_but_has_no_value`] pin the two
+        /// halves of the new meaning directly.
+        ///
+        /// `.get` on an unset key STAYS STUCK: there is no `Proc` that means "no
+        /// value". `Nil` is a value a program can write (so returning it would
+        /// fabricate a binding and collapse `{|k|}` into `{|k:Nil|}`), and
+        /// `error` would claim the key is ABSENT when it is present. Staying
+        /// stuck follows the recorded `MSet` precedent (user decision
+        /// 2026-06-30) for exactly this shape of "no honest answer exists yet".
+        ///
+        /// ⚠ USER-VISIBLE SEMANTICS, flagged as such: `{| 1 |}.get(1)` is a
+        /// pending user ruling. This row pins the conservative reading so the
+        /// behaviour cannot drift while the ruling is outstanding.
+        #[test]
+        fn pathmap_bare_key_get_stays_stuck_rather_than_inventing_a_value() {
+            // The unreduced `.get(...)` node is the normal form — NOT `1`, and
+            // NOT `Nil`, and NOT `error`.
+            assert_reduces_to("{| 1 |}.get(1)", "{|1|}.get(1)");
+        }
+
+        /// The other half of the bare entry's meaning: the key IS present.
+        ///
+        /// `.contains` is total on an unset entry and answers `true`, because
+        /// presence is a property of the KEY and the key was written. This is why
+        /// the `.contains(...)` rows in this module keep the bare `{| k |}` form
+        /// — they were correct before #74 and are correct after it.
+        #[test]
+        fn pathmap_bare_key_is_present_but_has_no_value() {
+            assert_reduces_to("{| 1 |}.contains(1)", "true");
+            assert_reduces_to("{| 1 |}.contains(2)", "false");
+            // …and the bare entry is a Display→parse fixpoint: no value is
+            // invented on the way out.
+            assert_reduces_to("{| 1 |}", "{|1|}");
         }
 
         #[test]
@@ -3164,12 +3214,12 @@ mod native_ops {
 
         #[test]
         fn pathmap_merge() {
-            assert_reduces_to("{| 1 |}.union({| 2 |}).get(2)", "2");
+            assert_reduces_to("{| 1 : 1 |}.union({| 2 : 2 |}).get(2)", "2");
         }
 
         #[test]
         fn pathmap_merge_list_path() {
-            assert_reduces_to("{| [1,2] |}.union({| [3,4] |}).get([3,4])", "[3,4]");
+            assert_reduces_to("{| [1,2] : [1,2] |}.union({| [3,4] : [3,4] |}).get([3,4])", "[3,4]");
         }
 
         #[test]
@@ -3180,7 +3230,7 @@ mod native_ops {
 
         #[test]
         fn pathmap_list_path_get() {
-            assert_reduces_to("{| [1,2] |}.get([1,2])", "[1,2]");
+            assert_reduces_to("{| [1,2] : [1,2] |}.get([1,2])", "[1,2]");
         }
 
         #[test]
@@ -3194,7 +3244,7 @@ mod native_ops {
         fn pathmap_prefix_path_not_confused_with_longer_path() {
             assert_reduces_to("{| [1,2] |}.contains([1])", "false");
             assert_reduces_to("{| [1,2] |}.contains([1,2])", "true");
-            assert_reduces_to("{| [1,2] |}.get([1,2])", "[1,2]");
+            assert_reduces_to("{| [1,2] : [1,2] |}.get([1,2])", "[1,2]");
         }
 
         #[test]
@@ -3235,9 +3285,9 @@ mod native_ops {
         #[test]
         fn pathmap_spec_edge_literals() {
             assert_reduces_to("{| |}.contains(1)", "false");
-            assert_reduces_to("{| 42 |}.get(42)", "42");
+            assert_reduces_to("{| 42 : 42 |}.get(42)", "42");
             assert_reduces_to(
-                r#"{| ["some string"] |}.get(["some string"])"#,
+                r#"{| ["some string"] : ["some string"] |}.get(["some string"])"#,
                 r#"["some string"]"#,
             );
             assert_reduces_to("{| [1,2], [1,2,3] |}.contains([1,2])", "true");
@@ -3295,24 +3345,24 @@ mod native_ops {
             use super::*;
 
             fn task_db() -> &'static str {
-                "{| [1,2,3], [1,2,4], [2,1] |}"
+                "{| [1,2,3] : [1,2,3], [1,2,4] : [1,2,4], [2,1] : [2,1] |}"
             }
 
             fn users_age_db() -> &'static str {
-                "{| [1,1,1,1], [1,2,1,1], [1,3,1,1] |}"
+                "{| [1,1,1,1] : [1,1,1,1], [1,2,1,1] : [1,2,1,1], [1,3,1,1] : [1,3,1,1] |}"
             }
 
             fn books_fiction_db() -> &'static str {
                 concat!(
                     "{| ",
-                    r#"["books","fiction","gatsby"], "#,
-                    r#"["books","fiction","moby"], "#,
-                    r#"["books","nonfiction","history"] |}"#
+                    r#"["books","fiction","gatsby"] : ["books","fiction","gatsby"], "#,
+                    r#"["books","fiction","moby"] : ["books","fiction","moby"], "#,
+                    r#"["books","nonfiction","history"] : ["books","nonfiction","history"] |}"#
                 )
             }
 
             fn nested_root_db() -> &'static str {
-                "{| [1,1,1], [1,1,2], [1,2,1] |}"
+                "{| [1,1,1] : [1,1,1], [1,1,2] : [1,1,2], [1,2,1] : [1,2,1] |}"
             }
 
             fn normal_forms_contain(input: &str, fragment: &str) {
@@ -3351,14 +3401,14 @@ mod native_ops {
                 let db = task_db();
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipperAt([1]).setSubtrie({{| [9], [8] |}}).contains([1,9])}}",
+                        "{{{}.writeZipperAt([1]).setSubtrie({{| [9] : [9], [8] : [8] |}}).contains([1,9])}}",
                         db
                     ),
                     "true",
                 );
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipperAt([1]).setSubtrie({{| [9], [8] |}}).contains([1,2,3])}}",
+                        "{{{}.writeZipperAt([1]).setSubtrie({{| [9] : [9], [8] : [8] |}}).contains([1,2,3])}}",
                         db
                     ),
                     "false",
@@ -3388,7 +3438,7 @@ mod native_ops {
                     concat!(
                         "{",
                         "{| [1] |}.writeZipper().graft(",
-                        "{| [2,3], [4] |}.readZipper()).get([4])}",
+                        "{| [2,3] : [2,3], [4] : [4] |}.readZipper()).get([4])}",
                     ),
                     "[4]",
                 );
@@ -3453,7 +3503,7 @@ mod native_ops {
             #[test]
             fn tut_write_zipper_set_subtrie_at_root() {
                 assert_reduces_to(
-                    "{| [1], [2] |}.writeZipper().setSubtrie({| [9], [8] |}).get([9])",
+                    "{| [1] : [1], [2] : [2] |}.writeZipper().setSubtrie({| [9] : [9], [8] : [8] |}).get([9])",
                     "[9]",
                 );
                 assert_reduces_to(
@@ -3489,7 +3539,7 @@ mod native_ops {
                     concat!(
                         "{",
                         "{| [1] |}.writeZipperAt([1]).graft(",
-                        "{| [2], [3] |}.readZipper()).get([1,3])}",
+                        "{| [2] : [2], [3] : [3] |}.readZipper()).get([1,3])}",
                     ),
                     "[3]",
                 );
@@ -3501,7 +3551,7 @@ mod native_ops {
                 let original = nested_root_db();
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipperAt([1,1]).setSubtrie({{| [9] |}}).get([1,1,9])}}",
+                        "{{{}.writeZipperAt([1,1]).setSubtrie({{| [9] : [9] |}}).get([1,1,9])}}",
                         original
                     ),
                     "[9]",
@@ -3512,7 +3562,7 @@ mod native_ops {
             // removeLeaf leaves original unchanged
             #[test]
             fn immutability_remove_leaf_preserves_original() {
-                let original = "{| [1,1], [1,2], [2] |}";
+                let original = "{| [1,1] : [1,1], [1,2] : [1,2], [2] : [2] |}";
                 assert_reduces_to(
                     &format!("{{{}.writeZipperAt([1,1]).removeLeaf().contains([1,1])}}", original),
                     "false",
@@ -3537,8 +3587,8 @@ mod native_ops {
             // graft leaves original unchanged
             #[test]
             fn immutability_graft_preserves_original() {
-                let original = "{| [1] |}";
-                let source = "{| [2,1] |}";
+                let original = "{| [1] : [1] |}";
+                let source = "{| [2,1] : [2,1] |}";
                 assert_reduces_to(
                     &format!(
                         "{{{}.writeZipper().graft({}.readZipper()).get([2,1])}}",
@@ -3553,10 +3603,10 @@ mod native_ops {
             // joinInto leaves original unchanged
             #[test]
             fn immutability_join_into_preserves_original() {
-                let original = "{| [1,2] |}";
+                let original = "{| [1,2] : [1,2] |}";
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipper().joinInto({{| [1,2], [3] |}}.readZipper()).get([3])}}",
+                        "{{{}.writeZipper().joinInto({{| [1,2] : [1,2], [3] : [3] |}}.readZipper()).get([3])}}",
                         original
                     ),
                     "[3]",
@@ -3643,7 +3693,7 @@ mod native_ops {
             fn write_zipper_set_subtrie_at_focus() {
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipperAt([1]).setSubtrie({{| [9], [8] |}}).get([1,9])}}",
+                        "{{{}.writeZipperAt([1]).setSubtrie({{| [9] : [9], [8] : [8] |}}).get([1,9])}}",
                         task_db()
                     ),
                     "[9]",
@@ -3656,7 +3706,7 @@ mod native_ops {
                     concat!(
                         "{",
                         "{| [1,2] |}.writeZipper().joinInto(",
-                        "{| [1,2], [3] |}.readZipper()).get([1,2])}",
+                        "{| [1,2] : [1,2], [3] : [3] |}.readZipper()).get([1,2])}",
                     ),
                     "[1,2]",
                 );
@@ -3664,7 +3714,7 @@ mod native_ops {
                     concat!(
                         "{",
                         "{| [1,2] |}.writeZipper().joinInto(",
-                        "{| [1,2], [3] |}.readZipper()).get([3])}",
+                        "{| [1,2] : [1,2], [3] : [3] |}.readZipper()).get([3])}",
                     ),
                     "[3]",
                 );
@@ -3694,7 +3744,7 @@ mod native_ops {
                     concat!(
                         "{",
                         "{| [1] |}.writeZipper().graft(",
-                        "{| [2,3] |}.readZipper()).get([2,3])}",
+                        "{| [2,3] : [2,3] |}.readZipper()).get([2,3])}",
                     ),
                     "[2,3]",
                 );
@@ -3861,7 +3911,7 @@ mod native_ops {
             fn map_and_pathmap_literals_stay_distinct() {
                 // Map: `{ k: v }`; Pathmap: `{| elem, ... |}`.
                 assert_reduces_to("{{1:10}.get(1)}", "10");
-                assert_reduces_to("{| 1 |}.get(1)", "1");
+                assert_reduces_to("{| 1 : 1 |}.get(1)", "1");
                 assert_reduces_to("{{1:2}.contains(1)}", "true");
                 assert_reduces_to("{| 1 |}.contains(1)", "true");
             }
@@ -5831,16 +5881,55 @@ mod par_reading_count_pins {
     /// eliminate the one that cannot complete. This row is the control most
     /// likely to catch collateral damage from any change to `|`.
     ///
-    /// ⚠ PINNED AS MEASURED, NOT AS ENDORSED. The reading carries an EMPTY
-    /// `HashMapLit({})` — the `@a : @b` entry is not in it. Whether a Pathmap
-    /// literal should retain its entries is a separate question from whether
-    /// the `|`/`|}` fork is stable, and only the latter is this row's job. The
-    /// empty payload is reported as an independent finding; it is not this
-    /// module's to fix, and pinning it here means a change to it must be
-    /// deliberate.
+    /// ⚠ RE-PINNED 2026-07-29 (#151) — THE DELIBERATE CHANGE THIS ROW ASKED FOR.
+    ///
+    /// This row used to pin `CastPathmap(PathmapLit(PathMapLit(HashMapLit({}))))`
+    /// — an EMPTY pathmap for a two-entry literal — under the note "PINNED AS
+    /// MEASURED, NOT AS ENDORSED … pinning it here means a change to it must be
+    /// deliberate." This is that deliberate change.
+    ///
+    /// `@a` and `@b` are `Name`s; the pathmap slot's declared element category
+    /// is `Proc` (upstream's `key_value_pair` is
+    /// `seq(field('key', $._proc), ':', field('value', $._proc))`, and Ruling A
+    /// of 2026-07-29 keeps MeTTaIL's pathmap kv semantics identical to its map
+    /// kv semantics). The finalize action's downcast mapped both to nothing and
+    /// emitted the empty container; the walker's close-time classifier now
+    /// refuses the flat instead, so the polluting packing is never interned and
+    /// the input has NO reading — which is what upstream does with it.
+    ///
+    /// ★ THE ROW'S ACTUAL JOB IS UNCHANGED AND STILL ASSERTED. `{|` opens a
+    /// Pathmap literal and `|}` closes it, and the lead `|` of that close is
+    /// byte-identical to the `PParInfix` operator. `prattail` forks and emits
+    /// BOTH the operator branch and the collection-yield branch. The refusal
+    /// below is a refusal to yield ANY reading — in particular it is NOT a
+    /// `PParInfix` reading, which is what a collapsed lex-fork would produce.
+    /// The `{| *@a : *@b |}` companion is the accept side of the same fork: same
+    /// bytes at the seam, one reading, both entries intact.
     #[test]
     fn pathmap_close_does_not_fork_into_a_par() {
-        pin("{| @a : @b |}", &["CastPathmap(PathmapLit(PathMapLit(HashMapLit({}))))"]);
+        fresh();
+        let refused = Proc::parse_via_wpda_all("{| @a : @b |}");
+        assert!(
+            refused.is_err(),
+            "`{{| @a : @b |}}` puts `Name`s in a `Proc` slot — it is not in the \
+             language and must yield NO reading (it used to yield the EMPTY \
+             pathmap); got {refused:?}",
+        );
+        // The lex-fork assertion, restated on the ACCEPTING side of the same
+        // seam so the `|`/`|}` resolution is still pinned: one reading, and it
+        // is a Pathmap literal rather than a `PParInfix`.
+        pin(
+            "{| *@a : *@b |}",
+            &[
+                // ★ The value reads `Set(…)` — the `PathValue` tag (#74). A bare
+                // `{| *@a |}` entry would read `Unset` here instead, and the two
+                // are distinct Debug renderings because they are distinct terms.
+                "CastPathmap(PathmapLit(PathMapLit(HashMapLit({PDrop(NQuoteShort(PVar(OrdVar(Free(\
+                 FreeVar { unique_id: UniqueId(#), pretty_name: Some(\"a\") }))))): \
+                 Set(PDrop(NQuoteShort(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(#), \
+                 pretty_name: Some(\"b\") }))))))}))))",
+            ],
+        );
     }
 
     /// A `|` whose left operand ends in `}` — the receive's body brace abuts

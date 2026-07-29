@@ -1284,6 +1284,28 @@ fn emit_collection_action_entry(
     //   HashMap → mettail_runtime::HashMapLit<K, V>  (NOT std::HashMap;
     //     `Map::MapLit(HashMapLit)` per ast_enums.rs:750. The wrapper
     //     gives deterministic Hash/Ord required by Ascent relations.)
+    //
+    // ── #151 (2026-07-29): THE ACTION STOPS FILTERING ────────────────────────
+    //
+    // Every arm below used to convert a failed element downcast into a SHORTER
+    // container: `filter_map(|a| a.into_term::<E>())` for the sequence/set arms,
+    // `if let (Some(k), Some(v))` for the two kv arms. That is precisely the
+    // machinery that turns "this reading is not in the language" into "an
+    // accepted, shorter container" — the sub-multiset ghost (`{a}` realising as
+    // `{}`, `{| @a : @b |}` realising as the EMPTY pathmap).
+    //
+    // Each now ABANDONS THE WHOLE TERM instead: `return` without `push_term`,
+    // the idiom the Vec arm's `None => return` already established for "this
+    // action cannot produce a term". The walker's close-time classifier is
+    // supposed to have refuted every such flat before it was interned, so this
+    // path is unreachable in a correct build — it is carried by a
+    // `debug_assert!` and a release-mode counter
+    // (`note_coll_action_downcast_abandon`) that a test asserts stays 0, rather
+    // than by a `panic!` (the generated actions run inside cranelift-compiled
+    // parse workers, where a panic is not an available failure mode).
+    //
+    // With both sites meaning THE SAME THING — this reading does not exist —
+    // the walker and the action cannot disagree.
     let action_fn = match shape.coll_kind {
         CollectionType::Vec => quote! {
             |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
@@ -1293,10 +1315,23 @@ fn emit_collection_action_entry(
                     None => return,
                 };
                 let drained = b.drain_collection(id);
-                let elems: std::vec::Vec<#element_cat_ident> = drained
-                    .into_iter()
-                    .filter_map(|a| a.into_term::<#element_cat_ident>())
-                    .collect();
+                let mut elems: std::vec::Vec<#element_cat_ident> =
+                    std::vec::Vec::with_capacity(drained.len());
+                for a in drained {
+                    match a.try_into_term::<#element_cat_ident>() {
+                        Ok(t) => elems.push(t),
+                        Err(_mismatch) => {
+                            debug_assert!(
+                                false,
+                                "collection-finalize downcast failed after the walker's \
+                                 close-time classifier accepted the flat: {:?}",
+                                _mismatch,
+                            );
+                            mettail_prattail::wpda_runtime::note_coll_action_downcast_abandon();
+                            return;
+                        },
+                    }
+                }
                 b.push_term::<#cat_ident>(#cat_ident::#label_ident(elems));
             }
         },
@@ -1308,11 +1343,25 @@ fn emit_collection_action_entry(
                     None => return,
                 };
                 let drained = b.drain_collection(id);
-                let container = mettail_runtime::HashBag::<#element_cat_ident>::from_iter(
-                    drained
-                        .into_iter()
-                        .filter_map(|a| a.into_term::<#element_cat_ident>())
-                );
+                let mut elems: std::vec::Vec<#element_cat_ident> =
+                    std::vec::Vec::with_capacity(drained.len());
+                for a in drained {
+                    match a.try_into_term::<#element_cat_ident>() {
+                        Ok(t) => elems.push(t),
+                        Err(_mismatch) => {
+                            debug_assert!(
+                                false,
+                                "collection-finalize downcast failed after the walker's \
+                                 close-time classifier accepted the flat: {:?}",
+                                _mismatch,
+                            );
+                            mettail_prattail::wpda_runtime::note_coll_action_downcast_abandon();
+                            return;
+                        },
+                    }
+                }
+                let container =
+                    mettail_runtime::HashBag::<#element_cat_ident>::from_iter(elems);
                 b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
             }
         },
@@ -1324,14 +1373,28 @@ fn emit_collection_action_entry(
                     None => return,
                 };
                 let drained = b.drain_collection(id);
+                let mut elems: std::vec::Vec<#element_cat_ident> =
+                    std::vec::Vec::with_capacity(drained.len());
+                for a in drained {
+                    match a.try_into_term::<#element_cat_ident>() {
+                        Ok(t) => elems.push(t),
+                        Err(_mismatch) => {
+                            debug_assert!(
+                                false,
+                                "collection-finalize downcast failed after the walker's \
+                                 close-time classifier accepted the flat: {:?}",
+                                _mismatch,
+                            );
+                            mettail_prattail::wpda_runtime::note_coll_action_downcast_abandon();
+                            return;
+                        },
+                    }
+                }
                 // `as Set` (Rholang 1.4 / main) carries a `HashSetLit` payload (see
                 // rholang `![mettail_runtime::HashSetLit<Proc>] as Set`); build the
                 // deterministic wrapper, not `std::collections::HashSet`.
-                let container = mettail_runtime::HashSetLit::<#element_cat_ident>::from_iter(
-                    drained
-                        .into_iter()
-                        .filter_map(|a| a.into_term::<#element_cat_ident>())
-                );
+                let container =
+                    mettail_runtime::HashSetLit::<#element_cat_ident>::from_iter(elems);
                 b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
             }
         },
@@ -1347,34 +1410,102 @@ fn emit_collection_action_entry(
                 // [k0, v0, k1, v1, ...] (same as HashMap); insert into a PathMapLit
                 // (the wrapper that `Pathmap::PathmapLit(...)` accepts — see
                 // runtime/src/pathmap_lit.rs; it derefs to HashMapLit for `insert`).
+                //
+                // ★ #74: the value is a `PathValue<E>`, NOT an `E`. A bare
+                // `{| k |}` entry arrives as `[k, ActionArg::UnsetCollectionValue]`
+                // — the walker splices a reserved UNSET marker where the source
+                // declined to write a value — and becomes `PathValue::Unset`.
+                // `Unset` is NOT `Nil`: encoding it as `Nil` would print
+                // `{|k:Nil|}` for an input written `{|k|}` and break the
+                // `parse ∘ display` fixpoint.
                 let mut iter = drained.into_iter();
                 let mut container = mettail_runtime::PathMapLit::<
-                    #element_cat_ident, #element_cat_ident,
+                    #element_cat_ident,
+                    mettail_runtime::PathValue<#element_cat_ident>,
                 >::new();
                 while let Some(k_arg) = iter.next() {
-                    match iter.next() {
-                        Some(v_arg) => {
-                            if let (Some(k), Some(v)) = (
-                                k_arg.into_term::<#element_cat_ident>(),
-                                v_arg.into_term::<#element_cat_ident>(),
-                            ) {
-                                container.insert(k, v);
-                            }
+                    // A key is NEVER optional. An unset marker in a key slot is
+                    // refused by the walker's classifier
+                    // (`FlatDisposition::UnsetInKeySlot`), so reaching it here
+                    // means the flat should not have been interned.
+                    let k = match k_arg.try_into_term::<#element_cat_ident>() {
+                        Ok(k) => k,
+                        Err(_mismatch) => {
+                            debug_assert!(
+                                false,
+                                "pathmap key downcast failed after the walker's \
+                                 close-time classifier accepted the flat: {:?}",
+                                _mismatch,
+                            );
+                            mettail_prattail::wpda_runtime::note_coll_action_downcast_abandon();
+                            return;
                         },
+                    };
+                    let v_arg = match iter.next() {
+                        Some(v) => v,
                         None => {
-                            // Pathmap optional-value (2026-06-27): a trailing
-                            // UNPAIRED key is a bare path `{| k |}` whose value
-                            // is the key itself (set-form: value = key). The
-                            // parser duplicates bare-path keys at parse time
-                            // (DuplicateLastCollectionElement) so even-length
-                            // pairs are the norm; this odd-tail arm is the
-                            // defensive net that still materializes a correct
-                            // `k → k` entry rather than dropping the key.
-                            if let Some(k) = k_arg.into_term::<#element_cat_ident>() {
-                                container.insert(k.clone(), k);
-                            }
+                            // An ODD drain. The kv arity gate at the close
+                            // (`items == 2·(seps+1)`, items even) makes this
+                            // unreachable; it is NOT an unset entry, because an
+                            // unset entry carries an explicit marker in the value
+                            // slot and so keeps the drain even.
+                            debug_assert!(
+                                false,
+                                "pathmap finalize saw an ODD drain — the kv arity \
+                                 gate at the collection close should have refuted it",
+                            );
+                            mettail_prattail::wpda_runtime::note_coll_action_downcast_abandon();
+                            return;
                         },
+                    };
+                    let v = if v_arg.is_unset_collection_value() {
+                        mettail_runtime::PathValue::Unset
+                    } else {
+                        match v_arg.try_into_term::<#element_cat_ident>() {
+                            Ok(v) => mettail_runtime::PathValue::Set(v),
+                            Err(_mismatch) => {
+                                debug_assert!(
+                                    false,
+                                    "pathmap value downcast failed after the walker's \
+                                     close-time classifier accepted the flat: {:?}",
+                                    _mismatch,
+                                );
+                                mettail_prattail::wpda_runtime::note_coll_action_downcast_abandon();
+                                return;
+                            },
+                        }
+                    };
+                    // ★ Ruling D (2026-07-29): `{| k : 1, k |}` writes one key
+                    // twice, once WITH a value and once WITHOUT. `insert` is
+                    // last-write-wins, so the bare occurrence would SILENTLY
+                    // DELETE the value. It is a written contradiction — refuse
+                    // the literal rather than pick a winner.
+                    //
+                    // Two occurrences that AGREE are not a contradiction: Ruling C
+                    // (#125) gives pathmaps set semantics with no implicit
+                    // multiplicity, so `{| k, k |}` and `{| k : 1, k : 1 |}`
+                    // dedup cleanly.
+                    if let Some(prev) = container.get(&k) {
+                        if prev != &v {
+                            #[cfg(debug_assertions)]
+                            {
+                                use std::sync::atomic::{AtomicU64, Ordering};
+                                static CONFLICTS: AtomicU64 = AtomicU64::new(0);
+                                let n = CONFLICTS.fetch_add(1, Ordering::Relaxed);
+                                if n < 8 {
+                                    eprintln!(
+                                        "[pathmap-finalize] conflicting entries for key \
+                                         `{}`: the literal binds it both with and \
+                                         without a value (or to two different values) \
+                                         — the literal is refused",
+                                        k,
+                                    );
+                                }
+                            }
+                            return;
+                        }
                     }
+                    container.insert(k, v);
                 }
                 b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
             }
@@ -1393,6 +1524,11 @@ fn emit_collection_action_entry(
                 // see runtime/src/hashmap_lit.rs:30 for the wrapper rationale,
                 // and language.rs::map_defaults for the `:` key_val_sep that
                 // the parser uses to split pairs).
+                //
+                // A `HashMap`'s values are MANDATORY (`kv_value_optional` is
+                // false), so no `PathValue` here and no unset marker can reach
+                // this arm — the walker refuses one with
+                // `FlatDisposition::UnsetValueForbidden`.
                 let mut iter = drained.into_iter();
                 let mut container = mettail_runtime::HashMapLit::<
                     #element_cat_ident, #element_cat_ident,
@@ -1400,14 +1536,36 @@ fn emit_collection_action_entry(
                 while let Some(k_arg) = iter.next() {
                     let v_arg = match iter.next() {
                         Some(v) => v,
-                        None => break, // odd-length drain; codegen invariant violation
+                        None => {
+                            // An ODD drain: the kv arity gate at the close makes
+                            // this unreachable. It used to `break`, emitting a
+                            // SHORT map for a literal the user wrote longer.
+                            debug_assert!(
+                                false,
+                                "map finalize saw an ODD drain — the kv arity gate \
+                                 at the collection close should have refuted it",
+                            );
+                            mettail_prattail::wpda_runtime::note_coll_action_downcast_abandon();
+                            return;
+                        },
                     };
-                    if let (Some(k), Some(v)) = (
-                        k_arg.into_term::<#element_cat_ident>(),
-                        v_arg.into_term::<#element_cat_ident>(),
+                    let (k, v) = match (
+                        k_arg.try_into_term::<#element_cat_ident>(),
+                        v_arg.try_into_term::<#element_cat_ident>(),
                     ) {
-                        container.insert(k, v);
-                    }
+                        (Ok(k), Ok(v)) => (k, v),
+                        (Err(_mismatch), _) | (_, Err(_mismatch)) => {
+                            debug_assert!(
+                                false,
+                                "map entry downcast failed after the walker's \
+                                 close-time classifier accepted the flat: {:?}",
+                                _mismatch,
+                            );
+                            mettail_prattail::wpda_runtime::note_coll_action_downcast_abandon();
+                            return;
+                        },
+                    };
+                    container.insert(k, v);
                 }
                 b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
             }
