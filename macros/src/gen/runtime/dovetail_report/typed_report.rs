@@ -42,7 +42,15 @@ pub(super) struct FoldRule<'a> {
     /// True when every param is native-scalar AND the output is native-scalar (e.g.
     /// `AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;`). The body is written
     /// against the native values, so the dispatcher binds operands via `try_eval()`
-    /// (not `&Cat`) and `safeify`s the body (overflow / div-by-zero → `None` → defer).
+    /// rather than `&Cat`.
+    ///
+    /// ⚠ **OPERAND BINDING ONLY.** Until #100 this flag also decided whether the BODY was
+    /// `safeify`d, which made "the dispatcher may panic" a function of the parameter
+    /// categories — a collection param or collection output set it `false` and routed the
+    /// body to a raw splice, where a `.expect()` ran live inside the saturation closure.
+    /// Body treatment is now unconditional ([`fold_body_value`]); only the binding, which
+    /// genuinely depends on whether a param has a native scalar to `try_eval()` to, is
+    /// still gated here.
     is_pure_native_arith: bool,
     /// (#101) The SHAPE of the native rule's left-hand side. See [`FoldLhsShape`].
     lhs_shape: FoldLhsShape,
@@ -553,80 +561,113 @@ fn collect_nested_structural_ac_rules(
     out
 }
 
-/// The `mettail_runtime` native-output numeric-cast reductions (generated cast fold bodies
-/// call these). They return `Option<scalar>` — a `None` defers — but carry no `try` segment,
-/// so they are recognized by name in [`body_returns_option`]. Their object-output siblings
-/// (`proc_int_bin`, …) return a `Proc` (not an `Option`) and MUST NOT appear here.
-const NATIVE_NUMERIC_CAST_FNS: &[&str] = &[
-    "numeric_int_bin_i32",
-    "numeric_int_bin_i64",
-    "numeric_uint_bin_u32",
-    "numeric_float_bin",
-    "numeric_fixed_bin",
-    "numeric_bigint_unary",
-    "numeric_bigrat_unary",
-];
+// ★★ #100 — `NATIVE_NUMERIC_CAST_FNS` and `body_returns_option` were DELETED here.
+//
+// `body_returns_option` was a syntactic classifier answering "is this body's outermost form an
+// `Option` the dispatcher must `?`-unwrap?", maintained as a list of conventions: a `try_*`
+// segment in a call or method name, a bare `Some`/`None`, or one of seven `mettail_runtime`
+// numeric-cast reductions recognised by NAME (the const that is gone with it, because its only
+// reader was this function).
+//
+// It is redundant, not merely unused. [`fold_body_value`] now routes every body through
+// `safeify_and_wrap`, whose `wrap_in_option_closure` ends in
+// `mettail_runtime::lift::Lift(#body).lift()`. `Lift` is an autoref-specialisation pair:
+//
+// ```text
+//   impl<T> Lift<Option<T>> { fn lift(self) -> Option<T> }   // inherent — wins by method
+//                                                            //   resolution when T = Option
+//   impl<T> LiftPlain for &Lift<T> { fn lift(&self) -> Option<T> }   // trait fallback: Some(t)
+// ```
+//
+// so an already-`Option` body passes through and a plain body is wrapped — the exact
+// discrimination `body_returns_option` was performing, decided by the TYPE SYSTEM at the use
+// site rather than by a name list at the emission site. Keeping both would leave two answers to
+// one question, and the syntactic one is the one that can be wrong: it was wrong for
+// `.expect()`, and that wrongness is #100 (see [`fold_body_value`]'s doc).
+//
+// ⚠ A body that named a fallible helper NOT on the list therefore used to be spliced raw and
+// now defers correctly, with no list to extend. `docs/design/made/native-types/
+// numeric-cast-adapter-generation.md` §6 records the allow-list this replaces.
 
-/// Whether a fold body's outermost form returns an `Option` that the dispatcher must `?`-unwrap
-/// (a `None` defers the fold). Precise for the fold-body conventions: a `try_*(..)` call or
-/// method, or a bare `Some(..)`/`None`, or a `mettail_runtime` native numeric-cast reduction
-/// ([`NATIVE_NUMERIC_CAST_FNS`]), recursing through a block's tail expression. A body that
-/// `.expect()`s/`.unwrap()`s an inner `Option`, or returns a raw value (`(-a)`, `a.union(&b)`,
-/// `{ … o }`, `proc_int_bin(..)`), is NOT an `Option` at the outermost position.
-fn body_returns_option(expr: &syn::Expr) -> bool {
-    match expr {
-        syn::Expr::Block(b) => match b.block.stmts.last() {
-            Some(syn::Stmt::Expr(e, None)) => body_returns_option(e),
-            _ => false,
-        },
-        syn::Expr::Call(c) => match c.func.as_ref() {
-            syn::Expr::Path(p) => p.path.segments.last().is_some_and(|s| {
-                let n = s.ident.to_string();
-                // The fallible-fold convention is any fn whose name has a `try` segment (a
-                // `<lang>_try_<op>` or bare `try_*`); match `try` as a `_`-delimited segment.
-                // The macro-generated numeric-cast adapters instead call the `mettail_runtime`
-                // native-output reductions, which return `Option<scalar>` but carry no `try`
-                // segment, so recognize them by name. Their object-output siblings (`proc_*`)
-                // return a `Proc`, NOT an `Option`, and are deliberately EXCLUDED here.
-                n.split('_').any(|seg| seg == "try")
-                    || n == "Some"
-                    || n == "None"
-                    || NATIVE_NUMERIC_CAST_FNS.contains(&n.as_str())
-            }),
-            _ => false,
-        },
-        syn::Expr::MethodCall(m) => {
-            let n = m.method.to_string();
-            n.split('_').any(|seg| seg == "try")
-        },
-        syn::Expr::Paren(p) => body_returns_option(&p.expr),
-        _ => false,
-    }
-}
+// ★★ #100 — `unwrap_fold_body_block` was DELETED here.
+//
+// It peeled redundant single-tail-expression `{ … }` wrappers off a fold body so the two
+// non-safeify arms of the old gate would not emit `{ { e } }` / `({ { e } })?`, which
+// `unused_braces` flags. Both of those arms are gone: [`fold_body_value`] has one form, and
+// `wrap_in_option_closure` already carries `#[allow(unused_braces, unused_parens)]` on the
+// statement that splices the body — which is why the `is_pure_native_arith` arm passed the
+// UNPEELED body and always did.
+//
+// Left in place it would have been a helper with no caller — a second, silent answer to
+// "how is a fold body braced" for whoever added the next emitter.
 
-/// Peel redundant single-tail-expression `{ … }` block wrappers off a fold body so the report
-/// emitters below supply bracing exactly once. A body written as `![{ e }]` — or a macro-
-/// synthesized `{ mettail_runtime::numeric_int_bin_i32(a, w) }` — is a `syn::Expr::Block`; splicing
-/// it under an extra `{ · }` / `({ · })?` / `#ctor( · )` yields the `{ { e } }` / `({ { e } })?` /
-/// `#ctor({ e })` shapes that `unused_braces` flags. Unwrapping a block whose sole content is a
-/// trailing expression (no `let`s, no trailing `;`, no label/attrs) is exactly the semantics-
-/// preserving rewrite the lint certifies (`{ e }` ≡ `e` in expression position when `e` binds
-/// nothing); every other body is returned unchanged (its braces are load-bearing).
-fn unwrap_fold_body_block(body: &syn::Expr) -> &syn::Expr {
-    let mut current = body;
-    loop {
-        match current {
-            syn::Expr::Block(b)
-                if b.attrs.is_empty() && b.label.is_none() && b.block.stmts.len() == 1 =>
-            {
-                match &b.block.stmts[0] {
-                    syn::Stmt::Expr(inner, None) => current = inner,
-                    _ => return current,
-                }
-            },
-            _ => return current,
-        }
-    }
+/// ★★ THE FOLD-BODY GATE — a declared `![…]` body's ONE emitted form.
+///
+/// ```text
+///     ( (|| -> Option<_> { Lift( safeify(body) ).lift() })() ) ?
+/// ```
+///
+/// The body is rewritten by [`crate::gen::native::rust_code_rewrite::safeify`], wrapped in an
+/// `Option`-returning closure, and `?`-unwrapped by the dispatcher. Every way a body can fail
+/// therefore arrives at the dispatcher as `None`, which leaves the redex unreduced and keeps
+/// the report `Complete` — the same disposition `6 / 0` has always had.
+///
+/// What `safeify` does to a body, and why this is the whole repair:
+///
+/// | written | emitted | on failure |
+/// |---|---|---|
+/// | `a + b` | `SafeArith::safe_add(a, b)?` | `None` → defer |
+/// | `x.expect(msg)` / `x.unwrap()` | `(x)?` | `None` → defer |
+/// | `t.eval()` | `(t).try_eval()?` | `None` → defer (a Var-bearing child) |
+/// | `Some(v)` / `try_f(..)` | unchanged; `Lift`'s autoref specialisation sees `Option<T>` | `None` → defer |
+/// | anything else | unchanged; `Lift` wraps it as `Some(t)` | — |
+///
+/// # ★★ #100 — the root was a CIRCULARITY, and it is why this function has no branches
+///
+/// This used to be a three-way discriminator:
+///
+/// ```text
+///     if is_pure_native_arith        → safeify_and_wrap(body), `?`        DEFERS
+///     else if body_returns_option(b) → (b)?                               DEFERS
+///     else                           → b                                  RAW — a panic survives
+/// ```
+///
+/// `safeify_and_wrap` was reachable ONLY behind `is_pure_native_arith`
+/// (`params.all(Scalar) && output is a non-collection native`), which a collection parameter
+/// or a collection/object output makes `false` **by construction**. So a collection fold could
+/// never reach the machinery that demotes `.expect` to `?` — and the fallback,
+/// `body_returns_option`, was a *syntactic* test whose own documentation read: *"A body that
+/// `.expect()`s/`.unwrap()`s an inner `Option` … is NOT an `Option` at the outermost
+/// position."*
+///
+/// ⇒ **The author's `.expect()` both created the panic and hid the body from the only detector
+/// that would have deferred it.** Four bodies sat in that loop —
+/// `Calculator::{ElemList, DeleteList, GetMap}` with `.expect(…)` and `Rholang::MDelete` with a
+/// bare `panic!`, the last of those on the production `m.delete(k)` surface — and each was
+/// executed with the e-graph mid-saturation. Measured before the repair: **147 of 193** fold
+/// bodies were emitted in the non-deferring form; four of the 147 carried a live abort, and the
+/// other 143 were one `.expect()` away from joining them.
+///
+/// A fix at the four sites would have left that loop intact for the 144th. Routing every body
+/// through the same rewrite closes the class instead:
+/// `every_declared_fold_body_defers_instead_of_panicking` is a total statement over the corpus
+/// and it is checkable on token streams, because there is exactly one form to check.
+///
+/// # ⚠ What is NOT unified — `is_pure_native_arith` still gates OPERAND BINDING
+///
+/// That flag decided two independent things, and only one of them was ever about parameter
+/// categories:
+///
+/// | decision | depends on categories? | still gated |
+/// |---|---|---|
+/// | bind operands as `#build(&d)?.try_eval()?` (native scalars) vs `&Cat` | **yes** — a `&Proc` has no `try_eval()` to a scalar | **yes**, see `param_binds` |
+/// | rewrite the body with `safeify` | **no** — `safeify` is a rewrite over `syn::Expr` and never inspects a parameter's type | no |
+///
+/// So the binding stays exactly as it was and the body treatment became total. The flag's own
+/// doc on [`FoldRule`] records the narrowed responsibility.
+fn fold_body_value(fold: &FoldRule<'_>) -> TokenStream {
+    let safeified = crate::gen::native::rust_code_rewrite::safeify_and_wrap(fold.body);
+    quote! { (#safeified)? }
 }
 
 /// `__is_redex` / `__is_var_op` / `__is_value_op` / `__weigh` / `__class_is_fold_value` /
@@ -1041,26 +1082,7 @@ fn generate_native_rules_and_dispatch(
             let out_type = language.get_type(&f.output_cat);
             let out_native = out_type.map(|t| t.native_type.is_some()).unwrap_or(false);
             let out_cat = &f.output_cat;
-            // Some fold bodies are fallible (`try_*` returning `Option`, e.g. a Calculator cast
-            // that may not be representable); `?` unwraps them — a `None` defers the fold (the
-            // redex stays unreduced) rather than fabricating a value.
-            // Pure-native-arith bodies are `safeify`d: arithmetic operators become
-            // `SafeArith::safe_*(..)?` and the whole body is wrapped in an `Option`-returning
-            // closure, so overflow / div-by-zero / NaN yields `None` → the fold defers (the redex
-            // is left unreduced, the report stays Complete) instead of panicking inside the engine
-            // closure. This matches the interpreter's `safeify_and_wrap` body handling. Other
-            // folds keep the raw / `try_*` body convention.
-            // Peel a redundant `{ … }` off the body so the wrappers below don't double-brace
-            // (`({ { e } })?` / `{ { e } }` / `#ctor({ e })`). See `unwrap_fold_body_block`.
-            let body_inner = unwrap_fold_body_block(body);
-            let body_value = if f.is_pure_native_arith {
-                let safeified = crate::gen::native::rust_code_rewrite::safeify_and_wrap(body);
-                quote! { (#safeified)? }
-            } else if body_returns_option(body_inner) {
-                quote! { (#body_inner)? }
-            } else {
-                quote! { #body_inner }
-            };
+            let body_value = fold_body_value(f);
             let result_handling = if out_native {
                 let native_type = out_type
                     .and_then(|t| t.native_type.as_ref())
@@ -2875,47 +2897,101 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
 
 #[cfg(test)]
 mod tests {
-    use super::body_returns_option;
+    // ★★ #100 — three cells were deleted from this module with the classifier they tested:
+    // `native_numeric_cast_fns_classify_as_option`,
+    // `object_output_cast_fns_do_not_classify_as_option`, and
+    // `try_convention_classifies_as_option`. All three asserted `body_returns_option`'s answer
+    // for a naming convention, and that question no longer has an answer to assert: the
+    // Option/plain discrimination is now `Lift`'s autoref specialisation, decided by the type
+    // system at the use site (see the deletion note above `fold_body_value`). What replaced
+    // them is the corpus gate below, which is total over the corpus rather than over a list of
+    // conventions somebody has to keep current — the list being incomplete is exactly how the
+    // defect worked.
 
+    /// ★★ #100 — EVERY DECLARED FOLD BODY IS EMITTED IN THE DEFERRING FORM.
+    ///
+    /// # The property, and why it is stated over the corpus rather than over four sites
+    ///
+    /// A `![…]` fold body runs inside the D-stage dispatcher's closure. The closure returns
+    /// `Option<ClassId>`, so a body that cannot produce a value has exactly one correct way
+    /// to say so — `None`, which leaves the redex unreduced and keeps the report `Complete`.
+    /// Anything else it does with the failure (`.expect`, `.unwrap`, `panic!`) is executed
+    /// with the e-graph mid-saturation.
+    ///
+    /// [`fold_body_value`] is the ONE place that decides the form, so the property is
+    /// checkable HERE, on token streams, with no build of any generated crate: the emitted
+    /// expression must be `((|| -> Option<_> { … Lift(<safeified body>).lift() })())?`.
+    /// `safeify` is what demotes `.expect(msg)` and `.unwrap()` to `?`
+    /// (`macros/src/gen/native/rust_code_rewrite.rs`), so carrying the `Lift` marker IS
+    /// carrying the demotion.
+    ///
+    /// # ⚠ Measured RED before the repair: 147 of 193
+    ///
+    /// 147 fold bodies were emitted in the NON-deferring form. Four of them carried a live
+    /// abort; the remaining 143 were one `.expect()` away from joining them, which is why the
+    /// gate is written over the FORM and not over a search for panicking tokens — a token
+    /// search is the same incomplete-list reasoning that produced the defect.
+    ///
+    /// | language | fold | what survived |
+    /// |---|---|---|
+    /// | `Calculator` | `Proc_ElemList` | `.expect("ElemList: invalid index")` |
+    /// | `Calculator` | `List_DeleteList` | `.expect("DeleteList: invalid index")` |
+    /// | `Calculator` | `Proc_GetMap` | `.expect("get: key not found")` |
+    /// | `Rholang` | `Proc_MDelete` | `panic!("delete: index out of bounds")` |
+    ///
+    /// ⚠ The `Rholang::MDelete` row is the one `safeify` cannot repair: a `panic!` has no
+    /// receiver to short-circuit, so its body was changed to `Proc::Err` at the declaration
+    /// site (matching its five sibling arms). The other 146 are closed by this function alone.
+    ///
+    /// # ⚠ The floor is the non-vacuity control
+    ///
+    /// "No offenders" is also what a census that found no folds reports. The subject is
+    /// [`crate::gen::runtime::binder_congruence::tests::bundled_languages`] — the ONE corpus
+    /// derivation, which already carries its own ≥ 50-language floor — and this cell adds a
+    /// fold-count floor on top, because a language set that reconstructs while its folds
+    /// stop being collected would satisfy every assertion below in silence.
     #[test]
-    fn native_numeric_cast_fns_classify_as_option() {
-        // The generated native-output cast bodies (Calculator) call these; they return
-        // `Option<scalar>`, so the dispatcher must `?`-unwrap (a `None` defers).
-        for body in [
-            quote::quote!(mettail_runtime::numeric_int_bin_i32(&a, w)),
-            quote::quote!(mettail_runtime::numeric_int_bin_i64(&a, w)),
-            quote::quote!(mettail_runtime::numeric_uint_bin_u32(&a, w)),
-            quote::quote!(mettail_runtime::numeric_float_bin(&a, w)),
-            quote::quote!(mettail_runtime::numeric_fixed_bin(&a, w)),
-            quote::quote!(mettail_runtime::numeric_bigint_unary(&a)),
-            quote::quote!(mettail_runtime::numeric_bigrat_unary(&a)),
-            quote::quote!({ mettail_runtime::numeric_float_bin(&a, w) }),
-        ] {
-            let e: syn::Expr = syn::parse2(body).expect("parse fold body");
-            assert!(body_returns_option(&e), "native numeric cast must be Option-returning");
+    fn every_declared_fold_body_defers_instead_of_panicking() {
+        let mut folds_seen = 0usize;
+        let mut offenders: Vec<String> = Vec::new();
+
+        for lang in crate::gen::runtime::binder_congruence::tests::bundled_languages() {
+            let (folds, _dispositions) = super::collect_fold_rules(&lang.def);
+            for fold in &folds {
+                folds_seen += 1;
+                let emitted = super::fold_body_value(fold).to_string().replace(' ', "");
+                // The deferring form: the safeify closure's `Lift` dispatch inside, `?` outside.
+                let defers =
+                    emitted.contains("::mettail_runtime::lift::Lift(") && emitted.ends_with(")?");
+                if !defers {
+                    offenders.push(format!(
+                        "{} :: {} :: {} — emitted `{}`",
+                        lang.path,
+                        lang.name,
+                        fold.op_variant,
+                        &emitted[..emitted.len().min(140)],
+                    ));
+                }
+            }
         }
-    }
 
-    #[test]
-    fn object_output_cast_fns_do_not_classify_as_option() {
-        // The generated object-output cast bodies (Rholang) call these; they return a `Proc`
-        // directly (`Proc::Err` on failure), so they MUST NOT be `?`-unwrapped.
-        for body in [
-            quote::quote!(mettail_runtime::proc_int_bin(&a, w)),
-            quote::quote!(mettail_runtime::proc_float_bin(&a, w)),
-            quote::quote!(mettail_runtime::proc_bigint_unary(&a)),
-            quote::quote!({ mettail_runtime::proc_int_bin(&a, w) }),
-        ] {
-            let e: syn::Expr = syn::parse2(body).expect("parse fold body");
-            assert!(!body_returns_option(&e), "object-output cast must not be Option-returning");
-        }
-    }
-
-    #[test]
-    fn try_convention_classifies_as_option() {
-        // Any fold body calling a `try_*`-segment fn is Option-returning (a `None` defers) — a
-        // general Rust idiom, independent of which language wrote the body.
-        let e: syn::Expr = syn::parse2(quote::quote!(try_widen(&a, w))).expect("parse fold body");
-        assert!(body_returns_option(&e));
+        assert!(
+            folds_seen >= 150,
+            "★ only {folds_seen} fold rule(s) were collected across the whole corpus. The \
+             bundled languages declare over two hundred, so the census or `collect_fold_rules` \
+             has changed shape and the offender check below would be reporting success over a \
+             domain that is not the corpus.",
+        );
+        assert!(
+            offenders.is_empty(),
+            "★ {} of {folds_seen} fold bodie(s) are NOT emitted in the deferring form, so a \
+             failure inside them runs as a panic in the middle of e-graph saturation instead \
+             of as a `None` that leaves the redex unreduced:\n  {}\n\nEvery fold body must go \
+             through `safeify_and_wrap` — `is_pure_native_arith` decides how OPERANDS are \
+             bound (`try_eval()` vs `&Cat`), which is the only half of that flag that is \
+             about parameter categories.",
+            offenders.len(),
+            offenders.join("\n  "),
+        );
     }
 }

@@ -156,6 +156,17 @@ supersedes the interim hand-gate `#[cfg(all(rholang, dovetail-codegen))]`.
 
 ## 6. The one classifier patch (the flagged hazard — red-team blocker 1)
 
+> ⚠ **SUPERSEDED (#100, 2026-07-29).** `body_returns_option` and the seven-name allow-list
+> this section specifies were **deleted**. `macros/.../typed_report.rs::fold_body_value` now
+> routes *every* fold body through `safeify_and_wrap`, whose
+> `mettail_runtime::lift::Lift(..).lift()` decides `Option<T>` versus plain `T` by autoref
+> specialisation — in the type system at the use site, rather than by a name list at the
+> emission site. The hazard this section solved is solved by construction: a fallible helper
+> the list did not name is now deferred correctly instead of spliced raw. The section is kept
+> because it records *why* the seven names needed recognising at all, and because the failure
+> mode it identified (a syntactic classifier that answers "not an `Option`" for a body that is
+> one) is exactly what `.expect()` exploited to become #100. Read §6 and §P1 below as history.
+
 `body_returns_option` (`macros/src/gen/runtime/dovetail_report/typed_report.rs:111-133`)
 decides whether a fold body is `Option`-returning (→ `?`-unwrap → defer) by matching the
 callee's final segment against a `try` segment. The renamed native generics

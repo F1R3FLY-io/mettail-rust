@@ -534,8 +534,21 @@ pub fn generate_binder_congruence_term_wrapper(
     }
 }
 
+/// ⚠ `pub(crate)` on a `#[cfg(test)]` module, deliberately.
+///
+/// [`tests::bundled_languages`] is THE corpus census — the one derivation of "every
+/// `language!` body under the manifest-declared roots, reconstructed exactly as the
+/// generator would see it". It was written here because this file needed it first; it is
+/// not about binder congruence, and a second guard now reads it
+/// (`dovetail_report::typed_report`'s fold-body gate).
+///
+/// Copying the walk into that module instead would recreate precisely the failure this
+/// file's own header spends forty lines on: *"a walk written out `n` times is a walk that
+/// can be widened `n − 1` times"* — the hand-written `BUNDLED_LANGUAGES` table failed OPEN
+/// three times because more than one place decided what the corpus was. One census, read
+/// by every guard that needs one.
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use mettail_ast::auto_inject::reconstruct_language_def_from_tokens;
     use mettail_ast::language_scan;
@@ -673,10 +686,10 @@ mod tests {
 
     /// A bundled language: its location, its declared name, and the exact macro-time
     /// augmented definition the generator would see.
-    struct BundledLanguage {
-        path: String,
-        name: String,
-        def: LanguageDef,
+    pub(crate) struct BundledLanguage {
+        pub(crate) path: String,
+        pub(crate) name: String,
+        pub(crate) def: LanguageDef,
     }
 
     /// ★★ EVERY bundled language definition, DERIVED from the corpus.
@@ -749,7 +762,7 @@ mod tests {
     /// every one of them, no handler is emitted, and none of them declares a float without
     /// a commutation. The residual therefore does not go live here; it stays exactly as
     /// logged, deliberately out of scope.
-    fn bundled_languages() -> Vec<BundledLanguage> {
+    pub(crate) fn bundled_languages() -> Vec<BundledLanguage> {
         let mut bundled = Vec::new();
         let mut failures = Vec::new();
 

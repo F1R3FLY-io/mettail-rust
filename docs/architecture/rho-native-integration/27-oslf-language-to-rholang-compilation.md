@@ -722,10 +722,14 @@ the automaton's; only the **value** is the handler's payload (FV `NativeSystemPr
 A `literals` regex-plus-`eval` constructor feeds the native path: its op surfaces in the scalar
 contract ABI and is classified `NativeFold` (§8.10) or, if it has no scalar contract,
 `NativeSystemProcess` (§8.11). A compile-time **fold-readiness** discipline (generated in
-`macros/src/gen/runtime/dovetail_report/typed_report.rs:299`: `__is_fold_redex`, `__is_value_op`,
-`__class_is_fold_value`, `__weigh`, `body_returns_option`) defers a fold until every object child is
+`macros/src/gen/runtime/dovetail_report/typed_report.rs`: `__is_fold_redex`, `__is_value_op`,
+`__class_is_fold_value`, `__weigh`) defers a fold until every object child is
 a reduced value op, and gives a redex a high extraction weight so bottom-up saturation prefers the
-contractum after the fire. Formal rule:
+contractum after the fire. A fold whose *body* cannot produce a value defers by the same
+mechanism: `fold_body_value` emits every `![…]` body as
+`((|| -> Option<_> { … })())?`, so a partial operation — `6 / 0`, `at(list(1,2),5)`,
+`m.delete(k)` with `k` out of range — returns `None` and leaves its redex unreduced (#100;
+this replaced a syntactic `body_returns_option` classifier). Formal rule:
 [28 §4.12](28-translation-rule-system.md#412-literals-and-ground-values-the-reflected-carrier).
 
 ### 8.13 Logic / guards (predicated types)

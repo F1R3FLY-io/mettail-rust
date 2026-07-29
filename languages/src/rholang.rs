@@ -2033,13 +2033,27 @@ language! {
                 Proc::CastList(l) => match (l.as_ref(), &k) {
                     (List::ListLit(v), Proc::CastInt(ii)) => match &**ii {
                         Int::NumLit(n) => {
+                            // ★★ #100 — an out-of-range index is an ERROR VALUE, like every
+                            // one of this match's five sibling arms. It used to be
+                            // `panic!("delete: index out of bounds")`, which ran inside the
+                            // D-stage saturation closure on the production `m.delete(k)`
+                            // surface: `[1,2].delete(5)` aborted the interpreter instead of
+                            // answering. `safeify` demotes `.expect`/`.unwrap` to `?` but it
+                            // cannot rewrite a `panic!` — there is no receiver to short-
+                            // circuit — so this arm is fixed where it is written.
+                            //
+                            // A negative index arrives here too: `*n as usize` wraps a
+                            // negative `i64` to a huge `usize`, which is `>= vec.len()` for
+                            // every representable list, so it takes the same arm rather than
+                            // indexing from the end.
                             let idx = *n as usize;
-                            let mut vec = v.clone();
-                            if idx >= vec.len() {
-                                panic!("delete: index out of bounds");
+                            if idx >= v.len() {
+                                Proc::Err
+                            } else {
+                                let mut vec = v.clone();
+                                vec.remove(idx);
+                                crate::rholang::runtime::mk_proc_list(vec)
                             }
-                            vec.remove(idx);
-                            crate::rholang::runtime::mk_proc_list(vec)
                         },
                         _ => Proc::Err,
                     },
