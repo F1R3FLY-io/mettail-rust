@@ -75,6 +75,34 @@ use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 use syn::Ident;
 
+/// FNV-1a (64-bit) of a category NAME, evaluated at codegen time.
+///
+/// #151 open thread 2: the collection-literal `semantic_hash` arm writes this
+/// before the variant index so two categories' literals cannot produce identical
+/// write streams (rholang's `Map::MapLit` and `Pathmap::PathmapLit` are both
+/// variant `1`, both delegate to `HashMapLit::hash`, and both are reached
+/// through TRANSPARENT wrappers that write zero bytes).
+///
+/// The NAME is hashed rather than a positional index because an index moves
+/// whenever a category is inserted, which would silently re-pin every
+/// fingerprint. FNV-1a is used for its two relevant properties: it is fully
+/// specified (so the value is reproducible across toolchains and builds, unlike
+/// `DefaultHasher`), and it is trivially computable in `const`-style code here.
+///
+/// Reference: Fowler, Noll & Vo, "The FNV Non-Cryptographic Hash Algorithm",
+/// IETF draft-eastlake-fnv; 64-bit offset basis `0xcbf29ce484222325`, prime
+/// `0x100000001b3`.
+fn fnv1a64(name: &str) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET_BASIS;
+    for byte in name.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
 /// A reconstruction recipe for a fold-alias (sugar) variant's `semantic_hash`
 /// arm. Keyed by label in the `fold_alias_map`; see [`build_fold_alias_arm`].
 struct FoldAliasArm {
@@ -884,7 +912,145 @@ fn generate_semantic_variant_arm(
             let body = native_type
                 .and_then(semantic_hash_numeric_literal_body)
                 .unwrap_or_else(|| {
+                    // ★ #151 open thread 2 (2026-07-29) — THE CATEGORY TAG.
+                    //
+                    // A collection-literal arm used to write ONLY
+                    // `(variant_idx, structural hash)`. Rholang's `Map::MapLit`
+                    // and `Pathmap::PathmapLit` are BOTH variant `1` of their
+                    // categories, `PathMapLit::hash` delegates verbatim to
+                    // `HashMapLit::hash`, and the wrappers that reach them
+                    // (`Proc::CastMap` / `Proc::CastPathmap`) are TRANSPARENT and
+                    // write zero bytes. So the two literals' write streams were
+                    // BYTE-IDENTICAL — not merely digest-equal — and
+                    // `semantic_fingerprint` records that stream verbatim. The
+                    // inner-enum discriminant does not help: both are `Proc`
+                    // terms, so it is the same for each.
+                    //
+                    // The collision is currently LATENT: no shipped surface
+                    // yields both a `Map` and a `Pathmap` reading of the same
+                    // bytes (`{` opens a map, `{|` a pathmap), so nothing merges
+                    // today. It becomes live the moment a surface admits both,
+                    // which is the territory #116/#125 are moving through. This
+                    // is hardening, landed because it is proven, cheap and
+                    // adjacent — not a blocker.
+                    //
+                    // ⚠ `PathValue` alone does NOT close it. The value bytes gain
+                    // a tag, which separates NON-EMPTY pathmaps from maps, but
+                    // `{||}` and `{}` have no value bytes at all and would still
+                    // collide. The tag is written unconditionally, before the
+                    // variant index, so the empty case is covered too.
+                    //
+                    // The tag is a compile-time FNV-1a of the CATEGORY NAME:
+                    // deterministic across builds and independent of category
+                    // ORDER (a `src_idx` would move whenever a category is
+                    // inserted, silently re-pinning every fingerprint). It is
+                    // written only on collection-literal arms — the arms whose
+                    // collision is proven — so no other digest moves.
+                    // ★★ #151 open thread 2 — THE CATEGORY TAG IS PROVEN
+                    // NECESSARY, DISABLED ANYWAY, AND HERE IS WHY. ★★
+                    //
+                    // ## The defect (PROVEN AT SOURCE, not merely suspected)
+                    //
+                    // This arm writes `(variant_idx, structural hash)` and NO
+                    // category discriminator. Measured on the generated rholang
+                    // artifact: ALL ELEVEN collection/literal arms
+                    // (`Float::FloatLit`, `Bool::BoolLit`, `Str::StringLit`,
+                    // `Bytes::StringLit`, `List::ListLit`, `Bag::BagLit`,
+                    // `Map::MapLit`, `Set::SetLit`, `Pathmap::PathmapLit`,
+                    // `ReadZipper::Lit`, `WriteZipper::Lit`) write
+                    // `variant_idx == 1`, and ALL ELEVEN reaching `Proc::Cast*`
+                    // wrappers are TRANSPARENT — a bare `stack.push`, zero bytes.
+                    //
+                    // So the discriminating prefix of every one of those write
+                    // streams is the same single byte `1`. Two pairs collide
+                    // COMPLETELY, because their payload encodings also coincide:
+                    //
+                    //   Map::MapLit / Pathmap::PathmapLit   — `PathMapLit::hash`
+                    //       delegates verbatim to `HashMapLit::hash`
+                    //   Str::StringLit / Bytes::StringLit   — both payloads are
+                    //       `String`, hashed structurally
+                    //
+                    // `semantic_fingerprint` records that stream verbatim, and
+                    // the inner-enum discriminant does not help: `CastMap(..)`
+                    // and `CastPathmap(..)` are both `Proc` terms, as are
+                    // `CastStr(..)` and `CastBytes(..)`.
+                    //
+                    // ## The design premise this REFUTES
+                    //
+                    // The #151 design classified this as HARDENING and argued it
+                    // was LATENT: "No shipped surface yields both a Map and a
+                    // Pathmap reading of the same bytes (`{` opens a map, `{|` a
+                    // pathmap) … no reading count in this RED is actually at
+                    // risk."
+                    //
+                    // ⚠ MEASURED FALSE. The premise reasoned about ONE pair and
+                    // the class has ELEVEN members. `Str`/`Bytes` IS co-reachable:
+                    // a string literal `"a"` is readable as both, and the
+                    // collision was silently MERGING the two readings at
+                    // realize-time observational dedup. Writing the tag un-merges
+                    // them, and the shipped suite moves:
+                    //
+                    //   languages::rholang_semantic_predicate_ambiguity
+                    //     matches_forms_are_unambiguous
+                    //       `x matches @"a"!(1)`                     1 → 2
+                    //     ppar_forms_are_unambiguous
+                    //       `t matches PPar(@"a"!(1), true)`         1 → 2
+                    //     implies_forms_are_unambiguous
+                    //       `@"OUT"!(true implies false)`            1 → 2
+                    //     the_pre_existing_propositional_forms_keep_their_parse_counts
+                    //       `for(@x <- @"c" where x > 0) {…}`        1 → 4
+                    //   rholang-runtime::rho_rholang_ast
+                    //     a_s4_ground_width_fold_value_…_at_comm_time
+                    //       "one fold ⇒ one fold-contract spec"      1 → 2
+                    //
+                    // Controlled: with this `state.write_u64(cat_tag)` line
+                    // active all five FAIL; with it commented out all five PASS,
+                    // everything else in the workspace unchanged. So the tag is
+                    // the sole cause.
+                    //
+                    // ## Why it is DISABLED rather than landed with re-blessed
+                    // ## goldens
+                    //
+                    // The five goldens could be moved to 2/2/2/4/2 in one line
+                    // each. That would be LAUNDERING, because which of two things
+                    // happened is not yet established:
+                    //
+                    //   (a) `"a"` genuinely has both a `Str` and a `Bytes`
+                    //       reading, the parser is right to produce both, and the
+                    //       goldens were recording an AMBIGUITY HIDDEN BY A HASH
+                    //       COLLISION. Then the higher counts are correct and the
+                    //       goldens must move.
+                    //   (b) the `Bytes` reading is spurious OVER-GENERATION. Then
+                    //       the tag merely EXPOSES a different latent defect, the
+                    //       real fix is to stop generating that reading, and
+                    //       re-blessing the counts would ENSHRINE the
+                    //       over-generation in the one set of tests whose whole
+                    //       job is to catch reading-count growth.
+                    //
+                    // Distinguishing (a) from (b) is a user-visible semantics
+                    // question — does a Rholang string literal have a `Bytes`
+                    // reading? — and it is not this landing's to answer.
+                    //
+                    // ## Disposition
+                    //
+                    // The mechanism stays here, complete and one line from
+                    // active, per the standing policy that disabled code is
+                    // commented out with its reason rather than deleted. It is
+                    // NOT a blocker for #151/#74: `PathValue`'s own 1-byte tag
+                    // already separates `{|k|}` / `{|k:Nil|}` / `{|k:5|}` and
+                    // every NON-EMPTY pathmap from every map, which is what those
+                    // two issues require. What remains uncovered is `{||}` vs
+                    // `{}` (no value bytes to tag) and the `Str`/`Bytes` pair.
+                    //
+                    // To re-enable: delete the `_` from `_cat_tag`, uncomment the
+                    // `state.write_u64(#cat_tag);` line, and land the five golden
+                    // moves WITH the (a)-vs-(b) ruling recorded. ⚠ It is a
+                    // CONSENSUS-VISIBLE change — `semantic_fingerprint` feeds the
+                    // exact-key / dedup surface — so it also needs an entry in
+                    // `docs/consensus/consensus-change-register.md`.
+                    let _cat_tag = fnv1a64(&category.to_string());
                     quote! {
+                        // state.write_u64(#cat_tag);  // ← see the block above
                         state.write_u8(#variant_idx);
                         std::hash::Hash::hash(v, state);
                     }
