@@ -151,38 +151,44 @@ fn fence_slice_expr(separator: Option<&str>, fence: Option<&str>) -> Option<Toke
 // =============================================================================
 
 /// Binding power information for a single constructor in the Display context.
+///
+/// ★ #97: `pub(crate)` because the REFLECTION renderer
+/// (`gen/runtime/metadata.rs`) parenthesizes from this same table. Two
+/// precedence models — one for `Display`, one for the reflected equational
+/// theory — could disagree about the very brackets an associativity law is
+/// about, so there is one.
 #[derive(Debug, Clone)]
-struct DisplayBpInfo {
+pub(crate) struct DisplayBpInfo {
     /// Left binding power of this operator.
-    left_bp: u8,
+    pub(crate) left_bp: u8,
     /// Right binding power of this operator.
-    right_bp: u8,
+    pub(crate) right_bp: u8,
     /// Whether this is a postfix operator.
-    is_postfix: bool,
+    pub(crate) is_postfix: bool,
     /// Whether this is a mixfix operator.
-    is_mixfix: bool,
+    pub(crate) is_mixfix: bool,
 }
 
 /// Binding power information for a unary prefix operator.
 #[derive(Debug, Clone)]
-struct DisplayPrefixBpInfo {
+pub(crate) struct DisplayPrefixBpInfo {
     /// Prefix binding power (child gets this as min_bp).
-    prefix_bp: u8,
+    pub(crate) prefix_bp: u8,
 }
 
 /// Lookup table for binding power information, keyed by constructor label.
 #[derive(Debug, Clone)]
-struct BpLookup {
+pub(crate) struct BpLookup {
     /// Infix/postfix/mixfix operators: label -> BP info.
-    infix: HashMap<String, DisplayBpInfo>,
+    pub(crate) infix: HashMap<String, DisplayBpInfo>,
     /// Unary prefix operators: label -> prefix BP.
-    prefix: HashMap<String, DisplayPrefixBpInfo>,
+    pub(crate) prefix: HashMap<String, DisplayPrefixBpInfo>,
     /// Maximum Display binding power of constructors that produce each category.
-    max_bp_by_category: HashMap<String, u8>,
+    pub(crate) max_bp_by_category: HashMap<String, u8>,
 }
 
 impl BpLookup {
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         BpLookup {
             infix: HashMap::new(),
             prefix: HashMap::new(),
@@ -190,7 +196,7 @@ impl BpLookup {
         }
     }
 
-    fn atomic_child_bp(&self, category: &str) -> u8 {
+    pub(crate) fn atomic_child_bp(&self, category: &str) -> u8 {
         self.max_bp_by_category
             .get(category)
             .copied()
@@ -211,7 +217,7 @@ impl BpLookup {
 /// so it shares the refusal rather than substituting an empty lookup: a
 /// `BpLookup::empty()` fallback would silently emit a `Display` impl that
 /// parenthesizes nothing correctly.
-fn build_bp_lookup(language: &LanguageDef) -> Result<BpLookup, String> {
+pub(crate) fn build_bp_lookup(language: &LanguageDef) -> Result<BpLookup, String> {
     let spec = language_def_to_spec(language)?;
 
     // Extract infix rules exactly as the pipeline does

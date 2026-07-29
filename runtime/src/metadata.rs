@@ -341,6 +341,20 @@ pub struct FieldDef {
 /// Definition of an equation (axiom)
 #[derive(Debug, Clone, Copy)]
 pub struct EquationDef {
+    /// The equation's declared name (e.g. `"Assoc"`, `"UnitL"`).
+    ///
+    /// ★ #97: the reflection could not say WHICH equation it reflected. Every
+    /// equation in the DSL is named — `Assoc . |- (Mul (Mul X Y) Z) = …` — and
+    /// [`RewriteDef`] has carried its name since it was written, so an
+    /// `EquationDef` without one was an asymmetry, not a design. It matters most
+    /// exactly where the rendered sides are least informative: a rule whose two
+    /// surfaces coincide (a retagging between display-transparent injection
+    /// constructors, say) is identified by its name and by nothing else.
+    ///
+    /// Not `Option`, unlike [`RewriteDef::name`]: `Equation::name` is a required
+    /// `Ident` in the grammar, so there is no nameless equation to represent.
+    pub name: &'static str,
+
     /// Freshness conditions (e.g., ["x # P"])
     pub conditions: &'static [&'static str],
 
@@ -821,6 +835,7 @@ mod guard_metadata_tests {
     static RICH_CONNECTIVES: &[ConnectiveDef] =
         &[ConnectiveDef { role: "and", keywords: &["and", "∧"] }];
     static RICH_EQUATIONS: &[EquationDef] = &[EquationDef {
+        name: "RichEq",
         conditions: &[],
         lhs: "lhs",
         rhs: "rhs",

@@ -761,12 +761,14 @@ mod tests {
         fn equations(&self) -> &'static [EquationDef] {
             &[
                 EquationDef {
+                    name: "ParNil",
                     conditions: &[],
                     lhs: "(PPar {P, {}})",
                     rhs: "P",
                     is_guarded: false,
                 },
                 EquationDef {
+                    name: "NewElim",
                     conditions: &["x # P"],
                     lhs: "(PNew ^x.(P))",
                     rhs: "P",
@@ -1063,6 +1065,7 @@ mod tests {
     ];
 
     static GUARDED_EQ: &[EquationDef] = &[EquationDef {
+        name: "GuardedNewElim",
         conditions: &["guard(fresh(n))"],
         lhs: "(PNew ^n.P)",
         rhs: "P",

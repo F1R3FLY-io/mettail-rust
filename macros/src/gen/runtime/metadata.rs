@@ -740,8 +740,14 @@ fn generate_equation_def(eq: &Equation, language: &LanguageDef) -> TokenStream {
         .iter()
         .any(|p| matches!(p, Premise::BehavioralGuard(_)));
 
+    // ★ #97 item 4. Every equation in the grammar is NAMED, and the reflection
+    // could not say which equation it was reflecting. It is the only thing that
+    // identifies a rule whose two rendered surfaces legitimately coincide.
+    let name_lit = LitStr::new(&eq.name.to_string(), eq.name.span());
+
     quote! {
         mettail_runtime::EquationDef {
+            name: #name_lit,
             conditions: &[#(#conditions_tokens),*],
             lhs: #lhs_lit,
             rhs: #rhs_lit,
@@ -827,14 +833,176 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
     }
 }
 
-/// Convert a Pattern to user syntax string
+// ═══════════════════════════════════════════════════════════════════════════
+// Task #97 — THE REFLECTION RENDERER'S PRECEDENCE MODEL
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// # The defect
+//
+// The renderer below turns an equation's or rewrite's `Pattern` back into the
+// surface syntax a user would write. Until this repair it spliced each child
+// into its parent's syntax pattern with NO context argument — no `min_bp`, no
+// parent label — and therefore never emitted a parenthesis. So
+//
+//     Mul(Mul(X, Y), Z)  ⟼  "X" + "*" + "Y"   then + "*" + "Z"  =  X*Y*Z
+//     Mul(X, Mul(Y, Z))  ⟼  "X" + "*" + "Y*Z"                   =  X*Y*Z
+//
+// and Monoid's associativity axiom — the one law whose entire content IS the
+// bracketing — reflected as the tautology `X*Y*Z = X*Y*Z`.
+//
+// # The model is BORROWED, never re-derived
+//
+// A precedence-aware renderer already exists in the same build: the generated
+// `Display` impl, whose operator arms emit `let needs_parens = <own_left_bp> <
+// min_bp;` and push their left and right operands at `left_bp` / `right_bp`.
+// Its table is [`BpLookup`], built once by
+// `gen::syntax::display::build_bp_lookup` from
+// `prattail::binding_power::analyze_binding_powers`. This renderer reads THAT
+// table. Two precedence models — one for `Display`, one for the reflected
+// theory — could disagree about the very brackets an associativity law is
+// about, which is the failure this repair exists to remove, not to duplicate.
+//
+// # Consequence: the bracketing is MINIMAL, and that is correct
+//
+// `Mul` is left-associative (`left_bp = 2`, `right_bp = 3`), so the LEFT-nested
+// side needs no bracket — `X*Y*Z` already means `(X*Y)*Z` — while the
+// RIGHT-nested side does: `2 < 3`, so it renders `X*(Y*Z)`. The axiom therefore
+// reflects as `X*Y*Z = X*(Y*Z)`: two different strings, each of which reparses
+// to the side it came from. A renderer that bracketed both sides would be a
+// SECOND model, disagreeing with `Display` about a string neither needs.
+
+/// Everything the reflection renderer needs that is not the pattern itself.
+#[derive(Clone, Copy)]
+struct RenderCtx<'a> {
+    language: &'a LanguageDef,
+    /// The ONE binding-power table, shared with `Display` codegen.
+    bp: &'a crate::gen::syntax::display::BpLookup,
+}
+
+/// A constructor's precedence: what it takes to bracket IT, and the threshold
+/// each of its operands inherits.
+///
+/// `None` from [`rule_bp`] means the constructor is not Pratt-registered — a
+/// delimited, atomic or binder rule. Such a rule brackets its own operands with
+/// its own literals, so it never needs parentheses and its children inherit `0`.
+/// This mirrors the `else` arm of `display.rs`'s arm generator exactly.
+struct RuleBp {
+    /// The rule's own left binding power — the operand strength it competes at.
+    /// Bracket the rendering when this is BELOW the inherited threshold.
+    own_left_bp: u8,
+    /// The `min_bp` each argument slot inherits, by slot index.
+    child_min_bps: Vec<u8>,
+}
+
+/// Read `label`'s precedence out of the shared table, in the same case order
+/// `display.rs` uses: postfix, then mixfix, then regular infix, then unary
+/// prefix, then "not an operator".
+fn rule_bp(label: &str, arg_slots: usize, bp: &crate::gen::syntax::display::BpLookup) -> Option<RuleBp> {
+    if let Some(info) = bp.infix.get(label) {
+        let child_min_bps: Vec<u8> = if info.is_postfix {
+            // Postfix: the single operand carries the operator's left power.
+            vec![info.left_bp; arg_slots]
+        } else if info.is_mixfix {
+            // Mixfix: first operand = left_bp, last = right_bp, interior = 0
+            // (an interior slot is fenced by the operator's own literals).
+            (0..arg_slots)
+                .map(|i| {
+                    if i == 0 {
+                        info.left_bp
+                    } else if i + 1 == arg_slots {
+                        info.right_bp
+                    } else {
+                        0
+                    }
+                })
+                .collect()
+        } else {
+            // Regular infix: left operand = left_bp, everything after = right_bp.
+            (0..arg_slots)
+                .map(|i| if i == 0 { info.left_bp } else { info.right_bp })
+                .collect()
+        };
+        return Some(RuleBp { own_left_bp: info.left_bp, child_min_bps });
+    }
+    if let Some(prefix) = bp.prefix.get(label) {
+        return Some(RuleBp {
+            own_left_bp: prefix.prefix_bp,
+            child_min_bps: vec![prefix.prefix_bp; arg_slots],
+        });
+    }
+    None
+}
+
+/// The `min_bp` for argument slot `index`, or `0` when the rule is not
+/// precedence-governed.
+fn child_min_bp(bp: Option<&RuleBp>, index: usize) -> u8 {
+    bp.and_then(|b| b.child_min_bps.get(index).copied()).unwrap_or(0)
+}
+
+/// The surface of `name` when it denotes a NULLARY constructor, else `None`.
+///
+/// ★ #97 item 2. A bare identifier in a pattern is parsed as
+/// [`PatternTerm::Var`] whether the author meant a metavariable or a nullary
+/// constructor; the rest of the system already decides between the two by
+/// LOOKING THE NAME UP (`PatternTerm::is_ground_pattern` calls
+/// `LanguageDef::get_constructor` for exactly this reason, and the Dovetail
+/// lowering resolves the same node as a constructor leaf). The renderer used to
+/// be the one place that did not, so Monoid's `Unit` — declared
+/// `Unit . M ::= "e" ;` — reflected as the bare word `Unit`, which is the
+/// constructor's LABEL and not anything a user can write.
+///
+/// "Nullary" is structural: the rule consumes no argument slot, in either
+/// grammar form. A constructor that takes arguments is not what a bare
+/// identifier denotes, so its label passes through unresolved.
+fn nullary_constructor_surface(name: &syn::Ident, ctx: RenderCtx<'_>) -> Option<String> {
+    let rule = ctx.language.get_constructor(name)?;
+    let takes_arguments = match (&rule.term_context, &rule.syntax_pattern) {
+        (Some(term_context), _) => !term_context.is_empty(),
+        (None, _) => rule.items.iter().any(|item| {
+            matches!(
+                item,
+                GrammarItem::NonTerminal { .. }
+                    | GrammarItem::Collection { .. }
+                    | GrammarItem::Binder { .. }
+            )
+        }),
+    };
+    if takes_arguments {
+        return None;
+    }
+    Some(match &rule.syntax_pattern {
+        Some(syntax_pattern) => apply_args_to_syntax(syntax_pattern, &[], ctx, None),
+        None => build_syntax_from_grammar(rule, &[], ctx, None),
+    })
+}
+
+/// Convert a Pattern to user syntax string, at the top level (nothing outside
+/// it, so nothing can require a bracket).
 fn pattern_to_user_syntax(pattern: &Pattern, language: &LanguageDef) -> String {
+    let bp = match crate::gen::syntax::display::build_bp_lookup(language) {
+        Ok(bp) => bp,
+        // The bridge refuses only on an `options` value it cannot decode, which
+        // makes `Display` codegen refuse for the same language in the same
+        // expansion. Rendering without precedence would silently reproduce the
+        // tautology this repair removes, so the reflection renders bracket-free
+        // ONLY when there are no operators to bracket.
+        Err(_) => crate::gen::syntax::display::BpLookup::empty(),
+    };
+    render_pattern(pattern, RenderCtx { language, bp: &bp }, 0)
+}
+
+/// Convert a Pattern to user syntax at an inherited precedence threshold.
+fn render_pattern(pattern: &Pattern, ctx: RenderCtx<'_>, min_bp: u8) -> String {
     match pattern {
-        Pattern::Term(pt) => pattern_term_to_syntax(pt, language),
+        Pattern::Term(pt) => render_pattern_term(pt, ctx, min_bp),
+        // Every arm below is DELIMITED: its own braces / `*map(…)` / `*zip(…)` /
+        // `[… := …]` fence its children, so no child can bind loosely enough to
+        // need a bracket and each is rendered at `0`. This is the same rule the
+        // generated `Display` collection twin follows.
         Pattern::Collection { elements, rest, .. } => {
             let mut parts: Vec<String> = elements
                 .iter()
-                .map(|e| pattern_to_user_syntax(e, language))
+                .map(|e| render_pattern(e, ctx, 0))
                 .collect();
 
             if let Some(r) = rest {
@@ -844,48 +1012,62 @@ fn pattern_to_user_syntax(pattern: &Pattern, language: &LanguageDef) -> String {
             format!("{{{}}}", parts.join(" | "))
         },
         Pattern::Map { collection, params, body } => {
-            let coll = pattern_to_user_syntax(collection, language);
+            let coll = render_pattern(collection, ctx, 0);
             let params_str: Vec<_> = params.iter().map(|p| p.to_string()).collect();
-            let body_str = pattern_to_user_syntax(body, language);
+            let body_str = render_pattern(body, ctx, 0);
             format!("{}.*map(|{}| {})", coll, params_str.join(", "), body_str)
         },
         Pattern::Zip { first, second } => {
-            let first_str = pattern_to_user_syntax(first, language);
-            let second_str = pattern_to_user_syntax(second, language);
+            let first_str = render_pattern(first, ctx, 0);
+            let second_str = render_pattern(second, ctx, 0);
             format!("*zip({}, {})", first_str, second_str)
         },
         // Renders back as the surface syntax the user wrote.
         Pattern::IndexedVec { collection, index, element } => {
-            format!("{}[{} := {}]", collection, index, pattern_to_user_syntax(element, language))
+            format!("{}[{} := {}]", collection, index, render_pattern(element, ctx, 0))
         },
     }
 }
 
-/// Convert a PatternTerm to user syntax string
-fn pattern_term_to_syntax(pt: &PatternTerm, language: &LanguageDef) -> String {
+/// Convert a PatternTerm to user syntax string, at an inherited precedence
+/// threshold.
+fn render_pattern_term(pt: &PatternTerm, ctx: RenderCtx<'_>, min_bp: u8) -> String {
     match pt {
-        PatternTerm::Var(v) => v.to_string(),
+        // A bare identifier is a METAVARIABLE unless it names a nullary
+        // constructor, in which case it denotes that constructor and renders as
+        // its surface — see [`nullary_constructor_surface`]. A nullary
+        // constructor's surface is a literal, so no threshold can bracket it.
+        PatternTerm::Var(v) => {
+            nullary_constructor_surface(v, ctx).unwrap_or_else(|| v.to_string())
+        },
 
         PatternTerm::Apply { constructor, args } => {
             // Try to find the grammar rule for this constructor
-            if let Some(rule) = language.terms.iter().find(|r| &r.label == constructor) {
-                // Use syntax_pattern if available
-                if let Some(syntax_pattern) = &rule.syntax_pattern {
-                    return apply_args_to_syntax(syntax_pattern, args, language);
-                }
-
-                // Otherwise build from grammar items
-                return build_syntax_from_grammar(rule, args, language);
+            if let Some(rule) = ctx.language.terms.iter().find(|r| &r.label == constructor) {
+                let bp = rule_bp(&constructor.to_string(), args.len(), ctx.bp);
+                // Use syntax_pattern if available; otherwise build from grammar items.
+                let rendered = match &rule.syntax_pattern {
+                    Some(syntax_pattern) => {
+                        apply_args_to_syntax(syntax_pattern, args, ctx, bp.as_ref())
+                    },
+                    None => build_syntax_from_grammar(rule, args, ctx, bp.as_ref()),
+                };
+                // The one bracketing decision, in the same form the generated
+                // `Display` arm emits it: `own_left_bp < min_bp`.
+                return match &bp {
+                    Some(b) if b.own_left_bp < min_bp => format!("({rendered})"),
+                    _ => rendered,
+                };
             }
 
-            // Fallback: constructor(args...)
+            // Fallback: the constructor has no grammar rule, so there is no
+            // surface for it and the prefix form is written out. It is already
+            // delimited, so it needs no threshold of its own and its arguments
+            // inherit none.
             if args.is_empty() {
                 constructor.to_string()
             } else {
-                let args_str: Vec<_> = args
-                    .iter()
-                    .map(|a| pattern_to_user_syntax(a, language))
-                    .collect();
+                let args_str: Vec<_> = args.iter().map(|a| render_pattern(a, ctx, 0)).collect();
                 format!(
                     "({}{})",
                     constructor,
@@ -898,42 +1080,55 @@ fn pattern_term_to_syntax(pt: &PatternTerm, language: &LanguageDef) -> String {
             }
         },
 
+        // The remaining forms all write their own delimiters — `^x.{…}`,
+        // `^[xs].{…}`, `t[r/x]`, `s[…]` — so each child is rendered bare.
         PatternTerm::Lambda { binder, body } => {
-            let body_str = pattern_to_user_syntax(body, language);
+            let body_str = render_pattern(body, ctx, 0);
             format!("^{}.{{{}}}", binder, body_str)
         },
 
         PatternTerm::MultiLambda { binders, body } => {
             let binders_str: Vec<_> = binders.iter().map(|b| b.to_string()).collect();
-            let body_str = pattern_to_user_syntax(body, language);
+            let body_str = render_pattern(body, ctx, 0);
             format!("^[{}].{{{}}}", binders_str.join(", "), body_str)
         },
 
         PatternTerm::Subst { term, var, replacement } => {
-            let term_str = pattern_to_user_syntax(term, language);
-            let repl_str = pattern_to_user_syntax(replacement, language);
+            let term_str = render_pattern(term, ctx, 0);
+            let repl_str = render_pattern(replacement, ctx, 0);
             format!("{}[{}/{}]", term_str, repl_str, var)
         },
 
         PatternTerm::MultiSubst { scope, replacements } => {
-            let scope_str = pattern_to_user_syntax(scope, language);
+            let scope_str = render_pattern(scope, ctx, 0);
             let repls: Vec<_> = replacements
                 .iter()
-                .map(|r| pattern_to_user_syntax(r, language))
+                .map(|r| render_pattern(r, ctx, 0))
                 .collect();
             format!("{}[{}]", scope_str, repls.join(", "))
         },
     }
 }
 
-/// Apply arguments to a syntax pattern
+/// Apply arguments to a syntax pattern.
+///
+/// `bp` is the enclosing constructor's precedence, or `None` when it is not
+/// Pratt-registered. Each argument slot is rendered at the threshold that
+/// precedence gives it: for a regular infix rule the FIRST slot inherits
+/// `left_bp` and the rest `right_bp`, which is what makes a right-nested
+/// left-associative operand bracket itself and a left-nested one not.
 fn apply_args_to_syntax(
     syntax_pattern: &[SyntaxExpr],
     args: &[Pattern],
-    language: &LanguageDef,
+    ctx: RenderCtx<'_>,
+    bp: Option<&RuleBp>,
 ) -> String {
     let mut result = String::new();
     let mut arg_iter = args.iter().peekable();
+    // Which argument slot the next consumed argument occupies. Indexes
+    // `bp.child_min_bps`, so it counts CONSUMED ARGUMENTS and not syntax
+    // elements — a literal is not a slot.
+    let mut slot: usize = 0;
 
     // Track if we're currently inside a lambda argument (for binder/body extraction)
     let mut current_lambda: Option<&Pattern> = None;
@@ -953,8 +1148,10 @@ fn apply_args_to_syntax(
                         result.push_str(&id_str);
                         continue;
                     } else {
-                        // This is the body - render it without extra braces
-                        result.push_str(&pattern_to_user_syntax(body, language));
+                        // This is the body — rendered bare: a binder body sits
+                        // inside the rule's own delimiters, exactly as the
+                        // generated `Display` pushes it at `min_bp == 0`.
+                        result.push_str(&render_pattern(body, ctx, 0));
                         current_lambda = None;
                         continue;
                     }
@@ -962,6 +1159,8 @@ fn apply_args_to_syntax(
 
                 // Get next argument
                 if let Some(arg) = arg_iter.next() {
+                    let inherited = child_min_bp(bp, slot);
+                    slot += 1;
                     // Check if this argument is a Lambda - if so, we need special handling
                     if let Pattern::Term(PatternTerm::Lambda { .. }) = arg {
                         // Store the lambda for subsequent binder/body params
@@ -971,7 +1170,7 @@ fn apply_args_to_syntax(
                             result.push_str(&binder.to_string());
                         }
                     } else {
-                        result.push_str(&pattern_to_user_syntax(arg, language));
+                        result.push_str(&render_pattern(arg, ctx, inherited));
                     }
                 }
             },
@@ -979,12 +1178,13 @@ fn apply_args_to_syntax(
                 // For Sep operations referencing a parameter, use the next argument
                 if let PatternOp::Sep { separator, source, .. } = op {
                     if let Some(arg) = arg_iter.next() {
+                        slot += 1;
                         // Check if there's a chained source (zip.map.sep)
                         if source.is_some() {
                             result.push_str(&pattern_op_to_string(op, None));
                         } else {
                             // Render the collection argument with the separator
-                            result.push_str(&render_collection_with_sep(arg, separator, language));
+                            result.push_str(&render_collection_with_sep(arg, separator, ctx));
                         }
                     } else {
                         result.push_str(&pattern_op_to_string(op, None));
@@ -999,17 +1199,20 @@ fn apply_args_to_syntax(
     result
 }
 
-/// Render a collection pattern with a separator
+/// Render a collection pattern with a separator.
+///
+/// Elements are rendered bare: a collection slot is fenced by the rule's own
+/// open/close literals, so no element can bind loosely enough to need a bracket.
 fn render_collection_with_sep(
     pattern: &Pattern,
     separator: &str,
-    language: &LanguageDef,
+    ctx: RenderCtx<'_>,
 ) -> String {
     match pattern {
         Pattern::Collection { elements, rest, .. } => {
             let mut parts: Vec<String> = elements
                 .iter()
-                .map(|e| pattern_to_user_syntax(e, language))
+                .map(|e| render_pattern(e, ctx, 0))
                 .collect();
 
             if let Some(r) = rest {
@@ -1018,18 +1221,25 @@ fn render_collection_with_sep(
 
             parts.join(&format!(" {} ", separator))
         },
-        _ => pattern_to_user_syntax(pattern, language),
+        _ => render_pattern(pattern, ctx, 0),
     }
 }
 
-/// Build user syntax from grammar items
+/// Build user syntax from grammar items (the BNFC item form).
+///
+/// The precedence contract is identical to [`apply_args_to_syntax`]'s: a
+/// non-terminal item is an argument slot and inherits its threshold from the
+/// enclosing rule's `bp`; a collection item writes its own delimiters, so its
+/// contents are bare.
 fn build_syntax_from_grammar(
     rule: &GrammarRule,
     args: &[Pattern],
-    language: &LanguageDef,
+    ctx: RenderCtx<'_>,
+    bp: Option<&RuleBp>,
 ) -> String {
     let mut result = String::new();
     let mut arg_iter = args.iter();
+    let mut slot: usize = 0;
 
     for item in &rule.items {
         match item {
@@ -1038,12 +1248,15 @@ fn build_syntax_from_grammar(
             },
             GrammarItem::NonTerminal { .. } => {
                 if let Some(arg) = arg_iter.next() {
-                    result.push_str(&pattern_to_user_syntax(arg, language));
+                    let inherited = child_min_bp(bp, slot);
+                    slot += 1;
+                    result.push_str(&render_pattern(arg, ctx, inherited));
                 }
             },
             GrammarItem::Collection { delimiters, .. } => {
                 if let Some(arg) = arg_iter.next() {
-                    let inner = pattern_to_user_syntax(arg, language);
+                    slot += 1;
+                    let inner = render_pattern(arg, ctx, 0);
                     if let Some((open, close)) = delimiters {
                         result.push_str(&format!("{}{}{}", open, inner, close));
                     } else {
@@ -1455,4 +1668,343 @@ mod tests {
             rendered
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Task #97 RED — the reflected equational theory can express BRACKETING
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // Monoid's associativity axiom is `(X*Y)*Z = X*(Y*Z)`. Its entire content is
+    // where the brackets go, so a renderer with no precedence model reflects it
+    // as `X*Y*Z = X*Y*Z` — a tautology, and the one rule in the corpus for which
+    // being uninformative is indistinguishable from being wrong.
+    //
+    // The cells below assert over the SHIPPED spec (`languages/src/monoid.rs`,
+    // read through the derived corpus) rather than a hand-built replica, so a
+    // cell cannot pass against a grammar the repository does not contain.
+
+    /// Monoid's three equations, rendered by the reflection renderer, keyed by
+    /// the equation's declared name.
+    fn monoid_equation_renderings() -> std::collections::HashMap<String, (String, String)> {
+        let monoid = crate::gen::capture::bundled_corpus::bundled_language("Monoid");
+        monoid
+            .def
+            .equations
+            .iter()
+            .map(|eq| {
+                (
+                    eq.name.to_string(),
+                    (
+                        pattern_to_user_syntax(&eq.left, &monoid.def),
+                        pattern_to_user_syntax(&eq.right, &monoid.def),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    /// ★ THE MUTATION CELL. `Assoc`'s right-nested side brackets its operand, so
+    /// the axiom no longer reflects as a tautology.
+    ///
+    /// ⚠ The assertion is pinned to the SUBSTRING `(Y*Z)`, never to
+    /// `assert_ne!(lhs, rhs)` on whole strings: a whole-string `assert_ne!`
+    /// passes on any incidental difference and is the vacuity mode that has
+    /// already bitten this campaign.
+    #[test]
+    fn the_associativity_axiom_reflects_its_bracketing() {
+        let renderings = monoid_equation_renderings();
+        let (lhs, rhs) = renderings
+            .get("Assoc")
+            .expect("`languages/src/monoid.rs` declares an equation named `Assoc`");
+
+        assert!(
+            rhs.contains("(Y*Z)"),
+            "the RIGHT-nested side must bracket its operand: `Mul` is left-associative \
+             (left_bp 2, right_bp 3), so a `Mul` sitting in a right operand meets a \
+             threshold above its own power and parenthesizes. Got rhs = {rhs}",
+        );
+
+        // ★ And the LEFT-nested side must NOT bracket. `X*Y*Z` already means
+        // `(X*Y)*Z` for a left-associative `*`; bracketing it would be a SECOND
+        // precedence model, disagreeing with the generated `Display` about a
+        // string that needs no bracket. This half of the cell is what keeps the
+        // repair from over-parenthesising its way to a passing `lhs != rhs`.
+        assert_eq!(
+            lhs, "X*Y*Z",
+            "the LEFT-nested side of a left-associative operator needs no bracket. \
+             Got lhs = {lhs}",
+        );
+
+        assert_ne!(
+            lhs, rhs,
+            "and therefore the axiom is no longer a tautology: {lhs} = {rhs}",
+        );
+    }
+
+    /// ANTI-VACUITY for the cell above: the two sides really are DIFFERENT
+    /// patterns. If `Assoc` were declared with two identical sides, the cell
+    /// above would be asserting something the repair did not cause.
+    #[test]
+    fn the_associativity_axiom_really_does_nest_its_two_sides_differently() {
+        let monoid = crate::gen::capture::bundled_corpus::bundled_language("Monoid");
+        let assoc = monoid
+            .def
+            .equations
+            .iter()
+            .find(|eq| eq.name == "Assoc")
+            .expect("`languages/src/monoid.rs` declares `Assoc`");
+
+        // LHS is `(Mul (Mul X Y) Z)`: its FIRST argument is an application.
+        // RHS is `(Mul X (Mul Y Z))`: its SECOND is.
+        fn nested_arg_index(pattern: &Pattern) -> Option<usize> {
+            let Pattern::Term(PatternTerm::Apply { args, .. }) = pattern else {
+                return None;
+            };
+            args.iter().position(|a| {
+                matches!(a, Pattern::Term(PatternTerm::Apply { .. }))
+            })
+        }
+        assert_eq!(
+            nested_arg_index(&assoc.left),
+            Some(0),
+            "`Assoc`'s left side must be LEFT-nested",
+        );
+        assert_eq!(
+            nested_arg_index(&assoc.right),
+            Some(1),
+            "`Assoc`'s right side must be RIGHT-nested",
+        );
+    }
+
+    /// CONTROL for the precedence repair — a flat, single-level term gains NO
+    /// parenthesis. An over-parenthesising renderer would reach `lhs != rhs` for
+    /// `Assoc` and turn this cell red at the same time, which is exactly what a
+    /// control is for.
+    #[test]
+    fn a_flat_term_gains_no_parenthesis() {
+        let renderings = monoid_equation_renderings();
+        for name in ["UnitL", "UnitR"] {
+            let (lhs, rhs) = renderings
+                .get(name)
+                .unwrap_or_else(|| panic!("`languages/src/monoid.rs` declares `{name}`"));
+            assert!(
+                !lhs.contains('(') && !lhs.contains(')'),
+                "`{name}`'s left side is a single `Mul` at the top level; nothing encloses \
+                 it, so nothing can require a bracket. Got: {lhs}",
+            );
+            assert_eq!(
+                rhs, "X",
+                "`{name}`'s right side is the bare metavariable `X`, which neither \
+                 precedence nor constructor resolution can touch. Got: {rhs}",
+            );
+        }
+    }
+
+    /// ★ THE SECOND MUTATION CELL (#97 item 2) — a bare identifier that names a
+    /// NULLARY CONSTRUCTOR reflects as that constructor's SURFACE, not as its
+    /// label.
+    ///
+    /// Monoid declares `Unit . M ::= "e" ;`, so `(Mul Unit X)` is written `e*X`.
+    /// The renderer used to emit the label `Unit`, which is not a string any user
+    /// can write, while the rest of the system already resolved the same node by
+    /// name (`PatternTerm::is_ground_pattern` → `LanguageDef::get_constructor`).
+    #[test]
+    fn a_nullary_constructor_reflects_as_its_surface_not_its_label() {
+        let renderings = monoid_equation_renderings();
+        let (lhs, _) = renderings.get("UnitL").expect("Monoid declares `UnitL`");
+        assert_eq!(
+            lhs, "e*X",
+            "`Unit` is declared `Unit . M ::= \"e\" ;`, so it reflects as `e`. Got: {lhs}",
+        );
+    }
+
+    /// CONTROL for the constructor-resolution repair — a side whose leaves are
+    /// all METAVARIABLES must be untouched by it. `Assoc` names `X`, `Y`, `Z`,
+    /// none of which is a constructor, so its left side is byte-identical before
+    /// and after.
+    #[test]
+    fn metavariables_are_not_resolved_against_the_constructor_table() {
+        let renderings = monoid_equation_renderings();
+        let (lhs, _) = renderings.get("Assoc").expect("Monoid declares `Assoc`");
+        assert_eq!(
+            lhs, "X*Y*Z",
+            "`X`, `Y` and `Z` name no constructor, so constructor resolution must leave \
+             them alone. Got: {lhs}",
+        );
+    }
+
+    /// The reflected equation can now say WHICH equation it is (#97 item 4).
+    #[test]
+    fn the_reflected_equation_carries_its_name() {
+        let monoid = crate::gen::capture::bundled_corpus::bundled_language("Monoid");
+        let assoc = monoid
+            .def
+            .equations
+            .iter()
+            .find(|eq| eq.name == "Assoc")
+            .expect("Monoid declares `Assoc`");
+        let rendered = generate_equation_def(assoc, &monoid.def).to_string();
+        assert!(
+            rendered.contains("name : \"Assoc\""),
+            "an `EquationDef` must carry the equation's declared name, as `RewriteDef` \
+             always has. Got: {rendered}",
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // THE CORPUS GATE — no reflected rule is vacuous without a REASON
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Whether `rule` renders as exactly its single argument and nothing else.
+    ///
+    /// Such a constructor is DISPLAY-TRANSPARENT: `CastInt(x)` and `x` are written
+    /// identically, by design — the injection exists to retype a value, not to
+    /// add notation. The generated `Display` is transparent for the same node.
+    fn is_display_transparent(rule: &GrammarRule) -> bool {
+        match &rule.syntax_pattern {
+            Some(syntax_pattern) => {
+                syntax_pattern.len() == 1 && matches!(syntax_pattern[0], SyntaxExpr::Param(_))
+            },
+            None => {
+                rule.items.len() == 1
+                    && matches!(rule.items[0], GrammarItem::NonTerminal { .. })
+            },
+        }
+    }
+
+    /// Strip every display-transparent wrapper from a pattern.
+    fn erase_transparent<'a>(pattern: &'a Pattern, language: &LanguageDef) -> &'a Pattern {
+        let mut current = pattern;
+        loop {
+            let Pattern::Term(PatternTerm::Apply { constructor, args }) = current else {
+                return current;
+            };
+            if args.len() != 1 {
+                return current;
+            }
+            let Some(rule) = language.get_constructor(constructor) else {
+                return current;
+            };
+            if !is_display_transparent(rule) {
+                return current;
+            }
+            current = &args[0];
+        }
+    }
+
+    /// Structural equality of two patterns AFTER erasing display-transparent
+    /// wrappers.
+    ///
+    /// This is the exemption predicate for the gate below: when it holds, the two
+    /// sides really do have the same SURFACE, and rendering them identically is
+    /// faithful rather than lossy.
+    fn equal_modulo_transparent(a: &Pattern, b: &Pattern, language: &LanguageDef) -> bool {
+        let (a, b) = (erase_transparent(a, language), erase_transparent(b, language));
+        match (a, b) {
+            (Pattern::Term(x), Pattern::Term(y)) => match (x, y) {
+                (PatternTerm::Var(u), PatternTerm::Var(v)) => u == v,
+                (
+                    PatternTerm::Apply { constructor: cx, args: ax },
+                    PatternTerm::Apply { constructor: cy, args: ay },
+                ) => {
+                    cx == cy
+                        && ax.len() == ay.len()
+                        && ax
+                            .iter()
+                            .zip(ay.iter())
+                            .all(|(p, q)| equal_modulo_transparent(p, q, language))
+                },
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// ★ THE ANTI-VACUITY GATE over the whole corpus: no reflected equation or
+    /// rewrite renders its two sides identically UNLESS the two sides genuinely
+    /// have the same surface.
+    ///
+    /// # The declared exemption, and why it is a reason rather than a skip
+    ///
+    /// Thirteen auto-injected `NormCast<S>To<T>In<R>` rewrites render
+    /// `lhs: "v", rhs: "v"`. Their shape is
+    /// `(Cast<S> v) ~> (Cast<T> (<S>To<T> v))`, and every constructor in it is
+    /// DISPLAY-TRANSPARENT: an injection adds no notation, so the surface really
+    /// is `v` on both sides. Rendering a constructor there would invent a
+    /// notation nobody can write and would contradict the generated `Display`,
+    /// which is transparent for the same node. What such a rule is identified by
+    /// is its NAME — `RewriteDef::name` has always carried one, and `EquationDef`
+    /// now does too — so the reflection does say which retagging it is.
+    ///
+    /// The exemption is therefore not a list of thirteen labels but the
+    /// structural property [`equal_modulo_transparent`]: two sides may render
+    /// identically exactly when they ARE identical once transparent wrappers are
+    /// erased. Monoid's `Assoc` does not satisfy it — its two sides differ in
+    /// nesting, not in wrappers — so this gate was RED on `Assoc` before the
+    /// precedence repair and is green after it.
+    #[test]
+    fn no_reflected_rule_is_vacuous_without_a_structural_reason() {
+        let mut rules_checked = 0usize;
+        let mut exempt = 0usize;
+        let mut vacuous: Vec<String> = Vec::new();
+
+        for language in crate::gen::capture::bundled_corpus::bundled_languages() {
+            let def = &language.def;
+            let sides: Vec<(String, &Pattern, &Pattern)> = def
+                .equations
+                .iter()
+                .map(|eq| (format!("equation `{}`", eq.name), &eq.left, &eq.right))
+                .chain(
+                    def.rewrites
+                        .iter()
+                        .map(|rw| (format!("rewrite `{}`", rw.name), &rw.left, &rw.right)),
+                )
+                .collect();
+
+            for (what, left, right) in sides {
+                rules_checked += 1;
+                let lhs = pattern_to_user_syntax(left, def);
+                let rhs = pattern_to_user_syntax(right, def);
+                if lhs != rhs {
+                    continue;
+                }
+                if equal_modulo_transparent(left, right, def) {
+                    exempt += 1;
+                    continue;
+                }
+                vacuous.push(format!(
+                    "{}: {what} reflects as `{lhs}` = `{rhs}` — identical surfaces that are \
+                     NOT the same pattern once display-transparent wrappers are erased, so \
+                     the reflection has lost the rule's content",
+                    language.tag,
+                ));
+            }
+        }
+
+        // Non-vacuity floor: "for every reflected rule, P" is satisfied by no
+        // rules at all.
+        assert!(
+            rules_checked >= 300,
+            "only {rules_checked} reflected rule(s) reached the gate; the corpus reflects \
+             several hundred across its equations and rewrites, so the subject has \
+             collapsed and this assertion would be reporting success over almost nothing",
+        );
+        // And the exemption is REACHED: if it were not, the structural predicate
+        // would be untested and could silently stop matching the class it exists
+        // to describe.
+        assert!(
+            exempt > 0,
+            "the display-transparent exemption matched NOTHING. The auto-injected \
+             `NormCast*` family is supposed to reach it, so either the family stopped \
+             being generated or `equal_modulo_transparent` stopped recognising it — in \
+             which case the exemption is an untested branch",
+        );
+        assert!(
+            vacuous.is_empty(),
+            "{} of {rules_checked} reflected rule(s) are vacuous with no structural \
+             reason:\n\n{}",
+            vacuous.len(),
+            vacuous.join("\n"),
+        );
+    }
+
 }
