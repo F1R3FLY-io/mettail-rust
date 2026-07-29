@@ -135,24 +135,59 @@
 //! This suite still compares with `assert_eq!` on an explicitly written expected value and never
 //! through a fuzzy helper.
 //!
-//! ### ⚠ Divergence A is NOT fixed here, and must not be
+//! ### ✔ Divergence A is RESOLVED UPSTREAM (2026-07-29) — the reducer no longer wraps
 //!
-//! f1r3node disagrees with **itself** about integer `+`:
+//! f1r3node used to disagree with **itself** about integer `+`:
 //!
-//! | Evaluator | `i64::MAX + 1` | Site |
+//! | Evaluator | `i64::MAX + 1` (before 2026-07-29) | Site |
 //! |---|---|---|
-//! | consensus reducer | **wraps** → `i64::MIN` | `rholang/src/rust/interpreter/reduce.rs:3106` `lhs.wrapping_add(rhs)` |
-//! | guard evaluator | **errors** | `rho-pure-eval/src/eval.rs:144-146` `int_binop_checked("+", …, i64::checked_add)` |
+//! | consensus reducer | **wrapped** → `i64::MIN` | `rholang/src/rust/interpreter/reduce.rs` `combine_plus`, `lhs.wrapping_add(rhs)` |
+//! | guard evaluator | **errored** | `rho-pure-eval/src/eval.rs` `int_binop_checked("+", …, i64::checked_add)` |
 //!
-//! Reconciling those two is an **upstream f1r3node / consensus decision the USER has not made**,
-//! and it is out of scope for MeTTaIL. What this suite *does* assert is the part that is
-//! unambiguously MeTTaIL's problem: Rholang must not contribute a **third arithmetic answer**, and
-//! must eventually inherit whichever f1r3node evaluator its lowering routes to — process position
-//! ⟶ `reduce.rs`, guard position ⟶ `rho-pure-eval`. The 2026-07-25 fix removes the part that was
-//! indefensible on its own terms — a *checked* operation FABRICATING `Default::default()` and
-//! presenting it as the answer — leaving `error`, which is the absence of an answer rather than a
-//! competing one. Inheriting the machine's answer is still C1's. The residual f1r3node-internal
-//! inconsistency is recorded, not resolved.
+//! …and, within the reducer itself, `*` and unary `-` were CHECKED while `+` and `-` wrapped: two
+//! opposite dispositions for one partiality, selected by which operator the deployer happened to
+//! write.
+//!
+//! **RULED 2026-07-29: "fix it — checked, with a clear error."** `combine_plus` and
+//! `combine_minus` now use `checked_add` / `checked_sub` and raise
+//! `ReduceError("Arithmetic overflow in addition: {lhs} + {rhs} is not representable as an Int
+//! (64-bit signed)")`, naming the operation AND both operands. Every `Int` operator in the reducer
+//! now answers the same way when its result is not representable, and the reducer now agrees with
+//! `rho-pure-eval`. Pinned upstream by `rholang/tests/reduce_spec.rs`
+//! (`eval_expr_should_return_error_for_{addition,subtraction}_overflow`,
+//! `every_int_operator_refuses_a_result_it_cannot_represent`) and end-to-end by
+//! `rholang/tests/rholang_numeric_eval_spec.rs`.
+//!
+//! ⚠ **That fix is consensus-visible**: a program whose `Int` addition or subtraction overflows
+//! now raises where it previously produced a wrapped value. Its measured blast radius is the
+//! "detect overflow by observing the wrap" idiom in the genesis contracts
+//! (`NonNegativeNumber.rho`'s `if (v + x >= v)`, and `MakeMint.rho`'s `deposit` through it), whose
+//! total replacement is to guard BEFORE adding — `if (x <= 9223372036854775807 - v)`.
+//!
+//! What this suite asserts is unchanged and remains MeTTaIL's own part: Rholang must not
+//! contribute a **third arithmetic answer**, and must inherit whichever f1r3node evaluator its
+//! lowering routes to — process position ⟶ `reduce.rs`, guard position ⟶ `rho-pure-eval`. Those
+//! two now agree, so "inherit the machine's answer" has one target instead of two. The 2026-07-25
+//! fix had already removed the part that was indefensible on its own terms — a *checked* operation
+//! FABRICATING `Default::default()` and presenting it as the answer — leaving `error`, which is
+//! the absence of an answer rather than a competing one.
+//!
+//! ### ⚠ Divergence: float ÷0 — MeTTaIL is DELIBERATELY stricter, and stays that way
+//!
+//! | Evaluator | `1.0 / 0.0` | Site |
+//! |---|---|---|
+//! | f1r3node's reducer | `+Inf` (no guard) | `reduce.rs` `combine_div`, the `GDouble` arm |
+//! | MeTTaIL's Rholang | `error` | `languages/src/rholang.rs`, the `Div` fold's `CastFloat` arm |
+//!
+//! **RULED 2026-07-29: "keep the strictness — it is the better semantics."** `±Inf` propagating
+//! silently through a consensus computation is worse than refusing: an infinity is a perfectly
+//! good float, so it flows into comparisons, sends and stored state indistinguishably from a
+//! computed magnitude, and the first observable symptom appears arbitrarily far from the division
+//! that produced it. The guard is also CONSISTENT with the five sibling numeric arms, all of which
+//! answer `error` on ÷0 — without it the disposition of `x / 0` would depend on which numeric
+//! carrier the operands happened to have. It is the conservative direction: it can refuse a
+//! program upstream would have run, never accept one upstream refuses, and never produce a
+//! DIFFERENT value for a program both accept. The full reasoning is recorded at the arm itself.
 //!
 //! ## Operational note: fold panics ABORT the process here
 //!
@@ -582,15 +617,15 @@ async fn conformance_runtime_bound_integer_add_after_comm() {
 
 // ── A — integer overflow and integer division by zero ────────────────────────────────────────────
 
-/// **Divergence A (witness) — Rholang's fold FAILS CLOSED; it no longer fabricates a value.**
+/// **Divergence A (witness) — BOTH SIDES NOW FAIL CLOSED on `i64` overflow.**
 ///
 /// For `int(i64::MAX, 64) + int(1, 64)`:
 ///
 /// | Implementation | Answer | Site |
 /// |---|---|---|
-/// | f1r3node consensus reducer | `i64::MIN` (wraps) | `rholang/src/rust/interpreter/reduce.rs:3106` `lhs.wrapping_add(rhs)` |
-/// | f1r3node guard evaluator | an error | `rho-pure-eval/src/eval.rs:144-146` `int_binop_checked` |
-/// | MeTTaIL Rholang fold | the **`error`** term | `languages/src/rholang.rs` `Add` body ▸ `SafeArith::safe_add` ▸ `None` ▸ `Proc::Err` |
+/// | f1r3node consensus reducer | `ReduceError("Arithmetic overflow in addition: 9223372036854775807 + 1 …")` | `rholang/src/rust/interpreter/reduce.rs` `combine_plus`, `checked_add` |
+/// | f1r3node guard evaluator | an error | `rho-pure-eval/src/eval.rs` `int_binop_checked` |
+/// | MeTTaIL Rholang fold | the **`error`** term | `languages/src/rholang.rs` `Add` body ▸ `SafeArith::safe_add` ▸ `Err` ▸ `Proc::Err` |
 ///
 /// **Amended 2026-07-25.** Until then the fold answered a silent **`0`**: its `Int` arm wrote
 /// `(**a).clone() + (**b).clone()`, which reached a macro-emitted `impl std::ops::Add for Int`
@@ -598,12 +633,27 @@ async fn conformance_runtime_bound_integer_add_after_comm() {
 /// operation FABRICATING the category's `Default` on failure. That emitter fallback has been
 /// deleted (`macros/src/gen/native/eval.rs`; no `std::ops::{Add,Sub,Mul,Div,Rem}` impl is emitted
 /// for a category any more, so the fabrication is not expressible), and the fold arms now map
-/// `SafeArith`'s `None` onto `Proc::Err` — the disposition the `UInt32`/`BigInt`/`BigRat`/`Fixed`
+/// `SafeArith`'s failure onto `Proc::Err` — the disposition the `UInt32`/`BigInt`/`BigRat`/`Fixed`
 /// arms already used for ÷0.
 ///
-/// A **wrong value** is therefore gone. A divergence remains, and it is the one this suite always
-/// said it was: the fold does not INHERIT the evaluator its lowering routes to. That is still C1's
-/// to close — see `divergence_a_target_int_overflow_inherits_the_f1r3node_evaluator`.
+/// **Amended again 2026-07-29 — the RE-MEASUREMENT that closed the third answer.** This cell used
+/// to assert that the machine *evaluated* the sum to `i64::MIN`:
+///
+/// ```text
+///     let observed = reduce(&proc).await.expect("the machine evaluates the sum");
+///     assert_eq!(observed…, vec![i64::MIN.to_string()],
+///                "A: the consensus reducer wraps (reduce.rs wrapping_add)");
+/// ```
+///
+/// Ruled 2026-07-29, `combine_plus` / `combine_minus` are CHECKED, so the reducer now REFUSES. The
+/// three-way table above is down to two dispositions, and both are refusals: MeTTaIL answers the
+/// `error` TERM (a value in the MeTTaIL lane), the machine raises a recoverable `ReduceError`.
+/// Neither is a number, so the silent wrong-value hazard is gone on both sides — exactly the shape
+/// divergence A2 already had for ÷0.
+///
+/// The residual divergence is the one this suite always said it was: the fold does not INHERIT the
+/// evaluator its lowering routes to. That is still C1's to close — see
+/// `divergence_a_target_int_overflow_inherits_the_f1r3node_evaluator`.
 ///
 /// *Amend when C1 lands:* the fold body is gone, so both arms answer whatever `reduce.rs` answers.
 #[tokio::test(flavor = "multi_thread")]
@@ -617,11 +667,29 @@ async fn divergence_a_witness_int_overflow_folds_to_the_error_term() {
         "A: Rholang's fold fails CLOSED on i64 overflow — never a fabricated value"
     );
 
-    let observed = reduce(&proc).await.expect("the machine evaluates the sum");
+    let err = reduce(&proc)
+        .await
+        .expect_err("the consensus reducer refuses an unrepresentable sum (checked since 2026-07-29)");
+    assert!(
+        err.contains("Arithmetic overflow in addition"),
+        "A: the consensus reducer must REFUSE, naming the operation and the operands — it wrapped \
+         to {} until 2026-07-29, which is a different number presented as the sum. Got {err:?}",
+        i64::MIN,
+    );
+    assert!(
+        err.contains("9223372036854775807") && err.contains("+ 1"),
+        "A: the message must name BOTH operands, which is what makes it actionable in a log. \
+         Got {err:?}",
+    );
+
+    // ── THE CONTROL: a TOTAL sum still computes, on the machine, to the same value. If this
+    // moves, the upstream fix broke addition rather than its overflow disposition.
+    let total = parse("int(7, 64) + int(8, 64)");
+    let observed = reduce(&total).await.expect("a representable sum still evaluates");
     assert_eq!(
         observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
-        vec![i64::MIN.to_string()],
-        "A: the consensus reducer wraps (reduce.rs:3106 wrapping_add)"
+        vec!["15".to_string()],
+        "A CONTROL: checked addition must still add",
     );
 }
 
@@ -696,13 +764,22 @@ async fn no_arithmetic_failure_ever_fabricates_a_value() {
 ///
 /// This asserts only what is unambiguously MeTTaIL's to fix: the fold and the reducer must give
 /// the *same* answer for the same expression in the same (process) position, whatever that answer
-/// is. It deliberately does **not** decide the f1r3node-internal `reduce.rs` (`wrapping_add`) vs
-/// `rho-pure-eval` (`checked_add`) question — that is an upstream consensus decision the USER has
-/// not made, so it is asserted *relatively* (`fold == reduce`), never absolutely.
+/// is. It is asserted *relatively* (`fold == reduce`), never absolutely.
+///
+/// ⚠ **Restated 2026-07-29.** The f1r3node-internal `reduce.rs` (`wrapping_add`) vs
+/// `rho-pure-eval` (`checked_add`) question WAS an open upstream decision when this cell was
+/// written; it has since been ruled — the reducer is now CHECKED and the two agree. What that
+/// changes here is only the *shape* of the eventual agreement, not this cell's subject: the fold
+/// answers the `error` TERM while the machine raises a recoverable `ReduceError`, so the
+/// comparison below (`folded == render(value)`) still cannot be made until C1 deletes the
+/// arithmetic fold bodies and leaves the machine as the only evaluator. Both sides now refuse
+/// rather than one wrapping, which is why the residual gap is a REPRESENTATION difference and no
+/// longer a value one.
 ///
 /// Closed by **C1** (deleting the arithmetic fold bodies makes the machine the only evaluator).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence A: Rholang's fold answers a silent 0 where f1r3node's reducer wraps; \
+#[ignore = "divergence A: the fold answers the `error` TERM where the machine raises a \
+            recoverable ReduceError — both refuse, but not in the same representation; \
             closed by C1 (delete the arithmetic fold bodies)"]
 async fn divergence_a_target_int_overflow_inherits_the_f1r3node_evaluator() {
     for source in [

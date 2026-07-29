@@ -1822,9 +1822,40 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    // Division by zero is an error (consistent with the integer/rational/fixed
-                    // arms); `safe_div` alone would answer `±Inf` for `x / 0.0` (it preserves
-                    // infinities and rejects only NaN), so the explicit zero guard stays.
+                    // ★★ A DELIBERATE, RULED DIVERGENCE FROM UPSTREAM — float ÷0 is an ERROR here.
+                    //
+                    //   | evaluator | `1.0 / 0.0` | site |
+                    //   |---|---|---|
+                    //   | f1r3node's consensus reducer | `+Inf` (no guard at all) | `rholang/src/rust/interpreter/reduce.rs` `combine_div`, the `GDouble` arm |
+                    //   | MeTTaIL's Rholang (this arm)  | `error`                  | here |
+                    //
+                    // RULED 2026-07-29: **keep the strictness — it is the better semantics.**
+                    // The reasoning, recorded so nobody "harmonises" it away later:
+                    //
+                    //   * `±Inf` propagating silently through a CONSENSUS computation is worse
+                    //     than refusing. An infinity is a perfectly good float, so it flows into
+                    //     comparisons, sends, and stored state indistinguishably from a computed
+                    //     magnitude, and the first observable symptom appears arbitrarily far
+                    //     from the division that produced it. `error` refuses at the point of
+                    //     the mistake, which is where the deployer can act on it.
+                    //   * It is CONSISTENT with the five sibling arms. `UInt32`, `BigInt`,
+                    //     `BigRat`, `Fixed` and `Int` all answer `error` on ÷0. A float arm that
+                    //     answered `+Inf` would make the disposition of `x / 0` a function of
+                    //     which numeric carrier the operands happened to have — the same
+                    //     grammar-authorship accident that made partiality dispositions
+                    //     unpredictable in the first place.
+                    //   * It is the STRICTER direction. Refusing a program upstream would have
+                    //     run is a conservative divergence: it can reject a computation that
+                    //     would have succeeded, but it can never accept one upstream rejects,
+                    //     and it never produces a DIFFERENT value for a program both accept.
+                    //
+                    // ⚠ It IS a divergence and is recorded as one — `NaN` is not the issue here
+                    // (`safe_div` already declines `0.0 / 0.0` with `UndefinedReason::NotANumber`,
+                    // and `Inf` is deliberately preserved by `SafeArith` for the tropical /
+                    // log-domain semirings). This guard is specifically about a FINITE numerator
+                    // over a zero denominator, which IEEE answers with an infinity and which the
+                    // rest of this grammar answers with `error`. Do not delete it to "match
+                    // upstream" without reopening the ruling.
                     (Float::FloatLit(x), Float::FloatLit(y)) => {
                         if y.get() == 0.0 {
                             Proc::Err
