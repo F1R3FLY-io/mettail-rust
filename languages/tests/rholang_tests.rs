@@ -3177,14 +3177,70 @@ mod native_ops {
         /// stuck follows the recorded `MSet` precedent (user decision
         /// 2026-06-30) for exactly this shape of "no honest answer exists yet".
         ///
-        /// ⚠ USER-VISIBLE SEMANTICS, flagged as such: `{| 1 |}.get(1)` is a
-        /// pending user ruling. This row pins the conservative reading so the
-        /// behaviour cannot drift while the ruling is outstanding.
+        /// ★★ RULED 2026-07-29 (USER): `{| 1 |}.get(1)` **ERRS**. It does not
+        /// block, and it does not invent a value.
+        ///
+        /// ## Why erring, and not blocking
+        ///
+        /// The argument is STRUCTURAL, not merely diagnostic. A stuck term
+        /// asserts *"this may resolve later"* — it is a promise that some future
+        /// reduction makes the expression answerable. Here there is no such
+        /// future state: the entry carries no value, and no reduction of
+        /// `.get(k)` can conjure one. Blocking would be a promise the term cannot
+        /// keep, so it errs.
+        ///
+        /// ⚠ **DELIBERATE DEPARTURE FROM THE `MSet` PRECEDENT** (user decision
+        /// 2026-06-30), which leaves an unreduced `.set(...)` node rather than
+        /// producing `error`. That precedent covers a DIFFERENT shape: an
+        /// unencodable path is a property of the ARGUMENT, and a later
+        /// substitution really can make it encodable. An unset value is a
+        /// property of the STORED ENTRY, which `.get` cannot change. The
+        /// departure was RULED, not inferred — do not "restore consistency" by
+        /// reverting it.
+        ///
+        /// ## ★ The guard is the THREE-WAY discrimination, not the unset case
+        ///
+        /// A row that only checked the unset case would not have shown the
+        /// implementation can tell the cases APART. All three of the states
+        /// Ruling B keeps distinct are asserted here, and each answers
+        /// differently:
+        ///
+        /// | literal          | `.get(1)`  | why                                |
+        /// |------------------|------------|------------------------------------|
+        /// | `{\| 1 \|}`      | `error`    | no value is stored                 |
+        /// | `{\| 1 : Nil \|}`| `Nil`      | `Nil` IS the stored value          |
+        /// | `{\| 1 : 5 \|}`  | `5`        | an ordinary stored value           |
+        ///
+        /// ⚠ The middle row is the load-bearing one: it is what stops the fix
+        /// from being "treat `Nil` as absent", which is exactly the collapse #74
+        /// removed.
         #[test]
-        fn pathmap_bare_key_get_stays_stuck_rather_than_inventing_a_value() {
-            // The unreduced `.get(...)` node is the normal form — NOT `1`, and
-            // NOT `Nil`, and NOT `error`.
-            assert_reduces_to("{| 1 |}.get(1)", "{|1|}.get(1)");
+        fn pathmap_get_discriminates_unset_from_nil_from_a_real_value() {
+            // Unset — the key IS present, but nothing is stored under it.
+            assert_reduces_to("{| 1 |}.get(1)", "error");
+            // `Nil` explicitly stored — a value, returned as itself.
+            assert_reduces_to("{| 1 : Nil |}.get(1)", "Nil");
+            // An ordinary value.
+            assert_reduces_to("{| 1 : 5 |}.get(1)", "5");
+            // …and an ABSENT key still errs, as it always did. The error is the
+            // same VALUE for both, but the two are distinct situations and the
+            // diagnostic distinguishes them (see the codegen comment).
+            assert_reduces_to("{| 1 : 5 |}.get(2)", "error");
+        }
+
+        /// The zipper sibling of the row above: `getLeaf()` reads a VALUE, so it
+        /// meets the same three cases and must discriminate them the same way.
+        ///
+        /// These are the ONLY two value-reading pathmap surfaces — see the
+        /// sibling enumeration in the commit body.
+        #[test]
+        fn zipper_get_leaf_discriminates_unset_from_nil_from_a_real_value() {
+            assert_reduces_to("{{| [1] |}.readZipper().descendTo([1]).getLeaf()}", "error");
+            assert_reduces_to(
+                "{{| [1] : Nil |}.readZipper().descendTo([1]).getLeaf()}",
+                "Nil",
+            );
+            assert_reduces_to("{{| [1] : 5 |}.readZipper().descendTo([1]).getLeaf()}", "5");
         }
 
         /// The other half of the bare entry's meaning: the key IS present.
