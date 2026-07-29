@@ -2385,6 +2385,85 @@ pub(crate) fn projection_iso_shape(
 /// 103.52) plus an exact structural bound (`legs == distinct`), not a return to linearity.
 /// Linearity for the enumeration seam would need the cartesian itself to be shared — a
 /// different change, against a different seam, with its own measurement.
+///
+/// # ★★ #103/R2′ — UNIONING THE **SINGLE** SEAM WAS BUILT, MEASURED, AND REFUTED
+///
+/// Recorded so it is not re-attempted. R2 (`Single = _all(input).0.into_iter().next()`) was
+/// blocked on paper by the `PROJ_HOLE_EPSILON` framing requirement and the bug-2318
+/// counterexample. **R2′** was the fallback: keep the `__single_winner == true` helper call
+/// — preserving BOTH the ε-framing and the per-operand single-winner composition — and
+/// union its candidates with `__all_with_weights_monolithic(input)` before taking the
+/// `⊕`-min, exactly as the `SepSeam::All` arm below does.
+///
+/// It was implemented in full and measured. **`languages/tests/rholang_tests.rs` went
+/// 446/447**, failing `parsing::query_receive_sugar_quoted_name_lhs`:
+///
+/// ```text
+///   for(p <- x!?(a)){*(@(p))}                        must desugar to
+///   new r in { x!(*r, a) | for(p <- r){*(@(p))} }
+/// ```
+///
+/// ## The blocker, and it is a FOURTH one the design did not name
+///
+/// The design named three things R2′ had to settle — the two incommensurate weight scales,
+/// the `proj_reject_capture`/`proj_reject_fire` pairing, and the R1 ordering. All three
+/// were settleable (the reject pairing survives untouched because the union sits strictly
+/// inside the ACCEPT arm; see the derivation that was written against
+/// `parse_via_wpda_uncached`'s emitted control flow). The blocker is none of them:
+///
+/// > **Unioning the Single seam makes the election CONTEXT-DEPENDENT, because `min_by`
+/// > breaks a weight tie between two DISTINCT semantic classes by CANDIDATE ORDER, and the
+/// > union changes that order.**
+///
+/// Measured weights for the two sides, under R2′ (`parse_via_wpda_all_with_weights`):
+///
+/// ```text
+///   for(p <- x!?(a)){*(@(p))}
+///     primary=0.0  open_len=3 lex_alt=0 src=0 rule=27   … PDrop(NParen(NQuote(p)))
+///     primary=0.0  open_len=3 lex_alt=0 src=0 rule=27   … PDrop(NQuote(p))
+///   new r in { x!(*r, a) | for(p <- r){*(@(p))} }
+///     primary=0.75 open_len=3 lex_alt=0 src=0 rule=3    … PDrop(NQuote(p))
+///     primary=0.75 open_len=3 lex_alt=0 src=0 rule=3    … PDrop(NParen(NQuote(p)))
+/// ```
+///
+/// The transparent-grouping twins `PDrop(NParen(NQuote(p)))` and `PDrop(NQuote(p))` are
+/// **distinct `semantic_hash` keys** (both survive the dedup — that is why there are two
+/// rows) that are **TOTALLY TIED on every weight component**. Nothing in the weight can
+/// separate them, so `min_by`, which keeps the FIRST minimum, decides by position in the
+/// candidate list. R2′ prepends the facade's leg to the walker's, and the facade leg is
+/// present only where the helper accepts a frame — so the SAME fragment elects differently
+/// depending on what encloses it:
+///
+/// ```text
+///   for(p <- r){*(@(p))}                             body ⇒ PDrop(NQuote(p))
+///   new r in { x!(*r, a) | for(p <- r){*(@(p))} }    body ⇒ PDrop(NParen(NQuote(p)))
+/// ```
+///
+/// Identical inner text, different elected body. That is a disambiguation-STABILITY
+/// violation, not a disambiguation-preservation one, and it is why one committed test
+/// catches it while the reading-count goldens do not move at all (the SET is unchanged;
+/// only which member is elected changes, and only in some enclosing contexts).
+///
+/// The note on the `SepSeam::All` arm below predicted `Name::parse("(@Nil)")` would flip to
+/// the transparent twin. Measured under R2′: it returns `NQuoteShort(PZero)`. **The note
+/// was right.** It is therefore restored verbatim rather than corrected — a correction to
+/// it was drafted mid-experiment on the reasoning that `min_by`'s first-minimum rule with
+/// the facade chained first would leave ties alone; that reasoning is wrong precisely
+/// because the ORDER, not the tie-breaking, is what the union changes.
+///
+/// ## What a future attempt would have to fix first
+///
+/// Not the union. The union is a symptom amplifier. The root is that two distinct semantic
+/// classes tie on ALL FIVE weight components, so *any* change to candidate order — a new
+/// prologue, a reordered chain, a different `sort_by` stability — silently re-elects. A
+/// principled repair gives the transparent-grouping twins a weight ORDER (they already have
+/// distinct `src_idx` at the `Name` category: `NParen` src=0 vs the unwrapped src=3, which
+/// is why `Name::parse_via_wpda_all("(@Nil)")` is NOT tied), or folds them into one semantic
+/// key. Either is a change to the grammar's declared priorities with its own measurement,
+/// and it must land BEFORE any seam unions into the single-result election.
+///
+/// ⚠ Do not read this as "the Single seam must never be unioned". Read it as: the tie is
+/// real, it is measurable in one command, and it must be removed first.
 pub(crate) fn emit_projection_isolation_prologue(
     helper_name: &proc_macro2::Ident,
     cat_ident: &proc_macro2::Ident,
@@ -2464,6 +2543,11 @@ pub(crate) fn emit_projection_isolation_prologue(
             // deliberately NOT unioned: doing so would flip `Name::parse("(@Nil)")` to the
             // transparent twin and `@Nil!(0)` from the specific `POutputNil` to the generic
             // `POutputShort(PZero, ..)`, and there is no evidence the election is wrong.
+            //
+            // ★★ #103/R2′ (2026-07-29) — THE ABOVE IS NOW MEASURED, AND IT HOLDS. Unioning
+            // the Single seam was BUILT AND MEASURED, and it is refuted. See
+            // `emit_projection_isolation_prologue`'s doc comment for the full transcript;
+            // the short form is that the note was right for a sharper reason than it gave.
             if let Some((__piso_terms, __piso_weights)) = #helper_name(input, false) {
                 // ★ #103/R3 (2026-07-29): THE RE-ENTRANCY GUARD THAT STOOD HERE WAS INERT,
                 // AND IS DELETED. It read `__METTAIL_G3_UNION_ACTIVE_<Cat>` at THIS
