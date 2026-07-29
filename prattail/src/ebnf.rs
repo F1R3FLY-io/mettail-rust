@@ -1628,6 +1628,10 @@ mod tests {
                         preceding_terminals: Vec::new(),
                         following_terminals: Vec::new(),
                         repetition: None,
+                        // #131: EBNF rendering walks `rule.syntax` itself; the parts
+                        // here exist only to mark the rule mixfix-shaped for the
+                        // binding-power view, which a capture part does not alter.
+                        capture_kind: None,
                     });
                 },
                 SyntaxItemSpec::Terminal(t) if after_trigger => {

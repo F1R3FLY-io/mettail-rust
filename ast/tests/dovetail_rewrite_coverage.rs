@@ -75,6 +75,25 @@ fn classify_pattern(pattern: &Pattern) -> Coverage {
             join(classify_pattern(collection), classify_pattern(body))
         },
         Pattern::Zip { first, second } => join(classify_pattern(first), classify_pattern(second)),
+        // `args[i := S]` — one element of an ORDERED collection at a bound position.
+        //
+        // LOWERING CONTRACT, and that is not a judgement call: the lowering rejects this
+        // family under its own name (`rho_net_lower.rs`'s
+        // `UnsupportedFamily::IndexedVecOrdered`, at both the LHS-var collection site and
+        // the reflection site) precisely because an ordered indexed access has no
+        // reflected image — no enclosing constructor supplies an `op`. Whatever gives it
+        // one will be lowering work, exactly as it is for `Lambda` and `Subst` above,
+        // which take the same class for the same reason.
+        //
+        // ⚠ INERT TODAY: no shipped grammar carries an element congruence (the variant's
+        // own doc records the measurement — 24 `Vec`-payload rules across the 49 language
+        // definitions, none of them with one), so this arm classifies nothing yet. It is
+        // written because the match is EXHAUSTIVE BY DESIGN: the absence of a `_` arm is
+        // what made the next variant fail loudly, and replacing that with a wildcard would
+        // trade a compile error for a silent misclassification.
+        Pattern::IndexedVec { element, .. } => {
+            join(Coverage::LoweringContract, classify_pattern(element))
+        },
     }
 }
 

@@ -336,6 +336,26 @@ fn add_pattern_requirements(pattern: &Pattern, out: &mut BTreeSet<Requirement>) 
             add_pattern_requirements(first, out);
             add_pattern_requirements(second, out);
         },
+        // `args[i := S]` — one element of an ORDERED collection at a bound position.
+        //
+        // Recorded as `CollectionPattern`, the EXISTING requirement it truthfully
+        // satisfies: it is a pattern that matches inside a collection payload. It is
+        // deliberately NOT given a requirement of its own, because a new `Requirement`
+        // variant here is not a local change — it must also gain a `Req…` constructor in
+        // `MeTTaILRewriteCoverage.v` and a place in the coverage theorems, or the
+        // regenerated `LanguageDefInventoryGenerated.v` names a constructor that does not
+        // exist and stops compiling (that file's own header states this contract). That
+        // is formal-verification work owned by the Dovetail surface, and inventing the
+        // taxonomy from here would be guessing at it.
+        //
+        // ⚠ INERT TODAY, and therefore free of that pressure: no shipped grammar carries
+        // an element congruence, so this arm contributes to no language's inventory —
+        // the generated file is unchanged by it. Written without a `_` arm so the NEXT
+        // variant still fails loudly, which is the only reason this gap was findable.
+        Pattern::IndexedVec { element, .. } => {
+            out.insert(Requirement::CollectionPattern);
+            add_pattern_requirements(element, out);
+        },
     }
 }
 

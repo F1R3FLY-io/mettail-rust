@@ -644,6 +644,7 @@ pub fn refine(current_level: &AbstractionLevel) -> Option<AbstractionLevel> {
 /// #         category: "Expr".to_string(),
 /// #         syntax: Vec::new(),
 /// #         associativity: Associativity::Left,
+/// #         shares_level_with_previous: false,
 /// #         prefix_precedence: None,
 /// #         has_rust_code: false,
 /// #         rust_code: None,

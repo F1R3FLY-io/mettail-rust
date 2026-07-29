@@ -58,6 +58,7 @@ Definition generated_language_inventory : list (string * list RewriteRequirement
   ("extmath", [ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler]);
   ("guardedrho", [ReqEnvRelationPremise; ReqBehavioralGuard; ReqSyntheticInjectionGuard; ReqCollectionPattern; ReqBinderPattern; ReqRhoCommHandlerContract; ReqRhoResourceGuardContract]);
   ("guardoptsmoke", [ReqEnvRelationPremise; ReqBehavioralGuard; ReqSyntheticInjectionGuard; ReqCollectionPattern]);
+  ("identparamtoy", [ReqFoldNativeHandler; ReqCollectionPattern]);
   ("importedmath", [ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler]);
   ("inoutdemo", [ReqDirectionalRewrite; ReqCollectionPattern]);
   ("json", [ReqCollectionPattern]);

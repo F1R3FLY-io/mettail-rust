@@ -1318,11 +1318,16 @@ fn emit_infix_action_entry(
             // ANY_CAT (u16::MAX) — mirroring the binder/collection drain args.
             if part.repetition.is_some() {
                 v.push(u16::MAX);
-            } else if mettail_ast::grammar::NonTerminalKind::classify(&part.operand_category)
-                == mettail_ast::grammar::NonTerminalKind::Ident
-            {
-                // ★ An `Ident` operand's arg is identifier TEXT, not a Term, so — exactly
-                // like the `*sep` repetition arg above — its expected category is ANY_CAT.
+            } else if part.capture_kind.is_some() {
+                // ★ A CAPTURE part's arg is token TEXT, not a Term, so — exactly like the
+                // `*sep` repetition arg above — its expected category is ANY_CAT.
+                //
+                // #131: keyed on `capture_kind`, which is the ONE place a part is decided
+                // to be a capture (`capture_kind_of` in `infix.rs`). It previously
+                // re-derived that from `operand_category`, which meant the classifier and
+                // the action entry could disagree about what a part IS while both
+                // compiled — the arg-shape gate would then reject every reading of a rule
+                // whose parse was otherwise correct.
                 //
                 // ⚠ WITHOUT THIS THE RULE CANNOT PARSE AT ALL, and the reason is a silent
                 // default: `lookup_cat_idx` ends in `.unwrap_or(0)`, and `Ident` is not in
@@ -1399,27 +1404,54 @@ fn emit_infix_action_entry(
                         };
                     }
                 }
+                // ★ #131: a CAPTURE part's arg is token TEXT, not a Term of some
+                // category named `Ident`. `into_term_arc::<Ident>()` would name a type
+                // that does not exist AND could never match this arg shape.
+                //
+                // ⚠ THE ACCESSOR ORDER IS LOAD-BEARING AND WAS MEASURED, NOT ASSUMED.
+                // Which `ActionArg` variant arrives depends on the SPPF terminal's
+                // `pushed_via_push_ident` discriminator, NOT on its `TokenKind`
+                // (`wpda_walker.rs` realize: `emit_push_ident` ⇒ `ActionArg::Ident`,
+                // `emit_push_token` ⇒ `ActionArg::Token` EVEN WHEN the kind is `Ident`).
+                // The mixfix capture is driven by `GuardedConsumeTokenKindAndReplace`,
+                // which interns with `pushed_via_push_ident = false` — so it delivers
+                // `ActionArg::Token { kind: Ident, .. }` and `as_ident()` alone returns
+                // `None`. Reading only `as_ident()` here would make every reading of the
+                // rule unrealizable while every symbol involved still existed and
+                // compiled: precisely the "a symbol exists, therefore the path works"
+                // inference that cost this task two rounds.
+                //
+                // Both accessors are read because both origins are legitimate — the
+                // binder path's `ConsumeIdentAndReplace` interns with the discriminator
+                // TRUE and yields `ActionArg::Ident`. What is NOT done is defaulting:
+                // when neither accessor yields text the action `return`s, killing the
+                // reading, because a blank name once built a well-formed term with an
+                // empty field and survived a full build, a green type-check and eight
+                // walkers before a fixture caught it.
+                if let Some(p) = part {
+                    if p.capture_kind.is_some() {
+                        return quote! {
+                            let #var: std::string::String = {
+                                let __arg = match iter.next() {
+                                    Some(__a) => __a,
+                                    None => return,
+                                };
+                                match __arg.as_ident() {
+                                    Some(__s) => __s.to_string(),
+                                    None => match __arg.as_token_text() {
+                                        Some(__s) => __s.to_string(),
+                                        None => return,
+                                    },
+                                }
+                            };
+                        };
+                    }
+                }
                 let cat_str = if i == 0 {
                     info.category.clone()
                 } else {
                     info.mixfix_parts[i - 1].operand_category.clone()
                 };
-                // An `Ident` operand is identifier TEXT, not a Term of some category
-                // `Ident`. Its `ActionArg` is `ActionArg::Ident { name, .. }`, pushed by
-                // the fork's `ConsumeIdentAndReplace { start_scope: false }`, and is read
-                // back with `as_ident()` — `into_term_arc::<Ident>()` would name a type
-                // that does not exist AND could never match that arg shape.
-                if mettail_ast::grammar::NonTerminalKind::classify(&cat_str)
-                    == mettail_ast::grammar::NonTerminalKind::Ident
-                {
-                    return quote! {
-                        let #var: std::string::String =
-                            match iter.next().as_ref().and_then(|a| a.as_ident()) {
-                                Some(v) => v.to_string(),
-                                None => return,
-                            };
-                    };
-                }
                 let cat = format_ident!("{}", cat_str);
                 quote! {
                     let #var = match iter.next().and_then(|a| a.into_term_arc::<#cat>()) {

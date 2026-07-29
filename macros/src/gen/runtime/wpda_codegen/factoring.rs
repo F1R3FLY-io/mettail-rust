@@ -1239,6 +1239,24 @@ fn mixfix_member_items(
                 coords.push((1, completed - 1, (j + 1) as u8));
             }
         }
+        // ★ #131 — SIBLING OF THE ROOT, IN THE FACTORING SPINE. A CAPTURE part
+        // terminates mergeability for exactly the reason a `*sep` repetition does
+        // above, and the same reason `BinderPosition::IdentTextCapture` terminates
+        // it on the binder side (see `spine_position_mergeable`): the shared spine
+        // trie has NO node for a token consumption — it merges literal runs and
+        // category sub-parses, and a capture is neither. The member commits at or
+        // before this depth and runs its capture in its own `MixfixLiteralRun`.
+        //
+        // ⚠ WITHOUT THIS the loop would fall through to `SpineItem::ParamParse`
+        // below, whose `lookup` ends in `.unwrap_or(0)` — so the non-category
+        // `Ident` would become category 0, the FIRST declared category, and a
+        // factored cohort would SUB-PARSE THE WRONG CATEGORY with no diagnostic.
+        // That is the identical fails-open shape root-caused three times over on
+        // this path (`semantic_actions`' `lookup_cat_idx`, `emit_mixfix_parts_fn`'s
+        // `position(..).unwrap_or(0)`), reached here through a different door.
+        if part.capture_kind.is_some() {
+            return (items, coords, true);
+        }
         // The operand: always dispatched at `cur_bp: 0` (the mixfix machine
         // convention, engine_impl kind-2/kind-1 operand arms). Post-operand
         // the Unwinding-MixfixMarker arm reads `marker.bp == part_i` and
@@ -1319,7 +1337,13 @@ pub(crate) fn build_mixfix_factoring(
             let mut expected_cats: Vec<u16> = Vec::with_capacity(1 + g.op.mixfix_parts.len());
             expected_cats.push(*dispatch_cat);
             for part in &g.op.mixfix_parts {
-                if part.repetition.is_some() {
+                // #131: a CAPTURE part's arg is token TEXT, so its expected category is
+                // ANY_CAT — mirroring the repetition arg above and, critically, mirroring
+                // `semantic_actions`' derivation EXACTLY. The two must agree: this vector
+                // becomes the cohort's `action_for` row while that one becomes the
+                // member's, and a disagreement makes the arg-shape gate reject readings
+                // in one emission mode and accept them in the other.
+                if part.repetition.is_some() || part.capture_kind.is_some() {
                     expected_cats.push(u16::MAX);
                 } else {
                     expected_cats.push(lookup(&part.operand_category));

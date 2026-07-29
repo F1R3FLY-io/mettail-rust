@@ -357,6 +357,11 @@ fn extract_mixfix_parts_for_display(syntax: &[SyntaxItemSpec]) -> (bool, Vec<BpM
                     preceding_terminals: Vec::new(),
                     following_terminals: Vec::new(),
                     repetition: None,
+                    // #131: Display's parts feed `build_bp_lookup`, which uses them
+                    // ONLY to decide precedence-aware parenthesization. A capture part
+                    // renders one token and can never need parentheses, so the bp view
+                    // is unchanged by the distinction.
+                    capture_kind: None,
                 });
             },
             SyntaxItemSpec::Terminal(t) if after_trigger => {

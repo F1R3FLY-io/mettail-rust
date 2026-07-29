@@ -469,6 +469,68 @@ pub(crate) fn emit_engine_impl_full(
             }
             targets
         }
+        /// ★ #131: satisfy a CAPTURE `MixfixPart` — consume exactly ONE token of
+        /// the part's kind and fold its text as this rule's next action argument.
+        ///
+        /// `$capture_kind` is the kind NAME from `mixfix_part(..).3`;
+        /// `$part_idx` is the index of the part being satisfied, which becomes the
+        /// marker's new `completed_idx`. For a part-0 capture entered at `kind: 2`
+        /// that equals the current `completed_idx` (a self-replace, the shipped
+        /// no-op); for a later capture entered at `kind: 1` it is
+        /// `completed_idx + 1`, which BUMPS the marker exactly as the operand
+        /// hand-off does.
+        ///
+        /// # Why this is `GuardedConsumeTokenKindAndReplace` and not a new action
+        ///
+        /// That fork action already does precisely the three things a capture
+        /// needs, and is already live (`l9modaltoy` emits it for its mid-rule
+        /// `w@Word` capture):
+        ///
+        /// 1. it GATES on `capture_kind(kind_name)`, which maps the builtin
+        ///    `"Ident"` to `TokenKind::Ident` — the kind the lexer actually emits —
+        ///    rather than to `TokenKind::Custom("Ident")`, which nothing emits and
+        ///    which left the gate permanently dead before `ac46362b`;
+        /// 2. on a MISS it allocates no child at all, so a wrong token kills only
+        ///    this reading and leaves sibling readings intact (fanout-survival);
+        /// 3. on a HIT it interns the token as an SPPF terminal and FOLDS it into
+        ///    the marker's frame, which is what makes it an action argument. A
+        ///    literal consume (`ConsumeAtAndReplace`) deliberately folds nothing —
+        ///    that is the difference between punctuation and data, and it is why a
+        ///    capture cannot be expressed as a literal run.
+        ///
+        /// The folded terminal reaches the rule action as
+        /// `ActionArg::Token { kind: Ident, .. }` (the intern records
+        /// `pushed_via_push_ident = false`, and realization branches on THAT
+        /// discriminator, not on the token kind). The mixfix action extractor in
+        /// `semantic_actions.rs` reads it accordingly.
+        macro_rules! __mixfix_capture_consume {
+            ($capture_kind:expr, $part_idx:expr) => {{
+                let __capture_kind: &str = $capture_kind;
+                let __part_idx: u8 = $part_idx;
+                WpdaStepAction::Fork {
+                    branches: vec![mettail_prattail::wpda_walker::ForkBranch {
+                        symbol: StackSymbolV2::mixfix_marker(
+                            *result_src_idx,
+                            *rule_idx,
+                            __part_idx,
+                        ),
+                        weight: lex_one(),
+                        new_state: WpdaState::MixfixLiteralRun {
+                            result_src_idx: *result_src_idx,
+                            rule_idx: *rule_idx,
+                            completed_idx: __part_idx,
+                            kind: 0,
+                            sub_pos: 0,
+                        },
+                        action_kind:
+                            mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeTokenKindAndReplace {
+                                kind_name: __capture_kind.to_string(),
+                            },
+                    }],
+                    consume_trigger: false,
+                }
+            }};
+        }
         macro_rules! __checked_literal_consume {
             ($expected:expr, $next_state:expr) => {{
                 let __expected: &str = $expected;
@@ -1706,9 +1768,17 @@ pub(crate) fn emit_engine_impl_full(
                             if !METHOD_NAME_PRUNE_ENABLED {
                                 true
                             } else {
+                                // #131: the 4th element is the capture kind, which this
+                                // prune does not consult — its evidence is the part's
+                                // FIRST PRECEDING LITERAL, and a capture part carries
+                                // preceding literals exactly as an operand part does.
+                                // A capture part with none (Rholang's collapsed method
+                                // name, `Call`'s `m`) yields `None` ⇒ ALWAYS KEEP, which
+                                // is the sound direction: the prune may only drop a rule
+                                // it can PROVE dead one step early.
                                 let __lit: Option<&'static str> =
                                     match mixfix_part(result_src, rule_idx, 0) {
-                                        Some((_, preceding, _)) => preceding.first().copied(),
+                                        Some((_, preceding, _, _)) => preceding.first().copied(),
                                         None => mixfix_nullary_literals(result_src, rule_idx)
                                             .and_then(|l| l.first().copied()),
                                     };
@@ -2055,7 +2125,25 @@ pub(crate) fn emit_engine_impl_full(
                         // consumed by Unwinding-MixfixMarker and
                         // MixfixLiteralRun (when needed).
                         match mixfix_part(*result_src_idx, *rule_idx, *completed_idx) {
-                            Some((operand_src_idx, _preceding, _following)) => {
+                            // #131: a CAPTURE part has no category to enter, and its
+                            // `operand_src_idx` is the `MIXFIX_PART_NO_OPERAND` poison.
+                            // This arm exists so that reaching here with a capture part
+                            // SAYS SO instead of pushing a `CategoryEntry` for a
+                            // non-category. The capture is driven entirely by
+                            // `MixfixLiteralRun` (kinds 2 and 1), which is the state
+                            // every mixfix rule actually transits — nothing in the
+                            // emitted engine enters `MixfixContinuation` today — so this
+                            // is a guard on an unused route, not a second driver.
+                            Some((_, _preceding, _following, Some(capture_kind))) => {
+                                WpdaStepAction::Error(format!(
+                                    "mixfix part {} of (result={}, rule={}) is a `{}` token \
+                                     capture, which MixfixContinuation cannot dispatch — a \
+                                     capture consumes a token and has no category to enter. \
+                                     Report this as a macro bug.",
+                                    completed_idx, result_src_idx, rule_idx, capture_kind,
+                                ))
+                            }
+                            Some((operand_src_idx, _preceding, _following, None)) => {
                                 WpdaStepAction::ReplaceAndPush {
                                     replace_symbol: StackSymbolV2::mixfix_marker(
                                         *result_src_idx,
@@ -2149,6 +2237,37 @@ pub(crate) fn emit_engine_impl_full(
                         // is then empty).
                         #mixfix_mlr_helpers_site_tokens
                         match (*kind, part) {
+                            // ★ #131: the PRE-CAPTURE literal run. Structurally the
+                            // kind-2 arm below, except that when the preceding literals
+                            // are exhausted the part is satisfied by CONSUMING ONE TOKEN
+                            // rather than by dispatching an operand.
+                            //
+                            // This is the arm `Call . recv:Num, m:Ident, args:Vec(Num)
+                            // |- recv "." m "(" args.*sep(",") ")"` enters right after
+                            // its `.` trigger: part 0 is `m`, whose preceding run is
+                            // EMPTY, so control arrives here and demands one `Ident`.
+                            // Before it existed the same state fell through to the
+                            // operand dispatch and sub-parsed the non-category `Ident`,
+                            // which is why the rule had no realizable reading at ANY
+                            // arity — including arity zero, where no separator is ever
+                            // scanned and the `*sep` part is therefore not implicated.
+                            (2, Some((_, preceding, _following, Some(capture_kind)))) => {
+                                if (*sub_pos as usize) < preceding.len() {
+                                    let expected = preceding[*sub_pos as usize];
+                                    __checked_literal_consume!(
+                                        expected,
+                                        WpdaState::MixfixLiteralRun {
+                                            result_src_idx: *result_src_idx,
+                                            rule_idx: *rule_idx,
+                                            completed_idx: *completed_idx,
+                                            kind: 2,
+                                            sub_pos: sub_pos + 1,
+                                        }
+                                    )
+                                } else {
+                                    __mixfix_capture_consume!(capture_kind, *completed_idx)
+                                }
+                            }
                             // #307 ROOT-A D1: the NEW pre-operand literal run
                             // — consumes parts[completed_idx].PRECEDING before
                             // the operand dispatch; the marker stays at
@@ -2156,7 +2275,7 @@ pub(crate) fn emit_engine_impl_full(
                             // operand completes). Empty preceding (Tern/PAmb)
                             // passes straight through to the operand
                             // (empty_pre_passthrough: zero blast radius).
-                            (2, Some((operand_src_idx, preceding, _following))) => {
+                            (2, Some((operand_src_idx, preceding, _following, None))) => {
                                 if (*sub_pos as usize) < preceding.len() {
                                     let expected = preceding[*sub_pos as usize];
                                     __checked_literal_consume!(
@@ -2206,7 +2325,15 @@ pub(crate) fn emit_engine_impl_full(
                                     }
                                 }
                             }
-                            (0, Some((_, _preceding, following))) => {
+                            // #131: the POST-part literal run is IDENTICAL for a capture
+                            // part and an operand part — both have completed part
+                            // `completed_idx` and both owe its `following` literals, then
+                            // either the marker Pop or the hand-off to part
+                            // `completed_idx + 1`. `Call` arrives here with the method
+                            // name consumed and `following == ["("]`, then hands off to
+                            // the `*sep` repetition. So the capture kind is deliberately
+                            // NOT matched: there is nothing left to distinguish.
+                            (0, Some((_, _preceding, following, _))) => {
                                 if (*sub_pos as usize) < following.len() {
                                     // Consume following[sub_pos] — CHECKED.
                                     let expected = following[*sub_pos as usize];
@@ -2340,7 +2467,44 @@ pub(crate) fn emit_engine_impl_full(
                                     *result_src_idx, *rule_idx, *completed_idx + 1,
                                 );
                                 match next_part {
-                                    Some((operand_src_idx, preceding, _following)) => {
+                                    // ★ #131: the NEXT part is a token capture. Same
+                                    // between-part literal run as the operand case, but
+                                    // the hand-off consumes one token instead of pushing
+                                    // a `CategoryEntry` — and, exactly as the operand
+                                    // hand-off does, it BUMPS the marker to
+                                    // `completed_idx + 1` so the post-part run
+                                    // (`kind: 0`) and the eventual action-arg accounting
+                                    // both see the capture as a completed part.
+                                    //
+                                    // ⚠ Not reached by `Call`, whose capture is part 0
+                                    // and therefore arrives via `kind: 2`. It IS the arm
+                                    // a mid-rule capture after another operand needs
+                                    // (`a "." m "." b`), and omitting it would have left
+                                    // that shape falling into the operand branch below —
+                                    // sub-parsing the poison `MIXFIX_PART_NO_OPERAND` as
+                                    // a category. The two arms are written together
+                                    // because the gap between them is exactly the class
+                                    // of defect this change exists to remove.
+                                    Some((_, preceding, _following, Some(capture_kind))) => {
+                                        if (*sub_pos as usize) < preceding.len() {
+                                            let expected = preceding[*sub_pos as usize];
+                                            __checked_literal_consume!(
+                                                expected,
+                                                WpdaState::MixfixLiteralRun {
+                                                    result_src_idx: *result_src_idx,
+                                                    rule_idx: *rule_idx,
+                                                    completed_idx: *completed_idx,
+                                                    kind: 1,
+                                                    sub_pos: sub_pos + 1,
+                                                }
+                                            )
+                                        } else {
+                                            __mixfix_capture_consume!(
+                                                capture_kind, *completed_idx + 1
+                                            )
+                                        }
+                                    }
+                                    Some((operand_src_idx, preceding, _following, None)) => {
                                         if (*sub_pos as usize) < preceding.len() {
                                             // Consume preceding[sub_pos] — CHECKED (#307 D3).
                                             let expected = preceding[*sub_pos as usize];

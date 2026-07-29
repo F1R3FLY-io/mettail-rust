@@ -651,6 +651,13 @@ fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<MixfixPart>) {
                     preceding_terminals: Vec::new(),
                     following_terminals: Vec::new(), // filled below
                     repetition: None,
+                    // #131: this reconstruction serves the BINDING-POWER table only
+                    // (precedence + associativity). A capture part yields no operand
+                    // and therefore carries no binding power, so the bp view of a rule
+                    // is the same whether or not a part is a capture — see
+                    // `emit_mixfix_parts_fn` for the codegen view, which does
+                    // distinguish them.
+                    capture_kind: None,
                 });
             },
             SyntaxItemSpec::Terminal(t) if after_trigger => {

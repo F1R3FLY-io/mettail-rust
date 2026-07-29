@@ -75,6 +75,11 @@ pub mod forks;
 /// `cargo test -p macros grammar_generality`.
 #[cfg(test)]
 mod grammar_generality_prop;
+/// #131: the `Ident`-capture ROUTING GATE — every declared `m:Ident` param must
+/// reach a token consumer in one of the two machines that can provide one. Runs
+/// at macro-expansion time; see the module docs for the three faults it rejects
+/// and why each was a real, measured state rather than a hypothetical.
+pub mod ident_capture_routing;
 pub mod infix;
 /// M6c.2 (2026-05-14): per-grammar `lex_alt_rule_for(cat, kind)` codegen.
 /// Used by the lex-Fork emitter to bind alternative tokens to prefix-site
@@ -118,6 +123,23 @@ use quote::{format_ident, quote};
 /// types — and is safe to include in the language crate alongside the
 /// existing trampoline parser during the Phase C parallel emission period.
 pub fn generate_wpda_engine_module(language: &LanguageDef) -> TokenStream {
+    // ★ #131: the `Ident`-capture ROUTING GATE, first thing and before any table
+    // is built. A declared `m:Ident` param that no machine consumes produces a
+    // parser in which the rule has NO realizable reading, and the only diagnostic
+    // the grammar author ever sees names neither the rule, nor the param, nor
+    // `Ident`. Stopping here instead names all three. Inert on every shipped
+    // grammar — none declares an `Ident` param.
+    //
+    // ⚠ The RETURN is load-bearing, not tidiness. `emit_bp_tables` below reaches
+    // `emit_mixfix_parts_fn`, whose hardened category lookup PANICS on exactly the
+    // grammars this gate rejects — and a proc-macro panic under the `[profile.dev]`
+    // cranelift backend aborts `rustc` with `fatal runtime error: Rust cannot catch
+    // foreign exceptions` and prints NO message (measured). Returning the
+    // `compile_error!` tokens here is what puts a readable diagnostic in front of
+    // that mute abort.
+    if let Some(errors) = ident_capture_routing::enforce(language) {
+        return errors;
+    }
     let lang_name = language.name.to_string();
     let engine_ident = format_ident!("{}WpdaEngine", lang_name);
 

@@ -151,6 +151,43 @@ pub struct MixfixPart {
     /// delivered to the rule action as an `ActionArg::CollectionId`.
     /// `None` for ordinary single-operand parts.
     pub repetition: Option<MixfixRep>,
+    /// #131 (2026-07-28): when `Some(kind)`, this part is a TOKEN CAPTURE —
+    /// the walker consumes exactly ONE token whose kind is `kind` and folds
+    /// its text as an action argument. It does **not** sub-parse a category.
+    ///
+    /// # Why a field, not a `MixfixPart` variant
+    ///
+    /// `repetition` already established that a part's *driving mode* is a
+    /// field rather than an enum discriminant, and the two are ORTHOGONAL:
+    /// Rholang's collapsed method surface
+    /// `Call . recv:Num, m:Ident, args:Vec(Num) |- recv "." m "(" args.*sep(",") ")"`
+    /// carries one capture part (`m`) AND one repetition part (`args`) in a
+    /// single rule. Modelling either as a variant would force the other to be
+    /// expressible inside it.
+    ///
+    /// # Why the kind is a `String` and not a `bool`
+    ///
+    /// The kind names the token class to demand, and the walker resolves it
+    /// through `capture_kind(&str)`, which maps the BUILTIN `"Ident"` to
+    /// [`crate::wpda_runtime::TokenKind::Ident`] (the kind the lexer actually
+    /// emits) and any other name to `TokenKind::Custom`. Carrying the name
+    /// keeps that one resolution rule shared with the binder-path captures
+    /// instead of duplicating a second, divergent notion of "identifier".
+    ///
+    /// # Invariants
+    ///
+    /// - A capture part yields NO operand, so it consumes no operand slot:
+    ///   `emit_mixfix_parts_fn` emits `u16::MAX` in the `operand_src_idx`
+    ///   position of a capture part's row precisely so that a consumer which
+    ///   ignores `capture_kind` and reads the index anyway cannot silently
+    ///   sub-parse category 0.
+    /// - `operand_category` still carries the declared type name (`"Ident"`)
+    ///   for diagnostics. It is NOT a declared category and must never be
+    ///   resolved to a category index.
+    /// - `capture_kind` and `repetition` are mutually exclusive on one part:
+    ///   a repetition accumulates category operands, a capture consumes a
+    ///   token. `Call`'s two parts hold one each.
+    pub capture_kind: Option<String>,
 }
 
 /// GEN-1 B-3 (Stage S2/S3): the descriptor for a mixfix repetition operand
@@ -1023,6 +1060,7 @@ mod tests {
                 preceding_terminals: vec![],
                 following_terminals: vec![":".to_string()],
                 repetition: None,
+                capture_kind: None,
             },
             MixfixPart {
                 operand_category: "Int".to_string(),
@@ -1030,6 +1068,7 @@ mod tests {
                 preceding_terminals: vec![],
                 following_terminals: vec![],
                 repetition: None,
+                capture_kind: None,
             },
         ];
         table.operators.push(ternary);

@@ -22,6 +22,20 @@ use mettail_prattail::binding_power::{
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+/// #131: the `operand_src_idx` a CAPTURE `MixfixPart` carries in the emitted
+/// `mixfix_part` table.
+///
+/// A capture part consumes ONE token and yields no operand, so no category index
+/// is honest for it. The alternative — resolving `"Ident"` through the category
+/// list — silently produced `0`, the FIRST declared category, and the walker then
+/// sub-parsed the wrong category with no diagnostic anywhere. This value is the
+/// backstop that makes such a read detectable; the driver reads `capture_kind`
+/// first and never reaches it.
+///
+/// Emitted verbatim as the generated `MIXFIX_PART_NO_OPERAND` so the codegen-time
+/// and runtime notions cannot drift.
+const MIXFIX_PART_NO_OPERAND: u16 = u16::MAX;
+
 /// Build the BindingPowerTable for a language from its `terms` block.
 pub(crate) fn build_bp_table(language: &LanguageDef) -> BindingPowerTable {
     let infix_rules = extract_infix_rules(language);
@@ -281,6 +295,18 @@ fn classify_postfix_mixfix(
                     preceding_terminals: std::mem::take(&mut preceding_buffer),
                     following_terminals: Vec::new(),
                     repetition: None,
+                    // #131: an `m:Ident` param in an OPERAND-LEADING rule is a TOKEN
+                    // CAPTURE, not a category operand. Rholang's collapsed method
+                    // surface — `recv "." m "(" args.*sep(",") ")"` — is exactly this
+                    // shape, and it is the whole reason the field exists.
+                    //
+                    // Before this, `base_type_name` yielded `"Ident"`, which is not a
+                    // declared category, and the walker sub-parsed a category that does
+                    // not exist: the rule had NO realizable reading and `# . f ( )`
+                    // failed at every arity with a diagnostic that never mentioned
+                    // `Ident`. See `MixfixPart::capture_kind` for why this is a field
+                    // and not a variant, and why the kind is carried by name.
+                    capture_kind: capture_kind_of(sty),
                 });
                 simple_idx += 1;
                 idx += 1;
@@ -324,6 +350,10 @@ fn classify_postfix_mixfix(
                         min: 0,
                         close: Vec::new(),
                     }),
+                    // #131: a repetition accumulates CATEGORY operands, so it is never
+                    // also a token capture. The two modes are orthogonal and both
+                    // appear in `Call` — on DIFFERENT parts.
+                    capture_kind: None,
                 });
                 simple_idx += 1;
                 idx += 1;
@@ -414,42 +444,20 @@ fn classify_mixfix(
                         return None;
                     }
                     if param_idx > 0 {
-                        // ★★ AN OPERAND-LEADING RULE CANNOT YET CARRY AN `Ident` CAPTURE,
-                        // AND IT MUST SAY SO RATHER THAN BUILD AN UNPARSEABLE RULE.
+                        // #131: an `Ident` param here is a TOKEN CAPTURE, carried by
+                        // `MixfixPart::capture_kind` and consumed one token at a time by
+                        // the walker's mixfix part driver.
                         //
-                        // `MixfixPart` has NO representation for a token consumption —
-                        // every part is a CATEGORY operand (`operand_category`) or a
-                        // repetition of them (`MixfixRep`). Left alone, `base_type_name`
-                        // happily yields `"Ident"` and the walker then tries to SUB-PARSE
-                        // a category that does not exist, so the rule silently has no
-                        // realizable reading: `# . f ( )` fails at every arity with a
-                        // diagnostic that never mentions `Ident`.
-                        //
-                        // That silence is the same fails-open class this whole task has
-                        // been chasing (a `RealizedTerm` coerced to `""`, a fork emitted
-                        // into a dispatcher never called). Failing at MACRO-EXPANSION time
-                        // names the limitation at the grammar that triggers it.
-                        //
-                        // ⚠ THIS IS THE SHAPE RHOLANG'S COLLAPSED `EMethodCall` NEEDS
-                        // (`recv "." name "(" args ")"`), so #132's collapse is blocked on
-                        // lifting it. The fix is structural, not a guard: `MixfixPart`
-                        // needs a token-capture part kind plus walker support to consume
-                        // it — a `prattail/` change, sized accordingly. A LITERAL-leading
-                        // rule (`Tagged . m:Ident |- "tag" m`) is unaffected: it routes
-                        // through `classify_binder_in` → `BinderPrefix` →
-                        // `WpdaState::BinderRule` and works today.
-                        if pty.is_ident_text() {
-                            panic!(
-                                "mettail: rule `{}` places an `Ident` capture (`{p}`) in an \
-                                 OPERAND-LEADING (infix/postfix) rule. `MixfixPart` has no \
-                                 token-capture kind, so the parser would sub-parse a \
-                                 non-existent category `Ident` and the rule could never \
-                                 match. Put the capture in a LITERAL-leading rule, or \
-                                 implement the token-capture part kind. Report as macro bug \
-                                 if you believe this rule shape should be supported.",
-                                rule.label,
-                            );
-                        }
+                        // ⚠ THE GUARD THAT USED TO STAND HERE IS GONE ON PURPOSE. It
+                        // panicked at macro-expansion time because `MixfixPart` had no
+                        // representation for a token consumption, so `base_type_name`
+                        // yielded the non-category `"Ident"` and the walker sub-parsed a
+                        // category that does not exist — the rule had no realizable
+                        // reading at all. Making that LOUD was right while the shape was
+                        // unsupported; keeping it once the shape IS supported would
+                        // reject exactly the grammars the field was added to serve
+                        // (Rholang's collapsed `EMethodCall`). `capture_kind_of` replaces
+                        // the rejection with the representation.
                         let cat = base_type_name(pty)?;
                         // L12 follow-up B6 (2026-05-07): widened from
                         // `following_terminal: Option<String>` to vectors.
@@ -473,6 +481,13 @@ fn classify_mixfix(
                             preceding_terminals: Vec::new(),
                             following_terminals: following,
                             repetition: None,
+                            // #131: the classic-mixfix twin of the postfix-mixfix site.
+                            // Both classifiers reach `capture_kind_of` so a rule's
+                            // reading does not depend on WHICH classifier claimed it —
+                            // the very asymmetry that made `Tagged` (literal-leading,
+                            // binder path) green while `Call` (operand-leading, Pratt
+                            // path) had no realizable reading at all.
+                            capture_kind: capture_kind_of(pty),
                         });
                     }
                 },
@@ -541,6 +556,47 @@ fn base_type_name(ty: &TypeExpr) -> Option<String> {
         _ => None,
     }
 }
+
+/// #131: the TOKEN KIND a mixfix part must consume, or `None` if the part is an
+/// ordinary category operand.
+///
+/// This is the SINGLE decision point that turns a declared param type into
+/// [`MixfixPart::capture_kind`]. It answers exactly one question — "does this
+/// param consume a token instead of naming a category?" — and it answers it from
+/// [`TypeExpr::is_ident_text`], the same predicate the binder path uses to route
+/// `m:Ident` to `BinderPosition::IdentTextCapture`. Both paths therefore agree on
+/// what an identifier param IS, which is what lets the LITERAL-leading rule
+/// (`Tagged . m:Ident |- "tag" m`) and the OPERAND-leading rule
+/// (`Call . recv:Num, m:Ident, … |- recv "." m …`) deliver the same `String` field
+/// through two different machines.
+///
+/// The returned name is resolved at parse time by the walker's `capture_kind`,
+/// which maps `"Ident"` to the builtin `TokenKind::Ident` the lexer actually
+/// emits (commit `ac46362b`) — NOT to `TokenKind::Custom("Ident")`, which no lexer
+/// ever produces and which would leave the gate permanently dead.
+fn capture_kind_of(ty: &TypeExpr) -> Option<String> {
+    match ty.is_ident_text() {
+        true => {
+            // ⚠ The name is spelled ONCE, here, and the assertion below is what stops it
+            // from drifting away from the classifier that decided we are on this branch.
+            // A silent drift would emit `capture_kind: Some("…")` for a kind the walker's
+            // `capture_kind` resolves to `TokenKind::Custom("…")`, which no lexer emits —
+            // reproducing the exact dead gate `ac46362b` root-caused and fixed.
+            debug_assert_eq!(
+                mettail_ast::grammar::NonTerminalKind::classify(IDENT_CAPTURE_KIND_NAME),
+                mettail_ast::grammar::NonTerminalKind::Ident,
+                "IDENT_CAPTURE_KIND_NAME must be the name `NonTerminalKind::classify` \
+                 maps to `Ident`",
+            );
+            Some(IDENT_CAPTURE_KIND_NAME.to_string())
+        },
+        false => None,
+    }
+}
+
+/// The token-kind name a builtin-`Ident` mixfix capture demands. See
+/// [`capture_kind_of`] for why it is spelled exactly once.
+const IDENT_CAPTURE_KIND_NAME: &str = "Ident";
 
 /// Emit per-category static BP tables consumed by the `InfixLoop` engine
 /// state. Tables are indexed by terminal text at runtime via the emitted
@@ -1146,6 +1202,17 @@ fn emit_mixfix_parts_fn(
                 continue;
             }
             let part_idx = part_idx as u8;
+            // #131: a CAPTURE part consumes one token and yields NO operand, so it must
+            // not occupy an operand slot. `MIXFIX_PART_NO_OPERAND` is emitted in the
+            // `operand_src_idx` position precisely so a consumer that ignores
+            // `capture_kind` and reads the index anyway cannot silently sub-parse
+            // category 0 — the failure it would otherwise produce is the one this whole
+            // task root-caused. The driver matches on the capture kind BEFORE the index
+            // is ever read; the poison is the backstop, not the mechanism.
+            let capture_kind_ts: TokenStream = match &part.capture_kind {
+                Some(k) => quote! { Some(#k) },
+                None => quote! { None },
+            };
             // ⚠ SIBLING OF THE #131 ROOT, HARDENED. This is the same fails-open shape as
             // `semantic_actions.rs`'s `lookup_cat_idx(..).unwrap_or(0)`, which resolved
             // the unknown category `Ident` to index 0 — the FIRST declared category — and
@@ -1153,22 +1220,35 @@ fn emit_mixfix_parts_fn(
             // read identifier text. Here the consequence would be a mixfix part that
             // SUB-PARSES THE WRONG CATEGORY: silently wrong, never a diagnostic.
             //
-            // An `Ident` part cannot reach this line today — `classify_postfix_mixfix`
-            // panics on an operand-leading `Ident` capture before the table is built — so
-            // this hardening is provably inert, and `cargo check -p languages` completing
-            // across all 49 languages is the measurement that says so.
-            let operand_src_idx = categories
-                .iter()
-                .position(|c| c == &part.operand_category)
-                .map(|i| i as u16)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "mettail: mixfix part `{}` of rule `{}` names the category `{}`, \
-                         which is not declared. Defaulting to category 0 would silently \
-                         sub-parse the WRONG category. Report this as a macro bug.",
-                        part.param_name, rule_idx, part.operand_category,
-                    )
-                });
+            // A CAPTURE part legitimately names a non-category (`Ident`), so it takes the
+            // poison instead of the lookup. Every OTHER part must resolve, and the panic
+            // stays: `cargo check -p languages` completing across all 49 languages is the
+            // measurement that says it never fires on a shipped grammar.
+            //
+            // A capture row is emitted with the poison spelled by NAME rather than as
+            // the bare literal `65535u16`, so the generated table says what it means at
+            // the one place a reader would otherwise have to guess:
+            //   `(0u16, 1u16, 0u8) => Some((MIXFIX_PART_NO_OPERAND, &[][..], &["("][..],
+            //                              Some("Ident")))`
+            let operand_src_idx: TokenStream = match part.capture_kind.is_some() {
+                true => quote! { MIXFIX_PART_NO_OPERAND },
+                false => {
+                    let idx = categories
+                        .iter()
+                        .position(|c| c == &part.operand_category)
+                        .map(|i| i as u16)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "mettail: mixfix part `{}` of rule `{}` names the category \
+                                 `{}`, which is not declared. Defaulting to category 0 would \
+                                 silently sub-parse the WRONG category. Report this as a \
+                                 macro bug.",
+                                part.param_name, rule_idx, part.operand_category,
+                            )
+                        });
+                    quote! { #idx }
+                },
+            };
             let preceding_lits: Vec<TokenStream> = part
                 .preceding_terminals
                 .iter()
@@ -1184,6 +1264,7 @@ fn emit_mixfix_parts_fn(
                     #operand_src_idx,
                     &[ #( #preceding_lits ),* ][..],
                     &[ #( #following_lits ),* ][..],
+                    #capture_kind_ts,
                 )),
             });
         }
@@ -1239,22 +1320,42 @@ fn emit_mixfix_parts_fn(
             (#spine_result_src, #spine_id) => Some(u8::MAX),
         });
     }
+    let no_operand_lit = MIXFIX_PART_NO_OPERAND;
     quote! {
         /// Mixfix per-part metadata: returns
-        /// `(operand_src_idx, preceding_terminals, following_terminals)`.
+        /// `(operand_src_idx, preceding_terminals, following_terminals, capture_kind)`.
         /// L12 follow-up B6 (2026-05-07): widened to vector terminals
         /// for postfix-mixfix support.
+        ///
+        /// #131 (2026-07-28): the 4th element is the TOKEN CAPTURE kind. `Some(k)`
+        /// means "consume ONE token of kind `k`", NOT "sub-parse the category `k`";
+        /// `None` is an ordinary category operand. A capture part yields no operand,
+        /// so its `operand_src_idx` is the poison `MIXFIX_PART_NO_OPERAND` — reading
+        /// it as a category index is a bug, and the poison makes that bug loud
+        /// instead of letting it sub-parse category 0.
         #[allow(non_snake_case, dead_code)]
         fn mixfix_part(
             result_src_idx: u16,
             rule_idx: u16,
             part_idx: u8,
-        ) -> Option<(u16, &'static [&'static str], &'static [&'static str])> {
+        ) -> Option<(
+            u16,
+            &'static [&'static str],
+            &'static [&'static str],
+            Option<&'static str>,
+        )> {
             match (result_src_idx, rule_idx, part_idx) {
                 #(#part_arms)*
                 _ => None,
             }
         }
+
+        /// #131: the `operand_src_idx` a CAPTURE part carries. A capture consumes a
+        /// token and produces no operand, so there is no honest category index to
+        /// put here; this value exists so that reading one is detectable rather than
+        /// silently equal to the first declared category.
+        #[allow(dead_code)]
+        const MIXFIX_PART_NO_OPERAND: u16 = #no_operand_lit;
 
         /// Mixfix parts count: returns the number of inner operands for
         /// the (result_src, rule_idx) mixfix rule. Counts a `*sep` repetition
