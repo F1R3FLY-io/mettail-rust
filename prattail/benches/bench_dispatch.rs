@@ -32,7 +32,7 @@ fn dispatch_pipeline(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         group.bench_with_input(BenchmarkId::from_parameter(name), spec, |b, s| {
-            b.iter(|| generate_parser(s))
+            b.iter(|| generate_parser(s).expect("bench spec must be generable"))
         });
     }
 
@@ -52,7 +52,7 @@ fn dispatch_scaling(c: &mut Criterion) {
         let spec = synthetic_spec(n);
 
         group.bench_with_input(BenchmarkId::from_parameter(n), &spec, |b, s| {
-            b.iter(|| generate_parser(s))
+            b.iter(|| generate_parser(s).expect("bench spec must be generable"))
         });
     }
 

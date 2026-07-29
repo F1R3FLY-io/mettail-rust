@@ -10,11 +10,13 @@
 
 #[cfg(test)]
 mod doc_examples;
+mod expansion_hook;
 mod gen;
 mod logic;
 
 use proc_macro::TokenStream;
-use proc_macro_error::{abort, proc_macro_error};
+use proc_macro_error::proc_macro_error;
+use quote::quote_spanned;
 use syn::parse_macro_input;
 
 use gen::runtime::wpda_codegen::generate_wpda_engine_module;
@@ -29,20 +31,65 @@ use mettail_ast::language::LanguageDef;
 use mettail_ast::merge::{apply_extends, apply_includes, apply_mixins};
 use mettail_ast::validation::validate_language;
 
+/// Render a refusal as `compile_error!` tokens at `span`.
+///
+/// ⚠ The trailing semicolon is **load-bearing**, not style. `language!` expands
+/// in ITEM position, and a macro invocation in item position must be delimited by
+/// braces or followed by `;` — without it `rustc` stops at
+/// "macros that expand to items must be delimited with braces or followed by a
+/// semicolon", the `compile_error!` never expands, and the refusal's message is
+/// never printed. The one working precedent in this tree
+/// (`ident_capture_routing::enforce`) has always carried it.
+fn refuse(span: proc_macro2::Span, message: &str) -> proc_macro2::TokenStream {
+    quote_spanned!(span => compile_error!(#message);)
+}
+
 #[proc_macro]
 #[proc_macro_error]
 pub fn language(input: TokenStream) -> TokenStream {
-    // Clone input BEFORE parse_macro_input! consumes it.
-    // The clone is safe within the same invocation's bridge session.
-    let input_for_registry: proc_macro2::TokenStream = input.clone().into();
+    // ★ Install the expansion panic hook before anything can panic. See
+    // `expansion_hook`'s module docs for what it does and does NOT add: the
+    // default handler already prints the payload and the `file:line`, including
+    // for panics in `pipeline::analysis`'s spawned threads (measured). What only
+    // the hook can supply is WHICH grammar was being expanded — one `rustc`
+    // process expands all 54 of them.
+    //
+    // Installed here rather than in `expand_language` so the unit tests, which
+    // call `expand_language` directly, never replace libtest's hook.
+    expansion_hook::install();
+    expand_language(input.into()).into()
+}
+
+/// The whole of `language!`, over `proc_macro2` tokens.
+///
+/// ★ Split out from the `#[proc_macro]` entry point so the macro boundary is
+/// REACHABLE FROM A UNIT TEST. `proc_macro::TokenStream` and `parse_macro_input!`
+/// both panic outside a live `rustc` bridge session, so as long as the body lived
+/// in `language` itself, the only instrument that could observe a refusal was a
+/// child `cargo build` — and consequently none of the boundary's nine refusal
+/// paths had a test at all. Over `proc_macro2` tokens, `expand_language` is an
+/// ordinary function: hand it a grammar, read the tokens it returns.
+///
+/// Every refusal RETURNS. None aborts. See the crate's `#[cfg(test)] mod
+/// expansion_boundary` for the cells that assert on the returned text.
+pub(crate) fn expand_language(input: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    // Clone input BEFORE parsing consumes it.
+    let input_for_registry = input.clone();
     // Verbatim raw body source, emitted as `LanguageMetadata::definition_source`
     // so the exact augmented `LanguageDef` can be reconstructed at runtime via
     // `mettail_ast::auto_inject::reconstruct_language_def` (reproducing the same
     // `definition_fingerprint`). Captured before parse so it is byte-for-byte
     // the macro invocation body.
     let definition_source_str = input_for_registry.to_string();
-    let mut language_def = parse_macro_input!(input as LanguageDef);
+    // `syn::parse2` rather than `parse_macro_input!`: identical behaviour on both
+    // arms (the macro's error arm is itself `return err.to_compile_error()`), but
+    // it accepts `proc_macro2` tokens and so works outside a bridge session.
+    let mut language_def = match syn::parse2::<LanguageDef>(input) {
+        Ok(def) => def,
+        Err(e) => return e.to_compile_error(),
+    };
     let lang_name = language_def.name.to_string();
+    expansion_hook::entering(&lang_name);
 
     // Store binary-encoded input tokens in registry (no bridge types retained).
     // MUST happen before any processing so consuming grammars get the full
@@ -51,7 +98,7 @@ pub fn language(input: TokenStream) -> TokenStream {
     // sharing a `name:` would otherwise silently change what a third one's `extends:`
     // resolves to — see `ast::registry::duplicate_registration_diagnostic`.
     if let Err(msg) = mettail_ast::registry::register_language(&lang_name, &input_for_registry) {
-        abort!(language_def.name.span(), "{}", msg);
+        return refuse(language_def.name.span(), &msg);
     }
 
     // Apply composition clauses in order:
@@ -59,21 +106,54 @@ pub fn language(input: TokenStream) -> TokenStream {
     // 2. includes — grammar-only import (Override: local rules win)
     // 3. mixins — fragment import (Override: local rules win)
     if let Err(msg) = apply_extends(&mut language_def) {
-        abort!(language_def.name.span(), "extends error:\n{}", msg);
+        return refuse(language_def.name.span(), &format!("extends error:\n{msg}"));
     }
 
     if let Err(msg) = apply_includes(&mut language_def) {
-        abort!(language_def.name.span(), "includes error:\n{}", msg);
+        return refuse(language_def.name.span(), &format!("includes error:\n{msg}"));
     }
 
     if let Err(msg) = apply_mixins(&mut language_def) {
-        abort!(language_def.name.span(), "mixins error:\n{}", msg);
+        return refuse(language_def.name.span(), &format!("mixins error:\n{msg}"));
     }
 
     if let Err(e) = validate_language(&language_def) {
-        let span = e.span();
-        let msg = e.message();
-        abort!(span, "{}", msg);
+        // The spanned renderer that has existed beside `ValidationError` since the
+        // type was written, and that this boundary reached past for months.
+        return e.to_compile_error();
+    }
+
+    // ★ #131 / #141-R2 — the `Ident`-capture ROUTING GATE, HOISTED to the macro
+    // boundary from inside `generate_wpda_engine_module`.
+    //
+    // # Why the gate had to move, and what it did not guard where it was
+    //
+    // Its former home is the ELEVENTH thing this function runs. `generate_all`
+    // below is the SECOND, and it reaches all 421 authored refusal sites in
+    // `prattail` — including the hardened category lookups this gate exists to
+    // stand in front of. Worse, a gate that returns tokens from
+    // `generate_wpda_engine_module` returns them as THAT MODULE'S CONTRIBUTION:
+    // `language!` kept going and still spilled five `include!` files to
+    // `target/generated/<lang>/` for a grammar it had already rejected. For the
+    // #131 fault the gate and its fault happened to live in the same function, so
+    // it worked; for anything upstream it was a gate in name only.
+    //
+    // A gate must live where it can `return` THE WHOLE EXPANSION. That is here.
+    //
+    // # Why this position and not one further down
+    //
+    // It sits above `emit_auto_injection_rules` deliberately, and the verdict is
+    // provably unchanged by that: auto-injection appends to `language_def.terms`
+    // and `.rewrites` only (`AutoInjectionOutput` has exactly those two fields),
+    // never to `.types` — and the gate's two classifiers read the rule itself
+    // (`classify_rule_public`) and `language.types` (`classify_binder_in`). The
+    // injected rules are `<Source>To<Target> . v:Source |- v : Target`, which
+    // declare no `Ident` param and so contribute no violations of their own.
+    // Rejecting before synthesising rules for a grammar that is already refused
+    // is strictly less work.
+    if let Some(errors) = gen::runtime::wpda_codegen::ident_capture_routing::enforce(&language_def)
+    {
+        return errors;
     }
 
     // Stage 3.13 (2026-04-30): auto-injection codegen — append synthetic
@@ -101,16 +181,16 @@ pub fn language(input: TokenStream) -> TokenStream {
     // language's logic relations and ?guard:Guard predicates to detect
     // negation cycles. Non-stratifiable programs make Ascent's fixpoint
     // semantics undefined, so this is a hard error (STRAT01).
+    //
+    // ★ EVERY violation is reported, not the first. `abort!` diverged, so the
+    // loop that used to stand here could never complete a second iteration and
+    // carried an `#[allow(clippy::never_loop)]` to say so; an author with three
+    // negation cycles fixed one per build. `compile_errors` emits one
+    // `compile_error!` per cycle, which is what `ident_capture_routing::enforce`
+    // has always done for its own violations.
     let strat_report = logic::stratification::analyze(&language_def);
-    if strat_report.has_violations() {
-        // `abort!` diverges on the first violation, so this loop intentionally
-        // never completes a second iteration — the emit-first-then-abort
-        // proc-macro idiom. Allow the clippy::never_loop false-positive rather
-        // than restructure the diagnostic-emission loop.
-        #[allow(clippy::never_loop)]
-        for (_id, msg) in strat_report.diagnostics() {
-            abort!(language_def.name.span(), "{}", msg);
-        }
+    if let Some(errors) = strat_report.compile_errors(language_def.name.span()) {
+        return errors;
     }
 
     // Stage-instrumentation (gated by the `walker-trace` feature +
@@ -140,8 +220,17 @@ pub fn language(input: TokenStream) -> TokenStream {
     }
 
     stage!("generate_all.start");
-    // Generate the Rust AST types and operations (also captures WFST pipeline analysis)
-    let (ast_code, pipeline_analysis) = generate_all(&language_def);
+    // Generate the Rust AST types and operations (also captures WFST pipeline analysis).
+    //
+    // ★ #141 change 7 — `generate_all` is fallible. Everything downstream of it
+    // (`prattail`'s lexer soundness gates, the `LanguageSpec` bridge's option
+    // decoding) hands its refusal back as a `String` instead of panicking inside
+    // a cranelift-compiled proc macro, where a panic aborts `rustc` outright. The
+    // refusal becomes a diagnostic HERE, at the only place that holds a span.
+    let (ast_code, pipeline_analysis) = match generate_all(&language_def) {
+        Ok(generated) => generated,
+        Err(rejection) => return refuse(language_def.name.span(), &rejection),
+    };
     stage!("generate_all.done");
 
     stage!("generate_freshness_functions.start");
@@ -246,7 +335,7 @@ pub fn language(input: TokenStream) -> TokenStream {
     let wpda_include = spill_and_include(&lang_name, "wpda", wpda_engine_code);
     let strategies_include = spill_and_include(&lang_name, "strategies", public_strategies);
 
-    let combined = quote::quote! {
+    quote::quote! {
         #ast_include
         #freshness_include
         #metadata_include
@@ -275,9 +364,7 @@ pub fn language(input: TokenStream) -> TokenStream {
         // `languages/src/bin/simulate_{lang}.rs` host invokes. Empty under
         // `options { emit_simulator: false }`.
         #generated_simulation_main
-    };
-
-    TokenStream::from(combined)
+    }
 }
 
 /// Define a reusable grammar fragment (types + terms only, no equations/rewrites/logic).
@@ -306,14 +393,14 @@ pub fn language_fragment(input: TokenStream) -> TokenStream {
 
     // Validate: all category references in terms exist in types
     if let Err(msg) = mettail_ast::fragment::validate_fragment(&fragment_def) {
-        abort!(fragment_def.name.span(), "{}", msg);
+        return refuse(fragment_def.name.span(), &msg).into();
     }
 
     let frag_name = fragment_def.name.to_string();
     // Fails closed on a name already taken in this compilation unit — fragments and
     // languages share one namespace because `lookup_language_def` resolves both.
     if let Err(msg) = mettail_ast::registry::register_fragment(&frag_name, &input_for_registry) {
-        abort!(fragment_def.name.span(), "{}", msg);
+        return refuse(fragment_def.name.span(), &msg).into();
     }
 
     // Fragments generate NO code — the consuming language! generates everything
@@ -346,4 +433,240 @@ pub fn compose_languages(input: TokenStream) -> TokenStream {
     let def = parse_macro_input!(input as ComposeDef);
     let code = gen::compose_gen::generate_composed_language(&def);
     TokenStream::from(code)
+}
+
+/// ★ THE MACRO BOUNDARY'S REFUSAL PATHS, asserted on the tokens they return.
+///
+/// # Why these cells can exist at all, and why they did not before
+///
+/// Every cell here calls [`expand_language`] — the body of `language!`, split out
+/// of the `#[proc_macro]` entry point precisely so a test can reach it. Before
+/// that split there was no in-process instrument: `proc_macro::TokenStream` and
+/// `parse_macro_input!` both require a live `rustc` bridge session, so the only
+/// way to observe a refusal was a child `cargo build`, and consequently none of
+/// the boundary's refusals had a test.
+///
+/// # ⚠ Discipline these cells are held to
+///
+/// * **No cell expects a panic.** No `#[should_panic]`, no `catch_unwind`. The
+///   assertions are on returned token TEXT. (Under the pre-#141 boundary these
+///   same calls would have *killed the test binary*: `abort!` diverges, and a
+///   panic in a cranelift-compiled crate aborts the process rather than
+///   unwinding. That the calls now RETURN is itself the repair being asserted.)
+/// * **Every cell exercises a REFUSAL, which returns before any generator runs.**
+///   That is not incidental: a cell that let an expansion succeed would write six
+///   files into `target/generated/<lang>/` as a side effect of running, and the
+///   campaign's generated-output manifest treats that directory as evidence.
+/// * **The mutation is asserted to have applied**, and each cell carries a
+///   control that must NOT discriminate.
+#[cfg(test)]
+mod expansion_boundary {
+    use super::*;
+    use proc_macro2::Span;
+    use quote::quote;
+
+    /// A minimal grammar body, parameterised by its `name:` token.
+    ///
+    /// `emit_*: false` keeps the fixture from reaching the test/simulator/Blockly
+    /// writers even if a cell were ever to let an expansion through.
+    fn well_formed_source(name: &str) -> proc_macro2::TokenStream {
+        let name = syn::Ident::new(name, Span::call_site());
+        quote! {
+            name: #name,
+            options { emit_tests: false, emit_simulator: false, emit_blockly: false },
+            types { Term },
+            terms {
+                Plus . a:Term, b:Term |- a "+" b : Term;
+            },
+        }
+    }
+
+    /// The same grammar with one rule mutated to declare an `Ident` param in the
+    /// Pratt machine's LEFT-OPERAND position — a position that has no
+    /// representation, since an LHS is a parsed sub-term of a declared category
+    /// and `Ident` is a token class. `#[n_violations]` rules carry the fault.
+    fn unrouted_ident_source(name: &str, n_violations: usize) -> proc_macro2::TokenStream {
+        let name = syn::Ident::new(name, Span::call_site());
+        let rules = (0..n_violations).map(|i| {
+            let label = syn::Ident::new(&format!("Unrouted{i}"), Span::call_site());
+            let param = syn::Ident::new(&format!("m{i}"), Span::call_site());
+            let literal = format!("+{i}");
+            quote! { #label . #param:Ident, x:Term |- #param #literal x : Term; }
+        });
+        quote! {
+            name: #name,
+            options { emit_tests: false, emit_simulator: false, emit_blockly: false },
+            types { Term },
+            terms {
+                Plus . a:Term, b:Term |- a "+" b : Term;
+                #(#rules)*
+            },
+        }
+    }
+
+    /// ★ #141 change 2 — a duplicate `name:` RETURNS a `compile_error!` naming
+    /// the offending language, instead of `abort!`ing.
+    ///
+    /// MUTATION: `RedDupAlpha` is already in the registry when the expansion
+    /// begins — exactly the state a second `language! { name: RedDupAlpha }` in
+    /// one crate produces. Registered directly rather than by expanding the first
+    /// declaration, because a successful expansion writes six files to
+    /// `target/generated/`.
+    ///
+    /// CONTROL that must NOT discriminate: `RedDupBeta` is registered too. A
+    /// message that named it would mean the diagnostic reports "some duplicate"
+    /// rather than *this* one, and a whole-string assertion would not have
+    /// caught it — a vacuous-witness failure this campaign has already recorded
+    /// once.
+    #[test]
+    fn a_duplicate_name_returns_a_compile_error_naming_that_language() {
+        let body = quote! { name: RedDupAlpha, types { Term } };
+        mettail_ast::registry::register_language("RedDupAlpha", &body)
+            .expect("first registration must succeed — the registry is thread-local");
+        mettail_ast::registry::register_language("RedDupBeta", &body)
+            .expect("the control name must register cleanly");
+
+        // MUTATION APPLIED: the two sources differ in exactly the `name:` token.
+        let mutated = well_formed_source("RedDupAlpha").to_string();
+        let control = well_formed_source("RedDupBeta").to_string();
+        assert_eq!(
+            mutated.replace("RedDupAlpha", "@"),
+            control.replace("RedDupBeta", "@"),
+            "the fixtures must differ in the name token and nothing else",
+        );
+
+        let rendered = expand_language(well_formed_source("RedDupAlpha")).to_string();
+        assert!(
+            rendered.contains("compile_error"),
+            "the refusal must be a `compile_error!`, not a diverging abort: {rendered}",
+        );
+        assert!(
+            rendered.contains("duplicate definition name"),
+            "the refusal must carry the registry's diagnostic: {rendered}",
+        );
+        assert!(
+            rendered.contains("RedDupAlpha"),
+            "★ the diagnostic must name the OFFENDING language: {rendered}",
+        );
+        assert!(
+            !rendered.contains("RedDupBeta"),
+            "★ …and not the other registered one — the message must track the \
+             input, not merely mention a duplicate: {rendered}",
+        );
+    }
+
+    /// ★ #141-R2 — the `Ident`-routing gate now discards THE WHOLE EXPANSION.
+    ///
+    /// This is the assertion the hoist exists for. In its former home
+    /// (`generate_wpda_engine_module`, the eleventh generator) the gate's tokens
+    /// replaced one module's contribution and `language!` carried on: it still
+    /// ran `generate_all` — all 421 of `prattail`'s authored refusal sites —
+    /// and still spilled five `include!` files for a grammar it had rejected.
+    ///
+    /// Two independent witnesses that nothing downstream ran:
+    ///   1. the returned tokens contain no `include!`, which every spilled
+    ///      generator emits exactly one of;
+    ///   2. `target/generated/<lang>/` was never created.
+    ///
+    /// CONTROL that must NOT discriminate: `Plus`, a perfectly routed rule, sits
+    /// in the same grammar and contributes no violation of its own.
+    #[test]
+    fn an_unrouted_ident_discards_the_whole_expansion() {
+        let source = unrouted_ident_source("RedGateOne", 1);
+
+        // MUTATION APPLIED: the fixture really does declare an `Ident` param.
+        let printed = source.to_string();
+        assert!(
+            printed.contains("m0 : Ident"),
+            "the fixture must declare the `Ident` param under test: {printed}",
+        );
+
+        let rendered = expand_language(source).to_string();
+        assert!(
+            rendered.contains("compile_error"),
+            "the gate must refuse this grammar: {rendered}",
+        );
+        for needle in ["Unrouted0", "m0", "has no token consumer", "leading position"] {
+            assert!(
+                rendered.contains(needle),
+                "the diagnostic must contain {needle:?}: {rendered}",
+            );
+        }
+        assert!(
+            !rendered.contains("Plus"),
+            "the correctly routed rule in the same grammar must not be blamed: {rendered}",
+        );
+
+        // ★ WITNESS 1 — no generator's output reached the expansion.
+        assert!(
+            !rendered.contains("include"),
+            "★ R2: a rejected grammar must yield ONLY the refusal — an `include!` \
+             here would mean a spilled generator ran anyway: {rendered}",
+        );
+
+        // ★ WITNESS 2 — and nothing was written for it.
+        let dir = crate::logic::writer::lang_generated_dir("RedGateOne");
+        assert!(
+            !dir.exists(),
+            "★ R2: `language!` must not spill files for a grammar it refused; found {}",
+            dir.display(),
+        );
+    }
+
+    /// ★ #141 change 2/5 — EVERY violation is reported, not the first.
+    ///
+    /// MUTATION: three unrouted `Ident` params instead of one. `abort!` diverged,
+    /// so the pre-#141 boundary could deliver exactly one diagnostic per build no
+    /// matter how many faults a grammar carried.
+    #[test]
+    fn every_violation_reaches_the_user_in_one_build() {
+        let rendered = expand_language(unrouted_ident_source("RedGateThree", 3)).to_string();
+        assert_eq!(
+            rendered.matches("compile_error").count(),
+            3,
+            "one diagnostic per violation: {rendered}",
+        );
+        for label in ["Unrouted0", "Unrouted1", "Unrouted2"] {
+            assert!(rendered.contains(label), "{label} must be reported too: {rendered}");
+        }
+    }
+
+    /// ★ THE ANTI-VACUITY CONTROL for both gate cells above: the same fixture
+    /// SHAPE, with zero offending rules, must not be refused by the gate.
+    ///
+    /// It must not discriminate — it passes before the change and after it. A gate
+    /// that refused every grammar, or a boundary that returned `compile_error!`
+    /// unconditionally, would satisfy every assertion above and fail here.
+    ///
+    /// ⚠ It asserts on the GATE rather than on a full expansion deliberately: a
+    /// successful `expand_language` writes six files into `target/generated/` and
+    /// takes seconds, and this cell's question — "is the clean grammar refused?" —
+    /// is answered entirely by the gate.
+    #[test]
+    fn the_clean_twin_of_the_gate_fixture_is_not_refused() {
+        let def: mettail_ast::language::LanguageDef =
+            syn::parse2(unrouted_ident_source("RedGateClean", 0))
+                .expect("the zero-violation fixture must parse");
+        assert!(
+            validate_language(&def).is_ok(),
+            "the control grammar must be valid, or the cells above could be \
+             refusing it for an unrelated reason",
+        );
+        assert!(
+            gen::runtime::wpda_codegen::ident_capture_routing::enforce(&def).is_none(),
+            "★ the gate must ADMIT the same fixture with no `Ident` param — \
+             otherwise the refusals above prove only that the gate is indiscriminate",
+        );
+    }
+
+    /// A grammar `syn` cannot parse returns `compile_error!` too, rather than
+    /// reaching any of the paths above with a half-built `LanguageDef`.
+    #[test]
+    fn an_unparseable_body_returns_a_compile_error() {
+        let rendered = expand_language(quote! { this is not a language }).to_string();
+        assert!(
+            rendered.contains("compile_error"),
+            "a parse failure must still be a returned diagnostic: {rendered}",
+        );
+    }
 }

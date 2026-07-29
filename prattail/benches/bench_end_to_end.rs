@@ -29,7 +29,7 @@ fn bench_end_to_end(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         group.bench_with_input(BenchmarkId::from_parameter(name), spec, |b, spec| {
-            b.iter(|| generate_parser(spec));
+            b.iter(|| generate_parser(spec).expect("bench spec must be generable"));
         });
     }
 
@@ -47,7 +47,7 @@ fn bench_scaling(c: &mut Criterion) {
         let n_rules = spec.rules.len() as u64;
         group.throughput(Throughput::Elements(n_rules));
         group.bench_with_input(BenchmarkId::from_parameter(n), &spec, |b, spec| {
-            b.iter(|| generate_parser(spec));
+            b.iter(|| generate_parser(spec).expect("bench spec must be generable"));
         });
     }
 
@@ -71,7 +71,7 @@ fn bench_output_size(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(1)); // will be updated per-iteration
         group.bench_with_input(BenchmarkId::from_parameter(name), spec, |b, spec| {
             b.iter(|| {
-                let output = generate_parser(spec);
+                let output = generate_parser(spec).expect("bench spec must be generable");
                 let size = output.to_string().len();
                 size
             });

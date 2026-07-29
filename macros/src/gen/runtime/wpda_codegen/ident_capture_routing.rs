@@ -76,7 +76,7 @@
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::quote_spanned;
 
 use super::binder::{classify_binder_in, BinderPosition};
 
@@ -291,21 +291,53 @@ pub(crate) fn check_against(
 /// are proven INERT (no shipped grammar reaches them), so they are backstops
 /// rather than diagnostics, and this gate is what stands in front of them: it
 /// rejects the malformed grammar BEFORE codegen can reach a mute abort.
+///
+/// ★ #141-R2: this gate is invoked from `macros/src/lib.rs`, at the macro
+/// boundary, where its `return` discards the WHOLE expansion. It used to be
+/// called from inside `generate_wpda_engine_module`, the eleventh of twelve
+/// generators, where returning tokens only replaced that one module's
+/// contribution — `language!` carried on and still spilled five `include!` files
+/// for a grammar it had already rejected.
 pub(crate) fn enforce(language: &LanguageDef) -> Option<TokenStream> {
-    let mut messages: Vec<String> = Vec::new();
-    for rule in &language.terms {
-        for violation in check_rule(rule, language) {
-            messages.push(violation.message());
-        }
-    }
-    if messages.is_empty() {
+    let violations = enforce_violations(language);
+    if violations.is_empty() {
         return None;
     }
     let mut out = TokenStream::new();
-    for m in messages {
-        out.extend(quote! { compile_error!(#m); });
+    for (label, message) in violations {
+        // ★ #141 change 6 — SPANNED AT THE OFFENDING RULE. This was
+        // `quote! { compile_error!(#m); }`, whose tokens carry `Span::call_site()`,
+        // so `rustc` drew its caret under the `language!` invocation — the whole
+        // grammar — while `check_rule` had `rule.label` in hand the entire time.
+        // For Rholang that is a 400-line macro call and a caret on all of it.
+        out.extend(quote_spanned!(label.span() => compile_error!(#message);));
     }
     Some(out)
+}
+
+/// Every violation in `language`, each paired with the IDENT of the rule that
+/// carries it.
+///
+/// Split out of [`enforce`] so the span's PROVENANCE is assertable. In a unit
+/// test `proc_macro2::Span` is a fallback span with no file, line or equality —
+/// there is nothing to compare — so a cell that called [`enforce`] and read the
+/// rendered tokens could not tell a rule-spanned refusal from a call-site-spanned
+/// one; the token text is byte-identical. Returning the `Ident` moves the claim
+/// to something a test CAN pin: that the label handed to `quote_spanned!` is the
+/// offending rule's own. The remaining step, `label.span()`, is one line above
+/// and in view.
+///
+/// (The rendered caret is observable only out of process. It was measured
+/// there — see this campaign's `red0` fixture — but that measurement cannot be a
+/// committed unit test.)
+pub(crate) fn enforce_violations(language: &LanguageDef) -> Vec<(&syn::Ident, String)> {
+    let mut violations: Vec<(&syn::Ident, String)> = Vec::new();
+    for rule in &language.terms {
+        for violation in check_rule(rule, language) {
+            violations.push((&rule.label, violation.message()));
+        }
+    }
+    violations
 }
 
 #[cfg(test)]
@@ -593,5 +625,45 @@ mod tests {
             "one diagnostic per violation: {rendered}",
         );
         assert!(rendered.contains("LhsIdentA") && rendered.contains("LhsIdentB"));
+    }
+
+    /// ★ #141 change 6 — the refusal is spanned at THE OFFENDING RULE, and the
+    /// span source is asserted rather than assumed.
+    ///
+    /// MUTATION: a two-rule language in which only the SECOND rule offends. The
+    /// diagnostic that `enforce` renders is identical whichever span it carries,
+    /// so the only assertable claim is the one this cell makes — that the ident
+    /// `enforce` hands to `quote_spanned!` is `LhsIdentB`'s own label, not
+    /// `Clean`'s, and not a call-site span synthesised from nothing.
+    ///
+    /// CONTROL that must NOT discriminate: the clean rule contributes no
+    /// violation at all, so a gate keyed on rule ORDER rather than on the
+    /// offending rule would be caught here as a wrong label rather than passing
+    /// on a lucky index.
+    #[test]
+    fn each_refusal_carries_the_offending_rules_own_label() {
+        let clean = rule("Clean", "Num", vec![simple("x", "Num")], vec![param("x")]);
+        let offending = rule(
+            "LhsIdentB",
+            "Num",
+            vec![simple("n", "Ident"), simple("y", "Num")],
+            vec![param("n"), lit("-"), param("y")],
+        );
+        let lang = language_with(vec![clean, offending]);
+
+        let violations = enforce_violations(&lang);
+        assert_eq!(violations.len(), 1, "exactly the second rule offends");
+        let (label, message) = &violations[0];
+        assert_eq!(
+            label.to_string(),
+            "LhsIdentB",
+            "★ the span must come from the offending rule's label — before this \
+             change the tokens carried `Span::call_site()` and `rustc` drew its \
+             caret under the whole `language!` invocation",
+        );
+        assert!(
+            message.contains("LhsIdentB") && message.contains('n'),
+            "the message names the rule and the param independently of the span: {message}",
+        );
     }
 }

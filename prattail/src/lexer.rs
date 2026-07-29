@@ -307,26 +307,30 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     (code, stats)
 }
 
-/// Run the full lexer generation pipeline with AL02 hybrid gating, panicking on a
-/// grammar the soundness gates reject.
-///
-/// A thin wrapper over [`try_generate_lexer_as_string_hybrid`], which is where the
-/// rejection is *decided*. The wrapper exists because the current caller
-/// ([`crate::pipeline`]) runs inside the `#[proc_macro_error]` `language!` expansion,
-/// where a panic surfaces as a compile error. Anything that wants to *inspect* a
-/// rejection — a test, or a future caller emitting `compile_error!` directly — must
-/// call the fallible entry point instead: a panic raised in this workspace's
-/// cranelift-compiled proc macro does not unwind across the `proc_macro` bridge and
-/// aborts `rustc` with no diagnostic at all.
-pub fn generate_lexer_as_string_hybrid(
-    input: &LexerInput,
-    hybrid_lexer: bool,
-) -> (String, LexerStats) {
-    match try_generate_lexer_as_string_hybrid(input, hybrid_lexer) {
-        Ok(generated) => generated,
-        Err(rejection) => panic!("{}", rejection),
-    }
-}
+// ⚠ `generate_lexer_as_string_hybrid` — the PANICKING WRAPPER — was DELETED here
+// (#141 change 7, 2026-07-29). It read:
+//
+//     match try_generate_lexer_as_string_hybrid(input, hybrid_lexer) {
+//         Ok(generated) => generated,
+//         Err(rejection) => panic!("{}", rejection),
+//     }
+//
+// and it, not the fallible form below, was what `pipeline::wfst_emit` called. The
+// fallible form was reached only from this file's own tests.
+//
+// Its doc comment stated BOTH of the following, two sentences apart:
+//
+//   * "the current caller … runs inside the `#[proc_macro_error]` `language!`
+//     expansion, WHERE A PANIC SURFACES AS A COMPILE ERROR";
+//   * "a panic raised in this workspace's cranelift-compiled proc macro does not
+//     unwind across the `proc_macro` bridge and ABORTS `rustc` WITH NO DIAGNOSTIC
+//     AT ALL".
+//
+// The second is the measured one (`fatal runtime error: Rust cannot catch foreign
+// exceptions` + `signal: 6, SIGABRT`). The first was false, and it is the sentence
+// that justified the wrapper's existence. Both are gone with it: the rejection now
+// travels as `Err(String)` from here to `macros/src/lib.rs`, which turns it into a
+// `compile_error!` at the `language!` invocation.
 
 /// Run the full lexer generation pipeline with AL02 hybrid gating, **returning** the
 /// grammar-level rejection rather than raising it.
@@ -342,7 +346,9 @@ pub fn generate_lexer_as_string_hybrid(
 /// at one position, which makes the active mode path-dependent) or
 /// [`check_channel_soundness`] (co-accepts disagreeing on their token channel, which
 /// makes the same span both trivia and a parse token). The diagnostic is the
-/// user-facing message, ready to be handed to `compile_error!` or `panic!`.
+/// user-facing message, and its destination is `compile_error!`: it is returned
+/// up through [`crate::pipeline`] to `macros/src/lib.rs`, which is the only
+/// frame that holds a span to attach it to.
 pub fn try_generate_lexer_as_string_hybrid(
     input: &LexerInput,
     hybrid_lexer: bool,
@@ -489,9 +495,9 @@ pub fn try_generate_lexer_as_string_hybrid(
         // which would make the post-position mode depend on the lattice path.
         // The check is a no-op for every non-modal grammar (no token carries a
         // push/pop effect, so no state can conflict). A violation is a hard
-        // rejection, returned to the caller: the panicking wrapper
-        // `generate_lexer_as_string_hybrid` runs inside the `#[proc_macro_error]`
-        // language! expansion, where it surfaces as a clear compile error.
+        // rejection, returned to the caller and propagated as `Err` all the way
+        // to `macros/src/lib.rs`, which emits it as a `compile_error!` spanned at
+        // the `language!` invocation.
         check_dui_soundness("default", &min_dfa, &input.custom_tokens)?;
         for mode_result in &mode_results {
             check_dui_soundness(

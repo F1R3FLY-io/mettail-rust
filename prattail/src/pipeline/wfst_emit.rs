@@ -10,10 +10,16 @@ use super::*;
 /// When `hybrid_lexer` is true and the DFA exceeds the direct-coded threshold,
 /// AL02 hybrid mode is activated: hot states (BFS depth ≤ 2) are direct-coded
 /// while cold states use compressed table lookup.
+///
+/// # Errors
+///
+/// `Err(diagnostic)` when the grammar fails one of the lexer's modal soundness
+/// gates. The message is user-facing and travels unchanged to the `language!`
+/// boundary, which renders it as `compile_error!`.
 pub(crate) fn generate_lexer_code_with_map(
     bundle: &LexerBundle,
     hybrid_lexer: bool,
-) -> (String, TokenVariantMap, LexerAmbiguityInfo) {
+) -> Result<(String, TokenVariantMap, LexerAmbiguityInfo), String> {
     let mut lexer_input = extract_terminals(
         &bundle.grammar_rules,
         &bundle.type_infos,
@@ -57,8 +63,8 @@ pub(crate) fn generate_lexer_code_with_map(
     lexer_input.reserved_kinds =
         bundle.reservation_policy.reserved_kinds(&lexer_input.terminals);
 
-    let (lexer_str, stats) = generate_lexer_as_string_hybrid(&lexer_input, hybrid_lexer);
-    (lexer_str, stats.variant_map, stats.ambiguity_info)
+    let (lexer_str, stats) = try_generate_lexer_as_string_hybrid(&lexer_input, hybrid_lexer)?;
+    Ok((lexer_str, stats.variant_map, stats.ambiguity_info))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

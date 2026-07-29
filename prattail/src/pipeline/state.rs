@@ -97,20 +97,26 @@ impl PipelineState {
     /// - `Ready → Generated`: runs lexer and parser codegen sequentially
     /// - `Generated → Complete`: concatenates code strings and parses into `TokenStream`
     /// - `Complete → panic`: pipeline is already done
-    pub fn advance(self) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// `Err(diagnostic)` when the lexer's modal soundness gates reject the
+    /// grammar. The message is the user-facing one; the `language!` boundary
+    /// renders it as `compile_error!`.
+    pub fn advance(self) -> Result<Self, String> {
         match self {
             PipelineState::Ready { lexer_bundle, parser_bundle } => {
                 // AL02: hybrid_lexer defaults to true in PipelineState path
                 // (cost-benefit analysis is not available here; hybrid is safe
                 // because it only activates for DFAs > 30 states)
                 let (lexer_code, variant_map, ambiguity_info) =
-                    generate_lexer_code_with_map(&lexer_bundle, true);
+                    generate_lexer_code_with_map(&lexer_bundle, true)?;
                 let parser_code = generate_parser_code_with_context(
                     &parser_bundle,
                     &variant_map,
                     &ambiguity_info,
                 );
-                PipelineState::Generated { lexer_code, parser_code }
+                Ok(PipelineState::Generated { lexer_code, parser_code })
             },
             PipelineState::Generated { lexer_code, parser_code } => {
                 let mut combined = lexer_code;
@@ -118,7 +124,7 @@ impl PipelineState {
                 let ts = combined
                     .parse::<TokenStream>()
                     .expect("PraTTaIL pipeline: generated code failed to parse as TokenStream");
-                PipelineState::Complete(ts)
+                Ok(PipelineState::Complete(ts))
             },
             // Forward-only state machine: Complete is terminal. Calling advance()
             // again is a caller contract violation (guard with is_complete() first).
@@ -165,8 +171,12 @@ pub(crate) fn pipeline_diagnostic(
 /// 1. Extracts Send+Sync bundles from `&LanguageSpec` on the current thread
 /// 2. Runs lexer then parser codegen sequentially
 /// 3. Concatenates results and parses into a single `TokenStream`
-pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
-    run_pipeline_with_analysis(spec).0
+///
+/// # Errors
+///
+/// `Err(diagnostic)` when the grammar is rejected by a lexer soundness gate.
+pub fn run_pipeline(spec: &LanguageSpec) -> Result<TokenStream, String> {
+    run_pipeline_with_analysis(spec).map(|(ts, _analysis)| ts)
 }
 
 /// Run the full pipeline and return both the generated `TokenStream` and
@@ -177,7 +187,13 @@ pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
 /// prediction WFSTs, dead-rule labels, and constructor weights are already
 /// computed. This function captures that data before it would otherwise
 /// be discarded.
-pub fn run_pipeline_with_analysis(spec: &LanguageSpec) -> (TokenStream, crate::PipelineAnalysis) {
+///
+/// # Errors
+///
+/// `Err(diagnostic)` when the grammar is rejected by a lexer soundness gate.
+pub fn run_pipeline_with_analysis(
+    spec: &LanguageSpec,
+) -> Result<(TokenStream, crate::PipelineAnalysis), String> {
     // Stage tracer gated by the `walker-trace` feature + `PRATTAIL_MACRO_TRACE`;
     // the env read compiles out on the default build (feature off ⇒ `trace` is a
     // constant `false` and every `stage!` body is dead-stripped). See
@@ -215,7 +231,7 @@ pub fn run_pipeline_with_analysis(spec: &LanguageSpec) -> (TokenStream, crate::P
 
     stage!("generate_lexer_code.start");
     let (lexer_code, variant_map, ambiguity_info) =
-        generate_lexer_code_with_map(&lexer_bundle, true);
+        generate_lexer_code_with_map(&lexer_bundle, true)?;
     stage!("generate_lexer_code.done");
 
     stage!("generate_parser_code.start");
@@ -235,7 +251,7 @@ pub fn run_pipeline_with_analysis(spec: &LanguageSpec) -> (TokenStream, crate::P
         .expect("PraTTaIL pipeline: generated code failed to parse as TokenStream");
     stage!("parse_to_tokenstream.done");
 
-    (ts, analysis)
+    Ok((ts, analysis))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

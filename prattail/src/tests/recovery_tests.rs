@@ -78,7 +78,7 @@ fn calculator_spec() -> LanguageSpec {
 #[test]
 fn test_generated_code_contains_sync_predicate() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     assert!(
@@ -90,7 +90,7 @@ fn test_generated_code_contains_sync_predicate() {
 #[test]
 fn test_sync_predicate_includes_eof() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Extract the is_sync_Int function body
@@ -110,7 +110,7 @@ fn test_sync_predicate_includes_eof() {
 #[test]
 fn test_sync_predicate_includes_structural_delimiters() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Calculator includes () so RParen should be in the sync set
@@ -161,7 +161,7 @@ fn test_multi_category_generates_separate_sync_predicates() {
         &category_names,
     ));
 
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     assert!(code_str.contains("is_sync_Int"), "should generate sync predicate for Int");
@@ -179,7 +179,7 @@ fn test_multi_category_generates_separate_sync_predicates() {
 #[test]
 fn test_recovering_parser_uses_sync_predicate() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // The recovering parser should reference its sync predicate
@@ -196,7 +196,7 @@ fn test_recovering_parser_uses_sync_predicate() {
 #[test]
 fn _disabled_test_generated_code_contains_recovery_beam_width() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     assert!(
@@ -279,7 +279,7 @@ fn test_repair_action_describe() {
 #[test]
 fn test_generated_code_contains_token_to_id() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     assert!(
@@ -312,7 +312,7 @@ fn test_generated_code_contains_token_to_id() {
 #[test]
 fn test_single_category_no_cross_cat_casts() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Single-category grammar has no cross-category casts

@@ -29,7 +29,9 @@ use crate::binding_power::{
 // data-type imports re-routed directly through `crate::grammar::ir::*`.
 use crate::automata::codegen::{LexerAmbiguityInfo, TokenVariantMap};
 use crate::grammar::ir::{CastRule, CrossCategoryRule, RDRuleInfo, RDSyntaxItem};
-use crate::lexer::{extract_terminals, generate_lexer_as_string_hybrid, GrammarRuleInfo, TypeInfo};
+use crate::lexer::{
+    extract_terminals, try_generate_lexer_as_string_hybrid, GrammarRuleInfo, TypeInfo,
+};
 // Stage 10.5b conclusion (2026-05-05): pratt::write_parser_helpers /
 // write_recovery_helpers DELETED. They emitted runtime helpers
 // (expect_token, expect_ident, peek_token, peek_ahead, sync_to) that

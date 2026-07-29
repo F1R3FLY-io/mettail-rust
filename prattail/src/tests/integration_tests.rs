@@ -86,7 +86,7 @@ fn calculator_spec() -> LanguageSpec {
 #[test]
 fn test_generate_parser_produces_code() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Stage 10.5 (2026-05-04): pipeline.rs no longer emits parser proper —
@@ -110,7 +110,7 @@ fn test_generate_parser_produces_code() {
 #[test]
 fn test_generate_parser_code_size() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Count approximate lines (by counting newline-separated statements)
@@ -169,7 +169,7 @@ fn test_generate_parser_with_unary_prefix() {
         &cat_names,
     ));
 
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Stage 10.5 (2026-05-04): `UnaryPrefix_Neg` was a trampoline frame-enum
@@ -211,7 +211,7 @@ fn test_generate_parser_with_optional() {
         &cat_names,
     ));
 
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Stage 10.5 (2026-05-04): `RD_IfExpr_0` was a trampoline frame-enum variant
@@ -241,7 +241,7 @@ fn test_generate_parser_with_optional() {
 fn test_standard_path_has_no_backtracking() {
     let spec = calculator_spec();
 
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Standard batch path should NOT contain save/restore backtracking
@@ -259,7 +259,7 @@ fn test_standard_path_has_no_backtracking() {
 fn test_no_lazy_parsers_or_context_sensitive_lex_infra() {
     let spec = calculator_spec();
 
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Lazy parsers and context-sensitive lex infrastructure should never be emitted
@@ -397,7 +397,7 @@ mod wfst_lexer_weight_tests {
     #[test]
     fn test_pipeline_generates_lex_weighted() {
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
 
         assert!(
@@ -415,7 +415,7 @@ mod wfst_lexer_weight_tests {
         // When dispatch strategy is Weighted, the pipeline should generate
         // CSR static arrays and LazyLock constructors for prediction WFSTs.
         let spec = calculator_spec_weighted();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
 
         // Should contain WFST static arrays for the category
@@ -446,7 +446,7 @@ mod wfst_lexer_weight_tests {
     fn test_pipeline_wfst_static_embedding_valid_rust() {
         // The full generated code (with WFST statics) should be valid Rust
         let spec = calculator_spec_weighted();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         // If generate_parser returns without panicking, the code parsed as TokenStream
         // successfully. Verify it's non-empty.
         assert!(!code.is_empty(), "generated code with WFST statics should not be empty");
@@ -583,7 +583,7 @@ mod wfst_lexer_weight_tests {
         // A4: Calculator grammar has no NFA-ambiguous groups (each token
         // dispatches to exactly one rule), so no cold functions should be emitted.
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
         assert!(
             !code_str.contains("nfa_try_cold_"),
@@ -599,7 +599,7 @@ mod wfst_lexer_weight_tests {
         // Note: This test is conditional — only passes when a grammar actually
         // produces cold alternatives (weight >= 1.0 in NFA groups).
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
         // Calculator has no NFA ambiguity, so no cold functions are emitted.
         // Just verify the attribute pattern is syntactically valid Rust.
@@ -620,7 +620,7 @@ mod wfst_lexer_weight_tests {
     fn test_b3_accept_alternatives_generated() {
         // B3: accept_alternatives function must be generated for all grammars.
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
         assert!(
             code_str.contains("accept_alternatives"),
@@ -632,7 +632,7 @@ mod wfst_lexer_weight_tests {
     fn test_b3_lex_lattice_generated() {
         // B3: lex_lattice function must be generated for all grammars.
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
         assert!(
             code_str.contains("lex_lattice"),
@@ -644,7 +644,7 @@ mod wfst_lexer_weight_tests {
     fn test_b3_lex_lattice_returns_token_source() {
         // B3: lex_lattice should return TokenSource (from mettail_prattail::lattice).
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
         // proc_macro2 TokenStream::to_string() spaces out `::` separators
         assert!(
@@ -659,7 +659,7 @@ mod wfst_lexer_weight_tests {
     fn test_b3_lex_lattice_core_delegation() {
         // B3: lex_lattice should delegate to lex_lattice_core from runtime_types.
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
         assert!(
             code_str.contains("lex_lattice_core"),
@@ -676,7 +676,7 @@ mod wfst_lexer_weight_tests {
         // B6: PREDICTION_<Cat> LazyLock static must be generated for each category.
         // This is the runtime static that B6 query methods access.
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
         assert!(
             code_str.contains("PREDICTION_Int"),
@@ -688,7 +688,7 @@ mod wfst_lexer_weight_tests {
     fn test_b6_prediction_wfst_static_is_lazily_initialized() {
         // B6: PREDICTION_<Cat> must use LazyLock for lazy initialization
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
         assert!(
             code_str.contains("LazyLock") && code_str.contains("PREDICTION_Int"),
@@ -714,7 +714,7 @@ mod wfst_lexer_weight_tests {
     fn test_b6_prediction_wfst_from_flat_constructor() {
         // B6: PREDICTION_<Cat> must use PredictionWfst::from_flat() for construction
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
         // proc_macro2 adds spaces around ::
         assert!(
@@ -731,7 +731,8 @@ mod wfst_lexer_weight_tests {
     fn test_pipeline_analysis_populated() {
         // 9a: Verify PipelineAnalysis is populated correctly for the calculator spec.
         let spec = calculator_spec();
-        let (_code, analysis) = crate::generate_parser_with_analysis(&spec);
+        let (_code, analysis) = crate::generate_parser_with_analysis(&spec)
+            .expect("the fixture spec must be generable");
 
         // constructor_weights should be populated for dispatch actions
         // (NumLit may not appear since integer literals are handled by the lexer,
@@ -764,7 +765,8 @@ mod wfst_lexer_weight_tests {
     fn test_pipeline_analysis_isomorphic_groups_simple() {
         // 9a: Single-category spec should have no isomorphic groups (need ≥2 to form a group).
         let spec = calculator_spec();
-        let (_code, analysis) = crate::generate_parser_with_analysis(&spec);
+        let (_code, analysis) = crate::generate_parser_with_analysis(&spec)
+            .expect("the fixture spec must be generable");
 
         assert!(
             analysis.isomorphic_groups.is_empty(),
@@ -859,7 +861,8 @@ mod wfst_lexer_weight_tests {
             reservation_policy: crate::ReservationPolicy::default(),
         };
 
-        let (_code, analysis) = crate::generate_parser_with_analysis(&spec);
+        let (_code, analysis) = crate::generate_parser_with_analysis(&spec)
+            .expect("the fixture spec must be generable");
 
         // Int and Float have identical dispatch topology: same tokens (+, Ident, IntegerLiteral)
         // with same action shapes (Direct for each). They should be isomorphic.
@@ -885,7 +888,8 @@ mod wfst_lexer_weight_tests {
         // 9a: Dead rules should be in dead_rule_labels.
         // The simple calculator_spec() has no dead rules (all are reachable).
         let spec = calculator_spec();
-        let (_code, analysis) = crate::generate_parser_with_analysis(&spec);
+        let (_code, analysis) = crate::generate_parser_with_analysis(&spec)
+            .expect("the fixture spec must be generable");
 
         assert!(
             analysis.dead_rule_labels.is_empty() || !analysis.dead_rule_labels.contains("NumLit"),
@@ -910,7 +914,7 @@ mod wfst_lexer_weight_tests {
         // verify the infrastructure: if the constants ARE present, they must be
         // well-formed; if absent, the optimization was correctly skipped.
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
 
         // BP05 constants may or may not be present depending on cost-benefit gates.
@@ -929,7 +933,7 @@ mod wfst_lexer_weight_tests {
         // The optimization is gated by cost-benefit analysis. Verify consistency:
         // if ACTIVE_BP_INT is present, the guard expression must also be present.
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
 
         let has_constants = code_str.contains("ACTIVE_BP_INT");
@@ -951,7 +955,7 @@ mod wfst_lexer_weight_tests {
         //
         // This is a smoke test that pipeline emission produces compilable code.
         let spec = calculator_spec();
-        let code = generate_parser(&spec);
+        let code = generate_parser(&spec).expect("the fixture spec must be generable");
         let code_str = code.to_string();
 
         // Pipeline still emits sync predicates + recovery infra.

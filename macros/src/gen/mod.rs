@@ -55,7 +55,19 @@ pub use syntax::parser::prattail_bridge::generate_prattail_parser_with_analysis;
 ///
 /// Returns `(code, PipelineAnalysis)` where the analysis captures WFST-derived
 /// data from the PraTTaIL pipeline for downstream Ascent codegen optimization.
-pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::PipelineAnalysis) {
+///
+/// # Errors
+///
+/// `Err(diagnostic)` when a downstream generator REFUSES the grammar rather than
+/// emitting for it. Two such refusals exist today, both reached through the
+/// PraTTaIL bridge: an `options { }` value the bridge cannot decode (group G7),
+/// and a grammar the lexer's modal soundness gates reject (change 7). The message
+/// is user-facing and `language!` renders it as `compile_error!` — before this
+/// seam was wired, the second of the two was a `panic!` inside a
+/// cranelift-compiled proc macro, which aborts `rustc` with no diagnostic at all.
+pub fn generate_all(
+    language: &LanguageDef,
+) -> Result<(TokenStream, mettail_prattail::PipelineAnalysis), String> {
     use crate::logic::writer::spill_and_include;
     use native::eval::generate_eval_method;
     use runtime::environment::generate_environments;
@@ -133,7 +145,7 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     let env_types = spill_and_include(&lang_name, "env_types", generate_environments(language));
     let env_subst_impl =
         spill_and_include(&lang_name, "env_subst", generate_env_substitution(language));
-    let display_impl = spill_and_include(&lang_name, "display", generate_display(language));
+    let display_impl = spill_and_include(&lang_name, "display", generate_display(language)?);
     let generation_impl =
         spill_and_include(&lang_name, "term_generation", generate_term_generation(language));
     let random_gen_impl =
@@ -190,7 +202,7 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     // Parser code: PraTTaIL (inline) — also captures pipeline analysis.
     // The parser output is large (DFA tables, parse fns per category); spill it.
     let (parser_code, pipeline_analysis) = {
-        let (prattail_parser, analysis) = generate_prattail_parser_with_analysis(language);
+        let (prattail_parser, analysis) = generate_prattail_parser_with_analysis(language)?;
         let category_parse_impls = generate_prattail_category_parse_impls(language);
         let combined = quote! {
             #prattail_parser
@@ -247,7 +259,7 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         #parser_code
     };
 
-    (code, pipeline_analysis)
+    Ok((code, pipeline_analysis))
 }
 
 /// Generate `impl Cat` parse methods for each language type using PraTTaIL's inline

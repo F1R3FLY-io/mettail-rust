@@ -70,6 +70,39 @@ impl StratificationReport {
             })
             .collect()
     }
+
+    /// Render **every** violation as `compile_error!` tokens, spanned at `span`,
+    /// or `None` when the language is stratifiable.
+    ///
+    /// # Why this exists as a named function rather than a loop at the boundary
+    ///
+    /// The loop it replaces (`macros/src/lib.rs`) called
+    /// `proc_macro_error::abort!` per diagnostic. `abort!` DIVERGES, so the loop
+    /// could never complete a second iteration; it carried an
+    /// `#[allow(clippy::never_loop)]` and a comment naming that as intentional —
+    /// "the emit-first-then-abort proc-macro idiom". The consequence for a
+    /// grammar author with three negation cycles was three builds, and there was
+    /// no way to test the claim because the loop lived inside a `#[proc_macro]`
+    /// body that no unit test can call.
+    ///
+    /// One `compile_error!` per cycle is what `ident_capture_routing::enforce`
+    /// already does for its own violations, and putting the emission in a
+    /// function makes "every violation, not just the first" an assertion instead
+    /// of a comment — see `emits_one_compile_error_per_negative_cycle`.
+    ///
+    /// ⚠ The trailing `;` inside `compile_error!(…);` is required: `language!`
+    /// expands in item position, where an undelimited macro invocation is a parse
+    /// error and the `compile_error!` would never expand at all.
+    pub fn compile_errors(&self, span: proc_macro2::Span) -> Option<proc_macro2::TokenStream> {
+        if !self.has_violations() {
+            return None;
+        }
+        let mut out = proc_macro2::TokenStream::new();
+        for (_id, message) in self.diagnostics() {
+            out.extend(quote::quote_spanned!(span => compile_error!(#message);));
+        }
+        Some(out)
+    }
 }
 
 /// Edge classification.
@@ -459,6 +492,92 @@ mod tests {
         let report = analyze(&lang);
         assert!(report.has_violations());
         assert_eq!(report.negative_cycles, vec![vec!["halts".to_string(), "halts".to_string()]]);
+    }
+
+    /// ★ #141 change 2 — EVERY violation is emitted, not just the first.
+    ///
+    /// The mutation is the SECOND negation cycle: the language carries two
+    /// self-negating relations, `halts` and `stalls`, differing in nothing but
+    /// the name. The old boundary called `abort!` inside a loop, which diverged
+    /// on the first diagnostic, so an author with two cycles was told about one.
+    ///
+    /// Pinned to the specific tokens rather than to a count alone: a two-element
+    /// emission that named `halts` twice would satisfy a count assertion and
+    /// would still be the defect.
+    #[test]
+    fn emits_one_compile_error_per_negative_cycle() {
+        let mut lang = minimal_lang();
+        for relation in ["halts", "stalls"] {
+            lang.rewrites.push(RewriteRule {
+                name: ident(relation),
+                type_context: Vec::new(),
+                premises: vec![Premise::BehavioralGuard(BehavioralPred::Not(Box::new(rel(
+                    relation,
+                    vec![pred_var("x")],
+                    false,
+                ))))],
+                left: var_pattern("x"),
+                right: var_pattern("x"),
+                is_auto_injected: false,
+            });
+        }
+
+        // MUTATION APPLIED: the analysis really does see two distinct cycles, so
+        // a single-message emission below would be the emitter's fault and not
+        // the analysis's.
+        let report = analyze(&lang);
+        assert_eq!(
+            report.negative_cycles.len(),
+            2,
+            "the fixture must present TWO cycles or this cell cannot discriminate: {:?}",
+            report.negative_cycles
+        );
+
+        let rendered = report
+            .compile_errors(proc_macro2::Span::call_site())
+            .expect("a language with negation cycles must produce refusal tokens")
+            .to_string();
+        assert_eq!(
+            rendered.matches("compile_error").count(),
+            2,
+            "one `compile_error!` per cycle: {rendered}"
+        );
+        assert!(rendered.contains("halts"), "the first cycle must be named: {rendered}");
+        assert!(
+            rendered.contains("stalls"),
+            "★ the SECOND cycle must be named too — this is the assertion the diverging \
+             `abort!` loop could not satisfy: {rendered}"
+        );
+        // Item position: an undelimited `compile_error!(..)` is a parse error and
+        // never expands, so the message would never reach the user.
+        assert!(
+            rendered.contains("compile_error ! (") && rendered.contains(") ;"),
+            "each refusal must be a semicolon-terminated item: {rendered}"
+        );
+    }
+
+    /// ★ THE CONTROL for `emits_one_compile_error_per_negative_cycle`. It must
+    /// NOT discriminate: a stratifiable language emits nothing, before the change
+    /// and after it. Without it, an emitter that returned two `compile_error!`s
+    /// for every language whatsoever would pass the cell above.
+    #[test]
+    fn a_stratifiable_language_emits_no_refusal() {
+        let mut lang = minimal_lang();
+        lang.equations.push(Equation {
+            name: ident("safe"),
+            type_context: Vec::new(),
+            premises: vec![Premise::RelationQuery {
+                relation: ident("safe"),
+                args: vec![ident("x")],
+            }],
+            left: var_pattern("x"),
+            right: var_pattern("x"),
+        });
+
+        let report = analyze(&lang);
+        assert!(report
+            .compile_errors(proc_macro2::Span::call_site())
+            .is_none());
     }
 
     #[test]

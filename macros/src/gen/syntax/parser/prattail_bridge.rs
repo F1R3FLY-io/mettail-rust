@@ -29,7 +29,15 @@ use mettail_prattail::{
 ///
 /// Performs structural mapping of syntax items, then delegates all
 /// flag classification to `LanguageSpec::new()`.
-pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
+///
+/// # Errors
+///
+/// `Err(diagnostic)` iff an `options { }` value has a shape this bridge cannot
+/// decode — see [`unexpected_option_shape`], which is where the reason for
+/// refusing rather than asserting is written down. Every such value is supposed
+/// to have been rejected at parse time, so an `Err` here is a MACRO BUG and its
+/// message says so.
+pub fn language_def_to_spec(language: &LanguageDef) -> Result<LanguageSpec, String> {
     let categories: Vec<CategorySpec> = language
         .types
         .iter()
@@ -162,20 +170,35 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         Some(AttributeValue::Keyword(kw)) => match kw.as_str() {
             "none" | "disabled" => BeamWidthConfig::Disabled,
             "auto" => BeamWidthConfig::Auto,
-            _ => unreachable!("beam_width keyword validated at parse time"),
+            other => {
+                return Err(unexpected_option_shape(
+                    "beam_width",
+                    &format!("the keyword `{other}`"),
+                    "a float, or one of the keywords `none`, `disabled`, `auto`",
+                ))
+            },
         },
         None => BeamWidthConfig::Disabled,
-        _ => unreachable!("beam_width type validated at parse time"),
+        Some(other) => {
+            return Err(unexpected_option_shape(
+                "beam_width",
+                &describe_option_value(other),
+                "a float, or one of the keywords `none`, `disabled`, `auto`",
+            ))
+        },
     };
 
-    let log_semiring_model_path =
-        language
-            .options
-            .get("log_semiring_model_path")
-            .map(|v| match v {
-                AttributeValue::Str(s) => s.clone(),
-                _ => unreachable!("log_semiring_model_path type validated at parse time"),
-            });
+    let log_semiring_model_path = match language.options.get("log_semiring_model_path") {
+        Some(AttributeValue::Str(s)) => Some(s.clone()),
+        None => None,
+        Some(other) => {
+            return Err(unexpected_option_shape(
+                "log_semiring_model_path",
+                &describe_option_value(other),
+                "a string path",
+            ))
+        },
+    };
 
     // PIECE 3: keyword-reservation policy. `auto` reserves identifier-shaped
     // keyword terminals (default-reserve modeling); `none` (the default when
@@ -194,10 +217,22 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                 contextual: contextual_collection_openers,
             },
             "none" => ReservationPolicy::none(),
-            _ => unreachable!("reserved_keywords keyword validated at parse time"),
+            other => {
+                return Err(unexpected_option_shape(
+                    "reserved_keywords",
+                    &format!("the keyword `{other}`"),
+                    "the keyword `auto` or `none`",
+                ))
+            },
         },
         None => ReservationPolicy::none(),
-        _ => unreachable!("reserved_keywords type validated at parse time"),
+        Some(other) => {
+            return Err(unexpected_option_shape(
+                "reserved_keywords",
+                &describe_option_value(other),
+                "the keyword `auto` or `none`",
+            ))
+        },
     };
 
     let semantic_dependency_groups = collect_semantic_dependency_groups(language);
@@ -449,7 +484,57 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
     // to the pipeline-side `GuardConfigSpec`. `None` is preserved as `None`.
     spec.guard_config = language.guard_config.as_ref().map(lower_guard_config);
 
-    spec
+    Ok(spec)
+}
+
+/// ★ #141 group G7 — the message that replaced five `unreachable!("… validated at
+/// parse time")`.
+///
+/// # Why these were converted even though the claim is TRUE
+///
+/// The claim really does hold: `ast/src/language/parse.rs` rejects every
+/// out-of-domain `beam_width`, `log_semiring_model_path` and `reserved_keywords`
+/// value while parsing the `options { }` block, with a `syn::Error` carrying the
+/// same domain this bridge expects. Classified `PreValidated` in the repair
+/// design, and that classification is retained here rather than in a table
+/// somewhere else.
+///
+/// What `unreachable!` bought was a *comment* asserting the two domains agree.
+/// What it cost, in this workspace specifically, is that if they ever DISAGREED
+/// the reader would be told nothing whatsoever: `[profile.dev]` compiles this
+/// proc macro under cranelift, where a panic does not unwind across the
+/// `proc_macro` bridge — `rustc` aborts with `fatal runtime error: Rust cannot
+/// catch foreign exceptions` and no message at all. The five sites were therefore
+/// "a comment, plus a silent build kill if the comment is wrong".
+///
+/// The conversion costs one `Err` per site and buys an assertable claim: the
+/// bridge's accepted domain is now testable from a unit test that hands it an
+/// out-of-domain value directly (see
+/// `an_out_of_domain_option_value_refuses_instead_of_asserting`), which is
+/// exactly the agreement `unreachable!` could only assume.
+fn unexpected_option_shape(option: &str, found: &str, expected: &str) -> String {
+    format!(
+        "mettail internal error: the `options {{ }}` value for `{option}` reached the \
+         PraTTaIL bridge as {found}, but this bridge accepts only {expected}. \
+         `ast/src/language/parse.rs` is supposed to have rejected it while parsing the \
+         `options` block, so the parser's accepted domain and the bridge's have drifted \
+         apart. This is a macro bug, not a grammar bug — please report it."
+    )
+}
+
+/// Name an option value's SHAPE for [`unexpected_option_shape`].
+///
+/// The value itself is not interpolated for the non-keyword arms: what went wrong
+/// is the variant, and printing e.g. a float where a keyword was required reads
+/// as though the number were at fault.
+fn describe_option_value(value: &AttributeValue) -> String {
+    match value {
+        AttributeValue::Float(_) => "a float".to_string(),
+        AttributeValue::Int(_) => "an integer".to_string(),
+        AttributeValue::Bool(_) => "a boolean".to_string(),
+        AttributeValue::Str(_) => "a string".to_string(),
+        AttributeValue::Keyword(kw) => format!("the keyword `{kw}`"),
+    }
 }
 
 /// Lower a `GuardConfig` (macros-side, syn-based) to a `GuardConfigSpec`
@@ -1296,9 +1381,172 @@ fn collect_constructor_idents_from_token_stream(
 /// Returns `(TokenStream, PipelineAnalysis)` where the analysis captures
 /// WFST-derived data (dead rules, constructor weights, category weights)
 /// for downstream optimization by the Ascent codegen.
+///
+/// # Errors
+///
+/// `Err(diagnostic)` from either of the two fallible stages this function joins:
+/// the `LanguageDef → LanguageSpec` bridge (an undecodable `options` value, G7)
+/// and the PraTTaIL pipeline itself (a lexer soundness gate rejecting the
+/// grammar, change 7). Both messages are user-facing and reach `language!`, which
+/// renders them as `compile_error!`.
 pub fn generate_prattail_parser_with_analysis(
     language: &LanguageDef,
-) -> (proc_macro2::TokenStream, mettail_prattail::PipelineAnalysis) {
-    let spec = language_def_to_spec(language);
+) -> Result<(proc_macro2::TokenStream, mettail_prattail::PipelineAnalysis), String> {
+    let spec = language_def_to_spec(language)?;
     mettail_prattail::generate_parser_with_analysis(&spec)
+}
+
+/// ★ THE TWO REFUSALS THIS BRIDGE CAN RAISE, asserted on the text they carry.
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+    use quote::quote;
+
+    fn parse_language(source: proc_macro2::TokenStream) -> LanguageDef {
+        syn::parse2(source).expect("the fixture grammar must parse")
+    }
+
+    /// The fixture body, parameterised by the token block, so the mutation and
+    /// its control differ in exactly one token declaration.
+    fn modal_grammar(name: &str, extra_default_token: proc_macro2::TokenStream) -> LanguageDef {
+        let name = syn::Ident::new(name, proc_macro2::Span::call_site());
+        parse_language(quote! {
+            name: #name,
+            options { emit_tests: false, emit_simulator: false, emit_blockly: false },
+            types { Term },
+            tokens {
+                PushBang = "!" push(inner) ;
+                #extra_default_token
+                raw mode inner {
+                    CloseInner = "!" pop ;
+                    GuestChunk = "[^!]+" ;
+                }
+            },
+            terms {
+                Plus . a:Term, b:Term |- a "+" b : Term;
+            },
+        })
+    }
+
+    /// ★ #141 change 7 — a lexer soundness rejection REACHES the macro boundary
+    /// as a value.
+    ///
+    /// MUTATION: `PlainBang`, whose pattern `"!"` is the same as the mode-pushing
+    /// `PushBang`'s. The two collapse into one DFA accepting state with different
+    /// mode effects, so the active mode becomes path-dependent — the Delimiter
+    /// Unambiguity Invariant — and `prattail` refuses to emit a lexer.
+    ///
+    /// Before this change the refusal travelled through
+    /// `generate_lexer_as_string_hybrid`, a wrapper whose whole body was
+    /// `Err(rejection) => panic!("{rejection}")`, inside a cranelift-compiled
+    /// proc macro: `rustc` died with `fatal runtime error: Rust cannot catch
+    /// foreign exceptions` and printed nothing. The fallible entry point it wraps
+    /// had existed, unused outside `lexer.rs`'s own tests, since `87292ef4`.
+    ///
+    /// CONTROL that must NOT discriminate: the same grammar with `PlainBang`
+    /// removed — one token declaration, nothing else — must generate. Without it
+    /// this cell would also be satisfied by a bridge that rejected every modal
+    /// grammar, or that failed for an unrelated reason and happened to mention
+    /// the phrase.
+    #[test]
+    fn a_lexer_soundness_rejection_returns_a_message_naming_both_tokens() {
+        let rejected = modal_grammar("RedDuiBad", quote! { PlainBang = "!" ; });
+
+        // MUTATION APPLIED: the conflicting declaration really is present, and
+        // the control really lacks it.
+        assert!(
+            rejected.token_defs.iter().any(|t| t.name == "PlainBang"),
+            "the mutation must declare `PlainBang`",
+        );
+
+        let rejection = generate_prattail_parser_with_analysis(&rejected)
+            .expect_err("the `!` push/plain conflict must be refused, not emitted");
+        assert!(
+            rejection.contains("DUI violation"),
+            "the grammar was refused, but not as a DUI violation: {rejection}",
+        );
+        assert!(
+            rejection.contains("PushBang") && rejection.contains("PlainBang"),
+            "the diagnostic must name BOTH conflicting tokens or it cannot be \
+             acted on: {rejection}",
+        );
+
+        // ★ THE CONTROL — drop the one conflicting token and the same shape emits.
+        let accepted = modal_grammar("RedDuiOk", quote! {});
+        assert!(
+            !accepted.token_defs.iter().any(|t| t.name == "PlainBang"),
+            "the control must differ in exactly that declaration",
+        );
+        let (code, _analysis) = generate_prattail_parser_with_analysis(&accepted)
+            .expect("removing the conflicting token must make the same grammar generable");
+        assert!(!code.is_empty(), "the control must really emit a parser, not an empty stream");
+    }
+
+    /// ★ #141 group G7 — an out-of-domain `options { }` value REFUSES instead of
+    /// asserting `unreachable!`.
+    ///
+    /// MUTATION: the option map is written directly, which is the only way to
+    /// reach these arms — `ast/src/language/parse.rs` rejects the same values
+    /// while parsing the `options` block, which is exactly the claim
+    /// `unreachable!("… validated at parse time")` was making. That claim is not
+    /// disputed here; what is asserted is that the two domains' AGREEMENT is now
+    /// checkable, and that a disagreement produces a message instead of a
+    /// `SIGABRT` with no output.
+    ///
+    /// CONTROL that must NOT discriminate: the in-domain value on the same
+    /// option, on the same fixture, must still convert.
+    #[test]
+    fn an_out_of_domain_option_value_refuses_instead_of_asserting() {
+        let cases: [(&str, AttributeValue, AttributeValue, &str); 3] = [
+            (
+                "beam_width",
+                AttributeValue::Keyword("aggressive".to_string()),
+                AttributeValue::Keyword("auto".to_string()),
+                "the keyword `aggressive`",
+            ),
+            (
+                "reserved_keywords",
+                AttributeValue::Bool(true),
+                AttributeValue::Keyword("none".to_string()),
+                "a boolean",
+            ),
+            (
+                "log_semiring_model_path",
+                AttributeValue::Int(7),
+                AttributeValue::Str("model.json".to_string()),
+                "an integer",
+            ),
+        ];
+
+        for (option, out_of_domain, in_domain, shape) in cases {
+            let mut language = crate::gen::empty_language_for_tests();
+            language.options.insert(option.to_string(), out_of_domain);
+
+            let rejection = language_def_to_spec(&language)
+                .err()
+                .unwrap_or_else(|| panic!("`{option}` must refuse an out-of-domain value"));
+            assert!(
+                rejection.contains(option),
+                "the diagnostic must name the option it refused: {rejection}",
+            );
+            assert!(
+                rejection.contains(shape),
+                "the diagnostic must name the SHAPE it found ({shape}): {rejection}",
+            );
+            assert!(
+                rejection.contains("ast/src/language/parse.rs"),
+                "★ the `PreValidated` claim must travel with the refusal — the \
+                 message names the validator whose domain has drifted: {rejection}",
+            );
+
+            // ★ THE CONTROL — the same option, in domain, on the same fixture.
+            let mut language = crate::gen::empty_language_for_tests();
+            language.options.insert(option.to_string(), in_domain);
+            assert!(
+                language_def_to_spec(&language).is_ok(),
+                "an in-domain `{option}` must still convert — otherwise the \
+                 refusal above proves only that the bridge rejects everything",
+            );
+        }
+    }
 }

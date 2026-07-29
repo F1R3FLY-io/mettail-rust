@@ -203,8 +203,16 @@ impl BpLookup {
 ///
 /// Converts the language definition to a spec, classifies rules, computes
 /// binding powers, and builds a label-indexed lookup table for display codegen.
-fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
-    let spec = language_def_to_spec(language);
+///
+/// # Errors
+///
+/// Propagates the `LanguageDef → LanguageSpec` bridge's refusal (an `options`
+/// value it cannot decode). Display shares that bridge with the parser generator,
+/// so it shares the refusal rather than substituting an empty lookup: a
+/// `BpLookup::empty()` fallback would silently emit a `Display` impl that
+/// parenthesizes nothing correctly.
+fn build_bp_lookup(language: &LanguageDef) -> Result<BpLookup, String> {
+    let spec = language_def_to_spec(language)?;
 
     // Extract infix rules exactly as the pipeline does
     let infix_rules: Vec<InfixRuleInfo> = spec
@@ -310,7 +318,7 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
         }
     }
 
-    lookup
+    Ok(lookup)
 }
 
 fn first_nonterminal_category_for_display(syntax: &[SyntaxItemSpec]) -> Option<String> {
@@ -386,9 +394,14 @@ fn extract_mixfix_parts_for_display(syntax: &[SyntaxItemSpec]) -> (bool, Vec<BpM
 /// 2. `DISPLAY_TASK_POOL` thread-local for zero-allocation steady-state
 /// 3. `display_iterative()` driver loop
 /// 4. `impl Display for Cat` delegating to the iterative engine
-pub fn generate_display(language: &LanguageDef) -> TokenStream {
+///
+/// # Errors
+///
+/// Propagates [`build_bp_lookup`]'s refusal — an `options` value the shared
+/// `LanguageDef → LanguageSpec` bridge cannot decode.
+pub fn generate_display(language: &LanguageDef) -> Result<TokenStream, String> {
     // Compute binding power lookup for precedence-aware parenthesization
-    let bp_lookup = build_bp_lookup(language);
+    let bp_lookup = build_bp_lookup(language)?;
 
     // ★ SURFACE SYNONYMY (2026-07-26). Derived from the grammar's own fold bodies and grouping
     // shapes; see `synonymy.rs` for the defect, the two refuted inference rules, and why the
@@ -403,14 +416,14 @@ pub fn generate_display(language: &LanguageDef) -> TokenStream {
     let display_impls = generate_display_impls(language);
     let at_sigil_wrap_predicate = generate_at_sigil_wrap_predicate(language);
 
-    quote! {
+    Ok(quote! {
         #synonymy_errors
         #synonymy_table
         #task_enum
         #iterative_engine
         #display_impls
         #at_sigil_wrap_predicate
-    }
+    })
 }
 
 // =============================================================================

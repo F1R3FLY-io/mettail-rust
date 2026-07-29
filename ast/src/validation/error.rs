@@ -265,8 +265,17 @@ impl ValidationError {
         }
     }
 
-    /// Convert to a compile_error! token stream
-    #[allow(dead_code)]
+    /// Render this error as `compile_error!` tokens, spanned at the offending
+    /// item.
+    ///
+    /// ★ This is what `language!` returns when [`super::validate_language`]
+    /// refuses a grammar (`macros/src/lib.rs`). It was written, spanned and
+    /// correct on the day it landed and then carried `#[allow(dead_code)]` for
+    /// months while the macro boundary reached for `proc_macro_error::abort!`
+    /// instead — which emits the same diagnostic and then kills `rustc` with
+    /// `SIGABRT`, so exactly one error escapes per invocation and `cargo`
+    /// appends a block that reads like a compiler crash. Returning these tokens
+    /// exits cleanly and lets `rustc` go on to report whatever else is wrong.
     pub fn to_compile_error(&self) -> TokenStream {
         let span = self.span();
         let msg = self.message();

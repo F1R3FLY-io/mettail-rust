@@ -123,23 +123,31 @@ use quote::{format_ident, quote};
 /// types — and is safe to include in the language crate alongside the
 /// existing trampoline parser during the Phase C parallel emission period.
 pub fn generate_wpda_engine_module(language: &LanguageDef) -> TokenStream {
-    // ★ #131: the `Ident`-capture ROUTING GATE, first thing and before any table
-    // is built. A declared `m:Ident` param that no machine consumes produces a
-    // parser in which the rule has NO realizable reading, and the only diagnostic
-    // the grammar author ever sees names neither the rule, nor the param, nor
-    // `Ident`. Stopping here instead names all three. Inert on every shipped
-    // grammar — none declares an `Ident` param.
+    // ★ #141-R2 — the `Ident`-capture ROUTING GATE USED TO RUN HERE, and it has
+    // been HOISTED to `macros/src/lib.rs`, immediately after `validate_language`.
+    // The call is DELETED rather than kept as defence in depth. The argument, so
+    // the next reader does not have to re-derive it:
     //
-    // ⚠ The RETURN is load-bearing, not tidiness. `emit_bp_tables` below reaches
-    // `emit_mixfix_parts_fn`, whose hardened category lookup PANICS on exactly the
-    // grammars this gate rejects — and a proc-macro panic under the `[profile.dev]`
-    // cranelift backend aborts `rustc` with `fatal runtime error: Rust cannot catch
-    // foreign exceptions` and prints NO message (measured). Returning the
-    // `compile_error!` tokens here is what puts a readable diagnostic in front of
-    // that mute abort.
-    if let Some(errors) = ident_capture_routing::enforce(language) {
-        return errors;
-    }
+    //  1. **Here it did not guard what its own comment claimed.** This is the
+    //     eleventh of twelve generators `language!` runs. `generate_all` is the
+    //     second, and it reaches every authored refusal site in `prattail`. A
+    //     gate whose `return` only replaces THIS module's contribution cannot
+    //     stop an expansion — `language!` kept going and still spilled five
+    //     `include!` files to `target/generated/<lang>/` for a rejected grammar.
+    //  2. **A second copy would be pure duplicate work.** This function has
+    //     exactly one caller (`macros/src/lib.rs`), and `macros` is a proc-macro
+    //     crate, so no out-of-crate caller can exist. With the gate hoisted above
+    //     it, control reaches here only for grammars the gate ADMITTED — where
+    //     the check walks every rule of every grammar a second time and always
+    //     returns `None`. Rholang alone is ~260 rules.
+    //  3. **Two copies of a verdict are two places for it to drift.** The
+    //     scenario a duplicate defends against — a future second caller that
+    //     skips the gate — is better served by there being ONE gate, at the one
+    //     boundary that can act on it, than by two that can disagree.
+    //
+    // The rationale that used to live here (why `compile_error!` and not
+    // `panic!`, measured) belongs to the gate and travelled with it: see
+    // `ident_capture_routing::enforce`.
     let lang_name = language.name.to_string();
     let engine_ident = format_ident!("{}WpdaEngine", lang_name);
 

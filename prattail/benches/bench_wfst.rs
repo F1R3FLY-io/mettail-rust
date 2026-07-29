@@ -847,7 +847,7 @@ fn bench_space(c: &mut Criterion) {
                     let mut total_bytes = 0u64;
                     for _ in 0..iters {
                         reset_peak();
-                        let _output = generate_parser(spec);
+                        let _output = generate_parser(spec).expect("bench spec must be generable");
                         total_bytes += peak_bytes() as u64;
                     }
                     Duration::from_nanos(total_bytes / iters)

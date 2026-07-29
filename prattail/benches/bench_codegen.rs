@@ -30,7 +30,7 @@ fn bench_full_parser_generation(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         group.bench_with_input(BenchmarkId::from_parameter(name), spec, |b, spec| {
-            b.iter(|| generate_parser(spec));
+            b.iter(|| generate_parser(spec).expect("bench spec must be generable"));
         });
     }
 
@@ -52,7 +52,7 @@ fn bench_parser_with_analysis(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         group.bench_with_input(BenchmarkId::from_parameter(name), spec, |b, spec| {
-            b.iter(|| generate_parser_with_analysis(spec));
+            b.iter(|| generate_parser_with_analysis(spec).expect("bench spec must be generable"));
         });
     }
 

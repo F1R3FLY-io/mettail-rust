@@ -96,7 +96,7 @@ fn typed_calc_spec() -> LanguageSpec {
 #[test]
 fn test_generated_code_imports_runtime_types() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     assert!(
@@ -113,7 +113,7 @@ fn test_generated_code_imports_runtime_types() {
 #[test]
 fn test_generated_code_contains_position_and_range() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Position and Range are now imported from runtime_types via wildcard import.
@@ -189,7 +189,7 @@ fn test_format_error_context() {
 #[test]
 fn test_error_message_includes_identifier() {
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Category with IVar should mention "identifier" in expected messages
@@ -251,7 +251,7 @@ fn test_runtime_types_provides_format_error_context() {
 fn test_single_category_no_cast_suggestions() {
     // Single-category grammar has no missing cast possibilities.
     let spec = calculator_spec();
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Should NOT contain cast rule hints (only one category, no casts possible)
@@ -279,7 +279,7 @@ fn test_cast_rule_suppresses_suggestions() {
         &category_names,
     ));
 
-    let code = generate_parser(&spec);
+    let code = generate_parser(&spec).expect("the fixture spec must be generable");
     let code_str = code.to_string();
 
     // Bool's prefix handler should NOT suggest Int → Bool (cast already exists).
