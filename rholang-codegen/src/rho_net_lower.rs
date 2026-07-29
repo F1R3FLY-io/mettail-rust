@@ -3855,6 +3855,29 @@ pub const FREE_VAR_REFLECT_LABEL: &str = "^free";
 pub const PEANO_ZERO_REFLECT_LABEL: &str = "^Z";
 pub const PEANO_SUCC_REFLECT_LABEL: &str = "^S";
 
+/// (A4) The reserved reflection tag PREFIX for an **identifier-text leaf** — a constructor
+/// field carrying a captured token text (`m:Ident`, `v@Tok`; `OpaqueLeafKind::TokenText`).
+///
+/// Such a field has no positional ground image the M-reflect walk can RECURSE into: it is not
+/// a subterm, it is atomic data. It does, however, have a perfectly good NULLARY image, which
+/// is the shape [`reflect_category_fn`]'s `Literal` arm already emits for a native-scalar leaf
+/// (`GroundTerm::new(format!("{}({:?})", label, value), vec![])` — `"NumLit(8)"`). The tag
+/// BAKES the text, so `l.nth(0)` and `l.last(0)` reflect to structurally distinct ground
+/// terms and the in-Rho set automaton can LOCATE either.
+///
+/// The emitted tag is `^ident("nth")` — this prefix, then the text under `{:?}`. `^`-prefixed
+/// ⟹ unforgeable versus any user `Ident` (a Rust identifier never contains `^`), so it
+/// satisfies [`mettail_ast::validation::is_reserved_reflect_label`] exactly as `^lambda` /
+/// `^bound` / `^free` do; and an identifier's own charset is dot-free, so the decoders'
+/// `{fp}.{label}` split stays unambiguous.
+///
+/// ★ WHY THIS IS NOT COSMETIC. Without it, `is_structural_category_field` answers `false` for
+/// a token-text field, so its host constructor fails reflection CLOSED and every firing on it
+/// routes to σ-replay. That costs nothing while only `PFlt` is affected — but a language that
+/// collapses a large method surface onto ONE `recv . name ( args )` constructor would trade
+/// its whole *located* in-Rho method match for σ-replay, silently and with no diagnostic.
+pub const IDENT_TEXT_REFLECT_LABEL: &str = "^ident";
+
 /// E-2 MECHANISM D — the reflected-ABI HEREDITARY-GROUND MARKER (reflected-ABI v2).
 ///
 /// Every reflected OBJECT node (`is_marked_object_label`) carries, as its FIRST element
@@ -3920,6 +3943,11 @@ pub fn all_reserved_reflect_labels() -> Vec<&'static str> {
         FLOAT_MERGE_RESERVED_LABEL,
         PEANO_ZERO_REFLECT_LABEL,
         PEANO_SUCC_REFLECT_LABEL,
+        // (A4) The identifier-text leaf tag PREFIX. Censused as the prefix because the
+        // emitted tag is `^ident("<text>")` — text-dependent, so no `&'static str` names an
+        // instance. The namespace assertion is about the RESERVED PREFIX, and every instance
+        // inherits it: `format!("{}({:?})", "^ident", …)` starts with `^` for every text.
+        IDENT_TEXT_REFLECT_LABEL,
     ]);
     labels.sort_unstable();
     labels.dedup();

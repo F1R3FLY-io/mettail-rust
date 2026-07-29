@@ -12,14 +12,25 @@
 //!
 //! Reconstruction is emitted for the structurally-invertible variants: `Var`, `Literal`
 //! (including the collection-category `ListLit`/`MapLit`/`BagLit` whole-value leaves),
-//! `Nullary`, `Regular` constructors whose fields are all plain (non-optional,
-//! non-collection, non-predicate) category children wrapped in `Arc`, and (E2.1) the AC
+//! `Nullary`, `Regular` constructors whose every field is invertible, and (E2.1) the AC
 //! `Collection` (HashBag soup), `Binder`, and `MultiBinder` variants — each the exact
 //! structural inverse of the corresponding [`super::typed_lowering`] arm. A `Regular`
-//! constructor with a builtin/opaque/optional/predicate field is not invertible here (its
-//! lowered child is a sentinel) and reconstructs to `None`, faithfully deferring any fold
-//! that would read it; a non-AC (`Vec`/`HashSet`/`HashMap`) collection field likewise lowers
-//! to a `FieldOpaque` spine leaf and stays `None`.
+//! constructor with a builtin/guest-body/optional/predicate/collection field is not
+//! invertible here (its lowered child is a lossy or absent sentinel) and reconstructs to
+//! `None`, faithfully deferring any fold that would read it; a non-AC
+//! (`Vec`/`HashSet`/`HashMap`) collection field likewise lowers to a `FieldOpaque` spine leaf
+//! and stays `None`.
+//!
+//! ★ (A4) FIELD-LEVEL, NOT VARIANT-LEVEL. Invertibility is decided per FIELD by
+//! [`ReconstructableField`] and the whole variant is refused only if some field is
+//! `NotInvertible`. The former predicate answered `bool`, so its single caller could only
+//! `continue` the WHOLE variant — which meant a constructor carrying an
+//! `OpaqueLeafKind::TokenText` capture beside perfectly ordinary category children was
+//! refused ENTIRELY, and the refusal was structural rather than informational: the captured
+//! text was already present in the e-graph content key (see [`super::op_enum`]), it merely
+//! had no label and no inverse. Token-text fields now rebuild through
+//! [`token_text_reconstruct`]; guest-body fields still do not, because an `Arc<FltNode>` has
+//! no lossless `Debug` inverse.
 //!
 //! E2.1 (AC `Collection`/`Binder`/`MultiBinder` inverses):
 //! - **AC `Collection` (HashBag soup):** the lowering ([`super::typed_lowering`]
@@ -51,8 +62,10 @@ use quote::{format_ident, quote};
 use syn::Ident;
 
 use super::coll_type_is_ac_bag;
-use super::op_enum::{op_enum_ident, op_variant_ident};
-use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use super::op_enum::{language_has_token_text_leaf, op_enum_ident, op_variant_ident};
+use crate::gen::term_ops::subst::{
+    collect_category_variants, FieldInfo, OpaqueLeafKind, VariantKind,
+};
 
 /// The from-derivation reconstruction fn name for a category (snake-cased to match the
 /// `__mettail_dovetail_add_<cat>` lowering convention and satisfy `non_snake_case`).
@@ -60,24 +73,156 @@ pub(crate) fn build_fn(category: &Ident) -> Ident {
     format_ident!("__mettail_dovetail_build_{}_d", super::to_snake(&category.to_string()))
 }
 
-/// Whether a field is a plain category child (recursively reconstructable): a single
-/// non-optional, non-collection, non-predicate, non-opaque-leaf child of an object
-/// (non-builtin) category.
+/// The fixed name of the token-text inverse (see [`token_text_reconstruct`]). It is NOT
+/// derived through [`build_fn`] because a token-text leaf has no CATEGORY to derive from —
+/// `FieldInfo::category` is the placeholder ident `String` for such a field, and routing it
+/// through `build_fn` would silently collide with a genuine user category named `String`.
+pub(crate) fn token_text_build_fn() -> Ident {
+    format_ident!("__mettail_dovetail_build_token_text_d")
+}
+
+/// (A4) How a constructor field participates in reconstruction. TOTAL over `FieldInfo`: every
+/// field lands in exactly one arm, so a new field shape must be classified here before it can
+/// silently make a variant non-invertible.
 ///
-/// L9-3/L9-4: an opaque-leaf capture (token-text `String` / guest-body
-/// `Arc<FltNode>`) is NOT plainly invertible — it was lowered to a LOSSY e-graph
-/// leaf (`format!("{}::{:?}", …)`, see `opaque_leaf_expr`), which cannot be
-/// parsed back into the payload, and it has no `__mettail_dovetail_build_<leaf>_d`
-/// reconstruction fn. A variant carrying one is therefore not structurally
-/// invertible; `category_reconstruct` skips it (falls through to `_ => None`).
-/// This is sound: such variants (e.g. Rholang's inert `PFlt`) never participate in
-/// a Dovetail rewrite, so they are never reached for reconstruction.
-fn is_plain_category_field(field: &FieldInfo) -> bool {
-    !field.is_optional
-        && !field.is_collection
-        && !field.is_predicate
-        && !field.is_opaque_leaf()
-        && !NonTerminalKind::classify(&field.category.to_string()).is_builtin()
+/// This replaces the former `is_plain_category_field` predicate, whose defect was not its
+/// answer but its ARITY: it was a `bool`, so the only thing a caller could do with a
+/// token-text field was refuse the WHOLE variant. That refusal was STRUCTURAL, not
+/// informational — the text was already in the e-graph content key (`typed_lowering`'s
+/// `FieldOpaque(format!("{:?}", text))` frames the string's own bytes, so two constructors
+/// differing only in the captured name were already distinct e-classes) — it simply had no
+/// inverse and no label. With three outcomes the caller can select a per-field builder
+/// instead, and only a genuinely non-invertible field refuses the variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReconstructableField {
+    /// A plain category child: non-optional, non-collection, non-predicate, non-leaf, of an
+    /// object (non-builtin) category. Rebuilt by `build_fn(cat)` and wrapped in `Arc`.
+    Category,
+    /// (A4) An [`OpaqueLeafKind::TokenText`] capture (`v@Tok`, `m:Ident`). Lowered to
+    /// `FieldTokenText(text)` VERBATIM, so [`token_text_build_fn`] inverts it losslessly. The
+    /// emitted field type is a BARE `String` (`OpaqueLeafKind::field_type`), so the rebuilt
+    /// value is used UNWRAPPED — no `Arc`.
+    TokenText,
+    /// Not invertible from the derivation: its lowered child is a lossy/absent spine sentinel.
+    /// Covers builtin-category fields, predicate slots, collections, optionals, and
+    /// [`OpaqueLeafKind::GuestBody`] (an `Arc<FltNode>` has no lossless `Debug` inverse).
+    /// A variant carrying one is skipped by `category_reconstruct` and falls through to
+    /// `_ => None` — faithfully deferring any fold that would read it.
+    NotInvertible,
+}
+
+/// Classify a field for reconstruction. Branches on the leaf FLAG before reading `category`,
+/// whose value is a placeholder (`String`/`FltNode`) for leaf fields.
+fn classify_reconstructable_field(field: &FieldInfo) -> ReconstructableField {
+    if field.is_optional || field.is_collection || field.is_predicate {
+        return ReconstructableField::NotInvertible;
+    }
+    match field.opaque_leaf {
+        Some(OpaqueLeafKind::TokenText) => ReconstructableField::TokenText,
+        Some(OpaqueLeafKind::GuestBody) => ReconstructableField::NotInvertible,
+        None if NonTerminalKind::classify(&field.category.to_string()).is_builtin() => {
+            ReconstructableField::NotInvertible
+        },
+        None => ReconstructableField::Category,
+    }
+}
+
+/// Whether every field of a variant is invertible — the admission test the `Regular` /
+/// `Binder` / `MultiBinder` arms apply before emitting a reconstruction arm.
+fn all_fields_invertible(fields: &[FieldInfo]) -> bool {
+    fields
+        .iter()
+        .all(|f| classify_reconstructable_field(f) != ReconstructableField::NotInvertible)
+}
+
+/// The per-field child expression for a reconstruction arm: the `i`-th derivation child
+/// rebuilt at the type the constructor's field expects.
+///
+/// ⚠ The two arms differ in WRAPPING, and the difference is load-bearing: a category child is
+/// stored `Arc<Cat>` (`term_ops/subst.rs`'s field-type derivation), a token-text leaf is stored
+/// as a BARE `String` (`OpaqueLeafKind::field_type`). Wrapping the latter would not type-check
+/// — which is the desired property: the shapes are checked by the compiler, not by a comment.
+///
+/// Panics only on a `NotInvertible` field, which the callers exclude via
+/// [`all_fields_invertible`] before ever reaching here.
+fn reconstruct_child_expr(field_index: usize, field: &FieldInfo) -> TokenStream {
+    let i = field_index;
+    match classify_reconstructable_field(field) {
+        ReconstructableField::Category => {
+            let child_build = build_fn(&field.category);
+            quote! {
+                ::std::sync::Arc::new(#child_build(__d.children.get(#i)?)?)
+            }
+        },
+        ReconstructableField::TokenText => {
+            let text_build = token_text_build_fn();
+            quote! {
+                #text_build(__d.children.get(#i)?)?
+            }
+        },
+        ReconstructableField::NotInvertible => unreachable!(
+            "reconstruct_child_expr reached a NotInvertible field; callers gate on \
+             all_fields_invertible first",
+        ),
+    }
+}
+
+/// (A4) Generate `__mettail_dovetail_build_token_text_d` — the inverse of
+/// `typed_lowering::token_text_leaf_typed`.
+///
+/// ONE arm and a total fallback. The lowering wrote the captured text VERBATIM into
+/// `FieldTokenText`, so the inverse is a `clone()`: there is no `Debug` escaping to undo and
+/// therefore NO UNESCAPING PARSER anywhere — the property that makes this lossless rather than
+/// merely usually-right. Every other op (including the lossy `FieldOpaque`, which a guest-body
+/// or predicate field still lowers to) answers `None`, so a fold reading a non-text child
+/// DEFERS instead of fabricating a string.
+///
+/// Emitted only when [`language_has_token_text_leaf`] holds — the same predicate that decides
+/// whether the `FieldTokenText` variant exists — so this function can never reference a
+/// variant the enum does not have.
+pub(crate) fn token_text_reconstruct(language: &LanguageDef) -> TokenStream {
+    if !language_has_token_text_leaf(language) {
+        return quote! {};
+    }
+    let enum_id = op_enum_ident(language);
+    let fn_name = token_text_build_fn();
+    quote! {
+        // A language whose only token-text field sits on a variant the fold gate never
+        // reaches emits this inverse without calling it; that is correct (the capability is
+        // present) and must not be a warning.
+        #[allow(dead_code)]
+        fn #fn_name(
+            __d: &::std::rc::Rc<
+                ::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>
+            >,
+        ) -> ::core::option::Option<::std::string::String> {
+            match &__d.op {
+                #enum_id::FieldTokenText(__s) => {
+                    ::core::option::Option::Some(__s.clone())
+                },
+                _ => ::core::option::Option::None,
+            }
+        }
+    }
+}
+
+/// Every per-category reconstructor for `language`, PLUS the single shared token-text inverse.
+///
+/// The three typed-path assembly sites (`typed_report`'s `generate_dovetail_normal_term`,
+/// `generate_step_graph`, `generate_typed_dovetail_report`) each emit the reconstructors into
+/// their own scope. Collecting them HERE rather than at each site is what keeps the token-text
+/// inverse from being added to two of the three — the exact drift shape this file's history
+/// already contains once.
+pub(crate) fn all_reconstructors(language: &LanguageDef) -> Vec<TokenStream> {
+    let mut out = Vec::with_capacity(language.types.len() + 1);
+    out.extend(
+        language
+            .types
+            .iter()
+            .map(|ty| category_reconstruct(language, &ty.name)),
+    );
+    out.push(token_text_reconstruct(language));
+    out
 }
 
 /// Generate `__mettail_dovetail_build_<cat>_d`: reconstruct a `<Cat>` from a derivation tree.
@@ -103,7 +248,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
                 });
             },
             VariantKind::Regular { label, fields } => {
-                if fields.is_empty() || !fields.iter().all(is_plain_category_field) {
+                if fields.is_empty() || !all_fields_invertible(&fields) {
                     // Not structurally invertible here — falls through to `_ => None`.
                     continue;
                 }
@@ -111,12 +256,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
                 let child_exprs: Vec<TokenStream> = fields
                     .iter()
                     .enumerate()
-                    .map(|(i, field)| {
-                        let child_build = build_fn(&field.category);
-                        quote! {
-                            ::std::sync::Arc::new(#child_build(__d.children.get(#i)?)?)
-                        }
-                    })
+                    .map(|(i, field)| reconstruct_child_expr(i, field))
                     .collect();
                 arms.push(quote! {
                     #enum_id::#v => ::core::option::Option::Some(
@@ -163,8 +303,10 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
             // (correct — Dovetail normal forms are α-classes). A pre-field/body that is not plainly
             // invertible (`None`) defers the whole reconstruction via `?`.
             VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
-                if !pre_scope_fields.iter().all(is_plain_category_field) {
-                    // A pre-scope field is opaque/optional/predicate/collection — not invertible.
+                if !all_fields_invertible(&pre_scope_fields) {
+                    // A pre-scope field is guest-body/optional/predicate/collection/builtin —
+                    // not invertible. (A token-text pre-scope field IS invertible; see
+                    // `ReconstructableField::TokenText`.)
                     continue;
                 }
                 let v = op_variant_ident(category, &label);
@@ -172,12 +314,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
                 let pre_exprs: Vec<TokenStream> = pre_scope_fields
                     .iter()
                     .enumerate()
-                    .map(|(i, field)| {
-                        let child_build = build_fn(&field.category);
-                        quote! {
-                            ::std::sync::Arc::new(#child_build(__d.children.get(#i)?)?)
-                        }
-                    })
+                    .map(|(i, field)| reconstruct_child_expr(i, field))
                     .collect();
                 let arity_idx = pre_scope_fields.len();
                 let body_idx = pre_scope_fields.len() + 1;
@@ -209,7 +346,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
             // (same α-equivalence rationale as the single-binder arm). The body de-Bruijn coords
             // index into this `n`-binder scope and stay valid.
             VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-                if !pre_scope_fields.iter().all(is_plain_category_field) {
+                if !all_fields_invertible(&pre_scope_fields) {
                     continue;
                 }
                 let v = op_variant_ident(category, &label);
@@ -217,12 +354,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
                 let pre_exprs: Vec<TokenStream> = pre_scope_fields
                     .iter()
                     .enumerate()
-                    .map(|(i, field)| {
-                        let child_build = build_fn(&field.category);
-                        quote! {
-                            ::std::sync::Arc::new(#child_build(__d.children.get(#i)?)?)
-                        }
-                    })
+                    .map(|(i, field)| reconstruct_child_expr(i, field))
                     .collect();
                 let arity_idx = pre_scope_fields.len();
                 let body_idx = pre_scope_fields.len() + 1;

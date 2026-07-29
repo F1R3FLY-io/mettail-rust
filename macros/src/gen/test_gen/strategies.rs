@@ -336,6 +336,21 @@ fn rule_has_internal_surface(rule: &mettail_ast::grammar::GrammarRule) -> bool {
         .unwrap_or(false)
 }
 
+/// (A4) How many builtin `m:Ident` params the rule named `(cat, label)` declares.
+///
+/// The tape builder reads `FieldInfo::opaque_leaf`, which cannot tell an `m:Ident` param from
+/// a `v@Tok` capture of a declared kind — and the two are governed by different lexer
+/// patterns. This reaches back to the RULE for that distinction; see
+/// [`crate::gen::term_gen::ident_param_count`] for why inferring it from the leaf kind is
+/// unsound. Returns 0 when no such rule exists (a synthesized variant has no term context).
+fn ident_param_count_for(cat: &str, label: &str, language: &LanguageDef) -> usize {
+    language
+        .terms
+        .iter()
+        .find(|r| r.category == *cat && r.label == *label)
+        .map_or(0, crate::gen::term_gen::ident_param_count)
+}
+
 fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantClassification {
     let cat = category.to_string();
     let variants = collect_spec_only_variants(category, language);
@@ -402,6 +417,88 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                 let has_recursive_field = fields
                     .iter()
                     .any(|f| language.types.iter().any(|t| t.name == f.category));
+
+                // (A4) A GUEST-BODY field (`*flt(…)` → `Arc<FltNode>`) has no tape
+                // construction and no reliably re-parseable Display, so its whole variant is
+                // excluded EXPLICITLY here rather than by accident. Before this, an
+                // ident-only variant like Rholang's `PFlt` was dropped by the
+                // `!has_recursive_field` test below — correct outcome, invisible reason —
+                // while a MIXED variant (a guest body beside a category child) reached
+                // `generate_direct_recursive_build` and emitted
+                // `Arc::new(build_<owner>_from_tape(..))` for the leaf slot: code that does
+                // not type-check. No shipped grammar had that shape, so it had never fired.
+                if fields.iter().any(|f| {
+                    f.opaque_leaf
+                        == Some(crate::gen::term_ops::subst::OpaqueLeafKind::GuestBody)
+                }) {
+                    continue;
+                }
+
+                // (A4) A MIXED variant carrying a `v@Tok` token-kind capture beside a
+                // category child is EXCLUDED. Its text must satisfy a DECLARED kind's lexer
+                // pattern, which this builder has no handle on (`FieldInfo` records the leaf
+                // KIND, not the token kind), and guessing would emit a term whose `Display`
+                // does not re-lex. Pre-A such a variant reached the "Unknown category" arm
+                // and emitted `Arc::new(build_<owner>_from_tape(..))` into a `String` slot —
+                // code that does not type-check — so excluding it is strictly an improvement.
+                if has_recursive_field
+                    && fields.iter().any(|f| {
+                        f.opaque_leaf
+                            == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
+                    })
+                    && ident_param_count_for(&cat, &label.to_string(), language) == 0
+                {
+                    continue;
+                }
+
+                // (A4) A variant whose fields are ALL token-text leaves (`m:Ident`, `v@Tok`)
+                // is a LEAF, not a drop. It has no category child to recurse into, so
+                // `has_recursive_field` is false and it used to `continue` — vanishing from
+                // the generated property suite with no diagnostic, exactly as it vanished
+                // from `term_gen`. Its text comes from the same spec-derived, pattern-
+                // validated pool the other generators use.
+                if !fields.is_empty()
+                    && !has_recursive_field
+                    && fields.iter().all(|f| {
+                        f.opaque_leaf
+                            == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
+                    })
+                    // ★ POSITIVE evidence that these text fields are `m:Ident` PARAMS, not
+                    // `v@Tok` captures of a DECLARED kind. `ident_samples` walks the
+                    // language's effective `Ident` pattern, which governs the former and not
+                    // the latter (`L9ModalToy`'s `Word = "<[a-z]+>"`). A `v@Tok` variant
+                    // keeps its previous treatment — dropped here, and served correctly by
+                    // `capture_only_construction` in the term generators, which samples each
+                    // capture's own declared kind.
+                    && ident_param_count_for(&cat, &label.to_string(), language)
+                        == fields.len()
+                {
+                    let label_str = label.to_string();
+                    let samples = crate::gen::term_gen::ident_samples(language);
+                    let args: Vec<String> = (0..fields.len())
+                        .map(|_| {
+                            format!(
+                                "[{}][(reader.next_byte() as usize) % {}].to_string()",
+                                samples
+                                    .iter()
+                                    .map(|s| format!("{s:?}"))
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                                samples.len(),
+                            )
+                        })
+                        .collect();
+                    leaves.push((
+                        label_str.clone(),
+                        format!(
+                            "AnyTerm::Wrap{cat}({cat}::{label}({args}))",
+                            cat = cat,
+                            label = label_str,
+                            args = args.join(", "),
+                        ),
+                    ));
+                    continue;
+                }
 
                 if !has_recursive_field || fields.is_empty() {
                     // Treat as leaf (unknown category fields)
@@ -1118,6 +1215,35 @@ fn generate_direct_recursive_build(
                         i = i,
                         fc = field_cat,
                         fcl = field_cat_lower,
+                    ));
+                    field_exprs.push(format!("f{}", i));
+                } else if field.opaque_leaf
+                    == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
+                    && ident_param_count_for(cat, &label.to_string(), language) > 0
+                {
+                    // (A4) A token-text leaf (`m:Ident`, `v@Tok`) is a BARE `String`, never
+                    // `Arc<Cat>`, and there is no `build_<cat>_from_tape` for it — it is not
+                    // a category. Its text comes from the spec-derived, pattern-validated
+                    // pool; a tape byte selects from that pool so proptest replay stays
+                    // deterministic and shrinking still shortens the tape.
+                    //
+                    // ⚠ WITHOUT THIS BRANCH the field fell through to the "Unknown category"
+                    // arm below, which emits `Arc::new(build_<OWNER>_from_tape(..))` — the
+                    // owning category's builder, into a `String` slot. That is generated code
+                    // that does not type-check, i.e. a BUILD BREAK rather than the silent
+                    // coverage loss the sibling sites had. It had never fired only because no
+                    // shipped grammar pairs an `m:Ident` param with a category child.
+                    let samples = crate::gen::term_gen::ident_samples(language);
+                    let pool = samples
+                        .iter()
+                        .map(|s| format!("{s:?}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    code.push_str(&format!(
+                        "            let f{i} = [{pool}][(reader.next_byte() as usize) % {n}].to_string();\n",
+                        i = i,
+                        pool = pool,
+                        n = samples.len(),
                     ));
                     field_exprs.push(format!("f{}", i));
                 } else if is_known {
@@ -2028,6 +2154,115 @@ fn generate_public_arb_strategy(category: &syn::Ident, _language: &LanguageDef, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A-8, the THIRD site** — the proptest tape builder.
+    ///
+    /// The design brief named two places an `Ident` position was dropped
+    /// (`term_gen/random.rs`, `term_gen/exhaustive.rs`). This is a third, and it is WORSE
+    /// than a drop: a token-text field beside a category child fell through to the "Unknown
+    /// category" arm, which emits `Arc::new(build_<OWNER>_from_tape(..))` into a `String`
+    /// slot — generated code that does not type-check. It had never fired only because no
+    /// shipped grammar pairs an `m:Ident` param with a category child; the collapse this
+    /// capability enables is exactly that shape, on a language whose generated property
+    /// suite IS emitted.
+    ///
+    /// ★ CONTROL, so this cannot pass by admitting everything: a `*flt(…)` guest-body
+    /// variant must still be ABSENT from the generated strategies — it has no tape
+    /// construction and no reliably re-parseable Display.
+    #[test]
+    fn token_text_field_is_a_string_in_the_tape_builder() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: IdentStrategyGen,
+                types { Proc }
+                tokens {
+                    FltOpenBrace = "box\\{" push(flt_body) ;
+                    raw mode flt_body {
+                        FltCloseBrace = "\\}" pop ;
+                        GuestChunk = "[^{}]+" ;
+                    }
+                }
+                terms {
+                    Nil . |- "0" : Proc ;
+                    Named . m:Ident |- "tag" m : Proc ;
+                    Call . recv:Proc, m:Ident |- "call" "(" recv "," m ")" : Proc ;
+                    Guest . |- *flt(node, FltOpenBrace, FltCloseBrace) : Proc ;
+                }
+            "#,
+        )
+        .expect("the fixture language must parse");
+        let code = generate_strategies(&language);
+
+        // The MIXED variant's text slot is a bare `String`, chosen from the spec-derived
+        // pool — never `Arc::new(build_proc_from_tape(..))`, which is what the pre-A
+        // fall-through emitted there.
+        assert!(
+            code.contains("Proc::Call("),
+            "the mixed ident-bearing constructor must be generated at all:\n{code}",
+        );
+        assert!(
+            code.contains(".to_string();"),
+            "the token-text slot must be filled with an owned `String`:\n{code}",
+        );
+        // The IDENT-ONLY variant is a LEAF, not a silent drop.
+        assert!(
+            code.contains("Proc::Named("),
+            "an ident-only constructor must be generated as a leaf rather than dropped:\n\
+             {code}",
+        );
+        // CONTROL: the guest-body variant stays out.
+        assert!(
+            !code.contains("Proc::Guest("),
+            "a guest-body constructor has no tape construction and must stay EXCLUDED — \
+             otherwise this test would be passing by admitting everything:\n{code}",
+        );
+    }
+
+    /// **A-4, the PROVENANCE discrimination.** `OpaqueLeafKind::TokenText` is shared by an
+    /// `m:Ident` param and a DECLARED `v@Tok` capture, and they are governed by DIFFERENT
+    /// lexer patterns. The generator samples the effective `Ident` pattern, so it may only do
+    /// so on POSITIVE evidence of an `m:Ident` param.
+    ///
+    /// ★ MUTATION IT REJECTS: dropping the `ident_param_count_for(..)` guard puts an `Ident`
+    /// sample (`"a"`) into a field the grammar says must match `Word = "<[a-z]+>"` — a
+    /// generated term whose `Display` does not re-lex, failing the round-trip property with a
+    /// message pointing at the parser rather than at the sampler. This was a real defect in
+    /// the first cut of this change, caught by re-reading the generated output for
+    /// `L9ModalToy` rather than by any assertion, which is why it now has one.
+    #[test]
+    fn declared_token_kind_capture_is_not_sampled_from_the_ident_pattern() {
+        let language: LanguageDef = syn::parse_str(
+            r#"
+                name: DeclaredKindStrategyGen,
+                types { ![i32] as Num }
+                tokens {
+                    Word = "<[a-z]+>" ;
+                }
+                terms {
+                    AddNum . a:Num, b:Num |- a "+" b : Num ![a + b] ;
+                    Tagged . |- "tag" w@Word : Num ![w.len() as i32];
+                }
+            "#,
+        )
+        .expect("the fixture language must parse");
+        let code = generate_strategies(&language);
+        // The `Ident`-pattern samples are `"A"` / `"AA"` / `"AAA"` (the shortest strings the
+        // default `[a-zA-Z_][a-zA-Z0-9_]*` DFA accepts, repeated); none may appear in a field
+        // the grammar governs with `Word`.
+        for wrong in ["Num::Tagged(\"A\"", "Num::Tagged(\"AA\"", "Num::Tagged(\"a\""] {
+            assert!(
+                !code.replace(' ', "").contains(&wrong.replace(' ', "")),
+                "a `v@Word` capture must NOT be sampled from the `Ident` pattern ({wrong}):\n\
+                 {code}",
+            );
+        }
+        // ANTI-VACUITY: the generator did run and did produce this category's builder.
+        assert!(
+            code.contains("build_num_from_tape"),
+            "the strategies generator must have produced a builder for `Num`, otherwise the \
+             absence above is an absence of output rather than of the defect:\n{code}",
+        );
+    }
 
     #[test]
     fn pre_scope_optional_pred_tape_builds_both_arms() {

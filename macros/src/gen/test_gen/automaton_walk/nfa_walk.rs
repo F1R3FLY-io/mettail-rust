@@ -46,6 +46,12 @@ pub struct CompiledPattern {
     pub accepts: Vec<bool>,
     /// Inverse partition: `representative_byte[class_id]` = one byte.
     pub representative_byte: Vec<u8>,
+    /// Forward partition: `byte_to_class[b as usize]` = the DFA class of byte `b`, or
+    /// `usize::MAX` when the byte falls outside this DFA's class range (no state has a
+    /// transition on it). Needed to RUN the DFA on a concrete string — [`deterministic_sample`]
+    /// only ever walks classes outward, so it needs the inverse; [`pattern_admits`] walks a
+    /// given string inward and needs this.
+    pub byte_to_class: Vec<usize>,
 }
 
 /// Compile a regex to a `CompiledPattern` suitable for runtime tape
@@ -76,12 +82,16 @@ pub fn compile_pattern(pattern: &str) -> Option<CompiledPattern> {
     // in that class. `partition.classify(b)` gives class for byte b.
     let mut representative_byte = vec![0u8; num_classes];
     let mut seen = vec![false; num_classes];
+    let mut byte_to_class = vec![usize::MAX; 256];
     for b in 0u8..=255u8 {
         let c = partition.classify(b);
         let c_idx = c as usize;
-        if c_idx < num_classes && !seen[c_idx] {
-            representative_byte[c_idx] = b;
-            seen[c_idx] = true;
+        if c_idx < num_classes {
+            byte_to_class[b as usize] = c_idx;
+            if !seen[c_idx] {
+                representative_byte[c_idx] = b;
+                seen[c_idx] = true;
+            }
         }
     }
 
@@ -92,7 +102,45 @@ pub fn compile_pattern(pattern: &str) -> Option<CompiledPattern> {
         transitions,
         accepts,
         representative_byte,
+        byte_to_class,
     })
+}
+
+/// (A4) Whether the compiled DFA for `pattern` ACCEPTS `candidate` exactly (whole-string
+/// match, not a prefix).
+///
+/// The companion to [`deterministic_sample`]: that walks the DFA outward to PRODUCE one
+/// accepted string, this runs it inward to CHECK a string the caller built. Both are needed
+/// by the term generators, which construct longer identifier candidates from the shortest
+/// accepted one and must keep only those the spec's own pattern still admits — otherwise a
+/// language that overrides `Ident` to a fixed-width class would silently receive generated
+/// terms that do not re-parse.
+///
+/// Returns `false` if the pattern fails to compile (an ill-formed override admits nothing),
+/// so a caller cannot mistake a compile failure for acceptance.
+pub fn pattern_admits(pattern: &str, candidate: &str) -> bool {
+    let Some(cp) = compile_pattern(pattern) else {
+        return false;
+    };
+    let mut state = cp.start as usize;
+    if state >= cp.num_states {
+        return false;
+    }
+    for &b in candidate.as_bytes() {
+        let class = cp.byte_to_class[b as usize];
+        if class >= cp.num_classes {
+            return false;
+        }
+        let target = cp.transitions[state * cp.num_classes + class];
+        if target == DEAD_STATE {
+            return false;
+        }
+        state = target as usize;
+        if state >= cp.num_states {
+            return false;
+        }
+    }
+    cp.accepts[state]
 }
 
 /// L9-3: a DETERMINISTIC, regex-valid sample string for `pattern` — the

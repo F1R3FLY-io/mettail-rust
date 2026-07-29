@@ -57,6 +57,20 @@ enum BindKind {
     Collection(Ident),
     /// Object (`Proc`, …): reconstruct to the typed AST `&Cat`. Gated on fold-readiness.
     Object,
+    /// (A4) Identifier TEXT (`m:Ident`, or a `v@Tok` capture): the derivation child is a
+    /// `FieldTokenText` leaf, inverted by `reconstruct::token_text_build_fn` to the captured
+    /// `String`. Bound as `&String` so the body's `m.as_str()` / `m.clone()` read exactly as
+    /// they do in the interpreter's `![…]` action, matching the `&Cat` convention the
+    /// `Object`/`Scalar` arms use.
+    ///
+    /// ★ It is NOT `Scalar`: `is_pure_native_arith` is `params.all(Scalar)`, so admitting a
+    /// text param can never route a fold body through the arithmetic `safeify`/`try_eval`
+    /// lane — that exclusion is by construction, not by a guard someone must remember.
+    ///
+    /// ⚠ It carries no category. A text leaf has no category to reconstruct through, and
+    /// `FoldParam::category` is a placeholder (`Ident`) for such a param — every site that
+    /// would dereference it must branch on `BindKind` first.
+    IdentText,
 }
 
 /// A fold rule's typed input parameter.
@@ -124,30 +138,37 @@ pub(super) fn collect_fold_rules(
         let mut refusing_param: Option<String> = None;
         for p in ctx {
             match p {
-                // ★ An `Ident` param REFUSES the fold, and this is a real limitation, not
-                // a formality. The fold body is lowered against the DOVETAIL DERIVATION,
-                // and each param is bound by calling that category's
-                // `__mettail_dovetail_build_<cat>_d` reconstructor. An `Ident` field has
-                // no such reconstructor because it is not a category — and it cannot
-                // simply be given one: an opaque-leaf capture is lowered to a LOSSY
-                // e-graph leaf (`format!("{}::{:?}", …)`, see `reconstruct.rs`'s
-                // `is_plain_category_field` doc), so the identifier's TEXT is not
-                // recoverable from the derivation at all.
+                // ★ (A4) An `Ident` param is ADMITTED. It used to REFUSE the fold, and the
+                // refusal was accurate for the lowering of the day: the fold body is lowered
+                // against the DOVETAIL DERIVATION and each param is bound by calling that
+                // category's `__mettail_dovetail_build_<cat>_d` reconstructor; an `Ident`
+                // field has no such reconstructor because it is not a category, and the
+                // opaque leaf it lowered to (`FieldOpaque(format!("{:?}", …))`) had no
+                // inverse.
                 //
-                // Declining names the offender in the lowering inventory rather than
-                // emitting a call to a function that does not exist. ⚠ CONSEQUENCE FOR
-                // ANY DESIGN THAT WANTS A FOLD TO READ A CAPTURED NAME (a single
-                // `EMethodCall`-style rule dispatching on its method name): it needs the
-                // opaque leaf to become INVERTIBLE for `TokenText` first. That is a
-                // derivation-lowering change, not a codegen tweak, and this gate is where
-                // its absence becomes visible instead of becoming a broken build.
-                TermParam::Simple { name, ty } if ty.is_ident_text() => {
-                    all_simple = false;
-                    refusing_param = Some(format!(
-                        "`{name}:{ty}` (identifier text is not recoverable from the \
-                         Dovetail derivation — the opaque-leaf lowering is lossy)"
-                    ));
-                    break;
+                // What changed is the LOWERING, exactly as that refusal said it must be:
+                // `typed_lowering` now emits `FieldTokenText(text)` — the text VERBATIM,
+                // under its own labelled discriminant — and `reconstruct` emits the total,
+                // lossless inverse `__mettail_dovetail_build_token_text_d`. So the param
+                // binds like any other, through a reconstructor that exists.
+                //
+                // ⚠ The reconstructor is named DIRECTLY, not derived via `build_fn` from
+                // `category`: a text leaf's `FieldInfo::category` is the placeholder ident
+                // `String`, and deriving would collide with a user category of that name.
+                //
+                // The `@`-binding takes the base ident from the SAME pattern the guard
+                // tests, so there is no second, drift-capable reading of what `Ident` means:
+                // `TypeExpr::is_ident_text` stays the single source of truth (it is itself
+                // defined over `TypeExpr::Base`, so the pattern cannot fail when the guard
+                // holds), and this arm precedes the general `Base` arm below.
+                TermParam::Simple { name, ty: ty @ TypeExpr::Base(category) }
+                    if ty.is_ident_text() =>
+                {
+                    params.push(FoldParam {
+                        name: name.clone(),
+                        category: category.clone(),
+                        bind: BindKind::IdentText,
+                    });
                 },
                 TermParam::Simple { name, ty: TypeExpr::Base(category) } => {
                     let lt = language.get_type(category);
@@ -656,6 +677,16 @@ fn generate_native_rules_and_dispatch(
                 .zip(cls_vars.iter())
                 .map(|(p, cls)| {
                     let nstr = p.name.to_string();
+                    // (A4) An `IdentText` param IS gated, like `Object`/`Collection`, and the
+                    // gate is SATISFIED rather than skipped — which is the point. A text
+                    // leaf's class holds exactly one e-node, `FieldTokenText(text)`;
+                    // `__is_value_op` is `!__is_fold_redex && !__is_var_op`, whose two sets
+                    // are the fold/substitution LHS HEADS and the `Var` op variants. A spine
+                    // sentinel is in neither, so the leaf classifies as a VALUE and
+                    // `__class_is_fold_value` admits it. Skipping the gate would have made
+                    // that a claim; keeping it makes the very first firing the evidence —
+                    // if the classification were wrong the fold would defer forever and the
+                    // `token_text_leaf` fixture's fold-fires test goes red immediately.
                     let gate = if matches!(p.bind, BindKind::Scalar) {
                         quote! {}
                     } else {
@@ -724,6 +755,17 @@ fn generate_native_rules_and_dispatch(
                         // would defer forever; the body/`CastWidth` evaluates an unfolded arg.
                         BindKind::Scalar | BindKind::Object => {
                             quote! { let #pname = &#bfn(&#dv)?; }
+                        },
+                        // (A4) Identifier text: invert the `FieldTokenText` leaf to the
+                        // captured `String` and bind a REFERENCE to it, matching the `&Cat`
+                        // convention above — so a body written `match m.as_str() { … }` or
+                        // `Cat::C(m.clone())` reads identically here and in the
+                        // interpreter's `![…]` action. A `None` (the child is some other
+                        // op) propagates through `?` and DEFERS the fold rather than
+                        // fabricating a name.
+                        BindKind::IdentText => {
+                            let text_build = reconstruct::token_text_build_fn();
+                            quote! { let #pname = &#text_build(&#dv)?; }
                         },
                         // Collection params bind a reference to the inner native collection
                         // (`&Vec`/`&HashBag`/`&HashMapLit`) the body operates on (`.extend`/
@@ -1365,11 +1407,10 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
         .iter()
         .map(|ty| typed_lowering::category_lowering_typed(language, &ty.name))
         .collect();
-    let reconstruct_fns: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|ty| reconstruct::category_reconstruct(language, &ty.name))
-        .collect();
+    // (A4) `all_reconstructors` = one per category PLUS the single shared token-text
+    // inverse. Collected there rather than here so the three typed-path assembly sites
+    // cannot drift apart about which inverses exist.
+    let reconstruct_fns: Vec<TokenStream> = reconstruct::all_reconstructors(language);
 
     let (folds, fold_dispositions) = collect_fold_rules(language);
     // (E1.3) Substitution rules share the native op-id counter with the folds (ids start at
@@ -1669,11 +1710,10 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
         .iter()
         .map(|ty| typed_lowering::category_lowering_typed(language, &ty.name))
         .collect();
-    let reconstruct_fns: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|ty| reconstruct::category_reconstruct(language, &ty.name))
-        .collect();
+    // (A4) `all_reconstructors` = one per category PLUS the single shared token-text
+    // inverse. Collected there rather than here so the three typed-path assembly sites
+    // cannot drift apart about which inverses exist.
+    let reconstruct_fns: Vec<TokenStream> = reconstruct::all_reconstructors(language);
 
     let (folds, fold_dispositions) = collect_fold_rules(language);
     let substs = collect_substitution_rules(language, folds.len());
@@ -2158,11 +2198,10 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
         .iter()
         .map(|ty| typed_lowering::category_lowering_typed(language, &ty.name))
         .collect();
-    let reconstruct_fns: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|ty| reconstruct::category_reconstruct(language, &ty.name))
-        .collect();
+    // (A4) `all_reconstructors` = one per category PLUS the single shared token-text
+    // inverse. Collected there rather than here so the three typed-path assembly sites
+    // cannot drift apart about which inverses exist.
+    let reconstruct_fns: Vec<TokenStream> = reconstruct::all_reconstructors(language);
 
     let (folds, fold_dispositions) = collect_fold_rules(language);
     // (E1.3) Substitution rules share the native op-id counter with the folds (ids start at

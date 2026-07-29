@@ -512,15 +512,55 @@ fn reflect_fn_name(category: &Ident) -> Ident {
 /// non-predicate field whose category is a language non-terminal (not a builtin like `i32`).
 /// Every other field (builtin / optional / predicate / collection) has no positional ground
 /// image, so its host variant fails the reflection closed (routing that firing to σ-replay).
+///
+/// ⚠ RECURSION, NOT ADMISSION. Since (A4) this predicate answers only "can the walk RECURSE
+/// here?"; whether a field is admissible at all is [`classify_reflect_field`]. A token-text
+/// leaf is not recursible (it is atomic data, not a subterm) yet IS reflectable, as a nullary
+/// node — so the two questions had to stop being the same question.
 fn is_structural_category_field(field: &FieldInfo) -> bool {
     !field.is_collection
         && !field.is_optional
         && !field.is_predicate
-        // L9-3: a token-text capture (`String`) has no positional ground image,
-        // so its host variant fails reflection closed → σ-replay (branch on the
-        // flag BEFORE reading `category`, whose placeholder is `String`).
+        // L9-3: a token-text capture (`String`) is not a recursible subterm — it has no
+        // `__mettail_rho_net_reflect_<cat>` to call (branch on the flag BEFORE reading
+        // `category`, whose placeholder is `String`). Its NULLARY image is emitted by
+        // `ReflectField::IdentText` instead.
         && !field.is_opaque_leaf()
         && !NonTerminalKind::classify(&field.category.to_string()).is_builtin()
+}
+
+/// (A4) How a constructor field reflects into a [`GroundTerm`] child. TOTAL over `FieldInfo`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReflectField {
+    /// A recursible category subterm — `__mettail_rho_net_reflect_<cat>(field.as_ref())?`.
+    Structural,
+    /// An [`OpaqueLeafKind::TokenText`] capture (`m:Ident`, `v@Tok`): a NULLARY ground leaf
+    /// whose tag BAKES the text — `^ident("nth")`. Atomic data, so nothing to recurse into;
+    /// distinct texts give structurally distinct ground terms, which is what lets the in-Rho
+    /// set automaton LOCATE a named constructor instead of falling back to σ-replay.
+    IdentText,
+    /// No positional ground image at all — the host variant fails reflection CLOSED and the
+    /// firing routes to σ-replay. Covers builtin/optional/predicate/collection fields and
+    /// [`OpaqueLeafKind::GuestBody`] (an `Arc<FltNode>` is an opaque foreign payload with no
+    /// ground image, and inventing a `{:?}` tag for it would make σ-replay silently
+    /// unnecessary-looking without making the match correct).
+    NotReflectable,
+}
+
+/// Classify a field for the M-reflect walk. Branches on the leaf FLAG before reading
+/// `category`, whose value is a placeholder (`String`/`FltNode`) for leaf fields.
+fn classify_reflect_field(field: &FieldInfo) -> ReflectField {
+    if is_structural_category_field(field) {
+        return ReflectField::Structural;
+    }
+    match field.opaque_leaf {
+        Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
+            if !field.is_optional && !field.is_collection =>
+        {
+            ReflectField::IdentText
+        },
+        _ => ReflectField::NotReflectable,
+    }
 }
 
 /// Generate the per-category structural `Term → GroundTerm` reflection fn — the M-reflect
@@ -529,11 +569,19 @@ fn is_structural_category_field(field: &FieldInfo) -> bool {
 /// [`GroundTerm`](mettail_rholang_codegen::GroundTerm) DIRECTLY from the runtime subject term
 /// (NOT from the report's σ), tagging each node with its BARE constructor label — the exact
 /// input `spread_term_par` / `reflect_tag` expect, so the reflected subject is coherent with the
-/// automaton's compiled tags. It is TOTAL over the category's variants: a Nullary or an
-/// all-structural Regular constructor reflects; a Var / Literal / Collection / Binder / an
-/// Regular with a non-structural field fails CLOSED with a typed reason (the firing then falls
-/// back to the σ-replay driver). The `k` reflection fns (one per category) are mutually
-/// recursive nested fns, so cross-category structural fields resolve without a trait surface.
+/// automaton's compiled tags. It is TOTAL over the category's variants: a Nullary or a Regular
+/// constructor all of whose fields are reflectable ([`classify_reflect_field`]) reflects; a Var
+/// / Literal / Collection / Binder / a Regular with a NON-reflectable field fails CLOSED with a
+/// typed reason (the firing then falls back to the σ-replay driver). The `k` reflection fns
+/// (one per category) are mutually recursive nested fns, so cross-category structural fields
+/// resolve without a trait surface.
+///
+/// ★ (A4) "Reflectable" is strictly wider than "recursible". A token-text field
+/// (`OpaqueLeafKind::TokenText`) is atomic data with no child to recurse into, yet has a
+/// perfectly good NULLARY image — `^ident("nth")` — so its host constructor now reflects
+/// STRUCTURALLY instead of failing closed. A guest-body field (`OpaqueLeafKind::GuestBody`)
+/// still fails closed: an `Arc<FltNode>` is an opaque foreign payload, and a `{:?}` tag over
+/// it would make the reflection LOOK total while giving the automaton nothing it can match on.
 fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream {
     let fn_name = reflect_fn_name(category);
     let ground = quote!(::mettail_rholang_codegen::GroundTerm);
@@ -548,16 +596,39 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
                     )
                 }
             },
-            VariantKind::Regular { label, fields } if fields.iter().all(is_structural_category_field) => {
+            VariantKind::Regular { label, fields }
+                if fields
+                    .iter()
+                    .all(|f| classify_reflect_field(f) != ReflectField::NotReflectable) =>
+            {
                 let label_lit = lit(&label.to_string());
+                let ident_label_lit = lit(mettail_rholang_codegen::IDENT_TEXT_REFLECT_LABEL);
                 let field_vars: Vec<Ident> =
                     (0..fields.len()).map(|i| format_ident!("__field_{i}")).collect();
                 let child_calls: Vec<TokenStream> = fields
                     .iter()
                     .zip(field_vars.iter())
-                    .map(|(field, var)| {
-                        let child_fn = reflect_fn_name(&field.category);
-                        quote! { #child_fn(#var.as_ref())? }
+                    .map(|(field, var)| match classify_reflect_field(field) {
+                        ReflectField::Structural => {
+                            let child_fn = reflect_fn_name(&field.category);
+                            quote! { #child_fn(#var.as_ref())? }
+                        },
+                        // (A4) A token-text field reflects to a NULLARY ground leaf whose tag
+                        // bakes the text — `^ident("nth")`. This is the SAME shape the
+                        // `Literal` arm below emits for a native-scalar leaf
+                        // (`format!("{}({:?})", label, value)`), which is already the accepted
+                        // structural image of atomic data; the only difference is that the tag
+                        // is `^`-prefixed and therefore unforgeable versus any user `Ident`.
+                        // `#var` is a `&String` here, so `{:?}` renders the quoted text.
+                        ReflectField::IdentText => quote! {
+                            #ground::new(
+                                ::std::format!("{}({:?})", #ident_label_lit, #var),
+                                ::std::vec::Vec::new(),
+                            )
+                        },
+                        ReflectField::NotReflectable => unreachable!(
+                            "the arm guard rejects any variant with a NotReflectable field",
+                        ),
                     })
                     .collect();
                 quote! {
@@ -2801,6 +2872,75 @@ mod tests {
 
     fn parse(fragment: &str) -> LanguageDef {
         syn::parse_str(fragment).expect("test language fragment must parse")
+    }
+
+    /// **A-7.** A constructor carrying an `m:Ident` token-text field REFLECTS — it emits an
+    /// `Ok(GroundTerm)` arm whose token-text position is the reserved nullary leaf
+    /// `^ident("…")` — while a constructor carrying a `*flt(…)` guest-body field still fails
+    /// reflection CLOSED with the typed reason (routing that firing to σ-replay).
+    ///
+    /// ★ MUTATION IT REJECTS: restoring `is_structural_category_field` as the admission test
+    /// (i.e. deleting the `ReflectField::IdentText` arm) puts `Named`/`Call` back on the
+    /// fail-closed arm, and `named_reflect`'s `Ok` assertion goes red.
+    ///
+    /// ★ CONTROL, so it cannot pass by admitting everything: the SAME reflection walk, on the
+    /// SAME language, must still refuse `Guest`. An `Arc<FltNode>` is an opaque foreign
+    /// payload with no ground image; inventing a `{:?}` tag for it would make the reflection
+    /// look total while giving the in-Rho automaton nothing it can match on.
+    ///
+    /// ⚠ The expected tag is DERIVED from the ABI constant, never re-spelled — a test that
+    /// re-spells a reserved tag is a second, unversioned copy of the ABI (the exact defect
+    /// that made the Peano assertion in this module test for a user constructor named `Z`).
+    #[test]
+    fn token_text_field_reflects_while_guest_body_still_fails_closed() {
+        let language = parse(
+            r#"
+                name: IdentReflectGen,
+                types { Proc }
+                tokens {
+                    FltOpenBacktick = "[a-z]+`" push(flt_body) ;
+                    raw mode flt_body {
+                        FltCloseBacktick = "`" pop ;
+                        GuestChunk = "[^`]+" ;
+                    }
+                }
+                terms {
+                    Nil . |- "0" : Proc ;
+                    Named . m:Ident |- "tag" m : Proc ;
+                    Call . recv:Proc, m:Ident |- recv "." m : Proc ;
+                    Guest . |- *flt(node, FltOpenBacktick, FltCloseBacktick) : Proc ;
+                }
+                equations {}
+                rewrites { Drop . |- (Named m) ~> (Nil) ; }
+            "#,
+        );
+        let reflect = reflect_category_fn(&language, &format_ident!("Proc")).to_string();
+        let ident_tag = format!("{:?}", mettail_rholang_codegen::IDENT_TEXT_REFLECT_LABEL);
+
+        // The token-text positions reflect, through the reserved `^ident` tag.
+        assert!(
+            reflect.contains(&ident_tag),
+            "a token-text field must reflect to the reserved {ident_tag} leaf; got:\n{reflect}",
+        );
+        // `Call`'s category child still RECURSES — the mixed variant reflects both shapes,
+        // so admitting the text position did not turn the whole variant into a leaf.
+        assert!(
+            reflect.contains("__mettail_rho_net_reflect_proc"),
+            "the mixed variant's category child must still recurse; got:\n{reflect}",
+        );
+        // CONTROL: the guest-body constructor keeps the fail-closed arm.
+        assert!(
+            reflect.contains("constructor Guest has a non-structural field"),
+            "a guest-body field must still fail reflection CLOSED (σ-replay); got:\n{reflect}",
+        );
+        // ANTI-VACUITY: the fail-closed message must NOT name the token-text constructors.
+        for refused in ["constructor Named has a", "constructor Call has a"] {
+            assert!(
+                !reflect.contains(refused),
+                "a token-text constructor must not be on the fail-closed arm ({refused}); \
+                 got:\n{reflect}",
+            );
+        }
     }
 
     #[test]

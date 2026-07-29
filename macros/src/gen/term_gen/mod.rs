@@ -8,7 +8,7 @@ mod random;
 pub use exhaustive::*;
 pub use random::*;
 
-use mettail_ast::grammar::{SyntaxExpr, TermParam};
+use mettail_ast::grammar::{NonTerminalKind, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -16,6 +16,147 @@ use syn::Ident;
 
 pub fn is_lang_type(cat: &Ident, language: &LanguageDef) -> bool {
     language.types.iter().any(|t| &t.name == cat)
+}
+
+/// (A4) Whether an argument position is the builtin `Ident` token class — an `m:Ident`
+/// mid-rule parameter, whose AST field is a bare `std::string::String`.
+///
+/// ★ WHY EVERY ARGUMENT-EMITTING SITE IN THIS MODULE MUST ASK. The generators reach a field's
+/// type through its CATEGORY name and gate on [`is_lang_type`], which is false for `Ident`
+/// (it is not a declared category). Every such site answered that with `quote! {}` or a
+/// `panic!("Non-exported category")` — i.e. it dropped the WHOLE constructor from generation,
+/// silently. That is invisible while `Ident` params are rare; a language that collapses a
+/// large method surface onto one `recv . name ( args )` constructor would trade its entire
+/// generated property-test coverage of that surface for zero, with no diagnostic anywhere.
+pub(crate) fn is_ident_position(cat: &Ident) -> bool {
+    NonTerminalKind::classify(&cat.to_string()) == NonTerminalKind::Ident
+}
+
+/// (A4) The identifier samples a generated term may put in an `Ident` position, SPEC-DERIVED
+/// and VALIDATED against the language's own effective `Ident` lexer pattern.
+///
+/// The base is [`deterministic_sample`](crate::gen::test_gen::automaton_walk::nfa_walk::
+/// deterministic_sample) of `effective_pattern_for(language, "Ident")` — the SAME mechanism
+/// `capture_only_construction` already uses for a `v@Tok` capture, and the reason that path's
+/// terms satisfy `parse(display(t)) == t`. Longer candidates are formed by repeating the base
+/// and are KEPT ONLY IF the pattern still accepts them, so an override such as
+/// `Ident = "[a-z]"` yields a one-element pool rather than an unparseable term.
+///
+/// ⚠ THE OBVIOUS ALTERNATIVE IS WRONG, so it is named here rather than rediscovered: reusing
+/// the `StringLiteral` sampler (`random.rs`'s `rng.gen_range(0..20)` lowercase bytes) would
+/// emit the EMPTY string one time in twenty, and the empty string is not an identifier under
+/// any pattern — the resulting term would fail to round-trip in the generated property suite
+/// with a message pointing at the parser rather than at the sampler. It is also unvalidated
+/// against a spec override, and it can collide with a reserved keyword.
+///
+/// Reserved-keyword collision is excluded by construction here: every candidate is a
+/// repetition of the shortest string the `Ident` DFA accepts (`"a"`, `"aa"`, `"aaa"` for the
+/// default pattern), and a grammar terminal is a written literal, so a collision would require
+/// the language to declare `a` / `aa` / `aaa` as syntax. The [`terminal_literals`] filter
+/// removes such a candidate if it ever happens.
+///
+/// Panics (as a proc-macro build error naming the cause) if the language's effective `Ident`
+/// pattern admits NO string at all: that is an ill-formed override, and a silent fallback to
+/// some other name would put an unparseable identifier into every generated term.
+pub(crate) fn ident_samples(language: &LanguageDef) -> Vec<String> {
+    use crate::gen::test_gen::automaton_walk::classify::effective_pattern_for;
+    use crate::gen::test_gen::automaton_walk::nfa_walk::{deterministic_sample, pattern_admits};
+
+    let pattern = effective_pattern_for(language, "Ident");
+    let base = deterministic_sample(&pattern).unwrap_or_else(|| {
+        panic!(
+            "the language's effective `Ident` pattern ({pattern:?}) admits no string, so no \
+             identifier can be generated for an `m:Ident` position",
+        )
+    });
+    let reserved = terminal_literals(language);
+    let mut out = Vec::with_capacity(3);
+    for repeat in 1..=3usize {
+        let candidate = base.repeat(repeat);
+        if pattern_admits(&pattern, &candidate)
+            && !reserved.contains(&candidate)
+            && !out.contains(&candidate)
+        {
+            out.push(candidate);
+        }
+    }
+    if out.is_empty() {
+        panic!(
+            "the language's effective `Ident` pattern ({pattern:?}) admits {base:?}, but every \
+             generated candidate collided with a grammar terminal — no identifier can be \
+             generated for an `m:Ident` position",
+        );
+    }
+    out
+}
+
+/// (A4) How many of `rule`'s term-context parameters are builtin `Ident` params (`m:Ident`).
+///
+/// ★ THIS IS POSITIVE EVIDENCE, and it has to be. `OpaqueLeafKind::TokenText` is shared by TWO
+/// provenances — a builtin `m:Ident` param and a DECLARED `v@Tok` token-kind capture — and
+/// they are governed by DIFFERENT lexer patterns. [`ident_samples`] samples the language's
+/// effective `Ident` pattern, which is correct for the first and WRONG for the second: `L9Modal
+/// Toy` declares `Word = "<[a-z]+>"`, so an `Ident` sample such as `"a"` placed in a `w@Word`
+/// field produces a term whose `Display` does not re-lex — a generated term that silently fails
+/// `parse ∘ display` for a reason pointing at the parser.
+///
+/// A generator therefore may not infer "this text field is an identifier" from the leaf KIND.
+/// It must see the `m:Ident` PARAMETER. (`term_gen`'s own random/exhaustive walkers get this
+/// for free: they key on the argument CATEGORY being literally `Ident`, which only an
+/// `m:Ident` param produces — a `v@Tok` field's placeholder category is `String`. The
+/// proptest tape builder reads `FieldInfo::opaque_leaf` instead, so it needs this.)
+///
+/// A `v@Tok` capture is served correctly elsewhere, by [`capture_only_construction`], which
+/// samples each capture's OWN declared kind.
+pub(crate) fn ident_param_count(rule: &mettail_ast::grammar::GrammarRule) -> usize {
+    rule.term_context.as_deref().map_or(0, |ctx| {
+        ctx.iter()
+            .filter(|p| matches!(p, TermParam::Simple { ty, .. } if ty.is_ident_text()))
+            .count()
+    })
+}
+
+/// Every terminal literal written in the language's grammar, so [`ident_samples`] can refuse a
+/// candidate that would lex as a keyword rather than as an identifier.
+fn terminal_literals(language: &LanguageDef) -> std::collections::HashSet<String> {
+    use mettail_ast::grammar::GrammarItem;
+    let mut out = std::collections::HashSet::with_capacity(language.terms.len() * 2);
+    for rule in &language.terms {
+        for item in &rule.items {
+            if let GrammarItem::Terminal(text) = item {
+                out.insert(text.clone());
+            }
+        }
+        if let Some(sp) = rule.syntax_pattern.as_deref() {
+            for expr in sp {
+                if let SyntaxExpr::Literal(text) = expr {
+                    out.insert(text.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// (A4) A runtime expression selecting one of [`ident_samples`] uniformly at random — the
+/// value a RANDOM generator puts in an `Ident` position. Evaluates to a `String`.
+///
+/// A single-element pool degenerates to a constant with no `rng` call, which keeps the
+/// generated code free of a `gen_range(0..1)` the compiler would warn about and keeps a
+/// one-identifier spec deterministic.
+pub(crate) fn random_ident_expr(language: &LanguageDef) -> TokenStream {
+    let samples = ident_samples(language);
+    if samples.len() == 1 {
+        let only = &samples[0];
+        return quote! { #only.to_string() };
+    }
+    let n = samples.len();
+    quote! {
+        {
+            let __idx = rng.gen_range(0..#n);
+            [#(#samples),*][__idx].to_string()
+        }
+    }
 }
 
 /// L9-3: build a constructor literal for a CAPTURES-ONLY rule (`Cat::Label(

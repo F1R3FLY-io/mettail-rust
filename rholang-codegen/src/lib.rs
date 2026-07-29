@@ -245,7 +245,7 @@ pub use rho_net_lower::{
     spread_root_location, spread_term_par, structural_ac_contract_call, structural_ac_match_call_par,
     structural_ac_rule_receiver, term_contract_call, AcReconstructTemplate,
     BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, GROUND_MARK_REFLECT_LABEL, GroundTerm,
-    LAMBDA_REFLECT_LABEL,
+    IDENT_TEXT_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
     MULTILAMBDA_REFLECT_LABEL, NONGROUND_MARK_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
     PEANO_ZERO_REFLECT_LABEL,
     RhoNetAcInjectionSite, RhoNetAcMatchEntry, RhoNetCommInjectionSite,

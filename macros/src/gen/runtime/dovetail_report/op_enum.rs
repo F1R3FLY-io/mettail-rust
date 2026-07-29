@@ -254,8 +254,70 @@ fn collect_op_variants(language: &LanguageDef) -> Vec<OpVariant> {
         quote! { ::dovetail::key::write_framed(out, __p.as_bytes()); },
         "<field-opaque>".to_string(),
     );
+    // (A4) The LABELLED, INVERTIBLE token-text leaf. Appended AFTER `FieldOpaque` so no
+    // existing discriminant moves — every other language's op-enum key bytes are unchanged
+    // — and emitted ONLY for a language that actually has an `OpaqueLeafKind::TokenText`
+    // field, so a language without one produces byte-identical output.
+    //
+    // ★ WHAT THIS ADDS, given the text was ALREADY in the key. `opaque_leaf_typed` writes
+    // `FieldOpaque(format!("{:?}", payload))`, and for a token-text field the payload IS the
+    // `String`, so `l.foo()` and `l.bar()` already hash-cons to DIFFERENT e-classes today.
+    // What was missing is (i) a LABEL — `FieldOpaque` is shared with builtin ints, `Vec`
+    // payloads, predicates and guest bodies, so provenance is unrecoverable — and (ii) an
+    // INVERSE. This variant supplies both: the discriminant names the kind, and the payload
+    // is the text VERBATIM (not `Debug`-escaped), so `reconstruct`'s
+    // `__mettail_dovetail_build_token_text_d` is a total, lossless inverse with no
+    // unescaping parser anywhere.
+    if language_has_token_text_leaf(language) {
+        push(
+            format_ident!("FieldTokenText"),
+            Some(quote! { ::std::string::String }),
+            // The text VERBATIM. `String: Eq` is byte equality, so framed UTF-8 bytes are
+            // exactly `Eq`-agreeing — the `SemanticHash` contract this enum's `unsafe impl`
+            // states. (`FieldOpaque` frames `Debug` bytes for the same reason: `Debug` on a
+            // `String` is injective, just lossy to invert.)
+            quote! { ::dovetail::key::write_framed(out, __p.as_bytes()); },
+            "<field-token-text>".to_string(),
+        );
+    }
 
     variants
+}
+
+/// Whether ANY constructor of `language` carries an [`OpaqueLeafKind::TokenText`] field — a
+/// `v@Tok` token-text capture or an `m:Ident` mid-rule parameter (both stamp the same kind;
+/// see `FieldInfo::opaque_leaf`).
+///
+/// ★ This is THE single predicate that decides whether the `FieldTokenText` op-enum variant
+/// exists, and it is therefore read by every emitter that can mention it — the enum
+/// ([`collect_op_variants`]), the inverse (`reconstruct::token_text_reconstruct`) — so the
+/// variant and its inverse can never disagree about existence. The lowering
+/// (`typed_lowering::field_child_expr_typed`) branches PER FIELD instead, which is sound
+/// because a field stamped `TokenText` implies this predicate holds.
+///
+/// It walks `collect_category_variants` — the SAME derivation every emitter consumes — rather
+/// than re-deriving field kinds from `LanguageDef`, so it cannot drift from what is emitted.
+pub(crate) fn language_has_token_text_leaf(language: &LanguageDef) -> bool {
+    fn is_token_text(field: &crate::gen::term_ops::subst::FieldInfo) -> bool {
+        field.opaque_leaf
+            == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
+    }
+    language.types.iter().any(|lang_type| {
+        collect_category_variants(&lang_type.name, language)
+            .iter()
+            .any(|variant| match variant {
+                VariantKind::Regular { fields, .. } => fields.iter().any(is_token_text),
+                VariantKind::Binder { pre_scope_fields, .. }
+                | VariantKind::MultiBinder { pre_scope_fields, .. } => {
+                    pre_scope_fields.iter().any(is_token_text)
+                },
+                VariantKind::Var { .. }
+                | VariantKind::Literal { .. }
+                | VariantKind::CollectionLiteral { .. }
+                | VariantKind::Nullary { .. }
+                | VariantKind::Collection { .. } => false,
+            })
+    })
 }
 
 /// Generate the typed op-enum + its `SemanticHash` + `Display` for a language (Step B).

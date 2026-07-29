@@ -12,7 +12,9 @@
 )]
 
 use crate::gen::native::NativeType;
-use crate::gen::term_gen::{count_optional_positions, is_lang_type};
+use crate::gen::term_gen::{
+    count_optional_positions, is_ident_position, is_lang_type, random_ident_expr,
+};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
     language::LanguageDef,
@@ -295,6 +297,16 @@ fn generate_random_depth_0(
                         _ => continue,
                     };
                     cases.push(literal_case);
+                } else if *kind == NonTerminalKind::Ident {
+                    // (A4) A rule whose ONLY non-terminal is an `m:Ident` param (e.g.
+                    // `Tagged . m:Ident |- "tag" m : Num`) is a DEPTH-0 constructor: the text
+                    // is a leaf, so there is nothing to recurse into. It reached neither
+                    // generator before — `kind.is_literal()` is false for `Ident` so this
+                    // block skipped it, and `generate_random_depth_d`'s
+                    // single-builtin-non-terminal guard skips it at every depth > 0 — so the
+                    // constructor was generated at NO depth at all, silently.
+                    let text = random_ident_expr(language);
+                    cases.push(quote! { #cat_name::#label(#text) });
                 }
             }
         }
@@ -560,21 +572,26 @@ fn generate_random_simple_constructor(
             (0..optional_total_count).map(|_| quote! { None }).collect();
         // The `core` token stream ends with `Cat::Label(args)`. Inject `None`
         // before the closing paren by re-constructing:
-        let positional_args: Vec<TokenStream> = positional_cats
-            .iter()
-            .enumerate()
-            .map(|(_, cat)| {
-                if !is_lang_type(cat, language) {
-                    quote! { panic!("Non-exported category") }
-                } else {
-                    quote! {
-                        std::sync::Arc::new(#cat::generate_random_at_depth_internal(
-                            vars, depth - 1, max_collection_width, rng, binding_depth,
-                        ))
-                    }
-                }
-            })
-            .collect();
+        // (A4) An `Ident` position takes the mixed emitter, which also covers the `Var` and
+        // category positions beside it; without it the `panic!("Non-exported category")`
+        // below would be emitted INTO the generated term generator for an `m:Ident` slot.
+        let positional_args: Vec<TokenStream> = random_args_with_ident(&positional_cats, language)
+            .unwrap_or_else(|| {
+                positional_cats
+                    .iter()
+                    .map(|cat| {
+                        if !is_lang_type(cat, language) {
+                            quote! { panic!("Non-exported category") }
+                        } else {
+                            quote! {
+                                std::sync::Arc::new(#cat::generate_random_at_depth_internal(
+                                    vars, depth - 1, max_collection_width, rng, binding_depth,
+                                ))
+                            }
+                        }
+                    })
+                    .collect()
+            });
         let _ = core;
         quote! {
             #cat_name::#label(
@@ -585,12 +602,73 @@ fn generate_random_simple_constructor(
     }
 }
 
+/// (A4) A random `OrdVar` for a `Var` argument position — the expression the binary generator
+/// already inlines, factored out so the mixed Ident/Var/category emitter below can reuse it
+/// verbatim rather than growing a second, drift-capable copy.
+fn random_var_expr(language: &LanguageDef) -> TokenStream {
+    let fallback = crate::gen::spec_admitted_var_name(language);
+    quote! {
+        if !vars.is_empty() {
+            let idx = rng.gen_range(0..vars.len());
+            mettail_runtime::OrdVar(
+                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(&vars[idx]))
+            )
+        } else {
+            mettail_runtime::OrdVar(
+                mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(#fallback))
+            )
+        }
+    }
+}
+
+/// (A4) Positional argument expressions for a constructor with AT LEAST ONE `Ident` position.
+///
+/// `None` when no argument is an `Ident` position — the callers then fall through to their
+/// pre-existing code paths UNTOUCHED, which is what keeps every language without an `m:Ident`
+/// param byte-identical. `None` also when some non-`Ident` argument is neither a `Var` nor a
+/// declared category, preserving the existing refusal for a genuinely ungeneratable position.
+///
+/// ★ WHY THIS EXISTS AT ALL. `generate_random_unary` / `_binary` / `_nary` each answered an
+/// `Ident` argument with `quote! {}` or `panic!("Non-exported category")`, because `Ident` is
+/// not a declared category and `is_lang_type` is false for it. The effect was that the WHOLE
+/// constructor vanished from random generation with no diagnostic — coverage traded for
+/// silence. An `Ident` position is depth-0 (a leaf), so the remaining category arguments take
+/// `depth - 1` exactly as they do beside a `Var` leaf.
+fn random_args_with_ident(
+    arg_cats: &[Ident],
+    language: &LanguageDef,
+) -> Option<Vec<TokenStream>> {
+    if !arg_cats.iter().any(is_ident_position) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(arg_cats.len());
+    for cat in arg_cats {
+        if is_ident_position(cat) {
+            out.push(random_ident_expr(language));
+        } else if NonTerminalKind::classify(&cat.to_string()) == NonTerminalKind::Var {
+            out.push(random_var_expr(language));
+        } else if is_lang_type(cat, language) {
+            out.push(quote! {
+                std::sync::Arc::new(#cat::generate_random_at_depth_internal(
+                    vars, depth - 1, max_collection_width, rng, binding_depth,
+                ))
+            });
+        } else {
+            return None;
+        }
+    }
+    Some(out)
+}
+
 fn generate_random_unary(
     cat_name: &Ident,
     label: &Ident,
     arg_cat: &Ident,
     language: &LanguageDef,
 ) -> TokenStream {
+    if let Some(args) = random_args_with_ident(std::slice::from_ref(arg_cat), language) {
+        return quote! { #cat_name::#label(#(#args),*) };
+    }
     if !is_lang_type(arg_cat, language) {
         return quote! {};
     }
@@ -608,6 +686,11 @@ fn generate_random_binary(
     arg2_cat: &Ident,
     language: &LanguageDef,
 ) -> TokenStream {
+    // (A4) An `Ident` position takes the mixed emitter; every other shape falls through to the
+    // pre-existing branches below, byte-identically.
+    if let Some(args) = random_args_with_ident(&[arg1_cat.clone(), arg2_cat.clone()], language) {
+        return quote! { #cat_name::#label(#(#args),*) };
+    }
     // Handle Var specially - it's a built-in type, generate directly as OrdVar
     let is_arg1_var = NonTerminalKind::classify(&arg1_cat.to_string()) == NonTerminalKind::Var;
     let is_arg2_var = NonTerminalKind::classify(&arg2_cat.to_string()) == NonTerminalKind::Var;
@@ -684,6 +767,10 @@ fn generate_random_nary(
     arg_cats: &[Ident],
     language: &LanguageDef,
 ) -> TokenStream {
+    // (A4) An `Ident` position takes the mixed emitter (see `random_args_with_ident`).
+    if let Some(args) = random_args_with_ident(arg_cats, language) {
+        return quote! { #cat_name::#label(#(#args),*) };
+    }
     // Simplified: all args at depth - 1
     let arg_generations: Vec<TokenStream> = arg_cats.iter().map(|cat| {
         if !is_lang_type(cat, language) {
@@ -840,14 +927,17 @@ fn generate_random_multi_binder_constructor(
         }
     } else {
         // Multiple args: simplified
-        let arg_generations: Vec<TokenStream> = other_args.iter().map(|(_, cat)| {
-            if !is_lang_type(cat, language) {
-                return quote! { panic!("Non-exported category") };
-            }
-            quote! {
-                std::sync::Arc::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
-            }
-        }).collect();
+        let other_cats: Vec<Ident> = other_args.iter().map(|(_, cat)| cat.clone()).collect();
+        // (A4) An `Ident` position among the non-body args takes the mixed emitter.
+        let arg_generations: Vec<TokenStream> = random_args_with_ident(&other_cats, language)
+            .unwrap_or_else(|| other_args.iter().map(|(_, cat)| {
+                if !is_lang_type(cat, language) {
+                    return quote! { panic!("Non-exported category") };
+                }
+                quote! {
+                    std::sync::Arc::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
+                }
+            }).collect());
 
         quote! {
             #scope_construction
@@ -940,14 +1030,17 @@ fn generate_random_binder_with_multiple_args(
         return quote! {};
     }
 
-    let arg_generations: Vec<TokenStream> = other_args.iter().map(|(_, cat)| {
-        if !is_lang_type(cat, language) {
-            return quote! { panic!("Non-exported category") };
-        }
-        quote! {
-            std::sync::Arc::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
-        }
-    }).collect();
+    let other_cats: Vec<Ident> = other_args.iter().map(|(_, cat)| cat.clone()).collect();
+    // (A4) An `Ident` position among the non-body args takes the mixed emitter.
+    let arg_generations: Vec<TokenStream> = random_args_with_ident(&other_cats, language)
+        .unwrap_or_else(|| other_args.iter().map(|(_, cat)| {
+            if !is_lang_type(cat, language) {
+                return quote! { panic!("Non-exported category") };
+            }
+            quote! {
+                std::sync::Arc::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
+            }
+        }).collect());
 
     let var_prefix = crate::gen::spec_admitted_var_name(language);
     quote! {

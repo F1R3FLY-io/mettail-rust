@@ -11,7 +11,9 @@
     clippy::unnecessary_filter_map
 )]
 
-use crate::gen::term_gen::{count_optional_positions, is_lang_type};
+use crate::gen::term_gen::{
+    count_optional_positions, ident_samples, is_ident_position, is_lang_type,
+};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
     language::LanguageDef,
@@ -199,6 +201,44 @@ fn generate_depth_0_cases(
                 )
             })
             .collect();
+
+        // (A4) A rule whose every non-terminal is an `m:Ident` param (e.g.
+        // `Tagged . m:Ident |- "tag" m : Num`) is a DEPTH-0 constructor: the text is a leaf,
+        // so there is nothing to recurse into and no depth to reach. It was enumerated at NO
+        // depth before — the depth-0 walk only handles nullary/`Var` shapes, and the depth-`d`
+        // walk's `is_lang_type` gate answered `Ident` with `quote! {}`.
+        let ident_only_cats: Vec<Ident> = rule
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                GrammarItem::NonTerminal { ident: nt, .. } => Some(nt.clone()),
+                _ => None,
+            })
+            .collect();
+        if !ident_only_cats.is_empty()
+            && ident_only_cats.iter().all(is_ident_position)
+            && rule.bindings.is_empty()
+            && !rule
+                .items
+                .iter()
+                .any(|item| matches!(item, GrammarItem::Collection { .. }))
+        {
+            let samples = ident_samples(language);
+            let vars: Vec<Ident> = (0..ident_only_cats.len())
+                .map(|i| quote::format_ident!("__ident{}", i))
+                .collect();
+            let args: Vec<TokenStream> = vars.iter().map(|v| quote! { #v.to_string() }).collect();
+            let mut inner = quote! { terms.push(#cat_name::#label(#(#args),*)); };
+            for var in vars.iter().rev() {
+                inner = quote! {
+                    for #var in [#(#samples),*] {
+                        #inner
+                    }
+                };
+            }
+            cases.push(inner);
+            continue;
+        }
 
         if non_terminals.is_empty() {
             // Nullary constructor
@@ -461,6 +501,12 @@ fn generate_simple_constructor_case(
         };
     }
 
+    // (A4) A constructor with an `Ident` position is enumerated by the mixed emitter at every
+    // arity; every other shape falls through to the arity-specific cases, byte-identically.
+    if let Some(case) = generate_ident_bearing_case(cat_name, label, &arg_cats, language) {
+        return case;
+    }
+
     // Generate depth loops based on arity
     match arg_cats.len() {
         1 => generate_unary_case(cat_name, label, &arg_cats[0], language),
@@ -539,6 +585,94 @@ fn generate_binary_case(
             }
         }
     }
+}
+
+/// (A4) The depth-`d` enumeration case for a constructor with AT LEAST ONE `Ident` position
+/// AND at least one category position.
+///
+/// `None` when the rule has no `Ident` position (the callers then fall through to their
+/// pre-existing arity-specific cases UNTOUCHED — the property that keeps every language
+/// without an `m:Ident` param byte-identical), when EVERY position is an `Ident` (that is a
+/// depth-0 constructor, enumerated by [`generate_depth_0_cases`], and emitting it here too
+/// would duplicate it at every depth), or when some non-`Ident` position is not a declared
+/// category (the pre-existing refusal).
+///
+/// ★ WHY: `generate_unary_case` / `_binary_case` / `_nary_case` each answered an `Ident`
+/// argument with `quote! {}` because `is_lang_type` is false for `Ident` — dropping the WHOLE
+/// constructor from exhaustive enumeration with no diagnostic. An identifier's admitted text
+/// ranges over an infinite regex-valid set, so "exhaustive" over it is undefined; the fixed
+/// [`ident_samples`] pool is the same decision (F.2) `capture_only_construction` already makes
+/// for a `v@Tok` capture — enumerate the category positions exhaustively, and the identifier
+/// over a small spec-derived set.
+///
+/// Category positions are enumerated at `d = depth - 1`, the same simplification
+/// [`generate_nary_case`] uses; an `Ident` position is depth-0 (a leaf) and contributes none.
+fn generate_ident_bearing_case(
+    cat_name: &Ident,
+    label: &Ident,
+    arg_cats: &[Ident],
+    language: &LanguageDef,
+) -> Option<TokenStream> {
+    if !arg_cats.iter().any(is_ident_position) {
+        return None;
+    }
+    if arg_cats.iter().all(is_ident_position) {
+        return None;
+    }
+    if arg_cats
+        .iter()
+        .any(|cat| !is_ident_position(cat) && !is_lang_type(cat, language))
+    {
+        return None;
+    }
+
+    let samples = ident_samples(language);
+    let arg_vars: Vec<Ident> = (0..arg_cats.len())
+        .map(|i| quote::format_ident!("arg{}", i))
+        .collect();
+    let constructor_args: Vec<TokenStream> = arg_cats
+        .iter()
+        .zip(arg_vars.iter())
+        .map(|(cat, var)| {
+            if is_ident_position(cat) {
+                // The AST field for an `Ident` position is a BARE `String` — never `Arc`.
+                quote! { #var.to_string() }
+            } else {
+                quote! { std::sync::Arc::new(#var.clone()) }
+            }
+        })
+        .collect();
+
+    let mut inner = quote! {
+        terms.push(#cat_name::#label(#(#constructor_args),*));
+    };
+    for (i, cat) in arg_cats.iter().enumerate().rev() {
+        let var = &arg_vars[i];
+        if is_ident_position(cat) {
+            inner = quote! {
+                for #var in [#(#samples),*] {
+                    #inner
+                }
+            };
+        } else {
+            let field = category_to_field_name(cat);
+            let pool = quote::format_ident!("__pool{}", i);
+            inner = quote! {
+                if let Some(#pool) = self.#field.get(&d) {
+                    for #var in #pool {
+                        #inner
+                    }
+                }
+            };
+        }
+    }
+
+    Some(quote! {
+        if depth > 0 {
+            let d = depth - 1;
+            #inner
+        }
+    })
 }
 
 /// Generate n-ary constructor case (n > 2)

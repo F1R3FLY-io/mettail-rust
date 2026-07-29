@@ -13,6 +13,14 @@
 //! fold never reads back, so reconstruction returns `None` for them. (Rholang's collection
 //! folds read whole `List`/`Map`/`Bag` *category* values via the `Literal` arm, and AC soup via
 //! the `Collection`-variant arm — both reconstructable.)
+//!
+//! ★ (A4) ONE field-level leaf is an exception, and it is an exception by KIND, not by
+//! blanket: an [`OpaqueLeafKind::TokenText`] capture (`v@Tok`, `m:Ident`) lowers to
+//! `FieldTokenText(text)` — the text VERBATIM — which `super::reconstruct` inverts
+//! losslessly. [`OpaqueLeafKind::GuestBody`] (`Arc<FltNode>`) and predicate slots keep the
+//! lossy `FieldOpaque`. Nothing about INERTNESS changes: every term operation still keys on
+//! `FieldInfo::is_opaque_leaf()` and treats both kinds identically (no descent, no
+//! α-conversion, no substitution), and not one line under `crate::gen::term_ops` is touched.
 
 use mettail_ast::grammar::NonTerminalKind;
 use mettail_ast::language::LanguageDef;
@@ -22,7 +30,9 @@ use syn::Ident;
 
 use super::op_enum::{op_enum_ident, op_variant_ident};
 use super::{category_lowering_fn, coll_type_is_ac_bag};
-use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use crate::gen::term_ops::subst::{
+    collect_category_variants, FieldInfo, OpaqueLeafKind, VariantKind,
+};
 
 /// `eg.add(ENode::leaf(L::FieldOpaque(format!("{:?}", payload))))` — a lossy spine leaf for a
 /// builtin/predicate/non-reconstructable field. Reconstruction maps it to `None`.
@@ -30,6 +40,29 @@ fn opaque_leaf_typed(enum_id: &Ident, payload: TokenStream) -> TokenStream {
     quote! {
         eg.add(::dovetail::egraph::ENode::leaf(
             #enum_id::FieldOpaque(format!("{:?}", #payload))
+        ))
+    }
+}
+
+/// (A4) `eg.add(ENode::leaf(L::FieldTokenText(text.clone())))` — the LABELLED, INVERTIBLE
+/// token-text leaf, carrying the captured text VERBATIM.
+///
+/// `payload` must evaluate to a `&String` (the bare `String` field borrowed by the match arm,
+/// or the `Some(_)` inner of an `Option<String>` field); `.clone()` is the whole conversion —
+/// there is no `Debug` framing to undo, which is precisely what makes
+/// `reconstruct::__mettail_dovetail_build_token_text_d` a lossless inverse.
+///
+/// ⚠ This is emitted ONLY for a field stamped [`OpaqueLeafKind::TokenText`], never for
+/// [`OpaqueLeafKind::GuestBody`] (an `Arc<FltNode>` has no lossless `Debug` inverse) and never
+/// for a predicate/builtin/collection field. That per-KIND split is the entire content of the
+/// change: `OpaqueLeafKind` exists to carry exactly this sort of per-kind difference
+/// (`term_ops/subst.rs`'s `OpaqueLeafKind::field_type` is its first use), and every INERTNESS
+/// site — `Eq`/`Hash`/`Ord`/`subst`/`normalize`/`semantic_hash`/`display`/`is_ground`/
+/// `term_depth`/`Drop`/`match_pattern` — keys on `FieldInfo::is_opaque_leaf()` and is untouched.
+fn token_text_leaf_typed(enum_id: &Ident, payload: TokenStream) -> TokenStream {
+    quote! {
+        eg.add(::dovetail::egraph::ENode::leaf(
+            #enum_id::FieldTokenText(#payload.clone())
         ))
     }
 }
@@ -84,7 +117,19 @@ fn field_child_expr_typed(
             // (`Option<Arc<FltNode>>`) capture — the present payload is an opaque
             // e-graph leaf (atomic data, never a recursible subterm), absence a
             // distinct nullary leaf. Mirrors the string-path `field_child_expr`.
-            let leaf = opaque_leaf_typed(enum_id, quote! { __pred });
+            //
+            // (A4) A PRESENT token-text payload takes the LABELLED, INVERTIBLE leaf; a
+            // guest-body or a predicate keeps the lossy `FieldOpaque`. Absence is the same
+            // `FieldNone(i)` nullary leaf either way, so `Option<String>` reconstructs as
+            // `Some(text)`/`None` losslessly once the present arm is invertible.
+            let leaf = match field.opaque_leaf {
+                Some(OpaqueLeafKind::TokenText) => {
+                    token_text_leaf_typed(enum_id, quote! { __pred })
+                },
+                Some(OpaqueLeafKind::GuestBody) | None => {
+                    opaque_leaf_typed(enum_id, quote! { __pred })
+                },
+            };
             let none = field_none_typed(enum_id, field_index);
             return quote! {
                 match #field_var.as_ref() {
@@ -114,11 +159,25 @@ fn field_child_expr_typed(
 
     if field.is_predicate || field.is_opaque_leaf() {
         // L9-3/L9-4: a token-text (`String`) / guest-body (`Arc<FltNode>`)
-        // capture lowers to an opaque e-graph leaf — atomic data, never a
-        // recursible category child (there is no `__mettail_dovetail_add_flt_node`
-        // to call). Mirrors the string-path `field_child_expr`; branch BEFORE the
-        // `child_fn` fall-through.
-        return opaque_leaf_typed(enum_id, quote! { #field_var });
+        // capture lowers to an e-graph LEAF — atomic data, never a recursible
+        // category child (there is no `__mettail_dovetail_add_flt_node` to call).
+        // Mirrors the string-path `field_child_expr`; branch BEFORE the `child_fn`
+        // fall-through.
+        //
+        // (A4) The two opaque-leaf KINDS part company here, and only here:
+        //   • `TokenText` → `FieldTokenText(text)`, labelled and INVERTIBLE;
+        //   • `GuestBody` → `FieldOpaque(Debug)`, still non-invertible — an
+        //     `Arc<FltNode>` has no lossless `Debug` inverse, so promoting it would
+        //     be a lie about recoverability rather than a capability.
+        // A predicate slot (`?g:Guard`) keeps `FieldOpaque` for the same reason.
+        return match field.opaque_leaf {
+            Some(OpaqueLeafKind::TokenText) => {
+                token_text_leaf_typed(enum_id, quote! { #field_var })
+            },
+            Some(OpaqueLeafKind::GuestBody) | None => {
+                opaque_leaf_typed(enum_id, quote! { #field_var })
+            },
+        };
     }
 
     if field.is_collection {
