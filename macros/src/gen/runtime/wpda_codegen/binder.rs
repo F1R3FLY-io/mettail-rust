@@ -3856,6 +3856,12 @@ pub(crate) fn emit_binder_action_entry(
     // auxiliary fields first, then the Scope. We emit the call as
     // `Cat::Label(field_names..., scope)` — field_names comes from
     // non-binder, non-body Term args + Predicate args in encounter order.
+    //
+    // ★ #139: that encounter order is SYNTAX order, and it is the order the
+    // variant DEFINITION now follows too — `gen/types/enums.rs` builds its field
+    // list from `gen::capture::field_layout`, which reproduces this walk. The two
+    // derivations remain independent code, so [`field_order_disagreement`] holds
+    // them to each other at every call site; see its header.
     let construct = if shape.has_binder && shape.is_multi {
         // Multi-binder: Scope<Vec<Binder>, Box<Body>>.
         let binder_list = binder_list_holder.expect("multi-binder shape must have binder list");
@@ -3920,6 +3926,193 @@ pub(crate) fn emit_binder_action_entry(
         }
         ,
     })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Task #139 — THE POSITIONAL GATE
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// What a single AST-variant field IS, in the one vocabulary both the
+/// DEFINITION and the CONSTRUCTION can speak.
+///
+/// Sharp enough to be worth asserting: `Term` carries the CATEGORY name, so a
+/// gate over it distinguishes `Arc<Proc>` from `Arc<Name>` — the transposition
+/// that type-checks and is silently wrong is a transposition of two `Term`s, and
+/// it is only invisible when the two categories are equal, in which case the two
+/// fields are interchangeable and no term is misbuilt.
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub(crate) enum FieldShapeTag {
+    /// A `v@Tok` capture's text — a bare `String`.
+    TokenText,
+    /// An `m:Ident` param's text — also a bare `String`, and therefore
+    /// positionally confusable with [`FieldShapeTag::TokenText`] unless the two
+    /// are told apart, which is why they are separate tags here.
+    IdentText,
+    /// A `*flt(…)` guest body — `Arc<FltNode>`.
+    GuestBody,
+    /// A parsed sub-term of the named category.
+    Term(String),
+    /// A collection slot: element category + container kind.
+    Collection(String, CollectionType),
+    /// A `?g:Guard` slot — `BehavioralPred`.
+    Predicate,
+    /// The trailing binder `Scope`.
+    Scope,
+    /// A parameter type `classify_binder_in` does not model. Unreachable from
+    /// the gate (that classifier returns `None` for such a rule, so no action
+    /// entry and no gate call), and named rather than silently coerced so that a
+    /// future widening of the classifier shows up here instead of passing.
+    Unmodelled,
+}
+
+/// One field of a variant: its shape, and whether it is `Option`-wrapped.
+///
+/// Flat, never nested: an `#opt(…)` group contributes one `Option<T>` field PER
+/// inner parameter on both sides (`enums.rs` emits them separately, and
+/// `emit_binder_action_entry`'s `Optional` arm pushes each inner ident into
+/// `field_names` individually).
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub(crate) struct FieldShape {
+    pub(crate) tag: FieldShapeTag,
+    pub(crate) optional: bool,
+}
+
+/// The fields the CONSTRUCTION site will pass, in the order it will pass them.
+///
+/// Mirrors [`emit_binder_action_entry`] exactly, including its `body_holder`
+/// selection rule (the first top-level `Term` whose category is the binder
+/// body's is consumed by the `Scope` rather than pushed as a field) and its
+/// "`scope` appended last" rule.
+pub(crate) fn constructed_field_shapes(shape: &BinderShape) -> Vec<FieldShape> {
+    fn tag_of(kind: &ActionArgKind) -> Option<FieldShapeTag> {
+        match kind {
+            ActionArgKind::TokenText { .. } => Some(FieldShapeTag::TokenText),
+            ActionArgKind::IdentText { .. } => Some(FieldShapeTag::IdentText),
+            ActionArgKind::GuestBody { .. } => Some(FieldShapeTag::GuestBody),
+            ActionArgKind::Term(cat) => Some(FieldShapeTag::Term(cat.clone())),
+            ActionArgKind::Predicate => Some(FieldShapeTag::Predicate),
+            ActionArgKind::CollectionDrain { elem_cat, coll_kind } => Some(
+                FieldShapeTag::Collection(elem_cat.clone(), coll_kind.clone()),
+            ),
+            // Both fold into the trailing `Scope`; neither is a field.
+            ActionArgKind::BinderName | ActionArgKind::BinderList => None,
+            // Handled by the caller, which flattens it.
+            ActionArgKind::Optional(_) => None,
+        }
+    }
+
+    let mut out = Vec::with_capacity(shape.action_args.len() + 1);
+    let mut body_taken = false;
+    for kind in &shape.action_args {
+        match kind {
+            ActionArgKind::Optional(inner) => {
+                for inner_kind in inner {
+                    if let Some(tag) = tag_of(inner_kind) {
+                        out.push(FieldShape { tag, optional: true });
+                    }
+                }
+            },
+            ActionArgKind::Term(cat)
+                if shape.has_binder
+                    && shape.body_cat.as_deref() == Some(cat.as_str())
+                    && !body_taken =>
+            {
+                // The binder body — consumed by the `Scope`, not a field.
+                body_taken = true;
+            },
+            other => {
+                if let Some(tag) = tag_of(other) {
+                    out.push(FieldShape { tag, optional: false });
+                }
+            },
+        }
+    }
+    if shape.has_binder {
+        out.push(FieldShape { tag: FieldShapeTag::Scope, optional: false });
+    }
+    out
+}
+
+/// The fields the DEFINITION site will declare, in the order it will declare
+/// them — read off the same [`crate::gen::capture::field_layout`] that
+/// `gen/types/enums.rs` consumes.
+pub(crate) fn declared_field_shapes(layout: &crate::gen::capture::FieldLayout) -> Vec<FieldShape> {
+    use crate::gen::capture::FieldSlotSource;
+    let mut out = Vec::with_capacity(layout.slots.len());
+    for slot in &layout.slots {
+        let tag = match &slot.source {
+            FieldSlotSource::TokenText => FieldShapeTag::TokenText,
+            FieldSlotSource::GuestBody { .. } => FieldShapeTag::GuestBody,
+            FieldSlotSource::Param(TermParam::GuardBody { .. }) => FieldShapeTag::Predicate,
+            FieldSlotSource::Param(
+                TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. },
+            ) => FieldShapeTag::Scope,
+            FieldSlotSource::Param(TermParam::Simple { ty, .. }) => match ty {
+                TypeExpr::Base(ident) => {
+                    let name = ident.to_string();
+                    match mettail_ast::grammar::NonTerminalKind::classify(&name) {
+                        mettail_ast::grammar::NonTerminalKind::Ident => FieldShapeTag::IdentText,
+                        _ => FieldShapeTag::Term(name),
+                    }
+                },
+                TypeExpr::Collection { coll_type, element } => match element.as_ref() {
+                    TypeExpr::Base(elem) => {
+                        FieldShapeTag::Collection(elem.to_string(), coll_type.clone())
+                    },
+                    _ => FieldShapeTag::Unmodelled,
+                },
+                TypeExpr::Map { key, value } => match (key.as_ref(), value.as_ref()) {
+                    (TypeExpr::Base(k), TypeExpr::Base(v)) if k == v => {
+                        FieldShapeTag::Collection(k.to_string(), CollectionType::HashMap)
+                    },
+                    _ => FieldShapeTag::Unmodelled,
+                },
+                _ => FieldShapeTag::Unmodelled,
+            },
+            // `field_layout` flattens opt-groups, so an `Optional` is never a slot.
+            FieldSlotSource::Param(TermParam::Optional { .. }) => FieldShapeTag::Unmodelled,
+        };
+        out.push(FieldShape { tag, optional: slot.optional });
+    }
+    out
+}
+
+/// ★ THE GATE. `Some(message)` iff the variant the DEFINITION will write and the
+/// arguments the CONSTRUCTION will pass do not line up field-for-field.
+///
+/// # Why a gate exists at all when both sides now derive from one order
+///
+/// They derive from one ORDER, not from one piece of code: `field_layout` walks
+/// the syntax pattern for the definition, and `classify_binder_in` walks it
+/// again for the construction. Two walks of one grammar can still drift — that
+/// is precisely how #139 arose, from two walks of two DIFFERENT lists. This
+/// check is what makes a future drift a REFUSAL at the offending rule instead of
+/// a variant whose operands are transposed and which type-checks.
+///
+/// It runs entirely on the macro's own data: no build of the generated crate,
+/// no test fixture, no grammar corpus. Every language that compiles is gated.
+pub(crate) fn field_order_disagreement(
+    rule: &GrammarRule,
+    shape: &BinderShape,
+) -> Option<String> {
+    let term_context = rule.term_context.as_deref()?;
+    let layout = crate::gen::capture::field_layout(term_context, rule.syntax_pattern.as_deref());
+    let declared = declared_field_shapes(&layout);
+    let constructed = constructed_field_shapes(shape);
+    if declared == constructed {
+        return None;
+    }
+    Some(format!(
+        "rule `{}`: the AST variant this rule DEFINES and the arguments its \
+         semantic action CONSTRUCTS do not line up field-for-field.\n  \
+         defined  (gen/types/enums.rs, via gen::capture::field_layout): {declared:?}\n  \
+         emitted  (gen/runtime/wpda_codegen/binder.rs::emit_binder_action_entry): \
+         {constructed:?}\n\nA positional disagreement here is NOT necessarily a compile \
+         error in the generated crate: two same-typed fields transpose silently. The two \
+         orders must both be the SYNTAX-PATTERN order — see the header of \
+         `macros/src/gen/capture.rs`.",
+        shape.label,
+    ))
 }
 
 #[cfg(test)]
@@ -4331,4 +4524,403 @@ mod tests {
             .to_string(), "1u16");
     }
 
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Task #139 RED — the DEFINITION's field order and the CONSTRUCTION's
+    // argument order come from ONE derivation
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // # The defect, stated as a shape rather than as an instance
+    //
+    // The construction site orders its arguments by SYNTAX-PATTERN encounter.
+    // Until this repair the variant DEFINITION ordered its fields by TERM-CONTEXT
+    // DECLARATION. Nothing held the two lists to each other, so they agreed only
+    // when the author happened to declare parameters in the order the surface
+    // mentions them.
+    //
+    // The fixture below is the smallest rule for which they disagree:
+    //
+    //     Guarded . p:Proc, ?g:Guard |- "guarded" "(" g ")" p : Proc ;
+    //             ╰── declaration (p, g) ──╯   ╰─ syntax (g, p) ─╯
+    //
+    // Under the pre-repair generator the definition was
+    // `Guarded(Arc<Proc>, BehavioralPred)` while the construction was
+    // `Guarded(pred, Arc::new(proc))` — E0308 in the generated crate. That
+    // compile error is the LOUD member of the class. The silent member is a rule
+    // whose two out-of-order parameters share a type:
+    //
+    //     Sub . a:Proc, b:Proc |- "sub" "(" b "," a ")" : Proc ;
+    //
+    // which emits `Sub(Arc::new(b), Arc::new(a))` against
+    // `Sub(Arc<Proc>, Arc<Proc>)`: type-correct, operands transposed, no
+    // diagnostic anywhere. Both cells below assert the ORDER, not the types, so
+    // they speak to the silent member as well as the loud one.
+    //
+    // # Why the assertions are pinned to tokens
+    //
+    // Each cell names the exact bytes it expects. A whole-string `assert_ne!`
+    // against the pre-repair output would pass on any incidental difference —
+    // a whitespace change, a renamed local — and that vacuity mode has already
+    // bitten this campaign once (see `the_refusal_is_not_the_old_index_zero_answer`).
+
+    /// `Guarded . p:Proc, ?g:Guard |- "guarded" "(" g ")" p : Proc ;`
+    ///
+    /// Declaration order `(p, g)`; syntax order `(g, p)`. The one shape the
+    /// repair changes.
+    fn guard_order_rule() -> GrammarRule {
+        GrammarRule {
+            term_context: Some(vec![
+                TermParam::Simple {
+                    name: Ident::new("p", Span::call_site()),
+                    ty: TypeExpr::Base(Ident::new("Proc", Span::call_site())),
+                },
+                TermParam::GuardBody { name: Ident::new("g", Span::call_site()) },
+            ]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("guarded".into()),
+                SyntaxExpr::Literal("(".into()),
+                SyntaxExpr::Param(Ident::new("g", Span::call_site())),
+                SyntaxExpr::Literal(")".into()),
+                SyntaxExpr::Param(Ident::new("p", Span::call_site())),
+            ]),
+            ..rule_fixture(
+                Ident::new("Guarded", Span::call_site()),
+                Ident::new("Proc", Span::call_site()),
+            )
+        }
+    }
+
+    /// THE CONTROL. The same rule with the guard parameter removed:
+    /// `Guarded . p:Proc |- "guarded" p : Proc ;`. One parameter, so declaration
+    /// order and syntax order are the same list and the repair cannot move it.
+    fn guard_order_control_rule() -> GrammarRule {
+        GrammarRule {
+            term_context: Some(vec![TermParam::Simple {
+                name: Ident::new("p", Span::call_site()),
+                ty: TypeExpr::Base(Ident::new("Proc", Span::call_site())),
+            }]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("guarded".into()),
+                SyntaxExpr::Param(Ident::new("p", Span::call_site())),
+            ]),
+            ..rule_fixture(
+                Ident::new("Guarded", Span::call_site()),
+                Ident::new("Proc", Span::call_site()),
+            )
+        }
+    }
+
+    /// The real `PGuardedInput` from `languages/tests/definitions/guarded_rho.rs`:
+    /// `n:Name, ?guard:Guard, ^x.p:[Name -> Proc]` with surface
+    /// `"for" "(" x "<-" n "where" guard ")" "{" p "}"`.
+    ///
+    /// SECOND CONTROL, and the load-bearing one: this rule's two orders ALREADY
+    /// agree (non-scope declaration `n, guard`; non-scope syntax `n` then
+    /// `guard`; abstraction declared last). It is the one shipped guard rule, so
+    /// any movement here would mean the repair broke a case that was correct.
+    fn shipped_guarded_input_rule() -> GrammarRule {
+        GrammarRule {
+            term_context: Some(vec![
+                TermParam::Simple {
+                    name: Ident::new("n", Span::call_site()),
+                    ty: TypeExpr::Base(Ident::new("Name", Span::call_site())),
+                },
+                TermParam::GuardBody { name: Ident::new("guard", Span::call_site()) },
+                TermParam::Abstraction {
+                    binder: Ident::new("x", Span::call_site()),
+                    body: Ident::new("p", Span::call_site()),
+                    ty: TypeExpr::Arrow {
+                        domain: Box::new(TypeExpr::Base(Ident::new("Name", Span::call_site()))),
+                        codomain: Box::new(TypeExpr::Base(Ident::new("Proc", Span::call_site()))),
+                    },
+                },
+            ]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("for".into()),
+                SyntaxExpr::Literal("(".into()),
+                SyntaxExpr::Param(Ident::new("x", Span::call_site())),
+                SyntaxExpr::Literal("<-".into()),
+                SyntaxExpr::Param(Ident::new("n", Span::call_site())),
+                SyntaxExpr::Literal("where".into()),
+                SyntaxExpr::Param(Ident::new("guard", Span::call_site())),
+                SyntaxExpr::Literal(")".into()),
+                SyntaxExpr::Literal("{".into()),
+                SyntaxExpr::Param(Ident::new("p", Span::call_site())),
+                SyntaxExpr::Literal("}".into()),
+            ]),
+            ..rule_fixture(
+                Ident::new("PGuardedInput", Span::call_site()),
+                Ident::new("Proc", Span::call_site()),
+            )
+        }
+    }
+
+    /// A `LanguageDef` declaring `Proc` and `Name`, holding `rules` as its terms.
+    fn lang_with(rules: Vec<GrammarRule>) -> mettail_ast::language::LanguageDef {
+        use mettail_ast::language::LangType;
+        let mut lang = synthetic_lang_for_lambda_test();
+        lang.terms = rules;
+        lang.types = vec![
+            LangType {
+                name: Ident::new("Proc", Span::call_site()),
+                native_type: None,
+                collection_kind: None,
+            },
+            LangType {
+                name: Ident::new("Name", Span::call_site()),
+                native_type: None,
+                collection_kind: None,
+            },
+        ];
+        lang
+    }
+
+    /// The action entry `emit_binder_action_entry` writes for `rule`, as tokens.
+    fn emitted_action_for(rule: &GrammarRule, categories: &[&str]) -> String {
+        let language = lang_with(vec![rule.clone()]);
+        let shape = classify_binder_in(rule, &language)
+            .expect("the fixture is literal-led and multi-position, so it must classify");
+        let categories: Vec<String> = categories.iter().map(|c| (*c).to_string()).collect();
+        emit_binder_action_entry(
+            0u16,
+            0u16,
+            &shape,
+            &rule.category,
+            &categories,
+            Span::call_site(),
+        )
+        .expect("a classified binder shape must yield an action entry")
+        .to_string()
+    }
+
+    /// The variant `gen/types/enums.rs` writes for `rule`, as tokens.
+    fn emitted_variant_for(rule: &GrammarRule) -> String {
+        let language = lang_with(vec![rule.clone()]);
+        crate::gen::types::enums::variant_tokens_for_rule(rule, &language).to_string()
+    }
+
+    /// ★ THE MUTATION CELL. The guard-first rule's DEFINITION follows the
+    /// SYNTAX, so it lines up with the construction field-for-field.
+    #[test]
+    fn the_definition_follows_the_syntax_when_declaration_order_differs() {
+        let rule = guard_order_rule();
+
+        // The DEFINITION. Pre-repair this read
+        // `Guarded (std :: sync :: Arc < Proc > , mettail_runtime :: BehavioralPred)`
+        // — declaration order. It is the byte sequence this repair moves, and it
+        // is pinned exactly rather than compared to its own former self.
+        let variant = emitted_variant_for(&rule);
+        assert_eq!(
+            variant,
+            "Guarded (mettail_runtime :: BehavioralPred , std :: sync :: Arc < Proc >)",
+            "the variant's field 0 must be the GUARD (syntax position 0) and field 1 the \
+             PROC (syntax position 1). Got: {variant}",
+        );
+
+        // The CONSTRUCTION, pinned to the same two positions: `arg_0` is
+        // extracted as a predicate and passed first; `arg_1` is extracted as a
+        // `Proc` term and passed second.
+        let action = emitted_action_for(&rule, &["Proc", "Name"]);
+        assert!(
+            action.contains(
+                "let arg_0 = match iter . next () . and_then \
+                 (| a | a . into_predicate :: < mettail_runtime :: BehavioralPred > ())"
+            ),
+            "syntax position 0 is the guard, so `arg_0` must be the PREDICATE extraction. \
+             Got: {action}",
+        );
+        assert!(
+            action.contains(
+                "let arg_1 = match iter . next () . and_then (| a | a . into_term :: < Proc > ())"
+            ),
+            "syntax position 1 is `p:Proc`, so `arg_1` must be the TERM extraction. \
+             Got: {action}",
+        );
+        assert!(
+            action.contains("Proc :: Guarded (arg_0 , std :: sync :: Arc :: new (arg_1))"),
+            "the construction must pass the predicate first and the term second, matching \
+             the definition positionally. Got: {action}",
+        );
+
+        // And the gate agrees, which is the property the two pins witness.
+        let language = lang_with(vec![rule.clone()]);
+        let shape = classify_binder_in(&rule, &language).expect("classifies");
+        assert_eq!(
+            field_order_disagreement(&rule, &shape),
+            None,
+            "the definition and the construction must line up field-for-field",
+        );
+    }
+
+    /// ★ THE ANTI-VACUITY WITNESS. The declaration order and the syntax order of
+    /// this fixture really are DIFFERENT lists — otherwise the cell above would
+    /// be asserting a tautology and would have passed before the repair too.
+    #[test]
+    fn the_fixture_really_does_declare_and_write_its_parameters_in_different_orders() {
+        let rule = guard_order_rule();
+        let term_context = rule.term_context.as_deref().expect("fixture has a term context");
+
+        let declared: Vec<String> = term_context
+            .iter()
+            .map(|p| match p {
+                TermParam::Simple { name, .. } => name.to_string(),
+                TermParam::GuardBody { name } => name.to_string(),
+                _ => "?".to_string(),
+            })
+            .collect();
+        assert_eq!(declared, vec!["p", "g"], "declaration order is (p, g)");
+
+        let written: Vec<String> = rule
+            .syntax_pattern
+            .as_deref()
+            .expect("fixture has a syntax pattern")
+            .iter()
+            .filter_map(|e| match e {
+                SyntaxExpr::Param(id) => Some(id.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(written, vec!["g", "p"], "syntax order is (g, p)");
+    }
+
+    /// CONTROL — a rule whose two orders coincide must be BYTE-IDENTICAL to what
+    /// the pre-repair generator produced. Both strings below are the pre-repair
+    /// output verbatim: a single `p:Proc` param is field 0 either way, so a
+    /// repair that reordered anything else would turn this cell red.
+    #[test]
+    fn a_rule_whose_orders_already_agree_does_not_move() {
+        let rule = guard_order_control_rule();
+
+        let variant = emitted_variant_for(&rule);
+        assert_eq!(
+            variant, "Guarded (std :: sync :: Arc < Proc >)",
+            "one param, one field, unchanged by the repair. Got: {variant}",
+        );
+
+        let action = emitted_action_for(&rule, &["Proc", "Name"]);
+        assert!(
+            action.contains("Proc :: Guarded (std :: sync :: Arc :: new (arg_0))"),
+            "one param, one constructor argument, unchanged by the repair. Got: {action}",
+        );
+
+        let language = lang_with(vec![rule.clone()]);
+        let shape = classify_binder_in(&rule, &language).expect("classifies");
+        assert_eq!(field_order_disagreement(&rule, &shape), None);
+    }
+
+    /// SECOND CONTROL — the one shipped `?g:Guard` rule. Its two orders already
+    /// agree, so the pinned bytes are exactly what `target/generated/guardedrho/
+    /// ast_enums.rs` holds at the commit before this repair. Movement here would
+    /// mean the repair broke a correct case.
+    #[test]
+    fn the_shipped_guarded_input_rule_does_not_move() {
+        let rule = shipped_guarded_input_rule();
+
+        let variant = emitted_variant_for(&rule);
+        assert_eq!(
+            variant,
+            "PGuardedInput (std :: sync :: Arc < Name > , mettail_runtime :: BehavioralPred , \
+             mettail_runtime :: Scope < mettail_runtime :: Binder < String > , \
+             std :: sync :: Arc < Proc >>)",
+            "the shipped rule's variant is `(Arc<Name>, BehavioralPred, Scope<…>)` before and \
+             after the repair. Got: {variant}",
+        );
+
+        let action = emitted_action_for(&rule, &["Proc", "Name"]);
+        assert!(
+            action.contains(
+                "Proc :: PGuardedInput (std :: sync :: Arc :: new (arg_1) , arg_2 , scope)"
+            ),
+            "the construction passes `(Arc::new(name), pred, scope)` before and after the \
+             repair. Got: {action}",
+        );
+
+        let language = lang_with(vec![rule.clone()]);
+        let shape = classify_binder_in(&rule, &language).expect("classifies");
+        assert_eq!(field_order_disagreement(&rule, &shape), None);
+    }
+
+    /// The gate is not inert: hand it a shape whose argument order has been
+    /// transposed relative to the rule and it says so, naming both sequences.
+    ///
+    /// ★ This is the SILENT member of the class made visible. The two fields are
+    /// `Predicate` and `Term("Proc")` here, but the same transposition between
+    /// two `Term("Proc")`s produces a variant that type-checks and evaluates the
+    /// wrong operands — which is why the gate compares POSITIONS and not types.
+    #[test]
+    fn the_gate_refuses_a_transposed_construction_naming_both_sequences() {
+        let rule = guard_order_rule();
+        let language = lang_with(vec![rule.clone()]);
+        let mut shape = classify_binder_in(&rule, &language).expect("classifies");
+        assert_eq!(
+            field_order_disagreement(&rule, &shape),
+            None,
+            "ANTI-VACUITY: the un-transposed shape must AGREE, or the refusal below \
+             would not be caused by the transposition",
+        );
+
+        shape.action_args.swap(0, 1);
+        let message = field_order_disagreement(&rule, &shape)
+            .expect("a transposed construction must be refused");
+        assert!(
+            message.contains("Guarded"),
+            "the refusal must NAME the rule. Got: {message}",
+        );
+        assert!(
+            message.contains("Predicate") && message.contains("Term(\"Proc\")"),
+            "the refusal must show BOTH field sequences so the reader can see which two \
+             positions swapped. Got: {message}",
+        );
+    }
+
+    /// ═══════════════════════════════════════════════════════════════════════
+    /// THE CORPUS GATE — order agreement for EVERY rule in EVERY bundled language
+    /// ═══════════════════════════════════════════════════════════════════════
+    ///
+    /// The cells above pin two synthetic fixtures and one shipped rule. This one
+    /// ranges over the whole corpus, and it is what keeps the rules that are
+    /// merely AT RISK — every literal-led multi-parameter rule — from becoming
+    /// the next instance. It derives its subject rather than listing it: a list
+    /// of languages is a list that can be short.
+    #[test]
+    fn every_bundled_rule_defines_and_constructs_the_same_field_order() {
+        let mut languages_scanned = 0usize;
+        let mut rules_gated = 0usize;
+        let mut disagreements: Vec<String> = Vec::new();
+        for language in crate::gen::capture::bundled_corpus::bundled_languages() {
+            languages_scanned += 1;
+            for rule in &language.def.terms {
+                let Some(shape) = classify_binder_in(rule, &language.def) else {
+                    continue;
+                };
+                rules_gated += 1;
+                if let Some(message) = field_order_disagreement(rule, &shape) {
+                    disagreements.push(format!("{}: {message}", language.tag));
+                }
+            }
+        }
+
+        // Non-vacuity floor. "For every rule, P" is satisfied by NO rules, which
+        // is the exact shape of a gate that has stopped seeing its subject.
+        assert!(
+            languages_scanned >= 45,
+            "the census found {languages_scanned} reconstructable language(s); the corpus \
+             holds around fifty, so the walk or the parse gate has changed shape and this \
+             assertion would be reporting success over a domain that is not the corpus",
+        );
+        assert!(
+            rules_gated >= 150,
+            "only {rules_gated} rule(s) reached the gate. Literal-led multi-position rules \
+             number in the hundreds across the corpus, so a count this low means \
+             `classify_binder_in` stopped classifying and the gate is ranging over almost \
+             nothing",
+        );
+        assert!(
+            disagreements.is_empty(),
+            "{} of {rules_gated} gated rule(s) define a field order their action does not \
+             construct:\n\n{}",
+            disagreements.len(),
+            disagreements.join("\n\n"),
+        );
+    }
 }

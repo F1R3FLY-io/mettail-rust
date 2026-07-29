@@ -12,7 +12,9 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
-use super::binder::{cat_idx_tokens, classify_binder_in, emit_binder_action_entry};
+use super::binder::{
+    cat_idx_tokens, classify_binder_in, emit_binder_action_entry, field_order_disagreement,
+};
 use super::collection::{classify_collection, CollectionShape};
 use super::infix;
 use super::prefix::{classify_atomic, AtomicShape, LiteralFamily};
@@ -40,6 +42,25 @@ pub fn emit_action_for_body(
             // Phase 5: try classifying as a binder rule first; takes
             // precedence over collection / atomic / infix classification.
             if let Some(shape) = classify_binder_in(rule, language) {
+                // ★ #139 — THE POSITIONAL GATE. This is the one site that holds
+                // BOTH derivations of the variant's field order: the rule (from
+                // which `gen/types/enums.rs` will write the DEFINITION, via
+                // `gen::capture::field_layout`) and the shape (from which
+                // `emit_binder_action_entry` will write the CONSTRUCTION). A
+                // disagreement is refused HERE, at the offending rule, because
+                // downstream it is not reliably a compile error: two same-typed
+                // fields transpose in silence.
+                if let Some(message) = field_order_disagreement(rule, &shape) {
+                    let span = rule.label.span();
+                    let refusal = syn::Error::new(span, message).to_compile_error();
+                    let src_idx = cat_i as u16;
+                    let rule_idx = *rule_idx;
+                    arms.push(quote! {
+                        (#src_idx, #rule_idx) => { #refusal }
+                        ,
+                    });
+                    continue;
+                }
                 if let Some(entry) = emit_binder_action_entry(
                     cat_i as u16,
                     *rule_idx,

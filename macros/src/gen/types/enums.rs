@@ -1,6 +1,6 @@
 #![allow(clippy::single_match)]
 
-use crate::gen::capture::{capture_layout, CaptureFieldKind};
+use crate::gen::capture::{field_layout, FieldSlotSource};
 use crate::gen::native::NativeType;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::{
@@ -249,6 +249,19 @@ fn literal_payload_type(
     }
 }
 
+/// The exact variant tokens this module writes for `rule` into the generated
+/// `ast_enums.rs`.
+///
+/// ★ #139: exists so the positional gate's cells
+/// (`gen/runtime/wpda_codegen/binder.rs`) can assert the DEFINITION against the
+/// CONSTRUCTION on the same rule, at the generator, on token streams — with no
+/// build of the generated crate. It is the same entry point the enum emitter
+/// uses, not a re-derivation of it, so a cell cannot pass against a variant that
+/// is never written.
+pub(crate) fn variant_tokens_for_rule(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
+    generate_variant(rule, language)
+}
+
 fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
     let label = &rule.label;
 
@@ -357,7 +370,34 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
     }
 }
 
-/// Generate variant from new term_context syntax
+/// Generate the AST variant for a rule written in judgement (`term_context`) form.
+///
+/// ★ Task #139 — the field ORDER is not decided here. It comes from
+/// [`crate::gen::capture::field_layout`], the ONE derivation shared with the
+/// construction site (`gen/runtime/wpda_codegen/binder.rs::emit_binder_action_entry`,
+/// which emits `Cat::Label(field_names…, scope)`). This function decides only
+/// each slot's TYPE.
+///
+/// # What this replaced, and why the split is the repair
+///
+/// Until #139 this function walked `term_context` — the DECLARATION order —
+/// while the constructor walked `syntax_pattern` — the SURFACE order. The two
+/// lists were independent, and they agreed only when the author happened to
+/// declare parameters in the order the surface mentions them. Two same-typed
+/// parameters written the other way round —
+///
+/// ```text
+///   Sub . a:Proc, b:Proc |- "sub" "(" b "," a ")" : Proc ;
+/// ```
+///
+/// — made the constructor emit `Sub(Arc::new(b), Arc::new(a))` against a
+/// definition `Sub(Arc<Proc>, Arc<Proc>)`: type-correct, operands transposed,
+/// no diagnostic anywhere. Adding a case for the shape that was noticed would
+/// have left the class intact; deriving the order from one list removes it.
+///
+/// The capture-bearing branch that used to sit here was already correct for
+/// exactly this reason — it walked the syntax pattern. It is gone because it is
+/// now the general case, not a special one.
 fn generate_variant_from_term_context(
     label: &syn::Ident,
     term_context: &[TermParam],
@@ -365,180 +405,28 @@ fn generate_variant_from_term_context(
     language: &LanguageDef,
     category: &syn::Ident,
 ) -> TokenStream {
-    // L9-3 (token-kind capture): when the syntax pattern contains one or more
-    // `v@Tok` captures (`SyntaxExpr::TokenKind`), the variant gains a
-    // `std::string::String` field per capture — the matched token's text,
-    // extracted by the walker via `as_token_text()` and constructed by
-    // `binder.rs`'s `TokenText` action arm. The field ORDER must equal the
-    // walker's `action_args` order (leading capture first, then syntax-pattern
-    // order) so the generated `Cat::Label(field_names…)` construction matches
-    // this definition positionally. We therefore build the whole field list by
-    // walking the syntax pattern in order: a `TokenKind` yields a `String`, a
-    // `Param` yields its `term_context` Simple-param field type. Literals /
-    // meta-ops contribute no field. Capture-free rules skip this branch and use
-    // the byte-identical term_context walk below.
-    if let Some(sp) = syntax_pattern {
-        if let Some(layout) = capture_layout(term_context, sp) {
-            // F.1 FULL SUPPORT: non-scope fields in syntax-pattern order (a
-            // capture next to a same-typed StringLiteral param never swaps —
-            // both come from the SAME sp walk), then the binder `Scope` LAST
-            // (matching binder.rs:3004-3011/:3338). Every seam derives its
-            // order from this same `capture_layout`, so definition, FieldInfo,
-            // and every walker stay positionally aligned.
-            let mut fields: Vec<TokenStream> = Vec::new();
-            for f in &layout.non_scope {
-                let base = match &f.kind {
-                    CaptureFieldKind::TokenText => quote! { std::string::String },
-                    CaptureFieldKind::GuestBody { .. } => {
-                        quote! { std::sync::Arc<mettail_runtime::FltNode> }
-                    },
-                    CaptureFieldKind::Term(ty) => {
-                        type_expr_to_field_type(ty, Some((language, category)))
-                    },
-                    CaptureFieldKind::Predicate => quote! { mettail_runtime::BehavioralPred },
-                };
-                if f.optional {
-                    // Mirror the top-level Optional field convention: bare
-                    // container types stay bare inside Option; everything else
-                    // is Arc-wrapped already (Term) or a plain leaf (String /
-                    // BehavioralPred).
-                    fields.push(quote! { Option<#base> });
-                } else {
-                    fields.push(base);
-                }
-            }
-            if let Some(scope) = &layout.scope {
-                if let TypeExpr::Arrow { codomain, .. } = scope.ty {
-                    let body_type = type_expr_to_rust_type(codomain);
-                    if scope.multi {
-                        fields.push(quote! {
-                            mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#body_type>>
-                        });
-                    } else {
-                        fields.push(quote! {
-                            mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body_type>>
-                        });
-                    }
-                }
-            }
-            return if fields.is_empty() {
-                quote! { #label }
-            } else if fields.len() == 1 {
-                let field = &fields[0];
-                quote! { #label(#field) }
-            } else {
-                quote! { #label(#(#fields),*) }
-            };
-        }
-    }
-
+    let layout = field_layout(term_context, syntax_pattern);
     let mut fields: Vec<TokenStream> = Vec::new();
-
-    for param in term_context {
-        match param {
-            TermParam::Simple { ty, .. } => {
-                // Simple parameter: generate appropriate field type
-                let field_type = type_expr_to_field_type(ty, Some((language, category)));
-                fields.push(field_type);
+    for slot in &layout.slots {
+        match (&slot.source, slot.optional) {
+            // L9-3: a `v@Tok` capture is the matched token's TEXT, extracted by
+            // the walker via `as_token_text()` and carried inertly as a bare
+            // `String` — no `Arc`/`Box`, because a capture is plain text.
+            (FieldSlotSource::TokenText, false) => fields.push(quote! { std::string::String }),
+            (FieldSlotSource::TokenText, true) => {
+                fields.push(quote! { Option<std::string::String> })
             },
-            TermParam::Abstraction { ty, .. } => {
-                // Single abstraction: ^x.p:[A -> B]
-                // Generates: Scope<Binder<String>, Box<B>>
-                if let TypeExpr::Arrow { codomain, .. } = ty {
-                    let body_type = type_expr_to_rust_type(codomain);
-                    fields.push(quote! {
-                        mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body_type>>
-                    });
-                }
+            // L9-4: a `*flt(…)` guest body is an opaque `Arc<FltNode>` leaf.
+            (FieldSlotSource::GuestBody { .. }, false) => {
+                fields.push(quote! { std::sync::Arc<mettail_runtime::FltNode> })
             },
-            TermParam::MultiAbstraction { ty, .. } => {
-                // Multi-abstraction: ^[xs].p:[Name* -> B]
-                // Generates: Scope<Vec<Binder<String>>, Box<B>>
-                if let TypeExpr::Arrow { codomain, .. } = ty {
-                    let body_type = type_expr_to_rust_type(codomain);
-                    fields.push(quote! {
-                        mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#body_type>>
-                    });
-                }
+            (FieldSlotSource::GuestBody { .. }, true) => {
+                fields.push(quote! { Option<std::sync::Arc<mettail_runtime::FltNode>> })
             },
-            TermParam::GuardBody { .. } => {
-                // Phase 2D (predicated types, 2026-04-08):
-                // Generate a positional field of type
-                // `mettail_runtime::BehavioralPred` to carry the
-                // per-instance behavioral predicate parsed at
-                // source-parse time by the language-generic
-                // `mettail_prattail::parser::predicate::PredicateParser`
-                // (Phase 1B).
-                //
-                // The field is passive runtime data used for shape
-                // dispatch, display, and hash-consing — not for
-                // runtime evaluation. At run time the predicate is
-                // enforced host-side at COMM (RSpace matching, a
-                // Rholang `where` guard, or a `RhoNativeJoin`) for
-                // Rho-backed languages, or evaluated by
-                // `mettail_runtime::evaluate_pred_with_bindings` for
-                // WPDA refinement guards (§8 of
-                // `docs/design/predicated-types.md`). The legacy
-                // Ascent JOIN-clause lowering was retired in P6.
-                fields.push(quote! {
-                    mettail_runtime::BehavioralPred
-                });
+            (FieldSlotSource::Param(param), false) => {
+                fields.extend(required_param_field(param, language, category))
             },
-            TermParam::Optional { params: inner } => {
-                // Opt-Group: each inner param contributes its own
-                // `Option<T>` field (separate, not a tuple). At runtime,
-                // when the syntax-pattern Opt block matches, the action
-                // populates each Option with `Some(...)`; when absent,
-                // each is `None`. Nested Optional flattens — the engine
-                // never produces `Some(Some(...))`.
-                fn one_optional_field(p: &TermParam) -> Vec<TokenStream> {
-                    match p {
-                        TermParam::Simple { ty, .. } => {
-                            let inner_ty = type_expr_to_rust_type(ty);
-                            // Phase 4 #3 (2026-05-12): collections / maps
-                            // inside Optional emit `Option<Vec<T>>` /
-                            // `Option<HashBag<T>>` / `Option<HashSet<T>>` /
-                            // `Option<HashMapLit<K,V>>` — NOT boxed. Matches
-                            // the top-level Class-2 convention (bare
-                            // container, no Box). Container types are
-                            // already heap-allocated so Box is redundant.
-                            match ty {
-                                TypeExpr::Collection { .. } | TypeExpr::Map { .. } => {
-                                    vec![quote! { Option<#inner_ty> }]
-                                },
-                                _ => vec![quote! { Option<std::sync::Arc<#inner_ty>> }],
-                            }
-                        },
-                        TermParam::Abstraction { ty, .. } => {
-                            if let TypeExpr::Arrow { codomain, .. } = ty {
-                                let body = type_expr_to_rust_type(codomain);
-                                vec![
-                                    quote! { Option<mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body>>> },
-                                ]
-                            } else {
-                                vec![]
-                            }
-                        },
-                        TermParam::MultiAbstraction { ty, .. } => {
-                            if let TypeExpr::Arrow { codomain, .. } = ty {
-                                let body = type_expr_to_rust_type(codomain);
-                                vec![
-                                    quote! { Option<mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#body>>> },
-                                ]
-                            } else {
-                                vec![]
-                            }
-                        },
-                        TermParam::GuardBody { .. } => {
-                            vec![quote! { Option<mettail_runtime::BehavioralPred> }]
-                        },
-                        TermParam::Optional { params: nested } => {
-                            nested.iter().flat_map(one_optional_field).collect()
-                        },
-                    }
-                }
-                fields.extend(inner.iter().flat_map(one_optional_field));
-            },
+            (FieldSlotSource::Param(param), true) => fields.extend(optional_param_field(param)),
         }
     }
 
@@ -550,6 +438,110 @@ fn generate_variant_from_term_context(
         quote! { #label(#field) }
     } else {
         quote! { #label(#(#fields),*) }
+    }
+}
+
+/// The field type of a term-context parameter declared OUTSIDE any `#opt(…)`
+/// group. Empty when the parameter contributes no field — an abstraction whose
+/// declared type is not an arrow has no codomain to put in the `Scope`, so there
+/// is nothing to emit.
+fn required_param_field(
+    param: &TermParam,
+    language: &LanguageDef,
+    category: &syn::Ident,
+) -> Vec<TokenStream> {
+    match param {
+        TermParam::Simple { ty, .. } => {
+            vec![type_expr_to_field_type(ty, Some((language, category)))]
+        },
+        // Single abstraction `^x.p:[A -> B]` → `Scope<Binder<String>, Arc<B>>`.
+        TermParam::Abstraction { ty, .. } => match ty {
+            TypeExpr::Arrow { codomain, .. } => {
+                let body_type = type_expr_to_rust_type(codomain);
+                vec![quote! {
+                    mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body_type>>
+                }]
+            },
+            _ => Vec::new(),
+        },
+        // Multi-abstraction `^[xs].p:[Name* -> B]` → `Scope<Vec<Binder<String>>, Arc<B>>`.
+        TermParam::MultiAbstraction { ty, .. } => match ty {
+            TypeExpr::Arrow { codomain, .. } => {
+                let body_type = type_expr_to_rust_type(codomain);
+                vec![quote! {
+                    mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#body_type>>
+                }]
+            },
+            _ => Vec::new(),
+        },
+        // Phase 2D (predicated types, 2026-04-08): a positional
+        // `mettail_runtime::BehavioralPred` carrying the per-instance behavioral
+        // predicate parsed at source-parse time by the language-generic
+        // `mettail_prattail::parser::predicate::PredicateParser` (Phase 1B).
+        //
+        // The field is passive runtime data used for shape dispatch, display,
+        // and hash-consing — not for runtime evaluation. At run time the
+        // predicate is enforced host-side at COMM (RSpace matching, a Rholang
+        // `where` guard, or a `RhoNativeJoin`) for Rho-backed languages, or
+        // evaluated by `mettail_runtime::evaluate_pred_with_bindings` for WPDA
+        // refinement guards (§8 of `docs/design/predicated-types.md`). The
+        // legacy Ascent JOIN-clause lowering was retired in P6.
+        TermParam::GuardBody { .. } => vec![quote! { mettail_runtime::BehavioralPred }],
+        // `field_layout` flattens opt-groups into one slot per inner parameter,
+        // so an `Optional` never arrives as a slot source.
+        TermParam::Optional { .. } => Vec::new(),
+    }
+}
+
+/// The field type of a term-context parameter declared INSIDE an `#opt(…)`
+/// group: each inner parameter contributes its own `Option<T>` field (separate,
+/// not a tuple). At runtime, when the syntax-pattern opt block matches, the
+/// action populates each `Option` with `Some(…)`; when absent, each is `None`.
+/// Nested `Optional` flattens — the engine never produces `Some(Some(…))`.
+///
+/// ⚠ These types are pinned to what `binder.rs`'s `ActionArgKind::Optional` arm
+/// actually constructs, which is `Option<Arc<Cat>>` for a term slot
+/// (`binder.rs`'s `into_term::<#cat_id>().map(std::sync::Arc::new)`). A
+/// `type_expr_to_field_type` here would render a native-typed parameter as a
+/// bare `Option<i64>` and disagree with that construction.
+fn optional_param_field(param: &TermParam) -> Vec<TokenStream> {
+    match param {
+        TermParam::Simple { ty, .. } => {
+            let inner_ty = type_expr_to_rust_type(ty);
+            // Phase 4 #3 (2026-05-12): collections / maps inside Optional emit
+            // `Option<Vec<T>>` / `Option<HashBag<T>>` / `Option<HashSet<T>>` /
+            // `Option<HashMapLit<K,V>>` — NOT boxed. Matches the top-level
+            // Class-2 convention (bare container, no Box). Container types are
+            // already heap-allocated so Box is redundant.
+            match ty {
+                TypeExpr::Collection { .. } | TypeExpr::Map { .. } => {
+                    vec![quote! { Option<#inner_ty> }]
+                },
+                _ => vec![quote! { Option<std::sync::Arc<#inner_ty>> }],
+            }
+        },
+        TermParam::Abstraction { ty, .. } => match ty {
+            TypeExpr::Arrow { codomain, .. } => {
+                let body = type_expr_to_rust_type(codomain);
+                vec![
+                    quote! { Option<mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body>>> },
+                ]
+            },
+            _ => Vec::new(),
+        },
+        TermParam::MultiAbstraction { ty, .. } => match ty {
+            TypeExpr::Arrow { codomain, .. } => {
+                let body = type_expr_to_rust_type(codomain);
+                vec![
+                    quote! { Option<mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#body>>> },
+                ]
+            },
+            _ => Vec::new(),
+        },
+        TermParam::GuardBody { .. } => vec![quote! { Option<mettail_runtime::BehavioralPred> }],
+        // `field_layout` flattens nested opt-groups, so this is unreachable; it
+        // is written as the same flatten rather than as an `unreachable!`.
+        TermParam::Optional { params } => params.iter().flat_map(optional_param_field).collect(),
     }
 }
 
