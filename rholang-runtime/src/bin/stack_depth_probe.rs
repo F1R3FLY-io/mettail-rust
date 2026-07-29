@@ -315,6 +315,339 @@ fn new_build_body(depth: usize) {
     std::mem::forget(term);
 }
 
+// ---------------------------------------------------------------------------
+// ★★ THE GENERATED TRAIT DRIVERS — nine `*_iterative` engines, eight of which had
+// NO subject here at all.
+//
+// `macros/src/gen/` emits nine work-stack drivers over the AST family:
+// `iterative_cmp` (PartialEq/Eq/PartialOrd/Ord), `iterative_hash` (Hash),
+// `iterative_drop` (Drop), `debug` (Debug), `display` (Display), plus the inherent
+// `semantic_hash`, `subst`, `normalize` and `match_pattern`. Only `Drop` was gated
+// (as `ast_drop`) — and it is the one that turned out NOT to be flat, at 254 B/level,
+// because `nested_list` alternates `Proc::CastList(Arc<List>)` with
+// `List::ListLit(Vec<Proc>)` and the worklist does not follow that cross-type hop.
+//
+// ⚠ So "generated" must not be read as "verified flat", and the remaining eight were
+// UNMEASURED rather than known-good. These subjects close that gap.
+//
+// ★ EVERY subject here builds on `nested_list` — deliberately the SAME cross-type shape
+// that exposed the `ast_drop` defect — and `mem::forget`s its terms, so the ladder is the
+// driver under test and never `ast_drop`'s own slope. One subject, one traversal.
+// ---------------------------------------------------------------------------
+
+/// [`nested_list`] with the LEAF integer chosen, so two ladders can be made to differ at
+/// the deepest point and nowhere else.
+fn nested_list_leaf(depth: usize, leaf: i64) -> Proc {
+    let mut p = int(leaf);
+    for _ in 0..depth {
+        p = list(vec![p]);
+    }
+    p
+}
+
+/// [`nested_list`] whose leaf is a FREE VARIABLE, so a substitution must walk the whole
+/// spine to reach the only thing it will rewrite.
+fn nested_list_var(depth: usize, name: &str) -> Proc {
+    let fv = mettail_runtime::get_or_create_var(name.to_string());
+    let mut p = Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv)));
+    for _ in 0..depth {
+        p = list(vec![p]);
+    }
+    p
+}
+
+/// `PartialEq` — `iterative_cmp.rs`.
+///
+/// ⚠ ANTI-VACUITY: `eq` short-circuits at the first UNEQUAL field, so the twins must compare
+/// **equal** or the ladder measures one frame. They are built INDEPENDENTLY rather than cloned,
+/// because `Clone` is `Arc::clone` here and a cloned twin would share every child pointer — an
+/// impl that opened with a pointer-equality fast path would then return without descending.
+fn ast_eq_body(depth: usize) {
+    let a = nested_list(depth);
+    let b = nested_list(depth);
+    assert!(a == b, "stack_depth_probe: ast_eq twins must be EQUAL or the walk short-circuits");
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+/// `Ord::cmp` — `iterative_cmp.rs`.
+///
+/// ⚠ ANTI-VACUITY: `cmp` short-circuits at the first unequal field, so the twins differ ONLY at
+/// the leaf and the comparison must descend the whole spine to decide.
+fn ast_cmp_body(depth: usize) {
+    let a = nested_list_leaf(depth, 1);
+    let b = nested_list_leaf(depth, 2);
+    assert!(a < b, "stack_depth_probe: ast_cmp twins must differ at the LEAF, a < b");
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+/// `Hash` — `iterative_hash.rs`.
+///
+/// ⚠ ANTI-VACUITY: hashing cannot short-circuit, but it is invisible — a driver that hashed only
+/// the root would still "work". Two different leaves must therefore produce two different digests.
+fn ast_hash_body(depth: usize) {
+    use std::hash::{Hash, Hasher};
+    let hash_of = |p: &Proc| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.hash(&mut h);
+        h.finish()
+    };
+    let a = nested_list_leaf(depth, 1);
+    let b = nested_list_leaf(depth, 2);
+    assert_ne!(
+        hash_of(&a),
+        hash_of(&b),
+        "stack_depth_probe: ast_hash must reach the LEAF — two leaves gave one digest"
+    );
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+/// `Debug` — `debug.rs`.
+///
+/// ⚠ ANTI-VACUITY: the rendering must GROW with depth, or the formatter stopped early.
+fn ast_debug_body(depth: usize) {
+    let a = nested_list(depth);
+    let rendered = format!("{a:?}");
+    assert!(
+        rendered.len() > depth,
+        "stack_depth_probe: ast_debug rendered {} bytes at depth {depth} — it stopped early",
+        rendered.len()
+    );
+    std::mem::forget(a);
+}
+
+/// `Display` — `display.rs`.
+///
+/// ⚠ ANTI-VACUITY: same rule as [`ast_debug_body`].
+fn ast_display_body(depth: usize) {
+    let a = nested_list(depth);
+    let rendered = format!("{a}");
+    assert!(
+        rendered.len() > depth,
+        "stack_depth_probe: ast_display rendered {} bytes at depth {depth} — it stopped early",
+        rendered.len()
+    );
+    std::mem::forget(a);
+}
+
+/// $`\alpha`$-canonical identity — `semantic_hash.rs`.
+///
+/// ⚠ ANTI-VACUITY: as for `ast_hash`, two leaves must give two digests.
+fn ast_semantic_hash_body(depth: usize) {
+    use std::hash::Hasher;
+    let hash_of = |p: &Proc| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.semantic_hash(&mut h);
+        h.finish()
+    };
+    let a = nested_list_leaf(depth, 1);
+    let b = nested_list_leaf(depth, 2);
+    assert_ne!(
+        hash_of(&a),
+        hash_of(&b),
+        "stack_depth_probe: ast_semantic_hash must reach the LEAF"
+    );
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+/// Capture-avoiding substitution — `subst.rs`.
+///
+/// ⚠ ANTI-VACUITY: the variable sits at the LEAF, so the substitution must traverse the entire
+/// spine to find it, and the result must actually differ from the input.
+fn ast_subst_body(depth: usize) {
+    let term = nested_list_var(depth, "probe_subst_x");
+    let fv = mettail_runtime::get_or_create_var("probe_subst_x".to_string());
+    let replaced = term.substitute(&fv, &int(7));
+    assert!(
+        replaced != term,
+        "stack_depth_probe: ast_subst did not reach the LEAF variable"
+    );
+    std::mem::forget(term);
+    std::mem::forget(replaced);
+}
+
+/// Collection canonicalisation — `normalize.rs`.
+///
+/// ⚠ ANTI-VACUITY: normalising a canonical term is the identity, so the assertion is that the
+/// result still carries the depth it was given — a driver that returned a truncated term would
+/// otherwise read as flat and correct.
+fn ast_normalize_body(depth: usize) {
+    let term = nested_list(depth);
+    let normalized = term.normalize();
+    assert!(
+        normalized == term,
+        "stack_depth_probe: ast_normalize is not the identity on a canonical term"
+    );
+    std::mem::forget(term);
+    std::mem::forget(normalized);
+}
+
+/// Pattern matching — `match_pattern.rs`.
+///
+/// ⚠ ANTI-VACUITY: the pattern must MATCH, or the walk stops at the first mismatch. A term is
+/// matched against an independently-built structural twin of itself.
+fn ast_match_pattern_body(depth: usize) {
+    let term = nested_list(depth);
+    let pattern = nested_list(depth);
+    assert!(
+        term.match_pattern(&pattern).is_some(),
+        "stack_depth_probe: ast_match_pattern must MATCH or the walk short-circuits"
+    );
+    std::mem::forget(term);
+    std::mem::forget(pattern);
+}
+
+/// ★ THE CONTROL for the eight subjects above: build the twin pair and forget it, running NO
+/// driver at all. Whatever slope the builders and the `Arc` bumps carry is in this ladder too,
+/// so a driver's slope is `subject − build_twins` and never the harness's own cost.
+fn build_twins_body(depth: usize) {
+    let a = nested_list_leaf(depth, 1);
+    let b = nested_list_leaf(depth, 2);
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+// ---------------------------------------------------------------------------
+// ★★ THE MECHANISM TEST — the same eight drivers on a shape with NO cross-type hop.
+//
+// The `*_add` twins below are identical in every respect except the SHAPE they walk:
+// `nested_add` is `Proc::Add(Arc<Proc>, Arc<Proc>)`, a pure single-type chain, where
+// `nested_list` alternates `Proc::CastList(Arc<List>)` with `List::ListLit(Vec<Proc>)`.
+//
+// The hypothesis under test is the one `ast_drop`'s note states: the generated work stacks
+// are typed per category, and a driver does not follow an edge that leaves its own type.
+// It predicts a SHARP result — every `*_add` twin flat, every `nested_list` original sloped.
+// Anything else refutes it, and a partial result localises the defect further.
+// ---------------------------------------------------------------------------
+
+/// [`nested_add`] with the LEAF chosen, for the comparison subjects' anti-vacuity.
+fn nested_add_leaf(depth: usize, leaf: i64) -> Proc {
+    let mut p = int(leaf);
+    for _ in 0..depth {
+        p = Proc::Add(Arc::new(p), Arc::new(int(1)));
+    }
+    p
+}
+
+/// [`nested_add`] whose leaf is a free variable, for `ast_subst_add`.
+fn nested_add_var(depth: usize, name: &str) -> Proc {
+    let fv = mettail_runtime::get_or_create_var(name.to_string());
+    let mut p = Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv)));
+    for _ in 0..depth {
+        p = Proc::Add(Arc::new(p), Arc::new(int(1)));
+    }
+    p
+}
+
+fn ast_eq_add_body(depth: usize) {
+    let a = nested_add(depth);
+    let b = nested_add(depth);
+    assert!(a == b, "stack_depth_probe: ast_eq_add twins must be EQUAL");
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+fn ast_cmp_add_body(depth: usize) {
+    let a = nested_add_leaf(depth, 1);
+    let b = nested_add_leaf(depth, 2);
+    assert!(a != b, "stack_depth_probe: ast_cmp_add twins must differ at the LEAF");
+    let _ = a.cmp(&b);
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+fn ast_hash_add_body(depth: usize) {
+    use std::hash::{Hash, Hasher};
+    let hash_of = |p: &Proc| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.hash(&mut h);
+        h.finish()
+    };
+    let a = nested_add_leaf(depth, 1);
+    let b = nested_add_leaf(depth, 2);
+    assert_ne!(hash_of(&a), hash_of(&b), "stack_depth_probe: ast_hash_add must reach the LEAF");
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+fn ast_debug_add_body(depth: usize) {
+    let a = nested_add(depth);
+    let rendered = format!("{a:?}");
+    assert!(rendered.len() > depth, "stack_depth_probe: ast_debug_add stopped early");
+    std::mem::forget(a);
+}
+
+fn ast_display_add_body(depth: usize) {
+    let a = nested_add(depth);
+    let rendered = format!("{a}");
+    assert!(rendered.len() > depth, "stack_depth_probe: ast_display_add stopped early");
+    std::mem::forget(a);
+}
+
+fn ast_semantic_hash_add_body(depth: usize) {
+    use std::hash::Hasher;
+    let hash_of = |p: &Proc| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.semantic_hash(&mut h);
+        h.finish()
+    };
+    let a = nested_add_leaf(depth, 1);
+    let b = nested_add_leaf(depth, 2);
+    assert_ne!(
+        hash_of(&a),
+        hash_of(&b),
+        "stack_depth_probe: ast_semantic_hash_add must reach the LEAF"
+    );
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+fn ast_subst_add_body(depth: usize) {
+    let term = nested_add_var(depth, "probe_subst_y");
+    let fv = mettail_runtime::get_or_create_var("probe_subst_y".to_string());
+    let replaced = term.substitute(&fv, &int(7));
+    assert!(replaced != term, "stack_depth_probe: ast_subst_add did not reach the LEAF");
+    std::mem::forget(term);
+    std::mem::forget(replaced);
+}
+
+fn ast_normalize_add_body(depth: usize) {
+    let term = nested_add(depth);
+    let normalized = term.normalize();
+    assert!(normalized == term, "stack_depth_probe: ast_normalize_add is not the identity");
+    std::mem::forget(term);
+    std::mem::forget(normalized);
+}
+
+fn ast_match_pattern_add_body(depth: usize) {
+    let term = nested_add(depth);
+    let pattern = nested_add(depth);
+    assert!(
+        term.match_pattern(&pattern).is_some(),
+        "stack_depth_probe: ast_match_pattern_add must MATCH"
+    );
+    std::mem::forget(term);
+    std::mem::forget(pattern);
+}
+
+/// The `*_add` control, matching [`build_twins_body`].
+fn build_twins_add_body(depth: usize) {
+    let a = nested_add_leaf(depth, 1);
+    let b = nested_add_leaf(depth, 2);
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+/// The `*_add` teardown, matching `ast_drop`. `lower_add` is already known flat, so this says
+/// whether the pure-`Proc` chain is flat under the generated `Drop` as the note claims.
+fn ast_drop_add_body(depth: usize) {
+    let term = nested_add(depth);
+    drop(term);
+}
+
 /// Names the subject a child should run. Kept in one place so the parent and the child cannot
 /// drift; the parent names subjects by the same strings.
 fn subject(name: &str) -> fn(usize) {
@@ -328,8 +661,31 @@ fn subject(name: &str) -> fn(usize) {
         "lower_new" => lower_new_body,
         "reproducer" => reproducer_body,
         "lower_leak" => lower_leak_body,
+        // -------- the GENERATED TRAIT DRIVERS (eight that had no subject) --------
+        "ast_eq" => ast_eq_body,
+        "ast_cmp" => ast_cmp_body,
+        "ast_hash" => ast_hash_body,
+        "ast_debug" => ast_debug_body,
+        "ast_display" => ast_display_body,
+        "ast_semantic_hash" => ast_semantic_hash_body,
+        "ast_subst" => ast_subst_body,
+        "ast_normalize" => ast_normalize_body,
+        "ast_match_pattern" => ast_match_pattern_body,
+        // -------- the MECHANISM TEST: same drivers, no cross-type hop --------
+        "ast_eq_add" => ast_eq_add_body,
+        "ast_cmp_add" => ast_cmp_add_body,
+        "ast_hash_add" => ast_hash_add_body,
+        "ast_debug_add" => ast_debug_add_body,
+        "ast_display_add" => ast_display_add_body,
+        "ast_semantic_hash_add" => ast_semantic_hash_add_body,
+        "ast_subst_add" => ast_subst_add_body,
+        "ast_normalize_add" => ast_normalize_add_body,
+        "ast_match_pattern_add" => ast_match_pattern_add_body,
         // -------- discriminators --------
         "ast_drop" => ast_drop_body,
+        "ast_drop_add" => ast_drop_add_body,
+        "build_twins" => build_twins_body,
+        "build_twins_add" => build_twins_add_body,
         "new_build" => new_build_body,
         // -------- depth axis: NOT converted, measured anyway --------
         "parse_depth" => parse_depth_body,
