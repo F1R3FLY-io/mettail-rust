@@ -31,7 +31,6 @@ proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
 prettyplease = "0.2"
-proc-macro-error = { workspace = true }
 moniker = { workspace = true }
 indexmap = { workspace = true }
 mettail-ast = { package = "ast", path = "../ast" }

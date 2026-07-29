@@ -81,14 +81,12 @@ pub(crate) fn install() {
     HOOK_INSTALLED.call_once(|| {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            if !raised_by_proc_macro_error(info) {
-                eprintln!(
-                    "[mettail] PANIC during macro expansion — most recently entered \
-                     `language!`: {}. The line below names the generator site; this line \
-                     names the grammar that reached it.",
-                    expanding()
-                );
-            }
+            eprintln!(
+                "[mettail] PANIC during macro expansion — most recently entered \
+                 `language!`: {}. The line below names the generator site; this line \
+                 names the grammar that reached it.",
+                expanding()
+            );
             previous(info);
         }));
     });
@@ -121,23 +119,34 @@ fn expanding() -> String {
     }
 }
 
-/// Is this panic `proc_macro_error`'s own control flow rather than a fault?
-///
-/// ⚠ **MEASURED, 2026-07-29** (`red0`/`case-hook-abort`): `abort!` is implemented
-/// as `panic!(AbortNow)`, raised at `proc-macro-error-1.0.4/src/lib.rs:472`, and
-/// it therefore **runs this hook**. Without this predicate every deliberate,
-/// fully-rendered `abort!` diagnostic would grow a spurious
-/// `[mettail] PANIC during macro expansion` line underneath it, with a
-/// `<non-string payload>` body — turning a clean diagnostic into something that
-/// reads like a crash.
-///
-/// The discrimination is on the panic's **location**, not its payload: the
-/// payload is a private unit struct that cannot be downcast from here, whereas
-/// `AbortNow` is raised from one file whose path contains the crate name. A
-/// payload-shape test ("not a `&str` and not a `String`") would also swallow
-/// every legitimate structured panic, which is the opposite of this hook's
-/// purpose.
-fn raised_by_proc_macro_error(info: &std::panic::PanicHookInfo<'_>) -> bool {
-    info.location()
-        .is_some_and(|location| location.file().contains("proc-macro-error"))
-}
+// ⚠ `raised_by_proc_macro_error` — the `AbortNow` FILTER — was DELETED here
+// together with the `proc-macro-error` dependency itself (#141 change 3b). It read:
+//
+//     fn raised_by_proc_macro_error(info: &std::panic::PanicHookInfo<'_>) -> bool {
+//         info.location()
+//             .is_some_and(|location| location.file().contains("proc-macro-error"))
+//     }
+//
+// and it guarded the `eprintln!` above.
+//
+// # Why it existed, and why it no longer can
+//
+// MEASURED, 2026-07-29 (`red0`/`case-hook-abort`): `proc_macro_error::abort!` is
+// implemented as `panic!(AbortNow)`, raised at
+// `proc-macro-error-1.0.4/src/lib.rs:472`, and it therefore RAN THIS HOOK. Every
+// deliberate, fully-rendered `abort!` diagnostic would otherwise have grown a
+// spurious `[mettail] PANIC during macro expansion` line underneath it, with a
+// `<non-string payload>` body — a clean diagnostic made to read like a crash.
+// The discrimination was on the panic's LOCATION rather than its payload,
+// because `AbortNow` is a private unit struct that cannot be downcast from here,
+// while a payload-shape test ("not a `&str` and not a `String`") would have
+// swallowed every legitimate structured panic — the opposite of this hook's
+// purpose. That filter was correct, and it was necessary for exactly as long as
+// this crate depended on `proc-macro-error`.
+//
+// It is deleted rather than retained as a guard against re-introduction: with
+// the dependency gone from `macros/Cargo.toml`, no `AbortNow` can be raised in
+// this process, so the predicate is a branch that can never be taken —
+// dead code justified only by a comment, which is the shape #141 exists to
+// remove. If `proc-macro-error` ever returns, this block is the record of what
+// has to come back with it.

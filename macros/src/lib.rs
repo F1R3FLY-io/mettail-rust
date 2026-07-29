@@ -15,7 +15,6 @@ mod gen;
 mod logic;
 
 use proc_macro::TokenStream;
-use proc_macro_error::proc_macro_error;
 use quote::quote_spanned;
 use syn::parse_macro_input;
 
@@ -45,7 +44,6 @@ fn refuse(span: proc_macro2::Span, message: &str) -> proc_macro2::TokenStream {
 }
 
 #[proc_macro]
-#[proc_macro_error]
 pub fn language(input: TokenStream) -> TokenStream {
     // ★ Install the expansion panic hook before anything can panic. See
     // `expansion_hook`'s module docs for what it does and does NOT add: the
@@ -385,7 +383,6 @@ pub(crate) fn expand_language(input: proc_macro2::TokenStream) -> proc_macro2::T
 /// }
 /// ```
 #[proc_macro]
-#[proc_macro_error]
 pub fn language_fragment(input: TokenStream) -> TokenStream {
     // Clone input BEFORE parse_macro_input! consumes it.
     let input_for_registry: proc_macro2::TokenStream = input.clone().into();
@@ -428,7 +425,6 @@ pub fn language_fragment(input: TokenStream) -> TokenStream {
 /// - `CombinedMetadata` aggregating sub-language metadata
 /// - `CombinedLanguage` struct implementing `mettail_runtime::Language`
 #[proc_macro]
-#[proc_macro_error]
 pub fn compose_languages(input: TokenStream) -> TokenStream {
     let def = parse_macro_input!(input as ComposeDef);
     let code = gen::compose_gen::generate_composed_language(&def);
