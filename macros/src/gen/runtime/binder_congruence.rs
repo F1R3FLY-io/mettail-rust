@@ -717,6 +717,32 @@ mod tests {
         ("rholang", include_str!("../../../../languages/src/rholang.rs")),
         ("swapdemo", include_str!("../../../../languages/tests/definitions/swapdemo.rs")),
         ("turing", include_str!("../../../../languages/src/turing.rs")),
+        // ⚠ THE FAILS-OPEN HAZARD, CAUGHT A FOURTH TIME. The four entries below were each
+        // declaring a `language!` with no key here, so each sat outside every guard this table
+        // feeds. `token_text_leaf_demo` is the A4 token-text fixture and predates Task #101; the
+        // other three are #101's collection-carrier fixtures. They are grouped because the
+        // omission has one cause and one remedy, not four.
+        //
+        // The `read_dir` completeness assertion in
+        // `ast/tests/language_name_keyed_artifacts.rs` is what found all four — which is the
+        // point of that test: the table cannot enumerate a directory, but a test can, so an
+        // omission is now a RED naming the file rather than a domain that quietly shrinks.
+        (
+            "token_text_leaf_demo",
+            include_str!("../../../../languages/tests/definitions/token_text_leaf_demo.rs"),
+        ),
+        (
+            "seq_carrier_demo",
+            include_str!("../../../../languages/tests/definitions/seq_carrier_demo.rs"),
+        ),
+        (
+            "map_param_refusal_demo",
+            include_str!("../../../../languages/tests/definitions/map_param_refusal_demo.rs"),
+        ),
+        (
+            "turing_loop",
+            include_str!("../../../../languages/tests/definitions/turing_loop.rs"),
+        ),
     ];
 
     /// A-S5.4b CROSS-CRATE AGREEMENT (design v2 §3.2): for EVERY bundled language definition, the

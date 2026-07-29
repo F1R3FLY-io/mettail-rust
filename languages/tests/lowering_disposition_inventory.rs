@@ -21,13 +21,24 @@
 //!
 //! That is the anti-vacuity property: **it fails on additions, not on a number.**
 //!
-//! # ★ The debt is ACCEPTED, not hidden
+//! # ★ The debt is ACCEPTED, not hidden — and one class of it has now been PAID
 //!
 //! The entries below are real defects. Pinning them is not approval; it is the difference
-//! between a defect that is *known, named, and bounded* and one that is invisible. Repairing
-//! each is separate work — the fold gate is Task #101, the `NormCast*` injection is
-//! `ast/src/auto_inject.rs`. When one is repaired, the assertion that mentions it fails and
-//! names it, which is exactly the notification a repair should produce.
+//! between a defect that is *known, named, and bounded* and one that is invisible. When one is
+//! repaired, the assertion that mentions it fails and names it, which is exactly the
+//! notification a repair should produce.
+//!
+//! ★★ THAT NOTIFICATION FIRED. Task #101 repaired the fold gate: `TypeExpr::Collection`
+//! parameters are lowered per CARRIER — an ordered `Vec(T)` through the labelled, losslessly
+//! invertible `FieldSeq<T>` leaf, a whole-constructor `HashBag(T)` through the AC bag node it
+//! already had — so the **fifteen** fold declinations this table used to carry are now zero.
+//! They were not deleted: [`no_fold_in_the_corpus_is_refused_for_a_collection_parameter`]
+//! carries the same enumeration INVERTED, pinning the exact set of fifteen `Delivered` folds,
+//! so a fold that stops being lowered turns this suite red naming itself exactly as a fold that
+//! newly stopped being lowered used to.
+//!
+//! The remaining debt is the `NormCast*` injection (`ast/src/auto_inject.rs`) and Rholang's
+//! `Extrude` equation.
 //!
 //! # ★ The two categories are NOT the same
 //!
@@ -64,6 +75,12 @@ use mettail_runtime::{
     LanguageMetadata, LoweredConstructKind, LoweredConstructOrigin, LoweringDispositionDef,
     LoweringLane, LoweringOutcomeKind,
 };
+
+/// (Task #101) The live fixture that keeps "the gate did not open too far" from being an
+/// assertion about an empty set — the corpus declares no fold with a set/map parameter. See
+/// clause (c) of [`no_fold_in_the_corpus_is_refused_for_a_collection_parameter`].
+#[path = "definitions/map_param_refusal_demo.rs"]
+mod map_param_refusal_demo;
 
 /// The eight production languages, each with its metadata.
 fn production_languages() -> Vec<(&'static str, &'static dyn LanguageMetadata)> {
@@ -262,31 +279,66 @@ fn json_declines_only_a_generator_injected_cast_rewrite() {
     assert_eq!(metadata.generator_bug_lowerings().len(), 1);
 }
 
-/// Turing: ONE declination — and it is the machine's entire ability to compute.
+/// ★★ Turing declines NOTHING — and the entry it used to carry was the machine's entire
+/// ability to compute.
 ///
 /// `shift_right` advances the tape head. Its first parameter is `l:Vec(Sym)`, a
-/// `TypeExpr::Collection`, so the fold gate drops it and the head never moves. See
-/// [`crate`]-adjacent `languages/tests/turing.rs`, whose
-/// `turing_head_never_moves_because_shift_right_is_declined` pins the measured consequence
-/// alongside this recorded cause.
+/// `TypeExpr::Collection`, and the fold gate used to drop it, so the head never moved and every
+/// derivation had length at most one: the language named `Turing` could not compute more than
+/// one step. Task #101 gave the ordered container a carrier with an inverse, and the fold is
+/// lowered.
+///
+/// The zero is POSITIVELY CONTROLLED here rather than asserted bare: the same walk that finds
+/// no declination must find `shift_right` `Delivered`, naming the rule it emitted. A walk that
+/// inspected nothing would satisfy the first assertion and fail the second. The measured
+/// consequence — two firings, the second one the head move — is
+/// `languages/tests/turing.rs`'s `turing_head_moves_because_shift_right_folds`.
 #[test]
-fn turing_declines_only_its_head_move() {
+fn turing_declines_nothing_because_its_head_move_is_lowered() {
     let metadata = &mettail_languages::turing::TuringMetadata;
-    assert_declinations("Turing", metadata, &[("fold", "shift_right", "Declared")]);
+    assert_declinations("Turing", metadata, &[]);
     assert!(
         metadata.generator_bug_lowerings().is_empty(),
-        "Turing's declination is the author's declared helper, not an injected construct",
+        "Turing injects nothing its own lowering cannot consume",
+    );
+
+    let shift_right: Vec<&LoweringDispositionDef> = metadata
+        .lowering_dispositions()
+        .iter()
+        .filter(|d| {
+            d.construct_kind == LoweredConstructKind::Fold && d.construct == "shift_right"
+        })
+        .collect();
+    assert_eq!(
+        shift_right.len(),
+        1,
+        "`shift_right` must have exactly one disposition; inventory: {:?}",
+        metadata.lowering_dispositions(),
+    );
+    assert_eq!(
+        shift_right[0].outcome,
+        LoweringOutcomeKind::Delivered,
+        "★ the head move must be LOWERED — that is the whole of Task #101 for this language: {}",
+        shift_right[0].summary(),
+    );
+    assert_eq!(
+        shift_right[0].detail, "Turing::fold::Tape_shift_right",
+        "a Delivered disposition carries the label of the rule it emitted: {}",
+        shift_right[0].summary(),
     );
 }
 
-/// ★ Rholang: TWENTY-ONE declinations — one equation, six generator-injected rewrites, and
-/// fourteen folds.
+/// ★ Rholang: SEVEN declinations — one equation and six generator-injected rewrites.
 ///
-/// The fourteen folds are the polyadic-syntax desugarings: `PParInternal`'s `ps:HashBag(Proc)`,
-/// the seven `*2Plus` sends' `bs:Vec(Proc)`, the five `InputBind*` receives' `args:Vec(Proc)` /
-/// `lhss:Vec(Name)`, and `PForUser`'s `rows:Vec(ForRow)`. Every one is refused for the SAME
-/// reason as Turing's head move — a collection-typed parameter — which is why the class is a
-/// class and not fourteen unrelated bugs.
+/// ⚠ FOURTEEN ENTRIES LEFT THIS TABLE UNDER TASK #101, all of one class: the polyadic-syntax
+/// desugarings — `PParInternal`'s `ps:HashBag(Proc)`, the seven `*2Plus` sends' `bs:Vec(Proc)`,
+/// the five `InputBind*` receives' `args:Vec(Proc)` / `lhss:Vec(Name)`, and `PForUser`'s
+/// `rows:Vec(ForRow)`. Every one had been refused for the SAME reason as Turing's head move — a
+/// collection-typed parameter whose lowered derivation child had no inverse — which is why the
+/// class was a class and not fourteen unrelated bugs, and why one repair retired all fourteen.
+/// Their `Delivered` labels are pinned as a SET in
+/// [`no_fold_in_the_corpus_is_refused_for_a_collection_parameter`], so this removal cannot be
+/// mistaken for the folds quietly vanishing.
 #[test]
 fn rholang_declination_set_is_pinned() {
     let metadata = &mettail_languages::rholang::RholangMetadata;
@@ -301,20 +353,6 @@ fn rholang_declination_set_is_pinned() {
             ("rewrite", "NormCastUInt32ToBigIntInProc", "AutoInjected"),
             ("rewrite", "NormCastUInt32ToBigRatInProc", "AutoInjected"),
             ("rewrite", "NormCastBigIntToBigRatInProc", "AutoInjected"),
-            ("fold", "PParInternal", "Declared"),
-            ("fold", "POutput2Plus", "Declared"),
-            ("fold", "PPersistOutput2Plus", "Declared"),
-            ("fold", "POutputNil2Plus", "Declared"),
-            ("fold", "PPersistOutputNil2Plus", "Declared"),
-            ("fold", "POutputQuoted2Plus", "Declared"),
-            ("fold", "POutputShort2Plus", "Declared"),
-            ("fold", "PPersistOutputShort2Plus", "Declared"),
-            ("fold", "InputBindQuery", "Declared"),
-            ("fold", "InputBindEmptyQuery", "Declared"),
-            ("fold", "InputBindQuotedQuery", "Declared"),
-            ("fold", "InputBindPolyadic", "Declared"),
-            ("fold", "InputBindPersistentPolyadic", "Declared"),
-            ("fold", "PForUser", "Declared"),
         ],
     );
     assert_eq!(metadata.generator_bug_lowerings().len(), 6);
@@ -360,15 +398,18 @@ fn production_declination_totals_are_pinned() {
 
     assert_eq!(
         (equations, rewrites, folds),
-        (1, 15, 15),
-        "the per-class declination totals across the eight production languages",
+        (1, 15, 0),
+        "the per-class declination totals across the eight production languages. ★ The fold \
+         column is ZERO since Task #101: every collection-parameter fold is lowered. Pinned as \
+         a per-class table rather than a sum precisely so that a fold declination reappearing \
+         under a different class cannot hide inside an unchanged total.",
     );
     assert_eq!(
         (declared, injected),
-        (16, 15),
-        "sixteen are accepted debt; fifteen are generator bugs",
+        (1, 15),
+        "ONE is accepted debt (Rholang's `Extrude` equation); fifteen are generator bugs",
     );
-    assert_eq!(equations + rewrites + folds, 31);
+    assert_eq!(equations + rewrites + folds, 16);
     assert!(
         inspected > 500,
         "the inventory must cover the whole corpus, not a handful of constructs \
@@ -433,54 +474,185 @@ fn congruence_rewrites_are_delivered_elsewhere_not_declined() {
     );
 }
 
-/// ★★ THE SIBLING ENUMERATION (Task #101).
+/// ★★ THE SIBLING ENUMERATION, INVERTED (Task #101).
 ///
-/// Every fold the gate refuses, across the entire corpus, refuses for **one shape**: a
-/// parameter whose type is a `TypeExpr::Collection`. Not one is refused for a binder
-/// abstraction, a guard slot, an optional group, a map type, or an arrow type.
+/// This assertion used to read
+/// `every_declined_fold_in_the_corpus_is_refused_for_a_collection_parameter`: every fold the
+/// gate refused, across the entire corpus, refused for ONE shape — a parameter whose type is a
+/// `TypeExpr::Collection`. Not one was refused for a binder abstraction, a guard slot, an
+/// optional group, or an arrow type. It existed because "adding a guard ≠ enumerating siblings"
+/// had been the recurring failure of the surrounding campaign: a gate written against the
+/// instance's lane rather than the SHAPE lets the class recur.
 ///
-/// ⚠ This assertion exists because "adding a guard ≠ enumerating siblings" has been the
-/// recurring failure of this campaign: a gate written against the instance's lane rather than
-/// the shape lets the class recur. Pinning the enumeration means a future fold refusal of a
-/// DIFFERENT shape turns this red instead of quietly joining the debt.
+/// The enumeration did its job. Because the fifteen refusals were one shape, one repair —
+/// giving the ordered container a carrier with an inverse — retired all fifteen at once, and
+/// this assertion is now the same enumeration read the other way:
 ///
-/// Independently corroborated by a whole-tree parse of all 49 `language!` bodies, which found
-/// 186 declared folds and exactly 16 refusals, all of class `TypeExpr::Collection` — the 15
-/// here plus the `TypedDropDemo::Head` fixture in `lowering_disposition_reds.rs`.
+///   (a) **the count is zero**, naming any survivor;
+///   (b) ★★ **the non-vacuity control**: the EXACT SET of fifteen `(language::construct,
+///       delivered-label)` pairs. A zero on its own is satisfied by a corpus nothing looked at,
+///       and — worse — by a fold that stopped being *declared*. Pinning the delivered set means
+///       a fold that stops being lowered, or is renamed, or loses its rule label, turns this
+///       red NAMING ITSELF, exactly as a newly-refused fold used to;
+///   (c) **the gate did not open too far**: the `MapParamRefusalDemo` fixture's `HashMap`
+///       parameter is still `Declined`. The corpus has zero set/map fold parameters, so without
+///       a live fixture that clause would be an assertion about an empty set.
 #[test]
-fn every_declined_fold_in_the_corpus_is_refused_for_a_collection_parameter() {
+fn no_fold_in_the_corpus_is_refused_for_a_collection_parameter() {
+    // ── (a) the count is ZERO, and any survivor is named ──────────────────────────────────
     let mut declined_folds: Vec<(String, String)> = Vec::new();
     for (name, metadata) in production_languages() {
         for disposition in metadata.lowering_dispositions() {
-            if disposition.construct_kind != LoweredConstructKind::Fold || !disposition.is_declined()
+            if disposition.construct_kind != LoweredConstructKind::Fold
+                || !disposition.is_declined()
             {
                 continue;
             }
-            declined_folds.push((format!("{name}::{}", disposition.construct), disposition.detail.to_string()));
+            declined_folds.push((
+                format!("{name}::{}", disposition.construct),
+                disposition.detail.to_string(),
+            ));
         }
     }
+    assert!(
+        declined_folds.is_empty(),
+        "★ a fold is refused again. The collection-parameter class had fifteen members and \
+         Task #101 retired all of them; a survivor here is either a NEW shape the gate does not \
+         admit or a regression in the carrier lowering: {declined_folds:#?}",
+    );
+
+    // ── (b) ★★ THE NON-VACUITY CONTROL: the fifteen, delivered, as a SET ──────────────────
+    // These are the exact folds the gate used to drop — Turing's head move and Rholang's
+    // fourteen polyadic desugarings — each paired with the label of the rule it now emits.
+    let mut delivered_collection_folds: Vec<(String, String)> = Vec::new();
+    for (name, metadata) in production_languages() {
+        for disposition in metadata.lowering_dispositions() {
+            if disposition.construct_kind != LoweredConstructKind::Fold
+                || disposition.outcome != LoweringOutcomeKind::Delivered
+            {
+                continue;
+            }
+            let qualified = format!("{name}::{}", disposition.construct);
+            if COLLECTION_PARAMETER_FOLDS.contains(&qualified.as_str()) {
+                delivered_collection_folds
+                    .push((qualified, disposition.detail.to_string()));
+            }
+        }
+    }
+    delivered_collection_folds.sort();
+
+    let mut expected: Vec<(String, String)> = vec![
+        ("Turing::shift_right", "Turing::fold::Tape_shift_right"),
+        ("Rholang::PParInternal", "Rholang::fold::Proc_PParInternal"),
+        ("Rholang::POutput2Plus", "Rholang::fold::Proc_POutput2Plus"),
+        ("Rholang::PPersistOutput2Plus", "Rholang::fold::Proc_PPersistOutput2Plus"),
+        ("Rholang::POutputNil2Plus", "Rholang::fold::Proc_POutputNil2Plus"),
+        ("Rholang::PPersistOutputNil2Plus", "Rholang::fold::Proc_PPersistOutputNil2Plus"),
+        ("Rholang::POutputQuoted2Plus", "Rholang::fold::Proc_POutputQuoted2Plus"),
+        ("Rholang::POutputShort2Plus", "Rholang::fold::Proc_POutputShort2Plus"),
+        ("Rholang::PPersistOutputShort2Plus", "Rholang::fold::Proc_PPersistOutputShort2Plus"),
+        ("Rholang::InputBindQuery", "Rholang::fold::InputBind_InputBindQuery"),
+        ("Rholang::InputBindEmptyQuery", "Rholang::fold::InputBind_InputBindEmptyQuery"),
+        ("Rholang::InputBindQuotedQuery", "Rholang::fold::InputBind_InputBindQuotedQuery"),
+        ("Rholang::InputBindPolyadic", "Rholang::fold::InputBind_InputBindPolyadic"),
+        (
+            "Rholang::InputBindPersistentPolyadic",
+            "Rholang::fold::InputBind_InputBindPersistentPolyadic",
+        ),
+        ("Rholang::PForUser", "Rholang::fold::Proc_PForUser"),
+    ]
+    .into_iter()
+    .map(|(c, l)| (c.to_string(), l.to_string()))
+    .collect();
+    expected.sort();
 
     assert_eq!(
-        declined_folds.len(),
-        15,
-        "the collection-parameter fold class has 15 members: {declined_folds:#?}",
+        expected.len(),
+        COLLECTION_PARAMETER_FOLDS.len(),
+        "the expected list and the membership set must describe the same fifteen folds",
     );
-    for (construct, detail) in &declined_folds {
-        assert!(
-            detail.contains("is not a `Simple`/`Base` typed parameter"),
-            "{construct} is declined for a reason OTHER than the collection-parameter gate, \
-             which means the class has a second shape: {detail}",
-        );
-        let names_a_collection = ["Vec(", "HashBag(", "HashSet(", "HashMap(", "PathMap("]
-            .iter()
-            .any(|marker| detail.contains(marker));
-        assert!(
-            names_a_collection,
-            "{construct}'s declination does not name a collection type, so the enumeration \
-             above is incomplete: {detail}",
-        );
-    }
+    assert_eq!(
+        delivered_collection_folds, expected,
+        "★★ the fifteen collection-parameter folds must ALL be Delivered, each naming the rule \
+         it emitted. A missing entry means a fold stopped being lowered (or stopped being \
+         declared) and the zero above went green over its absence — which is exactly the \
+         failure a bare count cannot see.",
+    );
+
+    // ── (c) the gate did not open too far, on a NON-EMPTY set ─────────────────────────────
+    // The corpus declares no fold with a set/map parameter, so this clause needs a live
+    // fixture. `MapParamRefusalDemo::MapFold` takes a `HashMap(Proc, Proc)`, whose `Debug` does
+    // not agree with `Eq` (its e-graph content key is a SORTED `Display`), so there is no
+    // stored order to invert and no honest carrier for it. Its sibling `VecFold` on the same
+    // language IS delivered — the positive control that keeps this from being a language
+    // nothing looked at. Both, with their reasons, are asserted in
+    // `languages/tests/collection_fold_carriers.rs`.
+    let fixture = map_param_refusal_demo::MapParamRefusalDemoMetadata.lowering_dispositions();
+    let map_fold: Vec<&LoweringDispositionDef> = fixture
+        .iter()
+        .filter(|d| d.construct_kind == LoweredConstructKind::Fold && d.construct == "MapFold")
+        .collect();
+    assert_eq!(map_fold.len(), 1, "the fixture's `MapFold` must have one disposition");
+    assert!(
+        map_fold[0].is_declined(),
+        "★ THE GATE OPENED TOO FAR: a keyed container has no order to invert, so admitting it \
+         would claim an inverse that does not exist: {}",
+        map_fold[0].summary(),
+    );
+    assert!(
+        map_fold[0].detail.contains("HashMap("),
+        "the declination must NAME the refusing type: {}",
+        map_fold[0].summary(),
+    );
+    let vec_fold: Vec<&LoweringDispositionDef> = fixture
+        .iter()
+        .filter(|d| d.construct_kind == LoweredConstructKind::Fold && d.construct == "VecFold")
+        .collect();
+    assert_eq!(vec_fold.len(), 1, "the fixture's `VecFold` control must have one disposition");
+    assert_eq!(
+        vec_fold[0].outcome,
+        LoweringOutcomeKind::Delivered,
+        "the ORDERED control on the same language must be delivered, or the refusal above is \
+         indistinguishable from a walk that inspected nothing: {}",
+        vec_fold[0].summary(),
+    );
 }
+
+/// The fifteen folds whose declaration carries a `TypeExpr::Collection` parameter — the exact
+/// class the fold gate used to refuse. Membership is a property of the GRAMMAR (each of these
+/// declares a `Vec(T)` or `HashBag(T)` parameter), so the list is stable under lowering
+/// changes and is what makes clause (b) of
+/// [`no_fold_in_the_corpus_is_refused_for_a_collection_parameter`] a set assertion rather than
+/// a count.
+///
+/// ⚠ THIS LIST IS THE PRODUCTION CORPUS ONLY, and says so because the earlier census did not.
+/// Task #94's note here read "a whole-tree parse of all 49 `language!` bodies … found 186
+/// declared folds and exactly 16 collection-parameter refusals: the 15 here plus the
+/// `TypedDropDemo::Head` fixture". Measured under #101, that census was already short: repairing
+/// the gate also flipped `IdentParamToy::Call` (`args:Vec(Num)`, in
+/// `languages/tests/ident_param_capture.rs`) from `Declined` to `Delivered`, which the census
+/// does not mention. A test-hosted grammar is not in `production_languages()`, so it cannot be
+/// pinned here; the honest scope of THIS constant is the eight production languages, and the
+/// count of test-hosted instances is left to the fixtures that own them
+/// (`lowering_disposition_reds.rs` for `TypedDropDemo::Head`,
+/// `collection_fold_carriers.rs` for `MapParamRefusalDemo`).
+const COLLECTION_PARAMETER_FOLDS: &[&str] = &[
+    "Turing::shift_right",
+    "Rholang::PParInternal",
+    "Rholang::POutput2Plus",
+    "Rholang::PPersistOutput2Plus",
+    "Rholang::POutputNil2Plus",
+    "Rholang::PPersistOutputNil2Plus",
+    "Rholang::POutputQuoted2Plus",
+    "Rholang::POutputShort2Plus",
+    "Rholang::PPersistOutputShort2Plus",
+    "Rholang::InputBindQuery",
+    "Rholang::InputBindEmptyQuery",
+    "Rholang::InputBindQuotedQuery",
+    "Rholang::InputBindPolyadic",
+    "Rholang::InputBindPersistentPolyadic",
+    "Rholang::PForUser",
+];
 
 /// A `DeliveredElsewhere` disposition always names a lane; no other outcome ever does.
 #[test]

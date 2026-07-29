@@ -23,14 +23,14 @@ use mettail_runtime::{LoweredConstructKind, LoweredConstructOrigin};
 
 use super::op_enum::{self, op_enum_ident, op_variant_ident};
 use super::reconstruct::{self, build_fn};
-use crate::gen::runtime::disposition::LoweringDisposition;
 use super::{
-    category_lowering_fn, is_comm_rewrite, is_nested_structural_ac_rewrite,
+    category_lowering_fn, collection_carrier, is_comm_rewrite, is_nested_structural_ac_rewrite,
     is_structural_ac_rewrite, is_substitution_rewrite, lit, pattern_to_dovetail, rule_block,
-    subst_rewrite_native_lhs, to_snake, typed_lowering, CommElementInfo, CommReductElement,
-    CommRewrite, NestedStructuralAcRewrite, StructuralAcRewrite, SubstRewrite,
+    subst_rewrite_native_lhs, to_snake, typed_lowering, CollectionCarrier, CommElementInfo,
+    CommReductElement, CommRewrite, NestedStructuralAcRewrite, StructuralAcRewrite, SubstRewrite,
 };
-use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
+use crate::gen::runtime::disposition::LoweringDisposition;
+use crate::gen::term_ops::subst::{collect_category_variants, rule_to_variant_kind, VariantKind};
 
 /// A fold rule lowered to a native rewrite + dispatcher arm.
 pub(super) struct FoldRule<'a> {
@@ -44,6 +44,32 @@ pub(super) struct FoldRule<'a> {
     /// against the native values, so the dispatcher binds operands via `try_eval()`
     /// (not `&Cat`) and `safeify`s the body (overflow / div-by-zero → `None` → defer).
     is_pure_native_arith: bool,
+    /// (#101) The SHAPE of the native rule's left-hand side. See [`FoldLhsShape`].
+    lhs_shape: FoldLhsShape,
+}
+
+/// (#101) The shape of a fold's native-rule LHS pattern. The two carriers need two shapes, and
+/// the difference is not cosmetic: [`dovetail::rules::Pattern::app`] is ARITY-EXACT
+/// (`EGraph::collect_matches` filters on `n.children.len() == args.len()`), so a positional
+/// pattern over an AC bag node would match **only a one-element bag**.
+enum FoldLhsShape {
+    /// `Pattern::app(op, [var p₀ … var pₙ])` — one positional argument per declared parameter.
+    ///
+    /// Used by every `VariantKind::Regular` fold (Turing's `shift_right`, all thirteen Rholang
+    /// `Vec` desugarings, every scalar/object fold) AND by an ordered whole-constructor
+    /// collection, whose typed lowering is `ENode::new(Cat_Label, [seq_leaf])` — arity 1, so
+    /// child 0 is the sequence leaf and the ordinary positional pattern binds it.
+    Positional,
+    /// `Pattern::ac(op, vec![], Some(param))` — the `k = 0` sub-multiset selection, whose single
+    /// split is `(∅, whole bag)`, so `rest` binds the WHOLE bag.
+    ///
+    /// Used by an AC whole-constructor collection (`PParInternal . ps:HashBag(Proc)`), whose
+    /// typed lowering is an n-ary bag node of unbounded arity.
+    AcWholeBag {
+        /// The parameter name `rest` binds — the pattern-variable key the dispatcher reads out
+        /// of the match substitution.
+        param: String,
+    },
 }
 
 /// How a fold body wants its input bound.
@@ -71,6 +97,33 @@ enum BindKind {
     /// `FoldParam::category` is a placeholder (`Ident`) for such a param — every site that
     /// would dereference it must branch on `BindKind` first.
     IdentText,
+    /// (#101) An ORDERED collection parameter — `l:Vec(Sym)`, `bs:Vec(Proc)`,
+    /// `rows:Vec(ForRow)`. The derivation child is a `FieldSeq<Elem>` leaf carrying the whole
+    /// `Vec<Elem>` verbatim, inverted by `reconstruct::ordered_seq_build_fn` and bound BY VALUE.
+    ///
+    /// ★ BY VALUE, MEASURED — not stylistic. `PForUser`'s declared body is
+    /// `desugar_for_rows(rows, body)` and `languages/src/rholang/receive.rs`'s
+    /// `pub fn desugar_for_rows(rows: Vec<ForRow>, body: &Proc) -> Proc` takes its rows OWNED;
+    /// under a `&Vec<ForRow>` binding the generated dispatcher does not compile. Owned binding
+    /// satisfies every corpus shape: `.len()`, `.iter().cloned()`, `.clone()`, `.split_first()`,
+    /// `.first()` and a by-value hand-off all read identically on an owned `Vec`.
+    ///
+    /// ⚠ It carries the ELEMENT category, not the parameter's own — a `Vec(Sym)` param has no
+    /// `Sym`-shaped value to reconstruct, so `FoldParam::category` is the element category and
+    /// every site that would route it through `build_fn` must branch on `BindKind` first.
+    OrderedCollection { element: Ident },
+    /// (#101) The ASSOCIATIVE-COMMUTATIVE whole-bag parameter — `ps:HashBag(Proc)`, the sole
+    /// parameter of a `VariantKind::Collection` constructor whose typed lowering is an n-ary
+    /// bag node. The match binds `ps` to the bag's own e-class (the `k = 0` AC selection), which
+    /// reconstructs to `Cat::Label(bag)`; `label` is that constructor's label, so the binding
+    /// can peel the bag back out.
+    ///
+    /// ⚠ TWO variants, because the CARRIERS are two. An ordered sequence is a payload-bearing
+    /// LEAF and an AC bag is an n-ary NODE; they have different LHS patterns, different
+    /// inverses, and different readiness rules (see the gate in `class_bindings`). Collapsing
+    /// them into one "collection" variant would put the permutation-licensed lane and the
+    /// order-preserving lane behind one name.
+    AcCollection { label: Ident },
 }
 
 /// A fold rule's typed input parameter.
@@ -80,15 +133,29 @@ struct FoldParam {
     bind: BindKind,
 }
 
-/// The folds lowered as native rules: `eval_mode == Fold`, every param a `Simple`/`Base` typed
-/// parameter, and at least one OBJECT (non-native) param (so a child must be reconstructed —
-/// pure-native folds keep the existing `try_eval` path). Stable `op_id` = declaration index.
+/// The folds lowered as native rules: `eval_mode == Fold` and every parameter of a shape whose
+/// lowered derivation child has an INVERSE to bind the operand through — a `Simple`/`Base`
+/// typed parameter, an ordered `Vec(T)`, or a whole-constructor AC `HashBag(T)`. Stable `op_id`
+/// = declaration index.
 ///
-/// ★ RETURNS THE DISPOSITION OF EVERY DECLARED FOLD ALONGSIDE THE LOWERED ONES. The three
-/// `continue`s below are silent drops with no diagnostic anywhere — not even a runtime `Err`.
-/// The third of them, `if !all_simple { continue }`, drops every fold with a `Vec(T)` or
-/// `HashBag(T)` parameter, which is 12 of Rholang's folds and Turing's `shift_right`. A reader
-/// of the generated code cannot distinguish those from folds the language never declared.
+/// ★ RETURNS THE DISPOSITION OF EVERY DECLARED FOLD ALONGSIDE THE LOWERED ONES. The `continue`s
+/// below were once silent drops with no diagnostic anywhere — not even a runtime `Err` — and a
+/// reader of the generated code could not distinguish them from folds the language never
+/// declared (Task #94).
+///
+/// ★★ (#101) COLLECTION PARAMETERS ARE NOW LOWERED. The gate used to refuse every `Vec(T)` /
+/// `HashBag(T)` parameter — fifteen folds across the corpus: Turing's `shift_right` (the entire
+/// mechanism by which that machine's head advances), Rholang's fourteen polyadic desugarings,
+/// and the `TypedDropDemo::Head` fixture. The refusal was accurate for the lowering of the day:
+/// a fold operand is bound by inverting the DOVETAIL DERIVATION, and a collection field lowered
+/// to `FieldOpaque(format!("{:?}", …))`, which has no inverse.
+///
+/// What changed is the LOWERING, exactly as that refusal said it must: `typed_lowering` now
+/// emits `FieldSeq<Elem>(values)` — the whole `Vec` VERBATIM, under its own labelled
+/// discriminant — with the total, lossless inverse `__mettail_dovetail_build_seq_<elem>_d`, and
+/// an AC whole-constructor bag already had both an n-ary node and an inverse. So these
+/// parameters bind like any other, through inverses that exist. The residue that is still
+/// refused is named per shape at the refusal site, never by a blanket "collections".
 ///
 /// The disposition vector is produced by THIS WALK, not by a parallel one: a second traversal
 /// that re-derived the same gates would be free to drift from them, and the defect being fixed
@@ -131,11 +198,29 @@ pub(super) fn collect_fold_rules(
             continue;
         };
         let mut params = Vec::new();
-        let mut all_simple = true;
-        // The parameter whose shape refused the fold, for the declination message. Recorded
-        // where the refusal happens so the reason names the actual offender rather than
-        // restating the gate.
-        let mut refusing_param: Option<String> = None;
+        // (#101) The FULL reason the gate refused this fold, recorded WHERE the refusal
+        // happens. It replaces the former `all_simple` flag plus a parameter rendering: with
+        // three admitted parameter shapes and two distinct residual refusals, one boolean plus
+        // one restated gate could no longer say what was actually wrong. Each refusal now
+        // states its own reason, so a reader of the inventory learns the shape, not the lane.
+        let mut refusal: Option<String> = None;
+        // (#101) The AC whole-constructor bag this rule IS, if any. A `HashBag(T)` parameter is
+        // lowerable only when its rule is a `VariantKind::Collection` — that is the only shape
+        // whose typed lowering is an n-ary AC bag node with the constructor's own op identity
+        // and a matching inverse. A `HashBag` FIELD of a multi-parameter constructor still
+        // lowers to the lossy `FieldOpaque` leaf on this path (see
+        // `typed_lowering::carrier_handle::resolve_field_carrier`), so it is refused below,
+        // naming the difference. Derived from `rule_to_variant_kind` — the SAME classification
+        // `collect_category_variants` feeds to the lowering — so the gate and the lowering
+        // cannot disagree about what this rule is.
+        let ac_whole_bag_label: Option<Ident> = match rule_to_variant_kind(rule, language) {
+            VariantKind::Collection { ref label, ref coll_type, .. }
+                if collection_carrier(Some(coll_type)) == CollectionCarrier::AcBag =>
+            {
+                Some(label.clone())
+            },
+            _ => None,
+        };
         for p in ctx {
             match p {
                 // ★ (A4) An `Ident` param is ADMITTED. It used to REFUSE the fold, and the
@@ -187,9 +272,89 @@ pub(super) fn collect_fold_rules(
                         bind,
                     });
                 },
+                // ★★ (#101) A COLLECTION parameter is ADMITTED, per CARRIER. Which carrier a
+                // container gets is decided ONCE, by `super::collection_carrier`, and this arm
+                // consumes that decision rather than re-deriving it — so the gate cannot admit
+                // a shape the lowering does not emit, or refuse one it does.
+                TermParam::Simple {
+                    name,
+                    ty: ty @ TypeExpr::Collection { coll_type, element },
+                } => {
+                    let TypeExpr::Base(element_cat) = element.as_ref() else {
+                        // `Vec(Vec(T))` and friends: the element is not a category, so there is
+                        // no element type for the sequence leaf to carry and no inverse to
+                        // build. Named rather than swept into the generic refusal.
+                        refusal = Some(format!(
+                            "parameter `{name}:{ty}` is a collection whose ELEMENT is not a \
+                             base category, so the lowered leaf has no element type to carry \
+                             and no inverse to reconstruct through",
+                        ));
+                        break;
+                    };
+                    match collection_carrier(Some(coll_type)) {
+                        // Ordered `Vec(T)`: the derivation child is a `FieldSeq<Elem>` leaf
+                        // carrying the whole `Vec` verbatim. Works both as a FIELD of a
+                        // `Regular` constructor (Turing's `shift_right`, every Rholang
+                        // desugaring) and as the sole parameter of an ordered whole-constructor
+                        // collection, whose lowering wraps the same leaf in a constructor node.
+                        CollectionCarrier::OrderedSeq => {
+                            params.push(FoldParam {
+                                name: name.clone(),
+                                category: element_cat.clone(),
+                                bind: BindKind::OrderedCollection { element: element_cat.clone() },
+                            });
+                        },
+                        // AC `HashBag(T)`: lowerable only as a whole-constructor collection.
+                        CollectionCarrier::AcBag => match ac_whole_bag_label.as_ref() {
+                            Some(label) => params.push(FoldParam {
+                                // ⚠ The RULE's category, not the element's: the AC match binds
+                                // the bag's own e-class, which reconstructs to
+                                // `Cat::Label(bag)` — so the operand is read back through the
+                                // rule category's reconstructor.
+                                name: name.clone(),
+                                category: rule.category.clone(),
+                                bind: BindKind::AcCollection { label: label.clone() },
+                            }),
+                            None => {
+                                refusal = Some(format!(
+                                    "parameter `{name}:{ty}` is an associative-commutative bag \
+                                     in a constructor that is not a whole-collection \
+                                     constructor; only a sole-parameter `HashBag` rule lowers \
+                                     to an n-ary AC bag node with an inverse — a bag FIELD \
+                                     lowers to the lossy opaque leaf, which cannot be read back",
+                                ));
+                                break;
+                            },
+                        },
+                        // ★ HashSet / HashMap / PathMap stay REFUSED, deliberately. Their
+                        // `Debug` does not agree with `Eq` — which is exactly why the op-enum's
+                        // collection-literal writer routes Bag/Map/Set through their SORTED
+                        // `Display` — so the lowered leaf has NO stored order to invert and a
+                        // labelled carrier would claim an inverse that does not exist. Refusing
+                        // by CARRIER rather than by container name means a container added to
+                        // `CollectionType` lands here until someone classifies it.
+                        CollectionCarrier::Opaque => {
+                            refusal = Some(format!(
+                                "parameter `{name}:{ty}` is an UNORDERED collection whose \
+                                 `Debug` does not agree with `Eq` (the e-graph content key for \
+                                 such a container is its SORTED `Display`), so its lowered leaf \
+                                 has no order to invert and the operand cannot be read back; \
+                                 ordered `Vec(T)` and whole-constructor `HashBag(T)` operands \
+                                 are lowered",
+                            ));
+                            break;
+                        },
+                    }
+                },
                 other => {
-                    all_simple = false;
-                    refusing_param = Some(describe_term_param(other));
+                    refusal = Some(format!(
+                        "parameter {} is not a fold-lowerable operand: a fold binds each \
+                         operand by INVERTING its lowered derivation child, and only a \
+                         `Simple` parameter of a base category, an ordered `Vec(T)`, or a \
+                         whole-constructor associative-commutative `HashBag(T)` has such an \
+                         inverse",
+                        describe_term_param(other),
+                    ));
                     break;
                 },
             }
@@ -214,18 +379,26 @@ pub(super) fn collect_fold_rules(
         // body is a closed expression. Verified against `languages/tests/rholang_tests.rs`
         // (`map_size_empty`, `map_set_chain_reduces_to_literal`, …), whose comments record the
         // symptom this guard caused.
-        if !all_simple {
-            // ★ THE FOLD GATE. Every `Vec(T)` / `HashBag(T)` parameter lands here, and until
-            // now it landed here silently: no rule, no diagnostic, no runtime error, nothing in
-            // the generated source to read. The fold simply never fired, and the language's
-            // surface syntax kept advertising it.
-            dispositions.push(declined(format!(
-                "parameter {} is not a `Simple`/`Base` typed parameter; collection and \
-                 higher-order fold operands need collection-comprehension lowering",
-                refusing_param.unwrap_or_else(|| "<unknown>".to_string()),
-            )));
+        if let Some(reason) = refusal {
+            // ★ THE FOLD GATE. Until Task #94 a refusal here was silent: no rule, no
+            // diagnostic, no runtime error, nothing in the generated source to read — the fold
+            // simply never fired while the language's surface syntax kept advertising it. The
+            // reason now travels with the refusal and names the SHAPE, so the inventory entry
+            // is actionable without opening the grammar.
+            dispositions.push(declined(reason));
             continue;
         }
+        // (#101) The LHS shape follows the carrier of the rule's own lowering, not a
+        // per-parameter guess: an AC whole-bag rule has exactly one parameter and an n-ary bag
+        // node, and `Pattern::app` is arity-exact, so a positional pattern there would match
+        // only a ONE-ELEMENT bag. Everything else is positional.
+        let lhs_shape = match params
+            .iter()
+            .find(|p| matches!(p.bind, BindKind::AcCollection { .. }))
+        {
+            Some(p) => FoldLhsShape::AcWholeBag { param: p.name.to_string() },
+            None => FoldLhsShape::Positional,
+        };
         let out_lt = language.get_type(&rule.category);
         let is_pure_native_arith = params.iter().all(|p| matches!(p.bind, BindKind::Scalar))
             && out_lt.map_or(false, |t| t.native_type.is_some() && t.collection_kind.is_none());
@@ -242,6 +415,7 @@ pub(super) fn collect_fold_rules(
             params,
             body,
             is_pure_native_arith,
+            lhs_shape,
         });
         op_id += 1;
     }
@@ -266,8 +440,11 @@ fn describe_term_param(param: &TermParam) -> String {
         },
         TermParam::GuardBody { name } => format!("`?{name}:Guard` (a semantic-predicate slot)"),
         TermParam::Optional { params } => {
-            let inner =
-                params.iter().map(describe_term_param).collect::<Vec<_>>().join(", ");
+            let inner = params
+                .iter()
+                .map(describe_term_param)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("`#opt({inner})` (an optional group)")
         },
     }
@@ -634,17 +811,43 @@ fn generate_native_rules_and_dispatch(
             let op_variant = &f.op_variant;
             let op_id = f.op_id;
             let label = lit(&format!("{}::fold::{}", language.name, f.op_variant));
-            let var_pats: Vec<TokenStream> = f
-                .params
-                .iter()
-                .map(|p| {
-                    let n = p.name.to_string();
-                    quote! { ::dovetail::rules::Pattern::var(#n) }
-                })
-                .collect();
+            // (#101) The LHS pattern differs PER CARRIER, and the difference is load-bearing:
+            // `Pattern::app` is ARITY-EXACT (`EGraph::collect_matches` filters on
+            // `n.children.len() == args.len()`), so a positional pattern over an n-ary AC bag
+            // node matches only a ONE-ELEMENT bag. The AC shape uses the `k = 0` sub-multiset
+            // selection, whose single split is `(∅, whole bag)`, and binds `rest` to the
+            // complement — i.e. to the whole bag.
+            let lhs = match &f.lhs_shape {
+                FoldLhsShape::Positional => {
+                    let var_pats: Vec<TokenStream> = f
+                        .params
+                        .iter()
+                        .map(|p| {
+                            let n = p.name.to_string();
+                            quote! { ::dovetail::rules::Pattern::var(#n) }
+                        })
+                        .collect();
+                    quote! {
+                        ::dovetail::rules::Pattern::app(
+                            #enum_id::#op_variant,
+                            vec![#(#var_pats),*],
+                        )
+                    }
+                },
+                FoldLhsShape::AcWholeBag { param } => {
+                    let rest = lit(param);
+                    quote! {
+                        ::dovetail::rules::Pattern::ac(
+                            #enum_id::#op_variant,
+                            vec![],
+                            ::core::option::Option::Some(#rest.to_string()),
+                        )
+                    }
+                },
+            };
             quote! {
                 ::dovetail::rules::NativeRule {
-                    lhs: ::dovetail::rules::Pattern::app(#enum_id::#op_variant, vec![#(#var_pats),*]),
+                    lhs: #lhs,
                     op: #op_id,
                     label: ::core::option::Option::Some(#label.to_string()),
                 }
@@ -687,7 +890,26 @@ fn generate_native_rules_and_dispatch(
                     // that a claim; keeping it makes the very first firing the evidence —
                     // if the classification were wrong the fold would defer forever and the
                     // `token_text_leaf` fixture's fold-fires test goes red immediately.
-                    let gate = if matches!(p.bind, BindKind::Scalar) {
+                    //
+                    // ★★ (#101) The AC WHOLE-BAG param is the ONE operand that must NOT be
+                    // readiness-gated, and the reason is a category error rather than a missing
+                    // safety net. `rest` binds the complement of the `k = 0` selection, i.e.
+                    // THE REDEX ROOT ITSELF: that class necessarily contains the fold's own
+                    // head op (`Proc_PParInternal`), which is by construction in
+                    // `redex_heads`, so `__is_value_op` is necessarily false and
+                    // `__class_is_fold_value` would defer the fold FOREVER. The class needs no
+                    // proof of matchability — the rule that just matched it IS the proof. The
+                    // first firing of `PParInternal` is the evidence, and if this reasoning
+                    // were wrong that fold would never fire and its tests would go red
+                    // immediately.
+                    //
+                    // An `OrderedCollection` param KEEPS the gate and SATISFIES it: a
+                    // `FieldSeq<Elem>` leaf is a spine sentinel, in neither the redex-head set
+                    // nor the `Var`-op set, so it classifies as a VALUE. Skipping the gate
+                    // there would have made that a claim; keeping it makes the first firing
+                    // the evidence.
+                    let gate = if matches!(p.bind, BindKind::Scalar | BindKind::AcCollection { .. })
+                    {
                         quote! {}
                     } else {
                         quote! {
@@ -776,6 +998,34 @@ fn generate_native_rules_and_dispatch(
                                 let #owned = #bfn(&#dv)?;
                                 let #pname = match &#owned {
                                     #pcat::#lit(__v) => __v,
+                                    _ => return ::core::option::Option::None,
+                                };
+                            }
+                        },
+                        // (#101) An ORDERED collection: invert the `FieldSeq<Elem>` leaf to the
+                        // whole `Vec<Elem>` and bind it BY VALUE. The inverse already returns
+                        // an owned `Vec` (it clones the leaf's payload), so ownership costs
+                        // nothing extra here and it is what the declared bodies need —
+                        // `desugar_for_rows(rows, body)` takes `Vec<ForRow>` by value, and
+                        // `.len()` / `.iter().cloned()` / `.clone()` / `.split_first()` /
+                        // `.first()` all read identically on an owned `Vec`. A `None` (the
+                        // child is some other op) propagates through `?` and DEFERS the fold
+                        // rather than fabricating a collection.
+                        BindKind::OrderedCollection { element } => {
+                            let seq_build = reconstruct::ordered_seq_build_fn(element);
+                            quote! { let #pname = #seq_build(&#dv)?; }
+                        },
+                        // (#101) The AC whole bag: the match bound `ps` to the bag's own
+                        // e-class, which reconstructs to `Cat::Label(bag)`; peel the bag out
+                        // and bind it BY VALUE. The reconstructed category impls `Drop`, so the
+                        // bag is CLONED out of a borrow rather than moved — `match &owned`,
+                        // the same discipline the `Collection` arm above uses.
+                        BindKind::AcCollection { label } => {
+                            let owned = format_ident!("__owned_{}", pname);
+                            quote! {
+                                let #owned = #bfn(&#dv)?;
+                                let #pname = match &#owned {
+                                    #pcat::#label(__v) => __v.clone(),
                                     _ => return ::core::option::Option::None,
                                 };
                             }

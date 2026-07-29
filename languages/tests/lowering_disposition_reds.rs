@@ -27,7 +27,7 @@
 //! | RED | class | what it pins |
 //! |---|---|---|
 //! | **A** | D4 — recorded, then discarded by the consumer | a `Lambda`-carrying equation on the `EGraph<String>` + binder-float path is `Declined`, naming the equation **and** the refusal |
-//! | **B** | D1–D3 — the typed path, which discarded its record three times | a `Lambda` equation, a freshness-premised equation, and a `Vec(T)`-parameter fold are each `Declined`, on a language where none of the three produced any diagnostic before |
+//! | **B** | D1–D3 — the typed path, which discarded its record three times | a `Lambda` equation, a freshness-premised equation, and (until Task #101 repaired it) a `Vec(T)`-parameter fold each carry a RECORD, on a language where none of the three produced any diagnostic before |
 //! | **C** | ★ the anti-vacuity check on the fix | a congruence rewrite is `DeliveredElsewhere { EGraphCongruenceClosure }` and **not** `Declined` — the property that stops 400 correctly-elsewhere-handled rewrites becoming false positives |
 //!
 //! Every RED carries a **positive control**: a construct on the same language, produced by the
@@ -231,25 +231,42 @@ fn red_b_typed_path_declinations_are_recorded_on_every_construct_class() {
         render(inventory),
     );
 
-    // (3) ★ THE FOLD GATE. `Head`'s `xs` is a `Vec(Term)` parameter, so the gate's
-    //     `if !all_simple { continue }` drops it. The recorded reason names the offending
-    //     PARAMETER, not merely the gate, so the entry is actionable without reading the
-    //     grammar.
-    let head = assert_declined_because(
-        inventory,
-        LoweredConstructKind::Fold,
-        "Head",
-        "is not a `Simple`/`Base` typed parameter",
+    // (3) ★★ THE FOLD GATE — REPAIRED (Task #101), and this entry INVERTED with it.
+    //
+    //     `Head`'s `xs` is a `Vec(Term)` parameter. This RED used to assert that the gate's
+    //     `if !all_simple { continue }` DROPPED it, with a reason containing "is not a
+    //     `Simple`/`Base` typed parameter" and naming `` `xs:Vec(Term)` ``. That refusal was
+    //     accurate for the lowering of the day: a fold operand is bound by INVERTING its
+    //     lowered derivation child, and a `Vec` field lowered to
+    //     `FieldOpaque(format!("{:?}", …))`, which has no inverse.
+    //
+    //     Task #101 changed the LOWERING, exactly as that refusal said it must: an ordered
+    //     collection now lowers to the labelled `FieldSeq<Term>(Vec<Term>)` leaf — the whole
+    //     vector VERBATIM — with the total inverse `__mettail_dovetail_build_seq_term_d`. So
+    //     `Head` binds like any other fold and is DELIVERED.
+    //
+    //     The RED is retired by INVERSION rather than deletion: the same construct, on the
+    //     same grammar, in the same walk, now carries the opposite disposition and states the
+    //     label of the rule it emitted. A regression that re-refuses it turns this red naming
+    //     it.
+    let head = dispositions_for(inventory, LoweredConstructKind::Fold, "Head");
+    assert_eq!(head.len(), 1, "`Head` must have exactly one disposition.{}", render(inventory));
+    assert_eq!(
+        head[0].outcome,
+        LoweringOutcomeKind::Delivered,
+        "★ Task #101: a `Vec(T)` fold parameter is lowered, not declined.{}",
+        render(inventory),
     );
-    assert!(
-        head.iter().any(|d| d.detail.contains("`xs:Vec(Term)`")),
-        "the fold declination must name the parameter whose shape refused it.{}",
+    assert_eq!(
+        head[0].detail, "TypedDropDemo::fold::Term_Head",
+        "a Delivered disposition carries the label of the rule it emitted.{}",
         render(inventory),
     );
 
-    // ★ POSITIVE CONTROL ON THE FOLD WALK. `Id` is a fold on the same language, found by the
-    // same traversal, that IS lowered. Without this, "the gate declined `Head`" could equally
-    // mean "the fold traversal never ran".
+    // ★ POSITIVE CONTROL ON THE FOLD WALK, kept and re-purposed. `Id` is a SCALAR-free object
+    // fold on the same language, found by the same traversal. It was the control on "the gate
+    // declined `Head`"; it is now the control on "the walk distinguishes folds at all", since
+    // both folds being Delivered could otherwise mean the walk stopped inspecting.
     let id = dispositions_for(inventory, LoweredConstructKind::Fold, "Id");
     assert_eq!(id.len(), 1, "`Id` must have exactly one disposition.{}", render(inventory));
     assert_eq!(
@@ -264,8 +281,10 @@ fn red_b_typed_path_declinations_are_recorded_on_every_construct_class() {
         render(inventory),
     );
 
-    // The declination set is exactly these four records and no others — an assertion on the
+    // The declination set is exactly these three records and no others — an assertion on the
     // SET, so a new silent drop on this grammar turns this test red naming the construct.
+    // ⚠ `fold Head` left this list under Task #101; the two equation declinations remain,
+    // which is what keeps the assertion from being satisfied by an empty walk.
     let declined: Vec<String> = typed_drop_demo::TypedDropDemoMetadata
         .declined_lowerings()
         .iter()
@@ -277,7 +296,6 @@ fn red_b_typed_path_declinations_are_recorded_on_every_construct_class() {
             "equation PairComm".to_string(),
             "equation PairComm".to_string(),
             "equation FreshSwap".to_string(),
-            "fold Head".to_string(),
         ],
         "the declination set is pinned; an addition is a new silent drop.{}",
         render(inventory),

@@ -11,14 +11,26 @@
 //!
 //! The tests below assert RULE-FIRING evidence from
 //! `TuringLanguage::dovetail_report_for` rather than comparing a reconstructed
-//! normal form from `dovetail_normal_term`. The latter returns
-//! `Err("… reconstruction … failed (stuck term)")` for every `Turing` term —
-//! including a term with no redex at all, e.g. `(halt , <[] | _ | []>)` — so the
-//! failure is in the typed e-graph → AST *reconstruction* for this language's
-//! shapes (a `Vec(Sym)` collection field plus a native fold whose OUTPUT is a
-//! non-native category), not in the reduction. The firing evidence is the
-//! stronger conformance statement anyway: it names the transition entry that
-//! matched, by the paper's own rule label.
+//! normal form from `dovetail_normal_term`. The firing evidence is the stronger
+//! conformance statement: it names the transition entry that matched, by the
+//! paper's own rule label, and it names the head move that followed.
+//!
+//! ⚠ RECORD CORRECTED (Task #101). This header used to say that
+//! `dovetail_normal_term` returns `Err("… reconstruction … failed (stuck
+//! term)")` for EVERY `Turing` term — including one with no redex at all, e.g.
+//! `(halt , <[] | _ | []>)` — and attributed that to the typed e-graph → AST
+//! *reconstruction* for this language's shapes: a `Vec(Sym)` collection field
+//! plus a native fold whose OUTPUT is a non-native category. The first half of
+//! that diagnosis was exactly right and is now repaired: a `Vec` field lowers to
+//! the labelled, losslessly invertible `FieldSeq<Sym>` leaf, so
+//! `__mettail_dovetail_build_tape_d` has a `Tp` arm and configurations
+//! reconstruct. [`turing_terms_now_reconstruct_because_vec_fields_are_invertible`]
+//! pins that, so the claim cannot go stale again unobserved.
+//!
+//! Firings remain the primary evidence for a different and still-true reason:
+//! `Cf` is not a redex head, so a rewritten configuration is not *cheaper* than
+//! its predecessor and funded 1-best extraction may return either. Reduction is
+//! what fired, not what was extracted.
 #![cfg(feature = "turing")]
 
 use mettail_languages::turing::*;
@@ -180,11 +192,17 @@ fn turing_halted_configuration_is_a_normal_form() {
 /// and its doc-comment claimed "it reduces the moved tape rather than leaving an
 /// un-evaluated helper node behind". It asserted neither of those things: it checked
 /// `complete=true` and that no `D_q0` entry fired, both of which hold of a helper that
-/// never reduces at all. Measured, `shift_right([0],1,[1,0])` produces
-/// `firings=[]` and leaves `Turing::Tape::shift_right` in the report — so the test
-/// passed while the property in its name was FALSE. The honest statement of what it
-/// actually checks is below; the property its old name claimed is pinned, with the
-/// reason it fails, in [`turing_head_never_moves_because_shift_right_is_declined`].
+/// never reduces at all. Measured then, `shift_right([0],1,[1,0])` produced
+/// `firings=[]` and left `Turing::Tape::shift_right` in the report — so the test
+/// passed while the property in its name was FALSE. This is the honest statement of
+/// what it actually checks, and the name says so.
+///
+/// ★ The property the OLD name claimed is now TRUE, and is asserted where it belongs —
+/// [`turing_head_moves_because_shift_right_folds`], which reads the same
+/// `shift_right([0],1,[1,0])` report and requires the fold to fire, the helper node to
+/// be gone, and the computed tape to be present. This test deliberately does NOT absorb
+/// that claim: its subject is the transition table's keying on `Cf`, and a test whose
+/// name and body describe different properties is the exact shape #94 removed here.
 #[test]
 fn turing_bare_tape_matches_no_transition_entry() {
     let (labels, rendered) = firings("shift_right([0],1,[1,0])");
@@ -198,49 +216,51 @@ fn turing_bare_tape_matches_no_transition_entry() {
     );
 }
 
-/// ★★ ACCEPTED DEBT, NAMED (Task #94; the substantive repair is Task #101).
+/// ★★ THE REPAIR, MEASURED (Task #101). Retires
+/// `turing_head_never_moves_because_shift_right_is_declined`, which pinned the defect this
+/// asserts the absence of. The old test is named here rather than deleted silently: it asserted
+/// BOTH the recorded cause (`shift_right` is `Declined`) and its measured consequence (exactly
+/// ONE firing, and an unreduced helper node left in the report), so that a repair would fail
+/// its CAUSE assertion first. Run unchanged against the repaired tree it did exactly that —
+/// `turing.rs:261`, "★ Task #101 SIGNAL: `shift_right` is no longer Declined … Disposition:
+/// fold `shift_right` :: Delivered :: Turing::fold::Tape_shift_right" — and not at either
+/// consequence assertion, which is the evidence that the two halves moved together.
 ///
-/// `shift_right` — the declared right-move helper, i.e. the entire mechanism by which
-/// this machine's head advances — **is lowered nowhere**, so the tape never changes and
-/// every derivation has length ≤ 1. The language named `Turing` cannot compute more than
-/// one step.
+/// # What moved
 ///
-/// # Why, exactly
+/// `shift_right . l:Vec(Sym), h:Sym, r:Vec(Sym)` is annotated `fold` and carries a real `![…]`
+/// body computing the zipper move. The typed fold gate used to drop it because its first
+/// parameter's type is a `TypeExpr::Collection`, not a `TypeExpr::Base`: a fold operand is
+/// bound by INVERTING its lowered derivation child, and a `Vec` field lowered to
+/// `FieldOpaque(format!("{:?}", …))`, which has no inverse. Task #101 gave the ordered
+/// container a carrier that does — the labelled `FieldSeq<Sym>(Vec<Sym>)` leaf, carrying the
+/// whole vector verbatim, with the total inverse `__mettail_dovetail_build_seq_sym_d` — so the
+/// parameter now binds like any other.
 ///
-/// `shift_right . l:Vec(Sym), h:Sym, r:Vec(Sym)` is annotated `fold` and carries a real
-/// `![…]` body computing the zipper move. Both fold lanes refuse it, independently, for
-/// the same reason — its first parameter's type is a `TypeExpr::Collection`, not a
-/// `TypeExpr::Base`:
+/// # The honest statement of the change
 ///
-/// * the native-eval lane skips the whole `Tape` category, which has no native type;
-/// * the typed lane's fold gate (`if !all_simple { continue }`) drops the rule.
+/// "every derivation has length ≤ 1" becomes **"length 2, and the second firing is the head
+/// move."** Two, not more, because the production transition table has entries only from `q0`
+/// and `D_q0_0` lands in `q1`: the maximal derivation from the paper's own configuration is
+/// exactly `D_q0_0` followed by the `shift_right` fold it names. A machine that takes THREE or
+/// more head moves needs more table entries, which is a change to the theory rather than to
+/// the lowering; that is `TuringLoop` in `languages/tests/collection_fold_carriers.rs`, hosted
+/// in the test so this production spec is untouched.
 ///
-/// The generated artifact of that refusal was `__is_fold_redex ≡ false` plus an empty
-/// dispatch — **a declination rendered as a silent identity**, with no diagnostic
-/// anywhere. That silence is what Task #94 removed: the refusal is now a `Declined`
-/// entry in the language's lowering-disposition inventory, naming the construct and the
-/// parameter whose shape refused it.
-///
-/// # What this test does, and what it will do next
-///
-/// It asserts BOTH halves together — the recorded cause and its measured consequence —
-/// so they can only move together:
-///
-///   (a) the inventory records `fold shift_right` as `Declined`, for the collection
-///       parameter;
-///   (b) the paper's own configuration therefore yields exactly ONE firing, and the
-///       reduct still carries an unreduced `shift_right` node.
-///
-/// The multi-step assertion this SHOULD make was written and run against this tree; it
-/// fails with `labels=["Turing::rewrite::D_q0_0"]` — one firing — and, applied directly,
-/// `shift_right([0],1,[1,0])` yields `firings=[]`. When Task #101 makes collection
-/// parameters foldable, (a) fails FIRST and names the construct that changed, which is
-/// the signal to replace this test with that multi-step assertion.
+/// ⚠ Why the assertions are firings and report terms rather than a whole-configuration normal
+/// form: `Cf` is not a redex head. The `redex_heads` invariant deliberately admits only heads
+/// whose presence PROVES an un-fired reduction (a fold constructor, a β-redex head, a COMM
+/// binder, a consumed AC element) — the measured 2026-07-25 decision recorded at
+/// `macros/src/gen/runtime/dovetail_report/typed_report.rs`'s `generate_helpers`. So
+/// `Cf(Q1, Tp …)` is not cheaper than `Cf(Q0, Tp …)`, funded 1-best extraction may return
+/// either, and the reduction statement lives in the firing evidence. Applied DIRECTLY, the
+/// helper has no such competitor, and the assertions below read its computed result straight
+/// out of the report.
 #[test]
-fn turing_head_never_moves_because_shift_right_is_declined() {
-    use mettail_runtime::{LanguageMetadata, LoweredConstructKind};
+fn turing_head_moves_because_shift_right_folds() {
+    use mettail_runtime::{LanguageMetadata, LoweredConstructKind, LoweringOutcomeKind};
 
-    // ── (a) the recorded cause ────────────────────────────────────────────────
+    // ── (a) the recorded cause: the fold is DELIVERED, and it states its own label ─────────
     let meta = TuringLanguage.metadata();
     let inventory = meta.lowering_dispositions();
     assert!(
@@ -258,42 +278,118 @@ fn turing_head_never_moves_because_shift_right_is_declined() {
         1,
         "`shift_right` must have exactly one disposition; inventory: {inventory:?}",
     );
-    assert!(
-        shift_right[0].is_declined(),
-        "★ Task #101 SIGNAL: `shift_right` is no longer Declined. The head move may now \
-         execute — replace this test with the multi-step derivation assertion it \
-         describes. Disposition: {}",
+    assert_eq!(
+        shift_right[0].outcome,
+        LoweringOutcomeKind::Delivered,
+        "the head move must be lowered, not declined: {}",
         shift_right[0].summary(),
     );
-    assert!(
-        shift_right[0].detail.contains("`l:Vec(Sym)`"),
-        "the declination must name the collection parameter that refused the fold: {}",
+    assert_eq!(
+        shift_right[0].detail, "Turing::fold::Tape_shift_right",
+        "a Delivered disposition carries the label of the rule it emitted, and that label is \
+         what the firing evidence below is matched against: {}",
         shift_right[0].summary(),
     );
 
-    // ── (b) the measured consequence ──────────────────────────────────────────
+    // ── (b) the measured consequence: TWO firings, the second one the head move ────────────
     // The paper's own configuration (`omnibus.tex:1949`).
     let (labels, rendered) = firings("(q0 , <[] | 0 | [0,1]>)");
     assert_eq!(
         labels,
-        vec!["Turing::rewrite::D_q0_0".to_string()],
-        "★ exactly ONE firing: the transition entry fires, and the head move it names \
-         does not. This is the whole defect, measured. report: {rendered}",
-    );
-    assert!(
-        !labels.iter().any(|l| l.contains("shift_right")),
-        "no fold fires for the head move; report: {rendered}",
+        vec![
+            "Turing::rewrite::D_q0_0".to_string(),
+            "Turing::fold::Tape_shift_right".to_string(),
+        ],
+        "★ exactly TWO firings, in order: the transition entry fires, and the head move it \
+         names fires after it. This inverts the measured `labels=[\"Turing::rewrite::D_q0_0\"]` \
+         of the defect. report: {rendered}",
     );
 
-    // Applied directly, the declared helper reduces not at all — no firing, and the
-    // helper node survives in the report.
+    // ── (c) the head move APPLIED: the computed tape, and no surviving helper node ─────────
+    // `shift_right([0], 1, [1,0])` ≙ `Tp( 1:[0], head([1,0]), tail([1,0]) )`
+    //                              =  `Tp([One, Zero], One, [Zero])`.
+    // Both halves of the report invert the defect's `firings=[] terms=[("Turing::Tape::
+    // shift_right", …)]`: the fold fires, and 1-best extraction now prefers the computed `Tp`
+    // (weight 1) over the redex it replaced (weight 100), so the helper is gone.
     let (bare_labels, bare_rendered) = firings("shift_right([0],1,[1,0])");
-    assert!(
-        bare_labels.is_empty(),
-        "a declined fold fires zero times; report: {bare_rendered}",
+    assert_eq!(
+        bare_labels,
+        vec!["Turing::fold::Tape_shift_right".to_string()],
+        "the declared helper fires exactly once when applied directly; report: {bare_rendered}",
     );
     assert!(
-        bare_rendered.contains("Turing::Tape::shift_right"),
-        "the unreduced helper node survives into the report; report: {bare_rendered}",
+        !bare_rendered.contains("Turing::Tape::shift_right"),
+        "the unreduced helper node must NOT survive into the report — the fold replaced it; \
+         report: {bare_rendered}",
+    );
+    assert!(
+        bare_rendered.contains("Turing::Tape::Tp"),
+        "the report must carry the MOVED TAPE, a `Tp` the input never contained; \
+         report: {bare_rendered}",
+    );
+    // ★ The tape's CONTENTS, not merely its constructor. The ordered carrier renders its whole
+    // payload (`<field-seq-Sym>([…])`), so the moved zipper is readable straight off the
+    // report: left context `[1,0]` (the written `1` pushed in front of the old `[0]`), head
+    // `1` (the old right-context head), right context `[0]` (its tail).
+    for expected in ["<field-seq-Sym>([One, Zero])", "Turing::Sym::One", "<field-seq-Sym>([Zero])"]
+    {
+        assert!(
+            bare_rendered.contains(expected),
+            "the computed tape must show {expected} — the head move is COMPUTED here, never \
+             transcribed; report: {bare_rendered}",
+        );
+    }
+
+    // ── (d) THE CONTROL. A halted configuration still matches nothing, so (b) and (c) are not
+    //        an engine that fires rules indiscriminately.
+    let (halted, halted_rendered) = firings("(halt , <[] | _ | []>)");
+    assert!(
+        halted.is_empty(),
+        "a halted configuration matches no transition and no fold; report: {halted_rendered}",
+    );
+}
+
+/// ★ (Task #101) Reconstruction of a `Vec`-field constructor, which was impossible before.
+///
+/// This file's header used to record that `dovetail_normal_term` answered
+/// `Err("… reconstruction … failed (stuck term)")` for EVERY `Turing` term, including one with
+/// no redex at all, because `Tp`'s `l`/`r` fields are `Vec(Sym)` collections whose lowered
+/// child was a lossy `FieldOpaque` sentinel — so `__mettail_dovetail_build_tape_d` had no `Tp`
+/// arm and every reconstruction rooted at a tape returned `None`.
+///
+/// The ordered carrier makes those fields invertible, so the reconstructor gains its `Tp` arm
+/// and a whole configuration reads back. Asserting it here is what keeps the header's claim
+/// from silently going stale a second time.
+#[test]
+fn turing_terms_now_reconstruct_because_vec_fields_are_invertible() {
+    mettail_runtime::clear_var_cache();
+    let term = TuringLanguage
+        .parse_term("(q0 , <[] | 0 | [0,1]>)")
+        .unwrap_or_else(|e| panic!("parse failed: {e}"));
+    let normal = TuringLanguage::dovetail_normal_term(term.as_ref(), MAX_ITERS, MAX_NODES)
+        .unwrap_or_else(|e| {
+            panic!(
+                "reconstruction must now succeed for a `Vec`-field constructor; got Err({e})"
+            )
+        });
+    let shown = format!("{normal}");
+    assert!(
+        shown.contains('|'),
+        "the reconstructed configuration renders its zipper tape: {shown:?}",
+    );
+    // ★ The head move's own result, reconstructed. `Cf` is not a redex head (see
+    // `turing_head_moves_because_shift_right_folds`), so a rewritten CONFIGURATION is not
+    // cheaper than its predecessor and 1-best extraction may return either; a bare helper
+    // application has no such competitor, so its normal form is exactly the moved tape.
+    let helper = TuringLanguage
+        .parse_term("(halt , shift_right([0],1,[1,0]))")
+        .unwrap_or_else(|e| panic!("helper parse failed: {e}"));
+    let moved = TuringLanguage::dovetail_normal_term(helper.as_ref(), MAX_ITERS, MAX_NODES)
+        .unwrap_or_else(|e| panic!("the moved tape must reconstruct; got Err({e})"));
+    assert_eq!(
+        format!("{moved}"),
+        "(halt , <[1 , 0]|1|[0]>)",
+        "the reconstructed normal form is the COMPUTED zipper move: write `1` at the head \
+         cell, then step right",
     );
 }

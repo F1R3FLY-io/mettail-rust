@@ -1096,12 +1096,14 @@ fn generate_collection_constructor_case(
     }
 
     // Find the collection field
-    let (collection_idx, element_cat) = rule
+    let (collection_idx, element_cat, coll_type) = rule
         .items
         .iter()
         .enumerate()
         .find_map(|(i, item)| match item {
-            GrammarItem::Collection { element_type, .. } => Some((i, element_type.clone())),
+            GrammarItem::Collection { element_type, coll_type, .. } => {
+                Some((i, element_type.clone(), coll_type.clone()))
+            },
             _ => None,
         })
         .expect("Collection constructor must have a collection field");
@@ -1124,7 +1126,7 @@ fn generate_collection_constructor_case(
 
     if other_fields.is_empty() {
         // Pure collection constructor (e.g., PPar(HashBag<Proc>))
-        generate_pure_collection_case(cat_name, label, &element_cat, language)
+        generate_pure_collection_case(cat_name, label, &element_cat, &coll_type, language)
     } else {
         // Mixed constructor (e.g., PAmb(Name, Proc) where Proc is a collection)
         // For now, skip these as they're more complex
@@ -1133,10 +1135,22 @@ fn generate_collection_constructor_case(
 }
 
 /// Generate a pure collection constructor (only one field, which is a collection)
+///
+/// (#101 sibling) The CONTAINER decides the payload's shape. This emitter used to build a
+/// `HashBag` unconditionally, which is correct for the `HashBag` constructors the corpus
+/// contains (`PPar`, `PParInternal`) and does not compile for an ORDERED one
+/// (`Boxed . xs:Vec(Term) |- … : Term`), whose AST field is a `Vec<Term>`. The corpus has zero
+/// ordered whole-constructor collections, so branching here is byte-identical for every
+/// existing language and repairs a shape that could not previously be declared at all.
+///
+/// `empty` / `push` are the only two things that differ between the containers, so they are
+/// the only two things parameterized — the size-0..3 enumeration below stays single-sourced
+/// rather than being duplicated per container.
 fn generate_pure_collection_case(
     cat_name: &Ident,
     label: &Ident,
     element_cat: &Ident,
+    coll_type: &mettail_ast::types::CollectionType,
     language: &LanguageDef,
 ) -> TokenStream {
     if !is_lang_type(element_cat, language) {
@@ -1144,21 +1158,32 @@ fn generate_pure_collection_case(
     }
 
     let field_name = category_to_field_name(element_cat);
+    let (empty, push): (TokenStream, TokenStream) = match coll_type {
+        mettail_ast::types::CollectionType::Vec => {
+            (quote! { ::std::vec::Vec::new() }, quote! { push })
+        },
+        mettail_ast::types::CollectionType::HashBag
+        | mettail_ast::types::CollectionType::HashSet
+        | mettail_ast::types::CollectionType::HashMap
+        | mettail_ast::types::CollectionType::PathMap => {
+            (quote! { mettail_runtime::HashBag::new() }, quote! { insert })
+        },
+    };
 
     quote! {
         // Generate collections of size 0 to max_collection_width
         for size in 0..=self.max_collection_width {
             if size == 0 {
                 // Empty collection
-                let bag = mettail_runtime::HashBag::new();
+                let bag = #empty;
                 terms.push(#cat_name::#label(bag));
             } else if size == 1 {
                 // Single element bags
                 for d in 0..depth {
                     if let Some(elems) = self.#field_name.get(&d) {
                         for elem in elems {
-                            let mut bag = mettail_runtime::HashBag::new();
-                            bag.insert(elem.clone());
+                            let mut bag = #empty;
+                            bag.#push(elem.clone());
                             terms.push(#cat_name::#label(bag));
                         }
                     }
@@ -1171,9 +1196,9 @@ fn generate_pure_collection_case(
                             if let Some(elems2) = self.#field_name.get(&d2) {
                                 for elem1 in elems1 {
                                     for elem2 in elems2 {
-                                        let mut bag = mettail_runtime::HashBag::new();
-                                        bag.insert(elem1.clone());
-                                        bag.insert(elem2.clone());
+                                        let mut bag = #empty;
+                                        bag.#push(elem1.clone());
+                                        bag.#push(elem2.clone());
                                         terms.push(#cat_name::#label(bag));
                                     }
                                 }
@@ -1192,10 +1217,10 @@ fn generate_pure_collection_case(
                                         for elem1 in elems1 {
                                             for elem2 in elems2 {
                                                 for elem3 in elems3 {
-                                                    let mut bag = mettail_runtime::HashBag::new();
-                                                    bag.insert(elem1.clone());
-                                                    bag.insert(elem2.clone());
-                                                    bag.insert(elem3.clone());
+                                                    let mut bag = #empty;
+                                                    bag.#push(elem1.clone());
+                                                    bag.#push(elem2.clone());
+                                                    bag.#push(elem3.clone());
                                                     terms.push(#cat_name::#label(bag));
                                                 }
                                             }

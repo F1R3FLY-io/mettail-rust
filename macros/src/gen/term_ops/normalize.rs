@@ -103,12 +103,32 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
             }
         }
 
-        let has_collection = rule
-            .items
-            .iter()
-            .any(|item| matches!(item, GrammarItem::Collection { .. }));
+        // (#101 sibling) The helper is an ASSOCIATIVITY device — it peels a nested
+        // `Cat::Label(inner)` and re-inserts its members — and its emitted body is
+        // `HashBag`-shaped throughout: a `&mut HashBag<Cat>` parameter, `(elem, count)`
+        // iteration, `bag.insert`. That is right for the unordered multiset containers, whose
+        // `normalize` Assemble arm is the only caller (see `generate_collection_assemble_arm`,
+        // which dispatches on exactly `HashBag | HashMap | PathMap`).
+        //
+        // An ORDERED (`Vec`) collection constructor has no associativity to exploit and no
+        // caller: its Assemble arm rebuilds the vector positionally. Emitting the helper for
+        // one produced `HashBag<Cat>`-typed code against a `Vec<Cat>` field — three compile
+        // errors per constructor in a language that could therefore never be declared. The
+        // corpus has zero ordered whole-constructor collections (every one is a `HashBag`), so
+        // gating on the container is byte-identical for every existing language.
+        let flattenable_collection = rule.items.iter().any(|item| {
+            matches!(
+                item,
+                GrammarItem::Collection {
+                    coll_type: CollectionType::HashBag
+                        | CollectionType::HashMap
+                        | CollectionType::PathMap,
+                    ..
+                }
+            )
+        });
 
-        if !has_collection {
+        if !flattenable_collection {
             continue;
         }
 

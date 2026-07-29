@@ -67,6 +67,7 @@ Definition generated_language_inventory : list (string * list RewriteRequirement
   ("lambda", [ReqDirectionalRewrite; ReqCongruencePremise; ReqBinderPattern; ReqSubstitutionPattern]);
   ("lambdademo", [ReqDirectionalRewrite; ReqBinderPattern; ReqSubstitutionPattern]);
   ("ledtest", [ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler]);
+  ("mapparamrefusaldemo", [ReqFoldNativeHandler; ReqCollectionPattern; ReqMapPattern]);
   ("mixedmath", [ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler]);
   ("monoid", [ReqEquation]);
   ("nativedemo", [ReqFoldNativeHandler]);
@@ -76,8 +77,10 @@ Definition generated_language_inventory : list (string * list RewriteRequirement
   ("pi", [ReqEquation; ReqDirectionalRewrite; ReqCongruencePremise; ReqFreshnessPremise; ReqCollectionPattern; ReqBinderPattern; ReqSubstitutionPattern]);
   ("refinementsmoke", [ReqEnvRelationPremise]);
   ("rholang", [ReqEquation; ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler; ReqFreshnessPremise; ReqEnvRelationPremise; ReqBehavioralGuard; ReqSyntheticInjectionGuard; ReqCollectionPattern; ReqMapPattern; ReqBinderPattern; ReqSubstitutionPattern; ReqRhoCommHandlerContract; ReqRhoResourceGuardContract]);
+  ("seqcarrierdemo", [ReqFoldNativeHandler; ReqCollectionPattern]);
   ("swapdemo", [ReqDirectionalRewrite]);
   ("tokentextleafdemo", [ReqFoldNativeHandler; ReqBinderPattern]);
   ("turing", [ReqDirectionalRewrite; ReqFoldNativeHandler; ReqCollectionPattern]);
+  ("turingloop", [ReqDirectionalRewrite; ReqFoldNativeHandler; ReqCollectionPattern]);
   ("typeddropdemo", [ReqEquation; ReqFoldNativeHandler; ReqFreshnessPremise; ReqCollectionPattern; ReqBinderPattern])
 ].

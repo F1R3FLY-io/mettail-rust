@@ -1087,15 +1087,60 @@ fn ac_bag_lowering(label: &LitStr, element_add: &Ident, bag_expr: TokenStream) -
     }
 }
 
+/// (#101) The e-graph CARRIER a collection type gets on the typed fold path. TOTAL over
+/// [`CollectionType`] with **no wildcard**, so a new container must be classified here before
+/// it can be lowered at all.
+///
+/// This replaces the former `coll_type_is_ac_bag` boolean, whose defect was not its answer but
+/// its ARITY: two outcomes cannot express three carriers, so every non-`HashBag` container was
+/// forced through the one lossy leaf and a `Vec` — which has a perfectly good stored order —
+/// was indistinguishable from a `HashMap`, which has none.
+///
+/// | container | carrier | why |
+/// |---|---|---|
+/// | `HashBag` | [`AcBag`](CollectionCarrier::AcBag) | the genuine AC multiset (commutative, with multiplicity), so sorting its lowered children by canonical key is sound and the AC matcher may permute them |
+/// | `Vec` | [`OrderedSeq`](CollectionCarrier::OrderedSeq) | ordered and non-commutative: its `Debug` is deterministic AND `Eq`-agreeing, so the whole value can be carried VERBATIM in a labelled leaf and read back losslessly |
+/// | `HashSet` / `HashMap` / `PathMap` | [`Opaque`](CollectionCarrier::Opaque) | ★ DELIBERATE. `Debug` does not agree with `Eq` for these — which is exactly why [`op_enum::literal_payload_write_content`] routes Bag/Map/Set through their SORTED `Display` — so there is no stored order to invert. A labelled leaf over their `Debug` would claim an inverse that does not exist. |
+///
+/// ⚠ `None` (a field with no recorded container) is `Opaque` for the same reason as the last
+/// row: without knowing the container we cannot claim an inverse. In practice it is
+/// unreachable — [`crate::gen::term_ops::subst::variant_kind_from_items`] always records a
+/// `coll_type` for a collection field — so this is a fail-closed default, not a live case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CollectionCarrier {
+    /// `HashBag` — an n-ary AC bag node whose children the AC matcher may permute.
+    AcBag,
+    /// `Vec` — a payload-bearing ORDERED leaf (`FieldSeq<Elem>(Vec<Elem>)`), invertible.
+    OrderedSeq,
+    /// `HashSet` / `HashMap` / `PathMap` — the lossy `FieldOpaque(Debug)` spine leaf, with no
+    /// inverse. A fold parameter of one of these is DECLINED, naming the type.
+    Opaque,
+}
+
+/// Classify a collection type's carrier. THE single classification; every other predicate in
+/// this module is a projection of it, so the AC lane and the ordered lane cannot drift apart.
+pub(crate) fn collection_carrier(coll_type: Option<&CollectionType>) -> CollectionCarrier {
+    match coll_type {
+        Some(CollectionType::HashBag) => CollectionCarrier::AcBag,
+        Some(CollectionType::Vec) => CollectionCarrier::OrderedSeq,
+        Some(CollectionType::HashSet)
+        | Some(CollectionType::HashMap)
+        | Some(CollectionType::PathMap)
+        | None => CollectionCarrier::Opaque,
+    }
+}
+
 /// Whether a collection type is an associative-commutative MULTISET that gets the
-/// n-ary canonical bag lowering. Only `HashBag` qualifies: it is the genuine AC
-/// multiset (commutative, with multiplicity), so sorting its lowered children by
-/// canonical key is sound. `Vec` (ordered, non-commutative), `HashSet` (a set),
-/// and `HashMap` (a keyed map) keep the prior opaque-leaf lowering — sorting
-/// would not respect their semantics, and the AC engine only consumes `HashBag`
-/// bag nodes today.
+/// n-ary canonical bag lowering — the `AcBag` projection of [`collection_carrier`].
+///
+/// ⚠ This is the predicate the **`EGraph<String>`** path consumes, and it is deliberately
+/// coarser than the carrier: on that path `Vec` keeps the prior opaque-leaf lowering, because
+/// the String path has no typed op-enum to hang a labelled `FieldSeq` variant on and no
+/// reconstructor to invert it with. The ~30 untyped-path languages (`Json`'s 52 `Vec<` fields,
+/// `Ambient`'s 8) therefore emit byte-identical output across #101 — that identity is the
+/// change's strongest control.
 fn coll_type_is_ac_bag(coll_type: Option<&CollectionType>) -> bool {
-    matches!(coll_type, Some(CollectionType::HashBag))
+    matches!(collection_carrier(coll_type), CollectionCarrier::AcBag)
 }
 
 fn field_child_expr(
@@ -2388,10 +2433,7 @@ mod tests {
         // ★ UNIT-TEST CONSUMER.
         let (_, dispositions) = rule_block(&language, None);
         let declined = declined_dispositions(&dispositions);
-        assert!(
-            declined.is_empty(),
-            "AC bag rewrite must lower, not be rejected: {declined:?}"
-        );
+        assert!(declined.is_empty(), "AC bag rewrite must lower, not be rejected: {declined:?}");
         assert!(
             dispositions.iter().any(|disposition| {
                 disposition.construct == "OpenRule"

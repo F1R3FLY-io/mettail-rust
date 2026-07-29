@@ -27,7 +27,7 @@ use quote::{format_ident, quote};
 use syn::Ident;
 
 use crate::gen::native::NativeType;
-use crate::gen::term_ops::subst::{collect_category_variants, VariantKind};
+use crate::gen::term_ops::subst::{collect_category_variants, rule_to_variant_kind, VariantKind};
 
 /// The generated op-enum identifier for a language (e.g. `RholangDovetailOp`).
 pub(crate) fn op_enum_ident(language: &LanguageDef) -> Ident {
@@ -281,7 +281,135 @@ fn collect_op_variants(language: &LanguageDef) -> Vec<OpVariant> {
         );
     }
 
+    // (#101) The LABELLED, INVERTIBLE ORDERED-SEQUENCE leaf, one variant per element category
+    // that actually occurs as a `Vec` element. Appended AFTER `FieldTokenText` so **no existing
+    // discriminant moves** — a language with no `Vec`-bearing constructor produces byte-identical
+    // output — and emitted from [`ordered_seq_element_categories`], the same derivation
+    // `typed_lowering` and `reconstruct` read, so the variant, the lowering and the inverse can
+    // never disagree about existence.
+    //
+    // ★ WHAT THIS ADDS, GIVEN THE BYTES ARE ALREADY THERE. `typed_lowering::opaque_leaf_typed`
+    // writes `FieldOpaque(format!("{:?}", values))` today, and `write_content` then frames those
+    // Debug bytes — so `[0,1]` and `[1,0]` ALREADY hash-cons to different e-classes. What was
+    // missing is (i) a LABEL — one `FieldOpaque` discriminant is shared across `Vec` payloads,
+    // builtin ints, predicates and guest bodies, so provenance is unrecoverable — and (ii) an
+    // INVERSE. This supplies both, and it strictly REDUCES aliasing: each element category now
+    // has its own discriminant. The payload bytes are byte-for-byte what `FieldOpaque` wrote
+    // (`format!("{:?}", …)` on the same value), so the equivalence relation over collection
+    // values is UNCHANGED; only the label and the inverse are new.
+    //
+    // ⚠ ORDERED ONLY. `HashSet`/`HashMap`/`PathMap` are NOT here: their `Debug` does not agree
+    // with `Eq` (which is why the collection-LITERAL writer above routes them through sorted
+    // `Display`), so there is no order to invert to. See [`super::CollectionCarrier`].
+    for element_cat in ordered_seq_element_categories(language) {
+        let display = format!("<field-seq-{element_cat}>");
+        push(
+            field_seq_variant_ident(&element_cat),
+            Some(quote! { ::std::vec::Vec<#element_cat> }),
+            // The ordered `Debug` of the whole `Vec` — EXACTLY the bytes `FieldOpaque` frames
+            // for this same payload today. `Vec<E>: Eq` is elementwise equality in order and the
+            // generated `Debug` is an in-order rendering of the same elements, so the framed
+            // bytes are `Eq`-agreeing — the `SemanticHash` contract this enum's `unsafe impl`
+            // states.
+            quote! { ::dovetail::key::write_framed(out, format!("{:?}", __p).as_bytes()); },
+            display,
+        );
+    }
+
     variants
+}
+
+/// (#101) The op-enum variant identifier for the ordered-sequence leaf of an element category:
+/// `Sym` → `FieldSeqSym`, `Proc` → `FieldSeqProc`.
+///
+/// ⚠ Distinct from the `<Cat>_<Label>` constructor-variant form ([`op_variant_ident`]), which
+/// always contains an underscore, and from every spine sentinel (`BinderArity`, `FieldNone`,
+/// `FieldOpaque`, `FieldTokenText`) — all of which lack the `FieldSeq` prefix. So no element
+/// category can collide with an existing variant.
+pub(crate) fn field_seq_variant_ident(element_cat: &Ident) -> Ident {
+    format_ident!("FieldSeq{}", element_cat)
+}
+
+/// (#101) Every element category that EARNS the ordered-sequence carrier, in a DETERMINISTIC,
+/// deduplicated order.
+///
+/// ★ THE single predicate that decides which `FieldSeq*` variants exist, read by every emitter
+/// that can mention one — the enum ([`collect_op_variants`]), the lowering
+/// (`typed_lowering::field_child_expr_typed` / the `Collection` arm), and the inverse
+/// (`reconstruct::ordered_seq_reconstruct`) — so the three can never disagree about existence.
+/// The carrier is a property of the ELEMENT CATEGORY, not of an individual field: once a
+/// category earns one, every `Vec` of it in the language uses it, which is what keeps the three
+/// emitters consistent by construction rather than by three matching conditions.
+///
+/// ★★ EARNED FROM **DECLARED** RULES (`language.terms` via
+/// [`crate::gen::term_ops::subst::rule_to_variant_kind`]), in exactly the three positions the
+/// typed lowering emits a sequence leaf at:
+///
+///  1. a NON-OPTIONAL `Vec` field of a `Regular` constructor;
+///  2. a NON-OPTIONAL `Vec` field in a `Binder`/`MultiBinder`'s pre-scope fields;
+///  3. a `VariantKind::Collection` constructor whose container is `Vec`.
+///
+/// ⚠ WHY DECLARED RULES AND NOT `collect_category_variants` — MEASURED, NOT STYLISTIC.
+/// `collect_category_variants` additionally synthesizes the higher-order-logic application
+/// forms `MApply<Domain>(Arc<Cat>, Vec<Domain>)` for every pair `compute_hol_domain_pairs`
+/// flags. Those have NO grammar rule, NO surface syntax, and are never a fold operand, so a
+/// labelled carrier buys them nothing — and giving each its own `Vec<Domain>` payload adds one
+/// nesting level per CATEGORY to the op enum's type graph. Measured on Rholang that is 15
+/// synthesized domains beside 4 declared ones, and it pushes auto-trait resolution for
+/// `static … OnceLock<CompiledRuleSet<RholangDovetailOp>>` over the recursion limit:
+/// `E0275: overflow evaluating the requirement Arc<WriteZipperLit>: Send`, reproducibly, in the
+/// integration-test compilation unit. Restricting the set to declared rules keeps every one of
+/// those synthesized fields on the `FieldOpaque` leaf they already used — zero behavioural
+/// change for them, since they were `NotInvertible` before and stay so.
+///
+/// ⚠ OPTIONAL collection fields are EXCLUDED, deliberately: `field_child_expr_typed` keeps them
+/// on the lossy `FieldOpaque` leaf (an absent collection is a `FieldNone` sentinel, and #94
+/// found zero corpus instances of `#opt(xs:Vec(T))`), so admitting them here would emit a
+/// variant nothing writes and an inverse nothing calls.
+pub(crate) fn ordered_seq_element_categories(language: &LanguageDef) -> Vec<Ident> {
+    fn ordered_field_element(field: &crate::gen::term_ops::subst::FieldInfo) -> Option<Ident> {
+        if field.is_optional || !field.is_collection {
+            return None;
+        }
+        match super::collection_carrier(field.coll_type.as_ref()) {
+            super::CollectionCarrier::OrderedSeq => Some(field.category.clone()),
+            super::CollectionCarrier::AcBag | super::CollectionCarrier::Opaque => None,
+        }
+    }
+
+    let mut out: Vec<Ident> = Vec::new();
+    let mut push_unique = |cat: Ident| {
+        if !out.iter().any(|seen| *seen == cat) {
+            out.push(cat);
+        }
+    };
+    for rule in &language.terms {
+        match rule_to_variant_kind(rule, language) {
+            VariantKind::Regular { fields, .. } => {
+                for cat in fields.iter().filter_map(ordered_field_element) {
+                    push_unique(cat);
+                }
+            },
+            VariantKind::Binder { pre_scope_fields, .. }
+            | VariantKind::MultiBinder { pre_scope_fields, .. } => {
+                for cat in pre_scope_fields.iter().filter_map(ordered_field_element) {
+                    push_unique(cat);
+                }
+            },
+            VariantKind::Collection { element_cat, ref coll_type, .. } => {
+                if super::collection_carrier(Some(coll_type))
+                    == super::CollectionCarrier::OrderedSeq
+                {
+                    push_unique(element_cat);
+                }
+            },
+            VariantKind::Var { .. }
+            | VariantKind::Literal { .. }
+            | VariantKind::CollectionLiteral { .. }
+            | VariantKind::Nullary { .. } => {},
+        }
+    }
+    out
 }
 
 /// Whether ANY constructor of `language` carries an [`OpaqueLeafKind::TokenText`] field — a
@@ -299,8 +427,7 @@ fn collect_op_variants(language: &LanguageDef) -> Vec<OpVariant> {
 /// than re-deriving field kinds from `LanguageDef`, so it cannot drift from what is emitted.
 pub(crate) fn language_has_token_text_leaf(language: &LanguageDef) -> bool {
     fn is_token_text(field: &crate::gen::term_ops::subst::FieldInfo) -> bool {
-        field.opaque_leaf
-            == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
+        field.opaque_leaf == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
     }
     language.types.iter().any(|lang_type| {
         collect_category_variants(&lang_type.name, language)

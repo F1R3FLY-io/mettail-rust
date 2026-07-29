@@ -634,10 +634,7 @@ fn random_var_expr(language: &LanguageDef) -> TokenStream {
 /// constructor vanished from random generation with no diagnostic — coverage traded for
 /// silence. An `Ident` position is depth-0 (a leaf), so the remaining category arguments take
 /// `depth - 1` exactly as they do beside a `Var` leaf.
-fn random_args_with_ident(
-    arg_cats: &[Ident],
-    language: &LanguageDef,
-) -> Option<Vec<TokenStream>> {
+fn random_args_with_ident(arg_cats: &[Ident], language: &LanguageDef) -> Option<Vec<TokenStream>> {
     if !arg_cats.iter().any(is_ident_position) {
         return None;
     }
@@ -1074,7 +1071,7 @@ fn generate_random_collection_constructor(
     let label = &rule.label;
 
     // Find the collection field and its type
-    let (element_cat, _coll_type) = rule
+    let (element_cat, coll_type) = rule
         .items
         .iter()
         .find_map(|item| match item {
@@ -1089,11 +1086,21 @@ fn generate_random_collection_constructor(
         return quote! { panic!("Non-type collection element category") };
     }
 
-    let is_list = language
-        .get_type(cat_name)
-        .and_then(|t| t.collection_kind.as_ref())
-        .map(|ck| matches!(ck, CollectionCategory::List(_)))
-        .unwrap_or(false);
+    // (#101 sibling) ORDERED-ness is a property of the CONSTRUCTOR's container, not only of
+    // the category. The category test below answers `List` for a collection-LITERAL category
+    // (`![Vec<Proc>] as List`); it answers `false` for an ordinary category that happens to
+    // declare a `Vec` collection constructor (`Boxed . xs:Vec(Term) |- … : Term`), and such a
+    // constructor then received `HashBag`-shaped generation for a `Vec<Term>` field — which
+    // does not compile. The corpus has zero instances (every whole-constructor collection in
+    // the tree is a `HashBag`), so reading the container here is byte-identical for every
+    // existing language and repairs a shape that could not previously be declared at all.
+    let is_vec_constructor = matches!(coll_type, mettail_ast::types::CollectionType::Vec);
+    let is_list = is_vec_constructor
+        || language
+            .get_type(cat_name)
+            .and_then(|t| t.collection_kind.as_ref())
+            .map(|ck| matches!(ck, CollectionCategory::List(_)))
+            .unwrap_or(false);
     let is_map = language
         .get_type(cat_name)
         .and_then(|t| t.collection_kind.as_ref())

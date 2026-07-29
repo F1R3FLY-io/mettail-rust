@@ -12,14 +12,21 @@
 //!
 //! Reconstruction is emitted for the structurally-invertible variants: `Var`, `Literal`
 //! (including the collection-category `ListLit`/`MapLit`/`BagLit` whole-value leaves),
-//! `Nullary`, `Regular` constructors whose every field is invertible, and (E2.1) the AC
-//! `Collection` (HashBag soup), `Binder`, and `MultiBinder` variants — each the exact
-//! structural inverse of the corresponding [`super::typed_lowering`] arm. A `Regular`
-//! constructor with a builtin/guest-body/optional/predicate/collection field is not
-//! invertible here (its lowered child is a lossy or absent sentinel) and reconstructs to
-//! `None`, faithfully deferring any fold that would read it; a non-AC
-//! (`Vec`/`HashSet`/`HashMap`) collection field likewise lowers to a `FieldOpaque` spine leaf
-//! and stays `None`.
+//! `Nullary`, `Regular` constructors whose every field is invertible, and (E2.1) the
+//! `Collection`, `Binder`, and `MultiBinder` variants — each the exact structural inverse of
+//! the corresponding [`super::typed_lowering`] arm. A `Regular` constructor with a
+//! builtin/guest-body/optional/predicate field is not invertible here (its lowered child is a
+//! lossy or absent sentinel) and reconstructs to `None`, faithfully deferring any fold that
+//! would read it.
+//!
+//! ★ (#101) A COLLECTION field's invertibility follows its CARRIER, not the blanket "collection
+//! ⇒ not invertible" this file used to apply. An ORDERED (`Vec`) field lowers to the labelled
+//! `FieldSeq<Elem>(Vec<Elem>)` leaf carrying the whole vector verbatim, so
+//! [`ordered_seq_build_fn`] inverts it losslessly and the constructor around it reconstructs;
+//! an unordered one (`HashBag`/`HashSet`/`HashMap`/`PathMap` as a FIELD) still lowers to
+//! `FieldOpaque` and stays `None`. Keeping the blanket after the lowering changed would leave
+//! this classifier asserting something false about the very lowering it inverts — the same
+//! "structural rather than informational refusal" (A4) removed for token text.
 //!
 //! ★ (A4) FIELD-LEVEL, NOT VARIANT-LEVEL. Invertibility is decided per FIELD by
 //! [`ReconstructableField`] and the whole variant is refused only if some field is
@@ -38,7 +45,11 @@
 //!   flat-maps `repeat_n(elem, count)`), so the inverse reconstructs each `d.children[i]`
 //!   and inserts it via the generated `Cat::insert_into_<label>` auto-flattening helper
 //!   (`normalize.rs`), restoring multiplicity faithfully (`{P,P}` → 2 children → multiplicity
-//!   2). Only `HashBag` is AC-lowered (and hence invertible); `Vec`/`HashSet`/`HashMap`
+//!   2).
+//! - **(#101) ORDERED `Collection` (a single-`Vec` constructor):** the lowering emits
+//!   `ENode::new(Cat_Label, [seq_leaf])` — a constructor node over the sequence leaf, which is
+//!   what restores the constructor identity a bare leaf erased — so the inverse reads child 0
+//!   through [`ordered_seq_build_fn`]. `HashSet`/`HashMap`/`PathMap` whole-constructor
 //!   collections lower to `FieldOpaque` and stay `None`.
 //! - **`Binder`:** children are `[…pre, BinderArity(1), body]`. The inverse verifies the
 //!   `BinderArity(1)` marker, reconstructs the pre-scope fields + body, and rebuilds
@@ -61,8 +72,11 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
-use super::coll_type_is_ac_bag;
-use super::op_enum::{language_has_token_text_leaf, op_enum_ident, op_variant_ident};
+use super::op_enum::{
+    field_seq_variant_ident, language_has_token_text_leaf, op_enum_ident, op_variant_ident,
+    ordered_seq_element_categories,
+};
+use super::{collection_carrier, CollectionCarrier};
 use crate::gen::term_ops::subst::{
     collect_category_variants, FieldInfo, OpaqueLeafKind, VariantKind,
 };
@@ -79,6 +93,16 @@ pub(crate) fn build_fn(category: &Ident) -> Ident {
 /// through `build_fn` would silently collide with a genuine user category named `String`.
 pub(crate) fn token_text_build_fn() -> Ident {
     format_ident!("__mettail_dovetail_build_token_text_d")
+}
+
+/// (#101) The name of the ORDERED-SEQUENCE inverse for an element category:
+/// `Sym` → `__mettail_dovetail_build_seq_sym_d`, returning `Option<Vec<Sym>>`.
+///
+/// Distinct from [`build_fn`], which returns `Option<Cat>`: a sequence leaf reconstructs a
+/// `Vec<Elem>`, not an `Elem`. The `seq_` infix keeps the two namespaces apart even when a
+/// language declares categories whose snake-cased names would otherwise collide.
+pub(crate) fn ordered_seq_build_fn(element_cat: &Ident) -> Ident {
+    format_ident!("__mettail_dovetail_build_seq_{}_d", super::to_snake(&element_cat.to_string()))
 }
 
 /// (A4) How a constructor field participates in reconstruction. TOTAL over `FieldInfo`: every
@@ -103,19 +127,63 @@ enum ReconstructableField {
     /// emitted field type is a BARE `String` (`OpaqueLeafKind::field_type`), so the rebuilt
     /// value is used UNWRAPPED — no `Arc`.
     TokenText,
+    /// (#101) A NON-OPTIONAL ORDERED (`Vec`) collection field. Lowered to
+    /// `FieldSeq<Elem>(values)` VERBATIM, so [`ordered_seq_build_fn`] inverts it losslessly.
+    /// The emitted field type is a BARE `Vec<Elem>`, so the rebuilt value is used UNWRAPPED —
+    /// no `Arc`, exactly like [`TokenText`](ReconstructableField::TokenText).
+    ///
+    /// ★ WHY THIS IS NOT AN EXPANSION OF SCOPE. Before #101 a `Vec` field's lowered child WAS a
+    /// lossy `FieldOpaque` sentinel, so `NotInvertible` was the true answer. #101 replaces that
+    /// child with a labelled leaf carrying the whole `Vec` verbatim; keeping the field
+    /// `NotInvertible` would leave the classifier asserting something false about the very
+    /// lowering it is the inverse of. That is precisely the defect (A4) removed for token text:
+    /// "the refusal was STRUCTURAL, not informational".
+    ///
+    /// ⚠ ELEMENTS ARE NOT E-CLASSES. The leaf carries the collection as ONE opaque payload, so
+    /// congruence closure sees nothing inside it and no element is reduced. This arm buys
+    /// reconstruction, not element reduction.
+    OrderedSeq,
     /// Not invertible from the derivation: its lowered child is a lossy/absent spine sentinel.
-    /// Covers builtin-category fields, predicate slots, collections, optionals, and
-    /// [`OpaqueLeafKind::GuestBody`] (an `Arc<FltNode>` has no lossless `Debug` inverse).
-    /// A variant carrying one is skipped by `category_reconstruct` and falls through to
-    /// `_ => None` — faithfully deferring any fold that would read it.
+    /// Covers builtin-category fields, predicate slots, OPTIONAL fields (including optional
+    /// collections), UNORDERED collections (`HashBag`/`HashSet`/`HashMap`/`PathMap` — see
+    /// [`super::CollectionCarrier`]), and [`OpaqueLeafKind::GuestBody`] (an `Arc<FltNode>` has
+    /// no lossless `Debug` inverse). A variant carrying one is skipped by `category_reconstruct`
+    /// and falls through to `_ => None` — faithfully deferring any fold that would read it.
     NotInvertible,
 }
 
 /// Classify a field for reconstruction. Branches on the leaf FLAG before reading `category`,
 /// whose value is a placeholder (`String`/`FltNode`) for leaf fields.
-fn classify_reconstructable_field(field: &FieldInfo) -> ReconstructableField {
-    if field.is_optional || field.is_collection || field.is_predicate {
+fn classify_reconstructable_field(
+    field: &FieldInfo,
+    earned_seq_elements: &[Ident],
+) -> ReconstructableField {
+    // ⚠ OPTIONAL FIRST, and deliberately: `field_child_expr_typed` keeps an optional collection
+    // on the lossy `FieldOpaque`/`FieldNone` pair regardless of container, so an
+    // `#opt(xs:Vec(T))` has no inverse even after #101. Testing `is_optional` before the
+    // container is what keeps this classifier in step with that lowering.
+    if field.is_optional || field.is_predicate {
         return ReconstructableField::NotInvertible;
+    }
+    if field.is_collection {
+        // (#101) The container decides: an ORDERED `Vec` field lowers to the invertible
+        // `FieldSeq<Elem>` leaf; every other container still lowers to `FieldOpaque`.
+        return match collection_carrier(field.coll_type.as_ref()) {
+            // ⚠ ...and only when the element category actually EARNED a `FieldSeq*` variant.
+            // A `Vec` field of a generator-synthesized HOL `MApply<Domain>` form whose domain
+            // occurs nowhere in a declared rule still lowers to `FieldOpaque`
+            // (`op_enum::ordered_seq_element_categories` records why), so it is still not
+            // invertible — and this classifier must say so rather than promise an inverse the
+            // lowering did not emit.
+            CollectionCarrier::OrderedSeq
+                if earned_seq_elements.iter().any(|e| *e == field.category) =>
+            {
+                ReconstructableField::OrderedSeq
+            },
+            CollectionCarrier::OrderedSeq
+            | CollectionCarrier::AcBag
+            | CollectionCarrier::Opaque => ReconstructableField::NotInvertible,
+        };
     }
     match field.opaque_leaf {
         Some(OpaqueLeafKind::TokenText) => ReconstructableField::TokenText,
@@ -129,10 +197,11 @@ fn classify_reconstructable_field(field: &FieldInfo) -> ReconstructableField {
 
 /// Whether every field of a variant is invertible — the admission test the `Regular` /
 /// `Binder` / `MultiBinder` arms apply before emitting a reconstruction arm.
-fn all_fields_invertible(fields: &[FieldInfo]) -> bool {
-    fields
-        .iter()
-        .all(|f| classify_reconstructable_field(f) != ReconstructableField::NotInvertible)
+fn all_fields_invertible(fields: &[FieldInfo], earned_seq_elements: &[Ident]) -> bool {
+    fields.iter().all(|f| {
+        classify_reconstructable_field(f, earned_seq_elements)
+            != ReconstructableField::NotInvertible
+    })
 }
 
 /// The per-field child expression for a reconstruction arm: the `i`-th derivation child
@@ -145,9 +214,13 @@ fn all_fields_invertible(fields: &[FieldInfo]) -> bool {
 ///
 /// Panics only on a `NotInvertible` field, which the callers exclude via
 /// [`all_fields_invertible`] before ever reaching here.
-fn reconstruct_child_expr(field_index: usize, field: &FieldInfo) -> TokenStream {
+fn reconstruct_child_expr(
+    field_index: usize,
+    field: &FieldInfo,
+    earned_seq_elements: &[Ident],
+) -> TokenStream {
     let i = field_index;
-    match classify_reconstructable_field(field) {
+    match classify_reconstructable_field(field, earned_seq_elements) {
         ReconstructableField::Category => {
             let child_build = build_fn(&field.category);
             quote! {
@@ -158,6 +231,15 @@ fn reconstruct_child_expr(field_index: usize, field: &FieldInfo) -> TokenStream 
             let text_build = token_text_build_fn();
             quote! {
                 #text_build(__d.children.get(#i)?)?
+            }
+        },
+        // (#101) A `Vec<Elem>` field: UNWRAPPED, like the token-text arm — the constructor
+        // stores the bare `Vec`, not an `Arc<Vec>`, so wrapping would not type-check. The
+        // shapes are checked by the compiler, not by a comment.
+        ReconstructableField::OrderedSeq => {
+            let seq_build = ordered_seq_build_fn(&field.category);
+            quote! {
+                #seq_build(__d.children.get(#i)?)?
             }
         },
         ReconstructableField::NotInvertible => unreachable!(
@@ -206,15 +288,59 @@ pub(crate) fn token_text_reconstruct(language: &LanguageDef) -> TokenStream {
     }
 }
 
-/// Every per-category reconstructor for `language`, PLUS the single shared token-text inverse.
+/// (#101) Generate `__mettail_dovetail_build_seq_<elem>_d` for each element category that occurs
+/// as an ORDERED (`Vec`) collection — the inverse of `typed_lowering::ordered_seq_leaf_typed`.
+///
+/// ONE arm and a total fallback, per element category. The lowering wrote the whole `Vec<Elem>`
+/// VERBATIM into `FieldSeq<Elem>`, so the inverse is a `clone()`: there is no `Debug` escaping
+/// to undo and therefore NO UNESCAPING PARSER anywhere — the property that makes this lossless
+/// rather than merely usually-right. Every other op (including the lossy `FieldOpaque`, which an
+/// unordered collection still lowers to) answers `None`, so a fold reading a non-sequence child
+/// DEFERS instead of fabricating a collection.
+///
+/// Driven by [`ordered_seq_element_categories`] — the same predicate that decides which
+/// `FieldSeq*` variants the enum has — so these functions can never reference a variant the enum
+/// does not have, nor go missing for one it does.
+pub(crate) fn ordered_seq_reconstruct(language: &LanguageDef) -> Vec<TokenStream> {
+    let enum_id = op_enum_ident(language);
+    ordered_seq_element_categories(language)
+        .into_iter()
+        .map(|element_cat| {
+            let fn_name = ordered_seq_build_fn(&element_cat);
+            let v = field_seq_variant_ident(&element_cat);
+            quote! {
+                // A language whose only `Vec` field sits on a variant no fold reads emits this
+                // inverse without calling it; that is correct (the capability is present) and
+                // must not be a warning.
+                #[allow(dead_code)]
+                fn #fn_name(
+                    __d: &::std::rc::Rc<
+                        ::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>
+                    >,
+                ) -> ::core::option::Option<::std::vec::Vec<#element_cat>> {
+                    match &__d.op {
+                        #enum_id::#v(__values) => {
+                            ::core::option::Option::Some(__values.clone())
+                        },
+                        _ => ::core::option::Option::None,
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
+/// Every per-category reconstructor for `language`, PLUS the single shared token-text inverse
+/// and (#101) one ordered-sequence inverse per `Vec` element category.
 ///
 /// The three typed-path assembly sites (`typed_report`'s `generate_dovetail_normal_term`,
 /// `generate_step_graph`, `generate_typed_dovetail_report`) each emit the reconstructors into
 /// their own scope. Collecting them HERE rather than at each site is what keeps the token-text
-/// inverse from being added to two of the three — the exact drift shape this file's history
-/// already contains once.
+/// inverse — and now the sequence inverses — from being added to two of the three: the exact
+/// drift shape this file's history already contains once.
 pub(crate) fn all_reconstructors(language: &LanguageDef) -> Vec<TokenStream> {
-    let mut out = Vec::with_capacity(language.types.len() + 1);
+    let seq = ordered_seq_reconstruct(language);
+    let mut out = Vec::with_capacity(language.types.len() + 1 + seq.len());
     out.extend(
         language
             .types
@@ -222,6 +348,7 @@ pub(crate) fn all_reconstructors(language: &LanguageDef) -> Vec<TokenStream> {
             .map(|ty| category_reconstruct(language, &ty.name)),
     );
     out.push(token_text_reconstruct(language));
+    out.extend(seq);
     out
 }
 
@@ -229,6 +356,9 @@ pub(crate) fn all_reconstructors(language: &LanguageDef) -> Vec<TokenStream> {
 pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> TokenStream {
     let enum_id = op_enum_ident(language);
     let fn_name = build_fn(category);
+    // (#101) The element categories that have a `FieldSeq*` variant — the SAME set the lowering
+    // consults, so the inverse admits exactly the fields the lowering made invertible.
+    let earned_seq_elements = ordered_seq_element_categories(language);
 
     let mut arms: Vec<TokenStream> = Vec::new();
     for variant in collect_category_variants(category, language) {
@@ -248,7 +378,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
                 });
             },
             VariantKind::Regular { label, fields } => {
-                if fields.is_empty() || !all_fields_invertible(&fields) {
+                if fields.is_empty() || !all_fields_invertible(&fields, &earned_seq_elements) {
                     // Not structurally invertible here — falls through to `_ => None`.
                     continue;
                 }
@@ -256,7 +386,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
                 let child_exprs: Vec<TokenStream> = fields
                     .iter()
                     .enumerate()
-                    .map(|(i, field)| reconstruct_child_expr(i, field))
+                    .map(|(i, field)| reconstruct_child_expr(i, field, &earned_seq_elements))
                     .collect();
                 arms.push(quote! {
                     #enum_id::#v => ::core::option::Option::Some(
@@ -274,22 +404,40 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
             // is AC-lowered; `Vec`/`HashSet`/`HashMap` lower to `FieldOpaque` and never reach
             // this arm (they have no AC-bag op node), so they correctly stay `None`.
             VariantKind::Collection { label, element_cat, coll_type } => {
-                if !coll_type_is_ac_bag(Some(&coll_type)) {
-                    // Non-AC collection: lowered as a `FieldOpaque` spine leaf, not invertible.
-                    continue;
-                }
                 let v = op_variant_ident(category, &label);
-                let elem_build = build_fn(&element_cat);
-                let helper = format_ident!("insert_into_{}", label.to_string().to_lowercase());
-                arms.push(quote! {
-                    #enum_id::#v => {
-                        let mut __bag = ::mettail_runtime::HashBag::<#element_cat>::new();
-                        for __child in &__d.children {
-                            #category::#helper(&mut __bag, #elem_build(__child)?);
-                        }
-                        ::core::option::Option::Some(#category::#label(__bag))
+                match collection_carrier(Some(&coll_type)) {
+                    CollectionCarrier::AcBag => {
+                        let elem_build = build_fn(&element_cat);
+                        let helper =
+                            format_ident!("insert_into_{}", label.to_string().to_lowercase());
+                        arms.push(quote! {
+                            #enum_id::#v => {
+                                let mut __bag = ::mettail_runtime::HashBag::<#element_cat>::new();
+                                for __child in &__d.children {
+                                    #category::#helper(&mut __bag, #elem_build(__child)?);
+                                }
+                                ::core::option::Option::Some(#category::#label(__bag))
+                            },
+                        });
                     },
-                });
+                    // (#101) The exact inverse of `typed_lowering`'s ordered `Collection` arm:
+                    // that arm emits `ENode::new(Cat_Label, [seq_leaf])`, so child 0 is the
+                    // sequence leaf and `build_seq_<elem>_d` reads the whole `Vec` back
+                    // losslessly. Emitting it keeps the two sides symmetric — an invertible
+                    // lowering with no inverse is the drift this file's history records.
+                    CollectionCarrier::OrderedSeq => {
+                        let seq_build = ordered_seq_build_fn(&element_cat);
+                        arms.push(quote! {
+                            #enum_id::#v => {
+                                let __values = #seq_build(__d.children.get(0usize)?)?;
+                                ::core::option::Option::Some(#category::#label(__values))
+                            },
+                        });
+                    },
+                    // Unordered non-AC collection (`HashSet`/`HashMap`/`PathMap`): lowered as a
+                    // `FieldOpaque` spine leaf, not invertible — falls through to `_ => None`.
+                    CollectionCarrier::Opaque => continue,
+                }
             },
             // (E2.1) `Binder`: the exact inverse of `typed_lowering::binder_arm_typed` with
             // `multi = false`. Lowered children are `[…pre, BinderArity(1), body]`. Reconstruct
@@ -303,7 +451,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
             // (correct — Dovetail normal forms are α-classes). A pre-field/body that is not plainly
             // invertible (`None`) defers the whole reconstruction via `?`.
             VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
-                if !all_fields_invertible(&pre_scope_fields) {
+                if !all_fields_invertible(&pre_scope_fields, &earned_seq_elements) {
                     // A pre-scope field is guest-body/optional/predicate/collection/builtin —
                     // not invertible. (A token-text pre-scope field IS invertible; see
                     // `ReconstructableField::TokenText`.)
@@ -314,7 +462,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
                 let pre_exprs: Vec<TokenStream> = pre_scope_fields
                     .iter()
                     .enumerate()
-                    .map(|(i, field)| reconstruct_child_expr(i, field))
+                    .map(|(i, field)| reconstruct_child_expr(i, field, &earned_seq_elements))
                     .collect();
                 let arity_idx = pre_scope_fields.len();
                 let body_idx = pre_scope_fields.len() + 1;
@@ -346,7 +494,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
             // (same α-equivalence rationale as the single-binder arm). The body de-Bruijn coords
             // index into this `n`-binder scope and stay valid.
             VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-                if !all_fields_invertible(&pre_scope_fields) {
+                if !all_fields_invertible(&pre_scope_fields, &earned_seq_elements) {
                     continue;
                 }
                 let v = op_variant_ident(category, &label);
@@ -354,7 +502,7 @@ pub(crate) fn category_reconstruct(language: &LanguageDef, category: &Ident) -> 
                 let pre_exprs: Vec<TokenStream> = pre_scope_fields
                     .iter()
                     .enumerate()
-                    .map(|(i, field)| reconstruct_child_expr(i, field))
+                    .map(|(i, field)| reconstruct_child_expr(i, field, &earned_seq_elements))
                     .collect();
                 let arity_idx = pre_scope_fields.len();
                 let body_idx = pre_scope_fields.len() + 1;
