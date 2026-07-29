@@ -36,12 +36,61 @@ use super::*;
 /// reduces to one Lehmann step).
 ///
 /// **Panics**: if `adj` is non-square (some row length differs from `adj.len()`).
+/// [`try_matrix_star_ref`] is the same computation reporting that as a value.
 pub fn matrix_star_ref<W: StarSemiringRef>(adj: &[Vec<W>]) -> Vec<Vec<W>> {
+    match try_matrix_star_ref(adj) {
+        Ok(closure) => closure,
+        Err(err) => panic!("matrix_star_ref: adj must be square (n × n) — {}", err),
+    }
+}
+
+/// The row whose length disagrees with the matrix's order.
+///
+/// Squareness of a `&[Vec<W>]` is not expressible in Rust's type system, so it is a
+/// *precondition* — and a precondition a caller can violate is a value, not a panic.
+/// The offending row is carried so the diagnostic names WHICH row is wrong rather than
+/// only that some row is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NonSquareMatrix {
+    /// `adj.len()` — the order the matrix claims by its row count.
+    pub order: usize,
+    /// Index of the first row whose length is not `order`.
+    pub row: usize,
+    /// That row's actual length.
+    pub row_len: usize,
+}
+
+impl std::fmt::Display for NonSquareMatrix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "row {} has {} entries, not {}",
+            self.row, self.row_len, self.order
+        )
+    }
+}
+
+impl std::error::Error for NonSquareMatrix {}
+
+/// [`matrix_star_ref`], returning [`NonSquareMatrix`] rather than raising it.
+///
+/// # Errors
+///
+/// `Err(NonSquareMatrix)` iff some row of `adj` has a length other than `adj.len()`.
+/// Lehmann's algorithm indexes `dist[i][j]` for every `i, j < n`, so a short row is
+/// an out-of-bounds read and a long row is a silently ignored tail — neither has a
+/// meaningful closure, and both must be refused rather than approximated.
+pub fn try_matrix_star_ref<W: StarSemiringRef>(
+    adj: &[Vec<W>],
+) -> Result<Vec<Vec<W>>, NonSquareMatrix> {
     let n = adj.len();
-    assert!(
-        adj.iter().all(|row| row.len() == n),
-        "matrix_star_ref: adj must be square (n × n)"
-    );
+    if let Some((row, cells)) = adj.iter().enumerate().find(|(_, row)| row.len() != n) {
+        return Err(NonSquareMatrix {
+            order: n,
+            row,
+            row_len: cells.len(),
+        });
+    }
     // Initialize: dist[i][j] = (I ⊕ A)[i][j].
     // The diagonal carries `one_ref() ⊕ adj[i][i]` (the zero-length-path
     // identity contribution); off-diagonal entries are just `adj[i][j]`.
@@ -73,7 +122,7 @@ pub fn matrix_star_ref<W: StarSemiringRef>(adj: &[Vec<W>]) -> Vec<Vec<W>> {
             }
         }
     }
-    dist
+    Ok(dist)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

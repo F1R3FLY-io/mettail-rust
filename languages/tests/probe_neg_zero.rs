@@ -231,107 +231,82 @@ fn probe_i32_min_atomic_lex() {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// The five probes below used to wrap their subject in `catch_unwind` and
+// `eprintln!` the payload on the `Err` arm.
+//
+// ⚠ That arm was UNREACHABLE and the net was FALSE. This workspace compiles
+// `dev`/`test` with the cranelift backend (`[profile.dev] codegen-backend =
+// "cranelift"`), which emits no catch pads: a panic raised in the subject does
+// not reach a `catch_unwind` monomorphised in this crate — the process aborts.
+// So the probes could never have printed a payload, and their `Err` arms
+// described a recovery that does not happen.
+//
+// They now call the subject DIRECTLY and assert the outcome. Each probe's own
+// name states what it expects, so asserting it is what the name already claimed;
+// a probe that prints and asserts nothing distinguishes nothing. Every
+// assertion below is a MEASURED negative — all five parse today (see the run
+// recorded with this change) — so this hardens the sites rather than pinning a
+// hope.
+// ═══════════════════════════════════════════════════════════════════════════
+
 #[test]
 fn probe_parse_dash_zero_point_zero_float() {
     use mettail_languages::calculator::Float;
-    use std::panic::AssertUnwindSafe;
     mettail_runtime::clear_var_cache();
-    // Direct Float::parse_structured of "-0.0" to see if it fails here too
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| Float::parse_structured("-0.0")));
-    match result {
-        Ok(Ok(t)) => eprintln!("Float::parse_structured('-0.0') = {:?}", t),
-        Ok(Err(e)) => eprintln!("Float::parse_structured('-0.0') ERR = {:?}", e),
-        Err(p) => eprintln!("Float::parse_structured('-0.0') PANIC = {:?}", p),
-    }
+    // Direct Float::parse_structured of "-0.0" to see if it fails here too.
+    let parsed = Float::parse_structured("-0.0")
+        .expect("`-0.0` is a well-formed Float surface and must parse");
+    eprintln!("Float::parse_structured('-0.0') = {:?}", parsed);
+    assert_eq!(
+        format!("{}", parsed),
+        "-0.0",
+        "the negative-zero Float must render back to its own surface"
+    );
 }
 
 #[test]
 fn probe_parse_dash_zero_point_zero_proc() {
     use mettail_runtime::Language;
-    use std::panic::AssertUnwindSafe;
     mettail_runtime::clear_var_cache();
     let lang = CalculatorLanguage;
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| lang.parse_term("-0.0")));
-    match result {
-        Ok(Ok(t)) => eprintln!("CalculatorLanguage::parse_term('-0.0') = {:?}", format!("{}", t)),
-        Ok(Err(e)) => eprintln!("CalculatorLanguage::parse_term('-0.0') ERR = {:?}", e),
-        Err(p) => {
-            if let Some(s) = p.downcast_ref::<String>() {
-                eprintln!("PANIC: {}", s);
-            } else if let Some(s) = p.downcast_ref::<&'static str>() {
-                eprintln!("PANIC: {}", s);
-            } else {
-                eprintln!("PANIC: unknown payload");
-            }
-        },
-    }
+    let parsed = lang
+        .parse_term("-0.0")
+        .expect("`-0.0` must parse in the Calculator's primary category");
+    eprintln!("CalculatorLanguage::parse_term('-0.0') = {:?}", format!("{}", parsed));
 }
 
 #[test]
 fn probe_parse_via_wpda_all_dash_zero_point_zero_float() {
     use mettail_languages::calculator::Float;
-    use std::panic::AssertUnwindSafe;
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| Float::parse_via_wpda_all("-0.0")));
-    match result {
-        Ok(Ok(ts)) => {
-            eprintln!("Float::parse_via_wpda_all('-0.0') = {} alts", ts.len());
-            for (i, t) in ts.iter().enumerate() {
-                eprintln!("    [{}] debug={:?} display={:?}", i, t, format!("{}", t));
-            }
-        },
-        Ok(Err(e)) => eprintln!("Float::parse_via_wpda_all('-0.0') ERR = {:?}", e),
-        Err(p) => {
-            if let Some(s) = p.downcast_ref::<String>() {
-                eprintln!("PANIC: {}", s);
-            } else if let Some(s) = p.downcast_ref::<&'static str>() {
-                eprintln!("PANIC: {}", s);
-            } else {
-                eprintln!("PANIC: unknown payload");
-            }
-        },
+    let alternatives = Float::parse_via_wpda_all("-0.0")
+        .expect("`-0.0` must parse through the all-alternatives WPDA entry point");
+    eprintln!("Float::parse_via_wpda_all('-0.0') = {} alts", alternatives.len());
+    for (i, t) in alternatives.iter().enumerate() {
+        eprintln!("    [{}] debug={:?} display={:?}", i, t, format!("{}", t));
     }
+    assert!(
+        !alternatives.is_empty(),
+        "a successful all-alternatives parse must yield at least one reading"
+    );
 }
 
 #[test]
 fn probe_minimal_atomic_int_lit() {
     // Simplest possible atomic int parse.
-    use std::panic::AssertUnwindSafe;
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| Int::parse_structured("42")));
-    match result {
-        Ok(Ok(t)) => eprintln!("Int::parse_structured('42') = {:?}", t),
-        Ok(Err(e)) => eprintln!("Int::parse_structured('42') ERR = {:?}", e),
-        Err(p) => {
-            if let Some(s) = p.downcast_ref::<String>() {
-                eprintln!("PANIC: {}", s);
-            } else if let Some(s) = p.downcast_ref::<&'static str>() {
-                eprintln!("PANIC: {}", s);
-            } else {
-                eprintln!("PANIC: unknown payload");
-            }
-        },
-    }
+    let parsed = Int::parse_structured("42").expect("`42` is the simplest atomic Int literal");
+    eprintln!("Int::parse_structured('42') = {:?}", parsed);
+    assert_eq!(format!("{}", parsed), "42");
 }
 
 #[test]
 fn probe_minimal_atomic_int_lit_negative() {
-    use std::panic::AssertUnwindSafe;
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| Int::parse_structured("-5")));
-    match result {
-        Ok(Ok(t)) => eprintln!("Int::parse_structured('-5') = {:?}", t),
-        Ok(Err(e)) => eprintln!("Int::parse_structured('-5') ERR = {:?}", e),
-        Err(p) => {
-            if let Some(s) = p.downcast_ref::<String>() {
-                eprintln!("PANIC: {}", s);
-            } else if let Some(s) = p.downcast_ref::<&'static str>() {
-                eprintln!("PANIC: {}", s);
-            } else {
-                eprintln!("PANIC: unknown payload");
-            }
-        },
-    }
+    let parsed = Int::parse_structured("-5").expect("`-5` is an atomic negative Int literal");
+    eprintln!("Int::parse_structured('-5') = {:?}", parsed);
+    assert_eq!(format!("{}", parsed), "-5");
 }
 
 #[test]

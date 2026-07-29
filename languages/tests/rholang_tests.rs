@@ -627,6 +627,24 @@ fn reachable_normal_form_displays(
 /// apply — see the ⚠ note on [`bag_multiset_eq`] for the vacuity this helper used to inherit, and
 /// [`comparator_integrity`] for the tests that pin the guarantee.
 fn assert_reduces_to(input: &str, expected: &str) {
+    if let Err(diagnosis) = check_reduces_to(input, expected) {
+        panic!("{diagnosis}");
+    }
+}
+
+/// The DECISION [`assert_reduces_to`] makes, as a value.
+///
+/// Split out so [`comparator_integrity`] can prove the comparator is able to answer
+/// `false` WITHOUT provoking a panic: this workspace builds `dev`/`test` under
+/// cranelift, where a deliberate panic is not reliably catchable and can abort the
+/// test process outright instead of being observed.
+///
+/// # Errors
+///
+/// `Err(diagnosis)` — the message [`assert_reduces_to`] raises, listing every
+/// reachable normal form — iff no reachable normal form matches `expected` under any
+/// of the disjuncts below.
+fn check_reduces_to(input: &str, expected: &str) -> Result<(), String> {
     let (results, initial_id) = run_with_initial(input);
     let nfs = reachable_normal_form_displays(&results, initial_id);
 
@@ -656,13 +674,15 @@ fn assert_reduces_to(input: &str, expected: &str) {
             || bag_multiset_eq(nf, &expected_singleton_par)
     });
 
-    assert!(
-        found,
+    if found {
+        return Ok(());
+    }
+    Err(format!(
         "Expected `{input}` to reduce to `{expected}`\n  \
          expected (parsed, rendered): `{expected_display}`\n  \
          reachable normal forms ({}): {nfs:#?}",
         nfs.len(),
-    );
+    ))
 }
 
 /// Assert that `input` has a reachable normal form whose DISPLAY is EXACTLY `expected_display`
@@ -1115,18 +1135,51 @@ mod comparator_integrity {
     use super::*;
 
     /// The exact measured vacuity witness: a false claim must FAIL.
+    ///
+    /// ⚠ Formerly `#[should_panic(expected = "Expected `1 + 2` to reduce to `999`")]`.
+    /// The decision is now taken from [`check_reduces_to`], the function
+    /// [`assert_reduces_to`] delegates to, so no panic is provoked — this workspace
+    /// builds `dev`/`test` under cranelift, where a deliberate panic can abort the
+    /// test process rather than being observed. What it distinguishes is UNCHANGED
+    /// (the false claim is refused, the true one is accepted) and then some: the
+    /// diagnosis is inspected as a string, so the test now also requires the message
+    /// to name the reachable normal forms it saw instead of merely starting with the
+    /// right prefix.
     #[test]
-    #[should_panic(expected = "Expected `1 + 2` to reduce to `999`")]
     fn assert_reduces_to_rejects_a_false_expectation() {
-        assert_reduces_to("1 + 2", "999");
+        let diagnosis = check_reduces_to("1 + 2", "999")
+            .expect_err("`1 + 2` does not reduce to `999`; the comparator must say so");
+        assert!(
+            diagnosis.contains("Expected `1 + 2` to reduce to `999`"),
+            "the diagnosis must name the claim it refused: {diagnosis}"
+        );
+        assert!(
+            diagnosis.contains("reachable normal forms"),
+            "the diagnosis must show what WAS reachable, or it cannot be acted on: \
+             {diagnosis}"
+        );
+
+        // ★ ANTI-VACUITY: the SAME comparator on the TRUE claim answers yes. Without
+        // this cell a comparator that refuses everything would satisfy the assertion
+        // above — which is the mirror image of the `None == None` vacuity this module
+        // was written for.
+        check_reduces_to("1 + 2", "3").expect("`1 + 2` DOES reduce to `3`");
     }
 
     /// A second witness in a different shape (collection vs. scalar), so a fix that only
     /// special-cases integers cannot pass this module.
     #[test]
-    #[should_panic(expected = "Expected `[1, 2, 3]` to reduce to")]
     fn assert_reduces_to_rejects_a_false_collection_expectation() {
-        assert_reduces_to("[1, 2, 3]", "Set(9)");
+        let diagnosis = check_reduces_to("[1, 2, 3]", "Set(9)")
+            .expect_err("a list is not that set; the comparator must say so");
+        assert!(
+            diagnosis.contains("Expected `[1, 2, 3]` to reduce to"),
+            "the diagnosis must name the claim it refused: {diagnosis}"
+        );
+
+        // ★ ANTI-VACUITY on the collection leg specifically.
+        check_reduces_to("[1, 2, 3]", "[1, 2, 3]")
+            .expect("a list IS itself; the collection leg must be able to answer yes");
     }
 
     /// `bag_multiset_eq` is INAPPLICABLE unless both sides are bag literals, and inapplicable

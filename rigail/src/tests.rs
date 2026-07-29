@@ -3074,10 +3074,68 @@ fn csch_7_matrix_star_ref_cyclic_boolean() {
 }
 
 /// `matrix_star_ref` rejects non-square input.
+///
+/// ⚠ Formerly `#[should_panic(expected = "matrix_star_ref: adj must be square")]`.
+/// Squareness is a precondition an external caller can violate, so the refusal is now
+/// a value ([`try_matrix_star_ref`]) and the panicking wrapper is a thin `.expect` over
+/// it. What this distinguishes GREW: the old form could only tell "panicked with a
+/// message starting `matrix_star_ref: adj must be square`" from "did not panic"; it now
+/// separates the wide row from the short row, names WHICH row disagrees and by how
+/// much, and — via the square control — shows the refusal is not simply "refuses
+/// everything".
 #[test]
-#[should_panic(expected = "matrix_star_ref: adj must be square")]
 fn csch_7_matrix_star_ref_rejects_non_square() {
-    let _ = matrix_star_ref(&vec![vec![BooleanWeight::new(false); 3]; 2]);
+    // 2 rows of 3 — order 2, so both rows are too WIDE. Lehmann would silently ignore
+    // column 2 of every row.
+    let wide = try_matrix_star_ref(&vec![vec![BooleanWeight::new(false); 3]; 2])
+        .expect_err("2×3 is not square");
+    assert_eq!(
+        wide,
+        NonSquareMatrix {
+            order: 2,
+            row: 0,
+            row_len: 3
+        }
+    );
+
+    // 3 rows of 2 — order 3, so every row is too SHORT. Lehmann would read out of
+    // bounds. A check written as `row.len() > n` would pass the case above and fail
+    // this one, which is why both are here.
+    let narrow = try_matrix_star_ref(&vec![vec![BooleanWeight::new(false); 2]; 3])
+        .expect_err("3×2 is not square");
+    assert_eq!(
+        narrow,
+        NonSquareMatrix {
+            order: 3,
+            row: 0,
+            row_len: 2
+        }
+    );
+
+    // A RAGGED matrix: rows 0 and 1 are fine, row 2 is not. The reported index must be
+    // the offending row, not always 0 — otherwise the field carries no information.
+    let ragged = try_matrix_star_ref(&vec![
+        vec![BooleanWeight::new(false); 3],
+        vec![BooleanWeight::new(false); 3],
+        vec![BooleanWeight::new(false); 1],
+    ])
+    .expect_err("a ragged matrix is not square");
+    assert_eq!(
+        ragged,
+        NonSquareMatrix {
+            order: 3,
+            row: 2,
+            row_len: 1
+        }
+    );
+
+    // ★ ANTI-VACUITY + wrapper agreement: the square matrix is accepted, and the
+    // panicking wrapper every production caller uses returns exactly what the fallible
+    // entry point does. Without this, moving the check into `try_…` alone would leave
+    // `matrix_star_ref` free to accept the rejected shapes.
+    let square = vec![vec![BooleanWeight::new(false); 3]; 3];
+    let accepted = try_matrix_star_ref(&square).expect("3×3 is square");
+    assert_eq!(accepted, matrix_star_ref(&square));
 }
 
 /// CSCH-8: `LexicographicWeight::star` returns `one_ref()` (idempotent

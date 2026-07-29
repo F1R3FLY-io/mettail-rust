@@ -307,15 +307,46 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     (code, stats)
 }
 
-/// Run the full lexer generation pipeline with AL02 hybrid gating.
+/// Run the full lexer generation pipeline with AL02 hybrid gating, panicking on a
+/// grammar the soundness gates reject.
 ///
-/// Same as [`generate_lexer_as_string`] but accepts the `hybrid_lexer` optimization gate.
-/// When true and the DFA exceeds the direct-coded threshold, hot states (BFS depth ≤ 2)
-/// are direct-coded while cold states use compressed table lookup.
+/// A thin wrapper over [`try_generate_lexer_as_string_hybrid`], which is where the
+/// rejection is *decided*. The wrapper exists because the current caller
+/// ([`crate::pipeline`]) runs inside the `#[proc_macro_error]` `language!` expansion,
+/// where a panic surfaces as a compile error. Anything that wants to *inspect* a
+/// rejection — a test, or a future caller emitting `compile_error!` directly — must
+/// call the fallible entry point instead: a panic raised in this workspace's
+/// cranelift-compiled proc macro does not unwind across the `proc_macro` bridge and
+/// aborts `rustc` with no diagnostic at all.
 pub fn generate_lexer_as_string_hybrid(
     input: &LexerInput,
     hybrid_lexer: bool,
 ) -> (String, LexerStats) {
+    match try_generate_lexer_as_string_hybrid(input, hybrid_lexer) {
+        Ok(generated) => generated,
+        Err(rejection) => panic!("{}", rejection),
+    }
+}
+
+/// Run the full lexer generation pipeline with AL02 hybrid gating, **returning** the
+/// grammar-level rejection rather than raising it.
+///
+/// Same as [`generate_lexer_as_string`] but accepts the `hybrid_lexer` optimization gate.
+/// When true and the DFA exceeds the direct-coded threshold, hot states (BFS depth ≤ 2)
+/// are direct-coded while cold states use compressed table lookup.
+///
+/// # Errors
+///
+/// `Err(diagnostic)` iff the grammar fails one of the two modal soundness gates —
+/// [`check_dui_soundness`] (a DFA state accepting tokens with *different* mode effects
+/// at one position, which makes the active mode path-dependent) or
+/// [`check_channel_soundness`] (co-accepts disagreeing on their token channel, which
+/// makes the same span both trivia and a parse token). The diagnostic is the
+/// user-facing message, ready to be handed to `compile_error!` or `panic!`.
+pub fn try_generate_lexer_as_string_hybrid(
+    input: &LexerInput,
+    hybrid_lexer: bool,
+) -> Result<(String, LexerStats), String> {
     // Stage tracer gated by the `walker-trace` feature + `PRATTAIL_MACRO_TRACE`;
     // the env read compiles out on the default build (feature off ⇒ `trace` is a
     // constant `false` and every `stage!` body — including its `$val` operands —
@@ -458,19 +489,16 @@ pub fn generate_lexer_as_string_hybrid(
         // which would make the post-position mode depend on the lattice path.
         // The check is a no-op for every non-modal grammar (no token carries a
         // push/pop effect, so no state can conflict). A violation is a hard
-        // rejection: `generate_lexer` runs inside the `#[proc_macro_error]`
-        // language! expansion, so the panic surfaces as a clear compile error.
-        if let Err(msg) = check_dui_soundness("default", &min_dfa, &input.custom_tokens) {
-            panic!("{}", msg);
-        }
+        // rejection, returned to the caller: the panicking wrapper
+        // `generate_lexer_as_string_hybrid` runs inside the `#[proc_macro_error]`
+        // language! expansion, where it surfaces as a clear compile error.
+        check_dui_soundness("default", &min_dfa, &input.custom_tokens)?;
         for mode_result in &mode_results {
-            if let Err(msg) = check_dui_soundness(
+            check_dui_soundness(
                 &mode_result.name,
                 &mode_result.min_dfa,
                 &mode_result.custom_tokens,
-            ) {
-                panic!("{}", msg);
-            }
+            )?;
         }
 
         // Task #18: the analogous CHANNEL soundness check. A DFA state whose
@@ -478,17 +506,13 @@ pub fn generate_lexer_as_string_hybrid(
         // span would be both trivia and a parse token), so reject the grammar at
         // COMPILE time rather than silently picking one. A no-op for every
         // grammar with no `-> CHANNEL` annotation.
-        if let Err(msg) = check_channel_soundness("default", &min_dfa, &input.custom_tokens) {
-            panic!("{}", msg);
-        }
+        check_channel_soundness("default", &min_dfa, &input.custom_tokens)?;
         for mode_result in &mode_results {
-            if let Err(msg) = check_channel_soundness(
+            check_channel_soundness(
                 &mode_result.name,
                 &mode_result.min_dfa,
                 &mode_result.custom_tokens,
-            ) {
-                panic!("{}", msg);
-            }
+            )?;
         }
 
         // Merge all mode token kinds into a combined list for the Token enum
@@ -521,7 +545,7 @@ pub fn generate_lexer_as_string_hybrid(
         ambiguity_info,
     };
 
-    (code, stats)
+    Ok((code, stats))
 }
 
 /// The lexer-mode effect a token's accept carries (L9-2 DUI analysis).
@@ -1059,13 +1083,25 @@ mod dui_tests {
         );
     }
 
+    /// End-to-end: a modal grammar whose default mode has the "!" push/plain conflict
+    /// is rejected by the REAL pipeline the `language!` macro drives — NFA → subset
+    /// construction → minimisation → the mode-effect gate — not by calling
+    /// [`check_dui_soundness`] on a hand-built DFA (which
+    /// `dui_real_pipeline_same_pattern_conflict_rejected` above already does).
+    ///
+    /// ⚠ This used to be a `#[should_panic]` test. It is not any more, and could not
+    /// stay one: this workspace builds the proc macro under cranelift
+    /// (`[profile.dev] codegen-backend = "cranelift"`), where a `panic!` does not
+    /// unwind across the `proc_macro` bridge — `rustc` aborts with
+    /// `fatal runtime error: Rust cannot catch foreign exceptions` and prints
+    /// nothing. What the test distinguishes is UNCHANGED and then some: before it
+    /// could only tell "some panic whose message contains `DUI violation`" from "no
+    /// panic"; it now separates rejection from acceptance on the same input, pins
+    /// BOTH conflicting token names in the diagnostic, and — via the control below —
+    /// requires the rejection to be attributable to the conflict rather than to
+    /// running the pipeline at all.
     #[test]
-    #[should_panic(expected = "DUI violation")]
     fn dui_generate_lexer_rejects_violation_grammar() {
-        // End-to-end: a modal grammar whose default mode has the "!" push/plain
-        // conflict is rejected by generate_lexer_as_string_hybrid — the
-        // modal-capable pipeline the language! macro uses. The hard rejection is
-        // a panic that surfaces as a clear compile error under #[proc_macro_error].
         let input = LexerInput {
             language_name: "DuiViolation".to_string(),
             terminals: Vec::new(),
@@ -1082,6 +1118,31 @@ mod dui_tests {
             }],
             reserved_kinds: ReservedKeywords::default(),
         };
-        let _ = generate_lexer_as_string_hybrid(&input, false);
+        let rejection = try_generate_lexer_as_string_hybrid(&input, false)
+            .expect_err("the `!` push/plain conflict must be rejected end-to-end");
+        assert!(
+            rejection.contains("DUI violation"),
+            "the pipeline rejected the grammar, but not as a DUI violation: {rejection}"
+        );
+        assert!(
+            rejection.contains("PushBang") && rejection.contains("PlainBang"),
+            "the diagnostic must name BOTH conflicting tokens, or it cannot be acted on: \
+             {rejection}"
+        );
+
+        // ★ ANTI-VACUITY. Drop `PlainBang` — the ONLY change — and the same pipeline on
+        // the same shape of input must SUCCEED. Without this cell the assertion above
+        // would also be satisfied by a pipeline that rejects every modal grammar, or one
+        // that fails for an unrelated reason and happens to mention the phrase.
+        let conformant = LexerInput {
+            custom_tokens: vec![dui_spec("PushBang", "!", Some("inner"), false)],
+            ..input
+        };
+        let (code, _stats) = try_generate_lexer_as_string_hybrid(&conformant, false)
+            .expect("removing the conflicting token must make the same grammar generable");
+        assert!(
+            !code.is_empty(),
+            "the conformant control must actually emit a lexer, not an empty string"
+        );
     }
 }

@@ -23761,22 +23761,18 @@ mod tests {
         assert_eq!(all, fam_sorted);
     }
 
-    /// u5 (A6.2): the duplicate-occurrence tripwire on a synthetic
-    /// zero-width flat carrying the same OR-node twice, exercised through
-    /// the full demand path. Debug builds PIN the `debug_assert` firing
-    /// via the harness-level `should_panic` (an in-test `catch_unwind`
-    /// CANNOT catch it under the workspace's cranelift dev profile —
-    /// cranelift emits no catch pads, so the unwind sails through
-    /// locally-monomorphized catches to libtest's LLVM-compiled one);
-    /// release builds run past the compiled-out assert and PIN the
-    /// counter halves (counted BEFORE the assert) plus the
-    /// last-selection collapse.
-    #[test]
-    #[cfg_attr(
-        debug_assertions,
-        should_panic(expected = "duplicate OR-node occurrence in one flat")
-    )]
-    fn kbest_u5_dup_flat_occurrence_tripwire() {
+    /// The env var that puts a re-executed test binary into u5 child mode.
+    const KBEST_U5_CHILD: &str = "PRATTAIL_KBEST_U5_DUP_FLAT_CHILD";
+
+    /// The u5 SUBJECT, factored out so the in-process (release) reading and the
+    /// child-process (debug) reading drive a byte-identical construction. A synthetic
+    /// zero-width flat carrying the SAME OR-node twice, demanded through the full
+    /// `cgll_kbest_next` path.
+    fn kbest_u5_drive() -> (
+        KbestDemandOutcome,
+        KbestState<LexicographicWeight>,
+        crate::sppf::SppfId,
+    ) {
         let mut walker = kbest_walker(true);
         let z = walker.sppf.intern_symbol(CGLL_BIN_TAG, 5, 5);
         let z1 = walker
@@ -23790,7 +23786,7 @@ mod tests {
         walker.sppf.link_packing_to_symbol(p, pk_zz);
         let mut state: KbestState<LexicographicWeight> = KbestState::new();
         let mut fdepths = rustc_hash::FxHashMap::default();
-        // Debug: panics inside this demand with the pinned message.
+        // ⚠ DEBUG: the tripwire's `debug_assert!` fires INSIDE this call.
         let outcome = walker.cgll_kbest_next(
             &mut state,
             &mut fdepths,
@@ -23800,29 +23796,122 @@ mod tests {
             true,
             None,
         );
-        // Release-only from here (the tripwire counted, the walk kept the
-        // last selection — today's CHOSEN SppfId-keyed collapse — and the
-        // PAIR action fired over the collapsed singleton).
-        assert_eq!(outcome, KbestDemandOutcome::Available);
-        assert!(
-            state.stats.dup_flat_occurrence >= 1,
-            "the tripwire counter must fire in every build profile"
-        );
-        assert!(
-            state
-                .nodes
-                .get(&p)
-                .is_some_and(|n| n.dup_flat_occurrence >= 1),
-            "per-node attribution of the tripwire"
-        );
-        let (vals, _) = {
-            let out = state
+        (outcome, state, p)
+    }
+
+    /// u5 (A6.2): the duplicate-occurrence tripwire on a synthetic zero-width flat
+    /// carrying the same OR-node twice, exercised through the full demand path.
+    ///
+    /// The tripwire has TWO halves and this test pins both, one per build profile:
+    ///
+    /// | profile | half pinned | how |
+    /// |---|---|---|
+    /// | `debug_assertions` | the tripwire is **LOUD** | a CHILD PROCESS runs the subject and must die naming the tripwire |
+    /// | release | the tripwire is **COUNTED** | in-process; the `debug_assert` is compiled out, so the counters (incremented BEFORE it) and the last-selection collapse are readable |
+    ///
+    /// ⚠ Formerly `#[cfg_attr(debug_assertions, should_panic(expected = "…"))]`.
+    /// A deliberate panic cannot be expected here: `prattail` is compiled under
+    /// cranelift for `dev`/`test`, which emits no catch pads — the unwind does not
+    /// reach libtest's LLVM-compiled interceptor, and the process aborts instead of
+    /// the test passing. (The old doc comment recorded exactly this for the in-test
+    /// `catch_unwind` case; the harness-level attribute is the same mechanism one
+    /// frame further out.) A subprocess is the only in-band way to observe an abort,
+    /// which is why the FFI-boundary probe in the sibling f1r3node tree
+    /// (`rspace++/libs/rspace_rhotypes/tests/ffi_absent_required_child.rs`) is built
+    /// the same way.
+    ///
+    /// What it distinguishes, before and after: STRICTLY MORE. Before, debug builds
+    /// checked only that *a* panic carrying that substring escaped, and never reached
+    /// a single one of the counter assertions. Now the debug reading additionally
+    /// requires the child to have got as far as the demand (so a child that died on
+    /// startup, or on an unrelated earlier panic, fails loudly instead of counting as
+    /// a pass), and requires it NOT to survive; and the counter half still runs
+    /// verbatim under release.
+    #[test]
+    fn kbest_u5_dup_flat_occurrence_tripwire() {
+        if cfg!(debug_assertions) {
+            if std::env::var(KBEST_U5_CHILD).is_ok() {
+                // ── child: reach the demand, then die inside it ──────────────
+                println!("U5_CHILD_REACHED_DEMAND=true");
+                let (outcome, state, _) = kbest_u5_drive();
+                // Only reachable if the tripwire went silent. Say so in the
+                // child's own words rather than exiting quietly.
+                println!(
+                    "U5_CHILD_SURVIVED=true outcome={outcome:?} dup={}",
+                    state.stats.dup_flat_occurrence
+                );
+                return;
+            }
+
+            // ── parent ───────────────────────────────────────────────────────
+            // `module_path!()` is `<crate>::…::tests`; libtest's `--exact` filter
+            // wants the path WITHOUT the crate name.
+            let module = module_path!();
+            let test_path = format!(
+                "{}::kbest_u5_dup_flat_occurrence_tripwire",
+                module.split_once("::").map_or(module, |(_, rest)| rest)
+            );
+            let exe = std::env::current_exe().expect("the test binary knows its own path");
+            let output = std::process::Command::new(exe)
+                .env(KBEST_U5_CHILD, "1")
+                .args([&test_path, "--exact", "--nocapture", "--test-threads=1"])
+                .output()
+                .expect("the child test process spawns");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            // ★ ANTI-VACUITY: the child must have reached the subject. Without this
+            // a child that failed to start — wrong filter, missing binary, panic in
+            // `kbest_walker` — would satisfy "it died" for the wrong reason.
+            assert!(
+                stdout.contains("U5_CHILD_REACHED_DEMAND=true"),
+                "the child never reached the demand, so it measured nothing.\n\
+                 --- child stdout ---\n{stdout}\n--- child stderr ---\n{stderr}"
+            );
+            assert!(
+                !stdout.contains("U5_CHILD_SURVIVED=true"),
+                "★ the duplicate-occurrence tripwire did NOT fire under \
+                 `debug_assertions`. A duplicate OR-node occurrence in one flat is \
+                 now silent in debug builds, and this guard no longer measures \
+                 anything — re-derive it.\n--- child stdout ---\n{stdout}"
+            );
+            assert!(
+                !output.status.success(),
+                "the child exited successfully; the tripwire is not fatal in debug.\n\
+                 --- child stdout ---\n{stdout}\n--- child stderr ---\n{stderr}"
+            );
+            // The panic hook runs before the unwind is initiated, so the message is
+            // on stderr even when cranelift then aborts the process.
+            assert!(
+                stderr.contains("duplicate OR-node occurrence in one flat"),
+                "the child died, but not at the tripwire.\n--- child stderr ---\n{stderr}"
+            );
+        } else {
+            // ── release: the `debug_assert` is compiled out, so the walk runs past
+            // the tripwire and both counter halves plus the collapse are readable.
+            let (outcome, state, p) = kbest_u5_drive();
+            assert_eq!(outcome, KbestDemandOutcome::Available);
+            assert!(
+                state.stats.dup_flat_occurrence >= 1,
+                "the tripwire counter must fire in every build profile"
+            );
+            assert!(
+                state
+                    .nodes
+                    .get(&p)
+                    .is_some_and(|n| n.dup_flat_occurrence >= 1),
+                "per-node attribution of the tripwire"
+            );
+            let vals = state
                 .sub(p, KbestOrderKey::Election)
                 .map(|s| s.list.iter().map(kbest_entry_i64).collect::<Vec<_>>())
                 .unwrap_or_default();
-            (out, ())
-        };
-        assert_eq!(vals.first().map(|(v, _)| *v), Some(101), "PAIR over the collapsed [1, 1]");
+            assert_eq!(
+                vals.first().map(|(v, _)| *v),
+                Some(101),
+                "PAIR over the collapsed [1, 1]"
+            );
+        }
     }
 
     /// u6 (A8 option B): OFF-Scan vs ON-Scan kt diff-test on shared
@@ -24449,13 +24538,83 @@ mod tests {
         }
     }
 
+    /// The 40-bit position domain has an EXACT boundary, and the infallible `pack`
+    /// wrapper agrees with `try_pack` everywhere inside it.
+    ///
+    /// ⚠ Formerly `#[should_panic(expected = "overflows 40 bits")]`, calling
+    /// `pack(POS_LIMIT, 0, 0)`. Two reasons that form is gone:
+    ///
+    /// 1. **It cannot survive this workspace's build.** `prattail` is compiled under
+    ///    cranelift for `dev`/`test`; a panic there does not unwind reliably, so a
+    ///    deliberate panic is a coin flip between a passing test and a process abort
+    ///    with no diagnostic.
+    /// 2. **It was guarding an unreachable arm.** MEASURED: `PackedDispatchConfig::pack`
+    ///    has NO production caller. Every live call site is inside a `#[cfg(test)]`
+    ///    module (`cursor_store.rs`, `tomita_frontier.rs`, and this file); the one
+    ///    non-test caller, `extract_dispatch_config`, is commented out above
+    ///    (Sig-B/#9 M1 superseded it with `extract_proj_descriptor`). No input can
+    ///    reach that `panic!`, which makes the domain boundary — not the panic — the
+    ///    property worth pinning.
+    ///
+    /// What it distinguishes, before and after: the regression this guards against is
+    /// a "fix" that MASKS an out-of-domain position (`pos & POS_MASK`) instead of
+    /// refusing it, silently aliasing two distinct dispatch configurations onto one
+    /// key and re-opening the cross-category live-lock `PackedDispatchConfig` exists to
+    /// close. That regression is still caught, by
+    /// `packed_dispatch_config_try_pack_rejects_overflow_position_when_representable`
+    /// (masking would make `try_pack` answer `Some`) together with the aliasing check
+    /// below. What is no longer directly observed is that the `pack` WRAPPER raises
+    /// rather than truncates — an unobservable distinction for a function whose only
+    /// refusal channel is a panic, and a vacuous one while it has no production caller.
     #[cfg(target_pointer_width = "64")]
     #[test]
-    #[should_panic(expected = "overflows 40 bits")]
-    fn packed_dispatch_config_pack_panics_on_overflow_position_when_representable() {
+    fn packed_dispatch_config_pins_the_exact_forty_bit_position_boundary() {
         let first_invalid =
             usize::try_from(PackedDispatchConfig::POS_LIMIT).expect("40-bit pos fits usize");
-        let _ = PackedDispatchConfig::pack(first_invalid, 0, 0);
+        let last_valid = first_invalid - 1;
+
+        // The boundary is EXACTLY here: one below packs, the boundary itself does not.
+        // A domain off by one in either direction fails one of these two.
+        assert!(
+            PackedDispatchConfig::try_pack(last_valid, 0, 0).is_some(),
+            "POS_LIMIT-1 is the largest in-domain position and must pack"
+        );
+        assert!(
+            PackedDispatchConfig::try_pack(first_invalid, 0, 0).is_none(),
+            "POS_LIMIT itself is out of domain and must be refused, not masked"
+        );
+
+        // ★ THE ALIASING CHECK. If refusal were ever replaced by masking, `POS_LIMIT`
+        // would collide with position 0 — the exact defect a 40-bit key must not have.
+        // Stated as a property of the packed word so it holds however the mask is
+        // spelled.
+        let zero = PackedDispatchConfig::try_pack(0, 0, 0).expect("0 is in domain");
+        assert_eq!(zero.pos(), 0, "position 0 round-trips");
+        for aliased in [
+            first_invalid,
+            first_invalid + 1,
+            first_invalid.saturating_mul(2),
+            usize::MAX,
+        ] {
+            assert!(
+                PackedDispatchConfig::try_pack(aliased, 0, 0).is_none(),
+                "position {aliased} is outside the 40-bit domain and must be refused; \
+                 masking it would alias onto {}",
+                aliased & (PackedDispatchConfig::POS_LIMIT as usize - 1)
+            );
+        }
+
+        // The infallible wrapper is the fallible one on the accepted domain — checked
+        // at the extremes and at the boundary-adjacent values, where an off-by-one in
+        // the wrapper would show up first.
+        for pos in [0usize, 1, 2, last_valid - 1, last_valid] {
+            assert_eq!(
+                PackedDispatchConfig::pack(pos, 17, 23),
+                PackedDispatchConfig::try_pack(pos, 17, 23)
+                    .expect("in-domain position packs"),
+                "pack and try_pack disagree at position {pos}"
+            );
+        }
     }
 
 

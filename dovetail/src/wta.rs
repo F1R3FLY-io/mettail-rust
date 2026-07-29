@@ -92,10 +92,54 @@ where
     /// use the fixpoint; non-trivial (cyclic) SCCs are closed by rigail's
     /// Newton-SCC solver. This is the exact `⊕`-aggregate over all derivations,
     /// the admissible 1-best for the best-first extractor.
+    ///
+    /// # Panics
+    ///
+    /// If a packing on a cycle carries a weight outside the closed domain — see
+    /// [`try_inside_weights_closed`](Self::try_inside_weights_closed), which reports
+    /// that as a value instead.
     pub fn inside_weights_closed(&self) -> HashMap<EClassId, W> {
         compute_inside_closed(self.egraph, &self.weigh)
     }
+
+    /// [`inside_weights_closed`](Self::inside_weights_closed), reporting a
+    /// non-closable weight domain as [`InsideClosureError`] instead of panicking.
+    pub fn try_inside_weights_closed(
+        &self,
+    ) -> Result<HashMap<EClassId, W>, InsideClosureError> {
+        try_compute_inside_closed(self.egraph, &self.weigh)
+    }
 }
+
+/// Why an exact cyclic inside closure could not be computed.
+///
+/// The closure of a cycle is the `⊕`-aggregate over every unfolding of it. That
+/// aggregate exists only when the recursive transition weight lies in the semiring's
+/// *closed* domain — [`CommutativeStarSemiring::valid_closed_weight`]. Under the
+/// tropical semiring `(min, +)` a negative recursive weight makes each extra
+/// unfolding strictly cheaper, so the aggregate is `−∞` (the fixpoint iteration
+/// diverges), and `NaN` is not ordered at all so `min` has no meaning on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InsideClosureError {
+    /// A packing participating in a cycle carried a recursive transition weight
+    /// outside the closed domain (negative or NaN under the tropical semiring).
+    UnclosableRecursiveWeight,
+}
+
+impl std::fmt::Display for InsideClosureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // ⚠ Byte-identical to the message the `assert!` this replaced carried, so
+            // the panicking wrapper's diagnostic is unchanged for every caller.
+            InsideClosureError::UnclosableRecursiveWeight => f.write_str(
+                "cyclic inside closure requires non-negative, non-NaN recursive transition weights or semiring zero",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InsideClosureError {}
 
 /// The acyclic inside-weight fixpoint (exact for acyclic e-graphs; a partial
 /// estimate on cycles). A free function so [`EGraphDfta::inside_weights`], the
@@ -161,7 +205,34 @@ where
 /// correctness (rigail) yields the exact least-fixpoint aggregate for the n-D
 /// multi-call case. Commutativity of `⊗` is the precondition for the out-of-SCC
 /// factoring and is enforced by [`CommutativeStarSemiring`].
+/// # Panics
+///
+/// If the e-graph carries a cycle whose recursive transition weight is outside the
+/// closed domain. [`try_compute_inside_closed`] is the same computation reporting
+/// that as an [`InsideClosureError`] value.
 pub fn compute_inside_closed<L, W, F>(egraph: &EGraph<L>, weigh: &F) -> HashMap<EClassId, W>
+where
+    L: Clone + Eq + std::hash::Hash,
+    W: CommutativeStarSemiring,
+    F: Fn(&ENode<L>) -> W,
+{
+    match try_compute_inside_closed(egraph, weigh) {
+        Ok(inside) => inside,
+        Err(err) => panic!("{}", err),
+    }
+}
+
+/// [`compute_inside_closed`], returning [`InsideClosureError`] rather than raising it.
+///
+/// # Errors
+///
+/// [`InsideClosureError::UnclosableRecursiveWeight`] iff some packing that
+/// participates in a cycle carries a weight outside the semiring's closed domain, for
+/// which no finite `⊕`-aggregate over cycle unfoldings exists.
+pub fn try_compute_inside_closed<L, W, F>(
+    egraph: &EGraph<L>,
+    weigh: &F,
+) -> Result<HashMap<EClassId, W>, InsideClosureError>
 where
     L: Clone + Eq + std::hash::Hash,
     W: CommutativeStarSemiring,
@@ -172,12 +243,12 @@ where
         if scc_classes.len() == 1 && !scc::has_self_loop(egraph, scc_classes[0]) {
             continue; // trivial SCC: the acyclic value is already exact
         }
-        let solved = solve_scc(egraph, weigh, &scc_classes, &inside);
+        let solved = solve_scc(egraph, weigh, &scc_classes, &inside)?;
         for (i, &q) in scc_classes.iter().enumerate() {
             inside.insert(q, solved[i]);
         }
     }
-    inside
+    Ok(inside)
 }
 
 /// Build the `PackingFactored` system for one SCC and solve it via Newton-SCC.
@@ -186,7 +257,7 @@ fn solve_scc<L, W, F>(
     weigh: &F,
     scc_classes: &[EClassId],
     inside: &HashMap<EClassId, W>,
-) -> Vec<W>
+) -> Result<Vec<W>, InsideClosureError>
 where
     L: Clone + Eq + std::hash::Hash,
     W: CommutativeStarSemiring,
@@ -212,11 +283,8 @@ where
                     outside_product = outside_product.times(&w_c);
                 }
             }
-            if !in_scc_children.is_empty() {
-                assert!(
-                    outside_product.valid_closed_weight(),
-                    "cyclic inside closure requires non-negative, non-NaN recursive transition weights or semiring zero"
-                );
+            if !in_scc_children.is_empty() && !outside_product.valid_closed_weight() {
+                return Err(InsideClosureError::UnclosableRecursiveWeight);
             }
             packings.push(PackingFactored {
                 target_i: i,
@@ -225,7 +293,7 @@ where
             });
         }
     }
-    solve_scc_weights_newton(scc_classes.len(), &packings, 64)
+    Ok(solve_scc_weights_newton(scc_classes.len(), &packings, 64))
 }
 
 #[cfg(test)]
@@ -349,10 +417,16 @@ mod tests {
         assert_eq!(inside[&eg.find(bad)], TropicalWeight(-1.0));
     }
 
+    /// A negative weight ON A CYCLE has no `⊕`-aggregate under `(min, +)` — each extra
+    /// unfolding is strictly cheaper — so the closure REFUSES rather than returning a
+    /// number nobody can interpret.
+    ///
+    /// ⚠ Formerly `#[should_panic]`. The refusal is now a value, so the test names the
+    /// exact variant instead of substring-matching a panic message, and the control
+    /// below fixes what the refusal is attributable to. Strictly more discriminating:
+    /// `#[should_panic(expected = "…")]` also passed if the panic came from anywhere
+    /// else in the call whose message happened to contain that prefix.
     #[test]
-    #[should_panic(
-        expected = "cyclic inside closure requires non-negative, non-NaN recursive transition weights"
-    )]
     fn closed_inside_rejects_negative_recursive_tropical_weights() {
         fn weigh_negative_recursive(n: &ENode<String>) -> TropicalWeight {
             match n.op.as_str() {
@@ -368,13 +442,30 @@ mod tests {
         eg.merge(base, f);
         eg.rebuild();
         let dfta = EGraphDfta::new(&eg, weigh_negative_recursive);
-        let _ = dfta.inside_weights_closed();
+        assert_eq!(
+            dfta.try_inside_weights_closed().unwrap_err(),
+            InsideClosureError::UnclosableRecursiveWeight
+        );
+
+        // ★ ANTI-VACUITY: the SAME e-graph with the sign flipped closes fine, so the
+        // refusal is the weight's doing and not the cycle's.
+        fn weigh_positive_recursive(n: &ENode<String>) -> TropicalWeight {
+            match n.op.as_str() {
+                "f" => TropicalWeight(1.0),
+                "base" => TropicalWeight(5.0),
+                _ => TropicalWeight(0.0),
+            }
+        }
+        let ok = EGraphDfta::new(&eg, weigh_positive_recursive)
+            .try_inside_weights_closed()
+            .expect("a non-negative recursive weight on the same cycle closes");
+        assert_eq!(ok[&eg.find(base)], TropicalWeight(5.0));
     }
 
+    /// `NaN` is not ordered, so `min` has no meaning on it; the closure refuses.
+    /// Separate from the negative case because a fix that only tested `w < 0` would
+    /// pass that one and fail this.
     #[test]
-    #[should_panic(
-        expected = "cyclic inside closure requires non-negative, non-NaN recursive transition weights"
-    )]
     fn closed_inside_rejects_nan_recursive_tropical_weights() {
         fn weigh_nan_recursive(n: &ENode<String>) -> TropicalWeight {
             match n.op.as_str() {
@@ -390,6 +481,34 @@ mod tests {
         eg.merge(base, f);
         eg.rebuild();
         let dfta = EGraphDfta::new(&eg, weigh_nan_recursive);
-        let _ = dfta.inside_weights_closed();
+        assert_eq!(
+            dfta.try_inside_weights_closed().unwrap_err(),
+            InsideClosureError::UnclosableRecursiveWeight
+        );
+    }
+
+    /// The panicking wrapper and the fallible entry point decide the SAME thing on the
+    /// SAME input. Without this the refusal could be moved into `try_…` alone and
+    /// `compute_inside_closed` — the name every production caller uses — could quietly
+    /// start accepting the rejected domain.
+    #[test]
+    fn the_panicking_and_fallible_closures_agree_on_the_accepted_domain() {
+        fn weigh_ok(n: &ENode<String>) -> TropicalWeight {
+            match n.op.as_str() {
+                "f" => TropicalWeight(1.0),
+                "base" => TropicalWeight(5.0),
+                _ => TropicalWeight(0.0),
+            }
+        }
+        let mut eg = EGraph::<String>::new();
+        let base = eg.add(ENode::leaf("base".into()));
+        let f = eg.add(ENode::new("f".into(), vec![base]));
+        eg.merge(base, f);
+        eg.rebuild();
+        let dfta = EGraphDfta::new(&eg, weigh_ok);
+        assert_eq!(
+            dfta.inside_weights_closed(),
+            dfta.try_inside_weights_closed().expect("accepted domain")
+        );
     }
 }

@@ -1866,18 +1866,30 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig { cases: 48, max_shrink_iters: 2048, ..ProptestConfig::default() })]
 
-    /// INV-6 (full-module generation) over random grammars. Guarded by
-    /// catch_unwind so that — only in the pre-GAP-1/3 red state — a grammar
-    /// containing an *unclassified* witness rule (which can make
-    /// `generate_wpda_engine_module` panic) is skipped rather than masking the
-    /// delimiter signal. Once the totality gaps are closed no rule is
-    /// unclassified and the guard is a no-op.
+    /// INV-6 (full-module generation) over random grammars.
+    ///
+    /// ⚠ This used to wrap `inv6_no_hardcoded_delims` in `catch_unwind`, skipping any
+    /// grammar whose generation panicked — a guard for the pre-GAP-1/3 red state, in
+    /// which an *unclassified* witness rule could make `generate_wpda_engine_module`
+    /// panic. The guard is gone for two independent reasons:
+    ///
+    /// 1. **It could not work here.** `macros` is compiled under cranelift for
+    ///    `dev`/`test`, which emits no catch pads: a panic raised inside the closure
+    ///    does not reach this `catch_unwind` at all. The `Err` arm was unreachable, so
+    ///    the "skip" it promised never happened — the process would have aborted.
+    /// 2. **It had nothing left to skip.** GAP-1/3 are closed: totality is derived and
+    ///    enforced, so no rule is unclassified and the guard was declared a no-op by
+    ///    its own doc comment.
+    ///
+    /// What it distinguishes, before and after: STRICTLY MORE. Before, a grammar that
+    /// panicked was — nominally — dropped from the sample, so INV-6 was asserted over
+    /// an unknown subset. Now every generated grammar must satisfy INV-6, and a
+    /// grammar that cannot be generated at all is a failure rather than a silent
+    /// abstention.
     #[test]
     fn grammar_generality_props_inv6(lang in arb_language_def()) {
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inv6_no_hardcoded_delims(&lang)));
-        if let Ok(check) = res {
-            prop_assert!(check.is_ok(), "{}", check.unwrap_err());
-        }
+        let check = inv6_no_hardcoded_delims(&lang);
+        prop_assert!(check.is_ok(), "{}", check.unwrap_err());
     }
 }
 

@@ -245,17 +245,36 @@ macro_rules! push_all_legs {
 }
 
 fn report(observations: Vec<Observation>) {
+    if let Err(diagnosis) = check(observations) {
+        panic!("{diagnosis}");
+    }
+}
+
+/// The DECISION [`report`] makes, as a value.
+///
+/// Split out so NC2 below can prove `report` is able to FAIL without provoking a
+/// panic: this workspace builds `dev`/`test` under cranelift, where a deliberate
+/// panic is not reliably catchable and can abort the test process instead of being
+/// observed.
+///
+/// # Errors
+///
+/// `Err(diagnosis)` — the message [`report`] raises, carrying every individual
+/// failure — iff any observation reports a failing leg.
+fn check(observations: Vec<Observation>) -> Result<(), String> {
     let mut failures: Vec<String> = Vec::with_capacity(observations.len());
     for o in &observations {
         failures.extend(o.failures());
     }
-    assert!(
-        failures.is_empty(),
+    if failures.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
         "\n{} of {} round-trip observations failed:\n\n{}\n",
         failures.len(),
         observations.len(),
         failures.join("\n\n"),
-    );
+    ))
 }
 
 mod rho {
@@ -627,18 +646,47 @@ fn negative_control_harness_detects_mismatch() {
     assert!(failures[0].contains("does not parse"), "{failures:#?}");
 }
 
-/// NC2 — `report` actually panics on a failing observation.
+/// NC2 — `report` actually FAILS on a failing observation.
+///
+/// ⚠ Formerly `#[should_panic(expected = "round-trip observations failed")]`. The
+/// decision is now read from [`check`], the function [`report`] delegates to. What it
+/// distinguishes is UNCHANGED (a failing observation is refused, a passing one is not)
+/// and then some: the diagnosis is inspected, so this now also requires the count to
+/// be right and the individual failure text to survive into the message — a `report`
+/// that failed with an empty body used to satisfy the old form.
 #[test]
-#[should_panic(expected = "round-trip observations failed")]
-fn negative_control_report_panics_on_failure() {
-    report(vec![Observation {
+fn negative_control_report_fails_on_failure() {
+    let failing = Observation {
         case: "nc2",
         entry: "synthetic",
         want_surface: "a",
         got_surface: "b".to_string(),
         want_term: "A".to_string(),
         got_term: Ok("A".to_string()),
-    }]);
+    };
+    let diagnosis = check(vec![failing])
+        .expect_err("a moved surface is a failing observation and `report` must say so");
+    assert!(
+        diagnosis.contains("1 of 1 round-trip observations failed"),
+        "the diagnosis must count what failed: {diagnosis}"
+    );
+    assert!(
+        diagnosis.contains("LEG S") && diagnosis.contains("nc2"),
+        "the diagnosis must carry the individual failure, naming the case and the leg: \
+         {diagnosis}"
+    );
+
+    // ★ ANTI-VACUITY: the same helper on a CLEAN observation must pass. Without this
+    // cell a `check` that refused everything would satisfy the assertions above.
+    check(vec![Observation {
+        case: "nc2-control",
+        entry: "synthetic",
+        want_surface: "a",
+        got_surface: "a".to_string(),
+        want_term: "A".to_string(),
+        got_term: Ok("A".to_string()),
+    }])
+    .expect("an observation whose legs both agree is not a failure");
 }
 
 /// NC3 — the corpus is not trivial: it must actually exercise the operand position where
