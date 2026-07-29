@@ -1,8 +1,8 @@
 # Ambient — the `language!` specification for the Cardelli-Gordon ambient calculus, component by component
 
-Last updated: 2026-07-28 · part of the [Language Specification References](README.md) suite
+Last updated: 2026-07-29 · part of the [Language Specification References](README.md) suite
 
-**Subject:** `languages/src/ambient.rs` (75 lines)
+**Subject:** `languages/src/ambient.rs` (135 lines: 19 rule declarations, the rest the C-G verdict commentary audited in [1.2](#12-the-elided-comment-blocks))
 **Audience:** anyone reading this block who needs to know **exactly** how far it is, and is not, the
 calculus of the *Mobile Ambients* paper
 **Method:** every claim below was checked against the DSL (domain-specific language) parser that
@@ -37,7 +37,7 @@ scale. This page assumes those.
 ## Table of contents
 
 1. [The specification under discussion](#1-the-specification-under-discussion)
-2. [What the macro produces from these 75 lines](#2-what-the-macro-produces-from-these-75-lines)
+2. [What the macro produces from these 19 declarations](#2-what-the-macro-produces-from-these-19-declarations)
 3. [`name: Ambient` — the language identifier](#3-name-ambient--the-language-identifier)
 4. [`types { Proc Name }` — the two sorts](#4-types--proc-name---the-two-sorts)
 5. [`terms { … }` — the signature and the concrete syntax](#5-terms-----the-signature-and-the-concrete-syntax)
@@ -56,7 +56,10 @@ scale. This page assumes those.
 ## 1. The specification under discussion
 
 Reproduced verbatim from `languages/src/ambient.rs`, with the line numbers this page cites. The
-crate attributes and the `use` are omitted; the `language!` invocation begins at line 9.
+crate attributes and the `use` are omitted; the `language!` invocation begins at line 9. The
+source's **comment blocks are elided** here and shown as `// ⟨…⟩` markers, which is why the numbers
+jump; [1.2](#12-the-elided-comment-blocks) says what each elided block is and where this page
+audits it.
 
 ```rust
 language! {
@@ -65,55 +68,80 @@ language! {
         Proc                                                                // 12
         Name                                                                // 13
     },                                                                      // 14
-    terms {                                                                 // 15
-        PZero . Proc ::= "0" ;                                              // 16
-                                                                            // 17
-        PIn . Proc ::= "in(" Name "," Proc ")";                             // 18
-        POut . Proc ::= "out(" Name "," Proc ")";                           // 19
-        POpen . Proc ::= "open(" Name "," Proc ")";                         // 20
-                                                                            // 21
-        PAmb . Proc ::= Name "[" Proc "]";                                  // 22
-                                                                            // 23
-        // PNew . Proc ::= "new(" <Name> "," Proc ")";                      // 24
-        PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc;         // 25
-                                                                            // 26
-        PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;               // 27
-    },                                                                      // 28
-    equations {                                                             // 35
-        NewComm . |- (PNew ^x.(PNew ^y.P)) = (PNew ^y.(PNew ^x.P));         // 37
-        ScopeExtrusion . | x # ...rest                                      // 40
+    // ⟨signature C-G alignment header⟩                                     // 15-23
+    terms {                                                                 // 24
+        // ⟨PZero verdict⟩                                                  // 25-27
+        PZero . Proc ::= "0" ;                                              // 28
+
+        // ⟨EXTENSION — capability/prefix fusion⟩                           // 30-53
+        PIn . Proc ::= "in(" Name "," Proc ")";                             // 54
+        POut . Proc ::= "out(" Name "," Proc ")";                           // 55
+        POpen . Proc ::= "open(" Name "," Proc ")";                         // 56
+
+        // ⟨PAmb verdict⟩                                                   // 58
+        PAmb . Proc ::= Name "[" Proc "]";                                  // 59
+
+        // ⟨PNew verdict⟩                                                   // 61-63
+        // PNew . Proc ::= "new(" <Name> "," Proc ")";                      // 64
+        PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc;         // 65
+
+        // ⟨PPar verdict⟩                                                   // 67-70
+        PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;               // 71
+
+        // ⟨ABSENT — replication⟩                                           // 73-76
+    },                                                                      // 77
+    // ⟨equation-block C-G alignment header⟩                                // 78-83
+    equations {                                                             // 84
+        NewComm . |- (PNew ^x.(PNew ^y.P)) = (PNew ^y.(PNew ^x.P));         // 86
+        ScopeExtrusion . | x # ...rest                                      // 89
             |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest}));
-        InNew . | x # N |- (PIn N (PNew ^x.P)) = (PNew ^x.(PIn N P));       // 43
-        OutNew . | x # N |- (POut N (PNew ^x.P)) = (PNew ^x.(POut N P));    // 44
-        OpenNew . | x # N |- (POpen N (PNew ^x.P)) = (PNew ^x.(POpen N P)); // 45
-        AmbNew . | x # N |- (PAmb N (PNew ^x.P)) = (PNew ^x.(PAmb N P));    // 48
-    },                                                                      // 49
-    rewrites {                                                              // 50
-        InRule . |- (PPar {(PAmb N (PPar {(PIn M P) , ...rest1})),          // 53
-                           (PAmb M R), ...rest2})                           // 53
-            ~> (PPar {(PAmb M (PPar {(PAmb N (PPar {P , ...rest1})), R})),  // 54
-                      ...rest2});                                           // 54
+        // ⟨EXTENSION — capability-prefix float⟩                            // 90-91
+        InNew . | x # N |- (PIn N (PNew ^x.P)) = (PNew ^x.(PIn N P));       // 92
+        OutNew . | x # N |- (POut N (PNew ^x.P)) = (PNew ^x.(POut N P));    // 93
+        OpenNew . | x # N |- (POpen N (PNew ^x.P)) = (PNew ^x.(POpen N P)); // 94
+        AmbNew . | x # N |- (PAmb N (PNew ^x.P)) = (PNew ^x.(PAmb N P));    // 97
+    },                                                                      // 98
+    rewrites {                                                              // 99
+        InRule . |- (PPar {(PAmb N (PPar {(PIn M P) , ...rest1})),          // 102
+                           (PAmb M R), ...rest2})                           // 102
+            ~> (PPar {(PAmb M (PPar {(PAmb N (PPar {P , ...rest1})), R})),  // 103
+                      ...rest2});                                           // 103
 
-        OutRule . |- (PAmb M (PPar {(PAmb N (PPar {(POut M P), ...rest1})), // 64
-                                    ...rest2}))                             // 64
-            ~> (PPar {(PAmb N (PPar {P, ...rest1})),                        // 64
-                      (PAmb M (PPar {...rest2}))});                         // 64
+        OutRule . |- (PAmb M (PPar {(PAmb N (PPar {(POut M P), ...rest1})), // 113
+                                    ...rest2}))                             // 113
+            ~> (PPar {(PAmb N (PPar {P, ...rest1})),                        // 113
+                      (PAmb M (PPar {...rest2}))});                         // 113
 
-        OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest})             // 67
-            ~> (PPar {P,Q, ...rest});                                       // 68
+        OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest})             // 117
+            ~> (PPar {P,Q, ...rest});                                       // 118
 
-        ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});   // 70
-        NewCong . | S ~> T |- (PNew ^x.S) ~> (PNew ^x.T);                   // 72
-        AmbCong . | S ~> T |- (PAmb N S) ~> (PAmb N T);                     // 73
-    }                                                                       // 74
-}                                                                           // 75
+        ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});   // 121
+        NewCong . | S ~> T |- (PNew ^x.S) ~> (PNew ^x.T);                   // 126
+        AmbCong . | S ~> T |- (PAmb N S) ~> (PAmb N T);                     // 128
+        // ⟨ABSENT — capability congruence⟩                                 // 130-133
+    }                                                                       // 134
+}                                                                           // 135
 ```
 
-Lines 29–34 — omitted above because they are commentary, not declaration — are the source's own
-statement of the alignment this page audits. They record that the equation block is "the C-G table
-(Mobile Ambients) with three exact axioms and three documented sound extensions", and that every
-float premise is the capture-avoidance condition `x # N`, "never the vacuous-binder condition
-`x # P` the pre-A-S5.4b declaration carried".
+### 1.2 The elided comment blocks
+
+The source carries its own C-G verdict beside every declaration. Those blocks are commentary
+rather than declaration, so the listing above elides them; each is named here with the section of
+this page that audits the claim it makes.
+
+| Lines | Elided block | Audited in |
+|---:|---|---|
+| 15–23 | signature C-G alignment header — names the paper, scopes the fragment to its section 2, and states the three verdict words (`C-G verbatim` / `EXTENSION` / `ABSENT`) used throughout the block | [6.2](#62-signature-correspondence-construct-by-construct) |
+| 25–27 | `PZero` is verbatim as a *term*; the Zero *laws* are absent | [6.4](#64-what-this-fragment-does-not-have) |
+| 30–53 | **EXTENSION — capability/prefix fusion**: what the paper factors, what is fused, why it is conservative over section 2, what it buys and what it forecloses | [6.3](#63-the-extensions-labelled-as-extensions) |
+| 58 | `PAmb` is verbatim | [6.2](#62-signature-correspondence-construct-by-construct) |
+| 61–63 | `PNew` is verbatim, and is the one rule needing the judgement form | [5.3](#53-pnew--the-one-judgement-style-rule) |
+| 67–70 | `PPar` is verbatim, with comm/assoc representational rather than axiomatic | [5.4](#54-ppar--the-collection-rule) |
+| 73–76 | **ABSENT** — replication, and why its absence is load-bearing for the float extensions | [6.4](#64-what-this-fragment-does-not-have) |
+| 78–83 | equation-block C-G alignment header: the equations are "the C-G table (Mobile Ambients) with three exact axioms and three documented sound extensions", and every float premise is the capture-avoidance condition `x # N`, "never the vacuous-binder condition `x # P` the pre-A-S5.4b declaration carried" | [7.1](#71-the-freshness-premise) |
+| 90–91 | **EXTENSION — capability-prefix float**: "NOT C-G axioms — documented sound extensions" | [6.3](#63-the-extensions-labelled-as-extensions) |
+| 100–101, 105–112, 115–116, 120, 123–125, 127 | the per-rewrite C-G citations, one per rule: (Red In), (Red Out) with the A-S5.4b redeclaration note, (Red Open), (Red Par), (Red Res), (Red Amb) | [8](#8-rewrites-----the-reduction-relation) |
+| 130–133 | **ABSENT** — capability congruence, and why its absence is fidelity rather than omission | [6.2](#62-signature-correspondence-construct-by-construct) |
 
 ### 1.1 Notation used in this document
 
@@ -152,7 +180,7 @@ the left and of the DSL on the right, because this page constantly moves between
 
 ---
 
-## 2. What the macro produces from these 75 lines
+## 2. What the macro produces from these 19 declarations
 
 `language!` is a procedural macro. It consumes a theory — the triple $`(\Sigma, E, R)`$ — and emits
 an entire language implementation. For `Ambient` that is **41 non-empty generated Rust modules**
@@ -348,13 +376,13 @@ judgement:          Label . term_context |- concrete_syntax : Category … ;
 
 | Rule | Line | Form | Why |
 |---|---:|---|---|
-| `PZero`, `PIn`, `POut`, `POpen`, `PAmb`, `PPar` | 16–27 | legacy `::=` | six ordinary constructors; the legacy form is terser when there is no binding structure to declare |
-| `PNew` | 25 | judgement `\|-` | a **binder**. Binding structure can only be declared in the judgement form |
+| `PZero`, `PIn`, `POut`, `POpen`, `PAmb`, `PPar` | 28–71 | legacy `::=` | six ordinary constructors; the legacy form is terser when there is no binding structure to declare |
+| `PNew` | 65 | judgement `\|-` | a **binder**. Binding structure can only be declared in the judgement form |
 
-Line 24 makes the reason explicit: it is the *commented-out* legacy attempt,
+Line 64 makes the reason explicit: it is the *commented-out* legacy attempt,
 `// PNew . Proc ::= "new(" <Name> "," Proc ")";`. The legacy form does have a binder item — `<Name>`
 parses to `GrammarItem::Binder` — but it cannot express the **arrow type** that says *what sort the
-body has*. The judgement form's `^x.p:[Name -> Proc]` can. Line 24 is dead text kept for
+body has*. The judgement form's `^x.p:[Name -> Proc]` can. Line 64 is dead text kept for
 legibility, not a pending task.
 
 ![Figure 2 — the Cardelli-Gordon syntax mapped onto this signature](figures/ambient-cg-correspondence.svg)
@@ -527,26 +555,26 @@ identical … as opposed to structurally equivalent".
 
 | C-G construct | This specification | Line | Verdict |
 |---|---|---:|---|
-| $`(\nu n)P`$ restriction | `PNew . ^x.p:[Name -> Proc]` | 25 | **verbatim** — a genuine binder over the `Name` sort |
-| $`0`$ inactivity | `PZero . Proc ::= "0"` | 16 | **verbatim** as a *term*; but see the Zero *laws* in [6.4](#64-what-this-fragment-does-not-have) |
-| $`P \mid Q`$ composition | `PPar . Proc ::= HashBag(Proc) sep "\|"` | 27 | **verbatim**, with comm/assoc **representational** rather than axiomatic |
-| $`n[P]`$ ambient | `PAmb . Proc ::= Name "[" Proc "]"` | 22 | **verbatim** |
-| $`M.P`$ action, with $`M ::= in\ n \mid out\ n \mid open\ n`$ | `PIn` / `POut` / `POpen`, each `Proc ::= "…(" Name "," Proc ")"` | 18–20 | **EXTENSION — fusion.** See [6.3](#63-the-extensions-labelled-as-extensions) |
+| $`(\nu n)P`$ restriction | `PNew . ^x.p:[Name -> Proc]` | 65 | **verbatim** — a genuine binder over the `Name` sort |
+| $`0`$ inactivity | `PZero . Proc ::= "0"` | 28 | **verbatim** as a *term*; but see the Zero *laws* in [6.4](#64-what-this-fragment-does-not-have) |
+| $`P \mid Q`$ composition | `PPar . Proc ::= HashBag(Proc) sep "\|"` | 71 | **verbatim**, with comm/assoc **representational** rather than axiomatic |
+| $`n[P]`$ ambient | `PAmb . Proc ::= Name "[" Proc "]"` | 59 | **verbatim** |
+| $`M.P`$ action, with $`M ::= in\ n \mid out\ n \mid open\ n`$ | `PIn` / `POut` / `POpen`, each `Proc ::= "…(" Name "," Proc ")"` | 54–56 | **EXTENSION — fusion.** See [6.3](#63-the-extensions-labelled-as-extensions) |
 | $`!P`$ replication | *nothing* | — | **ABSENT.** See [6.4](#64-what-this-fragment-does-not-have) |
-| (Struct Res Res) | `NewComm`, premise-free | 37 | **verbatim** |
-| (Struct Res Par) | `ScopeExtrusion`, premise `x # ...rest` | 40 | **verbatim**, lifted pointwise over the AC bag |
-| (Struct Res Amb) | `AmbNew`, premise `x # N` | 48 | **verbatim**; `x # N` coincides with $`x \neq N`$ because `Name` is variable-only |
-| (Struct Par Comm) / (Struct Par Assoc) | the `HashBag` carrier | 27 | **realised representationally**, not declared |
+| (Struct Res Res) | `NewComm`, premise-free | 86 | **verbatim** |
+| (Struct Res Par) | `ScopeExtrusion`, premise `x # ...rest` | 89 | **verbatim**, lifted pointwise over the AC bag |
+| (Struct Res Amb) | `AmbNew`, premise `x # N` | 97 | **verbatim**; `x # N` coincides with $`x \neq N`$ because `Name` is variable-only |
+| (Struct Par Comm) / (Struct Par Assoc) | the `HashBag` carrier | 71 | **realised representationally**, not declared |
 | (Struct Res) / (Struct Par) / (Struct Amb) / (Struct Action) — congruence of $`\equiv`$ | the float is applied bottom-up through every constructor arm | — | **realised by construction** |
 | (Struct Zero Par) / (Struct Zero Res) / (Struct Zero Repl) | *nothing* | — | **ABSENT** |
 | (Struct Repl Par) | *nothing* | — | **ABSENT** (vacuous: no $`!`$) |
-| — | `InNew` / `OutNew` / `OpenNew`, premise `x # N` | 43–45 | **EXTENSION — capability-prefix float** |
-| (Red In) | `InRule` | 53–54 | **verbatim** modulo the bag-body convention |
-| (Red Out) | `OutRule` | 64 | **verbatim** modulo the bag-body convention, *since A-S5.4b*; see [8.2](#82-outrule-against-red-out-and-the-a-s54b-redeclaration) |
-| (Red Open) | `OpenRule` | 67–68 | **verbatim** modulo the bag-body convention |
-| (Red Res) | `NewCong` | 72 | **verbatim** |
-| (Red Amb) | `AmbCong` | 73 | **verbatim** |
-| (Red Par) | `ParCong` | 70 | **verbatim** |
+| — | `InNew` / `OutNew` / `OpenNew`, premise `x # N` | 92–94 | **EXTENSION — capability-prefix float** |
+| (Red In) | `InRule` | 102–103 | **verbatim** modulo the bag-body convention |
+| (Red Out) | `OutRule` | 113 | **verbatim** modulo the bag-body convention, *since A-S5.4b*; see [8.2](#82-outrule-against-red-out-and-the-a-s54b-redeclaration) |
+| (Red Open) | `OpenRule` | 117–118 | **verbatim** modulo the bag-body convention |
+| (Red Res) | `NewCong` | 126 | **verbatim** |
+| (Red Amb) | `AmbCong` | 128 | **verbatim** |
+| (Red Par) | `ParCong` | 121 | **verbatim** |
 | (Red $`\equiv`$) | the float normalises before matching; the e-graph holds the contractum's class | — | **realised operationally**; see [9](#9-how-a-term-actually-reduces-the-three-lanes) |
 | $`\alpha`$-conversion as definitional identity | derived `BoundTerm` over moniker `Scope` | — | **verbatim** — structural, not axiomatised |
 
@@ -560,11 +588,15 @@ no rule permitting reduction under a capability prefix — actions are inert unt
 Two deliberate divergences. Each is stated with the line that introduces it, what it buys, and what
 it costs.
 
-#### Extension 1 — capability/prefix **fusion** (`ambient.rs:18-20`)
+#### Extension 1 — capability/prefix **fusion** (declared at `ambient.rs:54-56`, labelled at `:30-53`)
 
 The paper factors an action into a **capability** $`M`$ and an **action former** $`M.P`$, making
-$`M`$ a first-class syntactic category. This specification fuses them: `PIn`, `POut` and `POpen`
-are *process* formers of arity two, taking a `Name` and a continuation `Proc`.
+$`M`$ a first-class syntactic category. It is first-class in a checkable sense and not merely a
+notational one: the paper gives $`M`$ its *own* free-name function,
+$`fn(in\ n) = fn(out\ n) = fn(open\ n) = \{n\}`$, and defines $`fn(M.P) = fn(M) \cup fn(P)`$ —
+clauses that are only well-formed if $`M`$ is a syntactic category. This specification fuses the two layers: `PIn`,
+`POut` and `POpen` are *process* formers of arity two, taking a `Name` and a continuation `Proc`,
+and $`M`$ exists as no sort at all.
 
 ```math
 \text{paper:}\quad M.P \text{ with } M ::= in\ n \mid out\ n \mid open\ n
@@ -575,19 +607,39 @@ are *process* formers of arity two, taking a `Name` and a continuation `Proc`.
   automaton dispatches on the head alone: matching `(PIn M P)` is one symbol test, where matching
   $`M.P`$ with $`M = in\ m`$ would require descending into a capability subterm and discriminating
   there. This is the same reason the three rewrites can be lowered as flat AC patterns.
-- **What it costs.** Three things the paper's factoring gives you are unavailable here:
-  1. **capability variables** — you cannot write a process that is parametric in *which* capability
-     it exercises;
-  2. **path composition** $`M.M'.P`$ — the paper's $`M`$ can be a sequence; here you must nest
+- **What it does *not* cost — the fusion is conservative over section 2.** In the mobility calculus
+  of the paper's section 2, $`M`$ ranges over exactly the three atomic capabilities $`in\ n`$,
+  $`out\ n`$, $`open\ n`$. So the map
+
+  ```math
+  in\ n.P \mapsto \mathrm{PIn}(n, P), \qquad
+  out\ n.P \mapsto \mathrm{POut}(n, P), \qquad
+  open\ n.P \mapsto \mathrm{POpen}(n, P)
+  ```
+
+  is a **bijection** between the paper's $`M.P`$ terms and this signature's three formers. Nothing
+  of section 2 is lost, and the congruence rule (Struct Action)
+  $`P \equiv Q \Rightarrow M.P \equiv M.Q`$ holds *by construction* rather than as a declared
+  axiom.
+- **What it costs.** All three costs are relative to the paper's **section 3**, whose capability
+  layer needs $`M`$ to be a value:
+  1. **capability variables** — section 3 writes $`P\{x \leftarrow M\}`$ for substituting a
+     capability for a free occurrence of a variable; here you cannot write a process that is
+     parametric in *which* capability it exercises;
+  2. **path composition** $`(M.M').P`$ — introduced in section 3 as "a path-formation operation on
+     capabilities"; the section-2 grammar does *not* give $`M`$ a sequence form. Here you must nest
      process formers, e.g. `in(loc1, in(loc2, 0))`, which is the same thing operationally but is
      not a capability *value*;
-  3. **capability communication** — the paper's section 3 extends the calculus with input/output
-     so capabilities can be *sent*. That extension is out of scope for this fragment entirely.
-- **Labelling status.** ⚠ **This divergence is not annotated in `ambient.rs`.** The source's
-  alignment comment (lines 29–34) covers the *equations* only. Documenting the fusion here is
-  therefore part of what this page is for; a reader of the source alone would not be told.
+  3. **capability communication** — the paper's section 3 extends the calculus with input/output so
+     capabilities can be *sent*. That extension is out of scope for this fragment entirely.
+- **Labelling status.** ✅ **Annotated in the source at lines 30–53** (defect #96), in the same form
+  as Extension 2 below: the block opens `** EXTENSION — CAPABILITY/PREFIX FUSION. NOT the C-G
+  signature. **` and states what the paper factors, why the fusion is conservative over section 2,
+  what it buys and what it forecloses. The signature-wide alignment header at lines 15–23 names the
+  paper and scopes the fragment; the equation-block header at lines 78–83 continues to cover the
+  *equations* only, which is why the signature needed a header of its own.
 
-#### Extension 2 — the **capability-prefix float** equations (`ambient.rs:41-45`)
+#### Extension 2 — the **capability-prefix float** equations (declared at `ambient.rs:92-94`, labelled at `:90-91`)
 
 `InNew`, `OutNew` and `OpenNew` let a restriction float out through a capability prefix:
 
@@ -611,7 +663,7 @@ Par), (Struct Res Amb) and the Zero rules; none of them commutes $`\nu`$ with an
   capability continuation as a pattern variable, so no redex depends on the trio having fired. The
   formal match-completeness theorem is stated over the C-G subset *without* these three, which is
   the honest scope.
-- **Labelling status.** ✅ Annotated in the source at lines 41–42: "Capability-prefix floats: NOT
+- **Labelling status.** ✅ Annotated in the source at lines 90–91: "Capability-prefix floats: NOT
   C-G axioms — documented sound extensions".
 
 ### 6.4 What this fragment does not have
@@ -679,8 +731,8 @@ opposite of what extrusion is for. (Struct Res Par) and (Struct Res Amb) exist t
 binders; requiring the binder to be unused makes the law fire only when it is pointless.
 
 **Verified in the working tree at the time of writing:** all four premises read `x # N` —
-`ambient.rs:43` (`InNew`), `:44` (`OutNew`), `:45` (`OpenNew`), `:48` (`AmbNew`) — and
-`ScopeExtrusion` at `:40` reads `x # ...rest`. The reflected `metadata.rs` agrees, recording
+`ambient.rs:92` (`InNew`), `:93` (`OutNew`), `:94` (`OpenNew`), `:97` (`AmbNew`) — and
+`ScopeExtrusion` at `:89` reads `x # ...rest`. The reflected `metadata.rs` agrees, recording
 `conditions: &["x # N"]` for four equations and `conditions: &["x # ...rest"]` for one, with
 `NewComm` premise-free. **The correction has landed.**
 
@@ -1287,8 +1339,8 @@ exercises both a capability rule and the contractum-creates-a-redex property.
 
 | Claim in this document | Source |
 |---|---|
-| the declaration, line for line | `languages/src/ambient.rs:9-75` |
-| the source's own C-G alignment statement and the `x # N` correction note | `languages/src/ambient.rs:29-34`, `:41-42`, `:46-47`, `:56-62` |
+| the declaration, line for line | `languages/src/ambient.rs:9-135` |
+| the source's own C-G alignment statements, extension labels and correction notes | signature header `languages/src/ambient.rs:15-23`; capability/prefix fusion `:30-53`; equation header `:78-83`; capability-prefix float `:90-91`; the `x # N` note `:95-96`; the `OutRule` note `:105-111`; the two ABSENT notes `:73-76` and `:130-133` |
 | legacy `::=` versus judgement `\|-` dispatch | `ast/src/grammar.rs:618` (`parse_grammar_rule`), `:639-650` (the `::` lookahead), `:665` (`parse_grammar_rule_old`), `:726` (`parse_grammar_rule_new`) |
 | `HashBag(…) sep … delim … ` production and its validations | `ast/src/grammar.rs:1596` (`parse_collection`), `:1599` (carrier), `:1617` (`sep` required, non-empty), `:1631` (optional `delim`) |
 | `<Name>` binder item in the legacy form | `ast/src/grammar.rs:681-686` |
@@ -1342,9 +1394,11 @@ exercises both a capability rule and the contractum-creates-a-redex property.
 6. **An empty `...rest` is legal**, and the `OutRule` fix turns on exactly that.
 7. **`PIn` / `POut` / `POpen` fuse the paper's capability and action former.** They are *process*
    constructors here. There is no capability value, no `M.M'`, and no capability communication.
-   This extension is documented here but **not** annotated in `ambient.rs`.
+   The fusion is conservative over the paper's section 2 (the three formers are in bijection with
+   $`M.P`$ there); all three losses are section-3 features. Labelled in the source at lines 30–53
+   and must stay labelled.
 8. **`InNew` / `OutNew` / `OpenNew` are not C-G axioms.** They are labelled extensions in the
-   source at lines 41–42 and must stay labelled.
+   source at lines 90–91 and must stay labelled.
 9. **Two syntaxes coexist in one `terms` block.** Six rules use legacy `::=`, one uses the
    judgement form — because only the judgement form can declare a binder's arrow type.
 10. **Abstract versus concrete syntax.** `(PPar {(POpen N P), (PAmb N Q), ...rest})` in a rewrite

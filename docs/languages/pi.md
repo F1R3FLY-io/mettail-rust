@@ -1351,7 +1351,7 @@ guarantees in one place — they are the specification's security-relevant surfa
 | the conformance suite, its budgets, and every pinned string | `languages/tests/pi.rs:19-20`, `:75-316` |
 | the REPL backend registration, measured knobs, and the pre-scope deferral | `repl/src/rho_backends.rs:15`, `:964-1045` |
 | Rholang's `NQuote`, `PDrop`, `QuoteDrop`, `Exec`, and its hand-written communication | `languages/src/rholang.rs:439`, `:854-855`, `:2943`, `:2954`, `:2950-2951`; `languages/src/rholang/receive.rs:1056` |
-| Ambient's matching structural-congruence clauses | `languages/src/ambient.rs:35-49` |
+| Ambient's matching structural-congruence clauses | `languages/src/ambient.rs:84-98` |
 | the `pi` feature and its inclusion in `all-languages` | `languages/Cargo.toml:24-34`, `:109`; `languages/src/lib.rs:153-154` |
 
 ---

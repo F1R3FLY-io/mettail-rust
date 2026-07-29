@@ -186,7 +186,7 @@ language! {
         // ★ SURFACE DELTA (semantics unchanged): the paper writes the input
         // prefix INFIX (`n "?" x "." p`). An infix-LED rule that also opens a
         // binder is not supported by the WPDA binder codegen — every binder rule
-        // in the tree is literal-led (`ambient.rs:25` `"new" "(" x "," p ")"`,
+        // in the tree is literal-led (`ambient.rs:65` `"new" "(" x "," p ")"`,
         // `commdemo.rs:75` `"for" "(" x "<-" n ")" "{" p "}"`, `lambda.rs:19`
         // `"lam " x "." body`) and the infix spelling fails at parse time with
         // `unexpected `?` after parsing`. The TERM CONTEXT and result category —
