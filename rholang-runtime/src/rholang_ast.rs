@@ -3245,8 +3245,37 @@ fn lower_arm_cast_u_int32(value: &std::sync::Arc<UInt32>) -> Result<Par, Rholang
 #[inline(never)]
 fn lower_arm_cast_bytes(value: &std::sync::Arc<Bytes>) -> Result<Par, RholangAstLowerError> {
     match value.as_ref() {
-        // Rholang `Bytes` is a `String`-backed literal (`![String] as Bytes`); lower the ground
-        // literal to a Rholang `GString` (mirrors `CastStr`). Non-ground bytes are unsupported.
+        // ★★ `Bytes` LOWERS TO `GByteArray`, NOT `GString` (2026-07-29).
+        //
+        // This arm read:
+        //
+        //     Bytes::StringLit(string) => Ok(new_gstring_par(string.clone(), …))
+        //
+        // justified by "Rholang `Bytes` is a `String`-backed literal
+        // (`![String] as Bytes`) … mirrors `CastStr`". The justification was
+        // accurate about the DECLARATION and wrong about the SEMANTICS: upstream's
+        // wire model (`RhoTypes.proto`) carries `string g_string = 3` and
+        // `bytes g_byte_array = 25` as TWO DISTINCT types, so lowering a `Bytes`
+        // to a `GString` collapsed them — a `Bytes` and a `Str` of the same
+        // content produced IDENTICAL `Par`s, hence identical serialized bytes and
+        // identical post-state contributions.
+        //
+        // With `Bytes` given its real carrier (`![Vec<u8>] as Bytes`) the variant
+        // is `ListLit(Vec<u8>)` and the honest target already exists upstream:
+        // `models::rust::utils::new_gbytearray_par`. Written, compiled and measured
+        // — then held, because the carrier change is held (see
+        // `languages/src/rholang.rs`, the `as Bytes` block: `Bytes` would be left
+        // with no renderable surface form, which breaks Display→parse for the whole
+        // category and takes four sibling round-trips down with it).
+        //
+        // ⚠ SO THIS ARM IS STILL WRONG, KNOWINGLY: it lowers a `Bytes` to a
+        // `GString`, collapsing upstream's two distinct wire carriers
+        // (`string g_string = 3` vs `bytes g_byte_array = 25`) into one, so a
+        // `Bytes` and a `Str` of the same content produce IDENTICAL `Par`s and
+        // therefore identical serialized bytes. It is latent only because `Bytes`
+        // is unreachable in practice. Blocked on the same ruling.
+        //
+        //   Bytes::ListLit(bytes) => Ok(new_gbytearray_par(bytes.clone(), Vec::new(), false)),
         Bytes::StringLit(string) => Ok(new_gstring_par(string.clone(), Vec::new(), false)),
         _ => Err(RholangAstLowerError::UnsupportedProc("non-ground bytes process")),
     }

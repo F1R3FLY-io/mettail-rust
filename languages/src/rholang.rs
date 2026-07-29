@@ -84,6 +84,104 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
+        // ★★ `Bytes` IS A BYTE ARRAY, NOT A STRING (2026-07-29, ruled).
+        //
+        // This was `![String] as Bytes`. Both `Str` and `Bytes` were therefore
+        // STRING-SHAPED, so the generator emitted a `StringLit` variant for each
+        // and a `"…"` literal satisfied BOTH — every string literal in the
+        // language had two readings, `CastStr` and `CastBytes`. That was not an
+        // election between two designed alternatives; the DECLARATION created the
+        // ambiguity, and the disambiguator was left to clean it up.
+        //
+        // Upstream has no such ambiguity, and cannot express one:
+        //
+        //   * the wire model (`RhoTypes.proto`) has TWO DISTINCT CARRIERS —
+        //     `string g_string = 3` and `bytes g_byte_array = 25`;
+        //   * the grammar (`rholang-tree-sitter/grammar.js`) has NO byte-array
+        //     literal: the ground-literal choice at `:435-436` is `string_literal`
+        //     and `uri_literal` ONLY, and `ByteArray` appears at `:424` solely as a
+        //     TYPE NAME in `simple_type` — usable in `matches`/type patterns and
+        //     produced by builtins, never written as a literal.
+        //
+        // So a `"…"` literal is a `GString` upstream, full stop. With a `Vec<u8>`
+        // carrier it is a `Str` HERE BY CONSTRUCTION: the ambiguity becomes
+        // UNSPELLABLE rather than elected — no disambiguator pin, no dependence on
+        // rule declaration order.
+        //
+        // ⚠⚠ IMPLEMENTED, MEASURED, AND **NOT LANDED** — the carrier line below is
+        // commented out and `![String] as Bytes` is restored. Read this before
+        // re-attempting it.
+        //
+        // The change compiles cleanly workspace-wide (`cargo check --workspace
+        // --all-targets`, 0 errors, after the sibling `display.rs` emitter fix in
+        // `e54e85d7`), and it DOES achieve everything it was meant to:
+        //
+        //   ★ `Bytes::ListLit(Vec<u8>)` replaces `Bytes::StringLit(String)`, so a
+        //     `"…"` literal can no longer be a `Bytes` — the `Str`/`Bytes`
+        //     ambiguity becomes UNSPELLABLE rather than elected.
+        //   ★ With it, the `semantic_hash` CATEGORY TAG (#151 thread 2) can be
+        //     ENABLED and the five goldens it used to move PASS **UNEDITED** —
+        //     `matches_forms_are_unambiguous`, `ppar_forms_are_unambiguous`,
+        //     `implies_forms_are_unambiguous`,
+        //     `the_pre_existing_propositional_forms_keep_their_parse_counts`, and
+        //     `rho_rholang_ast::a_s4_ground_width_fold_value_…`. They became TRUE
+        //     rather than re-blessed, which was the whole point of holding the tag
+        //     back.
+        //   ★ All 78 byte-identity / fingerprint / conformance pins PASS: zero
+        //     serialized bytes and zero fingerprints moved.
+        //
+        // ⚠ THE BLOCKER: `Bytes` is left with NO SURFACE FORM AT ALL — not merely
+        // "no literal", which is what upstream has, but nothing RENDERABLE either.
+        // A `Vec<u8>` payload is not string-shaped, so no `StringLit` is emitted;
+        // and because `Bytes` declares no collection delimiters, the Display arm
+        // wraps its elements in EMPTY open/close, so `Bytes::ListLit(vec![])`
+        // renders as the empty string. MEASURED:
+        //
+        //   gen_rholang_prop::bytes_display_parse_roundtrip
+        //     arb_bytes produced unparseable surface term ""
+        //
+        // and it takes four sibling round-trips down with it, because `Bytes` is
+        // reachable as a `CastBytes` sub-term: `proc_display_parse_roundtrip`,
+        // `name_display_parse_roundtrip`, `forrow_display_parse_roundtrip`,
+        // `inputbind_display_parse_roundtrip`; plus
+        // `unit_rholang_proc_castbytes`, `unit_rholang_auto_bytes_listlit`, and two
+        // `testkit::ctor_engine` rows. ELEVEN failures in total.
+        //
+        // ⚠ These are NOT test-harness artefacts to be gated away. Display→parse is
+        // a real invariant of the language, and the change breaks it for an entire
+        // category: a `Bytes` value is constructible in Rust and then cannot be
+        // rendered. Suppressing the generated rows would hide that rather than fix
+        // it.
+        //
+        // ⇒ Landing this needs `Bytes` to gain a surface form — a GRAMMAR CHANGE
+        // the owner has not ruled on, and explicitly outside the scope that was
+        // given ("the carrier"). Upstream reaches `ByteArray` through BUILTINS and
+        // TYPE PATTERNS rather than literals, so the faithful shape is probably a
+        // builtin (`"…".toByteArray()`-style) plus `ByteArray` in the type-pattern
+        // position — not a new literal. That is the ruling this waits on.
+        //
+        // ★ Everything needed to land it in one step is here: uncomment the line
+        // below, delete the `![String] as Bytes` line, re-point
+        // `rholang_ast.rs::lower_arm_cast_bytes` at `Bytes::ListLit` +
+        // `new_gbytearray_par` (see the note there), and re-enable the tag in
+        // `macros/src/gen/term_ops/semantic_hash.rs`.
+        //
+        // ![Vec<u8>] as Bytes
+        //
+        // ⚠ NOT in scope, and deliberately untouched: `Uri`. Upstream has
+        // `string g_uri = 4` with backtick literal syntax which we do not model at
+        // all; that is already pinned as unsupported by
+        // `languages/tests/rholang_new_official_syntax.rs::uri_declarations_are_not_yet_supported`
+        // (asserted `is_err()` so the day it starts parsing is a deliberate
+        // change) and tracked as convergence item §17.10-C1. There is also a live
+        // interaction to respect when it lands: mettail already spends the
+        // backtick on FLT syntax (`FltOpenBacktick`), and the two can coexist only
+        // because an FLT requires a lowercase prefix while a URI has none.
+        //
+        // ⚠ THE STRING CARRIER IS STILL ACTIVE, and this is the defect, not the
+        // design: a `"…"` literal has BOTH a `CastStr` and a `CastBytes` reading
+        // because both categories are string-shaped. See the block above for the
+        // measured replacement and the one ruling it waits on.
         ![String] as Bytes
         ![Vec<Proc>] as List {
             open_parts: ["["],
@@ -1675,7 +1773,15 @@ language! {
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     (Float::FloatLit(x), Float::FloatLit(y)) => {
-                        match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_add(*x, *y) {
+                        // ★ IEEE-754, matching upstream's `combine_plus` `GDouble` arm. RULED 2026-07-29
+                        // together with `Div` below: see that arm for the floor argument, the IEEE
+                        // citation, and why `nan_is_a_value` is required rather than optional.
+                        // The indeterminate forms this admits: `Inf + (-Inf)` and `(-Inf) + Inf` (IEEE 754 §7.2, magnitude subtraction of infinities),
+                        // plus `NaN` PROPAGATION from either operand (§6.2). Overflow to `±Inf`
+                        // was never declined and is unaffected.
+                        match mettail_runtime::nan_is_a_value(
+                            <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_add(*x, *y),
+                        ) {
                             Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
                             Err(_) => Proc::Err,
                         }
@@ -1730,7 +1836,15 @@ language! {
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     (Float::FloatLit(x), Float::FloatLit(y)) => {
-                        match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_sub(*x, *y) {
+                        // ★ IEEE-754, matching upstream's `combine_minus` `GDouble` arm. RULED 2026-07-29
+                        // together with `Div` below: see that arm for the floor argument, the IEEE
+                        // citation, and why `nan_is_a_value` is required rather than optional.
+                        // The indeterminate forms this admits: `Inf - Inf` and `(-Inf) - (-Inf)` (IEEE 754 §7.2, magnitude subtraction of infinities),
+                        // plus `NaN` PROPAGATION from either operand (§6.2). Overflow to `±Inf`
+                        // was never declined and is unaffected.
+                        match (
+                            <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_sub(*x, *y)
+                        ) {
                             Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
                             Err(_) => Proc::Err,
                         }
@@ -1780,7 +1894,15 @@ language! {
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     (Float::FloatLit(x), Float::FloatLit(y)) => {
-                        match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_mul(*x, *y) {
+                        // ★ IEEE-754, matching upstream's `combine_mult` `GDouble` arm. RULED 2026-07-29
+                        // together with `Div` below: see that arm for the floor argument, the IEEE
+                        // citation, and why `nan_is_a_value` is required rather than optional.
+                        // The indeterminate forms this admits: `0 * ±Inf` and `±Inf * 0`, for either signed zero (IEEE 754 §7.2),
+                        // plus `NaN` PROPAGATION from either operand (§6.2). Overflow to `±Inf`
+                        // was never declined and is unaffected.
+                        match mettail_runtime::nan_is_a_value(
+                            <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_mul(*x, *y),
+                        ) {
                             Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
                             Err(_) => Proc::Err,
                         }
@@ -1912,16 +2034,15 @@ language! {
                     // Both are properties of the CARRIER, not of division, and removing them
                     // would cost the term algebra its `Eq`. They are recorded, not fixed here.
                     (Float::FloatLit(x), Float::FloatLit(y)) => {
-                        match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_div(*x, *y) {
-                            // Finite quotients and `±Inf` — `finite_or_inf_f64` passes both.
+                        // Finite quotients and `±Inf` pass `finite_or_inf_f64` untouched;
+                        // `nan_is_a_value` re-admits the indeterminate forms `0/0` and `Inf/Inf`,
+                        // and `NaN` propagation from either operand, as the VALUE IEEE delivers.
+                        // The reason-match lives in that ONE function rather than being copied into
+                        // each of the four float arms — see `runtime/src/safe_arith.rs`.
+                        match mettail_runtime::nan_is_a_value(
+                            <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_div(*x, *y),
+                        ) {
                             Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
-                            // The IEEE indeterminate forms. `SafeArith` declines them; IEEE and
-                            // upstream DELIVER them, as a `NaN`.
-                            Err(mettail_runtime::Partiality::Undefined {
-                                reason: mettail_runtime::UndefinedReason::NotANumber, ..
-                            }) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
-                                mettail_runtime::CanonicalFloat64::from(f64::NAN),
-                            ))),
                             Err(_) => Proc::Err,
                         }
                     }
@@ -2009,8 +2130,20 @@ language! {
                     BigRat::RatLit(r) => Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(r.clone().neg()))),
                     _ => Proc::Err,
                 },
+                // ★★ THE FOURTH FLOAT ARM, and it was the worst of them. This read
+                // `CanonicalFloat64::from(-f.get())`, and `rust_code_rewrite.rs` rewrites unary
+                // `-` into `<_ as SafeArith>::safe_neg(..)?` just as it rewrites the binary
+                // operators — so `-(0.0/0.0)` short-circuited the fold body and left a STUCK TERM
+                // (`-NaN` unreduced), which is neither a value nor `error`. It is spelled
+                // explicitly now, through the same adapter as the other three. IEEE 754 §6.3: the
+                // sign of a `NaN` is not interpreted, and negation propagates it.
                 Proc::CastFloat(x) => match &**x {
-                    Float::FloatLit(f) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(-f.get())))),
+                    Float::FloatLit(f) => match mettail_runtime::nan_is_a_value(
+                        <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_neg(*f),
+                    ) {
+                        Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
+                        Err(_) => Proc::Err,
+                    },
                     _ => Proc::Err,
                 },
                 Proc::CastFixed(x) => match &**x {
