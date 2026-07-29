@@ -24,7 +24,15 @@
 //! | `docs/languages/{lang}.md`                  | hand-written prose                                     | ⚠ SILENT          |
 //! | `target/generated/{lang}/`                  | `macros/src/logic/writer.rs::lang_generated_dir`       | ⚠ SILENT          |
 //! | `{lang}-blocks.ts`, `{lang}-categories.ts`  | `macros/src/gen/blockly/writer.rs`                     | ⚠ SILENT          |
-//! | `BUNDLED_LANGUAGES` string keys             | `macros/src/gen/runtime/binder_congruence.rs`          | ⚠ SILENT          |
+//! | the binder-congruence bundled SUBJECT       | `macros/src/gen/runtime/binder_congruence.rs`          | ⚠ SILENT → now DERIVED |
+//!
+//! The last row is the one that changed shape. It was a hand-written `const
+//! BUNDLED_LANGUAGES` of `(stem, include_str!(…))` pairs, and it failed OPEN three times
+//! in a row: a definition that was simply never listed compiled fine and sat outside every
+//! guard the table fed. Member 5 below therefore no longer checks that a list is complete
+//! — it checks that there is NO LIST, that the subject is derived from the same
+//! manifest-declared roots this file walks, and that the one class the derivation cannot
+//! reconstruct is exempted by an exactly-asserted table rather than by omission.
 //!
 //! The rest of the name-keyed family fails LOUD — `gen_{lang}_{section}.rs` hosts,
 //! `mettail_languages::{lang}`, `src/bin/simulate_{lang}.rs` — because each is a Rust path
@@ -56,15 +64,16 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Directories that hold no hand-written source: build output and macro output.
-///
-/// Mirrors `dovetail_language_inventory.rs`. Deliberately does NOT skip `bin`: a
-/// `language!` written into `languages/src/bin/` is a declaration like any other.
-const NON_SOURCE_DIRECTORIES: &[&str] = &["target", "generated"];
-
 /// Every `.rs` file under the manifest-declared language roots.
+///
+/// ★ The walk itself lives in [`mettail_ast::language_scan`] — ONE walk, read by all four
+/// audits that need it. It used to be written out here, and identically in
+/// `ast/tests/dovetail_language_inventory.rs` and `dovetail/tests/language_inventory.rs`,
+/// and a FOURTH time (narrowly, and wrongly) 500 lines below in this very file. A walk
+/// written out `n` times is a walk that can be widened `n − 1` times, which is exactly what
+/// happened: `c58d3845` widened three of the four.
 fn language_files() -> Vec<PathBuf> {
-    let roots = mettail_ast::manifest::language_roots(&repo_root()).unwrap_or_else(|err| {
+    mettail_ast::language_scan::language_files(&repo_root()).unwrap_or_else(|err| {
         panic!(
             "cannot determine the language definition roots: {err}\n\nThis guard decides \
              which language names are LIVE by scanning exactly those roots, so it must NOT \
@@ -72,40 +81,27 @@ fn language_files() -> Vec<PathBuf> {
              name-keyed artifact look stranded, or (worse, after a later edit) make the \
              guard pass by comparing two empty sets."
         )
-    });
-
-    let mut pending: Vec<PathBuf> = roots.into_iter().filter(|root| root.exists()).collect();
-    let mut files = Vec::new();
-
-    while let Some(path) = pending.pop() {
-        let metadata =
-            fs::metadata(&path).unwrap_or_else(|e| panic!("stat {}: {e}", path.display()));
-        if metadata.is_dir() {
-            let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
-            if NON_SOURCE_DIRECTORIES.contains(&name) {
-                continue;
-            }
-            for entry in
-                fs::read_dir(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
-            {
-                pending.push(entry.expect("dir entry").path());
-            }
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            files.push(path);
-        }
-    }
-
-    files.sort();
-    files
+    })
 }
 
-fn collect_language_names(items: &[Item], out: &mut BTreeSet<String>) {
+/// Every item-level `language!` body in `items`, in source order, INCLUDING the bodies
+/// inside inline `mod { … }` blocks.
+///
+/// The inline-`mod` recursion is load-bearing and the non-inline case is equally so:
+/// `languages/tests/x2_lookahead_bracket_probe.rs` declares THREE languages, one in each
+/// of three inline `pub mod`s, and `languages/tests/doc_comment_metadata.rs` reaches its
+/// grammar through `#[path = "definitions/optsmoke.rs"] mod optsmoke;` — a NON-inline
+/// `mod`, whose `ItemMod::content` is `None`. The first file declares three languages
+/// here; the second correctly declares none, because the declaration belongs to the file
+/// that spells it and counting it twice would put one grammar in the corpus under two
+/// paths.
+fn collect_language_defs(items: &[Item], out: &mut Vec<LanguageDef>) {
     for item in items {
         match item {
-            Item::Macro(item_macro) => collect_language_name(item_macro, out),
+            Item::Macro(item_macro) => collect_language_def(item_macro, out),
             Item::Mod(item_mod) => {
                 if let Some((_, nested)) = &item_mod.content {
-                    collect_language_names(nested, out);
+                    collect_language_defs(nested, out);
                 }
             },
             _ => {},
@@ -113,12 +109,21 @@ fn collect_language_names(items: &[Item], out: &mut BTreeSet<String>) {
     }
 }
 
-fn collect_language_name(item_macro: &ItemMacro, out: &mut BTreeSet<String>) {
+fn collect_language_def(item_macro: &ItemMacro, out: &mut Vec<LanguageDef>) {
     if item_macro.mac.path.is_ident("language") {
         let def: LanguageDef = syn::parse2(item_macro.mac.tokens.clone())
             .unwrap_or_else(|e| panic!("parse language! body: {e}"));
-        out.insert(def.name.to_string().to_lowercase());
+        out.push(def);
     }
+}
+
+fn collect_language_names(items: &[Item], out: &mut BTreeSet<String>) {
+    let mut defs = Vec::new();
+    collect_language_defs(items, &mut defs);
+    out.extend(
+        defs.into_iter()
+            .map(|def| def.name.to_string().to_lowercase()),
+    );
 }
 
 /// The set of language names, lower-cased, that a `language!` declaration actually
@@ -130,14 +135,16 @@ fn declared_language_names() -> BTreeSet<String> {
     for path in language_files() {
         let source =
             fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        // A file that declares a `language!` necessarily contains that text, so this gate
-        // cannot hide a declaration; it only spares `syn` the generated test hosts and
-        // simulator binaries that the package-wide root also walks.
-        if !source.contains("language!") {
+        // A file that declares a `language!` necessarily spells it followed by a
+        // delimiter, so this gate cannot hide a declaration; it only spares `syn` the
+        // generated test hosts and simulator binaries that the package-wide root also
+        // walks. The gate is the shared over-approximation, not a shared DECISION — the
+        // decision below is this audit's own, structural one.
+        if !mettail_ast::language_scan::mentions_language_invocation(&source) {
             continue;
         }
-        let parsed = syn::parse_file(&source)
-            .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        let parsed =
+            syn::parse_file(&source).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
         collect_language_names(&parsed.items, &mut names);
     }
     names
@@ -202,8 +209,8 @@ fn every_prop_corpus_names_a_live_language() {
     let mut stranded: Vec<(String, PathBuf)> = Vec::new();
     let mut live = 0usize;
 
-    for entry in fs::read_dir(&corpus_dir)
-        .unwrap_or_else(|e| panic!("read {}: {e}", corpus_dir.display()))
+    for entry in
+        fs::read_dir(&corpus_dir).unwrap_or_else(|e| panic!("read {}: {e}", corpus_dir.display()))
     {
         let path = entry.expect("dir entry").path();
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
@@ -382,8 +389,7 @@ fn every_generated_language_directory_names_a_live_language() {
         }
         live += 1;
 
-        for inner in
-            fs::read_dir(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+        for inner in fs::read_dir(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
         {
             let inner = inner.expect("dir entry").path();
             let Some(file_name) = inner.file_name().and_then(|n| n.to_str()) else {
@@ -434,143 +440,92 @@ fn every_generated_language_directory_names_a_live_language() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Member 5 — the `BUNDLED_LANGUAGES` string-keyed table
+// Member 5 — the binder-congruence bundled SUBJECT
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// `BUNDLED_LANGUAGES` is a hand-written mirror of two directory listings; this is the
-/// `read_dir` completeness assertion its own comment asks for.
+/// One `language!` body, keyed the way a corpus-wide subject has to be keyed.
 ///
-/// The table at `macros/src/gen/runtime/binder_congruence.rs` pairs a key with
-/// `include_str!` of a definition file. A MOVE fails the `macros` build, since
-/// `include_str!` stops resolving. An ADDITION does not: a definition never listed
-/// compiles fine and is silently outside every guard the table feeds, so the table reports
-/// success over a SHRINKING DOMAIN as the language set grows. That already happened once —
-/// `json`, `monoid`, `pi` and `turing` sat outside it, including `pi`, whose generated
-/// float handler carried an unsound replication arm (`!(νx.P) ⟶ νx.!P`) that a guard
-/// reading this table structurally could not see.
+/// # Why `(path, name)` and not a file stem
 ///
-/// # What the key actually is, measured
+/// The subject this member watches used to be keyed on the definition FILE STEM, and the
+/// map that produced it did `out.insert(stem, path)`. A file declaring TWO languages
+/// therefore yielded ONE entry — and the completeness check compared cardinalities that
+/// had both been collapsed the same way, so it passed. That was latent only while the
+/// scan could not reach a multi-declaration file;
+/// `languages/tests/x2_lookahead_bracket_probe.rs` declares `X2Base`, `X2Look` and
+/// `X2Teeth` in three inline `pub mod`s, and the moment the walk widened to reach it the
+/// stem key would have silently addressed one of the three.
 ///
-/// It is the definition FILE STEM, not the lower-cased language name. Those coincide for
-/// most entries and DIVERGE for four: `fortran_model` / `FortranModel`, `guarded_rho` /
-/// `GuardedRho`, `led_test` / `LedTest`, `reserved_model` / `ReservedModel`. Checking the
-/// key against the declared NAME set would therefore report four false strandings and
-/// train a reader to ignore this test. The key is checked against the file stem, which is
-/// what it is, and the file's declared language is checked separately for liveness.
-///
-/// # Two directions, because each fails differently
-///
-/// - **key ⇒ declaration**: the file a key points at must still DECLARE a `language!`. If
-///   it stops (grammar moved out, file repurposed), `include_str!` still resolves and the
-///   table still compiles — this is the silent half.
-/// - **declaration ⇒ key**: every definition file that declares a `language!` must have an
-///   entry. This is the FAILS-OPEN direction the table's own comment describes, and it is
-///   the one that had already recurred when this guard was written.
-#[test]
-fn bundled_languages_table_covers_every_definition_file() {
-    let table_path = repo_root().join("macros/src/gen/runtime/binder_congruence.rs");
-    let source = fs::read_to_string(&table_path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", table_path.display()));
-
-    let keys = bundled_language_keys(&source);
-    assert!(
-        keys.len() >= 30,
-        "only {} `BUNDLED_LANGUAGES` key(s) were extracted from {}; the extraction is \
-         broken and both comparisons below would be meaningless",
-        keys.len(),
-        table_path.display()
-    );
-
-    let declaring = definition_files_that_declare_a_language();
-    assert!(
-        declaring.len() >= 30,
-        "only {} definition file(s) declaring a `language!` were found; the directory walk \
-         is broken and the completeness check below would pass over nothing",
-        declaring.len()
-    );
-
-    let declaring_stems: BTreeSet<String> = declaring.keys().cloned().collect();
-
-    // ── key ⇒ declaration ─────────────────────────────────────────────────────────
-    let dead_keys: Vec<&String> = keys.difference(&declaring_stems).collect();
-    assert!(
-        dead_keys.is_empty(),
-        "`BUNDLED_LANGUAGES` in {} carries {} key(s) whose definition file no longer \
-         declares a `language!`: {:?}\n\n`include_str!` still resolves, so the table still \
-         compiles and the guards it feeds still report success — over a grammar that is no \
-         longer there.",
-        table_path.display(),
-        dead_keys.len(),
-        dead_keys,
-    );
-
-    // ── declaration ⇒ key (the FAILS-OPEN direction) ──────────────────────────────
-    let missing: Vec<String> = declaring_stems
-        .difference(&keys)
-        .map(|stem| {
-            let path = &declaring[stem];
-            format!(
-                "{stem}  (declares `{}`, at {})",
-                declaring_language_name(path),
-                path.display()
-            )
-        })
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "{} definition file(s) declare a `language!` and have no `BUNDLED_LANGUAGES` entry \
-         in {}:\n  {}\n\nThis is the FAILS-OPEN direction the table's own comment predicts: \
-         an unlisted definition is outside every guard that reads this table — including \
-         the float-handler soundness guards — and nothing about the build says so. Add \
-         `(\"<stem>\", include_str!(\"../../../../languages/…/<stem>.rs\"))` for each.",
-        missing.len(),
-        table_path.display(),
-        missing.join("\n  "),
-    );
+/// A `(repository-relative path, declared name)` pair is injective over the corpus by
+/// construction: two bodies in one file differ in `name`, and two bodies with one name in
+/// different files differ in `path` (and are separately rejected as duplicates by
+/// `ast/tests/dovetail_language_inventory.rs`).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct DeclaredBody {
+    /// Repository-relative, `/`-separated — e.g. `languages/src/ambient.rs`. Absolute
+    /// paths embed the checkout location and could not be written into an exemption table.
+    path: String,
+    /// The declared `name:`, verbatim (`Ambient`, `X2Base`), NOT lower-cased and NOT the
+    /// file stem. The two diverge for `fortran_model` / `FortranModel`, `guarded_rho` /
+    /// `GuardedRho`, `led_test` / `LedTest`, `reserved_model` / `ReservedModel`, and for
+    /// every body in `x2_lookahead_bracket_probe.rs`.
+    name: String,
+    /// Whether the body declares `extends` / `includes` / `mixins` — i.e. whether it is a
+    /// COMPOSED language, the one class that cannot be reconstructed outside the macro.
+    composed: bool,
 }
 
-/// Extract the string keys of `BUNDLED_LANGUAGES` by reading the table's entries.
-///
-/// The table is a `const … &[(&str, &str)]` whose entries are `("stem", include_str!(…))`.
-/// Reading it textually, rather than parsing the whole file with `syn`, keeps this guard
-/// independent of the surrounding module compiling — which matters because the point of
-/// the guard is to catch a state in which that module is nonetheless perfectly valid Rust.
-fn bundled_language_keys(source: &str) -> BTreeSet<String> {
-    let mut keys = BTreeSet::new();
-    let Some(start) = source.find("const BUNDLED_LANGUAGES") else {
-        panic!(
-            "`const BUNDLED_LANGUAGES` was not found; this guard's extraction is stale and \
-             would otherwise report an empty table as a clean one"
-        );
-    };
-    // Anchor each key on the `include_str!` that follows it, so prose in the surrounding
-    // doc comment (which quotes example entries) cannot be mistaken for a real one.
-    let mut rest = &source[start..];
-    while let Some(idx) = rest.find("include_str!(") {
-        let before = &rest[..idx];
-        if let Some(quote_end) = before.rfind("\",") {
-            if let Some(quote_start) = before[..quote_end].rfind('"') {
-                let key = &before[quote_start + 1..quote_end];
-                if !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                    keys.insert(key.to_string());
-                }
-            }
-        }
-        rest = &rest[idx + "include_str!(".len()..];
+impl DeclaredBody {
+    fn key(&self) -> (String, String) {
+        (self.path.clone(), self.name.clone())
     }
-    keys
 }
 
-/// The two directories a `BUNDLED_LANGUAGES` entry may `include_str!` from, mapped from
-/// file stem to path, restricted to files that actually declare a `language!`.
+/// Every `language!` body under the manifest-declared roots, keyed by `(path, name)`.
 ///
-/// Library-hosted definitions live in `languages/src/`; test-hosted ones in
-/// `languages/tests/definitions/`. Support modules in either directory (`lib.rs`,
-/// `bench_common.rs`, the composition module) declare no grammar and are excluded by the
-/// declaration test rather than by a hand-written skip list.
-fn definition_files_that_declare_a_language() -> std::collections::BTreeMap<String, PathBuf> {
+/// This is the WIDE scan — the same [`language_files`] walk every other member of this
+/// suite uses. It replaces a second, narrower walk that lived 500 lines below the correct
+/// one in this same file; see [`historic_narrow_scan`] for what that one could see, and
+/// [`the_scan_is_wider_than_the_two_directory_listing_it_replaced`] for the standing proof
+/// that the widening is real.
+fn declared_bodies() -> Vec<DeclaredBody> {
     let root = repo_root();
-    let mut out = std::collections::BTreeMap::new();
+    let mut bodies = Vec::new();
+    for path in language_files() {
+        let source =
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        if !mettail_ast::language_scan::mentions_language_invocation(&source) {
+            continue;
+        }
+        let parsed =
+            syn::parse_file(&source).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        let mut defs = Vec::new();
+        collect_language_defs(&parsed.items, &mut defs);
+        for def in defs {
+            bodies.push(DeclaredBody {
+                path: mettail_ast::language_scan::repo_relative(&root, &path),
+                name: def.name.to_string(),
+                composed: !def.extends_names.is_empty()
+                    || !def.include_names.is_empty()
+                    || !def.mixin_names.is_empty(),
+            });
+        }
+    }
+    bodies.sort();
+    bodies
+}
+
+/// The scan this file used to run, RETAINED as the control of a mutation experiment.
+///
+/// It reads exactly two hard-coded directories, exactly one level deep — a `read_dir`
+/// entry for a SUBDIRECTORY has no `.rs` extension, so `languages/src/composition/` was
+/// dropped before anything in it was read, and `languages/tests/*.rs` was never a root at
+/// all. Nothing calls it except [`the_scan_is_wider_than_the_two_directory_listing_it_replaced`],
+/// which is the point: a narrowing that is deleted leaves no evidence it was ever there,
+/// and the next person to write "the two definition directories" reintroduces it.
+fn historic_narrow_scan() -> BTreeSet<(String, String)> {
+    let root = repo_root();
+    let mut out = BTreeSet::new();
     for dir in [root.join("languages/src"), root.join("languages/tests/definitions")] {
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
@@ -590,28 +545,377 @@ fn definition_files_that_declare_a_language() -> std::collections::BTreeMap<Stri
                 Ok(parsed) => parsed,
                 Err(e) => panic!("parse {}: {e}", path.display()),
             };
-            let mut names = BTreeSet::new();
-            collect_language_names(&parsed.items, &mut names);
-            if names.is_empty() {
-                continue;
+            let mut defs = Vec::new();
+            collect_language_defs(&parsed.items, &mut defs);
+            for def in defs {
+                out.insert((
+                    mettail_ast::language_scan::repo_relative(&root, &path),
+                    def.name.to_string(),
+                ));
             }
-            let stem = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .expect("a `.rs` path has a stem")
-                .to_string();
-            out.insert(stem, path);
         }
     }
     out
 }
 
-fn declaring_language_name(path: &Path) -> String {
+/// The `macros` module that derives the bundled subject.
+fn binder_congruence_source() -> (PathBuf, String) {
+    let path = repo_root().join("macros/src/gen/runtime/binder_congruence.rs");
     let source =
-        fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let parsed =
-        syn::parse_file(&source).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
-    let mut names = BTreeSet::new();
-    collect_language_names(&parsed.items, &mut names);
-    names.into_iter().collect::<Vec<_>>().join(", ")
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    (path, source)
+}
+
+/// The `(path, name)` rows of `macros`' `RECONSTRUCTION_EXEMPT`, read textually.
+///
+/// Textually, not by parsing the module, for the same reason the old key extractor was
+/// textual: the whole point of this guard is to catch a state in which that module is
+/// nonetheless perfectly valid Rust, so it must not depend on the module compiling. The
+/// slice starts AT the `const` item, so the prose above it — which quotes the row shape —
+/// cannot be mistaken for a row.
+fn reconstruction_exempt_rows(source: &str) -> BTreeSet<(String, String)> {
+    let Some(start) = source.find("const RECONSTRUCTION_EXEMPT") else {
+        panic!(
+            "`const RECONSTRUCTION_EXEMPT` was not found in \
+             macros/src/gen/runtime/binder_congruence.rs. The bundled subject is DERIVED \
+             from the corpus, and the exemption table is the only place a language may be \
+             left out of it — an extraction that silently found nothing would report an \
+             empty exemption set as agreement."
+        );
+    };
+    let body = &source[start..];
+    let end = body
+        .find("];")
+        .unwrap_or_else(|| panic!("`RECONSTRUCTION_EXEMPT` has no closing `];`"));
+    let body = &body[..end];
+
+    let mut rows = BTreeSet::new();
+    let mut rest = body;
+    while let Some(at) = rest.find("path: \"") {
+        let after_path = &rest[at + "path: \"".len()..];
+        let Some(path_end) = after_path.find('"') else {
+            break;
+        };
+        let path = &after_path[..path_end];
+        let after = &after_path[path_end + 1..];
+        let Some(name_at) = after.find("name: \"") else {
+            break;
+        };
+        let after_name = &after[name_at + "name: \"".len()..];
+        let Some(name_end) = after_name.find('"') else {
+            break;
+        };
+        rows.insert((path.to_string(), after_name[..name_end].to_string()));
+        rest = &after_name[name_end + 1..];
+    }
+    rows
+}
+
+/// ★ The bundled subject of the binder-congruence guards is DERIVED, and the only
+/// languages left out of it are the composed ones — exactly those, named.
+///
+/// # What this replaced, and why completing a list was never the repair
+///
+/// `macros/src/gen/runtime/binder_congruence.rs` used to carry `const BUNDLED_LANGUAGES`,
+/// a hand-written `&[(stem, include_str!(…))]` mirror of two directory listings. Its own
+/// header called the residual risk out: `include_str!` catches a MOVE (the path stops
+/// resolving) and never an ADDITION, so a definition that was simply never listed compiled
+/// fine and sat outside every guard the table fed. The table therefore reported success
+/// over a SHRINKING DOMAIN as the language set grew, and it did so three times:
+///
+/// | occurrence | omitted | consequence |
+/// |---|---|---|
+/// | 1st (`359220f3`) | `json`, `monoid`, `pi`, `turing` | `pi`'s generated float handler carried an UNSOUND replication arm (`!(νx.P) ⟶ νx.!P`) that a guard reading this table structurally could not see |
+/// | 2nd | `binder_law_demo`, `congruence_lane_demo`, `typed_drop_demo` | two of the three BEAR the float handler, so the "exactly Ambient and Pi" guard again answered over a domain that did not contain the whole question |
+/// | 3rd (`53199ac4`) | `token_text_leaf_demo` | red at committed `HEAD` when this member was rewritten — the previous form of this very test was failing on it |
+///
+/// The lesson the second occurrence taught, in the table's own words, is that *"complete
+/// the list" is not a repair — DERIVING the list is*. So this member no longer checks a
+/// list for completeness. It checks that there is **no list**:
+///
+/// 1. `const BUNDLED_LANGUAGES` does not exist. A hand-written subject cannot fail open if
+///    there is no hand-written subject.
+/// 2. The subject is derived through [`mettail_ast::language_scan`] — the same walk, from
+///    the same manifest-declared roots, that every other member of this file uses. A
+///    private walk in `macros` could narrow independently, which is the defect one level up.
+/// 3. The ONE class the derivation provably cannot reconstruct is exempted by a typed
+///    table, and that table is checked for EQUALITY against the composed languages this
+///    file finds structurally. Equality, not containment: a row that stops being justified
+///    must fail here, and a new composed language must be classified deliberately rather
+///    than inherit an exemption.
+///
+/// Direction 1 of the old test (a key whose file no longer declares a `language!`) is
+/// SUBSUMED rather than dropped: a derived subject cannot name a file that stopped
+/// declaring, because it only ever names files it has just parsed a declaration out of.
+#[test]
+fn the_bundled_subject_is_derived_and_exempts_exactly_the_composed_languages() {
+    let (table_path, source) = binder_congruence_source();
+
+    // An ITEM, not a mention: the module's prose necessarily quotes the name of the thing
+    // it replaced, and a substring search would make that documentation self-defeating.
+    // A `const` item sits at item position, so its line begins with `const`; every
+    // quotation of it lives inside a `///` or `//!` line.
+    let table_is_back = source
+        .lines()
+        .any(|line| line.trim_start().starts_with("const BUNDLED_LANGUAGES"));
+    assert!(
+        !table_is_back,
+        "`const BUNDLED_LANGUAGES` is back in {}. It was a hand-written mirror of two \
+         directory listings and it failed OPEN three times — `json`/`monoid`/`pi`/`turing`, \
+         then `binder_law_demo`/`congruence_lane_demo`/`typed_drop_demo`, then \
+         `token_text_leaf_demo` — each time reporting success over a domain that had \
+         quietly stopped containing the whole question. Derive the subject from \
+         `mettail_ast::language_scan::language_files` instead; a list cannot enumerate a \
+         directory, and the guards that read it are only as total as their subject.",
+        table_path.display()
+    );
+
+    assert!(
+        source.contains("language_scan::language_files"),
+        "{} no longer derives its bundled subject from \
+         `mettail_ast::language_scan::language_files`. That function is the ONE walk of the \
+         manifest-declared roots; a private walk here could narrow on its own, which is \
+         precisely how the scan this test used to call stayed two directories wide while \
+         its three siblings were widened in `c58d3845`.",
+        table_path.display()
+    );
+
+    // ── the exemption set, asserted EXACTLY ───────────────────────────────────────
+    let bodies = declared_bodies();
+    assert!(
+        bodies.len() >= 50,
+        "the structural scan found only {} `language!` bodie(s); it is not reaching the \
+         source tree and the equality below would be comparing two nearly-empty sets",
+        bodies.len()
+    );
+
+    let composed: BTreeSet<(String, String)> = bodies
+        .iter()
+        .filter(|body| body.composed)
+        .map(DeclaredBody::key)
+        .collect();
+    let exempt = reconstruction_exempt_rows(&source);
+
+    assert_eq!(
+        exempt,
+        composed,
+        "the `RECONSTRUCTION_EXEMPT` table in {} and the composed languages this file finds \
+         structurally have diverged.\n  exempt but NOT composed: {:?}\n  composed but NOT \
+         exempt: {:?}\n\nA composed language declares `extends`/`includes`/`mixins`, which \
+         `ast/src/auto_inject.rs` resolves through the MACRO-TIME registry; that registry \
+         is empty at reconstruction time, so the composition FAILS and the definition \
+         cannot be rebuilt outside the macro (`ast/src/auto_inject.rs:122-124` owns the \
+         fix, and calls it a separate task). That is the ONLY sanctioned reason to leave a \
+         declared language out of the bundled subject. If a row is exempt without being \
+         composed, the exemption has outlived its argument; if a language is composed \
+         without being exempt, the subject derivation is about to fail on it.",
+        table_path.display(),
+        exempt.difference(&composed).collect::<Vec<_>>(),
+        composed.difference(&exempt).collect::<Vec<_>>(),
+    );
+
+    assert!(
+        !composed.is_empty(),
+        "no composed language was found at all, so the equality above just compared two \
+         empty sets. `languages/src/composition/` holds `ExtMath`, `ImportedMath` and \
+         `MixedMath`; if they are gone, delete the exemption vocabulary deliberately rather \
+         than letting this check go quiet."
+    );
+}
+
+/// ★ THE NARROWING, kept as a permanent control.
+///
+/// # The experiment
+///
+/// * **control** — [`historic_narrow_scan`], the two hard-coded directories read one level
+///   deep, exactly as this file used to read them;
+/// * **mutation** — [`declared_bodies`], the recursive walk of the manifest-declared roots;
+/// * **effect** — the mutation must see STRICTLY MORE. The difference is enumerated in the
+///   failure message, so a regression says which declarations went back out of reach.
+///
+/// # Why the delta is asserted NON-EMPTY and never as an exact list
+///
+/// `languages/tests/inventory_additive_inertness_canary.rs` is the standing witness that
+/// adding a language whose requirements are already covered must be INERT — no hand edit
+/// anywhere else. An exact delta here would break that: every new probe under
+/// `languages/tests/` would turn this test red for a purely clerical reason, and the
+/// remedy would be to paste a path into a list, which is exactly the habit the derived
+/// subject exists to end. The EXACT assertion belongs where drift must be argued — the
+/// exemption set, above — and this one asserts only that the mutation still applies.
+///
+/// # The second defect this pins
+///
+/// The narrow scan was also keyed by FILE STEM. The assertion below that stems are not
+/// injective over the corpus is the standing witness that a stem cannot address this
+/// subject: `languages/tests/x2_lookahead_bracket_probe.rs` alone holds three bodies.
+#[test]
+fn the_scan_is_wider_than_the_two_directory_listing_it_replaced() {
+    let wide: BTreeSet<(String, String)> =
+        declared_bodies().iter().map(DeclaredBody::key).collect();
+    let narrow = historic_narrow_scan();
+
+    assert!(
+        !narrow.is_empty(),
+        "the historic narrow scan found nothing, so the comparison below is not a \
+         narrowing experiment — it is a broken control"
+    );
+    assert!(
+        narrow.is_subset(&wide),
+        "the recursive walk does not contain the two-directory listing it replaced, which \
+         means it is not a widening but a DIFFERENT scan: {:?}",
+        narrow.difference(&wide).collect::<Vec<_>>()
+    );
+
+    let gained: Vec<&(String, String)> = wide.difference(&narrow).collect();
+    assert!(
+        !gained.is_empty(),
+        "the recursive, manifest-rooted walk sees exactly what two hard-coded directories \
+         read one level deep saw, so the narrowing this test exists to prevent has been \
+         reintroduced. Declarations in `languages/src/composition/` (one subdirectory down) \
+         and in top-level `languages/tests/*.rs` (never a root at all) are what the narrow \
+         scan could not reach."
+    );
+    eprintln!(
+        "note: the recursive walk reaches {} declaration(s) the historic two-directory scan \
+         could not:\n  {}",
+        gained.len(),
+        gained
+            .iter()
+            .map(|(path, name)| format!("{path} :: {name}"))
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+
+    // The stem key, refuted. Two bodies in one file collapse to one stem, which is how a
+    // map keyed on stems could report a complete corpus while addressing part of it.
+    let bodies = declared_bodies();
+    let stems: BTreeSet<&str> = bodies
+        .iter()
+        .map(|body| {
+            body.path
+                .rsplit('/')
+                .next()
+                .and_then(|file| file.strip_suffix(".rs"))
+                .expect("a `.rs` path has a stem")
+        })
+        .collect();
+    assert!(
+        stems.len() < bodies.len(),
+        "every declaring file holds exactly one `language!` body, so a FILE STEM would be \
+         an adequate key. It was not when this was written — \
+         `languages/tests/x2_lookahead_bracket_probe.rs` held three — and the subject is \
+         keyed on `(path, name)` because of it. If this is now genuinely true, say so \
+         deliberately rather than letting the weaker key back in."
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// The totality invariant — ported from `ast/tests/dovetail_language_inventory.rs`
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Every file in the repository that DECLARES a `language!`, wherever it lives.
+///
+/// Membership is decided by PARSING: a file is a declaration site iff `syn` finds an
+/// item-level `language!` macro in it. That is exact where a text search is not — the
+/// macro is named in documentation across a dozen crates and emitted inside `quote!`
+/// templates in `macros/`, none of which is a definition, and
+/// `dovetail/tests/language_inventory.rs` carries two `r##"…"##` grammar FIXTURES that are
+/// string literals rather than items.
+///
+/// A file that mentions `language!` but does not parse as Rust is reported rather than
+/// skipped: silence there would be a hole of exactly the shape this sweep closes.
+fn repository_language_declarations() -> BTreeSet<PathBuf> {
+    let mut declaring = BTreeSet::new();
+    let mut unparsable = Vec::new();
+
+    for path in mettail_ast::language_scan::repository_rust_files(&repo_root()) {
+        let source = fs::read_to_string(&path).unwrap_or_default();
+        if !mettail_ast::language_scan::mentions_language_invocation(&source) {
+            continue;
+        }
+        match syn::parse_file(&source) {
+            Ok(file) => {
+                let mut defs = Vec::new();
+                collect_language_defs(&file.items, &mut defs);
+                if !defs.is_empty() {
+                    declaring.insert(path);
+                }
+            },
+            Err(_) => {
+                if source
+                    .lines()
+                    .any(|line| line.trim_start().starts_with("language!"))
+                {
+                    unparsable.push(path.display().to_string());
+                }
+            },
+        }
+    }
+
+    assert!(
+        unparsable.is_empty(),
+        "file(s) look like they declare a `language!` but do not parse as Rust, so this \
+         sweep cannot tell whether they are inside the scanned roots: {unparsable:#?}"
+    );
+    declaring
+}
+
+/// ★ No `language!` in this repository lies outside the files this suite scans.
+///
+/// # Why this guard is the durable half of the fix, and the widening only the visible half
+///
+/// Three files in this repository walk directories looking for `language!` declarations.
+/// Two of them — `ast/tests/dovetail_language_inventory.rs:576` and
+/// `dovetail/tests/language_inventory.rs:580` — have carried a guard of this exact name
+/// for some time. This file did not, and that is not a coincidence: when `c58d3845`
+/// widened the roots (*"a `language!` in a top-level `languages/tests/*.rs` was audited by
+/// nobody"*), it widened both files that had a totality guard, because in both of them the
+/// guard is what went red. The scan in THIS file had nothing that could go red, so it
+/// stayed two directories wide through the very commit that fixed its siblings.
+///
+/// Widening a scan fixes today's corpus. A totality guard fixes the CLASS: from here on, a
+/// declaration written anywhere the roots do not reach fails by name, in this suite, on
+/// the next run.
+///
+/// When it fails there are exactly two honest resolutions, and neither is to delete the
+/// check: move the definition under a scanned root, or widen
+/// `[package.metadata.mettail] language_roots`. Both leave the language covered.
+#[test]
+fn language_declarations_cannot_hide_outside_the_scanned_roots() {
+    let audited: BTreeSet<PathBuf> = language_files().into_iter().collect();
+    let declaring = repository_language_declarations();
+
+    let escaped = declaring
+        .difference(&audited)
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        escaped.is_empty(),
+        "{} file(s) declare a `language!` that this suite never scans, so every name-keyed \
+         artifact belonging to them looks stranded and the bundled binder-congruence \
+         subject does not contain them:\n  {}\n\nMove the definition under a scanned root, \
+         or widen `[package.metadata.mettail] language_roots`.",
+        escaped.len(),
+        escaped.join("\n  "),
+    );
+
+    assert!(
+        declaring.len() >= 40,
+        "the repository-wide sweep found only {} declaring file(s); it is not reaching the \
+         source tree and the difference above would be empty for the wrong reason",
+        declaring.len()
+    );
+
+    // The two cases the narrow scan in this file could not reach, named so that they stay
+    // covered even if every other declaration outside the two historic directories moves.
+    for canary in [
+        "languages/tests/inventory_discovery_canary.rs",
+        "languages/src/composition/base_lang.rs",
+    ] {
+        let path = repo_root().join(canary);
+        assert!(
+            declaring.contains(&path) && audited.contains(&path),
+            "`{canary}` must be both recognised as a declaration and scanned by this suite"
+        );
+    }
 }

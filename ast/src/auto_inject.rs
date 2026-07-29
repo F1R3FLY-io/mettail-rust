@@ -122,8 +122,42 @@ fn is_auto_inject_enabled(language: &LanguageDef) -> bool {
 /// declare none, so this reconstruction is **exact** for them. Reconstructing a
 /// composed language exactly would require serializing the resolved base/fragment
 /// sources into the registry at runtime — that is a separate, later task.
+///
+/// ⚠ **A composed language does not reconstruct to an EMPTY definition; it does not
+/// reconstruct at all.** The wording above ("composition is a no-op") describes the
+/// EFFECT, not the control flow: `apply_extends` / `apply_includes` / `apply_mixins`
+/// resolve each base through `registry::lookup_language_def`, which returns `None`
+/// against an empty runtime registry, and each of the three turns that `None` into an
+/// `Err` naming the base it could not find (`ast/src/merge.rs`). So this function returns
+/// `Err` for `ExtMath`, `ImportedMath` and `MixedMath` — the three composed languages in
+/// `languages/src/composition/` — rather than a definition with nothing in it. Callers
+/// that must range over the whole corpus (see
+/// `macros/src/gen/runtime/binder_congruence.rs::RECONSTRUCTION_EXEMPT`) therefore have to
+/// treat those three as an EXEMPTION with an owner, and they assert exactly that failure
+/// rather than assuming an empty success.
 pub fn reconstruct_language_def(raw_source: &str) -> syn::Result<LanguageDef> {
-    let mut def = syn::parse_str::<LanguageDef>(raw_source)?;
+    reconstruct_language_def_from_tokens(syn::parse_str::<proc_macro2::TokenStream>(raw_source)?)
+}
+
+/// [`reconstruct_language_def`], entered from the macro's OWN token stream.
+///
+/// # Why a caller would want this door rather than the string one
+///
+/// A caller that has already parsed a file with `syn` holds `ItemMacro::mac.tokens` — the
+/// EXACT body of the invocation, delimiters resolved by the Rust tokenizer. The string
+/// door requires it to hand over source TEXT instead, which means locating the body's
+/// bounds itself. The only way to do that textually is to guess, and the guess that was
+/// in the tree took `source.rfind('}')` as the macro's closing brace: correct precisely
+/// when the `language!` is the LAST ITEM IN THE FILE, and wrong for every one of the six
+/// top-level `languages/tests/*.rs` declarations, which continue with `#[test] fn …`
+/// afterwards. It was also wrong for any file holding more than one body.
+///
+/// Both doors run the identical pipeline below, so a definition reconstructed either way
+/// fingerprints identically; the token door simply cannot be handed the wrong bytes.
+pub fn reconstruct_language_def_from_tokens(
+    tokens: proc_macro2::TokenStream,
+) -> syn::Result<LanguageDef> {
+    let mut def = syn::parse2::<LanguageDef>(tokens)?;
 
     // Mirror macros/src/lib.rs: apply composition clauses in order.
     // `apply_*` return `Result<(), String>`; map any error to a syn::Error so

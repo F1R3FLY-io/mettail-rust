@@ -29,12 +29,6 @@ enum Requirement {
     RhoResourceGuardContract,
 }
 
-/// Directories that hold no hand-written source: build output and macro output.
-///
-/// Nothing else is skipped. A `bin` skip used to sit here too, which made
-/// `languages/src/bin/` a place a definition could be written and never audited.
-const NON_SOURCE_DIRECTORIES: &[&str] = &["target", "generated"];
-
 /// Every directory that may hold a `language!` definition: the whole `languages`
 /// package.
 ///
@@ -59,92 +53,22 @@ const NON_SOURCE_DIRECTORIES: &[&str] = &["target", "generated"];
 /// exactly the kind a second literal reintroduces. Both now read the single declaration in
 /// the workspace manifest, `[package.metadata.mettail] language_roots`, through
 /// [`mettail_ast::manifest`].
-fn language_definition_roots() -> Vec<PathBuf> {
-    mettail_ast::manifest::language_roots(&repo_root()).unwrap_or_else(|err| {
+///
+/// # …and why the WALK over those roots is read too
+///
+/// The recursive walk itself now lives in [`mettail_ast::language_scan`], for the same
+/// reason the roots do: it was written out four times, and `c58d3845` widened three of the
+/// four. What is NOT shared is the DECISION — this audit answers "does this file declare a
+/// language?" with the real `LanguageDef` parser, `dovetail/tests/language_inventory.rs`
+/// answers it by textual scan, and having two independent answers is the point of having
+/// two audits.
+fn language_files() -> Vec<PathBuf> {
+    mettail_ast::language_scan::language_files(&repo_root()).unwrap_or_else(|err| {
         panic!(
             "cannot determine the language definition roots: {err}\n\nThis audit scans \
              exactly those roots, so it must NOT continue with a guess: an empty or \
              narrowed root list would make it pass by scanning nothing."
         )
-    })
-}
-
-fn language_files() -> Vec<PathBuf> {
-    let mut pending: Vec<PathBuf> = language_definition_roots()
-        .into_iter()
-        .filter(|root| root.exists())
-        .collect();
-    let mut files = Vec::new();
-
-    while let Some(path) = pending.pop() {
-        let metadata =
-            fs::metadata(&path).unwrap_or_else(|e| panic!("stat {}: {e}", path.display()));
-        if metadata.is_dir() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            if NON_SOURCE_DIRECTORIES.contains(&name) {
-                continue;
-            }
-            for entry in
-                fs::read_dir(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
-            {
-                pending.push(entry.expect("dir entry").path());
-            }
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            files.push(path);
-        }
-    }
-
-    files.sort();
-    files
-}
-
-/// Directories the repository-wide sweep does not enter.
-///
-/// `target` is build output and `scratchpad` is the gitignored, harness-wiped campaign
-/// scratch area — a stale probe left in either must not be able to fail this suite.
-/// DOT-directories are tooling state, never hand-written source: `.git` is object
-/// storage, and `.formal-tmp` holds the formal pipeline's `cargo expand` dumps, two of
-/// which are 40 MB single-item files that cost 13 seconds each to parse.
-fn is_swept_over(directory_name: &str) -> bool {
-    directory_name.starts_with('.') || matches!(directory_name, "target" | "scratchpad")
-}
-
-/// Whether `source` could contain a `language!` INVOCATION.
-///
-/// A Rust macro invocation is `path`, `!`, then a delimiter, with only whitespace and
-/// comments allowed in between — so a file that never spells `language!` followed by
-/// `(`, `[` or `{` cannot invoke it, and this gate cannot hide a declaration from the
-/// sweep. It is a strict over-approximation in the other direction (a doc comment
-/// showing `language! { … }` passes), which is harmless because `syn` then decides.
-///
-/// The gate matters because the parse behind it is the expensive step: the workspace
-/// holds 179 files that merely NAME the macro, 7.2 MB in all, one of them 1.2 MB, and
-/// `syn` in a debug test binary is slow enough on that to dominate the run. The gate
-/// admits 57 files totalling 1.1 MB.
-fn mentions_language_invocation(source: &str) -> bool {
-    let bytes = source.as_bytes();
-    source.match_indices("language!").any(|(at, needle)| {
-        let mut index = at + needle.len();
-        loop {
-            match bytes.get(index) {
-                Some(byte) if byte.is_ascii_whitespace() => index += 1,
-                Some(b'/') if bytes.get(index + 1) == Some(&b'/') => {
-                    index = source[index..]
-                        .find('\n')
-                        .map_or(bytes.len(), |end| index + end + 1);
-                },
-                Some(b'/') if bytes.get(index + 1) == Some(&b'*') => {
-                    index = source[index + 2..]
-                        .find("*/")
-                        .map_or(bytes.len(), |end| index + 2 + end + 2);
-                },
-                Some(b'{' | b'(' | b'[') => return true,
-                _ => return false,
-            }
-        }
     })
 }
 
@@ -159,52 +83,30 @@ fn mentions_language_invocation(source: &str) -> bool {
 /// A file that mentions `language!` but does not parse as Rust is reported rather than
 /// skipped: silence there would be a hole of exactly the shape this sweep closes.
 fn repository_language_declarations() -> BTreeSet<PathBuf> {
-    let mut pending = vec![repo_root()];
     let mut declaring = BTreeSet::new();
     let mut unparsable = Vec::new();
 
-    while let Some(path) = pending.pop() {
-        let Ok(metadata) = fs::metadata(&path) else {
-            continue; // a broken symlink is not a declaration
-        };
-        if metadata.is_dir() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            if is_swept_over(name) {
-                continue;
-            }
-            let Ok(entries) = fs::read_dir(&path) else {
-                continue;
-            };
-            for entry in entries {
-                pending.push(entry.expect("repository dir entry").path());
-            }
+    for path in mettail_ast::language_scan::repository_rust_files(&repo_root()) {
+        let source = fs::read_to_string(&path).unwrap_or_default();
+        if !mettail_ast::language_scan::mentions_language_invocation(&source) {
             continue;
         }
-        if path.extension().is_some_and(|ext| ext == "rs") {
-            let source = fs::read_to_string(&path).unwrap_or_default();
-            if !mentions_language_invocation(&source) {
-                continue;
-            }
-            match syn::parse_file(&source) {
-                Ok(file) => {
-                    let mut found = Vec::new();
-                    collect_language_macros(&file.items, &mut found);
-                    if !found.is_empty() {
-                        declaring.insert(path);
-                    }
-                },
-                Err(_) => {
-                    let mentions_at_item_position = source
-                        .lines()
-                        .any(|line| line.trim_start().starts_with("language!"));
-                    if mentions_at_item_position {
-                        unparsable.push(path.display().to_string());
-                    }
-                },
-            }
+        match syn::parse_file(&source) {
+            Ok(file) => {
+                let mut found = Vec::new();
+                collect_language_macros(&file.items, &mut found);
+                if !found.is_empty() {
+                    declaring.insert(path);
+                }
+            },
+            Err(_) => {
+                let mentions_at_item_position = source
+                    .lines()
+                    .any(|line| line.trim_start().starts_with("language!"));
+                if mentions_at_item_position {
+                    unparsable.push(path.display().to_string());
+                }
+            },
         }
     }
 
@@ -585,7 +487,8 @@ fn language_declarations_cannot_hide_outside_the_scanned_roots() {
         escaped.is_empty(),
         "{} file(s) declare a `language!` that this audit never parses, so nothing \
          checks their requirements against the Rocq inventory:\n{}\n\nMove the \
-         definition under a scanned root, or widen `language_definition_roots`.",
+         definition under a scanned root, or widen \
+         `[package.metadata.mettail] language_roots`.",
         escaped.len(),
         escaped.join("\n  "),
     );
@@ -613,11 +516,11 @@ fn current_language_defs_have_dovetail_requirement_inventory() {
     for path in &source_files {
         let source =
             fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        // A file that declares a `language!` necessarily contains that text, so this
-        // gate cannot hide a definition — it only spares `syn` the generated test
-        // binaries and simulators the widened root now walks. Anything that passes the
-        // gate is still parsed and decided structurally.
-        if !source.contains("language!") {
+        // A file that declares a `language!` necessarily spells it followed by a
+        // delimiter, so this gate cannot hide a definition — it only spares `syn` the
+        // generated test binaries and simulators the widened root now walks. Anything
+        // that passes the gate is still parsed and decided structurally.
+        if !mettail_ast::language_scan::mentions_language_invocation(&source) {
             continue;
         }
         let file =

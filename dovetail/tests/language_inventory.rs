@@ -14,6 +14,16 @@ use std::path::{Path, PathBuf};
 #[path = "../../ast/src/manifest.rs"]
 mod manifest;
 
+/// The single WALK over those roots, shared for the same reason and pulled in the same
+/// way. `language_scan` names `crate::manifest`, which resolves here because `manifest`
+/// above is a root-level module of this test crate exactly as it is of `ast`.
+// `dead_code` is wrong HERE for the same reason it is on `manifest`: this consumer needs
+// `rust_files_under`, `repository_rust_files` and `is_swept_over`, while `language_files`
+// and `repo_relative` are live in the other consumers.
+#[allow(dead_code)]
+#[path = "../../ast/src/language_scan.rs"]
+mod language_scan;
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum Requirement {
     Equation,
@@ -383,40 +393,21 @@ fn rocq_current_requirement_names(source: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Directories that hold no hand-written source and are never scanned.
+/// Every `.rs` file under `root`, recursively.
 ///
-/// `target` is build output; `generated` is macro output (the `language!` expansion,
-/// not a declaration). Nothing else is skipped: every other directory under a root is
-/// walked, so no `language!` can be placed out of reach of the audit. In particular
-/// `bin` is NOT skipped any more — a definition dropped into `languages/src/bin/`
-/// used to leave the scan silently, which is the same hole this file exists to close.
-const NON_SOURCE_DIRECTORIES: &[&str] = &["target", "generated"];
-
+/// The walk is [`language_scan::rust_files_under`] — ONE walk, shared by the four guards
+/// that need it, for exactly the reason the ROOT list is shared: written out four times,
+/// it was widened three times by `c58d3845` and the fourth kept its old, narrower reach.
+/// `target` (build output) and `generated` (macro output — the `language!` EXPANSION, not
+/// a declaration) are the only directories skipped; in particular `bin` is NOT, because a
+/// definition dropped into `languages/src/bin/` used to leave the scan silently.
+///
+/// ★ Only the WALK is shared. This audit's declaration DECISION stays its own textual
+/// scan, and `ast/tests/dovetail_language_inventory.rs`'s stays the real `LanguageDef`
+/// parser — two independent answers about the same corpus is the point of two audits.
 fn discover_rust_files(root: &Path) -> Vec<PathBuf> {
-    let mut pending = vec![root.to_path_buf()];
-    let mut files = Vec::new();
-    while let Some(path) = pending.pop() {
-        let metadata =
-            fs::metadata(&path).unwrap_or_else(|err| panic!("failed to stat {path:?}: {err}"));
-        if metadata.is_dir() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            if NON_SOURCE_DIRECTORIES.contains(&name) {
-                continue;
-            }
-            for entry in fs::read_dir(&path)
-                .unwrap_or_else(|err| panic!("failed to read directory {path:?}: {err}"))
-            {
-                pending.push(entry.expect("source directory entry").path());
-            }
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-            files.push(path);
-        }
-    }
-    files.sort();
-    files
+    language_scan::rust_files_under(root)
+        .unwrap_or_else(|err| panic!("failed to walk the language root {root:?}: {err}"))
 }
 
 /// Every directory that may hold a `language!` definition: the whole `languages`
@@ -461,53 +452,29 @@ fn language_definition_roots() -> Vec<std::path::PathBuf> {
     })
 }
 
-/// Whether the REPOSITORY-WIDE sweep declines to enter a directory.
-///
-/// `target` is build output; `scratchpad` is the documented wipeable campaign scratch
-/// area (gitignored, never a build input, cleared by the harness), so a stale probe
-/// left in either must not be able to fail this suite. DOT-directories are tooling
-/// state and never hold hand-written source: `.git` is object storage, and
-/// `.formal-tmp` holds the formal pipeline's `cargo expand` dumps — two 40 MB
-/// single-item files whose scan dominated everything else this test does.
-fn is_swept_over(directory_name: &str) -> bool {
-    directory_name.starts_with('.') || matches!(directory_name, "target" | "scratchpad")
-}
-
 /// Every file in the repository that DECLARES a `language!`, wherever it lives.
 ///
-/// Quotation does not count: the text is stripped by [`declarations_only`] first, so
-/// the many files that discuss the macro in documentation (`prattail/src/lib.rs`,
-/// `macros/src/…`, `languages/tests/doc_comment_metadata.rs`, and this file) are not
-/// mistaken for definitions.
+/// The repository-wide WALK is [`language_scan::repository_rust_files`], which declines
+/// `target` (build output), `scratchpad` (the documented wipeable campaign scratch area —
+/// gitignored, never a build input, cleared by the harness, so a stale probe left there
+/// must not be able to fail this suite) and DOT-directories (tooling state, never
+/// hand-written source: `.git` is object storage, and `.formal-tmp` holds the formal
+/// pipeline's `cargo expand` dumps, two 40 MB single-item files whose scan dominated
+/// everything else this test does).
+///
+/// The DECISION stays here, and stays textual. Quotation does not count: the text is
+/// stripped by [`declarations_only`] first, so the many files that discuss the macro in
+/// documentation (`prattail/src/lib.rs`, `macros/src/…`,
+/// `languages/tests/doc_comment_metadata.rs`, and this file) are not mistaken for
+/// definitions.
 fn repository_language_declarations() -> BTreeSet<PathBuf> {
-    let mut pending = vec![repo_root()];
     let mut declaring = BTreeSet::new();
 
-    while let Some(path) = pending.pop() {
-        let Ok(metadata) = fs::metadata(&path) else {
-            continue; // a broken symlink is not a declaration
-        };
-        if metadata.is_dir() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            if is_swept_over(name) {
-                continue;
-            }
-            let Ok(entries) = fs::read_dir(&path) else {
-                continue;
-            };
-            for entry in entries {
-                pending.push(entry.expect("repository directory entry").path());
-            }
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-            let source = fs::read_to_string(&path).unwrap_or_default();
-            // Cheap gate first: reading is unavoidable, stripping is not.
-            if source.contains("language!") && is_language_macro_source(&declarations_only(&source))
-            {
-                declaring.insert(path);
-            }
+    for path in language_scan::repository_rust_files(&repo_root()) {
+        let source = fs::read_to_string(&path).unwrap_or_default();
+        // Cheap gate first: reading is unavoidable, stripping is not.
+        if source.contains("language!") && is_language_macro_source(&declarations_only(&source)) {
+            declaring.insert(path);
         }
     }
 

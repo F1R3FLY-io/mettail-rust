@@ -16,6 +16,7 @@ pub mod grammar;
 pub mod grammar_shapes;
 pub mod identity;
 pub mod language;
+pub mod language_scan;
 pub mod manifest;
 pub mod merge;
 pub mod pattern;
