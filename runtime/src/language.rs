@@ -515,6 +515,24 @@ pub struct RuntimeDovetailRunReport {
     /// precedent). Populated only when a producer resolves σ provenance for a
     /// runtime bridge (Epic-4 Rho σ-injection).
     pub rewrite_justifications: Vec<RuntimeRewriteJustification>,
+    /// ★ The declared fold bodies that DECLINED, and why.
+    ///
+    /// A fold that produced no value used to be indistinguishable from a rule that simply did not
+    /// apply: both left the redex unreduced and both were reported as nothing at all, so a run
+    /// over `6 / 0` came back as *"already a normal form"* over the term `6 / 0`. This field is
+    /// the missing half — one record per distinct `(label, partiality)`, carrying a count and the
+    /// reason (see [`crate::partiality`]).
+    ///
+    /// ⚠ **Semantic declines only.** A fold that did not fire because an operand is still a redex
+    /// — a free variable, an unreduced child — is STRUCTURAL and is deliberately absent here;
+    /// that is "not yet", and a later iteration may supply the answer. Without that exclusion
+    /// every non-firing rule in the corpus would appear as a finding.
+    ///
+    /// Empty for every run in which nothing declined, and empty in every producer that does not
+    /// run the Dovetail fold dispatcher (additive — it mirrors the
+    /// [`rewrite_justifications`](Self::rewrite_justifications) empty-default precedent, and no
+    /// computed value or post-state hash depends on it).
+    pub declined_folds: Vec<crate::partiality::DeclinedFold>,
     pub completeness: RuntimeDovetailCompleteness,
     /// What the [`derivation_edges`](Self::derivation_edges) relation MEANS, so a consumer can
     /// project the right navigable graph. Production `exec` reports and the legacy step-display
@@ -2635,6 +2653,7 @@ mod tests {
                 count: 2,
             }],
             rewrite_justifications: Vec::new(),
+            declined_folds: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
             graph_kind: RuntimeDovetailGraphKind::Derivation,
         }

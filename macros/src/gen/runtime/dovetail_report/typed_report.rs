@@ -621,23 +621,43 @@ fn collect_nested_structural_ac_rules(
 /// ★★ THE FOLD-BODY GATE — a declared `![…]` body's ONE emitted form.
 ///
 /// ```text
-///     ( (|| -> Option<_> { Lift( safeify(body) ).lift() })() ) ?
+///     match partiality::classify( (|| -> Result<_, Partiality> { Lift( safeify(body) ).lift() })() ) {
+///         FoldDisposition::Ran(v)        => v,
+///         FoldDisposition::Defer         => return None,                       // STRUCTURAL
+///         FoldDisposition::Declined(p)   => { declines.record(label, p); return None }  // SEMANTIC
+///     }
 /// ```
 ///
-/// The body is rewritten by [`crate::gen::native::rust_code_rewrite::safeify`], wrapped in an
-/// `Option`-returning closure, and `?`-unwrapped by the dispatcher. Every way a body can fail
-/// therefore arrives at the dispatcher as `None`, which leaves the redex unreduced and keeps
-/// the report `Complete` — the same disposition `6 / 0` has always had.
+/// The body is rewritten by [`crate::gen::native::rust_code_rewrite::safeify`], wrapped in a
+/// `Result<_, Partiality>`-returning closure, and classified by the dispatcher. Every way a body
+/// can fail therefore leaves the redex unreduced and keeps the report `Complete` — the same
+/// disposition `6 / 0` has always had — **but the reason is now recorded** whenever the failure
+/// was the operation refusing its input rather than an operand not being ready.
+///
+/// # ★★ THE THREE-VALUED RETURN — why `Option<EClassId>` was not enough
+///
+/// Until 2026-07-29 this emitted `(…)?`, so the dispatcher's `None` meant **both** "no rule
+/// applies here" and "the operation declined this input". A report that conflates those can only
+/// ever say *"already a normal form"* over a term that in fact refused to compute — the `#33`
+/// conflation, one lane down from where it was already solved. `mettail_rholang_codegen`'s
+/// [`RhoFoldDataflowDisposition::{Run, Defer, BlockedBySemanticPredicate}`] draws exactly this
+/// partition for the Rho lane; `FoldDisposition` is the same shape for the Dovetail lane.
+///
+/// ⚠ `Declined` and `Defer` contribute **identically** to the e-graph — nothing. No computed
+/// value and no post-state hash moves; the only difference is what the run report carries. In
+/// particular the redex must SURVIVE, because a stuck `Proc::Div(a, b)` lowers to `EDivBody` and
+/// f1r3node's metered reducer decides it, whereas `Proc::Err` has no Rho image at all.
 ///
 /// What `safeify` does to a body, and why this is the whole repair:
 ///
 /// | written | emitted | on failure |
 /// |---|---|---|
-/// | `a + b` | `SafeArith::safe_add(a, b)?` | `None` → defer |
-/// | `x.expect(msg)` / `x.unwrap()` | `(x)?` | `None` → defer |
-/// | `t.eval()` | `(t).try_eval()?` | `None` → defer (a Var-bearing child) |
-/// | `Some(v)` / `try_f(..)` | unchanged; `Lift`'s autoref specialisation sees `Option<T>` | `None` → defer |
-/// | anything else | unchanged; `Lift` wraps it as `Some(t)` | — |
+/// | `a + b` | `SafeArith::safe_add(a, b)?` | `Undefined{…}` / `NotRepresentable{…}` → **declined, with the carrier and reason** |
+/// | `x.expect(msg)` | `Declarable::declared(x, msg)?` | `Declared{message}` → **declined, carrying the author's words** |
+/// | `x.unwrap()` | `Declarable::unwrapped(x)?` | `Unreported` → declined, and the silence is the finding |
+/// | `t.eval()` | `not_reduced(t.try_eval())?` | `NotReduced` → **defer** (a Var-bearing child); records nothing |
+/// | `Some(v)` / `try_f(..)` | unchanged; `Lift`'s autoref specialisation sees `Option<T>` | `Unreported` → declined |
+/// | anything else | unchanged; `Lift` wraps it as `Ok(t)` | — |
 ///
 /// # ★★ #100 — the root was a CIRCULARITY, and it is why this function has no branches
 ///
@@ -682,9 +702,31 @@ fn collect_nested_structural_ac_rules(
 ///
 /// So the binding stays exactly as it was and the body treatment became total. The flag's own
 /// doc on [`FoldRule`] records the narrowed responsibility.
-fn fold_body_value(fold: &FoldRule<'_>) -> TokenStream {
-    let safeified = crate::gen::native::rust_code_rewrite::safeify_and_wrap(fold.body);
-    quote! { (#safeified)? }
+///
+/// `label` is the fold's published label (`"Calculator::fold::Int_DivInt"`) — the same string its
+/// `NativeRule` carries, so a decline and a firing are comparable by name in one report.
+///
+/// The emitted expression names `__mettail_declines`, which every emission site of the dispatcher
+/// closure brings into scope as a `&mettail_runtime::DeclineSink`.
+fn fold_body_value(fold: &FoldRule<'_>, label: &TokenStream) -> TokenStream {
+    let safeified = crate::gen::native::rust_code_rewrite::safeify_and_wrap_reported(fold.body);
+    quote! {
+        match ::mettail_runtime::partiality::classify(#safeified) {
+            ::mettail_runtime::FoldDisposition::Ran(__mettail_value) => __mettail_value,
+            // STRUCTURAL — an operand is still a redex, so a later iteration may
+            // supply the answer. Nothing is recorded: this is "not yet", not a refusal.
+            ::mettail_runtime::FoldDisposition::Defer => {
+                return ::core::option::Option::None;
+            },
+            // SEMANTIC — the shape was reducible and the operation refused THIS input.
+            // The redex is still left in place (identical e-graph effect), but the
+            // reason is now on the record.
+            ::mettail_runtime::FoldDisposition::Declined(__mettail_partiality) => {
+                __mettail_declines.record(#label, __mettail_partiality);
+                return ::core::option::Option::None;
+            },
+        }
+    }
 }
 
 /// `__is_redex` / `__is_var_op` / `__is_value_op` / `__weigh` / `__class_is_fold_value` /
@@ -919,6 +961,12 @@ fn generate_native_rules_and_dispatch(
             let op_id = f.op_id;
             let out_add = category_lowering_fn(&f.output_cat);
             let body = f.body;
+            // The fold's published label, spelled exactly as its `NativeRule` spells it above, so
+            // a DECLINE record and a FIRING record name the same rule.
+            let fold_label = {
+                let l = lit(&format!("{}::fold::{}", language.name, f.op_variant));
+                quote! { #l }
+            };
 
             let cls_vars: Vec<Ident> = f
                 .params
@@ -1108,7 +1156,7 @@ fn generate_native_rules_and_dispatch(
             let out_type = language.get_type(&f.output_cat);
             let out_native = out_type.map(|t| t.native_type.is_some()).unwrap_or(false);
             let out_cat = &f.output_cat;
-            let body_value = fold_body_value(f);
+            let body_value = fold_body_value(f, &fold_label);
             let result_handling = if out_native {
                 let native_type = out_type
                     .and_then(|t| t.native_type.as_ref())
@@ -1201,6 +1249,17 @@ fn generate_native_rules_and_dispatch(
         .collect::<Result<Vec<_>, _>>()
         .unwrap_or_else(|reason| vec![quote! { compile_error!(#reason); }]);
 
+    // ⚠ The closure CAPTURES `__mettail_declines` (a `&::mettail_runtime::DeclineSink`), which
+    // every emission site must bring into scope immediately before splicing this token stream.
+    // The engine's `NativeDispatch` is a `dyn Fn` — not `FnMut` — because it is handed
+    // `&mut EGraph`, so the sink carries its own interior mutability; saturation is
+    // single-threaded by construction and `DeclineSink::record` is a straight-line push.
+    //
+    // The closure's own return stays `Option<EClassId>` because that is the ENGINE's vocabulary:
+    // a native rule either merges a computed class or leaves the redex alone. The three-valued
+    // disposition lives one level in, at the fold body (see `fold_body_value`), where `Declined`
+    // is recorded and then — deliberately — collapses to the same `None` a `Defer` produces. That
+    // collapse is what keeps this change additive: identical e-graph effect, strictly more report.
     let dispatch = quote! {
         |__op: ::dovetail::rules::NativeOpId,
          __eg: &mut ::dovetail::egraph::EGraph<#enum_id>,
@@ -1957,6 +2016,11 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
             }
 
             let __iters = ((__max_depth as usize) + #struct_slack).max(max_iters);
+            // The dispatcher's decline sink. `dovetail_normal_term` answers a TERM, not a
+            // report, so it has nowhere to publish the records — but the sink must still exist
+            // for the closure to capture, and it costs one empty `Vec` per call.
+            #[allow(unused_variables)]
+            let __mettail_declines = ::mettail_runtime::DeclineSink::new();
             let __dispatch = #dispatch;
             static __DOVETAIL_COMPILED_RULES: ::std::sync::OnceLock<
                 ::dovetail::rules::CompiledRuleSet<#enum_id>,
@@ -2324,6 +2388,11 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
 
                 // Native (fold / substitution) rules: the generated dispatcher computes the RHS
                 // class from the matched substitution (the same computation saturation uses).
+                // The step-only enumerator reports SUCCESSOR STATES, so a decline (like a
+                // deferral) simply contributes no successor; the sink exists for the closure to
+                // capture and its records are not projected into the rewrite graph.
+                #[allow(unused_variables)]
+                let __mettail_declines = ::mettail_runtime::DeclineSink::new();
                 let __dispatch = #dispatch;
                 for __nrule in __compiled_rules.native_rules() {
                     for (__c, __subst) in __eg.search(&__nrule.lhs) {
@@ -2482,6 +2551,10 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
                 derivation_edges: __derivation_edges,
                 rule_firings: Vec::new(),
                 rewrite_justifications: Vec::new(),
+                // The step-only producer reports SUCCESSOR STATES; a declining fold contributes
+                // no successor, exactly as a deferring one does, so this graph carries no
+                // decline records. (`dovetail_report_for` is where they surface.)
+                declined_folds: Vec::new(),
                 completeness: mettail_runtime::RuntimeDovetailCompleteness::Complete,
                 graph_kind: mettail_runtime::RuntimeDovetailGraphKind::Rewrite,
             };
@@ -2817,6 +2890,12 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                 }
 
                 let __iters = ((__max_depth as usize) + #struct_slack).max(max_iters);
+                // ★ The decline sink — the surface this whole change exists to fill. It is
+                // drained into `RuntimeDovetailRunReport::declined_folds` after saturation, so a
+                // report over `6 / 0` can say WHY nothing reduced instead of only that nothing
+                // did. Empty on every run in which no declared operation refused its input, which
+                // is the overwhelming majority — one `Vec::new()` per report.
+                let __mettail_declines = ::mettail_runtime::DeclineSink::new();
                 let __dispatch = #dispatch;
                 static __DOVETAIL_COMPILED_RULES: ::std::sync::OnceLock<
                     ::dovetail::rules::CompiledRuleSet<#enum_id>,
@@ -2879,6 +2958,11 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                 #resolve_justifications
                 let mut runtime_report =
                     ::mettail_dovetail_runtime::project_dovetail_report(&report);
+                // ★ Attach the semantic declines. Aggregated by `(label, partiality)` and in
+                // first-encounter order, exactly like `rule_firings`, so "how many distinct
+                // operations refused this program" is a stable question even though saturation
+                // re-dispatches a surviving redex once per iteration.
+                runtime_report.declined_folds = __mettail_declines.take();
                 #bareify_justifications
                 if record_source {
                     for __term in &mut runtime_report.terms {
@@ -2952,22 +3036,32 @@ mod tests {
     // conventions somebody has to keep current — the list being incomplete is exactly how the
     // defect worked.
 
-    /// ★★ #100 — EVERY DECLARED FOLD BODY IS EMITTED IN THE DEFERRING FORM.
+    /// ★★ #100 — EVERY DECLARED FOLD BODY IS EMITTED IN THE DEFERRING **AND REPORTING** FORM.
     ///
     /// # The property, and why it is stated over the corpus rather than over four sites
     ///
     /// A `![…]` fold body runs inside the D-stage dispatcher's closure. The closure returns
     /// `Option<ClassId>`, so a body that cannot produce a value has exactly one correct way
-    /// to say so — `None`, which leaves the redex unreduced and keeps the report `Complete`.
-    /// Anything else it does with the failure (`.expect`, `.unwrap`, `panic!`) is executed
-    /// with the e-graph mid-saturation.
+    /// to say so to the ENGINE — `None`, which leaves the redex unreduced and keeps the report
+    /// `Complete`. Anything else it does with the failure (`.expect`, `.unwrap`, `panic!`) is
+    /// executed with the e-graph mid-saturation.
     ///
     /// [`fold_body_value`] is the ONE place that decides the form, so the property is
-    /// checkable HERE, on token streams, with no build of any generated crate: the emitted
-    /// expression must be `((|| -> Option<_> { … Lift(<safeified body>).lift() })())?`.
-    /// `safeify` is what demotes `.expect(msg)` and `.unwrap()` to `?`
-    /// (`macros/src/gen/native/rust_code_rewrite.rs`), so carrying the `Lift` marker IS
-    /// carrying the demotion.
+    /// checkable HERE, on token streams, with no build of any generated crate. The emitted
+    /// expression must
+    ///
+    /// 1. wrap the body in the `Lift(<safeified body>).lift()` closure — `safeify` is what
+    ///    demotes `.expect(msg)` / `.unwrap()` / `.eval()` away from panicking
+    ///    (`macros/src/gen/native/rust_code_rewrite.rs`), so carrying the `Lift` marker IS
+    ///    carrying the demotion; **and**
+    /// 2. classify the result three-valued and RECORD the semantic half — the `classify` /
+    ///    `FoldDisposition::Declined` / `__mettail_declines.record` markers.
+    ///
+    /// ⚠ Requirement 2 was added on 2026-07-29. Before it the emitted form ended in a bare
+    /// `?`, which made "the operation declined this input" and "no rule applies here" the same
+    /// observation — a body could be perfectly non-panicking and still say nothing about WHY it
+    /// produced no value. A census that checks only requirement 1 passes a generator that has
+    /// silently dropped every reason, so both markers are checked, on every body, every time.
     ///
     /// # ⚠ Measured RED before the repair: 147 of 193
     ///
@@ -2996,24 +3090,49 @@ mod tests {
     /// stop being collected would satisfy every assertion below in silence.
     #[test]
     fn every_declared_fold_body_defers_instead_of_panicking() {
+        use quote::quote;
+
         let mut folds_seen = 0usize;
         let mut offenders: Vec<String> = Vec::new();
+        let mut unreporting: Vec<String> = Vec::new();
 
         for lang in crate::gen::runtime::binder_congruence::tests::bundled_languages() {
             let (folds, _dispositions) = super::collect_fold_rules(&lang.def);
             for fold in &folds {
                 folds_seen += 1;
-                let emitted = super::fold_body_value(fold).to_string().replace(' ', "");
-                // The deferring form: the safeify closure's `Lift` dispatch inside, `?` outside.
-                let defers =
-                    emitted.contains("::mettail_runtime::lift::Lift(") && emitted.ends_with(")?");
-                if !defers {
+                let label = {
+                    let l = super::lit(&format!("{}::fold::{}", lang.def.name, fold.op_variant));
+                    quote! { #l }
+                };
+                let emitted = super::fold_body_value(fold, &label)
+                    .to_string()
+                    .replace(' ', "");
+                let excerpt = |s: &str| s[..s.len().min(140)].to_string();
+
+                // (1) The DEFERRING form: the safeify closure's `Lift` dispatch inside.
+                if !emitted.contains("::mettail_runtime::lift::Lift(") {
                     offenders.push(format!(
                         "{} :: {} :: {} — emitted `{}`",
                         lang.path,
                         lang.name,
                         fold.op_variant,
-                        &emitted[..emitted.len().min(140)],
+                        excerpt(&emitted),
+                    ));
+                }
+
+                // (2) The REPORTING form: three-valued classification, and the SEMANTIC half
+                // recorded under this fold's own label.
+                let reports = emitted.contains("::mettail_runtime::partiality::classify(")
+                    && emitted.contains("::mettail_runtime::FoldDisposition::Declined(")
+                    && emitted.contains("::mettail_runtime::FoldDisposition::Defer")
+                    && emitted.contains("__mettail_declines.record(");
+                if !reports {
+                    unreporting.push(format!(
+                        "{} :: {} :: {} — emitted `{}`",
+                        lang.path,
+                        lang.name,
+                        fold.op_variant,
+                        excerpt(&emitted),
                     ));
                 }
             }
@@ -3031,11 +3150,23 @@ mod tests {
             "★ {} of {folds_seen} fold bodie(s) are NOT emitted in the deferring form, so a \
              failure inside them runs as a panic in the middle of e-graph saturation instead \
              of as a `None` that leaves the redex unreduced:\n  {}\n\nEvery fold body must go \
-             through `safeify_and_wrap` — `is_pure_native_arith` decides how OPERANDS are \
-             bound (`try_eval()` vs `&Cat`), which is the only half of that flag that is \
+             through `safeify_and_wrap_reported` — `is_pure_native_arith` decides how OPERANDS \
+             are bound (`try_eval()` vs `&Cat`), which is the only half of that flag that is \
              about parameter categories.",
             offenders.len(),
             offenders.join("\n  "),
+        );
+        assert!(
+            unreporting.is_empty(),
+            "★ {} of {folds_seen} fold bodie(s) DEFER without REPORTING: they are emitted \
+             without the three-valued classification, so a body that declines its input is \
+             indistinguishable from a rule that simply did not apply, and a run over such a \
+             term can only be described as `already a normal form`:\n  {}\n\nEvery fold body \
+             must be classified by `partiality::classify` and record its `Declined` half into \
+             `__mettail_declines`; the `Defer` half (an operand still a redex) must record \
+             NOTHING, which is why both arms are checked.",
+            unreporting.len(),
+            unreporting.join("\n  "),
         );
     }
 }

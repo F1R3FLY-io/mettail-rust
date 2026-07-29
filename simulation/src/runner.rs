@@ -573,16 +573,39 @@ impl<'a> SimulationRunner<'a> {
                 );
 
                 // Present the reduced normal form when the input folded to a literal (post-P6
-                // Dovetail reduces native folds in-engine); otherwise keep the raw report.
+                // Dovetail reduces native folds in-engine); otherwise keep the raw report — or,
+                // if a declared operation REFUSED its input, say so.
+                //
+                // ★ The order is deliberate and it is the lossless-promotion election
+                // (`ast/src/auto_inject.rs`): a term that DID reduce reports its normal form even
+                // when some narrower reading declined, because the program has an answer. Only a
+                // run that reached no value AND recorded a decline reports `Declined` — which is
+                // exactly the case that used to come back as a bare summary indistinguishable
+                // from an inert term.
                 let outcome = match dovetail_extract_normal_form(&dovetail_report) {
                     Some(term) => TraceOutcome::NormalForm {
                         term,
                         steps: next_step_index.saturating_sub(1),
                     },
-                    None => TraceOutcome::RuntimeReport {
-                        backend: backend.to_string(),
-                        artifact: artifact.to_string(),
-                        summary,
+                    None => match dovetail_report.declined_folds.first() {
+                        Some(first) => TraceOutcome::Declined {
+                            term: term_display.clone(),
+                            steps: next_step_index.saturating_sub(1),
+                            label: first.label.clone(),
+                            operation: first.operation().map(str::to_string),
+                            reason: first.reason_token().to_string(),
+                            detail: first.partiality.to_string(),
+                            all: dovetail_report
+                                .declined_folds
+                                .iter()
+                                .map(|record| record.to_string())
+                                .collect(),
+                        },
+                        None => TraceOutcome::RuntimeReport {
+                            backend: backend.to_string(),
+                            artifact: artifact.to_string(),
+                            summary,
+                        },
                     },
                 };
                 let morphology = morphology_tracker.as_ref().map(|t| t.summary());
@@ -1527,6 +1550,7 @@ mod tests {
             derivation_edges: Vec::new(),
             rule_firings: Vec::new(),
             rewrite_justifications: Vec::new(),
+            declined_folds: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
             graph_kind: RuntimeDovetailGraphKind::Derivation,
         }

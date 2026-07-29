@@ -13,6 +13,30 @@ use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam}
 use mettail_ast::language::{LanguageDef, NativeKind};
 use mettail_ast::types::TypeExpr;
 
+/// The FIRST generic argument of a declared collection native type — the
+/// collection's ELEMENT type.
+///
+/// #74: rholang declares `![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap`,
+/// but only the first parameter is information — a `Pathmap`'s VALUE type is
+/// derived from the container kind as `PathValue<E>`, because its value slot is
+/// optional. This extracts the `E` so `eval()`'s return type is rebuilt the same
+/// way `crate::gen::types::enums` builds the enum variant's payload. Keeping the
+/// two derivations textually parallel is deliberate: if they diverge the
+/// generated code does not compile, which is the failure mode we want.
+fn pathmap_element_type(native_type: &syn::Type) -> Option<TokenStream> {
+    let syn::Type::Path(type_path) = native_type else {
+        return None;
+    };
+    let seg = type_path.path.segments.last()?;
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    match args.args.first()? {
+        syn::GenericArgument::Type(elem) => Some(quote! { #elem }),
+        _ => None,
+    }
+}
+
 /// Per-field PDA classification of a HOL rule's term context — one entry per
 /// generated variant field, in declaration order.
 ///
@@ -1146,11 +1170,28 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
         if !match_arms.is_empty() {
             let nt = NativeType::from_syn_type(native_type);
-            let return_type = match nt {
-                NativeType::Str => quote! { std::string::String },
-                NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
-                NativeType::Float64 => quote! { mettail_runtime::CanonicalFloat64 },
-                _ => quote! { #native_type },
+            let return_type = if matches!(
+                lang_type.collection_kind,
+                Some(mettail_ast::language::CollectionCategory::Pathmap(_))
+            ) {
+                // #74: a `Pathmap`'s literal payload is
+                // `PathMapLit<E, PathValue<E>>` — the value slot is optional, so
+                // the value type is not `E`. The declared native type
+                // (`![PathMapLit<Proc, Proc>]`) supplies only `E`; the payload is
+                // rebuilt around it exactly as `types::enums` does, so `eval()`'s
+                // return type stays in lockstep with the enum variant's payload.
+                let elem = pathmap_element_type(native_type)
+                    .unwrap_or_else(|| quote! { #native_type });
+                quote! {
+                    mettail_runtime::PathMapLit<#elem, mettail_runtime::PathValue<#elem>>
+                }
+            } else {
+                match nt {
+                    NativeType::Str => quote! { std::string::String },
+                    NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
+                    NativeType::Float64 => quote! { mettail_runtime::CanonicalFloat64 },
+                    _ => quote! { #native_type },
+                }
             };
             try_eval_arms.push(quote! { _ => None, });
 
@@ -1271,18 +1312,19 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 //   * NOT EMITTING THE OPERATOR — chosen. Fabrication becomes unrepresentable
                 //     because the fabricating operation no longer exists: `a + b` on a
                 //     category value is a COMPILE error, and every call site must consume the
-                //     `Option` returned by the `SafeArith` impl below and map `None` onto the
-                //     language's own failure disposition (for Rholang: `Proc::Err`, the
+                //     `Result` returned by the `SafeArith` impl below and map its `Err` onto
+                //     the language's own failure disposition (for Rholang: `Proc::Err`, the
                 //     `error` term — see `languages/src/rholang.rs` `Add`/`Sub`/`Mul`/`Div`/
                 //     `Mod`, whose `UInt32`/`BigInt`/`BigRat`/`Fixed` arms already answered
                 //     `Proc::Err` on ÷0 before this change; the `Int`/`Float` arms were the
                 //     only fabricating ones).
                 //
                 // The `SafeArith` impl immediately below is therefore the SOLE arithmetic
-                // surface on a category value, and `None` is its sole failure report:
-                // "blocked by semantic predicate / defer to the machine", the same meaning it
-                // carries in `macros/src/gen/runtime/rho_dataflow.rs`'s
-                // `RhoFoldDataflowPredicateBlock::SafeEvaluationDeclined` gate.
+                // surface on a category value, and its `Err(Partiality)` is its sole failure
+                // report: "blocked by semantic predicate / defer to the machine", the same
+                // meaning it carries in `macros/src/gen/runtime/rho_dataflow.rs`'s
+                // `RhoFoldDataflowPredicateBlock::SafeEvaluationDeclined` gate — except that
+                // it now NAMES which partiality occurred.
 
                 // `SafeArith` for the category wrapper: delegates to `try_eval` to
                 // get the underlying native value, then delegates to the native
@@ -1292,56 +1334,61 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 // (e.g., rholang's `Proc::CastInt(Box::new(*a.clone() + *b.clone()))`
                 // with `a, b: &Box<Int>` — after `*a.clone()` they are `Int`).
                 //
-                // Returning `None` from any of the three steps (unevaluable operand,
-                // arithmetic failure, or invalid literal) causes the enclosing
-                // rewrite to not fire, matching the overall policy.
+                // ★ The two failure sources are reported DIFFERENTLY, and the difference is
+                // the whole partition:
+                //
+                //   * an operand that will not `try_eval` is STRUCTURAL — a Var-bearing or
+                //     unreduced child — so it becomes `Partiality::NotReduced` and DEFERS,
+                //     recording nothing;
+                //   * the arithmetic's own decline is SEMANTIC and carries the native impl's
+                //     reason (`DivisionByZero`, `NotRepresentable{carrier}`, …) unchanged.
                 let safe_arith_impl = quote! {
                     impl ::mettail_runtime::SafeArith for #category {
                         type Output = Self;
-                        fn safe_add(self, rhs: Self) -> Option<Self> {
-                            let a = self.try_eval()?;
-                            let b = rhs.try_eval()?;
+                        fn safe_add(self, rhs: Self) -> ::core::result::Result<Self, ::mettail_runtime::Partiality> {
+                            let a = ::mettail_runtime::partiality::not_reduced(self.try_eval())?;
+                            let b = ::mettail_runtime::partiality::not_reduced(rhs.try_eval())?;
                             let r = <_ as ::mettail_runtime::SafeArith>::safe_add(a, b)?;
-                            Some(#category::#literal_label(r))
+                            ::core::result::Result::Ok(#category::#literal_label(r))
                         }
-                        fn safe_sub(self, rhs: Self) -> Option<Self> {
-                            let a = self.try_eval()?;
-                            let b = rhs.try_eval()?;
+                        fn safe_sub(self, rhs: Self) -> ::core::result::Result<Self, ::mettail_runtime::Partiality> {
+                            let a = ::mettail_runtime::partiality::not_reduced(self.try_eval())?;
+                            let b = ::mettail_runtime::partiality::not_reduced(rhs.try_eval())?;
                             let r = <_ as ::mettail_runtime::SafeArith>::safe_sub(a, b)?;
-                            Some(#category::#literal_label(r))
+                            ::core::result::Result::Ok(#category::#literal_label(r))
                         }
-                        fn safe_mul(self, rhs: Self) -> Option<Self> {
-                            let a = self.try_eval()?;
-                            let b = rhs.try_eval()?;
+                        fn safe_mul(self, rhs: Self) -> ::core::result::Result<Self, ::mettail_runtime::Partiality> {
+                            let a = ::mettail_runtime::partiality::not_reduced(self.try_eval())?;
+                            let b = ::mettail_runtime::partiality::not_reduced(rhs.try_eval())?;
                             let r = <_ as ::mettail_runtime::SafeArith>::safe_mul(a, b)?;
-                            Some(#category::#literal_label(r))
+                            ::core::result::Result::Ok(#category::#literal_label(r))
                         }
-                        fn safe_div(self, rhs: Self) -> Option<Self> {
-                            let a = self.try_eval()?;
-                            let b = rhs.try_eval()?;
+                        fn safe_div(self, rhs: Self) -> ::core::result::Result<Self, ::mettail_runtime::Partiality> {
+                            let a = ::mettail_runtime::partiality::not_reduced(self.try_eval())?;
+                            let b = ::mettail_runtime::partiality::not_reduced(rhs.try_eval())?;
                             let r = <_ as ::mettail_runtime::SafeArith>::safe_div(a, b)?;
-                            Some(#category::#literal_label(r))
+                            ::core::result::Result::Ok(#category::#literal_label(r))
                         }
-                        fn safe_rem(self, rhs: Self) -> Option<Self> {
-                            let a = self.try_eval()?;
-                            let b = rhs.try_eval()?;
+                        fn safe_rem(self, rhs: Self) -> ::core::result::Result<Self, ::mettail_runtime::Partiality> {
+                            let a = ::mettail_runtime::partiality::not_reduced(self.try_eval())?;
+                            let b = ::mettail_runtime::partiality::not_reduced(rhs.try_eval())?;
                             let r = <_ as ::mettail_runtime::SafeArith>::safe_rem(a, b)?;
-                            Some(#category::#literal_label(r))
+                            ::core::result::Result::Ok(#category::#literal_label(r))
                         }
-                        fn safe_neg(self) -> Option<Self> {
-                            let a = self.try_eval()?;
+                        fn safe_neg(self) -> ::core::result::Result<Self, ::mettail_runtime::Partiality> {
+                            let a = ::mettail_runtime::partiality::not_reduced(self.try_eval())?;
                             let r = <_ as ::mettail_runtime::SafeArith>::safe_neg(a)?;
-                            Some(#category::#literal_label(r))
+                            ::core::result::Result::Ok(#category::#literal_label(r))
                         }
-                        fn safe_not(self) -> Option<Self> {
-                            let a = self.try_eval()?;
+                        fn safe_not(self) -> ::core::result::Result<Self, ::mettail_runtime::Partiality> {
+                            let a = ::mettail_runtime::partiality::not_reduced(self.try_eval())?;
                             let r = <_ as ::mettail_runtime::SafeArith>::safe_not(a)?;
-                            Some(#category::#literal_label(r))
+                            ::core::result::Result::Ok(#category::#literal_label(r))
                         }
-                        fn safe_pow(self, exp: i32) -> Option<Self> {
-                            let a = self.try_eval()?;
+                        fn safe_pow(self, exp: i32) -> ::core::result::Result<Self, ::mettail_runtime::Partiality> {
+                            let a = ::mettail_runtime::partiality::not_reduced(self.try_eval())?;
                             let r = <_ as ::mettail_runtime::SafeArith>::safe_pow(a, exp)?;
-                            Some(#category::#literal_label(r))
+                            ::core::result::Result::Ok(#category::#literal_label(r))
                         }
                     }
                 };

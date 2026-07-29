@@ -86,6 +86,12 @@ where
             .iter()
             .map(project_rewrite_justification)
             .collect(),
+        // ⚠ Declines are NOT a property of the engine's report — the Dovetail engine is
+        // language-agnostic and has no notion of a partial operation. They are collected by the
+        // GENERATED dispatcher (which is the only thing that runs a `![…]` body) and attached by
+        // the generated `__dovetail_report_impl` immediately after this projection. Left empty
+        // here so every non-fold producer stays exactly as it was.
+        declined_folds: Vec::new(),
         completeness: match report.completeness {
             ExtractionCompleteness::Complete => RuntimeDovetailCompleteness::Complete,
             ExtractionCompleteness::BoundedByCycleCut => {
@@ -278,6 +284,7 @@ where
         derivation_edges: Vec::new(),
         rule_firings: Vec::new(),
         rewrite_justifications: Vec::new(),
+        declined_folds: Vec::new(),
         completeness: RuntimeDovetailCompleteness::Complete,
         graph_kind: RuntimeDovetailGraphKind::Derivation,
     };
@@ -861,6 +868,7 @@ mod tests {
             derivation_edges: Vec::new(),
             rule_firings: Vec::new(),
             rewrite_justifications: Vec::new(),
+            declined_folds: Vec::new(),
             completeness: RuntimeDovetailCompleteness::BoundedByCycleCut,
             graph_kind: RuntimeDovetailGraphKind::Derivation,
         }

@@ -111,8 +111,16 @@ pub use numeric_cast_adapter::{
     CastWidth, ProcToNumericInput,
 };
 
-// Overflow-safe / NaN-safe arithmetic used by generated eval and Ascent rules
-// to convert panicking Rust arithmetic into Option-returning steps.
+// ★ The REPORTED disposition of a partial operation — why it declined, carried as a value.
+// `safe_arith` (below) is its producer; the generated Dovetail dispatcher is its consumer.
+pub mod partiality;
+pub use partiality::{
+    DeclineSink, DeclinedFold, Declarable, FoldDisposition, Partiality, UndefinedReason,
+};
+
+// Overflow-safe / NaN-safe arithmetic used by generated eval and Ascent rules to convert
+// panicking Rust arithmetic into `Result`-returning steps that NAME the partiality
+// (`Partiality::{Undefined, NotRepresentable}`) rather than merely absenting a value.
 mod safe_arith;
 pub use safe_arith::{SafeArith, SafeFloat};
 
@@ -206,41 +214,68 @@ pub use parser::{
 /// safeify wrapper around user `![…]` eval blocks.
 ///
 /// **Problem solved:** the safeify pass rewrites `![a + b]` into
-/// `(|| -> Option<_> { Some(safe_add(a,b)?) })()` (one level of `Option`).
-/// But user evals like `![{ calc_try_int_bin(&a, w) }]` *already* return
-/// `Option<i32>`. Wrapping with `Some(...)` produces `Option<Option<i32>>`
-/// and the expected type is `Option<i32>`.
+/// `(|| -> Result<_, Partiality> { Ok(safe_add(a,b)?) })()` (one level of
+/// `Result`). But user evals like `![{ calc_try_int_bin(&a, w) }]` *already*
+/// return `Option<i32>`, and a body that already reports its own partiality
+/// returns `Result<i32, Partiality>`. Wrapping either with `Ok(...)` would
+/// produce a nested `Result<Option<…>, …>` / `Result<Result<…>, …>` where the
+/// expected type is one level deep.
 ///
-/// **Solution:** the generated closure body becomes
-/// `(&Lift(rewritten)).lift()` where method resolution picks:
-///   - the inherent method on `Lift<Option<T>>` (passthrough) when the
-///     expression already returns `Option<T>`;
-///   - the trait method on `&Lift<T>` (returns `Some(t)`) for plain `T`.
+/// **Solution:** the generated closure body becomes `Lift(rewritten).lift()`
+/// where method resolution picks:
+///   - the inherent method on `Lift<Result<T, Partiality>>` (passthrough) when
+///     the expression already reports its own partiality;
+///   - the inherent method on `Lift<Option<T>>`, which converts the bare
+///     absence into [`Partiality::Unreported`] — a decline that names the site
+///     while recording, truthfully, that no reason was stated;
+///   - the trait method on `&Lift<T>` (returns `Ok(t)`) for plain `T`.
 ///
 /// This is the dtolnay autoref-specialization trick: inherent methods bind
-/// without autoref, trait methods bind with autoref, so the inherent
-/// passthrough always wins for `Option<T>`.
+/// without autoref, trait methods bind with autoref, so an inherent
+/// passthrough always wins for the two specialised shapes.
+///
+/// ★ **Why `Option<T>` maps to `Unreported` rather than to a silent deferral.**
+/// A `try_*` helper answering `None` is a body declining without saying why;
+/// the whole subject of `Partiality` is that such silence used to be
+/// indistinguishable from "no rule applies". Mapping it to a *named* decline
+/// makes every such site visible in the run report, which is how the remaining
+/// unvocalised partialities get found. A genuinely structural "not yet" is
+/// spelled explicitly — `safeify` emits
+/// [`partiality::not_reduced`](crate::partiality::not_reduced) for `x.eval()`
+/// ⟶ `x.try_eval()`, which produces [`Partiality::NotReduced`] and defers.
 pub mod lift {
     /// Newtype wrapper used to drive method-resolution dispatch.
     /// Always constructed by-value at the call site and consumed by `.lift()`.
     pub struct Lift<T>(pub T);
 
-    impl<T> Lift<Option<T>> {
-        /// Inherent passthrough for already-`Option<T>` values.
+    impl<T> Lift<Result<T, Partiality>> {
+        /// Inherent passthrough for a body that ALREADY reports its own partiality.
+    use crate::partiality::Partiality;
+
         ///
         /// Wins over the trait impl on `&Lift<…>` because no autoref is
         /// needed, and inherent-method resolution outranks trait-method
         /// resolution at equal autoref depth.
         #[inline]
-        pub fn lift(self) -> Option<T> {
+        pub fn lift(self) -> Result<T, Partiality> {
             self.0
         }
     }
 
-    /// Trait providing `lift()` on `&Lift<T>` for plain (non-`Option`) `T`.
+    impl<T> Lift<Option<T>> {
+        /// Inherent conversion for a body whose tail is a bare `Option<T>`: the absence carries
+        /// no reason, so it becomes [`Partiality::Unreported`] — recorded as a decline whose
+        /// finding is precisely that no reason was declared.
+        #[inline]
+        pub fn lift(self) -> Result<T, Partiality> {
+            self.0.ok_or(Partiality::Unreported)
+        }
+    }
+
+    /// Trait providing `lift()` on `&Lift<T>` for plain (non-`Option`, non-`Result`) `T`.
     ///
-    /// The autoref step happens via `Lift(x).lift()`; for `Lift<Option<T>>`
-    /// the inherent method binds first (no autoref) and this trait is
+    /// The autoref step happens via `Lift(x).lift()`; for the two specialised
+    /// shapes the inherent method binds first (no autoref) and this trait is
     /// bypassed. For plain `T`, autoref takes `&Lift<T>` and dispatches here.
     ///
     /// `T: Clone` is required because the receiver is a borrow — we cannot
@@ -253,10 +288,10 @@ pub mod lift {
     }
 
     impl<T: Clone> LiftPlain for &Lift<T> {
-        type Output = Option<T>;
+        type Output = Result<T, Partiality>;
         #[inline]
-        fn lift(self) -> Option<T> {
-            Some(self.0.clone())
+        fn lift(self) -> Result<T, Partiality> {
+            Ok(self.0.clone())
         }
     }
 
@@ -264,7 +299,7 @@ pub mod lift {
     mod tests {
         use super::*;
 
-        /// Inherent specialization wins for `Option<T>`: passthrough.
+        /// Inherent specialization wins for `Option<T>`: the value passes through into `Ok`.
         ///
         /// Method resolution: `Lift(x).lift()` finds the inherent
         /// `impl Lift<Option<T>>::lift` without needing autoref, so it
@@ -272,36 +307,58 @@ pub mod lift {
         #[test]
         fn lift_option_passes_through_some() {
             let x: Option<i32> = Some(42);
-            let out: Option<i32> = Lift(x).lift();
-            assert_eq!(out, Some(42));
+            let out: Result<i32, Partiality> = Lift(x).lift();
+            assert_eq!(out, Ok(42));
         }
 
         #[test]
-        fn lift_option_passes_through_none() {
+        fn lift_option_none_becomes_an_unreported_decline() {
             let x: Option<i32> = None;
-            let out: Option<i32> = Lift(x).lift();
-            assert_eq!(out, None);
+            let out: Result<i32, Partiality> = Lift(x).lift();
+            assert_eq!(out, Err(Partiality::Unreported));
+            assert!(
+                out.unwrap_err().is_decline(),
+                "a helper that declines without a reason is still a decline — the silence is \
+                 the finding",
+            );
         }
 
-        /// Trait fallback wraps a plain `T` in `Some`.
+        /// ★ A body that ALREADY reports its partiality passes through unchanged — no
+        /// double-wrap, and its reason is not overwritten by `Unreported`.
+        #[test]
+        fn lift_result_passes_its_own_partiality_through() {
+            let carried = Partiality::Undefined {
+                operation: "div",
+                carrier: "i64",
+                reason: crate::partiality::UndefinedReason::DivisionByZero,
+            };
+            let x: Result<i32, Partiality> = Err(carried);
+            let out: Result<i32, Partiality> = Lift(x).lift();
+            assert_eq!(out, Err(carried), "the inner reason must survive the lift");
+            let ok: Result<i32, Partiality> = Lift(Ok::<i32, Partiality>(5)).lift();
+            assert_eq!(ok, Ok(5));
+        }
+        /// ★ A bare `None` becomes a NAMED decline, not an anonymous absence.
+
+        /// Trait fallback wraps a plain `T` in `Ok`.
         ///
         /// `Lift(x).lift()` for `x: i32` finds no inherent on
-        /// `Lift<i32>` (only `Lift<Option<T>>` has one), so resolution
-        /// autorefs to `&Lift<i32>` and the trait impl `LiftPlain for
-        /// &Lift<T>` binds, returning `Some(x)`.
+        /// `Lift<i32>` (only `Lift<Option<T>>` and `Lift<Result<T, Partiality>>`
+        /// have one), so resolution autorefs to `&Lift<i32>` and the trait impl
+        /// `LiftPlain for &Lift<T>` binds, returning `Ok(x)`.
         #[test]
-        fn lift_plain_t_wraps_some() {
+        fn lift_plain_t_wraps_ok() {
             let x: i32 = 7;
-            let out: Option<i32> = Lift(x).lift();
-            assert_eq!(out, Some(7));
+            let out: Result<i32, Partiality> = Lift(x).lift();
+            assert_eq!(out, Ok(7));
         }
 
         /// Plain `T` with non-`Copy` payload is moved (not cloned).
         #[test]
         fn lift_plain_moves_owned() {
             let s = String::from("hello");
-            let out: Option<String> = Lift(s).lift();
-            assert_eq!(out.as_deref(), Some("hello"));
+            let out: Result<String, Partiality> = Lift(s).lift();
+            assert_eq!(out.as_deref(), Ok("hello"));
         }
     }
 }

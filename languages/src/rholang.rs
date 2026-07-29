@@ -1637,8 +1637,8 @@ language! {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(x), Int::NumLit(y)) => {
                         match <i64 as mettail_runtime::SafeArith>::safe_add(*x, *y) {
-                            Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1649,8 +1649,8 @@ language! {
                 (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
                     (UInt32::NumLit(x), UInt32::NumLit(y)) => {
                         match <u32 as mettail_runtime::SafeArith>::safe_add(*x, *y) {
-                            Some(v) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1666,8 +1666,8 @@ language! {
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     (Float::FloatLit(x), Float::FloatLit(y)) => {
                         match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_add(*x, *y) {
-                            Some(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1694,8 +1694,8 @@ language! {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(x), Int::NumLit(y)) => {
                         match <i64 as mettail_runtime::SafeArith>::safe_sub(*x, *y) {
-                            Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1704,8 +1704,8 @@ language! {
                 (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
                     (UInt32::NumLit(x), UInt32::NumLit(y)) => {
                         match <u32 as mettail_runtime::SafeArith>::safe_sub(*x, *y) {
-                            Some(v) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1721,8 +1721,8 @@ language! {
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     (Float::FloatLit(x), Float::FloatLit(y)) => {
                         match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_sub(*x, *y) {
-                            Some(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1745,8 +1745,8 @@ language! {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(x), Int::NumLit(y)) => {
                         match <i64 as mettail_runtime::SafeArith>::safe_mul(*x, *y) {
-                            Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1754,8 +1754,8 @@ language! {
                 (Proc::CastUInt32(a), Proc::CastUInt32(b)) => match (&**a, &**b) {
                     (UInt32::NumLit(x), UInt32::NumLit(y)) => {
                         match <u32 as mettail_runtime::SafeArith>::safe_mul(*x, *y) {
-                            Some(v) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1771,8 +1771,8 @@ language! {
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
                     (Float::FloatLit(x), Float::FloatLit(y)) => {
                         match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_mul(*x, *y) {
-                            Some(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1797,8 +1797,8 @@ language! {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(x), Int::NumLit(y)) => {
                         match <i64 as mettail_runtime::SafeArith>::safe_div(*x, *y) {
-                            Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1830,8 +1830,8 @@ language! {
                             Proc::Err
                         } else {
                             match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_div(*x, *y) {
-                                Some(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
-                                None => Proc::Err,
+                                Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
+                                Err(_) => Proc::Err,
                             }
                         }
                     }
@@ -1861,8 +1861,8 @@ language! {
                 (Proc::CastInt(a), Proc::CastInt(b)) => match (&**a, &**b) {
                     (Int::NumLit(x), Int::NumLit(y)) => {
                         match <i64 as mettail_runtime::SafeArith>::safe_rem(*x, *y) {
-                            Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
-                            None => Proc::Err,
+                            Ok(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -1902,8 +1902,8 @@ language! {
                 // `-i64::MIN` overflows (and panics); `safe_neg` is `checked_neg`.
                 Proc::CastInt(x) => match &**x {
                     Int::NumLit(n) => match <i64 as mettail_runtime::SafeArith>::safe_neg(*n) {
-                        Some(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
-                        None => Proc::Err,
+                        Ok(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v))),
+                        Err(_) => Proc::Err,
                     },
                     _ => Proc::Err,
                 },

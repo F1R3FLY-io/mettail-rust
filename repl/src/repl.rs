@@ -421,6 +421,7 @@ mod tests {
             }],
             rule_firings: Vec::new(),
             rewrite_justifications: Vec::new(),
+            declined_folds: Vec::new(),
             completeness: RuntimeDovetailCompleteness::Complete,
             graph_kind: RuntimeDovetailGraphKind::Derivation,
         }
@@ -2808,6 +2809,21 @@ impl Repl {
                     println!("  - {} term record(s)", dovetail_report.terms.len());
                 }
                 println!("  - {} {}(s)", dovetail_report.derivation_edges.len(), edge_noun);
+                // ★ The declined-operation surface. A declared operation that REFUSED its input
+                // used to be reported as nothing at all — the term simply stayed put and the
+                // stepper announced "already a normal form" over it. Naming the refusal here is
+                // the whole user-visible half of the reported-disposition change; nothing about
+                // the computation moved.
+                if !dovetail_report.declined_folds.is_empty() {
+                    println!();
+                    println!(
+                        "{}",
+                        "Declined — a declared operation refused its input:".yellow().bold()
+                    );
+                    for record in &dovetail_report.declined_folds {
+                        println!("  - {}", format!("{record}").yellow());
+                    }
+                }
                 println!();
 
                 let display = dovetail_report_display(dovetail_report);
@@ -2849,6 +2865,17 @@ impl Repl {
                     .count();
                 if step_mode {
                     match (is_rewrite_graph, available) {
+                        // ★ "Already a normal form" is a CLAIM, and over a term whose operation
+                        // declined it is a false one: nothing rewrites, but the term is stuck
+                        // rather than finished. Say which of the two it is.
+                        (true, 0) if !dovetail_report.declined_folds.is_empty() => {
+                            println!(
+                                "  {}",
+                                "No rewrites from this term — it is STUCK, not a normal form: a \
+                                 declared operation declined it (see above)."
+                                    .yellow()
+                            );
+                        },
                         (true, 0) => {
                             println!("  No rewrites from this term (already a normal form).");
                         },

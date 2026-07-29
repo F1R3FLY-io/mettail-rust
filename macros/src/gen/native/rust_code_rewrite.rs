@@ -17,19 +17,45 @@
 //! cause is producing panics at all.
 //!
 //! This module provides [`safeify`] which consumes a `syn::Expr` (or `syn::Block`)
-//! and returns an expression of type `Option<T>` that:
+//! and returns an expression of type `Result<T, Partiality>` that:
 //!
 //! - Replaces every infix arithmetic operator (`+ - * / %`) and unary `-` with
 //!   the corresponding [`mettail_runtime::SafeArith`] method, threaded through
-//!   `?` so any `None` short-circuits the whole expression.
+//!   `?` so a decline short-circuits the whole expression **carrying its reason**.
 //! - Replaces `.product::<T>()` / `.sum::<T>()` with
 //!   [`SafeArith::safe_product`] / [`SafeArith::safe_sum`].
 //! - Replaces `.pow(n)` / `.powi(n)` / `.powf(x)` with `safe_pow` / `safe_powf`.
 //! - Replaces `.sqrt()` / `.ln()` / `.log2()` / `.log10()` / `.exp()` /
 //!   `.sin()` / `.cos()` / `.tan()` / `.asin()` / `.acos()` / `.atan()` with
 //!   [`SafeFloat`] equivalents.
-//! - Wraps the whole rewritten body in `(|| -> Option<_> { Some(#rewritten) })()`
-//!   so the emission site can use `if let Some(v) = ...` uniformly.
+//! - Wraps the whole rewritten body in
+//!   `(|| -> Result<_, Partiality> { Ok(#rewritten) })()` so the emission site
+//!   can decide uniformly what to do with the reason.
+//!
+//! # ★★ The rewrite is from a panic to a REPORTED disposition, not to an absence
+//!
+//! Until 2026-07-29 this pass rewrote `.expect(msg)` and `.unwrap()` to a bare
+//! `(recv)?`, and its own comment said outright *"The panic message is
+//! discarded."* Three Calculator fold bodies were written
+//! `.expect("ElemList: invalid index")`, `.expect("DeleteList: invalid index")`
+//! and `.expect("get: key not found")` — three deliberate, message-carrying
+//! failures — and all three became an unlabelled short-circuit. **The authors'
+//! intent was to err; the machinery silently converted it to defer and threw
+//! away three good messages.**
+//!
+//! The rewrite now targets [`mettail_runtime::Partiality`], so each demotion
+//! keeps what it knows:
+//!
+//! | written | emitted | reported as |
+//! |---|---|---|
+//! | `a + b` | `SafeArith::safe_add(a, b)?` | `Undefined{…}` / `NotRepresentable{…}` — the carrier and reason |
+//! | `x.expect(LIT)` | `Declarable::declared(x, LIT)?` | `Declared{message: LIT}` — **the author's own words** |
+//! | `x.unwrap()` | `Declarable::unwrapped(x)?` | `Unreported` — declined, and no reason was declared |
+//! | `t.eval()` | `not_reduced(t.try_eval())?` | `NotReduced` — **structural**, defers, records nothing |
+//!
+//! ⚠ `.expect(…)` with a NON-literal argument is refused at expansion time
+//! rather than silently degraded: the whole subject of this pass is that a
+//! declared message must not be dropped. See [`rewrite_method_call`].
 //!
 //! # What is *not* rewritten
 //!
@@ -59,9 +85,10 @@ use syn::{BinOp, Expr, ExprMethodCall, ExprUnary, UnOp};
 /// Rewrite a `syn::Expr` so panicking arithmetic becomes `?`-propagated
 /// `SafeArith` calls.
 ///
-/// The returned expression has type `Option<T>` where `T` is the original
-/// expression's type. Embed inside `(|| -> Option<_> { Some(#rewritten) })()`
-/// or similar via [`wrap_in_option_closure`].
+/// The returned expression has type `Result<T, Partiality>` where `T` is the
+/// original expression's type. Embed inside
+/// `(|| -> Result<_, Partiality> { Ok(#rewritten) })()` or similar via
+/// [`wrap_in_result_closure`].
 pub fn safeify(expr: &Expr) -> Expr {
     let mut visitor = Safeifier;
     let mut cloned = expr.clone();
@@ -70,25 +97,29 @@ pub fn safeify(expr: &Expr) -> Expr {
 }
 
 /// Wrap a rewritten expression in a zero-arg closure that returns
-/// `Option<_>`. The result is the form the caller can embed directly into
-/// generated code and match on with `if let Some(v) = ...`.
+/// `Result<_, Partiality>`. The result is the form the caller can embed
+/// directly into generated code and classify with
+/// `mettail_runtime::partiality::classify`.
 ///
 /// `rewritten` is expected to be the output of [`safeify`] — an expression
-/// that may produce `?` short-circuit failures internally.
+/// that may produce `?` short-circuit declines internally, each carrying the
+/// reason it declined.
 ///
 /// **Lift dispatch:** the inner value passes through
 /// `mettail_runtime::lift::Lift(value).lift()` so an expression that already
-/// returns `Option<T>` (e.g. `calc_try_int_bin(&a, w)`) is detected by the
-/// autoref-specialization on `Lift<Option<T>>` and passes through unchanged
-/// — no `Some(Some(…))` double-wrap. A plain-`T` expression (e.g.
+/// reports its own partiality (`Result<T, Partiality>`) or that returns a bare
+/// `Option<T>` (e.g. `calc_try_int_bin(&a, w)`) is detected by the
+/// autoref-specialization inherent impls and converted exactly once — no
+/// `Ok(Ok(…))` / `Ok(Some(…))` double-wrap. A plain-`T` expression (e.g.
 /// `safe_add(a, b)?` after rewriting `a + b`) hits the `LiftPlain` trait
-/// fallback and gets wrapped as `Some(t)`.
-pub fn wrap_in_option_closure(rewritten: &Expr) -> TokenStream {
+/// fallback and gets wrapped as `Ok(t)`.
+pub fn wrap_in_result_closure(rewritten: &Expr) -> TokenStream {
     quote! {
-        (|| -> ::std::option::Option<_> {
+        (|| -> ::core::result::Result<_, ::mettail_runtime::Partiality> {
             // `LiftPlain` must be in scope to enable trait method dispatch
-            // on `&Lift<T>`. The inherent impl on `Lift<Option<T>>` does
-            // not require the trait import — it wins regardless.
+            // on `&Lift<T>`. The inherent impls on `Lift<Option<T>>` /
+            // `Lift<Result<T, Partiality>>` do not require the trait import —
+            // they win regardless.
             #[allow(unused_imports)]
             use ::mettail_runtime::lift::LiftPlain as _;
             #[allow(unused_braces, unused_parens)]
@@ -98,10 +129,28 @@ pub fn wrap_in_option_closure(rewritten: &Expr) -> TokenStream {
     }
 }
 
-/// Convenience: safeify + wrap in one step. This is the common codegen path.
+/// safeify + wrap, yielding an `Option<_>` — the shape the *evaluator* lanes
+/// (`try_eval`, the PDA visit arms, the Rho ground-eval and native-handler fns)
+/// consume, all of which return `Option` themselves and have no run report to
+/// write a reason into.
+///
+/// ⚠ The reason is COMPUTED here and dropped by `.ok()` at this boundary. That
+/// is a property of the *consumer*, not of the rewrite: the same body emitted
+/// through [`safeify_and_wrap_reported`] on the Dovetail fold lane keeps its
+/// reason all the way into the run report. Nothing is discarded before the
+/// boundary, so widening one of these lanes later is a local change.
 pub fn safeify_and_wrap(expr: &Expr) -> TokenStream {
+    let reported = safeify_and_wrap_reported(expr);
+    quote! { ::core::result::Result::ok(#reported) }
+}
+
+/// safeify + wrap, yielding `Result<_, Partiality>` — the shape the Dovetail
+/// fold dispatcher consumes so a decline can be REPORTED rather than merely
+/// deferred. This is the reporting path; [`safeify_and_wrap`] is the same
+/// rewrite with the reason dropped at the consumer's boundary.
+pub fn safeify_and_wrap_reported(expr: &Expr) -> TokenStream {
     let rewritten = safeify(expr);
-    wrap_in_option_closure(&rewritten)
+    wrap_in_result_closure(&rewritten)
 }
 
 // ─── The visitor ────────────────────────────────────────────────────────────
@@ -172,22 +221,53 @@ fn rewrite_method_call(mc: &ExprMethodCall) -> Option<Expr> {
     let args = &mc.args;
     let method_name = mc.method.to_string();
 
-    // `.expect(msg)` — user wrote "panic on None/Err with message" but inside
-    // a `safeify_and_wrap` closure we want short-circuit instead of panic.
-    // Rewrite to `?` so the wrapper returns None. The panic message is
-    // discarded (fold rules don't carry Result errors). This also applies
-    // to `.unwrap_or_else(|_| panic!(...))` via chained rewrites — but the
-    // common case in user grammar code is `.expect(...)`.
+    // ★★ `.expect(msg)` — the author wrote "fail HERE, and here is why". Inside a safeify
+    // closure we must not panic (a panic runs with the e-graph mid-saturation and is not
+    // containable under cg_clif), so the call is demoted to a `?` short-circuit — but the
+    // demotion CARRIES the author's message into `Partiality::Declared` instead of dropping it.
+    //
+    // ⚠ Until 2026-07-29 this arm emitted a bare `(#recv)?` and its comment read "The panic
+    // message is discarded." Three Calculator fold bodies lost their messages that way. The
+    // partition rule says a declared failure IS an error the deployer must act on, so the words
+    // the author chose are exactly the payload the report needs.
+    //
+    // A NON-literal argument is refused rather than degraded: `Partiality::Declared` carries a
+    // `&'static str` so the message costs nothing on the hot path, and accepting a computed
+    // message here would mean either discarding it (the defect) or interning attacker-influenced
+    // strings for the process lifetime. No `![…]` body in the corpus uses one, and a grammar that
+    // wants a dynamic reason should say it with a declared rewrite rule instead.
     if args.len() == 1 && method_name == "expect" {
-        return Some(syn::parse_quote! {
-            (#recv)?
+        let arg = args
+            .iter()
+            .next()
+            .expect("an `.expect(_)` call with args.len() == 1 has a first argument");
+        return Some(match arg {
+            Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(_),
+                ..
+            }) => syn::parse_quote! {
+                ::mettail_runtime::Declarable::declared((#recv), #arg)?
+            },
+            other => {
+                let rendered = quote!(#other).to_string();
+                let message = format!(
+                    "`.expect({rendered})` inside a `![…]` body needs a STRING LITERAL argument. \
+                     The message is carried into the run report as \
+                     `mettail_runtime::Partiality::Declared`, which holds a `&'static str`; a \
+                     computed message would have to be discarded, and discarding declared failure \
+                     messages is the defect this rewrite exists to close."
+                );
+                syn::parse_quote! { compile_error!(#message) }
+            },
         });
     }
 
-    // `.unwrap()` — same rewrite. Panicking on None/Err becomes short-circuit.
+    // `.unwrap()` — same demotion, but the author declared no message. `Partiality::Unreported`
+    // records precisely that: the body declined and stated no reason. The silence is the finding,
+    // so it is still a DECLINE (reported), not a structural deferral.
     if args.is_empty() && method_name == "unwrap" {
         return Some(syn::parse_quote! {
-            (#recv)?
+            ::mettail_runtime::Declarable::unwrapped((#recv))?
         });
     }
 
@@ -200,17 +280,25 @@ fn rewrite_method_call(mc: &ExprMethodCall) -> Option<Expr> {
     // sub-terms haven't been reduced yet, so calling `eval()` would
     // panic — the regressing pattern in 46 edge_case tests.
     //
-    // Rewriting `<recv>.eval()` → `(<recv>).try_eval()?` makes user
-    // grammar code Var-safe by construction. The enclosing
-    // `safeify_and_wrap` closure returns `Option<_>`, so `?` short-
-    // circuits to None on Var-bearing terms — evidence-driven rule-out
-    // per the preserve-all-derivations mandate (P3: try_eval=None IS
-    // evidence the term didn't reduce). The arm whose `.eval()` short-
-    // circuits simply doesn't contribute its term to the result; other
-    // alts whose sub-terms ARE reduced contribute normally.
+    // Rewriting `<recv>.eval()` → `not_reduced((<recv>).try_eval())?` makes
+    // user grammar code Var-safe by construction. The enclosing safeify
+    // closure returns `Result<_, Partiality>`, so `?` short-circuits on
+    // Var-bearing terms — evidence-driven rule-out per the
+    // preserve-all-derivations mandate (P3: try_eval=None IS evidence the term
+    // didn't reduce). The arm whose `.eval()` short-circuits simply doesn't
+    // contribute its term to the result; other alts whose sub-terms ARE reduced
+    // contribute normally.
+    //
+    // ★ THIS IS THE STRUCTURAL CASE, and it is the one the whole partition
+    // turns on. `Partiality::NotReduced` says "not YET" — a different,
+    // already-declared rule may still fire on this redex — so it DEFERS and is
+    // deliberately NOT recorded as a decline. Without this distinction a term
+    // that fails to fold because an operand is still a redex (a free variable,
+    // an unreduced child) would be reported as though an operation had refused
+    // it, and every non-firing rule in the corpus would look like a finding.
     if args.is_empty() && method_name == "eval" {
         return Some(syn::parse_quote! {
-            (#recv).try_eval()?
+            ::mettail_runtime::partiality::not_reduced((#recv).try_eval())?
         });
     }
 
@@ -404,16 +492,94 @@ mod tests {
     }
 
     #[test]
-    fn wraps_in_option_closure() {
+    fn wraps_in_result_closure_and_adapts_to_option_for_the_evaluator_lanes() {
         let expr: Expr = syn::parse_str("a + b").expect("parse");
-        let wrapped = safeify_and_wrap(&expr);
-        let s = normalise(wrapped);
-        assert!(s.contains("Option"), "expected Option wrapper: {}", s);
+
+        // The REPORTING form keeps the reason channel.
+        let reported = normalise(safeify_and_wrap_reported(&expr));
+        assert!(reported.contains("Result"), "expected Result wrapper: {reported}");
+        assert!(reported.contains("Partiality"), "expected Partiality error: {reported}");
         // The wrapper uses `Lift(...).lift()` (LiftPlain trait) rather than a
-        // literal `Some(...)` — it works for both Option<T> and plain T.
-        assert!(s.contains("Lift"), "expected Lift wrapper: {}", s);
-        assert!(s.contains(". lift ()"), "expected .lift() call: {}", s);
-        assert!(s.contains("safe_add"), "expected safe_add in body: {}", s);
+        // literal `Ok(...)` — it works for Result<T, Partiality>, Option<T> and plain T.
+        assert!(reported.contains("Lift"), "expected Lift wrapper: {reported}");
+        assert!(reported.contains(". lift ()"), "expected .lift() call: {reported}");
+        assert!(reported.contains("safe_add"), "expected safe_add in body: {reported}");
+
+        // The EVALUATOR form is the same rewrite with the reason dropped at the boundary.
+        let optioned = normalise(safeify_and_wrap(&expr));
+        assert!(
+            optioned.contains("Result :: ok"),
+            "the Option-shaped lanes adapt with `Result::ok`, so the reason is computed and \
+             dropped at the CONSUMER rather than never computed: {optioned}",
+        );
+        assert!(optioned.contains("safe_add"), "expected safe_add in body: {optioned}");
+    }
+
+    /// ★★ THE MESSAGE SURVIVES. `#100` rewrote `.expect(msg)` to a bare `(recv)?` and
+    /// discarded `msg`; three Calculator fold bodies lost their declared reasons that way.
+    #[test]
+    fn expect_carries_the_authors_message_instead_of_discarding_it() {
+        let out = safeify_str(r#"m.get(&k).cloned().expect("get: key not found")"#);
+        assert!(
+            out.contains("declared"),
+            "`.expect(LIT)` must demote through `Declarable::declared`, not a bare `?`: {out}",
+        );
+        assert!(
+            out.contains("\"get: key not found\""),
+            "★ the author's message must appear VERBATIM in the emitted code — that is the \
+             whole repair: {out}",
+        );
+        // The three real Calculator sites, by name.
+        for message in [
+            "ElemList: invalid index",
+            "DeleteList: invalid index",
+            "get: key not found",
+        ] {
+            let src = format!(r#"x.expect("{message}")"#);
+            let emitted = safeify_str(&src);
+            assert!(
+                emitted.contains(message),
+                "Calculator's `{message}` must reach the generated code: {emitted}",
+            );
+        }
+    }
+
+    /// A NON-literal `.expect(…)` argument is REFUSED at expansion time. Degrading it would
+    /// mean discarding a declared message, which is the defect being closed.
+    #[test]
+    fn a_non_literal_expect_message_is_refused_rather_than_dropped() {
+        let out = safeify_str("x.expect(&make_message(n))");
+        assert!(
+            out.contains("compile_error"),
+            "a computed `.expect(…)` message must fail the build, not vanish: {out}",
+        );
+        assert!(
+            out.contains("STRING LITERAL"),
+            "the refusal must say what to write instead: {out}",
+        );
+    }
+
+    /// `.unwrap()` declares no message, and `Unreported` says exactly that — still a decline.
+    #[test]
+    fn unwrap_demotes_to_an_unreported_decline() {
+        let out = safeify_str("xs.first().unwrap()");
+        assert!(
+            out.contains("unwrapped"),
+            "`.unwrap()` must demote through `Declarable::unwrapped`: {out}",
+        );
+    }
+
+    /// ★ THE STRUCTURAL CASE: `.eval()` becomes a DEFERRAL, never a decline. This is the
+    /// control that keeps "an operand is still a redex" out of the decline records.
+    #[test]
+    fn eval_demotes_to_a_structural_not_reduced_deferral() {
+        let out = safeify_str("n.as_ref().eval()");
+        assert!(
+            out.contains("not_reduced"),
+            "`.eval()` must demote through `partiality::not_reduced` so an unreduced child \
+             DEFERS instead of being recorded as a semantic decline: {out}",
+        );
+        assert!(out.contains("try_eval"), "expected try_eval in {out}");
     }
 
     #[test]

@@ -67,6 +67,46 @@ pub enum TraceOutcome {
         artifact: String,
         summary: String,
     },
+    /// ★ A declared operation REFUSED this input, and said why.
+    ///
+    /// # Why this is not `NormalForm` and not `Error`
+    ///
+    /// Until this variant existed a run of `6 / 0` came back as *"the run produced no reduced
+    /// value"* — either a bare [`RuntimeReport`](Self::RuntimeReport) summary or, where a term
+    /// display was available, a [`NormalForm`](Self::NormalForm) holding the **unreduced redex**.
+    /// Both readings say the same thing a totally inert term says, so a partial operation
+    /// declining was indistinguishable from a term that was already in normal form. That is the
+    /// same conflation the Dovetail dispatcher had, one layer up.
+    ///
+    /// It is not [`Error`](Self::Error) either: an `Error` is the *simulator* failing (a parse
+    /// failure, a backend failure). Here the simulator worked perfectly and the **program** has no
+    /// answer — the finding belongs to the program's author.
+    ///
+    /// ⚠ Produced only when the run reached no reduced value AND the run report carries at least
+    /// one semantic decline. A term that DOES reduce still reports [`NormalForm`](Self::NormalForm)
+    /// even if some other reading of it declined — that is the lossless-promotion election: when a
+    /// wider carrier supplies the value, the program has an answer and the narrower reading's
+    /// decline is a note, not the outcome.
+    Declined {
+        /// The term the run stopped at — the redex, unreduced.
+        term: String,
+        /// How many trace steps were recorded before the run stopped.
+        steps: usize,
+        /// The declining fold's published label, e.g. `"Calculator::fold::Int_DivInt"` — the same
+        /// string the rule's FIRING would carry.
+        label: String,
+        /// The operation's short name (`"div"`), when the partiality names one. `None` for a
+        /// failure the grammar author declared with `.expect(msg)`, whose content is `detail`.
+        operation: Option<String>,
+        /// The stable reason discriminant — `"DivisionByZero"`, `"NotRepresentable"`,
+        /// `"Declared"`, `"Unreported"`. Consumers should branch on THIS, never on `detail`.
+        reason: String,
+        /// The full human-readable rendering: the carrier, or the author's own message.
+        detail: String,
+        /// Every decline the run recorded, rendered — `label` / `reason` / `detail` above are the
+        /// first one. A run can decline in several places and all of them are findings.
+        all: Vec<String>,
+    },
     /// The simulation hit its step limit without reaching a normal form.
     StepLimitReached { final_term: String },
     /// An invariant was violated during execution.
@@ -168,6 +208,36 @@ fn outcome_to_json_fields(outcome: &TraceOutcome) -> String {
                 json_escape(backend),
                 json_escape(artifact),
                 json_escape(summary),
+            )
+        },
+        TraceOutcome::Declined {
+            term,
+            steps,
+            label,
+            operation,
+            reason,
+            detail,
+            all,
+        } => {
+            let operation_field = match operation {
+                Some(op) => format!("\"{}\"", json_escape(op)),
+                None => "null".to_string(),
+            };
+            let all_field = all
+                .iter()
+                .map(|record| format!("\"{}\"", json_escape(record)))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "\"kind\":\"Declined\",\"term\":\"{}\",\"steps\":{},\"label\":\"{}\",\
+                 \"operation\":{},\"reason\":\"{}\",\"detail\":\"{}\",\"all\":[{}]",
+                json_escape(term),
+                steps,
+                json_escape(label),
+                operation_field,
+                json_escape(reason),
+                json_escape(detail),
+                all_field,
             )
         },
         TraceOutcome::StepLimitReached { final_term } => {
@@ -399,6 +469,69 @@ fn extract_json_string(line: &str, key: &str) -> Option<String> {
     Some(value)
 }
 
+/// Extract a JSON array-of-strings value for the given key from a JSON object line.
+///
+/// Mirrors [`extract_json_string`]'s escape handling element by element and stops at the closing
+/// `]`. An absent key, or a key whose value is not an array, yields an empty `Vec` — the same
+/// "absent means empty" convention the writer uses when a run declined nothing. Written by hand,
+/// like every other reader here, because this module deliberately carries no `serde_json`
+/// dependency (see the module header).
+fn extract_json_string_array(line: &str, key: &str) -> Vec<String> {
+    let needle = format!("\"{}\":[", key);
+    let Some(open) = line.find(&needle) else {
+        return Vec::new();
+    };
+    let rest = &line[open + needle.len()..];
+    let mut out = Vec::new();
+    let mut chars = rest.chars();
+    loop {
+        // Skip to the next element's opening quote, or stop at the array's end.
+        let mut in_element = false;
+        for c in chars.by_ref() {
+            match c {
+                '"' => {
+                    in_element = true;
+                    break;
+                },
+                ']' => return out,
+                _ => {},
+            }
+        }
+        if !in_element {
+            return out;
+        }
+        let mut value = String::new();
+        loop {
+            match chars.next() {
+                None => return out,
+                Some('\\') => match chars.next() {
+                    Some('"') => value.push('"'),
+                    Some('\\') => value.push('\\'),
+                    Some('n') => value.push('\n'),
+                    Some('r') => value.push('\r'),
+                    Some('t') => value.push('\t'),
+                    Some('u') => {
+                        let hex: String = chars.by_ref().take(4).collect();
+                        if let Ok(code) = u16::from_str_radix(&hex, 16) {
+                            if let Some(c) = char::from_u32(code as u32) {
+                                value.push(c);
+                            }
+                        }
+                    },
+                    Some(c) => {
+                        value.push('\\');
+                        value.push(c);
+                    },
+                    None => return out,
+                },
+                Some('"') => break,
+                Some(c) => value.push(c),
+            }
+        }
+        out.push(value);
+    }
+}
+
 /// Extract a JSON integer value for the given key from a JSON object line.
 fn extract_json_usize(line: &str, key: &str) -> Option<usize> {
     // Look for "key":NUMBER pattern.
@@ -522,6 +655,30 @@ fn parse_outcome_from_line(line: &str) -> Result<TraceOutcome, String> {
             let summary = extract_json_string(line, "summary")
                 .ok_or_else(|| "Missing 'summary' in RuntimeReport outcome".to_string())?;
             Ok(TraceOutcome::RuntimeReport { backend, artifact, summary })
+        },
+        "Declined" => {
+            let term = extract_json_string(line, "term")
+                .ok_or_else(|| "Missing 'term' in Declined outcome".to_string())?;
+            let steps = extract_json_usize(line, "steps")
+                .ok_or_else(|| "Missing 'steps' in Declined outcome".to_string())?;
+            let label = extract_json_string(line, "label")
+                .ok_or_else(|| "Missing 'label' in Declined outcome".to_string())?;
+            // `operation` is nullable — a `.expect(msg)`-declared failure names no operation.
+            let operation = extract_json_string(line, "operation");
+            let reason = extract_json_string(line, "reason")
+                .ok_or_else(|| "Missing 'reason' in Declined outcome".to_string())?;
+            let detail = extract_json_string(line, "detail")
+                .ok_or_else(|| "Missing 'detail' in Declined outcome".to_string())?;
+            let all = extract_json_string_array(line, "all");
+            Ok(TraceOutcome::Declined {
+                term,
+                steps,
+                label,
+                operation,
+                reason,
+                detail,
+                all,
+            })
         },
         "StepLimitReached" => {
             let final_term = extract_json_string(line, "final_term")
@@ -922,6 +1079,115 @@ mod tests {
             other => panic!("Expected RuntimeReport, got: {:?}", other),
         }
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// ★ The DECLINED outcome survives the JSONL round trip — including the nullable `operation`
+    /// and the string array.
+    ///
+    /// The wire form is the artifact a downstream consumer reads, so a variant that renders but
+    /// does not parse back is a variant that exists only inside this process. Both the
+    /// operation-bearing shape (arithmetic) and the operation-less shape (an author's
+    /// `.expect(msg)`) are exercised, because they take different branches of the reader.
+    #[test]
+    fn test_declined_serialization_roundtrip() {
+        let dir = std::env::temp_dir().join("mettail_trace_test");
+        let _ = std::fs::create_dir_all(&dir);
+
+        // (a) An arithmetic decline: the operation and carrier are known.
+        let arithmetic = ExecutionTrace {
+            seed: "test-seed".to_string(),
+            language: "Calculator".to_string(),
+            steps: vec![TraceEntry {
+                step_index: 0,
+                term_display: "6 / 0".to_string(),
+                operation: "runtime:Dovetail:DovetailRunReport".to_string(),
+                metrics: None,
+            }],
+            outcome: TraceOutcome::Declined {
+                term: "6 / 0".to_string(),
+                steps: 1,
+                label: "Calculator::fold::Int_DivInt".to_string(),
+                operation: Some("div".to_string()),
+                reason: "DivisionByZero".to_string(),
+                detail: "`div` on `i32` is undefined here: division by zero".to_string(),
+                all: vec![
+                    "Calculator::fold::Int_DivInt declined: `div` on `i32` is undefined here: \
+                     division by zero"
+                        .to_string(),
+                ],
+            },
+            morphology: None,
+        };
+        let path = dir.join("declined_arithmetic.jsonl");
+        write_trace_jsonl(&arithmetic, &path).expect("write should succeed");
+        match read_trace_jsonl(&path).expect("read should succeed").outcome {
+            TraceOutcome::Declined {
+                term,
+                steps,
+                label,
+                operation,
+                reason,
+                detail,
+                all,
+            } => {
+                assert_eq!(term, "6 / 0");
+                assert_eq!(steps, 1);
+                assert_eq!(label, "Calculator::fold::Int_DivInt");
+                assert_eq!(operation.as_deref(), Some("div"));
+                assert_eq!(reason, "DivisionByZero", "★ the DISCRIMINANT must survive verbatim");
+                assert!(detail.contains("division by zero"), "detail was {detail:?}");
+                assert_eq!(all.len(), 1, "the full record list must survive: {all:?}");
+            },
+            other => panic!("Expected Declined, got: {other:?}"),
+        }
+        let _ = std::fs::remove_file(&path);
+
+        // (b) An author-declared decline: NO operation, and the message is the content. The
+        // `"operation":null` field must read back as `None` rather than as the string "null".
+        let declared = ExecutionTrace {
+            seed: "test-seed".to_string(),
+            language: "Calculator".to_string(),
+            steps: Vec::new(),
+            outcome: TraceOutcome::Declined {
+                term: "at(list(1, 2), 5)".to_string(),
+                steps: 0,
+                label: "Calculator::fold::Proc_ElemList".to_string(),
+                operation: None,
+                reason: "Declared".to_string(),
+                detail: "ElemList: invalid index".to_string(),
+                all: vec![
+                    "Calculator::fold::Proc_ElemList declined: ElemList: invalid index".to_string(),
+                    "Calculator::fold::Proc_GetMap declined: get: key not found".to_string(),
+                ],
+            },
+            morphology: None,
+        };
+        let path = dir.join("declined_declared.jsonl");
+        write_trace_jsonl(&declared, &path).expect("write should succeed");
+        match read_trace_jsonl(&path).expect("read should succeed").outcome {
+            TraceOutcome::Declined {
+                operation,
+                reason,
+                detail,
+                all,
+                ..
+            } => {
+                assert_eq!(
+                    operation, None,
+                    "★ a `.expect(msg)` decline names no operation, and `null` must read back as \
+                     `None` — not as the four-character string",
+                );
+                assert_eq!(reason, "Declared");
+                assert_eq!(
+                    detail, "ElemList: invalid index",
+                    "★★ the author's own message must survive to the wire",
+                );
+                assert_eq!(all.len(), 2, "a multi-element array must survive: {all:?}");
+                assert!(all[1].contains("get: key not found"), "{all:?}");
+            },
+            other => panic!("Expected Declined, got: {other:?}"),
+        }
         let _ = std::fs::remove_file(&path);
     }
 
