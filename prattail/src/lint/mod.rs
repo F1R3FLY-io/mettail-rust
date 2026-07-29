@@ -45,6 +45,7 @@
 //! | I10 | warning | ascent-file-write-failed | Ascent Datalog file I/O error |
 //! | I17 | info | computed-goto-dispatch | CD03: function pointer table dispatch activated |
 //! | I18 | info | lint-cache-hit | DB04: lint results cached, skipping lint passes |
+//! | I22 | error | analysis-thread-panicked | DB03: a scoped analysis thread panicked; carries the recovered payload |
 //!
 //! ## Display Format
 //!

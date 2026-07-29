@@ -30,16 +30,22 @@ gaps about when and why WFST and WPDS code fires.
 
 ## 1. Pipeline State Machine
 
-The PraTTaIL pipeline is a three-state machine. Each call to `advance()`
-moves it one step forward; it cannot go backwards.
+The PraTTaIL pipeline runs three phases in order; it cannot go backwards.
+
+> ⚠ **Correction, 2026-07-29 (#141 Stage 4).** These phases were previously
+> described as a `PipelineState` enum advanced by `advance()`. That enum was
+> unreachable — nothing constructed a `Ready` — and was removed; see the
+> tombstone in `prattail/src/pipeline/state.rs`. The phases and their data are
+> unchanged; the transitions below are ordinary function calls in
+> `run_pipeline_with_analysis`, not state moves.
 
 ```
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │  PipelineState                                                          │
+  │  Pipeline phases (pipeline/)                                            │
   │                                                                         │
   │  ┌───────────┐               ┌─────────────┐               ┌──────────┐ │
-  │  │ Ready     │               │ Generated   │               │ Complete │ │
-  │  ├───────────┤   advance()   ├─────────────┤   advance()   ├──────────┤ │
+  │  │ Extract   │               │ Generate    │               │ Finalize │ │
+  │  ├───────────┤   generate    ├─────────────┤   concat +    ├──────────┤ │
   │  │ lexer_    │──────────────►│ lexer_code  │──────────────►│ Token-   │ │
   │  │  bundle   │               │             │               │ Stream   │ │
   │  │ parser_   │               │ parser_code │               │          │ │
@@ -48,15 +54,17 @@ moves it one step forward; it cannot go backwards.
   └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-`Ready -> Generated` calls `generate_lexer_code()` and
-`generate_parser_code()` sequentially, producing two Rust source strings.
+`Extract -> Generate` calls `generate_lexer_code_with_map()` and
+`generate_parser_code_with_analysis()` sequentially, producing two Rust source
+strings plus the `PipelineAnalysis` that the `macros` crate's Ascent codegen
+consumes.
 
-`Generated -> Complete` concatenates the two strings and parses them into
+`Generate -> Finalize` concatenates the two strings and parses them into
 a single `TokenStream` that the proc-macro returns to the compiler.
 
-`run_pipeline()` in `pipeline.rs` is the sole entry point. It calls
+`run_pipeline()` in `pipeline/state.rs` is the sole entry point. It calls
 `extract_from_spec()` to project the `LanguageSpec` into `Send+Sync`
-bundles, then loops `advance()` until `Complete`.
+bundles, then runs the two remaining phases in sequence.
 
 ---
 
@@ -798,10 +806,10 @@ source location.
 
 | Concept                                                                              | File                            |
 |--------------------------------------------------------------------------------------|---------------------------------|
-| `PipelineState` state machine                                                        | `pipeline.rs`                   |
-| `run_pipeline()` entry point                                                         | `pipeline.rs`                   |
-| `generate_parser_code()`                                                             | `pipeline.rs`                   |
-| WFST construction block                                                              | `pipeline.rs`                   |
+| Three-phase orchestration (Extract/Generate/Finalize)                                | `pipeline/state.rs`             |
+| `run_pipeline()` entry point                                                         | `pipeline/state.rs`             |
+| `generate_parser_code()`                                                             | `pipeline/codegen.rs`           |
+| WFST construction block                                                              | `pipeline/codegen.rs`           |
 | `build_dispatch_action_tables()`                                                     | `prediction.rs`                 |
 | `resolve_dispatch_winners()`                                                         | `prediction.rs`                 |
 | `build_prediction_wfsts()`                                                           | `wfst.rs`                       |

@@ -1,18 +1,19 @@
 use super::*;
 
-/// Generate parser code with lexer context (variant map + ambiguity info).
-///
-/// Passes lexer context to `generate_parser_code()` so the composed dispatch
-/// table can be computed once and used both for:
-/// 1. Standard batch path: deterministic dispatch arms (no backtracking)
-/// 2. Context-sensitive lex (feature-gated): Lexer struct, LexerAdapter, lazy parsers
-pub(crate) fn generate_parser_code_with_context(
-    bundle: &ParserBundle,
-    variant_map: &TokenVariantMap,
-    ambiguity_info: &LexerAmbiguityInfo,
-) -> String {
-    generate_parser_code(bundle, variant_map, ambiguity_info).0
-}
+// `pub(crate) fn generate_parser_code_with_context(bundle, variant_map,
+// ambiguity_info) -> String` was REMOVED here on 2026-07-29 (#141 Stage 4). Its
+// whole body was `generate_parser_code(bundle, variant_map, ambiguity_info).0`
+// — the same call as `generate_parser_code_with_analysis` below, with the
+// `PipelineAnalysis` half of the tuple thrown away.
+//
+// Its only caller was `PipelineState::advance`, the dead state machine removed
+// from `pipeline/state.rs` in the same change; see the tombstone there. It is
+// worth recording *what* the dead path discarded: `PipelineAnalysis` carries the
+// dead-rule set, constructor weights and category weights that the `macros`
+// crate's Ascent codegen consumes for DCE. So the unreachable copy of the
+// pipeline was not merely a duplicate — it was a lossier one, and had it ever
+// been wired up it would have silently disabled downstream dead-code
+// elimination.
 
 /// Generate parser code with lexer context AND capture pipeline analysis data.
 ///

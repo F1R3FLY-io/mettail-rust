@@ -2150,3 +2150,170 @@ fn per_category_entropy_multiple_categories() {
         "single-rule entropy should be ~0, got {stmt_entropy}"
     );
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #141 Stage 4 — the recovered panic payload  (RED for `join_analysis`)
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// The defect: all 32 scoped analyses were joined with
+// `.join().expect("DB03: <X> analysis thread panicked")`. `join()` returns
+// `Err(Box<dyn Any + Send>)` holding the ORIGINAL panic message; `expect`
+// discards that box and panics with its own string. The module name it printed
+// was already known from the handle — the payload was the only value that named
+// which of the ~114 refusal sites inside that module fired.
+//
+// ⚠ Why no cell spawns a panicking thread. Measured 2026-07-29: under
+// `[profile.dev] codegen-backend = "cranelift"` a scoped thread's panic never
+// becomes a joinable `Err` — the process dies with `fatal runtime error: failed
+// to initiate panic, error 5`, taking the whole test binary with it. A cell that
+// tried would not be a test of this code, it would be an abort. So the two
+// halves of the repair are asserted where they are decidable: the DOWNCAST
+// (`panic_payload_text`) on synthetic payloads, and the MESSAGE
+// (`analysis_panic_diagnostic`) on its own inputs. Neither uses
+// `#[should_panic]` nor `catch_unwind`; see
+// `dovetail/tests/panic_expectation_gate.rs`.
+//
+// RED procedure for the downcast cells — collapse `panic_payload_text` to what
+// `expect` did, i.e. never look at the payload:
+//
+//     pub(super) fn panic_payload_text(_p: &(dyn std::any::Any + Send)) -> &str {
+//         "<panic payload is neither `&str` nor `String`>"
+//     }
+//
+// `recovers_a_str_literal_payload` and `recovers_a_formatted_string_payload`
+// then FAIL; `reports_an_unrecoverable_payload_honestly` — the CONTROL — passes
+// either way, because its payload really is neither type. A mutation that
+// flipped the control too would be discriminating on something other than the
+// downcast.
+
+/// `panic!("literal")` boxes a `&'static str`. The recovered text is that
+/// literal — not a stand-in, and not the joiner's own description.
+#[test]
+fn recovers_a_str_literal_payload() {
+    // The payload a `panic!` with no format arguments produces.
+    let payload: Box<dyn std::any::Any + Send> =
+        Box::new("LexError TokenKind in codegen-time token_kinds list");
+
+    let recovered = super::analysis::panic_payload_text(&*payload);
+
+    // Pinned to a token that exists ONLY in the payload: `expect`'s string was
+    // "DB03: symbolic analysis thread panicked", which contains no `LexError`.
+    assert!(
+        recovered.contains("LexError"),
+        "the `&str` payload was not recovered: {recovered}"
+    );
+    assert_eq!(
+        recovered, "LexError TokenKind in codegen-time token_kinds list",
+        "the payload must be recovered verbatim, not summarised"
+    );
+}
+
+/// `panic!("{fmt}", …)` boxes a `String`. Every refusal in the analysis modules
+/// that names a rule or category takes this arm, so it is the one that matters.
+#[test]
+fn recovers_a_formatted_string_payload() {
+    let payload: Box<dyn std::any::Any + Send> =
+        Box::new(String::from("unresolvable category `Ghost` in rule `Sel`"));
+
+    let recovered = super::analysis::panic_payload_text(&*payload);
+
+    // Pinned to the two identifiers that make the message actionable.
+    assert!(
+        recovered.contains("Ghost"),
+        "the formatted payload lost the category name: {recovered}"
+    );
+    assert!(
+        recovered.contains("Sel"),
+        "the formatted payload lost the rule label: {recovered}"
+    );
+}
+
+/// CONTROL — must NOT discriminate. A payload that is neither `&str` nor
+/// `String` (`std::panic::panic_any` with a custom type) has no text to recover,
+/// and this cell reads the same before and after the repair. It is here so that
+/// a mutation which broke the downcast is seen to break exactly the two cells
+/// above and no more.
+#[test]
+fn reports_an_unrecoverable_payload_honestly() {
+    let payload: Box<dyn std::any::Any + Send> = Box::new(0xDEAD_BEEF_u32);
+
+    let recovered = super::analysis::panic_payload_text(&*payload);
+
+    assert_eq!(
+        recovered, "<panic payload is neither `&str` nor `String`>",
+        "an untyped payload must say so rather than invent text"
+    );
+}
+
+/// The diagnostic carries BOTH names: the analysis (which `expect` had) and the
+/// payload (which `expect` threw away). Asserting only one would pass under the
+/// old behaviour.
+#[test]
+fn the_diagnostic_names_the_analysis_and_carries_the_payload() {
+    let diag = super::analysis::analysis_panic_diagnostic(
+        "symbolic analysis",
+        "Rholang",
+        "unresolvable category `Ghost` in rule `Sel`",
+    );
+
+    // What `expect` already said.
+    assert!(
+        diag.message.contains("symbolic analysis"),
+        "the diagnostic must name the analysis: {}",
+        diag.message
+    );
+    // What `expect` discarded — the discriminating half.
+    assert!(
+        diag.message.contains("Ghost"),
+        "the diagnostic must carry the recovered payload: {}",
+        diag.message
+    );
+    // Which of 54 concurrently-expanding grammars this belongs to. Interleaved
+    // stderr from 32 threads does not say.
+    assert_eq!(diag.grammar_name.as_deref(), Some("Rholang"));
+    assert_eq!(diag.id, DiagnosticId::I22);
+}
+
+/// ⚠ `emit_diagnostic` drops anything below `PRATTAIL_LINT_LEVEL`, default
+/// `Warning`. A `Note` here would recover the payload and then discard it one
+/// channel further along — the same defect, relocated.
+#[test]
+fn the_diagnostic_outranks_the_default_lint_level() {
+    let diag = super::analysis::analysis_panic_diagnostic("SFT analysis", "Ambient", "boom");
+
+    assert_eq!(
+        diag.severity,
+        crate::lint::LintSeverity::Error,
+        "a recovered analysis panic must not be filterable by the default lint level"
+    );
+    assert!(
+        diag.severity >= crate::lint::LintSeverity::Warning,
+        "severity must sort at or above the `emit_diagnostic` default threshold"
+    );
+}
+
+/// NON-VACUITY — two diagnostics that differ only in the analysis must differ in
+/// exactly the analysis token, and agree on the payload token.
+///
+/// ⚠ A whole-string `assert_ne!` would pass here for the wrong reason (the two
+/// messages differ in *many* ways once any field changes), and has passed
+/// vacuously twice in this campaign. The assertions below are pinned to
+/// individual tokens in each direction.
+#[test]
+fn two_analyses_differ_in_the_analysis_token_only() {
+    let payload = "unresolvable category `Ghost` in rule `Sel`";
+    let symbolic =
+        super::analysis::analysis_panic_diagnostic("symbolic analysis", "Rholang", payload);
+    let sft = super::analysis::analysis_panic_diagnostic("SFT analysis", "Rholang", payload);
+
+    // Discriminates: each names its own analysis and not the other's.
+    assert!(symbolic.message.contains("symbolic analysis"));
+    assert!(!symbolic.message.contains("SFT analysis"));
+    assert!(sft.message.contains("SFT analysis"));
+    assert!(!sft.message.contains("symbolic analysis"));
+
+    // Does NOT discriminate: the payload is the payload.
+    assert!(symbolic.message.contains("Ghost"));
+    assert!(sft.message.contains("Ghost"));
+    assert_eq!(symbolic.grammar_name, sft.grammar_name);
+}

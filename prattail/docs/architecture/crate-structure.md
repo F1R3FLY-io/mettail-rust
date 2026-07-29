@@ -143,11 +143,15 @@ lib.rs
 - `SyntaxItemSpec` variants: `Terminal`, `NonTerminal`, `IdentCapture`, `Binder`,
   `Collection`, `ZipMapSep`, `Optional`
 
-### `pipeline.rs` -- Pipeline Orchestrator (State Machine)
+### `pipeline.rs` -- Pipeline Orchestrator
 
-- **State machine**: `PipelineState` enum with states:
-  `Ready` → `Generated` → `Complete`
-- **Public API**: `run_pipeline(spec: &LanguageSpec) -> TokenStream`
+- **Three phases**: Extract → Generate → Finalize, run as straight-line code by
+  `run_pipeline_with_analysis`.
+  ⚠ **Correction, 2026-07-29 (#141 Stage 4):** these phases were previously
+  described as a `PipelineState` enum (`Ready → Generated → Complete`). That
+  enum was unreachable — nothing constructed a `Ready` — and was removed; see
+  the tombstone in `prattail/src/pipeline/state.rs`. The phases are unchanged.
+- **Public API**: `run_pipeline(spec: &LanguageSpec) -> Result<TokenStream, String>`
 - **Send+Sync data bundles** (extracted from `!Send` `LanguageSpec`):
   - `LexerBundle` { grammar_rules, type_infos, modes }
   - `ParserBundle` { categories, bp_table, rule_infos, follow_inputs, rd_rules,

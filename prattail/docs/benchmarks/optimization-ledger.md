@@ -858,6 +858,11 @@ LanguageSpec ──→ [Extract] ──→ Ready ──→ [Generate] ──→ 
 ```
 
 **State machine:** `PipelineState` enum with `Ready`, `Generated`, `Complete` states.
+⚠ *Historical record — as measured at the time.* That enum was later found to be
+unreachable and was removed on 2026-07-29 (#141 Stage 4); the three phases it
+named survive as straight-line code in `run_pipeline_with_analysis`. See the
+tombstone in `prattail/src/pipeline/state.rs`. The measurement above is left
+exactly as recorded.
 
 **Data bundles (all Send+Sync):**
 - `LexerBundle`: grammar_rules + type_infos

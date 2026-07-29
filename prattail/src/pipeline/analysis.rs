@@ -226,6 +226,133 @@ pub(crate) fn count_analysis_phases() -> u32 {
     count
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// DB03: recovering an analysis thread's panic payload  (#141 Stage 4)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// The text of a panic payload, for the two payload types `panic!` can produce.
+///
+/// `panic!("literal")` boxes a `&'static str`; `panic!("{fmt}", …)` boxes a
+/// `String`. Anything else — `std::panic::panic_any` with a custom type — has no
+/// text, and saying so is more honest than pretending the panic was silent.
+///
+/// Written as a `match` chain rather than `if let` so the discrimination is on
+/// the payload's *type*, which is what `downcast_ref` actually decides.
+pub(super) fn panic_payload_text(payload: &(dyn std::any::Any + Send)) -> &str {
+    match payload.downcast_ref::<&'static str>() {
+        Some(literal) => literal,
+        None => match payload.downcast_ref::<String>() {
+            Some(formatted) => formatted.as_str(),
+            None => "<panic payload is neither `&str` nor `String`>",
+        },
+    }
+}
+
+/// Join one scoped analysis thread, recovering the **original** panic payload
+/// into the pipeline's own diagnostic channel before letting the unwind
+/// continue.
+///
+/// # Why this exists — the defect it replaces
+///
+/// Every one of the 32 analyses below used to be joined with
+///
+/// ```text
+/// h_symbolic.join().expect("DB03: symbolic analysis thread panicked")
+/// ```
+///
+/// [`std::thread::ScopedJoinHandle::join`] returns
+/// `Err(Box<dyn Any + Send>)` **carrying the original panic message**, and
+/// [`Result::expect`] throws that box away and panics with its own string
+/// instead. The analysis modules behind these handles contain ~114 authored
+/// refusals between them; the payload is the *only* value that says which one
+/// fired. `expect` discarded exactly the discriminating information and kept
+/// only the module name, which the handle already encodes.
+///
+/// # Two measured facts that bound what this can and cannot do
+///
+/// 1. ⚠ **On this workspace's `dev` profile the join is never reached.**
+///    `[profile.dev] codegen-backend = "cranelift"` (root `Cargo.toml`), and
+///    cg_clif emits no catch pads, so the unwind out of a scoped thread cannot
+///    become an `Err`: the process dies with `fatal runtime error: failed to
+///    initiate panic, error 5`. This was measured directly on 2026-07-29 — a
+///    probe printed its outcome marker in *neither* the `Ok` nor the `Err` arm.
+///    The 32 `.expect` strings this replaces were therefore **dead text**, and
+///    so, on `dev`, is the `Err` arm below. It is live on any LLVM-backed
+///    profile — `[profile.release]`, and CI's release jobs.
+/// 2. **The panic is not silent even when this code never runs.** With no hook
+///    installed, `std`'s default handler still prints
+///    `thread '<unnamed>' panicked at <file>:<line>: <payload>` from the
+///    panicking thread. What the recovery below adds is not audibility; it is
+///    turning that stderr line into a **value inside the pipeline's diagnostic
+///    stream**, tagged with the grammar being expanded and the analysis that
+///    failed, in the same channel and format as every other pipeline
+///    diagnostic. Interleaved stderr from 32 concurrent threads does not say
+///    *which grammar* was being compiled; `I22` does.
+///
+/// # Why it re-raises rather than substituting a value
+///
+/// A panicked analysis produced no result. Returning `T::default()` would put a
+/// fabricated answer into [`MathAnalysisResults`] and let codegen proceed on it
+/// — the same defect as `BpLookup::empty()`, fixed in `9911d27d`: *a wrong
+/// answer, not a degraded one*. [`std::panic::resume_unwind`] continues the
+/// original unwind with the original payload, adding no second message to
+/// stderr; the diagnostic already carries the text. This is not a
+/// `catch_unwind` — it installs no landing pad and asserts no panic, so it is
+/// outside the scope of `dovetail/tests/panic_expectation_gate.rs`.
+fn join_analysis<T>(
+    handle: std::thread::ScopedJoinHandle<'_, T>,
+    analysis: &'static str,
+    grammar_name: &str,
+) -> T {
+    match handle.join() {
+        Ok(value) => value,
+        Err(payload) => {
+            crate::lint::emit_diagnostic(&analysis_panic_diagnostic(
+                analysis,
+                grammar_name,
+                panic_payload_text(&*payload),
+            ));
+            std::panic::resume_unwind(payload)
+        },
+    }
+}
+
+/// Build the `I22` diagnostic for a recovered analysis-thread panic.
+///
+/// Split out of [`join_analysis`] so that the *message* — the only part of this
+/// repair that carries information — can be asserted without a panicking
+/// thread. Under `[profile.dev]`'s cranelift backend a scoped thread's panic
+/// never becomes a joinable `Err` at all (see [`join_analysis`]'s note 1), so a
+/// test that spawned one would abort the whole test binary rather than exercise
+/// this code. Constructing the diagnostic directly asserts exactly the part that
+/// `Result::expect` used to throw away.
+///
+/// ⚠ The severity is [`LintSeverity::Error`] and that is load-bearing:
+/// [`crate::lint::emit_diagnostic`] silently drops anything below
+/// `PRATTAIL_LINT_LEVEL`, whose default is `Warning`. A `Note` here would
+/// re-create the defect being repaired — the payload recovered and then
+/// discarded, one channel further along.
+pub(super) fn analysis_panic_diagnostic(
+    analysis: &str,
+    grammar_name: &str,
+    payload_text: &str,
+) -> crate::lint::LintDiagnostic {
+    crate::lint::LintDiagnostic {
+        id: DiagnosticId::I22,
+        name: "analysis-thread-panicked",
+        severity: crate::lint::LintSeverity::Error,
+        category: None,
+        rule: None,
+        message: format!("DB03: the {analysis} thread panicked: {payload_text}"),
+        hint: Some(format!(
+            "the text after the colon is the panic's own payload, recovered from the join; it \
+             names the site inside the {analysis} that refused"
+        )),
+        grammar_name: Some(grammar_name.to_string()),
+        source_location: None,
+    }
+}
+
 /// Run all mathematical analyses in parallel using `std::thread::scope`.
 ///
 /// All inputs are borrowed references that are `Send + Sync`, allowing
@@ -234,7 +361,27 @@ pub(crate) fn count_analysis_phases() -> u32 {
 ///
 /// # Panics
 ///
-/// Propagates panics from any analysis thread via `.join().expect(...)`.
+/// Propagates panics from any analysis thread via [`join_analysis`], which
+/// first records the recovered payload as an `I22` diagnostic naming the
+/// grammar and the analysis.
+///
+/// # ⚠ Reported, not fixed here: 32 threads are spawned unconditionally
+///
+/// All 32 analyses are spawned on **every expansion of every language** (54
+/// languages). Sixteen of them — `vpa`, `symbolic`, `buchi`, `mso`,
+/// `probabilistic`, `register`, `parity_tree`, `multi_tape`, `multiset`,
+/// `two_way`, `sft`, `alternating`, `bisimulation`, `presburger`,
+/// `unification`, `lattice` — test `dispatch_plan.requires(…)` *inside* the
+/// spawned closure and return `None` immediately when the answer is "no", so
+/// the thread is created, scheduled and joined to do nothing. Hoisting the
+/// predicate above `s.spawn` would skip the spawn entirely.
+///
+/// That is a **performance** defect, not a diagnostic one, and it is
+/// deliberately left alone: changing which threads run perturbs nothing
+/// observable in the generated output, but it does not belong in a change whose
+/// acceptance criterion is a byte-identical regeneration manifest across 54
+/// languages. It needs its own item, with a before/after measurement of
+/// expansion wall time.
 pub(crate) fn run_math_analyses_parallel(
     bundle: &ParserBundle,
     wpds_analysis: Option<&crate::wpds::WpdsAnalysis>,
@@ -242,6 +389,10 @@ pub(crate) fn run_math_analyses_parallel(
     let all_syntax = &bundle.all_syntax;
     let categories = &bundle.categories;
     let wpds_ref = wpds_analysis;
+    // Carried into every `join_analysis` so a recovered payload names the
+    // grammar it belongs to: 54 languages expand in one `cargo build`, and 32
+    // threads interleave their stderr within each one.
+    let grammar_name = bundle.grammar_name.as_str();
 
     // Pre-build petri category info outside the thread scope.
     let petri_cats: Vec<crate::wpds::WpdsCategoryInfo> = categories
@@ -420,89 +571,49 @@ pub(crate) fn run_math_analyses_parallel(
         // ── Collect results ──────────────────────────────────────────────
         MathAnalysisResults {
             phase_count,
-            safety_result: h_safety
-                .join()
-                .expect("DB03: safety verification thread panicked"),
-            cegar_result: h_cegar
-                .join()
-                .expect("DB03: CEGAR refinement thread panicked"),
-            algebraic_result: h_algebraic
-                .join()
-                .expect("DB03: algebraic analysis thread panicked"),
-            confluence_result: h_confluence
-                .join()
-                .expect("DB03: confluence analysis thread panicked"),
-            termination_result: h_termination
-                .join()
-                .expect("DB03: termination analysis thread panicked"),
-            vpa_result: h_vpa.join().expect("DB03: VPA analysis thread panicked"),
-            wta_result: h_wta.join().expect("DB03: WTA analysis thread panicked"),
-            ewpds_result: h_ewpds
-                .join()
-                .expect("DB03: EWPDS analysis thread panicked"),
-            ara_result: h_ara.join().expect("DB03: ARA analysis thread panicked"),
-            petri_result: h_petri
-                .join()
-                .expect("DB03: Petri net analysis thread panicked"),
-            nominal_result: h_nominal
-                .join()
-                .expect("DB03: nominal analysis thread panicked"),
-            alternating_result: h_alternating
-                .join()
-                .expect("DB03: alternating analysis thread panicked"),
-            bisimulation_result: h_bisimulation
-                .join()
-                .expect("DB03: bisimulation analysis thread panicked"),
-            hindley_result: h_hindley
-                .join()
-                .expect("DB03: Hindley-Milner analysis thread panicked"),
-            ltl_results: h_ltl.join().expect("DB03: LTL check thread panicked"),
-            provenance_result: h_provenance
-                .join()
-                .expect("DB03: provenance tracking thread panicked"),
-            cra_result: h_cra.join().expect("DB03: CRA analysis thread panicked"),
-            morphism_result: h_morphism
-                .join()
-                .expect("DB03: morphism check thread panicked"),
-            kat_result: h_kat.join().expect("DB03: KAT check thread panicked"),
-            symbolic_result: h_symbolic
-                .join()
-                .expect("DB03: symbolic analysis thread panicked"),
-            buchi_result: h_buchi
-                .join()
-                .expect("DB03: Büchi analysis thread panicked"),
-            mso_result: h_mso.join().expect("DB03: MSO analysis thread panicked"),
-            probabilistic_result: h_probabilistic
-                .join()
-                .expect("DB03: probabilistic analysis thread panicked"),
-            register_result: h_register
-                .join()
-                .expect("DB03: register analysis thread panicked"),
-            parity_tree_result: h_parity_tree
-                .join()
-                .expect("DB03: parity tree analysis thread panicked"),
-            multi_tape_result: h_multi_tape
-                .join()
-                .expect("DB03: multi-tape analysis thread panicked"),
-            multiset_result: h_multiset
-                .join()
-                .expect("DB03: multiset analysis thread panicked"),
-            two_way_result: h_two_way
-                .join()
-                .expect("DB03: two-way transducer analysis thread panicked"),
-            sft_result: h_sft.join().expect("DB03: SFT analysis thread panicked"),
+            safety_result: join_analysis(h_safety, "safety verification", grammar_name),
+            cegar_result: join_analysis(h_cegar, "CEGAR refinement", grammar_name),
+            algebraic_result: join_analysis(h_algebraic, "algebraic analysis", grammar_name),
+            confluence_result: join_analysis(h_confluence, "confluence analysis", grammar_name),
+            termination_result: join_analysis(h_termination, "termination analysis", grammar_name),
+            vpa_result: join_analysis(h_vpa, "VPA analysis", grammar_name),
+            wta_result: join_analysis(h_wta, "WTA analysis", grammar_name),
+            ewpds_result: join_analysis(h_ewpds, "EWPDS analysis", grammar_name),
+            ara_result: join_analysis(h_ara, "ARA analysis", grammar_name),
+            petri_result: join_analysis(h_petri, "Petri net analysis", grammar_name),
+            nominal_result: join_analysis(h_nominal, "nominal analysis", grammar_name),
+            alternating_result: join_analysis(h_alternating, "alternating analysis", grammar_name),
+            bisimulation_result: join_analysis(
+                h_bisimulation,
+                "bisimulation analysis",
+                grammar_name,
+            ),
+            hindley_result: join_analysis(h_hindley, "Hindley-Milner analysis", grammar_name),
+            ltl_results: join_analysis(h_ltl, "LTL check", grammar_name),
+            provenance_result: join_analysis(h_provenance, "provenance tracking", grammar_name),
+            cra_result: join_analysis(h_cra, "CRA analysis", grammar_name),
+            morphism_result: join_analysis(h_morphism, "morphism check", grammar_name),
+            kat_result: join_analysis(h_kat, "KAT check", grammar_name),
+            symbolic_result: join_analysis(h_symbolic, "symbolic analysis", grammar_name),
+            buchi_result: join_analysis(h_buchi, "Büchi analysis", grammar_name),
+            mso_result: join_analysis(h_mso, "MSO analysis", grammar_name),
+            probabilistic_result: join_analysis(
+                h_probabilistic,
+                "probabilistic analysis",
+                grammar_name,
+            ),
+            register_result: join_analysis(h_register, "register analysis", grammar_name),
+            parity_tree_result: join_analysis(h_parity_tree, "parity tree analysis", grammar_name),
+            multi_tape_result: join_analysis(h_multi_tape, "multi-tape analysis", grammar_name),
+            multiset_result: join_analysis(h_multiset, "multiset analysis", grammar_name),
+            two_way_result: join_analysis(h_two_way, "two-way transducer analysis", grammar_name),
+            sft_result: join_analysis(h_sft, "SFT analysis", grammar_name),
             // ── E-graph equality saturation; populated after confluence joins ──
             egraph_result: None,
             // ── Constraint theory analyses ──
-            presburger_result: h_presburger
-                .join()
-                .expect("DB03: Presburger analysis thread panicked"),
-            unification_result: h_unification
-                .join()
-                .expect("DB03: Unification analysis thread panicked"),
-            lattice_result: h_lattice
-                .join()
-                .expect("DB03: Lattice analysis thread panicked"),
+            presburger_result: join_analysis(h_presburger, "Presburger analysis", grammar_name),
+            unification_result: join_analysis(h_unification, "Unification analysis", grammar_name),
+            lattice_result: join_analysis(h_lattice, "Lattice analysis", grammar_name),
             // ── Refinement type analysis ──
             refinement_analysis: refinement_analysis_result,
         }

@@ -111,6 +111,11 @@ define_diagnostic_ids! {
     I10 => "I10", I11 => "I11", I12 => "I12", I13 => "I13", I14 => "I14", I15 => "I15",
     I16 => "I16", I17 => "I17", I18 => "I18", I19 => "I19",
     I20 => "I20", I21 => "I21",
+    // I22: DB03 — a scoped analysis thread panicked and its payload was
+    // recovered by `pipeline::analysis::join_analysis`. See that function's
+    // doc-comment for why the payload has to be recovered here rather than
+    // read off stderr.
+    I22 => "I22",
 
     // ── Keyword (K) ──
     K01 => "K01", K02 => "K02",

@@ -18,7 +18,7 @@ call can be reconstructed (and re-audited) without re-deriving the analysis.
 
 ### `presburger.rs` — LIVE (do not touch)
 Earlier reconnaissance mis-flagged this as "near-dead (only a bench)". Direct grep refuted that:
-- `pipeline.rs:1834` and `pipeline.rs:2194` call `crate::presburger::analyze_from_bundle(...)` on the live pipeline path; the result is stored at `pipeline.rs:1587` (`PipelineState::presburger_result`).
+- `pipeline.rs:1834` and `pipeline.rs:2194` call `crate::presburger::analyze_from_bundle(...)` on the live pipeline path; the result is stored at `pipeline.rs:1587` (`MathAnalysisResults::presburger_result` — the struct was named `PipelineState` when this was written; the reference is preserved so the 2026-06-21 line numbers still resolve).
 - Consumed downstream by `lint.rs:510` / `lint.rs:9672` and `cost_benefit.rs` (`Optimization::PresburgerAnalysis`).
 - Backed by a dedicated zero-admission proof: `formal/rocq/presburger/` (Makefile target `rocq-presburger`).
 

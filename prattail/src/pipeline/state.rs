@@ -71,69 +71,57 @@ pub struct ParserBundle {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Pipeline state machine
+// Pipeline state machine — REMOVED 2026-07-29 (#141 Stage 4)
 // ══════════════════════════════════════════════════════════════════════════════
-
-/// Pipeline state machine for code generation.
-///
-/// Each state holds the data needed for the next transition.
-// Compile-time state machine with 3 total moves — never stored in collections.
-#[allow(clippy::large_enum_variant)]
-pub enum PipelineState {
-    /// Bundles extracted, ready for codegen.
-    Ready {
-        lexer_bundle: LexerBundle,
-        parser_bundle: ParserBundle,
-    },
-    /// Both code strings generated, ready to merge.
-    Generated { lexer_code: String, parser_code: String },
-    /// Final output produced.
-    Complete(TokenStream),
-}
-
-impl PipelineState {
-    /// Advance the pipeline to the next state.
-    ///
-    /// - `Ready → Generated`: runs lexer and parser codegen sequentially
-    /// - `Generated → Complete`: concatenates code strings and parses into `TokenStream`
-    /// - `Complete → panic`: pipeline is already done
-    ///
-    /// # Errors
-    ///
-    /// `Err(diagnostic)` when the lexer's modal soundness gates reject the
-    /// grammar. The message is the user-facing one; the `language!` boundary
-    /// renders it as `compile_error!`.
-    pub fn advance(self) -> Result<Self, String> {
-        match self {
-            PipelineState::Ready { lexer_bundle, parser_bundle } => {
-                // AL02: hybrid_lexer defaults to true in PipelineState path
-                // (cost-benefit analysis is not available here; hybrid is safe
-                // because it only activates for DFAs > 30 states)
-                let (lexer_code, variant_map, ambiguity_info) =
-                    generate_lexer_code_with_map(&lexer_bundle, true)?;
-                let parser_code = generate_parser_code_with_context(
-                    &parser_bundle,
-                    &variant_map,
-                    &ambiguity_info,
-                );
-                Ok(PipelineState::Generated { lexer_code, parser_code })
-            },
-            PipelineState::Generated { lexer_code, parser_code } => {
-                let mut combined = lexer_code;
-                combined.push_str(&parser_code);
-                let ts = combined
-                    .parse::<TokenStream>()
-                    .expect("PraTTaIL pipeline: generated code failed to parse as TokenStream");
-                Ok(PipelineState::Complete(ts))
-            },
-            // Forward-only state machine: Complete is terminal. Calling advance()
-            // again is a caller contract violation (guard with is_complete() first).
-            PipelineState::Complete(_) => {
-                panic!("PraTTaIL pipeline: advance() called on the terminal Complete state — the pipeline state machine is forward-only and Complete is terminal; check is_complete() before advancing")
-            },
-        }
-    }
-}
+//
+// `pub enum PipelineState { Ready { .. }, Generated { .. }, Complete(TokenStream) }`
+// and its sole method `pub fn advance(self) -> Result<Self, String>` lived here.
+// Both are gone. The three-phase pipeline they described — Extract → Generate →
+// Finalize — is unchanged and is implemented by `run_pipeline_with_analysis`
+// below; what is gone is a SECOND, unreachable copy of the Generate/Finalize
+// steps.
+//
+// ── Why it was removed, and the evidence ─────────────────────────────────────
+//
+// 1. ZERO CALLERS, measured. `PipelineState` occurred nowhere in the workspace
+//    outside this file's own definition — not in `prattail`, not in `macros`,
+//    not in `benches/`, not in the 2,281 files under `target/generated`, not in
+//    the `f1r3node-rust` sibling. Nothing ever constructed a `Ready`, so
+//    `advance` could never be called on any state. (Six architecture documents
+//    still *described* it; they are corrected, and they point here.)
+//
+// 2. IT WAS A DIVERGING DUPLICATE. `run_pipeline_with_analysis` performs the
+//    same three steps inline. The dead copy had already drifted: it called
+//    `generate_parser_code_with_context` where the live path calls
+//    `generate_parser_code_with_analysis`. A second copy of the codegen
+//    sequence that nothing exercises cannot be kept honest by anything.
+//
+// 3. IT DOUBLED THE PANIC SURFACE THIS CAMPAIGN IS SHRINKING. Its `Generated`
+//    arm carried a duplicate of the live
+//    `.expect("PraTTaIL pipeline: generated code failed to parse as
+//    TokenStream")`, and its terminal arm was
+//
+//        PipelineState::Complete(_) => {
+//            panic!("PraTTaIL pipeline: advance() called on the terminal \
+//                    Complete state — the pipeline state machine is \
+//                    forward-only and Complete is terminal; check \
+//                    is_complete() before advancing")
+//        },
+//
+//    a bare `panic!` — measured MUTE inside the cranelift-compiled proc macro —
+//    sitting inside a function that already returned `Result<Self, String>`
+//    after `042476d9` gave it that signature. Converting that arm to an `Err`
+//    was the alternative considered. It was rejected: the condition it reports
+//    is "you advanced a state machine nobody can obtain", so the conversion
+//    would have added a diagnostic for an event with no possible witness, and
+//    left both duplicates in place. Deleting removes the panic, the duplicate
+//    `.expect`, and the drift, and costs nothing that anything called.
+//
+// The live `.expect` on the same `parse::<TokenStream>()` step survives in
+// `run_pipeline_with_analysis` and is NOT in scope here: it is one of the C2
+// sites this task deliberately defers rather than convert alongside a
+// 54-language regeneration. It is enumerated and ratcheted by
+// `macros/tests/expansion_panic_gate.rs`.
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Pipeline diagnostic helper

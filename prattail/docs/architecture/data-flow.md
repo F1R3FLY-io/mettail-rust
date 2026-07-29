@@ -26,33 +26,45 @@ final output.
 
 ---
 
-## Pipeline State Machine
+## Pipeline Phases
 
-The pipeline in `pipeline.rs` uses a `PipelineState` enum to track progress:
+> ⚠ **Correction, 2026-07-29 (#141 Stage 4).** This section previously described
+> a `PipelineState` enum (`Ready → Generated → Complete`) as the mechanism. That
+> enum, and its `advance()` method, **were unreachable** — nothing in the
+> workspace ever constructed a `Ready` — and were removed; see the tombstone in
+> `prattail/src/pipeline/state.rs`. The **three phases below are unchanged**;
+> they are what `run_pipeline_with_analysis` does, as straight-line code in one
+> function rather than as three moves of a state machine. Only the vocabulary
+> changed.
+
+The pipeline in `pipeline/` runs three phases, each named by the function that
+performs it:
 
 ```
 LanguageSpec
     │
     ▼
-[Extract]  extract_from_spec()
+[Extract]  extract_from_spec()                          — pipeline/state.rs
     │       Separates LanguageSpec into Send+Sync bundles:
     │         LexerBundle  (grammar_rules, type_infos)
     │         ParserBundle (categories, bp_table, rule_infos, follow_inputs,
     │                       rd_rules, cross_rules, cast_rules)
     ▼
-PipelineState::Ready { lexer_bundle, parser_bundle }
+(lexer_bundle, parser_bundle)
     │
     ▼
-[Generate]  generate_lexer_code() + generate_parser_code()
-    │         Produces complete lexer and parser as String buffers
+[Generate]  generate_lexer_code_with_map()              — pipeline/wfst_emit.rs
+    │       + generate_parser_code_with_analysis()      — pipeline/codegen.rs
+    │         Produces complete lexer and parser as String buffers, plus the
+    │         PipelineAnalysis the macros crate's Ascent codegen consumes
     ▼
-PipelineState::Generated { lexer_code: String, parser_code: String }
+(lexer_code: String, parser_code: String, analysis: PipelineAnalysis)
     │
     ▼
 [Finalize]  concatenate + str::parse::<TokenStream>()
     │         Single parse of complete generated code string
     ▼
-PipelineState::Complete(TokenStream)
+(TokenStream, PipelineAnalysis)
 ```
 
 ### Why Send+Sync Bundles?

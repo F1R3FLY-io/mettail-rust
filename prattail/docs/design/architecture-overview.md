@@ -24,9 +24,20 @@ containing a complete, self-contained parser. Three composition entry points
 feed into the pipeline: `language!` (primary), `language_fragment!` (reusable
 fragments), and `compose_languages!` (runtime delegation).
 
-The pipeline is organized as a three-phase state machine:
-`Extract` -> `Generate` -> `Finalize`, represented by the `PipelineState`
-enum in `pipeline.rs`.
+The pipeline is organized as three phases: `Extract` -> `Generate` ->
+`Finalize`, run as straight-line code by `run_pipeline_with_analysis` in
+`pipeline/state.rs`.
+
+> ⚠ **Correction, 2026-07-29 (#141 Stage 4).** Until this date every mention of
+> the phases in this document attributed them to a `PipelineState` enum whose
+> `advance()` method moved between `Ready`, `Generated` and `Complete`. That
+> enum was **unreachable** — nothing in the workspace ever constructed a `Ready`
+> — and it was removed, along with the `generate_parser_code_with_context`
+> wrapper that only it called. See the tombstones in
+> `prattail/src/pipeline/state.rs` and `prattail/src/pipeline/codegen.rs`.
+> **The three phases, their order, their inputs and their outputs are
+> unchanged**; only the enum vocabulary is gone. Each mention below has been
+> rewritten to name the value that actually flows between phases.
 
 ```
   language! { ... }       language_fragment! { ... }       compose_languages! { ... }
@@ -57,7 +68,7 @@ enum in `pipeline.rs`.
                    │
                    ▼
    ┌───────────────────────────────────────────────────────────────┐
-   │  PraTTaIL Pipeline State Machine (pipeline.rs)                │
+   │  PraTTaIL Pipeline — three phases (pipeline/)                 │
    │                                                               │
    │    ┌─────────────────────┐                                    │
    │    │   [Extract Phase]   │  extract_from_spec()               │
@@ -68,10 +79,10 @@ enum in `pipeline.rs`.
    │               │                                               │
    │               ▼                                               │
    │  ┌────────────────────────────────┐                           │
-   │  │ PipelineState::Ready {         │                           │
+   │  │ (                              │                           │
    │  │   lexer_bundle: LexerBundle,   │                           │
    │  │   parser_bundle: ParserBundle, │                           │
-   │  │ }                              │                           │
+   │  │ )                              │                           │
    │  └────────────┬───────────────────┘                           │
    │               │                                               │
    │               ▼                                               │
@@ -97,10 +108,12 @@ enum in `pipeline.rs`.
    │                        │                                      │
    │                        ▼                                      │
    │  ┌────────────────────────────┐                               │
-   │  │ PipelineState::Generated { │                               │
+   │  │ (                          │                               │
    │  │   lexer_code: String,      │                               │
    │  │   parser_code: String,     │                               │
-   │  │ }                          │                               │
+   │  │   analysis: Pipeline‑      │                               │
+   │  │             Analysis,      │                               │
+   │  │ )                          │                               │
    │  └────────────────────┬───────┘                               │
    │                       │                                       │
    │                       ▼                                       │
@@ -114,7 +127,7 @@ enum in `pipeline.rs`.
    │    └──────────────┬───────────────┘                           │
    │                   │                                           │
    │                   ▼                                           │
-   │    PipelineState::Complete(TokenStream)                       │
+   │    (TokenStream, PipelineAnalysis)                            │
    │                                                               │
    └───────────────────────────────┬───────────────────────────────┘
                                    │
@@ -125,9 +138,9 @@ enum in `pipeline.rs`.
 
 ## 2. Pipeline Stages
 
-The pipeline is a three-phase state machine implemented by the `PipelineState`
-enum in `pipeline.rs`. Each phase transitions the state to the next via
-`advance()`. The two primary entry points are:
+The pipeline is three phases run in sequence by `run_pipeline_with_analysis`
+(`pipeline/state.rs`); each phase's output is the next phase's input. The two
+primary entry points are:
 
 - `generate_parser(spec) -> TokenStream`
 - `generate_parser_with_analysis(spec) -> (TokenStream, PipelineAnalysis)`
@@ -148,7 +161,7 @@ overhead.
 | `ParserBundle` | `grammar_name`, `categories`, `bp_table`, `rule_infos`, `follow_inputs`, `rd_rules`, `cross_rules`, `cast_rules`, `has_binders`, `beam_width`, `recovery_config`, `all_syntax`, `rule_locations`, `semantic_dependency_groups` |
 |                |                                                                                                                                                                                                                                |
 
-State transition: `LanguageSpec` -> `PipelineState::Ready { lexer_bundle, parser_bundle }`
+Phase output: `LanguageSpec` -> `(lexer_bundle, parser_bundle)`
 
 ### Phase 2: Generate
 
@@ -162,7 +175,7 @@ Sub-steps:
 5. Equivalence class computation
 6. Direct-coded lexer codegen (IS_ACCEPTING bitmap, lex_core/lex_weighted_core)
 
-**Parser codegen:** `generate_parser_code_with_context(&ParserBundle, &TokenVariantMap, &LexerAmbiguityInfo) -> String`
+**Parser codegen:** `generate_parser_code_with_analysis(&ParserBundle, &TokenVariantMap, &LexerAmbiguityInfo) -> (String, PipelineAnalysis)`
 
 Sub-steps:
 1. FIRST set computation (fixed-point iteration)
@@ -179,13 +192,13 @@ Sub-steps:
 12. Error recovery codegen (WFST-weighted repair actions)
 13. EBNF debug dump (opt-in via `PRATTAIL_DUMP_EBNF` environment variable)
 
-State transition: `PipelineState::Ready` -> `PipelineState::Generated { lexer_code, parser_code }`
+Phase output: `(lexer_bundle, parser_bundle)` -> `(lexer_code, parser_code, analysis)`
 
 ### Phase 3: Finalize
 
 **Concatenation and parse:** `lexer_code + parser_code` -> `str::parse::<TokenStream>()`
 
-State transition: `PipelineState::Generated` -> `PipelineState::Complete(TokenStream)`
+Phase output: `(lexer_code, parser_code)` -> `TokenStream`
 
 ### Phase Dependencies
 
@@ -214,7 +227,7 @@ prattail/src/
   |                          generate_parser() and generate_parser_with_analysis()
   |                          entry points, PipelineAnalysis export struct
   |
-  |-- pipeline.rs            PipelineState state machine (Ready/Generated/Complete),
+  |-- pipeline/             Three-phase orchestration (Extract/Generate/Finalize),
   |                          extract_from_spec(), run_pipeline(),
   |                          run_pipeline_with_analysis(),
   |                          dead-rule detection (4-tier), inter-category dead-path
