@@ -4605,14 +4605,28 @@ fn generate_engine_auto_literal_arm(
             {
                 return quote! {
                     #category::#literal_label(v) => {
-                        let mut entries: Vec<_> = v.iter().collect();
-                        // ⚠ PRE-EXISTING SORT, retained here deliberately. It is
-                        // a Display→parse-visible behaviour that moves goldens,
-                        // so it is retired in its OWN commit with a round-trip
-                        // check rather than folded into the #74/#151 repair.
-                        entries.sort_by(|a, b| format!("{}", a.0).cmp(&format!("{}", b.0)));
-                        // The entries Vec holds REFERENCES into v's storage,
-                        // so addresses inside v are stable across sort.
+                        // ⚠ NEVER SORTED (2026-07-29, Ruling E). A pathmap is a
+                        // PATH-KEYED container whose order is the source's
+                        // insertion order; `PathMapLit` preserves it, and Display
+                        // must not reorder what the author wrote.
+                        //
+                        // This arm used to run
+                        // `entries.sort_by(|a, b| format!("{}", a.0).cmp(…))` —
+                        // a sort by the FORMATTED KEY, which is
+                        // (a) lexicographic on rendered text, so `[10]` sorted
+                        // before `[9]`, and (b) O(n·|render|) allocation per
+                        // comparison. It also put `Display` and the container's
+                        // own `iter()` into permanent disagreement about order,
+                        // which is why the #151/#74 test rows had to read the
+                        // PAYLOAD rather than the rendering.
+                        //
+                        // The sibling asymmetry that shows it was a defect and
+                        // not a policy: `lower_map` (the map→`EMap` lowering)
+                        // does NOT sort, and neither does the `Map` Display path
+                        // for insertion-ordered content. Only pathmaps were
+                        // sorted, in two places, for no reason their siblings
+                        // shared.
+                        let entries: Vec<_> = v.iter().collect();
                         stack.push(DisplayTask::WriteString(#close.to_string()));
                         for (i, (k, val)) in entries.iter().enumerate().rev() {
                             // Tasks are pushed in REVERSE display order, so the
@@ -4636,8 +4650,8 @@ fn generate_engine_auto_literal_arm(
                 #category::#literal_label(v) => {
                     use std::fmt::Write as _;
                     let mut s = String::from(#open);
-                    let mut entries: Vec<_> = v.iter().collect();
-                    entries.sort_by(|a, b| format!("{}", a.0).cmp(&format!("{}", b.0)));
+                    // ⚠ NEVER SORTED — see the sibling arm above.
+                    let entries: Vec<_> = v.iter().collect();
                     for (i, (k, val)) in entries.iter().enumerate() {
                         if i > 0 { s.push_str(#sep); s.push(' '); }
                         match val {

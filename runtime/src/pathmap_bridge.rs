@@ -52,6 +52,49 @@ where
 }
 
 /// Rebuild a [`PathMapLit`] from a trie and the key index produced by [`trie_and_key_index_from_lit`].
+///
+/// # ★ The order is the TRIE's, and that is load-bearing (2026-07-29)
+///
+/// This used to iterate `key_index` directly:
+///
+/// ```ignore
+/// for (enc, k) in key_index {                  // ⚠ std::HashMap iteration
+///     if let Some(v) = trie.get_val_at(&enc) { out.insert(k, v.clone()); }
+/// }
+/// ```
+///
+/// `key_index` is a [`std::collections::HashMap`], whose iteration order is a
+/// function of its `RandomState` seed — **randomised per process**. So the
+/// rebuilt literal's insertion order was RUN-VARYING, and every operation that
+/// round-trips through the trie (`pathmap_put`, `pathmap_merge`,
+/// `pathmap_restrict`, `pathmap_subtract`, `pathmap_meet`, and the zipper
+/// writers) produced a `PathMapLit` whose order changed from run to run.
+///
+/// That was invisible because it was MASKED in both places a pathmap's order can
+/// be observed: generated `Display` sorted by formatted key, and `lower_pathmap`
+/// sorted by `Ord` before building the `EMap`. Removing either sort (Ruling E —
+/// "never sort pathmaps") exposes it immediately: `{| 1:10, 2:20 |}.set(3, 30)`
+/// rendered as `{|2:20, 1:10, 3:30|}`.
+///
+/// ⚠ The masking was not equally benign in the two places. Display flakiness is
+/// user-visible; the lowering's sort was the only thing keeping the `EMap` pair
+/// order — and therefore the serialized bytes and the post-state hash —
+/// deterministic. A run-varying wire order is a consensus break.
+///
+/// So the sorts were not merely redundant, they were LOAD-BEARING, and the honest
+/// repair is at the root rather than at either observation point: walk the TRIE,
+/// which iterates its keys in a deterministic order derived from the path bytes,
+/// and use `key_index` only to recover each encoded key's original `K`.
+///
+/// This also PRE-STAGES #116 ("EPathMap must BE a trie map"), whose thesis is
+/// exactly that a pathmap's canonical key order is derived from the trie rather
+/// than from insertion or from a sort bolted onto one consumer.
+///
+/// An encoded key present in the trie but absent from `key_index` is skipped: it
+/// has no original `K` to insert under, so inventing one is not available. That
+/// cannot arise from this module's own operations (every `set_val_at` is paired
+/// with a `key_index.insert`), and the skip is the same conservative behaviour
+/// the previous `get_val_at`-guarded form had in the mirror direction.
 pub fn pathmap_lit_from_trie_and_keys<K, V>(
     trie: &PathTrie<V>,
     key_index: HashMap<Vec<u8>, K>,
@@ -61,9 +104,9 @@ where
     V: Clone + Send + Sync + Unpin,
 {
     let mut out = PathMapLit::new();
-    for (enc, k) in key_index {
-        if let Some(v) = trie.get_val_at(&enc) {
-            out.insert(k, v.clone());
+    for (enc, v) in trie.iter() {
+        if let Some(k) = key_index.get(enc.as_slice()) {
+            out.insert(k.clone(), v.clone());
         }
     }
     out

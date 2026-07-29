@@ -1392,10 +1392,27 @@ fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RholangAstLow
     match pathmap {
         Pathmap::PathmapLit(entries) => {
             // A pathmap is key/value like a map; lower to a Rholang `EMap` (mirrors `lower_map`).
-            // `PathMapLit` (insertion-order) is sorted by key for a deterministic encoding.
-            let mut entries: Vec<(&Proc, &mettail_languages::rholang::PathValueProc)> =
+            //
+            // ⚠ NEVER SORTED (2026-07-29, Ruling E). This used to run
+            // `entries.sort_by(|(key_a, _), (key_b, _)| key_a.cmp(key_b))`, justified in a
+            // comment as "sorted by key for a deterministic encoding".
+            //
+            // The justification does not survive comparison with its own sibling:
+            // `lower_map` — the map→`EMap` lowering, which produces the SAME `EMap` node
+            // from the SAME kind of insertion-ordered `HashMapLit` — does NOT sort. So
+            // sorting was not a determinism requirement of the encoding; it was an
+            // asymmetry applied to pathmaps alone, in the two places pathmaps are rendered
+            // or lowered (here and generated `display.rs`), and it silently reordered what
+            // the author wrote.
+            //
+            // Determinism is preserved without it for the same reason it is preserved for
+            // maps: the order is a deterministic function of the SOURCE (`PathMapLit`
+            // preserves insertion order), so the same program lowers to the same bytes.
+            // Canonicalising ACROSS source orders is #116's job (EPathMap becoming a real
+            // trie map, where key order is derived from the trie), not a sort bolted onto
+            // one of two lowering paths.
+            let entries: Vec<(&Proc, &mettail_languages::rholang::PathValueProc)> =
                 entries.iter().collect();
-            entries.sort_by(|(key_a, _), (key_b, _)| key_a.cmp(key_b));
 
             let mut pairs = Vec::with_capacity(entries.len());
             let mut locally_free = Vec::new();

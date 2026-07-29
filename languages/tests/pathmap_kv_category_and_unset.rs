@@ -445,6 +445,58 @@ fn antivacuity_multi_entry_literals_keep_insertion_order() {
     );
 }
 
+/// ★ RULING E (2026-07-29) — DISPLAY NO LONGER SORTS, AND THE ROUND TRIP PROVES
+/// IT IS SAFE.
+///
+/// Generated `display.rs` used to run
+/// `entries.sort_by(|a, b| format!("{}", a.0).cmp(&format!("{}", b.0)))` on
+/// pathmap entries — a sort by the FORMATTED key, so `[10]` rendered before
+/// `[9]`, and one that put `Display` in permanent disagreement with the
+/// container's own `iter()`.
+///
+/// The sibling asymmetry that shows it was a defect rather than a policy:
+/// `lower_map` (map → `EMap`) does not sort, and the `Map::MapLit` arm of the
+/// trampolined lowering does not sort. Only pathmaps were sorted, in the two
+/// places pathmaps are rendered or lowered.
+///
+/// ⚠ Removing it is Display→parse VISIBLE, which is why this row asserts the
+/// FIXPOINT and not merely the absence of a sort: `Display` must emit the
+/// author's order, and re-parsing that text must return the same payload in the
+/// same order. Both directions are checked, on an input whose sorted order and
+/// insertion order DIFFER — otherwise the row could pass while the sort was
+/// still in place.
+#[test]
+fn ruling_e_display_preserves_source_order_and_round_trips() {
+    // Insertion order `3, 1` — a sort by key (or by formatted key) would render
+    // `1, 3`, so this input DISCRIMINATES.
+    let src = "{| 3 : 4, 1 : 2 |}";
+    let term = sole_reading(src);
+    let printed = term.to_string();
+    assert_eq!(
+        printed, "{|3:4, 1:2|}",
+        "Display must emit the AUTHOR's order, not a sorted one",
+    );
+    // …and the printed form re-parses to the same payload, in the same order.
+    let reparsed = sole_reading(&printed);
+    assert_eq!(payload(&reparsed), payload(&term), "Display → parse fixpoint");
+    assert_eq!(
+        payload(&term).expect("pathmap payload").1,
+        vec![("3".to_string(), "4".to_string()), ("1".to_string(), "2".to_string())],
+    );
+
+    // The formatted-key ordering hazard specifically: `[10]` vs `[9]`. Under the
+    // removed sort these came back `[10], [9]` (lexicographic on rendered text)
+    // regardless of how they were written.
+    let src = "{| [9] : 1, [10] : 2 |}";
+    let term = sole_reading(src);
+    assert_eq!(
+        payload(&term).expect("pathmap payload").1,
+        vec![("[9]".to_string(), "1".to_string()), ("[10]".to_string(), "2".to_string())],
+    );
+    let reparsed = sole_reading(&term.to_string());
+    assert_eq!(payload(&reparsed), payload(&term), "Display → parse fixpoint");
+}
+
 /// ★ ROOT-3 REGRESSION CONTROL.
 ///
 /// The 40 misclassified slots were the auto-injected higher-order-literal

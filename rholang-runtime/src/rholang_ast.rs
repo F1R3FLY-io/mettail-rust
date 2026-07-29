@@ -1894,9 +1894,16 @@ impl<'a> Drive<'a> {
             },
             Proc::CastPathmap(value) => match value.as_ref() {
                 Pathmap::PathmapLit(entries) => {
-                    let mut entries: Vec<(&Proc, &mettail_languages::rholang::PathValueProc)> =
+                    // ⚠ NEVER SORTED (2026-07-29, Ruling E). The removed
+                    // `entries.sort_by_key(|(key_a, _)| *key_a)` had no sibling:
+                    // the `Map::MapLit` arm ~30 lines above lowers its
+                    // insertion-ordered `HashMapLit` to the SAME `EMap` node
+                    // WITHOUT sorting. (The `Bag::BagLit` arm does sort — but a
+                    // BAG IS UNORDERED, so a sort there is canonicalisation; a
+                    // pathmap's order is the source's, so a sort is a rewrite.)
+                    // See `recursive_oracle::lower_pathmap` for the full argument.
+                    let entries: Vec<(&Proc, &mettail_languages::rholang::PathValueProc)> =
                         entries.iter().collect();
-                    entries.sort_by_key(|(key_a, _)| *key_a);
                     let mut children = Vec::with_capacity(2 * entries.len());
                     let pair_count = entries.len();
                     for (key, value) in entries {
