@@ -339,6 +339,14 @@ fn turing_declines_nothing_because_its_head_move_is_lowered() {
 /// Their `Delivered` labels are pinned as a SET in
 /// [`no_fold_in_the_corpus_is_refused_for_a_collection_parameter`], so this removal cannot be
 /// mistaken for the folds quietly vanishing.
+///
+/// ⚠ THIRTEEN OF THOSE FOURTEEN REMAIN; `PParInternal` IS NOT ONE OF THEM (2026-07-29). The
+/// `__ppar(…)` rule was deleted outright as a vestige of the pre-braced grammar — see
+/// `languages/src/rholang.rs`, above the `PPar` rule — so its fold is not "quietly missing",
+/// it has no rule to be the fold OF. The count above is left at fourteen because it is a
+/// statement about what Task #101 measured, not about what the grammar declares today; the
+/// live count is whatever [`COLLECTION_PARAMETER_FOLDS`] enumerates, and that constant is the
+/// one a future reader should trust.
 #[test]
 fn rholang_declination_set_is_pinned() {
     let metadata = &mettail_languages::rholang::RholangMetadata;
@@ -543,7 +551,6 @@ fn no_fold_in_the_corpus_is_refused_for_a_collection_parameter() {
 
     let mut expected: Vec<(String, String)> = vec![
         ("Turing::shift_right", "Turing::fold::Tape_shift_right"),
-        ("Rholang::PParInternal", "Rholang::fold::Proc_PParInternal"),
         ("Rholang::POutput2Plus", "Rholang::fold::Proc_POutput2Plus"),
         ("Rholang::PPersistOutput2Plus", "Rholang::fold::Proc_PPersistOutput2Plus"),
         ("Rholang::POutputNil2Plus", "Rholang::fold::Proc_POutputNil2Plus"),
@@ -638,7 +645,9 @@ fn no_fold_in_the_corpus_is_refused_for_a_collection_parameter() {
 /// `collection_fold_carriers.rs` for `MapParamRefusalDemo`).
 const COLLECTION_PARAMETER_FOLDS: &[&str] = &[
     "Turing::shift_right",
-    "Rholang::PParInternal",
+    // `Rholang::PParInternal` was here until 2026-07-29, when the `__ppar(…)` rule it named
+    // was deleted as a vestige of the pre-braced `PPar` grammar. It is the only entry ever
+    // removed from this list for that reason — every other removal would be a regression.
     "Rholang::POutput2Plus",
     "Rholang::PPersistOutput2Plus",
     "Rholang::POutputNil2Plus",

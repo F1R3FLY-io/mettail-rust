@@ -438,18 +438,41 @@ language! {
 
         PDrop . n:Name  |- "*" n : Proc ;
 
-        // AST-level constructor for parallel composition (multiset of procs).
-        // Equations / rewrites match on `(PPar {…})`. User-facing surface
-        // syntax is either braced `{ P | Q }` or bare infix `P | Q` (`PParInfix`,
-        // folded via `merge_pp_parallel`). The `__ppar(…)` keyword exposes the
-        // constructor for internal use and round-trip parsing of normalized AST.
+        // Parallel composition, as a multiset of procs. Equations and rewrites
+        // match on `(PPar {…})`.
         //
-        // Top-level `{ … }` is also used for Map literals (`{ k: v }`); the
-        // parser disambiguates on `:` vs `|`. Empty `{}` is an empty Map.
+        // TWO surfaces, both user-facing, both live:
+        //   * this braced collection rule, `{ P | Q }`, which builds the
+        //     `HashBag` directly, and
+        //   * the bare infix `P | Q` (`PParInfix`, declared with the other
+        //     infix operators), which folds through `merge_pp_parallel` and
+        //     flattens nested `PPar` members into one flat n-ary bag.
+        // Both therefore arrive at the same `Proc::PPar(HashBag<Proc>)`.
+        //
+        // ⚠ THERE WAS A THIRD, `__ppar(p, …)`, DELETED 2026-07-29. It was a
+        // vestige: commit `1a3f3490` ("Adds support for braced parallel
+        // composition", May 2026) introduced the braced rule above, renamed the
+        // pre-existing keyword rule to `PParInternal`, and gave it a fold that
+        // degenerated it into the new one — but never removed it. It claimed to
+        // be the round-trip display surface for a normalized AST, and that was
+        // already false when written: the generated `Display` renders
+        // `Proc::PPar` as `{ … | … }`, so no term ever displayed through it.
+        // Measured before deletion, `__ppar(Nil, Nil)` did not parse either
+        // (`TrailingTokens` at byte 5), so it was unreachable from BOTH
+        // directions. Do not reintroduce it; it also cost a reserved keyword.
+        //
+        // AMBIGUITY, DELIBERATELY PRESERVED: `{ … }` also spells a Map literal
+        // (`{ k : v }`), so bare `{}` is genuinely ambiguous between an empty
+        // Map and an empty `PPar`. Per rholang semantics that ambiguity needs
+        // additional context to resolve, so the parser does NOT resolve it
+        // here — `parse_via_wpda_all("{}")` returns BOTH readings (measured: 2,
+        // `CastMap(MapLit(HashMapLit({})))` and `PPar(HashBag {})`), and the
+        // choice is deferred to a consumer that has the context. Pinned by
+        // `par_reading_count_pins::empty_braces_keep_both_the_map_and_the_par_reading`
+        // in `languages/tests/rholang_tests.rs`. Non-empty `{ … }` is
+        // discriminated by its contents (`:` for a Map entry, `|` for a par
+        // element), which is a reading of the input, not a prior decision.
         PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
-        PParInternal . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc ![{
-            Proc::PPar(ps.clone())
-        }] fold;
 
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;

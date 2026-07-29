@@ -5667,6 +5667,417 @@ mod branch_b_send_normalization_pins {
     }
 }
 
+/// Reading-count + reading-SET pins for parallel composition — the `|` seam.
+///
+/// ## Why this gate exists
+///
+/// Before it, the tree had **no** reading-count pin on `|` or on `PPar`
+/// anywhere. [`branch_b_send_normalization_pins`] above watches the *send*
+/// seam and nothing else. Task #103 measured what that costs: a lost reading
+/// is invisible to BOTH `Display` and `semantic_hash`, so no other instrument
+/// in the suite reports it — the reading simply stops existing and every
+/// remaining assertion still passes.
+///
+/// `|` is the most delicate token in the Rholang grammar. It is simultaneously
+///
+/// * the `PParInfix` binary operator (`a | b`),
+/// * the element separator of the `PPar` collection (`{ a | b }`), and
+/// * the lead byte of the Pathmap close `|}` (`{| k : v |}`),
+///
+/// which is precisely why `prattail`'s `FrameCtx` carries the innermost
+/// collection's `close`/`sep` — so the lex-fork can emit the collection-yield
+/// branch *alongside* (never instead of) the colliding operator branch. That
+/// arbitration has no direct instrument. This module is it.
+///
+/// ## What is asserted, and why it is not a `Display` comparison
+///
+/// Each row pins **(a)** the deduped reading count and **(b)** the sorted set
+/// of per-reading `Debug` renderings.
+///
+/// * `parse_via_wpda_all` returns the set deduped by semantic fingerprint, so
+///   the surviving length IS the distinct-semantic-key count. A count alone is
+///   therefore already a two-sided bound: it catches an over-prune (a reading
+///   lost) and an over-generation (a spurious reading gained).
+/// * The `Debug` set is the second side. A count can be held constant while
+///   the *identity* of a reading changes; the set cannot.
+/// * `Display` is deliberately **not** used. It collapses genuine twins by
+///   design — see the note on [`branch_b_send_normalization_pins`]:
+///   "distinctness is proven by the deduped count, not by display".
+///
+/// `Debug` renderings have their `UniqueId(n)` counters masked to `UniqueId(#)`
+/// by [`mask_ids`]. Those counters are allocation-order artefacts of the
+/// process-global var cache — two runs of the same parse in a different order
+/// produce different integers for the same term — so they are noise, not
+/// structure. Masked, what remains pinned is the constructor spine plus every
+/// `pretty_name`, which is exactly the reading.
+///
+/// ## Every count below was MEASURED, never guessed (2026-07-29)
+///
+/// Taken with the `zz_par_measure` probe on the pre-deletion tree, then
+/// re-taken unchanged after `PParInternal` was removed. That before/after
+/// identity is the control the deletion was landed against.
+mod par_reading_count_pins {
+    use super::*;
+
+    /// Replace every `UniqueId(<digits>)` with `UniqueId(#)`.
+    ///
+    /// Hand-rolled rather than pulled from `regex`: the shape is a fixed
+    /// literal followed by digits, the test crate has no regex dependency, and
+    /// the output buffer can be preallocated to the input length (masking only
+    /// ever shrinks the string).
+    fn mask_ids(rendered: &str) -> String {
+        const MARKER: &str = "UniqueId(";
+        let mut out = String::with_capacity(rendered.len());
+        let mut rest = rendered;
+        while let Some(at) = rest.find(MARKER) {
+            out.push_str(&rest[..at + MARKER.len()]);
+            rest = &rest[at + MARKER.len()..];
+            let close = rest
+                .find(')')
+                .expect("a `UniqueId(` opened by the derived Debug always closes");
+            out.push('#');
+            rest = &rest[close..];
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// The sorted, id-masked `Debug` set of every reading of `src`.
+    fn readings(src: &str) -> Vec<String> {
+        fresh();
+        let all = Proc::parse_via_wpda_all(src)
+            .unwrap_or_else(|e| panic!("`{src}` must parse, got {e:?}"));
+        let mut rendered: Vec<String> =
+            all.iter().map(|p| mask_ids(&format!("{p:?}"))).collect();
+        rendered.sort();
+        rendered
+    }
+
+    /// Pin both sides: the count first (so a moved count reports as a count,
+    /// not as an unreadable set diff), then the set.
+    fn pin(src: &str, expected: &[&str]) {
+        let got = readings(src);
+        assert_eq!(
+            got.len(),
+            expected.len(),
+            "`{src}` reading COUNT moved: expected {} reading(s), got {}:\n{got:#?}",
+            expected.len(),
+            got.len()
+        );
+        assert_eq!(got, expected, "`{src}` reading SET moved");
+    }
+
+    const VAR_A: &str =
+        r#"PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(#), pretty_name: Some("a") })))"#;
+
+    /// Bare infix, two operands. `PParInfix` is what the parser BUILDS; the
+    /// `merge_pp_parallel` fold that turns it into a `Proc::PPar` bag runs
+    /// later, at normalization — so the reading here is legitimately the infix
+    /// node and not the multiset.
+    #[test]
+    fn bare_infix_par_has_one_reading() {
+        pin(
+            "a | b",
+            &[&format!(
+                "PParInfix({VAR_A}, PVar(OrdVar(Free(FreeVar {{ unique_id: UniqueId(#), \
+                 pretty_name: Some(\"b\") }}))))"
+            )],
+        );
+    }
+
+    /// Three operands. One reading, left-nested — `|` associates left and the
+    /// alternative bracketing is NOT a separate reading, because the fold makes
+    /// them equal and `parse_via_wpda_all` dedupes by semantic fingerprint.
+    /// This row is the one that would move first if the associativity of `|`
+    /// were ever re-derived.
+    #[test]
+    fn three_way_bare_infix_par_has_one_reading() {
+        pin(
+            "a | b | c",
+            &[&format!(
+                "PParInfix(PParInfix({VAR_A}, PVar(OrdVar(Free(FreeVar {{ unique_id: \
+                 UniqueId(#), pretty_name: Some(\"b\") }})))), PVar(OrdVar(Free(FreeVar {{ \
+                 unique_id: UniqueId(#), pretty_name: Some(\"c\") }}))))"
+            )],
+        );
+    }
+
+    /// The BRACED collection surface — the live `Proc::PPar` path, and the one
+    /// the `PParInternal` deletion had to leave untouched. Two `Nil`s land in
+    /// the bag as a single key with multiplicity 2, which is the multiset
+    /// semantics being asserted: `{Nil | Nil}` is not `{Nil}`.
+    ///
+    /// Deliberately a bag with ONE DISTINCT key. `HashBag`'s derived `Debug`
+    /// renders `counts` through a `HashMap`, whose iteration order is not
+    /// stable across processes — so a two-distinct-key bag would make this a
+    /// flaky assertion rather than a pin.
+    #[test]
+    fn braced_par_of_two_nils_has_one_reading() {
+        pin("{Nil | Nil}", &["PPar(HashBag { counts: {PZero: 2}, total_count: 2 })"]);
+    }
+
+    /// Three elements: multiplicity 3, still one reading. Pinned alongside the
+    /// two-element row because a separator loop that mis-terminated would move
+    /// exactly one of the two.
+    #[test]
+    fn braced_par_of_three_nils_has_one_reading() {
+        pin("{Nil | Nil | Nil}", &["PPar(HashBag { counts: {PZero: 3}, total_count: 3 })"]);
+    }
+
+    /// ★ THE LEX-FORK SEAM. `{|` opens a Pathmap literal and `|}` closes it —
+    /// and the lead `|` of that close is byte-identical to the `PParInfix`
+    /// operator. `prattail` resolves this by forking and emitting BOTH the
+    /// operator branch and the collection-yield branch, then letting the parse
+    /// eliminate the one that cannot complete. This row is the control most
+    /// likely to catch collateral damage from any change to `|`.
+    ///
+    /// ⚠ PINNED AS MEASURED, NOT AS ENDORSED. The reading carries an EMPTY
+    /// `HashMapLit({})` — the `@a : @b` entry is not in it. Whether a Pathmap
+    /// literal should retain its entries is a separate question from whether
+    /// the `|`/`|}` fork is stable, and only the latter is this row's job. The
+    /// empty payload is reported as an independent finding; it is not this
+    /// module's to fix, and pinning it here means a change to it must be
+    /// deliberate.
+    #[test]
+    fn pathmap_close_does_not_fork_into_a_par() {
+        pin("{| @a : @b |}", &["CastPathmap(PathmapLit(PathMapLit(HashMapLit({}))))"]);
+    }
+
+    /// A `|` whose left operand ends in `}` — the receive's body brace abuts
+    /// the operator. One reading: the `}` closes the body and the `|` is the
+    /// infix operator, never a collection separator continuing the body.
+    #[test]
+    fn receive_composed_with_a_send_has_one_reading() {
+        pin(
+            "for(x <- @Nil){x} | @Nil!(0)",
+            &[
+                r#"PParInfix(PForUser([ForRowSingleNoWhere(InputBind(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(#), pretty_name: Some("x") }))), NQuoteNil))], PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(#), pretty_name: Some("x") })))), POutputNil(CastInt(NumLit(0))))"#,
+            ],
+        );
+    }
+
+    /// ★ `{}` IS AMBIGUOUS, AND BOTH READINGS SURVIVE — the pin for the USER
+    /// ruling of 2026-07-29:
+    ///
+    /// > "Per rholang semantics, `{}` could be either an empty ppar or map,
+    /// > that's ambiguity that requires additional context to decide."
+    ///
+    /// Measured: **2** readings, `CastMap(MapLit(HashMapLit({})))` and
+    /// `PPar(HashBag { counts: {}, total_count: 0 })`. The parser preserves
+    /// both and defers the choice, which is the standing "never disambiguate
+    /// early / preserve every reading" mandate being honoured rather than
+    /// violated.
+    ///
+    /// This row exists because the grammar comment above the `PPar` rule used
+    /// to assert "Empty `{}` is an empty Map" — a claim that reads like an
+    /// early-disambiguation decision baked into the grammar. It was not one;
+    /// it was simply false about the parser, and it has been corrected. Pinning
+    /// the count here is what stops the claim from becoming true by accident:
+    /// if either reading is ever eliminated, THIS row fails, and it is the only
+    /// thing in the tree that would notice.
+    #[test]
+    fn empty_braces_keep_both_the_map_and_the_par_reading() {
+        pin(
+            "{}",
+            &[
+                "CastMap(MapLit(HashMapLit({})))",
+                "PPar(HashBag { counts: {}, total_count: 0 })",
+            ],
+        );
+    }
+}
+
+/// The `PParInternal` / `__ppar` rule is DELETED, and the internal-keyword
+/// mechanism it used is not.
+///
+/// ## What was deleted, and why it was a deletion rather than a repair
+///
+/// `Proc::PPar` carried three surfaces for one semantic node:
+///
+/// ```text
+/// PParInfix    . a:Proc, b:Proc  |- a "|" b                        : Proc  ![merge_pp_parallel] fold
+/// PPar         . ps:HashBag(Proc) |- "{" ps.*sep("|") "}"          : Proc
+/// PParInternal . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc  ![Proc::PPar(ps)] fold
+/// ```
+///
+/// The third was a vestige. Commit `1a3f3490` ("Adds support for braced
+/// parallel composition", May 2026) shows the old `PPar` rule *was* the
+/// `__ppar` rule; when the braced form landed, the keyword rule was renamed to
+/// `PParInternal` and given a fold that degenerates it into the new one. It was
+/// never removed. Its stated justification — that it is the round-trip display
+/// surface for a normalized `Proc::PPar` — was false by the time it was
+/// written: the generated `Display` renders `Proc::PPar` as `{ … | … }`, so no
+/// normalized term could ever display through `__ppar(…)`.
+///
+/// ## What these rows assert
+///
+/// Named tokens only — a count, or a `contains`/`starts_with` on a specific
+/// identifier. Never an `assert_ne!` between two opaque renderings: that shape
+/// has passed vacuously twice in this campaign, because "these two blobs
+/// differ" is satisfied by any difference at all, including the wrong one.
+mod ppar_internal_rule_is_deleted {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    /// The generated-artefact directory. `CARGO_TARGET_DIR` wins when set, so a
+    /// caller who redirects the build tree still measures the tree that was
+    /// just built.
+    fn generated_dir() -> PathBuf {
+        let target = match std::env::var_os("CARGO_TARGET_DIR") {
+            Some(dir) => PathBuf::from(dir),
+            None => Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("`languages` is a workspace member, so its manifest dir has a parent")
+                .join("target"),
+        };
+        target.join("generated").join("rholang")
+    }
+
+    fn artifact(name: &str) -> String {
+        let path = generated_dir().join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "cannot read the generated artefact {}: {e}\n\nIt is written by the \
+                 `language!` macro while compiling `mettail_languages`, a dependency of this \
+                 test — so a missing file means this walk is looking in the wrong place, never \
+                 that the artefact is optional.",
+                path.display()
+            )
+        })
+    }
+
+    /// The keyword is gone from the token enum — AND the two sibling internal
+    /// keywords are still there.
+    ///
+    /// ★ The two positive assertions are the load-bearing half. Without them
+    /// this row cannot tell "one rule was deleted" from "the internal-keyword
+    /// mechanism was broken", and both produce the same negative result.
+    /// `__comm_where` and `__guard_then` are internal keyword rules too, but
+    /// unlike `PParInternal` they are LIVE: each has its own semantics and no
+    /// alternative surface, so an over-broad edit that took them with it would
+    /// be a regression, not a cleanup.
+    #[test]
+    fn the_keyword_left_the_token_enum_and_its_siblings_did_not() {
+        let parser_src = artifact("parser.rs");
+        assert!(
+            !parser_src.contains("Kw__ppar"),
+            "`Kw__ppar` is still in the generated token enum — the deletion did not apply"
+        );
+        assert!(
+            parser_src.contains("Kw__comm_where"),
+            "`Kw__comm_where` vanished — the deletion was over-broad and took a LIVE \
+             internal-keyword rule with it"
+        );
+        assert!(
+            parser_src.contains("Kw__guard_then"),
+            "`Kw__guard_then` vanished — the deletion was over-broad and took a LIVE \
+             internal-keyword rule with it"
+        );
+    }
+
+    /// The opener left the balanced-depth scanner sets.
+    ///
+    /// `__OPENS` / `__CLOSES` are the token-text arrays the generated
+    /// cross-category lookahead uses to count nesting while scanning ahead. A
+    /// deleted rule whose opener stayed in `__OPENS` would leave the scanner
+    /// counting a depth level no rule can ever open.
+    #[test]
+    fn the_opener_left_the_lookahead_scanner_sets() {
+        assert!(
+            !artifact("wpda.rs").contains("\"__ppar\""),
+            "the generated WPDA still carries the `__ppar` opener — check `__OPENS` and the \
+             `CollectionSpec {{ open: .. }}` entry"
+        );
+    }
+
+    /// `__ppar(…)` is not a parse.
+    ///
+    /// ⚠ This row is a CONTROL, not a discriminator, and saying so is the
+    /// honest reading of the measurement. `__ppar(Nil, Nil)` already failed to
+    /// parse BEFORE the deletion — measured 2026-07-29 as
+    /// `TrailingTokens { found: "Ident", .. byte_offset: 5 }`, i.e. the parse
+    /// stopped one byte into the keyword and the rest arrived as a bare
+    /// identifier. So the keyword surface was already unreachable from the
+    /// parse side as well as from the `Display` side, and the rule was dead in
+    /// both directions rather than merely redundant in one. What this row pins
+    /// is that it STAYS unreachable.
+    ///
+    /// Absence is asserted with `.is_err()` on the returned `Result`. Never
+    /// `#[should_panic]`, never `catch_unwind`: a test that expects a panic
+    /// passes for any panic, including one from an unrelated defect.
+    #[test]
+    fn the_keyword_surface_does_not_parse() {
+        fresh();
+        assert!(
+            Proc::parse_via_wpda_all("__ppar(Nil, Nil)").is_err(),
+            "`__ppar(Nil, Nil)` parsed — the deleted keyword surface is reachable again"
+        );
+    }
+
+    /// ★ THE DISCRIMINATING PROPERTY, in its permanent form.
+    ///
+    /// The deleted rule's stated purpose was to be the round-trip display
+    /// surface of a normalized `Proc::PPar`. The RED for this deletion stated
+    /// that purpose as a falsifiable claim — `format!("{}")` of a genuine
+    /// `Proc::PPar` bag `starts_with("__ppar")` — and ran it against the
+    /// pre-deletion tree, where the rule still existed. It FAILED, measuring
+    ///
+    /// ```text
+    ///   Proc::PPar({Nil, @a!(0)})  displays as  {@a!(0) | Nil}
+    /// ```
+    ///
+    /// That failure IS the evidence of redundancy: the semantic node never
+    /// displayed through the rule even while the rule was present, so the rule
+    /// could not have been serving the purpose it claimed. Deleting it
+    /// therefore removed a surface nothing reached.
+    ///
+    /// The row below is that same measurement kept as its true form, so the
+    /// property stays instrumented after the rule is gone. Both construction
+    /// routes are checked — the braced parse and a directly-built bag — so the
+    /// claim is about the NODE, not about one surface that produced it.
+    #[test]
+    fn a_par_bag_displays_through_the_braced_surface() {
+        fresh();
+        let parsed = parse("{Nil | @a!(0)}");
+        assert!(
+            format!("{parsed:?}").starts_with("PPar("),
+            "`{{Nil | @a!(0)}}` must build a genuine `Proc::PPar` bag, got {parsed:?}"
+        );
+        assert!(
+            format!("{parsed}").starts_with('{'),
+            "a `Proc::PPar` bag must display through the braced surface, got {parsed}"
+        );
+
+        let mut bag = mettail_runtime::HashBag::new();
+        bag.insert(parse("Nil"));
+        bag.insert(parse("@a!(0)"));
+        let built = Proc::PPar(bag);
+        assert!(
+            format!("{built}").starts_with('{'),
+            "a directly-built `Proc::PPar` bag must display through the braced surface, \
+             got {built}"
+        );
+    }
+
+    /// The two sibling `__`-keyword rules still round-trip through `Display`.
+    ///
+    /// `parser.rs` keeping the identifiers proves the tokens survived; this
+    /// proves the RULES did. `__comm_where` and `__guard_then` are fixed-arity,
+    /// not collections, so they were never instances of the keyword-wrapper
+    /// pattern that `PParInternal` was the tree's only member of.
+    #[test]
+    fn the_sibling_internal_keyword_rules_still_have_a_surface() {
+        let parser_src = artifact("parser.rs");
+        for keyword in ["__comm_where", "__guard_then"] {
+            assert!(
+                parser_src.contains(&format!("Token::Kw{keyword} => \"{keyword}\"")),
+                "the `{keyword}` rule lost its token-text mapping — the deletion reached a \
+                 LIVE internal-keyword rule"
+            );
+        }
+    }
+}
+
 /// #29 — `is_ground` must DESCEND into a collection literal.
 ///
 /// `is_ground` is consulted to decide whether a term may be treated as a finished

@@ -4404,8 +4404,8 @@ fn mk_proc_list(items: Vec<Proc>) -> Proc {
     Proc::CastList(Arc::new(List::ListLit(items)))
 }
 
-/// A-S4: desugar ONE raw send-sugar node (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, their `!!`
-/// twins, and the internal `__ppar`) to its canonical channel-first form. Returns `None` for
+/// A-S4: desugar ONE raw send-sugar node (`x!()`, `c!(a,b)`, `@Nil!(q)`, `@n!(…)`, and their `!!`
+/// twins) to its canonical channel-first form. Returns `None` for
 /// every non-sugar node. Each arm performs EXACTLY the constructor rewrite the rule's `![{…}]
 /// fold` body performs (`languages/src/rholang.rs`) — a pure structural rearrangement, no value
 /// computation — so lowering the desugared node is byte-identical to lowering the eval-time fold
@@ -4512,8 +4512,6 @@ fn desugar_surface_sugar_node(proc: &Proc) -> Option<Proc> {
         Proc::PPersistOutputShortEmpty(p) => Proc::PPersistOutput(quote(p), empty()),
         Proc::POutputShort2Plus(p, a, bs) => Proc::POutput(quote(p), list1(a, bs)),
         Proc::PPersistOutputShort2Plus(p, a, bs) => Proc::PPersistOutput(quote(p), list1(a, bs)),
-        // Internal `__ppar(…)` constructor exposure: the multiset it denotes.
-        Proc::PParInternal(parts) => Proc::PPar(parts.clone()),
         // `!?` query binds: `for(p <- x!?(a, b)){B}` denotes
         // `new r in { x!(*r, a, b) | for(p <- r){B} }` — one fresh private return channel per
         // query bind, all of a `for`'s rows expanded together under one `new`.

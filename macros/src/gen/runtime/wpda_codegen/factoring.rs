@@ -3758,10 +3758,20 @@ mod tests {
     // The rholang `@`-cohort pins (F0 gate, plan §5).
     // ═══════════════════════════════════════════════════════════════════════
 
-    /// Proc@ = 3 groups with 6/3/6 leaves: Nil {10,11,15,16,20,21} (incl. the
-    /// two NULLARY members 15/16), Quoted {12,17,22}, Short {13,14,18,19,
-    /// 23,24}. Rule indices are pinned against the generated WPDA_RULES
+    /// Proc@ = 3 groups with 6/3/6 leaves: Nil {9,10,14,15,19,20} (incl. the
+    /// two NULLARY members 14/15), Quoted {11,16,21}, Short {12,13,17,18,
+    /// 22,23}. Rule indices are pinned against the generated WPDA_RULES
     /// table (labels asserted first, so drift fails loudly and precisely).
+    ///
+    /// ⚠ THESE INDICES ARE ABSOLUTE POSITIONS IN THE `Proc` RULE LIST, so any
+    /// rule added or removed ANYWHERE ABOVE THEM shifts all of them. They were
+    /// last re-derived on 2026-07-29, when deleting `PParInternal` (which sat
+    /// at `Proc` index 3) shifted every index from 3 upward down by one. They
+    /// were re-derived by DUMPING the regenerated rule list, not by
+    /// decrementing the previous numbers — an arithmetic shortcut is right only
+    /// until one pin moves for an unrelated reason. If you are updating them
+    /// again, dump the list again; `rule_idx(&per_cat[0], "Label")` in this
+    /// module is the helper that resolves a label to its current index.
     #[test]
     fn rholang_proc_at_cohort_pins_three_groups_6_3_6() {
         let def = rholang();
@@ -3771,21 +3781,21 @@ mod tests {
         assert_eq!(name_src, 3, "Name src_idx pinned by WPDA_CATEGORIES");
         // WPDA_RULES parity for the 15-rule cohort.
         let pinned_labels = [
-            (10u16, "POutputNil"),
-            (11, "PPersistOutputNil"),
-            (12, "POutputQuoted"),
-            (13, "POutputShort"),
-            (14, "PPersistOutputShort"),
-            (15, "POutputNilEmpty"),
-            (16, "PPersistOutputNilEmpty"),
-            (17, "POutputQuotedEmpty"),
-            (18, "POutputShortEmpty"),
-            (19, "PPersistOutputShortEmpty"),
-            (20, "POutputNil2Plus"),
-            (21, "PPersistOutputNil2Plus"),
-            (22, "POutputQuoted2Plus"),
-            (23, "POutputShort2Plus"),
-            (24, "PPersistOutputShort2Plus"),
+            (9u16, "POutputNil"),
+            (10, "PPersistOutputNil"),
+            (11, "POutputQuoted"),
+            (12, "POutputShort"),
+            (13, "PPersistOutputShort"),
+            (14, "POutputNilEmpty"),
+            (15, "PPersistOutputNilEmpty"),
+            (16, "POutputQuotedEmpty"),
+            (17, "POutputShortEmpty"),
+            (18, "PPersistOutputShortEmpty"),
+            (19, "POutputNil2Plus"),
+            (20, "PPersistOutputNil2Plus"),
+            (21, "POutputQuoted2Plus"),
+            (22, "POutputShort2Plus"),
+            (23, "PPersistOutputShort2Plus"),
         ];
         for (idx, label) in pinned_labels {
             assert_eq!(
@@ -3822,9 +3832,9 @@ mod tests {
         assert_eq!(quoted.leaf_count(), 3);
         assert_eq!(short.leaf_count(), 6);
 
-        assert_eq!(nil.member_rule_idxs(), BTreeSet::from([10, 11, 15, 16, 20, 21]));
-        assert_eq!(quoted.member_rule_idxs(), BTreeSet::from([12, 17, 22]));
-        assert_eq!(short.member_rule_idxs(), BTreeSet::from([13, 14, 18, 19, 23, 24]));
+        assert_eq!(nil.member_rule_idxs(), BTreeSet::from([9, 10, 14, 15, 19, 20]));
+        assert_eq!(quoted.member_rule_idxs(), BTreeSet::from([11, 16, 21]));
+        assert_eq!(short.member_rule_idxs(), BTreeSet::from([12, 13, 17, 18, 22, 23]));
 
         // Divergence-only cohorts stay SINGLE-ROOT forests (F5-1 invariant:
         // multiple roots require a root accept, which Proc@ has none of).
@@ -3873,80 +3883,134 @@ mod tests {
 
         assert_eq!(
             render_forest(&proc_at.groups[0].roots),
-            "L(Nil)[L(!)[L(()[P(0,0)[L())=>r10 L(,)=>r20] L())=>r15]] \
-             L(!!)[L(()[P(0,0)[L())=>r11 L(,)=>r21] L())=>r16]]]",
+            "L(Nil)[L(!)[L(()[P(0,0)[L())=>r9 L(,)=>r19] L())=>r14]] \
+             L(!!)[L(()[P(0,0)[L())=>r10 L(,)=>r20] L())=>r15]]]",
             "Nil group divergence structure",
         );
         assert_eq!(
             render_forest(&proc_at.groups[1].roots),
-            format!("P({name_src},0)[L(!)[L(()[P(0,0)[L())=>r12 L(,)=>r22] L())=>r17]]]"),
+            format!("P({name_src},0)[L(!)[L(()[P(0,0)[L())=>r11 L(,)=>r21] L())=>r16]]]"),
             "Quoted group divergence structure",
         );
         assert_eq!(
             render_forest(&proc_at.groups[2].roots),
-            "P(0,0)[L(!)[L(()[P(0,0)[L())=>r13 L(,)=>r23] L())=>r18]] \
-             L(!!)[L(()[P(0,0)[L())=>r14 L(,)=>r24] L())=>r19]]]",
+            "P(0,0)[L(!)[L(()[P(0,0)[L())=>r12 L(,)=>r22] L())=>r17]] \
+             L(!!)[L(()[P(0,0)[L())=>r13 L(,)=>r23] L())=>r18]]]",
             "Short group divergence structure",
         );
     }
 
-    /// Commit-coordinate pins (amendment A4): rule 15 (nullary — full
-    /// `@ Nil ! (` spine shared, commit into the literal tail at sub_pos 4 =
-    /// parts_len, the tail-complete pop-and-fire arm) and rule 20 (2Plus —
-    /// commit at the `,` leaf into BinderRule pos 6, collection remainder in
-    /// its own machinery); rule 10 as the no-remainder control.
+    /// Commit-coordinate pins (amendment A4): rule 14 = `POutputNilEmpty`
+    /// (nullary — full `@ Nil ! (` spine shared, commit into the literal tail
+    /// at sub_pos 4 = parts_len, the tail-complete pop-and-fire arm) and rule
+    /// 19 = `POutputNil2Plus` (2Plus — commit at the `,` leaf into BinderRule
+    /// pos 6, collection remainder in its own machinery); rule 9 =
+    /// `POutputNil` as the no-remainder control.
+    ///
+    /// ⚠ THIS TEST WAS SILENTLY RETARGETED BY A RULE DELETION AND DID NOT
+    /// FAIL (2026-07-29). It named rules 15/20/10; removing `PParInternal`
+    /// from `Proc` index 3 shifted every later index down by one, so those
+    /// three numbers came to select `PPersistOutputNilEmpty`,
+    /// `PPersistOutputNil2Plus` and `PPersistOutputNil` — the PERSIST TWINS of
+    /// the intended rules. Every assertion still passed, because a twin has
+    /// the same kind, the same leaf edge, the same depth and the same commit
+    /// shape. The test was green while testing rules its own name did not
+    /// describe.
+    ///
+    /// That is the sharper hazard of an absolute rule index: the loud failure
+    /// is the lucky case. The labels are now asserted FIRST, so a future shift
+    /// reports as "rule 14 is X, expected POutputNilEmpty" instead of passing
+    /// quietly on a neighbour.
     #[test]
-    fn rholang_commit_coordinates_rule15_nullary_and_rule20_2plus() {
+    fn rholang_commit_coordinates_nullary_and_2plus() {
         let def = rholang();
         let (categories, per_cat) = cats_per_cat(&def);
         let model = build_prefix_factoring(&def, &categories, &per_cat);
+
+        // ★ The anti-retarget guard: bind the indices to their LABELS before
+        // using them as coordinates. Without this, a shift selects a twin and
+        // every assertion below still holds.
+        const NULLARY_IDX: u16 = 14;
+        const TWO_PLUS_IDX: u16 = 19;
+        const CONTROL_IDX: u16 = 9;
+        for (idx, label) in [
+            (NULLARY_IDX, "POutputNilEmpty"),
+            (TWO_PLUS_IDX, "POutputNil2Plus"),
+            (CONTROL_IDX, "POutputNil"),
+        ] {
+            assert_eq!(
+                per_cat[0][idx as usize].label.to_string(),
+                label,
+                "rule {idx} must be {label} — if this fails the indices below have shifted \
+                 and are now selecting a different rule (probably its persist twin)",
+            );
+        }
+
         let nil = &bucket(&model, 0, "@").groups[0];
 
-        let (edge15, m15) = nil.leaf_for(15).expect("rule 15 leaf");
-        assert_eq!(m15.kind, MemberKind::Nullary);
+        let (edge_nullary, m_nullary) =
+            nil.leaf_for(NULLARY_IDX).expect("POutputNilEmpty leaf");
+        assert_eq!(m_nullary.kind, MemberKind::Nullary);
         assert!(
-            matches!(edge15, SpineItem::Literal { text, required_top_cat: None } if text == ")"),
-            "rule 15 commits on the `)` leaf edge: {edge15:?}",
+            matches!(
+                edge_nullary,
+                SpineItem::Literal { text, required_top_cat: None } if text == ")"
+            ),
+            "POutputNilEmpty commits on the `)` leaf edge: {edge_nullary:?}",
         );
-        assert_eq!(m15.leaf_depth, 4, "spine consumed Nil ! ( ) for rule 15");
         assert_eq!(
-            m15.commit,
+            m_nullary.leaf_depth, 4,
+            "spine consumed Nil ! ( ) for POutputNilEmpty",
+        );
+        assert_eq!(
+            m_nullary.commit,
             MemberCommit::Nullary {
-                rule_idx: 15,
+                rule_idx: NULLARY_IDX,
                 completed_idx: 0,
                 sub_pos: 4
             },
             "nullary commit lands at sub_pos == parts_len (tail complete)",
         );
-        assert_eq!(m15.pos_map, SpinePosMap::Nullary { sub_pos_at_depth: vec![0, 1, 2, 3, 4] },);
-        assert!(!m15.has_post_spine_remainder);
-
-        let (edge20, m20) = nil.leaf_for(20).expect("rule 20 leaf");
-        assert_eq!(m20.kind, MemberKind::Binder);
-        assert!(
-            matches!(edge20, SpineItem::Literal { text, .. } if text == ","),
-            "rule 20 commits on the `,` leaf edge: {edge20:?}",
-        );
-        assert_eq!(m20.leaf_depth, 5, "spine consumed Nil ! ( <a> , for rule 20");
         assert_eq!(
-            m20.commit,
-            MemberCommit::Binder { rule_idx: 20, resume_pos: 6 },
+            m_nullary.pos_map,
+            SpinePosMap::Nullary { sub_pos_at_depth: vec![0, 1, 2, 3, 4] },
+        );
+        assert!(!m_nullary.has_post_spine_remainder);
+
+        let (edge_2plus, m_2plus) =
+            nil.leaf_for(TWO_PLUS_IDX).expect("POutputNil2Plus leaf");
+        assert_eq!(m_2plus.kind, MemberKind::Binder);
+        assert!(
+            matches!(edge_2plus, SpineItem::Literal { text, .. } if text == ","),
+            "POutputNil2Plus commits on the `,` leaf edge: {edge_2plus:?}",
+        );
+        assert_eq!(
+            m_2plus.leaf_depth, 5,
+            "spine consumed Nil ! ( <a> , for POutputNil2Plus",
+        );
+        assert_eq!(
+            m_2plus.commit,
+            MemberCommit::Binder { rule_idx: TWO_PLUS_IDX, resume_pos: 6 },
             "2Plus commit resumes BinderRule at pos 6 (the collection slot)",
         );
-        assert_eq!(m20.pos_map, SpinePosMap::Binder { pos_at_depth: vec![1, 2, 3, 4, 5, 6] },);
+        assert_eq!(
+            m_2plus.pos_map,
+            SpinePosMap::Binder { pos_at_depth: vec![1, 2, 3, 4, 5, 6] },
+        );
         assert!(
-            m20.has_post_spine_remainder,
+            m_2plus.has_post_spine_remainder,
             "the 2Plus collection tail runs in the member's own machinery",
         );
 
-        let (edge10, m10) = nil.leaf_for(10).expect("rule 10 leaf");
-        assert!(matches!(edge10, SpineItem::Literal { text, .. } if text == ")"));
+        let (edge_control, m_control) =
+            nil.leaf_for(CONTROL_IDX).expect("POutputNil leaf");
+        assert!(matches!(edge_control, SpineItem::Literal { text, .. } if text == ")"));
         assert_eq!(
-            m10.commit,
-            MemberCommit::Binder { rule_idx: 10, resume_pos: 6 },
-            "rule 10 commit position IS its final-pos Pop → fire arm",
+            m_control.commit,
+            MemberCommit::Binder { rule_idx: CONTROL_IDX, resume_pos: 6 },
+            "POutputNil's commit position IS its final-pos Pop → fire arm",
         );
-        assert!(!m10.has_post_spine_remainder);
+        assert!(!m_control.has_post_spine_remainder);
     }
 
     /// Name@ and InputBind@ cohorts under the F0/legacy stance
@@ -5124,17 +5188,19 @@ mod tests {
             "every dispositioned member appears in exactly one group list",
         );
 
-        // ── dispositions: Nil group 0xF800 keyed at min member 10 ─────────
+        // ── dispositions: Nil group 0xF800 keyed at min member 9 ──────────
+        // (Indices re-derived 2026-07-29 after `PParInternal` was deleted from
+        // `Proc` index 3; 9 = POutputNil, 11 = POutputQuoted, 12 = POutputShort.)
         let proc_dispositions = &bundle.dispositions[0];
         assert_eq!(
-            proc_dispositions.get(&10),
+            proc_dispositions.get(&9),
             Some(&SpineDisposition::GroupFirst {
                 spine_id: SPINE_RULE_BASE,
                 body_src_idx: 0,
-                weight_rule_idx: 10, // AV5: MIN member, never SPINE_ID
+                weight_rule_idx: 9, // AV5: MIN member, never SPINE_ID
             }),
         );
-        for rest in [11u16, 15, 16, 20, 21] {
+        for rest in [10u16, 14, 15, 19, 20] {
             assert_eq!(
                 proc_dispositions.get(&rest),
                 Some(&SpineDisposition::GroupRest),
@@ -5142,20 +5208,20 @@ mod tests {
             );
         }
         assert_eq!(
-            proc_dispositions.get(&12),
+            proc_dispositions.get(&11),
             Some(&SpineDisposition::GroupFirst {
                 spine_id: SPINE_RULE_BASE + 1,
                 body_src_idx: 3,
-                weight_rule_idx: 12,
+                weight_rule_idx: 11,
             }),
-            "Quoted group leads at rule 12 with the Name body",
+            "Quoted group leads at rule 11 with the Name body",
         );
         assert_eq!(
-            proc_dispositions.get(&13),
+            proc_dispositions.get(&12),
             Some(&SpineDisposition::GroupFirst {
                 spine_id: SPINE_RULE_BASE + 2,
                 body_src_idx: 0,
-                weight_rule_idx: 13,
+                weight_rule_idx: 12,
             }),
         );
         // The lex-alt surface mirrors the dispositions (A3).
@@ -5189,24 +5255,28 @@ mod tests {
                 && quoted_arm1.contains("rule_at(0u16,63489u16,2u8"),
             "Quoted pre-root arm pushes the Name operand: {quoted_arm1}",
         );
-        // Typed commits (A4): rule 10 binder-resumes at its final pos 6;
-        // rule 15 nullary-commits into its MixfixLiteralRun tail complete.
-        assert!(arms.contains("rule_at(0u16,10u16,6u8"), "rule 10 commit coordinate present",);
+        // Typed commits (A4): rule 9 (`POutputNil`) binder-resumes at its final
+        // pos 6; rule 14 (`POutputNilEmpty`) nullary-commits into its
+        // MixfixLiteralRun tail complete.
+        assert!(arms.contains("rule_at(0u16,9u16,6u8"), "rule 9 commit coordinate present",);
         assert!(
-            arms.contains("mixfix_marker(0u16,15u16,0u8)") && arms.contains("sub_pos:4u8"),
-            "rule 15 nullary commit coordinate present",
+            arms.contains("mixfix_marker(0u16,14u16,0u8)") && arms.contains("sub_pos:4u8"),
+            "rule 14 nullary commit coordinate present",
         );
 
         // ── engine-table rows ──────────────────────────────────────────────
+        // Indices re-derived 2026-07-29 (post-`PParInternal` deletion): the Nil
+        // group is {9,10,14,15,19,20}, Quoted {11,16,21}, Short
+        // {12,13,17,18,22,23}.
         let owners = normalized(&bundle.trigger_spine_owner_fn);
-        assert!(owners.contains("(0u16,10u16)=>Some(63488u16)"));
-        assert!(owners.contains("(0u16,15u16)=>Some(63488u16)"));
-        assert!(owners.contains("(0u16,12u16)=>Some(63489u16)"));
-        assert!(owners.contains("(0u16,24u16)=>Some(63490u16)"));
+        assert!(owners.contains("(0u16,9u16)=>Some(63488u16)"));
+        assert!(owners.contains("(0u16,14u16)=>Some(63488u16)"));
+        assert!(owners.contains("(0u16,11u16)=>Some(63489u16)"));
+        assert!(owners.contains("(0u16,23u16)=>Some(63490u16)"));
         let members = normalized(&bundle.spine_members_fn);
-        assert!(members.contains("(0u16,63488u16)=>&[10u16,11u16,15u16,16u16,20u16,21u16]"));
-        assert!(members.contains("(0u16,63489u16)=>&[12u16,17u16,22u16]"));
-        assert!(members.contains("(0u16,63490u16)=>&[13u16,14u16,18u16,19u16,23u16,24u16]"));
+        assert!(members.contains("(0u16,63488u16)=>&[9u16,10u16,14u16,15u16,19u16,20u16]"));
+        assert!(members.contains("(0u16,63489u16)=>&[11u16,16u16,21u16]"));
+        assert!(members.contains("(0u16,63490u16)=>&[12u16,13u16,17u16,18u16,22u16,23u16]"));
         // H9 poison rows: union = the members' canonical expected_input_cats
         // (Term slots per category; CollectionDrain/other slots = ANY_CAT
         // 65535), arity = the u8::MAX poison.
@@ -5479,13 +5549,19 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════════
 
     /// P1 (GO/STOP): the two real cohort tries against the ACTUAL rholang
-    /// grammar — leaves {4,6,8}/{5,7,9}, divergences at depths 1 and 2,
-    /// rules 8/9 truncated at their rep, NO interior accepts, whole-slice
+    /// grammar — leaves {3,5,7}/{4,6,8}, divergences at depths 1 and 2,
+    /// rules 7/8 truncated at their rep, NO interior accepts, whole-slice
     /// coverage, uniform result_src = 0, spine ids CONTINUING Proc's prefix
     /// ordinals (3 prefix groups ⇒ `!` = 0xF803, `!!` = 0xF804), the D-1
-    /// floors (min l_bp 2/4), the AV5 identities (min member 4/5), the
+    /// floors (min l_bp 2/4), the AV5 identities (min member 3/4), the
     /// A-M4 Fix-B evidence (both cohorts share "("), and the typed
     /// MixfixRun commit coordinates.
+    ///
+    /// ⚠ The leaf numbers are ABSOLUTE `Proc` rule indices: `!` = {POutput,
+    /// POutputEmpty, POutput2Plus} = {3,5,7} and `!!` = {PPersistOutput,
+    /// PPersistOutputEmpty, PPersistOutput2Plus} = {4,6,8}. Re-derived
+    /// 2026-07-29 by dumping the regenerated rule list after `PParInternal`
+    /// was deleted from index 3; every index at or above 3 moved down one.
     #[test]
     fn rholang_mixfix_send_cohorts_pin_two_groups() {
         let def = rholang();
@@ -5511,7 +5587,7 @@ mod tests {
             .expect("the ! cohort exists");
         assert_eq!(
             bang.slice,
-            vec![(2u8, 0u16, 4u16), (6u8, 0u16, 6u16), (10u8, 0u16, 8u16)],
+            vec![(2u8, 0u16, 3u16), (6u8, 0u16, 5u16), (10u8, 0u16, 7u16)],
             "the ! slice mirrors mixfix_bp_name",
         );
         assert_eq!(bang.groups.len(), 1);
@@ -5520,8 +5596,8 @@ mod tests {
         assert_eq!(g.spine_id, SPINE_RULE_BASE + 3, "continues Proc's prefix ordinals");
         assert_eq!(g.result_src_idx, 0);
         assert_eq!(g.min_l_bp, 2);
-        assert_eq!(g.min_member_rule_idx, 4);
-        assert_eq!(g.member_l_bps, vec![(2u8, 4u16), (6u8, 6u16), (10u8, 8u16)]);
+        assert_eq!(g.min_member_rule_idx, 3);
+        assert_eq!(g.member_l_bps, vec![(2u8, 3u16), (6u8, 5u16), (10u8, 7u16)]);
         assert_eq!(g.fixb_literal.as_deref(), Some("("), "A-M4 shared Fix-B evidence");
         assert_eq!(
             g.expected_cats_union,
@@ -5530,42 +5606,53 @@ mod tests {
         );
         assert_eq!(
             render(&g.roots[0]),
-            "L(()[P(0,0)[L())=>r4 L(,)=>r8] L())=>r6]",
+            "L(()[P(0,0)[L())=>r3 L(,)=>r7] L())=>r5]",
             "the §1.3 trie: divergence 1 = operand-vs-close, divergence 2 = close-vs-sep",
         );
-        let (_, m4) = g.roots[0].leaf_for(4).expect("rule 4 leafs");
+        // Label-bound coordinates: a rule-index shift must fail HERE, loudly,
+        // rather than silently selecting a neighbouring send rule.
+        for (idx, label) in
+            [(3u16, "POutput"), (5u16, "POutputEmpty"), (7u16, "POutput2Plus")]
+        {
+            assert_eq!(
+                per_cat[0][idx as usize].label.to_string(),
+                label,
+                "the ! cohort's rule {idx} must be {label}",
+            );
+        }
+        let (_, m4) = g.roots[0].leaf_for(3).expect("POutput leafs");
         assert_eq!(
             m4.commit,
             MemberCommit::MixfixRun {
-                rule_idx: 4,
+                rule_idx: 3,
                 kind: 0,
                 completed_idx: 0,
                 sub_pos: 1
             },
         );
-        assert!(!m4.has_post_spine_remainder, "rule 4's ) is its final item");
-        let (_, m6) = g.roots[0].leaf_for(6).expect("rule 6 leafs");
+        assert!(!m4.has_post_spine_remainder, "POutput's ) is its final item");
+        let (_, m6) = g.roots[0].leaf_for(5).expect("POutputEmpty leafs");
         assert_eq!(
             m6.commit,
             MemberCommit::MixfixRun {
-                rule_idx: 6,
+                rule_idx: 5,
                 kind: 2,
                 completed_idx: 0,
                 sub_pos: 2
             },
         );
         assert!(!m6.has_post_spine_remainder);
-        let (_, m8) = g.roots[0].leaf_for(8).expect("rule 8 leafs");
+        let (_, m8) = g.roots[0].leaf_for(7).expect("POutput2Plus leafs");
         assert_eq!(
             m8.commit,
             MemberCommit::MixfixRun {
-                rule_idx: 8,
+                rule_idx: 7,
                 kind: 0,
                 completed_idx: 0,
                 sub_pos: 1
             },
         );
-        assert!(m8.has_post_spine_remainder, "rule 8 truncates at its rep");
+        assert!(m8.has_post_spine_remainder, "POutput2Plus truncates at its rep");
         assert_eq!(
             m8.pos_map,
             SpinePosMap::Mixfix {
@@ -5578,15 +5665,26 @@ mod tests {
             .iter()
             .find(|b| b.trigger == "!!")
             .expect("the !! cohort exists");
-        assert_eq!(bangbang.slice, vec![(4u8, 0u16, 5u16), (8u8, 0u16, 7u16), (12u8, 0u16, 9u16)],);
+        assert_eq!(bangbang.slice, vec![(4u8, 0u16, 4u16), (8u8, 0u16, 6u16), (12u8, 0u16, 8u16)],);
         assert_eq!(bangbang.groups.len(), 1);
         let g2 = &bangbang.groups[0];
         assert_eq!(g2.spine_id, SPINE_RULE_BASE + 4);
         assert_eq!(g2.min_l_bp, 4);
-        assert_eq!(g2.min_member_rule_idx, 5);
+        assert_eq!(g2.min_member_rule_idx, 4);
+        for (idx, label) in [
+            (4u16, "PPersistOutput"),
+            (6u16, "PPersistOutputEmpty"),
+            (8u16, "PPersistOutput2Plus"),
+        ] {
+            assert_eq!(
+                per_cat[0][idx as usize].label.to_string(),
+                label,
+                "the !! cohort's rule {idx} must be {label}",
+            );
+        }
         assert_eq!(
             render(&g2.roots[0]),
-            "L(()[P(0,0)[L())=>r5 L(,)=>r9] L())=>r7]",
+            "L(()[P(0,0)[L())=>r4 L(,)=>r8] L())=>r6]",
             "the !! trie is isomorphic",
         );
     }
@@ -5738,10 +5836,15 @@ mod tests {
     /// flips): the loop-v2 fan arm (D-1 guard on the A-M4 MEMBER id, the
     /// AV5 min-member weight, the spine push + flag), the three prelude
     /// arms per plan §2.2 (chain step via `__checked_literal_consume!`,
-    /// divergence 1 = descent-Advance + rule-6 commit CAR with the
-    /// B-alone/zero short-circuit, divergence 2 = rule-4/rule-8 commit CARs
+    /// divergence 1 = descent-Advance + rule-5 commit CAR with the
+    /// B-alone/zero short-circuit, divergence 2 = rule-3/rule-7 commit CARs
     /// with the singleton short-circuits + the Error miss shape), and the
     /// engine-table rows (owner/members/H9 union/weight; A7 rows ABSENT).
+    ///
+    /// ⚠ Rule numbers here are ABSOLUTE `Proc` indices — 3 = `POutput`,
+    /// 5 = `POutputEmpty`, 7 = `POutput2Plus` for the `!` cohort, and their
+    /// persist twins 4/6/8 for `!!`. Re-derived 2026-07-29 by dumping the
+    /// regenerated rule list after `PParInternal` was deleted from index 3.
     #[test]
     fn mixfix_emission_pins_fan_arm_prelude_and_tables() {
         let def = rholang();
@@ -5758,8 +5861,8 @@ mod tests {
                 result_src_idx: 0,
                 spine_id: SPINE_RULE_BASE + 3,
                 min_l_bp: 2,
-                min_member_rule_idx: 4,
-                member_rule_idxs: vec![4, 6, 8],
+                min_member_rule_idx: 3,
+                member_rule_idxs: vec![3, 5, 7],
             },
         );
         // ── the fan arm ────────────────────────────────────────────────────
@@ -5768,12 +5871,12 @@ mod tests {
         assert!(
             bang_arm.contains("if2u8>=*cur_bp")
                 && bang_arm.contains("__goal_admits(0u16)")
-                && bang_arm.contains("__method_name_admits(0u16,4u16)"),
+                && bang_arm.contains("__method_name_admits(0u16,3u16)"),
             "D-1 full-admission guard on the MEMBER id (A-M4): {bang_arm}",
         );
         assert!(
             bang_arm.contains("mixfix_marker(0u16,63491u16,0,)")
-                && bang_arm.contains("BP_TIER_MIXFIX,0u16,4u16")
+                && bang_arm.contains("BP_TIER_MIXFIX,0u16,3u16")
                 && bang_arm.contains("rule_idx:63491u16")
                 && bang_arm.contains("__mixfix_spine_pushed=true"),
             "spine push at the AV5 min-member weight: {bang_arm}",
@@ -5791,7 +5894,7 @@ mod tests {
             window(&prelude, "(0u16,63491u16,2u8,0u8,1u8)=>", "(0u16,63491u16,0u8,0u8,0u8)=>");
         assert!(
             div1.contains("__mixfix_literal_targets(tokens,_pos,\")\")"),
-            "divergence 1 gates the rule-6 commit on the close: {div1}",
+            "divergence 1 gates the rule-5 commit on the close: {div1}",
         );
         assert!(
             div1.contains(
@@ -5801,9 +5904,9 @@ mod tests {
         );
         assert!(
             div1.contains("ForkActionKind::Advance")
-                && div1.contains("mixfix_marker(0u16,6u16,0u8)")
+                && div1.contains("mixfix_marker(0u16,5u16,0u8)")
                 && div1.contains("kind:2u8,sub_pos:2u8"),
-            "divergence 1 fork = descent-first + rule-6 commit CAR: {div1}",
+            "divergence 1 fork = descent-first + rule-5 commit CAR: {div1}",
         );
         assert!(
             !div1.contains("__spine_lit_total==1"),
@@ -5819,8 +5922,8 @@ mod tests {
         );
         assert!(
             div2.contains("if__spine_lit_total==1")
-                && div2.contains("mixfix_marker(0u16,4u16,0u8)")
-                && div2.contains("mixfix_marker(0u16,8u16,0u8)")
+                && div2.contains("mixfix_marker(0u16,3u16,0u8)")
+                && div2.contains("mixfix_marker(0u16,7u16,0u8)")
                 && div2.contains("kind:0u8,sub_pos:1u8"),
             "divergence 2 = the two commit CARs with singleton short-circuits: {div2}",
         );
@@ -5831,12 +5934,12 @@ mod tests {
         // ── engine-table rows ─────────────────────────────────────────────
         let owners = normalized(&bundle.trigger_spine_owner_fn);
         for (m, spine) in [
-            (4, "63491"),
-            (6, "63491"),
-            (8, "63491"),
-            (5, "63492"),
-            (7, "63492"),
-            (9, "63492"),
+            (3, "63491"),
+            (5, "63491"),
+            (7, "63491"),
+            (4, "63492"),
+            (6, "63492"),
+            (8, "63492"),
         ] {
             assert!(
                 owners.contains(&format!("(0u16,{m}u16)=>Some({spine}u16)")),
@@ -5844,8 +5947,8 @@ mod tests {
             );
         }
         let members = normalized(&bundle.spine_members_fn);
-        assert!(members.contains("(0u16,63491u16)=>&[4u16,6u16,8u16]"));
-        assert!(members.contains("(0u16,63492u16)=>&[5u16,7u16,9u16]"));
+        assert!(members.contains("(0u16,63491u16)=>&[3u16,5u16,7u16]"));
+        assert!(members.contains("(0u16,63492u16)=>&[4u16,6u16,8u16]"));
         let actions = normalized(&bundle.action_for_prelude);
         assert!(
             actions.contains("(0u16,63491u16)=>")
@@ -5853,15 +5956,15 @@ mod tests {
             "H9 poison union row (Name LHS + Proc + rep ANY_CAT): {actions}",
         );
         let weights = normalized(&bundle.spine_weight_rule_fn);
-        assert!(weights.contains("(0u16,63491u16)=>4u16"));
-        assert!(weights.contains("(0u16,63492u16)=>5u16"));
+        assert!(weights.contains("(0u16,63491u16)=>3u16"));
+        assert!(weights.contains("(0u16,63492u16)=>4u16"));
         // A7-mixfix (A-M5): rows OMITTED — the members are operand-leading.
         let leads = normalized(&bundle.leading_trigger_prelude);
         assert!(
             !leads.contains("63491") && !leads.contains("63492"),
             "mixfix spine ids must NOT appear on the leading-trigger surface: {leads}",
         );
-        // min_span stays EMPTY for rholang (rules 8/9 are Op-bearing ⇒ min 0).
+        // min_span stays EMPTY for rholang (rules 7/8 are Op-bearing ⇒ min 0).
         assert!(bundle.min_span_prelude.is_empty());
     }
 

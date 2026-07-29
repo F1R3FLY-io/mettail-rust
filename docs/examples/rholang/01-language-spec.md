@@ -98,23 +98,51 @@ terminal tokens, not a nonterminal.
 ### 3.3 Collection Terms
 
 ```rust
+// The braced collection surface — builds the multiset directly.
+PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
+
+// The bare-infix surface — folds into the same multiset.
 PParInfix . a:Proc, b:Proc |- a "|" b : Proc ![{
     crate::rholang::runtime::merge_pp_parallel(a.clone(), b.clone())
 }] fold;
-
-// Internal AST constructor — matched by equations / rewrites, never input by
-// users. The `__ppar(…)` form is the round-trip surface for the AST.
-PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
 ```
 
-Parallel composition uses Rholang-style bare infix `a | b` (`PParInfix`),
-which `fold`s to the multiset `Proc::PPar(HashBag<Proc>)` via
-`merge_pp_parallel`. The `__ppar(…)` keyword rule keeps the `Proc::PPar`
-variant available for equation/rewrite matching but is reserved for internal
-use (never appears in user input). The earlier braced surface
-`{ a | b | c }` was retired so that `{` `}` could be repurposed for the
-Rholang-style empty `Map` literal — see
-[exploring/rholang-rholang-style-syntax.md](../../design/exploring/rholang-rholang-style-syntax.md).
+Parallel composition has **two** user-facing surfaces, both live, and they
+converge on one node.
+
+- Braced `{ a | b | c }` (`PPar`) enters the collection frame at `{`, reads
+  elements separated by `|`, and pops at `}` — one step to
+  `Proc::PPar(HashBag<Proc>)`.
+- Bare infix `a | b | c` (`PParInfix`) is the Rholang-idiomatic spelling. It
+  parses to nested `PParInfix` nodes, and its `fold` runs `merge_pp_parallel`,
+  which flattens any `Proc::PPar` member into the accumulating bag — so the
+  nesting does not survive and the result is the same flat n-ary multiset.
+
+Equations and rewrites match on `(PPar {…})`, which both surfaces reach.
+
+Because `{ … }` also spells a `Map` literal (`{ k : v }`), bare `{}` is
+genuinely ambiguous — it may denote an empty `Map` or an empty `PPar`, and
+Rholang semantics require additional context to decide. The parser therefore
+does **not** decide: `Proc::parse_via_wpda_all("{}")` returns **both** readings
+and defers the choice to a consumer that has the context. Non-empty `{ … }`
+needs no such deferral, because its contents discriminate it — `:` introduces a
+`Map` entry, `|` separates `PPar` elements — and that is a reading of the input
+rather than a prior decision. (Pinned by
+`par_reading_count_pins::empty_braces_keep_both_the_map_and_the_par_reading` in
+`languages/tests/rholang_tests.rs`.)
+
+> **Historical note (corrected 2026-07-29).** Earlier revisions of this section
+> stated that the braced surface `{ a | b | c }` "was retired so that `{` `}`
+> could be repurposed for the Rholang-style empty `Map` literal", and presented a
+> keyword rule `PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")"` as the
+> round-trip surface for the AST. Both statements were wrong. The braced form was
+> not retired — it was *introduced* by commit `1a3f3490` and is the rule shown
+> above; the keyword rule was the one superseded, surviving only under the name
+> `PParInternal` with a fold degenerating it into the braced form. It never
+> served as a round-trip surface (`Proc::PPar` displays as `{ … | … }`), and it
+> was deleted from the grammar on 2026-07-29. See
+> [exploring/rholang-rholang-style-syntax.md](../../design/exploring/rholang-rholang-style-syntax.md)
+> for the Rholang-style alignment that introduced the braced form.
 
 The `*sep(delim)` operator is a collection operation.  Available collection
 types are `Vec(T)`, `HashBag(T)`, and `HashSet(T)`.

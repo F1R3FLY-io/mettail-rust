@@ -1871,8 +1871,8 @@ mod differential {
     ///
     /// Sources are Rholang SURFACE, parsed by the same WPDA parser production uses, so the
     /// corpus exercises the raw parse-tree shapes (`POutputShort`, `POutput2Plus`,
-    /// `PParInternal`, …) that `desugar_surface_sugar_node` rewrites — the arms a hand-built `Proc`
-    /// corpus would never reach.
+    /// `POutputQuoted2Plus`, …) that `desugar_surface_sugar_node` rewrites — the arms a
+    /// hand-built `Proc` corpus would never reach.
     const CORPUS: &[(&str, &str, Expect)] = &[
         // ── leaves ──────────────────────────────────────────────────────────────────────────
         ("Nil", "PZero", Expect::Lowers),

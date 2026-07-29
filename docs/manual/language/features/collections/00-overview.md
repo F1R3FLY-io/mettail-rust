@@ -18,22 +18,50 @@ between elements in concrete syntax.
 
 ## Running Example
 
-Rholang's parallel composition `PPar` uses `HashBag` and is built from the
-bare-infix surface rule `PParInfix . a "|" b` which folds into the
-multiset `Proc::PPar`:
+Rholang's parallel composition `PPar` uses `HashBag`, and it is the clearest
+illustration of a point worth making early: **one collection node may carry more
+than one surface syntax.** `PPar` carries two.
 
 ```text
-PParInfix . a:Proc, b:Proc |- a "|" b : Proc
+PPar      . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
+
+PParInfix . a:Proc, b:Proc   |- a "|" b : Proc
     ![{ merge_pp_parallel(a, b) }] fold ;
-PPar      . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc ; // internal
 ```
 
-Concrete surface syntax: `a | b | c` → `Proc::PParInfix(…)` →
-(fold via `merge_pp_parallel`) → `Proc::PPar(HashBag { a, b, c })`. The
-internal `__ppar(…)` form is reserved for AST round-tripping and never
-appears in user input. See
+- The **braced collection rule** is the direct one. `{ a | b | c }` enters the
+  collection frame at `{`, reads elements separated by `|`, and pops at `}`,
+  producing `Proc::PPar(HashBag { a, b, c })` in a single step.
+- The **bare-infix rule** is the idiomatic one. `a | b | c` parses as nested
+  `Proc::PParInfix(…)` nodes, which `fold` collapses through
+  `merge_pp_parallel`. That helper flattens any `Proc::PPar` member it meets, so
+  the nesting does not survive into the result: the same flat n-ary
+  `HashBag { a, b, c }` comes out.
+
+Both routes therefore converge on one normal form, which is what makes `|`
+associative and commutative *as a matter of the data structure* rather than as a
+matter of declared equations.
+
+```text
+        "{ a | b | c }" ──────────────────────────┐
+                                                  ▼
+                                    Proc::PPar(HashBag { a, b, c })
+                                                  ▲
+        "a | b | c" ──► PParInfix(PParInfix(a,b),c)┘
+                              (fold: merge_pp_parallel)
+```
+
+> **Removed:** a third surface, the internal keyword rule
+> `PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc`, appeared in
+> earlier revisions of this page and was described as the reserved round-trip
+> form for the AST. It was deleted from the grammar on 2026-07-29 as a vestige of
+> the pre-braced grammar, and the description had been inaccurate for some time
+> before that: `Proc::PPar` displays through the braced form, never through
+> `__ppar(…)`. Nothing replaces it — the braced rule *is* the round-trip surface.
+
+See
 [exploring/rholang-rholang-style-syntax.md](../../../../../design/exploring/rholang-rholang-style-syntax.md)
-for the Rholang-style alignment that drove this split.
+for the Rholang-style alignment that drove the introduction of the braced form.
 
 ## Key Types
 

@@ -14,7 +14,7 @@ use mettail_macros::language;
 //                  does not contain a single instance of.
 //
 // Every `VariantKind::Collection` in the production tree is a `HashBag`
-// (`PPar` / `PParInternal`). So the two claims Task #101 makes about the ORDERED
+// (`PPar`). So the two claims Task #101 makes about the ORDERED
 // whole-constructor arm — that it lowers to `ENode::new(Cat_Label, [seq_leaf])`
 // rather than a bare leaf, and that a fold over it fires — are claims about an
 // EMPTY SET unless a live grammar exercises them. This is that grammar.
