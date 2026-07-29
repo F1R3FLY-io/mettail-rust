@@ -12,7 +12,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
-use super::binder::{classify_binder_in, emit_binder_action_entry};
+use super::binder::{cat_idx_tokens, classify_binder_in, emit_binder_action_entry};
 use super::collection::{classify_collection, CollectionShape};
 use super::infix;
 use super::prefix::{classify_atomic, AtomicShape, LiteralFamily};
@@ -46,6 +46,7 @@ pub fn emit_action_for_body(
                     &shape,
                     &cat_ident,
                     categories,
+                    rule.label.span(),
                 ) {
                     arms.push(entry);
                 }
@@ -83,9 +84,14 @@ pub fn emit_action_for_body(
             }
             // Phase 3: try classifying as an infix / postfix / mixfix rule.
             if let Some(info) = infix::classify_rule_public(rule) {
-                if let Some(entry) =
-                    emit_infix_action_entry(cat_i as u16, *rule_idx, &info, &cat_ident, categories)
-                {
+                if let Some(entry) = emit_infix_action_entry(
+                    cat_i as u16,
+                    *rule_idx,
+                    &info,
+                    &cat_ident,
+                    categories,
+                    rule.label.span(),
+                ) {
                     arms.push(entry);
                 }
             }
@@ -1268,12 +1274,19 @@ fn emit_collection_action_entry(
 /// mixfix). Action body pops N args from the builder, downcasts each to
 /// the operand category's term type, and constructs
 /// `<Cat>::<Label>(Box::new(arg_0), ..., Box::new(arg_N))`.
+///
+/// `rule_span` is the offending rule's LABEL span, threaded from the single
+/// caller ([`emit_action_for_body`], which holds the `GrammarRule`). `cat_ident`
+/// cannot serve: it is a `format_ident!` of the category NAME, so its span is
+/// the call site, and a `quote_spanned!` on it would be `quote!` wearing a
+/// longer name.
 fn emit_infix_action_entry(
     src_idx: u16,
     rule_idx: u16,
     info: &InfixRuleInfo,
     cat_ident: &Ident,
     categories: &[String],
+    rule_span: proc_macro2::Span,
 ) -> Option<TokenStream> {
     // GEN-1 B-3 (Stage S3): a mixfix rule MAY carry a `*sep` repetition part
     // (POutput2Plus `… bs.*sep(",") …`, InputBind* polyadic/query binds). Its
@@ -1299,25 +1312,39 @@ fn emit_infix_action_entry(
     // Postfix: 1 arg of info.category.
     // Binary infix: 2 args of info.category.
     // Mixfix: arg0=info.category, args 1..N=info.mixfix_parts[i-1].operand_category.
-    let lookup_cat_idx = |name: &str| -> u16 {
-        categories
-            .iter()
-            .position(|c| c == name)
-            .map(|i| i as u16)
-            .unwrap_or(0)
+    //
+    // ★ #141 G2 — THIS CLOSURE USED TO END IN `.unwrap_or(0)`, and the incident
+    // report is the `capture_kind` arm twenty lines below: `Ident` is not in
+    // `categories`, so it resolved to index 0 — the FIRST declared category —
+    // the language COMPILED, and the only thing the user saw was "no accepting
+    // branch reached end of input" with nothing naming `Ident`. #131 closed ONE
+    // door into that default (`capture_kind.is_some()`); the default itself
+    // stayed open, here and in `binder::emit_binder_action_entry`, and the #133
+    // sweep hardened two other siblings without reaching either. It now refuses
+    // through the shared resolver, which substitutes a spanned `compile_error!`
+    // exactly where the wrong index would have gone.
+    let lookup_cat_idx = |name: &str| -> TokenStream {
+        cat_idx_tokens(
+            name,
+            categories,
+            "an infix/postfix/mixfix rule's action entry",
+            &info.label,
+            rule_span,
+        )
     };
     let operand_cat_idx = lookup_cat_idx(&info.category);
     let result_cat_idx = lookup_cat_idx(&info.result_category);
-    let expected_input_cats: Vec<u16> = if info.is_postfix {
+    let any_cat_value: u16 = u16::MAX;
+    let expected_input_cats: Vec<TokenStream> = if info.is_postfix {
         vec![operand_cat_idx]
     } else if info.is_mixfix {
-        let mut v = vec![operand_cat_idx];
+        let mut v = vec![operand_cat_idx.clone()];
         for part in &info.mixfix_parts {
             // GEN-1 B-3 (Stage S3): a `*sep` repetition part's arg is an
             // `ActionArg::CollectionId` (not a Term), so its expected category is
             // ANY_CAT (u16::MAX) — mirroring the binder/collection drain args.
             if part.repetition.is_some() {
-                v.push(u16::MAX);
+                v.push(quote! { #any_cat_value });
             } else if part.capture_kind.is_some() {
                 // ★ A CAPTURE part's arg is token TEXT, not a Term, so — exactly like the
                 // `*sep` repetition arg above — its expected category is ANY_CAT.
@@ -1329,30 +1356,30 @@ fn emit_infix_action_entry(
                 // compiled — the arg-shape gate would then reject every reading of a rule
                 // whose parse was otherwise correct.
                 //
-                // ⚠ WITHOUT THIS THE RULE CANNOT PARSE AT ALL, and the reason is a silent
-                // default: `lookup_cat_idx` ends in `.unwrap_or(0)`, and `Ident` is not in
+                // ⚠ WITHOUT THIS THE RULE CANNOT PARSE AT ALL, and the reason WAS a silent
+                // default: `lookup_cat_idx` ended in `.unwrap_or(0)`, and `Ident` is not in
                 // `categories`, so it resolved to index 0 — the FIRST declared category.
                 // The action entry then advertised "slot 1 expects a `Num` term" while the
                 // extractor at that slot read `as_ident()`. The arg-shape gate rejected
                 // every reading, surfacing as "no accepting branch reached end of input"
                 // with nothing naming `Ident` anywhere in the diagnostic.
-                v.push(u16::MAX);
+                //
+                // ★ #141 G2: the default is gone — `lookup_cat_idx` now REFUSES. This arm
+                // stays exactly as #131 wrote it: a capture part's expected category is
+                // genuinely ANY_CAT, so it must not consult the resolver at all. The arm is
+                // a positive statement about capture parts, not a way around a bad lookup.
+                v.push(quote! { #any_cat_value });
             } else {
                 v.push(lookup_cat_idx(&part.operand_category));
             }
         }
         v
     } else {
-        vec![operand_cat_idx, operand_cat_idx]
+        vec![operand_cat_idx.clone(), operand_cat_idx]
     };
-    let cats_lits: Vec<TokenStream> = expected_input_cats
-        .iter()
-        .map(|c| {
-            let c = *c;
-            quote! { #c }
-        })
-        .collect();
-    let expected_input_cats_ts = quote! { &[#(#cats_lits),*] };
+    // #141 G2: `expected_input_cats` now holds the emitted tokens directly —
+    // either a `u16` literal or the `compile_error!` that refuses in its place.
+    let expected_input_cats_ts = quote! { &[#(#expected_input_cats),*] };
     let action_fn = if info.is_postfix {
         // Arity-1: pop one operand, construct unary variant.
         quote! {
@@ -1830,5 +1857,164 @@ mod tests {
         let s = ts.to_string();
         assert!(s.contains("as_u64"), "Usize must use as_u64 for the lossless prefix, got: {s}");
         assert!(s.contains("usize :: try_from") || s.contains("usize::try_from"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Task #141 G2 / RED-2 — the fails-open category lookup
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // ## What the mutation is, and why it is applied HERE and not to a grammar
+    //
+    // The defect: `emit_infix_action_entry`'s `lookup_cat_idx` ended in
+    // `.unwrap_or(0)`, so a category name absent from `categories` became index
+    // 0 — THE FIRST DECLARED CATEGORY — and the language COMPILED, shipping a
+    // parser whose `expected_input_cats` and `output_cat` named the wrong
+    // category. That is the one shape in this campaign whose "before" state is a
+    // SUCCESSFUL BUILD producing a wrong parser.
+    //
+    // ⚠ The mutation cannot be written as a grammar. Measured 2026-07-29, both
+    // by construction and by build:
+    //
+    // * `collect_category_names_with_literals`'s **Pass 5** (`wpda_codegen/mod.rs`)
+    //   adds "any remaining user-declared `LangType` not covered above", so
+    //   `categories` is TOTAL over `language.types`. A declared category is
+    //   therefore always resolvable. (Measured: a fixture declaring a rule-less
+    //   `Ghost` still emitted `WPDA_CATEGORIES = ["Term", "Ghost"]`.)
+    // * An UNdeclared category is rejected earlier, by `validate_language`:
+    //   `Rule 'Sel' references category 'Ghost' which is not exported`. (Measured
+    //   on the same fixture with `Ghost` removed from `types { }`.)
+    //
+    // So the only inputs that reach the default are category names a CLASSIFIER
+    // synthesises that are not declared types — `Ident` being the measured one
+    // (task #131, whose incident report is the `capture_kind` arm of
+    // `emit_infix_action_entry`). #131 closed that ONE door; the default behind it
+    // stayed open, which is precisely why it must become a refusal: the next
+    // classifier change re-opens a door, and a backstop that answers "category 0"
+    // converts a diagnosable macro bug into an undiagnosable parser bug.
+    //
+    // The mutation is therefore applied at the emitter — the only layer at which
+    // it IS applicable — and every cell decides on EMITTED TEXT. No cell expects a
+    // panic; none exists to expect.
+    //
+    // ## Anti-vacuity
+    //
+    // Four cells: the mutation-applied check (the two category lists differ in
+    // exactly the referenced name), the mutation (refuses, naming category AND
+    // rule), the control (same call, category present ⇒ index emitted, NO
+    // refusal), and the twin at `binder::emit_binder_action_entry`
+    // (`binder.rs`'s own `mod tests`), so a repair to one site cannot pass for
+    // both.
+
+    /// The category the fixture rule's operands are declared in. Absent from
+    /// [`RED2_CATEGORIES_MUTATION`], present in [`RED2_CATEGORIES_CONTROL`] —
+    /// that difference IS the mutation.
+    const RED2_REFERENCED_CATEGORY: &str = "Ghost";
+    /// The fixture rule's label. The refusal must name it: a message that names
+    /// `rule 7` names nothing a grammar author can act on.
+    const RED2_RULE_LABEL: &str = "SelectGhost";
+    const RED2_CATEGORIES_MUTATION: &[&str] = &["Term"];
+    const RED2_CATEGORIES_CONTROL: &[&str] = &["Term", "Ghost"];
+
+    fn red2_categories(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| (*n).to_string()).collect()
+    }
+
+    /// A binary infix rule whose OPERAND category is `RED2_REFERENCED_CATEGORY`
+    /// and whose result category is declared — so exactly one lookup can fail,
+    /// and the cells below can attribute the refusal to it.
+    fn red2_infix_info() -> InfixRuleInfo {
+        InfixRuleInfo {
+            label: RED2_RULE_LABEL.to_string(),
+            terminal: "?".to_string(),
+            category: RED2_REFERENCED_CATEGORY.to_string(),
+            result_category: "Term".to_string(),
+            associativity: mettail_prattail::binding_power::Associativity::Left,
+            shares_level_with_previous: false,
+            is_cross_category: true,
+            is_postfix: false,
+            is_mixfix: false,
+            mixfix_parts: Vec::new(),
+            nullary_literals: Vec::new(),
+        }
+    }
+
+    fn red2_emit(categories: &[&str]) -> String {
+        emit_infix_action_entry(
+            0u16,
+            0u16,
+            &red2_infix_info(),
+            &Ident::new("Term", Span::call_site()),
+            &red2_categories(categories),
+            Span::call_site(),
+        )
+        .expect("the fixture rule must yield an action entry in BOTH arms; a `None` here \
+                 would make the mutation and the control agree vacuously")
+        .to_string()
+    }
+
+    /// The mutation is REALLY applied: the two category lists differ in exactly
+    /// the name the fixture rule references, and in nothing else. Without this a
+    /// fixture that quietly stopped exercising the lookup would pass forever.
+    #[test]
+    fn the_red2_mutation_is_applied() {
+        let missing: Vec<&&str> = RED2_CATEGORIES_CONTROL
+            .iter()
+            .filter(|c| !RED2_CATEGORIES_MUTATION.contains(c))
+            .collect();
+        assert_eq!(
+            missing,
+            vec![&RED2_REFERENCED_CATEGORY],
+            "control minus mutation must be exactly the referenced category",
+        );
+        assert!(
+            RED2_CATEGORIES_MUTATION
+                .iter()
+                .all(|c| RED2_CATEGORIES_CONTROL.contains(c)),
+            "the mutation must REMOVE a category, never add or rename one",
+        );
+        assert_eq!(
+            red2_infix_info().category,
+            RED2_REFERENCED_CATEGORY,
+            "the fixture rule must actually reference the removed category",
+        );
+    }
+
+    /// MUTATION. The category is unresolvable ⇒ the emitter refuses, and the
+    /// refusal NAMES the category and the rule. A refusal that said only
+    /// "unresolvable category" would be the vacuous form this cell exists to
+    /// reject.
+    #[test]
+    fn unresolved_operand_category_refuses_naming_the_category_and_the_rule() {
+        let emitted = red2_emit(RED2_CATEGORIES_MUTATION);
+        assert!(
+            emitted.contains("compile_error"),
+            "an unresolvable category must emit `compile_error!`, not an index. Got: {emitted}",
+        );
+        assert!(
+            emitted.contains(RED2_REFERENCED_CATEGORY),
+            "the refusal must NAME the unresolvable category `{RED2_REFERENCED_CATEGORY}`. \
+             Got: {emitted}",
+        );
+        assert!(
+            emitted.contains(RED2_RULE_LABEL),
+            "the refusal must NAME the rule `{RED2_RULE_LABEL}` — not its index. Got: {emitted}",
+        );
+    }
+
+    /// CONTROL. The same call with the category present emits the index and does
+    /// NOT refuse — so the mutation's refusal is attributable to the missing
+    /// category and not to the fixture being malformed.
+    #[test]
+    fn resolved_operand_category_emits_the_index_and_does_not_refuse() {
+        let emitted = red2_emit(RED2_CATEGORIES_CONTROL);
+        assert!(
+            !emitted.contains("compile_error"),
+            "a resolvable category must NOT refuse. Got: {emitted}",
+        );
+        assert!(
+            emitted.contains("1u16"),
+            "`Ghost` is index 1 of {RED2_CATEGORIES_CONTROL:?}, so the entry must carry `1u16`. \
+             Got: {emitted}",
+        );
     }
 }

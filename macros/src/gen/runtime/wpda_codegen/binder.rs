@@ -1113,6 +1113,151 @@ pub(crate) fn lookup_src_idx(name: &str, categories: &[String]) -> Option<u16> {
     categories.iter().position(|c| c == name).map(|i| i as u16)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// THE category-index resolver (task #141 G1+G2)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ## Why this exists at all, and why it lives beside `lookup_src_idx`
+//
+// Every emitter that has to turn a category NAME into the `u16` index the
+// generated engine keys on wrote its own lookup. Six of them ended the same
+// two ways, and both endings are defects:
+//
+// * `.unwrap_or(0)` — an undeclared category becomes index 0, **the FIRST
+//   declared category**. The build SUCCEEDS and ships a parser that sub-parses
+//   the wrong category. Measured, not hypothesised: `semantic_actions.rs`'s own
+//   comment (the `capture_kind` arm of `emit_infix_action_entry`) records the
+//   #131 incident where `Ident` — not a declared category — resolved to index 0,
+//   the action entry then advertised "this slot expects a `Num` term" while the
+//   extractor at that slot read `as_ident()`, and the arg-shape gate rejected
+//   every reading of a rule whose parse was otherwise correct. The user-visible
+//   symptom was "no accepting branch reached end of input", **with nothing
+//   naming `Ident` anywhere in the diagnostic**.
+// * `.unwrap_or_else(|| panic!("mettail: unresolvable category …"))` — the #133
+//   hardening, copied verbatim into FOUR places. Under this workspace's
+//   `[profile.dev] codegen-backend = "cranelift"` a `panic!` inside the proc
+//   macro prints **nothing at all** — measured 2026-07-29, task #141 RED-0:
+//   the payload never appears; rustc dies with
+//   `fatal runtime error: Rust cannot catch foreign exceptions, aborting`
+//   (SIGABRT). So all four copies were four copies of a message no one could
+//   ever read.
+//
+// One resolver, one message, one place to fix it next time. It lives beside
+// [`lookup_src_idx`] — the `Option`-returning lookup the same emitters already
+// share — precisely so that the next emitter needing a category index finds the
+// refusing form in the same glance as the permissive one.
+//
+// ## The two shapes a caller can be in
+//
+// * **Token position** — the index is about to be interpolated into emitted
+//   code (`category_entry(#idx)`, `output_cat: #idx`, `expected_input_cats:
+//   &[#idx, …]`). Such a caller uses [`cat_idx_tokens`], which substitutes a
+//   spanned `compile_error!` for the literal. The generated module then refuses
+//   to compile and says why, which is the whole point: a `compile_error!` is a
+//   TOKEN, rendered by rustc, so unlike a `panic!` it cannot be swallowed by the
+//   backend (`wpda_codegen/ident_capture_routing.rs` records the same finding).
+// * **Macro-time value position** — the index feeds a data structure consumed
+//   later in the same expansion (`SpineItem::ParamParse { cat_src_idx }`).
+//   Such a caller uses [`resolve_cat_idx`] directly and decides for itself; see
+//   the note at `factoring.rs`'s `binder_items` for the one site in this shape
+//   and what it would take to give it a token position.
+
+/// A category name that is not among the language's declared categories.
+///
+/// Carries everything the diagnostic needs — the offending name, the rule it
+/// appears on, the emitter position that asked, and the declared set it was
+/// looked up in — so that the message can be rendered ONCE, by
+/// [`UnresolvedCategory::message`], rather than at each of six call sites.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnresolvedCategory {
+    /// The category name that could not be resolved.
+    category: String,
+    /// The grammar rule the name appears on, by LABEL — never by index. A
+    /// message that names `rule 7` names nothing a grammar author can act on.
+    rule: String,
+    /// Where in the emission the lookup happened, e.g.
+    /// `"a ParamParse position"`. A short noun phrase, read as
+    /// "unresolvable category `X` in <site> of rule `Y`".
+    site: &'static str,
+    /// The declared category list, rendered. Included in the message because
+    /// the single most common cause is a typo, and the fix is visible the
+    /// moment the author sees the list they meant to name.
+    declared: String,
+}
+
+impl UnresolvedCategory {
+    /// THE message. Six call sites, one wording.
+    pub(crate) fn message(&self) -> String {
+        format!(
+            "mettail: unresolvable category `{category}` in {site} of rule `{rule}`. \
+             `{category}` is not one of this language's declared categories \
+             [{declared}], so the generated parser has no category index for it. \
+             This refusal replaces a silent fallback to category index 0 — the FIRST \
+             declared category — which produced a language that COMPILED and then \
+             sub-parsed the wrong category, reporting only \"no accepting branch \
+             reached end of input\" (tasks #131, #133, #141). Declare `{category}` in \
+             the `types {{ … }}` block, or correct the category name on rule \
+             `{rule}`.",
+            category = self.category,
+            site = self.site,
+            rule = self.rule,
+            declared = self.declared,
+        )
+    }
+
+    /// The refusal as emitted code, spanned at `span`.
+    ///
+    /// `quote_spanned!` rather than `quote!` follows the tree's existing
+    /// precedent (`macros/src/gen/native/eval.rs`), so the diagnostic points at
+    /// the offending rule rather than at the whole `language!` invocation
+    /// wherever the token stream survives to rustc unspilled.
+    pub(crate) fn compile_error(&self, span: proc_macro2::Span) -> TokenStream {
+        let message = self.message();
+        quote::quote_spanned!(span => compile_error!(#message))
+    }
+}
+
+/// Resolve a category name to the `u16` src index the generated engine keys on,
+/// or refuse with everything the diagnostic needs.
+///
+/// This is [`lookup_src_idx`] plus the obligation to say what went wrong. Prefer
+/// it at every new site; prefer [`cat_idx_tokens`] when the result is headed for
+/// emitted code.
+pub(crate) fn resolve_cat_idx(
+    name: &str,
+    categories: &[String],
+    site: &'static str,
+    rule: &str,
+) -> Result<u16, UnresolvedCategory> {
+    match lookup_src_idx(name, categories) {
+        Some(idx) => Ok(idx),
+        None => Err(UnresolvedCategory {
+            category: name.to_string(),
+            rule: rule.to_string(),
+            site,
+            declared: categories.join(", "),
+        }),
+    }
+}
+
+/// Resolve a category name straight to the tokens an emitter interpolates —
+/// the `u16` literal on success, a spanned `compile_error!` on failure.
+///
+/// The substitution happens exactly where the wrong index would have been used,
+/// so the refusal cannot drift away from the site it describes.
+pub(crate) fn cat_idx_tokens(
+    name: &str,
+    categories: &[String],
+    site: &'static str,
+    rule: &str,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    match resolve_cat_idx(name, categories, site, rule) {
+        Ok(idx) => quote! { #idx },
+        Err(unresolved) => unresolved.compile_error(span),
+    }
+}
+
 fn first_param_cat_from_positions(positions: &[BinderPosition]) -> Option<&str> {
     for position in positions {
         match position {
@@ -1880,8 +2025,17 @@ pub(crate) fn emit_binder_rule_body(
                         }
                     },
                     BinderPosition::ParamParse { cat, collection } => {
-                        let cat_src_idx = lookup_src_idx(cat, categories)
-                        .unwrap_or_else(|| panic!("mettail: unresolvable category `{cat}` in a ParamParse position — every category param is validated against the declared type list, so this is a macro bug, not a grammar error"));
+                        // #141 G1: the ONE resolver, the ONE message. A token
+                        // position, so an unresolvable category refuses as a
+                        // `compile_error!` the user can read rather than as a
+                        // `panic!` cranelift swallows whole.
+                        let cat_src_idx = cat_idx_tokens(
+                            cat,
+                            categories,
+                            "a ParamParse position",
+                            &rule.label.to_string(),
+                            rule.label.span(),
+                        );
                         // Stage 3.27d (G-PREFIX-BP, 2026-04-30): for unary-prefix
                         // rules, install `cur_bp = prefix_bp` so the operand sub-parse
                         // cannot be stolen by lower-precedence trailing infix.
@@ -2730,8 +2884,14 @@ pub(crate) fn emit_binder_list_loop_body(
                                     // CollectionMarker push. The Class-2-in-*opt
                                     // CollectionMarker push case lives in
                                     // `emit_optional_group_body`, not here.
-                                    let cat_src_idx = lookup_src_idx(cat, categories)
-                        .unwrap_or_else(|| panic!("mettail: unresolvable category `{cat}` in a ParamParse position — every category param is validated against the declared type list, so this is a macro bug, not a grammar error"));
+                                    // #141 G1: the ONE resolver, the ONE message.
+                                    let cat_src_idx = cat_idx_tokens(
+                                        cat,
+                                        categories,
+                                        "a ParamParse position inside a binder-list loop",
+                                        &rule.label.to_string(),
+                                        rule.label.span(),
+                                    );
                                     quote! {
                                         (#result_src_idx, #rule_idx, #cur_sp) => {
                                             return WpdaStepAction::ReplaceAndPush {
@@ -2988,8 +3148,14 @@ pub(crate) fn emit_optional_group_body(
                             }
                         },
                         BinderPosition::ParamParse { cat, collection } => {
-                            let cat_src_idx = lookup_src_idx(cat, categories)
-                        .unwrap_or_else(|| panic!("mettail: unresolvable category `{cat}` in a ParamParse position — every category param is validated against the declared type list, so this is a macro bug, not a grammar error"));
+                            // #141 G1: the ONE resolver, the ONE message.
+                            let cat_src_idx = cat_idx_tokens(
+                                cat,
+                                categories,
+                                "a ParamParse position inside an optional group",
+                                &rule.label.to_string(),
+                                rule.label.span(),
+                            );
                             match collection {
                                 None => quote! {
                                     (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
@@ -3137,12 +3303,19 @@ pub(crate) fn emit_optional_group_body(
 }
 
 /// Phase 5: emit the action_for arm for a multi-step rule.
+///
+/// `rule_span` is the offending rule's LABEL span, threaded from the single
+/// caller (`semantic_actions::emit_action_for_body`, which holds the
+/// `GrammarRule`). It exists so a category that cannot be resolved refuses AT
+/// THE RULE rather than at the whole `language!` invocation — see
+/// [`UnresolvedCategory`].
 pub(crate) fn emit_binder_action_entry(
     src_idx: u16,
     rule_idx: u16,
     shape: &BinderShape,
     cat_ident: &Ident,
     categories: &[String],
+    rule_span: proc_macro2::Span,
 ) -> Option<TokenStream> {
     let label_ident = format_ident!("{}", shape.label);
     let arity = shape.action_arity;
@@ -3151,34 +3324,41 @@ pub(crate) fn emit_binder_action_entry(
     // Predicate, Optional) → ANY_CAT sentinel. Only `Term(cat)` slots have
     // a real category index. Output is shape.result_cat (the home cat,
     // since binder rules belong to one category at construction).
-    let lookup_cat_idx = |name: &str| -> u16 {
-        categories
-            .iter()
-            .position(|c| c == name)
-            .map(|i| i as u16)
-            .unwrap_or(0)
+    //
+    // ★ #141 G2 — THIS CLOSURE USED TO END IN `.unwrap_or(0)`. An unresolvable
+    // category became index 0, THE FIRST DECLARED CATEGORY, and the language
+    // COMPILED: `output_cat` and every `Term(cat)` slot of `expected_input_cats`
+    // silently named the wrong category, so the arg-shape gate rejected readings
+    // of rules whose parse was correct. The #133 sweep hardened the two siblings
+    // (`emit_mixfix_parts_fn`, `classify_postfix_mixfix`) and missed this one and
+    // its twin in `semantic_actions::emit_infix_action_entry`. Both now refuse
+    // through [`cat_idx_tokens`], which substitutes a spanned `compile_error!`
+    // exactly where the wrong index would have gone.
+    let lookup_cat_idx = |name: &str| -> TokenStream {
+        cat_idx_tokens(
+            name,
+            categories,
+            "a binder rule's action entry",
+            &shape.label,
+            rule_span,
+        )
     };
     let result_cat_idx = lookup_cat_idx(&shape.result_cat);
     // ANY_CAT = u16::MAX; matches mettail_prattail::wpda_runtime::ANY_CAT
     // (this is in macros code so we can't reference the runtime constant
     // by path; we emit `&[ANY_CAT]` literally in the generated code).
     let any_cat_value: u16 = u16::MAX;
-    let expected_input_cats: Vec<u16> = shape
+    let expected_input_cats: Vec<TokenStream> = shape
         .action_args
         .iter()
         .map(|kind| match kind {
             ActionArgKind::Term(cat) => lookup_cat_idx(cat),
-            _ => any_cat_value,
+            _ => quote! { #any_cat_value },
         })
         .collect();
-    let cats_lits: Vec<TokenStream> = expected_input_cats
-        .iter()
-        .map(|c| {
-            let c = *c;
-            quote! { #c }
-        })
-        .collect();
-    let expected_input_cats_ts = quote! { &[#(#cats_lits),*] };
+    // #141 G2: `expected_input_cats` now holds the emitted tokens directly —
+    // either a `u16` literal or the `compile_error!` that refuses in its place.
+    let expected_input_cats_ts = quote! { &[#(#expected_input_cats),*] };
 
     // Generate the per-arg extraction code in push order.
     let mut extracts: Vec<TokenStream> = Vec::new();
@@ -3989,4 +4169,166 @@ mod tests {
         assert!(s.contains("\")\""));
         assert!(s.contains("\",\""));
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Task #141 G1+G2 / RED-2 — the shared category resolver, and the binder
+    // twin of `semantic_actions`' fails-open lookup
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // The full argument for why this mutation is applied at the EMITTER rather
+    // than to a grammar — Pass 5 makes `categories` total over `language.types`,
+    // and an undeclared category is rejected by `validate_language` — is written
+    // once, in `semantic_actions.rs`'s `mod tests`. These cells are the TWIN:
+    // `emit_binder_action_entry` carried the identical `.unwrap_or(0)`, was
+    // missed by the same #133 sweep, and must be shown to refuse independently,
+    // so that repairing one site cannot make both cells pass.
+
+    /// The category the fixture rule's `Term` slot is declared in — absent from
+    /// the mutation's category list, present in the control's.
+    const RED2_REFERENCED_CATEGORY: &str = "Ghost";
+    const RED2_RULE_LABEL: &str = "BindGhost";
+
+    fn red2_binder_shape() -> BinderShape {
+        BinderShape {
+            label: RED2_RULE_LABEL.to_string(),
+            result_cat: "Term".to_string(),
+            positions: Vec::new(),
+            is_multi: false,
+            has_binder: false,
+            action_arity: 1,
+            action_args: vec![ActionArgKind::Term(RED2_REFERENCED_CATEGORY.to_string())],
+            body_cat: None,
+            param_cats: vec![RED2_REFERENCED_CATEGORY.to_string()],
+        }
+    }
+
+    /// The same shape with its `Term` slot pointed at `slot_category` instead —
+    /// used by [`the_refusal_is_not_the_old_index_zero_answer`] to hold
+    /// EVERYTHING ELSE constant.
+    fn red2_binder_shape_with_slot(slot_category: &str) -> BinderShape {
+        BinderShape {
+            action_args: vec![ActionArgKind::Term(slot_category.to_string())],
+            param_cats: vec![slot_category.to_string()],
+            ..red2_binder_shape()
+        }
+    }
+
+    fn red2_binder_emit(categories: &[&str]) -> String {
+        red2_binder_emit_shape(&red2_binder_shape(), categories)
+    }
+
+    fn red2_binder_emit_shape(shape: &BinderShape, categories: &[&str]) -> String {
+        let categories: Vec<String> = categories.iter().map(|c| (*c).to_string()).collect();
+        emit_binder_action_entry(
+            0u16,
+            0u16,
+            shape,
+            &Ident::new("Term", Span::call_site()),
+            &categories,
+            Span::call_site(),
+        )
+        .expect("the fixture shape must yield an action entry in BOTH arms; a `None` here \
+                 would make the mutation and the control agree vacuously")
+        .to_string()
+    }
+
+    /// MUTATION. `Ghost` is not a declared category ⇒ the binder action entry
+    /// refuses, naming the category and the rule.
+    #[test]
+    fn binder_action_entry_refuses_an_unresolvable_category_naming_it_and_the_rule() {
+        let emitted = red2_binder_emit(&["Term"]);
+        assert!(
+            emitted.contains("compile_error"),
+            "an unresolvable `ActionArgKind::Term` category must emit `compile_error!`, \
+             not index 0. Got: {emitted}",
+        );
+        assert!(
+            emitted.contains(RED2_REFERENCED_CATEGORY),
+            "the refusal must NAME `{RED2_REFERENCED_CATEGORY}`. Got: {emitted}",
+        );
+        assert!(
+            emitted.contains(RED2_RULE_LABEL),
+            "the refusal must NAME rule `{RED2_RULE_LABEL}`. Got: {emitted}",
+        );
+    }
+
+    /// CONTROL. The same shape with `Ghost` declared emits its index and does not
+    /// refuse.
+    #[test]
+    fn binder_action_entry_emits_the_index_when_the_category_is_declared() {
+        let emitted = red2_binder_emit(&["Term", "Ghost"]);
+        assert!(
+            !emitted.contains("compile_error"),
+            "a declared category must NOT refuse. Got: {emitted}",
+        );
+        assert!(
+            emitted.contains("1u16"),
+            "`Ghost` is index 1 of [Term, Ghost]. Got: {emitted}",
+        );
+    }
+
+    /// ★ THE FAILS-OPEN WITNESS. Index 0 is `Term`, the FIRST declared category —
+    /// the exact wrong answer both sites used to give. This cell states the
+    /// contrast that makes the repair meaningful: the refusal must not merely be
+    /// *some* output, it must not be the OLD output.
+    #[test]
+    fn the_refusal_is_not_the_old_index_zero_answer() {
+        // ONE category list, ONE `result_cat` (`Term`, index 0). The two emissions
+        // differ in exactly one thing: whether the slot names a DECLARED category
+        // (`Term`) or an unresolvable one (`Ghost`). Under HEAD's `.unwrap_or(0)`
+        // they were BYTE-IDENTICAL — that indistinguishability WAS the defect, and
+        // it is what this cell refuses to let return.
+        //
+        // ⚠ The comparison is on the ARG-CATEGORY LIST specifically, not on the whole
+        // emission. The two emissions also differ in the extraction code (`param_cats`
+        // puts the category NAME into `into_term::<…>()`), so a whole-string `assert_ne!`
+        // would pass even under the old `.unwrap_or(0)` — measured, and rejected, while
+        // writing this cell. The list is the field the defect corrupted, so the list is
+        // what the cell pins.
+        const INDEX_ZERO_ARG_LIST: &str = "expected_input_cats : & [0u16]";
+        let categories = ["Term"];
+        let unresolvable =
+            red2_binder_emit_shape(&red2_binder_shape_with_slot("Ghost"), &categories);
+        let honestly_zero =
+            red2_binder_emit_shape(&red2_binder_shape_with_slot("Term"), &categories);
+        assert!(
+            honestly_zero.contains(INDEX_ZERO_ARG_LIST),
+            "ANTI-VACUITY: `Term` IS index 0 of {categories:?}, so this arm must render \
+             exactly `{INDEX_ZERO_ARG_LIST}`. If this fails the rendering changed and the \
+             assertion below has stopped meaning anything. Got: {honestly_zero}",
+        );
+        assert!(
+            !unresolvable.contains(INDEX_ZERO_ARG_LIST),
+            "an unresolvable category must NOT render the same arg list as a genuine \
+             index-0 category — that indistinguishability WAS the defect. Got: \
+             {unresolvable}",
+        );
+    }
+
+    /// The resolver's message is the ONE message: it names the category, the
+    /// rule, the site, and the declared set it searched.
+    #[test]
+    fn the_resolver_message_names_category_rule_site_and_declared_set() {
+        let categories = vec!["Term".to_string(), "Num".to_string()];
+        let err = resolve_cat_idx("Ghost", &categories, "a ParamParse position", "SomeRule")
+            .expect_err("`Ghost` is not in the declared set, so this must refuse");
+        let message = err.message();
+        for needle in ["Ghost", "SomeRule", "a ParamParse position", "Term", "Num"] {
+            assert!(
+                message.contains(needle),
+                "the ONE message must contain `{needle}`. Got: {message}",
+            );
+        }
+    }
+
+    /// And it resolves what it should: a declared category yields its index, so
+    /// the resolver is not refusing everything.
+    #[test]
+    fn the_resolver_resolves_a_declared_category() {
+        let categories = vec!["Term".to_string(), "Num".to_string()];
+        assert_eq!(resolve_cat_idx("Num", &categories, "a site", "R"), Ok(1u16));
+        assert_eq!(cat_idx_tokens("Num", &categories, "a site", "R", Span::call_site())
+            .to_string(), "1u16");
+    }
+
 }
