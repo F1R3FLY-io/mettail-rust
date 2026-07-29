@@ -633,6 +633,48 @@ fn ast_match_pattern_add_body(depth: usize) {
     std::mem::forget(pattern);
 }
 
+/// ★★ `Clone` — and it is NOT a generated driver, which is the whole point.
+///
+/// `iterative_clone.rs` existed and was DELETED (`651499e2`). The ARC refactor
+/// (`9c55d81d`) changed recursive AST children from `Box<Cat>` to `Arc<Cat>`, so the derived
+/// `Clone` is `Arc::clone` per child — a refcount increment that stops at the `Arc` boundary
+/// and never descends the subtree. This subject is the executable form of that claim: it
+/// clones a deep term on the ALTERNATING ladder, where every other driver is sloped.
+///
+/// ⚠ ANTI-VACUITY: the clone must be OBSERVED, or the optimiser may drop it entirely. Its
+/// root discriminant is compared and both terms are then forgotten.
+fn ast_clone_body(depth: usize) {
+    let a = nested_list(depth);
+    let b = a.clone();
+    assert!(
+        std::mem::discriminant(&a) == std::mem::discriminant(&b),
+        "stack_depth_probe: ast_clone produced a different variant"
+    );
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+/// `Clone` on the pure chain, for the 2x2.
+fn ast_clone_add_body(depth: usize) {
+    let a = nested_add(depth);
+    let b = a.clone();
+    assert!(
+        std::mem::discriminant(&a) == std::mem::discriminant(&b),
+        "stack_depth_probe: ast_clone_add produced a different variant"
+    );
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+/// ★ THE ALLOCATION control for [`ast_clone_body`]: build the term and forget it, WITHOUT
+/// cloning. Under DHAT the difference between this and `ast_clone` is exactly what one clone
+/// of a depth-N term allocates, so the O(1)-vs-O(N) question is answered by subtraction
+/// rather than by reading the type definition.
+fn build_one_body(depth: usize) {
+    let a = nested_list(depth);
+    std::mem::forget(a);
+}
+
 /// The `*_add` control, matching [`build_twins_body`].
 fn build_twins_add_body(depth: usize) {
     let a = nested_add_leaf(depth, 1);
@@ -681,6 +723,11 @@ fn subject(name: &str) -> fn(usize) {
         "ast_subst_add" => ast_subst_add_body,
         "ast_normalize_add" => ast_normalize_add_body,
         "ast_match_pattern_add" => ast_match_pattern_add_body,
+        // -------- discriminators --------
+        // -------- ★ Clone: stack-safe by REPRESENTATION, not by a driver --------
+        "ast_clone" => ast_clone_body,
+        "ast_clone_add" => ast_clone_add_body,
+        "build_one" => build_one_body,
         // -------- discriminators --------
         "ast_drop" => ast_drop_body,
         "ast_drop_add" => ast_drop_add_body,
