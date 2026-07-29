@@ -596,8 +596,12 @@ pub fn decode_sites_par(sites_value: &Par, expected_tag: &str) -> Result<Vec<Str
     let Some(ExprInstance::EPathmapBody(pathmap)) = &expr.expr_instance else {
         return Err(format!("sites value is not an EPathMap: {expr:?}"));
     };
-    let mut sites: Vec<String> = Vec::with_capacity(pathmap.ps.len());
-    for entry in &pathmap.ps {
+    // `EPathMap` stores an `EntryTrie`, not a `Vec<Par>` (models `9994a75b`); `ps()` is the
+    // memoized canonical projection and returns `&Vec<Par>`, so binding it once borrows the
+    // entries for both the preallocation and the walk without cloning them.
+    let entries = pathmap.ps();
+    let mut sites: Vec<String> = Vec::with_capacity(entries.len());
+    for entry in entries {
         let [entry_expr] = entry.exprs.as_slice() else {
             return Err(format!("subtrie entry is not a single expr: {entry:?}"));
         };

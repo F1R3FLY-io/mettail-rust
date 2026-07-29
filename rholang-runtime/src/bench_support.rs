@@ -1111,14 +1111,19 @@ fn visit_expr(expr: &Expr, count: &mut usize) {
                 visit_par(p, count);
             }
         },
+        // `EPathMap` stores an `EntryTrie`, not a `Vec<Par>` (models `9994a75b`), so its
+        // entries arrive through the `ps()` PROJECTION rather than a field. It returns
+        // `&Vec<Par>` off a `OnceLock<Arc<..>>`, so this walk borrows — it does not clone,
+        // and the memo is shared across the clone family. Note there is no `&`: `ps()`
+        // already yields the reference, and `&pathmap.ps()` would be `&&Vec<Par>`.
         ExprInstance::EPathmapBody(pathmap) => {
-            for p in &pathmap.ps {
+            for p in pathmap.ps() {
                 visit_par(p, count);
             }
         },
         ExprInstance::EZipperBody(zipper) => {
             if let Some(pathmap) = &zipper.pathmap {
-                for p in &pathmap.ps {
+                for p in pathmap.ps() {
                     visit_par(p, count);
                 }
             }
