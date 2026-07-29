@@ -117,11 +117,12 @@ pub struct ParserBundle {
 //    left both duplicates in place. Deleting removes the panic, the duplicate
 //    `.expect`, and the drift, and costs nothing that anything called.
 //
-// The live `.expect` on the same `parse::<TokenStream>()` step survives in
-// `run_pipeline_with_analysis` and is NOT in scope here: it is one of the C2
-// sites this task deliberately defers rather than convert alongside a
-// 54-language regeneration. It is enumerated and ratcheted by
-// `macros/tests/expansion_panic_gate.rs`.
+// The live `parse::<TokenStream>()` on the same step, in
+// `run_pipeline_with_analysis` below, was ALSO an `.expect` when this tombstone
+// was first written. #141 Stage 5 converted it: it is now a `map_err(..)?`
+// carrying `emitted_source_does_not_lex`, which names the language and keeps the
+// `proc_macro2::LexError`. That conversion is why the duplicate deleted above was
+// worth deleting rather than converting twice.
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Pipeline diagnostic helper
@@ -234,12 +235,56 @@ pub fn run_pipeline_with_analysis(
     stage!("concat.done");
 
     stage!("parse_to_tokenstream.start");
+    // #141 Stage 5. This is THE live "the generator emitted invalid Rust" site:
+    // the one `parse::<TokenStream>()` on the whole `language!` expansion path,
+    // over the concatenated lexer + parser buffer. It used to read
+    //
+    //     .expect("PraTTaIL pipeline: generated code failed to parse as TokenStream")
+    //
+    // which is a refusal that names neither the language nor the fault. Three
+    // things were wrong with it and all three are fixed by the `?` below.
+    //
+    // 1. It is a `panic!` inside a cranelift-compiled proc macro, so it is MUTE:
+    //    `rustc` aborts with `fatal runtime error: Rust cannot catch foreign
+    //    exceptions` and prints nothing. The enclosing function already returns
+    //    `Result<_, String>` — the seam `042476d9` built runs from here to
+    //    `macros/src/lib.rs`, which renders the string as `compile_error!`.
+    // 2. It discarded the `proc_macro2::LexError`, the only value that localises
+    //    the fault inside a buffer that exceeds a hundred thousand bytes for a
+    //    grammar the size of Rholang's. Same defect as `join().expect(…)`.
+    // 3. It did not name the language. 54 grammars expand in one `cargo build`.
+    //
+    // ⚠ A failure here is a MACRO BUG, not a bad grammar: every byte of `combined`
+    // was written by this crate. The message says so, so that whoever sees it
+    // looks at the emitter rather than at their `language!` block.
     let ts = combined
         .parse::<TokenStream>()
-        .expect("PraTTaIL pipeline: generated code failed to parse as TokenStream");
+        .map_err(|lex_error| emitted_source_does_not_lex(&spec.name, combined.len(), &lex_error))?;
     stage!("parse_to_tokenstream.done");
 
     Ok((ts, analysis))
+}
+
+/// The diagnostic returned when PraTTaIL's own emitted source does not lex.
+///
+/// Split out of [`run_pipeline_with_analysis`] so the message can be asserted
+/// directly. It travels the seam built in `042476d9` —
+/// `run_pipeline_with_analysis` → `generate_parser_with_analysis` →
+/// `prattail_bridge` → `macros/src/lib.rs` — and is rendered there as
+/// `compile_error!`, so its text is the entire user-visible artefact of this
+/// repair.
+pub(super) fn emitted_source_does_not_lex(
+    language_name: &str,
+    buf_len: usize,
+    lex_error: &proc_macro2::LexError,
+) -> String {
+    format!(
+        "internal error: PraTTaIL emitted Rust source for language `{language_name}` that does \
+         not lex: {lex_error}. This is a bug in the generator, not in the grammar — every byte \
+         of the {buf_len}-byte buffer was written by `mettail-prattail`. The `LexError` above \
+         carries the offset at which lexing stopped; dump the buffer with \
+         `PRATTAIL_MACRO_TRACE=1` to inspect it."
+    )
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

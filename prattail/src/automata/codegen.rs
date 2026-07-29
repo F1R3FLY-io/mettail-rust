@@ -26,6 +26,130 @@ use super::{
 use crate::lint::DiagnosticId;
 use crate::CustomTokenSpec;
 
+// ══════════════════════════════════════════════════════════════════════════════
+// `w!` — the one place the infallibility of a `String` write is argued
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// `write!` into the in-memory `String` buffer, discarding the `Result`.
+///
+/// # Why this macro exists
+///
+/// This module emits the lexer by appending to a `String`. Until 2026-07-29 every
+/// one of the **119** appends that needed formatting was spelled
+///
+/// ```text
+/// write!(buf, "…", …).expect("codegen: write into in-memory String is infallible");
+/// ```
+///
+/// — 119 copies of one claim. ⚠ The claim is **true**, and the checks were
+/// therefore **not** deleted: this macro expands to exactly the same
+/// `write!(…).expect(…)` and emits exactly the same instructions. What changed is
+/// that the argument for the claim is now made **once**, here, instead of being
+/// asserted 119 times and argued zero times. 119 unargued sites became one argued
+/// site; a reader who wants to know why a `Result` is being discarded on the
+/// hottest expansion path in the tree has one place to look.
+///
+/// # The argument
+///
+/// [`std::fmt::Write`] is implemented for [`String`] as
+///
+/// ```text
+/// impl fmt::Write for String {
+///     fn write_str(&mut self, s: &str) -> fmt::Result { self.push_str(s); Ok(()) }
+/// }
+/// ```
+///
+/// — the body is a `push_str` and an unconditional `Ok(())`. `fmt::Error` is
+/// produced only by a `Write` implementation that can fail (an `io`-backed sink,
+/// a fixed-capacity buffer), and by `Display`/`Debug` implementations that choose
+/// to return it. The only `Err` `write!` can yield here is therefore one raised by
+/// a formatting argument's own `Display` impl; every argument at every one of the
+/// 119 sites is an integer, a `&str`, a `String`, or a `char`, whose `Display`
+/// impls are all infallible. Allocation failure aborts rather than returning
+/// `Err`. So the `Err` arm is unreachable **by type**, not by convention — which
+/// is why the classification in `macros/tests/expansion_panic_gate.rs` is
+/// `InfallibleByType` and not `ProvenInert`: it needs no measurement to stay
+/// true, and no future grammar can falsify it.
+///
+/// # Why not `let _ = write!(…)`
+///
+/// Because that would silently discard a real error if the premise above ever
+/// stopped holding — for instance if a caller passed a buffer type other than
+/// `String`. `.expect` keeps the failure loud, costs nothing on the success path,
+/// and the message names the premise.
+macro_rules! w {
+    ($buf:expr, $($arg:tt)*) => {
+        write!($buf, $($arg)*).expect("codegen: write into in-memory String is infallible")
+    };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// `TokenKind::LexError` at codegen time — the one place its absence is argued
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Refuse a [`TokenKind::LexError`] found in a codegen-time token list.
+///
+/// # Why this function exists
+///
+/// Eight `match` arms in this module ended in
+///
+/// ```text
+/// TokenKind::LexError(_) => unreachable!(
+///     "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
+/// ),
+/// ```
+///
+/// — eight copies of one claim, with the claim argued at none of them (one of the
+/// eight carried a three-line comment; the other seven asserted and moved on).
+/// This is the same defect as the 119 copies of the `write!` infallibility claim
+/// that `w!` collapsed, at a smaller scale, and it gets the same treatment: one
+/// site that argues, eight sites that call.
+///
+/// # The argument — a program-text fact, measured 2026-07-29
+///
+/// `TokenKind::LexError(LexErrorKind)` has **zero construction sites in the
+/// workspace**. An exhaustive search for the constructor expression across every
+/// tracked `.rs` file — `prattail`, `macros`, `ast`, `benches/`, and the 2,281
+/// files under `target/generated` — finds the variant only in
+///
+/// * its own declaration, `automata/types.rs:59`;
+/// * two `match` arms that *read* it, `recovery_dispatch.rs:218` and
+///   `benches/bench_specs/mod.rs:991`;
+/// * the eight arms that now call this function.
+///
+/// Nothing produces one. And [`TokenKind`] is `#[non_exhaustive]`, so no crate
+/// outside `prattail` may construct any variant of it with a literal either.
+/// ∴ within this workspace no value `TokenKind::LexError(..)` can exist, and the
+/// eight arms are unreachable — not "unreached by every shipped grammar", which
+/// is a measurement that a new grammar could overturn, but unreachable because
+/// the expression that would make one is not written anywhere.
+///
+/// # ⚠ Why the classification is `ProvenInert` and not `InfallibleByType`
+///
+/// The claim above is falsifiable by *adding* a constructor, and there is a
+/// documented intent to do exactly that. `automata/types.rs:54-59` describes the
+/// variant as an L3 (2026-04-28) feature — "lex failure at this position … treated
+/// as a real token in the parse so error recovery (#64 / L12 WPDS-edge recovery)
+/// can compose lex failures with parser failures uniformly". That wiring was never
+/// completed: the feature's two readers format a value that cannot occur. So the
+/// guard's entry for this site is `ProvenInert` — **an open defect, not a
+/// licence** — and the day L3 is finished, these eight arms become live and each
+/// needs a real answer rather than a refusal.
+///
+/// The parameter exists so the refusal names *which* of the eight emitters was
+/// running, which `unreachable!`'s shared literal could not.
+fn lex_error_is_not_a_codegen_time_token(emitter: &'static str) -> ! {
+    unreachable!(
+        "`TokenKind::LexError` reached `{emitter}` in a codegen-time token list. \
+         This variant is produced only at parse time by the emitted lexer, and as \
+         of 2026-07-29 it is produced nowhere at all — it has zero constructors in \
+         the workspace (see `automata/codegen.rs`'s argument at \
+         `lex_error_is_not_a_codegen_time_token`). Reaching this point means the L3 \
+         lex-failure token was wired up without revisiting the eight codegen arms \
+         that assume it cannot exist."
+    )
+}
+
 /// Threshold: use direct-coded for small DFAs, table-driven for larger ones.
 const DIRECT_CODED_THRESHOLD: usize = 30;
 
@@ -125,9 +249,9 @@ impl TokenVariantMap {
                 | TokenKind::RationalLit(cat)
                 | TokenKind::FixedPointLit(cat) => cat.clone(),
                 TokenKind::BooleanLit => "Boolean".to_string(),
-                TokenKind::LexError(_) => unreachable!(
-                    "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
-                ),
+                TokenKind::LexError(_) => {
+                    lex_error_is_not_a_codegen_time_token("TokenVariantMap::from_token_kinds")
+                },
             };
             insert(name);
         }
@@ -163,9 +287,9 @@ impl TokenVariantMap {
             | TokenKind::RationalLit(cat)
             | TokenKind::FixedPointLit(cat) => cat.clone(),
             TokenKind::BooleanLit => "Boolean".to_string(),
-            TokenKind::LexError(_) => unreachable!(
-                "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
-            ),
+            TokenKind::LexError(_) => {
+                lex_error_is_not_a_codegen_time_token("TokenVariantMap::kind_to_id")
+            },
         };
         self.get_id(&name)
     }
@@ -269,6 +393,35 @@ pub fn analyze_ambiguity(dfa: &Dfa) -> LexerAmbiguityInfo {
 /// When `hybrid_lexer` is true and the DFA has > 30 states, AL02 hybrid
 /// mode is activated: hot states (BFS depth ≤ 2) get direct-coded match
 /// arms while cold states use compressed table lookup.
+/// # ⚠ Not on the `language!` expansion path — measured 2026-07-29
+///
+/// #141 Stage 5 was briefed to route this function's parse failure to the macro
+/// boundary through the `Result` seam built in `042476d9`. **That is not
+/// constructible, because no path leads from here to the boundary.** The callers
+/// of `generate_lexer_code`, enumerated exhaustively over every tracked `.rs`
+/// file, are:
+///
+/// | caller | kind |
+/// |---|---|
+/// | `lexer.rs:177` (`generate_lexer`) | whose own callers are `src/tests/lexer_tests.rs:88,191` and `benches/bench_lexer.rs:67,215` — tests and benches only |
+/// | `benches/bench_lexer_codegen.rs:35,62` | bench |
+/// | `benches/bench_lexer.rs:189` | bench |
+///
+/// The expansion path does **not** pass through here. It runs
+/// `pipeline::wfst_emit::generate_lexer_code_with_map` →
+/// `lexer::try_generate_lexer_as_string_hybrid` → `generate_lexer_string_hybrid`,
+/// all of which deal in `String`, and performs exactly **one**
+/// `parse::<TokenStream>()` for the whole language — in
+/// `pipeline::state::run_pipeline_with_analysis`, on the concatenated lexer +
+/// parser buffer. **That** is the live "the generator emitted invalid Rust" site,
+/// and #141 Stage 5 converts it there, where the enclosing function already
+/// returns `Result<_, String>` and the language name is in scope.
+///
+/// So the refusal below stays a panic — a bench or unit test that panics is
+/// audible and is the right failure — but it no longer throws away the evidence:
+/// `str::parse::<TokenStream>()` fails with a [`proc_macro2::LexError`] that says
+/// *where* the emitted text stopped lexing, and `.expect` discarded it. That is
+/// the same defect as `join().expect(…)` in Stage 4, at a smaller site.
 pub fn generate_lexer_code(
     dfa: &Dfa,
     partition: &AlphabetPartition,
@@ -278,36 +431,79 @@ pub fn generate_lexer_code(
 ) -> (TokenStream, CodegenStrategy) {
     let (buf, strategy, _variant_map, _ambiguity) =
         generate_lexer_string(dfa, partition, token_kinds, language_name, custom_tokens);
-    let ts = buf
-        .parse::<TokenStream>()
-        .expect("generated lexer code must be valid Rust");
+    let ts = parse_emitted_lexer(&buf, language_name, "generate_lexer_code");
     (ts, strategy)
 }
 
-/// Generate the complete lexer code as a TokenStream with AL02 hybrid gating.
+/// Parse an emitted lexer buffer, reporting *what* failed rather than *that* it
+/// failed.
 ///
-/// Same as [`generate_lexer_code`] but accepts the `hybrid_lexer` optimization gate.
-pub fn generate_lexer_code_hybrid(
-    dfa: &Dfa,
-    partition: &AlphabetPartition,
-    token_kinds: &[TokenKind],
-    language_name: &str,
-    hybrid_lexer: bool,
-    custom_tokens: &[CustomTokenSpec],
-) -> (TokenStream, CodegenStrategy) {
-    let (buf, strategy, _variant_map, _ambiguity) = generate_lexer_string_hybrid(
-        dfa,
-        partition,
-        token_kinds,
-        language_name,
-        hybrid_lexer,
-        custom_tokens,
-    );
-    let ts = buf
-        .parse::<TokenStream>()
-        .expect("generated lexer code must be valid Rust");
-    (ts, strategy)
+/// `.expect` on a `parse::<TokenStream>()` drops the [`proc_macro2::LexError`],
+/// which is the only value that localises the fault inside a buffer that is tens
+/// of thousands of lines long for a grammar the size of Rholang's. The message
+/// below keeps it, and names the language and the emitter, because "generated
+/// lexer code must be valid Rust" identifies neither.
+///
+/// ⚠ This is deliberately **not** a `Result`: its two callers are a bench harness
+/// and a unit test, neither of which has a diagnostic channel to route an `Err`
+/// into, and manufacturing an unused `try_` seam is the defect `042476d9` already
+/// found once (`try_generate_lexer_as_string_hybrid` sat unused from `87292ef4`
+/// until Stage 2 wired it). See [`generate_lexer_code`] for the reachability
+/// measurement and for where the live conversion happens instead.
+fn parse_emitted_lexer(buf: &str, language_name: &str, emitter: &'static str) -> TokenStream {
+    match buf.parse::<TokenStream>() {
+        Ok(ts) => ts,
+        Err(lex_error) => {
+            panic!("{}", emitted_lexer_does_not_lex(buf.len(), language_name, emitter, &lex_error))
+        },
+    }
 }
+
+/// The message [`parse_emitted_lexer`] refuses with.
+///
+/// Split out so the message — the whole content of the repair — is assertable
+/// without provoking the panic that carries it. See
+/// `dovetail/tests/panic_expectation_gate.rs`: a test that expected the panic
+/// would, under this workspace's cranelift `dev` profile, abort the test binary
+/// instead of observing anything. A real [`proc_macro2::LexError`] is obtainable
+/// in a test for free — `"(".parse::<TokenStream>()` yields one as an `Err` — so
+/// the cells feed a genuine error value, not a stand-in.
+fn emitted_lexer_does_not_lex(
+    buf_len: usize,
+    language_name: &str,
+    emitter: &'static str,
+    lex_error: &proc_macro2::LexError,
+) -> String {
+    format!(
+        "`{emitter}` emitted a lexer for language `{language_name}` that is not valid Rust: \
+         {lex_error}. This is a bug in the emitter, not in the grammar: the buffer is \
+         {buf_len} bytes and the `LexError` above carries the position at which it stopped \
+         lexing."
+    )
+}
+
+// `pub fn generate_lexer_code_hybrid(dfa, partition, token_kinds, language_name,
+// hybrid_lexer, custom_tokens) -> (TokenStream, CodegenStrategy)` was REMOVED
+// here on 2026-07-29 (#141 Stage 5). Its body was `generate_lexer_string_hybrid`
+// followed by
+//
+//     let ts = buf.parse::<TokenStream>()
+//         .expect("generated lexer code must be valid Rust");
+//
+// — the second of the two sites #141 Stage 5 was briefed to route to the macro
+// boundary. It could not be routed and did not need to be: an exhaustive search
+// for the identifier across every tracked `.rs` file (`prattail`, `macros`,
+// `ast`, `benches/`, and `target/generated`) found **zero callers** — not a test,
+// not a bench, not the pipeline. It was `pub`, so nothing in the crate flagged it
+// as dead.
+//
+// It was the `hybrid_lexer`-gated twin of `generate_lexer_code`; the expansion
+// path reaches AL02 hybrid gating through
+// `lexer::try_generate_lexer_as_string_hybrid` instead, which returns a `String`
+// and never parses it. Deleting removes an unargued `.expect` and a second,
+// silently diverging copy of the parse step. `generate_lexer_string_hybrid` — the
+// function it wrapped — is untouched and still used by
+// `generate_lexer_string`, the tests and the benches.
 
 /// Generate the complete lexer code as a `String` (no proc_macro2 parsing).
 ///
@@ -444,8 +640,7 @@ fn write_token_enum(
             TokenKind::Fixed(text) => {
                 let variant_name = terminal_to_variant_name(text);
                 if seen.insert(variant_name.clone()) {
-                    write!(buf, "{},", variant_name)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "{},", variant_name);
                 }
             },
             TokenKind::Dollar => {
@@ -467,15 +662,12 @@ fn write_token_enum(
                     {
                         // Payload-carrying variant: use &'a str for str types, type directly otherwise
                         if pt == "str" {
-                            write!(buf, "{}(&'a str),", name)
-                                .expect("codegen: write into in-memory String is infallible");
+                            w!(buf, "{}(&'a str),", name);
                         } else {
-                            write!(buf, "{}({}),", name, pt)
-                                .expect("codegen: write into in-memory String is infallible");
+                            w!(buf, "{}({}),", name, pt);
                         }
                     } else {
-                        write!(buf, "{},", name)
-                            .expect("codegen: write into in-memory String is infallible");
+                        w!(buf, "{},", name);
                     }
                 }
             },
@@ -486,8 +678,7 @@ fn write_token_enum(
             | TokenKind::RationalLit(cat)
             | TokenKind::FixedPointLit(cat) => {
                 if seen.insert(cat.clone()) {
-                    write!(buf, "{}(&'a str),", cat)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "{}(&'a str),", cat);
                 }
             },
             TokenKind::BooleanLit => {
@@ -495,17 +686,7 @@ fn write_token_enum(
                     buf.push_str("Boolean(bool),");
                 }
             },
-            TokenKind::LexError(_) => {
-                // L3 (2026-04-28): LexError is a runtime-only token. The
-                // codegen-time `token_kinds` slice is built from the
-                // grammar's accepting NFA states; lex-failure synthesis
-                // happens at runtime, so this variant must never appear
-                // here.
-                unreachable!(
-                    "LexError TokenKind in codegen-time token_kinds list — \
-                     should be runtime-only"
-                );
-            },
+            TokenKind::LexError(_) => lex_error_is_not_a_codegen_time_token("write_token_enum"),
         }
     }
 
@@ -564,8 +745,7 @@ fn write_token_display(
                 if seen.insert(variant_name.clone()) {
                     // Escape backticks in the text for the format string
                     let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
-                    write!(buf, "Token::{} => \"`{}`\".to_string(),", variant_name, escaped)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{} => \"`{}`\".to_string(),", variant_name, escaped);
                 }
             },
             TokenKind::Dollar => {
@@ -586,11 +766,9 @@ fn write_token_display(
                         .and_then(|s| s.payload_type.as_ref())
                         .is_some();
                     if has_payload {
-                        write!(buf, "Token::{}(v) => format!(\"{} `{{}}`\", v),", name, name)
-                            .expect("codegen: write into in-memory String is infallible");
+                        w!(buf, "Token::{}(v) => format!(\"{} `{{}}`\", v),", name, name);
                     } else {
-                        write!(buf, "Token::{} => \"`{}`\".to_string(),", name, name)
-                            .expect("codegen: write into in-memory String is infallible");
+                        w!(buf, "Token::{} => \"`{}`\".to_string(),", name, name);
                     }
                 }
             },
@@ -598,8 +776,7 @@ fn write_token_display(
             | TokenKind::RationalLit(cat)
             | TokenKind::FixedPointLit(cat) => {
                 if seen.insert(cat.clone()) {
-                    write!(buf, "Token::{}(s) => format!(\"{} `{{}}`\", s),", cat, cat)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{}(s) => format!(\"{} `{{}}`\", s),", cat, cat);
                 }
             },
             TokenKind::BooleanLit => {
@@ -607,9 +784,7 @@ fn write_token_display(
                     buf.push_str("Token::Boolean(b) => format!(\"boolean `{}`\", b),");
                 }
             },
-            TokenKind::LexError(_) => unreachable!(
-                "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
-            ),
+            TokenKind::LexError(_) => lex_error_is_not_a_codegen_time_token("write_token_display"),
         }
     }
 
@@ -673,12 +848,12 @@ fn write_token_to_kind(
             TokenKind::Fixed(text) => {
                 let variant_name = terminal_to_variant_name(text);
                 if seen.insert(variant_name.clone()) {
-                    write!(
+                    w!(
                         buf,
                         "Token::{} => TokenKind::Fixed({:?}.to_string()),\n",
-                        variant_name, text
-                    )
-                    .expect("codegen: write into in-memory String is infallible");
+                        variant_name,
+                        text
+                    );
                 }
             },
             TokenKind::Dollar => {
@@ -697,55 +872,43 @@ fn write_token_to_kind(
                         .iter()
                         .any(|s| s.name == *name && s.payload_type.is_some());
                     if has_payload {
-                        write!(
+                        w!(
                             buf,
                             "Token::{}(_) => TokenKind::Custom({:?}.to_string()),\n",
-                            name, name
-                        )
-                        .expect("codegen: write into in-memory String is infallible");
+                            name,
+                            name
+                        );
                     } else {
-                        write!(
-                            buf,
-                            "Token::{} => TokenKind::Custom({:?}.to_string()),\n",
-                            name, name
-                        )
-                        .expect("codegen: write into in-memory String is infallible");
+                        w!(buf, "Token::{} => TokenKind::Custom({:?}.to_string()),\n", name, name);
                     }
                 }
             },
             TokenKind::IntegerLit(cat) => {
                 if seen.insert(cat.clone()) {
-                    write!(
-                        buf,
-                        "Token::{}(_) => TokenKind::IntegerLit({:?}.to_string()),\n",
-                        cat, cat
-                    )
-                    .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{}(_) => TokenKind::IntegerLit({:?}.to_string()),\n", cat, cat);
                 }
             },
             TokenKind::RationalLit(cat) => {
                 if seen.insert(cat.clone()) {
-                    write!(
+                    w!(
                         buf,
                         "Token::{}(_) => TokenKind::RationalLit({:?}.to_string()),\n",
-                        cat, cat
-                    )
-                    .expect("codegen: write into in-memory String is infallible");
+                        cat,
+                        cat
+                    );
                 }
             },
             TokenKind::FixedPointLit(cat) => {
                 if seen.insert(cat.clone()) {
-                    write!(
+                    w!(
                         buf,
                         "Token::{}(_) => TokenKind::FixedPointLit({:?}.to_string()),\n",
-                        cat, cat
-                    )
-                    .expect("codegen: write into in-memory String is infallible");
+                        cat,
+                        cat
+                    );
                 }
             },
-            TokenKind::LexError(_) => unreachable!(
-                "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
-            ),
+            TokenKind::LexError(_) => lex_error_is_not_a_codegen_time_token("token_to_kind"),
         }
     }
     buf.push_str("}\n}\n");
@@ -805,8 +968,7 @@ fn write_token_to_kind(
             TokenKind::Fixed(text) => {
                 let variant_name = terminal_to_variant_name(text);
                 if seen2.insert(variant_name.clone()) {
-                    write!(buf, "Token::{} => {:?},\n", variant_name, text)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{} => {:?},\n", variant_name, text);
                 }
             },
             TokenKind::Dollar => {
@@ -831,23 +993,20 @@ fn write_token_to_kind(
                             .and_then(|s| s.payload_type.as_deref())
                             .unwrap_or("str");
                         if pt == "str" {
-                            write!(buf, "Token::{}(s) => s,\n", name)
-                                .expect("codegen: write into in-memory String is infallible");
+                            w!(buf, "Token::{}(s) => s,\n", name);
                         } else {
-                            write!(
+                            w!(
                                 buf,
                                 "Token::{}(_) => &source[range.start.byte_offset..range.end.byte_offset],\n",
                                 name
-                            )
-                            .expect("codegen: write into in-memory String is infallible");
+                            );
                         }
                     } else {
-                        write!(
+                        w!(
                             buf,
                             "Token::{} => &source[range.start.byte_offset..range.end.byte_offset],\n",
                             name
-                        )
-                        .expect("codegen: write into in-memory String is infallible");
+                        );
                     }
                 }
             },
@@ -855,13 +1014,10 @@ fn write_token_to_kind(
             | TokenKind::RationalLit(cat)
             | TokenKind::FixedPointLit(cat) => {
                 if seen2.insert(cat.clone()) {
-                    write!(buf, "Token::{}(s) => s,\n", cat)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{}(s) => s,\n", cat);
                 }
             },
-            TokenKind::LexError(_) => unreachable!(
-                "LexError TokenKind in codegen-time token_kinds list — runtime-only variant"
-            ),
+            TokenKind::LexError(_) => lex_error_is_not_a_codegen_time_token("token_text"),
         }
     }
     buf.push_str("}\n}\n");
@@ -884,7 +1040,7 @@ fn write_class_table(buf: &mut String, partition: &AlphabetPartition) {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", class).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}", class);
     }
     buf.push_str("];");
 }
@@ -917,13 +1073,12 @@ fn write_is_accepting_check(buf: &mut String, dfa: &Dfa) {
     }
 
     // Emit the static array
-    write!(buf, "static IS_ACCEPTING: [u64; {}] = [", num_words)
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "static IS_ACCEPTING: [u64; {}] = [", num_words);
     for (i, word) in words.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "0x{:016x}", word).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "0x{:016x}", word);
     }
     buf.push_str("];");
 
@@ -940,8 +1095,7 @@ fn write_accept_arms(buf: &mut String, dfa: &Dfa, custom_tokens: &[CustomTokenSp
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(ref kind) = state.accept {
-            write!(buf, "{}u32 => Some(", state_idx)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, "{}u32 => Some(", state_idx);
             write_token_constructor(buf, kind, custom_tokens);
             buf.push_str("),");
         }
@@ -958,8 +1112,7 @@ fn write_accept_weight_arms(buf: &mut String, dfa: &Dfa) {
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if state.accept.is_some() {
-            write!(buf, "{}u32 => {:.1}_f64,", state_idx, state.weight.value())
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, "{}u32 => {:.1}_f64,", state_idx, state.weight.value());
         }
     }
     buf.push_str("_ => f64::INFINITY }");
@@ -973,12 +1126,10 @@ fn write_transition_arms(buf: &mut String, dfa: &Dfa) {
         if !has_transitions {
             continue;
         }
-        write!(buf, "{}u32 => match class {{", state_idx)
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}u32 => match class {{", state_idx);
         for (class_id, &target) in state.transitions.iter().enumerate() {
             if target != super::DEAD_STATE {
-                write!(buf, "{}u8 => {}u32,", class_id, target)
-                    .expect("codegen: write into in-memory String is infallible");
+                w!(buf, "{}u8 => {}u32,", class_id, target);
             }
         }
         buf.push_str("_ => u32::MAX },");
@@ -1034,8 +1185,7 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[
         },
         TokenKind::Fixed(text) => {
             let variant_name = terminal_to_variant_name(text);
-            write!(buf, "Token::{}", variant_name)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, "Token::{}", variant_name);
         },
         TokenKind::Dollar => buf.push_str("Token::Dollar(&text[1..])"),
         TokenKind::DoubleDollar => {
@@ -1048,25 +1198,22 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[
                 // directly as payload regardless of `constructor_code`.
                 let is_str_payload = spec.payload_type.as_deref() == Some("str");
                 if is_str_payload {
-                    write!(buf, "Token::{}(text)", name)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{}(text)", name);
                 } else if let Some(ref code) = spec.constructor_code {
-                    write!(buf, "Token::{}({{ let text = text; {} }})", name, code)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{}({{ let text = text; {} }})", name, code);
                 } else if let Some(ref pt) = spec.payload_type {
-                    write!(
+                    w!(
                         buf,
                         "Token::{}(text.parse::<{}>().expect(\"invalid {} literal\"))",
-                        name, pt, name
-                    )
-                    .expect("codegen: write into in-memory String is infallible");
+                        name,
+                        pt,
+                        name
+                    );
                 } else {
-                    write!(buf, "Token::{}", name)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{}", name);
                 }
             } else {
-                write!(buf, "Token::{}", name)
-                    .expect("codegen: write into in-memory String is infallible");
+                w!(buf, "Token::{}", name);
             }
         },
         // Category-bound literal variants modeled identically to Custom.
@@ -1076,26 +1223,20 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[
             if let Some(spec) = custom_tokens.iter().find(|s| s.name == *cat) {
                 let is_str_payload = spec.payload_type.as_deref() == Some("str");
                 if is_str_payload {
-                    write!(buf, "Token::{}(text)", cat)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{}(text)", cat);
                 } else if let Some(ref code) = spec.constructor_code {
-                    write!(buf, "Token::{}({{ let text = text; {} }})", cat, code)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{}({{ let text = text; {} }})", cat, code);
                 } else {
-                    write!(buf, "Token::{}(text)", cat)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "Token::{}(text)", cat);
                 }
             } else {
-                write!(buf, "Token::{}(text)", cat)
-                    .expect("codegen: write into in-memory String is infallible");
+                w!(buf, "Token::{}(text)", cat);
             }
         },
         TokenKind::BooleanLit => {
             buf.push_str("Token::Boolean(text == \"true\")");
         },
-        TokenKind::LexError(_) => unreachable!(
-            "LexError TokenKind in codegen-time write_token_constructor — runtime-only variant"
-        ),
+        TokenKind::LexError(_) => lex_error_is_not_a_codegen_time_token("write_token_constructor"),
     }
 }
 
@@ -1108,8 +1249,7 @@ fn write_direct_coded_lexer(
 ) {
     write_class_table(buf, partition);
 
-    write!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", partition.num_classes)
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", partition.num_classes);
 
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
@@ -1171,8 +1311,7 @@ fn write_hybrid_lexer(
     let num_classes = partition.num_classes;
 
     write_class_table(buf, partition);
-    write!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", num_classes)
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", num_classes);
 
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
@@ -1239,16 +1378,13 @@ fn write_hybrid_lexer(
         let has_transitions = state.transitions.iter().any(|&t| t != DEAD_STATE);
         if !has_transitions {
             // Hot state with no transitions → always dead
-            write!(buf, "{}u32 => u32::MAX,", state_idx)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, "{}u32 => u32::MAX,", state_idx);
             continue;
         }
-        write!(buf, "{}u32 => match class {{", state_idx)
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}u32 => match class {{", state_idx);
         for (class_id, &target) in state.transitions.iter().enumerate() {
             if target != DEAD_STATE {
-                write!(buf, "{}u8 => {}u32,", class_id, target)
-                    .expect("codegen: write into in-memory String is infallible");
+                w!(buf, "{}u8 => {}u32,", class_id, target);
             }
         }
         buf.push_str("_ => u32::MAX },");
@@ -1425,28 +1561,24 @@ fn write_accept_alternatives(buf: &mut String, dfa: &Dfa, custom_tokens: &[Custo
                 // Unambiguous: single alternative
                 let primary_variant =
                     token_kind_to_constructor(primary_kind, "text", custom_tokens);
-                write!(
+                w!(
                     buf,
                     "{}u32 => vec![({}, {:.1}_f64)],",
                     state_idx,
                     primary_variant,
                     state.weight.value()
-                )
-                .expect("codegen: write into in-memory String is infallible");
+                );
             } else {
                 // Multi-accept: primary + alternatives
-                write!(buf, "{}u32 => vec![", state_idx)
-                    .expect("codegen: write into in-memory String is infallible");
+                w!(buf, "{}u32 => vec![", state_idx);
                 // Primary first (best weight)
                 let primary_variant =
                     token_kind_to_constructor(primary_kind, "text", custom_tokens);
-                write!(buf, "({}, {:.1}_f64),", primary_variant, state.weight.value())
-                    .expect("codegen: write into in-memory String is infallible");
+                w!(buf, "({}, {:.1}_f64),", primary_variant, state.weight.value());
                 // Alternatives
                 for (alt_kind, alt_weight) in &state.alt_accepts {
                     let alt_variant = token_kind_to_constructor(alt_kind, "text", custom_tokens);
-                    write!(buf, "({}, {:.1}_f64),", alt_variant, alt_weight.value())
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "({}, {:.1}_f64),", alt_variant, alt_weight.value());
                 }
                 buf.push_str("],");
             }
@@ -1528,9 +1660,9 @@ fn token_kind_to_constructor(
             }
         },
         TokenKind::BooleanLit => format!("Token::Boolean({} == \"true\")", text_var),
-        TokenKind::LexError(_) => unreachable!(
-            "LexError TokenKind in codegen-time token-constructor builder — runtime-only variant"
-        ),
+        TokenKind::LexError(_) => {
+            lex_error_is_not_a_codegen_time_token("token_kind_to_constructor")
+        },
     }
 }
 
@@ -2287,46 +2419,42 @@ pub fn build_bitmap_tables(dfa: &Dfa) -> Result<BitmapTables, String> {
 /// Write the comb-compressed transition tables as static arrays.
 fn write_comb_tables(buf: &mut String, comb: &CombTable) {
     // BASE array
-    write!(buf, "static BASE: [u32; {}] = [", comb.base.len())
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "static BASE: [u32; {}] = [", comb.base.len());
     for (i, &b) in comb.base.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", b).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}", b);
     }
     buf.push_str("];");
 
     // DEFAULT array
-    write!(buf, "static DEFAULT: [u32; {}] = [", comb.default.len())
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "static DEFAULT: [u32; {}] = [", comb.default.len());
     for (i, &d) in comb.default.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", d).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}", d);
     }
     buf.push_str("];");
 
     // NEXT array
-    write!(buf, "static NEXT: [u32; {}] = [", comb.next.len())
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "static NEXT: [u32; {}] = [", comb.next.len());
     for (i, &n) in comb.next.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", n).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}", n);
     }
     buf.push_str("];");
 
     // CHECK array
-    write!(buf, "static CHECK: [u32; {}] = [", comb.check.len())
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "static CHECK: [u32; {}] = [", comb.check.len());
     for (i, &c) in comb.check.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", c).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}", c);
     }
     buf.push_str("];");
 }
@@ -2334,35 +2462,32 @@ fn write_comb_tables(buf: &mut String, comb: &CombTable) {
 /// Write the bitmap-compressed transition tables as static arrays.
 fn write_bitmap_tables(buf: &mut String, tables: &BitmapTables) {
     // BITMAPS array
-    write!(buf, "static BITMAPS: [u32; {}] = [", tables.bitmaps.len())
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "static BITMAPS: [u32; {}] = [", tables.bitmaps.len());
     for (i, &b) in tables.bitmaps.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", b).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}", b);
     }
     buf.push_str("];");
 
     // OFFSETS array
-    write!(buf, "static OFFSETS: [u16; {}] = [", tables.offsets.len())
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "static OFFSETS: [u16; {}] = [", tables.offsets.len());
     for (i, &o) in tables.offsets.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", o).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}", o);
     }
     buf.push_str("];");
 
     // TARGETS array
-    write!(buf, "static TARGETS: [u32; {}] = [", tables.targets.len())
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "static TARGETS: [u32; {}] = [", tables.targets.len());
     for (i, &t) in tables.targets.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", t).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}", t);
     }
     buf.push_str("];");
 }
@@ -2408,8 +2533,7 @@ fn write_comb_driven_lexer(
     write_class_table(buf, partition);
     write_comb_tables(buf, comb);
 
-    write!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", partition.num_classes)
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", partition.num_classes);
 
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
@@ -2422,14 +2546,13 @@ fn write_comb_driven_lexer(
     }
 
     // dfa_next function using comb lookup
-    write!(
+    w!(
         buf,
         "#[inline(always)] fn dfa_next(state: u32, class: u8) -> u32 {{ \
          let idx = BASE[state as usize] as usize + class as usize; \
          if CHECK[idx] == state {{ NEXT[idx] }} else {{ DEFAULT[state as usize] }} \
          }}"
-    )
-    .expect("codegen: write into in-memory String is infallible");
+    );
 
     // accept_token() function
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
@@ -2471,8 +2594,7 @@ fn write_bitmap_driven_lexer(
     write_class_table(buf, partition);
     write_bitmap_tables(buf, tables);
 
-    write!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", partition.num_classes)
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "#[allow(dead_code)] const NUM_CLASSES: usize = {};", partition.num_classes);
 
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
@@ -2577,8 +2699,7 @@ fn write_chain_tables(buf: &mut String, chains: &[MultiByteChain]) {
     }
 
     for (start_state, state_chains) in &chains_by_start {
-        write!(buf, "{}u32 => {{", start_state)
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}u32 => {{", start_state);
 
         // Sort chains longest-first for greedy matching (longest match wins)
         let mut sorted_chains: Vec<&&MultiByteChain> = state_chains.iter().collect();
@@ -2586,8 +2707,7 @@ fn write_chain_tables(buf: &mut String, chains: &[MultiByteChain]) {
 
         for chain in sorted_chains {
             let len = chain.chain_len();
-            write!(buf, "if pos + {} <= bytes.len() && ", len)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, "if pos + {} <= bytes.len() && ", len);
 
             // Emit byte comparison. For short chains (3-4 bytes), use individual
             // comparisons to help the compiler optimize. For longer chains, use
@@ -2597,24 +2717,20 @@ fn write_chain_tables(buf: &mut String, chains: &[MultiByteChain]) {
                     if i > 0 {
                         buf.push_str(" && ");
                     }
-                    write!(buf, "bytes[pos + {}] == {}u8", i, byte)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "bytes[pos + {}] == {}u8", i, byte);
                 }
             } else {
-                write!(buf, "bytes[pos..pos + {}] == [", len)
-                    .expect("codegen: write into in-memory String is infallible");
+                w!(buf, "bytes[pos..pos + {}] == [", len);
                 for (i, &byte) in chain.bytes.iter().enumerate() {
                     if i > 0 {
                         buf.push(',');
                     }
-                    write!(buf, "{}u8", byte)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "{}u8", byte);
                 }
                 buf.push(']');
             }
 
-            write!(buf, " {{ return Some(({}u32, {})); }}", chain.end_state, len)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, " {{ return Some(({}u32, {})); }}", chain.end_state, len);
         }
 
         buf.push_str("None },");
@@ -2795,14 +2911,11 @@ pub fn write_token_variant_id(
         // Integer variant has two payload fields: (i64, IntSuffix).
         let is_two_field = matches!(family, super::TokenFamily::Integer);
         if is_two_field {
-            write!(buf, "Token::{}(_, _) => {},", name, id)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, "Token::{}(_, _) => {},", name, id);
         } else if has_payload {
-            write!(buf, "Token::{}(_) => {},", name, id)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, "Token::{}(_) => {},", name, id);
         } else {
-            write!(buf, "Token::{} => {},", name, id)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, "Token::{} => {},", name, id);
         }
     }
 
@@ -2848,13 +2961,12 @@ pub fn write_mph_keyword_tables(buf: &mut String, terminals: &[super::TerminalPa
 ///
 /// Emits `static CHAR_CLASS_{SUFFIX}: [u8; 256] = [...]` for the given partition.
 fn write_class_table_suffixed(buf: &mut String, partition: &AlphabetPartition, suffix: &str) {
-    write!(buf, "static CHAR_CLASS_{}: [u8; 256] = [", suffix)
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "static CHAR_CLASS_{}: [u8; 256] = [", suffix);
     for (i, &class) in partition.byte_to_class.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "{}", class).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}", class);
     }
     buf.push_str("];");
 }
@@ -2875,45 +2987,40 @@ fn write_is_accepting_suffixed(buf: &mut String, dfa: &Dfa, suffix: &str) {
         }
     }
 
-    write!(buf, "static IS_ACCEPTING_{}: [u64; {}] = [", suffix, num_words)
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "static IS_ACCEPTING_{}: [u64; {}] = [", suffix, num_words);
     for (i, &w) in words.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        write!(buf, "0x{:016x}", w).expect("codegen: write into in-memory String is infallible");
+        w!(buf, "0x{:016x}", w);
     }
     buf.push_str("];");
 
-    write!(
+    w!(
         buf,
         "#[inline(always)] fn is_accepting_state_{}(state: u32) -> bool {{ \
          (IS_ACCEPTING_{}[(state >> 6) as usize] >> (state & 63)) & 1 != 0 \
          }}",
         suffix.to_lowercase(),
         suffix
-    )
-    .expect("codegen: write into in-memory String is infallible");
+    );
 }
 
 /// Write a suffixed `dfa_next_{suffix}` transition function.
 ///
 /// Uses match-arm dispatch (direct-coded) for the given DFA's transitions.
 fn write_dfa_next_suffixed(buf: &mut String, dfa: &Dfa, suffix: &str) {
-    write!(buf, "fn dfa_next_{}(state: u32, class: u8) -> u32 {{", suffix.to_lowercase())
-        .expect("codegen: write into in-memory String is infallible");
+    w!(buf, "fn dfa_next_{}(state: u32, class: u8) -> u32 {{", suffix.to_lowercase());
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         let has_transitions = state.transitions.iter().any(|&t| t != DEAD_STATE);
         if !has_transitions {
             continue;
         }
-        write!(buf, "{}u32 => match class {{", state_idx)
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}u32 => match class {{", state_idx);
         for (class_id, &target) in state.transitions.iter().enumerate() {
             if target != DEAD_STATE {
-                write!(buf, "{}u8 => {}u32,", class_id, target)
-                    .expect("codegen: write into in-memory String is infallible");
+                w!(buf, "{}u8 => {}u32,", class_id, target);
             }
         }
         buf.push_str("_ => u32::MAX },");
@@ -2932,20 +3039,18 @@ fn write_accept_token_suffixed(
     custom_tokens: &[CustomTokenSpec],
     suffix: &str,
 ) {
-    write!(
+    w!(
         buf,
         "fn accept_token_{}<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {{",
         suffix.to_lowercase()
-    )
-    .expect("codegen: write into in-memory String is infallible");
+    );
     // A mode whose accept states are all unit variants (e.g. a fixed closer +
     // a payload-free GuestChunk) never references `text`; keep it live.
     buf.push_str("let _ = text;");
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(ref kind) = state.accept {
-            write!(buf, "{}u32 => Some(", state_idx)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, "{}u32 => Some(", state_idx);
             write_token_constructor(buf, kind, custom_tokens);
             buf.push_str("),");
         }
@@ -2971,12 +3076,11 @@ fn write_push_pop_tables(
     suffix: &str,
 ) {
     // push_target_{suffix}(state) -> u8
-    write!(
+    w!(
         buf,
         "fn push_target_{}(state: u32) -> u8 {{ match state {{",
         suffix.to_lowercase()
-    )
-    .expect("codegen: write into in-memory String is infallible");
+    );
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(TokenKind::Custom(ref name)) = state.accept {
             if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
@@ -2990,8 +3094,7 @@ fn write_push_pop_tables(
                             .map(|m| m.mode_id)
                             .unwrap_or(0)
                     };
-                    write!(buf, "{}u32 => {}u8,", state_idx, target_id)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "{}u32 => {}u8,", state_idx, target_id);
                 }
             }
         }
@@ -2999,18 +3102,16 @@ fn write_push_pop_tables(
     buf.push_str("_ => u8::MAX } }");
 
     // should_pop_{suffix}(state) -> bool
-    write!(
+    w!(
         buf,
         "fn should_pop_{}(state: u32) -> bool {{ match state {{",
         suffix.to_lowercase()
-    )
-    .expect("codegen: write into in-memory String is infallible");
+    );
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(TokenKind::Custom(ref name)) = state.accept {
             if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
                 if spec.is_pop {
-                    write!(buf, "{}u32 => true,", state_idx)
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "{}u32 => true,", state_idx);
                 }
             }
         }
@@ -3028,12 +3129,11 @@ fn write_accept_alternatives_suffixed(
     custom_tokens: &[CustomTokenSpec],
     suffix: &str,
 ) {
-    write!(
+    w!(
         buf,
         "fn accept_alternatives_{}<'a>(state: u32, text: &'a str) -> Vec<(Token<'a>, f64)> {{",
         suffix.to_lowercase()
-    )
-    .expect("codegen: write into in-memory String is infallible");
+    );
     // Some modes' accept states are unit variants that never reference `text`
     // (e.g. a fixed closer with no payload); keep the parameter live.
     buf.push_str("let _ = text;");
@@ -3043,25 +3143,21 @@ fn write_accept_alternatives_suffixed(
             if state.alt_accepts.is_empty() {
                 let primary_variant =
                     token_kind_to_constructor(primary_kind, "text", custom_tokens);
-                write!(
+                w!(
                     buf,
                     "{}u32 => vec![({}, {:.1}_f64)],",
                     state_idx,
                     primary_variant,
                     state.weight.value()
-                )
-                .expect("codegen: write into in-memory String is infallible");
+                );
             } else {
-                write!(buf, "{}u32 => vec![", state_idx)
-                    .expect("codegen: write into in-memory String is infallible");
+                w!(buf, "{}u32 => vec![", state_idx);
                 let primary_variant =
                     token_kind_to_constructor(primary_kind, "text", custom_tokens);
-                write!(buf, "({}, {:.1}_f64),", primary_variant, state.weight.value())
-                    .expect("codegen: write into in-memory String is infallible");
+                w!(buf, "({}, {:.1}_f64),", primary_variant, state.weight.value());
                 for (alt_kind, alt_weight) in &state.alt_accepts {
                     let alt_variant = token_kind_to_constructor(alt_kind, "text", custom_tokens);
-                    write!(buf, "({}, {:.1}_f64),", alt_variant, alt_weight.value())
-                        .expect("codegen: write into in-memory String is infallible");
+                    w!(buf, "({}, {:.1}_f64),", alt_variant, alt_weight.value());
                 }
                 buf.push_str("],");
             }
@@ -3079,8 +3175,12 @@ fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::Mod
     buf.push_str("#[allow(dead_code)] fn m_char_class(mode: u8, b: u8) -> u8 { match mode {");
     buf.push_str("0u8 => CHAR_CLASS_DEFAULT[b as usize],");
     for mode in mode_results {
-        write!(buf, "{}u8 => CHAR_CLASS_{}[b as usize],", mode.mode_id, mode.name.to_uppercase())
-            .expect("codegen: write into in-memory String is infallible");
+        w!(
+            buf,
+            "{}u8 => CHAR_CLASS_{}[b as usize],",
+            mode.mode_id,
+            mode.name.to_uppercase()
+        );
     }
     buf.push_str("_ => 0u8 } }");
 
@@ -3089,8 +3189,12 @@ fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::Mod
     );
     buf.push_str("0u8 => dfa_next_default(state, class),");
     for mode in mode_results {
-        write!(buf, "{}u8 => dfa_next_{}(state, class),", mode.mode_id, mode.name.to_lowercase())
-            .expect("codegen: write into in-memory String is infallible");
+        w!(
+            buf,
+            "{}u8 => dfa_next_{}(state, class),",
+            mode.mode_id,
+            mode.name.to_lowercase()
+        );
     }
     buf.push_str("_ => u32::MAX } }");
 
@@ -3099,13 +3203,12 @@ fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::Mod
     );
     buf.push_str("0u8 => is_accepting_state_default(state),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => is_accepting_state_{}(state),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => false } }");
 
@@ -3115,29 +3218,28 @@ fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::Mod
     );
     buf.push_str("0u8 => accept_alternatives_default(state, text),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => accept_alternatives_{}(state, text),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => Vec::new() } }");
 
     buf.push_str("#[allow(dead_code)] fn m_push_target(mode: u8, state: u32) -> u8 { match mode {");
     buf.push_str("0u8 => push_target_default(state),");
     for mode in mode_results {
-        write!(buf, "{}u8 => push_target_{}(state),", mode.mode_id, mode.name.to_lowercase())
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}u8 => push_target_{}(state),", mode.mode_id, mode.name.to_lowercase());
     }
     buf.push_str("_ => u8::MAX } }");
 
-    buf.push_str("#[allow(dead_code)] fn m_should_pop(mode: u8, state: u32) -> bool { match mode {");
+    buf.push_str(
+        "#[allow(dead_code)] fn m_should_pop(mode: u8, state: u32) -> bool { match mode {",
+    );
     buf.push_str("0u8 => should_pop_default(state),");
     for mode in mode_results {
-        write!(buf, "{}u8 => should_pop_{}(state),", mode.mode_id, mode.name.to_lowercase())
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}u8 => should_pop_{}(state),", mode.mode_id, mode.name.to_lowercase());
     }
     buf.push_str("_ => false } }");
 
@@ -3149,8 +3251,7 @@ fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::Mod
     // constant-false behavior is preserved byte-for-byte.
     buf.push_str("#[allow(dead_code)] fn m_is_raw(mode: u8) -> bool { match mode {");
     for mode in mode_results {
-        write!(buf, "{}u8 => {},", mode.mode_id, mode.raw)
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}u8 => {},", mode.mode_id, mode.raw);
     }
     buf.push_str("_ => false } }");
 
@@ -3166,8 +3267,7 @@ fn write_mode_dispatch_shims(buf: &mut String, mode_results: &[crate::lexer::Mod
     buf.push_str("#[allow(dead_code)] fn m_stream_id(mode: u8, state: u32) -> u8 { match mode {");
     buf.push_str("0u8 => stream_id_default(state),");
     for mode in mode_results {
-        write!(buf, "{}u8 => stream_id_{}(state),", mode.mode_id, mode.name.to_lowercase())
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}u8 => stream_id_{}(state),", mode.mode_id, mode.name.to_lowercase());
     }
     buf.push_str("_ => 0u8 } }");
 }
@@ -3321,8 +3421,7 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
     buf.push_str("let is_acc_init = match mode {");
     buf.push_str("0u8 => is_accepting_state_default(0),");
     for mode in mode_results {
-        write!(buf, "{}u8 => is_accepting_state_{}(0),", mode.mode_id, mode.name.to_lowercase())
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}u8 => is_accepting_state_{}(0),", mode.mode_id, mode.name.to_lowercase());
     }
     buf.push_str("_ => false };");
     buf.push_str("if is_acc_init { last_accept = Some((0, pos, line, col)); }");
@@ -3337,14 +3436,13 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
         "0u8 => { let class = CHAR_CLASS_DEFAULT[b as usize]; dfa_next_default(state, class) }",
     );
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => {{ let class = CHAR_CLASS_{}[b as usize]; dfa_next_{}(state, class) }}",
             mode.mode_id,
             mode.name.to_uppercase(),
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => u32::MAX };");
 
@@ -3359,13 +3457,12 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
     buf.push_str("let is_acc = match mode {");
     buf.push_str("0u8 => is_accepting_state_default(state),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => is_accepting_state_{}(state),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => false };");
     buf.push_str("if is_acc { last_accept = Some((state, pos, line, col)); }");
@@ -3382,13 +3479,12 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
     buf.push_str("let token_opt = match mode {");
     buf.push_str("0u8 => accept_token_default(accept_state, text),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => accept_token_{}(accept_state, text),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => None };");
 
@@ -3398,26 +3494,24 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
     buf.push_str("let push_target = match mode {");
     buf.push_str("0u8 => push_target_default(accept_state),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => push_target_{}(accept_state),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => u8::MAX };");
 
     buf.push_str("let do_pop = match mode {");
     buf.push_str("0u8 => should_pop_default(accept_state),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => should_pop_{}(accept_state),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => false };");
 
@@ -3430,8 +3524,12 @@ fn write_modal_lex_functions(buf: &mut String, mode_results: &[crate::lexer::Mod
     buf.push_str("let stream_id = match mode {");
     buf.push_str("0u8 => stream_id_default(accept_state),");
     for mode in mode_results {
-        write!(buf, "{}u8 => stream_id_{}(accept_state),", mode.mode_id, mode.name.to_lowercase())
-            .expect("codegen: write into in-memory String is infallible");
+        w!(
+            buf,
+            "{}u8 => stream_id_{}(accept_state),",
+            mode.mode_id,
+            mode.name.to_lowercase()
+        );
     }
     buf.push_str("_ => 0u8 };");
 
@@ -3494,20 +3592,18 @@ fn write_stream_tables(
     stream_names: &[String],
     suffix: &str,
 ) {
-    write!(
+    w!(
         buf,
         "#[allow(dead_code)] fn stream_id_{}(state: u32) -> u8 {{ match state {{",
         suffix.to_lowercase()
-    )
-    .expect("codegen: write into in-memory String is infallible");
+    );
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(TokenKind::Custom(ref name)) = state.accept {
             if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
                 if let Some(ref stream) = spec.stream {
                     if stream != "main" {
                         if let Some(idx) = stream_names.iter().position(|s| s == stream) {
-                            write!(buf, "{}u32 => {}u8,", state_idx, idx + 1)
-                                .expect("codegen: write into in-memory String is infallible");
+                            w!(buf, "{}u32 => {}u8,", state_idx, idx + 1);
                         }
                     }
                 }
@@ -3567,8 +3663,7 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
     buf.push_str("let is_acc_init = match mode {");
     buf.push_str("0u8 => is_accepting_state_default(0),");
     for mode in mode_results {
-        write!(buf, "{}u8 => is_accepting_state_{}(0),", mode.mode_id, mode.name.to_lowercase())
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "{}u8 => is_accepting_state_{}(0),", mode.mode_id, mode.name.to_lowercase());
     }
     buf.push_str("_ => false };");
     buf.push_str("if is_acc_init { last_accept = Some((0, pos, line, col)); }");
@@ -3581,14 +3676,13 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
         "0u8 => { let class = CHAR_CLASS_DEFAULT[b as usize]; dfa_next_default(state, class) }",
     );
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => {{ let class = CHAR_CLASS_{}[b as usize]; dfa_next_{}(state, class) }}",
             mode.mode_id,
             mode.name.to_uppercase(),
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => u32::MAX };");
     buf.push_str("if next_state == u32::MAX { break; }");
@@ -3600,13 +3694,12 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
     buf.push_str("let is_acc = match mode {");
     buf.push_str("0u8 => is_accepting_state_default(state),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => is_accepting_state_{}(state),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => false };");
     buf.push_str("if is_acc { last_accept = Some((state, pos, line, col)); }");
@@ -3622,13 +3715,12 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
     buf.push_str("let token_opt = match mode {");
     buf.push_str("0u8 => accept_token_default(accept_state, text),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => accept_token_{}(accept_state, text),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => None };");
 
@@ -3638,26 +3730,24 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
     buf.push_str("let push_target = match mode {");
     buf.push_str("0u8 => push_target_default(accept_state),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => push_target_{}(accept_state),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => u8::MAX };");
 
     buf.push_str("let do_pop = match mode {");
     buf.push_str("0u8 => should_pop_default(accept_state),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => should_pop_{}(accept_state),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => false };");
 
@@ -3665,13 +3755,12 @@ fn write_modal_lex_with_streams(buf: &mut String, mode_results: &[crate::lexer::
     buf.push_str("let stream_id = match mode {");
     buf.push_str("0u8 => stream_id_default(accept_state),");
     for mode in mode_results {
-        write!(
+        w!(
             buf,
             "{}u8 => stream_id_{}(accept_state),",
             mode.mode_id,
             mode.name.to_lowercase()
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
     }
     buf.push_str("_ => 0u8 };");
 
@@ -3777,8 +3866,7 @@ pub fn generate_modal_lexer_string(
     // 3. Mode constants
     buf.push_str("const MODE_DEFAULT: u8 = 0;");
     for mode in mode_results {
-        write!(buf, "const MODE_{}: u8 = {};", mode.name.to_uppercase(), mode.mode_id)
-            .expect("codegen: write into in-memory String is infallible");
+        w!(buf, "const MODE_{}: u8 = {};", mode.name.to_uppercase(), mode.mode_id);
     }
 
     // 4. Default mode DFA tables
@@ -3824,8 +3912,7 @@ pub fn generate_modal_lexer_string(
     if has_streams {
         // Channel ID constants (0 = main/DEFAULT, 1+ = named channels)
         for (i, name) in stream_names.iter().enumerate() {
-            write!(buf, "#[allow(dead_code)] const STREAM_{}: u8 = {};", name.to_uppercase(), i + 1)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, "#[allow(dead_code)] const STREAM_{}: u8 = {};", name.to_uppercase(), i + 1);
         }
     }
 
@@ -3838,15 +3925,13 @@ pub fn generate_modal_lexer_string(
 
     if has_streams {
         // Channel name array for the runtime `LexResult.streams` keys.
-        write!(
+        w!(
             buf,
             "#[allow(dead_code)] static STREAM_NAMES: [&str; {}] = [\"main\"",
             stream_names.len() + 1
-        )
-        .expect("codegen: write into in-memory String is infallible");
+        );
         for name in &stream_names {
-            write!(buf, ",\"{}\"", name)
-                .expect("codegen: write into in-memory String is infallible");
+            w!(buf, ",\"{}\"", name);
         }
         buf.push_str("];");
     }
@@ -5212,6 +5297,181 @@ mod tests {
             output.contains("const MODE_HEX: u8 = 1;"),
             "MODE_HEX should be 1, got:\n{}",
             &output[..output.len().min(500)]
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // #141 Stage 5 — `w!`, and the refusal that names the emitter
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// `w!` must emit the SAME BYTES as the `write!(…).expect(…)` it replaced.
+    ///
+    /// This is the unit-level half of the acceptance criterion; the other half is
+    /// the 0-mover regeneration manifest across all 54 languages. The cell exists
+    /// because the manifest cannot say WHY two buffers agree, and because a
+    /// regression in `w!` would move 119 call sites at once.
+    ///
+    /// RED procedure: change the macro body to `writeln!` (or drop the trailing
+    /// argument). `w_emits_the_same_bytes_as_write` then FAILS while
+    /// `push_str_is_unaffected_by_w` — the CONTROL — still passes, because it
+    /// routes no bytes through `w!`.
+    #[test]
+    fn w_emits_the_same_bytes_as_write() {
+        // Shapes drawn from the real call sites: positional args, `{:?}`, a
+        // width-free integer, and a literal brace pair in the emitted Rust.
+        let (state_idx, cat, weight) = (7u32, "Proc", 1.5f64);
+
+        let mut via_macro = String::new();
+        w!(via_macro, "{}u32 => Some(", state_idx);
+        w!(via_macro, "Token::{}({:?}.to_string()),", cat, cat);
+        w!(via_macro, "{{ w = {} }}\n", weight);
+
+        let mut via_write = String::new();
+        write!(via_write, "{}u32 => Some(", state_idx)
+            .expect("codegen: write into in-memory String is infallible");
+        write!(via_write, "Token::{}({:?}.to_string()),", cat, cat)
+            .expect("codegen: write into in-memory String is infallible");
+        write!(via_write, "{{ w = {} }}\n", weight)
+            .expect("codegen: write into in-memory String is infallible");
+
+        assert_eq!(via_macro, via_write, "`w!` must be a pure renaming of `write!(…).expect(…)`");
+        // Pinned to tokens, so the cell cannot pass on two empty buffers.
+        assert!(via_macro.contains("7u32 => Some("), "buffer lost the state arm: {via_macro}");
+        assert!(via_macro.contains("Token::Proc(\"Proc\".to_string()),"), "{via_macro}");
+        assert!(via_macro.contains("{ w = 1.5 }"), "brace escaping changed: {via_macro}");
+    }
+
+    /// CONTROL — must NOT discriminate. `push_str` is the other half of this
+    /// module's emission and does not go through `w!`, so a mutation to `w!` must
+    /// leave this cell alone. If a `w!` mutation broke this too, it would be
+    /// discriminating on something other than the macro.
+    #[test]
+    fn push_str_is_unaffected_by_w() {
+        let mut buf = String::new();
+        buf.push_str("match state {");
+        buf.push_str("_ => None }");
+        assert_eq!(buf, "match state {_ => None }");
+    }
+
+    /// The emitted-lexer refusal names the language, the emitter, the buffer size
+    /// and — the part `.expect` discarded — the `LexError` itself.
+    ///
+    /// ⚠ No panic is provoked. A genuine `proc_macro2::LexError` is obtained as an
+    /// ordinary `Err`: an unbalanced delimiter fails `str::parse::<TokenStream>()`.
+    #[test]
+    fn the_emitted_lexer_refusal_carries_the_lex_error() {
+        // A real LexError, not a stand-in: `(` opens a group that never closes.
+        let lex_error = "fn lex(".parse::<TokenStream>().expect_err(
+            "an unbalanced delimiter must fail to lex — if this ever succeeds the cell below \
+             is testing nothing",
+        );
+
+        let msg = emitted_lexer_does_not_lex(123_456, "Rholang", "generate_lexer_code", &lex_error);
+
+        assert!(msg.contains("Rholang"), "the refusal must name the language: {msg}");
+        assert!(msg.contains("generate_lexer_code"), "the refusal must name the emitter: {msg}");
+        assert!(msg.contains("123456"), "the refusal must give the buffer size: {msg}");
+        // The discriminating half: `.expect` dropped this entirely.
+        assert!(
+            msg.contains(&lex_error.to_string()),
+            "the refusal must carry the LexError text: {msg}"
+        );
+        assert!(
+            msg.contains("bug in the emitter, not in the grammar"),
+            "the refusal must say whose bug it is: {msg}"
+        );
+    }
+
+    /// A valid buffer parses and the refusal is not taken — the success-path
+    /// control for [`parse_emitted_lexer`].
+    #[test]
+    fn a_valid_emitted_lexer_parses() {
+        let ts = parse_emitted_lexer("fn lex() -> u8 { 0u8 }", "Calculator", "unit test");
+        let text = ts.to_string();
+        assert!(text.contains("fn lex"), "the parsed stream lost its content: {text}");
+    }
+
+    /// NON-VACUITY for the eight `TokenKind::LexError` arms: the claim they rest on
+    /// is that the variant has **zero constructors** in this crate. Assert it here,
+    /// on this crate's own source, so the claim is checked rather than believed.
+    ///
+    /// `TokenKind` is `#[non_exhaustive]`, so only `prattail` may construct any
+    /// variant with a literal; scanning `prattail/src` is therefore sufficient, and
+    /// that sufficiency is itself asserted below.
+    #[test]
+    fn token_kind_lex_error_has_no_constructor_in_this_crate() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders: Vec<String> = Vec::new();
+        let mut files = 0usize;
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                match path.is_dir() {
+                    true => stack.push(path),
+                    false => {
+                        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                            continue;
+                        }
+                        let Ok(src) = std::fs::read_to_string(&path) else {
+                            continue;
+                        };
+                        files += 1;
+                        for (lineno, line) in src.lines().enumerate() {
+                            let code = line.split("//").next().unwrap_or("");
+                            // A CONSTRUCTOR binds a value into the variant. The
+                            // PATTERN `LexError(_)` and the binding pattern
+                            // `LexError(kind)` in a `match` do not; discriminate on
+                            // `=>` appearing after the construct on the same line,
+                            // which is what a match arm has and an expression
+                            // does not.
+                            // ⚠ Split so this line is not itself a match. The first
+                            // run of this cell reported exactly one offender — the
+                            // scanner's own needle — which is the
+                            // authorship-versus-quotation defect
+                            // `macros/tests/generated_output_locality.rs` documents
+                            // and `dovetail/tests/panic_expectation_gate.rs:89`
+                            // solves the same way.
+                            let needle = concat!("TokenKind::", "LexError", "(");
+                            let Some(at) = code.find(needle) else {
+                                continue;
+                            };
+                            if code[at..].contains("=>") {
+                                continue;
+                            }
+                            offenders.push(format!(
+                                "{}:{}: {}",
+                                path.display(),
+                                lineno + 1,
+                                line.trim()
+                            ));
+                        }
+                    },
+                }
+            }
+        }
+        // Anti-vacuity: the walk must actually have read this crate.
+        assert!(files > 50, "the scan read only {files} files — it is not walking prattail/src");
+        // The sufficiency premise, asserted rather than assumed.
+        let types_rs = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/automata/types.rs"),
+        )
+        .expect("prattail/src/automata/types.rs must exist");
+        assert!(
+            types_rs.contains("#[non_exhaustive]\npub enum TokenKind {"),
+            "TokenKind is no longer #[non_exhaustive]; scanning only this crate is no longer \
+             sufficient to establish that LexError has no constructor"
+        );
+        assert!(
+            offenders.is_empty(),
+            "`TokenKind::LexError` gained {} constructor(s). The eight `unreachable!` arms in \
+             automata/codegen.rs rest on there being none — see \
+             `lex_error_is_not_a_codegen_time_token`. Each arm now needs a real answer:\n{}",
+            offenders.len(),
+            offenders.join("\n")
         );
     }
 }

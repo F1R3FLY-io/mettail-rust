@@ -2317,3 +2317,86 @@ fn two_analyses_differ_in_the_analysis_token_only() {
     assert!(sft.message.contains("Ghost"));
     assert_eq!(symbolic.grammar_name, sft.grammar_name);
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #141 Stage 5 — the LIVE "the generator emitted invalid Rust" refusal
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// `run_pipeline_with_analysis` performs the ONE `parse::<TokenStream>()` on the
+// whole `language!` expansion path, over the concatenated lexer + parser buffer.
+// It used to end in
+//
+//     .expect("PraTTaIL pipeline: generated code failed to parse as TokenStream")
+//
+// — a bare panic inside a cranelift-compiled proc macro (mute: `rustc` aborts
+// with `fatal runtime error: Rust cannot catch foreign exceptions` and prints
+// nothing), inside a function that ALREADY returns `Result<_, String>`, throwing
+// away the `proc_macro2::LexError` and naming neither the language nor the fault.
+// It is now a `map_err(..)?` travelling the seam built in `042476d9`.
+//
+// ⚠ These cells provoke no panic. A genuine `LexError` is obtained as an ordinary
+// `Err` from an unbalanced delimiter, so the message is fed a real error value.
+//
+// RED procedure: drop `{lex_error}` from `emitted_source_does_not_lex`'s format
+// string (what `.expect` did). `the_live_refusal_carries_the_lex_error` FAILS;
+// `the_live_refusal_names_the_language` still passes, because the language name
+// was never the missing half — which is exactly why asserting only that would be
+// the vacuous test.
+
+/// The live refusal names the grammar. 54 languages expand in one `cargo build`.
+#[test]
+fn the_live_refusal_names_the_language() {
+    let lex_error = "fn parse_proc("
+        .parse::<proc_macro2::TokenStream>()
+        .expect_err(
+        "an unbalanced delimiter must fail to lex — if this succeeds the cells here test nothing",
+    );
+
+    let msg = super::state::emitted_source_does_not_lex("Rholang", 987_654, &lex_error);
+
+    assert!(msg.contains("Rholang"), "the refusal must name the language: {msg}");
+    assert!(msg.contains("987654"), "the refusal must give the buffer size: {msg}");
+}
+
+/// The discriminating half: the `LexError` localises the fault inside a buffer
+/// that runs to hundreds of thousands of bytes. `.expect` discarded it.
+#[test]
+fn the_live_refusal_carries_the_lex_error() {
+    let lex_error = "fn parse_proc("
+        .parse::<proc_macro2::TokenStream>()
+        .expect_err(
+        "an unbalanced delimiter must fail to lex — if this succeeds the cells here test nothing",
+    );
+
+    let msg = super::state::emitted_source_does_not_lex("Ambient", 12_345, &lex_error);
+
+    assert!(
+        msg.contains(&lex_error.to_string()),
+        "the refusal must carry the LexError text: {msg}"
+    );
+    assert!(
+        msg.contains("bug in the generator, not in the grammar"),
+        "the refusal must say whose bug it is, so the reader looks at the emitter: {msg}"
+    );
+}
+
+/// CONTROL — must NOT discriminate. Two refusals for different languages agree on
+/// the fault text and differ only in the language token.
+///
+/// ⚠ A whole-string `assert_ne!` would pass here for the wrong reason; the
+/// assertions are pinned per token, in both directions.
+#[test]
+fn two_languages_differ_only_in_the_language_token() {
+    let lex_error = "fn parse_proc("
+        .parse::<proc_macro2::TokenStream>()
+        .expect_err(
+        "an unbalanced delimiter must fail to lex — if this succeeds the cells here test nothing",
+    );
+
+    let rho = super::state::emitted_source_does_not_lex("Rholang", 100, &lex_error);
+    let amb = super::state::emitted_source_does_not_lex("Ambient", 100, &lex_error);
+
+    assert!(rho.contains("Rholang") && !rho.contains("Ambient"));
+    assert!(amb.contains("Ambient") && !amb.contains("Rholang"));
+    assert!(rho.contains(&lex_error.to_string()) && amb.contains(&lex_error.to_string()));
+}
