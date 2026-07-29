@@ -244,14 +244,14 @@ pub use parser::{
 /// [`partiality::not_reduced`](crate::partiality::not_reduced) for `x.eval()`
 /// ⟶ `x.try_eval()`, which produces [`Partiality::NotReduced`] and defers.
 pub mod lift {
+    use crate::partiality::Partiality;
+
     /// Newtype wrapper used to drive method-resolution dispatch.
     /// Always constructed by-value at the call site and consumed by `.lift()`.
     pub struct Lift<T>(pub T);
 
     impl<T> Lift<Result<T, Partiality>> {
         /// Inherent passthrough for a body that ALREADY reports its own partiality.
-    use crate::partiality::Partiality;
-
         ///
         /// Wins over the trait impl on `&Lift<…>` because no autoref is
         /// needed, and inherent-method resolution outranks trait-method
@@ -311,6 +311,7 @@ pub mod lift {
             assert_eq!(out, Ok(42));
         }
 
+        /// ★ A bare `None` becomes a NAMED decline, not an anonymous absence.
         #[test]
         fn lift_option_none_becomes_an_unreported_decline() {
             let x: Option<i32> = None;
@@ -338,7 +339,6 @@ pub mod lift {
             let ok: Result<i32, Partiality> = Lift(Ok::<i32, Partiality>(5)).lift();
             assert_eq!(ok, Ok(5));
         }
-        /// ★ A bare `None` becomes a NAMED decline, not an anonymous absence.
 
         /// Trait fallback wraps a plain `T` in `Ok`.
         ///
