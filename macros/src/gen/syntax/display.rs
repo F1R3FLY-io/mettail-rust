@@ -4554,8 +4554,35 @@ fn generate_engine_auto_literal_arm(
         // element extraction), since HashMap's "element" concept is
         // key+value pair.
         let value_ident = extract_map_value_ident(native_type);
-        let elem_display_task = elem_ident.as_ref().map(|c| format_ident!("Display{}", c));
-        let value_display_task = value_ident.as_ref().map(|c| format_ident!("Display{}", c));
+        // ⚠ A `DisplayTask::Display<X>` variant exists only for a CATEGORY `X`.
+        // A collection whose element is a Rust PRIMITIVE — `Vec<u8>`, the byte-array
+        // carrier for rholang's `Bytes` — has no such variant, and emitting one
+        // produced `DisplayTask::Displayu8`, which does not exist. MEASURED
+        // 2026-07-29 while giving `Bytes` a real carrier (`![Vec<u8>] as Bytes`).
+        //
+        // The emitter already has the right fallback for "no DisplayTask for this
+        // element": render inline with `format!`. It simply never reached it,
+        // because `native_type_element_ident` happily returns `u8` and nothing
+        // asked whether `u8` names a category.
+        //
+        // The test is `NativeType::from_type_str`: every category resolves to
+        // `NativeType::Other` (it is not a name the native-type table knows),
+        // while every Rust primitive and every known wrapper resolves to a named
+        // variant. So a NON-`Other` element is, by construction, not a category.
+        let names_a_category = |ident: &syn::Ident| {
+            matches!(
+                crate::gen::native::NativeType::from_type_str(&ident.to_string()),
+                crate::gen::native::NativeType::Other(_)
+            )
+        };
+        let elem_display_task = elem_ident
+            .as_ref()
+            .filter(|c| names_a_category(c))
+            .map(|c| format_ident!("Display{}", c));
+        let value_display_task = value_ident
+            .as_ref()
+            .filter(|c| names_a_category(c))
+            .map(|c| format_ident!("Display{}", c));
 
         // Re-key the per-shape emitter on the DECLARED collection category
         // (general) rather than the `NativeType` name allowlist. Each declared
