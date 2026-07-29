@@ -667,13 +667,12 @@ fn generate_parser_code(
     // these labels are additionally threaded into dispatch and trampoline
     // configs to suppress parser codegen for unreachable rules.
     // The lint layer still emits W01 warnings independently.
-    let mut all_dead_rule_labels = collect_dead_rule_labels_with_ignored(
+    let all_dead_rule_labels = collect_dead_rule_labels_with_ignored(
         &bundle.rule_infos,
         &bundle.categories,
         &first_sets,
         &prediction_wfsts,
         &bundle.semantic_dependency_groups,
-        &HashMap::new(), // DTs are built after this pass; trie confirmation happens in pass 2 below
         &bundle.rd_rules,
         &bundle.dead_rule_ignore_labels,
     );
@@ -955,41 +954,32 @@ fn generate_parser_code(
         }
     }
 
-    // ── 1.2b: Trie+WFST dead-rule confirmation (2nd pass) ──────────────────
-    // Now that decision trees are built, re-run dead-rule collection with trie
-    // reachability to confirm WfstUnreachable rules. Rules dead in BOTH the
-    // WFST and the trie are added to the dead set.
-    {
-        let dt_trees = decision_trees.trees();
-        let confirmed = collect_dead_rule_labels_with_ignored(
-            &bundle.rule_infos,
-            &bundle.categories,
-            &first_sets,
-            &prediction_wfsts,
-            &bundle.semantic_dependency_groups,
-            dt_trees,
-            &bundle.rd_rules,
-            &bundle.dead_rule_ignore_labels,
-        );
-        let new_dead: Vec<String> = confirmed
-            .difference(&all_dead_rule_labels)
-            .cloned()
-            .collect();
-        if !new_dead.is_empty() {
-            let mut sorted: Vec<&str> = new_dead.iter().map(|s| s.as_str()).collect();
-            sorted.sort_unstable();
-            pipeline_diagnostic(
-                &bundle.grammar_name, DiagnosticId::I07, "trie-confirmed-dead",
-                crate::lint::LintSeverity::Info,
-                format!(
-                    "trie-confirmed dead: {} additional rule(s) confirmed dead via trie+WFST cross-validation: [{}]",
-                    new_dead.len(), sorted.join(", "),
-                ),
-                None,
-            );
-            all_dead_rule_labels.extend(new_dead);
-        }
-    }
+    // ── 1.2b: (DELETED, #112/D4) Trie+WFST dead-rule "confirmation" (2nd pass) ──
+    //
+    // A second `collect_dead_rule_labels_with_ignored` used to run here with the
+    // decision trees in hand, and extend `all_dead_rule_labels` with every Tier-3
+    // (`WfstUnreachable`) rule the trie ALSO failed to reach — emitting
+    // `DiagnosticId::I07 trie-confirmed-dead`.
+    //
+    // ★ It cannot confirm anything. `CategoryDecisionTree::reachable_rules()` is a
+    // trie over DISPATCH TOKENS and the prediction WFST is a prefix-dispatch
+    // automaton: both answer "which rule does a LEADING TERMINAL select?". An
+    // operand-led rule (`POutput . n:Name, p:Proc |- n "!" "(" p ")"`) is reached
+    // through the Pratt loop and appears in neither, so the two models agree by
+    // sharing a blind spot rather than by corroborating evidence — and the pass
+    // published 143 live Rholang rules as dead, `Proc::POutput` among them. See
+    // `pipeline::dead_rules::collect_dead_rule_labels_with_ignored`'s doc comment.
+    //
+    // With Tier 3 no longer admitted into the dead set, this pass computes exactly
+    // the same set as the first one, so it is deleted rather than left inert: an
+    // analysis pass whose output is provably empty is a pass the next reader has to
+    // re-derive as empty. `all_dead_rule_labels` is therefore immutable from its
+    // single point of definition above.
+    //
+    // ⚠ NOT deleted with it: `filter_dead_rule_warnings_with_decision_trees`, which
+    // still narrows the WARNING list fed to the W01 lint below
+    // (`cached_dead_rule_warnings`). Narrowing diagnostics with a second heuristic is
+    // a precision trade a human reads; publishing them as a reachability set is not.
 
     // ── 1.3a: Trie-depth sync token ranking ─────────────────────────────────
     // Adjust recovery sync token discounts based on trie depth. Sync tokens at

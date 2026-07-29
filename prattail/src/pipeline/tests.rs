@@ -186,6 +186,194 @@ fn test_dead_rule_wfst_warnings_require_trie_confirmation() {
         );
 }
 
+/// ★★ #112/D4 — THE DEAD-RULE LIST DOES NOT NAME A RULE THE ACTION TABLE DISPATCHES.
+///
+/// # What this measures
+///
+/// [`collect_dead_rule_labels_with_ignored`] publishes the set that
+/// [`crate::PipelineAnalysis::dead_rule_labels`] carries: printed in every generated
+/// `tests_unit.rs`, used to derive `unreachable_categories`, and — behind
+/// `optimization_gates.enhanced_dce` — used to SUPPRESS PARSER CODEGEN. It admitted
+/// `DeadRuleWarning::WfstUnreachable` (Tier 3), which both governing doc comments said it
+/// excluded, so the published Rholang list named 143 live rules including
+/// `Proc::POutput`, `Proc::PNew` and `Name::NQuote`.
+///
+/// # The fixture is the SHAPE that breaks the model, not a copy of Rholang
+///
+/// prattail cannot see a bundled grammar (`languages` depends on it, not the reverse), so
+/// the operand-led shape is reproduced directly:
+///
+/// ```text
+///     POutput . n:Name, p:Proc |- n "!" "(" p ")" : Proc ;
+///               ▲ FIRST item is a NON-TERMINAL of ANOTHER category
+/// ```
+///
+/// Its `RuleInfo` therefore has `is_cross_category: true`, `is_infix: false`, so it skips
+/// Tier 1 and Tier 2 and lands in Tier 3 — "no token in `Proc`'s FIRST set predicts this
+/// label via the prediction WFST" — which is true of it and says nothing, because it is
+/// reached through the Pratt loop's operand path. The three surviving assertions below are
+/// asserted SEPARATELY so a failure names which one moved.
+///
+/// # ⚠ The non-vacuity control comes first
+///
+/// "`POutput` is not in the dead set" is also satisfied by a fixture that never flagged it.
+/// So the cell FIRST asserts that `detect_dead_rules_with_ignored` still emits a
+/// `WfstUnreachable` warning for it: the claim being made is that a Tier-3 *diagnostic* is
+/// no longer promoted to a *verdict*, not that the diagnostic disappeared.
+///
+/// # ⚠ The controls that must NOT discriminate
+///
+/// A Tier-1 rule (`ProcLit`: a literal in a category with no `native_type`) and a Tier-2
+/// rule (`GhostInfix`: an infix rule in a category with no reachable prefix rule) must BOTH
+/// stay flagged. If the deletion had been over-broad — dropping the whole `match` rather
+/// than one arm — these two go red.
+#[test]
+fn the_dead_rule_list_does_not_name_a_rule_the_action_table_dispatches() {
+    use crate::automata::codegen::terminal_to_variant_name;
+    use crate::automata::semiring::TropicalWeight;
+    use crate::grammar::ir::{RDRuleInfo, RDSyntaxItem};
+    use crate::prediction::DispatchAction;
+    use crate::token_id::TokenIdMap;
+    use crate::wfst::{PredictionWfst, WeightedAction, WeightedTransition, WfstState};
+
+    // ── The prediction WFST: `Proc` dispatches exactly ONE rule by leading terminal. ──
+    let dispatch_token = terminal_to_variant_name("Nil");
+    let mut token_map = TokenIdMap::new();
+    let kw_nil = token_map.get_or_insert(&dispatch_token);
+    let mut start = WfstState::new(0);
+    start.transitions.push(WeightedTransition {
+        from: 0,
+        input: kw_nil,
+        action_idx: 0,
+        to: 1,
+        weight: TropicalWeight::new(0.0),
+    });
+    let wfst = PredictionWfst {
+        category: "Proc".to_string(),
+        states: vec![start, WfstState::final_state(1, TropicalWeight::new(0.0))],
+        start: 0,
+        actions: vec![WeightedAction {
+            action: DispatchAction::Direct {
+                rule_label: "PNil".to_string(),
+                parse_fn: "parse_pnil".to_string(),
+            },
+            weight: TropicalWeight::new(0.0),
+        }],
+        token_map: token_map.clone(),
+        beam_width: None,
+        context_labels: HashMap::new(),
+    };
+
+    // `Ghost` has NO first set, so it is not in `reachable_categories` — that is what makes
+    // `GhostInfix` a Tier-2 warning.
+    let first_sets = HashMap::from([("Proc".to_string(), first_set(&[dispatch_token.as_str()]))]);
+    let prediction_wfsts = HashMap::from([("Proc".to_string(), wfst)]);
+    let categories =
+        vec![category("Proc", true), category("Name", false), category("Ghost", false)];
+
+    let rule_infos = vec![
+        // LIVE by prefix dispatch — the sanity anchor.
+        RuleInfo {
+            label: "PNil".to_string(),
+            category: "Proc".to_string(),
+            ..rule("PNil", "Proc")
+        },
+        // ★ THE SUBJECT: operand-led, so no leading terminal predicts it.
+        RuleInfo {
+            label: "POutput".to_string(),
+            category: "Proc".to_string(),
+            first_items: vec![FirstItem::NonTerminal("Name".to_string())],
+            is_infix: false,
+            is_var: false,
+            is_literal: false,
+            is_cross_category: true,
+            is_cast: false,
+        },
+        // TIER 1 CONTROL: a literal in a category with no `native_type`.
+        RuleInfo {
+            is_literal: true,
+            ..rule("ProcLit", "Proc")
+        },
+        // TIER 2 CONTROL: an infix rule in a category nothing can start a parse in.
+        RuleInfo {
+            is_infix: true,
+            ..rule("GhostInfix", "Ghost")
+        },
+    ];
+
+    let rd_rules = vec![RDRuleInfo {
+        label: "PNil".to_string(),
+        category: "Proc".to_string(),
+        items: vec![RDSyntaxItem::Terminal("Nil".to_string())],
+        has_binder: false,
+        has_multi_binder: false,
+        is_collection: false,
+        collection_type: None,
+        separator: None,
+        prefix_bp: None,
+        eval_mode: None,
+    }];
+
+    // ── NON-VACUITY: Tier 3 still NOTICES the operand-led rule. ───────────────────────
+    let warnings = detect_dead_rules_with_ignored(
+        &rule_infos,
+        &categories,
+        &first_sets,
+        &prediction_wfsts,
+        &[],
+        &HashSet::new(),
+        &rd_rules,
+        &HashSet::new(),
+    );
+    assert!(
+        warnings.iter().any(|w| matches!(
+            w,
+            DeadRuleWarning::WfstUnreachable { rule_label, .. } if rule_label == "POutput"
+        )),
+        "★ the fixture must still REACH Tier 3 for `POutput`, otherwise every assertion \
+         below passes because nothing was measured. Warnings: {warnings:?}",
+    );
+
+    // ── THE SET THAT IS PUBLISHED AND ACTED ON. ───────────────────────────────────────
+    let dead = collect_dead_rule_labels_with_ignored(
+        &rule_infos,
+        &categories,
+        &first_sets,
+        &prediction_wfsts,
+        &[],
+        &rd_rules,
+        &HashSet::new(),
+    );
+
+    // ★ THE MUTATION'S SIGNATURE — asserted on its own, so the message names it.
+    assert!(
+        !dead.contains("POutput"),
+        "★ `POutput` is operand-led: it is reached through the Pratt loop, has an emitted \
+         action, and parses. Tier 3 cannot see it, and Tier 3's `reachable_rules()` \
+         cross-check is a trie over the SAME dispatch tokens — two models with one blind \
+         spot agree without corroborating anything. It must not be published as dead. \
+         Dead set: {dead:?}",
+    );
+    assert!(
+        !dead.contains("PNil"),
+        "`PNil` is dispatched by its leading terminal and was never a candidate. \
+         Dead set: {dead:?}",
+    );
+
+    // ★ THE CONTROLS — a fix that also removed Tier 1 or Tier 2 is over-broad.
+    assert!(
+        dead.contains("ProcLit"),
+        "★ THE TIER-1 CONTROL: a literal rule in a category with no `native_type` can never \
+         produce a value and MUST stay flagged. If this is missing the repair deleted the \
+         whole admission rather than the Tier-3 arm. Dead set: {dead:?}",
+    );
+    assert!(
+        dead.contains("GhostInfix"),
+        "★ THE TIER-2 CONTROL: an infix rule in a category no parse can start in MUST stay \
+         flagged. Dead set: {dead:?}",
+    );
+}
+
 #[test]
 fn test_refinement_downcast_labels_are_dead_rule_ignored() {
     let mut spec = LanguageSpec::new(
@@ -915,66 +1103,84 @@ fn test_symbolic_satisfiable_guards_no_dead() {
     );
 }
 
-// ── Test 3: PR01-DCE — low-selectivity rules extend dead rules ──────────
+// ── Tests 3 & 4 (#112/D4): PR01-DCE — "low selectivity" is NOT "dead" ───
 
+/// ★★ A FREQUENCY STATISTIC NEVER ENTERS THE REACHABILITY SET — normalized or not.
+///
+/// This replaces `test_probabilistic_low_selectivity_extends_dead`, which asserted the
+/// opposite and so *pinned the category error in place*: PR01-DCE inserted
+/// `ProbabilisticAnalysis::low_selectivity_rules` — every state whose outgoing probability
+/// MASS is under a threshold (`probabilistic.rs`'s sweep) — into `dead_rule_labels`. That
+/// set is consumed as a reachability claim: it is printed in every generated
+/// `tests_unit.rs`, it derives `unreachable_categories` below, and behind `enhanced_dce` it
+/// suppresses parser codegen. "Fires rarely" is not "cannot fire", and the rules the
+/// threshold selects are by construction the rarely-exercised ones — i.e. exactly those
+/// whose disappearance a corpus run would not notice.
+///
+/// The old `is_normalized` gate is folded in here rather than kept as a separate cell: it
+/// decided whether the probabilities were *meaningful*, never whether improbable meant
+/// impossible, so both settings must give the same answer. Asserting both in one place is
+/// what makes that a stated property instead of two unrelated observations.
+///
+/// ⚠ **The control that must NOT discriminate** is SYM01-DCE, exercised on the same
+/// `build_pipeline_analysis` call in the same cell: an UNSAT guard IS a proof over the
+/// whole input domain, so `unsat_rule` must still be admitted. If it moves, the repair
+/// removed the wrong extension.
 #[test]
-fn test_probabilistic_low_selectivity_extends_dead() {
-    let prob = crate::probabilistic::ProbabilisticAnalysis {
-        num_states: 3,
-        is_normalized: true,
-        total_selectivity: 0.8,
-        mean_entropy: 1.5,
-        low_selectivity_rules: vec!["low_1".into(), "low_2".into()],
-        rule_selectivities: HashMap::new(),
-    };
-    let mut bundle = empty_bundle();
-    bundle.probabilistic = Some(&prob);
+fn low_selectivity_is_not_reachability_under_any_normalisation() {
+    for is_normalized in [true, false] {
+        let prob = crate::probabilistic::ProbabilisticAnalysis {
+            num_states: 3,
+            is_normalized,
+            total_selectivity: 0.8,
+            mean_entropy: 1.5,
+            low_selectivity_rules: vec!["low_1".into(), "low_2".into()],
+            rule_selectivities: HashMap::new(),
+        };
+        // ★ THE CONTROL, on the same call: a guard proven UNSAT is a real proof.
+        let sym = crate::symbolic::SymbolicAnalysis {
+            num_states: 1,
+            num_transitions: 1,
+            guard_satisfiability: vec![("g".into(), false)],
+            overlapping_guards: Vec::new(),
+            subsumed_guards: Vec::new(),
+            unsatisfiable_rule_labels: vec!["unsat_rule".into()],
+        };
+        let mut bundle = empty_bundle();
+        bundle.probabilistic = Some(&prob);
+        bundle.symbolic = Some(&sym);
 
-    let categories = vec![category("Expr", true)];
-    let rule_infos = vec![rule("low_1", "Expr"), rule("low_2", "Expr"), rule("alive", "Expr")];
-    let dead_rules = HashSet::new();
-    let prediction_wfsts = HashMap::new();
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![
+            rule("low_1", "Expr"),
+            rule("low_2", "Expr"),
+            rule("unsat_rule", "Expr"),
+            rule("alive", "Expr"),
+        ];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
 
-    let analysis =
-        run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
-    assert!(
-        analysis.dead_rule_labels.contains("low_1"),
-        "low_1 should be in dead_rule_labels"
-    );
-    assert!(
-        analysis.dead_rule_labels.contains("low_2"),
-        "low_2 should be in dead_rule_labels"
-    );
-}
-
-// ── Test 4: PR01-DCE — not-normalized PA does not extend dead rules ─────
-
-#[test]
-fn test_probabilistic_not_normalized_no_dead() {
-    let prob = crate::probabilistic::ProbabilisticAnalysis {
-        num_states: 2,
-        is_normalized: false,
-        total_selectivity: 0.5,
-        mean_entropy: 1.0,
-        low_selectivity_rules: vec!["low_1".into()],
-        rule_selectivities: HashMap::new(),
-    };
-    let mut bundle = empty_bundle();
-    bundle.probabilistic = Some(&prob);
-
-    let categories = vec![category("Expr", true)];
-    let rule_infos = vec![rule("low_1", "Expr")];
-    let dead_rules = HashSet::new();
-    let prediction_wfsts = HashMap::new();
-
-    let analysis =
-        run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
-
-    assert!(
-        !analysis.dead_rule_labels.contains("low_1"),
-        "low_1 should NOT be in dead_rule_labels when not normalized"
-    );
+        for rare in ["low_1", "low_2"] {
+            assert!(
+                !analysis.dead_rule_labels.contains(rare),
+                "★ `{rare}` is merely IMPROBABLE (is_normalized={is_normalized}); \
+                 `dead_rule_labels` is read as a reachability claim and suppresses codegen \
+                 behind `enhanced_dce`, so a frequency statistic must never enter it. \
+                 Dead set: {:?}",
+                analysis.dead_rule_labels,
+            );
+        }
+        assert!(
+            analysis.dead_rule_labels.contains("unsat_rule"),
+            "★ THE CONTROL: an UNSAT guard has NO satisfying input at all — that is a proof \
+             over the whole domain and must still be admitted (is_normalized={is_normalized}). \
+             Dead set: {:?}",
+            analysis.dead_rule_labels,
+        );
+    }
 }
 
 // ── Test 5: PR01-WEIGHT — probabilistic weight blending ─────────────────

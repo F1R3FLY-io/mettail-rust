@@ -251,7 +251,7 @@ pub fn write_test_file(language: &LanguageDef, pipeline: &PipelineAnalysis) -> T
     sections.push(("unit", generate_unit_section(language, pipeline)));
     sections.push(("prop", generate_prop_section(language, pipeline)));
     if !language.equations.is_empty() || !language.rewrites.is_empty() {
-        sections.push(("rewrite", generate_rewrite_section(language, pipeline)));
+        sections.push(("rewrite", generate_rewrite_section(language)));
     }
     let analytical_content = generate_analytical_section(language, pipeline);
     if !analytical_content.is_empty() {
@@ -431,7 +431,28 @@ fn emit_test_file_header(
     ));
 
     if let Some(rules) = dead_rules_note {
-        out.push_str(&format!("// Dead rules detected by WFST analysis: {}\n\n", rules));
+        // ★ #112/D4 — the label says WHAT WAS MEASURED, not a verdict.
+        //
+        // This line used to read `// Dead rules detected by WFST analysis: […]`, over a
+        // set that (a) contained Tier-3 `WfstUnreachable` false positives — 143 of them
+        // in Rholang, `Proc::POutput` among them — and (b) is not a WFST result at all
+        // now that Tier 3 is out: it is Tier 1 (`literal rule in a category with no
+        // native_type`) plus Tier 2 (`infix/var rule in a category with no reachable
+        // prefix rule`) plus SYM01 (`guard proven UNSAT`). Neither half of the old
+        // sentence survived contact with the set it described.
+        //
+        // A caption that reads as a deadness verdict over a set that is not one is a
+        // defect independently of the false positives — a reader who trusts it deletes
+        // a live rule — so the caption is fixed even though the false positives are
+        // gone. It names the three admission criteria so a reader can check an entry
+        // rather than believe it.
+        out.push_str(&format!(
+            "// Rules with no reachable parse: literal-in-a-category-with-no-native-type \
+             (Tier 1), infix/var-in-an-unreachable-category (Tier 2), or a guard proven \
+             UNSAT (SYM01). NOT a WFST prefix-dispatch verdict — see \
+             `prattail::pipeline::dead_rules::collect_dead_rule_labels_with_ignored`: {}\n\n",
+            rules
+        ));
     }
 }
 
@@ -511,7 +532,12 @@ fn generate_prop_section(language: &LanguageDef, pipeline: &PipelineAnalysis) ->
 }
 
 /// Generate the rewrite/equation tests section (no helpers required).
-fn generate_rewrite_section(language: &LanguageDef, pipeline: &PipelineAnalysis) -> String {
+/// ⚠ Takes no [`PipelineAnalysis`]. It used to, for exactly one purpose: handing
+/// `dead_rule_labels` to `rewrite_tests` so a "dead" rewrite's generated execution test
+/// could be `#[ignore]`d. That oracle was unsound and is gone (#112/D4 — the argument is
+/// in `rewrite_tests`'s module header), and the parameter went with it so no future
+/// caller can reintroduce the coupling by having it already in scope.
+fn generate_rewrite_section(language: &LanguageDef) -> String {
     let lang_name = language.name.to_string();
     let lang_name_lower = lang_name.to_lowercase();
     let mut out = String::with_capacity(8192);
@@ -528,7 +554,7 @@ fn generate_rewrite_section(language: &LanguageDef, pipeline: &PipelineAnalysis)
         out.push_str("// ═══════════════════════════════════════════════════════════\n");
         out.push_str("// Rewrite tests (one per rewrite rule)\n");
         out.push_str("// ═══════════════════════════════════════════════════════════\n\n");
-        out.push_str(&rewrite_tests::generate_rewrite_tests(language, pipeline));
+        out.push_str(&rewrite_tests::generate_rewrite_tests(language));
     }
 
     out

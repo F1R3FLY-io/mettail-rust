@@ -767,13 +767,13 @@ pub(crate) fn detect_dead_prefixes(
     result
 }
 
-/// A4: Collect dead rule labels safe for codegen suppression.
+/// A4: Collect the rule labels this analysis is willing to call UNREACHABLE.
 ///
-/// Runs `detect_dead_rules()` and returns the set of rule labels whose codegen
-/// can safely be elided.
+/// Runs `detect_dead_rules()` and returns the subset of its warnings that are a
+/// reachability *proof* rather than a reachability *heuristic*.
 ///
 /// **Conservative filtering**: the dead-rule analysis (`detect_dead_rules`)
-/// was designed for diagnostics (lint warnings), not codegen suppression.
+/// was designed for diagnostics (lint warnings), not for anything that acts.
 /// Only provably unreachable rules are included:
 ///
 /// - **Tier 1** (`LiteralNoNativeType`): literal rules in categories without
@@ -792,19 +792,63 @@ pub(crate) fn detect_dead_prefixes(
 ///   that appear later in the node ordering.
 /// - **`NearlyDeadPath`** (A8): informational only — rules are technically
 ///   reachable.
+///
+/// # ★★ #112/D4 — Tier 3 was in the set, contradicting this comment and `lib.rs`
+///
+/// Until this repair the `match` below carried a third arm,
+/// `DeadRuleWarning::WfstUnreachable { .. }`, admitted behind a "trie confirmation"
+/// second pass. The exclusion above and
+/// [`crate::PipelineAnalysis::dead_rule_labels`]'s own doc (*"Tier 3/4 are excluded
+/// due to false-positive risk"*) both said it was not there. It was, and the
+/// published Rholang list therefore named **`Proc::POutput`, `Proc::PNew`,
+/// `Name::NQuote`** and 140 further live rules as dead.
+///
+/// ## Why the mitigation could not work — the two models share the blind spot
+///
+/// The admission was gated on [`filter_dead_rule_warnings_with_decision_trees`]:
+/// a Tier-3 warning survived only if `CategoryDecisionTree::reachable_rules()`
+/// *also* reported the rule unreachable. But that trie is indexed by **dispatch
+/// token** — the same prefix-dispatch model the prediction WFST is. Tier 3's
+/// flagging condition is *"no token in the category's FIRST set predicts this
+/// label via the prediction WFST"*, which is structurally blind to any rule that
+/// is not reached by a leading terminal:
+///
+/// ```text
+///     POutput . n:Name, p:Proc |- n "!" "(" p ")" : Proc ;
+///               ▲
+///               └─ OPERAND-led. Reached through the Pratt loop's led/infix
+///                  dispatch, never through prefix dispatch — so neither the
+///                  WFST nor the trie has an entry for it, and both "agree".
+/// ```
+///
+/// ⇒ Cross-validating two models that share a blind spot cannot catch the error
+/// class the cross-validation was added for; it only makes the false positives
+/// look corroborated. The `decision_trees` parameter is gone with the arm, and
+/// with it the second collection pass in `pipeline::codegen` that existed solely
+/// to feed it.
+///
+/// ## What is NOT changed, and why
+///
+/// [`filter_dead_rule_warnings_with_decision_trees`] itself stays: its other
+/// caller (`pipeline::codegen`'s `cached_dead_rule_warnings`) feeds the **W01
+/// lint**, where narrowing a set of *diagnostics* with a second heuristic is a
+/// legitimate precision/recall trade — nothing acts on it, a human reads it.
+/// Likewise [`detect_dead_prefixes`] still consults Tier-3 warnings: it demotes
+/// recovery sync tokens by WEIGHT, which is a heuristic ranking rather than a
+/// deadness verdict, and it receives the already-trie-filtered warning list. The
+/// defect repaired here is a heuristic *published as a proof*, not the heuristic.
 pub(crate) fn collect_dead_rule_labels_with_ignored(
     rule_infos: &[RuleInfo],
     categories: &[CategoryInfo],
     first_sets: &HashMap<String, FirstSet>,
     prediction_wfsts: &HashMap<String, PredictionWfst>,
     semantic_dependency_groups: &[HashSet<String>],
-    decision_trees: &HashMap<String, crate::decision_tree::CategoryDecisionTree>,
     rd_rules: &[crate::grammar::ir::RDRuleInfo],
     ignored_rule_labels: &HashSet<String>,
 ) -> HashSet<String> {
     let mut dead_labels = HashSet::new();
 
-    let raw_warnings = detect_dead_rules_with_ignored(
+    let warnings = detect_dead_rules_with_ignored(
         rule_infos,
         categories,
         first_sets,
@@ -814,20 +858,20 @@ pub(crate) fn collect_dead_rule_labels_with_ignored(
         rd_rules,
         ignored_rule_labels,
     );
-    let confirmed_warnings =
-        filter_dead_rule_warnings_with_decision_trees(raw_warnings, decision_trees);
 
-    for w in confirmed_warnings {
+    for w in warnings {
         match &w {
             DeadRuleWarning::LiteralNoNativeType { rule_label, .. }
-            | DeadRuleWarning::UnreachableCategory { rule_label, .. }
-            | DeadRuleWarning::WfstUnreachable { rule_label, .. } => {
+            | DeadRuleWarning::UnreachableCategory { rule_label, .. } => {
                 dead_labels.insert(rule_label.clone());
             },
             _ => {},
         }
     }
 
+    // WfstUnreachable (Tier 3) excluded: see the doc comment above — it measures
+    // "has no leading-terminal prefix dispatch", which an operand-led rule fails
+    // while being perfectly reachable.
     // InterCategoryDeadPath excluded: backward_scores assumes topological
     // ordering but the inter-category graph has cycles, producing false positives.
     // NearlyDeadPath excluded: informational only, rules are technically reachable.

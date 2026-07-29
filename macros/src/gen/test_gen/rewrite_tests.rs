@@ -7,24 +7,62 @@
 //!    (suffix `_exec`) that runs the rule's LHS constructor through SimulationRunner
 //!    and asserts the result reaches a NormalForm.
 //!
-//! Dead rules (proven unreachable by WFST analysis) are emitted with `#[ignore]`.
+//! ★★ #112/D4 — NOTHING HERE IS SUPPRESSED BY A REACHABILITY ANALYSIS ANY MORE.
+//!
+//! This module used to open with *"Dead rules (proven unreachable by WFST analysis) are
+//! emitted with `#[ignore]`"*, implemented as
+//!
+//! ```text
+//!     let is_dead = pipeline.dead_rule_labels.contains(&rewrite.name.to_string());
+//!     …
+//!     if is_dead { out.push_str("#[ignore = \"dead rule — skipped by WFST analysis\"]\n"); }
+//! ```
+//!
+//! It is deleted rather than repaired. Three independent reasons, any one sufficient:
+//!
+//! 1. **The oracle compared two different namespaces.** `rewrite.name` is an
+//!    *unqualified rewrite-rule* name (`PFlt`); `dead_rule_labels` holds *qualified
+//!    grammar-rule* labels (`Proc::POutput`). The lookup could therefore only fire where
+//!    the two spellings collide by accident — and the Rholang set contained bare entries
+//!    (`"PFlt"`, `"PFltBrace"`, `"PFltFence"`) precisely capable of colliding. So it was
+//!    simultaneously UNSOUND (able to silence a live rewrite) and INCOMPLETE (blind to a
+//!    genuinely dead one whose rewrite carries a different name). Measured: zero firings
+//!    across all bundled languages — the guard had never done anything, by coincidence.
+//!
+//! 2. **Even with the namespaces reconciled, the premise does not connect.** The set is a
+//!    claim about the PARSER's dispatch (Tier 1 / Tier 2 / SYM01). The suppressed test is
+//!    a SEMANTIC one: `construct_test_expression` SYNTHESISES a concrete term for the
+//!    rule and `SimulationRunner` reduces it. A rule the parser's prefix dispatch cannot
+//!    select is not thereby a rule the runner cannot execute — the two sentences are
+//!    about two different machines, and only the second is what the test measures.
+//!
+//! 3. **It bought nothing even where it fired.** The emitted `_exec` body already
+//!    tolerates every failure mode deadness could produce: it asserts only inside
+//!    `if let Ok(Ok(trace)) = result`, so a rule that will not parse yields `Err` and the
+//!    test passes silently. `#[ignore]` therefore removed coverage without removing a
+//!    single failure.
+//!
+//! ⇒ A test suppressed by an unsound oracle is strictly worse than a test that fails: the
+//! failure is a report, the suppression is a silence. If a rewrite rule's generated
+//! execution test ever does fail, that is information about the rule and it should be read
+//! — which is why `generate_rewrite_tests` no longer takes a `PipelineAnalysis` at all.
+//! There is nothing left for it to consult, so it cannot grow a second consumer of the
+//! same unsound premise.
 //!
 //! NOTE: Rewrite LHS/RHS are pattern strings with meta-variables (e.g., N, P, ...rest)
 //! that cannot be parsed as concrete terms. The metadata tests verify presence only.
 //! The `_exec` tests use construct_test_expression() to build a concrete parseable input.
 
 use mettail_ast::language::{LanguageDef, RewriteRule};
-use mettail_prattail::PipelineAnalysis;
 
 /// Generate per-rewrite-rule tests for the language.
 ///
 /// Returns a string of `#[test]` functions to be spliced into the generated
 /// test file.
-pub fn generate_rewrite_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) -> String {
+pub fn generate_rewrite_tests(language: &LanguageDef) -> String {
     let lang_name = language.name.to_string();
     let lang_name_lower = lang_name.to_lowercase();
     let lang_struct = format!("{}Language", lang_name);
-    let dead_rules = &pipeline.dead_rule_labels;
 
     let mut out = String::with_capacity(4096);
 
@@ -36,7 +74,6 @@ pub fn generate_rewrite_tests(language: &LanguageDef, pipeline: &PipelineAnalysi
         let rule_name = rewrite.name.to_string();
         let test_name = format!("rewrite_{}_{}", lang_name_lower, rule_name.to_lowercase());
 
-        let is_dead = dead_rules.contains(&rule_name);
         let is_congruence = rewrite.is_congruence_rule();
 
         if is_congruence {
@@ -99,15 +136,9 @@ pub fn generate_rewrite_tests(language: &LanguageDef, pipeline: &PipelineAnalysi
             // Concrete execution test: attempt to construct a concrete input for the
             // LHS constructor and run it through SimulationRunner.
             // Only generated when the constructor is synthesizable from grammar rules.
-            if let Some(exec_test) = generate_exec_test(
-                &test_name,
-                &rule_name,
-                rewrite,
-                language,
-                &lang_struct,
-                &lang_name,
-                is_dead,
-            ) {
+            if let Some(exec_test) =
+                generate_exec_test(&test_name, &rule_name, rewrite, language, &lang_struct)
+            {
                 out.push_str(&exec_test);
             }
         }
@@ -129,8 +160,6 @@ fn generate_exec_test(
     rewrite: &RewriteRule,
     language: &LanguageDef,
     lang_struct: &str,
-    _lang_name: &str,
-    is_dead: bool,
 ) -> Option<String> {
     // Find the grammar rule whose label matches the LHS constructor.
     let grammar_rule = find_grammar_rule_for_rewrite(rewrite, language)?;
@@ -152,9 +181,9 @@ fn generate_exec_test(
         rule_name
     ));
 
-    if is_dead {
-        out.push_str("#[ignore = \"dead rule — skipped by WFST analysis\"]\n");
-    }
+    // ★ #112/D4: no `#[ignore]` is emitted here under any condition. See the module
+    // header for the three reasons the dead-rule oracle that used to gate this line was
+    // deleted rather than repaired.
     out.push_str("#[test]\n");
     out.push_str(&format!("fn {}_exec() {{\n", test_name));
     out.push_str("    use mettail_simulation::runner::{SimulationConfig, SimulationRunner};\n");

@@ -1050,8 +1050,13 @@ pub(crate) struct AdvancedAnalysisBundle<'a> {
 ///
 /// When feature-gated analysis results are available, this function:
 /// - **SYM01-DCE**: Extends `dead_rule_labels` with unsatisfiable symbolic guards
-/// - **PR01-DCE**: Extends `dead_rule_labels` with low-selectivity rules (when normalized)
+///   (an UNSAT guard is a proof over the whole input domain — see the body)
 /// - **PR01-WEIGHT**: Blends probabilistic selectivity into `constructor_weights`
+///
+/// ⚠ **PR01-DCE is gone** (#112/D4). It extended `dead_rule_labels` with
+/// `low_selectivity_rules`, i.e. with a FREQUENCY statistic. `dead_rule_labels` is
+/// consumed as a reachability claim, so "rare" was being published as "unreachable";
+/// the rationale is recorded at the deletion site in the body.
 /// - **N06-ISO**: Extends `isomorphic_groups` with bisimulation-equivalent category pairs
 /// - **A3**: Adds +0.5 tropical weight penalty to constructors of bisimilar categories'
 ///   lexicographically second member, reducing redundant NFA try-all work
@@ -1112,25 +1117,52 @@ pub(crate) fn build_pipeline_analysis(
     }
 
     // ── Dead rule extension from advanced automata analyses ───────────────
-    // mut needed when symbolic-automata or probabilistic features extend the set.
+    // mut needed when the symbolic-automata feature extends the set.
     #[allow(unused_mut)]
     let mut dead_rules_extended = dead_rules.clone();
 
-    // Sprint 1 (SYM01-DCE): Unsatisfiable symbolic guards → dead rules
+    // Sprint 1 (SYM01-DCE): Unsatisfiable symbolic guards → dead rules.
+    //
+    // This one IS a reachability proof and belongs here: `unsatisfiable_rule_labels`
+    // names rules whose guard is UNSAT over the symbolic algebra, so no input
+    // whatsoever can satisfy it. "There is no model" is a statement about the whole
+    // input domain, not about a sample of it.
     if let Some(sym) = _advanced.symbolic {
         for label in &sym.unsatisfiable_rule_labels {
             dead_rules_extended.insert(label.clone());
         }
     }
 
-    // Sprint 2 (PR01-DCE): Low-selectivity rules → dead rules (only when normalized)
-    if let Some(prob) = _advanced.probabilistic {
-        if prob.is_normalized && !prob.low_selectivity_rules.is_empty() {
-            for label in &prob.low_selectivity_rules {
-                dead_rules_extended.insert(label.clone());
-            }
-        }
-    }
+    // ── ★★ #112/D4 — Sprint 2 (PR01-DCE) DELETED: "low selectivity" is not "dead" ──
+    //
+    // This block used to read
+    //
+    // ```text
+    //     if prob.is_normalized && !prob.low_selectivity_rules.is_empty() {
+    //         for label in &prob.low_selectivity_rules {
+    //             dead_rules_extended.insert(label.clone());
+    //         }
+    //     }
+    // ```
+    //
+    // `ProbabilisticAnalysis::low_selectivity_rules` is produced by
+    // `probabilistic.rs`'s threshold sweep: it names every state whose outgoing
+    // probability MASS falls below a cut-off. That is a FREQUENCY statistic. A rule
+    // that fires on one input in ten thousand is rare; it is not unreachable, and
+    // `dead_rule_labels` is consumed as a reachability claim — it is published in
+    // every generated `tests_unit.rs`, it derives `unreachable_categories` below,
+    // and (behind `enhanced_dce`) it suppresses parser codegen. Feeding a frequency
+    // statistic into it is the same category error Tier 3 committed one file over,
+    // with a worse failure mode: the rules it silences are by construction the
+    // rarely-exercised ones, i.e. exactly those whose loss a corpus would not show.
+    //
+    // The `is_normalized` guard did not make it sound, only quieter — it gates
+    // whether the probabilities are meaningful, not whether "improbable" means
+    // "impossible". There is no gate under which this is admissible, so there is no
+    // gate here; the statistic itself remains available on
+    // `AdvancedAnalysisBundle::probabilistic` for weighting (PR01-WEIGHT above still
+    // blends it into `constructor_weights`, which is precisely where a frequency
+    // belongs — it reorders candidates, it does not delete them).
 
     // Determine unreachable categories: categories where ALL rules are dead.
     let mut unreachable_categories = HashSet::new();
