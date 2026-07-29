@@ -43,11 +43,19 @@ fn collection_type_name(coll_type: &CollectionType) -> &'static str {
 /// so there is exactly ONE derivation of what became of a language's declared
 /// semantics, reachable from a running program through
 /// `LanguageMetadata::lowering_dispositions`.
+///
+/// # Errors
+///
+/// `Err(diagnostic)` iff the shared `LanguageDef → LanguageSpec` bridge refuses —
+/// an `options { }` value it cannot decode — and so the ONE binding-power table
+/// this reflection renders through cannot be built. See the `# The refusal is
+/// PROPAGATED` section on [`build_reflection_bp`] for why the alternative is a
+/// wrong answer rather than a degraded one.
 pub fn generate_metadata(
     language: &LanguageDef,
     definition_source: &str,
     lowering_dispositions: &[crate::gen::runtime::disposition::LoweringDisposition],
-) -> TokenStream {
+) -> Result<TokenStream, String> {
     let name = &language.name;
     let name_str = name.to_string();
     let name_lit = LitStr::new(&name_str, name.span());
@@ -56,6 +64,11 @@ pub fn generate_metadata(
     let source_lit = LitStr::new(definition_source, Span::call_site());
     let metadata_name = format_ident!("{}Metadata", name);
 
+    // ★ THE ONE binding-power table, built ONCE per language and threaded down to
+    // every rendered equation and rewrite side. Its refusal is this function's
+    // refusal; see `build_reflection_bp`.
+    let bp = build_reflection_bp(language)?;
+
     // Generate type definitions
     let type_defs = generate_type_defs(language);
 
@@ -63,10 +76,10 @@ pub fn generate_metadata(
     let term_defs = generate_term_defs(language);
 
     // Generate equation definitions
-    let equation_defs = generate_equation_defs(language);
+    let equation_defs = generate_equation_defs(language, &bp);
 
     // Generate rewrite definitions
-    let rewrite_defs = generate_rewrite_defs(language);
+    let rewrite_defs = generate_rewrite_defs(language, &bp);
 
     // Raw generated languages are substrate-neutral: they do not advertise a
     // production runtime backend by default. The generated Ascent runner remains
@@ -93,7 +106,7 @@ pub fn generate_metadata(
     let lowering_disposition_defs =
         crate::gen::runtime::disposition::emit_disposition_defs(lowering_dispositions);
 
-    quote! {
+    Ok(quote! {
         /// Static metadata for the #name language
         pub struct #metadata_name;
 
@@ -162,7 +175,58 @@ pub fn generate_metadata(
                 #lowering_disposition_defs
             }
         }
-    }
+    })
+}
+
+/// Build the reflection's binding-power table, or REFUSE.
+///
+/// # The refusal is PROPAGATED, never substituted
+///
+/// [`crate::gen::syntax::display::build_bp_lookup`]'s own contract says it: an
+/// empty [`BpLookup`](crate::gen::syntax::display::BpLookup) is not a degraded
+/// table, it is a table that says every constructor is precedence-free. Rendering
+/// through it emits no parenthesis anywhere — which is precisely the tautology
+/// `X*Y*Z = X*Y*Z` that this renderer's precedence model exists to remove. A
+/// reflected associativity axiom whose entire content is where the brackets go
+/// would come back as a WRONG ANSWER, published through
+/// `LanguageMetadata::equations` to every runtime consumer, with no diagnostic
+/// anywhere in the build. Refusing costs the same expansion an error message.
+///
+/// # Why this is built once, at the top, and not lazily
+///
+/// `build_bp_lookup` runs the whole `LanguageDef → LanguageSpec` bridge. Calling
+/// it per rendered side made it run twice per equation and twice per rewrite; it
+/// is a pure function of `language`, so hoisting it is byte-inert in the output
+/// and linear-to-constant in the work. It is also built UNCONDITIONALLY, even for
+/// a language that declares no equations, because that is exactly what the
+/// sibling that shares this bridge does: `generate_display` calls
+/// `build_bp_lookup` at its top whether or not the grammar has an infix rule. Two
+/// consumers of one bridge that disagree about WHEN it may refuse is the same
+/// class of drift as two consumers that disagree about precedence.
+///
+/// # What this refusal is NOT: a reachable boundary path
+///
+/// ★ At the `language!` boundary this `Err` is unreachable today, and the code
+/// still propagates it. `macros/src/lib.rs` calls `generate_all` — which calls
+/// `generate_display`, which calls the same `build_bp_lookup` on the same
+/// `LanguageDef` — BEFORE it calls `generate_metadata`, and refuses there first.
+/// That is an argument about one caller's STATEMENT ORDER, not about this
+/// function: `generate_metadata` is `pub`, this crate's own tests call it
+/// directly, and the campaign that produced this note has already watched a gate
+/// silently stop guarding what its doc-comment claimed because the statement
+/// order around it moved (`ident_capture_routing::enforce`, hoisted in #141
+/// Stage 2). A `Result` costs ten lines and needs no such argument.
+fn build_reflection_bp(
+    language: &LanguageDef,
+) -> Result<crate::gen::syntax::display::BpLookup, String> {
+    crate::gen::syntax::display::build_bp_lookup(language).map_err(|rejection| {
+        format!(
+            "the reflected equational theory for `{}` cannot be rendered, because the \
+             binding-power table it shares with `Display` codegen could not be built: \
+             {rejection}",
+            language.name,
+        )
+    })
 }
 
 fn generate_runtime_backend_defs() -> TokenStream {
@@ -573,11 +637,14 @@ fn type_expr_to_string(ty: &TypeExpr) -> String {
 }
 
 /// Generate EquationDef array
-fn generate_equation_defs(language: &LanguageDef) -> TokenStream {
+fn generate_equation_defs(
+    language: &LanguageDef,
+    bp: &crate::gen::syntax::display::BpLookup,
+) -> TokenStream {
     let defs: Vec<TokenStream> = language
         .equations
         .iter()
-        .map(|eq| generate_equation_def(eq, language))
+        .map(|eq| generate_equation_def(eq, language, bp))
         .collect();
 
     quote! {
@@ -716,7 +783,11 @@ fn wrap_if_binary(pred: &BehavioralPred) -> String {
 }
 
 /// Generate a single EquationDef
-fn generate_equation_def(eq: &Equation, language: &LanguageDef) -> TokenStream {
+fn generate_equation_def(
+    eq: &Equation,
+    language: &LanguageDef,
+    bp: &crate::gen::syntax::display::BpLookup,
+) -> TokenStream {
     // Convert conditions to strings
     let conditions: Vec<String> = eq.premises.iter().map(premise_to_display_string).collect();
 
@@ -729,8 +800,8 @@ fn generate_equation_def(eq: &Equation, language: &LanguageDef) -> TokenStream {
         .collect();
 
     // Convert patterns to user syntax (use LitStr for static str fields)
-    let lhs = pattern_to_user_syntax(&eq.left, language);
-    let rhs = pattern_to_user_syntax(&eq.right, language);
+    let lhs = pattern_to_user_syntax(&eq.left, language, bp);
+    let rhs = pattern_to_user_syntax(&eq.right, language, bp);
     let lhs_lit = LitStr::new(&lhs, Span::call_site());
     let rhs_lit = LitStr::new(&rhs, Span::call_site());
 
@@ -757,12 +828,15 @@ fn generate_equation_def(eq: &Equation, language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate RewriteDef array
-fn generate_rewrite_defs(language: &LanguageDef) -> TokenStream {
+fn generate_rewrite_defs(
+    language: &LanguageDef,
+    bp: &crate::gen::syntax::display::BpLookup,
+) -> TokenStream {
     let defs: Vec<TokenStream> = language
         .rewrites
         .iter()
         .enumerate()
-        .map(|(i, rw)| generate_rewrite_def(rw, i, language))
+        .map(|(i, rw)| generate_rewrite_def(rw, i, language, bp))
         .collect();
 
     quote! {
@@ -771,7 +845,12 @@ fn generate_rewrite_defs(language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate a single RewriteDef
-fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef) -> TokenStream {
+fn generate_rewrite_def(
+    rw: &RewriteRule,
+    _index: usize,
+    language: &LanguageDef,
+    bp: &crate::gen::syntax::display::BpLookup,
+) -> TokenStream {
     // Extract the rewrite rule name from the AST
     let name = {
         let name_str = rw.name.to_string();
@@ -808,8 +887,8 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
         .unwrap_or(quote! { None });
 
     // Convert patterns to user syntax (use LitStr for static str fields)
-    let lhs = pattern_to_user_syntax(&rw.left, language);
-    let rhs = pattern_to_user_syntax(&rw.right, language);
+    let lhs = pattern_to_user_syntax(&rw.left, language, bp);
+    let rhs = pattern_to_user_syntax(&rw.right, language, bp);
     let lhs_lit = LitStr::new(&lhs, Span::call_site());
     let rhs_lit = LitStr::new(&rhs, Span::call_site());
 
@@ -978,17 +1057,19 @@ fn nullary_constructor_surface(name: &syn::Ident, ctx: RenderCtx<'_>) -> Option<
 
 /// Convert a Pattern to user syntax string, at the top level (nothing outside
 /// it, so nothing can require a bracket).
-fn pattern_to_user_syntax(pattern: &Pattern, language: &LanguageDef) -> String {
-    let bp = match crate::gen::syntax::display::build_bp_lookup(language) {
-        Ok(bp) => bp,
-        // The bridge refuses only on an `options` value it cannot decode, which
-        // makes `Display` codegen refuse for the same language in the same
-        // expansion. Rendering without precedence would silently reproduce the
-        // tautology this repair removes, so the reflection renders bracket-free
-        // ONLY when there are no operators to bracket.
-        Err(_) => crate::gen::syntax::display::BpLookup::empty(),
-    };
-    render_pattern(pattern, RenderCtx { language, bp: &bp }, 0)
+///
+/// ⚠ `bp` is a PARAMETER, not something this function builds. Building it here
+/// meant re-running the whole `LanguageDef → LanguageSpec` bridge once per
+/// rendered side, and — because a `Result` has no natural answer this deep inside
+/// a `String`-returning renderer — swallowing its refusal into
+/// `BpLookup::empty()`. See [`build_reflection_bp`]: the one caller that can
+/// refuse builds the table, once.
+fn pattern_to_user_syntax(
+    pattern: &Pattern,
+    language: &LanguageDef,
+    bp: &crate::gen::syntax::display::BpLookup,
+) -> String {
+    render_pattern(pattern, RenderCtx { language, bp }, 0)
 }
 
 /// Convert a Pattern to user syntax at an inherited precedence threshold.
@@ -1656,7 +1737,9 @@ mod tests {
             guard_config: None,
         };
 
-        let rendered = generate_rewrite_def(&rw, 0, &language).to_string();
+        let bp = build_reflection_bp(&language)
+            .expect("a fixture with no `options` block cannot make the bridge refuse");
+        let rendered = generate_rewrite_def(&rw, 0, &language, &bp).to_string();
         assert!(
             rendered.contains("is_guarded : true"),
             "synthetic injection guards must be visible in metadata: {}",
@@ -1686,6 +1769,8 @@ mod tests {
     /// the equation's declared name.
     fn monoid_equation_renderings() -> std::collections::HashMap<String, (String, String)> {
         let monoid = crate::gen::capture::bundled_corpus::bundled_language("Monoid");
+        let bp = build_reflection_bp(&monoid.def)
+            .expect("`languages/src/monoid.rs` is a shipped grammar, so its bridge converts");
         monoid
             .def
             .equations
@@ -1694,8 +1779,8 @@ mod tests {
                 (
                     eq.name.to_string(),
                     (
-                        pattern_to_user_syntax(&eq.left, &monoid.def),
-                        pattern_to_user_syntax(&eq.right, &monoid.def),
+                        pattern_to_user_syntax(&eq.left, &monoid.def, &bp),
+                        pattern_to_user_syntax(&eq.right, &monoid.def, &bp),
                     ),
                 )
             })
@@ -1842,7 +1927,8 @@ mod tests {
             .iter()
             .find(|eq| eq.name == "Assoc")
             .expect("Monoid declares `Assoc`");
-        let rendered = generate_equation_def(assoc, &monoid.def).to_string();
+        let bp = build_reflection_bp(&monoid.def).expect("Monoid's bridge converts");
+        let rendered = generate_equation_def(assoc, &monoid.def, &bp).to_string();
         assert!(
             rendered.contains("name : \"Assoc\""),
             "an `EquationDef` must carry the equation's declared name, as `RewriteDef` \
@@ -1949,6 +2035,13 @@ mod tests {
 
         for language in crate::gen::capture::bundled_corpus::bundled_languages() {
             let def = &language.def;
+            let bp = build_reflection_bp(def).unwrap_or_else(|rejection| {
+                panic!(
+                    "{} is a SHIPPED grammar; the reflection's binding-power table must \
+                     build for it: {rejection}",
+                    language.tag,
+                )
+            });
             let sides: Vec<(String, &Pattern, &Pattern)> = def
                 .equations
                 .iter()
@@ -1962,8 +2055,8 @@ mod tests {
 
             for (what, left, right) in sides {
                 rules_checked += 1;
-                let lhs = pattern_to_user_syntax(left, def);
-                let rhs = pattern_to_user_syntax(right, def);
+                let lhs = pattern_to_user_syntax(left, def, &bp);
+                let rhs = pattern_to_user_syntax(right, def, &bp);
                 if lhs != rhs {
                     continue;
                 }
@@ -2007,4 +2100,177 @@ mod tests {
         );
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // #141 Part A RED — the reflection REFUSES; it does not render bracket-free
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // `build_bp_lookup` became fallible in `042476d9` and its doc-comment says why
+    // an empty table must not be substituted for its refusal. `d71555ef` wired
+    // this renderer to it with `Err(_) => BpLookup::empty()` anyway — a fails-open
+    // fallback on a refusal path. With an empty table NOTHING is
+    // precedence-governed, so every operator renders unbracketed and Monoid's
+    // associativity axiom comes back as the tautology `X*Y*Z = X*Y*Z`: the exact
+    // wrong answer `d71555ef` exists to remove, published through
+    // `LanguageMetadata::equations`, with no diagnostic anywhere in the build.
+    //
+    // ⚠ These cells do NOT expect a panic (no `#[should_panic]`, no
+    // `catch_unwind`); they read the value the generator returns.
+
+    /// Monoid, plus one `options { }` value the shared bridge cannot decode.
+    ///
+    /// `beam_width` accepts the keywords the bridge enumerates; `aggressive` is
+    /// not among them, and `prattail_bridge`'s own
+    /// `an_out_of_domain_option_value_refuses_instead_of_asserting` pins that same
+    /// pair. Using a value that fails IN THE BRIDGE — rather than one this module
+    /// invents — is what makes this cell exercise the real refusal.
+    fn monoid_with_an_undecodable_option() -> LanguageDef {
+        let mut def = crate::gen::capture::bundled_corpus::bundled_language("Monoid").def;
+        def.options.insert(
+            "beam_width".to_string(),
+            mettail_ast::language::AttributeValue::Keyword("aggressive".to_string()),
+        );
+        def
+    }
+
+    /// ★ THE MUTATION CELL. An undecodable `options` value produces a DIAGNOSTIC
+    /// that names the language and the option — not an empty lookup.
+    #[test]
+    fn an_undecodable_option_refuses_the_reflection_instead_of_rendering_it_bracket_free() {
+        let mutated = monoid_with_an_undecodable_option();
+        let control = crate::gen::capture::bundled_corpus::bundled_language("Monoid").def;
+
+        // ── the mutation really was applied, and is the ONLY difference ──
+        assert!(
+            !control.options.contains_key("beam_width"),
+            "the control fixture must not already carry the mutated option, or the two \
+             fixtures differ in nothing",
+        );
+        assert!(
+            matches!(
+                mutated.options.get("beam_width"),
+                Some(mettail_ast::language::AttributeValue::Keyword(kw)) if kw == "aggressive",
+            ),
+            "the mutation must be present in the fixture handed to the generator",
+        );
+        assert_eq!(
+            mutated.equations.len(),
+            control.equations.len(),
+            "the mutation changes an OPTION, never the equations being reflected",
+        );
+
+        let rejection = generate_metadata(&mutated, "", &[]).expect_err(
+            "an `options` value the bridge cannot decode must REFUSE the reflection: \
+             rendering it through an empty binding-power table emits no parenthesis \
+             anywhere, which turns the associativity axiom into a tautology",
+        );
+
+        // ── pinned to specific tokens, never a whole-string `assert_ne!` ──
+        assert!(
+            rejection.contains("Monoid"),
+            "the diagnostic must name the LANGUAGE it refused — one `rustc` process \
+             expands every bundled grammar: {rejection}",
+        );
+        assert!(
+            rejection.contains("beam_width"),
+            "the diagnostic must name the OPTION whose value it could not decode: \
+             {rejection}",
+        );
+        assert!(
+            rejection.contains("the keyword `aggressive`"),
+            "the bridge's own description of the offending SHAPE must survive the hop \
+             to this generator, not be replaced by a summary: {rejection}",
+        );
+        assert!(
+            rejection.contains("reflected equational theory"),
+            "and the diagnostic must say WHICH generator refused, since `Display` \
+             codegen refuses on the same bridge for the same value: {rejection}",
+        );
+    }
+
+    /// ★ THE CONTROL, which must NOT discriminate: unmutated Monoid still renders,
+    /// and renders the SAME bytes as before this repair.
+    ///
+    /// The bracket in `rhs` is the load-bearing token. If threading the table down
+    /// from `generate_metadata` had changed which table a side is rendered
+    /// against, `X*(Y*Z)` would be the first thing to move — it is the one
+    /// rendering in the corpus that exists only because the table is populated.
+    #[test]
+    fn a_well_formed_options_value_renders_the_same_bytes_as_before() {
+        let monoid = crate::gen::capture::bundled_corpus::bundled_language("Monoid").def;
+        let tokens = generate_metadata(&monoid, "", &[])
+            .expect("`languages/src/monoid.rs` is shipped, so its reflection must render")
+            .to_string();
+
+        assert!(
+            tokens.contains(r#"lhs : "X*Y*Z""#),
+            "the LEFT-nested side of a left-associative `*` needs no bracket: {tokens}",
+        );
+        assert!(
+            tokens.contains(r#"rhs : "X*(Y*Z)""#),
+            "the RIGHT-nested side must still bracket — this is the byte that proves \
+             the hoisted table is the SAME table the per-side calls built: {tokens}",
+        );
+        assert!(
+            tokens.contains(r#"name : "Assoc""#),
+            "and the reflected equation still says which equation it is: {tokens}",
+        );
+    }
+
+    /// ★ THE DISCRIMINATION WITNESS — what the deleted fallback actually produced.
+    ///
+    /// This cell renders Monoid's associativity axiom through the very table the
+    /// `Err(_) => BpLookup::empty()` arm substituted, and shows the answer is
+    /// WRONG rather than degraded: both sides come back `X*Y*Z`, the tautology,
+    /// and the two are equal. It is kept permanently so the argument for
+    /// propagating the refusal is a measurement in the suite rather than a claim
+    /// in a commit message.
+    #[test]
+    fn an_empty_binding_power_table_reflects_the_axiom_as_a_tautology() {
+        let monoid = crate::gen::capture::bundled_corpus::bundled_language("Monoid").def;
+        let assoc = monoid
+            .equations
+            .iter()
+            .find(|eq| eq.name == "Assoc")
+            .expect("Monoid declares `Assoc`");
+        let empty = crate::gen::syntax::display::BpLookup::empty();
+
+        let lhs = pattern_to_user_syntax(&assoc.left, &monoid, &empty);
+        let rhs = pattern_to_user_syntax(&assoc.right, &monoid, &empty);
+
+        assert_eq!(
+            rhs, "X*Y*Z",
+            "an empty table makes NOTHING precedence-governed, so the right-nested side \
+             loses the bracket that is the axiom's entire content. Got: {rhs}",
+        );
+        assert_eq!(
+            lhs, rhs,
+            "…and the axiom therefore reflects as a tautology. This is the answer the \
+             fails-open fallback published; it is wrong, not merely unhelpful",
+        );
+
+        // And the populated table — the one the generator now insists on — does not.
+        let bp = build_reflection_bp(&monoid).expect("Monoid's bridge converts");
+        assert_eq!(
+            pattern_to_user_syntax(&assoc.right, &monoid, &bp),
+            "X*(Y*Z)",
+            "the real table brackets it",
+        );
+    }
+
+    /// ANTI-VACUITY for the mutation cell: the refusal must come from the OPTION,
+    /// not from anything else about the fixture. The same fixture minus the
+    /// mutation converts.
+    #[test]
+    fn the_refusal_is_caused_by_the_option_and_by_nothing_else() {
+        let control = crate::gen::capture::bundled_corpus::bundled_language("Monoid").def;
+        assert!(
+            build_reflection_bp(&control).is_ok(),
+            "unmutated Monoid must build its table — otherwise the mutation cell proves \
+             only that this generator refuses everything",
+        );
+        assert!(
+            build_reflection_bp(&monoid_with_an_undecodable_option()).is_err(),
+            "and the mutated twin must not",
+        );
+    }
 }

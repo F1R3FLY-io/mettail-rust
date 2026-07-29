@@ -248,9 +248,20 @@ pub(crate) fn expand_language(input: proc_macro2::TokenStream) -> proc_macro2::T
     stage!("lowering_disposition_inventory.done");
 
     stage!("generate_metadata.start");
-    // Generate metadata for REPL introspection
+    // Generate metadata for REPL introspection.
+    //
+    // ★ #141 Part A — fallible for the same reason `generate_all` is, and through
+    // the same bridge. The reflected equational theory renders through `Display`'s
+    // binding-power table; when the shared `LanguageDef → LanguageSpec` bridge
+    // cannot decode an `options` value, that table cannot be built, and a reflection
+    // rendered without it is a WRONG answer (every axiom collapses to a
+    // bracket-free tautology) rather than a degraded one. The refusal becomes a
+    // diagnostic here, at the only place that holds a span.
     let metadata_code =
-        generate_metadata(&language_def, &definition_source_str, &lowering_dispositions);
+        match generate_metadata(&language_def, &definition_source_str, &lowering_dispositions) {
+            Ok(tokens) => tokens,
+            Err(rejection) => return refuse(language_def.name.span(), &rejection),
+        };
     stage!("generate_metadata.done");
 
     stage!("generate_language_impl.start");
