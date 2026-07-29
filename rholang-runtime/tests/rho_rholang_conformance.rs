@@ -172,22 +172,36 @@
 //! FABRICATING `Default::default()` and presenting it as the answer — leaving `error`, which is
 //! the absence of an answer rather than a competing one.
 //!
-//! ### ⚠ Divergence: float ÷0 — MeTTaIL is DELIBERATELY stricter, and stays that way
+//! ### ★ Float ÷0 — NO LONGER A DIVERGENCE. MeTTaIL answers IEEE-754, as upstream does.
 //!
-//! | Evaluator | `1.0 / 0.0` | Site |
-//! |---|---|---|
-//! | f1r3node's reducer | `+Inf` (no guard) | `reduce.rs` `combine_div`, the `GDouble` arm |
-//! | MeTTaIL's Rholang | `error` | `languages/src/rholang.rs`, the `Div` fold's `CastFloat` arm |
+//! | Evaluator | `1.0 / 0.0` | `-1.0 / 0.0` | `0.0 / 0.0` |
+//! |---|---|---|---|
+//! | f1r3node's reducer (`reduce.rs` `combine_div`, `GDouble` arm) | `+Inf` | `-Inf` | `NaN` |
+//! | MeTTaIL's Rholang (`languages/src/rholang.rs`, `Div`'s `CastFloat` arm) | `+Inf` | `-Inf` | `NaN` |
 //!
-//! **RULED 2026-07-29: "keep the strictness — it is the better semantics."** `±Inf` propagating
-//! silently through a consensus computation is worse than refusing: an infinity is a perfectly
-//! good float, so it flows into comparisons, sends and stored state indistinguishably from a
-//! computed magnitude, and the first observable symptom appears arbitrarily far from the division
-//! that produced it. The guard is also CONSISTENT with the five sibling numeric arms, all of which
-//! answer `error` on ÷0 — without it the disposition of `x / 0` would depend on which numeric
-//! carrier the operands happened to have. It is the conservative direction: it can refuse a
-//! program upstream would have run, never accept one upstream refuses, and never produce a
-//! DIFFERENT value for a program both accept. The full reasoning is recorded at the arm itself.
+//! **RULED 2026-07-29, REVERSING an earlier ruling of the same day** that had kept a refusal here
+//! (recorded in `ffdc3ad1`, whose text this section replaces). The governing rule is *upstream is
+//! a floor on SEMANTICS, not a ceiling on DIAGNOSTICS*: a program upstream **accepts** must be
+//! accepted, and must compute the **same value**. The BUG-FIX carve-out licenses divergence only
+//! where upstream is *wrong*, and ⚠ IEEE 754 §7.3 **defines** finite-non-zero ÷ 0 as the
+//! correctly-signed infinity and `0/0` as a `NaN` — so upstream is correct, the carve-out is
+//! unavailable, and refusing rejected a program upstream accepts. The reversal and the rebuttal of
+//! each of the earlier ruling's three arguments are recorded at the arm itself.
+//!
+//! ⚠ **Two residual divergences remain, and neither is division's.** `CanonicalFloat64`
+//! (`runtime/src/canonical_float.rs:35-42`) maps `-0.0` to `+0.0` and every `NaN` to one bit
+//! pattern so that terms have a well-defined `Eq`/`Hash`/`Ord`. So `x / -0.0` answers `+Inf` here
+//! and `-Inf` upstream — `-0.0` is not a representable `Float` term at all — and a produced `NaN`
+//! carries `f64::NAN`'s bits rather than the hardware's. Both are properties of the CARRIER.
+//!
+//! ⚠ **Three SIBLING arms still refuse an IEEE indeterminate form where upstream computes `NaN`,
+//! and were NOT part of this ruling.** `Add` (`rholang.rs:1678`), `Sub` (`:1733`) and `Mul`
+//! (`:1783`) route through `SafeArith`, whose `finite_or_inf_f64` declines `NaN`, so
+//! `Inf + (-Inf)`, `Inf - Inf` and `Inf * 0.0` answer the `error` term where `combine_plus` /
+//! `combine_minus` / `combine_mult`'s `GDouble` arms answer `NaN`. `Inf` is reachable in both
+//! (`1e308 * 10.0`). The same floor argument applies to all three; extending the ruling to them is
+//! a USER decision and is deliberately not taken here. `%` needs no change: MeTTaIL's `Mod` has no
+//! float arm and upstream's `combine_mod` refuses `(GDouble, GDouble)` outright.
 //!
 //! ## Operational note: fold panics ABORT the process here
 //!
@@ -749,8 +763,12 @@ async fn no_arithmetic_failure_ever_fabricates_a_value() {
         // u32 underflow / overflow (raw `u32` arithmetic PANICS, which aborts a fold here).
         "uint(0, 32) - uint(1, 32)",
         "uint(4294967295, 32) + uint(1, 32)",
-        // IEEE: `Inf - Inf` is NaN, which `SafeArith` declines.
-        "float(1.0, 64) / float(0.0, 64)",
+        // ⚠ `float(1.0, 64) / float(0.0, 64)` was in this list. It has been MOVED OUT and is
+        // asserted by `float_division_by_zero_answers_ieee754_not_the_error_term` instead. It was
+        // never a member of this class: nothing was fabricated and nothing overflowed, and IEEE
+        // 754 §7.3 gives `1.0 / 0.0` an ANSWER (`+Inf`). The comment that carried it here said
+        // "`Inf - Inf` is NaN, which `SafeArith` declines", which describes a different
+        // expression — `1.0 / 0.0` is not an indeterminate form. See the module header.
     ] {
         let folded = fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}"));
         assert_eq!(
@@ -758,6 +776,73 @@ async fn no_arithmetic_failure_ever_fabricates_a_value() {
             "{source:?} must fail CLOSED; a failed checked operation may never fabricate a value"
         );
     }
+}
+
+/// ★★ **Float ÷0 answers IEEE-754 — the same value upstream computes.** RULED 2026-07-29,
+/// reversing the earlier same-day ruling that kept a refusal here.
+///
+/// | expression | f1r3node's `combine_div` (`GDouble` arm) | this fold |
+/// |---|---|---|
+/// | `1.0 / 0.0`  | `+Inf` | `+Inf` |
+/// | `-1.0 / 0.0` | `-Inf` | `-Inf` |
+/// | `0.0 / 0.0`  | `NaN`  | `NaN`  |
+///
+/// The floor is on SEMANTICS: a program upstream accepts must be accepted and must compute the
+/// same value. IEEE 754 §7.3 defines all three, so the BUG-FIX carve-out does not apply and the
+/// refusal was rejecting a program upstream runs.
+///
+/// ⚠ Each row is watched RED by the guard it replaces: restore the `y.get() == 0.0` guard and all
+/// three rows report the `error` term. The `NaN` row is the sharp one — it is red both under the
+/// old guard AND under any "just delete the guard" fix, because `SafeArith::safe_div` declines
+/// `NaN` via `finite_or_inf_f64`, so the arm must bypass `SafeArith` rather than merely drop the
+/// zero test.
+///
+/// ⚠ `-0.0` is deliberately NOT in the table. `CanonicalFloat64` canonicalises `-0.0` to `+0.0`
+/// (`runtime/src/canonical_float.rs:35-42`) so that terms have a well-defined `Eq`/`Hash`/`Ord`, so
+/// `1.0 / -0.0` answers `+Inf` here against upstream's `-Inf`. That is the CARRIER's divergence,
+/// not division's; it is recorded in the module header and is out of this ruling's scope.
+#[tokio::test(flavor = "multi_thread")]
+async fn float_division_by_zero_answers_ieee754_not_the_error_term() {
+    // FLOOR: a total float division still folds, so "the fold produced a float" below is not
+    // satisfied by an evaluator that has stopped folding floats altogether.
+    assert_eq!(
+        fold(&parse("float(7.0, 64) / float(2.0, 64)")).expect("the fold converges"),
+        "3.5",
+        "★ FLOOR: ordinary float division must still compute",
+    );
+
+    for (source, expected) in [
+        ("float(1.0, 64) / float(0.0, 64)", "inf"),
+        ("float(-1.0, 64) / float(0.0, 64)", "-inf"),
+        ("float(0.0, 64) / float(0.0, 64)", "NaN"),
+    ] {
+        let folded = fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}"));
+        assert_eq!(
+            folded, expected,
+            "★★ {source:?} must answer the IEEE-754 value upstream computes, not the `error` term",
+        );
+    }
+
+    // ⚠ `-0.0` — MEASURED, and pinned here so the CARRIER's divergence is a recorded fact rather
+    // than a claim in prose. `CanonicalFloat64::canonicalize` maps `-0.0` to `+0.0`
+    // (`runtime/src/canonical_float.rs:35-42`), and it does so at PARSE time: `float(-0.0, 64)`
+    // parses to `FloatLit(0.0)`, not to a negated zero. So a signed zero is not a representable
+    // `Float` TERM, and IEEE's sign rule for `x / -0.0` has no operand to act on.
+    assert_eq!(
+        fold(&parse("float(1.0, 64) / float(-0.0, 64)")).expect("the fold converges"),
+        "inf",
+        "★ `1.0 / -0.0` answers `+Inf` here where upstream answers `-Inf`, because `-0.0` \
+         collapses to `+0.0` when the literal is built. That is `CanonicalFloat64`'s divergence, \
+         not division's — the canonicalisation is what gives terms a well-defined `Eq`/`Hash`/`Ord` \
+         — and it is out of the 2026-07-29 ruling's scope. If this ever reads `-inf`, the carrier \
+         changed and the module header's residual-divergence note must be updated.",
+    );
+    assert_eq!(
+        fold(&parse("float(-0.0, 64) / float(1.0, 64)")).expect("the fold converges"),
+        "0.0",
+        "★ and in the numerator: `-0.0 / 1.0` answers `+0.0`, where upstream preserves `-0.0`'s \
+         bits — the same carrier-level collapse, observed from the other side",
+    );
 }
 
 /// **Divergence A (target) — Rholang must INHERIT f1r3node's answer, never invent a third.**
@@ -3964,3 +4049,4 @@ async fn c4_a_bare_element_walk_visits_every_element_in_order() {
          retired witness recorded as false at six consecutive steps"
     );
 }
+

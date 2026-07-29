@@ -1832,48 +1832,97 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    // ★★ A DELIBERATE, RULED DIVERGENCE FROM UPSTREAM — float ÷0 is an ERROR here.
+                    // ★★ IEEE-754 DIVISION, WITH NO ZERO GUARD — deliberately identical to
+                    // upstream. This arm HAD a `y == 0.0` guard answering `error`; it was removed.
                     //
-                    //   | evaluator | `1.0 / 0.0` | site |
-                    //   |---|---|---|
-                    //   | f1r3node's consensus reducer | `+Inf` (no guard at all) | `rholang/src/rust/interpreter/reduce.rs` `combine_div`, the `GDouble` arm |
-                    //   | MeTTaIL's Rholang (this arm)  | `error`                  | here |
+                    //   | evaluator | `1.0 / 0.0` | `-1.0 / 0.0` | `0.0 / 0.0` |
+                    //   |---|---|---|---|
+                    //   | f1r3node's reducer (`reduce.rs` `combine_div`, `GDouble` arm) | `+Inf` | `-Inf` | `NaN` |
+                    //   | MeTTaIL's Rholang (this arm)                                  | `+Inf` | `-Inf` | `NaN` |
                     //
-                    // RULED 2026-07-29: **keep the strictness — it is the better semantics.**
-                    // The reasoning, recorded so nobody "harmonises" it away later:
+                    // ★ RULED 2026-07-29, REVERSING an earlier ruling of the same day that had
+                    // kept the refusal (recorded in `ffdc3ad1`). The reversal is not a change of
+                    // taste; the earlier ruling misapplied the governing rule, and the rule is:
                     //
-                    //   * `±Inf` propagating silently through a CONSENSUS computation is worse
-                    //     than refusing. An infinity is a perfectly good float, so it flows into
-                    //     comparisons, sends, and stored state indistinguishably from a computed
-                    //     magnitude, and the first observable symptom appears arbitrarily far
-                    //     from the division that produced it. `error` refuses at the point of
-                    //     the mistake, which is where the deployer can act on it.
-                    //   * It is CONSISTENT with the five sibling arms. `UInt32`, `BigInt`,
-                    //     `BigRat`, `Fixed` and `Int` all answer `error` on ÷0. A float arm that
-                    //     answered `+Inf` would make the disposition of `x / 0` a function of
-                    //     which numeric carrier the operands happened to have — the same
-                    //     grammar-authorship accident that made partiality dispositions
-                    //     unpredictable in the first place.
-                    //   * It is the STRICTER direction. Refusing a program upstream would have
-                    //     run is a conservative divergence: it can reject a computation that
-                    //     would have succeeded, but it can never accept one upstream rejects,
-                    //     and it never produces a DIFFERENT value for a program both accept.
+                    //   **Upstream is a floor on SEMANTICS, not a ceiling on DIAGNOSTICS.** A
+                    //   program upstream ACCEPTS must be accepted here, and must compute the SAME
+                    //   VALUE. Diagnostics, error specificity and debuggability may exceed
+                    //   upstream freely; the accepted-language and the computed values may not
+                    //   diverge from it.
                     //
-                    // ⚠ It IS a divergence and is recorded as one — `NaN` is not the issue here
-                    // (`safe_div` already declines `0.0 / 0.0` with `UndefinedReason::NotANumber`,
-                    // and `Inf` is deliberately preserved by `SafeArith` for the tropical /
-                    // log-domain semirings). This guard is specifically about a FINITE numerator
-                    // over a zero denominator, which IEEE answers with an infinity and which the
-                    // rest of this grammar answers with `error`. Do not delete it to "match
-                    // upstream" without reopening the ruling.
+                    //   The BUG-FIX carve-out permits divergence only where upstream is WRONG.
+                    //   ⚠ It does not apply here: IEEE 754 §7.3 DEFINES division of a finite
+                    //   non-zero numerator by zero as the correctly-signed infinity (raising the
+                    //   `divideByZero` exception, whose default handling is to deliver that
+                    //   infinity, not to trap), and `0/0` as the invalid operation delivering a
+                    //   `NaN`. Upstream is therefore CORRECT, so the carve-out is unavailable, and
+                    //   refusing rejects a program upstream accepts — which the floor forbids.
+                    //
+                    // The earlier ruling's three arguments, and why each fails:
+                    //   * "`±Inf` propagating silently is worse than refusing" — an argument about
+                    //     which semantics one would PREFER. The floor is not a preference; a
+                    //     consensus implementation that refuses what its peers run does not
+                    //     produce a safer network, it produces a fork.
+                    //   * "consistent with the five sibling arms" — `Int`, `UInt32`, `BigInt`,
+                    //     `BigRat` and `Fixed` have NO representation for an infinity, so `error`
+                    //     is the only answer available to them. `Float` does have one. Uniformity
+                    //     across carriers that differ in what they can represent is not a
+                    //     property worth buying with a divergence.
+                    //   * "it is the conservative direction — it can never produce a DIFFERENT
+                    //     value for a program both accept" — true, and beside the point: it made
+                    //     a program upstream accepts UNACCEPTABLE, which is the other half of the
+                    //     floor and the half that was overlooked.
+                    //
+                    // ⚠⚠ **DELETING THE ZERO GUARD IS NOT ENOUGH, AND WRITING RAW `/` HERE IS
+                    // IMPOSSIBLE.** Two traps, both MEASURED, both of which silently produce the
+                    // wrong disposition rather than a compile error:
+                    //
+                    //   1. `<CanonicalFloat64 as SafeArith>::safe_div` routes through
+                    //      `finite_or_inf_f64` (`runtime/src/safe_arith.rs:532-542`), which
+                    //      preserves `±Inf` but DECLINES `NaN` with
+                    //      `UndefinedReason::NotANumber`. So a fix that merely drops the
+                    //      `y == 0.0` test still refuses `0.0 / 0.0`, where upstream answers `NaN`.
+                    //   2. ⚠ The `/` OPERATOR CANNOT BE USED to get around that. Everything inside
+                    //      a `![ … ]` block is rewritten by `macros/src/gen/native/rust_code_rewrite.rs`
+                    //      (`binop_to_safe_method`, `:206-215`), which turns every `a / b` into
+                    //      `<_ as SafeArith>::safe_div(a, b)?` — including a `/` on raw `f64`s. The
+                    //      `?` short-circuits the WHOLE fold body, so the rule does not fire at
+                    //      all and the redex survives. Measured: an earlier draft of this arm
+                    //      wrote `x.get() / y.get()` and `float(0.0,64) / float(0.0,64)` folded to
+                    //      the STUCK TERM `"0.0 / 0.0"` — neither a value nor `error`.
+                    //
+                    // Hence the explicit `match` below, which suppresses the `?` and converts the
+                    // one decline this carrier can produce back into the value IEEE specifies.
+                    // `finite_or_inf_f64`'s sole decline is `NotANumber`, and every input that
+                    // makes `f64` division yield `NaN` (`0/0`, `Inf/Inf`, a `NaN` operand) is an
+                    // input whose IEEE answer IS `NaN` — so the conversion is exact, not a
+                    // fallback. A decline for any OTHER reason is still `error`: if `SafeArith`'s
+                    // float policy ever grows one, this arm must be revisited rather than guess.
+                    //
+                    // `SafeArith`'s NaN policy itself is left untouched — the tropical and
+                    // log-domain semirings depend on it, and it is not this ruling's subject.
+                    //
+                    // ⚠ TWO RESIDUAL DIVERGENCES REMAIN, and they are NOT from this arm — they
+                    // are `CanonicalFloat64`'s canonicalisation (`runtime/src/canonical_float.rs`
+                    // :35-42), which maps every `NaN` to one bit pattern and `-0.0` to `+0.0` so
+                    // that `Eq`/`Hash`/`Ord` are well defined for terms:
+                    //   * `x / -0.0` answers `+Inf` here and `-Inf` upstream, because `-0.0` is
+                    //     not representable as a `Float` term in the first place.
+                    //   * a produced `NaN` carries `f64::NAN`'s bits rather than the hardware's.
+                    // Both are properties of the CARRIER, not of division, and removing them
+                    // would cost the term algebra its `Eq`. They are recorded, not fixed here.
                     (Float::FloatLit(x), Float::FloatLit(y)) => {
-                        if y.get() == 0.0 {
-                            Proc::Err
-                        } else {
-                            match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_div(*x, *y) {
-                                Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
-                                Err(_) => Proc::Err,
-                            }
+                        match <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_div(*x, *y) {
+                            // Finite quotients and `±Inf` — `finite_or_inf_f64` passes both.
+                            Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
+                            // The IEEE indeterminate forms. `SafeArith` declines them; IEEE and
+                            // upstream DELIVER them, as a `NaN`.
+                            Err(mettail_runtime::Partiality::Undefined {
+                                reason: mettail_runtime::UndefinedReason::NotANumber, ..
+                            }) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+                                mettail_runtime::CanonicalFloat64::from(f64::NAN),
+                            ))),
+                            Err(_) => Proc::Err,
                         }
                     }
                     _ => Proc::Err,
@@ -2011,18 +2060,73 @@ language! {
                     Pathmap::PathmapLit(ref payload) => {
                         match crate::rholang::pathmap::pathmap_get(payload, &k) {
                             Ok(Some(mettail_runtime::PathValue::Set(v))) => v,
-                            // #74: the key IS present but bound to nothing
-                            // (`{| k |}`). There is no `Proc` that means "no
-                            // value": `Nil` is a value a program can write, and
-                            // `error` would claim the key is absent when it is
-                            // not. STAY STUCK — leave the unreduced `.get(...)`
-                            // node — following the recorded MSet precedent
-                            // (user decision 2026-06-30) for exactly this shape
-                            // of "no honest answer exists yet".
-                            Ok(Some(mettail_runtime::PathValue::Unset)) => Proc::MGet(
-                                std::sync::Arc::new(m.clone()),
-                                std::sync::Arc::new(k.clone()),
-                            ),
+                            // ★★ #74, RULED 2026-07-29 (USER): an UNSET value
+                            // ERRS. It does not block, and it does not invent a
+                            // value.
+                            //
+                            // The argument is STRUCTURAL. A stuck term asserts
+                            // "this may resolve later"; there is no future state
+                            // in which `.get` on a valueless entry becomes
+                            // answerable, so blocking would be a promise the term
+                            // cannot keep.
+                            //
+                            // ⚠ DELIBERATE DEPARTURE from the `MSet` precedent
+                            // below (user decision 2026-06-30), which stays stuck
+                            // on an unencodable path. That shape differs: an
+                            // unencodable path is a property of the ARGUMENT and a
+                            // later substitution really can make it encodable,
+                            // whereas an unset value is a property of the STORED
+                            // ENTRY, which `.get` cannot change. RULED, not
+                            // inferred — do not "restore consistency" by
+                            // reverting it.
+                            //
+                            // The diagnostic names the DISTINCTION rather than
+                            // reading like "key not found", because the key WAS
+                            // found — that confusion is the whole reason the
+                            // message exists. It reports the pathmap's KIND when
+                            // the pathmap is uniformly valueless (the shape the
+                            // ruling describes) and flags MIXEDNESS otherwise,
+                            // because a mixed pathmap is reachable (see the
+                            // commit body's path enumeration) and claiming "this
+                            // pathmap has no values" of a mixed one would be
+                            // false.
+                            //
+                            // ⚠ The message rides a debug-build diagnostic, not
+                            // the returned value: `Err . |- "error" : Proc` is
+                            // NULLARY, so the grammar has no value that can carry
+                            // a payload. Reported as a finding rather than worked
+                            // around — and `.expect(msg)` is NOT an alternative
+                            // here, because the `#153` rewrite turns it into a
+                            // `Partiality::Declared` DECLINE, which returns `None`
+                            // and leaves the term stuck: the exact disposition
+                            // this ruling overturns.
+                            Ok(Some(mettail_runtime::PathValue::Unset)) => {
+                                #[cfg(debug_assertions)]
+                                {
+                                    let all_unset = payload.iter().all(|(_, v)| v.is_unset());
+                                    if all_unset {
+                                        eprintln!(
+                                            "[pathmap.get] this pathmap has no values, so \
+                                             `.get({})` is not a meaningful operation on it \
+                                             — the key IS present; nothing is stored under \
+                                             it. An unset value is not `Nil` and not \
+                                             absent.",
+                                            k,
+                                        );
+                                    } else {
+                                        eprintln!(
+                                            "[pathmap.get] this pathmap is MIXED (some \
+                                             entries carry values, some do not) and the \
+                                             entry for `{}` is one of the valueless ones, \
+                                             so `.get({})` has nothing to return — the key \
+                                             IS present. An unset value is not `Nil` and \
+                                             not absent.",
+                                            k, k,
+                                        );
+                                    }
+                                }
+                                Proc::Err
+                            },
                             Ok(None) | Err(()) => Proc::Err,
                         }
                     },
@@ -2636,12 +2740,33 @@ language! {
                 Proc::CastReadZipper(inner) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rholang::zipper::zipper_get_leaf(z.as_ref()) {
                         Ok(mettail_runtime::PathValue::Set(v)) => v,
-                        // #74: the leaf EXISTS but nothing is bound to it
-                        // (`{| k |}`). No `Proc` means "no value" — `Nil` is a
-                        // writable value and `error` would claim the leaf is
-                        // absent. Stay stuck, exactly as a failed navigation
-                        // does.
-                        Ok(mettail_runtime::PathValue::Unset) => stuck(),
+                        // ★★ #74, RULED 2026-07-29 (USER) — the ZIPPER SIBLING of
+                        // `MGet`'s unset arm, and the second of exactly TWO
+                        // value-reading pathmap surfaces.
+                        //
+                        // The leaf EXISTS but nothing is stored under it
+                        // (`{| k |}`). No reduction of `getLeaf()` can produce a
+                        // value that was never written, so this ERRS rather than
+                        // blocking — a stuck term would promise a future state
+                        // that does not exist. Same ruling, same reasoning, same
+                        // departure from the `MSet` precedent as `MGet` above.
+                        //
+                        // ⚠ NOTE THE ASYMMETRY WITH THE ARM BELOW, which is
+                        // deliberate and is exactly the distinction the ruling
+                        // turns on: a FAILED NAVIGATION (`Err(())` — there is no
+                        // leaf here at all) stays STUCK, because a later
+                        // reduction of the zipper expression really can move the
+                        // focus somewhere that has a leaf. A leaf that exists
+                        // and holds nothing cannot become non-empty.
+                        Ok(mettail_runtime::PathValue::Unset) => {
+                            #[cfg(debug_assertions)]
+                            eprintln!(
+                                "[readZipper.getLeaf] the leaf at this focus has no value, \
+                                 so `getLeaf()` has nothing to return — the leaf IS \
+                                 present. An unset value is not `Nil` and not absent.",
+                            );
+                            Proc::Err
+                        },
                         Err(()) => stuck(),
                     },
                     _ => stuck(),
