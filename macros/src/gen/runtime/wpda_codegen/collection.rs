@@ -143,19 +143,44 @@ fn has_binder_internal_collection_slot(positions: &[BinderPosition]) -> bool {
 /// 3. the lexer terminal set — `find_collection_info` in
 ///    `crate::gen::syntax::parser::prattail_bridge`.
 ///
-/// Resolution: an explicitly **declared** `key_val_sep` (from a
-/// [`CollectionDelimiters`] on an `as Map`/`as Pathmap` category) wins; otherwise
-/// the per-type default applies — `":"` for the kv-bearing container types
-/// (`HashMap`, `PathMap`), `None` for the sequence/set types (`Vec`, `HashBag`,
-/// `HashSet`).
+/// Resolution: **the container type decides whether a key/value separator exists
+/// at all**; the declared delimiters only choose its spelling. A `HashMap`/
+/// `PathMap` slot resolves to the declared `key_val_sep` when one is in scope and
+/// to the `":"` default otherwise; a `Vec`/`HashBag`/`HashSet` slot is `None`
+/// unconditionally, *including* when the enclosing category declares a
+/// `key_val_sep`.
 ///
-/// Byte-identity (existing corpus): the inline-binder and lexer sources have no
-/// declared delimiters in scope and pass `declared = None`, reducing to
-/// `type_default(coll_type)` — exactly the former
-/// `match coll_kind { HashMap | PathMap => Some(":"), _ => None }` hardcode. The
-/// declared-category source always carries `Some(d)` whose `key_val_sep` is
-/// `Some(":")` for the shipped `Map`/`Pathmap` categories, so the declared value
-/// wins and equals the former `d.key_val_sep.clone()`.
+/// ★ ROOT 3 (2026-07-29, #151) — why the type gate is load-bearing. Until this
+/// fix the resolver read `declared.key_val_sep` *before* looking at `coll_type`:
+///
+/// ```ignore
+/// declared.and_then(|d| d.key_val_sep.clone())
+///     .or_else(|| match coll_type { HashMap | PathMap => Some(":"), _ => None })
+/// ```
+///
+/// [`super::binder::classify_binder_in`] resolves `declared_delims` from the
+/// rule's **own result category**, on the premise that a binder rule's category
+/// is a host category like `Proc`/`Name` and therefore never a declared
+/// collection. That premise is false: the auto-injected higher-order-literal
+/// (`MVar`/`MApply*`) variants exist in *every* category, including rholang's
+/// `Map` and `Pathmap`, which **are** declared collection categories carrying
+/// `key_val_sep: Some(":")`. So `MApplyProc(Arc<Map>, Vec<Proc>)` — whose slot is
+/// a `Vec`, not a map — inherited `":"` from its home category and was classified
+/// `is_kv` by the walker (`prattail/src/wpda_walker.rs`, the `CollectionMarker`
+/// close). MEASURED at HEAD `8c946bff`: 42 of rholang's generated collection
+/// slots carried `kv_sep: Some(":")` where only **2** are genuine kv rules
+/// (`MapLit`, `PathmapLit`); the other 40 were `Vec` slots wearing a map's
+/// separator, hence graded by the kv arity gate (`items == 2·(seps+1)`) instead
+/// of the sequence gate (`items == seps+1`) and skipped by the element-category
+/// gate.
+///
+/// Byte-identity (existing corpus): the inline-binder and lexer sources that pass
+/// `declared = None` are unaffected — they already reduced to
+/// `type_default(coll_type)`. The declared-category source is unaffected for
+/// genuine `Map`/`Pathmap` literal rules, whose `coll_type` is `HashMap`/
+/// `PathMap` and whose declared `key_val_sep` is `Some(":")`. Only the
+/// `Vec`-in-a-collection-category case moves, and it moves from a wrong answer to
+/// the right one.
 ///
 /// `PathMap` note: `PathMap` NEVER lexes as an inline collection type
 /// (`ast/src/types.rs` accepts only `Vec | HashBag | HashSet | HashMap` inline,
@@ -166,12 +191,16 @@ pub(crate) fn kv_sep_for(
     coll_type: &CollectionType,
     declared: Option<&CollectionDelimiters>,
 ) -> Option<String> {
-    declared
-        .and_then(|d| d.key_val_sep.clone())
-        .or_else(|| match coll_type {
-            CollectionType::HashMap | CollectionType::PathMap => Some(":".to_string()),
-            _ => None,
-        })
+    match coll_type {
+        // Only kv-bearing container types have a key/value separator. The
+        // declared spelling wins when present; `":"` is the per-type default.
+        CollectionType::HashMap | CollectionType::PathMap => declared
+            .and_then(|d| d.key_val_sep.clone())
+            .or_else(|| Some(":".to_string())),
+        // Sequence/set types have no key/value separator regardless of what the
+        // enclosing (possibly collection-declared) category spells out.
+        CollectionType::Vec | CollectionType::HashBag | CollectionType::HashSet => None,
+    }
 }
 
 /// Try to classify a `GrammarRule` as a collection-literal rule.
@@ -1483,6 +1512,85 @@ mod tests {
     use mettail_ast::types::CollectionType;
     use proc_macro2::Span;
     use syn::Ident;
+
+    // ── ROOT 3 (#151, 2026-07-29): the container type decides whether a kv
+    // separator exists; the declared delimiters only choose its spelling. ──
+    //
+    // The defect these pin: `MApplyProc(Arc<Map>, Vec<Proc>)` is an
+    // auto-injected higher-order-literal variant whose *home category* is
+    // rholang's `Map` (a declared collection carrying `key_val_sep: Some(":")`)
+    // but whose *slot* is a `Vec`. `binder::classify_binder_in` resolves
+    // `declared_delims` from the home category, so this `Vec` slot used to
+    // inherit `":"` and be classified `is_kv` by the walker — putting 40 of
+    // rholang's 42 generated kv slots under the wrong arity gate. MEASURED at
+    // HEAD `8c946bff`.
+
+    /// Row G of the #151/#74 RED — the cheapest one in the set: a pure
+    /// macro-crate unit test that needs no `languages` build.
+    #[test]
+    fn kv_sep_for_vec_in_a_map_category_is_none() {
+        let map_delims = CollectionCategory::map_defaults();
+        assert_eq!(
+            map_delims.key_val_sep.as_deref(),
+            Some(":"),
+            "fixture precondition: a declared Map category carries `:`"
+        );
+        assert_eq!(
+            kv_sep_for(&CollectionType::Vec, Some(&map_delims)),
+            None,
+            "a `Vec` slot has no key/value separator even when its enclosing \
+             category declares one (ROOT 3: the auto-injected `MApply*` HOL \
+             variants live in the `Map`/`Pathmap` categories but carry `Vec` \
+             slots)"
+        );
+    }
+
+    /// The same rule for the other two non-kv container types, so the fix is a
+    /// class fix rather than a `Vec`-shaped instance fix.
+    #[test]
+    fn kv_sep_for_bag_and_set_in_a_map_category_are_none() {
+        let map_delims = CollectionCategory::map_defaults();
+        assert_eq!(kv_sep_for(&CollectionType::HashBag, Some(&map_delims)), None);
+        assert_eq!(kv_sep_for(&CollectionType::HashSet, Some(&map_delims)), None);
+    }
+
+    /// The control that proves the fix is surgical: genuine kv containers keep
+    /// resolving, declared spelling first, `":"` default second.
+    #[test]
+    fn kv_sep_for_genuine_kv_containers_is_unchanged() {
+        let map_delims = CollectionCategory::map_defaults();
+        assert_eq!(
+            kv_sep_for(&CollectionType::HashMap, Some(&map_delims)).as_deref(),
+            Some(":"),
+        );
+        assert_eq!(
+            kv_sep_for(&CollectionType::PathMap, Some(&map_delims)).as_deref(),
+            Some(":"),
+        );
+        // No declared delimiters in scope (the inline-binder and lexer-terminal
+        // sources) ⇒ the per-type default.
+        assert_eq!(
+            kv_sep_for(&CollectionType::HashMap, None).as_deref(),
+            Some(":"),
+        );
+        assert_eq!(
+            kv_sep_for(&CollectionType::PathMap, None).as_deref(),
+            Some(":"),
+        );
+        assert_eq!(kv_sep_for(&CollectionType::Vec, None), None);
+        // A user-overridden spelling still wins for a genuine kv container.
+        let custom = mettail_ast::language::CollectionDelimiters {
+            open: "map(".to_string(),
+            close: ")".to_string(),
+            sep: ",".to_string(),
+            key_val_sep: Some("=>".to_string()),
+        };
+        assert_eq!(
+            kv_sep_for(&CollectionType::HashMap, Some(&custom)).as_deref(),
+            Some("=>"),
+        );
+        assert_eq!(kv_sep_for(&CollectionType::Vec, Some(&custom)), None);
+    }
 
     fn empty_lang() -> mettail_ast::language::LanguageDef {
         mettail_ast::language::LanguageDef {

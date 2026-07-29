@@ -329,12 +329,28 @@ pub(crate) fn classify_binder_in(
     }
     // Stage 3 (2026-06-27): the declared collection delimiters for THIS rule's
     // result category, if it is declared as a collection category (`as List`/
-    // `Bag`/`Map`/`Set`/`Pathmap`). For binder rules — whose category is a host
-    // category like `Proc`/`Name`, never a declared collection — this resolves to
-    // `None`, so the kv-separator resolver falls to the per-type default
-    // (`HashMap` ⇒ `":"`), byte-identical to the former hardcode. It is threaded
-    // through `language` so the inline-binder kv-source reads through the SAME
-    // `kv_sep_for` resolver as the declared-category and lexer-terminal sources.
+    // `Bag`/`Map`/`Set`/`Pathmap`). It is threaded through `language` so the
+    // inline-binder kv-source reads through the SAME `kv_sep_for` resolver as the
+    // declared-category and lexer-terminal sources.
+    //
+    // ⚠ CORRECTION (2026-07-29, #151 ROOT 3). The original text here claimed:
+    // "For binder rules — whose category is a host category like `Proc`/`Name`,
+    // never a declared collection — this resolves to `None`". **That premise is
+    // false.** The auto-injected higher-order-literal variants (`MVar`,
+    // `MApplyProc`, `MApplyName`, …) are generated into *every* category,
+    // including rholang's `Map` and `Pathmap`, which ARE declared collection
+    // categories carrying `key_val_sep: Some(":")`. So `declared_delims` is
+    // `Some(..)` for 40 of rholang's binder rules, whose collection slots are
+    // `Vec<Proc>` argument lists — not maps.
+    //
+    // The consequence used to be that those `Vec` slots inherited `":"` and were
+    // classified `is_kv` by the walker's `CollectionMarker` close, landing them
+    // under the kv arity gate (`items == 2·(seps+1)`) instead of the sequence
+    // gate (`items == seps+1`). The fix is in `kv_sep_for` itself, which now
+    // gates on `coll_type` first: a `Vec` has no key/value separator regardless
+    // of what its home category declares. This site keeps resolving the declared
+    // delimiters (they legitimately supply the *spelling* for a genuine kv slot);
+    // it simply no longer decides *whether* a separator exists.
     let declared_delims = language
         .types
         .iter()
