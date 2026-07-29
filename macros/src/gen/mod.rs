@@ -470,6 +470,10 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             // OFF / non-eligible ⇒ the pre-memo body VERBATIM (byte-identical).
             let memo_on = sep_enabled || proj_enabled || infix_enabled;
             let proj_memo_ident = format_ident!("__PROJ_MEMO_{}", cat);
+            // #103/R3 MEMOIZED ENUMERATION: the `_all` sibling map. Same `memo_on`
+            // predicate, same facade-side emission gate (`memo_iso_eligible`), so the
+            // two maps and their two wrappers cannot drift apart.
+            let proj_all_memo_ident = format_ident!("__PROJ_ALL_MEMO_{}", cat);
 
             let parse_fn = format_ident!("parse_{}", cat);
             let _parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
@@ -860,6 +864,169 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     }
                 }
             };
+
+            // ── #103/R3 MEMOIZED ENUMERATION ──
+            //
+            // The `_all` (ambiguity-preserving) string entry gets the same treatment
+            // the single-result entry got in ROOT-P: a per-category, epoch-scoped,
+            // thread-local memo in front of the isolation prologues, with the former
+            // body renamed `_uncached`.
+            //
+            // WHY IT WAS OWED. The `@`-projection helper sub-parses each operand
+            // through THIS entry and combines the per-operand reading sets
+            // CARTESIAN-wise, so the same `(category, span)` subproblem is re-entered
+            // once per enclosing combination — and, until #103/R3, each re-entry ran a
+            // full monolithic walker pass over that span. The union prologue carried a
+            // thread-local "re-entrancy guard" that was supposed to bound this; it read
+            // its flag one statement too late and was constant-`true`, so it bounded
+            // nothing (see `facade::emit_projection_isolation_prologue`). The banked
+            // deep-`@` ladder confirms the walker ran once per NESTING LEVEL: at d=6
+            // the union's excess over the pre-union row is 48.68 ms and the Σ of the
+            // walker-alone row over all six levels is 46.86 ms.
+            //
+            // Two DELIBERATE divergences from the single-result memo above, both
+            // argued at `facade::emit_proj_all_memo_thread_local`:
+            //   * the key is the RAW `input`, NOT `input.trim()` — this value carries
+            //     WEIGHTS, and `LexicographicWeight` is whitespace-sensitive (F12), so
+            //     trimming the key would silently assert `_all(s).1 == _all(s.trim()).1`;
+            //   * no `__REALIZE_CAP` skip — that cap is a helper-internal decline
+            //     trigger, not a property of this entry's output, and skipping above it
+            //     would disable the memo exactly on the most ambiguous inputs.
+            //
+            // ★ DIVERGENT: `__ProjMemoGuard::enter()` is added HERE too, so a top-level
+            // `_all` now also bumps the shared epoch and hence clears the SINGLE memo.
+            // That is a cost change only (clearing is always sound), but it is a change
+            // to a path R3 does not own, so it is stated rather than buried. It is also
+            // REQUIRED for soundness of sharing: without it, two consecutive top-level
+            // `_all` calls would share an epoch, and a `mettail_runtime::clear_var_cache()`
+            // between them (which the gates and `fresh()`-based tests do routinely) would
+            // be SPANNED by a memo hit — returning terms carrying pre-clear `FreeVar`s
+            // that a fresh parse would not produce. The existing single memo escapes this
+            // only because its epoch bumps on every outermost `parse_via_wpda`.
+            let parse_via_wpda_all_with_weights_entry = if memo_on {
+                quote! {
+                    /// M8 (2026-05-14): multi-result WPDS-driven parser entry —
+                    /// #103/R3 MEMOIZED wrapper.
+                    ///
+                    /// Returns ALL accepted terms produced by the walker's
+                    /// `WpdaResolveResult::Accepted` vec, in lex-min order
+                    /// (per the underlying `LexicographicWeight` ordering). Use
+                    /// this when downstream disambiguation needs every alt
+                    /// (e.g. `parse_preserving_vars` flattening into
+                    /// `Ambiguous`, or `run_ascent_typed` iterating alts).
+                    ///
+                    /// Epoch-scoped to the OUTERMOST parse via `__ProjMemoGuard`
+                    /// (shared with the single-result memo, so the depth counter
+                    /// handles nesting for both entries with no new machinery);
+                    /// consults `__PROJ_ALL_MEMO_<Cat>` keyed on the RAW input. On a
+                    /// miss it computes `parse_via_wpda_all_with_weights_uncached` and
+                    /// stores the (Ok OR Err) result — a pure function of the input up
+                    /// to `UniqueId` renaming, so the memoized value is equal to the
+                    /// un-memoized one; only the recursion SHAPE (tree → DAG) changes.
+                    pub fn parse_via_wpda_all_with_weights(
+                        input: &str,
+                    ) -> Result<
+                        (
+                            Vec<#cat>,
+                            Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                        ),
+                        ParseError,
+                    > {
+                        let _g = __ProjMemoGuard::enter();
+                        let __epoch = __ProjMemoGuard::epoch();
+                        // ★ RAW, not trimmed — see the divergence note above.
+                        if let Some(__hit) = #proj_all_memo_ident.with(|__cell| {
+                            let mut __slot = __cell.borrow_mut();
+                            if __slot.0 != __epoch {
+                                // Stale epoch (a new outermost parse): lazily clear.
+                                __slot.0 = __epoch;
+                                __slot.1.clear();
+                                None
+                            } else {
+                                __slot.1.get(input).cloned()
+                            }
+                        }) {
+                            return __hit;
+                        }
+                        let __computed = Self::parse_via_wpda_all_with_weights_uncached(input);
+                        #proj_all_memo_ident.with(|__cell| {
+                            let mut __slot = __cell.borrow_mut();
+                            if __slot.0 != __epoch {
+                                __slot.0 = __epoch;
+                                __slot.1.clear();
+                            }
+                            __slot.1.insert(input.to_string(), __computed.clone());
+                        });
+                        __computed
+                    }
+
+                    /// Un-memoized multi-result WPDS parser entry — the VERBATIM
+                    /// pre-memo `parse_via_wpda_all_with_weights` body. Called by the
+                    /// memoized wrapper on a cache miss. Its isolation-recursion
+                    /// sub-parses re-enter through the memoized wrapper, so the
+                    /// enumerating matcher's cartesian re-descent collapses to a
+                    /// polynomial DAG and the union's walker leg runs once per DISTINCT
+                    /// span per epoch instead of once per visit.
+                    ///
+                    /// M6c.4 (2026-05-14): when `lex_dag(input).has_ambiguity()`
+                    /// is true (multi-kind or multi-length lex alts at any
+                    /// byte position), routes through `LatticeTokenSource`
+                    /// so the walker's lex-Fork surfaces all alternatives.
+                    /// Otherwise uses the slice path — byte-identical to
+                    /// `parse_via_wpda`. The `_all_with_source` facade
+                    /// variant accepts either source.
+                    fn parse_via_wpda_all_with_weights_uncached(
+                        input: &str,
+                    ) -> Result<
+                        (
+                            Vec<#cat>,
+                            Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                        ),
+                        ParseError,
+                    > {
+                        mettail_prattail::hang_dump::install_hang_dump_handler();
+                        #proj_prologue_all
+                        #sep_prologue_all
+                        #infix_prologue_all
+                        Self::__all_with_weights_monolithic(input)
+                    }
+                }
+            } else {
+                quote! {
+                    /// M8 (2026-05-14): multi-result WPDS-driven parser entry.
+                    ///
+                    /// Returns ALL accepted terms produced by the walker's
+                    /// `WpdaResolveResult::Accepted` vec, in lex-min order
+                    /// (per the underlying `LexicographicWeight` ordering). Use
+                    /// this when downstream disambiguation needs every alt
+                    /// (e.g. `parse_preserving_vars` flattening into
+                    /// `Ambiguous`, or `run_ascent_typed` iterating alts).
+                    ///
+                    /// M6c.4 (2026-05-14): when `lex_dag(input).has_ambiguity()`
+                    /// is true (multi-kind or multi-length lex alts at any
+                    /// byte position), routes through `LatticeTokenSource`
+                    /// so the walker's lex-Fork surfaces all alternatives.
+                    /// Otherwise uses the slice path — byte-identical to
+                    /// `parse_via_wpda`. The `_all_with_source` facade
+                    /// variant accepts either source.
+                    pub fn parse_via_wpda_all_with_weights(
+                        input: &str,
+                    ) -> Result<
+                        (
+                            Vec<#cat>,
+                            Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                        ),
+                        ParseError,
+                    > {
+                        mettail_prattail::hang_dump::install_hang_dump_handler();
+                        #proj_prologue_all
+                        #sep_prologue_all
+                        #infix_prologue_all
+                        Self::__all_with_weights_monolithic(input)
+                    }
+                }
+            };
+
             let parse_via_wpda_method = quote! {
                 #parse_via_wpda_entry
 
@@ -931,37 +1098,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     None
                 }
 
-                /// M8 (2026-05-14): multi-result WPDS-driven parser entry.
-                ///
-                /// Returns ALL accepted terms produced by the walker's
-                /// `WpdaResolveResult::Accepted` vec, in lex-min order
-                /// (per the underlying `LexicographicWeight` ordering). Use
-                /// this when downstream disambiguation needs every alt
-                /// (e.g. `parse_preserving_vars` flattening into
-                /// `Ambiguous`, or `run_ascent_typed` iterating alts).
-                ///
-                /// M6c.4 (2026-05-14): when `lex_dag(input).has_ambiguity()`
-                /// is true (multi-kind or multi-length lex alts at any
-                /// byte position), routes through `LatticeTokenSource`
-                /// so the walker's lex-Fork surfaces all alternatives.
-                /// Otherwise uses the slice path — byte-identical to
-                /// `parse_via_wpda`. The `_all_with_source` facade
-                /// variant accepts either source.
-                pub fn parse_via_wpda_all_with_weights(
-                    input: &str,
-                ) -> Result<
-                    (
-                        Vec<#cat>,
-                        Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
-                    ),
-                    ParseError,
-                > {
-                    mettail_prattail::hang_dump::install_hang_dump_handler();
-                    #proj_prologue_all
-                    #sep_prologue_all
-                    #infix_prologue_all
-                    Self::__all_with_weights_monolithic(input)
-                }
+                #parse_via_wpda_all_with_weights_entry
 
                 /// The MONOLITHIC `_all` body — the plain canonical-GLL walker over the
                 /// whole input, with NO isolation prologue in front of it.

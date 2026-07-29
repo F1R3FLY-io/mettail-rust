@@ -1909,17 +1909,58 @@ pub(crate) fn proj_isolation_helper_ident(cat_name: &str) -> proc_macro2::Ident 
     format_ident!("__mettail_wpda_proj_isolate_all_{}", cat_name)
 }
 
-/// The module-scope thread-local re-entrancy guard for the #28/G3 union (`cat_name`).
+/// The module-scope thread-local SPAN LOG of the #28/G3 union's WALKER LEGS for
+/// `cat_name` (`__G3_WALKER_SPANS_<Cat>`) — storage for the `__g3_*` probe.
 ///
-/// The isolation helper sub-parses each operand through the SAME `_all` string entry the
-/// union sits on, so without a guard the monolithic walker is invoked once per NESTING
-/// LEVEL, each invocation re-parsing that level's whole subtree. The guard bounds it to
-/// ONE walker pass per top-level `_all` call. That is sufficient AND complete: the
-/// top-level pass already returns the whole input's entire reading set, including readings
-/// whose nested groupings are transparent, so declining to re-union at inner levels cannot
-/// lose a reading.
+/// One entry is pushed per ENTRY INTO THE UNION ARM, i.e. per call of
+/// `Cat::__all_with_weights_monolithic` made by the `SepSeam::All` prologue. The probe
+/// is the executable form of the `__PROJ_ALL_MEMO_<Cat>` contract — **one walker leg
+/// per DISTINCT span per epoch** — so after #103/R3
+/// `spans.len() == spans.iter().collect::<BTreeSet<_>>().len()`. That equality is
+/// deterministic and involves no timing, which is why it, and not a wall-clock budget,
+/// is the gate on the memo's structural claim (`gate_f_all`).
+///
+/// ★ ARMED, not always-on. Recording is off until `Cat::__g3_probe_reset()` arms it.
+/// An unbounded `Vec<String>` on the parse hot path is a leak in a long-lived host
+/// (`rholang-runtime` parses continuously and would never reset it). Disarmed, the
+/// probe costs one thread-local `bool` read per union-arm entry and allocates nothing.
+/// The `legs > 0` non-vacuity assertion in `gate_f_all` is what proves arming worked,
+/// so a silently-disarmed probe cannot make that gate pass vacuously.
+pub(crate) fn proj_union_probe_spans_ident(cat_name: &str) -> proc_macro2::Ident {
+    format_ident!("__G3_WALKER_SPANS_{}", cat_name)
+}
+
+/// The module-scope thread-local ARM flag for the `__g3_*` walker-leg probe
+/// (`__G3_PROBE_ARMED_<Cat>`). See [`proj_union_probe_spans_ident`].
+pub(crate) fn proj_union_probe_armed_ident(cat_name: &str) -> proc_macro2::Ident {
+    format_ident!("__G3_PROBE_ARMED_{}", cat_name)
+}
+
+/// The gated `@`-projection isolation shape for `cat_name`: `Some` iff the master
+/// switch is ON, the category is in the include set, AND a shape is derivable.
+pub(crate) fn projection_iso_shape(
+    language: &LanguageDef,
+    cat_name: &str,
+    categories: &[String],
+) -> Option<ProjIsoShape> {
+    if eligible_family(language, IsoFamily::Proj, cat_name, categories) {
+        derive_projection_iso_shape(language, cat_name, categories)
+    } else {
+        None
+    }
+}
+
+/// Emit the string-entry prologue that calls the projection-isolation helper with
+/// the RAW input string (before `lex_dag`). On `None`/failure the helper declines
+/// and the facade falls through to the UNMODIFIED monolithic body (byte-identical;
+/// monolithic authoritative). Wired BEFORE the sep-isolation prologue
+/// (mutually-exclusive by input shape).
 ///
 /// ## Measured, on the deep-`@` ladder `@^d Nil (!(0))^d` (debug build, min of 3)
+///
+/// ★ RELOCATED VERBATIM (#103/R3, 2026-07-29) from `proj_union_guard_ident`, which no
+/// longer exists. The table is the measurement; it is kept because it is the evidence,
+/// and the reading of it is CORRECTED BELOW rather than the table being deleted.
 ///
 /// ```text
 ///   d                        1      2      3      4      5      6   step ratio
@@ -1944,39 +1985,117 @@ pub(crate) fn proj_isolation_helper_ident(cat_name: &str) -> proc_macro2::Ident 
 ///    is a different configuration (facade off everywhere), not the pre-change baseline.
 ///    The honest control is `_all` PRE-union at HEAD, which is the third row.
 ///
-/// The guard's own contribution is therefore modest and should be stated as measured:
-/// ~3% at d=6 (153.13 → 148.22). It is kept because it makes the number of walker passes
-/// a function of the CALL, not of the nesting depth, which bounds the worst case on shapes
-/// where inner levels re-enter the same category more aggressively than this ladder does.
-pub(crate) fn proj_union_guard_ident(cat_name: &str) -> proc_macro2::Ident {
-    format_ident!("__METTAIL_G3_UNION_ACTIVE_{}", cat_name)
-}
-
-/// The gated `@`-projection isolation shape for `cat_name`: `Some` iff the master
-/// switch is ON, the category is in the include set, AND a shape is derivable.
-pub(crate) fn projection_iso_shape(
-    language: &LanguageDef,
-    cat_name: &str,
-    categories: &[String],
-) -> Option<ProjIsoShape> {
-    if eligible_family(language, IsoFamily::Proj, cat_name, categories) {
-        derive_projection_iso_shape(language, cat_name, categories)
-    } else {
-        None
-    }
-}
-
-/// Emit the string-entry prologue that calls the projection-isolation helper with
-/// the RAW input string (before `lex_dag`). On `None`/failure the helper declines
-/// and the facade falls through to the UNMODIFIED monolithic body (byte-identical;
-/// monolithic authoritative). Wired BEFORE the sep-isolation prologue
-/// (mutually-exclusive by input shape).
+/// ### ★ THIRD CORRECTION (#103/R3, 2026-07-29) — the two rows this table was used to
+/// ### justify the re-entrancy guard with say the OPPOSITE, and the guard is now deleted
+///
+/// The note that stood here read: *"The guard's own contribution is therefore modest and
+/// should be stated as measured: ~3% at d=6 (153.13 → 148.22). It is kept because it makes
+/// the number of walker passes a function of the CALL, not of the nesting depth."* Both
+/// halves are wrong, and the table itself is what refutes them.
+///
+/// **(a) The ~3% is noise, and cannot be anything else.** `__g3_outermost` was
+/// constant-`true` (proof below), so the guarded and unguarded legs executed *identical*
+/// work — and the guarded leg additionally did two thread-local writes per union. A leg
+/// that does strictly more work cannot legitimately be 3% faster; 153.13 vs 148.22 is
+/// run-to-run variance on a debug build, not a treatment effect.
+///
+/// **(b) The guard never bounded the walker passes.** If it had done what the note claims
+/// — one walker pass per top-level `_all` — the union's excess over the PRE-union row at
+/// d=6 would be exactly one walker pass, i.e. `14.28`. Measured excess:
+/// `148.22 − 99.54 = 48.68`. The Σ of the walker-alone row over all six nesting levels is
+/// `1.92 + 4.04 + 6.46 + 8.81 + 11.35 + 14.28 = 46.86`. **48.68 ≈ 46.86, within 4%** —
+/// the arithmetic says the walker ran once per NESTING LEVEL, precisely the cost the
+/// guard's docstring claimed to prevent.
+///
+/// **The three-way reachability proof that `__g3_outermost` was constant-`true`.** The
+/// flag was read at the statement AFTER `#helper_name(input, false)`, i.e. after every
+/// nested `_all` sub-parse it was meant to guard had already returned; it was `true` only
+/// across the single `__all_with_weights_monolithic` call. For the `else` arm to be
+/// reachable, `Cat::parse_via_wpda_all_with_weights` would have to be reachable FROM
+/// `Cat::__all_with_weights_monolithic`. It is not:
+///
+/// 1. `__METTAIL_G3_UNION_ACTIVE` had exactly 3 readers in the whole emitted tree
+///    (`target/generated/rholang/parser.rs`, one per union prologue: `Proc`, `Name`,
+///    `InputBind`). No other reader existed anywhere.
+/// 2. All 140 `parse_via_wpda_all_with_weights(` call sites in
+///    `target/generated/rholang/wpda.rs` lie in exactly five functions — the three
+///    `__mettail_wpda_proj_isolate_all_{Proc,InputBind,Name}` helpers plus
+///    `__mettail_wpda_infix_isolate_all_Proc` and `__mettail_wpda_sep_isolate_all_ForRow`.
+///    **Zero** lie in any `parse_*_via_wpda_all*` walker entry, and those five helpers are
+///    called only from the ten isolation prologues in `parser.rs`.
+/// 3. `__all_with_weights_monolithic` (`gen/mod.rs`) deliberately does NOT re-run the
+///    prologues — that is what makes the prologue's call to it terminate rather than
+///    recurse — so it reaches only `lex_dag`/`lex` and the walker entries.
+///
+/// ⇒ the `else` arm was dead, and the guard's only live residue was a **latent sticky
+/// impurity**: its `set(true)`/`set(false)` pair was manual rather than RAII, so an unwind
+/// out of the monolithic call left the flag `true` for the remaining life of the thread,
+/// after which `_all` on that thread would silently stop unioning. Deleting the guard
+/// removes it. (It has no non-panicking witness — the only way to observe it is to unwind
+/// — so it is recorded here rather than tested: `dovetail/tests/panic_expectation_gate.rs`
+/// bans tests that expect a panic, and a test that cannot be written must still be
+/// written *down*.)
+///
+/// **What actually bounds the recursion** is `__PROJ_ALL_MEMO_<Cat>` (#103/R3): the `_all`
+/// string entry is memoized per epoch on the RAW input, so each distinct span is walked
+/// once per top-level parse instead of once per visit. `gate_f_all`
+/// (`languages/tests/proj_iso_ab_soundness.rs`) asserts that structurally via the
+/// `__g3_*` probe, and re-measures this ladder's `_all` row.
+///
+/// ## Measured AFTER #103/R3, same ladder, same estimator (min of 3, debug)
+///
+/// Both legs below have the guard DELETED; they differ only in whether
+/// `__PROJ_ALL_MEMO_<Cat>` is emitted (`if memo_on` vs `if false` at the
+/// `parse_via_wpda_all_with_weights` split in `gen/mod.rs`). `walker-leg` is
+/// `__all_with_weights_monolithic` timed directly — not "the walker in another
+/// configuration", but the EXACT leg the union prologue runs — and `Σlegs` is its prefix
+/// sum, which is the union's true walker subtotal because the `__g3_*` probe reports
+/// exactly `d` legs at depth `d` (one per distinct span) in BOTH legs.
+///
+/// ```text
+///   d                          1      2      3      4      5      6   step ratio
+///   union, memo OFF        12.55  19.58  31.80  53.64  90.55 151.70   ~1.68
+///   union, memo ON  (R3)    8.09  13.54  23.83  40.85  66.59 103.52   1.72→1.55
+///   walker-leg              1.89   4.02   6.50   8.83  11.39  14.20   (Σ = 46.82)
+///   facade = union − Σlegs  6.20   7.63  11.43  19.62  33.97  56.70   1.50→1.67
+/// ```
+///
+/// ★ **The memo-OFF row independently re-confirms that the deleted guard was inert.** It
+/// reproduces the banked `_all union, unguard` row (`12.74 19.58 32.27 54.98 91.20
+/// 153.13`) to within ~1% *with the guard removed* — and the banked `guarded` row
+/// (`148.22`) sits inside that same ~3% band, which is what "the ~3% was noise" predicts.
+/// The `walker-leg` row likewise reproduces the banked `walker alone` row to within ~1%,
+/// and its Σ over six levels is **46.82 ms** against the banked **46.86 ms** — so the
+/// `48.68 ≈ 46.86` arithmetic that refuted the guard is reproducible, not a coincidence of
+/// one run.
+///
+/// ★ **The design's own cost prediction was WRONG, and is recorded rather than quietly
+/// dropped.** It predicted the union's d=6 total would fall to ≈55-60 ms, on the reasoning
+/// that the `_all` pre-union row would "flatten toward the single-seam shape". Measured:
+/// **103.52 ms**. The decomposition says exactly where the reasoning failed:
+///
+/// * the walker subtotal is **unchanged** (46.82 ms) — as predicted, since the memo removes
+///   re-walks of the same span and the deep-`@` ladder has none: the probe measures
+///   `legs == distinct == d` at every rung with the memo OFF as well as ON;
+/// * the facade subtotal fell from ~99.5 ms to **56.70 ms** (−43%) but did **not** flatten,
+///   and could not have. The single seam is flat because it composes per-operand SINGLE
+///   winners, so its cartesian is `1 × 1 × …`; the `_all` seam composes per-operand READING
+///   SETS, and the memo removes the cost of RECOMPUTING a reading set, not the cost of
+///   COMBINING one. Building, ⊗-weighting, `semantic_hash`-keying and ⊕-min-folding a
+///   cartesian whose factors grow with depth is multiplicative by construction — which is
+///   what correction 1 above already said, and which the prediction contradicted.
+///
+/// So the honest statement of what R3 bought on this ladder is **1.47× at d=6** (151.70 →
+/// 103.52) plus an exact structural bound (`legs == distinct`), not a return to linearity.
+/// Linearity for the enumeration seam would need the cartesian itself to be shared — a
+/// different change, against a different seam, with its own measurement.
 pub(crate) fn emit_projection_isolation_prologue(
     helper_name: &proc_macro2::Ident,
     cat_ident: &proc_macro2::Ident,
     seam: SepSeam,
 ) -> TokenStream {
-    let union_guard = proj_union_guard_ident(&cat_ident.to_string());
+    let probe_spans = proj_union_probe_spans_ident(&cat_ident.to_string());
+    let probe_armed = proj_union_probe_armed_ident(&cat_ident.to_string());
     match seam {
         SepSeam::Single => quote! {
             // P1 `@`-PROJECTION ISOLATION prologue (Plan a8b32275) — single winner.
@@ -2030,30 +2149,38 @@ pub(crate) fn emit_projection_isolation_prologue(
             // transparent twin and `@Nil!(0)` from the specific `POutputNil` to the generic
             // `POutputShort(PZero, ..)`, and there is no evidence the election is wrong.
             if let Some((__piso_terms, __piso_weights)) = #helper_name(input, false) {
-                // ★ RE-ENTRANCY GUARD. The helper above sub-parses each operand through
-                // THIS SAME `_all` entry, so an unguarded union runs the walker once per
-                // nesting level. One walker pass per TOP-LEVEL call is sufficient AND
-                // complete: that pass already returns the whole input's entire reading set,
-                // nested transparent groupings included. See `proj_union_guard_ident` for
-                // the measured cost table — including the correction that the geometric
-                // `_all` curve is PRE-EXISTING and not introduced by this union.
-                let __g3_outermost = #union_guard.with(|__g| !__g.get());
-                let (__g3_walker_terms, __g3_walker_weights) = if __g3_outermost {
-                    #union_guard.with(|__g| __g.set(true));
-                    // The walker's own reading set for the same input. An `Err` contributes
-                    // NOTHING rather than propagating: the facade exists precisely because
-                    // the walker is incomplete on this family (the G2 witnesses parse ON and
-                    // were rejected by the walker alone until #35), so a walker rejection
-                    // must not be allowed to lose readings the facade legitimately found.
-                    let __g3_res = Self::__all_with_weights_monolithic(input);
-                    #union_guard.with(|__g| __g.set(false));
-                    match __g3_res {
+                // ★ #103/R3 (2026-07-29): THE RE-ENTRANCY GUARD THAT STOOD HERE WAS INERT,
+                // AND IS DELETED. It read `__METTAIL_G3_UNION_ACTIVE_<Cat>` at THIS
+                // statement — i.e. AFTER `#helper_name(input, false)` above had already
+                // run every nested `_all` sub-parse the guard was written to suppress — so
+                // `__g3_outermost` was constant-`true` and the `else` arm was unreachable.
+                // What the guard claimed to bound (one walker pass per top-level call) is
+                // now actually bounded, by `__PROJ_ALL_MEMO_<Cat>` on the `_all` string
+                // entry: one walker leg per DISTINCT span per epoch. See
+                // `emit_projection_isolation_prologue`'s doc comment for the three-way
+                // reachability proof, the arithmetic confirmation from the banked ladder
+                // (48.68 ≈ 46.86 within 4%), and the latent sticky impurity that deleting
+                // the manual set/reset pair removes.
+                //
+                // The `__g3_*` PROBE: one entry per entry into this arm, recorded only
+                // while ARMED (`Cat::__g3_probe_reset()`), so `gate_f_all` can assert the
+                // memo's contract structurally — `legs == distinct` — with no timing.
+                // Disarmed it is one thread-local `bool` read and no allocation.
+                #probe_armed.with(|__armed| {
+                    if __armed.get() {
+                        #probe_spans.with(|__spans| __spans.borrow_mut().push(input.to_string()));
+                    }
+                });
+                // The walker's own reading set for the same input. An `Err` contributes
+                // NOTHING rather than propagating: the facade exists precisely because
+                // the walker is incomplete on this family (the G2 witnesses parse ON and
+                // were rejected by the walker alone until #35), so a walker rejection
+                // must not be allowed to lose readings the facade legitimately found.
+                let (__g3_walker_terms, __g3_walker_weights) =
+                    match Self::__all_with_weights_monolithic(input) {
                         Ok((__t, __w)) => (__t, __w),
                         Err(_) => (Vec::new(), Vec::new()),
-                    }
-                } else {
-                    (Vec::new(), Vec::new())
-                };
+                    };
                 // FINALIZE exactly as the helper and the monolithic `_all` both do —
                 // dedup by semantic key, ⊕-min representative, weight-sort — so the
                 // unioned set is indistinguishable in shape from either input set.
@@ -3076,12 +3203,55 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
         }
     };
 
-    let union_guard = proj_union_guard_ident(&cat_ident.to_string());
+    let probe_spans = proj_union_probe_spans_ident(&cat_ident.to_string());
+    let probe_armed = proj_union_probe_armed_ident(&cat_ident.to_string());
     quote! {
-        // ★ #28 / G3 — the union's re-entrancy guard. See `proj_union_guard_ident`
-        // for the measurement that makes it necessary rather than defensive.
+        // ★ #103/R3 — the union's WALKER-LEG PROBE, which replaced the inert
+        // `__METTAIL_G3_UNION_ACTIVE_<Cat>` re-entrancy guard. See
+        // `emit_projection_isolation_prologue` for why the guard was dead and what
+        // actually bounds the walker passes now (`__PROJ_ALL_MEMO_<Cat>`).
         thread_local! {
-            static #union_guard: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+            /// Every span the `SepSeam::All` union prologue handed to
+            /// `__all_with_weights_monolithic`, in call order, while ARMED.
+            #[allow(non_upper_case_globals)]
+            static #probe_spans: std::cell::RefCell<Vec<std::string::String>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+            /// Recording is OFF until `Cat::__g3_probe_reset()` arms it — an unbounded
+            /// span log on the parse hot path would leak in a long-lived host.
+            #[allow(non_upper_case_globals)]
+            static #probe_armed: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+
+        impl #cat_ident {
+            /// ARM the `@`-projection union's walker-leg probe and clear its span log.
+            ///
+            /// ★ `#[doc(hidden)]` diagnostic surface, not API. Precedent:
+            /// `__all_with_weights_monolithic`. Its consumer is `gate_f_all`
+            /// (`languages/tests/proj_iso_ab_soundness.rs`), which asserts the
+            /// `__PROJ_ALL_MEMO_<Cat>` contract STRUCTURALLY — one walker leg per
+            /// DISTINCT span per epoch — instead of inferring it from wall-clock.
+            #[doc(hidden)]
+            pub fn __g3_probe_reset() {
+                #probe_spans.with(|__spans| __spans.borrow_mut().clear());
+                #probe_armed.with(|__armed| __armed.set(true));
+            }
+
+            /// The spans handed to the monolithic walker by the union prologue since the
+            /// last [`Self::__g3_probe_reset`], in call order. `legs == spans.len()`;
+            /// `distinct == spans` deduplicated.
+            #[doc(hidden)]
+            pub fn __g3_walker_spans() -> Vec<std::string::String> {
+                #probe_spans.with(|__spans| __spans.borrow().clone())
+            }
+
+            /// The number of walker legs the union prologue ran since the last
+            /// [`Self::__g3_probe_reset`]. `0` while disarmed — `gate_f_all` asserts
+            /// `legs > 0` on its mutation leg precisely so a silently-disarmed probe
+            /// cannot make the gate pass vacuously.
+            #[doc(hidden)]
+            pub fn __g3_walker_legs() -> usize {
+                #probe_spans.with(|__spans| __spans.borrow().len())
+            }
         }
 
         /// P1 `@`-PROJECTION ISOLATION+COMBINE (Plan a8b32275): STRING-level
@@ -4015,6 +4185,68 @@ fn emit_proj_memo_thread_local(cat_ident: &proc_macro2::Ident) -> TokenStream {
     }
 }
 
+/// #103/R3 MEMOIZED ENUMERATION — the PER-CATEGORY thread-local memo map
+/// `__PROJ_ALL_MEMO_<Cat>` consulted by the memoized
+/// `Cat::parse_via_wpda_all_with_weights` (`gen/mod.rs`). The `_all` sibling of
+/// [`emit_proj_memo_thread_local`], emitted under the SAME `memo_iso_eligible`
+/// predicate so the two maps and their two wrappers can never drift apart.
+///
+/// # Why the `_all` seam needed one at all
+///
+/// The `@`-projection isolation helper sub-parses every operand through the same
+/// `_all` string entry the union prologue sits on, and combines the per-operand
+/// reading sets CARTESIAN-wise. Overlapping `(category, span)` subproblems are
+/// therefore re-visited once per enclosing combination, and each visit ran a full
+/// monolithic walker pass over that span. The banked deep-`@` ladder (relocated onto
+/// [`emit_projection_isolation_prologue`]) shows the arithmetic: at `d = 6` the
+/// union's excess over the pre-union row is `48.68 ms`, and the Σ of the walker-alone
+/// row over all six nesting levels is `46.86 ms` — a 4% match, i.e. **one walker pass
+/// per nesting level**. The memo makes it one per DISTINCT span per epoch.
+///
+/// # Two deliberate divergences from the single-result memo
+///
+/// 1. **The key is the RAW `input`, not `input.trim()`.** The single memo's value is a
+///    term; this one's is `(terms, weights)`, and the facade's `LexicographicWeight` is
+///    whitespace-sensitive (F12). Keying on the trimmed span would silently assert
+///    `_all(s).1 == _all(s.trim()).1`, which nothing in this tree establishes. The
+///    helper already trims each extracted operand before recursing, so in practice
+///    nearly every key arrives trimmed anyway and the extra entries are rare: the cost
+///    of being conservative is a few map entries, the cost of being wrong is a wrong
+///    weight vector.
+/// 2. **No `__REALIZE_CAP` skip.** `__REALIZE_CAP` is a HELPER-INTERNAL decline
+///    trigger (the helper `return None`s when a cartesian would exceed it), not a
+///    property of the union's output — the union's walker leg is uncapped. Declining to
+///    cache above the cap would disable the memo exactly on the most ambiguous inputs,
+///    which are the ones that need it. A hit costs one deep clone; a miss costs a
+///    walker pass plus a cartesian. If that trade ever inverts, `gate_f_all` stops
+///    flattening — that is the falsifiable check, and no cap should be added without it.
+///
+/// `Err` is cached alongside `Ok` for the same reason the single memo does it: a
+/// declining span is re-visited as often as an accepting one, so caching only `Ok`
+/// leaves the exponential re-descent in place on exactly the failing tilings that the
+/// cartesian enumerates most.
+fn emit_proj_all_memo_thread_local(cat_ident: &proc_macro2::Ident) -> TokenStream {
+    let memo_ident = format_ident!("__PROJ_ALL_MEMO_{}", cat_ident);
+    quote! {
+        thread_local! {
+            #[allow(non_upper_case_globals, clippy::type_complexity)]
+            static #memo_ident: std::cell::RefCell<(
+                u64,
+                std::collections::HashMap<
+                    std::string::String,
+                    Result<
+                        (
+                            Vec<#cat_ident>,
+                            Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                        ),
+                        mettail_prattail::runtime_types::ParseError,
+                    >,
+                >,
+            )> = std::cell::RefCell::new((0, std::collections::HashMap::new()));
+        }
+    }
+}
+
 /// Emit per-category `parse_<Cat>_via_wpda` wrappers plus the shared
 /// `WpdaParseError` type.
 pub(crate) fn emit_parse_fns(
@@ -4070,11 +4302,18 @@ pub(crate) fn emit_parse_fns(
         let memo_iso_eligible = sep_isolation_shape(language, cat_name, categories).is_some()
             || projection_iso_shape(language, cat_name, categories).is_some()
             || infix_iso_shape(language, cat_name, categories).is_some();
-        let proj_memo_thread_local = if memo_iso_eligible {
+        // ★ #103/R3: the `_all` memo map rides on the SAME `memo_iso_eligible`
+        // predicate as the single-result one — one `if`, two maps — so the enumeration
+        // seam's memo can never be emitted for a category whose wrapper was not, nor
+        // vice versa.
+        let (proj_memo_thread_local, proj_all_memo_thread_local) = if memo_iso_eligible {
             any_iso_eligible = true;
-            emit_proj_memo_thread_local(&cat_ident)
+            (
+                emit_proj_memo_thread_local(&cat_ident),
+                emit_proj_all_memo_thread_local(&cat_ident),
+            )
         } else {
-            quote! {}
+            (quote! {}, quote! {})
         };
 
         // ── P2 ISOLATION+COMBINE (Plan a7986200, 2026-07-05) ──
@@ -4365,6 +4604,12 @@ pub(crate) fn emit_parse_fns(
             // const is ON AND this category is isolation-eligible; empty otherwise
             // (byte-identical). Shares the module scope with the `impl Cat` methods.
             #proj_memo_thread_local
+
+            // #103/R3 MEMOIZED ENUMERATION: the per-category thread-local memo map
+            // `__PROJ_ALL_MEMO_<Cat>` consulted by the memoized
+            // `Cat::parse_via_wpda_all_with_weights` (gen/mod.rs). Same emission gate
+            // as the single-result map above.
+            #proj_all_memo_thread_local
 
             // P2 ISOLATION+COMBINE (Plan a7986200): the per-category
             // `__mettail_wpda_sep_isolate_all_<Cat>` helper (+ its specialized

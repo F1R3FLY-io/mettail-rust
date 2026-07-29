@@ -32,6 +32,8 @@
 //! | **C** | degenerate tail ≡ its non-degenerate sibling | the G1 invariant: emptying a `.*sep` tail must not change whether the frame parses |
 //! | **D** | the G2 witnesses parse ON | pins the family whose production correctness rests *entirely* on the facade |
 //! | **E** | reading-count table | a golden over both legs, so any drift in either direction is caught |
+//! | **F** | single-seam parse-time budget | the executable form of `ProjectionIsolation.v` T3 |
+//! | **F-all** | `_all`-seam walker legs == distinct spans, and its own time budget | the enumeration seam recurses through the facade too, and until #103/R3 nothing watched it |
 //!
 //! # "G3" — ★ CLOSED 2026-07-25 (#28)
 //!
@@ -666,5 +668,287 @@ fn gate_f_parse_time_budget_on_the_deep_at_ladder() {
         total < 1.0,
         "the A/B contrast set took {total:.3}s (budget 1.0s) — a per-input blow-up \
          is the first symptom of a re-armed projection frontier"
+    );
+}
+
+/// The `@`-projection deep ladder `@^d Nil (!(0))^d`, shared by the gate-F family.
+fn deep_at_ladder(max_depth: usize) -> Vec<String> {
+    (1..=max_depth)
+        .map(|d| {
+            let mut s = String::with_capacity(4 * d + 4);
+            (0..d).for_each(|_| s.push('@'));
+            s.push_str("Nil");
+            (0..d).for_each(|_| s.push_str("!(0)"));
+            s
+        })
+        .collect()
+}
+
+/// ── Gate F-all ★ (#103/R3): ONE WALKER LEG PER DISTINCT SPAN ──
+///
+/// # The half of gate F that was missing
+///
+/// [`gate_f_parse_time_budget_on_the_deep_at_ladder`] watches the SINGLE-result seam —
+/// the one ROOT-P already made linear with `__PROJ_MEMO_<Cat>`. The ambiguity-preserving
+/// `_all` seam, which the `@`-projection helper actually recurses through, was guarded by
+/// nothing, and its measured step ratio was RISING (1.34 → 1.85 on the pre-union row).
+///
+/// # What is asserted, and why it is structural rather than timed
+///
+/// The `SepSeam::All` union prologue hands each span it accepts to the monolithic walker.
+/// `__PROJ_ALL_MEMO_<Cat>` (#103/R3) makes the `_all` string entry return early on a
+/// repeat of the same span within one epoch, so the union arm — and therefore the walker
+/// leg — runs **once per DISTINCT span per top-level parse** instead of once per visit.
+/// That is an exact, deterministic equality (`legs == distinct`), so it is asserted
+/// directly through the `__g3_*` probe rather than inferred from wall-clock. No timing,
+/// no flakiness, and it fails loudly if a future edit re-arms the re-descent.
+///
+/// # The measured RED→GREEN that this test is the executable form of
+///
+/// With the `_all` memo forced off (`if false` in place of `if memo_on` at the
+/// `parse_via_wpda_all_with_weights` split in `macros/src/gen/mod.rs`) and everything
+/// else at HEAD — summed over the swept inputs below:
+///
+/// ```text
+///                        legs   distinct   verdict
+///   memo OFF (RED)        123         60   legs > distinct — the same span re-walked
+///   memo ON  (GREEN)       60         60   one leg per distinct span
+/// ```
+///
+/// The worst single row was `@Nil!(@Nil!(@Nil!(0),@Nil!(0)),@Nil!(@Nil!(0),@Nil!(0)))` at
+/// **43 legs over 3 distinct spans** (`@Nil!(0)` walked 36 times), and the sharpest
+/// evidence that this was never a synthetic concern is that a row already in the A/B
+/// corpus separates: `g2-no-method` (`@(a!(Nil))!(Nil,)`) ran 3 legs over 2 spans.
+///
+/// ⚠ **The obvious mutation does not separate the two configurations.** The first version
+/// of this gate pinned `ctl-deep-3` (`@@@Nil!(0)!(0)!(0)`, the d=3 rung of gate F's own
+/// ladder), on the reasoning that a deep chain must re-visit its own sub-spans. Measured
+/// with the memo forced off: `legs == distinct` — it passed RED. Every tiling of that
+/// ladder visits each span once, so the ladder measures depth, not sharing. The family
+/// that does separate them is [`REPEATED_OPERAND_FAMILY`]: the same operand TEXT at two
+/// argument positions, which the cartesian enumerates independently. The sweep is
+/// therefore not decoration — a single-input version of this gate was green on the
+/// defect it exists to catch.
+///
+/// # Non-vacuity, and the control
+///
+/// * `legs > 0` — the probe records only while ARMED, and the union arm is only entered
+///   when the helper ACCEPTS. A silently disarmed probe, or an input the facade declines,
+///   would make `legs == distinct == 0` and pass this test for the wrong reason. Asserted
+///   explicitly so that cannot happen.
+/// * the control is an input the facade **declines** — `"Nil"` has no σ-led frame, so the
+///   union arm is never entered. `legs == 0` there both before and after the memo (both
+///   measured), which is what shows the swept inputs' non-zero counts come from those
+///   inputs and not from ambient parsing the probe happens to be recording.
+#[test]
+fn gate_f_all_one_walker_leg_per_distinct_span() {
+    // ── control: an input the facade DECLINES ⇒ the union arm is never entered ──
+    mettail_runtime::clear_var_cache();
+    Proc::__g3_probe_reset();
+    let ctl = Proc::parse_via_wpda_all("Nil");
+    assert!(ctl.is_ok(), "the control must still parse (via the walker): {ctl:?}");
+    let ctl_legs = Proc::__g3_walker_legs();
+    assert_eq!(
+        ctl_legs, 0,
+        "control `Nil` has no σ-led frame, so the `@`-projection helper must decline and \
+         the union arm must never run a walker leg — got {ctl_legs}. A non-zero count here \
+         means the probe is recording legs this test does not account for, and the \
+         mutation legs' numbers cannot be attributed to their own inputs."
+    );
+
+    // ── the mutation sweep ──
+    //
+    // The whole A/B corpus, the deep-`@` ladder, and the REPEATED-OPERAND family that
+    // separates the two configurations. Sweeping rather than pinning one input is not
+    // thoroughness for its own sake: `legs == distinct` holds VACUOUSLY on any input
+    // whose tilings each visit a span once, and the deep ladder turns out to be one of
+    // those (measured — see the RED/GREEN table above). A single-input version of this
+    // gate would have passed with the memo forced off.
+    let mut inputs: Vec<String> = corpus().iter().map(|(_, s)| s.to_string()).collect();
+    inputs.extend(deep_at_ladder(6));
+    inputs.extend(REPEATED_OPERAND_FAMILY.iter().map(|s| s.to_string()));
+
+    let mut rows: Vec<String> = Vec::with_capacity(inputs.len());
+    let mut bad: Vec<String> = Vec::new();
+    let mut total_legs = 0usize;
+    let mut total_distinct = 0usize;
+
+    for src in &inputs {
+        mettail_runtime::clear_var_cache();
+        Proc::__g3_probe_reset();
+        let _ = Proc::parse_via_wpda_all(src);
+
+        let spans = Proc::__g3_walker_spans();
+        let legs = spans.len();
+        let distinct = spans.iter().collect::<std::collections::BTreeSet<_>>().len();
+        total_legs += legs;
+        total_distinct += distinct;
+        rows.push(format!("  {legs:>4} legs {distinct:>4} distinct   {src:?}\n"));
+
+        if legs != distinct {
+            let mut counts: std::collections::BTreeMap<&String, usize> = Default::default();
+            for s in &spans {
+                *counts.entry(s).or_insert(0) += 1;
+            }
+            let repeats: String = counts
+                .iter()
+                .filter(|(_, n)| **n > 1)
+                .map(|(s, n)| format!("      {n:>4} ×  {s:?}\n"))
+                .collect();
+            bad.push(format!("  {src:?}: {legs} legs over {distinct} distinct spans\n{repeats}"));
+        }
+    }
+
+    let table: String = rows.concat();
+    println!("`_all` union walker legs per input:\n{table}");
+
+    // ── non-vacuity, asserted BEFORE the equality ──
+    //
+    // The probe records only while ARMED and only when the `@`-projection helper
+    // ACCEPTS, so `legs == distinct == 0` everywhere would satisfy the equality below
+    // while measuring nothing at all. That is a FAILURE, not a trivial success.
+    assert!(
+        total_legs > 0 && total_distinct > 0,
+        "the probe recorded NO walker leg across {} inputs (legs={total_legs}, \
+         distinct={total_distinct}). Either `__g3_probe_reset` no longer arms the probe, \
+         or the `@`-projection helper stopped accepting every shape in the sweep — in \
+         both cases the equality below would pass vacuously.\n{table}",
+        inputs.len()
+    );
+
+    assert!(
+        bad.is_empty(),
+        "the `_all` union ran MORE walker legs than there are DISTINCT spans. \
+         `__PROJ_ALL_MEMO_<Cat>` is supposed to make the enumerating matcher's cartesian \
+         re-descent a DAG, so each span is walked once per epoch; a leg count above the \
+         distinct-span count means the memo is not being consulted (a stale epoch every \
+         call, a key that never matches, or the wrapper bypassed):\n{}\nfull table:\n{table}",
+        bad.concat()
+    );
+}
+
+/// Inputs whose operand spans REPEAT — the family that separates a memoized `_all` from
+/// an un-memoized one, and the reason [`gate_f_all_one_walker_leg_per_distinct_span`]
+/// sweeps instead of pinning a single input.
+///
+/// The deep-`@` ladder does NOT separate them: each of its tilings visits each span once,
+/// so `legs == distinct` there with the memo forced off. What separates them is the same
+/// operand TEXT appearing at two argument positions, which the cartesian enumerates
+/// independently and therefore re-parses — the exact re-descent the memo collapses.
+const REPEATED_OPERAND_FAMILY: &[&str] = &[
+    "@Nil!(@Nil!(0),@Nil!(0))",
+    "@Nil!(@Nil!(0),@Nil!(0),@Nil!(0))",
+    "@Nil!(@(a)!(0),@(a)!(0))",
+    "@@Nil!(0)!(@@Nil!(0)!(0),@@Nil!(0)!(0))",
+    "@Nil!(@Nil!(@Nil!(0),@Nil!(0)),@Nil!(@Nil!(0),@Nil!(0)))",
+];
+
+/// ── Gate F-all ★: the PARSE-TIME BUDGET on the `_all` seam ──
+///
+/// The sibling of [`gate_f_parse_time_budget_on_the_deep_at_ladder`] for the
+/// ambiguity-preserving entry. Same ladder, same estimator (min of `REPS`), same ratio
+/// budget and the same reason for excluding the `d = 1 -> 2` step (`d = 1` is `@Nil!(0)`,
+/// which the fewest-holes primary elects as the specific `POutputNil`, so it sits on a
+/// different curve from the generic `POutputShort` chain every `d >= 2` rung takes).
+///
+/// ⚠ This is a GUARD, not the RED. The pre-#103/R3 `_all` union row already sat at a
+/// ~1.67 step ratio — under budget while doing Σ-over-levels redundant walker passes —
+/// which is exactly why the structural
+/// [`gate_f_all_one_walker_leg_per_distinct_span`] above, and not a wall-clock
+/// threshold, is what pins the memo's contract. What this test adds is the missing
+/// symmetric budget: before #103/R3 the `_all` seam had NO time gate at all, so a future
+/// edit could re-arm the geometric regime here and every gate in the tree would stay
+/// green.
+///
+/// Thresholds are deliberately loose (a debug build on a shared machine); the tight,
+/// exact statement lives in the structural test.
+#[test]
+fn gate_f_all_parse_time_budget_on_the_deep_at_ladder() {
+    use std::time::Instant;
+    const REPS: usize = 3;
+    const MAX_DEPTH: usize = 6;
+    const MAX_STEP_RATIO: f64 = 3.0;
+    /// Total wall-clock for all six rungs. Pre-#103/R3 the d=6 rung ALONE measured
+    /// 148.22 ms, so this ceiling is one a re-armed re-descent cannot slip under.
+    const LADDER_TOTAL_BUDGET_S: f64 = 1.0;
+
+    let ladder = deep_at_ladder(MAX_DEPTH);
+
+    /// Min-of-`REPS` wall-clock, in ms, with the fresh-variable cache cleared before
+    /// every rep so no rung inherits another's bindings.
+    fn min_ms(src: &str, reps: usize, mut run: impl FnMut(&str) -> bool) -> f64 {
+        mettail_runtime::clear_var_cache();
+        let _ = run(src); // warm-up
+        let mut t_min = f64::INFINITY;
+        for _ in 0..reps {
+            mettail_runtime::clear_var_cache();
+            let t0 = Instant::now();
+            let ok = run(src);
+            let dt = t0.elapsed().as_secs_f64() * 1000.0;
+            assert!(ok, "ladder rung must parse: {src:?}");
+            t_min = t_min.min(dt);
+        }
+        t_min
+    }
+
+    let best: Vec<f64> = ladder
+        .iter()
+        .map(|src| min_ms(src, REPS, |s| Proc::parse_via_wpda_all(s).is_ok()))
+        .collect();
+    // ★ The honest control for the union: `__all_with_weights_monolithic` is not "the
+    // walker in a different configuration", it is the EXACT leg the union prologue runs,
+    // so `union − Σ(walker legs)` attributes the remainder to the facade's own
+    // helper+cartesian work. The probe says the union runs `d` legs at depth `d` (one per
+    // distinct span), so the subtrahend at depth `d` is the PREFIX SUM of this row.
+    let walker: Vec<f64> = ladder
+        .iter()
+        .map(|src| min_ms(src, REPS, |s| Proc::__all_with_weights_monolithic(s).is_ok()))
+        .collect();
+
+    let mut table = String::new();
+    let mut walker_prefix = 0.0f64;
+    for (i, src) in ladder.iter().enumerate() {
+        walker_prefix += walker[i];
+        table.push_str(&format!(
+            "  d={} {:>34}  union {:>7.2} ms   walker-leg {:>6.2} ms   Σlegs {:>7.2} ms   facade {:>7.2} ms\n",
+            i + 1,
+            src,
+            best[i],
+            walker[i],
+            walker_prefix,
+            best[i] - walker_prefix,
+        ));
+    }
+    // Printed unconditionally (`--nocapture`) so the ladder can be read off a GREEN run
+    // and compared against the banked table on
+    // `facade::emit_projection_isolation_prologue` without having to make it fail first.
+    println!("`_all` union ladder (min of {REPS}, debug):\n{table}");
+
+    let mut bad: Vec<String> = Vec::new();
+    for d in 2..MAX_DEPTH {
+        let ratio = best[d] / best[d - 1];
+        // A non-finite ratio (a zero-time rung) is a FAILURE, not a silent pass: it means
+        // the measurement is degenerate and the budget was never actually checked.
+        if !ratio.is_finite() || ratio >= MAX_STEP_RATIO {
+            bad.push(format!(
+                "  d={}->{}  ratio {:.2} (budget < {:.1})",
+                d,
+                d + 1,
+                ratio,
+                MAX_STEP_RATIO
+            ));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "the `_all` seam's per-level step ratio exceeded the budget — the enumerating \
+         matcher's cartesian re-descent may no longer be collapsing to a DAG:\n{}\nladder:\n{table}",
+        bad.join("\n")
+    );
+
+    let total_s: f64 = best.iter().sum::<f64>() / 1000.0;
+    assert!(
+        total_s < LADDER_TOTAL_BUDGET_S,
+        "the six `_all` ladder rungs took {total_s:.3}s (budget {LADDER_TOTAL_BUDGET_S:.1}s):\n{table}"
     );
 }
