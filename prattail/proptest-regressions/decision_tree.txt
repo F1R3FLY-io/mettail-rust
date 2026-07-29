@@ -1,7 +1,20 @@
+# ── SUPERSEDED (#104, 2026-07-29): RELOCATED to `prattail/proptest-regressions/decision_tree/tests.txt` ──
+#
+# `prattail/src/decision_tree.rs` no longer exists: the module became the DIRECTORY
+# `prattail/src/decision_tree/`, and every `proptest!` block moved into `tests.rs` inside it.
+# proptest resolves a layout-A corpus from the path of the file that DECLARES the property
+# (`FileFailurePersistence::SourceParallel`), so the corpus it opens is
+# `.../decision_tree/tests.txt` — not this file. Sitting here, the seed below was replayed by
+# nothing at all, and nothing said so.
+#
+# The file is RETAINED rather than deleted so the provenance survives and the move is
+# reversible. Its entry is commented out below so it is not counted twice by corpus
+# inventories; the live copy carries it byte-identically.
+#
 # Seeds for failure cases proptest has generated in the past. It is
 # automatically read and these particular cases re-run before any
 # novel cases are generated.
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 6c118d633e0fafae86469a8c29d573fbe3fef9aa31d89029abed2d93e6a79eaa # shrinks to entries = [("Phs", 0, "  aaa"), ("Phs", 0, "aaaa ")]
+# cc 6c118d633e0fafae86469a8c29d573fbe3fef9aa31d89029abed2d93e6a79eaa # shrinks to entries = [("Phs", 0, "  aaa"), ("Phs", 0, "aaaa ")]

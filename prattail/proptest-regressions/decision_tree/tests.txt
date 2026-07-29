@@ -1,0 +1,35 @@
+# ── RELOCATED from `prattail/proptest-regressions/decision_tree.txt` (#104, 2026-07-29) ──
+#
+# proptest names a layout-A corpus after the source file that DECLARES the property. Its
+# `FileFailurePersistence::SourceParallel` resolver walks up from `file!()` to the directory
+# holding `lib.rs`, strips that `src` component, and re-roots the remainder under the crate's
+# `proptest-regressions/` sibling (proptest-1.10.0,
+# `src/test_runner/failure_persistence/file.rs`, the `SourceParallel` arm). So for
+# `prattail/src/decision_tree/tests.rs` the corpus proptest opens is
+#
+#     prattail/proptest-regressions/decision_tree/tests.txt      <- this file
+#
+# and NOT `.../decision_tree.txt`. The seed below was recorded while these properties still
+# lived in a flat `prattail/src/decision_tree.rs`; when that module became a DIRECTORY and the
+# properties moved into `tests.rs` inside it, the recorded path stopped matching and the seed
+# was replayed by nothing at all. Nothing failed. The file kept sitting in the directory
+# listing reading as covered — the same shape as the `RhoCalc` -> `Rholang` corpus strand and
+# the `prattail/src/automata/lex_weight.rs` -> `rigail/src/lex_weight.rs` relocation.
+#
+# The original is retained at its old path, marked SUPERSEDED, so the provenance survives and
+# the move is reversible. The entry below is byte-identical to it. It is ALSO promoted to a
+# named test — `the_dedup_collision_keeps_the_first_code` and its sibling in
+# `prattail/src/decision_tree/tests.rs` — but a promoted test and a replayed seed are not the
+# same thing: the test pins the one property the entry was shrunk against, while the seed is
+# re-run against every property this file declares.
+#
+# `testkit/tests/proptest_corpus_replay_paths.rs` is the guard that makes the next such strand
+# loud instead of silent.
+#
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6c118d633e0fafae86469a8c29d573fbe3fef9aa31d89029abed2d93e6a79eaa # shrinks to entries = [("Phs", 0, "  aaa"), ("Phs", 0, "aaaa ")]

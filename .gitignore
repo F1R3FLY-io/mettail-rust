@@ -143,13 +143,20 @@ prattail-parser-*.rs
 #     declared in `[package.metadata.mettail]` (see `ast::manifest`); it is
 #     `languages/tests` today. ⚠ The file name is keyed on the LANGUAGE NAME, not on the
 #     test file — every generated property test of a language shares ONE corpus — so
-#     renaming a language STRANDS its corpus silently. `languages/tests/corpus_name_guard.rs`
+#     renaming a language STRANDS its corpus silently.
+#     `ast/tests/language_name_keyed_artifacts.rs::every_prop_corpus_names_a_live_language`
 #     is the guard that makes that loud.
 #
 #   LAYOUT A — `<crate>/proptest-regressions/<module path>.txt`
 #     proptest's DEFAULT `FileFailurePersistence::SourceParallel` form, derived from
 #     `file!()`. Used by every hand-written `proptest!` block (macros/, prattail/,
-#     rholang-runtime/).
+#     rholang-runtime/, rigail/). ⚠ The path is keyed on the SOURCE FILE, so MOVING a
+#     property strands its corpus just as silently — and by two routes the layout-B guard
+#     cannot see: the properties moving crate (`prattail/src/automata/lex_weight.rs` ->
+#     `rigail/src/lex_weight.rs`) and a flat module becoming a directory
+#     (`prattail/src/decision_tree.rs` -> `prattail/src/decision_tree/tests.rs`).
+#     `testkit/tests/proptest_corpus_replay_paths.rs` is the guard for this layout; it
+#     inverts proptest's own `SourceParallel` resolution rather than consulting a list.
 !*.proptest-regressions
 !**/proptest-regressions/
 !**/proptest-regressions/**
