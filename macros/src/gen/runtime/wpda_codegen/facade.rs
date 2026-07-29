@@ -1936,6 +1936,302 @@ pub(crate) fn proj_union_probe_armed_ident(cat_name: &str) -> proc_macro2::Ident
     format_ident!("__G3_PROBE_ARMED_{}", cat_name)
 }
 
+/// The module-scope thread-local FOLD counter for the #103/R1 representative probe
+/// (`__REP_FOLD_<Cat>`): how many times a ⊕-min dedup seam met a semantic key it had
+/// already seen and therefore had to ELECT between two representatives of one class.
+///
+/// This is the NON-VACUITY denominator of [`proj_rep_diverge_ident`]: a divergence count
+/// of `0` means nothing only if the fold count is also `0` (the seam never had a choice
+/// to make). `gate_g` asserts `folds > 0` on its mutation leg for exactly that reason.
+pub(crate) fn proj_rep_fold_ident(cat_name: &str) -> proc_macro2::Ident {
+    format_ident!("__REP_FOLD_{}", cat_name)
+}
+
+/// The module-scope thread-local DIVERGENCE counter for the #103/R1 representative probe
+/// (`__REP_DIVERGE_<Cat>`): how many of those folds the two comparators answer
+/// DIFFERENTLY, i.e. `(__rep_cmp(w, cur) == Less) != (w < cur)`.
+///
+/// ★ Why this counter is the whole experiment. R1 replaces the representative rule at two
+/// seams; the two rules differ on EXACTLY the folds this counts, and on no others (see
+/// [`emit_rep_cmp_fn`] for the proof that the difference is confined to the reversed
+/// `open_len` leg). So:
+///
+/// * `divergences == 0` over a corpus ⇒ R1 is **provably inert** on that corpus — no
+///   elected representative, hence no `Display`, `Debug` or `semantic_hash` observation,
+///   can have moved. That is a measurement, not an absence of one.
+/// * `divergences > 0` on an input ⇒ that input is a **P-WITNESS candidate**: the seam
+///   elected a different spelling of the same semantic class, and the elected term is
+///   worth diffing.
+///
+/// The counter is computed identically under BOTH configurations (pre-R1 and post-R1
+/// both evaluate both comparators), so it is a configuration-independent property of the
+/// input, which is what makes the A/B honest.
+pub(crate) fn proj_rep_diverge_ident(cat_name: &str) -> proc_macro2::Ident {
+    format_ident!("__REP_DIVERGE_{}", cat_name)
+}
+
+/// The module-scope thread-local DETAIL LOG of the #103/R1 representative probe
+/// (`__REP_DIVERGE_LOG_<Cat>`): for each divergent fold, BOTH spellings — the one
+/// `__rep_cmp` keeps and the one the full `lex_cmp` would have kept — plus both weights
+/// in full.
+///
+/// ★ Why the count alone is not enough. A divergence says the two rules PICK differently.
+/// It does not say the two picks are OBSERVABLY different: the whole point of a
+/// `semantic_hash` class is that its members mean the same thing, and two of them can
+/// easily be `Debug`- and `Display`-identical (a sugar≡canonical alias pair, or the same
+/// constructor reached by two lex forks). Only the two spellings side by side decide
+/// whether a divergence is a P-WITNESS or an internal re-labelling — so the log is what
+/// makes the question decidable rather than merely countable.
+///
+/// ARMED by [`proj_rep_probe_armed_ident`]; see [`emit_rep_fold_body`].
+pub(crate) fn proj_rep_diverge_log_ident(cat_name: &str) -> proc_macro2::Ident {
+    format_ident!("__REP_DIVERGE_LOG_{}", cat_name)
+}
+
+/// The module-scope thread-local ARM flag for the #103/R1 detail log
+/// (`__REP_LOG_ARMED_<Cat>`). `Cat::__rep_probe_reset()` arms it.
+///
+/// The COUNTERS are always on (two `Cell<usize>` increments in an already-rare branch);
+/// only the `Debug`-string LOG is armed, because an unbounded `Vec<String>` on the parse
+/// hot path is a leak in a long-lived host that never resets it.
+pub(crate) fn proj_rep_probe_armed_ident(cat_name: &str) -> proc_macro2::Ident {
+    format_ident!("__REP_LOG_ARMED_{}", cat_name)
+}
+
+/// Emit `fn __rep_cmp` — ★ #103/R1, **THE REPRESENTATIVE-ELECTION COMPARATOR**.
+///
+/// # The defect it removes
+///
+/// The ⊕-min dedup seams fold a `semantic_hash` equivalence class down to one
+/// representative term, and they used to pick that representative with the SAME
+/// comparator that ranks the surviving classes against one another —
+/// `LexicographicWeight::lex_cmp` (`rigail/src/lex_weight.rs`), whose first tie-breaker
+/// below `primary` is a **reversed `open_len`**:
+///
+/// ```text
+///   primary  >  open_len (REVERSED — longer wins)  >  lex_alt_idx  >  src_idx  >  rule_idx
+/// ```
+///
+/// `open_len` is the byte length of the OPEN token a prefix lex-fork branch matched. It
+/// is a property of the DERIVATION PATH — *which bytes the lexer committed to at a fork*
+/// — not of the term. Using it to rank two DISTINCT semantic classes is exactly right:
+/// that is maximal munch, and it is what elects `{|` (Pathmap, len 2) over `{` (PPar,
+/// len 1) for `{||}`. Using it to choose between two spellings of ONE class is a
+/// category error: both spellings mean the same thing, so the choice cannot be justified
+/// by which lexer fork produced them, and the seam ends up electing on a byte predicate
+/// over the derivation path.
+///
+/// `__rep_cmp` is `lex_cmp` with that one leg removed:
+///
+/// ```text
+///   primary  >  lex_alt_idx  >  src_idx  >  rule_idx
+/// ```
+///
+/// Every remaining component is a property of the GRAMMAR (which lex alternative, which
+/// source category, which rule within it), so the representative is now a function of the
+/// grammar's own declared priorities alone.
+///
+/// # Where it is applied, and where it deliberately is NOT
+///
+/// Applied at the **G3 union finalize** ([`emit_projection_isolation_prologue`],
+/// `SepSeam::All`) and the **proj helper finalize** ([`emit_projection_isolation`]) —
+/// ★ BOTH, or the helper collapses the class before the union can see it, and the union
+/// site would be measuring an already-decided outcome.
+///
+/// NOT applied at the `.*sep` finalize or the binary-infix finalize in this phase. Those
+/// are the same shape and are candidates, but each fold there mixes a different candidate
+/// population (list elements; two infix operands) and so needs its own measurement before
+/// its representative rule is changed. Changing all four on one argument would make a
+/// single measurement stand for four different claims.
+///
+/// ★ `rigail/src/lex_weight.rs` is **UNCHANGED**. `Ord for LexicographicWeight` still
+/// delegates to `lex_cmp`, so every `<`, `sort_by(cmp)`, `min_by(cmp)` and `plus` in the
+/// walker and the facade keeps the maximal-munch tiebreak. `__rep_cmp` exists only at
+/// these two dedup seams and is emitted facade-side precisely so it cannot leak into the
+/// ⊗-monotone output-identity theorem that `dedup_push_realized` sits inside.
+///
+/// # ★ THE CONSEQUENCE, STATED PLAINLY
+///
+/// The two seams now run **two independent tests** per fold: `__rep_cmp` decides the
+/// TERM, and `<` (the full `lex_cmp`) still decides the WEIGHT. Therefore
+///
+/// > **the stored `(term, weight)` pair may be a pair that NO SINGLE CANDIDATE EVER
+/// > CARRIED.**
+///
+/// That is intended, and it is not a soundness leak, because the two halves answer two
+/// different questions:
+///
+/// * the WEIGHT is what ranks this class against the OTHER classes in the final
+///   `sort_by` / `min_by`. Keeping it at the full `lex_cmp`-min preserves maximal munch
+///   exactly where it belongs — BETWEEN classes — and keeps the class's rank equal to
+///   the rank the un-deduped candidate set would have given it. Had the weight followed
+///   `__rep_cmp` instead, a class could be pushed DOWN the final sort by losing the
+///   longer-open member's weight, which would be a disambiguation change.
+/// * the TERM is only the spelling handed back for that rank, and by the
+///   `semantic_hash` congruence every member of the class is an equally valid answer.
+///
+/// It is also why R1 must be settled BEFORE anything reads `.0.into_iter().next()` off
+/// the finalized pair: the pair's two halves may come from different candidates, so code
+/// that assumes `terms[i]` and `weights[i]` were produced together must be re-derived,
+/// not ported.
+///
+/// # The probe
+///
+/// Both comparators are evaluated at every fold, so the emitted seam also counts folds
+/// ([`proj_rep_fold_ident`]) and the folds on which the two answers differ
+/// ([`proj_rep_diverge_ident`]), and records both spellings of each divergence
+/// ([`proj_rep_diverge_log_ident`]). The divergence count is the executable form of R1's
+/// claim; see [`proj_rep_diverge_ident`] for why `0` would be a result rather than a
+/// non-result.
+///
+/// # ★★ MEASURED 2026-07-29 — R1 IS A BEHAVIOUR FIX, NOT SEAM-SHAPE HARDENING
+///
+/// The design predicted **no witness**, reasoning that `semantic_hash` folds
+/// sugar≡canonical aliases and `Display` is equal by construction for the
+/// transparent-grouping twins, so no `Display`- or `semantic_hash`-level witness should
+/// exist. It was right about those two keys and wrong about a third it did not consider.
+///
+/// `gate_g_representative_election_is_open_len_free`
+/// (`languages/tests/proj_iso_ab_soundness.rs`) measures **17 divergent folds** across the
+/// A/B corpus, the deep-`@` ladder, the repeated-operand family and the lex-fork family.
+/// The smallest witness is `@Nil!(0)` — the most ordinary input in the corpus:
+///
+/// ```text
+///   incumbent  POutputNil(CastInt(NumLit(0)))          primary=0.025 open_len=0 lex_alt=0 src=0 rule=33
+///   incoming   POutputShort(PZero, CastInt(NumLit(0))) primary=0.025 open_len=3 lex_alt=0 src=0 rule=33
+/// ```
+///
+/// One semantic class (`@Nil!(q)` spelled with the dedicated `POutputNil` rule, or with the
+/// generic `POutputShort` carrying `PZero` as the channel process). The two candidates are
+/// **identical on every grammar component** — same primary cost, same lex alternative, same
+/// source category, same rule index. The only thing that differs is that the incoming
+/// candidate's derivation went through a lex fork whose open token was 3 bytes (`Nil`).
+///
+/// Pre-R1 that `3` was the entire decision: the reversed `open_len` leg made the incoming
+/// strictly `⊕`-smaller, so the GENERIC spelling displaced the SPECIFIC one — the seam
+/// elected on a derivation-path byte predicate with nothing else available to it. Post-R1
+/// `__rep_cmp` returns `Equal` there, first-seen stands, and `POutputNil` survives. The
+/// lex-fork family reproduces the same mechanism at `open_len` 3 vs 2 (Pathmap `{|` vs the
+/// 3-byte `Nil`), which is what shows the cause is the FORK and not one token's length.
+///
+/// Where the change is observable, and where it is not:
+///
+/// | identity key | moved? | why |
+/// |---|---|---|
+/// | `_all` reading set, `Debug` | ★ **YES** | `parse_via_wpda_all("@Nil!(0)")` → `POutputNil(..)` after, `POutputShort(PZero, ..)` before |
+/// | `Display` | no | `POutputShort(PZero, q)` renders its channel as bare `Nil`, so both spell `@Nil!(0)` |
+/// | `semantic_hash` | no | by construction — they are ONE key, which is why they meet at this fold |
+/// | single-result `parse_via_wpda` | no | every divergence measured is on the `_all` leg; the ε-framed election is untouched |
+/// | `gate_e_reading_count_golden` | no | a representative change is not a disambiguation change: counts are unmoved |
+///
+/// So the witness lives at the STRUCTURE of the `_all` reading set — the one identity key
+/// nothing observed, since gate A's `Obs::elected` watches only the SINGLE seam. That blind
+/// spot is why a fold electing on a byte predicate survived this long.
+pub(crate) fn emit_rep_cmp_fn() -> TokenStream {
+    quote! {
+        /// ★ #103/R1 — the REPRESENTATIVE comparator: `lex_cmp` with the reversed
+        /// `open_len` maximal-munch tiebreak OMITTED.
+        ///
+        /// `open_len` is a derivation-path byte predicate (which open token a prefix
+        /// lex-fork committed to), so it ranks two DISTINCT semantic classes correctly
+        /// but cannot justify choosing between two spellings of ONE class. Every leg
+        /// kept below is a declared grammar priority. See
+        /// `facade::emit_rep_cmp_fn` for the full derivation.
+        #[inline]
+        fn __rep_cmp(
+            __a: &mettail_prattail::automata::lex_weight::LexicographicWeight,
+            __b: &mettail_prattail::automata::lex_weight::LexicographicWeight,
+        ) -> std::cmp::Ordering {
+            // `total_cmp` for NaN safety, exactly as `lex_cmp` does.
+            __a.primary
+                .0
+                .total_cmp(&__b.primary.0)
+                .then(__a.lex_alt_idx.cmp(&__b.lex_alt_idx))
+                .then(__a.src_idx.cmp(&__b.src_idx))
+                .then(__a.rule_idx.cmp(&__b.rule_idx))
+        }
+    }
+}
+
+/// Emit the body of ONE ⊕-min dedup fold under #103/R1 — the two independent tests, plus
+/// the fold/divergence probe increments.
+///
+/// `terms` / `weights` name the two parallel output vectors at the call site, `idx` the
+/// index of the incumbent representative, `term` / `w` the incoming candidate.
+///
+/// Emitted from ONE place so the two seams cannot drift apart; if a third seam is ever
+/// converted (the `.*sep` or binary-infix finalize) it reuses this, and its own
+/// measurement is what admits it.
+fn emit_rep_fold_body(
+    terms: &proc_macro2::Ident,
+    weights: &proc_macro2::Ident,
+    idx: &proc_macro2::Ident,
+    term: &proc_macro2::Ident,
+    w: &proc_macro2::Ident,
+    fold_counter: &proc_macro2::Ident,
+    diverge_counter: &proc_macro2::Ident,
+    diverge_log: &proc_macro2::Ident,
+    log_armed: &proc_macro2::Ident,
+) -> TokenStream {
+    quote! {
+        // ★ #103/R1 — TWO INDEPENDENT TESTS. `__rep_cmp` decides the TERM (grammar
+        // priorities only); `<` (full `lex_cmp`, maximal munch included) still decides
+        // the WEIGHT, because the weight is what ranks this class against the OTHERS in
+        // the final sort. The stored pair may therefore be a pair no single candidate
+        // ever carried — intended; see `facade::emit_rep_cmp_fn`.
+        let __rep_wins = __rep_cmp(&#w, &#weights[#idx]) == std::cmp::Ordering::Less;
+        let __full_wins = #w < #weights[#idx];
+        // The probe: both comparators are evaluated anyway, so counting the folds on
+        // which they DISAGREE is nearly free and is the executable form of R1's claim.
+        #fold_counter.with(|__c| __c.set(__c.get() + 1));
+        if __rep_wins != __full_wins {
+            #diverge_counter.with(|__c| __c.set(__c.get() + 1));
+            // ★ The DETAIL log. A divergence count alone says the two rules PICK
+            // differently; it does not say whether the two picks are OBSERVABLY
+            // different, which is the only question that matters for whether R1 moves
+            // an answer. Recording both spellings — before the incoming term is moved
+            // — is what turns the count into a decidable P-WITNESS question.
+            //
+            // ARMED, not always-on: recording is off until `Cat::__rep_probe_reset()`
+            // arms it, so a long-lived host never accumulates `Debug` strings on the
+            // parse hot path. Disarmed this is one thread-local `bool` read, and it is
+            // reached only on a divergent fold, which is already the rare branch of the
+            // rare branch.
+            #log_armed.with(|__armed| {
+                if __armed.get() {
+                    let __fmt_w = |__x: &mettail_prattail::automata::lex_weight::LexicographicWeight| {
+                        format!(
+                            "primary={:?} open_len={} lex_alt={} src={} rule={}",
+                            __x.primary.0, __x.open_len, __x.lex_alt_idx, __x.src_idx, __x.rule_idx,
+                        )
+                    };
+                    // `__rep_wins != __full_wins`, so exactly one rule takes the
+                    // incoming candidate and the other keeps the incumbent.
+                    let (__by_rep, __by_full) = if __rep_wins {
+                        (&#term, &#terms[#idx])
+                    } else {
+                        (&#terms[#idx], &#term)
+                    };
+                    let __rec = format!(
+                        "rep_keeps={:?}\n      full_keeps={:?}\n      w_incoming[{}]\n      w_incumbent[{}]",
+                        __by_rep,
+                        __by_full,
+                        __fmt_w(&#w),
+                        __fmt_w(&#weights[#idx]),
+                    );
+                    #diverge_log.with(|__l| __l.borrow_mut().push(__rec));
+                }
+            });
+        }
+        if __rep_wins {
+            #terms[#idx] = #term;
+        }
+        if __full_wins {
+            #weights[#idx] = #w;
+        }
+    }
+}
+
 /// The gated `@`-projection isolation shape for `cat_name`: `Some` iff the master
 /// switch is ON, the category is in the include set, AND a shape is derivable.
 pub(crate) fn projection_iso_shape(
@@ -2096,6 +2392,26 @@ pub(crate) fn emit_projection_isolation_prologue(
 ) -> TokenStream {
     let probe_spans = proj_union_probe_spans_ident(&cat_ident.to_string());
     let probe_armed = proj_union_probe_armed_ident(&cat_ident.to_string());
+    let rep_fold = proj_rep_fold_ident(&cat_ident.to_string());
+    let rep_diverge = proj_rep_diverge_ident(&cat_ident.to_string());
+    let rep_log = proj_rep_diverge_log_ident(&cat_ident.to_string());
+    let rep_log_armed = proj_rep_probe_armed_ident(&cat_ident.to_string());
+    // ★ #103/R1 — the representative comparator, emitted as a nested `fn` item inside
+    // the union arm's own block (so it can never collide with the sep/infix prologues
+    // spliced into the same enclosing function body) from the SAME emitter the proj
+    // helper's finalize uses.
+    let rep_cmp_fn = emit_rep_cmp_fn();
+    let g3_fold_body = emit_rep_fold_body(
+        &format_ident!("__g3_terms"),
+        &format_ident!("__g3_weights"),
+        &format_ident!("__idx"),
+        &format_ident!("__term"),
+        &format_ident!("__w"),
+        &rep_fold,
+        &rep_diverge,
+        &rep_log,
+        &rep_log_armed,
+    );
     match seam {
         SepSeam::Single => quote! {
             // P1 `@`-PROJECTION ISOLATION prologue (Plan a8b32275) — single winner.
@@ -2187,6 +2503,15 @@ pub(crate) fn emit_projection_isolation_prologue(
                 // `semantic_hash` folds sugar≡canonical aliases, so a reading the two
                 // legs spell differently but mean identically collapses to one key here;
                 // that is what keeps the union from inflating counts with mere notation.
+                //
+                // ★ #103/R1 — THIS is the seam where the two legs' spellings of one
+                // semantic class actually meet: the facade's reading and the walker's
+                // reading of the same class arrive here with independently-derived
+                // weights, and one of them is kept. The representative is elected by
+                // `__rep_cmp` (grammar priorities), NOT by the reversed `open_len`
+                // maximal-munch leg of `lex_cmp`, which is a derivation-path byte
+                // predicate and cannot arbitrate between two spellings of one meaning.
+                #rep_cmp_fn
                 let mut __g3_seen: std::collections::HashMap<Vec<u8>, usize> =
                     std::collections::HashMap::with_capacity(
                         __piso_terms.len() + __g3_walker_terms.len(),
@@ -2208,10 +2533,7 @@ pub(crate) fn emit_projection_isolation_prologue(
                         __h.into_key()
                     };
                     if let Some(&__idx) = __g3_seen.get(&__key) {
-                        if __w < __g3_weights[__idx] {
-                            __g3_terms[__idx] = __term;
-                            __g3_weights[__idx] = __w;
-                        }
+                        #g3_fold_body
                     } else {
                         __g3_seen.insert(__key, __g3_terms.len());
                         __g3_terms.push(__term);
@@ -3205,6 +3527,24 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
 
     let probe_spans = proj_union_probe_spans_ident(&cat_ident.to_string());
     let probe_armed = proj_union_probe_armed_ident(&cat_ident.to_string());
+    let rep_fold = proj_rep_fold_ident(&cat_ident.to_string());
+    let rep_diverge = proj_rep_diverge_ident(&cat_ident.to_string());
+    let rep_log = proj_rep_diverge_log_ident(&cat_ident.to_string());
+    let rep_log_armed = proj_rep_probe_armed_ident(&cat_ident.to_string());
+    // ★ #103/R1 — the same emitter the union finalize uses, so the two seams' election
+    // rule is one definition with two emission sites rather than two definitions.
+    let rep_cmp_fn = emit_rep_cmp_fn();
+    let helper_fold_body = emit_rep_fold_body(
+        &format_ident!("__out_terms"),
+        &format_ident!("__out_weights"),
+        &format_ident!("__idx"),
+        &format_ident!("__term"),
+        &format_ident!("__w"),
+        &rep_fold,
+        &rep_diverge,
+        &rep_log,
+        &rep_log_armed,
+    );
     quote! {
         // ★ #103/R3 — the union's WALKER-LEG PROBE, which replaced the inert
         // `__METTAIL_G3_UNION_ACTIVE_<Cat>` re-entrancy guard. See
@@ -3220,6 +3560,27 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             /// span log on the parse hot path would leak in a long-lived host.
             #[allow(non_upper_case_globals)]
             static #probe_armed: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+            /// ★ #103/R1 — how many times either dedup seam had to ELECT between two
+            /// members of one `semantic_hash` class. The non-vacuity denominator.
+            #[allow(non_upper_case_globals)]
+            static #rep_fold: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+            /// ★ #103/R1 — how many of those elections `__rep_cmp` and the full
+            /// `lex_cmp` answer DIFFERENTLY. This is exactly the set of folds R1 moves;
+            /// `0` over a corpus is a proof of inertness on that corpus, not a
+            /// missing measurement.
+            #[allow(non_upper_case_globals)]
+            static #rep_diverge: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+            /// ★ #103/R1 — for each divergent fold, BOTH spellings plus both weights.
+            /// A count says the rules pick differently; only the two spellings say
+            /// whether the difference is OBSERVABLE. Recorded only while ARMED.
+            #[allow(non_upper_case_globals)]
+            static #rep_log: std::cell::RefCell<Vec<std::string::String>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+            /// Recording of the detail log is OFF until `Cat::__rep_probe_reset()`
+            /// arms it — an unbounded `Debug`-string log on the parse hot path would
+            /// leak in a long-lived host. The COUNTERS above are always on.
+            #[allow(non_upper_case_globals)]
+            static #rep_log_armed: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         }
 
         impl #cat_ident {
@@ -3251,6 +3612,67 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
             #[doc(hidden)]
             pub fn __g3_walker_legs() -> usize {
                 #probe_spans.with(|__spans| __spans.borrow().len())
+            }
+
+            /// ★ #103/R1 — zero the representative-election probe counters, and clear
+            /// and ARM the divergence detail log.
+            ///
+            /// The COUNTERS are always on: two `Cell<usize>` increments inside the
+            /// DUPLICATE-KEY branch of a dedup fold (already the rare branch), no
+            /// allocation, no unbounded growth — so there is no arming state that
+            /// could silently disarm the fold/divergence numbers a gate reads.
+            ///
+            /// The `Debug`-string DETAIL LOG is armed here and only here, because an
+            /// unbounded `Vec<String>` on the parse hot path would leak in a
+            /// long-lived host (`rholang-runtime` parses continuously and would never
+            /// reset it). A gate that reads the log therefore cannot be fooled by a
+            /// silently-disarmed probe: the always-on divergence COUNT is what says
+            /// how many records the log must contain.
+            #[doc(hidden)]
+            pub fn __rep_probe_reset() {
+                #rep_fold.with(|__c| __c.set(0));
+                #rep_diverge.with(|__c| __c.set(0));
+                #rep_log.with(|__l| __l.borrow_mut().clear());
+                #rep_log_armed.with(|__a| __a.set(true));
+            }
+
+            /// ★ #103/R1 — one record per DIVERGENT fold since
+            /// [`Self::__rep_probe_reset`]: the spelling `__rep_cmp` keeps, the
+            /// spelling the full `lex_cmp` would have kept, and both weights.
+            ///
+            /// `len()` must equal [`Self::__rep_cmp_divergences`] — the count is
+            /// always on and the log is armed, so a shorter log means the arming was
+            /// missed and any conclusion drawn from the log is unsound. Gates assert
+            /// that equality.
+            #[doc(hidden)]
+            pub fn __rep_cmp_divergence_log() -> Vec<std::string::String> {
+                #rep_log.with(|__l| __l.borrow().clone())
+            }
+
+            /// ★ #103/R1 — how many `semantic_hash`-class ELECTIONS the two
+            /// projection dedup seams have made since [`Self::__rep_probe_reset`].
+            ///
+            /// The denominator of [`Self::__rep_cmp_divergences`]: a divergence count
+            /// of `0` is evidence only when this is `> 0`, because a seam that never
+            /// met a duplicate key never had a representative to elect.
+            #[doc(hidden)]
+            pub fn __rep_cmp_folds() -> usize {
+                #rep_fold.with(|__c| __c.get())
+            }
+
+            /// ★ #103/R1 — how many of those elections `__rep_cmp` (grammar
+            /// priorities) and the full `lex_cmp` (maximal munch included) decide
+            /// DIFFERENTLY.
+            ///
+            /// This is precisely the set of folds R1 moves, and it is computed the
+            /// same way whether or not R1's election rule is the one in force — both
+            /// comparators are evaluated at every fold — so it is a property of the
+            /// INPUT, not of the configuration. `> 0` on an input makes that input a
+            /// P-WITNESS candidate worth diffing at `Display` / `Debug`; `0` across a
+            /// corpus proves no elected representative on that corpus can have moved.
+            #[doc(hidden)]
+            pub fn __rep_cmp_divergences() -> usize {
+                #rep_diverge.with(|__c| __c.get())
             }
         }
 
@@ -3358,6 +3780,15 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
 
             // FINALIZE like the monolithic `_all`: dedup by semantic key,
             // ⊕-min representative, weight-sort.
+            //
+            // ★ #103/R1 — the representative is elected by `__rep_cmp` (grammar
+            // priorities), not by the reversed `open_len` maximal-munch leg of
+            // `lex_cmp`. ⚠ This site MUST change together with the G3 union finalize:
+            // the helper runs FIRST and its fold would otherwise collapse the class
+            // before the union could ever see the alternative spelling, so converting
+            // only the union would leave the rule half-applied and its measurement
+            // meaningless.
+            #rep_cmp_fn
             let mut __seen: std::collections::HashMap<Vec<u8>, usize> =
                 std::collections::HashMap::with_capacity(__candidates.len());
             let mut __out_terms: Vec<#cat_ident> = Vec::new();
@@ -3369,10 +3800,7 @@ fn emit_projection_isolation(cat_ident: &proc_macro2::Ident, shape: &ProjIsoShap
                     __h.into_key()
                 };
                 if let Some(&__idx) = __seen.get(&__key) {
-                    if __w < __out_weights[__idx] {
-                        __out_terms[__idx] = __term;
-                        __out_weights[__idx] = __w;
-                    }
+                    #helper_fold_body
                 } else {
                     __seen.insert(__key, __out_terms.len());
                     __out_terms.push(__term);

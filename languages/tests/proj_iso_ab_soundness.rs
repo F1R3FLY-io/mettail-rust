@@ -827,6 +827,364 @@ fn gate_f_all_one_walker_leg_per_distinct_span() {
     );
 }
 
+/// ── Gate G ★ (#103/R1): the REPRESENTATIVE is elected on grammar priorities alone ──
+///
+/// # The property
+///
+/// The `@`-projection helper's finalize and the #28/G3 union's finalize both fold a
+/// `semantic_hash` equivalence class down to ONE representative term. Until #103/R1 they
+/// elected that representative with `LexicographicWeight::lex_cmp`, whose first
+/// tie-breaker below `primary` is a **reversed `open_len`** — the byte length of the OPEN
+/// token a prefix lex-fork committed to. That is a property of the DERIVATION PATH, not
+/// of the term, and while it is exactly the right way to rank two DISTINCT semantic
+/// classes (maximal munch: `{|` beats `{` for `{||}`), it cannot arbitrate between two
+/// SPELLINGS of one class — both mean the same thing, so the choice cannot be justified
+/// by which lexer fork produced them.
+///
+/// `__rep_cmp` (`facade::emit_rep_cmp_fn`) is `lex_cmp` with that one leg removed. The
+/// weight stored for the class is still the full `lex_cmp`-min, because the weight is
+/// what ranks the class against the OTHERS.
+///
+/// # ★★ THE MEASUREMENT: A P-WITNESS EXISTS, AND THE PLAN PREDICTED IT WOULD NOT
+///
+/// Both comparators are evaluated at every fold, so the seam counts folds
+/// (`__rep_cmp_folds`), the folds on which the two answers DIFFER
+/// (`__rep_cmp_divergences`), and — while armed — both spellings of each divergence
+/// (`__rep_cmp_divergence_log`). Those divergent folds are exactly the ones R1 moves,
+/// and the count is computed the same way whether or not R1's rule is in force, so it is
+/// a property of the INPUT rather than of the configuration.
+///
+/// The design predicted **no witness**: `semantic_hash` folds sugar≡canonical aliases and
+/// `Display` is equal by construction for the transparent-grouping twins, so it doubted a
+/// `Display`- or `semantic_hash`-level witness existed. **Measured 2026-07-29: 17
+/// divergent folds over this sweep**, the smallest on `@Nil!(0)` — the most ordinary
+/// input in the corpus. The recorded fold is:
+///
+/// ```text
+///   incumbent  POutputNil(CastInt(NumLit(0)))          primary=0.025 open_len=0 lex_alt=0 src=0 rule=33
+///   incoming   POutputShort(PZero, CastInt(NumLit(0))) primary=0.025 open_len=3 lex_alt=0 src=0 rule=33
+/// ```
+///
+/// One `semantic_hash` class (`@Nil!(q)` written with the dedicated `POutputNil` rule, or
+/// with the generic `POutputShort` and `PZero` as the channel process). The two candidates
+/// are IDENTICAL on **every grammar component** — same primary cost, same lex alternative,
+/// same source category, same rule index. They differ on exactly one thing: the incoming
+/// candidate's derivation went through a lex fork whose open token was 3 bytes (`Nil`).
+///
+/// Pre-R1 that 3 was the whole decision: the reversed `open_len` leg made the incoming
+/// strictly `⊕`-smaller, so the generic spelling displaced the specific one. **The seam
+/// elected on a derivation-path byte predicate, and nothing else was available to it.**
+/// Post-R1 `__rep_cmp` returns `Equal` on that fold, first-seen stands, and the specific
+/// `POutputNil` survives. That is a behaviour change, not seam-shape hardening, and it is
+/// pinned in [`REP_ELECTION_PINS`].
+///
+/// ## Where the witness is, and where it is NOT — the plan was half right
+///
+/// | identity key | witness? | why |
+/// |---|---|---|
+/// | `_all` reading set, `Debug` | ★ **YES** | `parse_via_wpda_all("@Nil!(0)")` returns `POutputNil(..)` after R1 and `POutputShort(PZero, ..)` before |
+/// | `Display` | **no** | `POutputShort(PZero, q)` renders `Nil` for its channel with no parens needed, so both spell `@Nil!(0)` |
+/// | `semantic_hash` | **no** | by construction — they are ONE key, which is why they meet at this fold at all |
+/// | single-result `parse_via_wpda` | **no** | measured: every divergence in this sweep is on the `_all` leg (`d1 == 0`), so the ε-framed single-winner election is untouched |
+///
+/// So the plan's doubt was correct about `Display` and `semantic_hash` and wrong about the
+/// third key it did not consider: the **structure of the `_all` reading set**, which gate
+/// A observes for the SINGLE seam (`Obs::elected`) and which nothing observed for `_all`.
+/// That blind spot is why the witness went unnoticed, and closing it is what this gate is.
+///
+/// ## Why the fork family is in the sweep
+///
+/// `open_len` is `0` at every non-fork weight-construction site (`from_cost`, `lex_w`, …)
+/// and becomes non-zero ONLY on a PREFIX LEX-FORK branch (`lex_w_with_len` /
+/// `lex_w_alt_with_len`), from which `times` MAX-projects it along the whole derivation.
+/// [`LEX_FORK_FAMILY`] puts Rholang's live fork — the collection open, Pathmap `{|` (len 2)
+/// vs PPar `{` (len 1) — under, beside and inside a σ-led frame. It contributed 4 of the
+/// 17 divergences, at `open_len` 3 vs 2 rather than 3 vs 0, confirming the mechanism is the
+/// fork and not one accidental token length.
+///
+/// # Non-vacuity, and the two controls
+///
+/// * `total_folds > 0` **and** `total_div > 0` — a seam that never meets a duplicate
+///   semantic key never elects a representative, and a sweep with no divergence would make
+///   the pins below hold for a reason that has nothing to do with R1.
+/// * `__rep_cmp_divergence_log().len() == divergences` per row — the COUNT is always on and
+///   the LOG is armed, so a short log means arming was missed and every spelling read off
+///   the log is untrustworthy.
+/// * **the ambient control** is `"Nil"`: no σ-led frame, so the helper declines, neither
+///   seam runs, and `folds == divergences == 0`. That is what shows the swept rows' counts
+///   come from those rows rather than from parsing the harness itself does.
+/// * **the control that must NOT discriminate** is the zero-divergence half of
+///   [`REP_ELECTION_PINS`] — rows with MANY folds and no divergence (`@(a)!(0)`: 9 folds,
+///   3 readings; `@Nil!(0,)`: 5 folds, 2 readings). Their reading sets are pinned to the
+///   same bytes under both rules, so a mutation that moved everything — rather than
+///   exactly the `open_len`-decided folds — fails here instead of passing as a witness.
+#[test]
+fn gate_g_representative_election_is_open_len_free() {
+    /// Reset all three projection categories' probes (`Proc`, `Name`, `InputBind` are the
+    /// Rholang categories with a derivable projection shape).
+    fn reset() {
+        Proc::__rep_probe_reset();
+        Name::__rep_probe_reset();
+        InputBind::__rep_probe_reset();
+    }
+    /// `(folds, divergences)` summed over the three categories — a `Proc` parse folds at
+    /// its own seam AND at the `Name` / `InputBind` seams its operands recurse through, so
+    /// reading only `Proc`'s counters would under-report.
+    fn read() -> (usize, usize) {
+        (
+            Proc::__rep_cmp_folds() + Name::__rep_cmp_folds() + InputBind::__rep_cmp_folds(),
+            Proc::__rep_cmp_divergences()
+                + Name::__rep_cmp_divergences()
+                + InputBind::__rep_cmp_divergences(),
+        )
+    }
+
+    // ── control: an input the facade DECLINES ⇒ neither seam ever folds ──
+    mettail_runtime::clear_var_cache();
+    reset();
+    let ctl = Proc::parse_via_wpda_all("Nil");
+    assert!(ctl.is_ok(), "the control must still parse (via the walker): {ctl:?}");
+    let (ctl_folds, ctl_div) = read();
+    assert_eq!(
+        (ctl_folds, ctl_div),
+        (0, 0),
+        "control `Nil` has no σ-led frame, so the `@`-projection helper declines and \
+         neither dedup seam runs — got {ctl_folds} folds / {ctl_div} divergences. A \
+         non-zero count here means the counters are recording folds this test does not \
+         account for, and the sweep's numbers cannot be attributed to their own inputs."
+    );
+
+    // ── the sweep ──
+    let mut inputs: Vec<String> = corpus().iter().map(|(_, s)| s.to_string()).collect();
+    inputs.extend(deep_at_ladder(6));
+    inputs.extend(REPEATED_OPERAND_FAMILY.iter().map(|s| s.to_string()));
+    inputs.extend(LEX_FORK_FAMILY.iter().map(|s| s.to_string()));
+
+    let mut rows: Vec<String> = Vec::with_capacity(inputs.len());
+    let mut witnesses: Vec<String> = Vec::new();
+    let mut total_folds = 0usize;
+    let mut total_div = 0usize;
+
+    for src in &inputs {
+        // Both string entries: the SINGLE seam folds only at the helper finalize, the
+        // `_all` seam folds at the helper finalize AND at the union finalize.
+        mettail_runtime::clear_var_cache();
+        reset();
+        let single = Proc::parse_via_wpda(src);
+        let (f1, d1) = read();
+
+        mettail_runtime::clear_var_cache();
+        reset();
+        let all = Proc::parse_via_wpda_all(src);
+        let (f2, d2) = read();
+
+        let folds = f1 + f2;
+        let div = d1 + d2;
+        total_folds += folds;
+        total_div += div;
+
+        let elected = match &single {
+            Ok(t) => canon(&format!("{t:?}")),
+            Err(_) => "<ERR>".to_string(),
+        };
+        let n_all = all.as_ref().map(|v| v.len() as i64).unwrap_or(-1);
+        let all_dbg: String = match &all {
+            Ok(v) => v
+                .iter()
+                .map(|t| format!("        | {}\n", canon(&format!("{t:?}"))))
+                .collect(),
+            Err(_) => "        | <ERR>\n".to_string(),
+        };
+        rows.push(format!(
+            "  {folds:>4} folds {div:>4} diverge  readings {n_all:>3}   {src:?}\n{all_dbg}"
+        ));
+        if div > 0 {
+            // ⚠ The log is read from the `_all` leg only (the second `reset()` cleared
+            // the single leg's records), so `d2` — not `div` — is the number of records
+            // it must contain. Asserted, because a short log means the arming was missed
+            // and everything concluded from the log below would be unsound.
+            let log: Vec<String> = Proc::__rep_cmp_divergence_log()
+                .into_iter()
+                .chain(Name::__rep_cmp_divergence_log())
+                .chain(InputBind::__rep_cmp_divergence_log())
+                .collect();
+            assert_eq!(
+                log.len(),
+                d2,
+                "the always-on divergence COUNT and the armed detail LOG disagree for \
+                 {src:?} ({d2} vs {}). `__rep_probe_reset` must arm the log, or the \
+                 spellings below are not the spellings that were elected.",
+                log.len()
+            );
+            let detail: String = log
+                .iter()
+                .map(|r| format!("      {}\n", canon(r)))
+                .collect::<String>();
+            // The OBSERVABLE consequence: the `_all` seam's reading set, at both identity
+            // keys the plan named — structure (`Debug`) and surface (`Display`).
+            mettail_runtime::clear_var_cache();
+            let obs: String = match Proc::parse_via_wpda_all(src) {
+                Ok(v) => v
+                    .iter()
+                    .map(|t| format!("      all: {}   ||   {}\n", canon(&format!("{t:?}")), t))
+                    .collect(),
+                Err(e) => format!("      all: <ERR {e:?}>\n"),
+            };
+            witnesses.push(format!(
+                "  {src:?}  ({div} divergent folds)\n    elected: {elected}\n{detail}{obs}"
+            ));
+        }
+    }
+
+    let table: String = rows.concat();
+    println!("`@`-projection representative elections:\n{table}");
+    println!("TOTAL: {total_folds} folds, {total_div} divergent");
+    if witnesses.is_empty() {
+        println!(
+            "P-WITNESS: NONE over {} inputs — `__rep_cmp` and `lex_cmp` agree at every \
+             fold, so R1 is provably inert on this corpus.",
+            inputs.len()
+        );
+    } else {
+        println!("P-WITNESS CANDIDATES:\n{}", witnesses.concat());
+    }
+
+    // ── non-vacuity, asserted BEFORE anything is concluded from the pins ──
+    assert!(
+        total_folds > 0,
+        "the two `@`-projection dedup seams performed NO representative election across \
+         {} inputs. Either the counters are no longer wired into the folds, or the helper \
+         stopped accepting every shape in the sweep — in both cases the pins below would \
+         hold for a reason that has nothing to do with R1.\n{table}",
+        inputs.len()
+    );
+    assert!(
+        total_div > 0,
+        "no fold in this sweep put `__rep_cmp` and the full `lex_cmp` in disagreement, so \
+         R1's election rule was never exercised and the pins below cannot distinguish it \
+         from the rule it replaced. The sweep must contain at least one class whose \
+         members tie on primary/lex_alt/src/rule and differ on `open_len` — that is what \
+         [`LEX_FORK_FAMILY`] and the `@Nil!(0)` family are for. Measured at R1: 17.\n{table}"
+    );
+
+    // ── the pins: TEXT, on both halves ──
+    //
+    // ⚠ These pin a MEASUREMENT, not a design invariant. If a grammar or lexer change moves
+    // a row, the correct response is to READ THE PRINTED WITNESS BLOCK — which carries both
+    // spellings and both full weights for every divergent fold — and re-derive, not to
+    // relax the pin.
+    let mut moved: Vec<String> = Vec::new();
+    for (src, expected) in REP_ELECTION_PINS {
+        mettail_runtime::clear_var_cache();
+        let got: Vec<String> = match Proc::parse_via_wpda_all(src) {
+            Ok(v) => v.iter().map(|t| canon(&format!("{t:?}"))).collect(),
+            Err(e) => vec![format!("<ERR {e:?}>")],
+        };
+        let want: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+        if got != want {
+            moved.push(format!(
+                "  {src:?}\n    want ({}):\n{}    got  ({}):\n{}",
+                want.len(),
+                want.iter()
+                    .map(|r| format!("      {r}\n"))
+                    .collect::<String>(),
+                got.len(),
+                got.iter()
+                    .map(|r| format!("      {r}\n"))
+                    .collect::<String>(),
+            ));
+        }
+    }
+    assert!(
+        moved.is_empty(),
+        "the `@`-projection `_all` reading set moved at a pinned row.\n\n\
+         The WITNESS rows pin #103/R1's behaviour change: a class whose members tie on \
+         primary, lex_alt, src and rule and differ ONLY on `open_len` must keep the \
+         FIRST-SEEN spelling, not the longer-open one. If a witness row regressed to \
+         `POutputShort(PZero, ..)`, the reversed-`open_len` leg is back in the \
+         representative election.\n\n\
+         The CONTROL rows have many folds and NO divergence, so they must be byte-identical \
+         under either election rule. If a control row moved, the change is not confined to \
+         the `open_len`-decided folds and the witness rows above prove nothing.\n\n{}\
+         \nfull table:\n{table}",
+        moved.concat()
+    );
+}
+
+/// The pinned `_all` reading sets for [`gate_g_representative_election_is_open_len_free`],
+/// as canonicalised `Debug` (the `UniqueId` counter normalised out by [`canon`]).
+///
+/// Two halves, and the gate needs both:
+///
+/// * ★ **WITNESS rows** — divergent folds, so #103/R1 MOVED them. Each is pinned to the
+///   post-R1 spelling; pre-R1 the same rows returned the `POutputShort(PZero, ..)` twin,
+///   which the printed divergence log records as `full_keeps`. These fail if the reversed
+///   `open_len` leg ever returns to the representative election.
+/// * **CONTROL rows** — many folds, ZERO divergences. Under either election rule these are
+///   the same bytes, so they must NOT move. They are what distinguishes "R1 changed exactly
+///   the `open_len`-decided folds" from "something changed the seam wholesale".
+///
+/// The reading order is the finalize's weight `sort_by`, which is deterministic.
+const REP_ELECTION_PINS: &[(&str, &[&str])] = &[
+    // ── ★ WITNESS: primary/lex_alt/src/rule all tie; open_len 0 vs 3 ──
+    ("@Nil!(0)", &["POutputNil(CastInt(NumLit(0)))"]),
+    (
+        "@@Nil!(0)!(0)",
+        &["POutputShort(POutputNil(CastInt(NumLit(0))), CastInt(NumLit(0)))"],
+    ),
+    // ── ★ WITNESS via the PREFIX LEX FORK: open_len 2 vs 3 ──
+    ("@Nil!({||})", &["POutputNil(CastPathmap(PathmapLit(PathMapLit(HashMapLit({})))))"]),
+    // ── CONTROL: 9 folds, 0 divergences — must be identical under both rules ──
+    (
+        "@(a)!(0)",
+        &[
+            "POutputQuoted(NParen(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(_), pretty_name: Some(\"a\") })))), CastInt(NumLit(0)))",
+            "POutputQuoted(NVar(OrdVar(Free(FreeVar { unique_id: UniqueId(_), pretty_name: Some(\"a\") }))), CastInt(NumLit(0)))",
+            "POutputShort(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(_), pretty_name: Some(\"a\") }))), CastInt(NumLit(0)))",
+        ],
+    ),
+    // ── CONTROL: 5 folds, 0 divergences, and BOTH spellings of the class survive here
+    //    because they are DISTINCT semantic keys (a degenerate tail is not `POutputNil`) ──
+    (
+        "@Nil!(0,)",
+        &[
+            "POutputShort2Plus(PZero, CastInt(NumLit(0)), [])",
+            "POutputNil2Plus(CastInt(NumLit(0)), [])",
+        ],
+    ),
+];
+
+/// The inputs that put Rholang's live PREFIX LEX-FORK — the collection open, Pathmap
+/// `{|` (len 2) vs PPar `{` (len 1) — under, beside and inside a σ-led projection frame.
+///
+/// ★ Why this family and not a bigger random sweep. `open_len` is `0` at every non-fork
+/// weight-construction site; it becomes non-zero ONLY on a prefix lex-fork branch, and
+/// `times` MAX-projects it along the derivation. So the ONLY way the reversed-`open_len`
+/// tiebreak can reach the projection dedup seams is for a fork branch to appear somewhere
+/// inside a span the helper accepts. Sweeping inputs with no fork at all cannot produce a
+/// divergence however many of them there are — it would grow the table without growing
+/// the evidence.
+const LEX_FORK_FAMILY: &[&str] = &[
+    // The fork itself, as an operand of a σ-led send.
+    "@Nil!({||})",
+    "@Nil!({|1:2|})",
+    "@Nil!({||},{||})",
+    // The fork as the CHANNEL of a σ-led send (the quoted-collection channel).
+    "@{||}!(0)",
+    "@{|1:2|}!(0)",
+    "@{||}!({||})",
+    // Under a `PDrop` of a quoted Pathmap — the `|}` / `|` close ambiguity, which is the
+    // form `rholang_tests.rs`'s own lattice-backend pins use.
+    "*@{|1:2|}",
+    "*@{||}",
+    "@Nil!(*@{|1:2|})",
+    // Beside a grouped channel, so the transparent-grouping twin and the fork meet in the
+    // same union finalize.
+    "@(a)!({||})",
+    "@({||})!(0)",
+    "@Nil!({||},@Nil!({||}))",
+];
+
 /// Inputs whose operand spans REPEAT — the family that separates a memoized `_all` from
 /// an un-memoized one, and the reason [`gate_f_all_one_walker_leg_per_distinct_span`]
 /// sweeps instead of pinning a single input.

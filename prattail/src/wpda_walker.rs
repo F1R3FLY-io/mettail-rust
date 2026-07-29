@@ -7890,14 +7890,41 @@ where
     /// ≡-class (so callers count DISTINCT alternatives toward their cap),
     /// `false` iff it was folded into an existing representative.
     ///
-    /// The fold MIRRORS the facade root-dedup EXACTLY (see
-    /// `__mettail_wpda_collect_*` in `wpda_codegen::facade`): on a duplicate,
-    /// the representative — term AND weight — is replaced iff the new weight
-    /// is strictly `⊕`-smaller (`semiring_priority_cmp == Less`, which equals
-    /// `<` for `LexicographicWeight`); ties keep the first-seen representative
-    /// in place. Combined with `⊗`-monotonicity and the `semantic_hash`
-    /// congruence, this makes per-node dedup byte-for-byte equal to
-    /// root-only dedup (the output-identity theorem).
+    /// On a duplicate, the representative — term AND weight — is replaced iff
+    /// the new weight is strictly `⊕`-smaller (`semiring_priority_cmp == Less`,
+    /// which equals `<` for `LexicographicWeight`); ties keep the first-seen
+    /// representative in place. Combined with `⊗`-monotonicity and the
+    /// `semantic_hash` congruence, this makes per-node dedup byte-for-byte
+    /// equal to root-only dedup (the output-identity theorem).
+    ///
+    /// ## ⚠ CORRECTION (#103/R1, 2026-07-29) — this note used to claim the fold
+    /// ## "MIRRORS the facade root-dedup EXACTLY". It no longer does, at 2 of 4 sites.
+    ///
+    /// The facade has FOUR ⊕-min dedup seams. Two of them — the `@`-projection
+    /// helper's finalize and the #28/G3 union's finalize
+    /// (`wpda_codegen::facade::emit_rep_cmp_fn`) — now run TWO INDEPENDENT
+    /// tests per fold: `__rep_cmp` (= `lex_cmp` with the reversed `open_len`
+    /// maximal-munch tiebreak OMITTED) decides which TERM survives, while `<`
+    /// (the full `lex_cmp`) still decides which WEIGHT is stored. The other two
+    /// facade seams (the `.*sep` finalize and the binary-infix finalize) still
+    /// use the single `<` test, as does this fold and its k-best twin.
+    ///
+    /// ★ This fold is deliberately NOT converted, and the divergence is not a
+    /// defect. `dedup_push_realized` sits INSIDE the ⊗-monotone output-identity
+    /// theorem: that theorem's proof needs the per-node representative rule to
+    /// be the same `⊕` the root-only fold would apply, so that pushing the fold
+    /// down through `⊗` cannot change the root answer. `__rep_cmp` is not a `⊕`
+    /// of the weight semiring (it ignores a component the semiring's own order
+    /// reads), so adopting it here would invalidate the theorem rather than
+    /// extend it. The facade's two converted seams are outside that theorem —
+    /// they fold ROOT-level candidate sets that were already fully realized —
+    /// which is exactly why the change is emitted facade-side and
+    /// `rigail/src/lex_weight.rs` is left untouched.
+    ///
+    /// So: this fold mirrors the facade's `.*sep` and binary-infix seams
+    /// exactly, and mirrors the projection/union seams up to the representative
+    /// rule while agreeing with them on the weight. Stated rather than left to
+    /// be re-derived from a note that had gone stale.
     ///
     /// NO-OP (always pushes, returns `true`) when the engine returns `None`
     /// for this term (handwritten / test engines, or a non-`Term` arg) —
