@@ -91,12 +91,46 @@ compiling, the AST constructor is retained behind an internal-only grammar
 rule using a reserved label `__ppar` (it never appears in user input):
 
 ```rust
-PPar . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
+PParInternal . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
 ```
 
-`{}` is therefore reserved exclusively for:
+> ⚠★ **WHAT SHIPPED INVERTED THIS SECTION'S DISPOSITION — both halves.** The two
+> paragraphs above are the *proposal*, retained so the reasoning stays legible.
+> `8c946bff` settled it the other way, by measurement:
+>
+> | rule | this proposal said | what shipped |
+> |---|---|---|
+> | `PPar … \|- "{" ps.*sep("\|") "}"` | **removed** from the user-facing grammar | ★ **RETAINED** |
+> | `PParInternal … \|- "__ppar" "(" … ")"` | **retained** as the internal surface | ★ **DELETED** |
+>
+> The `__ppar` rule was a five-month vestige, dead in **both** directions:
+> `__ppar(Nil, Nil)` did not parse at any arity (`TrailingTokens { found:
+> "Ident", byte_offset: 5 }`, with or without a space), and a genuine
+> `Proc::PPar` bag never displayed through it — `display.rs:147` emits `"{"`, so
+> the bag rendered as `{@a!(0) | Nil}` **even while the rule existed**. The
+> rule's own justifying comment ("round-trip parsing of normalized AST") was
+> therefore stale and false when written, not merely outdated. `1a3f3490` (May
+> 2026) created the vestige: it introduced the braced rule, renamed the
+> pre-existing keyword rule to `PParInternal`, and gave it a fold degenerating
+> it into the new one — after which no commit ever added a use.
 
-- The empty `Map` literal at expression position.
+⚠ **`{}` is NOT reserved exclusively for `Map`** — the claim this section used to
+make. Measured, `{}` yields **two** readings and both survive:
+
+```
+parse_via_wpda_all("{}") → 2 readings
+  CastMap(MapLit(HashMapLit({})))
+  PPar(HashBag { counts: {}, total_count: 0 })
+```
+
+Per the owner's ruling of 2026-07-29 — *"`{}` could be either an empty ppar or
+map, that's ambiguity that requires additional context to decide"* — that is the
+**correct** disposition, and the parser deferring here honours the
+never-disambiguate-early mandate rather than violating it. The reading count is
+now pinned by `par_reading_count_pins`. What `{}` no longer means is `PZero`
+(§3.1). Its other uses are unchanged:
+
+- The empty `Map` literal at expression position — one of the two readings above.
 - The body of `for(...) { P }`, `new x in { P }`, and (future) `contract`.
 
 ### 3.3 Brace-delimited `Map` literal
@@ -403,11 +437,15 @@ which there is no sensible default, so an annotation is required.
 
 - `Proc::PZero` displays as `Nil`.
 - `Proc::PParInfix(a, b)` displays as `a | b`.
-- `Proc::PPar(bag)` is reachable only after `fold` and displays through its
-  internal-only template `__ppar(p₁, p₂, …)`. The internal form is acceptable
-  for debugging and tests; it round-trips through the parser by re-parsing
-  the original infix surface form. Tests that compare PPar normal forms use
-  `term_eq` or substring containment rather than exact display matching.
+- `Proc::PPar(bag)` displays as `{p₁ | p₂ | …}` through the **braced** rule —
+  `display.rs:147` emits `"{"`. ⚠★ This bullet previously claimed it displayed
+  through an "internal-only template `__ppar(p₁, p₂, …)`" that "round-trips
+  through the parser". That was **false when written and never true**: run as a
+  falsifiable claim against the pre-deletion tree, with the `__ppar` rule still
+  present, a genuine bag rendered `{@a!(0) | Nil}`. `8c946bff` deleted the rule
+  on exactly that evidence — see the correction box in §3.2. Tests that compare
+  PPar normal forms use `term_eq` or substring containment rather than exact
+  display matching.
 - Map normal forms display as `{k: v, …}` via the macro-generated display
   template from the collection delimiters override.
 
@@ -421,7 +459,8 @@ corresponding prefix-form calls.
 ## 6. Migration Checklist
 
 - [x] `languages/src/rholang.rs` — `PZero`, `Map` delimiter override, `Map()`
-  alias, removed braced `PPar`, internal `__ppar` rule, eight Map method-call
+  alias, ⚠★ **retained** braced `PPar` and **deleted** `PParInternal`/`__ppar`
+  (`8c946bff` — this line previously said the opposite of both; see §3.2), eight Map method-call
   sugars, three List method sugars (`LLength`, `LNth`, `LConcat`), three
   bag-specific Bag method sugars (`BCount`, `BDiff`, `BRemove`),
   polymorphic `MUnion` / `MSize` (Map ∪ Bag), `Len` extended to `CastBag`,
