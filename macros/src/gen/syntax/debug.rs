@@ -22,8 +22,12 @@
 
 #![allow(clippy::cmp_owned)]
 
+use crate::gen::term_ops::collection_walk::{
+    for_each_subterm, plan_for, CollectionPlan, OrderSensitivity, WalkOrder,
+};
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
+use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -248,9 +252,8 @@ fn generate_debug_variant_arm(
             }
         },
 
-        // Stage 0 identity: Debug prints the payload via its own `Debug`, which
-        // is correct for a collection wrapper too (it recurses structurally).
-        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
+        // An OPAQUE native leaf: its own `Debug` has no sub-terms to recurse into.
+        VariantKind::Literal { label } => {
             let label_str = label.to_string();
             // Pattern destructures owned term, val is owned. Debug::fmt takes &self.
             quote! {
@@ -259,6 +262,23 @@ fn generate_debug_variant_arm(
                     f.write_str("(")?;
                     std::fmt::Debug::fmt(&val, f)?;
                     f.write_str(")")?;
+                }
+            }
+        },
+
+        // ★ #162 — the collection-literal boundary. `Debug::fmt(&val, f)` on a
+        // `&Vec<Proc>` formats every element through `Proc::fmt`, re-entering this
+        // driver by host recursion — the reason `ast_debug` was the second-worst
+        // subject at 10,542 B/level in debug and 463 in release.
+        VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
+            let label_str = label.to_string();
+            let body =
+                debug_collection_stmts(element_cat, coll_type, &quote! { val }, language);
+            quote! {
+                #category::#label(val) => {
+                    f.write_str(#label_str)?;
+                    f.write_str("(")?;
+                    #body
                 }
             }
         },
@@ -280,7 +300,10 @@ fn generate_debug_variant_arm(
             generate_debug_regular_arm(category, label, fields, language)
         },
 
-        VariantKind::Collection { label, .. } => generate_debug_collection_arm(category, label),
+        // ★ #162 — the category-DIRECT collection field, same boundary.
+        VariantKind::Collection { label, element_cat, coll_type } => {
+            generate_debug_collection_arm(category, label, element_cat, coll_type, language)
+        },
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             generate_debug_binder_arm(category, label, pre_scope_fields, body_cat, false)
@@ -403,16 +426,94 @@ fn generate_debug_regular_arm(
 /// Generate Debug arm for Collection variant (top-level collection constructor).
 ///
 /// The single collection field is formatted inline using its own Debug impl.
-fn generate_debug_collection_arm(category: &Ident, label: &Ident) -> TokenStream {
+fn generate_debug_collection_arm(
+    category: &Ident,
+    label: &Ident,
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+    language: &LanguageDef,
+) -> TokenStream {
     let label_str = label.to_string();
+    let body = debug_collection_stmts(element_cat, coll_type, &quote! { coll }, language);
 
     quote! {
         #category::#label(coll) => {
             f.write_str(#label_str)?;
             f.write_str("(")?;
-            std::fmt::Debug::fmt(&coll, f)?;
-            f.write_str(")")?;
+            #body
         }
+    }
+}
+
+/// ★ #162 — the ONE place `Debug` decides what to do with a collection of
+/// sub-terms. Emits the statements that render the container AND the arm's closing
+/// `)`, so the caller only supplies the `Label(` prefix.
+///
+/// ## The rendering must be IDENTICAL, and for `Vec` that is checkable
+///
+/// `Vec<T>`'s derived `Debug` is `[a, b, c]` — open bracket, elements in index
+/// order, `, ` between, close bracket. Reproducing it with `DebugTask::WriteStr`
+/// glue and one `Debug{Elem}` task per element is exact, and
+/// `languages/tests/generated_traversal_boundary_laws.rs` asserts it against the
+/// container's OWN `Debug` as an independent oracle.
+///
+/// ⚠ The pushes are in REVERSE render order, and the closing bracket goes on
+/// FIRST. This is the `display.rs:14827` idiom verbatim — the in-tree existence
+/// proof that this shape can be walked in O(1) stack.
+///
+/// ## Why the unordered containers keep their whole-value `Debug`
+///
+/// Two independent reasons, and either alone would be sufficient:
+///
+/// 1. Their derived `Debug` is not a bracketed element list — `HashSetLit` renders
+///    `HashSetLit({a, b})`, `HashBag` renders
+///    `HashBag { counts: {…}, total_count: n }`. Reproducing those field-by-field
+///    would be transcribing a `derive`, which drifts the moment the struct changes.
+/// 2. [`collection_walk::is_order_faithful`] already refuses them, for the
+///    order-dependence reason that governs every other converted driver.
+///
+/// ⚠ **`{:#?}` (alternate) formatting.** `Vec`'s `Debug` honours `f.alternate()`
+/// and expands one element per line; the element walk does not. That is a change,
+/// and it is a deliberate one: the surrounding generated `Debug` ALREADY ignores
+/// `alternate` for the enum structure itself (every arm writes with `write_str`),
+/// so the pretty form was already not pretty. Measured: no test in `languages/`,
+/// `rholang-runtime/`, `ast/` or `runtime/` applies `{:#?}` to a generated term
+/// type (the one occurrence, `s1_speculative_sandbox.rs:825`, formats a sandbox
+/// config).
+fn debug_collection_stmts(
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+    coll_expr: &TokenStream,
+    language: &LanguageDef,
+) -> TokenStream {
+    match plan_for(element_cat, coll_type, OrderSensitivity::OrderSensitive, language) {
+        CollectionPlan::PerElement { element_cat, coll_type } => {
+            let task_variant = format_ident!("Debug{}", element_cat);
+            let pushes = for_each_subterm(
+                &coll_type,
+                coll_expr,
+                WalkOrder::ReverseForLifo,
+                &|elem, not_first| {
+                    quote! {
+                        stack.push(DebugTask::#task_variant(#elem as *const _));
+                        if #not_first {
+                            stack.push(DebugTask::WriteStr(", "));
+                        }
+                    }
+                },
+            );
+            quote! {
+                f.write_str("[")?;
+                // Pushed first ⇒ popped LAST: the arm's `)` then the `]`.
+                stack.push(DebugTask::WriteStr(")"));
+                stack.push(DebugTask::WriteStr("]"));
+                #pushes
+            }
+        },
+        CollectionPlan::WholeValue { .. } => quote! {
+            std::fmt::Debug::fmt(&#coll_expr, f)?;
+            f.write_str(")")?;
+        },
     }
 }
 

@@ -128,17 +128,29 @@ mod tests {
         // same shape. `is_ground` was the urgent half: it is consulted to decide
         // whether a term may be treated as a finished value, so a false `true`
         // silently licensed downstream code to skip required work.
-        // ── PERMANENT — leaf treatment is CORRECT here ───────────────────────
+        // ── ★★ #162 RETIRED (2026-07-30) — the five `iterative_drop` rows are
+        // ── GONE, and the heading they sat under was WRONG.
         //
-        // `iterative_drop`: the arm extracts CHILDREN for the trampolined drop.
-        // A collection literal's wrapper owns its elements and its own `Drop`
-        // frees them, so there is no child to hand to the trampoline. The `_`
-        // is the right emission; these rows are permanent.
-        ("iterative_drop", "Bag"),
-        ("iterative_drop", "List"),
-        ("iterative_drop", "Map"),
-        ("iterative_drop", "Pathmap"),
-        ("iterative_drop", "Set"),
+        // They were listed as:
+        //
+        //     ── PERMANENT — leaf treatment is CORRECT here ──
+        //     `iterative_drop`: the arm extracts CHILDREN for the trampolined
+        //     drop. A collection literal's wrapper owns its elements and its own
+        //     `Drop` frees them, so there is no child to hand to the trampoline.
+        //     The `_` is the right emission; these rows are permanent.
+        //
+        // ⚠ "Its own `Drop` frees them" is TRUE and is exactly the defect. A
+        // `Vec<Proc>`'s derived `Drop` frees the elements RECURSIVELY — one native
+        // frame per nesting level — which is precisely what the trampoline exists
+        // to prevent. `ast_drop` bisected to 254 B/level (debug) and 94 (release)
+        // on the `CastList`/`ListLit` ladder while its `Add`-chain twin read 0, and
+        // that asymmetry is the proof: the slope arrives with the COLLECTION, not
+        // with the category hop.
+        //
+        // Recorded as a correction rather than silently deleted, because the claim
+        // was plausible enough to be written down as PERMANENT and the next reader
+        // is better served knowing which argument failed.
+        //
         // `parse_alt_filter`: the arm answers "is this parse alternative a
         // NATIVE LITERAL reading?", which is true of a collection literal and
         // does not depend on the payload. The `_` is the right emission; these

@@ -200,6 +200,20 @@ impl<K, V> HashMapLit<K, V> {
     }
 }
 
+/// By-value iteration over `(key, value)` pairs, in insertion order.
+///
+/// ★ #162 — added for the generated iterative `Drop`; see
+/// [`HashSetLit`](crate::HashSetLit)'s impl for why ownership is required there.
+/// Both the key AND the value are sub-terms of a map literal, so both are yielded.
+impl<K, V> IntoIterator for HashMapLit<K, V> {
+    type Item = (K, V);
+    type IntoIter = indexmap::map::IntoIter<K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 impl<K, V> FromIterator<(K, V)> for HashMapLit<K, V>
 where
     K: Eq + Hash,

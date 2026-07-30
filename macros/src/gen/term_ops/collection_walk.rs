@@ -265,37 +265,51 @@ pub(crate) fn plan_for(
 /// shapes materialises the item refs into a `Vec` first; the allocation is
 /// bounded by the container's own length and is only paid where a caller
 /// genuinely needs LIFO order over an unordered container.
+/// ★ #162 — the callback's second argument.
+///
+/// A renderer (`Debug`) needs to know whether a position is preceded by a
+/// SEPARATOR; a hasher and a dropper do not. Rather than two nearly-identical
+/// walk emitters, the one walk hands every caller a boolean EXPRESSION that is
+/// `true` exactly for the positions that are not first in container order, and
+/// callers that do not care ignore it. `__walk_index` is the container index, so
+/// the expression means the same thing under both [`WalkOrder`] directions.
+pub(crate) type SubtermBody<'a> = &'a dyn Fn(&TokenStream, &TokenStream) -> TokenStream;
+
 pub(crate) fn for_each_subterm(
     coll_type: &CollectionType,
     coll_expr: &TokenStream,
     order: WalkOrder,
-    subterm: &dyn Fn(&TokenStream) -> TokenStream,
+    subterm: SubtermBody<'_>,
 ) -> TokenStream {
-    let elem_body = subterm(&quote! { __walk_elem });
-    let key_body = subterm(&quote! { __walk_key });
-    let value_body = subterm(&quote! { __walk_value });
+    let not_first = quote! { (__walk_index > 0) };
+    // A map VALUE is never the first position of its container — its key precedes
+    // it — so it always needs the separator its shape prescribes.
+    let always = quote! { true };
+    let elem_body = subterm(&quote! { __walk_elem }, &not_first);
+    let key_body = subterm(&quote! { __walk_key }, &not_first);
+    let value_body = subterm(&quote! { __walk_value }, &always);
 
     match (coll_type, order) {
         // ── single-position shapes ──────────────────────────────────────────
         (CollectionType::Vec, WalkOrder::Forward) => quote! {
-            for __walk_elem in #coll_expr.iter() {
+            for (__walk_index, __walk_elem) in #coll_expr.iter().enumerate() {
                 #elem_body
             }
         },
         (CollectionType::Vec, WalkOrder::ReverseForLifo) => quote! {
-            for __walk_elem in #coll_expr.iter().rev() {
+            for (__walk_index, __walk_elem) in #coll_expr.iter().enumerate().rev() {
                 #elem_body
             }
         },
         (CollectionType::HashSet, WalkOrder::Forward) => quote! {
-            for __walk_elem in #coll_expr.iter() {
+            for (__walk_index, __walk_elem) in #coll_expr.iter().enumerate() {
                 #elem_body
             }
         },
         (CollectionType::HashSet, WalkOrder::ReverseForLifo) => quote! {
             {
                 let __walk_items: Vec<_> = #coll_expr.iter().collect();
-                for __walk_elem in __walk_items.into_iter().rev() {
+                for (__walk_index, __walk_elem) in __walk_items.into_iter().enumerate().rev() {
                     #elem_body
                 }
             }
@@ -303,21 +317,23 @@ pub(crate) fn for_each_subterm(
         // `HashBag::iter` yields `(&E, usize)`: the multiplicity is a count, not
         // a term, so it contributes no position.
         (CollectionType::HashBag, WalkOrder::Forward) => quote! {
-            for (__walk_elem, _) in #coll_expr.iter() {
+            for (__walk_index, (__walk_elem, _)) in #coll_expr.iter().enumerate() {
                 #elem_body
             }
         },
         (CollectionType::HashBag, WalkOrder::ReverseForLifo) => quote! {
             {
                 let __walk_items: Vec<_> = #coll_expr.iter().collect();
-                for (__walk_elem, _) in __walk_items.into_iter().rev() {
+                for (__walk_index, (__walk_elem, _)) in
+                    __walk_items.into_iter().enumerate().rev()
+                {
                     #elem_body
                 }
             }
         },
         // ── key/value shapes ────────────────────────────────────────────────
         (CollectionType::HashMap, WalkOrder::Forward) => quote! {
-            for (__walk_key, __walk_value) in #coll_expr.iter() {
+            for (__walk_index, (__walk_key, __walk_value)) in #coll_expr.iter().enumerate() {
                 #key_body
                 #value_body
             }
@@ -325,14 +341,18 @@ pub(crate) fn for_each_subterm(
         (CollectionType::HashMap, WalkOrder::ReverseForLifo) => quote! {
             {
                 let __walk_items: Vec<_> = #coll_expr.iter().collect();
-                for (__walk_key, __walk_value) in __walk_items.into_iter().rev() {
+                for (__walk_index, (__walk_key, __walk_value)) in
+                    __walk_items.into_iter().enumerate().rev()
+                {
                     #value_body
                     #key_body
                 }
             }
         },
         (CollectionType::PathMap, WalkOrder::Forward) => quote! {
-            for (__walk_key, __walk_path_value) in #coll_expr.iter() {
+            for (__walk_index, (__walk_key, __walk_path_value)) in
+                #coll_expr.iter().enumerate()
+            {
                 #key_body
                 if let mettail_runtime::PathValue::Set(__walk_value) = __walk_path_value {
                     #value_body
@@ -342,7 +362,9 @@ pub(crate) fn for_each_subterm(
         (CollectionType::PathMap, WalkOrder::ReverseForLifo) => quote! {
             {
                 let __walk_items: Vec<_> = #coll_expr.iter().collect();
-                for (__walk_key, __walk_path_value) in __walk_items.into_iter().rev() {
+                for (__walk_index, (__walk_key, __walk_path_value)) in
+                    __walk_items.into_iter().enumerate().rev()
+                {
                     if let mettail_runtime::PathValue::Set(__walk_value) = __walk_path_value {
                         #value_body
                     }
@@ -356,17 +378,17 @@ pub(crate) fn for_each_subterm(
 /// Emit a loop over the ZIPPED sub-term positions of two containers of the same
 /// shape, invoking `subterm_pair(&left_expr, &right_expr)` once per position.
 ///
-/// For the comparison traversals (`PartialEq`, `Ord`, `match_pattern`), which
-/// walk two terms in lock-step rather than one.
+/// For the comparison traversals (`PartialEq`, `Ord`, `match_pattern`), which walk
+/// two terms in lock-step rather than one.
 ///
-/// ⚠ Only an [order-faithful](is_order_faithful) container admits a pairwise
-/// walk at all: zipping two `HashSet` iterators pairs elements by *iteration
-/// order*, which depends on insertion history and hash seeds, so it would report
-/// two equal sets as unequal. Callers reach this function only through
-/// [`CollectionPlan::PerElement`] with [`OrderSensitivity::OrderSensitive`],
-/// which already implies `Vec`; any other shape emits a `compile_error!` so a
-/// future change to [`is_order_faithful`] fails LOUDLY in the generated tree
-/// rather than silently mis-comparing.
+/// ⚠ Only an [order-faithful](is_order_faithful) container admits a pairwise walk
+/// at all: zipping two `HashSet` iterators pairs elements by *iteration order*,
+/// which depends on insertion history and hash seeds, so it would report two equal
+/// sets as unequal. Callers reach this function only through
+/// [`CollectionPlan::PerElement`] with [`OrderSensitivity::OrderSensitive`], which
+/// already implies `Vec`; any other shape emits a `compile_error!` so a future
+/// change to [`is_order_faithful`] fails LOUDLY in the generated tree rather than
+/// silently mis-comparing.
 ///
 /// ⚠ It emits `compile_error!` rather than `panic!` deliberately: a `panic!` in a
 /// proc macro does not unwind the `proc_macro` bridge under this workspace's
@@ -404,6 +426,82 @@ pub(crate) fn for_each_subterm_pair(
                  here without going through `plan_for`."
             );
             quote! { compile_error!(#message); }
+        },
+    }
+}
+
+/// Emit a loop that MOVES every sub-term OUT of the container at `coll_place`,
+/// leaving it empty, and invokes `owned_subterm(&expr)` once per position with an
+/// OWNED value.
+///
+/// ## ★ Why `Drop` needs its own walk
+///
+/// Every other converted traversal reads its sub-terms through a raw pointer and
+/// the container keeps owning them. `Drop` is the opposite: it must TAKE
+/// ownership, so that the container is EMPTY by the time its own `Drop` runs and
+/// the recursive teardown never happens. A borrowed walk cannot express that —
+/// `DropTask` holds owned category values, not pointers.
+///
+/// `std::mem::take` is the mechanism, which is why every literal wrapper has a
+/// no-bounds `Default` (the wrappers' own comments explain that a derived
+/// `Default` would force `Proc: Default`), and why `HashSetLit`, `HashMapLit` and
+/// `PathMapLit` gained `IntoIterator` for this change.
+///
+/// ⚠ Destruction ORDER is unobservable, so this walk is always forward and the
+/// [`is_order_faithful`] boundary does not apply — callers pass
+/// [`OrderSensitivity::OrderAgnostic`] to [`plan_for`] and EVERY container shape
+/// is walkable. That exemption is the reason `Drop` can be fully converted while
+/// `Hash` and `Ord` keep a residue.
+pub(crate) fn for_each_owned_subterm(
+    coll_type: &CollectionType,
+    coll_place: &TokenStream,
+    owned_subterm: &dyn Fn(&TokenStream) -> TokenStream,
+) -> TokenStream {
+    let elem_body = owned_subterm(&quote! { __walk_owned });
+    let key_body = owned_subterm(&quote! { __walk_owned_key });
+    let value_body = owned_subterm(&quote! { __walk_owned_value });
+
+    match coll_type {
+        CollectionType::Vec | CollectionType::HashSet => quote! {
+            for __walk_owned in std::mem::take(#coll_place) {
+                #elem_body
+            }
+        },
+        // `HashBag::into_iter` yields `(T, usize)` — the multiplicity is a count,
+        // not a term. ⚠ Each DISTINCT element is yielded once regardless of its
+        // multiplicity, which is correct: a bag stores one copy plus a count.
+        CollectionType::HashBag => quote! {
+            for (__walk_owned, _) in std::mem::take(#coll_place).into_iter() {
+                #elem_body
+            }
+        },
+        // ★ BOTH positions. The pre-#162 `HashMap`/`PathMap` arm of the
+        // `VariantKind::Collection` emitter destructured `(elem, _count)` and
+        // pushed only the first — so a map's VALUES were left to the recursive
+        // `Drop` it exists to avoid. The `_count` name is the tell: it was written
+        // for `HashBag` and reused for the two map shapes, where the second
+        // component is a TERM.
+        CollectionType::HashMap => quote! {
+            for (__walk_owned_key, __walk_owned_value) in
+                std::mem::take(#coll_place).into_iter()
+            {
+                #key_body
+                #value_body
+            }
+        },
+        // A pathmap's value is a `PathValue<E>`; an `Unset` entry owns no sub-term
+        // at all (#74 / Ruling B: unset ≠ Nil).
+        CollectionType::PathMap => quote! {
+            for (__walk_owned_key, __walk_owned_path_value) in
+                std::mem::take(#coll_place).into_iter()
+            {
+                #key_body
+                if let mettail_runtime::PathValue::Set(__walk_owned_value) =
+                    __walk_owned_path_value
+                {
+                    #value_body
+                }
+            }
         },
     }
 }
@@ -504,7 +602,7 @@ mod tests {
     #[test]
     fn the_emitted_walk_carries_the_callers_body_and_respects_order() {
         let coll = quote! { __c };
-        let body = |e: &TokenStream| quote! { touch(#e); };
+        let body = |e: &TokenStream, _sep: &TokenStream| quote! { touch(#e); };
 
         // ⚠ `TokenStream::to_string` spaces punctuation apart (`. rev ()`), so the
         // needle must be matched against a whitespace-STRIPPED rendering. Matching

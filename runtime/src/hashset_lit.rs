@@ -193,6 +193,22 @@ impl<T> HashSetLit<T> {
     }
 }
 
+/// By-value iteration, so a destructive traversal can MOVE the elements out.
+///
+/// ★ #162 — added for the generated iterative `Drop`. `Drop` is the one traversal
+/// that needs OWNERSHIP rather than a borrow: it pushes each element onto the
+/// work stack as an owned value so the container is empty by the time its own
+/// `Drop` runs, and the recursive teardown never happens. `std::mem::take` +
+/// `into_iter` is that idiom, and it needs this impl.
+impl<T> IntoIterator for HashSetLit<T> {
+    type Item = T;
+    type IntoIter = std::collections::hash_set::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 impl<T> FromIterator<T> for HashSetLit<T>
 where
     T: Eq + Hash,

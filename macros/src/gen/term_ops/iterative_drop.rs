@@ -47,6 +47,9 @@
 
 use crate::gen::generate_var_label;
 use crate::gen::native::NativeType;
+use crate::gen::term_ops::collection_walk::{
+    for_each_owned_subterm, plan_for, CollectionPlan, OrderSensitivity,
+};
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;
@@ -284,12 +287,57 @@ fn generate_push_children_arm(
             }
         },
 
-        // Literal: leaf value, no children to extract
-        // Stage 0 identity — STAYS (child extraction for the iterative drop;
-        // the wrapper's own `Drop` frees the elements).
-        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
+        // Literal: an OPAQUE native leaf owns no sub-terms.
+        VariantKind::Literal { label } => {
             quote! {
                 #category::#label(_) => {}
+            }
+        },
+
+        // ★★ #162 — A CORRECTION TO A CLAIM THAT WAS ON RECORD AS PERMANENT.
+        //
+        // This arm used to share `Literal`'s `#category::#label(_) => {}`, and
+        // `arm_integrity`'s ratchet listed all five collection-literal categories
+        // under a heading that read:
+        //
+        //     ── PERMANENT — leaf treatment is CORRECT here ──
+        //     `iterative_drop`: the arm extracts CHILDREN for the trampolined
+        //     drop. A collection literal's wrapper owns its elements and its own
+        //     `Drop` frees them, so there is no child to hand to the trampoline.
+        //     The `_` is the right emission; these rows are permanent.
+        //
+        // ⚠ MEASURED FALSE. "Its own `Drop` frees them" is true and is exactly the
+        // problem: `Vec<Proc>`'s derived `Drop` frees the elements RECURSIVELY, one
+        // native frame per level, which is what the trampoline exists to prevent.
+        // `ast_drop` bisected to 254 B/level in debug and 94 in release on the
+        // `CastList`/`ListLit` ladder — sloped, while its `Add`-chain twin was flat.
+        // The rows are not permanent; they were the defect.
+        //
+        // ★ `Drop` is also the EASIEST of the family to convert, because
+        // destruction order is unobservable — so unlike `Hash`/`Ord`/`Debug` it can
+        // walk EVERY container shape, not just the order-faithful ones.
+        VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
+            match plan_for(element_cat, coll_type, OrderSensitivity::OrderAgnostic, language) {
+                CollectionPlan::PerElement { element_cat, coll_type } => {
+                    let task_variant = format_ident!("Drop{}", element_cat);
+                    let pushes =
+                        for_each_owned_subterm(&coll_type, &quote! { coll }, &|owned| {
+                            quote! {
+                                stack.push(DropTask::#task_variant(#owned));
+                            }
+                        });
+                    quote! {
+                        #category::#label(ref mut coll) => {
+                            #pushes
+                        }
+                    }
+                },
+                // A container of PRIMITIVES (`![Vec<u8>]`): no sub-terms, so its
+                // own `Drop` is already O(1) in stack. Leaf treatment is correct
+                // here, and this is the ONLY reason it ever is.
+                CollectionPlan::WholeValue { .. } => quote! {
+                    #category::#label(_) => {}
+                },
             }
         },
 

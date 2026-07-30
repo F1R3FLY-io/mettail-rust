@@ -247,7 +247,7 @@ fn hash_collection_stmts(
         CollectionPlan::PerElement { element_cat, coll_type } => {
             let task_variant = format_ident!("Hash{}", element_cat);
             let pushes =
-                for_each_subterm(&coll_type, coll_expr, WalkOrder::ReverseForLifo, &|e| {
+                for_each_subterm(&coll_type, coll_expr, WalkOrder::ReverseForLifo, &|e, _| {
                     quote! {
                         stack.push(HashTask::#task_variant(#e as *const _));
                     }

@@ -82,6 +82,18 @@ impl<K: Hash + Ord, V: Hash + Ord> Hash for PathMapLit<K, V> {
     }
 }
 
+/// By-value iteration over `(key, value)` pairs. ★ #162 — added for the generated
+/// iterative `Drop`; see [`HashSetLit`](crate::HashSetLit)'s impl. `Deref` cannot
+/// serve here because `Deref` only yields a borrow and `Drop` needs to MOVE.
+impl<K, V> IntoIterator for PathMapLit<K, V> {
+    type Item = (K, V);
+    type IntoIter = <HashMapLit<K, V> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 impl<K, V> FromIterator<(K, V)> for PathMapLit<K, V>
 where
     K: Eq + Hash,
