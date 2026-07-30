@@ -328,7 +328,10 @@ fn collect_spec_only_variants(category: &syn::Ident, language: &LanguageDef) -> 
         // FALSIFIED the "they still PARSE" clause: measured before deletion,
         // `__ppar(Nil, Nil)` did not parse at all. The clause holds for the two
         // remaining rules; do not extend it to a new `__` rule without measuring.
-        if rule_has_internal_surface(rule) {
+        // ★ #150 — THE SHARED CLASSIFIER, called on the HOT PATH. The census
+        // (`gen::generatability::tests`) calls the same function, so "what the tape builder
+        // skips" and "what the ledger measures" are one computation.
+        if crate::gen::generatability::tape_rule_gap(rule).is_some() {
             continue;
         }
         variants.push(rule_to_variant_kind(rule, language));
@@ -367,22 +370,6 @@ fn collect_spec_only_variants(category: &syn::Ident, language: &LanguageDef) -> 
     variants
 }
 
-/// Whether `rule`'s surface begins with an internal-only `__`-prefixed terminal
-/// (the project convention for non-surface rules). Checks the FIRST literal in
-/// the syntax pattern, so a param-led rule whose first terminal is `__…` is also
-/// covered; rules with no literal (pure casts) are not internal.
-fn rule_has_internal_surface(rule: &mettail_ast::grammar::GrammarRule) -> bool {
-    use mettail_ast::grammar::SyntaxExpr;
-    rule.syntax_pattern
-        .as_ref()
-        .and_then(|sp| {
-            sp.iter().find_map(|e| match e {
-                SyntaxExpr::Literal(s) => Some(s.starts_with("__")),
-                _ => None,
-            })
-        })
-        .unwrap_or(false)
-}
 
 /// (A4) How many builtin `m:Ident` params the rule named `(cat, label)` declares.
 ///
@@ -407,6 +394,19 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
     let mut recursive = Vec::new();
 
     for variant in &variants {
+        // ★★ #150 — THE SEVEN `continue`s THAT USED TO BE SCATTERED THROUGH THE ARMS BELOW ARE
+        // NOW ONE CALL. `tape_variant_gap` is the only implementation of these tests, and the
+        // ledger census calls the SAME function — so "what the tape builder skips" and "what the
+        // ledger measures" cannot diverge, because there is no second implementation to diverge
+        // from. Each refusal now carries a named `GeneratorGap` instead of falling off the loop.
+        //
+        // ⚠ The all-token-text LEAF case is deliberately NOT a gap: `tape_variant_gap` answers
+        // `None` for it so it falls through to its own arm below, which pushes a leaf. Its
+        // condition implies the `NoRecursiveField` gap's, so the order inside that function is
+        // load-bearing — see its doc comment.
+        if crate::gen::generatability::tape_variant_gap(variant, &cat, language).is_some() {
+            continue;
+        }
         match variant {
             // ★ #141 G5 — generated-source EXPRESSION position: the leaf's build
             // code is a Rust expression written as text, and `compile_error!(…)`
@@ -474,38 +474,7 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                     .iter()
                     .any(|f| language.types.iter().any(|t| t.name == f.category));
 
-                // (A4) A GUEST-BODY field (`*flt(…)` → `Arc<FltNode>`) has no tape
-                // construction and no reliably re-parseable Display, so its whole variant is
-                // excluded EXPLICITLY here rather than by accident. Before this, an
-                // ident-only variant like Rholang's `PFlt` was dropped by the
-                // `!has_recursive_field` test below — correct outcome, invisible reason —
-                // while a MIXED variant (a guest body beside a category child) reached
-                // `generate_direct_recursive_build` and emitted
-                // `Arc::new(build_<owner>_from_tape(..))` for the leaf slot: code that does
-                // not type-check. No shipped grammar had that shape, so it had never fired.
-                if fields.iter().any(|f| {
-                    f.opaque_leaf
-                        == Some(crate::gen::term_ops::subst::OpaqueLeafKind::GuestBody)
-                }) {
-                    continue;
-                }
 
-                // (A4) A MIXED variant carrying a `v@Tok` token-kind capture beside a
-                // category child is EXCLUDED. Its text must satisfy a DECLARED kind's lexer
-                // pattern, which this builder has no handle on (`FieldInfo` records the leaf
-                // KIND, not the token kind), and guessing would emit a term whose `Display`
-                // does not re-lex. Pre-A such a variant reached the "Unknown category" arm
-                // and emitted `Arc::new(build_<owner>_from_tape(..))` into a `String` slot —
-                // code that does not type-check — so excluding it is strictly an improvement.
-                if has_recursive_field
-                    && fields.iter().any(|f| {
-                        f.opaque_leaf
-                            == Some(crate::gen::term_ops::subst::OpaqueLeafKind::TokenText)
-                    })
-                    && ident_param_count_for(&cat, &label.to_string(), language) == 0
-                {
-                    continue;
-                }
 
                 // (A4) A variant whose fields are ALL token-text leaves (`m:Ident`, `v@Tok`)
                 // is a LEAF, not a drop. It has no category child to recurse into, so
@@ -565,35 +534,14 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                     continue;
                 }
 
-                if !has_recursive_field || fields.is_empty() {
-                    // Treat as leaf (unknown category fields)
-                    continue;
-                }
 
-                // Exclude variants that recurse into a RUNTIME-ONLY opaque native
-                // (e.g. `CastReadZipper . z:ReadZipper |- z`): such a field can
-                // only be filled by an unparseable opaque-native arb leaf, so the
-                // whole variant's Display has no parse. Skipping it keeps
-                // `arb_<cat>` surface-faithful (fixes e.g. `proc_display_parse_roundtrip`
-                // embedding `readZipper@0`). Spec-derived via the single-source
-                // predicate.
-                if fields
-                    .iter()
-                    .any(|f| crate::gen::category_is_runtime_only_native(&f.category, language))
-                {
-                    continue;
-                }
 
                 let label_str = label.to_string();
                 let code = generate_regular_build_code(&cat, &label_str, fields, language);
                 recursive.push((label_str, code));
             },
             VariantKind::Collection { label, element_cat, coll_type } => {
-                // Collections are recursive (contain elements)
-                let is_known = language.types.iter().any(|t| t.name == *element_cat);
-                if !is_known {
-                    continue;
-                }
+                // Collections are recursive (contain elements).
                 let label_str = label.to_string();
                 let code = generate_collection_build_code(
                     &cat,
@@ -604,10 +552,6 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                 recursive.push((label_str, code));
             },
             VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
-                let is_body_known = language.types.iter().any(|t| t.name == *body_cat);
-                if !is_body_known {
-                    continue;
-                }
                 let label_str = label.to_string();
                 let code = generate_binder_build_code(
                     &cat,
@@ -620,10 +564,6 @@ fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantCl
                 recursive.push((label_str, code));
             },
             VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-                let is_body_known = language.types.iter().any(|t| t.name == *body_cat);
-                if !is_body_known {
-                    continue;
-                }
                 let label_str = label.to_string();
                 let code = generate_binder_build_code(
                     &cat,

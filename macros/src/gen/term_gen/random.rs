@@ -370,7 +370,10 @@ fn generate_random_depth_d(
                 .items
                 .iter()
                 .any(|item| matches!(item, GrammarItem::Collection { .. }));
-            if !rule.bindings.is_empty() && !has_collections {
+            // ★ #150 — the shared classifier decides; the ledger census calls the SAME
+            // function. `MultiBinderWithCollection` names what used to be an unlabelled
+            // fall-through.
+            if crate::gen::generatability::term_multi_binder_gap(rule).is_none() {
                 constructor_cases
                     .push(generate_random_multi_binder_constructor(cat_name, rule, language));
             }
@@ -407,14 +410,16 @@ fn generate_random_depth_d(
             .as_ref()
             .is_some_and(|ctx| ctx.iter().any(|p| matches!(p, TermParam::Optional { .. })));
 
-        if has_collections && !is_class2_binder && !has_optional_param {
-            // Handle collection constructors
-            constructor_cases
-                .push(generate_random_collection_constructor(cat_name, rule, language));
-            continue;
-        }
-        if has_collections && (is_class2_binder || has_optional_param) {
-            // Class-2 binder or Optional-collection rule: skip random gen.
+        // ★★ #150 — ONE `continue` carried TWO causes. `term_collection_arity_gap` names them
+        // separately (`Class2CollectionArity` / `OptionalCollectionArity`) because a row keyed on
+        // the SITE could not tell a reader which of the two to fix. The ledger census calls the
+        // same function, so the skip set and the measured set are one computation.
+        if has_collections {
+            let _ = (is_class2_binder, has_optional_param);
+            if crate::gen::generatability::term_collection_arity_gap(rule).is_none() {
+                constructor_cases
+                    .push(generate_random_collection_constructor(cat_name, rule, language));
+            }
             continue;
         }
 
@@ -461,12 +466,7 @@ fn generate_random_depth_d(
         // `#opt(...)` is generatable (as `None`, via the Optional count
         // split in `generate_random_simple_constructor`), so
         // `Optional { GuardBody }` must NOT trip this skip.
-        let has_guard_slot = rule
-            .term_context
-            .as_ref()
-            .map(|ctx| ctx.iter().any(|p| matches!(p, TermParam::GuardBody { .. })))
-            .unwrap_or(false);
-        if has_guard_slot {
+        if crate::gen::generatability::term_guard_slot_gap(rule).is_some() {
             continue;
         }
 

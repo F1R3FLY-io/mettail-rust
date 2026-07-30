@@ -22,6 +22,9 @@
 pub mod blockly;
 pub(crate) mod capture;
 pub mod compose_gen;
+/// #150 — THE single classification of "can a generator build a term for this rule?", with the
+/// generator as a PARAMETER rather than a second implementation.
+pub mod generatability;
 pub mod native;
 pub mod runtime;
 pub mod syntax;

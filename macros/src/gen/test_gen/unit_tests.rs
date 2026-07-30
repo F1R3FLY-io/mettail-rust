@@ -237,18 +237,12 @@ pub fn generate_unit_tests(language: &LanguageDef, _pipeline: &PipelineAnalysis)
                     None // Too complex
                 }
             },
-            VariantKind::Collection { label: lbl, .. } => {
-                // Skip collection constructors — they need non-trivial setup
-                let lbl_str = lbl.to_string();
-                let _ = lbl_str;
-                None
-            },
-            VariantKind::MultiBinder { label: lbl, .. } => {
-                // Skip multi-binders — they need Vec<Binder> which is too complex
-                let lbl_str = lbl.to_string();
-                let _ = lbl_str;
-                None
-            },
+            // ★ #150 — these two arms answered `None` UNCONDITIONALLY. The refusal was right;
+            // the silence was not. `unit_variant_gap` now names them
+            // `CollectionElementSetup` / `MultiBinderVecBinder`, the ledger census counts them
+            // through THE SAME function, and the emitted comment below carries the discriminant
+            // so the generated output and the table agree BY CONSTRUCTION.
+            VariantKind::Collection { .. } | VariantKind::MultiBinder { .. } => None,
         };
 
         if let Some(body_code) = body {
@@ -402,7 +396,10 @@ fn default_value_for_native_type(language: &LanguageDef, native_type: &str) -> S
 }
 
 /// Try to construct a leaf value for a field (Box<Cat> or collection).
-fn construct_leaf_value(field: &FieldInfo, language: &LanguageDef) -> Option<String> {
+pub(crate) fn construct_leaf_value(
+    field: &FieldInfo,
+    language: &LanguageDef,
+) -> Option<String> {
     // Phase 3A: guard slots use BehavioralPred::Top as the neutral predicate.
     // Top is always satisfied regardless of the fact snapshot, enabling
     // structural coverage of guarded constructors without guard evaluation.

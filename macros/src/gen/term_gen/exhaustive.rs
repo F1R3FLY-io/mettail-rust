@@ -761,12 +761,10 @@ fn generate_binder_constructor_case(
     // Constructors with `?guard:Guard` slots are skipped from
     // exhaustive generation; tests that need to construct guarded
     // terms should build them by hand.
-    let has_guard_slot = rule
-        .term_context
-        .as_ref()
-        .map(|ctx| ctx.iter().any(|p| matches!(p, TermParam::GuardBody { .. })))
-        .unwrap_or(false);
-    if has_guard_slot {
+    // ★★ #150 — THE MIRROR IS KILLED HERE. This predicate was written out a second time in
+    // `random.rs`, and a predicate written out twice is a predicate that can be widened once.
+    // Both files now call `generatability::term_guard_slot_gap`, and so does the ledger census.
+    if crate::gen::generatability::term_guard_slot_gap(rule).is_some() {
         return quote! {};
     }
 
