@@ -110,14 +110,95 @@ impl CanonicalFixedPoint {
         Some(Self::from_raw(CanonicalBigInt::from(q), p))
     }
 
-    /// Remainder such that `(a / b) * b + (a % b) == a` with truncated quotient.
+    /// Remainder on the aligned unscaled integers, at the shared scale `P`: `ua % ub`, truncated
+    /// toward zero so the sign follows the DIVIDEND (as `BigInt`'s and Rust's `i64`'s `%` do).
+    ///
+    /// # Upstream is the definition
+    ///
+    /// This matches upstream Rholang's `combine_mod` `GFixedPoint` arm exactly —
+    /// `f1r3node-rust-mettail/rholang/src/rust/interpreter/reduce.rs:3460-3470`:
+    ///
+    /// ```text
+    /// let ua = bytes_to_bigint(&fp1.unscaled);
+    /// let ub = bytes_to_bigint(&fp2.unscaled);
+    /// let remainder = &ua % &ub;
+    /// make_fixedpoint_expr(GFixedPoint { unscaled: …, scale: fp1.scale }, "%")
+    /// ```
+    ///
+    /// ⇒ remainder on the unscaled integers, scale preserved. ★ Note the exact remainder ALWAYS
+    /// fits this type: `/` must approximate (`10.0/3.0` is not representable at any finite scale),
+    /// but `%` never must, because `ua % ub` is an integer no wider than `ua`.
+    ///
+    /// # ⚠ WHAT THIS USED TO COMPUTE, AND WHY IT WAS WRONG
+    ///
+    /// Until 2026-07-30 the body was:
+    ///
+    /// ```text
+    /// let q = (ua.clone() * pow10(p)) / &ub;     // ← scaled quotient
+    /// let rem = ua - (q * &ub) / pow10(p);       // ← then divided back down
+    /// ```
+    ///
+    /// That is `a − trunc_p(a/b)·b`, which expands to `(a/b − trunc_p(a/b))·b = ε·b` with
+    /// `0 ≤ ε < 10⁻ᵖ` — **the truncation error of the division, scaled by the divisor.** A
+    /// residual, not a remainder. Its magnitude is bounded by `|b|·10⁻ᵖ`, so it tends to ZERO as
+    /// precision grows, which no remainder does. Measured consequences:
+    ///
+    /// | input | superseded | correct (= upstream) |
+    /// |---|---|---|
+    /// | `7.00p2 % 3.00p2` | `0.01p2` | `1.00p2` |
+    /// | `10.0p1 % 3.0p1`  | `0.1p1`  | `1.0p1`  |
+    /// | `7.50p2 % 2.00p2` | `0p0`    | `1.50p2` |
+    ///
+    /// The `7.50 % 2.00` row shows the mechanism plainly: `7.50/2.00 = 3.75` is EXACT at two
+    /// places, so `ε = 0` and the old code returned zero for a division that leaves remainder
+    /// `1.50`.
+    ///
+    /// ## Why "copy+paste" is the diagnosis
+    ///
+    /// Compare [`checked_div`](Self::checked_div) directly above: there `let numer = ua * pow10(p)`
+    /// is **essential**, because a quotient must be computed at scale to have fractional digits at
+    /// all. `checked_rem` copied that line and then bolted on a compensating `/ pow10(p)` to make
+    /// the units balance. The round trip exists ONLY to undo a factor that should never have been
+    /// introduced — deleting both is the whole fix.
+    ///
+    /// The copy is recorded upstream of the code, in the design note
+    /// `docs/design/exploring/ieee754-fixed-point.md` §4.4(5), which derived `%` by substituting
+    /// item (4)'s SHIFTED quotient into the C99 identity `(a/b)·b + a%b == a`. That identity is
+    /// C99 §6.5.5's, and it is stated for INTEGER division; item (4)'s `q` is a `p`-places
+    /// fixed-point number, not an integer, so the substitution is invalid. The note has been
+    /// corrected alongside this function, because it would otherwise regenerate the defect.
+    ///
+    /// ## ★★ The decisive defect: `%` was not a function on this type's own equality
+    ///
+    /// [`PartialEq`], [`Hash`] and [`to_canonical_bytes`](Self::to_canonical_bytes) all key on
+    /// [`value_ratio`](Self::value_ratio) — the reduced rational — because keying on the raw
+    /// `(unscaled, places)` pair would break the `SemanticHash`↔`Eq` agreement the Dovetail
+    /// e-graph relies on to dedup. So `places` is NOT part of a value's identity, and
+    /// `7.00p2 == 7.0p1`. But the superseded `%` READ `places`: it answered `0.01` for the first
+    /// spelling and `0.1` for the second. **Equal inputs, unequal outputs.** Whatever else it was,
+    /// it was not a function on the equivalence classes this type declares. Pinned by
+    /// `tests::remainder_is_invariant_under_the_places_spelling`.
+    ///
+    /// # The identity that no longer holds — and why that is correct, not a loss
+    ///
+    /// `checked_div(a,b)·b + checked_rem(a,b) == a` is now FALSE (`3.3·3.0 + 1.0 = 10.9 ≠ 10.0`),
+    /// and it was true before. That is not a regression: the division identity
+    /// `q·b + r == a` is a theorem about the **integer** (truncated) quotient, and
+    /// [`checked_div`](Self::checked_div) does not return that — it returns the quotient carried to
+    /// `p` fractional places, which is a different (and deliberately approximating) operation. The
+    /// old pairing satisfied the identity only because the old `%` was defined as "whatever makes
+    /// `checked_div` exact", i.e. as the division's own error term. The identity that holds now is
+    /// `trunc(a/b)·b + (a % b) == a`, asserted in `tests::div_mod_example` and
+    /// `tests::div_mod_with_negatives`. ★ Upstream claims no such identity between its `/` and `%`
+    /// either, which is why it has no such test.
+    ///
+    /// `/` is deliberately NOT changed here; only `%` moved.
     pub fn checked_rem(self, rhs: Self) -> Option<Self> {
         let (ua, ub, p) = Self::align_pair(self, rhs);
         if ub.is_zero() {
             return None;
         }
-        let q = (ua.clone() * pow10(p)) / &ub;
-        let rem = ua - (q * &ub) / pow10(p);
+        let rem = ua % ub;
         Some(Self::from_raw(CanonicalBigInt::from(rem), p))
     }
 
@@ -315,28 +396,199 @@ mod tests {
         h.finish()
     }
 
+    /// The TRUNCATED INTEGER quotient `trunc(a/b)`, as an integer-valued fixed point
+    /// (`places = 0`).
+    ///
+    /// ★ This is the quotient `checked_rem`'s remainder pairs with, and it is NOT what
+    /// [`CanonicalFixedPoint::checked_div`] returns. `checked_div` carries the quotient to `p`
+    /// fractional places (`10.0p1 / 3.0p1 == 3.3p1`); the division identity
+    /// `q·b + r == a` holds for the INTEGER quotient only. Written out here so the two tests
+    /// below can name the distinction instead of implying it.
+    fn integer_quotient(
+        a: CanonicalFixedPoint,
+        b: CanonicalFixedPoint,
+    ) -> CanonicalFixedPoint {
+        let (ua, ub, _p) = CanonicalFixedPoint::align_pair(a, b);
+        CanonicalFixedPoint::new(ua / ub, 0)
+    }
+
+    /// ★ RE-DERIVED 2026-07-30 — NOT re-blessed. `%` is the remainder on the ALIGNED UNSCALED
+    /// INTEGERS (upstream's definition, `reduce.rs:3460-3470`), so `10.0p1 % 3.0p1` aligns to
+    /// `ua = 100`, `ub = 30` and answers `100 % 30 = 10` at `places = 1` — the value **1.0**.
+    ///
+    /// **The identity that HOLDS** is against the TRUNCATED INTEGER quotient:
+    ///   `trunc(a/b)·b + (a % b) == a`, i.e. `3·3.0 + 1.0 == 10.0`. ✓
+    ///
+    /// **The identity that NO LONGER HOLDS** is against `checked_div`'s quotient:
+    ///   `(a/b)·b + (a % b) == a`, i.e. `3.3·3.0 + 1.0 == 10.9 ≠ 10.0`. ✗
+    ///
+    /// The second is asserted as an INEQUALITY deliberately. It is exactly the identity the
+    /// superseded `checked_rem` satisfied (it returned `0.1p1`, and `3.3·3.0 + 0.1 == 10.0`), so
+    /// reverting the `checked_rem` fix turns THIS row red rather than letting the residual-valued
+    /// `%` back in as a "restored invariant". `/` is unchanged and its pin below is untouched.
     #[test]
     fn div_mod_example() {
         let a = fp(10, 0, 1);
         let b = fp(3, 0, 1);
         let q = a.checked_div(b).expect("div");
         let r = a.checked_rem(b).expect("rem");
-        assert_eq!(q.unscaled.get(), &BigInt::from(33));
+
+        // `/` is NOT changed: the quotient is still carried to `p` places.
+        assert_eq!(q.unscaled(), &BigInt::from(33));
         assert_eq!(q.places(), 1);
-        assert_eq!(r.unscaled.get(), &BigInt::from(1));
-        assert_eq!(r.places(), 1);
-        let restored = q * b + r;
-        assert_eq!(restored, a);
+
+        // `%` is the remainder on the aligned unscaled integers, at the shared scale.
+        assert_eq!(
+            r.unscaled(),
+            &BigInt::from(10),
+            "`10.0p1 % 3.0p1` aligns to `100 % 30 = 10`; unscaled `1` would be `0.1p1`, the \
+             truncation residual of the division, not a remainder",
+        );
+        assert_eq!(r.places(), 1, "upstream preserves the operand scale");
+        assert_eq!(r.to_string(), "1.0p1");
+
+        // THE IDENTITY THAT HOLDS: against the truncated integer quotient.
+        let q_int = integer_quotient(a, b);
+        assert_eq!(q_int.unscaled(), &BigInt::from(3), "trunc(10/3) == 3");
+        assert_eq!(
+            q_int * b + r,
+            a,
+            "`trunc(a/b)·b + (a % b) == a` — the division identity the exact remainder satisfies",
+        );
+
+        // THE IDENTITY THAT DOES NOT: against the p-places quotient. `3.3·3.0 + 1.0 == 10.9`.
+        assert_ne!(
+            q * b + r,
+            a,
+            "`(a/b)·b + (a % b) == a` holds only for the p-PLACES quotient paired with the \
+             p-places truncation RESIDUAL — the superseded behaviour. If this row passes, \
+             `checked_rem` has been reverted to computing `ε·b`.",
+        );
+        assert_eq!(
+            (q * b + r).to_string(),
+            "10.90p2",
+            "the pairing is off by exactly the residual the old `%` returned (0.1·3.0 = 0.30… \
+             precisely: 9.90 + 1.0 = 10.90 versus a = 10.0)",
+        );
     }
 
+    /// ★ RE-DERIVED 2026-07-30 — NOT re-blessed. `BigInt`'s `%` truncates toward zero, so the
+    /// sign of the remainder follows the DIVIDEND, matching Rust's `i64 %` and therefore matching
+    /// upstream's `GInt` row (`lhs % rhs`) and its `GFixedPoint` row (`&ua % &ub`) alike.
+    ///
+    /// The identity asserted for every row is `trunc(a/b)·b + (a % b) == a` — the same one
+    /// [`div_mod_example`] establishes, now over all four sign combinations. ⚠ The originally
+    /// pinned operand pair (`-1.00p2 % 0.25p2`) is kept as the first row but measures NO sign
+    /// behaviour: `25` divides `100` exactly, so its remainder is identically zero. That is why
+    /// the four `±7 % ±3` rows were added — the old pin could not have caught a sign error.
     #[test]
     fn div_mod_with_negatives() {
+        // Row 0: the originally pinned pair. Exact division ⇒ remainder is EXACTLY ZERO, which
+        // normalizes to `0p0`. Retained for continuity, not for coverage.
         let a = CanonicalFixedPoint::new(BigInt::from(-100), 2);
         let b = CanonicalFixedPoint::new(BigInt::from(25), 2);
-        let q = a.checked_div(b).expect("q");
         let r = a.checked_rem(b).expect("r");
-        let back = q * b + r;
-        assert_eq!(back, a);
+        assert!(
+            r.unscaled().is_zero(),
+            "-1.00p2 / 0.25p2 is exact (-4), so the remainder is 0 and this row cannot detect a \
+             sign defect",
+        );
+        assert_eq!(r.places(), 0, "true zero normalizes to `0p0`");
+        let q_int = integer_quotient(a, b);
+        assert_eq!(q_int.unscaled(), &BigInt::from(-4));
+        assert_eq!(q_int * b + r, a, "`trunc(a/b)·b + (a % b) == a`");
+
+        // Rows 1-4: every sign combination, checked against `i64 %` — the carrier upstream's
+        // `GInt` row uses, so agreement here is agreement with upstream on sign.
+        for (ai, bi) in [(7i64, 3i64), (-7, 3), (7, -3), (-7, -3)] {
+            let a = CanonicalFixedPoint::new(BigInt::from(ai) * 100, 2);
+            let b = CanonicalFixedPoint::new(BigInt::from(bi) * 100, 2);
+            let r = a.checked_rem(b).expect("rem");
+            let want = CanonicalFixedPoint::new(BigInt::from(ai % bi) * 100, 2);
+            assert_eq!(
+                r, want,
+                "`{ai}.00p2 % {bi}.00p2` must equal `{}` — the value of `{ai}i64 % {bi}i64`, \
+                 truncated toward zero with the sign of the dividend",
+                ai % bi,
+            );
+            let q_int = integer_quotient(a, b);
+            assert_eq!(
+                q_int * b + r,
+                a,
+                "`trunc(a/b)·b + (a % b) == a` must hold at signs ({ai}, {bi})",
+            );
+        }
+    }
+
+    /// ★ SCALE INVARIANCE — THE LAW THE SUPERSEDED `checked_rem` BROKE, and which nothing checked.
+    ///
+    /// `PartialEq`, `Hash` and `to_canonical_bytes` all key on `value_ratio()` (see the doc comment
+    /// on [`CanonicalFixedPoint::to_canonical_bytes`], which explains that keying on the raw
+    /// `(unscaled, places)` pair would break the `SemanticHash`↔`Eq` agreement the Dovetail e-graph
+    /// relies on). `places` is therefore NOT part of a value's identity: `7.00p2 == 7.0p1 == 7p0`.
+    ///
+    /// An operation on this type must consequently be a function on those equivalence classes —
+    /// **equal inputs, equal outputs.** `%` was not. It read `places`, and the three spellings of
+    /// the same two values gave three different answers:
+    ///
+    /// | spelling | superseded `%` | correct `%` |
+    /// |---|---|---|
+    /// | `7.00p2 % 3.00p2` | `0.01` | `1` |
+    /// | `7.0p1 % 3.0p1`   | `0.1`  | `1` |
+    /// | `7p0 % 3p0`       | `1`    | `1` |
+    ///
+    /// This is the decisive defect, and no other test in the suite could see it: each spelling was
+    /// internally consistent, and the carrier matrix pinned only the `p2` row.
+    #[test]
+    fn remainder_is_invariant_under_the_places_spelling() {
+        let spellings = [
+            ("7.00p2 % 3.00p2", 700, 300, 2u32),
+            ("7.0p1 % 3.0p1", 70, 30, 1),
+            ("7p0 % 3p0", 7, 3, 0),
+        ];
+        let one = CanonicalFixedPoint::new(BigInt::from(1), 0);
+
+        // PREMISE, asserted rather than assumed: the operands really are pairwise equal.
+        let seven = CanonicalFixedPoint::new(BigInt::from(7), 0);
+        let three = CanonicalFixedPoint::new(BigInt::from(3), 0);
+        for (label, ua, ub, p) in spellings {
+            let a = CanonicalFixedPoint::new(BigInt::from(ua), p);
+            let b = CanonicalFixedPoint::new(BigInt::from(ub), p);
+            assert_eq!(a, seven, "the dividend of `{label}` is the value 7");
+            assert_eq!(b, three, "the divisor of `{label}` is the value 3");
+        }
+
+        let mut results = Vec::with_capacity(spellings.len());
+        for (label, ua, ub, p) in spellings {
+            let a = CanonicalFixedPoint::new(BigInt::from(ua), p);
+            let b = CanonicalFixedPoint::new(BigInt::from(ub), p);
+            let r = a.checked_rem(b).expect("rem");
+            assert_eq!(
+                r, one,
+                "`{label}` must be the value 1: `%` reads `places`, but `places` is not part of \
+                 this type's identity, so a `places`-dependent answer makes `%` not a function \
+                 on its own equivalence classes",
+            );
+            assert_eq!(r.places(), p, "`{label}` preserves the operand scale, as upstream does");
+            results.push((label, r));
+        }
+
+        // The consequence spelled out: equal values ⇒ equal hashes ⇒ equal canonical bytes. This
+        // is the e-graph's dedup key, so a `places`-dependent `%` would have produced two e-nodes
+        // that must be one.
+        let (first_label, first) = results[0];
+        for &(label, r) in &results[1..] {
+            assert_eq!(
+                hash_val(&r),
+                hash_val(&first),
+                "`{label}` and `{first_label}` must hash alike",
+            );
+            assert_eq!(
+                r.to_canonical_bytes(),
+                first.to_canonical_bytes(),
+                "`{label}` and `{first_label}` must have identical canonical bytes",
+            );
+        }
     }
 
     #[test]
