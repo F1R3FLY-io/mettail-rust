@@ -592,6 +592,68 @@ fn ast_term_depth_body(depth: usize) {
     std::mem::forget(a);
 }
 
+/// ★★ **`is_ground` — the ELEVENTH driver, and the subject that did not exist.**
+///
+/// `macros/src/gen/term_ops/ground.rs` emitted bare host recursion (`f0.is_ground()`,
+/// `coll.iter().all(|x| x.is_ground())`), the same shape `term_depth` had before #162. It is
+/// compiled into every language and it has a generated caller at
+/// `target/generated/rholang/parse_alt_filter.rs`.
+///
+/// ⚠★★ **Why this subject is the actual fix for #189, and the conversion only the easy half.**
+/// `stack_depth_gate`'s `the_sloped_driver_set_is_exactly_the_declared_one` totals in BOTH
+/// directions over a universe it enumerates from [`SUBJECTS`] at run time — declared-but-absent
+/// and present-but-undeclared both fail. That is a strong instrument and it was completely blind
+/// here: a driver with **no subject** is not a row in the table to be totalled. A bidirectional
+/// totality gate over a universe that does not contain the defect cannot see the defect. That is
+/// how the tenth driver hid, and then this eleventh one.
+///
+/// ⚠ ANTI-VACUITY, and it has to run the OTHER way from `ast_term_depth`'s. `is_ground` returns
+/// `true` by DRAINING the whole work stack and `false` by stopping at the first `Var` leaf, so a
+/// ground fixture is the weaker instrument: an implementation that pushed nothing at all would
+/// answer `true` immediately and pass. The fixture is therefore a spine whose ONLY leaf is a FREE
+/// VARIABLE, asserted NOT ground — which can only be answered correctly by descending the entire
+/// spine to reach it. Same reasoning as `ast_cmp`'s "twins differ only at the leaf".
+fn ast_is_ground_body(depth: usize) {
+    let a = nested_list_var(depth, "g");
+    assert!(
+        !a.is_ground(),
+        "stack_depth_probe: ast_is_ground reported a depth-{depth} spine GROUND when its only \
+         leaf is a FREE VARIABLE — the walk never reached the bottom, so the ladder measures \
+         nothing"
+    );
+    // The ground twin, so the drain-to-completion path is exercised on the same ladder rather
+    // than only the short-circuit path. A conversion could be flat on one and not the other.
+    let b = nested_list(depth);
+    assert!(
+        b.is_ground(),
+        "stack_depth_probe: ast_is_ground reported a depth-{depth} spine of integer literals \
+         NOT ground — some arm answers `false` for a term with no variable in it"
+    );
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+/// [`ast_is_ground_body`] on the pure `Proc::Add` chain — the MECHANISM twin. The other drivers'
+/// `*_add` ladders are flat because the pure chain has no collection element to delegate at; a
+/// driver with no worklist at all does not benefit from that, so before #189 this twin is where
+/// the slope shows without any collection in the picture.
+fn ast_is_ground_add_body(depth: usize) {
+    let a = nested_add_var(depth, "g");
+    assert!(
+        !a.is_ground(),
+        "stack_depth_probe: ast_is_ground_add reported a depth-{depth} Add chain GROUND when its \
+         only leaf is a FREE VARIABLE — the walk never reached the bottom"
+    );
+    let b = nested_add(depth);
+    assert!(
+        b.is_ground(),
+        "stack_depth_probe: ast_is_ground_add reported a depth-{depth} Add chain of integer \
+         literals NOT ground"
+    );
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
 /// ★★ **THE POSITIVE CONTROL FOR THE CLASSIFIER, and it exists because #162 emptied the sloped
 /// set.**
 ///
@@ -1222,6 +1284,16 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
     // -------- ★ the TENTH driver: host-recursive, no worklist at all --------
     ("ast_term_depth", ast_term_depth_body),
     ("ast_term_depth_add", ast_term_depth_add_body),
+    // -------- ★★ the ELEVENTH driver (#189): host-recursive AND with no subject at all -----
+    //
+    // The tenth was found because it had a subject that measured a slope. The eleventh could
+    // not be found that way, because the thing missing was the subject. See
+    // `ast_is_ground_body`, and `stack_depth_gate`'s
+    // `every_generated_traversal_has_a_probe_subject`, which derives the universe from the
+    // GENERATED TREE rather than from this table — because this table is the thing that was
+    // incomplete.
+    ("ast_is_ground", ast_is_ground_body),
+    ("ast_is_ground_add", ast_is_ground_add_body),
     // The classifier's own non-vacuity anchor — see `ast_recursion_control_body`.
     ("ast_recursion_control", ast_recursion_control_body),
     // -------- ★ the CONFOUND CONTROL: the same drivers, anti-vacuity WITHOUT `PartialEq` -----

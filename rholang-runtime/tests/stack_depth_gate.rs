@@ -654,6 +654,9 @@ fn flat_generated_drivers_are_depth_independent() {
         "ast_match_pattern_add",
         "ast_term_depth",
         "ast_term_depth_add",
+        // ── converted by #189 ──
+        "ast_is_ground",
+        "ast_is_ground_add",
         // ── flat once `ast_eq` stopped dominating their anti-vacuity assertions ──
         "ast_subst",
         "ast_subst_add",
@@ -787,6 +790,11 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
     ("ast_drop", Shape::Flat),
     // ★ THE LAST SLOPED DRIVER — no work stack at all. See the note above.
     ("ast_term_depth", Shape::Flat),
+    // ★★ #189 — the ELEVENTH driver, converted. It was host-recursive exactly as
+    // `term_depth` was, and it had NO SUBJECT, which is why neither this gate's
+    // present-but-undeclared direction nor its declared-but-absent direction could see it.
+    // See `every_generated_traversal_has_a_probe_subject`.
+    ("ast_is_ground", Shape::Flat),
     // ★ The retired confound, kept as a live control in its post-conversion form.
     ("ast_subst", Shape::FlatAndItsEqFreeTwinAgrees { eq_free_twin: "ast_subst_noassert" }),
     (
@@ -812,6 +820,7 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
     ("ast_display_add", Shape::Flat),
     ("ast_clone_add", Shape::Flat),
     ("ast_term_depth_add", Shape::Flat),
+    ("ast_is_ground_add", Shape::Flat),
     // ★★ THE CLASSIFIER'S OWN NON-VACUITY ANCHOR, and the only sloped row left.
     //
     // #162 converted all ten drivers, so with this row absent EVERY `ast_*` subject would be
@@ -831,7 +840,7 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
 /// a renamed mode, a probe that failed to run, a redirect that swallowed stdout — every
 /// assertion below would iterate an empty set and PASS. This is the count at the time of writing;
 /// it may only grow, and it must never be silently reduced to match a shrunken enumeration.
-const MIN_DRIVER_SUBJECTS: usize = 29;
+const MIN_DRIVER_SUBJECTS: usize = 31;
 
 /// The `ast_*` subjects the PROBE dispatches, read from the probe itself.
 ///
@@ -841,6 +850,26 @@ const MIN_DRIVER_SUBJECTS: usize = 29;
 /// subject would simply go unclassified, which is a vacuous pass and precisely the hole this
 /// closes.
 fn probe_driver_subjects() -> Vec<String> {
+    let subjects: Vec<String> =
+        probe_subjects().into_iter().filter(|line| line.starts_with("ast_")).collect();
+    assert!(
+        subjects.len() >= MIN_DRIVER_SUBJECTS,
+        "stack_depth_gate: the probe enumerated only {} `ast_*` subjects, below the floor of {}. \
+         Either the enumeration broke (in which case every classification below would pass \
+         vacuously) or subjects were REMOVED, which needs saying out loud.",
+        subjects.len(),
+        MIN_DRIVER_SUBJECTS
+    );
+    subjects
+}
+
+/// EVERY subject the probe dispatches, unfiltered — the raw `SUBJECTS` enumeration.
+///
+/// ★ Split out from [`probe_driver_subjects`] for #189's census, which has to resolve
+/// subject names that are NOT `ast_*` (`parse_depth` covers the recognizer). Filtering
+/// before resolving would have made the recognizer's coverage claim unverifiable, which is
+/// the same shape of hole #189 was.
+fn probe_subjects() -> Vec<String> {
     let output = std::process::Command::new(PROBE)
         .env("GATE_SUBJECT", "list_subjects")
         .env_remove("RUST_MIN_STACK")
@@ -854,21 +883,7 @@ fn probe_driver_subjects() -> Vec<String> {
     );
     let listing = String::from_utf8(output.stdout)
         .expect("stack_depth_gate: the probe's subject enumeration was not UTF-8");
-    let subjects: Vec<String> = listing
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.starts_with("ast_"))
-        .map(str::to_owned)
-        .collect();
-    assert!(
-        subjects.len() >= MIN_DRIVER_SUBJECTS,
-        "stack_depth_gate: the probe enumerated only {} `ast_*` subjects, below the floor of {}. \
-         Either the enumeration broke (in which case every classification below would pass \
-         vacuously) or subjects were REMOVED, which needs saying out loud.",
-        subjects.len(),
-        MIN_DRIVER_SUBJECTS
-    );
-    subjects
+    listing.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_owned).collect()
 }
 
 /// The measured shape of one subject: `Flat` or `Sloped`, by the fixed-stack discriminator.
@@ -1007,6 +1022,427 @@ fn the_sloped_driver_set_is_exactly_the_declared_one() {
             },
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// ★★ #189 — THE TRAVERSAL CENSUS, derived from the GENERATED TREE
+//
+// ⚠ THE HOLE THIS CLOSES, stated first because it is the whole point.
+//
+// `the_sloped_driver_set_is_exactly_the_declared_one` totals in BOTH directions —
+// present-but-undeclared and declared-but-absent both fail — over a universe it
+// ENUMERATES from `stack_depth_probe`'s `SUBJECTS` table at run time rather than
+// hand-mirroring it. That is a strong instrument, and it was completely blind to
+// `is_ground`: **a driver with no probe subject is not a row in the table to be
+// totalled.** A bidirectional totality gate over a universe that does not contain the
+// defect cannot see the defect. That is exactly how the TENTH driver (`term_depth`)
+// hid, and then this ELEVENTH one.
+//
+// So this gate derives its universe from the one artifact that actually grows when a
+// new generated traversal is added: **the set of files the macro writes into
+// `target/generated/rholang/`**. Every file gets a row saying what it is and how it is
+// covered; a new emitter cannot land without one. Two derived floors keep the rows
+// honest in the two ways a declaration can lie:
+//
+//   * a row claiming NOT-A-TRAVERSAL must describe a file with no self-recursive call
+//     and no work-stack — so a traversal smuggled into an existing "inert" file fails;
+//   * a row claiming a TRAVERSAL must name an entry point that is still present in the
+//     file — so a row cannot go on describing something that has been deleted.
+//
+// ★ The measured answer to "how many generated traversals have NO probe subject" is
+// **EIGHT**, of which `is_ground` was one. The other seven are recorded as
+// `Unmeasured` rows with their mechanism, NOT silently omitted — see the table.
+// ---------------------------------------------------------------------------
+
+/// How a generated file's recursion is accounted for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Coverage {
+    /// A probe subject exercises it, and `EXPECTED_DRIVER_SHAPE` classifies the subject.
+    Subject(&'static str),
+    /// It descends a host term on the NATIVE STACK and nothing measures it. ⚠ A live
+    /// Θ(depth) exposure. This set must only ever SHRINK.
+    UnmeasuredTraversal(&'static str),
+    /// It recurses, but not over the depth of an existing host term — so a depth ladder
+    /// is not the instrument for it. The string says why.
+    NotADepthTraversal(&'static str),
+    /// It contains no self-recursive call and no work-stack at all. Asserted, not
+    /// asserted-of.
+    Inert,
+}
+
+/// ★ Every file `language!` writes for Rholang, with what it is and how its recursion is
+/// accounted for. The FILE LIST is derived at run time; this table is the expectation.
+const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
+    // ── the ELEVEN per-category AST drivers, ten already measured ───────────────────
+    ("iterative_cmp.rs", "cmp", Coverage::Subject("ast_cmp")),
+    ("iterative_hash.rs", "hash", Coverage::Subject("ast_hash")),
+    ("iterative_drop.rs", "drop", Coverage::Subject("ast_drop")),
+    ("semantic_hash.rs", "semantic_hash", Coverage::Subject("ast_semantic_hash")),
+    ("debug.rs", "fmt", Coverage::Subject("ast_debug")),
+    ("display.rs", "fmt", Coverage::Subject("ast_display")),
+    ("subst.rs", "subst", Coverage::Subject("ast_subst")),
+    ("normalize.rs", "normalize", Coverage::Subject("ast_normalize")),
+    ("match_pattern.rs", "match_pattern", Coverage::Subject("ast_match_pattern")),
+    ("term_depth.rs", "depth_iterative", Coverage::Subject("ast_term_depth")),
+    // ★★ #189 — the eleventh, converted and now measured.
+    ("is_ground.rs", "ground_iterative", Coverage::Subject("ast_is_ground")),
+    // ── the RECOGNIZER: a traversal of the INPUT, measured on both axes ─────────────
+    ("parser.rs", "parse", Coverage::Subject("parse_depth")),
+    ("wpda.rs", "semantic_fingerprint", Coverage::Subject("parse_depth")),
+    // ── ⚠ SEVEN host-recursive walks with NO SUBJECT. Live Θ(depth) exposures. ──────
+    //
+    // Each is a per-category descent over an existing term (or, for `dovetail_report`,
+    // over a derivation whose depth IS the term's) emitted as bare host recursion, with
+    // nothing in this file measuring it. Reported by #189's census rather than fixed:
+    // #189's scope is `is_ground`, and a conversion needs its own subject, its own
+    // anti-vacuity fixture and its own RED before green.
+    (
+        "env_subst.rs",
+        "subst_by_name_proc",
+        Coverage::UnmeasuredTraversal(
+            "`term_ops/subst.rs::generate_env_substitution` emits `subst_by_name_*` as bare \
+             host recursion, one family per category (860 self-calls). The eager `subst` twin \
+             next to it IS converted and IS measured by `ast_subst`, so this is a converted \
+             emitter with an unconverted half",
+        ),
+    ),
+    (
+        "parse_alt_filter.rs",
+        "_collect_uniform_flags",
+        Coverage::UnmeasuredTraversal(
+            "`term_ops/parse_alt_filter.rs` emits `_collect_uniform_flags` as bare host \
+             recursion (1,825 self-calls). ★ It is also `is_ground`'s own generated CALLER, \
+             so before #189 the two composed into a doubly-recursive descent",
+        ),
+    ),
+    (
+        "var_inference.rs",
+        "infer_var_type",
+        Coverage::UnmeasuredTraversal(
+            "`syntax/var_inference.rs` emits `infer_var_type` / `infer_var_category` as bare \
+             host recursion (2,643 self-calls on `infer_var_type` alone)",
+        ),
+    ),
+    (
+        "eval.rs",
+        "try_eval",
+        Coverage::UnmeasuredTraversal(
+            "`native/eval.rs` emits `try_eval`. PARTIALLY converted: `Int` has an \
+             `__EvalFrame` worklist, the other 15 categories are plain host recursion — so \
+             the emitter already contains its own conversion pattern",
+        ),
+    ),
+    (
+        "language_struct.rs",
+        "collect_all_proc_vars",
+        Coverage::UnmeasuredTraversal(
+            "`runtime/language.rs` emits `collect_all_*_vars` as bare host recursion, one per \
+             category (243 self-calls on the `Proc` one)",
+        ),
+    ),
+    (
+        "flt_reflect.rs",
+        "__mettail_rho_net_reflect_proc",
+        Coverage::UnmeasuredTraversal(
+            "`runtime/rho_invocation.rs` emits `__mettail_rho_net_reflect_*` as bare host \
+             recursion (232 self-calls on the `Proc` one). ⚠ This one crosses into the in-Rho \
+             ABI, so its depth bound is a CONSENSUS-facing question",
+        ),
+    ),
+    (
+        "dovetail_report.rs",
+        "__mettail_dovetail_build_proc_d",
+        Coverage::UnmeasuredTraversal(
+            "`runtime/dovetail_report/{typed_lowering,typed_report}.rs` emit \
+             `__mettail_dovetail_build_*_d` / `__mettail_dovetail_add_*` as bare host \
+             recursion (14,328 self-calls). ⚠ Different AXIS: it descends a `Derivation` \
+             tree, not the AST — but a derivation for a depth-N term is N deep, so the \
+             exposure is the same. It is also `term_depth`'s 40-site caller",
+        ),
+    ),
+    // ── recursion that is NOT over an existing term's depth ─────────────────────────
+    (
+        "rho_net_invocation.rs",
+        "__mettail_rho_net_reflect_proc",
+        Coverage::NotADepthTraversal(
+            "the SAME reflector family as `flt_reflect.rs`, emitted a second time by the same \
+             `runtime/rho_invocation.rs`. Counted ONCE in the eight, here so the file cannot \
+             go unclassified",
+        ),
+    ),
+    (
+        "random_generation.rs",
+        "generate_random_at_depth_internal",
+        Coverage::NotADepthTraversal(
+            "a GENERATOR: recursion bounded by an explicit `max_depth` budget it decrements, \
+             not by the depth of a term it was handed",
+        ),
+    ),
+    (
+        "term_generation.rs",
+        "generate_all",
+        Coverage::NotADepthTraversal("a GENERATOR, bounded by its own depth budget"),
+    ),
+    (
+        "strategies.rs",
+        "arb_proc",
+        Coverage::NotADepthTraversal("proptest strategies: generators, bounded by `max_depth`"),
+    ),
+    (
+        "tests_prop.rs",
+        "proptest",
+        Coverage::NotADepthTraversal("generated test bodies; the self-calls are `new(` helpers"),
+    ),
+    (
+        "term_wrapper.rs",
+        "semantic_hash",
+        Coverage::NotADepthTraversal(
+            "a DISPATCHER: forwards `clone`/`semantic_hash`/`substitute_env` to the per-category \
+             drivers, which are measured on their own. Its own recursion depth is 1",
+        ),
+    ),
+    (
+        "language_trait_impl.rs",
+        "infer_var_type",
+        Coverage::NotADepthTraversal(
+            "a DISPATCHER onto `var_inference.rs`'s walk, which carries the row above",
+        ),
+    ),
+    (
+        "env_types.rs",
+        "new",
+        Coverage::NotADepthTraversal("an environment container; the self-calls are `new(`"),
+    ),
+    (
+        "metadata.rs",
+        "nth_index",
+        Coverage::NotADepthTraversal("static grammar metadata tables; `nth_index` is a helper"),
+    ),
+    (
+        "rho_fold_dataflow.rs",
+        "__mettail_rho_dataflow_collect_int",
+        Coverage::NotADepthTraversal("fixed-arity dataflow shim, no term-depth recursion"),
+    ),
+    (
+        "rho_scalar_invocation.rs",
+        "__mettail_rho_try_scalar_inner",
+        Coverage::NotADepthTraversal("fixed-arity scalar shim, no term-depth recursion"),
+    ),
+    // ── files with no self-recursive call at all ────────────────────────────────────
+    ("ast_enums.rs", "", Coverage::Inert),
+    ("ast.rs", "", Coverage::Inert),
+    ("binder_congruence.rs", "", Coverage::Inert),
+    ("flatten.rs", "", Coverage::Inert),
+    ("freshness.rs", "", Coverage::Inert),
+    ("guard_codegen.rs", "", Coverage::Inert),
+    ("language.rs", "", Coverage::Inert),
+    ("numeric_cast_adapter.rs", "", Coverage::Inert),
+    ("rust_ctor.rs", "", Coverage::Inert),
+    ("simulate.rs", "", Coverage::Inert),
+    ("tests_analytical.rs", "", Coverage::Inert),
+    ("tests_rewrite.rs", "", Coverage::Inert),
+    ("tests_unit.rs", "", Coverage::Inert),
+];
+
+/// ⚠ The non-vacuity floor on the DERIVED file universe. If the scan ever returned
+/// nothing — a relocated `target`, a rename, a build that did not run the macro — every
+/// assertion below would iterate an empty set and PASS. It may only grow.
+const MIN_GENERATED_FILES: usize = 40;
+
+/// ⚠ The RATCHET on the unmeasured set. Recorded as a number so a NEW unmeasured
+/// traversal cannot be added quietly alongside the seven already on file.
+/// **It must only ever DECREASE**, and it decreases by converting a traversal and giving
+/// it a subject — never by deleting its row.
+const UNMEASURED_TRAVERSALS: usize = 7;
+
+/// `target/generated/rholang`, derived from the probe binary's own path so it survives a
+/// relocated `CARGO_TARGET_DIR` and `cargo nextest`'s archive layout.
+fn generated_dir() -> std::path::PathBuf {
+    let probe = std::path::Path::new(PROBE);
+    let target = probe
+        .parent()
+        .and_then(|debug| debug.parent())
+        .expect("stack_depth_gate: the probe path has no <target>/<profile>/ prefix");
+    target.join("generated").join("rholang")
+}
+
+/// Whether `source` contains a call to a function it also DEFINES — the cheap, single-pass
+/// marker for "this file recurses". One pass over the text, so it is affordable on the
+/// 239k-line `wpda.rs`.
+///
+/// ⚠ Deliberately LOOSE in the safe direction: it counts helper reuse (`new(`) as
+/// recursion, which is why the table classifies rather than merely counts. A loose
+/// detector over-reports and forces a row; a tight one would under-report and let a
+/// traversal through, which is the failure that produced #189.
+fn defines_a_function_it_also_calls(source: &str) -> bool {
+    let mut defined: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut called: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let bytes = source.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if !is_word(bytes[i]) || (i > 0 && is_word(bytes[i - 1])) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && is_word(bytes[i]) {
+            i += 1;
+        }
+        let word = &source[start..i];
+        // Is it followed by `(` or `<`, i.e. is this a definition or a call site?
+        let mut j = i;
+        while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\n' || bytes[j] == b'\t') {
+            j += 1;
+        }
+        if j >= bytes.len() || (bytes[j] != b'(' && bytes[j] != b'<') {
+            continue;
+        }
+        // Preceded by `fn `?
+        let preceded_by_fn = start >= 3 && &source[start - 3..start] == "fn ";
+        if preceded_by_fn {
+            defined.insert(word);
+        } else {
+            called.insert(word);
+        }
+    }
+    defined.intersection(&called).next().is_some()
+}
+
+/// ★★ **THE #189 GATE — every generated file is classified, and every TRAVERSAL either
+/// has a probe subject or is on the record as unmeasured with its mechanism named.**
+///
+/// Four assertions, and each catches a distinct way the census can go stale:
+///
+/// 1. **A new generated file appears** and is not classified. This is the direction that
+///    would have caught `is_ground` — a new emitter writes a new file, and the file set is
+///    derivable while the subject table is not.
+/// 2. **A declared file disappears**, so the row describes nothing.
+/// 3. **A row claiming `Inert` describes a file that recurses** — a traversal smuggled
+///    into a file that was previously inert.
+/// 4. **A row claiming a subject names one the probe does not dispatch** — the link
+///    between this table and `EXPECTED_DRIVER_SHAPE` is checked rather than assumed.
+///
+/// Plus the ratchet: [`UNMEASURED_TRAVERSALS`] pins the count of live unmeasured
+/// exposures at the measured seven, so an eighth cannot join them quietly.
+#[test]
+fn every_generated_traversal_has_a_probe_subject() {
+    let dir = generated_dir();
+    let mut present: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| {
+            panic!(
+                "stack_depth_gate: could not read the generated tree at {}: {e}. The census \
+                 derives its universe from this directory; without it every assertion below \
+                 would be vacuous.",
+                dir.display()
+            )
+        })
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".rs"))
+        .collect();
+    present.sort();
+
+    assert!(
+        present.len() >= MIN_GENERATED_FILES,
+        "stack_depth_gate: only {} generated `.rs` files found in {}, below the floor of {}. \
+         Either the macro did not run or the layout moved — and an under-populated scan makes \
+         every assertion below pass vacuously.",
+        present.len(),
+        dir.display(),
+        MIN_GENERATED_FILES
+    );
+
+    // (1) TOTALITY, derived direction: every generated file is classified.
+    for name in &present {
+        assert!(
+            GENERATED_FILE_CENSUS.iter().any(|(declared, _, _)| declared == name),
+            "UNCLASSIFIED GENERATED FILE `{name}`: the macro writes it and \
+             `GENERATED_FILE_CENSUS` does not say what it is.\n\
+             ★ This is the assertion that exists because of #189. A new generated traversal \
+             arrives as a new FILE, and the file set is derivable while \
+             `stack_depth_probe`'s `SUBJECTS` table is not — so a driver with no subject was \
+             invisible to `the_sloped_driver_set_is_exactly_the_declared_one`, which totals \
+             over the subject table. Classify it: `Subject(..)` if a probe subject exercises \
+             it, `UnmeasuredTraversal(..)` if it descends a host term with nothing measuring \
+             it, `NotADepthTraversal(..)` if its recursion is not bounded by term depth, or \
+             `Inert` if it does not recurse at all."
+        );
+    }
+
+    // (2) TOTALITY, declared direction: no rows for files that no longer exist.
+    for (declared, _, _) in GENERATED_FILE_CENSUS {
+        assert!(
+            present.iter().any(|name| name == declared),
+            "STALE CENSUS ROW `{declared}`: it is classified here but the macro no longer \
+             writes it. A removed file must lose its row, or the table stops being a \
+             description of anything."
+        );
+    }
+
+    // (3) An `Inert` row must describe a file that really does not recurse, and a
+    //     traversal row must name an entry point that is really still there.
+    let mut lies: Vec<String> = Vec::new();
+    for (file, entry, coverage) in GENERATED_FILE_CENSUS {
+        let source = std::fs::read_to_string(dir.join(file))
+            .unwrap_or_else(|e| panic!("stack_depth_gate: could not read {file}: {e}"));
+        match coverage {
+            Coverage::Inert => {
+                if defines_a_function_it_also_calls(&source) {
+                    lies.push(format!(
+                        "  {file} is declared INERT but now defines a function it also calls. \
+                         A traversal has been added to a file that was not one. Reclassify it \
+                         — with a subject if it descends a host term."
+                    ));
+                }
+            },
+            _ => {
+                if !entry.is_empty() && !source.contains(entry) {
+                    lies.push(format!(
+                        "  {file} is declared to contain the entry point `{entry}`, and it does \
+                         not. Either it was renamed (update the row) or the traversal was \
+                         removed (remove the row) — a row that describes nothing is worse than \
+                         no row, because it reads as coverage."
+                    ));
+                }
+            },
+        }
+    }
+    assert!(lies.is_empty(), "GENERATED-FILE CENSUS IS WRONG:\n{}", lies.join("\n"));
+
+    // (4) Every declared subject is one the probe actually dispatches.
+    let enumerated = probe_subjects();
+    for (file, _, coverage) in GENERATED_FILE_CENSUS {
+        if let Coverage::Subject(subject) = coverage {
+            assert!(
+                enumerated.iter().any(|name| name == subject),
+                "`{file}` claims coverage by the probe subject `{subject}`, and the probe does \
+                 not dispatch it. The claim of coverage is the thing under test here, so an \
+                 unresolvable subject name is a silent hole of exactly #189's kind."
+            );
+        }
+    }
+
+    // (5) THE RATCHET on live unmeasured exposures.
+    let unmeasured: Vec<&str> = GENERATED_FILE_CENSUS
+        .iter()
+        .filter_map(|(file, _, coverage)| match coverage {
+            Coverage::UnmeasuredTraversal(_) => Some(*file),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        unmeasured.len(),
+        UNMEASURED_TRAVERSALS,
+        "the count of UNMEASURED host-recursive traversals is {} and the ratchet says {}: \
+         {unmeasured:?}.\n\
+         If it GREW, a new Θ(depth) exposure was added without a subject — the #189 defect \
+         repeating. If it SHRANK, one was converted, which is good news and the ratchet must \
+         come down WITH the conversion so the new floor is asserted rather than merely no \
+         longer contradicted.",
+        unmeasured.len(),
+        UNMEASURED_TRAVERSALS
+    );
 }
 
 /// **M-6, WIDTH axis — the parser does not grow with sibling count.**
