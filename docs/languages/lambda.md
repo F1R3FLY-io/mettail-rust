@@ -14,6 +14,11 @@ file-and-line provenance for each one.
 > transcribed from a comment that the code stopped honouring when the gating was reverted. Where a
 > claim here rests on a comment, it has been re-anchored to something checkable — generated output,
 > an exhaustive `match`, a test assertion, or a counterexample language — and §9 names which.
+>
+> ★ That claim is now **true**, because work item #98 changed the code to match it rather than
+> deleting the sentence. The episode is worth keeping in view: the same sentence was false, then
+> refuted here with a counterexample, then made true — so its truth value came from the emitter,
+> never from the comment. §4.1 gives the before/after and the guard that now pins it.
 
 Lambda is the smallest complete specification in the tree — 12 lines covering one sort, two
 constructors, no equations, and four rewrite rules — which makes it the recommended first read for
@@ -272,45 +277,67 @@ abstractions during matching and substitution. They are emphatically **not** you
 `Lam` and `App`: `Term::Lam` is the λ of the language you are defining; `Term::LamTerm` is the
 engine's own abstraction machinery over that language.
 
-They appear because `compute_hol_domain_pairs` yields the pair `(Term, Term)`. It is tempting — and
-the comment above its call site at `macros/src/gen/types/enums.rs:129-134` still says so — to read
-this as *demand-driven*: the pair is flagged because your `Lam` rule structurally declares a
-`[Term -> Term]` abstraction, and removing the binder would remove the variants.
+They appear because `compute_hol_domain_pairs` yields the pair `(Term, Term)`, and it yields that
+pair because your `Lam` rule declares a `[Term -> Term]` abstraction. Emission **is** demand-driven,
+per language: delete the `Lam` rule and all four variants disappear.
 
-> ⚠ **That reading is wrong, and Lambda is the worst possible place to notice it.**
-> `compute_hol_domain_pairs` (`macros/src/logic/common.rs:36-45`) is a nested loop over
-> `language.types` × `language.types` that inserts **every** pair unconditionally. There is no
-> flagging left in it. The HOL-B gating described by the call-site comment was **reverted**, for
-> the reason its own doc-comment gives: gating the enum emission while other emitters still
-> referenced the ungated set produced dangling references — *"96+ compile errors across
-> rholang/guardedrho on the merge"* — so the code now emits the full cross-product deliberately.
->
-> Lambda cannot expose this, because it has exactly one sort: the cross-product
-> $`\{\mathrm{Term}\} \times \{\mathrm{Term}\}`$ *is* the single pair `(Term, Term)`, so
-> demand-driven and exhaustive predict the same output here.
+The gate is `mettail_ast::grammar_shapes::declares_binder`, and the demand signal is the grammar's
+own declaration — a `^x.body` / `^[xs].body` abstraction parameter, or a legacy positional
+`<Category>` binder item. When it holds, the language receives the full cross-product
+$`\text{sorts} \times \text{sorts}`$; when it does not, it receives **nothing**. So the rule is:
 
-**The witness is `Monoid`.** It declares one sort `M`, no binder anywhere in the file — no `^`
-parameter, no arrow type — and three equations over an empty `rewrites` block. Under the
-demand-driven reading it should receive no higher-order variants at all. What
-`target/generated/monoid/ast_enums.rs` actually contains is:
-
-```rust
-#[derive(Clone, mettail_runtime::BoundTerm)]
-pub enum M {
-    Unit,                                                    // ← Monoid's own
-    Mul(std::sync::Arc<M>, std::sync::Arc<M>),               // ← Monoid's own
-    MVar(mettail_runtime::OrdVar),                           // ← auto: the variable form
-    LamM(mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<M>>),
-    MLamM(mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<M>>),
-    ApplyM(std::sync::Arc<M>, std::sync::Arc<M>),
-    MApplyM(std::sync::Arc<M>, Vec<M>),                      // ← all four, with no binder
-}
+```math
+\#\{\text{HOL variants}\} \;=\;
+\begin{cases}
+  4n^2 & \text{if the grammar declares a binder}\\
+  0    & \text{otherwise}
+\end{cases}
+\qquad n = \#\text{sorts}
 ```
 
-All four, from a specification with no binder. So the true rule is: **a language with $`n`$ sorts
-receives $`4n^2`$ higher-order variants, whatever its binding structure** — $`O(n^2)`$, not
-demand-driven. Lambda's four are $`4 \cdot 1^2`$, and they would still be there if you deleted the
-`Lam` rule entirely.
+Lambda's four are $`4 \cdot 1^2`$ — one sort, so the cross-product
+$`\{\mathrm{Term}\} \times \{\mathrm{Term}\}`$ is the single pair `(Term, Term)`.
+
+> ⚠★ **This page previously said the opposite, and a reader of the old text must not conclude that
+> nothing changed.** Until work item #98 the emission was genuinely *not* demand-driven:
+> `compute_hol_domain_pairs` was a nested loop over `language.types` × `language.types` that
+> inserted every pair **unconditionally**, for every language. §4.1 of this page originally
+> asserted demand-driven emission by transcribing a call-site comment, was corrected to refute
+> that claim with a counterexample, and is now corrected **again** — because #98 made the original
+> claim true by changing the code rather than the prose.
+>
+> The counterexample the refutation used was **Monoid**: one sort `M`, no binder anywhere in the
+> file, yet `target/generated/monoid/ast_enums.rs` contained all four of `LamM` / `MLamM` /
+> `ApplyM` / `MApplyM`. That is no longer so. Monoid's generated enum is now exactly:
+>
+> ```rust
+> #[derive(Clone, mettail_runtime::BoundTerm)]
+> pub enum M {
+>     Unit,                                        // ← Monoid's own
+>     Mul(std::sync::Arc<M>, std::sync::Arc<M>),   // ← Monoid's own
+>     MVar(mettail_runtime::OrdVar),               // ← auto: the variable form
+> }
+> ```
+>
+> Measured over the 54 declared languages at the time of the change: the family was **3212 of
+> 3976** generated AST variants — 80.8% — while **40 of the 54 declare no binder**. Removing it
+> from those 40 deleted 1432 variants, $`36.0\%`$ of all variants, and 23.7 MB of generated code,
+> $`18.4\%`$ of the total — and moved not one byte for any of the 14 that do declare one.
+>
+> Why the change was safe when the earlier attempt was not: the reverted "HOL-B" gating narrowed
+> the set **per (sort, domain) pair** while other emitters still referenced the ungated set, which
+> produced dangling references — *"96+ compile errors across rholang/guardedrho on the merge"*. Its
+> post-mortem prescribed the fix, *"teach every emitter to use the same gated set"*; that has since
+> landed, so all seven emission sites now read this one function and an empty set reaches all of
+> them together. #98 gates per **language**, which is coarser than HOL-B and touches no
+> binder-declaring language at all.
+
+★ **Do not re-derive this from a comment.** The checkable statements are: the gate
+`macros/src/logic/common.rs::compute_hol_domain_pairs`; the predicate
+`ast/src/grammar_shapes.rs::declares_binder`; and the two-direction guard
+`languages/tests/hol_family_demand_driven.rs`, which asserts that every binder-declaring language
+receives exactly $`4n^2`$ variants and that every binderless one receives none — over the whole
+corpus, with an anti-vacuity floor.
 
 #### Representation notes
 
@@ -745,7 +772,7 @@ Subject: `(lam x. x, lam a. lam b. a)`.
 | Algorithm 1, including the `'V'` empty-name fallback and the absence of any collision guard | `macros/src/gen/mod.rs:2162-2171`; no call site in `macros/src/gen/` or `ast/src/` performs a duplicate-label check |
 | Algorithm 2's shape tests, capture order, and `unbind`-before-substitute discipline | `macros/src/gen/runtime/dovetail_report.rs:1543-1549`; `ast/src/language/parse.rs:2981-3042` (`eval` lowering) |
 | auto-injected `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}` | `macros/src/gen/types/enums.rs:129-182` |
-| the variants are the **full cross-product**, not demand-driven — and the call-site comment that says otherwise is stale | behaviour: `macros/src/logic/common.rs:36-45` inserts every `(cat, domain)` pair unconditionally. Witness: `languages/src/monoid.rs` declares no binder, yet `target/generated/monoid/ast_enums.rs:6-11` contains `LamM` / `MLamM` / `ApplyM` / `MApplyM`. The reversion rationale is in `common.rs`'s own doc-comment |
+| the variants are demand-driven **per language**: the full cross-product when the grammar declares a binder, none when it does not | behaviour: `macros/src/logic/common.rs::compute_hol_domain_pairs` returns the empty set unless `ast/src/grammar_shapes.rs::declares_binder` holds. Witness, both directions: `languages/src/monoid.rs` declares no binder and `target/generated/monoid/ast_enums.rs` contains **no** `LamM` / `MLamM` / `ApplyM` / `MApplyM`, while `languages/src/lambda.rs` declares one and `target/generated/lambda/ast_enums.rs` contains all four. Asserted over the whole corpus, with an anti-vacuity floor, by `languages/tests/hol_family_demand_driven.rs`. ⚠ Before work item #98 this row said the opposite, and it was correct then — the emission really was unconditional; see §4.1 |
 | `Arc` children, iterative `Clone`/`Hash`/`Ord`/`Debug` rationale | `macros/src/gen/types/enums.rs:184-201` |
 | generated `enum Term` for this language | `target/generated/lambda/ast_enums.rs` |
 | `Display` renders `"lam " + name + " . " + body`; `App` renders `( fun , arg )` | `target/generated/lambda/display.rs:68-103` |
@@ -782,13 +809,16 @@ Subject: `(lam x. x, lam a. lam b. a)`.
    is one bar.
 5. **The commented `Proc` and `Name` sorts are dead text**, not a TODO. They are ρ-calculus
    residue.
-6. **The four auto-injected HOL variants are *not* caused by the binder parameter.** They are the
-   full $`n \times n`$ cross-product over the sorts, emitted whatever the binding structure —
-   `Monoid`, which declares no binder at all, receives all four. Lambda's single sort hides this,
-   since a one-element cross-product looks exactly like demand-driven emission. They are also
-   meta-level: do not confuse `Term::LamTerm` (engine machinery) with `Term::Lam` (your λ).
-   ⚠ The comment at `macros/src/gen/types/enums.rs:129-134` still describes the reverted
-   demand-driven behaviour; `macros/src/logic/common.rs:36-45` is what runs.
+6. **The four auto-injected HOL variants *are* caused by the binder — but by its mere presence, not
+   by its type.** Declaring any binder anywhere in the grammar switches on the full
+   $`n \times n`$ cross-product over the sorts; declaring none switches off all of it. So the
+   binder parameter does not select *which* pairs you get, only *whether* you get any. Lambda's
+   single sort hides the distinction, since $`1 \times 1`$ is one pair either way — `Rholang`, with
+   20 sorts, is where it shows (1600 variants). They are also meta-level: do not confuse
+   `Term::LamTerm` (engine machinery) with `Term::Lam` (your λ).
+   ⚠ Before work item #98 this gotcha read the other way round, and it was right: the variants were
+   emitted whatever the binding structure, and `Monoid` — no binder at all — received all four.
+   §4.1 records what changed.
 7. **Adding an η equation is not free.** Its freshness premise is unsupported on the current
    Dovetail structural path, so the language would fail closed rather than silently mis-reduce.
 8. **`"lam "` carries a trailing space** in the literal. That is cosmetic — lexing is

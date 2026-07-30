@@ -201,7 +201,7 @@ this toolchain rather than standard computability vocabulary.
 | **tropical semiring** | the min-plus semiring $`(\mathbb{R}\cup\{\infty\},\min,+)`$; "best" means least total cost |
 | **fold** ★ | a `terms` annotation declaring that the production is *computed* by a native Rust body rather than left as a constructor |
 | **native payload** ★ | a sort declared `![T] as C`, whose values wrap a Rust value of type `T` |
-| **HOL** | ★ higher-order logic. Here, specifically, the *HOL plumbing*: the auto-injected `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}` variants the engine uses for *specification-level* abstraction. They are meta-level and never appear in surface syntax |
+| **HOL** | ★ higher-order logic. Here, specifically, the *HOL plumbing*: the `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}` variants the engine uses for *specification-level* abstraction. They are meta-level and never appear in surface syntax, and since work item #98 they are auto-injected only into languages that declare a binder — so **Turing has none** (see [§6.1](#61-what-the-block-generates)) |
 | `FieldOpaque` ★ | the e-graph operator used for a constructor field the engine cannot model structurally. It carries the field's `Debug` rendering as a string |
 | **fail closed** ★ | refusing with a typed error rather than producing a partial or guessed result |
 
@@ -350,21 +350,21 @@ something for `n` to range over.
 
 ### 6.1 What the block generates
 
-One Rust `enum` per sort, plus two families of *auto-injected* variants. Abbreviated from
+One Rust `enum` per sort, plus the *auto-injected* `Var` and literal forms. Abbreviated from
 `ast_enums.rs` (paths shortened):
 
 ```rust
-pub enum Config { Cf(Arc<State>, Arc<Tape>), CVar(OrdVar), /* + 20 HOL variants */ }
+pub enum Config { Cf(Arc<State>, Arc<Tape>), CVar(OrdVar) }
 pub enum Tape   { Tp(Vec<Sym>, Arc<Sym>, Vec<Sym>),
                   shift_right(Vec<Sym>, Arc<Sym>, Vec<Sym>),
-                  TVar(OrdVar), /* + 20 HOL variants */ }
-pub enum State  { Halt, Q(Arc<UInt32>), Q0, Q1, SVar(OrdVar), /* + 20 HOL variants */ }
-pub enum Sym    { Blank, Zero, One, SVar(OrdVar), /* + 20 HOL variants */ }
-pub enum UInt32 { NumLit(u32), UVar(OrdVar), /* + 20 HOL variants */ }
+                  TVar(OrdVar) }
+pub enum State  { Halt, Q(Arc<UInt32>), Q0, Q1, SVar(OrdVar) }
+pub enum Sym    { Blank, Zero, One, SVar(OrdVar) }
+pub enum UInt32 { NumLit(u32), UVar(OrdVar) }
 ```
 
-Counting: 10 declared constructors, 5 auto-injected `Var` variants, 1 auto-injected `NumLit`, and
-100 auto-injected HOL variants, for **116** in total.
+Counting: 10 declared constructors, 5 auto-injected `Var` variants and 1 auto-injected `NumLit`, for
+**16** in total.
 
 #### The `Var` variants, and a name collision worth knowing about
 
@@ -374,15 +374,24 @@ upper-cased, followed by* `Var`. So `Config` yields `CVar`, `Tape` yields `TVar`
 of different enums, but `State::SVar` and `Sym::SVar` are distinct types with the same spelling,
 and a reader skimming a match arm can easily mistake one for the other.
 
-#### The 100 HOL variants
+#### ★ No HOL variants — Turing declares no binder
 
-`compute_hol_domain_pairs` currently returns the **full Cartesian product** of the declared sorts:
-five sorts give 25 pairs, and each pair contributes four variants. Turing declares no binder
-anywhere — there is not a single `^x.` in the file — and gets the plumbing regardless. They are
-inert here in the strongest sense: **no surface syntax produces them.** `LamConfig` occurs zero
-times in the generated `parser.rs` and zero times in `wpda.rs`, and ten times in `display.rs` — the
-printer must handle every variant of an enum, but nothing a programmer can type ever builds one.
-They exist for the engine's own specification-level abstraction, which this language never uses.
+Sibling languages that declare a binder additionally receive the four-variant *higher-order logic*
+family per (sort, domain) pair. Turing receives **none**: there is not a single `^x.` in the file, so
+`compute_hol_domain_pairs` returns the empty set and `ast_enums.rs` carries no `Lam{D}` / `MLam{D}` /
+`Apply{D}` / `MApply{D}` at all.
+
+> ⚠★ **This section previously documented 100 such variants, and it was accurate.** Until work item
+> #98 the family was emitted regardless of binding structure: five sorts gave $`5^2 = 25`$ pairs,
+> four variants each, so Turing's enums held **100 HOL variants beside 16 real ones** — 87.0% of the
+> total, the highest proportion in the corpus. This page had already observed that they were *inert
+> in the strongest sense* — `LamConfig` occurred zero times in the generated `parser.rs` and zero
+> times in `wpda.rs`, so nothing a programmer could type ever built one — and #98 acted on exactly
+> that observation. Turing's generated output fell 54.2%, from 3.35 MB to 1.53 MB, the largest
+> relative reduction of any language.
+>
+> The gate is `ast/src/grammar_shapes.rs::declares_binder`; both directions are pinned over the
+> whole corpus by `languages/tests/hol_family_demand_driven.rs`.
 
 #### Representation notes
 
@@ -1047,8 +1056,8 @@ recorded under the label `Turing::rewrite::D_q0_0`.
 nodes cost the same.
 
 **7. Reconstruct — and fail closed.** `dovetail_normal_term` calls
-`__mettail_dovetail_build_tape_d`, whose match has arms for `Tape_TVar` and the HOL variants and
-then falls through to `_ => None`. **There is no arm for `Tape_Tp` or `Tape_shift_right`**, because
+`__mettail_dovetail_build_tape_d`, whose match has an arm for `Tape_TVar` and then falls through to
+`_ => None`. (Before #98 it also carried arms for the HOL variants, which Turing no longer has.) **There is no arm for `Tape_Tp` or `Tape_shift_right`**, because
 their `FieldOpaque` children have no inverse. The call returns
 `Err("generated Dovetail normal-form reconstruction for language Turing failed (stuck term)")`.
 
@@ -1356,7 +1365,7 @@ Neither is attempted here; both are recorded so the next person does not redisco
 | `types` block forms (plain / `![T] as C` / collections) | `ast/src/language/parse.rs:462` (`parse_types`), `:474-484` |
 | reflected sorts, `native_type`, `is_primary` | `target/generated/turing/metadata.rs:15-43` |
 | auto-injected `Var` variant and its naming rule | `macros/src/gen/mod.rs:2162-2171` (`generate_var_label`) |
-| HOL pairs are the full Cartesian product of the sorts | `macros/src/logic/common.rs:36-45` (`compute_hol_domain_pairs`); consumed at `macros/src/gen/types/enums.rs:131-136` |
+| Turing receives NO HOL variants, because it declares no binder | `macros/src/logic/common.rs::compute_hol_domain_pairs` returns the empty set unless `ast/src/grammar_shapes.rs::declares_binder` holds; consumed in `macros/src/gen/types/enums.rs`. Witness: `target/generated/turing/ast_enums.rs` contains no `Lam`/`Apply` variant. Guard: `languages/tests/hol_family_demand_driven.rs`. ⚠ Before #98 this row read "the full Cartesian product of the sorts", and it was correct then — see [§6.1](#61-what-the-block-generates) |
 | the generated enums and their 116 variants | `target/generated/turing/ast_enums.rs` |
 | `literals` block production (`pattern:` + `eval: ![…]`) | `ast/src/language/parse.rs:1449-1510` (`parse_literals`) |
 | the generated `UInt32` scan-site action, and its `u32::try_from` narrowing | `target/generated/turing/wpda.rs:4533-4562` |

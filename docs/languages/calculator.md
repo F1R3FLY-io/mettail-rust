@@ -269,6 +269,16 @@ the stack.
 none, so `compute_hol_domain_pairs` yields nothing and none of those variants exist. Arithmetic
 needs no meta-level abstraction machinery.
 
+> ⚠★ **This paragraph was false when it was written, and work item #98 made it true.** Until #98
+> `compute_hol_domain_pairs` ignored binder declaration entirely and returned the full (sort ×
+> sort) cross-product for every language, so Calculator's twelve sorts received
+> $`4 \cdot 12^2 = 576`$ higher-order logic (HOL) variants — **76.4%** of the 754 variants in its
+> generated enums, the single largest block of dead weight in the corpus. Removing them cut
+> Calculator's generated output by 53.2%, from 19.8 MB to 9.3 MB. The claim is now checkable rather
+> than aspirational: the
+> gate is `ast/src/grammar_shapes.rs::declares_binder` and the guard that pins both directions
+> over the whole corpus is `languages/tests/hol_family_demand_driven.rs`.
+
 ### 4.3 Auto-injection: the eight promotions you did not write
 
 The macro runs `emit_auto_injection_rules` after composition and before codegen. For every ordered

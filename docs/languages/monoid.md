@@ -299,7 +299,7 @@ more is needed — and the *choice* of the first form is load-bearing twice over
 
 ### 5.1 What the block generates
 
-One Rust `enum` per sort, plus two families of *auto-injected* variants. The real output
+One Rust `enum` per sort, plus the *auto-injected* variable form. The real output
 (`target/generated/monoid/ast_enums.rs`, verbatim with paths shortened):
 
 ```rust
@@ -308,10 +308,6 @@ pub enum M {
     Unit,                                          // <- your `Unit` rule
     Mul(Arc<M>, Arc<M>),                           // <- your `Mul` rule
     MVar(OrdVar),                                  // <- AUTO-INJECTED: the variable form
-    LamM(Scope<Binder<String>, Arc<M>>),           // .
-    MLamM(Scope<Vec<Binder<String>>, Arc<M>>),     // | AUTO-INJECTED:
-    ApplyM(Arc<M>, Arc<M>),                        // | higher-order (HOL) plumbing
-    MApplyM(Arc<M>, Vec<M>),                       // '
 }
 ```
 
@@ -334,20 +330,32 @@ program at all: without it, the only closed terms would be built from `Unit` and
 be a one-element monoid. It carries an `OrdVar` — a moniker `Var` (free or bound) equipped with a
 total order so that hashing and comparison are deterministic across runs.
 
-#### `LamM` / `MLamM` / `ApplyM` / `MApplyM` — the HOL plumbing
+#### ★ No HOL plumbing — Monoid declares no binder
 
-Expanded: **Lam**bda over domain **M**, **M**ulti-**Lam**bda over domain **M**, **Apply** to an
-**M**, **M**ulti-**Apply** to **M**s. These are *meta-level* constructs the engine uses to represent
-and apply specification-level abstractions during matching and substitution.
+Sibling languages that declare a binder additionally receive a four-variant *higher-order logic*
+family per (sort, domain) pair — `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}`, the engine's own
+meta-level abstraction machinery. **Monoid receives none of it**, because it declares no binder
+anywhere: no `^x.body` parameter, no arrow type, no positional binder item. `Lam{D}` is the family's
+only introduction form, so without a binder nothing could ever construct one and `Apply{D}` would
+have nothing to β-reduce.
 
-**Monoid declares no binder anywhere — and gets all four anyway.** This is the cleanest available
-witness for a fact that is easy to get wrong: `compute_hol_domain_pairs` returns the **full
-cross-product** of (category $`\times`$ domain) over all declared types, unconditionally. With one
-sort that is one pair, hence one family of four variants. The function's own documentation explains
-why an earlier demand-driven gating ("HOL-B") was reverted: downstream emitters reference these
-variants unconditionally for every pair, so gating the *enum* against a usage scan produced dangling
-references — "96+ compile errors across rholang/guardedrho on the merge". See
-[§9.4, finding F-2](#94-defect-log) for the stale comment this leaves behind at the call site.
+The gate is `ast/src/grammar_shapes.rs::declares_binder`, consumed by
+`macros/src/logic/common.rs::compute_hol_domain_pairs`: the full cross-product when it holds, the
+empty set when it does not. Monoid is on the empty side; [Lambda](lambda.md) — one sort, one
+`^x.body` parameter — is on the full side and receives $`4 \cdot 1^2 = 4`$.
+
+> ⚠ **This section previously documented the opposite, and it was correct at the time.** Until work
+> item #98 the family was emitted unconditionally, and Monoid was this suite's cleanest *witness* to
+> that: no binder, yet all four of `LamM` / `MLamM` / `ApplyM` / `MApplyM` in its generated enum. It
+> was also finding **F-2** in [§9.4](#94-defect-log) — a stale call-site comment claiming
+> demand-driven behaviour the code did not implement. #98 resolved F-2 by making the code match the
+> comment: the family is now genuinely demand-driven, Monoid's enum is three variants, and the
+> two-direction guard is `languages/tests/hol_family_demand_driven.rs`.
+>
+> The earlier "HOL-B" attempt at this had been reverted because it gated per (sort, domain) **pair**
+> while other emitters still referenced the ungated set, producing dangling references — "96+
+> compile errors across rholang/guardedrho on the merge". #98 gates per **language**, and only after
+> every emitter had been routed through the one oracle.
 
 #### Representation notes
 
@@ -357,11 +365,14 @@ references — "96+ compile errors across rholang/guardedrho on the merge". See
   emitted as *iterative work-stack* implementations (`iterative_cmp.rs`, `iterative_hash.rs`,
   `iterative_drop.rs`, `debug.rs`) so that deeply nested terms — and a left-nested chain of `Mul` is
   exactly that — cannot overflow the stack.
-- `BoundTerm` is derived. For Monoid this is inert plumbing, since no variant holds a user-declared
-  `Scope`; it matters only for the auto-injected HOL variants.
+- `BoundTerm` is derived. For Monoid this is **wholly inert**: no variant holds a `Scope` at all —
+  neither a user-declared one nor an auto-injected `Lam{D}`, since #98 withholds the HOL family from
+  a grammar with no binder. The derive is emitted uniformly for every sort so that the trait is
+  available where it *is* load-bearing.
 
-**★ The carrier the code declares is the FREE algebra.** `enum M` is $`T_\Sigma(X)`$ extended with
-the HOL variants — every distinct tree is a distinct value. The equations of
+**★ The carrier the code declares is the FREE algebra.** `enum M` is exactly $`T_\Sigma(X)`$ —
+every distinct tree is a distinct value. (Before #98 it was $`T_\Sigma(X)`$ *extended with* the HOL
+variants; those are now withheld from a binderless grammar, so the correspondence is exact.) The equations of
 [§7](#7-equations------the-equational-theory) do not change this type, do not add a canonical form to
 it, and do not make its `PartialEq` coarser. Whatever quotient exists lives elsewhere.
 
@@ -492,7 +503,7 @@ match term {
         stack.push(DisplayTask::DisplayM(&**x as *const _, 2u8));
         if needs_parens { stack.push(DisplayTask::WriteLiteral("(")); }
     }
-    // ... one arm per remaining variant: Unit, MVar, and the four HOL variants
+    // ... one arm per remaining variant: Unit and MVar (no HOL variants -- see 5.1)
 }
 ```
 
@@ -866,16 +877,28 @@ cited line numbers are also stale: `:1331` is `pattern_to_dovetail` and `:1351` 
 label sites are `:1488` and `:1508`. The assertions in that file are unaffected — they check for
 `UnitL::forward`, `UnitR::forward`, and any `Assoc::*`, all of which exist.
 
-**F-2 — a stale comment at the HOL call site contradicts the function it calls.**
-`macros/src/gen/types/enums.rs:129-134` says the auto-injected `Lam{D}` / `MLam{D}` / `Apply{D}` /
-`MApply{D}` variants are emitted only for pairs "structurally implied by an `Abstraction` /
-`MultiAbstraction` grammar param, or appearing by name in a `rust_code` body / logic block". The
-function it then calls, `compute_hol_domain_pairs` (`macros/src/logic/common.rs:36-45`), returns the
-**full cross-product** unconditionally, and its own doc comment at `:17-35` explains that the gating
-was reverted as incorrect. Monoid is the minimal witness: it declares no binder of any kind and
-`target/generated/monoid/ast_enums.rs:6-11` still carries all four variants. (This also makes
-`docs/languages/lambda.md:236-239` inaccurate where it says the variants "are now demand-driven";
-that page is outside this one's write scope.)
+**F-2 — a stale comment at the HOL call site contradicted the function it called. ✅ RESOLVED by
+work item #98** — and resolved in the direction the comment described, by changing the code.
+
+*The finding as filed:* `macros/src/gen/types/enums.rs` said the auto-injected `Lam{D}` / `MLam{D}` /
+`Apply{D}` / `MApply{D}` variants were emitted only for pairs "structurally implied by an
+`Abstraction` / `MultiAbstraction` grammar param, or appearing by name in a `rust_code` body / logic
+block", while the function it called, `compute_hol_domain_pairs`, returned the **full cross-product**
+unconditionally. Monoid was the minimal witness: no binder of any kind, yet all four variants in its
+generated enum.
+
+*The resolution:* emission is now gated on `ast/src/grammar_shapes.rs::declares_binder` — per
+language, not per pair. Monoid's enum is `Unit` / `Mul` / `MVar`, and the call-site comment has been
+rewritten to describe the gate that exists. Measured at the time of the change, the family was
+**3212 of 3976** generated AST variants across the corpus (80.8%) while **40 of 54** languages
+declared no binder; withholding it from those 40 removed 1432 variants and 23.7 MB of generated
+code, and moved no byte of any of the 14 that do declare one. Both directions are pinned by
+`languages/tests/hol_family_demand_driven.rs`, with an anti-vacuity floor.
+
+*Why it was not simply fixed when filed:* a prior attempt ("HOL-B") had gated per **pair** while
+other emitters still referenced the ungated set, leaving dangling references — "96+ compile errors
+across rholang/guardedrho on the merge" — and was reverted. Its post-mortem prescribed routing every
+emitter through one oracle first; #98 landed only after that had happened.
 
 **F-3 — the two backends lower the same equations to different rule counts and directionality.**
 Dovetail emits four rules with undirected merge semantics
@@ -1037,7 +1060,7 @@ procedure ADD(eg, t):                     # one arm per enum variant
       Unit      -> return eg.add(leaf "Monoid::M::Unit")
       Mul(a, b) -> return eg.add(node "Monoid::M::Mul" [ ADD(eg, a), ADD(eg, b) ])
       MVar(v)   -> return eg.add(leaf ("Monoid::M::MVar" ++ show v))
-      otherwise -> the four HOL variants, unreachable for a parsed Monoid term
+      (no other arms: #98 withholds the HOL family from a binderless grammar)
 ```
 
 `ADD` recurses over the *Rust* term, whose depth is bounded by the length of the source text, so no
@@ -1172,7 +1195,7 @@ cannot spin the automaton indefinitely; a step-limit exhaustion becomes a parse 
 `iterative_hash.rs` engines hold `*const M` raw pointers in their work stacks. The generated comment
 states the invariant that justifies it: the pointer is derived from a `&M` reference within the same
 call, so the referent is guaranteed live for the duration. The Dovetail lowering additionally calls
-`scope.unsafe_body()` on the HOL variants, which for Monoid is unreachable from any parsed term.
+`scope.unsafe_body()` on the HOL variants, which Monoid does not have at all (#98).
 
 **Why any of this is a security question and not merely an engineering one.** The omnibus paper puts
 rung two on the critical path for capability safety: *"The equational theory of a single operator —
@@ -1209,7 +1232,7 @@ at runtime, because the trust argument rests on that string's provenance.
 | `emit_tests` / `emit_blockly` default to `true`; what each writes | `macros/src/lib.rs:173-191`, `:200-219` |
 | Monoid writes no generated test / simulator / Blockly files | `find languages -name '*monoid*'` returns exactly `languages/src/monoid.rs` and `languages/tests/monoid.rs`; `languages/src/generated/` does not exist |
 | auto-injected `Var` variant and its naming rule | `macros/src/gen/types/enums.rs:121-126`; `macros/src/gen/mod.rs:2162` (`generate_var_label`) |
-| HOL variants are the full cross-product, not demand-driven | `macros/src/logic/common.rs:36-45`, with the revert rationale at `:17-35`; call site `macros/src/gen/types/enums.rs:136-160` |
+| HOL variants are demand-driven per language, so Monoid receives none | `macros/src/logic/common.rs::compute_hol_domain_pairs` returns the empty set unless `ast/src/grammar_shapes.rs::declares_binder` holds; guard `languages/tests/hol_family_demand_driven.rs`. ⚠ Before #98 this row read "the full cross-product, not demand-driven", and it was correct then |
 | generated `enum M` for this language | `target/generated/monoid/ast_enums.rs:1-12` |
 | infix classification and the `Left` default | `macros/src/gen/runtime/wpda_codegen/infix.rs:71` (`classify_judgement`), `:91-134`, `:122-126` |
 | left-associative binding powers are $`(p, p+1)`$ starting at 2 | `prattail/src/binding_power.rs:593` (`analyze_binding_powers`), `:611-643` |
