@@ -5713,6 +5713,15 @@ mod tests {
     /// and still assert exactly what they did; `slice.len()` and
     /// `singletons.len()` move TOGETHER, from 43 to 44, which is itself the
     /// evidence that the new method added a singleton rather than a group.
+    ///
+    /// Census delta (2026-07-30): the three BYTE-NAMED methods MeTTaIL lacked —
+    /// `hexToBytes`, `bytesToHex` and `toUtf8Bytes`, upstream `method_table` keys
+    /// at `reduce.rs:9346-9348` — grow the Proc `.` cohort 44 → 47. Each is a
+    /// nullary `p "." NAME "(" ")"` form whose name no other method shares, so
+    /// all three are `LoneRootChild` singletons and the cohort still yields ZERO
+    /// factorable groups. As with `last`, `slice.len()` and `singletons.len()`
+    /// move TOGETHER (44 → 47), which is the evidence that three singletons were
+    /// added rather than a group; the property this pin exists for is untouched.
     #[test]
     fn rholang_mixfix_other_cohorts_stay_unfactored() {
         let def = rholang();
@@ -5742,8 +5751,8 @@ mod tests {
         assert_eq!(query.singletons[0].reason, SingletonReason::LoneRootChild);
         let dot = bucket(proc_src, ".");
         assert!(dot.groups.is_empty());
-        assert_eq!(dot.slice.len(), 44, "the 44-method cohort");
-        assert_eq!(dot.singletons.len(), 44);
+        assert_eq!(dot.slice.len(), 47, "the 47-method cohort");
+        assert_eq!(dot.singletons.len(), 47);
         assert!(dot
             .singletons
             .iter()
