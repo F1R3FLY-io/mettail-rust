@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# gate-router-post-commit — route a red fence to the agent that CAUSED it.   #178 / #68
+#
+# ── INSTALL (one line, per repo; see also the ⚠ WORKTREE and ⚠ .githooks notes below) ─────
+#     scripts/gate-router-post-commit --install
+# which is exactly:
+#     install -m 755 <this file> "$(git rev-parse --git-path hooks)/post-commit"
+# ── UNINSTALL ─────────────────────────────────────────────────────────────────────────────
+#     rm -f "$(git rev-parse --git-path hooks)/post-commit"
+# ── OUT-OF-BAND CENSUS (weekly, never on the commit path) ─────────────────────────────────
+#     scripts/gate-router-post-commit --census
+#
+# ── THE PROBLEM ───────────────────────────────────────────────────────────────────────────
+# Five times a gate went red *correctly and immediately* and nobody was told. Every
+# assertion was strong enough, so "write a stronger gate" was never the repair — the failure
+# was in ROUTING. Both delivery channels were dead:
+#   • local  — ZERO non-sample git hooks existed in either repo, so nothing ran on commit;
+#   • remote — neither working branch had an upstream, and both were >160 commits ahead of
+#              the last pushed tip, so no GitHub Actions job had observed any of the work.
+#
+# ── WHY A HOOK IS THE ROUTER, NOT MERELY A RUNNER ─────────────────────────────────────────
+# ★ A post-commit hook's stdout goes to the terminal of the process that made the commit.
+# That is the entire mechanism: the warning reaches the COMMITTER by construction, with no
+# lookup. This matters because git identity CANNOT route here — all concurrent agents commit
+# as the same author and committer, so `%an`/`%cn` carries zero routing information. The only
+# durable routing key is (SHA, paths touched), which is what this hook emits.
+#
+# The concurrency case it exists for: agent A commits, agent B later runs a suite and sees
+# A's red, and B is fenced out of A's files — so the red is observed by someone who cannot
+# act on it. The ledger below lets B map the red back to A's SHA.
+#
+# ── WHY post-commit AND NOT pre-commit ────────────────────────────────────────────────────
+# pre-commit sits on the critical path of every agent. Any cost is paid per commit and any
+# failure blocks work, so the first slow or wrong verdict gets bypassed with `--no-verify` —
+# exactly the failure mode `check_frontier_fuse`'s own doc-comment argues against ("a gate
+# that fires on the wrong thing gets disabled"). post-commit cannot block and cannot be
+# bypassed for speed, so it survives.
+#
+# ── WHY THIS NEVER INVOKES cargo ──────────────────────────────────────────────────────────
+# ⚠ Running a gate is dominated by BUILDING it, which is unbounded (a cold `casper` test
+# binary is minutes; the gate itself then runs in 2.2 s). ⚠ And it cannot assume the tree
+# compiles: during this work a concurrent agent left `models` non-compiling mid-edit
+# (`COLLECTION_DEPTH_LIMIT not found`), which broke an unrelated build. A hook that may take
+# minutes, or that fails for reasons the committer did not cause, gets removed. So this hook
+# is pure git plumbing and reports WHICH gates the commit put at risk plus the exact command.
+# Actually running them is out-of-band, never the commit path.
+#
+# ── ⚠ DO NOT "INSTALL THE HOOKS" BY SETTING core.hooksPath=.githooks ──────────────────────
+# f1r3node already carries a TRACKED, EXECUTABLE `.githooks/pre-commit` that has never run.
+# It executes `cargo fmt --check` and `cargo clippy --workspace -- -D warnings`. Pointing
+# core.hooksPath at that directory would (a) activate lint work the owner has explicitly
+# sequenced LAST (#82/#86), and (b) block every commit immediately, because 17 pre-existing
+# `-D warnings` violations already make three crates uncompilable under those flags. Install
+# THIS ONE FILE into the resolved hooks directory instead, so nothing else is activated.
+#
+# ── ⚠ WORKTREES ──────────────────────────────────────────────────────────────────────────
+# `f1r3node-rust-mettail` is a worktree; `core.hooksPath` lives in the SHARED
+# `f1r3node-rust/.git/config` and resolves to `f1r3node-rust/.git/hooks`. One install there
+# therefore covers all of that repo's worktrees. `git rev-parse --git-path hooks` in the
+# install line above resolves this correctly from any of them.
+#
+# ── THE MAP IS DERIVED, NOT HAND-MAINTAINED ──────────────────────────────────────────────
+# A hand-listed gate->paths table is a mirror of a computable domain and would drift (this
+# codebase has been bitten by that shape repeatedly). Each gate DECLARES its own watched
+# paths, in its own source, as a module-doc line:
+#
+#     //! @watches: docs/consensus/ casper/src/ models/src/rust/rholang/sorter/
+#
+# and this hook derives the map with one `git grep`. ★ If NO gate declares anything the hook
+# says so instead of exiting quietly — a router with an empty map is a router that never
+# fires, which is the very defect being repaired. An undeclared gate is reported as UNROUTED
+# by the out-of-band census (`--census`), matching the convention `check_foreign_rows`
+# already uses when it demands a row NAME what checks it or say NOT_NAMED.
+#
+# ── MEASURED COST ON EVERY COMMIT (hyperfine, 30 runs, warmed) ───────────────────────────
+#   f1r3node, one declaration, HIT path : 20.5 ms ± 1.2 ms
+#   mettail, empty map, early exit      : 14.0 ms ± 1.0 ms
+# ⚠ An earlier estimate of 11.3 ms was measured on a PROTOTYPE that omitted `rev-parse` and
+# the per-gate declaration lookup; 20.5 ms is the real figure for the shipped script. The cost
+# is almost entirely process spawns, not work: three `git` invocations
+# (`rev-parse` / `grep` / `diff-tree`), of which `git grep` is 7.9 ms and `diff-tree` 3.1 ms.
+# For scale: the register gate itself RUNS in 2.2 s once built, and building it cold is
+# minutes — which is why this hook does neither.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+set -uo pipefail
+
+# `--install` places this file where hooks ACTUALLY fire. ⚠ `git rev-parse --git-path hooks`
+# honours `core.hooksPath`, verified in all three worktrees of both repos, so this is correct
+# from inside a linked worktree as well — where the answer is the SHARED parent hooks dir and
+# one install therefore covers every worktree of that repo.
+if [ "${1:-}" = "--install" ]; then
+  self=$(readlink -f "$0")
+  dest="$(git rev-parse --git-path hooks)/post-commit"
+  [ -e "$dest" ] && [ "$(readlink -f "$dest")" != "$self" ] && {
+    printf 'refusing to overwrite an existing hook: %s\n' "$dest" >&2; exit 1; }
+  install -m 755 "$self" "$dest" && printf 'installed: %s\n' "$dest"
+  exit $?
+fi
+
+# ⚠ ONE `git rev-parse` for all three answers. Process spawns are the whole cost here: a first
+# cut used three separate `rev-parse` calls plus a per-gate `git grep`, six spawns in all, and
+# measured 30.9 ms — nearly all of it fork/exec, not work.
+#
+# ⚠ The three answers are CLASSIFIED, not read positionally. `git rev-parse` does NOT emit in
+# command-line order — it defers revs to the end, so `--show-toplevel --short HEAD --git-path X`
+# answers toplevel, X, HEAD. A positional read put the ledger path into `$sha` and printed it as
+# the commit id. Classifying by shape is order-independent and costs nothing.
+root=; sha=; ledger=
+while IFS= read -r answer; do
+  case "$answer" in
+    *gate-ledger.jsonl) ledger=$answer ;;
+    */*)                root=$answer ;;
+    *)                  sha=$answer ;;
+  esac
+done < <(git rev-parse --show-toplevel --git-path gate-ledger.jsonl --short HEAD 2>/dev/null)
+[ -n "$root" ] && [ -n "$sha" ] && [ -n "$ledger" ] || exit 0
+cd "$root" || exit 0
+case "$ledger" in /*) ;; *) ledger="$root/$ledger" ;; esac   # rev-parse may answer relatively
+
+# `--census` is the OUT-OF-BAND mode: it is the only part that costs real time, and it
+# answers a weekly question, not a per-commit one. It is never reached from the hook path.
+census=0
+[ "${1:-}" = "--census" ] && census=1
+
+C_WARN=$'\033[33m'; C_CMD=$'\033[36m'; C_ERR=$'\033[31m'; C_B=$'\033[1m'; C_0=$'\033[0m'
+[ -t 1 ] || { C_WARN=; C_CMD=; C_ERR=; C_B=; C_0=; }
+
+# ── the DERIVED map: every gate that declares what it watches ────────────────────────────
+# ★ ONE `git grep` yields BOTH the gate path AND its declaration (`path:…@watches: …`), so
+# there is no per-gate follow-up call. `-h` is deliberately NOT passed: the filename is half
+# the answer.
+#
+# ⚠ The pattern is ANCHORED to `^//! @watches:`. An unanchored `@watches:` also matches PROSE
+# that merely discusses the convention — the register gate's own header does exactly that, and
+# an unanchored first cut counted it as a second, phantom gate whose watch list was the English
+# sentence. The declaration is a module-doc line at column 0, and nothing else is one.
+mapfile -t decls < <(git grep -I -e '^//! @watches:' -- '*/tests/*.rs' '*tests/**/*.rs' 2>/dev/null | sort -u)
+gates=()
+for d in "${decls[@]}"; do gates+=("${d%%:*}"); done
+
+if [ "${#gates[@]}" -eq 0 ]; then
+  # ★ Say so — a router with an empty map is a router that never fires, which is the defect
+  # being repaired, and a silent exit here would reproduce it exactly.
+  #
+  # ⚠ But at most ONCE PER DAY. This notice is addressed to whoever seeds the declarations,
+  # not to the agent committing right now, and a warning that prints on every commit with
+  # nothing actionable *for the reader* becomes wallpaper and then gets deleted — which is how
+  # the fence being replaced came to be inert. Rate-limiting is what keeps a standing,
+  # non-actionable notice alive. The stamp lives under .git/ and is not committable.
+  stamp="$root/$(git rev-parse --git-path gate-router-emptymap.stamp)"
+  case "$stamp" in "$root"/[!/]*) ;; *) stamp="$(git rev-parse --git-path gate-router-emptymap.stamp)" ;; esac
+  now=$(date +%s)
+  last=0
+  [ -r "$stamp" ] && read -r last < "$stamp" 2>/dev/null
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  if [ "$((now - last))" -ge 86400 ]; then
+    printf '%s' "$now" > "$stamp" 2>/dev/null
+    printf '%s━━ gate router ━━%s no gate declares %s@watches:%s — the router has an EMPTY MAP\n' \
+      "$C_ERR" "$C_0" "$C_B" "$C_0"
+    printf '   and cannot fire. Add one module-doc line to each gate that watches a domain:\n'
+    printf '     %s//! @watches: <path> [<path>...]%s\n' "$C_CMD" "$C_0"
+    printf '   (this notice is rate-limited to once per day)\n'
+  fi
+  exit 0
+fi
+
+if [ "$census" -eq 1 ]; then
+  printf 'gates declaring @watches: %d\n' "${#gates[@]}"
+  printf -- '── UNROUTED (gate-shaped by FILENAME, declares nothing) ──\n'
+  # ⚠ Match the FILE NAME, not the file's content. `git grep -l <word>` would match any test
+  # that merely mentions "registry" in prose — that is how a first cut of this census reported
+  # 103 files including `mod.rs` and `harness.rs`. The name is the claim a gate makes about
+  # itself, so the name is what to select on.
+  n=0
+  while IFS= read -r f; do
+    case " ${gates[*]} " in *" $f "*) continue ;; esac
+    printf '  %s\n' "$f"; n=$((n + 1))
+  done < <(git ls-files -- '*/tests/*.rs' '*tests/**/*.rs' 2>/dev/null \
+             | grep -aiE '/(.*(golden|drift|census|inventory|conformance|ratchet)|.*_gate|.*registry).*\.rs$' \
+             | sort -u)
+  printf 'UNROUTED count: %d\n' "$n"
+  exit 0
+fi
+
+# ── what this commit touched ─────────────────────────────────────────────────────────────
+mapfile -t touched < <(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+[ "${#touched[@]}" -eq 0 ] && exit 0
+
+hits=0
+for d in "${decls[@]}"; do
+  gate=${d%%:*}
+  line=${d#*@watches:}
+  hit_path=
+  for w in $line; do
+    for t in "${touched[@]}"; do
+      case "$t" in "$w"*) hit_path=$t; break 2 ;; esac
+    done
+  done
+  [ -z "$hit_path" ] && continue
+
+  pkg=${gate%%/tests/*}; pkg=${pkg##*/}
+  target=${gate##*/}; target=${target%.rs}
+  [ "$hits" -eq 0 ] && {
+    printf '\n%s━━ gate router ━━%s commit %s touched paths a gate watches.\n' "$C_WARN" "$C_0" "$sha"
+    printf '   %sYou are the committer; these are yours to settle, not the next agent'\''s.%s\n' \
+      "$C_B" "$C_0"
+  }
+  hits=$((hits + 1))
+  printf '   • %s  (watches %s; you touched %s)\n' "$target" "$w" "$hit_path"
+  printf '     %scargo test -p %s --test %s%s\n' "$C_CMD" "$pkg" "$target" "$C_0"
+  printf '{"sha":"%s","gate":"%s","pkg":"%s","target":"%s","watch":"%s","touched":"%s","at":%s}\n' \
+    "$sha" "$gate" "$pkg" "$target" "$w" "$hit_path" "$(date +%s)" >> "$ledger"
+done
+
+exit 0   # ★ ALWAYS 0. Advice, never a block.
