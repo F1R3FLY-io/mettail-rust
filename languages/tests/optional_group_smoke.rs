@@ -363,3 +363,85 @@ fn three_deep_nested_ifelse_display_roundtrip() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// ★★ #189 RESIDUAL — the OPTIONAL SAME-CATEGORY CHILD, and why this file gained a
+// depth test.
+//
+// `macros/src/gen/native/eval.rs` emits `try_eval` as an `__EvalFrame` work stack for
+// every category with a HOL rule, and `IfElse`'s `t` branch has always gone onto that
+// stack. Its `#opt(e:Int)` branch did NOT: the emitter classified an optional child as
+// a CROSS-category capture (`CrossKind::OptionalNative`) and evaluated it EAGERLY with
+// `__b.as_ref().try_eval()?` inside the Visit arm — on the host stack, once per level.
+//
+// The comment that justified it said the `Some(_)`/`None` branching "doesn't fit the
+// unconditional Visit-frame push". The premise is true and the conclusion does not
+// follow: what the branching did not fit was the FRAME, which had no way to say the
+// child was absent. It now carries a presence flag, the child is Visit-pushed when
+// present, and the Reduce arm pops conditionally.
+//
+// ★ `optsmoke` is the ONLY grammar in the workspace that instantiates the shape — a
+// census of all 54 generated `eval.rs` files finds exactly one — so this file is where
+// the regression gate belongs.
+// ---------------------------------------------------------------------------
+
+/// `if false then 1 else (if false then 1 else (… else 7))` built STRUCTURALLY to
+/// `DEPTH` levels, so the ladder is not bounded by the parser.
+///
+/// ⚠ Built with a loop, never recursion: a recursive builder would overflow before the
+/// evaluator got the chance to, and the subject would measure the fixture.
+fn deep_else_chain(depth: usize) -> Int {
+    use std::sync::Arc;
+    let mut term = Int::NumLit(7);
+    for _ in 0..depth {
+        term = Int::IfElse(
+            Arc::new(Bool::BoolLit(false)),
+            Arc::new(Int::NumLit(1)),
+            Some(Arc::new(term)),
+        );
+    }
+    term
+}
+
+/// **The gate: `try_eval` down a deep chain nested through the OPTIONAL branch, on a
+/// stack far too small to hold one host frame per level.**
+///
+/// 200,000 levels on a 256 KiB stack is ~1.3 bytes per level. The pre-conversion
+/// emitter spent a full `try_eval` frame there, so this could not have completed —
+/// it is a one-directional gate by necessity, because a stack overflow ABORTS the
+/// process and cannot be caught and asserted upon.
+///
+/// ⚠ ANTI-VACUITY: the assertion is on the VALUE, not on completion. Every `cond` is
+/// `false`, so the whole chain must be walked to its `NumLit(7)` leaf and unwound
+/// through 200,000 `e.unwrap_or(0)` steps; the answer is 7 only if it was. A driver
+/// that stopped early would return `1` (the nearest `then` branch) or `0` (the
+/// `unwrap_or` default), both of which fail here.
+#[test]
+fn try_eval_is_stack_safe_through_the_optional_else_branch() {
+    const DEPTH: usize = 200_000;
+    let handle = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let term = deep_else_chain(DEPTH);
+            let value = term.try_eval();
+            // The chain is dropped by the generated pooled iterative `Drop`, which is
+            // measured flat by `stack_depth_gate`'s `ast_drop` — so the teardown is not
+            // a second, hidden host recursion on this same 256 KiB stack.
+            drop(term);
+            value
+        })
+        .expect("spawning the small-stack evaluator thread must succeed");
+    let value = handle.join().expect(
+        "try_eval on a 200,000-deep chain nested through `#opt(e:Int)` must complete on a \
+         256 KiB stack — a panic or abort here means the optional same-category child is \
+         being evaluated by host recursion again",
+    );
+    assert_eq!(
+        value,
+        Some(7),
+        "every `cond` in the chain is `false`, so `try_eval` must walk all {DEPTH} levels to \
+         the `NumLit(7)` leaf and carry it back out through every `e.unwrap_or(0)`. A value \
+         of 1 means it answered from a `then` branch and 0 means it answered from the \
+         `unwrap_or` default — either way it did not descend."
+    );
+}

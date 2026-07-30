@@ -872,39 +872,37 @@ fn residue_static_falsity_judgement_has_not_got_worse() {
 fn flat_generated_drivers_are_depth_independent() {
     // 1 MiB, the same bound the converted lowering is held to. Measured floors after
     // #162: 24–229 KiB debug, 24–29 KiB release.
-    for name in [
-        // ── converted by #162 ──
-        "ast_cmp",
-        "ast_cmp_add",
-        "ast_eq",
-        "ast_eq_add",
-        "ast_hash",
-        "ast_hash_add",
-        "ast_semantic_hash",
-        "ast_semantic_hash_add",
-        "ast_debug",
-        "ast_debug_add",
-        "ast_drop",
-        "ast_drop_add",
-        "ast_match_pattern",
-        "ast_match_pattern_add",
-        "ast_term_depth",
-        "ast_term_depth_add",
-        // ── converted by #189 ──
-        "ast_is_ground",
-        "ast_is_ground_add",
-        // ── flat once `ast_eq` stopped dominating their anti-vacuity assertions ──
-        "ast_subst",
-        "ast_subst_add",
-        "ast_normalize",
-        "ast_normalize_add",
-        // ── the reference implementations ──
-        "ast_display",
-        "ast_display_add",
-        "ast_clone",
-        "ast_clone_add",
-    ] {
-        assert_depth_independent(name, 1024 * 1024);
+    //
+    // ★★ **DERIVED from [`EXPECTED_DRIVER_SHAPE`], never hand-listed** — and the reason is
+    // a measured defect, not a style preference.
+    //
+    // This loop used to be a literal array of twenty-six names maintained beside a table
+    // that already knew the answer. `ast_try_eval` and `ast_try_eval_cast` were added to
+    // the table and not to the array, so both were CLASSIFIED as flat while being held
+    // only to `assert_depth_independent`'s absence — an 8× looser bar (≈32 vs ≈4 B/level)
+    // — and neither printed a slope. A second copy of a derived set is a copy that drifts,
+    // and this campaign's record is that EVERY such copy drifted. Completing the array
+    // would have been the same non-repair a fourth time; the array is deleted instead.
+    //
+    // ⚠ The predicate is "the shape ASSERTS depth-independence", which is **not** the same
+    // as `Shape::Flat`. [`Shape::FlatAndItsEqFreeTwinAgrees`] is a flat assertion carrying
+    // an ADDITIONAL obligation, so matching on `Shape::Flat` alone would have silently
+    // DROPPED `ast_subst` and `ast_normalize` — a narrowing disguised as a derivation.
+    // Measured on this build: 30 `Flat` + 2 `FlatAndItsEqFreeTwinAgrees` = 32 subjects
+    // checked, against the 26 the array named; the six it gains are `ast_try_eval`,
+    // `ast_try_eval_cast`, `ast_subst_noassert`, `ast_normalize_noassert`,
+    // `ast_subst_noassert_add` and `ast_normalize_noassert_add`. Nothing is lost.
+    let mut checked: Vec<&'static str> = Vec::with_capacity(EXPECTED_DRIVER_SHAPE.len());
+    for (name, shape) in EXPECTED_DRIVER_SHAPE {
+        match shape {
+            Shape::Flat | Shape::FlatAndItsEqFreeTwinAgrees { .. } => {
+                assert_depth_independent(name, 1024 * 1024);
+                checked.push(name);
+            }
+            // Recorded as a FACT, never as a budget — a sloped row must NOT be held to a
+            // flat bar. `ast_recursion_control` is the classifier's non-vacuity anchor.
+            Shape::Sloped => {}
+        }
     }
 }
 
@@ -994,17 +992,29 @@ enum Shape {
 /// arrive unnoticed.
 ///
 /// ★★ **#162 (2026-07-30) inverted this table.** It used to declare eight sloped subjects and six
-/// flat; it now declares ONE sloped subject and twenty-seven flat. Bisected on this build,
+/// flat; the sloped set is now down to the single classifier anchor. Bisected on this build,
 /// alternating ladder, 16 → 4,096, debug / release B/level — the full before/after is in
 /// [`flat_generated_drivers_are_depth_independent`]'s table.
 ///
-/// ⚠ **`ast_term_depth` is the LAST sloped driver, and it is a different KIND of defect.** The
-/// other nine had a work stack and escaped it at the collection-element boundary.
-/// `macros/src/gen/term_ops/depth.rs` emits `term_depth` as bare host recursion — `1 +
+/// ⚠ **The membership counts are DELIBERATELY NOT SPELLED HERE.** A numeral in prose beside a
+/// table that already computes it is a transcription, and every transcription in this campaign
+/// drifted — this doc alone carried "twenty-seven flat" against thirty-two non-sloped rows.
+/// [`flat_generated_drivers_are_depth_independent`] derives the flat set from this table and
+/// prints the count and the membership when it disagrees with [`MIN_DRIVER_SUBJECTS`]; read the
+/// failure message, not a sentence.
+///
+/// ⚠ **`term_depth` was a different KIND of defect, and it is now CONVERTED.** The other nine had
+/// a work stack and escaped it at the collection-element boundary.
+/// `macros/src/gen/term_ops/depth.rs` emitted `term_depth` as bare host recursion — `1 +
 /// f0.term_depth()`, `1 + coll.iter().map(|x| x.term_depth()).max().unwrap_or(0)` — with **no work
-/// stack to escape from**. The tell is its `*_add` twin: `ast_term_depth_add` slopes at 2,367
-/// B/level on the pure `Add` chain where every one of the other nine reads 0. It is a CONVERSION,
-/// not a boundary fix, and it is the only row below that is not `Flat`.
+/// stack to escape from**. The tell was its `*_add` twin: `ast_term_depth_add` sloped at 2,367
+/// B/level on the pure `Add` chain where every one of the other nine read 0. It needed a
+/// CONVERSION, not a boundary fix.
+///
+/// ★ **Superseded, annotated rather than overwritten** (the campaign's convention): the sentence
+/// that stood here — *"it is the only row below that is not `Flat`"* — described the table before
+/// the conversion landed. `ast_term_depth` is `Shape::Flat` below, and the only non-`Flat` row is
+/// `ast_recursion_control`, which is the classifier's non-vacuity anchor and is never converted.
 ///
 /// ⚠⚠ **A CORRECTION TO THE RECORD ON `term_depth`.** The note that stood here said it "has NO
 /// CALLER anywhere in the workspace, which is why it is a latent trap rather than a live
@@ -1012,6 +1022,42 @@ enum Shape {
 /// it at **40 sites** — `__max_depth = __max_depth.max(value.term_depth())`, once per
 /// `RholangTermInner` arm inside the Dovetail e-graph build — emitted by
 /// `macros/src/gen/runtime/dovetail_report/typed_report.rs:1845/1933/2659/2677`. The earlier
+
+    // ★ The non-vacuity floor, itself derived. If the table were emptied, truncated, or
+    // its rows all reclassified `Sloped`, the loop above would pass by checking nothing —
+    // exactly the failure `MIN_DRIVER_SUBJECTS` exists to prevent one level up.
+    //
+    // The message prints the COUNT and the MEMBERSHIP so a correction is DERIVED rather
+    // than decremented, which is the #189 precedent that got `UNMEASURED_TRAVERSALS` to
+    // its honest value.
+    let sloped = EXPECTED_DRIVER_SHAPE
+        .iter()
+        .filter(|(_, s)| matches!(s, Shape::Sloped))
+        .count();
+    let expected_flat = MIN_DRIVER_SUBJECTS - sloped;
+    assert_eq!(
+        checked.len(),
+        expected_flat,
+        "DERIVED FLAT SET CHANGED SIZE: `flat_generated_drivers_are_depth_independent` \
+         checked {} subjects, but `EXPECTED_DRIVER_SHAPE` declares {} non-sloped rows \
+         (MIN_DRIVER_SUBJECTS {} − {} sloped).\n\n\
+         Checked: {:?}\n\n\
+         If a driver was legitimately added or reclassified, move MIN_DRIVER_SUBJECTS with \
+         it in the SAME commit — it is the floor on the derived universe, not a tally to \
+         reconcile afterwards. If it was not, a row has been lost.",
+        checked.len(),
+        expected_flat,
+        MIN_DRIVER_SUBJECTS,
+        sloped,
+        checked
+    );
+    assert!(
+        sloped >= 1,
+        "VACUOUS CLASSIFIER: `EXPECTED_DRIVER_SHAPE` declares no `Sloped` row, so \
+         `measured_shape` would answer `Flat` for every subject even if `CLASSIFY_DEPTH` \
+         were wrong, and this test would pass without discriminating anything. \
+         `ast_recursion_control` is that anchor and is never to be converted."
+    );
 /// reading missed them because a `grep` of the SOURCE tree finds only the emitter's `quote!`
 /// fragments; the call sites exist only after expansion. So `term_depth` is LIVE, deleting it is
 /// off the table, and it must be converted.
@@ -1024,7 +1070,8 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
     ("ast_hash", Shape::Flat),
     ("ast_semantic_hash", Shape::Flat),
     ("ast_drop", Shape::Flat),
-    // ★ THE LAST SLOPED DRIVER — no work stack at all. See the note above.
+    // ★ Converted by #162. It had no work stack at all — see the note above, which records
+    // the pre-conversion reading rather than deleting it.
     ("ast_term_depth", Shape::Flat),
     // ★★ #189 — the ELEVENTH driver, converted. It was host-recursive exactly as
     // `term_depth` was, and it had NO SUBJECT, which is why neither this gate's
@@ -1076,7 +1123,7 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
 /// a renamed mode, a probe that failed to run, a redirect that swallowed stdout — every
 /// assertion below would iterate an empty set and PASS. This is the count at the time of writing;
 /// it may only grow, and it must never be silently reduced to match a shrunken enumeration.
-const MIN_DRIVER_SUBJECTS: usize = 31;
+const MIN_DRIVER_SUBJECTS: usize = 33;
 
 /// The `ast_*` subjects the PROBE dispatches, read from the probe itself.
 ///
@@ -1137,6 +1184,38 @@ fn measured_shape(name: &str) -> Shape {
         name,
         CLASSIFY_STACK / 1024,
         CLASSIFY_FLOOR_DEPTH
+    // ★★ #189 residual — the TWELFTH driver, `try_eval`, and a CORRECTION to the census row
+    // that named it. That row said `Int` had a worklist and "the other 15 categories are plain
+    // host recursion". The first half is right; the second is FALSE, and the emitter says why:
+    // `macros/src/gen/native/eval.rs:1201` selects the worklist iff `!pda_reduce_arms
+    // .is_empty()`, and `pda_reduce_arms` is filled only by the HOL branch (:590) — so a
+    // category takes the recursive branch EXACTLY when it declares no HOL rule, and a category
+    // with no HOL rule has no same-category child to recurse into.
+    //
+    // MEASURED over the artifact as well: a census of all 54 generated `eval.rs` files (62
+    // `try_eval` impls) finds ZERO non-cast `try_eval()` call sites in any Rholang category.
+    // What remains is the lossless CAST LATTICE, whose height (`BigRat ▸ BigInt ▸ Int ▸ UInt32
+    // ▸ Bool`) bounds the host depth at five frames for a term of ANY depth.
+    //
+    // ⚠⚠ **THAT BOUND IS RHOLANG-SCOPED AND MEASURED — it is NOT a property of the emitter.**
+    // The same census over the whole workspace finds **63 eager non-cast `try_eval()` sites**:
+    // `calculator` 59, `ledtest` 4, `optsmoke` 1. Rholang's row is zero because all twelve of
+    // its sites are cast arms, which is a fact about Rholang's grammar, not about what the
+    // generator can emit. A reader who takes the five-frame bound as generator-wide will
+    // conclude the class is closed when it is not: `calculator` carries a live CROSS-category
+    // cycle (`Int::BoolToInt` ⇄ `Bool::EqInt`) that descends `Int → Bool → Int → …` entirely on
+    // the host stack, and `ledtest` carries its twin (`Num::PredToNum` ⇄ `Pred::EqNum`).
+    // ⇒ The generator-wide repair is a category dependency GRAPH refusing on any CYCLE, not the
+    // same-category identity check this row is about. Tracked as its own item; ⚠ and the graph
+    // must be built over the POST-auto-injection rule set, because `Num::PredToNum` is not
+    // declared anywhere — `ast/src/auto_inject.rs:321` synthesises it.
+    //
+    // Two subjects rather than one, because a single ladder could not tell "the worklist is
+    // flat" from "the lattice hop is per-edge": `ast_try_eval` drives the worklist down a
+    // depth-N `NegInt` chain, `ast_try_eval_cast` puts an `Int ▸ BigRat` hop on top of the same
+    // chain. See `stack_depth_probe::ast_try_eval_body`.
+    ("ast_try_eval", Shape::Flat),
+    ("ast_try_eval_cast", Shape::Flat),
     );
     match runs_within(CLASSIFY_STACK, CLASSIFY_DEPTH, name) {
         true => Shape::Flat,
@@ -1285,9 +1364,17 @@ fn the_sloped_driver_set_is_exactly_the_declared_one() {
 //   * a row claiming a TRAVERSAL must name an entry point that is still present in the
 //     file — so a row cannot go on describing something that has been deleted.
 //
-// ★ The measured answer to "how many generated traversals have NO probe subject" is
-// **EIGHT**, of which `is_ground` was one. The other seven are recorded as
-// `Unmeasured` rows with their mechanism, NOT silently omitted — see the table.
+// ★ The measured answer to "how many generated traversals have NO probe subject" was
+// **EIGHT** when #189 derived it, of which `is_ground` was one. #189's residual took a
+// second — `eval.rs` — and the correction is worth stating, because the row was not
+// merely stale, it was WRONG ABOUT THE MECHANISM: it reported fifteen categories as
+// "plain host recursion" from a count of `try_eval` impls WITHOUT a worklist, and the
+// emitter's own branch condition says a category takes that branch exactly when it has
+// no HOL rule and therefore no same-category child to recurse into. Counting the impls
+// that lack a work stack is not the same question as counting the impls that recurse.
+//
+// The remaining six are recorded as `Unmeasured` rows with their mechanism, NOT silently
+// omitted — see the table.
 // ---------------------------------------------------------------------------
 
 /// How a generated file's recursion is accounted for.
@@ -1309,7 +1396,13 @@ enum Coverage {
 /// ★ Every file `language!` writes for Rholang, with what it is and how its recursion is
 /// accounted for. The FILE LIST is derived at run time; this table is the expectation.
 const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
-    // ── the ELEVEN per-category AST drivers, ten already measured ───────────────────
+    // ── the per-category AST drivers, every one of them measured ────────────────────
+    //
+    // ⚠ No count is spelled here. This header read "the ELEVEN per-category AST drivers,
+    // ten already measured" while the block held TWELVE — it was written when `is_ground`
+    // was the newest arrival and was not touched when `eval.rs`/`try_eval` joined. The
+    // membership is the rows below; `every_generated_traversal_has_a_probe_subject` is
+    // what enforces that each has a subject, and its failure message prints the set.
     ("iterative_cmp.rs", "cmp", Coverage::Subject("ast_cmp")),
     ("iterative_hash.rs", "hash", Coverage::Subject("ast_hash")),
     ("iterative_drop.rs", "drop", Coverage::Subject("ast_drop")),
@@ -1325,7 +1418,7 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
     // ── the RECOGNIZER: a traversal of the INPUT, measured on both axes ─────────────
     ("parser.rs", "parse", Coverage::Subject("parse_depth")),
     ("wpda.rs", "semantic_fingerprint", Coverage::Subject("parse_depth")),
-    // ── ⚠ SEVEN host-recursive walks with NO SUBJECT. Live Θ(depth) exposures. ──────
+    // ── ⚠ SIX host-recursive walks with NO SUBJECT. Live Θ(depth) exposures. ────────
     //
     // Each is a per-category descent over an existing term (or, for `dovetail_report`,
     // over a derivation whose depth IS the term's) emitted as bare host recursion, with
@@ -1357,15 +1450,6 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
         Coverage::UnmeasuredTraversal(
             "`syntax/var_inference.rs` emits `infer_var_type` / `infer_var_category` as bare \
              host recursion (2,643 self-calls on `infer_var_type` alone)",
-        ),
-    ),
-    (
-        "eval.rs",
-        "try_eval",
-        Coverage::UnmeasuredTraversal(
-            "`native/eval.rs` emits `try_eval`. PARTIALLY converted: `Int` has an \
-             `__EvalFrame` worklist, the other 15 categories are plain host recursion — so \
-             the emitter already contains its own conversion pattern",
         ),
     ),
     (
@@ -1402,7 +1486,9 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
         "__mettail_rho_net_reflect_proc",
         Coverage::NotADepthTraversal(
             "the SAME reflector family as `flt_reflect.rs`, emitted a second time by the same \
-             `runtime/rho_invocation.rs`. Counted ONCE in the eight, here so the file cannot \
+             `runtime/rho_invocation.rs`. Counted ONCE in the unmeasured set — see \
+             `UNMEASURED_TRAVERSALS`, which is the only place that number lives — here so \
+             the file cannot \
              go unclassified",
         ),
     ),
@@ -1428,6 +1514,28 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
         "tests_prop.rs",
         "proptest",
         Coverage::NotADepthTraversal("generated test bodies; the self-calls are `new(` helpers"),
+    // ★★ #189 residual, RESOLVED — and the row it replaces was wrong about the mechanism.
+    //
+    // It read: "PARTIALLY converted: `Int` has an `__EvalFrame` worklist, the other 15
+    // categories are plain host recursion". MEASURED FALSE. The emitter (`native/eval.rs:1201`)
+    // takes the recursive branch exactly when a category declares no HOL rule, and such a
+    // category has no same-category child to recurse into — its arms are the literal, the Var,
+    // the auto-injected CASTS and `_ => None`. Rholang declares ONE HOL rule over a native
+    // category (`NegInt`, `languages/src/rholang.rs:1257`), so `Int` alone needs a worklist and
+    // the other fifteen have nothing to convert.
+    //
+    // The residue is the CAST LATTICE, and it is a bound rather than an absence: at most five
+    // host frames (`BigRat ▸ BigInt ▸ Int ▸ UInt32 ▸ Bool`) for a term of any depth. Both
+    // subjects measure it — see `EXPECTED_DRIVER_SHAPE`'s note.
+    //
+    // ⚠⚠ **RHOLANG-SCOPED, and this file is the Rholang gate — so the row is right and the
+    // SENTENCE would be wrong if read as a generator property.** Workspace-wide the same
+    // census finds 63 eager non-cast `try_eval()` sites (`calculator` 59, `ledtest` 4,
+    // `optsmoke` 1), including two live CROSS-category cycles that this gate cannot see
+    // because it only probes Rholang. See `EXPECTED_DRIVER_SHAPE`'s note for the mechanism
+    // and why the generator-wide repair is a cycle-refusing category graph rather than the
+    // same-category check that closed this row.
+    ("eval.rs", "try_eval", Coverage::Subject("ast_try_eval")),
     ),
     (
         "term_wrapper.rs",
@@ -1486,10 +1594,29 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
 const MIN_GENERATED_FILES: usize = 40;
 
 /// ⚠ The RATCHET on the unmeasured set. Recorded as a number so a NEW unmeasured
-/// traversal cannot be added quietly alongside the seven already on file.
+/// traversal cannot be added quietly alongside the ones already on file.
 /// **It must only ever DECREASE**, and it decreases by converting a traversal and giving
 /// it a subject — never by deleting its row.
-const UNMEASURED_TRAVERSALS: usize = 7;
+///
+/// ⚠ **This doc used to say "alongside the seven already on file" while the constant read
+/// 6.** The sentence was written when the value was 7 and was not moved when the #189
+/// residual took `eval.rs` out. ⇒ The membership is spelled ONCE, immediately below, and
+/// nowhere else in this file; every other site refers to this constant by name.
+///
+/// ★ 7 → 6 (#189 residual, 2026-07-30). The new value is **DERIVED, not decremented**: the
+/// census was run with the old value still in place and its own failure reported the count
+/// and the membership —
+///
+/// ```text
+/// the count of UNMEASURED host-recursive traversals is 6 and the ratchet says 7:
+/// ["env_subst.rs", "parse_alt_filter.rs", "var_inference.rs", "language_struct.rs",
+///  "flt_reflect.rs", "dovetail_report.rs"]
+/// ```
+///
+/// — and 6 is what was then written here. Subtracting one from seven would have produced the
+/// same number and proved nothing; letting the instrument answer is what makes the figure a
+/// measurement.
+const UNMEASURED_TRAVERSALS: usize = 6;
 
 /// `target/generated/rholang`, derived from the probe binary's own path so it survives a
 /// relocated `CARGO_TARGET_DIR` and `cargo nextest`'s archive layout.
@@ -1560,7 +1687,7 @@ fn defines_a_function_it_also_calls(source: &str) -> bool {
 ///    between this table and `EXPECTED_DRIVER_SHAPE` is checked rather than assumed.
 ///
 /// Plus the ratchet: [`UNMEASURED_TRAVERSALS`] pins the count of live unmeasured
-/// exposures at the measured seven, so an eighth cannot join them quietly.
+/// exposures at the measured six, so a seventh cannot join them quietly.
 #[test]
 fn every_generated_traversal_has_a_probe_subject() {
     let dir = generated_dir();

@@ -136,6 +136,19 @@ fn classify_term_params_for_pda<'a>(
     Some(out)
 }
 
+/// Would a CAPTURE rule's `Term` field recurse into the category that owns the rule?
+///
+/// ★ The discriminator behind the refusal in the capture branch of
+/// [`generate_eval_method`]. It is a separate function so it can be tested in both
+/// directions without standing up a whole `LanguageDef`; what the tests prove is that
+/// the PREDICATE fires on a same-category base type and stays quiet otherwise. That the
+/// emitter consults it is checked by the workspace build, which compiles every
+/// `language!` in the tree — including the grammars whose generated output is not
+/// present in `target/generated/` and which an artifact census therefore cannot see.
+fn capture_term_field_is_same_category(ty: &TypeExpr, category: &syn::Ident) -> bool {
+    matches!(ty, TypeExpr::Base(base) if base == category)
+}
+
 /// True if the type is a category with `native_type` (e.g. `Int`, `Float`).
 /// False for collection categories (`List`, `Bag`) and non-native types
 /// — the param binding for those must use `.clone()` rather than `.eval()`.
@@ -616,6 +629,67 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 CaptureFieldKind::Term(ty) => {
                                     let name = format_ident!("{}", f.name);
                                     pats.push(quote! { #name });
+                                    // ★★ THE REFUSAL — the sibling of the `OptionalSameCat`
+                                    // defect, made UNSPELLABLE instead of left to be found.
+                                    //
+                                    // The comment below this branch asserts *"A capture rule
+                                    // is a LEAF value producer (its `String` fields are not
+                                    // same-category children, so it needs no Reduce frame)"*.
+                                    // That is true of its `String` fields and says nothing
+                                    // about its `Term` fields, which this very arm binds
+                                    // through `try_eval()?` — on the HOST STACK, in both the
+                                    // recursive form and the PDA Visit arm, because the
+                                    // branch `continue`s before any Reduce frame is built.
+                                    // A capture rule with a same-category `Term` field would
+                                    // therefore be Θ(depth) inside a "converted" driver, the
+                                    // same shape `#opt(e:Int)` had.
+                                    //
+                                    // MEASURED: no grammar in the workspace instantiates it
+                                    // (the census of all 54 generated `eval.rs` files finds
+                                    // zero non-cast `try_eval()` sites in the two capture
+                                    // languages, `l9flttoy` and `l9modaltoy`). So this is a
+                                    // REFUSAL rather than a conversion: the shape has no
+                                    // user, and a build failure naming the rule is a better
+                                    // answer than emitting a silent recursion for the first
+                                    // grammar that writes one.
+                                    //
+                                    // ⚠ The DISCRIMINATOR below is unit-tested for
+                                    // non-vacuity by
+                                    // `capture_term_field_same_category_discriminator_is_non_vacuous`
+                                    // (this file, in `mod tests`). ★ Be precise about what
+                                    // that test establishes: it proves the discriminator
+                                    // ANSWERS CORRECTLY on both polarities. It does NOT
+                                    // prove the emitter consults it — that is proven by the
+                                    // workspace build, because a rule of this shape fails to
+                                    // compile without the refusal.
+                                    //
+                                    // ⚠ This comment previously named
+                                    // `capture_rule_with_same_category_term_field_is_refused`,
+                                    // which does not exist and never did: a repo-wide search
+                                    // returns exactly one hit — this line. A test name in a
+                                    // comment is a claim about the suite that nothing checks,
+                                    // so it is worth stating what the real test does and does
+                                    // not cover rather than swapping one bare name for another.
+                                    if capture_term_field_is_same_category(ty, category) {
+                                        let msg = format!(
+                                            "mettail: rule `{}::{}` is a CAPTURE rule (its \
+                                             syntax pattern binds token text) and it also \
+                                             takes a same-category term parameter `{}: {}`. \
+                                             `try_eval` cannot be emitted stack-safely for \
+                                             that shape: the capture branch produces a leaf \
+                                             value with no Reduce frame, so the same-category \
+                                             child would be evaluated by HOST RECURSION and a \
+                                             term nested through `{}` would be Θ(depth) in \
+                                             stack. Split the rule — put the same-category \
+                                             child on a non-capture rule, which gets a work-\
+                                             stack frame — or open a work item to give the \
+                                             capture branch its own Reduce frame.",
+                                            category, label, f.name, category, f.name,
+                                        );
+                                        return quote::quote_spanned!(
+                                            label.span()=> compile_error!(#msg);
+                                        );
+                                    }
                                     if type_has_native_eval(ty, language) {
                                         bindings
                                             .push(quote! { let #name = #name.as_ref().eval(); });
@@ -858,16 +932,44 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 // Opt-Group: `Optional(storage_ty, use_eval)` represents
                                 // an `Option<storage_ty>` field; visit emits
                                 // `Option::map` over `try_eval()` (Native) or
-                                // `Option::clone()` (Borrow). Optional same-cat
-                                // children are routed through cross_kinds (not the
-                                // same-cat Visit-push path) because the `Some(_)`/
-                                // `None` branching doesn't fit the unconditional
-                                // Visit-frame push.
+                                // `Option::clone()` (Borrow).
+                                //
+                                // ★★ `OptionalSameCat` — #189-residual, THE ONE PLACE THE
+                                // WORK STACK WAS STILL ESCAPED, and it is the #162 lesson
+                                // repeating one level down: *a work-stack driver can only
+                                // replace recursion for work its TASK ENUM can represent.*
+                                //
+                                // This arm used to read: *"Optional same-cat children are
+                                // routed through cross_kinds (not the same-cat Visit-push
+                                // path) because the `Some(_)`/`None` branching doesn't fit
+                                // the unconditional Visit-frame push."* The premise is
+                                // true — the push IS unconditional — and the conclusion
+                                // does not follow. What the branching does not fit is the
+                                // FRAME, which had no way to say "the child was absent";
+                                // routing the child to `try_eval()?` instead just moved
+                                // the descent onto the host stack, where a chain nested
+                                // through the optional position is Θ(depth).
+                                //
+                                // MEASURED over the artifact: the workspace's 54 generated
+                                // `eval.rs` files contain exactly ONE instance —
+                                // `optsmoke::Int::IfElse`'s `#opt(e:Int)`, whose `t` branch
+                                // went on the work stack and whose `e` branch did not. It
+                                // is the ONLY same-category host recursion in any
+                                // generated `try_eval` anywhere.
+                                //
+                                // The repair is to give the frame the missing word: the
+                                // field becomes a PRESENCE FLAG (`bool`), the child is
+                                // Visit-pushed when present, and the Reduce arm rebuilds
+                                // the `Option<NativeT>` the user's `![…]` body expects by
+                                // popping conditionally. A same-category optional child is
+                                // always `Native` here, because `generate_eval_method`
+                                // returns early for a category with no `native_type`.
                                 enum CrossKind {
                                     Native(TokenStream),
                                     Borrow(TokenStream),
                                     OptionalNative(TokenStream),
                                     OptionalBorrow(TokenStream),
+                                    OptionalSameCat,
                                 }
                                 let mut cross_kinds: Vec<(syn::Ident, CrossKind)> = Vec::new();
                                 for entry in &classified {
@@ -880,6 +982,15 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                         PdaParam::Guard { .. } => continue,
                                     };
                                     if *same && !*is_optional {
+                                        continue;
+                                    }
+                                    // ★ The same-category OPTIONAL child: no storage type,
+                                    // because nothing is stored — the frame carries a
+                                    // presence flag and the value comes off the value
+                                    // stack, exactly as the non-optional same-cat child's
+                                    // does. See `CrossKind::OptionalSameCat`.
+                                    if *same {
+                                        cross_kinds.push((name.clone(), CrossKind::OptionalSameCat));
                                         continue;
                                     }
                                     let target_native = language
@@ -929,10 +1040,29 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                         | CrossKind::OptionalBorrow(ty) => {
                                             quote! { #n: ::std::option::Option<#ty> }
                                         },
+                                        // ★ The presence flag — the word the frame was
+                                        // missing. See `CrossKind::OptionalSameCat`.
+                                        CrossKind::OptionalSameCat => quote! { #n: bool },
                                     })
                                     .collect();
                                 let cross_field_names: Vec<syn::Ident> =
                                     cross_kinds.iter().map(|(n, _)| n.clone()).collect();
+                                // ★ Field INITIALISERS, not just names. Every other kind
+                                // binds a local already named after its field and uses
+                                // struct-init shorthand; `OptionalSameCat` has no local to
+                                // shorthand from — its field is computed from the still-
+                                // unshadowed `Option<Arc<Cat>>` binder at the push site,
+                                // because the same binder is needed one line later by the
+                                // conditional Visit push.
+                                let cross_field_inits: Vec<TokenStream> = cross_kinds
+                                    .iter()
+                                    .map(|(n, k)| match k {
+                                        CrossKind::OptionalSameCat => {
+                                            quote! { #n: #n.is_some() }
+                                        },
+                                        _ => quote! { #n },
+                                    })
+                                    .collect();
 
                                 // Emit Frame variant.
                                 if cross_fields.is_empty() {
@@ -987,6 +1117,11 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                         // Clone the inner Box if Some.
                                         let #n: ::std::option::Option<_> = #n.clone();
                                     },
+                                    // ★ NOTHING is evaluated eagerly for a same-category
+                                    // optional child — that eager `try_eval()?` WAS the
+                                    // defect. It must also not shadow `#n`, which the
+                                    // conditional Visit push below still needs.
+                                    CrossKind::OptionalSameCat => quote! {},
                                 })
                                 .collect();
                                 let reduce_push = if cross_field_names.is_empty() {
@@ -994,16 +1129,21 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 } else {
                                     quote! {
                                         work.push(__EvalFrame::#reduce_variant {
-                                            #(#cross_field_names),*
+                                            #(#cross_field_inits),*
                                         });
                                     }
                                 };
                                 // Same-category children: push in REVERSE so the left-
-                                // most child is processed first (LIFO stack).
-                                // Opt-Group: Optional same-cat children are routed
-                                // through cross_kinds (with OptionalBorrow), NOT
-                                // through this Visit-push path — they're captured
-                                // unconditionally and unwrapped at Reduce time.
+                                // most child is processed first (LIFO stack), which is
+                                // what makes the value stack read in declaration order
+                                // and the reverse-order pops below correct.
+                                //
+                                // ★ Optional same-category children go through THIS path
+                                // now, conditionally. The interleaving still works: an
+                                // absent child pushes no Visit and its Reduce pop is
+                                // likewise skipped (the frame's presence flag decides
+                                // both), so the two sequences stay in lockstep whatever
+                                // the mix of present and absent children is.
                                 let same_cat_pushes: Vec<TokenStream> = classified
                                     .iter()
                                     .rev()
@@ -1017,6 +1157,20 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                             ..
                                         } => Some(quote! {
                                             work.push(__EvalFrame::Visit(#name.as_ref()));
+                                        }),
+                                        PdaParam::Term {
+                                            name,
+                                            same_cat: true,
+                                            is_optional: true,
+                                            ..
+                                        } => Some(quote! {
+                                            if let ::std::option::Option::Some(__opt_child) =
+                                                #name.as_ref()
+                                            {
+                                                work.push(
+                                                    __EvalFrame::Visit(__opt_child.as_ref()),
+                                                );
+                                            }
                                         }),
                                         _ => None,
                                     })
@@ -1050,10 +1204,11 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                         __EvalFrame::#reduce_variant { #(#cross_field_names),* }
                                     }
                                 };
-                                // Opt-Group: Optional same-cat children are NOT
-                                // popped from values (they were captured into the
-                                // frame as `Option<Box<Cat>>`); only pure-same-cat
-                                // children are pushed/popped via Visit frames.
+                                // ★ Optional same-cat children ARE popped now, conditionally
+                                // — the mirror image of the conditional Visit push above.
+                                // The `bool` destructured out of the frame is shadowed by
+                                // the `Option<NativeT>` the user's `![…]` body expects, so
+                                // the body sees exactly what the recursive form gave it.
                                 let pops: Vec<TokenStream> = classified
                                     .iter()
                                     .rev()
@@ -1075,6 +1230,21 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                             // binding order below.
                                             let #name = values.pop().expect("PDA same-cat value");
                                         }),
+                                        PdaParam::Term {
+                                            name,
+                                            same_cat: true,
+                                            is_optional: true,
+                                            ..
+                                        } => Some(quote! {
+                                            let #name = match #name {
+                                                true => ::std::option::Option::Some(
+                                                    values
+                                                        .pop()
+                                                        .expect("PDA optional same-cat value"),
+                                                ),
+                                                false => ::std::option::Option::None,
+                                            };
+                                        }),
                                         _ => None,
                                     })
                                     .collect();
@@ -1093,6 +1263,8 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                         let #n: ::std::option::Option<&_> = #n.as_ref().map(|__b| &**__b);
                                     }),
                                     CrossKind::OptionalNative(_) => None,
+                                    // Already rebuilt by its `pops` entry.
+                                    CrossKind::OptionalSameCat => None,
                                 })
                                 .collect();
                                 pda_reduce_arms.push(quote! {
@@ -1412,6 +1584,36 @@ mod tests {
             name: format_ident!("{}", name),
             ty: TypeExpr::Base(format_ident!("{}", cat)),
         }
+    }
+
+    /// ★ Non-vacuity for the capture-rule refusal, in BOTH directions.
+    ///
+    /// ⚠ What this proves and what it does not, stated so the next reader does not
+    /// over-read it: it proves the DISCRIMINATOR answers correctly. It does not prove
+    /// the emitter consults it — that is proven by the workspace build, which expands
+    /// every `language!` in the tree. The distinction matters here because the
+    /// evidence that no grammar instantiates the shape came from a census of
+    /// `target/generated/`, which holds 54 languages while the source declares more:
+    /// an artifact census cannot see a grammar that was not compiled into it.
+    #[test]
+    fn capture_term_field_same_category_discriminator_is_non_vacuous() {
+        let category = format_ident!("Int");
+        assert!(
+            capture_term_field_is_same_category(
+                &TypeExpr::Base(format_ident!("Int")),
+                &category
+            ),
+            "a capture rule's `Term(Int)` field inside category `Int` IS the \
+             same-category recursion the refusal exists for"
+        );
+        assert!(
+            !capture_term_field_is_same_category(
+                &TypeExpr::Base(format_ident!("Bool")),
+                &category
+            ),
+            "a capture rule's `Term(Bool)` field inside category `Int` is a CROSS-category \
+             hop, bounded by the cast lattice's height — refusing it would be wrong"
+        );
     }
 
     #[test]

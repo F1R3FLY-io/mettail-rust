@@ -49,7 +49,7 @@
 
 use std::sync::Arc;
 
-use mettail_languages::rholang::{Int, List, Proc};
+use mettail_languages::rholang::{BigRat, Int, List, Proc};
 use mettail_rholang_runtime::rholang_ast::{lower_proc_in_env, BoundEnv};
 use mettail_runtime::{Binder, Scope};
 use models::rust::rholang::par_children::dismantle;
@@ -114,6 +114,23 @@ fn nested_neg(depth: usize) -> Proc {
         n = Int::NegInt(Arc::new(n));
     }
     Proc::CastInt(Arc::new(n))
+}
+
+/// `- - - … - leaf` as a bare `Int`, with `depth` signs and the LEAF chosen.
+///
+/// ★ [`nested_neg`] wraps the same chain in a `Proc::CastInt` because its consumer is the
+/// LOWERING. `try_eval` is a method on `Int` (`eval` is generated only for categories with a
+/// `native_type`, and `Proc` has none), so its ladder must hand over the `Int` itself.
+///
+/// The leaf is a parameter for the same reason `nested_list_leaf`'s is: two chains that differ
+/// ONLY at the deepest point force any evaluator to reach the bottom before it can tell them
+/// apart. See [`ast_try_eval_body`]'s anti-vacuity.
+fn nested_neg_int_leaf(depth: usize, leaf: i64) -> Int {
+    let mut n = Int::NumLit(leaf);
+    for _ in 0..depth {
+        n = Int::NegInt(Arc::new(n));
+    }
+    n
 }
 
 /// `1 matches (1 and (1 and (…)))` with `depth` connectives: the FORMULA compiler's own depth
@@ -649,6 +666,116 @@ fn ast_is_ground_add_body(depth: usize) {
         b.is_ground(),
         "stack_depth_probe: ast_is_ground_add reported a depth-{depth} Add chain of integer \
          literals NOT ground"
+    );
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+// ---------------------------------------------------------------------------
+// ★★ `try_eval` — the TWELFTH driver, and the census row that named it was WRONG about why.
+//
+// `GENERATED_FILE_CENSUS`'s `eval.rs` row read: *"PARTIALLY converted: `Int` has an
+// `__EvalFrame` worklist, the other 15 categories are plain host recursion."* The second half
+// is FALSE, and the way it is false matters more than the fact.
+//
+// ★ THE DECIDING FUNCTION, read from `macros/src/gen/native/eval.rs` @ `717efdc5`:
+//
+//   * `generate_eval_method` emits `eval`/`try_eval` ONLY for categories with a `native_type`
+//     (`None => continue`, :367). Rholang has SIXTEEN such categories, which is where the
+//     "15 others" came from.
+//   * The worklist form is chosen by `pda_supported && !pda_reduce_arms.is_empty()` (:1201),
+//     and `pda_reduce_arms` is filled ONLY by the HOL branch (`else if let Some(ref
+//     rust_code_block) = rule.rust_code`, :590) — one Reduce variant per HOL rule.
+//   * ⇒ a category takes the recursive branch **exactly when it has no HOL rule**, and a
+//     category with no HOL rule has NO SAME-CATEGORY CHILD to recurse into. Its arms are the
+//     literal (`Some(n.clone())`), the Var (`None`), the auto-injected CASTS, and `_ => None`.
+//
+// So the recursive branch is not "plain host recursion" — for the same-category axis it is not
+// recursion at all. Rholang's `terms { }` block declares exactly ONE HOL rule over a native
+// category (`NegInt . a:Int |- "-" a : Int ![(-a)]`, `languages/src/rholang.rs:1257`), which is
+// why `Int` alone carries a worklist and why nothing else has anything to convert.
+//
+// ★ MEASURED over the artifact as well as derived from the emitter: a census of all 54
+// generated `eval.rs` files (62 `try_eval` impls) finds ZERO non-cast `try_eval()` call sites in
+// any Rholang category. Every one of Rholang's 12 call sites sits under a `<Src>To<Tgt>`
+// auto-injected projection label, i.e. is CROSS-category by construction.
+//
+// ⚠ WHAT IS LEFT, and it is a real bound rather than an absence. The cross-category calls form
+// the LOSSLESS CAST LATTICE, and its host depth is the lattice's HEIGHT, not the term's:
+//
+//     BigRat → {BigInt, Fixed, Float, Int, UInt32, Bool}
+//     BigInt → {Int, UInt32, Bool}          Int → {UInt32, Bool}        UInt32 → {Bool}
+//     Bool, Fixed, Float, Str, Bytes, List, Bag, Map, Set, Pathmap, ReadZipper, WriteZipper → ∅
+//
+// — a strict partial order (`BigRat ▸ BigInt ▸ Int ▸ UInt32 ▸ Bool` is its longest chain), so at
+// most FIVE host frames for any term of any depth. The two subjects below measure the claim
+// instead of asserting it: `ast_try_eval` drives the worklist down a depth-N chain, and
+// `ast_try_eval_cast` puts a lattice hop ON TOP of the same chain so the composition is on one
+// ladder. Both must read flat, or the derivation above is wrong somewhere.
+// ---------------------------------------------------------------------------
+
+/// **`try_eval` on the `Int::NegInt` chain — the WORKLIST path, at depth.**
+///
+/// This is `Int`'s `__EvalFrame` driver descending `depth` levels of `NegInt`. It is also the
+/// MECHANISM twin the other subjects spell `*_add`: a pure same-category chain with no
+/// collection and no category hop, so a flat reading here cannot be a collection arm's doing.
+///
+/// ⚠ ANTI-VACUITY, twice over, because `try_eval` answers `Option` and BOTH failure modes are
+/// silent:
+///
+/// 1. **The exact value.** `NegInt^d(NumLit(1))` is `+1` for even `d` and `−1` for odd `d`, and
+///    it is that only if all `d` negations were applied. An evaluator that stopped early
+///    returns the wrong SIGN, not `None`.
+/// 2. **The leaf discrimination.** Two chains that differ only at the deepest literal must
+///    evaluate differently — the same rule `ast_cmp_body` obeys. A driver that answered from
+///    the top `NegInt` alone would satisfy (1) by luck on one parity and fail this.
+fn ast_try_eval_body(depth: usize) {
+    let a = nested_neg_int_leaf(depth, 1);
+    let expected = if depth % 2 == 0 { 1i64 } else { -1i64 };
+    assert_eq!(
+        a.try_eval(),
+        Some(expected),
+        "stack_depth_probe: ast_try_eval on a depth-{depth} NegInt chain over `1` must be \
+         {expected} — a different value means the walk did not apply every negation, and `None` \
+         means it did not reach the literal at all"
+    );
+    let b = nested_neg_int_leaf(depth, 2);
+    assert_ne!(
+        a.try_eval(),
+        b.try_eval(),
+        "stack_depth_probe: ast_try_eval gave the SAME value for two depth-{depth} chains that \
+         differ only at their deepest literal — the ladder is not being descended"
+    );
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+/// **`try_eval` across the CAST LATTICE, composed with the worklist.**
+///
+/// `BigRat::IntToBigRat(NegInt^depth(NumLit(leaf)))`. `BigRat` has no HOL rule, so it takes the
+/// recursive branch; its `IntToBigRat` arm makes ONE cross-category call into `Int::try_eval`,
+/// which is the worklist. The composition is what a real term exercises and what neither
+/// subject alone would show: if the lattice hop were per-LEVEL rather than per-EDGE, this ladder
+/// would slope where [`ast_try_eval_body`] does not.
+///
+/// ⚠ ANTI-VACUITY: the leaf discrimination again. `CanonicalBigRat` compares by value, so two
+/// chains differing only at the deepest literal must produce different rationals — which
+/// requires descending `Int`'s whole chain and then applying the coercion.
+fn ast_try_eval_cast_body(depth: usize) {
+    let a = BigRat::IntToBigRat(Arc::new(nested_neg_int_leaf(depth, 1)));
+    let b = BigRat::IntToBigRat(Arc::new(nested_neg_int_leaf(depth, 2)));
+    let va = a.try_eval();
+    assert!(
+        va.is_some(),
+        "stack_depth_probe: ast_try_eval_cast answered None on a depth-{depth} chain under a \
+         lossless `Int ▸ BigRat` projection — the inner chain evaluates, so a None here is the \
+         cast arm failing to reach it"
+    );
+    assert_ne!(
+        va,
+        b.try_eval(),
+        "stack_depth_probe: ast_try_eval_cast gave the SAME rational for two depth-{depth} \
+         chains differing only at their deepest literal — the cast arm is not descending"
     );
     std::mem::forget(a);
     std::mem::forget(b);
@@ -1368,3 +1495,11 @@ fn main() {
     // only thing bounding this call is the `RLIMIT_STACK` the parent installed before `exec`.
     subject(&name)(depth);
 }
+    // -------- ★★ the TWELFTH driver: `try_eval`, whose census row was wrong about WHY -----
+    //
+    // The row said fifteen categories were "plain host recursion". The emitter says a category
+    // takes the recursive branch exactly when it has NO HOL rule, and a category with no HOL
+    // rule has no same-category child to recurse into. What is left is the CAST LATTICE, whose
+    // height is a property of the grammar and not of the term. See `ast_try_eval_body`.
+    ("ast_try_eval", ast_try_eval_body),
+    ("ast_try_eval_cast", ast_try_eval_cast_body),
