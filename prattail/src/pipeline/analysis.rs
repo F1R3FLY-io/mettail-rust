@@ -1727,9 +1727,22 @@ pub(crate) fn build_pipeline_analysis(
     // Compute Shannon entropy per category from rule selectivities.
     // High entropy → more ambiguous alternatives → wider beam needed.
     // Categories with a single dominant rule have entropy near zero.
-    let per_category_entropy: HashMap<String, f64> = if let Some(prob) = _advanced.probabilistic {
+    // ⚠ #173 sibling: key-ordered on BOTH levels, and both for reasons.
+    //
+    // `cat_probs`' Vecs are pushed in `rule_selectivities` iteration order, and
+    // the entropy below is an `f64` fold over each Vec — non-associative, so a
+    // hash-ordered push made the entropy VALUES vary run to run. That half is
+    // fixed at `rule_selectivities`, which is now a `BTreeMap`.
+    //
+    // `per_category_entropy` itself is key-ordered because codegen resolves an
+    // argmax over it with `max_by`, whose tie-break is "last element in iteration
+    // order" — see the field's own documentation in `lib.rs`.
+    let per_category_entropy: std::collections::BTreeMap<String, f64> = if let Some(prob) =
+        _advanced.probabilistic
+    {
         // Group rule selectivities by category and compute per-category entropy.
-        let mut cat_probs: HashMap<String, Vec<f64>> = HashMap::new();
+        let mut cat_probs: std::collections::BTreeMap<String, Vec<f64>> =
+            std::collections::BTreeMap::new();
         for (qualified_label, &selectivity) in &prob.rule_selectivities {
             // qualified_label format is "Category::Rule"
             if let Some(cat) = qualified_label.split("::").next() {
@@ -1740,7 +1753,7 @@ pub(crate) fn build_pipeline_analysis(
             }
         }
 
-        let mut entropy_map = HashMap::new();
+        let mut entropy_map = std::collections::BTreeMap::new();
         for (cat, probs) in &cat_probs {
             let sum: f64 = probs.iter().sum();
             if sum > 0.0 {
@@ -1756,7 +1769,7 @@ pub(crate) fn build_pipeline_analysis(
         }
         entropy_map
     } else {
-        HashMap::new()
+        std::collections::BTreeMap::new()
     };
 
     // ── Recursive SCC categories from Buchi analysis ──

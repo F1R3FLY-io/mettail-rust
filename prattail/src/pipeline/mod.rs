@@ -63,3 +63,9 @@ mod tests;
 
 #[cfg(test)]
 mod proptest_tests;
+
+/// #173: the analysis-result determinism gate. A sibling of `analysis` rather
+/// than a child of its test module, so it owns its own fixture and cannot be
+/// weakened by an edit made for another guard's reasons.
+#[cfg(test)]
+mod analysis_determinism;
