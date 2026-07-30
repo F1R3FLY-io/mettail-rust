@@ -282,10 +282,35 @@ fn render_body(depth: usize) {
 ///
 /// The `language!` macro's pooled iterative `Drop` covers a pure `Proc` chain — `lower_add`
 /// (`Proc::Add(Arc<Proc>, Arc<Proc>)`) is flat — but `nested_list` alternates
-/// `Proc::CastList(Arc<List>)` with `List::ListLit(Vec<Proc>)`, and the worklist evidently does
-/// not follow the hop through `List`. That is a defect in the generated teardown, in
+/// `Proc::CastList(Arc<List>)` with `List::ListLit(Vec<Proc>)`, and somewhere across that
+/// alternation the worklist is abandoned. That is a defect in the generated teardown, in
 /// `macros/src/gen/`, NOT in the lowering, and it is recorded here so it is a number rather than
 /// a suspicion.
+///
+/// ★★ **CORRECTION (2026-07-29).** This note used to say the worklist *"does not follow the hop
+/// through `List`"* — i.e. that a driver abandons its work stack when an edge leaves its own
+/// category. **That explanation is REFUTED.** The cross-category hop is handled correctly; the
+/// escape is one level further down, at the COLLECTION-ELEMENT boundary. Read
+/// `target/generated/rholang/iterative_cmp.rs`:
+///
+/// ```text
+/// :2174  (Proc::CastList(ref l0), Proc::CastList(ref r0)) => {
+/// :2175      stack.push(CmpTask::CmpList(&**l0 as *const _, &**r0 as *const _));   ← the HOP,
+/// :2176  }                                                                            PUSHED
+///
+/// :11128 (List::ListLit(a), List::ListLit(b)) => {
+/// :11129     if a != b {                       ← `a`,`b` are `&Vec<Proc>`; `!=` is PartialEq,
+/// :11130         return false;                    which re-enters the driver per element by
+/// :11131     }                                    HOST RECURSION. THE ESCAPE.
+/// ```
+///
+/// The `Ord` half does the same thing with `let ord = a.cmp(b);` at `:34250`. So the shape of the
+/// defect is `Category → Vec<Elem> → Elem`: iterative down to the collection, then a WHOLE-VALUE
+/// delegation to a trait method that has no access to the work stack.
+///
+/// ★ And `display.rs` proves flat is achievable on the identical shape — `:14827` pushes one
+/// `DisplayTask::DisplayProc` per element instead of delegating, and `ast_display` measures
+/// **0 B/level in both profiles**. It is the model the rewrite should copy, not a lucky case.
 fn ast_drop_body(depth: usize) {
     let term = nested_list(depth);
     drop(term);
@@ -325,7 +350,15 @@ fn new_build_body(depth: usize) {
 // `semantic_hash`, `subst`, `normalize` and `match_pattern`. Only `Drop` was gated
 // (as `ast_drop`) — and it is the one that turned out NOT to be flat, at 254 B/level,
 // because `nested_list` alternates `Proc::CastList(Arc<List>)` with
-// `List::ListLit(Vec<Proc>)` and the worklist does not follow that cross-type hop.
+// `List::ListLit(Vec<Proc>)` and the worklist is abandoned somewhere in that alternation.
+//
+// ★★ ...and there is a TENTH, `term_depth`, which has no work stack at all. See
+// `ast_term_depth_body`. The count of nine was itself the kind of hand-maintained figure this
+// gate exists to distrust.
+//
+// ⚠ WHERE the worklist is abandoned was long recorded WRONGLY as "the cross-type hop". It is
+// the COLLECTION-ELEMENT boundary; see the correction on `ast_drop_body` for the generated
+// lines that show the hop being pushed and the elements being delegated.
 //
 // ⚠ So "generated" must not be read as "verified flat", and the remaining eight were
 // UNMEASURED rather than known-good. These subjects close that gap.
@@ -500,6 +533,62 @@ fn ast_match_pattern_body(depth: usize) {
     std::mem::forget(pattern);
 }
 
+/// ★★ THE TENTH DRIVER — `term_depth()`, and it is not a worklist driver at all.
+///
+/// The section header above says `macros/src/gen/` emits NINE work-stack drivers. That count was
+/// short by one, and the tenth is the worst of them: `macros/src/gen/term_ops/depth.rs` emits
+/// `term_depth` as plain HOST RECURSION with no stack, no worklist and no pooling —
+///
+/// ```text
+/// VariantKind::Regular            => 1 + f0.term_depth()
+/// VariantKind::CollectionLiteral  => 1 + coll.iter().map(|x| x.term_depth()).max().unwrap_or(0)
+/// VariantKind::Binder             => 1 + scope.inner().unsafe_body.term_depth()
+/// ```
+///
+/// — and it is compiled into every language (`macros/src/gen/mod.rs:161`, `:241`), so it is live
+/// code rather than a dormant emitter. It was found while looking for an eq-free anti-vacuity
+/// check for [`ast_subst_noassert_body`]: `term_depth()` is the obvious instrument for
+/// *"the result still carries the depth it was given"*, and reading it before using it is the
+/// only reason the confound control is not measuring a fresh Θ(depth) traversal of its own.
+///
+/// ⚠ It differs from the other nine in a way that matters for the rewrite: the nine escape a
+/// worklist they DO have, at one boundary (the collection element). This one has no worklist to
+/// escape, so it is not a boundary fix — it is a conversion.
+///
+/// ★ Its saving grace, established by call-site search and stated because a severity claim needs
+/// it: **`term_depth()` has no caller.** Outside the generator that emits it and its own
+/// recursive self-calls, nothing in the workspace invokes it — the A-RT05 post-fixpoint
+/// convergence check it was written for does not call it either. So it is a latent trap for the
+/// next caller rather than a live exposure, and it is measured here so that "latent" is a number.
+///
+/// ⚠ ANTI-VACUITY: the measured depth must GROW with the ladder, or the walk stopped early. The
+/// bound is `>= depth` rather than the exact `2·depth + 1` the arm arithmetic predicts, so the
+/// assertion cannot go red for a change in how a level is COUNTED while still failing for any
+/// walk that does not reach the bottom.
+fn ast_term_depth_body(depth: usize) {
+    let a = nested_list(depth);
+    let measured = a.term_depth();
+    assert!(
+        measured as usize >= depth,
+        "stack_depth_probe: ast_term_depth measured {measured} on a depth-{depth} spine — it \
+         stopped early"
+    );
+    std::mem::forget(a);
+}
+
+/// [`ast_term_depth_body`] on the pure chain. ★ Expected SLOPED where every other `*_add` twin is
+/// flat: the pure chain's flatness elsewhere comes from there being no collection element to
+/// delegate, and a driver with no worklist at all does not benefit from that.
+fn ast_term_depth_add_body(depth: usize) {
+    let a = nested_add(depth);
+    let measured = a.term_depth();
+    assert!(
+        measured as usize >= depth,
+        "stack_depth_probe: ast_term_depth_add measured {measured} on a depth-{depth} chain"
+    );
+    std::mem::forget(a);
+}
+
 /// ★ THE CONTROL for the eight subjects above: build the twin pair and forget it, running NO
 /// driver at all. Whatever slope the builders and the `Arc` bumps carry is in this ladder too,
 /// so a driver's slope is `subject − build_twins` and never the harness's own cost.
@@ -511,16 +600,353 @@ fn build_twins_body(depth: usize) {
 }
 
 // ---------------------------------------------------------------------------
+// ★★ IS A GENERATED DRIVER REACHABLE FROM RHOLANG SOURCE? — a THREE-RUNG differential.
+//
+// ⚠ Measured slopes are not measured severity. `ast_cmp` bisects to 10,592 B/level (debug) on
+// the alternating ladder, but a driver reachable only from a test fixture is a latent defect
+// while one reachable from a parse is the 8.8 kB class (`291bc217`). The difference is a CALL
+// SITE, and these three subjects turn it into a number instead of a `rg` result.
+//
+// ★ The call sites, read from the production lowering (`rholang-runtime/src/rholang_ast.rs`,
+// `fn drive` @ 1695 — NOT the `#[cfg(test)]` `recursive_oracle`):
+//
+//   * 1851 `Proc::CastBag(Bag::BagLit(entries))` → `entries.sort_by_key(|(item, _)| *item)`
+//   * 1885 `Proc::CastSet(Set::SetLit(items))`   → `items.sort()` on a `Vec<&Proc>`   (TERM)
+//   * 2259 `Proc::CastSet(Set::SetLit(items))`   → `items.sort()` on a `Vec<&Proc>`   (PATTERN)
+//
+// `Vec<&Proc>::sort` is `Ord` on `Proc`, which is `iterative_cmp.rs` — `ast_cmp`'s driver, on
+// whole sub-terms, inside the very function whose Θ(depth) recursion was the reported SIGSEGV.
+//
+// ★ And the SET LITERAL ITSELF is hash-keyed: `Set` is `mettail_runtime::HashSetLit<Proc>`
+// (`languages/src/rholang.rs:202`), `Bag` is `HashBag<Proc>` = `HashMap<Proc, usize, FxHasher>`,
+// `Map` is `HashMap<Proc, Proc>`. So building any of them from source runs `Hash` — and `Eq` on
+// collision — over whole deeply-nested sub-terms at CONSTRUCTION time.
+//
+// The three rungs separate those two mechanisms, on one parse-and-lower path each:
+//
+// | subject            | source                                  | hashes keys | sorts elements |
+// |--------------------|-----------------------------------------|:-----------:|:--------------:|
+// | `list_pair_lower`  | `@"OUT"!([ [[…1…]], [[…2…]] ])`         | no          | no             |
+// | `map_pair_lower`   | `@"OUT"!({ [[…1…]] : 0, [[…2…]] : 0 })` | YES         | no             |
+// | `set_pair_lower`   | `@"OUT"!(Set( [[…1…]], [[…2…]] ))`      | YES         | YES            |
+//
+// Every rung parses two spines of the SAME depth and lowers them through the SAME `drive`, so
+// the parser's own 1,408 B/level is present in all three and cancels in the differences:
+// `map − list` is the hash-insert, and `set − map` is the sort, i.e. `ast_cmp`.
+//
+// ⚠ Two deep elements, not one, and that is required rather than tidy: `Vec::sort` on a
+// one-element slice performs ZERO comparisons, so a single-element `Set` would exercise the
+// call site and measure nothing. The two leaves differ (`1` vs `2`) so the comparison must
+// descend both spines to their bottom to decide — the same anti-vacuity rule `ast_cmp_body`
+// obeys, transplanted onto the source path.
+// ---------------------------------------------------------------------------
+
+/// `[[[…[leaf]…]]]` with `depth` bracket levels, appended to `out`.
+fn push_deep_element(out: &mut String, depth: usize, leaf: char) {
+    for _ in 0..depth {
+        out.push('[');
+    }
+    out.push(leaf);
+    for _ in 0..depth {
+        out.push(']');
+    }
+}
+
+/// `@"OUT"!([ [[…1…]], [[…2…]] ])` — the CONTROL: a list literal neither hashes nor sorts.
+fn list_pair_source(depth: usize) -> String {
+    let mut source = String::with_capacity(4 * depth + 32);
+    source.push_str("@\"OUT\"!([");
+    push_deep_element(&mut source, depth, '1');
+    source.push_str(", ");
+    push_deep_element(&mut source, depth, '2');
+    source.push_str("])");
+    source
+}
+
+/// `@"OUT"!({ [[…1…]] : 0, [[…2…]] : 0 })` — a map literal: hashes its keys, sorts nothing.
+fn map_pair_source(depth: usize) -> String {
+    let mut source = String::with_capacity(4 * depth + 40);
+    source.push_str("@\"OUT\"!({");
+    push_deep_element(&mut source, depth, '1');
+    source.push_str(" : 0, ");
+    push_deep_element(&mut source, depth, '2');
+    source.push_str(" : 0})");
+    source
+}
+
+/// `@"OUT"!(Set( [[…1…]], [[…2…]] ))` — a set literal: hashes its elements AND sorts them in
+/// `drive`.
+fn set_pair_source(depth: usize) -> String {
+    let mut source = String::with_capacity(4 * depth + 40);
+    source.push_str("@\"OUT\"!(Set(");
+    push_deep_element(&mut source, depth, '1');
+    source.push_str(", ");
+    push_deep_element(&mut source, depth, '2');
+    source.push_str("))");
+    source
+}
+
+/// ★ The PARSE-ONLY rungs, which exist because the lower-only reading was AMBIGUOUS.
+///
+/// Bisected debug, 16 → 1,024: `list_pair_lower` 950 B/level but `map_pair_lower` **10,491** —
+/// an 11.0× jump from replacing a list literal with a hash-keyed one. That localises the cost to
+/// the collection literal, but NOT to a phase: a hash-keyed literal is built twice over, once by
+/// the parser's own reduce action (`HashMapLit::<Proc, Proc>::default()` then
+/// `container.insert(k, v)`, emitted into `wpda.rs`) and again read by `drive`. These rungs stop
+/// after the parse so the two phases can be told apart.
+///
+/// ⚠ They `mem::forget` rather than `drop`, unlike [`parse_depth_body`], and that is deliberate:
+/// `drop` of a deep `Proc` is `ast_drop` (252 B/level debug, 94 release), so a dropping parse
+/// rung reads `max(parser, teardown)` and could not be differenced against a forgetting one.
+fn list_pair_parse_body(depth: usize) {
+    let source = list_pair_source(depth);
+    let term = Proc::parse_via_wpda(&source).expect("stack_depth_probe: list_pair did not parse");
+    std::mem::forget(term);
+}
+
+fn map_pair_parse_body(depth: usize) {
+    let source = map_pair_source(depth);
+    let term = Proc::parse_via_wpda(&source).expect("stack_depth_probe: map_pair did not parse");
+    std::mem::forget(term);
+}
+
+fn set_pair_parse_body(depth: usize) {
+    let source = set_pair_source(depth);
+    let term = Proc::parse_via_wpda(&source).expect("stack_depth_probe: set_pair did not parse");
+    std::mem::forget(term);
+}
+
+fn list_pair_lower_body(depth: usize) {
+    let source = list_pair_source(depth);
+    let term = Proc::parse_via_wpda(&source).expect("stack_depth_probe: list_pair did not parse");
+    lower(term);
+}
+
+fn map_pair_lower_body(depth: usize) {
+    let source = map_pair_source(depth);
+    let term = Proc::parse_via_wpda(&source).expect("stack_depth_probe: map_pair did not parse");
+    lower(term);
+}
+
+fn set_pair_lower_body(depth: usize) {
+    let source = set_pair_source(depth);
+    let term = Proc::parse_via_wpda(&source).expect("stack_depth_probe: set_pair did not parse");
+    lower(term);
+}
+
+/// ★ Not a ladder — an INSTRUMENT. Prints the byte length of each rung's source at `depth`, so
+/// "how many source bytes reach the ceiling" is read off the same string the ladder parses
+/// rather than recomputed by hand in a report.
+fn report_source_bytes_body(depth: usize) {
+    println!("depth={depth}");
+    println!("  list_pair_source  {} bytes", list_pair_source(depth).len());
+    println!("  map_pair_source   {} bytes", map_pair_source(depth).len());
+    println!("  set_pair_source   {} bytes", set_pair_source(depth).len());
+    println!("  reproducer_source {} bytes", reproducer_source(depth).len());
+}
+
+// ---------------------------------------------------------------------------
+// ★★ THE CONFOUND CONTROL — five of the nine readings may not be their own drivers.
+//
+// `ast_eq`, `ast_normalize`, `ast_match_pattern` and `ast_subst` all bisected to ~6,140
+// B/level in debug and ~175 in release, on the alternating ladder. ★ That the figures are
+// numerically INDISTINGUISHABLE is itself the evidence: four independent traversals do not
+// agree to three significant figures by coincidence — they agree because they share a
+// component.
+//
+// The shared component is each subject's own ANTI-VACUITY ASSERTION. `ast_subst` closes with
+// `assert!(replaced != term)` and `ast_normalize` with `assert!(normalized == term)`, and
+// `!=`/`==` on `Proc` is `PartialEq` — which is `iterative_cmp.rs`, i.e. `ast_eq`'s driver,
+// re-entered on the same deep term. So those two ladders may be measuring `ast_eq` twice and
+// their own subject not at all.
+//
+// The generated source predicts they will read FLAT once the assertion is eq-free:
+//
+//   * `subst.rs`'s `List::ListLit(ref coll)` arm PUSHES a `SubstTask::VisitProc` for every
+//     element (`for (idx, elem) in coll.iter().enumerate().rev()`). It is a real worklist
+//     descent with zero host recursion — heap growth, not stack growth.
+//   * `normalize.rs`'s arm is `List::ListLit(v) => results[slot] = Some(…ListLit(v.clone()))`
+//     — a CLONE-LEAF. It never descends into the elements at all, so `normalize` on this
+//     ladder visits `Proc::CastList` → `norm_visit_list` → clone and stops: exactly two
+//     worklist steps at ANY depth. And `Proc::clone` is `Arc::clone` per child (`ast_clone`,
+//     measured flat), so the clone is O(width) heap and O(1) stack.
+//
+// ⚠ THE ANTI-VACUITY CHECK MAY NOT USE `term_depth()`, and that is a measured constraint
+// rather than a preference. `macros/src/gen/term_ops/depth.rs` emits `term_depth` as
+// `1 + coll.iter().map(|x| x.term_depth()).max().unwrap_or(0)` — plain HOST RECURSION, with no
+// worklist anywhere. It is a TENTH Θ(depth) traversal in this family, not a neutral instrument,
+// and using it here would have replaced `ast_eq`'s slope with its own.
+//
+// ★ So the check below is a probe-LOCAL iterative walk, using no generated driver at all: it
+// descends the result's spine with a `while`/`loop` over borrows, counts the levels it crossed,
+// and reads the leaf. It is shape-forced in the same sense the other subjects are — the
+// threshold SCALES WITH DEPTH (`levels == depth`), so a driver that stopped early fails — and
+// it is O(1) in stack by construction, so it cannot contribute a slope of its own.
+// ---------------------------------------------------------------------------
+
+/// Walk a [`nested_list`] spine to its leaf ITERATIVELY, counting levels.
+///
+/// Returns `(levels, leaf)`: `levels` is the number of `CastList`/singleton-`ListLit` pairs
+/// crossed, and `leaf` borrows the first `Proc` that is not one. Uses a `loop` over borrows —
+/// no `PartialEq`, no `Debug`, no `Display`, no `clone`, no generated driver of any kind — so a
+/// subject can observe its driver's result all the way to the deepest level without re-entering
+/// another driver to do it.
+fn spine_leaf(term: &Proc) -> (usize, &Proc) {
+    let mut cursor = term;
+    let mut levels = 0usize;
+    loop {
+        match cursor {
+            Proc::CastList(inner) => match &**inner {
+                List::ListLit(items) if items.len() == 1 => {
+                    levels += 1;
+                    cursor = &items[0];
+                },
+                _ => return (levels, cursor),
+            },
+            _ => return (levels, cursor),
+        }
+    }
+}
+
+/// [`spine_leaf`] for the pure `Proc::Add(Arc<Proc>, Arc<Proc>)` chain, which nests on its LEFT
+/// operand.
+fn add_spine_leaf(term: &Proc) -> (usize, &Proc) {
+    let mut cursor = term;
+    let mut levels = 0usize;
+    while let Proc::Add(lhs, _) = cursor {
+        levels += 1;
+        cursor = &**lhs;
+    }
+    (levels, cursor)
+}
+
+/// The `i64` under a `CastInt(NumLit(_))` leaf, or `None`. Reads through borrows only, so it
+/// cannot contribute a traversal.
+fn leaf_num(leaf: &Proc) -> Option<i64> {
+    match leaf {
+        Proc::CastInt(inner) => match &**inner {
+            Int::NumLit(value) => Some(*value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `ast_subst` with the `PartialEq` assertion REPLACED by an eq-free one — the confound control.
+///
+/// Identical to [`ast_subst_body`] in every respect except the anti-vacuity check: instead of
+/// `assert!(replaced != term)`, which re-enters `iterative_cmp`, it walks the result's spine
+/// with [`spine_leaf`] and requires that the walk crossed all `depth` levels AND that the leaf
+/// is the substituted `7` rather than the free variable it replaced. That is a STRICTLY
+/// STRONGER statement than `replaced != term` — inequality is satisfied by a difference
+/// anywhere, while this pins the change to the deepest level — and it is O(1) in stack.
+fn ast_subst_noassert_body(depth: usize) {
+    let term = nested_list_var(depth, "probe_subst_x");
+    let fv = mettail_runtime::get_or_create_var("probe_subst_x".to_string());
+    let replaced = term.substitute(&fv, &int(7));
+    let (levels, leaf) = spine_leaf(&replaced);
+    assert_eq!(
+        levels, depth,
+        "stack_depth_probe: ast_subst_noassert result carries {levels} levels, not {depth} — the \
+         substitution did not rebuild the whole spine"
+    );
+    assert_eq!(
+        leaf_num(leaf),
+        Some(7),
+        "stack_depth_probe: ast_subst_noassert did not reach the LEAF variable — the leaf is not \
+         the substituted 7"
+    );
+    std::hint::black_box(&replaced);
+    std::mem::forget(term);
+    std::mem::forget(replaced);
+}
+
+/// `ast_normalize` with the `PartialEq` assertion REPLACED by an eq-free one.
+///
+/// [`ast_normalize_body`] asserts `normalized == term`, which is `iterative_cmp` on two deep
+/// terms. The eq-free form asserts the same intent — *the result still carries the depth it was
+/// given, and its leaf survived* — by walking the result's spine iteratively.
+fn ast_normalize_noassert_body(depth: usize) {
+    let term = nested_list(depth);
+    let normalized = term.normalize();
+    let (levels, leaf) = spine_leaf(&normalized);
+    assert_eq!(
+        levels, depth,
+        "stack_depth_probe: ast_normalize_noassert result carries {levels} levels, not {depth} — \
+         normalisation is not the identity on a canonical term"
+    );
+    assert_eq!(
+        leaf_num(leaf),
+        Some(1),
+        "stack_depth_probe: ast_normalize_noassert lost the leaf literal"
+    );
+    std::hint::black_box(&normalized);
+    std::mem::forget(term);
+    std::mem::forget(normalized);
+}
+
+/// [`ast_subst_noassert_body`] on the PURE chain, so the control has both ladders.
+fn ast_subst_noassert_add_body(depth: usize) {
+    let term = nested_add_var(depth, "probe_subst_y");
+    let fv = mettail_runtime::get_or_create_var("probe_subst_y".to_string());
+    let replaced = term.substitute(&fv, &int(7));
+    let (levels, leaf) = add_spine_leaf(&replaced);
+    assert_eq!(
+        levels, depth,
+        "stack_depth_probe: ast_subst_noassert_add result carries {levels} levels, not {depth}"
+    );
+    assert_eq!(
+        leaf_num(leaf),
+        Some(7),
+        "stack_depth_probe: ast_subst_noassert_add did not reach the LEAF variable"
+    );
+    std::hint::black_box(&replaced);
+    std::mem::forget(term);
+    std::mem::forget(replaced);
+}
+
+/// [`ast_normalize_noassert_body`] on the PURE chain.
+fn ast_normalize_noassert_add_body(depth: usize) {
+    let term = nested_add(depth);
+    let normalized = term.normalize();
+    let (levels, leaf) = add_spine_leaf(&normalized);
+    assert_eq!(
+        levels, depth,
+        "stack_depth_probe: ast_normalize_noassert_add result carries {levels} levels, not {depth}"
+    );
+    assert_eq!(
+        leaf_num(leaf),
+        Some(1),
+        "stack_depth_probe: ast_normalize_noassert_add lost the leaf literal"
+    );
+    std::hint::black_box(&normalized);
+    std::mem::forget(term);
+    std::mem::forget(normalized);
+}
+
+// ---------------------------------------------------------------------------
 // ★★ THE MECHANISM TEST — the same eight drivers on a shape with NO cross-type hop.
 //
 // The `*_add` twins below are identical in every respect except the SHAPE they walk:
 // `nested_add` is `Proc::Add(Arc<Proc>, Arc<Proc>)`, a pure single-type chain, where
 // `nested_list` alternates `Proc::CastList(Arc<List>)` with `List::ListLit(Vec<Proc>)`.
 //
-// The hypothesis under test is the one `ast_drop`'s note states: the generated work stacks
-// are typed per category, and a driver does not follow an edge that leaves its own type.
-// It predicts a SHARP result — every `*_add` twin flat, every `nested_list` original sloped.
-// Anything else refutes it, and a partial result localises the defect further.
+// ★★ RESULT (bisected 2026-07-29, both profiles, 16 → 4,096): the prediction of a SHARP split
+// HELD — every `*_add` twin is flat (0–1 B/level) while its `nested_list` original is sloped —
+// but the EXPLANATION the split was offered for did not.
+//
+// The hypothesis was: *"the generated work stacks are typed per category, and a driver does not
+// follow an edge that leaves its own type."* That is REFUTED at the source. `iterative_cmp.rs`
+// pushes `CmpTask::CmpList` for `Proc::CastList(Arc<List>)` (`:2175`) — the cross-category edge
+// IS followed. What the `*_add` chain actually lacks is not a category hop but a COLLECTION: it
+// is `Proc::Add(Arc<Proc>, Arc<Proc>)`, all fields single sub-terms, so there is no `Vec<Proc>`
+// to hand whole to a trait method. `nested_list` has one, and `if a != b` on it (`:11129`) is
+// where the work stack is left behind.
+//
+// ⚠ So this 2x2 is still the right experiment and its numbers still stand; only the label on the
+// axis changed, from "cross-type hop" to "collection-element boundary". A ladder that varies two
+// things at once — category hop AND collection-ness — cannot tell them apart, and this one did
+// vary both. It was the generated source, not the ladder, that decided between them.
 // ---------------------------------------------------------------------------
 
 /// [`nested_add`] with the LEAF chosen, for the comparison subjects' anti-vacuity.
@@ -692,61 +1118,107 @@ fn ast_drop_add_body(depth: usize) {
 
 /// Names the subject a child should run. Kept in one place so the parent and the child cannot
 /// drift; the parent names subjects by the same strings.
+///
+/// ★★ A TABLE rather than a bare `match`, and the reason is a gate the parent could not
+/// otherwise write. `stack_depth_gate`'s driver classification has to answer *"is the set of
+/// SLOPED drivers still exactly the expected one?"*, and the two ways that question fails are
+/// (a) a driver leaves the set silently and (b) a **new** driver appears in it. Catching (b)
+/// requires knowing the universe, and a parent that hand-mirrors this list cannot know it — a
+/// subject added here and not there is simply never classified, which is a vacuous pass.
+///
+/// So the parent ENUMERATES this table at run time (`GATE_SUBJECT=list_subjects`, which prints
+/// one name per line) and fails if any `ast_*` name it reads is absent from its own declared
+/// partition. The table is the single source of truth; the parent holds only the expectation.
+///
+/// ⚠ `list_subjects` is deliberately NOT a row: it takes no depth and measures nothing, and a
+/// row for it would appear in the universe the parent must classify.
+const SUBJECTS: &[(&str, fn(usize))] = &[
+    // -------- depth axis: the converted lowering --------
+    ("lower_depth", lower_depth_body),
+    ("lower_add", lower_add_body),
+    ("lower_par", lower_par_body),
+    ("lower_neg", lower_neg_body),
+    ("lower_formula", lower_formula_body),
+    ("lower_new", lower_new_body),
+    ("reproducer", reproducer_body),
+    ("lower_leak", lower_leak_body),
+    // -------- the GENERATED TRAIT DRIVERS (eight that had no subject) --------
+    ("ast_eq", ast_eq_body),
+    ("ast_cmp", ast_cmp_body),
+    ("ast_hash", ast_hash_body),
+    ("ast_debug", ast_debug_body),
+    ("ast_display", ast_display_body),
+    ("ast_semantic_hash", ast_semantic_hash_body),
+    ("ast_subst", ast_subst_body),
+    ("ast_normalize", ast_normalize_body),
+    ("ast_match_pattern", ast_match_pattern_body),
+    // -------- ★ the TENTH driver: host-recursive, no worklist at all --------
+    ("ast_term_depth", ast_term_depth_body),
+    ("ast_term_depth_add", ast_term_depth_add_body),
+    // -------- ★ the CONFOUND CONTROL: the same drivers, anti-vacuity WITHOUT `PartialEq` -----
+    ("ast_subst_noassert", ast_subst_noassert_body),
+    ("ast_normalize_noassert", ast_normalize_noassert_body),
+    ("ast_subst_noassert_add", ast_subst_noassert_add_body),
+    ("ast_normalize_noassert_add", ast_normalize_noassert_add_body),
+    // -------- ★ SOURCE REACHABILITY: parse-only and parse+lower, three shapes each --------
+    ("list_pair_parse", list_pair_parse_body),
+    ("map_pair_parse", map_pair_parse_body),
+    ("set_pair_parse", set_pair_parse_body),
+    ("list_pair_lower", list_pair_lower_body),
+    ("map_pair_lower", map_pair_lower_body),
+    ("set_pair_lower", set_pair_lower_body),
+    ("report_source_bytes", report_source_bytes_body),
+    // -------- the MECHANISM TEST: same drivers, no cross-type hop --------
+    ("ast_eq_add", ast_eq_add_body),
+    ("ast_cmp_add", ast_cmp_add_body),
+    ("ast_hash_add", ast_hash_add_body),
+    ("ast_debug_add", ast_debug_add_body),
+    ("ast_display_add", ast_display_add_body),
+    ("ast_semantic_hash_add", ast_semantic_hash_add_body),
+    ("ast_subst_add", ast_subst_add_body),
+    ("ast_normalize_add", ast_normalize_add_body),
+    ("ast_match_pattern_add", ast_match_pattern_add_body),
+    // -------- ★ Clone: stack-safe by REPRESENTATION, not by a driver --------
+    ("ast_clone", ast_clone_body),
+    ("ast_clone_add", ast_clone_add_body),
+    ("build_one", build_one_body),
+    // -------- discriminators --------
+    ("ast_drop", ast_drop_body),
+    ("ast_drop_add", ast_drop_add_body),
+    ("build_twins", build_twins_body),
+    ("build_twins_add", build_twins_add_body),
+    ("new_build", new_build_body),
+    // -------- depth axis: NOT converted, measured anyway --------
+    ("parse_depth", parse_depth_body),
+    ("par_drop", par_drop_body),
+    ("render", render_body),
+    // -------- width axis --------
+    ("lower_width", lower_width_body),
+    ("parse_width", parse_width_body),
+];
+
+/// The body [`SUBJECTS`] names `name`, or a panic naming what was asked for.
 fn subject(name: &str) -> fn(usize) {
-    match name {
-        // -------- depth axis: the converted lowering --------
-        "lower_depth" => lower_depth_body,
-        "lower_add" => lower_add_body,
-        "lower_par" => lower_par_body,
-        "lower_neg" => lower_neg_body,
-        "lower_formula" => lower_formula_body,
-        "lower_new" => lower_new_body,
-        "reproducer" => reproducer_body,
-        "lower_leak" => lower_leak_body,
-        // -------- the GENERATED TRAIT DRIVERS (eight that had no subject) --------
-        "ast_eq" => ast_eq_body,
-        "ast_cmp" => ast_cmp_body,
-        "ast_hash" => ast_hash_body,
-        "ast_debug" => ast_debug_body,
-        "ast_display" => ast_display_body,
-        "ast_semantic_hash" => ast_semantic_hash_body,
-        "ast_subst" => ast_subst_body,
-        "ast_normalize" => ast_normalize_body,
-        "ast_match_pattern" => ast_match_pattern_body,
-        // -------- the MECHANISM TEST: same drivers, no cross-type hop --------
-        "ast_eq_add" => ast_eq_add_body,
-        "ast_cmp_add" => ast_cmp_add_body,
-        "ast_hash_add" => ast_hash_add_body,
-        "ast_debug_add" => ast_debug_add_body,
-        "ast_display_add" => ast_display_add_body,
-        "ast_semantic_hash_add" => ast_semantic_hash_add_body,
-        "ast_subst_add" => ast_subst_add_body,
-        "ast_normalize_add" => ast_normalize_add_body,
-        "ast_match_pattern_add" => ast_match_pattern_add_body,
-        // -------- discriminators --------
-        // -------- ★ Clone: stack-safe by REPRESENTATION, not by a driver --------
-        "ast_clone" => ast_clone_body,
-        "ast_clone_add" => ast_clone_add_body,
-        "build_one" => build_one_body,
-        // -------- discriminators --------
-        "ast_drop" => ast_drop_body,
-        "ast_drop_add" => ast_drop_add_body,
-        "build_twins" => build_twins_body,
-        "build_twins_add" => build_twins_add_body,
-        "new_build" => new_build_body,
-        // -------- depth axis: NOT converted, measured anyway --------
-        "parse_depth" => parse_depth_body,
-        "par_drop" => par_drop_body,
-        "render" => render_body,
-        // -------- width axis --------
-        "lower_width" => lower_width_body,
-        "parse_width" => parse_width_body,
-        other => panic!("stack_depth_probe: unknown GATE_SUBJECT={other:?}"),
+    match SUBJECTS.iter().find(|(subject_name, _)| *subject_name == name) {
+        Some((_, body)) => *body,
+        None => panic!("stack_depth_probe: unknown GATE_SUBJECT={name:?}"),
     }
 }
 
+/// The subject name the parent uses to enumerate [`SUBJECTS`]. Not a row in it — see the table's
+/// note.
+const LIST_SUBJECTS: &str = "list_subjects";
+
 fn main() {
     let name = std::env::var("GATE_SUBJECT").expect("stack_depth_probe: GATE_SUBJECT must be set");
+    // ★ The enumeration mode, handled BEFORE `GATE_DEPTH` is read: it has no depth, and requiring
+    // one would make the parent pass a meaningless number to learn the subject list.
+    if name == LIST_SUBJECTS {
+        for (subject_name, _) in SUBJECTS {
+            println!("{subject_name}");
+        }
+        return;
+    }
     let depth: usize = std::env::var("GATE_DEPTH")
         .expect("stack_depth_probe: GATE_DEPTH must accompany GATE_SUBJECT")
         .parse()
