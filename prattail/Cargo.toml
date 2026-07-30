@@ -164,6 +164,14 @@ harness = false
 name = "bench_analysis"
 harness = false
 
+## Work item #164: what an unwanted analysis thread costs. Measures the spawn
+## mechanism in isolation (32 vs 18 empty scoped threads — the upper bound on the
+## saving) against one whole `generate_parser` call, and prints the exact,
+## load-independent spawn ledger per spec.
+[[bench]]
+name = "bench_analysis_spawn"
+harness = false
+
 [[bench]]
 name = "bench_codegen"
 harness = false
