@@ -1484,7 +1484,19 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x == y))),
+                    // ★★ A NUMERIC PREDICATE, so it is IEEE-754 — compared in raw `f64` via
+                    // `.get()`, NOT through `CanonicalFloat64`'s `PartialEq`/`Ord`.
+                    // IEEE 754 §5.11: `NaN == NaN` is FALSE. `NaN` is UNORDERED, not equal to itself.
+                    // The carrier's relations answer a DIFFERENT question and are deliberately
+                    // unchanged: `CanonicalFloat64::PartialEq` is reflexive on `NaN` and its `Ord`
+                    // sorts `NaN` last, because STRUCTURAL IDENTITY — pattern matching, a `Map`
+                    // key, `HashSet` membership, `SemanticHash` — needs an equivalence relation,
+                    // and IEEE equality is deliberately irreflexive so it is not one. Two `NaN`
+                    // terms therefore remain indistinguishable to matching while `==` answers
+                    // `false`; that split is upstream's too (`GDouble` is a `fixed64` of raw bits,
+                    // so `Par` equality is bit-comparison, while `combine_relop`'s `GDouble` arm
+                    // returns `false` on a `NaN` operand). RULED 2026-07-29.
+                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x.get() == y.get()))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
@@ -1539,7 +1551,19 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x != y))),
+                    // ★★ A NUMERIC PREDICATE, so it is IEEE-754 — compared in raw `f64` via
+                    // `.get()`, NOT through `CanonicalFloat64`'s `PartialEq`/`Ord`.
+                    // IEEE 754 §5.11: `NaN != NaN` is TRUE — the one NaN predicate that holds.
+                    // The carrier's relations answer a DIFFERENT question and are deliberately
+                    // unchanged: `CanonicalFloat64::PartialEq` is reflexive on `NaN` and its `Ord`
+                    // sorts `NaN` last, because STRUCTURAL IDENTITY — pattern matching, a `Map`
+                    // key, `HashSet` membership, `SemanticHash` — needs an equivalence relation,
+                    // and IEEE equality is deliberately irreflexive so it is not one. Two `NaN`
+                    // terms therefore remain indistinguishable to matching while `==` answers
+                    // `false`; that split is upstream's too (`GDouble` is a `fixed64` of raw bits,
+                    // so `Par` equality is bit-comparison, while `combine_relop`'s `GDouble` arm
+                    // returns `false` on a `NaN` operand). RULED 2026-07-29.
+                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x.get() != y.get()))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
@@ -1587,7 +1611,19 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x > y))),
+                    // ★★ A NUMERIC PREDICATE, so it is IEEE-754 — compared in raw `f64` via
+                    // `.get()`, NOT through `CanonicalFloat64`'s `PartialEq`/`Ord`.
+                    // IEEE 754 §5.11: every ORDERED comparison involving a `NaN` is FALSE.
+                    // The carrier's relations answer a DIFFERENT question and are deliberately
+                    // unchanged: `CanonicalFloat64::PartialEq` is reflexive on `NaN` and its `Ord`
+                    // sorts `NaN` last, because STRUCTURAL IDENTITY — pattern matching, a `Map`
+                    // key, `HashSet` membership, `SemanticHash` — needs an equivalence relation,
+                    // and IEEE equality is deliberately irreflexive so it is not one. Two `NaN`
+                    // terms therefore remain indistinguishable to matching while `==` answers
+                    // `false`; that split is upstream's too (`GDouble` is a `fixed64` of raw bits,
+                    // so `Par` equality is bit-comparison, while `combine_relop`'s `GDouble` arm
+                    // returns `false` on a `NaN` operand). RULED 2026-07-29.
+                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x.get() > y.get()))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
@@ -1626,7 +1662,19 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x < y))),
+                    // ★★ A NUMERIC PREDICATE, so it is IEEE-754 — compared in raw `f64` via
+                    // `.get()`, NOT through `CanonicalFloat64`'s `PartialEq`/`Ord`.
+                    // IEEE 754 §5.11: every ORDERED comparison involving a `NaN` is FALSE.
+                    // The carrier's relations answer a DIFFERENT question and are deliberately
+                    // unchanged: `CanonicalFloat64::PartialEq` is reflexive on `NaN` and its `Ord`
+                    // sorts `NaN` last, because STRUCTURAL IDENTITY — pattern matching, a `Map`
+                    // key, `HashSet` membership, `SemanticHash` — needs an equivalence relation,
+                    // and IEEE equality is deliberately irreflexive so it is not one. Two `NaN`
+                    // terms therefore remain indistinguishable to matching while `==` answers
+                    // `false`; that split is upstream's too (`GDouble` is a `fixed64` of raw bits,
+                    // so `Par` equality is bit-comparison, while `combine_relop`'s `GDouble` arm
+                    // returns `false` on a `NaN` operand). RULED 2026-07-29.
+                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x.get() < y.get()))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
@@ -1665,7 +1713,19 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x >= y))),
+                    // ★★ A NUMERIC PREDICATE, so it is IEEE-754 — compared in raw `f64` via
+                    // `.get()`, NOT through `CanonicalFloat64`'s `PartialEq`/`Ord`.
+                    // IEEE 754 §5.11: `>=` on an unordered pair is FALSE (it is NOT `!(<)`).
+                    // The carrier's relations answer a DIFFERENT question and are deliberately
+                    // unchanged: `CanonicalFloat64::PartialEq` is reflexive on `NaN` and its `Ord`
+                    // sorts `NaN` last, because STRUCTURAL IDENTITY — pattern matching, a `Map`
+                    // key, `HashSet` membership, `SemanticHash` — needs an equivalence relation,
+                    // and IEEE equality is deliberately irreflexive so it is not one. Two `NaN`
+                    // terms therefore remain indistinguishable to matching while `==` answers
+                    // `false`; that split is upstream's too (`GDouble` is a `fixed64` of raw bits,
+                    // so `Par` equality is bit-comparison, while `combine_relop`'s `GDouble` arm
+                    // returns `false` on a `NaN` operand). RULED 2026-07-29.
+                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x.get() >= y.get()))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
@@ -1704,7 +1764,19 @@ language! {
                     _ => Proc::Err,
                 },
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&**a, &**b) {
-                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x <= y))),
+                    // ★★ A NUMERIC PREDICATE, so it is IEEE-754 — compared in raw `f64` via
+                    // `.get()`, NOT through `CanonicalFloat64`'s `PartialEq`/`Ord`.
+                    // IEEE 754 §5.11: `<=` on an unordered pair is FALSE (it is NOT `!(>)`).
+                    // The carrier's relations answer a DIFFERENT question and are deliberately
+                    // unchanged: `CanonicalFloat64::PartialEq` is reflexive on `NaN` and its `Ord`
+                    // sorts `NaN` last, because STRUCTURAL IDENTITY — pattern matching, a `Map`
+                    // key, `HashSet` membership, `SemanticHash` — needs an equivalence relation,
+                    // and IEEE equality is deliberately irreflexive so it is not one. Two `NaN`
+                    // terms therefore remain indistinguishable to matching while `==` answers
+                    // `false`; that split is upstream's too (`GDouble` is a `fixed64` of raw bits,
+                    // so `Par` equality is bit-comparison, while `combine_relop`'s `GDouble` arm
+                    // returns `false` on a `NaN` operand). RULED 2026-07-29.
+                    (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(x.get() <= y.get()))),
                     _ => Proc::Err,
                 },
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {

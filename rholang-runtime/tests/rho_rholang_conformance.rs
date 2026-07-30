@@ -322,6 +322,28 @@ fn fold_program(proc: &Proc) -> Result<String, String> {
         .unwrap_or_else(|_| unreachable!("a fold panic aborts the process; it never unwinds here"))
 }
 
+/// The FOLD side, returning the normal form as a `Proc` rather than its rendered string, so a test
+/// can ask about structural identity (`BoundTerm::term_eq`, `Proc::semantic_hash`) and not only
+/// about display.
+fn fold_to_proc(source: &str) -> Proc {
+    let owned = parse(source);
+    let label = source.to_string();
+    std::thread::Builder::new()
+        .name("rholang-fold-to-proc".into())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let term = RholangTerm(RholangTermInner::Proc(owned));
+            let normal_form =
+                RholangLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
+                    .unwrap_or_else(|err| panic!("dovetail failed for {label:?}: {err}"));
+            proc_of(normal_form.as_ref())
+                .unwrap_or_else(|| panic!("{label:?} did not fold to a Proc"))
+        })
+        .expect("spawn the rholang fold-to-proc worker")
+        .join()
+        .unwrap_or_else(|_| unreachable!("a fold panic aborts the process; it never unwinds here"))
+}
+
 /// Unwrap a boxed `RholangTerm` back to its `Proc` alternative (`None` for a non-`Proc` category
 /// or an `Ambiguous` residue).
 fn proc_of(term: &dyn mettail_runtime::Term) -> Option<Proc> {
@@ -4230,81 +4252,6 @@ async fn signed_zero_is_the_carriers_divergence_and_it_is_pinned() {
     }
 }
 
-/// ⚠★ **FILED, NOT FIXED — making `NaN` reachable ACTIVATED a latent comparison divergence.**
-///
-/// Before the 2026-07-29 float rulings, every route to a `NaN` was declined, so `NaN` was not a
-/// representable `Float` term and the comparison operators' `NaN` behaviour was unobservable.
-/// `b77e657c` (`Div`) and this commit (`Add`/`Sub`/`Mul`/`Neg`) make it reachable, which turns a
-/// latent divergence into a live one. **It was not part of either ruling and is deliberately not
-/// changed here**; this cell records the MEASURED behaviour so it is a fact on the record and a
-/// change to it goes red.
-///
-/// | expression | here | upstream / IEEE 754 §5.11 |
-/// |---|---|---|
-/// | `NaN == NaN` | `true`  | `false` |
-/// | `NaN != NaN` | `false` | `true`  |
-/// | `NaN > 1.0`  | `true`  | `false` |
-/// | `NaN >= NaN` | `true`  | `false` |
-/// | `NaN < 1.0`  | `false` | `false` — agrees, by coincidence |
-///
-/// **The mechanism is the CARRIER, not the operator arms.** IEEE 754 §5.11 makes every ordered
-/// comparison involving a `NaN` false and `NaN == NaN` false, so `NaN` is *unordered*. But the
-/// comparison arms compare `CanonicalFloat64` values directly, and that type's `PartialEq` answers
-/// `true` for two `NaN`s while its `Ord` sorts `NaN` GREATER than every finite value
-/// (`runtime/src/canonical_float.rs:94-135`) — deliberately, because a term algebra needs a total,
-/// reflexive `Eq`/`Hash`/`Ord` to be usable as a map key, in a relation, and in
-/// `BoundTerm`/`SemanticHash`. Note also that `binop_to_safe_method` does NOT rewrite `==`, `>`,
-/// `<` — they are `BinOp::Eq`/`Gt`/`Lt` and fall through — so unlike the arithmetic arms these are
-/// not being safe-ified behind the author's back.
-///
-/// ★ **Why it needs a ruling rather than a patch.** The arms COULD be changed to compare
-/// `x.get()` against `y.get()` in raw `f64`, which would give IEEE semantics without touching the
-/// carrier's `Eq` at all. That is a two-line change. What it would BUY is upstream parity on
-/// comparisons; what it would COST is that Rholang's `==` operator would then disagree with the
-/// term algebra's own notion of equality — the same two `NaN` terms would be `==`-unequal while
-/// remaining `Eq`-equal, hence indistinguishable to pattern matching, to a `Map` key, and to
-/// `SemanticHash`. That trade is a semantics decision about what `NaN` *is* in this language, not a
-/// bug fix, so it is filed.
-///
-/// ⚠ Upstream is unambiguous about its own side: f1r3node has
-/// `rholang/tests/rholang_numeric_eval_spec.rs::float_nan_comparisons_return_false` and
-/// `::float_nan_equality_follows_ieee754`, both green, so this is a real divergence and not an
-/// assumption about upstream.
-#[tokio::test(flavor = "multi_thread")]
-async fn nan_comparisons_follow_the_carrier_not_ieee754_and_that_is_filed() {
-    const NAN: &str = "(float(0.0, 64) / float(0.0, 64))";
-
-    // FLOOR: `NaN` really is reachable now — otherwise every row below would be testing an
-    // expression that never produces one, and the divergence would be recorded where it is absent.
-    assert_eq!(
-        fold(&parse(NAN)).expect("the fold converges"),
-        "NaN",
-        "★ FLOOR: this cell is about comparisons ON a NaN; the NaN must exist first",
-    );
-
-    for (source, ours, ieee, note) in [
-        (format!("{NAN} == {NAN}"), "true", "false", "IEEE: NaN is not equal to itself"),
-        (format!("{NAN} != {NAN}"), "false", "true", "IEEE: the only true NaN predicate"),
-        (format!("{NAN} > float(1.0, 64)"), "true", "false", "the carrier's Ord sorts NaN last"),
-        (format!("{NAN} >= {NAN}"), "true", "false", "IEEE: unordered, so >= is false"),
-        (format!("{NAN} < float(1.0, 64)"), "false", "false", "agrees with IEEE, coincidentally"),
-        // The CONTROL: comparisons that do NOT involve a NaN are IEEE-correct, so this cell is
-        // about NaN specifically and not about the comparison operators being broken generally.
-        ("(float(1.0, 64) / float(0.0, 64)) > float(1e308, 64)".to_string(), "true", "true",
-         "CONTROL: +Inf > any finite — agrees"),
-        ("float(1.0, 64) < float(2.0, 64)".to_string(), "true", "true",
-         "CONTROL: ordinary floats compare correctly"),
-    ] {
-        let folded = fold(&parse(&source)).unwrap_or_else(|err| panic!("{source:?}: {err}"));
-        assert_eq!(
-            folded, ours,
-            "★ {source:?} answers {ours:?} here; IEEE and upstream answer {ieee:?} ({note}). This \
-             divergence is FILED, not fixed. If this assertion fails, someone has ruled on it — \
-             update the table in this cell's doc comment and the module header.",
-        );
-    }
-}
-
 /// ★ `%` on floats needs NO change — MEASURED on both sides, and they already agree.
 ///
 /// Rholang's `Mod` rule has no `CastFloat` arm at all (its only `safe_rem` call site is `i64`), so
@@ -4331,4 +4278,226 @@ async fn float_modulo_is_refused_by_both_evaluators_so_it_needs_no_ruling() {
              `combine_mod` `GDouble` refusal has to be revisited at the same time.",
         );
     }
+}
+
+/// ★★ **Float comparison is a NUMERIC PREDICATE and follows IEEE-754.** RULED 2026-07-29, after
+/// `b77e657c` / `ab885336` made `NaN` reachable and turned this from latent into observable.
+///
+/// | expression | before | now | upstream |
+/// |---|---|---|---|
+/// | `NaN == NaN` | `true`  | `false` | `false` |
+/// | `NaN != NaN` | `false` | `true`  | `true`  |
+/// | `NaN > 1.0`  | `true`  | `false` | `false` |
+/// | `NaN >= NaN` | `true`  | `false` | `false` |
+/// | `NaN < 1.0`  | `false` | `false` | `false` |
+///
+/// ## The two relations, and why the split is correct rather than an inconsistency
+///
+/// Rholang's `==`/`!=`/`<`/`<=`/`>`/`>=` on floats answer **"how do these two numbers compare?"**
+/// Pattern matching, `Map` keys, `HashSet` membership and `SemanticHash` answer **"are these the
+/// same term?"** Those are different questions, and a single relation cannot serve both: IEEE
+/// equality is *deliberately irreflexive* on `NaN`, so it is **not an equivalence relation**, and a
+/// term algebra cannot be built on one — `Eq`'s reflexivity contract would be violated and terms
+/// would stop being usable as keys. So the arms compare raw `f64` (`.get()`) while
+/// `CanonicalFloat64`'s `PartialEq`/`Ord` stay reflexive and total. **The carrier is unchanged.**
+///
+/// ⚠ **Upstream has the same split, and it was VERIFIED rather than assumed:**
+/// * numeric — `combine_relop`'s `GDouble` arm (`reduce.rs:3146-3162`) returns `GBool(false)`
+///   outright when either operand `is_nan()`, and `combine_eq` / `combine_neq` (`:3734`, `:3752`)
+///   consult `par_contains_nan_double`. Both upstream tests are green:
+///   `rholang_numeric_eval_spec::float_nan_comparisons_return_false` (all four ordered operators)
+///   and `::float_nan_equality_follows_ieee754` (`==` false, `!=` true).
+/// * structural — `RhoTypes.proto:269` declares `fixed64 g_double`, *"IEEE 754 f64 stored as raw
+///   bits"*, so `GDouble(u64)`'s derived `PartialEq`/`Hash` compare BIT PATTERNS and two same-bit
+///   `NaN`s are structurally equal.
+///
+/// ## The arm inventory
+///
+/// SIX arms, enumerated from the grammar rather than from a list of operators: `Eq`, `Ne`, `Gt`,
+/// `Lt`, `GtEq`, `LtEq`. ★ Unlike the arithmetic arms these were a PLAIN fix, not an adapter
+/// problem: `binop_to_safe_method` (`rust_code_rewrite.rs:206-215`) maps only `+ - * / %` and unary
+/// `- !`, so `==`/`<`/`>` are `BinOp::Eq`/`Lt`/`Gt`, fall through, and are not safe-ified behind the
+/// author's back. Only `CanonicalFloat64` has comparison arms: it is the sole float carrier in any
+/// grammar (`rholang.rs:84` `![f64] as Float`; `calculator.rs:18` declares one too but has no
+/// `CastFloat` arms at all). `QuietNaN` covers four carriers because `SafeArith` is a
+/// general-purpose runtime library, not because four appear in a grammar.
+#[tokio::test(flavor = "multi_thread")]
+async fn float_comparison_is_a_numeric_predicate_and_follows_ieee754() {
+    const NAN: &str = "(float(0.0, 64) / float(0.0, 64))";
+    const POS_INF: &str = "(float(1.0, 64) / float(0.0, 64))";
+
+    // ★ FLOOR 1: the NaN must exist, or every row below compares something else.
+    assert_eq!(
+        fold(&parse(NAN)).expect("the fold converges"),
+        "NaN",
+        "★ FLOOR: this cell is about comparisons ON a NaN; the NaN must be reachable first",
+    );
+
+    // ★ FLOOR 2: ordinary float comparisons must still be CORRECT, so no row below rests on a
+    // comparator that has simply stopped working. All six operators, both verdicts each.
+    for (source, expected) in [
+        ("float(1.5, 64) < float(2.5, 64)", "true"),
+        ("float(2.5, 64) < float(1.5, 64)", "false"),
+        ("float(2.0, 64) == float(2.0, 64)", "true"),
+        ("float(2.0, 64) == float(3.0, 64)", "false"),
+        ("float(2.0, 64) != float(3.0, 64)", "true"),
+        ("float(2.0, 64) != float(2.0, 64)", "false"),
+        ("float(3.0, 64) >= float(3.0, 64)", "true"),
+        ("float(2.0, 64) >= float(3.0, 64)", "false"),
+        ("float(3.0, 64) <= float(3.0, 64)", "true"),
+        ("float(4.0, 64) <= float(3.0, 64)", "false"),
+        ("float(3.0, 64) > float(2.0, 64)", "true"),
+        ("float(2.0, 64) > float(3.0, 64)", "false"),
+    ] {
+        assert_eq!(
+            fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}")),
+            expected,
+            "★ FLOOR: {source:?} — an ordinary float comparison must still be correct",
+        );
+    }
+
+    // ── IEEE 754 §5.11, per operator. `NaN` is UNORDERED: the only true predicate is `!=`. ──
+    for (source, expected, arm) in [
+        (format!("{NAN} == {NAN}"), "false", "Eq"),
+        (format!("{NAN} == float(1.0, 64)"), "false", "Eq"),
+        (format!("float(1.0, 64) == {NAN}"), "false", "Eq"),
+        (format!("{NAN} != {NAN}"), "true", "Ne"),
+        (format!("{NAN} != float(1.0, 64)"), "true", "Ne"),
+        (format!("{NAN} > float(1.0, 64)"), "false", "Gt"),
+        (format!("float(1.0, 64) > {NAN}"), "false", "Gt"),
+        (format!("{NAN} < float(1.0, 64)"), "false", "Lt"),
+        (format!("float(1.0, 64) < {NAN}"), "false", "Lt"),
+        (format!("{NAN} >= {NAN}"), "false", "GtEq"),
+        (format!("{NAN} >= float(1.0, 64)"), "false", "GtEq"),
+        (format!("{NAN} <= {NAN}"), "false", "LtEq"),
+        (format!("{NAN} <= float(1.0, 64)"), "false", "LtEq"),
+        // CONTROL: an INFINITY is perfectly ordered, so it must NOT be swept up by the NaN rule.
+        (format!("{POS_INF} > float(1e308, 64)"), "true", "Gt (control: +Inf is ordered)"),
+        (format!("{POS_INF} == {POS_INF}"), "true", "Eq (control: +Inf equals itself)"),
+        (format!("{POS_INF} >= {POS_INF}"), "true", "GtEq (control)"),
+    ] {
+        let folded = fold(&parse(&source)).unwrap_or_else(|err| panic!("{source:?}: {err}"));
+        assert_eq!(
+            folded, expected,
+            "★★ {arm} arm — {source:?} must be {expected:?} (IEEE 754 §5.11). A `NaN` is UNORDERED: \
+             every comparison but `!=` is false. If this reads the opposite, the arm is comparing \
+             `CanonicalFloat64` values through the carrier's reflexive `PartialEq` / NaN-last `Ord` \
+             instead of raw `f64` via `.get()`.",
+        );
+    }
+}
+
+/// ★★ **THE OTHER HALF OF THE SPLIT, AND IT IS INTENTIONAL — DO NOT "FIX" THIS.**
+///
+/// ⚠ A future reader will see that `NaN == NaN` folds to `false` and conclude that two `NaN` terms
+/// must therefore be distinguishable to pattern matching, to a term-keyed container and to
+/// `SemanticHash`, and will set out to make that so. **That would be a bug, not a fix.** This cell
+/// exists to say so in the place where the change would be made, and to fail if it is.
+///
+/// STRUCTURAL IDENTITY answers a different question from a numeric predicate, and it requires an
+/// EQUIVALENCE relation — reflexive, symmetric, transitive. IEEE equality is deliberately
+/// irreflexive on `NaN` (§5.11), so it is not one. Adopting it for terms would cost, concretely:
+///
+/// * `BoundTerm::term_eq` is the relation the SPATIAL MATCHER uses, so an irreflexive `NaN` would
+///   make a `NaN` term fail to match itself;
+/// * `Eq`'s reflexivity is a `HashMap`/`HashSet` **soundness** requirement, not a style preference —
+///   a key not equal to itself can be inserted and then never found again;
+/// * `Proc::semantic_hash` would have to hash a value that compares unequal to itself, breaking
+///   `a == b ⟹ hash(a) == hash(b)` in the direction that matters.
+///
+/// ⚠⚠ **And it is worse than that, MEASURED.** This cell was driven RED by patching
+/// `CanonicalFloat64::PartialEq` to `self.0 == other.0` — i.e. by making the carrier follow IEEE —
+/// and the result was not a failed assertion about map keys. It was
+/// `generated Dovetail saturation for language Rholang stopped before convergence: IterationLimit`,
+/// on the very first fold of `0.0 / 0.0`. **The rewrite engine stops terminating**: saturation
+/// decides it has reached a fixpoint by comparing terms, and a term that is not equal to itself can
+/// never be recognised as unchanged. So the reflexive carrier is not a convenience for containers,
+/// it is a precondition for the fold converging at all.
+///
+/// So `CanonicalFloat64` canonicalises every `NaN` to one bit pattern and compares it equal to
+/// itself (`runtime/src/canonical_float.rs:35-42`, `:94-135`) and the comparison ARMS reach past it
+/// with `.get()`. ⚠ Upstream reaches the same arrangement from the other side, VERIFIED:
+/// `RhoTypes.proto:269` declares `fixed64 g_double`, so `GDouble(u64)`'s derived `PartialEq`/`Hash`
+/// compare bit patterns and two same-bit `NaN`s are structurally equal there too, while
+/// `combine_relop` (`reduce.rs:3146-3162`) answers `false`.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_nan_terms_stay_structurally_identical_and_that_is_deliberate() {
+    use std::collections::HashMap;
+
+    use mettail_runtime::BoundTerm;
+
+    /// The hash a term-keyed container would use: `Proc::semantic_hash` run to a `u64`.
+    fn sem(p: &Proc) -> u64 {
+        use std::hash::Hasher;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        p.semantic_hash(&mut h);
+        h.finish()
+    }
+
+    let nan_a = fold_to_proc("float(0.0, 64) / float(0.0, 64)");
+    let nan_b = fold_to_proc("float(0.0, 64) / float(0.0, 64)");
+    // A second, INDEPENDENT route to a NaN, so this is about the value and not about two copies of
+    // one expression: `Inf - Inf` is a different IEEE 754 §7.2 invalid operation from `0/0`.
+    let nan_c =
+        fold_to_proc("(float(1.0, 64) / float(0.0, 64)) - (float(1.0, 64) / float(0.0, 64))");
+    let one = fold_to_proc("float(1.0, 64)");
+
+    // ★ FLOOR: all three really are NaN terms, and the control really is not. Without this the
+    // equalities below could hold because everything collapsed to the same non-NaN term.
+    for (label, p) in [("nan_a", &nan_a), ("nan_b", &nan_b), ("nan_c", &nan_c)] {
+        assert_eq!(p.to_string(), "NaN", "★ FLOOR: {label} must be a NaN term");
+    }
+    assert_eq!(one.to_string(), "1.0", "★ FLOOR: the control must not be a NaN");
+
+    // ★ FLOOR: and the NUMERIC predicate really does disagree — otherwise this cell is not
+    // documenting a split, it is documenting one relation twice.
+    assert_eq!(
+        fold(&parse("(float(0.0, 64) / float(0.0, 64)) == (float(0.0, 64) / float(0.0, 64))"))
+            .expect("the fold converges"),
+        "false",
+        "★ FLOOR: `NaN == NaN` must be `false` for the split below to mean anything",
+    );
+
+    // ── STRUCTURAL, and INTENTIONAL. ──
+    assert!(
+        nan_a.term_eq(&nan_b),
+        "★★ INTENTIONAL: two NaN terms are the SAME TERM. `==` on floats answers `false` because it \
+         is a numeric predicate; `term_eq` is structural identity and is what the spatial matcher \
+         uses, so it must stay an equivalence relation. Do not change it to agree with `==`.",
+    );
+    assert!(
+        nan_a.term_eq(&nan_c),
+        "★★ INTENTIONAL: and it does not depend on HOW the NaN arose — `0/0` and `Inf - Inf` are the \
+         same term, because every NaN canonicalises to one bit pattern.",
+    );
+    assert!(
+        !nan_a.term_eq(&one),
+        "★ the CONTROL: a NaN term is not a `1.0` term — without this, `term_eq` returning `true` \
+         for everything would satisfy the assertions above",
+    );
+
+    // `a == b ⟹ hash(a) == hash(b)`: the contract every hashed container over terms depends on.
+    assert_eq!(
+        sem(&nan_a),
+        sem(&nan_c),
+        "★★ INTENTIONAL: two `term_eq` NaN terms must hash the same under `semantic_hash`, or every \
+         term-keyed container is unsound.",
+    );
+    assert_ne!(
+        sem(&nan_a),
+        sem(&one),
+        "★ the CONTROL: distinct terms must not collapse to one hash, or the assertion above would \
+         hold vacuously",
+    );
+
+    // The consequence, demonstrated: a value stored under one NaN term is retrievable by another.
+    let mut store: HashMap<u64, &str> = HashMap::new();
+    store.insert(sem(&nan_a), "stored under 0/0");
+    assert_eq!(
+        store.get(&sem(&nan_c)).copied(),
+        Some("stored under 0/0"),
+        "★★ INTENTIONAL: this is the reflexivity IEEE equality cannot provide and a term algebra \
+         requires. If it ever returns `None`, someone made structural identity follow IEEE and \
+         every NaN key in the system became unreachable.",
+    );
 }
