@@ -77,6 +77,40 @@ pub struct DeclaredLanguage {
     /// [`Self::declares_binder`] is the conservative pre-composition answer. See the
     /// module docs.
     pub composes: bool,
+    /// ★★ An INDEPENDENT witness of binding, used to anchor the POLARITY of
+    /// [`Self::declares_binder`].
+    ///
+    /// # Why a second answer to (almost) the same question
+    ///
+    /// A guard that compares [`Self::declares_binder`] against emitted output cannot
+    /// detect an INVERTED predicate: inverting `declares_binder` inverts the census and
+    /// the emission gate together, so the comparison still agrees and the guard passes
+    /// green while every language gets exactly the wrong family. This was observed, not
+    /// theorised — it is why this field exists.
+    ///
+    /// So this is computed WITHOUT calling [`crate::grammar_shapes::declares_binder`]: it
+    /// matches `TermParam::Abstraction` / `MultiAbstraction` inline, right here. The two
+    /// derivations are then mutually checking, which is the same reason
+    /// `ast/tests/dovetail_language_inventory.rs` keeps a structural and a textual answer
+    /// to "does this file declare a language" instead of collapsing them.
+    ///
+    /// # It is deliberately a ONE-WAY witness, not a mirror
+    ///
+    /// This answers only "does some rule spell a top-level `^x.body` / `^[xs].body`
+    /// param?". It does NOT look inside `#opt(…)`, and it does not consider the legacy
+    /// positional `GrammarItem::Binder`. It is therefore *sufficient but not necessary*
+    /// for binding, and the invariant it anchors is the implication
+    ///
+    /// ```text
+    ///     spells_abstraction_param  ⟹  declares_binder
+    /// ```
+    ///
+    /// A full second implementation would be a mirror of a computable domain — the very
+    /// shape this repository keeps getting burned by — and would need updating in two
+    /// places whenever a new binding form is added. An implication needs updating in
+    /// none: a new binding form makes `declares_binder` more true, which the implication
+    /// tolerates, while flipping the polarity of `declares_binder` breaks it immediately.
+    pub spells_abstraction_param: bool,
 }
 
 impl DeclaredLanguage {
@@ -135,6 +169,20 @@ pub fn binder_census(workspace_root: &Path) -> Result<Vec<DeclaredLanguage>, Str
                 composes: !def.extends_names.is_empty()
                     || !def.include_names.is_empty()
                     || !def.mixin_names.is_empty(),
+                // ★ Computed inline, deliberately NOT via `grammar_shapes`. See the field
+                // docs: this is the independent witness that anchors the predicate's
+                // polarity, and routing it through the predicate would defeat its purpose.
+                spells_abstraction_param: def.terms.iter().any(|rule| {
+                    rule.term_context.as_ref().is_some_and(|params| {
+                        params.iter().any(|param| {
+                            matches!(
+                                param,
+                                crate::grammar::TermParam::Abstraction { .. }
+                                    | crate::grammar::TermParam::MultiAbstraction { .. }
+                            )
+                        })
+                    })
+                }),
             });
         }
     }
@@ -225,6 +273,63 @@ mod tests {
              the HOL family and the guard that asserts binderless languages receive none \
              would range over nothing. {} languages, all binding.",
             census.len()
+        );
+    }
+
+    /// ★★ The POLARITY anchor: a grammar that spells `^x.body` MUST be censused as binding.
+    ///
+    /// # The hole this closes, observed under a red probe
+    ///
+    /// Every other guard in this campaign compares the binder predicate against emitted
+    /// output. Inverting [`crate::grammar_shapes::declares_binder`] inverts BOTH sides at
+    /// once — the census flips, and `compute_hol_domain_pairs` flips with it — so those
+    /// comparisons still agree and stay GREEN while all 54 languages receive exactly the
+    /// wrong family. That was measured with the predicate negated, and it is the reason
+    /// [`DeclaredLanguage::spells_abstraction_param`] is derived independently.
+    ///
+    /// The invariant is the one-way implication `spells_abstraction_param ⟹
+    /// declares_binder`, checked against a floor of witnesses so it cannot hold vacuously.
+    /// Under an inverted predicate every witness violates it, and the failure NAMES the
+    /// languages.
+    #[test]
+    fn a_grammar_that_spells_an_abstraction_param_is_censused_as_binding() {
+        let census = binder_census(&repo_root()).expect("the language corpus must be walkable");
+
+        let witnesses: Vec<&DeclaredLanguage> = census
+            .iter()
+            .filter(|entry| entry.spells_abstraction_param)
+            .collect();
+
+        // Anti-vacuity floor: the implication below is vacuous without witnesses, and the
+        // corpus demonstrably contains binder-declaring grammars (Lambda's
+        // `Lam . ^x.body:[Term -> Term]`, Rholang's `PInputs`, …).
+        assert!(
+            witnesses.len() >= 10,
+            "only {} grammar(s) were found to spell a `^x.body` / `^[xs].body` abstraction \
+             param. The corpus contains many more, so the independent witness has itself \
+             broken — and the implication it anchors would then hold vacuously, which is \
+             exactly the state that lets an INVERTED binder predicate pass every other \
+             guard in this campaign.",
+            witnesses.len()
+        );
+
+        let violations: Vec<String> = witnesses
+            .iter()
+            .filter(|entry| !entry.declares_binder)
+            .map(|entry| format!("{} ({})", entry.name, entry.source))
+            .collect();
+
+        assert!(
+            violations.is_empty(),
+            "{} language(s) spell an abstraction param yet are censused as declaring NO \
+             binder:\n  {}\n\n★ `spells_abstraction_param` is derived independently of \
+             `grammar_shapes::declares_binder` precisely so this cannot happen quietly. A \
+             `^x.body:[D -> C]` param IS a binding — if the predicate disagrees it has been \
+             inverted, narrowed, or pointed at the wrong field, and every guard that \
+             compares the predicate against emitted output will keep passing while the HOL \
+             family goes to exactly the wrong languages.",
+            violations.len(),
+            violations.join("\n  "),
         );
     }
 
