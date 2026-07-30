@@ -1,5 +1,149 @@
-use super::{Bag, ForRow, Int, List, Map, Name, Proc, Set, Str};
+use super::{Bag, Bytes, ForRow, Int, List, Map, Name, Proc, Set, Str};
 use mettail_runtime::{BoundTerm, HashBag};
+
+// ══════════════════════════════════════════════════════════════════════════════════════════
+// The byte-array methods (2026-07-30)
+// ══════════════════════════════════════════════════════════════════════════════════════════
+//
+// Reachable only since the `b"…"` literal (`713e0364`) gave `Bytes` a surface. The upstream
+// definitions these mirror are in `f1r3node-rust-mettail/rholang/src/rust/interpreter/reduce.rs`
+// and are cited per function; the fold lane must agree with the machine lane, and before these
+// arms existed it did not — `b"dead".length()` folded to the `error` term while the reducer
+// answered `2`.
+
+/// The ground byte payload of a `Proc`, or `None` when it is not a ground byte array.
+///
+/// One extractor, so every byte-method arm agrees about what "a byte array" is. A `Bytes` that is
+/// still a variable or a redex yields `None`, which the callers turn into "no arm" rather than
+/// into a wrong answer.
+fn ground_bytes(proc: &Proc) -> Option<&Vec<u8>> {
+    match proc {
+        Proc::CastBytes(inner) => match inner.as_ref() {
+            Bytes::BytesLit(bytes) => Some(bytes),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Wrap a byte vector as a `Proc`.
+fn proc_bytes(bytes: Vec<u8>) -> Proc {
+    Proc::CastBytes(std::sync::Arc::new(Bytes::BytesLit(bytes)))
+}
+
+/// `"…".hexToBytes()` — upstream `reduce.rs:4849`, whose decoder is
+/// `StringOps::unsafe_decode_hex` (`models/src/rust/string_ops.rs:17-28`).
+///
+/// ⚠ **THE FILTER-AND-PAD BEHAVIOUR IS REPRODUCED DELIBERATELY, AND MUST NOT BE "FIXED".**
+/// Upstream FILTERS every non-hex-digit character out of the input and then LEFT-PADS an
+/// odd-length result with a `0` nibble, with the comment *"Match Scala Base16.unsafeDecode"*. The
+/// consequences are lossy and surprising:
+///
+/// | input | upstream result | why |
+/// |---|---|---|
+/// | `"deadbeef"` | `[de ad be ef]` | the ordinary case |
+/// | `"abc"` | `[0a bc]` | odd length ⇒ left-padded to `"0abc"` |
+/// | `"de-ad"` | `[de ad]` | `-` is filtered out |
+/// | `"hello world"` | `[ed]` | only `e` and `d` are hex digits |
+///
+/// It is nonetheless the CORRECT behaviour to implement here, and rejecting the odd or dirty input
+/// would be the defect. `hexToBytes` is consensus-reachable upstream — `Registry.rho` calls it on
+/// public keys — so its decoder decides COMPUTED VALUES on a live path. Upstream is a floor on
+/// semantics: a deliberate, documented, load-bearing behaviour is not a bug to repair. Pinned by
+/// `languages/tests/rholang_byte_methods.rs::hex_to_bytes_filters_and_pads_exactly_as_upstream_does`.
+///
+/// ★ NOTE THE ASYMMETRY WITH THE LITERAL, WHICH IS INTENTIONAL. The `b"…"` literal's decoder
+/// (`languages/src/rholang.rs`, the `literals { Bytes { … } }` eval) accepts ONLY an even run of
+/// hex digits, because a literal's job is to have exactly one reading and the regex can enforce
+/// that at the lexer. A METHOD's argument is run-time data that upstream has already decided how
+/// to interpret. Two decoders, two different jobs; neither should be made to serve the other.
+pub(crate) fn fold_hex_to_bytes(receiver: &Proc) -> Proc {
+    let text = match receiver {
+        Proc::CastStr(inner) => match inner.as_ref() {
+            Str::StringLit(text) => text,
+            _ => return Proc::Err,
+        },
+        _ => return Proc::Err,
+    };
+    // Upstream step 1: keep only ASCII hex digits.
+    let digits: Vec<u8> = text
+        .bytes()
+        .filter(|byte| byte.is_ascii_hexdigit())
+        .collect();
+    // Upstream step 2: left-pad an odd count with a zero nibble. Preallocated at the exact final
+    // byte count, which is `ceil(digits / 2)`.
+    let mut decoded: Vec<u8> = Vec::with_capacity(digits.len().div_ceil(2));
+    let mut pending_high_nibble: Option<u8> = if digits.len() % 2 == 0 { None } else { Some(0) };
+    for digit in digits {
+        // Total on the filtered alphabet — `is_ascii_hexdigit` admits exactly these three ranges,
+        // so the `else` branch is unreachable and is answered rather than asserted (a `panic!`
+        // here would abort the process under the cranelift dev backend).
+        let nibble = match digit {
+            b'0'..=b'9' => digit - b'0',
+            b'a'..=b'f' => digit - b'a' + 10,
+            b'A'..=b'F' => digit - b'A' + 10,
+            _ => return Proc::Err,
+        };
+        match pending_high_nibble {
+            None => pending_high_nibble = Some(nibble),
+            Some(high) => {
+                decoded.push((high << 4) | nibble);
+                pending_high_nibble = None;
+            },
+        }
+    }
+    match pending_high_nibble {
+        // Unreachable: the parity was fixed before the loop. Fail closed rather than assert.
+        Some(_) => Proc::Err,
+        None => proc_bytes(decoded),
+    }
+}
+
+/// `b"…".bytesToHex()` — upstream `reduce.rs:4893`,
+/// `bytes.iter().map(|byte| format!("{:02x}", byte)).collect()`. Lowercase, two digits per byte,
+/// so leading zeros are preserved and the result is a word of the `b"…"` literal language.
+pub(crate) fn fold_bytes_to_hex(receiver: &Proc) -> Proc {
+    let Some(bytes) = ground_bytes(receiver) else {
+        return Proc::Err;
+    };
+    const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut rendered = String::with_capacity(2 * bytes.len());
+    for byte in bytes {
+        rendered.push(HEX_DIGITS[(*byte >> 4) as usize] as char);
+        rendered.push(HEX_DIGITS[(*byte & 0x0f) as usize] as char);
+    }
+    Proc::CastStr(std::sync::Arc::new(Str::StringLit(rendered)))
+}
+
+/// `"…".toUtf8Bytes()` — upstream `reduce.rs:4948`, `utf8_string.as_bytes().to_vec()`.
+///
+/// ⚠ A DIFFERENT FUNCTION FROM `hexToBytes`, and the pair `"dead"` separates them sharply: as hex
+/// it is the two bytes `de ad`, as UTF-8 it is the four bytes `64 65 61 64`. Rust's `String` is
+/// UTF-8 by construction, so this is total and lossless in the direction it runs.
+pub(crate) fn fold_to_utf8_bytes(receiver: &Proc) -> Proc {
+    match receiver {
+        Proc::CastStr(inner) => match inner.as_ref() {
+            Str::StringLit(text) => proc_bytes(text.as_bytes().to_vec()),
+            _ => Proc::Err,
+        },
+        _ => Proc::Err,
+    }
+}
+
+/// The byte-array arm of `nth` / `last`: the UNSIGNED byte at `index`, as an `Int`.
+///
+/// Upstream `reduce.rs:4670` (`nth`) and `:4753` (`last`, which binds the index to
+/// `len.saturating_sub(1)` and then runs `nth`'s arm verbatim). ⚠ `new_gint_par(b as i64, …)` —
+/// the cast is from `u8`, so `0x80` is `128` and never `-128`; upstream's own comment on that line
+/// reads *"Convert to unsigned"*. Out of range is the `error` term, matching what every other
+/// out-of-domain collection access answers here.
+pub(crate) fn fold_bytes_nth(receiver: &Proc, index: usize) -> Option<Proc> {
+    let bytes = ground_bytes(receiver)?;
+    Some(match bytes.get(index) {
+        Some(byte) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(i64::from(*byte)))),
+        None => Proc::Err,
+    })
+}
 
 fn is_collection_cast(proc: &Proc) -> bool {
     matches!(proc, Proc::CastList(_) | Proc::CastBag(_) | Proc::CastMap(_) | Proc::CastSet(_))
@@ -272,6 +416,22 @@ pub(crate) fn fold_proc_length(p: &Proc) -> Proc {
         Proc::CastSet(s) => match s.as_ref() {
             Set::SetLit(ref payload) => {
                 Proc::CastInt(std::sync::Arc::new(Int::NumLit(payload.len() as i64)))
+            },
+            _ => Proc::Err,
+        },
+        // ★ THE BYTE ARM (2026-07-30) — upstream `reduce.rs:8775`,
+        // `GByteArray(bytes) => new_gint_expr(bytes.len() as i64)`.
+        //
+        // ⚠ Its absence was a FOLD/MACHINE DISAGREEMENT, not merely a missing feature. `length` IS
+        // a key of the interpreter's `method_table`, so `l.length()` lowers to `EMethod("length")`
+        // and the reducer has answered correctly for a byte array all along; this lane answered the
+        // `error` term. It was unreachable only because `Bytes` had no surface, so the disagreement
+        // became live at the moment the `b"…"` literal landed and is repaired in the same campaign.
+        //
+        // The unit is BYTES, not hex digits: `b"dead"` is two bytes.
+        Proc::CastBytes(b) => match b.as_ref() {
+            Bytes::BytesLit(bytes) => {
+                Proc::CastInt(std::sync::Arc::new(Int::NumLit(bytes.len() as i64)))
             },
             _ => Proc::Err,
         },

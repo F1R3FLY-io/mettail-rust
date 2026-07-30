@@ -1981,6 +1981,13 @@ impl<'a> Drive<'a> {
             Proc::SpatialPPar(..) => self.stacks.value(lower_arm_spatial_p_par()?),
             // ── Methods routed to the reducer's OWN method table (option C, C1/C2) ───────────
             Proc::MToByteArray(m) => self.method("toByteArray", m, &[], env),
+            // The three byte-named methods (2026-07-30). Each names a key of the reducer's
+            // `method_table`: `hexToBytes` at `reduce.rs:9346`, `bytesToHex` at `:9347`,
+            // `toUtf8Bytes` at `:9348`. Routed rather than host-computed for the same reason as
+            // every sibling — the reducer owns the semantics and the metering.
+            Proc::MHexToBytes(s) => self.method("hexToBytes", s, &[], env),
+            Proc::MBytesToHex(b) => self.method("bytesToHex", b, &[], env),
+            Proc::MToUtf8Bytes(s) => self.method("toUtf8Bytes", s, &[], env),
             Proc::MGet(m, k) => self.method("get", m, &[k], env),
             Proc::MSet(m, k, v) => self.method("set", m, &[k, v], env),
             Proc::MContains(m, k) => self.method("contains", m, &[k], env),

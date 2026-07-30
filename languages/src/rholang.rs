@@ -2664,6 +2664,46 @@ language! {
         MToByteArray . m:Proc
         |- m "." "toByteArray" "(" ")" : Proc;
 
+        // ── THE THREE BYTE-NAMED METHODS MeTTaIL LACKED (2026-07-30) ────────────────────────
+        //
+        // ★ THE DERIVED GAP, AND THE AXIS IT IS COUNTED ON. Walking every `fn <name>_method` in
+        // `f1r3node-rust-mettail/rholang/src/rust/interpreter/reduce.rs` and keeping those whose
+        // body has a `GByteArray` arm gives EIGHT entries: `nth` (:4670), `last` (:4753),
+        // `toByteArray` (:4815), `hexToBytes` (:4849), `bytesToHex` (:4893), `toUtf8Bytes`
+        // (:4948), `length` (:8775), `slice` (:8857). On the axis of BYTE-NAMED methods —
+        // `toByteArray`, `hexToBytes`, `bytesToHex`, `toUtf8Bytes` — MeTTaIL had ONE of FOUR, and
+        // the three declared below close it.
+        //
+        // ⚠ THE COUNT IS AXIS-DEPENDENT AND EVERY PRIOR FIGURE WAS RIGHT ON SOME OTHER AXIS.
+        // Register entry CBR-L13 records "1 of 9" (byte-PRODUCING surface, methods ∪ the five
+        // crypto system processes); the byte-named axis gives "1 of 4"; the `GByteArray`-arm axis
+        // gives 8. The axis that had never been measured is the one that mattered: of those eight,
+        // the number that ACCEPTED a `Bytes` receiver in this fold lane was **ZERO** — even the
+        // four whose names were declared. See the `Bytes` arms added to `LLength`/`LNth`/`LLast`.
+        //
+        // ⚠ `slice` IS DELIBERATELY STILL ABSENT. It is missing for EVERY carrier here — `String`,
+        // `List` and `ByteArray` alike — so its absence is not a byte gap but a missing method,
+        // and declaring it means one rule with three carrier arms plus a new reserved keyword for
+        // all categories. That blast radius has nothing to do with bytes; it is REPORTED as a
+        // derived finding rather than smuggled in with them.
+        //
+        // Each rule below is a `fold` AND routes to the machine (`lower_method`), exactly like its
+        // siblings: the fold answers when both lanes can, and the reducer is normative.
+        MHexToBytes . s:Proc
+        |- s "." "hexToBytes" "(" ")" : Proc ![{
+            crate::rholang::runtime::fold_hex_to_bytes(&s)
+        }] fold;
+
+        MBytesToHex . b:Proc
+        |- b "." "bytesToHex" "(" ")" : Proc ![{
+            crate::rholang::runtime::fold_bytes_to_hex(&b)
+        }] fold;
+
+        MToUtf8Bytes . s:Proc
+        |- s "." "toUtf8Bytes" "(" ")" : Proc ![{
+            crate::rholang::runtime::fold_to_utf8_bytes(&s)
+        }] fold;
+
         MKeys . m:Proc
         |- m "." "keys" "(" ")" : Proc ![{
             match &m {
@@ -2740,6 +2780,19 @@ language! {
                     },
                     _ => Proc::Err,
                 },
+                // ★ THE BYTE ARM (2026-07-30) — upstream `reduce.rs:4670`. `nth` on a byte array
+                // answers the UNSIGNED byte value as an integer (upstream's own comment there
+                // reads "Convert to unsigned"), so `b"80".nth(0)` is `128`, never `-128`.
+                //
+                // ⚠ Its absence was a FOLD/MACHINE DISAGREEMENT: `nth` is a key of the reducer's
+                // `method_table`, which has answered correctly for a byte array all along, while
+                // this lane answered `error`. It was unreachable only because `Bytes` had no
+                // surface, and became live with the `b"…"` literal.
+                Proc::CastBytes(_) => match nth_index(&i) {
+                    Some(n) => crate::rholang::runtime::fold_bytes_nth(&l, n)
+                        .unwrap_or(Proc::Err),
+                    None => Proc::Err,
+                },
                 _ => Proc::Err,
             }
         }] fold;
@@ -2810,6 +2863,18 @@ language! {
             match &l {
                 Proc::CastList(lit) => match lit.as_ref() {
                     List::ListLit(v) => v.last().cloned().unwrap_or(Proc::Err),
+                    _ => Proc::Err,
+                },
+                // ★ THE BYTE ARM (2026-07-30) — upstream `reduce.rs:4753`, which binds the index
+                // to `len.saturating_sub(1)` and then runs `nth`'s byte arm VERBATIM. Reached here
+                // through the same `fold_bytes_nth` helper for the same reason: `[].last()` and
+                // `[].nth(0)` cannot be allowed to answer differently, and neither can
+                // `b"".last()` and `b"".nth(0)` — they are the same projection at the same index.
+                Proc::CastBytes(inner) => match inner.as_ref() {
+                    Bytes::BytesLit(bytes) => {
+                        crate::rholang::runtime::fold_bytes_nth(&l, bytes.len().saturating_sub(1))
+                            .unwrap_or(Proc::Err)
+                    },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -3671,6 +3736,12 @@ language! {
         MUnionCongR . | S ~> T |- (MUnion X S) ~> (MUnion X T);
         MSizeCong . | S ~> T |- (MSize S) ~> (MSize T);
         MToByteArrayCong . | S ~> T |- (MToByteArray S) ~> (MToByteArray T);
+        // The three byte-named methods added 2026-07-30. A method whose RECEIVER is still a redex
+        // must let congruence reduce it first, exactly as every sibling method does — without
+        // these, `@1.hexToBytes()` would fold on the un-reduced receiver and answer `error`.
+        MHexToBytesCong . | S ~> T |- (MHexToBytes S) ~> (MHexToBytes T);
+        MBytesToHexCong . | S ~> T |- (MBytesToHex S) ~> (MBytesToHex T);
+        MToUtf8BytesCong . | S ~> T |- (MToUtf8Bytes S) ~> (MToUtf8Bytes T);
         MKeysCong . | S ~> T |- (MKeys S) ~> (MKeys T);
         MValuesCong . | S ~> T |- (MValues S) ~> (MValues T);
 

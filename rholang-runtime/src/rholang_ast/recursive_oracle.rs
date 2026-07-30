@@ -202,6 +202,11 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         // a hex `GString` in protobuf BYTE order and could not encode any collection the Rholang
         // grammar actually produces.
         Proc::MToByteArray(m) => lower_arm_m_to_byte_array(m, env),
+        // The three byte-named methods (2026-07-30) — keys of the reducer's `method_table`
+        // at `reduce.rs:9346`, `:9347`, `:9348`.
+        Proc::MHexToBytes(s) => lower_arm_m_hex_to_bytes(s, env),
+        Proc::MBytesToHex(b) => lower_arm_m_bytes_to_hex(b, env),
+        Proc::MToUtf8Bytes(s) => lower_arm_m_to_utf8_bytes(s, env),
         //
         // ── C1 — the collection method surface (landed 2026-07-26) ──────────────────────────
         //
@@ -796,6 +801,33 @@ fn lower_arm_m_to_byte_array(
     env: &BoundEnv,
 ) -> Result<Par, RholangAstLowerError> {
     lower_method("toByteArray", m.as_ref(), &[], env)
+}
+
+/// The `Proc::MHexToBytes(s)` arm — `"…".hexToBytes()`.
+#[inline(never)]
+fn lower_arm_m_hex_to_bytes(
+    s: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RholangAstLowerError> {
+    lower_method("hexToBytes", s.as_ref(), &[], env)
+}
+
+/// The `Proc::MBytesToHex(b)` arm — `b"…".bytesToHex()`.
+#[inline(never)]
+fn lower_arm_m_bytes_to_hex(
+    b: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RholangAstLowerError> {
+    lower_method("bytesToHex", b.as_ref(), &[], env)
+}
+
+/// The `Proc::MToUtf8Bytes(s)` arm — `"…".toUtf8Bytes()`.
+#[inline(never)]
+fn lower_arm_m_to_utf8_bytes(
+    s: &std::sync::Arc<Proc>,
+    env: &BoundEnv,
+) -> Result<Par, RholangAstLowerError> {
+    lower_method("toUtf8Bytes", s.as_ref(), &[], env)
 }
 
 #[inline(never)]
