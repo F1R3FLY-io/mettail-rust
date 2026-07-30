@@ -418,7 +418,7 @@ fn lowering_is_depth_independent() {
 /// | subject | traversal | owner | debug | release |
 /// |---|---|---|---|---|
 /// | `par_drop` | `drop_in_place::<Par>` — `prost`'s DERIVED recursive `Drop` | `models` (f1r3node) | 368 | 95 |
-/// | `ast_drop` | the `language!` iterative `Drop`, across a CROSS-TYPE hop | `macros/src/gen/` | 271 | 96 |
+/// | ~~`ast_drop`~~ | ~~the `language!` iterative `Drop`~~ — **CONVERTED by #162**, now −1 / 0 | `macros/src/gen/` | ~~271~~ | ~~96~~ |
 /// | `render` | `observation::render_par_text` — decode + format, both recursive | this crate | 3,674 | 911 |
 /// | `lower_formula` | `formula::is_statically_false` ⇄ `is_statically_true` | `languages/src/` | 4,097 | 978 |
 ///
@@ -510,11 +510,19 @@ fn residue_par_drop_has_not_got_worse() {
     assert_slope_below("par_drop", ceiling(600, 200), 512, 4096);
 }
 
-/// See [`residue_par_drop_has_not_got_worse`].
-#[test]
-fn residue_ast_drop_has_not_got_worse() {
-    assert_slope_below("ast_drop", ceiling(450, 200), 512, 4096);
-}
+// ★★ `residue_ast_drop_has_not_got_worse` IS GONE, and that is how a subject is
+// supposed to leave this list.
+//
+// It asserted `ast_drop` stayed under 450 B/level (debug) / 200 (release) while
+// measuring 252/94. #162 converted the driver — `iterative_drop`'s
+// collection-literal arm now pushes one owned `DropTask` per element instead of
+// leaving the payload to `Vec<Proc>`'s recursive `Drop` — and `ast_drop` reads
+// −1/0. The row moved to `flat_generated_drivers_are_depth_independent`, which
+// asserts the new state rather than merely not contradicting it.
+//
+// This file's own rule, stated for the lowering residue and applied here: "A
+// subject leaves this list by being converted, never by having its ceiling
+// raised."
 
 /// See [`residue_par_drop_has_not_got_worse`].
 #[test]
@@ -549,41 +557,112 @@ fn residue_static_falsity_judgement_has_not_got_worse() {
 
 /// **The FLAT generated drivers, gated as flat on BOTH ladders.**
 ///
-/// | subject | ladder | debug | release |
-/// |---|---|---|---:|---:|
-/// | `ast_display` | alternating (`CastList`/`ListLit`) | 0 | 0 |
-/// | `ast_display_add` | pure (`Add(Arc<Proc>, Arc<Proc>)`) | 0 | 1 |
-/// | `ast_clone` | alternating | 1 | 0 |
-/// | `ast_clone_add` | pure | 0 | 0 |
+/// ★★ **#162 landed (2026-07-30) and this list grew from four rows to twenty-two.**
+/// Eight of the nine work-stack drivers were Θ(depth) at the COLLECTION-ELEMENT
+/// boundary — iterative all the way down to a container of sub-terms, then a
+/// whole-value delegation to `PartialEq`/`Ord`/`Hash`/`Debug`/`Drop` that cannot see
+/// the work stack. `macros/src/gen/term_ops/collection_walk.rs` is the one shared
+/// mechanism that replaced it with one task per ELEMENT.
 ///
-/// (Bisected 2026-07-29, 16 → 4,096. A reading of 0 or 1 B/level is one 4 KiB bucket over a
-/// 4,080-step ladder — the instrument's floor. Several of these are NEGATIVE before clamping.)
+/// Bisected on this build, alternating ladder (`CastList`/`ListLit`) 16 → 4,096,
+/// B/level, BEFORE → AFTER in each profile:
 ///
-/// ★ **Why BOTH ladders, when the pure one is flat for everything.** On the pure chain every
-/// driver reads 0, so a pure-ladder pass says nothing about a driver in particular. The
-/// alternating ladder is where the discrimination lives. The pure rung is kept anyway because it
-/// is the control that makes the alternating rung's *0* meaningful — a subject flat on both is
-/// flat; a subject flat only on the pure one has simply not been tested.
+/// | subject | debug before | debug after | release before | release after |
+/// |---|---:|---:|---:|---:|
+/// | `ast_cmp` | 10,590 | **0** | 336 | **0** |
+/// | `ast_debug` | 10,542 | **0** | 462 | **0** |
+/// | `ast_eq` | 6,144 | **−1** | 173 | **0** |
+/// | `ast_match_pattern` | 6,136 | **0** | 175 | **0** |
+/// | `ast_hash` | 1,214 | **−2** | 207 | **1** |
+/// | `ast_semantic_hash` | 1,216 | **−1** | 208 | **−1** |
+/// | `ast_drop` | 254 | **−1** | 94 | **0** |
+/// | `ast_subst` | 6,132 | **1** | 174 | **1** |
+/// | `ast_normalize` | 6,145 | **2** | 173 | **0** |
+/// | `ast_display` | 0 | 0 | 0 | 1 |
+/// | `ast_clone` | 1 | 0 | 0 | 1 |
 ///
-/// ★ **Why these two are the reference implementations.** They reach O(1) stack by two DIFFERENT
-/// mechanisms, and the rewrite needs both facts:
+/// (0, ±1 and ±2 are all the instrument's floor: one 4 KiB bisection bucket across a
+/// 4,080-step ladder is under 2 B/step. Negative readings are flat subjects whose
+/// address-space layout shifted by a bucket.)
+///
+/// ★ **`ast_match_pattern` and `ast_semantic_hash` were converted for FREE**, and the
+/// mechanism is worth stating because it is the leverage this whole rewrite ran on:
+/// `match_pattern.rs`'s escape is `(List::ListLit(v1), List::ListLit(v2)) if v1 == v2`
+/// — a whole-`Vec` `PartialEq` — and `semantic_hash`'s was a structural
+/// `std::hash::Hash`. Both bottom out in drivers that are now flat, so neither arm
+/// needed touching for the SLOPE. (`semantic_hash` did need converting for a
+/// different reason: #154's fix moved it onto a per-element `semantic_hash`
+/// re-entry, which re-introduced the slope at 4,096 B/level until its own
+/// `AbsorbUsize` landed.)
+///
+/// ★ **`ast_subst` and `ast_normalize` are here as a DELIBERATE reclassification.**
+/// They were declared `SlopedByItsOwnAssertion` — measured sloped, but only because
+/// their anti-vacuity check is `assert!(replaced != term)` and `!=` on `Proc` is
+/// `ast_eq`'s driver re-entered on the same deep term. That attribution predicted
+/// that converting `iterative_cmp` would make them read flat, and it did. See
+/// [`Shape::FlatAndItsEqFreeTwinAgrees`] for the control in its new form.
+///
+/// ★ **Why BOTH ladders, when the pure one is flat for everything.** On the pure
+/// `Add(Arc<Proc>, Arc<Proc>)` chain every work-stack driver reads 0, so a
+/// pure-ladder pass says nothing about a driver in particular. The alternating
+/// ladder is where the discrimination lives. The pure rung is kept anyway because it
+/// is the control that makes the alternating rung's 0 meaningful — a subject flat on
+/// both is flat; a subject flat only on the pure one has simply not been tested.
+///
+/// ★ **The two original reference implementations stay, and they are why the rewrite
+/// had a target at all:**
 ///
 ///   * `ast_display` is a real work-stack driver that does the hard case right. Its
 ///     `List::ListLit` arm pushes one `DisplayTask::DisplayProc` per element
-///     (`display.rs:14827`) where every sloped driver hands the whole `Vec` to a trait method.
-///     It is the shape the rewrite should copy.
-///   * `ast_clone` is O(1) by REPRESENTATION, not by a driver at all: `iterative_clone.rs` was
-///     DELETED (`651499e2`) once the ARC refactor (`9c55d81d`) made recursive children
-///     `Arc<Cat>`, so the derived `Clone` is a refcount bump per child that never descends. It is
-///     the reminder that some of these traversals do not need converting so much as deleting.
+///     (`display.rs:14827`) where every sloped driver handed the whole `Vec` to a
+///     trait method. It is the shape the rewrite copied, and
+///     `collection_walk::for_each_subterm` is that shape generalised.
+///   * `ast_clone` is O(1) by REPRESENTATION, not by a driver at all:
+///     `iterative_clone.rs` was DELETED (`651499e2`) once the ARC refactor
+///     (`9c55d81d`) made recursive children `Arc<Cat>`, so the derived `Clone` is a
+///     refcount bump per child that never descends. It is the reminder that some of
+///     these traversals do not need converting so much as deleting.
 ///
-/// ⚠ Both were WATCHED RED before being trusted, by perturbing the subject rather than the
-/// assertion — see the campaign record. A gate nobody has seen fail is a gate nobody has tested.
+/// ⚠ A reading of 0 here is NOT evidence on its own that the conversion is correct —
+/// only that it is heap-bounded. The conversion also has to leave `Hash`, `Ord`,
+/// `Debug` and `semantic_hash` computing the same VALUES, and those are consensus-
+/// visible (`Proc` is a hash key inside the AST; `semantic_fingerprint` feeds the
+/// realize dedup). That half is gated separately, by
+/// `languages/tests/generated_traversal_boundary_laws.rs` and
+/// `languages/tests/semantic_fingerprint_binder_in_collection_literal.rs`, which
+/// compare framed write-STREAMS rather than digests or lengths — a value-only change
+/// in a fixed-width encoding is invisible to any size- or count-based check.
 #[test]
 fn flat_generated_drivers_are_depth_independent() {
-    // 1 MiB, the same bound the converted lowering is held to. Measured floors for these four:
-    // 20–72 KiB debug, 20–28 KiB release.
-    for name in ["ast_display", "ast_display_add", "ast_clone", "ast_clone_add"] {
+    // 1 MiB, the same bound the converted lowering is held to. Measured floors after
+    // #162: 24–229 KiB debug, 24–29 KiB release.
+    for name in [
+        // ── converted by #162 ──
+        "ast_cmp",
+        "ast_cmp_add",
+        "ast_eq",
+        "ast_eq_add",
+        "ast_hash",
+        "ast_hash_add",
+        "ast_semantic_hash",
+        "ast_semantic_hash_add",
+        "ast_debug",
+        "ast_debug_add",
+        "ast_drop",
+        "ast_drop_add",
+        "ast_match_pattern",
+        "ast_match_pattern_add",
+        // ── flat once `ast_eq` stopped dominating their anti-vacuity assertions ──
+        "ast_subst",
+        "ast_subst_add",
+        "ast_normalize",
+        "ast_normalize_add",
+        // ── the reference implementations ──
+        "ast_display",
+        "ast_display_add",
+        "ast_clone",
+        "ast_clone_add",
+    ] {
         assert_depth_independent(name, 1024 * 1024);
     }
 }
@@ -598,11 +677,17 @@ const CLASSIFY_STACK: usize = 1024 * 1024;
 /// ★ Chosen by measurement, not by taste. The classification is a single fixed-stack question —
 /// *does this subject survive 1 MiB at depth D?* — which is ~1,000× cheaper than bisecting (two
 /// `exec`s per subject instead of ~40), and it is sound only if D clears the SHALLOWEST slope in
-/// the set by a wide margin. That is `ast_drop` in release at 94 B/level, whose 1 MiB budget runs
-/// out at ≈ 10,900 levels; 32,768 is 3× past it. Calibrated at D ∈ {8,192, 16,384, 32,768,
-/// 65,536} in both profiles: every flat subject survives all four, every sloped one fails from
-/// 16,384 (release) or 8,192 (debug) onward. There is no D in that range where the partition is
-/// ambiguous, and 32,768 sits in the middle of the unambiguous region.
+/// the set by a wide margin.
+///
+/// ⚠ RE-DERIVED after #162 (2026-07-30), because the subject that set this bound was CONVERTED.
+/// It used to be `ast_drop` in release at 94 B/level, whose 1 MiB budget runs out at ≈ 10,900
+/// levels. `ast_drop` is now flat, and the shallowest surviving slope in the set is
+/// `ast_term_depth` at 207 B/level (release) — 1 MiB / 207 ≈ 5,065 levels, so 32,768 is 6× past
+/// it, a WIDER margin than before rather than a narrower one. The constant is unchanged and the
+/// original calibration (D ∈ {8,192, 16,384, 32,768, 65,536} in both profiles: every flat subject
+/// survives all four, every sloped one fails from 16,384 release / 8,192 debug onward) therefore
+/// still holds a fortiori. Recorded because a bound whose justification has been converted away
+/// is a bound nobody can check.
 const CLASSIFY_DEPTH: usize = 32_768;
 
 /// ⚠ The NON-VACUITY floor. A subject that cannot run at all fails the deep probe and would be
@@ -614,22 +699,39 @@ const CLASSIFY_FLOOR_DEPTH: usize = 16;
 /// How a driver subject's depth behaviour is expected to read.
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum Shape {
-    /// Minimum stack does not grow with depth. The rewrite's target state for all of them.
+    /// Minimum stack does not grow with depth. #162's target state, reached by
+    /// nine of the ten.
     Flat,
     /// Θ(depth). ⚠ Recorded as a FACT, never as a budget — no ceiling accompanies it.
     Sloped,
-    /// ★ Measured sloped, but the slope is **not this driver's**.
+    /// ★★ **THE POST-CONVERSION FORM OF A CONTROL WHOSE PREDICTION CAME TRUE.**
     ///
-    /// The subject's own anti-vacuity assertion is `assert!(replaced != term)` /
-    /// `assert!(normalized == term)`, and `!=`/`==` on `Proc` is `PartialEq` — `ast_eq`'s driver,
-    /// re-entered on the same deep term. The named twin is the identical body with an EQ-FREE
-    /// check, and it reads flat; the pair is what makes the confound a measurement rather than an
-    /// argument.
+    /// This variant used to be `SlopedByItsOwnAssertion { eq_free_twin }`, and it
+    /// asserted that `ast_subst`/`ast_normalize` STILL SLOPED while their eq-free
+    /// twins read flat. The point was an ATTRIBUTION, not a measurement: both
+    /// subjects bisected to ~6,140 B/level, agreeing with `ast_eq` and
+    /// `ast_match_pattern` to three significant figures, because all four were the
+    /// SAME measurement — `ast_eq`'s. Two of them reached it through their own
+    /// anti-vacuity assertion (`assert!(replaced != term)`, and `!=` on `Proc` is
+    /// `ast_eq`'s driver re-entered on the same deep term), and excising the
+    /// assertion made both read 0.
     ///
-    /// ⚠ Kept as a LIVE CONTROL rather than deleted. If `iterative_cmp` is ever converted, these
-    /// rows go flat and this gate goes RED — which is correct: the confound will have dissolved
-    /// and the row belongs in `Flat`. A deleted control would have made that silent.
-    SlopedByItsOwnAssertion { eq_free_twin: &'static str },
+    /// Its doc carried an explicit prediction: *"If `iterative_cmp` is ever
+    /// converted, these rows go flat and this gate goes RED — which is correct: the
+    /// confound will have dissolved and the row belongs in `Flat`."*
+    ///
+    /// #162 converted `iterative_cmp`. Measured on this build: `ast_subst` 6,132 → 1
+    /// (debug) and 174 → 1 (release); `ast_normalize` 6,145 → 2 and 173 → 0. **The
+    /// prediction was borne out to the letter**, which is the strongest thing that
+    /// can be said for an attribution — it was falsifiable and it survived.
+    ///
+    /// ⚠ Updated rather than DELETED, deliberately. The pairing is still the only
+    /// thing that distinguishes "this driver is flat" from "this driver's assertion
+    /// stopped dominating its ladder", so it stays live in its new form: the subject
+    /// AND its eq-free twin must both read flat, AND they must AGREE. Before the
+    /// conversion their DISAGREEMENT was the finding; now their agreement is. A
+    /// deleted control would have made the next re-entry silent.
+    FlatAndItsEqFreeTwinAgrees { eq_free_twin: &'static str },
 }
 
 /// **The declared partition**, and the gate's only hand-written content.
@@ -639,52 +741,45 @@ enum Shape {
 /// derived and only the expectation is declared, which is the whole point: a tenth driver cannot
 /// arrive unnoticed.
 ///
-/// Bisected 2026-07-29 on this build, alternating ladder, 16 → 4,096, debug / release B/level:
+/// ★★ **#162 (2026-07-30) inverted this table.** It used to declare eight sloped subjects and six
+/// flat; it now declares ONE sloped subject and twenty-seven flat. Bisected on this build,
+/// alternating ladder, 16 → 4,096, debug / release B/level — the full before/after is in
+/// [`flat_generated_drivers_are_depth_independent`]'s table.
 ///
-/// | subject | debug | release | shape |
-/// |---|---:|---:|---|
-/// | `ast_cmp` | 10,591 | 336 | Sloped |
-/// | `ast_debug` | 10,543 | 462 | Sloped |
-/// | `ast_eq` | 6,142 | 173 | Sloped |
-/// | `ast_match_pattern` | 6,138 | 175 | Sloped |
-/// | `ast_semantic_hash` | 1,215 | 208 | Sloped |
-/// | `ast_hash` | 1,216 | 207 | Sloped |
-/// | `ast_drop` | 252 | 94 | Sloped |
-/// | `ast_subst` | 6,132 | 174 | **SlopedByItsOwnAssertion** |
-/// | `ast_normalize` | 6,145 | 173 | **SlopedByItsOwnAssertion** |
-/// | `ast_subst_noassert` | **0** | **0** | Flat |
-/// | `ast_normalize_noassert` | **0** | **0** | Flat |
-/// | `ast_display` | 0 | 0 | Flat |
-/// | `ast_clone` | 1 | 0 | Flat |
+/// ⚠ **`ast_term_depth` is the LAST sloped driver, and it is a different KIND of defect.** The
+/// other nine had a work stack and escaped it at the collection-element boundary.
+/// `macros/src/gen/term_ops/depth.rs` emits `term_depth` as bare host recursion — `1 +
+/// f0.term_depth()`, `1 + coll.iter().map(|x| x.term_depth()).max().unwrap_or(0)` — with **no work
+/// stack to escape from**. The tell is its `*_add` twin: `ast_term_depth_add` slopes at 2,367
+/// B/level on the pure `Add` chain where every one of the other nine reads 0. It is a CONVERSION,
+/// not a boundary fix, and it is the only row below that is not `Flat`.
 ///
-/// ★ **Read the top four rows together with the bottom four.** `ast_eq`, `ast_match_pattern`,
-/// `ast_subst` and `ast_normalize` bisect to 6,142 / 6,138 / 6,132 / 6,145 — four "independent"
-/// traversals agreeing to three significant figures, which does not happen by coincidence. In
-/// release the deep ends are 720 / 724 / 720 / 720 KiB, identical to the KiB. They agree because
-/// they are the SAME measurement: `ast_eq`'s. Two of the four reach it through their own
-/// assertion (excised above, and both then read 0); `ast_match_pattern` reaches it from inside
-/// its own body — `match_pattern.rs:8392` is `(List::ListLit(v1), List::ListLit(v2)) if v1 == v2`,
-/// a whole-`Vec` `PartialEq` — so it stays `Sloped`, and converting `iterative_cmp` would fix it
-/// for free.
-///
-/// ⚠ **`ast_term_depth` is a TENTH driver, and the only one on the PURE ladder that slopes.**
-/// `macros/src/gen/term_ops/depth.rs` emits `term_depth` as bare host recursion —
-/// `1 + f0.term_depth()`, `1 + coll.iter().map(|x| x.term_depth()).max()` — with no work stack to
-/// escape from, so its `*_add` twin slopes where all nine others are flat. It has NO CALLER
-/// anywhere in the workspace, which is why it is a latent trap rather than a live exposure, and
-/// why it is measured here rather than treated as urgent.
+/// ⚠⚠ **A CORRECTION TO THE RECORD ON `term_depth`.** The note that stood here said it "has NO
+/// CALLER anywhere in the workspace, which is why it is a latent trap rather than a live
+/// exposure." **MEASURED FALSE (2026-07-30).** `target/generated/rholang/dovetail_report.rs` calls
+/// it at **40 sites** — `__max_depth = __max_depth.max(value.term_depth())`, once per
+/// `RholangTermInner` arm inside the Dovetail e-graph build — emitted by
+/// `macros/src/gen/runtime/dovetail_report/typed_report.rs:1845/1933/2659/2677`. The earlier
+/// reading missed them because a `grep` of the SOURCE tree finds only the emitter's `quote!`
+/// fragments; the call sites exist only after expansion. So `term_depth` is LIVE, deleting it is
+/// off the table, and it must be converted.
 const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
     // ── the alternating ladder: where the discrimination lives ──
-    ("ast_cmp", Shape::Sloped),
-    ("ast_debug", Shape::Sloped),
-    ("ast_eq", Shape::Sloped),
-    ("ast_match_pattern", Shape::Sloped),
-    ("ast_hash", Shape::Sloped),
-    ("ast_semantic_hash", Shape::Sloped),
-    ("ast_drop", Shape::Sloped),
+    ("ast_cmp", Shape::Flat),
+    ("ast_debug", Shape::Flat),
+    ("ast_eq", Shape::Flat),
+    ("ast_match_pattern", Shape::Flat),
+    ("ast_hash", Shape::Flat),
+    ("ast_semantic_hash", Shape::Flat),
+    ("ast_drop", Shape::Flat),
+    // ★ THE LAST SLOPED DRIVER — no work stack at all. See the note above.
     ("ast_term_depth", Shape::Sloped),
-    ("ast_subst", Shape::SlopedByItsOwnAssertion { eq_free_twin: "ast_subst_noassert" }),
-    ("ast_normalize", Shape::SlopedByItsOwnAssertion { eq_free_twin: "ast_normalize_noassert" }),
+    // ★ The retired confound, kept as a live control in its post-conversion form.
+    ("ast_subst", Shape::FlatAndItsEqFreeTwinAgrees { eq_free_twin: "ast_subst_noassert" }),
+    (
+        "ast_normalize",
+        Shape::FlatAndItsEqFreeTwinAgrees { eq_free_twin: "ast_normalize_noassert" },
+    ),
     ("ast_subst_noassert", Shape::Flat),
     ("ast_normalize_noassert", Shape::Flat),
     ("ast_display", Shape::Flat),
@@ -753,9 +848,9 @@ fn probe_driver_subjects() -> Vec<String> {
 
 /// The measured shape of one subject: `Flat` or `Sloped`, by the fixed-stack discriminator.
 ///
-/// ⚠ `SlopedByItsOwnAssertion` is never returned — it is not something a measurement can see. It
-/// is an ATTRIBUTION, and the gate checks it by requiring the declared eq-free twin to measure
-/// flat while the subject itself measures sloped.
+/// ⚠ `FlatAndItsEqFreeTwinAgrees` is never returned — it is not something a single measurement can
+/// see. It is an ATTRIBUTION over a PAIR, and the gate checks it by requiring the subject and its
+/// declared eq-free twin to measure flat AND to agree.
 fn measured_shape(name: &str) -> Shape {
     assert!(
         runs_within(CLASSIFY_STACK, CLASSIFY_FLOOR_DEPTH, name),
@@ -850,24 +945,39 @@ fn the_sloped_driver_set_is_exactly_the_declared_one() {
                 CLASSIFY_STACK / 1024,
                 CLASSIFY_DEPTH
             ),
-            Shape::SlopedByItsOwnAssertion { eq_free_twin } => {
+            Shape::FlatAndItsEqFreeTwinAgrees { eq_free_twin } => {
+                let twin = measured_shape(eq_free_twin);
                 assert_eq!(
                     measured,
-                    Shape::Sloped,
-                    "`{declared}` is declared sloped-by-its-own-assertion but now reads FLAT. \
-                     Either its `PartialEq` anti-vacuity check was replaced (in which case this \
-                     row and `{eq_free_twin}` are now the same subject and one should go), or \
-                     `iterative_cmp` was converted — in which case the confound has dissolved and \
-                     the row belongs in `Shape::Flat`."
+                    Shape::Flat,
+                    "`{declared}` is declared FLAT-with-an-eq-free-twin and now needs more than \
+                     {} KiB at depth {}.\n\
+                     Before #162 this row was `SlopedByItsOwnAssertion`: it measured sloped, but \
+                     only because its anti-vacuity assertion (`assert!(replaced != term)`) \
+                     re-entered `ast_eq`'s driver on the same deep term. Converting \
+                     `iterative_cmp` made it flat, exactly as that attribution predicted. If it \
+                     is sloped again, either `iterative_cmp` regressed — check `{eq_free_twin}`, \
+                     which shares this subject's body but NOT its assertion — or the driver \
+                     itself acquired a per-level frame.",
+                    CLASSIFY_STACK / 1024,
+                    CLASSIFY_DEPTH
                 );
                 assert_eq!(
-                    measured_shape(eq_free_twin),
+                    twin,
                     Shape::Flat,
-                    "THE ATTRIBUTION NO LONGER HOLDS: `{declared}` is declared sloped only \
-                     because its anti-vacuity assertion re-enters `ast_eq`, and its eq-free twin \
-                     `{eq_free_twin}` is supposed to demonstrate that by reading FLAT. The twin \
-                     is now sloped too, so the slope is NOT the assertion's after all and the \
-                     driver itself must be re-examined — start by finding what recurses in it."
+                    "the eq-free twin `{eq_free_twin}` is sloped while `{declared}` is not. The \
+                     twin is the SAME body with the `PartialEq` anti-vacuity check removed, so it \
+                     cannot be the slopier of the two. Something is wrong with the twin subject \
+                     itself."
+                );
+                assert_eq!(
+                    measured, twin,
+                    "`{declared}` and its eq-free twin `{eq_free_twin}` DISAGREE about their \
+                     shape. Their agreement is what this control now asserts: before #162 the \
+                     pair's disagreement proved the slope belonged to the assertion rather than \
+                     to the driver, and after #162 their agreement proves the assertion no \
+                     longer dominates the ladder. A disagreement in either direction means one \
+                     of the two subjects is measuring something the other is not."
                 );
             },
         }
