@@ -652,6 +652,8 @@ fn flat_generated_drivers_are_depth_independent() {
         "ast_drop_add",
         "ast_match_pattern",
         "ast_match_pattern_add",
+        "ast_term_depth",
+        "ast_term_depth_add",
         // ── flat once `ast_eq` stopped dominating their anti-vacuity assertions ──
         "ast_subst",
         "ast_subst_add",
@@ -679,15 +681,26 @@ const CLASSIFY_STACK: usize = 1024 * 1024;
 /// `exec`s per subject instead of ~40), and it is sound only if D clears the SHALLOWEST slope in
 /// the set by a wide margin.
 ///
-/// ⚠ RE-DERIVED after #162 (2026-07-30), because the subject that set this bound was CONVERTED.
-/// It used to be `ast_drop` in release at 94 B/level, whose 1 MiB budget runs out at ≈ 10,900
-/// levels. `ast_drop` is now flat, and the shallowest surviving slope in the set is
-/// `ast_term_depth` at 207 B/level (release) — 1 MiB / 207 ≈ 5,065 levels, so 32,768 is 6× past
-/// it, a WIDER margin than before rather than a narrower one. The constant is unchanged and the
-/// original calibration (D ∈ {8,192, 16,384, 32,768, 65,536} in both profiles: every flat subject
-/// survives all four, every sloped one fails from 16,384 release / 8,192 debug onward) therefore
-/// still holds a fortiori. Recorded because a bound whose justification has been converted away
-/// is a bound nobody can check.
+/// ⚠⚠ RE-DERIVED TWICE ON 2026-07-30, because #162 CONVERTED the subject this bound was
+/// calibrated against — and then converted its replacement too.
+///
+/// The original anchor was `ast_drop` in release at 94 B/level, whose 1 MiB budget runs out at
+/// ≈ 10,900 levels, putting D = 32,768 3× past it. `ast_drop` was converted; the shallowest
+/// surviving slope became `ast_term_depth` at 207 (≈ 5,065 levels, 6× margin). Then
+/// `ast_term_depth` was converted too, and **every `ast_*` subject in the family became flat.**
+///
+/// ★ That is a VACUITY HAZARD, not a victory: with no sloped subject anywhere,
+/// [`measured_shape`] would return `Flat` for everything even if this constant were 4, and the
+/// whole partition would pass while asserting nothing. The anchor is therefore no longer a
+/// generated driver at all — it is `ast_recursion_control`, a deliberately host-recursive walk of
+/// the same ladder, owned by `stack_depth_probe.rs` and never to be converted. See its row in
+/// [`EXPECTED_DRIVER_SHAPE`].
+///
+/// The constant is unchanged. The original calibration (D ∈ {8,192, 16,384, 32,768, 65,536} in
+/// both profiles: every flat subject survives all four, every sloped one fails from 16,384
+/// release / 8,192 debug onward) holds a fortiori for a control that recurses at least as steeply
+/// as the drivers it replaced. Recorded in full because a bound whose justification has been
+/// converted away is a bound nobody can check.
 const CLASSIFY_DEPTH: usize = 32_768;
 
 /// ⚠ The NON-VACUITY floor. A subject that cannot run at all fails the deep probe and would be
@@ -773,7 +786,7 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
     ("ast_semantic_hash", Shape::Flat),
     ("ast_drop", Shape::Flat),
     // ★ THE LAST SLOPED DRIVER — no work stack at all. See the note above.
-    ("ast_term_depth", Shape::Sloped),
+    ("ast_term_depth", Shape::Flat),
     // ★ The retired confound, kept as a live control in its post-conversion form.
     ("ast_subst", Shape::FlatAndItsEqFreeTwinAgrees { eq_free_twin: "ast_subst_noassert" }),
     (
@@ -798,15 +811,27 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
     ("ast_normalize_noassert_add", Shape::Flat),
     ("ast_display_add", Shape::Flat),
     ("ast_clone_add", Shape::Flat),
-    // ⚠ The exception that proves the rule: no work stack, so no benefit from having no collection.
-    ("ast_term_depth_add", Shape::Sloped),
+    ("ast_term_depth_add", Shape::Flat),
+    // ★★ THE CLASSIFIER'S OWN NON-VACUITY ANCHOR, and the only sloped row left.
+    //
+    // #162 converted all ten drivers, so with this row absent EVERY `ast_*` subject would be
+    // flat — and `measured_shape` would then return `Flat` for everything even if
+    // `CLASSIFY_DEPTH` were 4, making the whole partition pass vacuously. The constant was
+    // calibrated against `ast_drop` at 94 B/level and then `ast_term_depth` at 207; both are
+    // now converted, so the calibration lost its anchor.
+    //
+    // `ast_recursion_control` is a deliberately host-recursive walk of the same
+    // `CastList`/`ListLit` ladder, owned by `stack_depth_probe.rs` and never to be converted.
+    // It measures nothing about the generated drivers: it proves the CLASSIFIER can still tell
+    // the two shapes apart. The depth-gate equivalent of `MIN_DRIVER_SUBJECTS`.
+    ("ast_recursion_control", Shape::Sloped),
 ];
 
 /// ⚠ The non-vacuity floor on the DERIVED universe. If `list_subjects` ever returned nothing —
 /// a renamed mode, a probe that failed to run, a redirect that swallowed stdout — every
 /// assertion below would iterate an empty set and PASS. This is the count at the time of writing;
 /// it may only grow, and it must never be silently reduced to match a shrunken enumeration.
-const MIN_DRIVER_SUBJECTS: usize = 28;
+const MIN_DRIVER_SUBJECTS: usize = 29;
 
 /// The `ast_*` subjects the PROBE dispatches, read from the probe itself.
 ///

@@ -358,6 +358,105 @@ fn debug_rendering_of_a_collection_is_unchanged_by_the_element_walk() {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. TERM_DEPTH — the values are unchanged by the worklist conversion
+// ---------------------------------------------------------------------------
+
+/// ★★ **The closed-form oracle for `term_depth`.**
+///
+/// #162 replaced `term_depth`'s bare host recursion (`1 + max(children)`) with an
+/// explicit `(node, dist)` worklist keeping ONE running maximum — no result stack and
+/// no combine task, because the recurrence collapses to
+///
+/// ```math
+/// f(n) \;=\; \max_{m \,\in\, \mathrm{desc}(n)} \big(\mathrm{dist}(n, m) + \mathrm{base}(m)\big)
+/// ```
+///
+/// with `base = 0` for a leaf kind and `1` otherwise (the proof is in
+/// `macros/src/gen/term_ops/depth.rs`'s module header). That is a genuine rewrite of
+/// the arithmetic, so the VALUES need an oracle that does not restate it.
+///
+/// The oracle is a closed form. `[[…[1]…]]` at nesting `n` is `n` alternating
+/// `Proc::CastList(Arc<List>)` / `List::ListLit(Vec<Proc>)` pairs above a
+/// `Proc::CastInt(Arc<Int>)` above an `Int::NumLit(i32)`. Unrolling the DECLARED
+/// semantics: `NumLit` is a scalar literal so 0; `CastInt` is a constructor so 1;
+/// each `ListLit` is a collection category so `1 +` its element; each `CastList` is a
+/// constructor so `1 +` its field. Hence
+///
+/// ```math
+/// f_n \;=\; 2n + 1
+/// ```
+///
+/// ⚠ The probe's own anti-vacuity assertion is only `measured >= depth`, chosen so it
+/// could not go red for a change in how a level is COUNTED. That is the right choice
+/// there and it means the probe does NOT pin the values — this test does.
+///
+/// **What breaks it:** pushing a collection FIELD's elements at `dist + 2` instead of
+/// `dist + 1` (a collection field's container contributes no level of its own, while
+/// a collection CATEGORY's does — the one confusion available in this conversion),
+/// giving a leaf kind `base = 1`, or dropping a node's own contribution so that a
+/// childless internal node reports its parent's depth.
+#[test]
+fn term_depth_matches_its_closed_form_on_the_alternating_ladder() {
+    for n in [0usize, 1, 2, 3, 5, 8, 13] {
+        let term = parse(&nested_list_source(n, 1));
+        let expected = (2 * n + 1) as u32;
+        assert_eq!(
+            term.term_depth(),
+            expected,
+            "`{}` must have term_depth {expected} = 2·{n} + 1: {n} `CastList`/`ListLit` pairs \
+             (2 levels each) above `CastInt` (1 level) above the scalar `NumLit` (0). Got {}. \
+             The #162 conversion rewrote this arithmetic into a running maximum over \
+             `dist + base`, so a wrong answer means the worklist is assigning the wrong \
+             DISTANCE to some child position — most likely a collection FIELD's elements, \
+             which sit at `dist + 1` because the container adds no level, unlike a \
+             collection CATEGORY's.",
+            nested_list_source(n, 1),
+            term.term_depth()
+        );
+    }
+}
+
+/// The same oracle on shapes the alternating ladder does not reach: a pure
+/// constructor chain, a binder, an unordered container, and a map (whose KEY and
+/// VALUE are both sub-terms).
+#[test]
+fn term_depth_is_unchanged_on_every_converted_container_shape() {
+    // `1` is `CastInt(NumLit)` = 1. `[1]` adds a `ListLit` and a `CastList` = 3.
+    let cases: &[(&str, u32)] = &[
+        ("Nil", 0),
+        ("1", 1),
+        ("[]", 2),
+        ("[1]", 3),
+        ("[[1]]", 5),
+        // `1 | 2` is `PPar(HashBag<Proc>)`: a collection CATEGORY-direct FIELD on a
+        // node, so `1 + max(elements)` = 1 + 1 = 2.
+        ("1 | 2", 2),
+        // `Set(1)` = CastSet(SetLit(HashSetLit{CastInt(NumLit)})) = 1 + 1 + 1 = 3.
+        ("Set(1)", 3),
+        // `{1: 2}` = CastMap(MapLit(HashMapLit{k -> v})) = 1 + 1 + 1 = 3; both key and
+        // value are depth-1 sub-terms, so the max is 1 either way.
+        ("{1: 2}", 3),
+        // A deeper VALUE than KEY, so the walk must reach values and not only keys.
+        ("{1: [[2]]}", 7),
+        // A deeper KEY than VALUE, the mirror case.
+        ("{[[2]]: 1}", 7),
+        // `{|1 : [[2]]|}` — a pathmap `Set` value.
+        ("{|1 : [[2]]|}", 7),
+    ];
+    for (source, expected) in cases {
+        let term = parse(source);
+        assert_eq!(
+            term.term_depth(),
+            *expected,
+            "`{source}` must have term_depth {expected}; got {}. Each row is derived from \
+             the DECLARED semantics in `depth.rs`'s module header, independently of the \
+             worklist that now computes it.",
+            term.term_depth()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 4. NON-VACUITY — the corpus actually exercises the converted shapes
 // ---------------------------------------------------------------------------
 

@@ -561,6 +561,22 @@ fn ast_match_pattern_body(depth: usize) {
 /// convergence check it was written for does not call it either. So it is a latent trap for the
 /// next caller rather than a live exposure, and it is measured here so that "latent" is a number.
 ///
+/// ⚠⚠ **BOTH HALVES OF THAT PARAGRAPH ARE NOW FALSE, and it is kept as a correction.**
+///
+/// * **It HAS callers.** `target/generated/rholang/dovetail_report.rs` invokes it at 40 sites —
+///   `__max_depth = __max_depth.max(value.term_depth())`, one per `RholangTermInner` arm inside
+///   the Dovetail e-graph build — emitted by
+///   `macros/src/gen/runtime/dovetail_report/typed_report.rs:1845/1933/2659/2677`. The "nothing
+///   invokes it" reading came from grepping the SOURCE tree, where the only occurrences are the
+///   emitter's own `quote!` fragments; the call sites exist only after expansion. A generated
+///   method's callers can be generated too, and a source grep cannot see them.
+/// * **It is no longer sloped.** #162 converted it to an explicit `(node, dist)` worklist with one
+///   running maximum. Measured on this build: 3,408 -> -1 B/level (debug), 207 -> 0 (release), and
+///   the `*_add` twin 2,367 -> 1.
+///
+/// The subject stays, because a converted driver needs watching at least as much as an
+/// unconverted one.
+///
 /// ⚠ ANTI-VACUITY: the measured depth must GROW with the ladder, or the walk stopped early. The
 /// bound is `>= depth` rather than the exact `2·depth + 1` the arm arithmetic predicts, so the
 /// assertion cannot go red for a change in how a level is COUNTED while still failing for any
@@ -572,6 +588,57 @@ fn ast_term_depth_body(depth: usize) {
         measured as usize >= depth,
         "stack_depth_probe: ast_term_depth measured {measured} on a depth-{depth} spine — it \
          stopped early"
+    );
+    std::mem::forget(a);
+}
+
+/// ★★ **THE POSITIVE CONTROL FOR THE CLASSIFIER, and it exists because #162 emptied the sloped
+/// set.**
+///
+/// `the_sloped_driver_set_is_exactly_the_declared_one` decides Flat vs Sloped with ONE fixed-stack
+/// question: *does this subject survive 1 MiB at depth `CLASSIFY_DEPTH`?* That is sound only if
+/// `CLASSIFY_DEPTH` is deep enough to exhaust 1 MiB for a subject that really does slope — and the
+/// constant was calibrated against `ast_drop` at 94 B/level, then against `ast_term_depth` at 207.
+/// #162 converted both. With every `ast_*` subject flat, **the classifier would return `Flat` for
+/// everything even if `CLASSIFY_DEPTH` were 4**, and the whole gate would pass vacuously.
+///
+/// This subject is the anchor that keeps it honest: a DELIBERATELY host-recursive walk of the same
+/// `Proc::CastList` / `List::ListLit` ladder every other subject uses, owned by this file and
+/// never converted. It is declared `Sloped`, so the gate fails if the classifier stops being able
+/// to see a slope at all.
+///
+/// ⚠ It measures nothing about the generated drivers and is not a defect. It is an instrument
+/// check — the depth-gate equivalent of the `MIN_DRIVER_SUBJECTS` floor on the enumeration.
+fn recursion_control_depth(term: &Proc) -> usize {
+    match term {
+        Proc::CastList(inner) => 1 + recursion_control_depth_list(inner),
+        _ => 0,
+    }
+}
+
+/// The `List` half of [`recursion_control_depth`]'s deliberate mutual recursion.
+fn recursion_control_depth_list(term: &List) -> usize {
+    match term {
+        List::ListLit(elements) => {
+            let mut deepest = 0usize;
+            for element in elements {
+                deepest = deepest.max(recursion_control_depth(element));
+            }
+            1 + deepest
+        },
+        _ => 0,
+    }
+}
+
+/// [`recursion_control_depth`] on the alternating ladder. Declared `Sloped`, and the gate's only
+/// remaining sloped subject.
+fn ast_recursion_control_body(depth: usize) {
+    let a = nested_list(depth);
+    let measured = recursion_control_depth(&a);
+    assert!(
+        measured >= depth,
+        "stack_depth_probe: ast_recursion_control measured {measured} on a depth-{depth} spine — \
+         the control must actually WALK the ladder or it proves nothing about the classifier"
     );
     std::mem::forget(a);
 }
@@ -1155,6 +1222,8 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
     // -------- ★ the TENTH driver: host-recursive, no worklist at all --------
     ("ast_term_depth", ast_term_depth_body),
     ("ast_term_depth_add", ast_term_depth_add_body),
+    // The classifier's own non-vacuity anchor — see `ast_recursion_control_body`.
+    ("ast_recursion_control", ast_recursion_control_body),
     // -------- ★ the CONFOUND CONTROL: the same drivers, anti-vacuity WITHOUT `PartialEq` -----
     ("ast_subst_noassert", ast_subst_noassert_body),
     ("ast_normalize_noassert", ast_normalize_noassert_body),
