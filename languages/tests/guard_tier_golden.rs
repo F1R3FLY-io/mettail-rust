@@ -148,6 +148,15 @@ fn assert_tier_tuple(
 /// = 0`. This is diagnostics only — it pins no new constant and so cannot itself go stale —
 /// and it exists because the 2026-07-30 `PParInternal` investigation had to reconstruct
 /// exactly this inference, and then the raw decomposition, by hand from a totals-only message.
+/// `"1 field"` / `"2 fields"`. A diagnostic that says "exactly 1 field(s)" invites the reader
+/// to wonder whether the count is really known, which is the opposite of this message's job.
+fn plural(n: isize, one: &'static str, many: &'static str) -> &'static str {
+    match n {
+        1 => one,
+        _ => many,
+    }
+}
+
 fn drift_shape(
     meta: &dyn LanguageMetadata,
     expected: (usize, usize, usize),
@@ -164,10 +173,18 @@ fn drift_shape(
         d(actual.2, expected.2),
     );
 
+    // `{:+}` renders zero as `+0`, which reads as a change when it is the absence of one —
+    // and "ΔT2 = 0" is the single most load-bearing token in this message, because it is what
+    // rules out a tier shift. So sign only the non-zero deltas.
+    let signed = |v: isize| if v == 0 { "0".to_string() } else { format!("{v:+}") };
+
     let mut s = String::with_capacity(1024);
     s.push_str("    ── implied shape of the change (derived from guards.rs's tally rules) ──\n");
     s.push_str(&format!(
-        "    Δtotal = {d_total:+}, ΔT1 = {d_t1:+}, ΔT2 = {d_t2:+}\n"
+        "    Δtotal = {}, ΔT1 = {}, ΔT2 = {}\n",
+        signed(d_total),
+        signed(d_t1),
+        signed(d_t2)
     ));
 
     match (d_t1, d_t2) {
@@ -177,10 +194,11 @@ fn drift_shape(
         ),
         (dt1, 0) => s.push_str(&format!(
             "    ΔT2 = 0 ⇒ no rewrite condition, congruence premise, or binder field changed.\n    \
-             ΔT1 = {dt1:+} ⇒ exactly {n} non-binder, non-`Guard` constructor field(s) {verb} \
+             ΔT1 = {dt1:+} ⇒ exactly {n} non-binder, non-`Guard` constructor {field} {verb} \
              `metadata.terms()`.\n    Look for a rule ADDED TO or REMOVED FROM the declaring \
              `language!` spec — not for a field changing type.\n",
             n = dt1.abs(),
+            field = plural(dt1.abs(), "field", "fields"),
             verb = if dt1 < 0 { "DISAPPEARED from" } else { "APPEARED in" },
         )),
         (0, dt2) => s.push_str(&format!(
@@ -190,10 +208,11 @@ fn drift_shape(
              congruence moves T2 by 2.\n",
         )),
         (dt1, dt2) if dt1 == -dt2 && d_total == 0 => s.push_str(&format!(
-            "    Δtotal = 0 with ΔT1 = {dt1:+}, ΔT2 = {dt2:+} ⇒ {n} field(s) CHANGED TIER \
+            "    Δtotal = 0 with ΔT1 = {dt1:+}, ΔT2 = {dt2:+} ⇒ {n} {field} CHANGED TIER \
              rather than appearing or disappearing — the signature of `is_binder` flipping, \
              or of a field's type becoming (or ceasing to be) `Guard`/`Option<Guard>`.\n",
             n = dt1.abs(),
+            field = plural(dt1.abs(), "field", "fields"),
         )),
         (dt1, dt2) => s.push_str(&format!(
             "    ΔT1 = {dt1:+} AND ΔT2 = {dt2:+} ⇒ BOTH a structural and a behavioral source \
@@ -478,20 +497,29 @@ fn drift_shape_localises_each_kind_of_change() {
         drift_shape(meta, expected, actual, 2, 1, 3, 3)
     };
 
-    // (i) A vanished structural field: Δtotal = −1, ΔT1 = −1, ΔT2 = 0.
+    // (i) A vanished structural field: Δtotal = −1, ΔT1 = −1, ΔT2 = 0. This is the exact
+    // 2026-07-30 `PParInternal` signature, so it is asserted verbatim, singular noun and all.
     let structural_only = shape((9, 2, 7), (8, 1, 7));
     assert!(
-        structural_only.contains("ΔT1 = -1")
-            && structural_only.contains("DISAPPEARED from")
+        structural_only.contains("Δtotal = -1, ΔT1 = -1, ΔT2 = 0")
+            && structural_only
+                .contains("exactly 1 non-binder, non-`Guard` constructor field DISAPPEARED from")
             && structural_only.contains("REMOVED FROM"),
         "drift_shape must localise a lost field to the declaring spec's rule list, got:\n{structural_only}"
     );
-
-    // (ii) An added structural field points the reader the other way.
-    let added = shape((9, 2, 7), (10, 3, 7));
+    // A zero delta must read `0`, never `+0`: "ΔT2 = 0" is what rules out a tier shift, and a
+    // signed zero reads as a change.
     assert!(
-        added.contains("ΔT1 = +1") && added.contains("APPEARED in"),
-        "drift_shape must distinguish an ADDED field from a lost one, got:\n{added}"
+        !structural_only.contains("+0"),
+        "drift_shape must not render a zero delta as `+0`, got:\n{structural_only}"
+    );
+
+    // (ii) An added structural field points the reader the other way, and pluralises.
+    let added = shape((9, 2, 7), (11, 4, 7));
+    assert!(
+        added.contains("ΔT1 = +2")
+            && added.contains("exactly 2 non-binder, non-`Guard` constructor fields APPEARED in"),
+        "drift_shape must distinguish an ADDED field from a lost one, and pluralise, got:\n{added}"
     );
 
     // (iii) Behavioral-only drift must NOT send the reader hunting for a field.
