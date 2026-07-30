@@ -1446,6 +1446,76 @@ mod tests {
         assert_eq!(i32::MIN.safe_neg(), Err(overflow("neg", "i32")));
     }
 
+    /// ★ `i64::MIN % -1` DECLINES, matching upstream's explicit refusal.
+    ///
+    /// Upstream's `combine_mod` `GInt` row guards it by hand — `if lhs == i64::MIN && rhs == -1 {
+    /// return Err(ReduceError("Arithmetic overflow in modulo")) }`
+    /// (`f1r3node-rust-mettail/rholang/src/rust/interpreter/reduce.rs:3416-3420`) — and mettail
+    /// reaches the same disposition structurally, because `safe_rem` is `i64::checked_rem`, which
+    /// is `None` here (the *quotient* overflows). The mathematical remainder is 0, so this is one
+    /// of the few places where "the exact answer exists but is refused"; upstream refuses, and
+    /// upstream is the floor on semantics.
+    ///
+    /// Recorded during the 2026-07-30 `%` sibling sweep: this is the `GInt` row of upstream's
+    /// `combine_mod`, and it AGREES.
+    #[test]
+    fn i64_rem_min_by_neg_one_declines_as_upstream_does() {
+        assert_eq!(i64::MIN.safe_rem(-1), Err(overflow("rem", "i64")));
+        assert_eq!(
+            i64::MIN.safe_rem(-1).unwrap_err().reason_token(),
+            "NotRepresentable",
+            "the quotient is what does not fit; the remainder itself would be 0",
+        );
+        // The ordinary rows are plain truncated remainder, sign following the dividend.
+        assert_eq!(7_i64.safe_rem(3), Ok(1));
+        assert_eq!((-7_i64).safe_rem(3), Ok(-1));
+        assert_eq!(7_i64.safe_rem(-3), Ok(1));
+    }
+
+    /// ⚠ REPORTED, NOT RULED (2026-07-30 `%` sibling sweep): `CanonicalBigRat::safe_rem` does NOT
+    /// agree with upstream's `GBigRat` row, and this test MEASURES the disagreement rather than
+    /// asserting either side is right.
+    ///
+    /// Upstream's `combine_mod` `GBigRat` arm returns the LITERAL RATIONAL ZERO for every non-zero
+    /// divisor (`reduce.rs:3437-3448`), which is exact: in the field ℚ every non-zero `b` divides
+    /// every `a`, so nothing is left over. `CanonicalBigRat::safe_rem` instead delegates to
+    /// `num_rational`'s `Rem`, which is the common-denominator numerator remainder
+    /// `a/b % c/d = ((a·l/b) % (c·l/d))/l`, `l = lcm(b,d)` (`num-rational-0.4.2/src/lib.rs:761-791`,
+    /// via `arith_impl!(impl Rem, rem)`) — so `7r % 3r` is `1`, not `0`.
+    ///
+    /// ★ WHY THIS IS NOT CHANGED HERE. It is NOT on the Rholang `%` path: `languages/src/rholang.rs`
+    /// answers `BigRat %` with its own arm that builds the rational zero directly, reproducing
+    /// upstream (pinned by `rholang_arith_carrier_matrix::bigrat_modulo_is_the_rational_zero`). This
+    /// impl is reached only by OTHER generated languages, so changing it would move a computed value
+    /// on languages the owner's `%` ruling did not mention, and the ruling was specifically "align
+    /// `%` semantics with upstream **Rholang**". Pinned so the divergence is a record, not a
+    /// surprise.
+    #[test]
+    fn bigrat_rem_diverges_from_upstreams_rholang_row_and_is_pinned_not_fixed() {
+        let seven = crate::CanonicalBigRat::from(num_rational::Ratio::new(
+            num_bigint::BigInt::from(7),
+            num_bigint::BigInt::from(1),
+        ));
+        let three = crate::CanonicalBigRat::from(num_rational::Ratio::new(
+            num_bigint::BigInt::from(3),
+            num_bigint::BigInt::from(1),
+        ));
+        let got = seven.safe_rem(three).expect("3r is non-zero, so `%` is defined");
+        let one = num_rational::Ratio::new(num_bigint::BigInt::from(1), num_bigint::BigInt::from(1));
+        assert_eq!(
+            got.get(),
+            &one,
+            "`num_rational`'s `Rem` gives the integer-style remainder 1 here; upstream's Rholang \
+             `GBigRat` row would give 0. If this row moves to 0, the divergence has been SETTLED \
+             — record the ruling, and check `rholang.rs`'s own `BigRat %` arm still agrees too.",
+        );
+        assert_ne!(
+            got.get().numer(),
+            &num_bigint::BigInt::from(0),
+            "stated explicitly: this is NOT upstream's literal zero",
+        );
+    }
+
     #[test]
     fn i32_pow_normal() {
         assert_eq!(2_i32.safe_pow(10), Ok(1024));
