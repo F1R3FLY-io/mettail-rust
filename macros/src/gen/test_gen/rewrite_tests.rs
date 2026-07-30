@@ -77,20 +77,63 @@ pub fn generate_rewrite_tests(language: &LanguageDef) -> String {
         let is_congruence = rewrite.is_congruence_rule();
 
         if is_congruence {
-            // Skip congruence rules — they need a triggering context
+            // ★★ #150 — A CONGRUENCE IS NOT REDUCED HERE, AND THE REASON IS NOW ASSERTED.
+            //
+            // A congruence needs a triggering context, so this emitter cannot run it. That
+            // disposition is correct. What was WRONG, for 415 tests across 13 languages, was
+            // answering it with a body containing nothing but `let _lang = X;` and two prose
+            // comments: a named, passing, EMPTY `#[test]`. The suite grew by one green test and
+            // nothing was checked — a coverage OVERCLAIM, which is strictly worse than the
+            // silent skip this module's own header (see the #112/D4 note above) argues against.
+            //
+            // The repair is not to reduce the rule. It is to assert the FACT the skip rests on:
+            // that the rule reaches the reflected metadata AND that it really does carry a
+            // congruence premise. `rw.premise` is emitted from `Premise::Congruence`
+            // (`macros/src/gen/runtime/metadata.rs:872`) by the SAME predicate
+            // `is_congruence_rule()` selected this branch with, so the assertion fails exactly
+            // when the two disagree — which is the only way this disposition can be wrong.
+            //
+            // ⇒ a disposition is a value, not an absence. Pinned by
+            // `languages/tests/generated_tests_assert_something.rs`.
             out.push_str(&format!(
-                "// Rewrite test for {} skipped: congruence rule (needs triggering context)\n",
+                "// Rewrite {} is a CONGRUENCE: not reduced here (needs a triggering context).\n\
+                 \x20// Its disposition is asserted instead — metadata presence + the congruence\n\
+                 \x20// premise that IS the reason it is not reduced.\n",
                 rule_name
             ));
-            // Congruence rules need triggering context for full semantic testing,
-            // but we still verify metadata presence.
             out.push_str("#[test]\n");
             out.push_str(&format!("fn {}() {{\n", test_name));
             out.push_str(&format!("    let _lang = {};\n", lang_struct));
-            out.push_str("    // Congruence rules require a rewrite-triggering context to test.\n");
-            out.push_str(
-                "    // They fire when their premise (S ~> T) is satisfied by another rewrite.\n",
-            );
+            out.push_str(&format!(
+                "    let meta = _lang.metadata();\n\
+                 \x20   let rewrites = meta.rewrites();\n\
+                 \x20   assert!(\n\
+                 \x20       rewrites.len() > {},\n\
+                 \x20       \"Expected at least {} rewrites in metadata, found {{}}\",\n\
+                 \x20       rewrites.len()\n\
+                 \x20   );\n\
+                 \x20   let rw = &rewrites[{}];\n",
+                i,
+                i + 1,
+                i
+            ));
+            out.push_str(&format!(
+                "    assert_eq!(rw.name, Some(\"{}\"), \"Rewrite rule name mismatch\");\n\
+                 \x20   assert!(!rw.lhs.is_empty(), \"Rewrite {} LHS should be non-empty\");\n\
+                 \x20   assert!(!rw.rhs.is_empty(), \"Rewrite {} RHS should be non-empty\");\n",
+                rule_name, rule_name, rule_name,
+            ));
+            out.push_str(&format!(
+                "    // THE DISPOSITION: this branch was selected by `is_congruence_rule()`, so\n\
+                 \x20   // the reflected metadata must agree that {} carries `S ~> T`.\n\
+                 \x20   assert!(\n\
+                 \x20       rw.premise.is_some(),\n\
+                 \x20       \"{} was skipped as a congruence, but its reflected metadata carries \\\n\
+                 \x20        no congruence premise — the codegen predicate and the reflection \\\n\
+                 \x20        disagree about what a congruence is\"\n\
+                 \x20   );\n",
+                rule_name, rule_name,
+            ));
             out.push_str("}\n\n");
         } else {
             // Non-congruence rewrite: verify metadata presence
