@@ -1738,12 +1738,53 @@ pub fn analyze_from_bundle(
     let mut subsumed_guards: Vec<(String, String, String)> = Vec::new();
 
     // Group guard indices by category for pairwise comparison.
-    let mut by_category: HashMap<&str, Vec<usize>> = HashMap::new();
+    //
+    // ★ #183 — THE CARRIER IS TWO COLLECTIONS ON PURPOSE, AND THE ORDER IS THE
+    // GRAMMAR'S OWN.
+    //
+    // This grouping used to be a `HashMap<&str, Vec<usize>>` iterated with
+    // `.values()`. The *set* of findings was correct, but the order in which the
+    // per-category groups were visited was `std`'s per-instance `RandomState`
+    // order, and `subsumed_guards` is a `Vec` whose element order reaches
+    // `lint_pb03_subsumed_arithmetic_guard` (lint/lints.rs) and therefore the
+    // order of the PB03 diagnostics a build emits. Two runs of the same analysis
+    // on the same grammar reported the same findings in different orders.
+    //
+    // WHY FIRST-ENCOUNTER GRAMMAR ORDER AND NOT `BTreeMap`. The standing ruling
+    // (`f5b2e820`, Ruling E) prefers *preserving an order the data has* over
+    // *imposing one it lacks*, and #173's fix to `petri::analyze_from_bundle`
+    // (`4009cded`) applied it to exactly this shape. The data has an order here:
+    // `guards` is built by walking `all_syntax` in declaration order, and the
+    // loop below already iterated each group's `indices` in that order — so the
+    // code had *already* committed to insertion order as its reporting order and
+    // the only broken part was that the order of the groups was randomised.
+    // Lexicographic category order would instead substitute alphabetical order
+    // for the grammar's, so renaming a category would permute the whole report.
+    //
+    // WHY NOT SIMPLY DROP THE GROUPING. A single `for i in 0..guards.len()` /
+    // `for j in 0..guards.len()` pair with a `cat_i == cat_j` test would also be
+    // deterministic, but it turns Θ(Σ_c n_c²) category-local comparisons into
+    // Θ(n²) — needlessly quadratic in the number of *distinct* categories'
+    // guards, where n is the number of guarded rules.
+    //
+    // So: a `Vec` carries the order and a `HashMap` does the one thing it is good
+    // at — O(1) lookup of "have I seen this category?" — without its iteration
+    // order reaching the result. Both are preallocated from the known bound
+    // `guards.len()`.
+    let mut by_category: Vec<(&str, Vec<usize>)> = Vec::with_capacity(guards.len());
+    let mut group_of: HashMap<&str, usize> = HashMap::with_capacity(guards.len());
     for (idx, (_rule_label, category, _pred, _desc)) in guards.iter().enumerate() {
-        by_category.entry(category.as_str()).or_default().push(idx);
+        let key = category.as_str();
+        match group_of.get(key) {
+            Some(&group) => by_category[group].1.push(idx),
+            None => {
+                group_of.insert(key, by_category.len());
+                by_category.push((key, vec![idx]));
+            },
+        }
     }
 
-    for indices in by_category.values() {
+    for (_category, indices) in &by_category {
         // All pairs (i, j) where i ≠ j within the same category.
         for &i in indices {
             for &j in indices {

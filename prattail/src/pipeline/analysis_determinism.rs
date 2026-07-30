@@ -84,6 +84,80 @@ fn term(text: &str) -> SyntaxItemSpec {
     SyntaxItemSpec::Terminal(text.to_string())
 }
 
+fn ident(param: &str) -> SyntaxItemSpec {
+    SyntaxItemSpec::IdentCapture { param_name: param.to_string() }
+}
+
+/// A rule whose items are the arithmetic guard `param ≤ bound`.
+///
+/// `presburger::extract_numeric_guard` slides a 3-element window looking for
+/// `<operand> <comparison> <operand>`, resolving an `IdentCapture` as a variable
+/// and an integer-parsing `Terminal` as a constant, so this triple is the
+/// smallest shape that reaches [`crate::presburger::PresburgerAnalysis`] at all.
+fn guard_rule(label: &str, category: &str, param: &str, bound: i64) -> GuardRuleSpec {
+    (
+        label.to_string(),
+        category.to_string(),
+        vec![ident(param), term("<="), term(&bound.to_string())],
+    )
+}
+
+/// A `(label, category, items)` triple, the element type of `all_syntax`.
+type GuardRuleSpec = (String, String, Vec<SyntaxItemSpec>);
+
+/// ★ #183: the guard rules that make `presburger_result.subsumed_guards` observable.
+///
+/// # Why this exists — the gate had a blind spot and it was recorded, not hidden
+///
+/// `analysis_results_are_reproducible_across_runs` is a *result-observing* gate:
+/// it can only see a field that is populated. Before these rules the fixture
+/// declared no arithmetic guard at all, so `presburger_result` rendered as
+///
+/// ```text
+/// presburger_result: Some(
+///     PresburgerAnalysis {
+///         unsatisfiable_guards: [],
+///         tautological_guards: [],
+///         subsumed_guards: [],
+///     },
+/// ),
+/// ```
+///
+/// and `subsumed_guards` — built by iterating a `HashMap`'s `values()` — was
+/// *accidentally invariant* because it was empty. `#173`'s own commit message
+/// names that class as the limit of the instrument. These rules remove the limit
+/// for this field rather than adding a hand-written assertion beside the gate:
+/// once the field is non-empty, the existing derivation reports it with no list
+/// here naming it.
+///
+/// # Why three categories, and why the bounds all differ
+///
+/// The nondeterminism is in the order of the **category groups**, so the fixture
+/// must supply at least two to have any permutation to observe, and the gate
+/// compares renders line-by-line at equal indices — so two groups whose rendered
+/// text coincided would make a swap invisible. Three categories give `3! = 6`
+/// orders (missed by [`DETERMINISM_REPEATS`] runs with probability `6^(1-8)`,
+/// under one in 250,000), and every bound below is distinct so that every one of
+/// the six renders differently.
+///
+/// # Why each category contributes exactly one subsumption
+///
+/// `A` subsumes `B` iff `¬A ∧ B` is unsatisfiable. For `n ≤ hi` and `n ≤ lo`
+/// with `lo < hi`, `¬(n ≤ hi) ∧ (n ≤ lo)` is `n > hi ∧ n ≤ lo`, unsatisfiable —
+/// so the wider guard subsumes the narrower one. The converse direction gives
+/// `lo < n ≤ hi`, which is satisfiable, so it is not reported. One ordered pair
+/// per category, three entries in the field.
+fn arithmetic_guard_rules() -> Vec<GuardRuleSpec> {
+    vec![
+        guard_rule("IntLe3", "Int", "n", 3),
+        guard_rule("IntLe5", "Int", "n", 5),
+        guard_rule("StrLe11", "Str", "s", 11),
+        guard_rule("StrLe13", "Str", "s", 13),
+        guard_rule("BoolLe21", "Bool", "b", 21),
+        guard_rule("BoolLe23", "Bool", "b", 23),
+    ]
+}
+
 /// A grammar **wide enough that unordered carriers are detectable**.
 ///
 /// Detectability is the design constraint, and it is a property of *width*: a
@@ -104,7 +178,7 @@ fn wide_bundle() -> ParserBundle {
         category("Bool", false),
         category("Chan", false),
     ];
-    let all_syntax = vec![
+    let mut all_syntax = vec![
         (
             "PPar".to_string(),
             "Proc".to_string(),
@@ -159,6 +233,10 @@ fn wide_bundle() -> ParserBundle {
         ("Lt".to_string(), "Bool".to_string(), vec![nt("Int", "a"), term("<"), nt("Int", "b")]),
         ("And".to_string(), "Bool".to_string(), vec![nt("Bool", "a"), term("&&"), nt("Bool", "b")]),
     ];
+    // ★ #183: appended rather than interleaved, so the structural rules above keep
+    // their grammar positions and every other analysis this gate observes sees the
+    // same prefix it saw before.
+    all_syntax.extend(arithmetic_guard_rules());
 
     ParserBundle {
         grammar_name: "DeterminismGate".to_string(),
@@ -422,6 +500,52 @@ fn codegen_visible_argmax_is_stable_under_an_entropy_tie() {
 // The gate
 // ══════════════════════════════════════════════════════════════════════════════
 
+/// ★ #183: the fixture must keep *reaching* the order-dependent field, in enough
+/// categories for its order to be observable.
+///
+/// # Why an adequacy check and not an expected value
+///
+/// This does not assert *what* `subsumed_guards` contains — the gate above already
+/// asserts that whatever it contains is reproducible, and duplicating the contents
+/// here would be a second mirror of a computed fact. What it asserts is the
+/// *precondition* under which the gate above says anything at all: the field is
+/// non-empty, and its entries come from **two or more categories**, because the
+/// only nondeterminism in the producer is the order of the per-category groups.
+/// A single group renders identically under its one permutation, so a fixture that
+/// drifted down to one category would restore the blind spot silently.
+///
+/// The category of each entry is *derived* from the reported rule label by looking
+/// it up in the bundle, not listed here.
+fn assert_fixture_reaches_subsumption(bundle: &ParserBundle) {
+    let presburger = crate::presburger::analyze_from_bundle(&bundle.all_syntax);
+    assert!(
+        !presburger.subsumed_guards.is_empty(),
+        "the fixture no longer produces any `presburger_result.subsumed_guards`, so the gate \
+         above is once again silent about that field: an empty Vec reproduces trivially \
+         whatever order its producer iterates. Restore the arithmetic guard rules in \
+         `arithmetic_guard_rules`.",
+    );
+
+    let category_of: HashMap<&str, &str> = bundle
+        .all_syntax
+        .iter()
+        .map(|(label, category, _)| (label.as_str(), category.as_str()))
+        .collect();
+    let categories: BTreeSet<&str> = presburger
+        .subsumed_guards
+        .iter()
+        .filter_map(|(_subsuming, _subsumed, rule)| category_of.get(rule.as_str()).copied())
+        .collect();
+    assert!(
+        categories.len() >= 2,
+        "the fixture's subsumed arithmetic guards fall in only {} category/categories \
+         ({categories:?}). `presburger::analyze_from_bundle` groups guards by category and its \
+         only order-dependent step is the order of those GROUPS, so one group makes the gate \
+         above vacuous for this field however many entries it holds.",
+        categories.len(),
+    );
+}
+
 /// Every field of [`MathAnalysisResults`] must be reproducible across repeated
 /// runs of the analysis phase on one grammar.
 ///
@@ -465,6 +589,8 @@ fn analysis_results_are_reproducible_across_runs() {
     if std::env::var("PRATTAIL_DETERMINISM_DUMP").is_ok() {
         println!("{}", runs[0].join("\n"));
     }
+
+    assert_fixture_reaches_subsumption(&bundle);
 
     let findings = irreproducible(&runs);
     let report: Vec<String> = findings
