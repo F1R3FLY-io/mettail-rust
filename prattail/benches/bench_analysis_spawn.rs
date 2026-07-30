@@ -55,7 +55,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::time::Duration;
 
 use mettail_prattail::generate_parser;
-use mettail_prattail::pipeline::analysis_spawn_ledger;
+use mettail_prattail::pipeline::{analysis_spawn_ledger, reset_analysis_spawn_ledger};
 
 use bench_specs::{complex_spec, medium_spec, minimal_spec, small_spec};
 
@@ -153,6 +153,13 @@ fn generate_parser_per_spec(c: &mut Criterion) {
 /// thread-local ledger afterwards. Counts are exact and unaffected by machine
 /// load, which is why they — not the wall times below — are the headline number
 /// for #164.
+///
+/// ⚠ The reset is not hygiene, it is correctness, and its absence produced a wrong
+/// reading on the first run of this bench. `medium` has two categories, falls below
+/// the parallel path's `>= 3` threshold, and so never calls
+/// `run_math_analyses_parallel` at all — leaving `small`'s ledger in place, which
+/// the loop then printed under `medium`'s name. After the reset an untouched ledger
+/// reads `considered=0`, which is the true answer: this spec spawns nothing.
 fn report_spawn_counts(_c: &mut Criterion) {
     let specs = [
         ("minimal", minimal_spec()),
@@ -163,6 +170,7 @@ fn report_spawn_counts(_c: &mut Criterion) {
 
     println!("#164 spawn ledger (exact, load-independent):");
     for (name, spec) in &specs {
+        reset_analysis_spawn_ledger();
         let _ = generate_parser(spec).expect("bench spec must be generable");
         let ledger = analysis_spawn_ledger();
         println!(

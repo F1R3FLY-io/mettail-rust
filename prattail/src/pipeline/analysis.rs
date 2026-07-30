@@ -451,8 +451,26 @@ thread_local! {
 
 /// The spawn ledger for the most recent [`run_math_analyses_parallel`] on the
 /// calling thread. [`AnalysisSpawnLedger::EMPTY`] if there has not been one.
+///
+/// ⚠ "Most recent" is load-bearing, and reading it without
+/// [`reset_analysis_spawn_ledger`] is a trap: a grammar with fewer than three
+/// categories takes [`run_math_analyses_sequential`] instead, spawns nothing, and
+/// leaves the *previous* grammar's ledger in place. An observer that walks a list
+/// of grammars will then attribute one grammar's threads to another. Reset before
+/// each observation and an empty ledger means "this grammar spawned nothing",
+/// which is the answer you wanted.
 pub fn analysis_spawn_ledger() -> AnalysisSpawnLedger {
     SPAWN_LEDGER.with(std::cell::Cell::get)
+}
+
+/// Clear the calling thread's spawn ledger.
+///
+/// For observers that read [`analysis_spawn_ledger`] once per grammar: it is the
+/// only way to tell "spawned nothing" from "did not run the parallel path at
+/// all", because both leave `spawned` unchanged. [`run_math_analyses_parallel`]
+/// resets on entry itself, so production code never needs this.
+pub fn reset_analysis_spawn_ledger() {
+    SPAWN_LEDGER.with(|cell| cell.set(AnalysisSpawnLedger::EMPTY));
 }
 
 /// Record that an analysis became a thread. `module` is `Some` for a
@@ -665,7 +683,7 @@ pub(crate) fn run_math_analyses_parallel(
 
     // #164: the ledger describes ONE call, so start from zero. Reset here rather
     // than in the caller so no caller can forget.
-    SPAWN_LEDGER.with(|cell| cell.set(AnalysisSpawnLedger::EMPTY));
+    reset_analysis_spawn_ledger();
     let plan = &dispatch_plan;
     use crate::predicate_dispatch::ModuleId;
 
