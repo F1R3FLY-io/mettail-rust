@@ -2442,10 +2442,19 @@ mod native_ops {
             );
         }
 
+        /// ⚠ THE `%` ROW MOVED 2026-07-30 (owner ruling: align with upstream). It asserted
+        /// `0.1p1`, which was the TRUNCATION RESIDUAL of the division (`10.0 − 3.3·3.0 = 0.1`),
+        /// not a remainder. `%` is now the remainder on the aligned unscaled integers, as
+        /// upstream's `combine_mod` `GFixedPoint` arm is (`reduce.rs:3460-3470`): `100 % 30 = 10`
+        /// at `places = 1`, i.e. `1.0p1`.
+        ///
+        /// ★ The `/` row is UNCHANGED and that is the point — the two operators were wrongly
+        /// believed to be a matched pair that had to move together. `/` still carries the quotient
+        /// to `p` places; only `%` was defined in terms of it.
         #[test]
         fn fixed_div_and_mod() {
             assert_reduces_to("10p1 / 3p1", "3.3p1");
-            assert_reduces_to("10p1 % 3p1", "0.1p1");
+            assert_reduces_to("10p1 % 3p1", "1.0p1");
         }
 
         #[test]

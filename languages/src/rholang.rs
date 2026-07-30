@@ -2299,36 +2299,59 @@ language! {
                     }
                     _ => Proc::Err,
                 },
-                // ⚠ A DERIVED DIVERGENCE, REPORTED AND DELIBERATELY NOT CHANGED HERE.
+                // ★ REPAIRED 2026-07-30 BY OWNER RULING. This arm now AGREES with upstream.
                 //
-                // `CanonicalFixedPoint::checked_rem` (`runtime/src/canonical_fixed_point.rs:114`)
-                // implements a DIFFERENT DEFINITION of fixed-point `%` from upstream's, and both
-                // are internally consistent:
+                // `CanonicalFixedPoint::checked_rem` computes the remainder on the aligned
+                // UNSCALED INTEGERS at the shared scale — `ua % ub`, truncated toward zero so the
+                // sign follows the dividend — which is upstream's `combine_mod` `GFixedPoint` arm
+                // verbatim (`reduce.rs:3460-3470`: `let remainder = &ua % &ub;` with
+                // `scale: fp1.scale`). `7.00p2 % 3.00p2` is `1.00p2` here and upstream;
+                // `7.50p2 % 2.00p2` is `1.50p2` here and upstream. The full derivation, the
+                // superseded formula, and the identity that no longer holds are documented on
+                // `checked_rem` itself in `runtime/src/canonical_fixed_point.rs`.
                 //
-                //   mettail   a % b = a − trunc_p(a/b)·b      remainder after dividing to p places
-                //   upstream  a % b = unscaled(a) % unscaled(b) at scale p, i.e. the
-                //                     INTEGER-quotient remainder (`reduce.rs:3446-3470`)
+                // ⚠⚠ DO NOT "RESTORE" THE OLD BEHAVIOUR. THE REASONING BELOW IS SUPERSEDED AND IS
+                // QUOTED ONLY SO IT IS NOT REDISCOVERED AND ACTED ON AS A BUG FIX (precedent:
+                // `0d05986d`). Until 2026-07-30 this comment read:
                 //
-                // MEASURED: `7.00p2 % 3.00p2` is `0.01p2` here (a/b = 2.33; 7.00 − 6.99) and
-                // `1.00p2` upstream (700 % 300 = 100). `7.50p2 % 2.00p2` is `0p0` here and
-                // `1.50p2` upstream.
+                //   > ★ WHY THIS IS NOT REPAIRED IN THIS COMMIT. mettail's `checked_rem` is the
+                //   > MATCHED PAIR of its `checked_div`, which also divides to `p` places, and the
+                //   > two together satisfy `q·b + r = a` — pinned by
+                //   > `canonical_fixed_point.rs::div_mod_example` and `::div_mod_with_negatives`.
+                //   > Adopting upstream's `%` therefore requires re-deciding `/` in the same
+                //   > breath, and it MOVES A COMPUTED VALUE on a consensus-visible operator.
                 //
-                // ★ WHY THIS IS NOT REPAIRED IN THIS COMMIT. mettail's `checked_rem` is the
-                // MATCHED PAIR of its `checked_div`, which also divides to `p` places, and the two
-                // together satisfy `q·b + r = a` — pinned by
-                // `canonical_fixed_point.rs::div_mod_example` and `::div_mod_with_negatives`.
-                // Adopting upstream's `%` therefore requires re-deciding `/` in the same breath,
-                // and it MOVES A COMPUTED VALUE on a consensus-visible operator. That is an owner
-                // ruling, not a defaulting decision, and it is a different defect from #115's
-                // "declare the missing operators". Reported with both formulas so it cannot be
-                // mistaken for an arithmetic slip; pinned as a KNOWN-DIVERGENT cell in the matrix
-                // gate so it cannot be forgotten.
+                // WHY THAT WAS WRONG, point by point:
                 //
-                // (Upstream additionally REQUIRES EQUAL SCALES for every fixed-point arithmetic
-                // operator — `combine_plus:3540`, `combine_mod:3446` — while mettail aligns to
-                // `max(places)`, so `7.00p2 + 3.000p3` is `10.000p3` here and an
-                // `OperatorExpectedError` upstream. A second, pre-existing, PERMISSIVE divergence
-                // on the same carrier, reported for the same reason.)
+                //   · "MATCHED PAIR … satisfy `q·b + r = a`" — the pairing was real but it is not
+                //     an argument for the old `%`. Read the other way, the old `%` was DEFINED as
+                //     whatever makes `checked_div` exact, i.e. as the division's own error term:
+                //     `a − trunc_p(a/b)·b = (a/b − trunc_p(a/b))·b = ε·b`, `0 ≤ ε < 10⁻ᵖ`. That is
+                //     a RESIDUAL, not a remainder — bounded by `|b|·10⁻ᵖ`, so it tends to ZERO as
+                //     precision grows. `7.50p2 % 2.00p2` returned `0` because `7.50/2.00 = 3.75`
+                //     is exact at two places.
+                //   · "requires re-deciding `/` in the same breath" — FALSE, and this is what
+                //     stalled the repair. `q·b + r = a` is a theorem about the TRUNCATED INTEGER
+                //     quotient (C99 §6.5.5), not about a `p`-places quotient. `/` therefore never
+                //     entered into it: `%` was simply not the operation the identity is about.
+                //     `checked_div` is UNCHANGED by the repair and `10p1 / 3p1` is still `3.3p1`.
+                //   · Not stated at the time, and DECISIVE: the old `%` read `places`, which this
+                //     type's own equality contract declares meaningless. `PartialEq`/`Hash`/
+                //     `to_canonical_bytes` key on the reduced rational, so `7.00p2 == 7.0p1` — yet
+                //     the old `%` gave `0.01` and `0.1`. Equal inputs, unequal outputs: it was not
+                //     a function on the type's own equivalence classes. Any "restoration" would
+                //     reintroduce that, and `runtime`'s
+                //     `remainder_is_invariant_under_the_places_spelling` would go red.
+                //
+                // ⚠ STILL OPEN, AND NOT CHANGED HERE: upstream REFUSES MIXED SCALES. Every
+                // upstream fixed-point arithmetic arm raises `OperatorExpectedError { op, expected:
+                // "FixedPoint(p{fp1.scale})", other_type: "FixedPoint(p{fp2.scale})" }` when the
+                // scales differ (`combine_mod:3446-3452`, `combine_plus:3540`), while mettail's
+                // `align_pair` aligns to `max(places)` — so `7.00p2 % 3.000p3` answers here and
+                // errors upstream, and `7.00p2 + 3.000p3` is `10.000p3` here. Adopting the refusal
+                // would make mettail LESS permissive (it removes accepted programs), which is a
+                // separate owner ruling from this one; the ruling received covered the ARITHMETIC
+                // only. Reported, pre-existing, PERMISSIVE.
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => {
                         match x.checked_rem(*y) {

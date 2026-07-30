@@ -177,16 +177,67 @@ For binary `+`, `-`, `*`, `/`, `%`:
    using **integer** division on `BigInt`, and result places = `P`.  
    Check: `a=100, b=30, P=1` → `100 * 10 / 30 = 33` → `3.3p1`. ✓
 
-5. **Mod (C99 identity):**  
-   \[
-   (a / b) \times b + (a \bmod b) = a
-   \]
-   at the shared precision model. With `q` the quotient from (4),  
-   \[
-   r_{\text{unscaled}} = u_a' - \frac{q \cdot u_b'}{10^P}
-   \]
-   (integer arithmetic arranged so the result is exact in fixed point at place `P`).  
-   Example: `10p1 % 3p1` → `0.1p1`. ✓
+5. **Mod — remainder on the unscaled integers, scale preserved:**
+
+   ```math
+   r_{\text{unscaled}} = u_a' \bmod u_b', \qquad \text{places} = P
+   ```
+
+   using `BigInt`'s `%`, which truncates toward zero so the sign follows the **dividend** (as
+   Rust's `i64 %` and C99's `%` both do).
+   Example: `10p1 % 3p1` → aligned `u_a' = 100`, `u_b' = 30`, `100 mod 30 = 10` → `1.0p1`. ✓
+
+   This is upstream Rholang's definition verbatim — `combine_mod`'s `GFixedPoint` arm,
+   `f1r3node-rust-mettail/rholang/src/rust/interpreter/reduce.rs:3460-3470`.
+
+   ★ Note the asymmetry with (4): the exact remainder **always fits** the type, because
+   `u_a' \bmod u_b'` is an integer no wider than `u_a'`. Division must approximate; remainder
+   never must. So (4) is a *choice* of precision and (5) is not.
+
+   > ### ⚠ SUPERSEDED (2026-07-30) — quoted so it is not restored
+   >
+   > This item previously read **"Mod (C99 identity)"** and specified, with `q` the quotient
+   > from (4):
+   >
+   > ```math
+   > (a / b) \times b + (a \bmod b) = a, \qquad
+   > r_{\text{unscaled}} = u_a' - \frac{q \cdot u_b'}{10^P}
+   > ```
+   >
+   > with the worked example `10p1 % 3p1` → `0.1p1`. ✓
+   >
+   > **That derivation is invalid, and it is the origin of the defect that shipped.** C99 §6.5.5
+   > does state `(a/b)*b + a%b == a`, but it states it for **integer** division, where `a/b` is
+   > truncated to an integer. Item (4)'s `q` is not an integer — it is a `P`-places fixed-point
+   > number — so substituting it into that identity is a category error. Solving the borrowed
+   > identity for `r` with the wrong `q` yields
+   >
+   > ```math
+   > r = a - \operatorname{trunc}_P(a/b)\cdot b
+   >   = \bigl(a/b - \operatorname{trunc}_P(a/b)\bigr)\cdot b
+   >   = \varepsilon\, b, \qquad 0 \le \varepsilon < 10^{-P}
+   > ```
+   >
+   > — the **truncation error of the division, scaled by the divisor.** A residual, not a
+   > remainder: it is bounded by `|b| \cdot 10^{-P}` and therefore tends to **zero** as precision
+   > grows, which no remainder does. `7.50p2 % 2.00p2` returned `0p0`, because `7.50/2.00 = 3.75`
+   > is exact at two places, for a division that leaves remainder `1.50`.
+   >
+   > The `10p1 % 3p1` → `0.1p1` example did not catch it because the residual there is
+   > numerically `0.1`, whose unscaled payload (`1`) is off from the true remainder's (`10`) by
+   > exactly the spurious factor `10^P` — the signature of the `\cdot 10^P` … `/ 10^P` round trip
+   > the formula inherited from item (4), where that factor is essential.
+   >
+   > It also violated a law stated elsewhere in this design: because `PartialEq`, `Hash` and
+   > `to_canonical_bytes` key on the reduced rational (so that `SemanticHash` agrees with `Eq` for
+   > the Dovetail e-graph), `places` is **not** part of a value's identity and `7.00p2 == 7.0p1`.
+   > The superseded `%` read `places`, answering `0.01` and `0.1` for those two spellings — equal
+   > inputs, unequal outputs. Guarded now by
+   > `runtime/src/canonical_fixed_point.rs::tests::remainder_is_invariant_under_the_places_spelling`.
+   >
+   > ⚠ Item (4) is **unchanged**. The two operators were wrongly believed to be a matched pair
+   > that had to move together; they never were, because the identity that binds a quotient to a
+   > remainder is about the integer quotient, which (4) does not return.
 
 Document **division by zero** as `Proc::Err` / language error, consistent with `Div` on `BigRat` / integers in Rholang.
 

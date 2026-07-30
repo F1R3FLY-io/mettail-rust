@@ -56,26 +56,45 @@
 //! would break the property every other arm has, that the answer depends only on operand values.
 //! Failing closed is the correct answer, not a missing one.
 //!
-//! ## ⚠ TWO DERIVED DIVERGENCES ON `Fixed`, REPORTED AND NOT CHANGED
+//! ## ⚠ TWO DERIVED DIVERGENCES ON `Fixed` — ONE NOW REPAIRED, ONE STILL OPEN
 //!
-//! Both were found by this matrix and neither is a missing operator, so neither is repaired here.
+//! Both were found by this matrix. Neither is a missing operator.
 //!
-//! 1. **`%` has a different DEFINITION.** `CanonicalFixedPoint::checked_rem`
-//!    (`runtime/src/canonical_fixed_point.rs:114`) computes `a − trunc_p(a/b)·b` — the remainder
-//!    after dividing to `p` places — while upstream computes the INTEGER-quotient remainder
-//!    `unscaled(a) % unscaled(b)` at scale `p` (`reduce.rs:3446-3470`). MEASURED:
-//!    `7.00p2 % 3.00p2` is `0.01p2` here and `1.00p2` upstream; `7.50p2 % 2.00p2` is `0p0` here and
-//!    `1.50p2` upstream. It is NOT an arithmetic slip: mettail's `checked_rem` is the matched pair
-//!    of its `checked_div` (which also divides to `p` places) and the two satisfy `q·b + r = a`,
-//!    pinned by `canonical_fixed_point.rs::div_mod_example`. Adopting upstream's `%` requires
-//!    re-deciding `/` in the same breath and MOVES A COMPUTED VALUE — an owner ruling.
-//! 2. **Mixed scales are ACCEPTED.** Upstream requires equal scales for every fixed-point
-//!    arithmetic operator (`combine_plus:3540`, `combine_mod:3446`) and raises
-//!    `OperatorExpectedError` otherwise; mettail aligns to `max(places)`, so `7.00p2 + 3.000p3` is
-//!    `10.000p3` here. Pre-existing and PERMISSIVE.
+//! 1. **`%` had a different DEFINITION — ★ REPAIRED 2026-07-30 by owner ruling ("align `%`
+//!    semantics with upstream Rholang"). `Fixed %` now AGREES with upstream.**
+//!    `CanonicalFixedPoint::checked_rem` computes the remainder on the aligned unscaled integers
+//!    at the shared scale, which is upstream's `combine_mod` `GFixedPoint` arm verbatim
+//!    (`reduce.rs:3460-3470`). `7.00p2 % 3.00p2` is `1.00p2` in both; `7.50p2 % 2.00p2` is
+//!    `1.50p2` in both.
 //!
-//! Both are pinned below as KNOWN-DIVERGENT cells with the upstream answer written down, so they
-//! cannot be quietly forgotten or mistaken for correct.
+//!    ⚠ The superseded finding is quoted here so it is not rediscovered and "fixed" back:
+//!
+//!    > computes `a − trunc_p(a/b)·b` — the remainder after dividing to `p` places … It is NOT an
+//!    > arithmetic slip: mettail's `checked_rem` is the matched pair of its `checked_div` (which
+//!    > also divides to `p` places) and the two satisfy `q·b + r = a` … Adopting upstream's `%`
+//!    > requires re-deciding `/` in the same breath.
+//!
+//!    Two things in that were wrong. (a) `a − trunc_p(a/b)·b` expands to `(a/b − trunc_p(a/b))·b
+//!    = ε·b` with `0 ≤ ε < 10⁻ᵖ` — the division's own TRUNCATION ERROR scaled by the divisor,
+//!    bounded by `|b|·10⁻ᵖ` and therefore tending to zero as precision grows. A residual, not a
+//!    remainder. (b) `/` did NOT have to be re-decided: `q·b + r = a` is a theorem about the
+//!    TRUNCATED INTEGER quotient (C99 §6.5.5), not about a `p`-places quotient, so `/` was never
+//!    implicated. `checked_div` is unchanged and `10p1 / 3p1` is still `3.3p1`. What the finding
+//!    missed entirely is decisive: the old `%` read `places`, which `PartialEq`/`Hash`/
+//!    `to_canonical_bytes` all declare meaningless (they key on the reduced rational), so
+//!    `7.00p2 == 7.0p1` while `%` answered `0.01` and `0.1` — not a function on the type's own
+//!    equivalence classes. `runtime`'s `remainder_is_invariant_under_the_places_spelling` is the
+//!    guard for that law.
+//! 2. **Mixed scales are ACCEPTED — STILL OPEN, not changed.** Upstream requires equal scales for
+//!    every fixed-point arithmetic operator and raises `OperatorExpectedError { op, expected:
+//!    "FixedPoint(p{fp1.scale})", other_type: "FixedPoint(p{fp2.scale})" }` otherwise
+//!    (`combine_mod:3446-3452`, `combine_plus:3540`); mettail's `align_pair` aligns to
+//!    `max(places)`, so `7.00p2 + 3.000p3` is `10.000p3` here and `7.00p2 % 3.000p3` answers here.
+//!    Pre-existing and PERMISSIVE. Adopting the refusal REMOVES ACCEPTED PROGRAMS, which is a
+//!    separate ruling from the arithmetic one; the ruling received covered the arithmetic only.
+//!
+//! Row 1 is now pinned as an AGREEING cell with upstream's answer written down; row 2 remains
+//! pinned as KNOWN-DIVERGENT, so neither can be quietly forgotten or mistaken for the other.
 //!
 //! # The gate
 //!
@@ -372,28 +391,92 @@ fn bigrat_modulo_is_the_rational_zero() {
     }
 }
 
-/// ⚠ THE TWO `Fixed` DIVERGENCES, PINNED WITH UPSTREAM'S ANSWER WRITTEN DOWN. Neither is repaired
-/// (see the module header): both move a computed value on a consensus-visible operator and both
-/// need an owner ruling, not a default. This row exists so that if either changes, it changes
-/// DELIBERATELY.
+/// ★ `Fixed %` NOW AGREES WITH UPSTREAM (owner ruling, 2026-07-30) — pinned against UPSTREAM'S
+/// value, which is the whole point of the row: the assertion is no longer "this is what we do",
+/// it is "this is what upstream does, and we do it too".
+///
+/// ⚠ Every expected value below was `0.01p2` / `0p0` before the repair — the division's truncation
+/// residual `ε·b`, `0 ≤ ε < 10⁻ᵖ`. See the module header for the superseded finding, quoted, and
+/// for the two ways it was wrong. Do not move this row back.
 #[test]
-fn the_two_fixed_point_divergences_are_pinned_with_upstreams_answer() {
-    // 1. `%` is the remainder after dividing to `p` places, not the integer-quotient remainder.
-    for (src, mettail, upstream) in [
-        ("7.00p2 % 3.00p2", "0.01p2", "1.00p2"),
-        ("7.50p2 % 2.00p2", "0p0", "1.50p2"),
+fn fixed_point_modulo_agrees_with_upstream() {
+    // Remainder on the aligned unscaled integers, scale preserved — `reduce.rs:3460-3470`.
+    for (src, upstream, derivation) in [
+        ("7.00p2 % 3.00p2", "1.00p2", "700 % 300 = 100 at p2"),
+        ("7.50p2 % 2.00p2", "1.50p2", "750 % 200 = 150 at p2"),
+        // ★ The exactly-divisible case, which is where the old formula was most visibly wrong: it
+        // answered `0` here because `7.50/2.50 = 3.00` is exact at two places, and it ALSO answers
+        // `0` correctly — so this row only distinguishes the two definitions together with the
+        // rows above. Kept because a remainder of zero must survive normalization to `0p0`.
+        ("7.50p2 % 2.50p2", "0p0", "750 % 250 = 0, and true zero normalizes to p0"),
+        // Sign follows the DIVIDEND (truncated toward zero), as `BigInt`'s and upstream's `GInt`
+        // `lhs % rhs` both do.
+        ("-7.00p2 % 3.00p2", "-1.00p2", "-700 % 300 = -100 at p2"),
+        ("7.00p2 % -3.00p2", "1.00p2", "700 % -300 = 100 at p2"),
     ] {
-        let (_, value) = fold_carrier_and_value(src);
+        let (carrier, value) = fold_carrier_and_value(src);
         assert_eq!(
-            value, mettail,
-            "`{src}` answers `{mettail}` here and `{upstream}` upstream              (`reduce.rs:3446-3470`). If this row moves, the divergence has been settled — record              the ruling.",
+            (carrier.as_str(), value.as_str()),
+            ("Fixed", upstream),
+            "`{src}` must answer upstream's `{upstream}` ({derivation}). If this row moves, `%` \
+             has drifted off upstream — it is not free to change.",
         );
     }
-    // 2. Mixed scales are accepted here and refused upstream.
+
+    // ★ SCALE INVARIANCE at the SURFACE level. `7.00p2` and `7.0p1` are the same value (`==`
+    // keys on the reduced rational), so `%` must answer the same value for both spellings. The
+    // superseded `%` gave `0.01p2` and `0.1p1`. The runtime-level guard is
+    // `canonical_fixed_point.rs::remainder_is_invariant_under_the_places_spelling`; this is the
+    // same law measured through the parser and the fold, where a user meets it.
+    let (_, p2) = fold_carrier_and_value("7.00p2 % 3.00p2");
+    let (_, p1) = fold_carrier_and_value("7.0p1 % 3.0p1");
+    let (_, p0) = fold_carrier_and_value("7p0 % 3p0");
+    assert_eq!(
+        (p2.as_str(), p1.as_str(), p0.as_str()),
+        ("1.00p2", "1.0p1", "1p0"),
+        "the three spellings of `7 % 3` must all be the VALUE one, differing only in how many \
+         trailing zeros the scale prints",
+    );
+    // …and those three renderings must compare EQUAL, since `places` is not part of a `Fixed`
+    // value's identity. Asserted on the RESULTS' own surfaces rather than on a compound
+    // `a % b == c % d` expression, so this row measures the equality law and not `%`-versus-`==`
+    // precedence.
+    for (lhs, rhs) in [(&p2, &p1), (&p1, &p0)] {
+        let (carrier, value) = fold_carrier_and_value(&format!("{lhs} == {rhs}"));
+        assert_eq!(
+            (carrier.as_str(), value.as_str()),
+            ("Bool", "true"),
+            "`{lhs} == {rhs}` must be true — `places` is not part of a `Fixed` value's identity, \
+             so an operation answering different VALUES for different spellings (as `%` did) is \
+             not a function on this type's equivalence classes",
+        );
+    }
+}
+
+/// ⚠ THE REMAINING `Fixed` DIVERGENCE, PINNED WITH UPSTREAM'S ANSWER WRITTEN DOWN. Mixed scales
+/// are ACCEPTED here and REFUSED upstream. Not repaired: adopting the refusal REMOVES ACCEPTED
+/// PROGRAMS, a separate owner ruling from the `%` arithmetic one. This row exists so that if it
+/// changes, it changes DELIBERATELY.
+#[test]
+fn mixed_scale_fixed_point_is_accepted_here_and_refused_upstream() {
+    // Upstream: `OperatorExpectedError { op: "+", expected: "FixedPoint(p2)",
+    //                                   other_type: "FixedPoint(p3)" }` — `combine_plus:3540`.
     let (carrier, value) = fold_carrier_and_value("7.00p2 + 3.000p3");
     assert_eq!(
         (carrier.as_str(), value.as_str()),
         ("Fixed", "10.000p3"),
         "mixed-scale fixed-point addition aligns to `max(places)` here, while upstream raises          `OperatorExpectedError` (`combine_plus:3540`). PERMISSIVE and pre-existing.",
+    );
+    // ★ The same permissiveness on `%` specifically, which the repair did NOT touch: upstream's
+    // `combine_mod:3446-3452` refuses this outright. `7.00p2 % 3.000p3` aligns to p3 —
+    // `7000 % 3000 = 1000` — and answers `1.000p3`.
+    let (carrier, value) = fold_carrier_and_value("7.00p2 % 3.000p3");
+    assert_eq!(
+        (carrier.as_str(), value.as_str()),
+        ("Fixed", "1.000p3"),
+        "mixed-scale `%` answers here (aligned to `max(places)`) while upstream raises \
+         `OperatorExpectedError {{ op: \"%\", expected: \"FixedPoint(p2)\", other_type: \
+         \"FixedPoint(p3)\" }}` (`combine_mod:3446-3452`). ACCEPTED-PROGRAMS divergence, still \
+         open — the `%` ruling covered the arithmetic only.",
     );
 }
