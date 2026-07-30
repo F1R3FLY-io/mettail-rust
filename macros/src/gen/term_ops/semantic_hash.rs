@@ -623,15 +623,48 @@ fn semantic_hash_collection(
         CollectionType::HashBag => quote! {
             #coll_expr.semantic_hash_into(state, |__e, __h| #element_cat::semantic_hash(__e, __h));
         },
-        CollectionType::HashMap | CollectionType::PathMap => quote! {
+        CollectionType::HashMap => quote! {
             #coll_expr.semantic_hash_into(
                 state,
                 |__k, __h| #element_cat::semantic_hash(__k, __h),
                 |__v, __h| #element_cat::semantic_hash(__v, __h),
             );
         },
+        // ★ #74 / #154 — a pathmap's VALUE is a `PathValue<E>`, not an `E`. An
+        // `Unset` entry has no sub-term at all (Ruling B: unset ≠ Nil), so it
+        // contributes only its 1-byte tag; a `Set` entry contributes the tag and
+        // then its inner term's ALPHA-CANONICAL digest.
+        //
+        // ⚠ This arm used to share `HashMap`'s, which typechecked only because the
+        // value closure was never instantiated with a real `PathValue` — the
+        // `CollectionLiteral` route that reaches it was going through structural
+        // `Hash` instead.
+        CollectionType::PathMap => quote! {
+            #coll_expr.semantic_hash_into(
+                state,
+                |__k, __h| #element_cat::semantic_hash(__k, __h),
+                |__v, __h| match __v {
+                    mettail_runtime::PathValue::Unset => {
+                        std::hash::Hasher::write_u8(__h, 0u8);
+                    },
+                    mettail_runtime::PathValue::Set(__inner) => {
+                        std::hash::Hasher::write_u8(__h, 1u8);
+                        #element_cat::semantic_hash(__inner, __h);
+                    },
+                },
+            );
+        },
+        // ★ #154 — was `std::hash::Hash::hash(#coll_expr, state)`, i.e. STRUCTURAL,
+        // and therefore leaked a binder's run-varying `unique_id` exactly as the
+        // collection-literal arm did. It read as correct next to its siblings
+        // because the whole helper is named `semantic_hash_collection`; the only way
+        // to see it was to read the arm. `HashSetLit::semantic_hash_into` was added
+        // for this call.
         CollectionType::HashSet => quote! {
-            std::hash::Hash::hash(#coll_expr, state);
+            #coll_expr.semantic_hash_into(
+                state,
+                |__e, __h| #element_cat::semantic_hash(__e, __h),
+            );
         },
     }
 }
@@ -903,7 +936,41 @@ fn generate_semantic_variant_arm(
 
         // Stage 0 identity — STAYS. Numeric-family canonicalisation does not
         // apply to collection wrappers; they fall to the structural default.
-        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
+        // ★★ #154 (2026-07-30) — THE COLLECTION-LITERAL ARM NO LONGER SHARES THIS ONE.
+        //
+        // A `CollectionLiteral` used to fall through to the `(variant_idx,
+        // STRUCTURAL Hash)` body below, and structural `Hash` on a binder-bearing
+        // element writes the binder's moniker `unique_id` — a process-global counter
+        // freshened by every `unbind` and never reset. So `semantic_hash` of a
+        // binder inside a `Map`/`Pathmap`/`List`/`Set`/`Bag` LITERAL was RUN-VARYING,
+        // while the same binder inside a `PPar` bag was not: the sibling
+        // `VariantKind::Collection` arm had already been fixed by FIX-A (2026-06-29)
+        // and routes through `semantic_hash_collection`.
+        //
+        // `semantic_hash` is CONSENSUS-VISIBLE — it backs `semantic_fingerprint` →
+        // `exact_key`/`content_key`, the realize ambiguity-dedup surface — so two
+        // nodes whose `unique_id` counters had diverged would disagree about which
+        // parse readings are the same reading.
+        //
+        // ★ The fix is one line of routing because the machinery already existed;
+        // what was missing was the DECLARATION that a collection literal is not a
+        // leaf. That is the same root cause as #162's stack slope: the
+        // `CollectionLiteral` discriminant exists precisely so every consumer states
+        // its intent, and this was one of the consumers that had not.
+        //
+        // ⚠ Gated by `languages/tests/semantic_fingerprint_binder_in_collection_literal.rs`,
+        // whose alpha-twin rows go RED the moment this arm rejoins `Literal`'s.
+        VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
+            let body = semantic_hash_collection(&quote! { v }, element_cat, coll_type);
+            quote! {
+                #category::#label(v) => {
+                    state.write_u8(#variant_idx);
+                    #body
+                }
+            }
+        },
+
+        VariantKind::Literal { label } => {
             // NUMERIC leaves (integer / rational families) get a family-tagged
             // canonical-value hash so cast-promotion-tower reps of one value
             // collapse (see `semantic_hash_numeric_literal_body`). Non-numeric

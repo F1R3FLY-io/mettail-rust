@@ -141,6 +141,58 @@ impl<T: Hash + Ord> Hash for HashSetLit<T> {
     }
 }
 
+impl<T> HashSetLit<T> {
+    /// Order-independent hash whose per-element source is the caller's
+    /// ALPHA-CANONICAL `semantic_hash` rather than the structural [`Hash`] above
+    /// (#154).
+    ///
+    /// The sibling of [`HashBag::semantic_hash_into`](crate::HashBag::semantic_hash_into)
+    /// and [`HashMapLit::semantic_hash_into`](crate::HashMapLit::semantic_hash_into),
+    /// added because `semantic_hash`'s collection emitter had no method to call for
+    /// a `HashSet`-shaped collection and fell back to structural `Hash` — which
+    /// writes a binder's run-varying moniker `unique_id` into a CONSENSUS-VISIBLE
+    /// fingerprint.
+    ///
+    /// ## Why it sorts by the SEMANTIC DIGEST and not by `T: Ord`
+    ///
+    /// `Hash for HashSetLit` restores determinism by sorting with `T: Ord`, which
+    /// is the structural order — and for a binder-bearing `T` the structural order
+    /// itself depends on `unique_id`. Sorting by it would therefore leak the very
+    /// thing this method exists to exclude, through the ORDER instead of through
+    /// the bytes. Sorting by the alpha-canonical per-element digest keeps
+    /// order-independence (equal sets emit identical streams) while being
+    /// name-free. This is exactly what `HashMapLit::semantic_hash_into` does, and
+    /// it is stated here too because the reason is easy to lose.
+    ///
+    /// ⚠ Two elements whose semantic digests COLLIDE could be written in either
+    /// relative order, so the stream is deterministic only up to digest collision —
+    /// the same bound `HashMapLit::semantic_hash_into` carries. `HashBag` avoids it
+    /// entirely with commutative lanes; matching that here would change the
+    /// (already consensus-visible) `Bag` and `Map` streams too, so the three are
+    /// deliberately left consistent with each other rather than individually
+    /// perfected.
+    pub fn semantic_hash_into<H, F>(&self, state: &mut H, elem_sem: F)
+    where
+        H: Hasher,
+        F: Fn(&T, &mut FxHasher),
+    {
+        self.0.len().hash(state);
+        let mut digests: Vec<u64> = self
+            .0
+            .iter()
+            .map(|elem| {
+                let mut hasher = FxHasher::default();
+                elem_sem(elem, &mut hasher);
+                hasher.finish()
+            })
+            .collect();
+        digests.sort_unstable();
+        for digest in digests {
+            state.write_u64(digest);
+        }
+    }
+}
+
 impl<T> FromIterator<T> for HashSetLit<T>
 where
     T: Eq + Hash,
