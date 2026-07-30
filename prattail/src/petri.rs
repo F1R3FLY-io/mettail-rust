@@ -1088,6 +1088,39 @@ pub struct PetriAnalysis {
 /// - **Places** are derived from NonTerminal references, which model
 ///   communication channels or shared resources between categories.
 ///
+/// # Ordering law (work item #173)
+///
+/// Places are discovered — and therefore numbered, wired, and **reported** — in
+/// **first-encounter order over the grammar**: every `NonTerminal` category in
+/// `all_syntax` in rule-declaration × left-to-right item order, then every
+/// declared category in `categories` order that no rule referenced.
+///
+/// The order is established **here, once**, because three downstream facts are
+/// derived from it and none of them may drift apart:
+///
+/// 1. [`PetriNet::add_place`] assigns place ids `0, 1, 2, …` sequentially, so
+///    discovery order *is* the id order;
+/// 2. the transition wiring below attaches to "the first two places", which is a
+///    statement about that order;
+/// 3. [`PetriAnalysis::unbounded_places`] is built by walking `net.places`, so
+///    the report is in that order too — and it is the report a human reads.
+///
+/// ⚠ First-encounter order is chosen **deliberately**, over two alternatives:
+///
+/// - **Lexicographic** (`BTreeSet`) is deterministic but *foreign*: it would
+///   substitute alphabetical order for the grammar's own, so renaming a category
+///   would permute the whole report and renumber every place. The grammar has a
+///   declared order; there is no reason to discard it.
+/// - **`HashSet` iteration order** — what this function used before #173 — is not
+///   an order at all. `std`'s `RandomState` reseeds per set instance, so two runs
+///   over the *same* grammar produced `["Gamma", "Alpha", "Beta"]` and
+///   `["Alpha", "Beta", "Gamma"]`, and place id `0` named a different place each
+///   time.
+///
+/// This is therefore **not** the imposition of an order on unordered data (cf.
+/// the standing ruling against sorting pathmaps): it *preserves* an order the
+/// grammar already has and that `add_place` already assumed.
+///
 /// # Arguments
 ///
 /// * `all_syntax` — Per-rule syntax items: `(label, category, items)`.
@@ -1097,46 +1130,63 @@ pub fn analyze_from_bundle(
     categories: &[crate::wpds::WpdsCategoryInfo],
 ) -> PetriAnalysis {
     use crate::SyntaxItemSpec;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
 
     let mut net = PetriNet::new();
 
-    // Track which place IDs map to which names for unboundedness reporting.
-    let mut place_map: HashMap<String, usize> = HashMap::new();
+    // Upper bound on both discovered places and discovered transitions: every
+    // syntax item can contribute at most one of either, plus one place per
+    // declared category. Known bound ⇒ preallocated.
+    let item_budget: usize = all_syntax.iter().map(|(_, _, items)| items.len()).sum();
+
     // Track parallel composition operators as transitions.
-    let mut transition_names: Vec<String> = Vec::new();
-    // Track NonTerminal references as channel/place candidates.
-    let mut channel_refs: HashSet<String> = HashSet::new();
+    let mut transition_names: Vec<String> = Vec::with_capacity(item_budget);
+    // Channel/place candidates, as an **insertion-ordered set**: `channel_refs`
+    // carries the order (see the ordering law above) and `channel_seen` is the
+    // O(1) duplicate test. Splitting the two is what lets a hash set do the one
+    // thing it is good at — membership — without its iteration order leaking
+    // into the result.
+    let mut channel_refs: Vec<String> = Vec::with_capacity(item_budget + categories.len());
+    let mut channel_seen: HashSet<String> = HashSet::with_capacity(item_budget + categories.len());
+
+    /// Records a channel reference the first time it is seen, preserving
+    /// first-encounter order.
+    fn remember(name: &str, order: &mut Vec<String>, seen: &mut HashSet<String>) {
+        if seen.insert(name.to_string()) {
+            order.push(name.to_string());
+        }
+    }
 
     /// Recursively scan a syntax item for parallel operators and channel refs.
     fn scan_item(
         item: &SyntaxItemSpec,
         rule_label: &str,
         transition_names: &mut Vec<String>,
-        channel_refs: &mut HashSet<String>,
+        channel_refs: &mut Vec<String>,
+        channel_seen: &mut HashSet<String>,
     ) {
         match item {
             SyntaxItemSpec::Terminal(t) if t == "|" || t == "||" || t == "par" => {
                 transition_names.push(format!("{}::{}", rule_label, t));
             },
             SyntaxItemSpec::NonTerminal { category, .. } => {
-                channel_refs.insert(category.clone());
+                remember(category, channel_refs, channel_seen);
             },
             SyntaxItemSpec::Optional { inner } => {
                 for sub in inner {
-                    scan_item(sub, rule_label, transition_names, channel_refs);
+                    scan_item(sub, rule_label, transition_names, channel_refs, channel_seen);
                 }
             },
             SyntaxItemSpec::Map { body_items } => {
                 for sub in body_items {
-                    scan_item(sub, rule_label, transition_names, channel_refs);
+                    scan_item(sub, rule_label, transition_names, channel_refs, channel_seen);
                 }
             },
             SyntaxItemSpec::Sep { body, .. } => {
-                scan_item(body, rule_label, transition_names, channel_refs);
+                scan_item(body, rule_label, transition_names, channel_refs, channel_seen);
             },
             SyntaxItemSpec::Zip { body, .. } => {
-                scan_item(body, rule_label, transition_names, channel_refs);
+                scan_item(body, rule_label, transition_names, channel_refs, channel_seen);
             },
             _ => {},
         }
@@ -1144,19 +1194,35 @@ pub fn analyze_from_bundle(
 
     for (label, _category, syntax) in all_syntax {
         for item in syntax {
-            scan_item(item, label, &mut transition_names, &mut channel_refs);
+            scan_item(
+                item,
+                label,
+                &mut transition_names,
+                &mut channel_refs,
+                &mut channel_seen,
+            );
         }
     }
 
     // Also add each grammar category as a potential place (process state).
+    // Declared-category order, after the referenced ones — see the ordering law.
     for cat in categories {
-        channel_refs.insert(cat.name.clone());
+        remember(&cat.name, &mut channel_refs, &mut channel_seen);
     }
 
-    // Create places from channel references.
+    // Create places from channel references, in discovery order. `place_ids` is
+    // the id sequence `add_place` handed back, which the transition wiring below
+    // reads positionally.
+    //
+    // #173: this loop also maintained a `place_map: HashMap<String, usize>`
+    // name→id index. It is gone rather than commented out because it was not
+    // disabled — it was *write-only*: its single reader was the wiring below,
+    // which read `place_map.values()` POSITIONALLY (`.first()`, `.get(1)`) and so
+    // chose the transition's input and output places by hash order. `net.places`
+    // is itself the id-ordered index, so nothing was left for the map to do.
+    let mut place_ids: Vec<usize> = Vec::with_capacity(channel_refs.len());
     for name in &channel_refs {
-        let id = net.add_place(name.clone());
-        place_map.insert(name.clone(), id);
+        place_ids.push(net.add_place(name.clone()));
     }
 
     // Create transitions from parallel composition operators.
@@ -1165,8 +1231,8 @@ pub fn analyze_from_bundle(
     for tname in &transition_names {
         let tid = net.add_transition(tname.clone());
         // For each transition, connect to the first two places as a simplified
-        // model: input from first place, output to second place.
-        let place_ids: Vec<usize> = place_map.values().copied().collect();
+        // model: input from first place, output to second place. "First two" is
+        // meaningful only because `place_ids` is in grammar discovery order.
         if let Some(&first) = place_ids.first() {
             net.transitions[tid].add_input(first, 1);
             if let Some(&second) = place_ids.get(1) {
@@ -1189,6 +1255,12 @@ pub fn analyze_from_bundle(
     let has_deadlock_risk = check_deadlock(&net);
 
     // Identify unbounded places: places without a capacity bound.
+    //
+    // `net.places` is in place-id order, which by the ordering law above is
+    // grammar discovery order — so this list is, too. No sort is applied and
+    // none is wanted: sorting here would substitute alphabetical order for the
+    // grammar's own, and would put the law in a second place where it could
+    // drift from the first.
     let unbounded_places: Vec<String> = net
         .places
         .iter()
@@ -1714,6 +1786,190 @@ mod tests {
         assert!(
             result.place_count > 0 || result.transition_count > 0,
             "should produce a non-trivial Petri net from syntax"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // #173: the place-ordering law
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// A grammar whose three plausible place orders are **all different**, so an
+    /// assertion about one of them cannot accidentally be satisfied by another:
+    ///
+    /// | order                        | result                          |
+    /// |------------------------------|---------------------------------|
+    /// | first-encounter (the law)    | `Gamma`, `Beta`, `Alpha`        |
+    /// | category-declaration         | `Alpha`, `Beta`, `Gamma`        |
+    /// | lexicographic                | `Alpha`, `Beta`, `Gamma`        |
+    ///
+    /// The single rule lives in `Alpha` but references `Gamma` then `Beta`, so
+    /// those two are discovered from the syntax scan and `Alpha` only later, from
+    /// the declared-category sweep.
+    fn discriminating_bundle() -> (
+        Vec<(String, String, Vec<crate::SyntaxItemSpec>)>,
+        Vec<crate::wpds::WpdsCategoryInfo>,
+    ) {
+        let syntax = vec![(
+            "AOne".to_string(),
+            "Alpha".to_string(),
+            vec![
+                crate::SyntaxItemSpec::NonTerminal {
+                    category: "Gamma".to_string(),
+                    param_name: "g".to_string(),
+                },
+                crate::SyntaxItemSpec::Terminal("|".to_string()),
+                crate::SyntaxItemSpec::NonTerminal {
+                    category: "Beta".to_string(),
+                    param_name: "b".to_string(),
+                },
+            ],
+        )];
+        let categories = ["Alpha", "Beta", "Gamma"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| crate::wpds::WpdsCategoryInfo {
+                name: (*name).to_string(),
+                is_primary: i == 0,
+            })
+            .collect();
+        (syntax, categories)
+    }
+
+    /// `unbounded_places` is in grammar first-encounter order, on **every** run.
+    ///
+    /// # Why this is two assertions and not one
+    ///
+    /// Nondeterminism cannot fail a single run, and an order can be stable while
+    /// being the wrong order. So:
+    ///
+    /// - **Reproducibility** is checked by running the analysis `REPEATS` times.
+    ///   Each call builds a *fresh* collection, and `std` reseeds `RandomState`
+    ///   per instance, so a hash-ordered carrier disagrees with itself here with
+    ///   probability `1 - (1/3!)^(REPEATS-1)`.
+    /// - **The law itself** is checked against the literal expected sequence,
+    ///   which is a one-pass check that *cannot* pass vacuously — it pins the
+    ///   order to first-encounter and rejects both lexicographic and
+    ///   declaration order (see [`discriminating_bundle`]).
+    ///
+    /// Restoring the `HashSet` in `analyze_from_bundle` fails both.
+    #[test]
+    fn unbounded_places_are_in_grammar_first_encounter_order() {
+        /// With `k = 3! = 6` orders, `n` runs miss a hash-ordered carrier with
+        /// probability `k^(1-n)`; at `n = 8` that is under `1/10^5`.
+        const REPEATS: usize = 8;
+        let (syntax, categories) = discriminating_bundle();
+        let expected = vec!["Gamma".to_string(), "Beta".to_string(), "Alpha".to_string()];
+
+        let runs: Vec<Vec<String>> = (0..REPEATS)
+            .map(|_| analyze_from_bundle(&syntax, &categories).unbounded_places)
+            .collect();
+
+        for (attempt, run) in runs.iter().enumerate() {
+            assert_eq!(
+                *run, runs[0],
+                "run {attempt} reported the unbounded places as {run:?} and run 0 reported \
+                 {:?} — the same grammar analysed twice gave two different orders, so the \
+                 place list is being materialised from a hash-ordered collection",
+                runs[0],
+            );
+        }
+
+        assert_eq!(
+            runs[0], expected,
+            "the unbounded places are reported as {:?}, but the ordering law is grammar \
+             first-encounter order, which for this grammar is {expected:?}. \
+             `[\"Alpha\", \"Beta\", \"Gamma\"]` would mean the order became lexicographic or \
+             declaration order — deterministic, but no longer the grammar's own.",
+            runs[0],
+        );
+    }
+
+    /// This module's own source, for the carrier-type guard below.
+    const PETRI_SOURCE: &str = include_str!("petri.rs");
+
+    /// The body of [`analyze_from_bundle`] alone, with `//`-comments removed.
+    ///
+    /// Both restrictions are load-bearing, and both were learned the hard way
+    /// while writing this guard:
+    ///
+    /// - **Producer region only.** A whole-file scan is red on a *correct* file,
+    ///   because the guard's own failure messages below have to name the shapes
+    ///   they forbid in order to be readable.
+    /// - **Comments stripped.** The ordering law is documented in prose that
+    ///   quotes those same shapes, so a raw scan would be red because of the
+    ///   comment explaining why it is green.
+    ///
+    /// The region is delimited by the function signature and the `Tests` banner
+    /// that follows it — `analyze_from_bundle` is the last item before the banner.
+    fn producer_source() -> String {
+        const SIGNATURE: &str = "pub fn analyze_from_bundle(";
+        let start = match PETRI_SOURCE.find(SIGNATURE) {
+            Some(at) => at,
+            None => panic!(
+                "`{SIGNATURE}` is not in this file. The ordering law of #173 is a property \
+                 of that function; if it was renamed or moved, this guard must follow it \
+                 rather than silently stop checking anything."
+            ),
+        };
+        let region = &PETRI_SOURCE[start..];
+        let end = region.find("\n// \u{2550}").unwrap_or(region.len());
+        region[..end]
+            .lines()
+            .map(|line| match line.find("//") {
+                Some(at) => &line[..at],
+                None => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The place-discovery **carrier** is order-carrying, and the transition
+    /// wiring does not read a hash collection positionally.
+    ///
+    /// # Why a carrier-type guard in addition to the behavioural one
+    ///
+    /// The behavioural guard above can only see what the *report* exposes. The
+    /// other half of #173 is invisible there: the wiring used to choose its input
+    /// and output places with `place_map.values().copied().collect()` and then
+    /// `.first()` / `.get(1)`, making the net's own structure hash-ordered. That
+    /// permutation happens not to change the deadlock verdict — the nets are
+    /// isomorphic under it — so no assertion about `PetriAnalysis` can detect it,
+    /// and yet the code is wrong and the next field added to `PetriAnalysis`
+    /// would expose it.
+    ///
+    /// A carrier assertion is checkable in one pass and cannot pass vacuously:
+    /// each clause below requires a positive match, so deleting or renaming the
+    /// thing it guards turns it red rather than silent.
+    #[test]
+    fn place_discovery_carrier_is_order_carrying() {
+        let source = producer_source();
+
+        assert!(
+            source.contains("let mut channel_refs: Vec<String>"),
+            "`channel_refs` — the place-discovery carrier — is no longer declared as \
+             `Vec<String>`. Grammar first-encounter order is carried by that Vec; a \
+             `HashSet` cannot carry an order at all and a `BTreeSet` would carry the \
+             wrong one. If the carrier was renamed, rename it here too: this guard is \
+             deliberately unable to pass without finding it.",
+        );
+        assert!(
+            source.contains("let mut channel_seen: HashSet<String>"),
+            "`channel_seen` — the O(1) duplicate test that lets `channel_refs` stay a \
+             Vec without going quadratic — is gone. Membership is the one thing a hash \
+             set should be doing here.",
+        );
+        assert!(
+            !source.contains("place_map"),
+            "`place_map` is back. It was a write-only `HashMap<String, usize>` whose only \
+             reader took `.values()` POSITIONALLY, which is what made the transition \
+             wiring hash-ordered (#173). `net.places` is already the id-ordered index.",
+        );
+        assert!(
+            !source.contains(".values().copied().collect()"),
+            "a `HashMap`'s values are being collected into a sequence again. That is the \
+             #173 shape exactly: the collection has no order, so the sequence has no \
+             order, and every positional read of it — `.first()`, `.get(1)`, `zip`, a \
+             rendered list — silently inherits the randomness.",
         );
     }
 }
