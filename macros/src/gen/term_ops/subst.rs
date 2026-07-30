@@ -294,23 +294,43 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
     let language_name = &language.name;
     let env_name = format_ident!("{}Env", language_name);
 
-    // Post-HOL-B size reduction: a replacement category `X` only needs
-    // full PDA dispatch in `subst_by_name_X` if `X` can host replaceable
-    // free variables. For pure-data categories (Int/UInt32/BigInt/…) the
-    // method trivially clones. The PDA is still CAPABLE of dispatching —
-    // the wrapper just short-circuits the non-variable-bearing replacement
-    // categories with an early `self.clone()`. This preserves the API
-    // while eliminating per-variant monomorphization cost for those cats.
-    let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
+    // A replacement category `X` needs full PDA dispatch in `subst_by_name_X` only if an
+    // `X`-typed FREE VARIABLE can occur in a term — otherwise there is nothing for the
+    // walk to rewrite and the method may short-circuit to `self.clone()`.
+    //
+    // ⚠★ #98 — this predicate used to ask the HOL set, and that was a latent
+    // unsoundness that only #98 could have detonated. Read carefully before editing:
+    //
+    //  * The old form was `hol_pairs.iter().any(|(c, d)| c == cat || d == cat) || <cat
+    //    has a DECLARED var rule>`. Because `compute_hol_domain_pairs` returned the full
+    //    cross-product, `(cat, cat)` was a member for EVERY declared category, so the
+    //    first disjunct was unconditionally `true` and the second was dead. The
+    //    "size reduction" the old comment described therefore never once fired.
+    //  * #98 empties that set for a binderless language. The first disjunct then goes
+    //    `false`, and the fallback decides — but the fallback only sees var rules the
+    //    grammar DECLARES, whereas `gen/types/enums.rs` emits an auto-injected
+    //    `<Cat>Var(OrdVar)` for every category that declares none. Every category has a
+    //    variable form; only some declare it. The fallback would thus have answered
+    //    `false` for categories that demonstrably hold variables, silently degrading
+    //    `subst_by_name_X` to a clone and dropping substitutions on the floor.
+    //
+    // The predicate now asks the question it actually means, against the same source
+    // `enums.rs` uses: does this category have a variable form in its emitted enum? That
+    // is true for every declared category — by a DECLARED var rule, else by the
+    // auto-injected one — so this is a no-op relative to the pre-#98 behavior (which was
+    // also unconditionally `true`, by the accident above). The disjunction is spelled out
+    // rather than collapsed to `true` because it names the two sources, so a future
+    // change to `enums.rs` that stops emitting a variable form for some category has a
+    // matching term here to update instead of a bare literal to rediscover.
     let is_variable_bearing = |cat_name: &syn::Ident| -> bool {
-        let cat_str = cat_name.to_string();
-        hol_pairs
+        let declares_var_rule = language
+            .terms
             .iter()
-            .any(|(c, d)| c == &cat_str || d == &cat_str)
-            || language
-                .terms
-                .iter()
-                .any(|r| r.category == *cat_name && crate::gen::is_var_rule(r))
+            .any(|r| r.category == *cat_name && crate::gen::is_var_rule(r));
+        // `enums.rs` emits `#var_label(OrdVar)` for exactly the categories with no
+        // declared var rule, so a declared category always has one form or the other.
+        let receives_auto_var = language.types.iter().any(|t| t.name == *cat_name);
+        declares_var_rule || receives_auto_var
     };
 
     let env_wrappers: Vec<TokenStream> = language

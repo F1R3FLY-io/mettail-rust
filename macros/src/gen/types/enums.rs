@@ -190,13 +190,21 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             });
         }
 
-        // Auto-generate lambda variants for domain categories that this
-        // category uses. Pre-HOL-B: every (cat, domain) pair — O(categories²).
-        // Post-HOL-B: only pairs flagged by `compute_hol_domain_pairs`:
-        // either structurally implied by an `Abstraction` /
-        // `MultiAbstraction` grammar param, or appearing by name in a
-        // `rust_code` body / logic block. This is the primary cut: the
-        // enum definition is what every downstream emitter keys off of.
+        // Auto-generate the HOL family for the (cat, domain) pairs that
+        // `compute_hol_domain_pairs` flags. This is the primary cut: the enum
+        // definition is what every downstream emitter keys off of.
+        //
+        // #98: that set is the full (category × domain) cross-product for a language
+        // that DECLARES A BINDER, and EMPTY for one that does not — so a binderless
+        // language gets no `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}` at all.
+        //
+        // ⚠ The comment that stood here described a per-pair gate ("structurally
+        // implied by an `Abstraction` param, or appearing by name in a `rust_code`
+        // body") which the function had never implemented — it returned the
+        // unconditional cross-product, and the claim was recorded as defect F-2 in
+        // `docs/languages/monoid.md`. Do not reintroduce a per-pair gate here without
+        // reading the HOL-B post-mortem in `logic/common.rs`: narrowing the enum below
+        // what the other emitters reference is what produced 96+ dangling references.
         let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
         let cat_str = cat_name.to_string();
         for domain_lang_type in &language.types {

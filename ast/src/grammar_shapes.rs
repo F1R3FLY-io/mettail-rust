@@ -33,9 +33,104 @@
 //! No code change in `binder.rs`, `prefix.rs`, `infix.rs`, or
 //! `semantic_actions.rs` is needed for the shared shape recognizers.
 
-use crate::grammar::{GrammarRule, SyntaxExpr, TermParam};
+use crate::grammar::{GrammarItem, GrammarRule, SyntaxExpr, TermParam};
+use crate::language::LanguageDef;
 use crate::types::{CollectionType, EvalMode, TypeExpr};
 use std::collections::HashSet;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Binder declaration — the ONE predicate that answers "does this bind?"
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Whether a single `TermParam` — or anything nested inside it — binds a variable.
+///
+/// The two binding forms are the abstraction params, spelled `^x.body:[D -> C]`
+/// ([`TermParam::Abstraction`]) and `^[xs].body:[D* -> C]`
+/// ([`TermParam::MultiAbstraction`]). Neither [`TermParam::Simple`] nor
+/// [`TermParam::GuardBody`] binds: a guard slot carries a `BehavioralPred`, which
+/// scrutinises the term it guards and introduces no name.
+///
+/// ★ [`TermParam::Optional`] is the case a flat `iter().any(matches!(…))` gets wrong.
+/// `#opt(…)` is a *container* of params, so an abstraction can sit one level down —
+/// `#opt(^x.body:[D -> C])` declares a binder that a non-recursive scan cannot see.
+/// No grammar in the corpus spells that today (measured: the recursive and flat forms
+/// agree on all 54 declared languages), so recursing changes no current answer. It is
+/// written recursively because the shape is *already legal* in the parser
+/// (`ast/src/grammar.rs::parse_term_param` accepts nested params), so the flat form is
+/// a hole waiting for the first grammar that steps in it, not a simplification.
+pub fn param_declares_binder(param: &TermParam) -> bool {
+    match param {
+        TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => true,
+        TermParam::Optional { params } => params.iter().any(param_declares_binder),
+        TermParam::Simple { .. } | TermParam::GuardBody { .. } => false,
+    }
+}
+
+/// Whether a single grammar rule binds a variable.
+///
+/// A rule reaches codegen in one of two styles, and each spells binding its own way:
+///
+/// | style | where binding is spelled | recognized by |
+/// |---|---|---|
+/// | judgement (`Lam . ^x.body:[T -> T] \|- … : T ;`) | `term_context` params | [`param_declares_binder`] |
+/// | legacy positional (`Lam . "λ" <Name> "." Proc ;`) | `items` | [`GrammarItem::Binder`] |
+///
+/// Both are consulted, unconditionally. An earlier copy of this predicate consulted
+/// `items` only via `term_context.as_ref().map(…).unwrap_or_else(…)` — i.e. only when
+/// `term_context` was `None` — which silently ignores a `GrammarItem::Binder` on any
+/// rule that also carries a term context. That is `false` for every rule in the corpus
+/// today (measured: the union and the either/or forms agree on all 54 languages), but
+/// the either/or form encodes an assumption about the two styles being mutually
+/// exclusive that nothing in `ast/src/grammar.rs` enforces.
+pub fn rule_declares_binder(rule: &GrammarRule) -> bool {
+    let binds_in_context = rule
+        .term_context
+        .as_ref()
+        .is_some_and(|params| params.iter().any(param_declares_binder));
+    let binds_in_items = rule
+        .items
+        .iter()
+        .any(|item| matches!(item, GrammarItem::Binder { .. }));
+    binds_in_context || binds_in_items
+}
+
+/// **Does this language declare any binder?**
+///
+/// This is the demand signal for the auto-injected higher-order-logic (HOL) variant
+/// family — `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}` — read by
+/// `macros/src/logic/common.rs::compute_hol_domain_pairs` (which every HOL emitter
+/// keys off) and by
+/// `macros/src/gen/runtime/wpda_codegen/synthetic.rs::synthesize_grammar_rules`
+/// (which emits the family's surface syntax).
+///
+/// ## Why this is the right question
+///
+/// The family is meta-level abstraction machinery: `Lam{D}` introduces a binding, and
+/// `Apply{D}` β-reduces against it (`macros/src/gen/term_ops/normalize.rs`). A language
+/// that never binds a variable can never build a `Lam{D}`, so it can never *reduce* an
+/// `Apply{D}` either — the whole family is inert. Binding is therefore not a proxy for
+/// demand; it is demand.
+///
+/// ## ★ Why it is DERIVED and not a list of language names
+///
+/// The answer is computed from the language's own declaration — the abstraction params
+/// of its grammar rules — so a grammar that starts or stops binding is reclassified by
+/// the same edit that changes it. A hand-maintained roster of "the languages with
+/// binders" would be a mirror of a computable domain, and this repository has watched
+/// that shape fail repeatedly (see
+/// `ast/tests/language_name_keyed_artifacts.rs`, which exists because
+/// `const BUNDLED_LANGUAGES` failed open three times before it was replaced by a walk).
+///
+/// ## Composition
+///
+/// Callers must evaluate this on the **post-composition** definition. `extends` /
+/// `includes` / `mixins` merge a base's `terms` in, so a language that declares no
+/// abstraction itself can inherit one. Both production call sites satisfy this: the
+/// macro applies `merge::apply_*` before codegen, and
+/// `auto_inject::reconstruct_language_def` replays those same passes.
+pub fn declares_binder(language: &LanguageDef) -> bool {
+    language.terms.iter().any(rule_declares_binder)
+}
 
 /// Recognized shape of a unary-prefix rule.
 ///
@@ -369,11 +464,17 @@ pub fn classify_fold_alias_shape(rule: &GrammarRule) -> Option<FoldAliasShape> {
     // Both are read off the same expression `is_fold_alias_root` just validated, so they
     // cannot disagree with it.
     let root = unwrap_single_expr(code)?;
-    let syn::Expr::Call(root_call) = root else { return None };
+    let syn::Expr::Call(root_call) = root else {
+        return None;
+    };
     let (_, target_label) = constructor_path(&root_call.func)?;
     let renaming_inverse = renaming_inverse_of(root_call, &param_order);
 
-    Some(FoldAliasShape { target_category: cat, target_label, renaming_inverse })
+    Some(FoldAliasShape {
+        target_category: cat,
+        target_label,
+        renaming_inverse,
+    })
 }
 
 /// The [`FoldAliasShape::renaming_inverse`] of a validated fold-alias root call: `Some(v)`
@@ -459,9 +560,7 @@ fn is_fold_alias_root(
     };
     match e {
         syn::Expr::Call(call) => match constructor_path(&call.func) {
-            Some((type_seg, variant_seg))
-                if type_seg == root_cat && variant_seg != rule_label =>
-            {
+            Some((type_seg, variant_seg)) if type_seg == root_cat && variant_seg != rule_label => {
                 call.args.iter().all(|a| is_fold_alias_node(a, params))
             },
             _ => false,
@@ -569,7 +668,9 @@ fn is_param_ref(expr: &syn::Expr, params: &HashSet<String>) -> bool {
 
 /// Whether `path` is a single identifier contained in `params`.
 fn is_single_ident_in(path: &syn::Path, params: &HashSet<String>) -> bool {
-    path.get_ident().map(|id| params.contains(&id.to_string())).unwrap_or(false)
+    path.get_ident()
+        .map(|id| params.contains(&id.to_string()))
+        .unwrap_or(false)
 }
 
 /// A PascalCase (UpperCamelCase) identifier starts with an ASCII uppercase
@@ -577,7 +678,10 @@ fn is_single_ident_in(path: &syn::Path, params: &HashSet<String>) -> bool {
 /// (`POutput`, `NQuote`, `PZero`) from free functions (`name_pattern_to_proc`,
 /// `new`, `clone`).
 fn is_pascal_case(s: &str) -> bool {
-    s.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+    s.chars()
+        .next()
+        .map(|c| c.is_ascii_uppercase())
+        .unwrap_or(false)
 }
 
 // ── Fold-alias POLYADIC-SEND shape (trailing-Vec, arity ≥2) ──────────────────
@@ -798,9 +902,11 @@ fn channel_wrap_leaf_param(expr: &syn::Expr, params: &HashSet<String>) -> Option
         // A bare single-ident param reference (e.g. `n`). A `≥2`-segment path
         // (`Proc::PZero`, a nullary variant) has no `get_ident()` ⇒ `None` ⇒ NOT
         // param-bottomed (the A1b exclusion of the `*Nil*` channels).
-        syn::Expr::Path(p) => {
-            p.path.get_ident().map(|id| id.to_string()).filter(|s| params.contains(s))
-        },
+        syn::Expr::Path(p) => p
+            .path
+            .get_ident()
+            .map(|id| id.to_string())
+            .filter(|s| params.contains(s)),
         syn::Expr::Paren(p) => channel_wrap_leaf_param(&p.expr, params),
         syn::Expr::Group(g) => channel_wrap_leaf_param(&g.expr, params),
         _ => None,
@@ -1105,7 +1211,8 @@ mod tests {
                 )
             }},
         );
-        let shape = classify_fold_alias_send_shape(&rule).expect("Short2Plus is a fold-alias-send sugar");
+        let shape =
+            classify_fold_alias_send_shape(&rule).expect("Short2Plus is a fold-alias-send sugar");
         assert_eq!(shape.target_category, "Proc");
         assert_eq!(shape.scalar_target_label, "POutput"); // derived from the body, not hardcoded
         assert_eq!(shape.channel_param, "p");
@@ -1131,7 +1238,8 @@ mod tests {
                 )
             }},
         );
-        let shape = classify_fold_alias_send_shape(&rule).expect("POutput2Plus classifies (as canonical)");
+        let shape =
+            classify_fold_alias_send_shape(&rule).expect("POutput2Plus classifies (as canonical)");
         assert_eq!(shape.scalar_target_label, "POutput");
         assert_eq!(shape.channel_param, "n");
         assert!(shape.channel_is_bare_param, "the canonical channel is a bare param quote");
@@ -1216,7 +1324,11 @@ mod tests {
         let sugar = fold_rule(
             "WrapSend",
             "Widget",
-            vec![simple_param("w", "Widget"), simple_param("x", "Widget"), vec_param("xs", "Widget")],
+            vec![
+                simple_param("w", "Widget"),
+                simple_param("x", "Widget"),
+                vec_param("xs", "Widget"),
+            ],
             syn::parse_quote! {{
                 let mut acc = Vec::with_capacity(1 + xs.len());
                 acc.push(x.clone());
@@ -1227,8 +1339,8 @@ mod tests {
                 )
             }},
         );
-        let shape =
-            classify_fold_alias_send_shape(&sugar).expect("synthetic sugar classifies by structure");
+        let shape = classify_fold_alias_send_shape(&sugar)
+            .expect("synthetic sugar classifies by structure");
         assert_eq!(shape.target_category, "Widget");
         assert_eq!(shape.scalar_target_label, "Emit"); // derived from THIS body
         assert_eq!(shape.channel_param, "w");
@@ -1239,7 +1351,11 @@ mod tests {
         let canonical = fold_rule(
             "EmitMulti",
             "Widget",
-            vec![simple_param("n", "Chan"), simple_param("x", "Widget"), vec_param("xs", "Widget")],
+            vec![
+                simple_param("n", "Chan"),
+                simple_param("x", "Widget"),
+                vec_param("xs", "Widget"),
+            ],
             syn::parse_quote! {{
                 let mut acc = Vec::with_capacity(1 + xs.len());
                 acc.push(x.clone());
@@ -1260,7 +1376,11 @@ mod tests {
         let impure = fold_rule(
             "WrapSendImpure",
             "Widget",
-            vec![simple_param("w", "Widget"), simple_param("x", "Widget"), vec_param("xs", "Widget")],
+            vec![
+                simple_param("w", "Widget"),
+                simple_param("x", "Widget"),
+                vec_param("xs", "Widget"),
+            ],
             syn::parse_quote! {{
                 let mut acc = Vec::with_capacity(1 + xs.len());
                 acc.push(x.clone());

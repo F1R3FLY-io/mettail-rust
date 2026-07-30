@@ -321,24 +321,17 @@ pub(crate) fn build_per_category_rules(
     //    lexer's FIRST set doesn't include Dollar/Ddollar tokens (per
     //    `pipeline.rs:2265-2280`) and the trampoline doesn't emit dollar
     //    handlers either.
-    let has_binders = language.terms.iter().any(|rule| {
-        rule.term_context
-            .as_ref()
-            .map(|tc| {
-                tc.iter().any(|p| {
-                    matches!(
-                        p,
-                        mettail_ast::grammar::TermParam::Abstraction { .. }
-                            | mettail_ast::grammar::TermParam::MultiAbstraction { .. }
-                    )
-                })
-            })
-            .unwrap_or_else(|| {
-                rule.items
-                    .iter()
-                    .any(|item| matches!(item, GrammarItem::Binder { .. }))
-            })
-    });
+    //
+    // ★ #98: the predicate is READ from `mettail_ast::grammar_shapes`, not restated
+    //    here. This site was the FIRST to gate on binder declaration and it carried its
+    //    own inlined copy — while `logic/common.rs::compute_hol_domain_pairs`, which
+    //    decides whether the AST variants these rules construct exist at all, gated on
+    //    nothing. The two answers have to agree (a synthetic rule whose target variant
+    //    was not emitted is a dangling reference; a variant with no synthetic rule is
+    //    unparseable), and the only way to guarantee agreement is one function. The
+    //    shared form additionally recurses into `#opt(…)` and consults `items` even when
+    //    a term context is present — two cases the inlined copy answered `false` for.
+    let has_binders = mettail_ast::grammar_shapes::declares_binder(language);
     if has_binders {
         let category_names: Vec<String> =
             language.types.iter().map(|t| t.name.to_string()).collect();

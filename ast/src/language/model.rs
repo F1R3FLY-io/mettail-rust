@@ -15,11 +15,20 @@ pub enum AttributeValue {
     Keyword(String),
 }
 
-// NOTE: HOL variant auto-generation is fully automatic — it scans the grammar
-// for explicit `Lam{D}` / `Apply{D}` references and for multi-binder
-// `TermParam::Abstraction` / `TermParam::MultiAbstraction` params, and only
-// emits variants that are actually needed. There is no user-facing option
-// for this — see `macros/src/logic/common.rs::compute_hol_domain_pairs`.
+// NOTE: HOL variant auto-generation is automatic and DEMAND-DRIVEN PER LANGUAGE
+// (#98). A language whose grammar declares a binder — an `^x.body` / `^[xs].body`
+// abstraction param, or a legacy positional `GrammarItem::Binder` — receives the
+// `Lam{D}` / `MLam{D}` / `Apply{D}` / `MApply{D}` family for every (category, domain)
+// pair. A language that declares no binder receives none of it. There is no
+// user-facing option: the demand signal is the grammar itself, via
+// `grammar_shapes::declares_binder`, consumed by
+// `macros/src/logic/common.rs::compute_hol_domain_pairs`.
+//
+// ⚠ The note that stood here claimed the emission "scans the grammar for explicit
+// `Lam{D}` / `Apply{D}` references … and only emits variants that are actually
+// needed". That described the abandoned per-pair "HOL-B" gate, not the code: until
+// #98 the family was emitted unconditionally into every category of every language.
+// Per-PAIR narrowing is still not done, and `logic/common.rs` records why.
 
 /// Top-level theory definition
 /// theory! { name: Foo, params: ..., options { ... }, types { ... }, terms { ... }, equations { ... }, rewrites { ... }, logic { ... } }

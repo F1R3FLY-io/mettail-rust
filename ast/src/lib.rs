@@ -10,6 +10,7 @@
 //! non-proc-macro consumers from importing types from a proc-macro crate.
 
 pub mod auto_inject;
+pub mod binder_census;
 pub mod compose;
 pub mod fragment;
 pub mod grammar;
