@@ -2335,13 +2335,31 @@ language! {
                 //     quotient (C99 §6.5.5), not about a `p`-places quotient. `/` therefore never
                 //     entered into it: `%` was simply not the operation the identity is about.
                 //     `checked_div` is UNCHANGED by the repair and `10p1 / 3p1` is still `3.3p1`.
-                //   · Not stated at the time, and DECISIVE: the old `%` read `places`, which this
-                //     type's own equality contract declares meaningless. `PartialEq`/`Hash`/
-                //     `to_canonical_bytes` key on the reduced rational, so `7.00p2 == 7.0p1` — yet
-                //     the old `%` gave `0.01` and `0.1`. Equal inputs, unequal outputs: it was not
-                //     a function on the type's own equivalence classes. Any "restoration" would
-                //     reintroduce that, and `runtime`'s
-                //     `remainder_is_invariant_under_the_places_spelling` would go red.
+                //   · ⚠⚠ RE-DERIVED 2026-07-30 (work item #200). A third argument stood here,
+                //     verbatim:
+                //
+                //       > Not stated at the time, and DECISIVE: the old `%` read `places`, which
+                //       > this type's own equality contract declares meaningless.
+                //       > `PartialEq`/`Hash`/`to_canonical_bytes` key on the reduced rational, so
+                //       > `7.00p2 == 7.0p1` — yet the old `%` gave `0.01` and `0.1`. Equal
+                //       > inputs, unequal outputs: it was not a function on the type's own
+                //       > equivalence classes.
+                //
+                //     Its premise is now FALSE. The owner ruled `Eq`/`Hash`/`Ord` onto the raw
+                //     `(unscaled, places)` pair, so `7.00p2 != 7.0p1` and a `places`-reading `%`
+                //     IS a function on the equivalence classes. Left as written, that paragraph
+                //     reads as a licence to restore the residual `%`. It is not one.
+                //
+                //     What condemns the old `%` is the FLOOR, and it always did: upstream's
+                //     `combine_mod` `GFixedPoint` arm (`reduce.rs:3460-3470`) computes
+                //     `&ua % &ub` on the unscaled integers preserving `fp1.scale`, and upstream
+                //     requires `fp1.scale == fp2.scale`, so at equal scales this `%` is
+                //     upstream's `%` exactly. The residual matched it at NO scale:
+                //     `7.50p2 % 2.00p2` returned `0p0` where upstream returns `1.50p2`, because
+                //     `7.50/2.00 = 3.75` is exact at two places so the error term is zero. A
+                //     quantity that vanishes as precision grows is not a remainder. Any
+                //     "restoration" turns `runtime`'s
+                //     `remainder_is_invariant_under_the_places_spelling` red.
                 //
                 // ⚠ STILL OPEN, AND NOT CHANGED HERE: upstream REFUSES MIXED SCALES. Every
                 // upstream fixed-point arithmetic arm raises `OperatorExpectedError { op, expected:

@@ -718,26 +718,50 @@ fn semantic_hash_collection(
 ///     (mirrors `native::lossless_coercion` codegen); `CanonicalBigInt` is
 ///     already canonical.
 ///   - rational family (`CanonicalBigRat` / `CanonicalFixedPoint`):
-///     `NUMERIC_RAT_TAG` followed by `to_canonical_bytes()` — the length-framed
-///     reduced `(numer, denom)` of the value's rational form. The two wrappers
-///     emit the SAME framed format, so a fixed-point and a big-rational of equal
-///     value hash identically.
+///     `NUMERIC_RAT_TAG` followed by the length-framed reduced `(numer, denom)`
+///     of the value's rational form. The two wrappers emit the SAME framed
+///     format, so a fixed-point and a big-rational of equal value hash
+///     identically. ★ The METHOD NAME differs between them since work item #200
+///     (2026-07-30): `CanonicalBigRat::to_canonical_bytes()` is already
+///     value-keyed, while `CanonicalFixedPoint`'s value-keyed form is
+///     `to_rational_canonical_bytes()` — its `to_canonical_bytes()` was moved
+///     onto the raw `(unscaled, places)` pair so it agrees with the `Eq` the
+///     owner ruled, which the op-enum content key
+///     (`dovetail_report/op_enum.rs:141-146`) requires and this fingerprint must
+///     NOT have. One method could not serve both; see
+///     `CanonicalFixedPoint::to_rational_canonical_bytes`'s own doc for the
+///     two-consumer table.
 ///
 /// The two distinct family tags keep the integer `1` and the rational `1/1`
 /// observationally apart (they ARE distinct under the evaluator).
 ///
-/// ## Why `to_canonical_bytes()` and not `Hash::hash`
+/// ## Why a canonical-BYTES method and not `Hash::hash`
 ///
 /// `num_rational::Ratio::hash` hashes the *continued-fraction* expansion
-/// (`div_mod_floor` recursion), so `CanonicalBigRat(3/2)::hash` writes `[1,2,0]`
-/// while `CanonicalFixedPoint(1.5)::hash` (manual `numer.hash();denom.hash();`)
-/// writes `[3,2]` — `Hash::hash` would NOT unify the two rational wrappers.
-/// `to_canonical_bytes()` is the documented `Eq`-agreeing canonical form (the
-/// same key the Dovetail op-enum uses) and is identical across wrappers, so it
-/// unifies them by construction. The bytes are written through `Hasher::write`
+/// (`div_mod_floor` recursion), so `CanonicalBigRat(3/2)::hash` writes `[1,2,0]`,
+/// while `CanonicalFixedPoint(1.5p1)::hash` writes its raw `(unscaled, places)`
+/// stream `[15, 1]` — `Hash::hash` would NOT unify the two rational wrappers.
+/// The value-keyed canonical-bytes methods are identical across wrappers, so
+/// they unify them by construction. The bytes are written through `Hasher::write`
 /// behind an explicit `write_usize(len)` frame so the leaf is self-delimiting
 /// for ANY `Hasher` (the dedup's `FramedSemanticKeyHasher` already frames
 /// `write`, but the framing keeps the stream unambiguous regardless).
+///
+/// ⚠ **RE-DERIVED 2026-07-30 (work item #200).** This paragraph read, verbatim:
+///
+/// > while `CanonicalFixedPoint(1.5)::hash` (manual `numer.hash();denom.hash();`)
+/// > writes `[3,2]` — `Hash::hash` would NOT unify the two rational wrappers.
+/// > `to_canonical_bytes()` is the documented `Eq`-agreeing canonical form (the
+/// > same key the Dovetail op-enum uses) and is identical across wrappers, so it
+/// > unifies them by construction.
+///
+/// Two clauses of that are now false and one is now the reason for the split:
+/// `CanonicalFixedPoint`'s `Hash` no longer writes `numer`/`denom`; its
+/// `to_canonical_bytes()` is no longer identical to `CanonicalBigRat`'s; and "the
+/// same key the Dovetail op-enum uses" is now precisely what this arm must AVOID,
+/// because the op-enum key must agree with an `Eq` that separates `7.00p2` from
+/// `7.0p1` while this fingerprint must unify `1.5p1` with `3/2`. Contradictory
+/// requirements, two methods.
 ///
 /// ## Soundness
 ///
@@ -793,9 +817,20 @@ fn semantic_hash_numeric_literal_body(native_type: &syn::Type) -> Option<TokenSt
     }
 
     if matches!(nt, NativeType::CanonicalBigRat | NativeType::CanonicalFixedPoint) {
+        // ★ THE SPLIT (work item #200, 2026-07-30). `CanonicalFixedPoint::to_canonical_bytes`
+        // no longer keys on the value — it keys on the raw `(unscaled, places)` pair, because
+        // the op-enum content key (`dovetail_report/op_enum.rs:141-146`) must agree with `Eq`,
+        // and `Eq` moved. The VALUE-keyed form survives under a qualifying name and is what
+        // THIS fingerprint needs, because unifying `Fixed(1.5p1)` with `BigRat(3/2)` is the
+        // whole point of the arm. `CanonicalBigRat` is unaffected: its only key is the value.
+        let canon_bytes = if matches!(nt, NativeType::CanonicalFixedPoint) {
+            quote! { v.to_rational_canonical_bytes() }
+        } else {
+            quote! { v.to_canonical_bytes() }
+        };
         return Some(quote! {
             state.write_u8(#NUMERIC_RAT_TAG);
-            let __numeric_canon: ::std::vec::Vec<u8> = v.to_canonical_bytes();
+            let __numeric_canon: ::std::vec::Vec<u8> = #canon_bytes;
             state.write_usize(__numeric_canon.len());
             state.write(__numeric_canon.as_slice());
         });

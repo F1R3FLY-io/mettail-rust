@@ -61,14 +61,93 @@ impl CanonicalFixedPoint {
     }
 
     /// Deterministic canonical byte serialization that agrees with [`Eq`]: two
-    /// `CanonicalFixedPoint`s are equal iff their canonical bytes are equal. **Critically,
-    /// this keys on [`value_ratio`](Self::value_ratio) — the reduced rational
-    /// `unscaled / 10^places` — exactly as `PartialEq`/`Hash` do, NOT on the raw
-    /// `(unscaled, places)` pair.** Using the raw pair (or `Debug`, which renders the raw
-    /// pair) would give two `Eq`-equal values (e.g. `15p1` and `150p2`, both `3/2`) distinct
-    /// bytes and break the `SemanticHash`↔`Eq` agreement that the Dovetail e-graph relies on
-    /// to dedup. Used to give a generated typed op-enum a sound `SemanticHash` content key.
+    /// `CanonicalFixedPoint`s are equal iff their canonical bytes are equal. It keys on the raw
+    /// `(unscaled, places)` pair — **exactly** what `PartialEq`/`Hash` key on since work item
+    /// #200 — as `framed(unscaled.to_signed_bytes_le()) ++ places.to_le_bytes()`.
+    ///
+    /// # Why this is injective, and therefore satisfies the contract
+    ///
+    /// `dovetail/src/key.rs:96-104` requires `write_content` to be *injective up to
+    /// observational equivalence* — a biconditional over an exact `Vec<u8>`, not a hash:
+    /// `a == b  ⟺  a.to_canonical_bytes() == b.to_canonical_bytes()`.
+    /// `BigInt::to_signed_bytes_le` is the MINIMAL two's-complement encoding and hence a
+    /// bijection on `BigInt` (the same property [`CanonicalBigInt::to_canonical_bytes`] already
+    /// relies on). The 8-byte little-endian length frame stops the mantissa from aliasing into
+    /// the `places` field, and `places` is fixed-width (4 B). Decoding is therefore
+    /// unambiguous — read 8, read that many, read 4 — so the composite is injective on
+    /// `(unscaled, places)`, which is precisely the new `Eq`.
+    ///
+    /// # ⚠ WHAT THIS USED TO KEY ON, AND WHY IT CHANGED
+    ///
+    /// Until work item #200 (2026-07-30) the body keyed on
+    /// [`value_ratio`](Self::value_ratio) and this doc comment read, verbatim:
+    ///
+    /// > **Critically, this keys on [`value_ratio`](Self::value_ratio) — the reduced rational
+    /// > `unscaled / 10^places` — exactly as `PartialEq`/`Hash` do, NOT on the raw
+    /// > `(unscaled, places)` pair.** Using the raw pair (or `Debug`, which renders the raw
+    /// > pair) would give two `Eq`-equal values (e.g. `15p1` and `150p2`, both `3/2`) distinct
+    /// > bytes and break the `SemanticHash`↔`Eq` agreement that the Dovetail e-graph relies on
+    /// > to dedup.
+    ///
+    /// Two things were wrong with that, and they are independent:
+    ///
+    /// 1. **The mechanism was mis-named.** The Dovetail e-graph does **not** dedup on the
+    ///    content key. `dovetail/src/egraph.rs` says of `content_key` explicitly that it "does
+    ///    NOT participate in hashcons identity"; the hashcons is `memo: HashMap<ENode<L>,
+    ///    EClassId>` (`egraph.rs:188`) and `ENode<L>` *derives* `PartialEq`/`Hash`
+    ///    (`egraph.rs:32-36`), so the dedup key is `L`'s own — i.e. this type's `Eq`/`Hash`,
+    ///    never these bytes. The content key serves AC keys, extraction and reporting. The old
+    ///    conclusion ("must agree with `Eq`") was right; its stated reason was not.
+    ///    ⚠ Commit `7baf0136`'s message claims it corrected this text. It did not — the
+    ///    correction landed only in `languages/tests/fixedpoint_scale_dedup_ab.rs`'s module
+    ///    doc. This is that correction, in the product file.
+    /// 2. **`places` IS part of identity.** Keying `Eq` on the reduced rational made the
+    ///    hashcons collapse `7.00p2` with `7.0p1`, so a scale-reading operator computed from
+    ///    whichever spelling the source text happened to mention first — witnessed in the
+    ///    consensus lane by `languages/tests/fixedpoint_scale_dedup_rholang.rs`. Work item
+    ///    #200 ruled `Eq`/`Hash`/`Ord` onto `(unscaled, places)`, and the agreement obligation
+    ///    then carries this method along with them.
+    ///
+    /// The value-keyed form did not disappear — it is
+    /// [`to_rational_canonical_bytes`](Self::to_rational_canonical_bytes), which still has one
+    /// live consumer with the opposite requirement.
     pub fn to_canonical_bytes(&self) -> Vec<u8> {
+        let u = self.unscaled.get().to_signed_bytes_le();
+        let mut out = Vec::with_capacity(u.len() + 12);
+        out.extend_from_slice(&(u.len() as u64).to_le_bytes());
+        out.extend_from_slice(&u);
+        out.extend_from_slice(&self.places.to_le_bytes());
+        out
+    }
+
+    /// Canonical bytes keyed on the **VALUE** — the length-framed reduced `(numer, denom)` of
+    /// `unscaled / 10^places`. Byte-identical to [`CanonicalBigRat::to_canonical_bytes`] for an
+    /// equal value, and that is the whole point.
+    ///
+    /// # Why this exists separately from [`to_canonical_bytes`](Self::to_canonical_bytes)
+    ///
+    /// The two methods have **contradictory** requirements because they have different
+    /// consumers, and no single method can serve both:
+    ///
+    /// | consumer | coordinate | needs |
+    /// |---|---|---|
+    /// | op-enum `SemanticHash` content key | `macros/src/gen/runtime/dovetail_report/op_enum.rs:141-146` | agreement with `Eq` ⇒ the **raw pair** |
+    /// | realize-frontier fingerprint | `macros/src/gen/term_ops/semantic_hash.rs:795-807` | **value** unification with `CanonicalBigRat` |
+    ///
+    /// The second is load-bearing, not incidental. A numeric literal read from ONE source token
+    /// can reach a category through several transparent lossless promotion casts
+    /// (`Fixed → BigRat` among them), and if the two readings fingerprint differently the
+    /// realize frontier fans out: `k` literals with `m` transparent reps each give `m^k`
+    /// alternatives — the measured `3^4 = 81` for `Map().set(1,10).set(2,20)`, with a
+    /// memcg-OOM at 20k-ternary attributed to the class (see `semantic_hash.rs`'s own
+    /// derivation). Unifying `Fixed(1.5p1)` with `BigRat(3/2)` collapses that fan, and it is
+    /// SOUND there because the realize-dedup only ever compares alternatives spanning the SAME
+    /// source tokens — so it never merges two distinct values.
+    ///
+    /// ★ Note the two collisions are genuinely different animals: this one is *wanted* (same
+    /// token, two category readings); the one work item #200 removed was *unwanted* (two
+    /// different tokens, equal value).
+    pub fn to_rational_canonical_bytes(&self) -> Vec<u8> {
         let r = self.value_ratio();
         let n = r.numer().to_signed_bytes_le();
         let d = r.denom().to_signed_bytes_le();
@@ -168,16 +247,37 @@ impl CanonicalFixedPoint {
     /// fixed-point number, not an integer, so the substitution is invalid. The note has been
     /// corrected alongside this function, because it would otherwise regenerate the defect.
     ///
-    /// ## ★★ The decisive defect: `%` was not a function on this type's own equality
+    /// ## ★★ The decisive defect — RE-DERIVED 2026-07-30, because its original argument no
+    /// longer holds
     ///
-    /// [`PartialEq`], [`Hash`] and [`to_canonical_bytes`](Self::to_canonical_bytes) all key on
-    /// [`value_ratio`](Self::value_ratio) — the reduced rational — because keying on the raw
-    /// `(unscaled, places)` pair would break the `SemanticHash`↔`Eq` agreement the Dovetail
-    /// e-graph relies on to dedup. So `places` is NOT part of a value's identity, and
-    /// `7.00p2 == 7.0p1`. But the superseded `%` READ `places`: it answered `0.01` for the first
-    /// spelling and `0.1` for the second. **Equal inputs, unequal outputs.** Whatever else it was,
-    /// it was not a function on the equivalence classes this type declares. Pinned by
-    /// `tests::remainder_is_invariant_under_the_places_spelling`.
+    /// **The superseded argument, verbatim:**
+    ///
+    /// > [`PartialEq`], [`Hash`] and [`to_canonical_bytes`](Self::to_canonical_bytes) all key on
+    /// > [`value_ratio`](Self::value_ratio) — the reduced rational — because keying on the raw
+    /// > `(unscaled, places)` pair would break the `SemanticHash`↔`Eq` agreement the Dovetail
+    /// > e-graph relies on to dedup. So `places` is NOT part of a value's identity, and
+    /// > `7.00p2 == 7.0p1`. But the superseded `%` READ `places`: it answered `0.01` for the
+    /// > first spelling and `0.1` for the second. **Equal inputs, unequal outputs.** Whatever
+    /// > else it was, it was not a function on the equivalence classes this type declares.
+    ///
+    /// ⚠ **That argument is DEAD as of work item #200.** `places` IS part of identity now, so
+    /// `7.00p2 ≠ 7.0p1`, and the two spellings are no longer "equal inputs". Read literally,
+    /// the superseded `%` WOULD be a function on the new equivalence classes — the raw pair
+    /// determines its answer. So this paragraph, unamended, is an argument for putting the
+    /// residual-valued `%` BACK. It is not. Do not.
+    ///
+    /// **What condemns the superseded `%` now is simpler and stronger: it did not compute a
+    /// remainder, and upstream defines what a remainder is.** Upstream's `combine_mod`
+    /// `GFixedPoint` arm (`reduce.rs:3460-3470`, quoted above) is `&ua % &ub` on the unscaled
+    /// integers with `scale: fp1.scale`, and upstream requires `fp1.scale == fp2.scale`, so at
+    /// equal scales this function and upstream's are the SAME function — a floor obligation,
+    /// not a taste. The superseded body computed `ε·b`, the division's own truncation residual,
+    /// which is not upstream's answer at ANY scale: `7.50p2 % 2.00p2` returned `0p0` where
+    /// upstream returns `1.50p2`, because `7.50/2.00 = 3.75` is exact at two places and so
+    /// `ε = 0`. A quantity that tends to zero as precision grows is not a remainder.
+    ///
+    /// Pinned by `tests::remainder_is_invariant_under_the_places_spelling`, itself re-derived
+    /// alongside this text.
     ///
     /// # The identity that no longer holds — and why that is correct, not a loss
     ///
@@ -216,9 +316,58 @@ impl CanonicalFixedPoint {
     }
 }
 
+/// ★ IDENTITY IS THE RAW `(unscaled, places)` PAIR — work item #200, 2026-07-30.
+///
+/// Ruled by the owner, verbatim: *"Key Eq/Hash/Ord on (unscaled, places)"*.
+///
+/// # What this replaced, verbatim
+///
+/// ```text
+/// impl PartialEq for CanonicalFixedPoint {
+///     fn eq(&self, other: &Self) -> bool { self.value_ratio() == other.value_ratio() }
+/// }
+/// impl Ord for CanonicalFixedPoint {
+///     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+///         self.value_ratio().cmp(&other.value_ratio())
+///     }
+/// }
+/// impl Hash for CanonicalFixedPoint {
+///     fn hash<H: Hasher>(&self, state: &mut H) {
+///         let r = self.value_ratio();
+///         r.numer().hash(state);
+///         r.denom().hash(state);
+///     }
+/// }
+/// ```
+///
+/// # Why it had to move
+///
+/// `ENode<L>` derives `PartialEq`/`Hash` (`dovetail/src/egraph.rs:32-36`), so the e-graph
+/// hashcons `memo: HashMap<ENode<L>, EClassId>` (`:188`) keys a `Fixed` literal leaf on THIS
+/// impl. `EGraph::add` (`:292-295`) returns the existing class on a memo hit and never inserts
+/// the incoming node, so a class kept only the FIRST-INSERTED `places`. The generated fold then
+/// reads its operand out of the e-CLASS, not the source term — so `/`, `&`, `|` and `bitnot`
+/// computed from whichever spelling of an equal value the program happened to mention first.
+/// Witnessed in the consensus lane: `languages/tests/fixedpoint_scale_dedup_rholang.rs`
+/// measures `((7.0p1 - 7.0p1) - (3.0p1 - 3.0p1)) + (7.00p2 / 3.00p2)` as `2.3p1` and the same
+/// two summands SWAPPED as `2.33p2`. `23/10 ≠ 233/100`.
+///
+/// ★ It also brings `==` INTO agreement with upstream, which it previously breached: upstream's
+/// `combine_eq` (`f1r3node-rust-mettail/rholang/src/rust/interpreter/reduce.rs:3733-3749`) is
+/// structural `Par` equality over `GFixedPoint { unscaled, scale }` and answers **`false`** for
+/// `7.00p2 == 7.0p1`, where mettail answered **`true`**; and `Set(7.00p2, 7.0p1)` is a
+/// TWO-element set upstream (`models/src/rust/sorted_par_hash_set.rs:14-24` is a
+/// `HashSet<Par>`) where mettail made it one.
+///
+/// ⚠ **Residual, NOT closed by this change:** [`normalize_in_place`](Self::normalize_in_place)
+/// still collapses true zero to `0p0` where upstream's `make_fixedpoint_expr`
+/// (`reduce.rs:9668-9675`) does not, so `0.00p2 == 0.0p1` remains `true` here and `false`
+/// upstream. Recorded, not repaired — it is a third change and needs its own ruling.
 impl PartialEq for CanonicalFixedPoint {
     fn eq(&self, other: &Self) -> bool {
-        self.value_ratio() == other.value_ratio()
+        // `places` first: a `u32` compare is far cheaper than a `BigInt` compare and
+        // discriminates most unequal pairs outright.
+        self.places == other.places && self.unscaled.get() == other.unscaled.get()
     }
 }
 
@@ -230,17 +379,55 @@ impl PartialOrd for CanonicalFixedPoint {
     }
 }
 
+/// Lexicographic on `(value_ratio(), places)` — **not** on `(unscaled, places)`.
+///
+/// # The consistency obligation, discharged
+///
+/// Rust requires `a.cmp(&b) == Equal  ⟺  a == b`. With `Eq` on the raw pair:
+///
+/// | case | `cmp` says | `eq` says | consistent? |
+/// |---|---|---|---|
+/// | `value_ratio` differs | not `Equal` (ratios decide) | `false` — equal pairs would force equal ratios, so unequal ratios force unequal pairs | ✓ |
+/// | `value_ratio` equal, `places` equal | `Equal` | `true` — `u_a/10^p == u_b/10^p ⇒ u_a == u_b` | ✓ |
+/// | `value_ratio` equal, `places` differ | not `Equal` (tie-break decides) | `false` | ✓ |
+///
+/// All three cases agree, so the obligation holds.
+///
+/// # ⚠ Why NOT plain lexicographic `(unscaled, places)`
+///
+/// It would not be an ORDER ON NUMBERS. `1.0p1` is `(10, 1)` and `0.99p2` is `(99, 2)`, so
+/// comparing mantissas first gives `10 < 99` ⇒ `1.0p1 < 0.99p2`, which is false as arithmetic.
+/// Pinned by `tests::ord_is_numeric_first_then_places`.
+///
+/// # ⚠ KNOWN RESIDUAL — the `places` tie-break leaks a non-numeric answer
+///
+/// `7.00p2 > 7.0p1` is **`true`** under this `Ord` (equal value, `places` 2 > 1), and as
+/// arithmetic that is nonsense. The tie-break exists ONLY to satisfy Rust's totality
+/// requirement and to give `BTreeMap`/`sort` a total order; it is not meant to be observable
+/// from a program.
+///
+/// **Its named resolution is upstream's scale-equality refusal** — the SIXTH refusal site,
+/// `compare_fixed_points` (`reduce.rs:9772-9783`, reached from `combine_relop` `:3188`), which
+/// refuses a mixed-scale comparison outright with `op: "cmp"`. Once that precondition is
+/// adopted (work item #186), the four language-level ordering relops refuse before this
+/// tie-break is ever reachable, and the invariant to pin is: *no language-level ordering
+/// comparison may observe the `places` tie-break.* That work is a separate, owner-blocked
+/// change (it turns on a `Mul` scale-rule decision that neither ruling authorises) and is
+/// deliberately NOT made here. Until it lands, the leak is REAL and is recorded rather than
+/// hidden.
 impl Ord for CanonicalFixedPoint {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.value_ratio().cmp(&other.value_ratio())
+        self.value_ratio()
+            .cmp(&other.value_ratio())
+            .then_with(|| self.places.cmp(&other.places))
     }
 }
 
+/// Agrees with [`PartialEq`] by construction: the same two fields, in the same order.
 impl Hash for CanonicalFixedPoint {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let r = self.value_ratio();
-        r.numer().hash(state);
-        r.denom().hash(state);
+        self.unscaled.get().hash(state);
+        self.places.hash(state);
     }
 }
 
@@ -520,25 +707,48 @@ mod tests {
         }
     }
 
-    /// ★ SCALE INVARIANCE — THE LAW THE SUPERSEDED `checked_rem` BROKE, and which nothing checked.
+    /// ★ SCALE INVARIANCE OF THE REMAINDER'S **VALUE** — the law the superseded `checked_rem`
+    /// broke, and which nothing checked.
     ///
-    /// `PartialEq`, `Hash` and `to_canonical_bytes` all key on `value_ratio()` (see the doc comment
-    /// on [`CanonicalFixedPoint::to_canonical_bytes`], which explains that keying on the raw
-    /// `(unscaled, places)` pair would break the `SemanticHash`↔`Eq` agreement the Dovetail e-graph
-    /// relies on). `places` is therefore NOT part of a value's identity: `7.00p2 == 7.0p1 == 7p0`.
+    /// ⚠⚠ RE-DERIVED 2026-07-30 (work item #200). **This test's thesis inverted, and the whole
+    /// argument had to be rebuilt.** The superseded doc read, verbatim:
     ///
-    /// An operation on this type must consequently be a function on those equivalence classes —
-    /// **equal inputs, equal outputs.** `%` was not. It read `places`, and the three spellings of
-    /// the same two values gave three different answers:
+    /// > `PartialEq`, `Hash` and `to_canonical_bytes` all key on `value_ratio()` (see the doc
+    /// > comment on [`CanonicalFixedPoint::to_canonical_bytes`], which explains that keying on
+    /// > the raw `(unscaled, places)` pair would break the `SemanticHash`↔`Eq` agreement the
+    /// > Dovetail e-graph relies on). `places` is therefore NOT part of a value's identity:
+    /// > `7.00p2 == 7.0p1 == 7p0`.
+    /// >
+    /// > An operation on this type must consequently be a function on those equivalence
+    /// > classes — **equal inputs, equal outputs.** `%` was not.
     ///
-    /// | spelling | superseded `%` | correct `%` |
+    /// **Every premise of that paragraph is now false.** `places` IS part of identity, the
+    /// three spellings are NOT equal, and the superseded `%` — which reads only the raw pair —
+    /// *is* a function on the new equivalence classes. ★ Left unamended, this test would read
+    /// as a licence to restore the residual-valued `%` as a bug fix. It is not.
+    ///
+    /// **What the repair rests on instead — and it is stronger, because it is a floor
+    /// obligation rather than an internal-consistency argument.** Upstream's `combine_mod`
+    /// `GFixedPoint` arm (`reduce.rs:3460-3470`) computes `&ua % &ub` on the unscaled integers,
+    /// preserving `fp1.scale`, and it requires `fp1.scale == fp2.scale`. At equal scales this
+    /// function is therefore upstream's function, exactly. The superseded body computed the
+    /// division's truncation residual `ε·b`, which agrees with upstream at NO scale:
+    ///
+    /// | spelling | superseded `%` (a residual) | this `%` (= upstream) |
     /// |---|---|---|
-    /// | `7.00p2 % 3.00p2` | `0.01` | `1` |
-    /// | `7.0p1 % 3.0p1`   | `0.1`  | `1` |
-    /// | `7p0 % 3p0`       | `1`    | `1` |
+    /// | `7.00p2 % 3.00p2` | `0.01p2` | `1.00p2` |
+    /// | `7.0p1 % 3.0p1`   | `0.1p1`  | `1.0p1`  |
+    /// | `7p0 % 3p0`       | `1p0`    | `1p0`    |
+    /// | `7.50p2 % 2.00p2` | `0p0`    | `1.50p2` |
     ///
-    /// This is the decisive defect, and no other test in the suite could see it: each spelling was
-    /// internally consistent, and the carrier matrix pinned only the `p2` row.
+    /// The last row is the mechanism in one line: `7.50/2.00 = 3.75` is EXACT at two places, so
+    /// `ε = 0` and the old code returned zero for a division leaving remainder `1.50`.
+    ///
+    /// **What this test still pins, and why it is still worth pinning.** The three spellings
+    /// denote the same two numbers, so a correct `%` must answer the same NUMBER for all three
+    /// — `value_ratio()`-equal, even though no longer `Eq`-equal. That is precisely the property
+    /// the residual lacked (it answered three different numbers), so the test still catches a
+    /// revert. It now says so on `value_ratio()` rather than on `Eq`.
     #[test]
     fn remainder_is_invariant_under_the_places_spelling() {
         let spellings = [
@@ -548,14 +758,27 @@ mod tests {
         ];
         let one = CanonicalFixedPoint::new(BigInt::from(1), 0);
 
-        // PREMISE, asserted rather than assumed: the operands really are pairwise equal.
+        // PREMISE, asserted rather than assumed: the operands denote the same two NUMBERS…
         let seven = CanonicalFixedPoint::new(BigInt::from(7), 0);
         let three = CanonicalFixedPoint::new(BigInt::from(3), 0);
         for (label, ua, ub, p) in spellings {
             let a = CanonicalFixedPoint::new(BigInt::from(ua), p);
             let b = CanonicalFixedPoint::new(BigInt::from(ub), p);
-            assert_eq!(a, seven, "the dividend of `{label}` is the value 7");
-            assert_eq!(b, three, "the divisor of `{label}` is the value 3");
+            assert_eq!(
+                a.value_ratio(),
+                seven.value_ratio(),
+                "the dividend of `{label}` is the NUMBER 7",
+            );
+            assert_eq!(
+                b.value_ratio(),
+                three.value_ratio(),
+                "the divisor of `{label}` is the NUMBER 3",
+            );
+            // …and are nonetheless DISTINCT VALUES for `p != 0`, which is the #200 ruling.
+            if p != 0 {
+                assert_ne!(a, seven, "`{label}`'s dividend is not `Eq` to `7p0` — identity is \
+                                      the raw `(unscaled, places)` pair since work item #200");
+            }
         }
 
         let mut results = Vec::with_capacity(spellings.len());
@@ -564,30 +787,37 @@ mod tests {
             let b = CanonicalFixedPoint::new(BigInt::from(ub), p);
             let r = a.checked_rem(b).expect("rem");
             assert_eq!(
-                r, one,
-                "`{label}` must be the value 1: `%` reads `places`, but `places` is not part of \
-                 this type's identity, so a `places`-dependent answer makes `%` not a function \
-                 on its own equivalence classes",
+                r.value_ratio(),
+                one.value_ratio(),
+                "`{label}` must be the NUMBER 1. The superseded `%` answered `0.01`, `0.1` and \
+                 `1` for these three spellings — three different numbers for one division, \
+                 because it returned the division's truncation residual `ε·b` instead of \
+                 upstream's `ua % ub`",
             );
             assert_eq!(r.places(), p, "`{label}` preserves the operand scale, as upstream does");
             results.push((label, r));
         }
 
-        // The consequence spelled out: equal values ⇒ equal hashes ⇒ equal canonical bytes. This
-        // is the e-graph's dedup key, so a `places`-dependent `%` would have produced two e-nodes
-        // that must be one.
+        // The consequence, restated on the method that still carries the VALUE key. ★ Note the
+        // deliberate split introduced by work item #200: `to_rational_canonical_bytes` unifies
+        // these three (and unifies a `Fixed` with an equal `BigRat`, which the realize-frontier
+        // dedup needs), while `to_canonical_bytes` separates them (which the op-enum content
+        // key needs, to agree with `Eq`). Both directions are asserted so neither can drift.
         let (first_label, first) = results[0];
         for &(label, r) in &results[1..] {
             assert_eq!(
-                hash_val(&r),
-                hash_val(&first),
-                "`{label}` and `{first_label}` must hash alike",
+                r.to_rational_canonical_bytes(),
+                first.to_rational_canonical_bytes(),
+                "`{label}` and `{first_label}` are the same NUMBER, so the VALUE-keyed bytes \
+                 must agree",
             );
-            assert_eq!(
+            assert_ne!(
                 r.to_canonical_bytes(),
                 first.to_canonical_bytes(),
-                "`{label}` and `{first_label}` must have identical canonical bytes",
+                "…while the IDENTITY-keyed bytes must differ, because `{label}` and \
+                 `{first_label}` are distinct values since work item #200",
             );
+            assert_ne!(hash_val(&r), hash_val(&first), "`Hash` follows `Eq`, so it separates too");
         }
     }
 
@@ -629,11 +859,22 @@ mod tests {
         assert_eq!(x.to_string(), "12.345p3");
     }
 
+    /// ★ RE-DERIVED 2026-07-30 (work item #200) — this assertion INVERTED.
+    ///
+    /// It read `assert_eq!(a, b)` under the name `eq_same_rational_different_places`, pinning
+    /// that the reduced rational alone decided identity. `places` is part of identity now, so
+    /// `10.0p1` and `10p0` are DISTINCT despite denoting the same number — which is exactly
+    /// what upstream's structural `GFixedPoint` equality already said (`reduce.rs:3733-3749`).
     #[test]
-    fn eq_same_rational_different_places() {
+    fn eq_distinguishes_same_rational_at_different_places() {
         let a = CanonicalFixedPoint::new(BigInt::from(100), 1);
         let b = CanonicalFixedPoint::new(BigInt::from(10), 0);
-        assert_eq!(a, b);
+        assert_ne!(a, b, "same value, different `places` ⇒ DISTINCT since work item #200");
+        assert_eq!(
+            a.value_ratio(),
+            b.value_ratio(),
+            "…while still denoting the same number — the distinction is of identity, not of value",
+        );
         assert_ne!(a.to_string(), b.to_string());
     }
 
@@ -646,23 +887,140 @@ mod tests {
         assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
     }
 
+    /// ★ `Ord` compares the NUMBER first and only then breaks ties on `places`. The naive
+    /// lexicographic `(unscaled, places)` shape — the obvious reading of the ruling's words —
+    /// is REJECTED here by counterexample, so it cannot be reintroduced as a simplification.
+    #[test]
+    fn ord_is_numeric_first_then_places() {
+        let one_p1 = CanonicalFixedPoint::new(BigInt::from(10), 1); // 1.0
+        let point99_p2 = CanonicalFixedPoint::new(BigInt::from(99), 2); // 0.99
+
+        assert_eq!(
+            one_p1.cmp(&point99_p2),
+            Ordering::Greater,
+            "1.0 > 0.99. Lexicographic `(unscaled, places)` would compare mantissas 10 vs 99 \
+             and answer Less — an order on spellings, not on numbers",
+        );
+        assert_eq!(point99_p2.cmp(&one_p1), Ordering::Less, "antisymmetry");
+
+        // The tie-break, asserted so the KNOWN RESIDUAL is visible rather than latent. See the
+        // `Ord` impl's doc: its named resolution is upstream's scale-equality refusal at the
+        // relops (`reduce.rs:9772-9783`), which is a separate, owner-blocked change.
+        let seven_p2 = CanonicalFixedPoint::new(BigInt::from(700), 2);
+        let seven_p1 = CanonicalFixedPoint::new(BigInt::from(70), 1);
+        assert_eq!(
+            seven_p2.value_ratio(),
+            seven_p1.value_ratio(),
+            "premise: equal VALUE",
+        );
+        assert_eq!(
+            seven_p2.cmp(&seven_p1),
+            Ordering::Greater,
+            "⚠ KNOWN RESIDUAL: equal value, so only the `places` tie-break can decide, and it \
+             answers `7.00p2 > 7.0p1` — not a numeric fact. It exists to make `Ord` TOTAL. Its \
+             resolution is the relops' scale-equality precondition, not a different `Ord`.",
+        );
+    }
+
+    /// ★ The consistency obligation Rust states for `Ord`, checked over a scale matrix rather
+    /// than argued: `a.cmp(&b) == Equal  ⟺  a == b`, for every ordered pair.
+    #[test]
+    fn cmp_equal_iff_eq_over_a_scale_matrix() {
+        // Six values spanning: same value at three scales, a neighbouring value, a negative,
+        // and zero (which `normalize_in_place` forces to `p0`).
+        let matrix = [
+            ("7p0", CanonicalFixedPoint::new(BigInt::from(7), 0)),
+            ("7.0p1", CanonicalFixedPoint::new(BigInt::from(70), 1)),
+            ("7.00p2", CanonicalFixedPoint::new(BigInt::from(700), 2)),
+            ("6.99p2", CanonicalFixedPoint::new(BigInt::from(699), 2)),
+            ("-7.0p1", CanonicalFixedPoint::new(BigInt::from(-70), 1)),
+            ("0p0", CanonicalFixedPoint::new(BigInt::from(0), 3)),
+        ];
+        for (la, a) in &matrix {
+            for (lb, b) in &matrix {
+                assert_eq!(
+                    a.cmp(b) == Ordering::Equal,
+                    a == b,
+                    "`cmp == Equal ⟺ ==` must hold for ({la}, {lb})",
+                );
+                // Hash agreement rides on the same pair, so check it in the same sweep.
+                if a == b {
+                    assert_eq!(hash_val(a), hash_val(b), "Eq ⇒ equal hash ({la}, {lb})");
+                    assert_eq!(
+                        a.to_canonical_bytes(),
+                        b.to_canonical_bytes(),
+                        "Eq ⇒ equal canonical bytes ({la}, {lb})",
+                    );
+                } else {
+                    assert_ne!(
+                        a.to_canonical_bytes(),
+                        b.to_canonical_bytes(),
+                        "`to_canonical_bytes` is a BICONDITIONAL over an exact `Vec<u8>` \
+                         (dovetail/src/key.rs:96-104), so distinct values must write distinct \
+                         bytes too ({la}, {lb})",
+                    );
+                }
+            }
+        }
+    }
+
+    /// ★ RE-DERIVED 2026-07-30 (work item #200) — this assertion INVERTED.
+    ///
+    /// It read `assert_eq!(hash_val(&x), hash_val(&y))` for `10.0p1` / `10p0`. `Hash` must
+    /// agree with `Eq`, and `Eq` now separates them, so the hashes must differ too. ⚠ Note the
+    /// obligation is only one-directional (`Eq ⇒ equal hash`); a hash COLLISION between unequal
+    /// values would be legal. `assert_ne!` is nonetheless the right pin here, because the two
+    /// hashes are built from genuinely different field streams and an accidental collision on
+    /// `DefaultHasher` would itself be worth knowing about.
     #[test]
     fn hash_matches_eq() {
         let x = CanonicalFixedPoint::new(BigInt::from(100), 1);
         let y = CanonicalFixedPoint::new(BigInt::from(10), 0);
-        assert_eq!(hash_val(&x), hash_val(&y));
+        assert_ne!(x, y, "premise: distinct since work item #200");
+        assert_ne!(hash_val(&x), hash_val(&y), "distinct identity ⇒ distinct hash stream");
         let z = fp(1, 0, 0);
         assert_ne!(hash_val(&x), hash_val(&z));
     }
 
+    /// ★ RE-DERIVED 2026-07-30 (work item #200). The round-trip row moved from `assert_eq!` to
+    /// a value-level assertion, and the reason is worth stating because it is a NEW consequence
+    /// of the ruling that nothing else records.
+    ///
+    /// It read `assert_eq!(s - half, one)`. `align_pair` returns at `max(places)`, so
+    /// `(1p0 + 0.5p1) - 0.5p1` is `1.0p1 = (10, 1)`, not `1p0 = (1, 0)`. Under the old
+    /// value-keyed `Eq` those were the same value and the round trip closed. Under identity on
+    /// the raw pair they are distinct, so:
+    ///
+    /// ⚠ **`+` and `-` are no longer inverse AT THE LEVEL OF IDENTITY when the operand scales
+    /// differ.** `(x + y) - y` denotes the same NUMBER as `x` but is a different VALUE, and
+    /// therefore hashes differently, keys a `Map` differently, and occupies its own e-class.
+    ///
+    /// **Its named resolution is upstream's scale-equality refusal** (work item #186): once
+    /// `+`/`-` refuse mixed scales, `max(places)` can only ever equal both operands' `places`,
+    /// the widening disappears, and the round trip closes again at the identity level. That is
+    /// a separate, owner-blocked change and is deliberately NOT made here — so this residual is
+    /// REAL today and is pinned rather than hidden.
     #[test]
     fn add_sub_misaligned_places() {
         let one = fp(1, 0, 0);
         let half = fp(0, 5, 1);
         let s = one + half;
         let expected = fp(1, 5, 1);
-        assert_eq!(s, expected);
-        assert_eq!(s - half, one);
+        assert_eq!(s, expected, "1p0 + 0.5p1 == 1.5p1, at p1 on both sides — identity holds");
+
+        let back = s - half;
+        assert_eq!(
+            back.value_ratio(),
+            one.value_ratio(),
+            "the round trip recovers the NUMBER 1",
+        );
+        assert_ne!(
+            back, one,
+            "⚠ …but not the VALUE `1p0`: `align_pair` widened to p1, so the result is `1.0p1`. \
+             `+`/`-` are not identity-inverse across mixed scales. Closed by the scale-equality \
+             precondition (work item #186), not by this ruling.",
+        );
+        assert_eq!(back.places(), 1, "the widened scale is where it came from");
     }
 
     #[test]

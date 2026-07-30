@@ -2467,15 +2467,36 @@ mod native_ops {
             assert_reduces_to("5p0 bitor 3p0", "7p0");
         }
 
+        /// ★ RE-DERIVED 2026-07-30 (work item #200): `Fixed` identity is the raw
+        /// `(unscaled, places)` pair, so two spellings of one number are no longer `==`.
+        ///
+        /// ⚠⚠ **Exactly ONE row moved. The three `10p1 … 10.0p1` rows are UNCHANGED, and that
+        /// is not an oversight.** `10p1` and `10.0p1` parse to the *identical* raw pair
+        /// `(100, 1)` — `runtime/src/fixed_lit.rs:64-77` multiplies the mantissa up to the
+        /// declared scale, so `10p1` is `10 × 10¹ = 100 @ p1` and `10.0p1` is
+        /// `(10×10¹ + 0) @ p1 = 100 @ p1`. They are the SAME VALUE, not merely the same number,
+        /// and `==`/`<=`/`>=` on them are `true` under any identity definition. Pinned
+        /// independently by `runtime::fixed_lit::tests::parse_matches_canonical_fixed_point_eq`.
+        ///
+        /// A later reader flipping these three to `"false"` "for consistency" would be
+        /// asserting that a value is not equal to itself.
+        ///
+        /// `1p0 == 1.0p1` is the row that moved: `(1, 0)` versus `(10, 1)` — different values.
+        /// ★ This moves mettail INTO agreement with upstream, whose `combine_eq`
+        /// (`reduce.rs:3733-3749`) is structural `Par` equality over
+        /// `GFixedPoint { unscaled, scale }` and already answered `false`.
         #[test]
         fn fixed_comparisons() {
+            // Identical raw pairs — unchanged by #200, and must stay unchanged.
             assert_reduces_to("10p1 == 10.0p1", "true");
-            assert_reduces_to("1p0 == 1.0p1", "true");
+            assert_reduces_to("10p1 <= 10.0p1", "true");
+            assert_reduces_to("10p1 >= 10.0p1", "true");
+            // Different raw pairs, same number — MOVED by #200 from "true".
+            assert_reduces_to("1p0 == 1.0p1", "false");
+            // Unrelated to scale identity: different numbers at one scale.
             assert_reduces_to("10p1 != 9p1", "true");
             assert_reduces_to("10p1 < 11p1", "true");
             assert_reduces_to("10p1 > 9p1", "true");
-            assert_reduces_to("10p1 <= 10.0p1", "true");
-            assert_reduces_to("10p1 >= 10.0p1", "true");
         }
 
         #[test]

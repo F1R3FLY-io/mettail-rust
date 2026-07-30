@@ -79,12 +79,25 @@
 //!    bounded by `|b|·10⁻ᵖ` and therefore tending to zero as precision grows. A residual, not a
 //!    remainder. (b) `/` did NOT have to be re-decided: `q·b + r = a` is a theorem about the
 //!    TRUNCATED INTEGER quotient (C99 §6.5.5), not about a `p`-places quotient, so `/` was never
-//!    implicated. `checked_div` is unchanged and `10p1 / 3p1` is still `3.3p1`. What the finding
-//!    missed entirely is decisive: the old `%` read `places`, which `PartialEq`/`Hash`/
-//!    `to_canonical_bytes` all declare meaningless (they key on the reduced rational), so
-//!    `7.00p2 == 7.0p1` while `%` answered `0.01` and `0.1` — not a function on the type's own
-//!    equivalence classes. `runtime`'s `remainder_is_invariant_under_the_places_spelling` is the
-//!    guard for that law.
+//!    implicated. `checked_div` is unchanged and `10p1 / 3p1` is still `3.3p1`.
+//!
+//!    ⚠⚠ **RE-DERIVED 2026-07-30 (work item #200).** This item used to close with a third
+//!    argument, verbatim:
+//!
+//!    > What the finding missed entirely is decisive: the old `%` read `places`, which
+//!    > `PartialEq`/`Hash`/`to_canonical_bytes` all declare meaningless (they key on the reduced
+//!    > rational), so `7.00p2 == 7.0p1` while `%` answered `0.01` and `0.1` — not a function on
+//!    > the type's own equivalence classes.
+//!
+//!    That argument is DEAD: `places` is now part of `Fixed` identity, `7.00p2 != 7.0p1`, and a
+//!    `places`-reading `%` WOULD be a function on the new equivalence classes. Read unamended it
+//!    is an argument for restoring the residual-valued `%`. What condemns the old `%` instead is
+//!    simpler and is a floor obligation rather than an internal-consistency one: upstream's
+//!    `combine_mod` `GFixedPoint` arm (`reduce.rs:3460-3470`) is `&ua % &ub` on the unscaled
+//!    integers at `fp1.scale`, and upstream requires equal scales, so at equal scales this `%`
+//!    IS upstream's `%`. The residual agreed with it at no scale — `7.50p2 % 2.00p2` returned
+//!    `0p0` where upstream returns `1.50p2`. `runtime`'s
+//!    `remainder_is_invariant_under_the_places_spelling` remains the guard, re-derived alongside.
 //! 2. **Mixed scales are ACCEPTED — STILL OPEN, not changed.** Upstream requires equal scales for
 //!    every fixed-point arithmetic operator and raises `OperatorExpectedError { op, expected:
 //!    "FixedPoint(p{fp1.scale})", other_type: "FixedPoint(p{fp2.scale})" }` otherwise
@@ -423,9 +436,10 @@ fn fixed_point_modulo_agrees_with_upstream() {
         );
     }
 
-    // ★ SCALE INVARIANCE at the SURFACE level. `7.00p2` and `7.0p1` are the same value (`==`
-    // keys on the reduced rational), so `%` must answer the same value for both spellings. The
-    // superseded `%` gave `0.01p2` and `0.1p1`. The runtime-level guard is
+    // ★ SCALE INVARIANCE OF THE NUMBER, at the SURFACE level. `7.00p2`, `7.0p1` and `7p0` are
+    // three spellings of the number seven, so `%` must answer the number one for all three. The
+    // superseded `%` gave `0.01p2` and `0.1p1` — three different NUMBERS for one division. The
+    // runtime-level guard is
     // `canonical_fixed_point.rs::remainder_is_invariant_under_the_places_spelling`; this is the
     // same law measured through the parser and the fold, where a user meets it.
     let (_, p2) = fold_carrier_and_value("7.00p2 % 3.00p2");
@@ -434,21 +448,34 @@ fn fixed_point_modulo_agrees_with_upstream() {
     assert_eq!(
         (p2.as_str(), p1.as_str(), p0.as_str()),
         ("1.00p2", "1.0p1", "1p0"),
-        "the three spellings of `7 % 3` must all be the VALUE one, differing only in how many \
+        "the three spellings of `7 % 3` must all be the NUMBER one, differing only in how many \
          trailing zeros the scale prints",
     );
-    // …and those three renderings must compare EQUAL, since `places` is not part of a `Fixed`
-    // value's identity. Asserted on the RESULTS' own surfaces rather than on a compound
-    // `a % b == c % d` expression, so this row measures the equality law and not `%`-versus-`==`
-    // precedence.
+    // ⚠⚠ RE-DERIVED 2026-07-30 (work item #200) — THIS LOOP INVERTED. It asserted
+    // `("Bool", "true")` with the justification:
+    //
+    //   > `{lhs} == {rhs}` must be true — `places` is not part of a `Fixed` value's identity,
+    //   > so an operation answering different VALUES for different spellings (as `%` did) is
+    //   > not a function on this type's equivalence classes
+    //
+    // `places` IS part of identity now, so the three spellings are three distinct VALUES and
+    // `==` answers `false`. ★ That is not a regression: upstream's `combine_eq`
+    // (`reduce.rs:3733-3749`) is structural `Par` equality over `GFixedPoint { unscaled, scale }`
+    // and has always answered `false` here, so this row moves mettail INTO agreement with the
+    // floor rather than away from it.
+    //
+    // The law the loop above still measures is untouched: `%` answers the same NUMBER for all
+    // three spellings. What changed is only that "same number" is no longer spelled `==`.
+    // Asserted on the RESULTS' own surfaces rather than on a compound `a % b == c % d`
+    // expression, so this row measures the equality law and not `%`-versus-`==` precedence.
     for (lhs, rhs) in [(&p2, &p1), (&p1, &p0)] {
         let (carrier, value) = fold_carrier_and_value(&format!("{lhs} == {rhs}"));
         assert_eq!(
             (carrier.as_str(), value.as_str()),
-            ("Bool", "true"),
-            "`{lhs} == {rhs}` must be true — `places` is not part of a `Fixed` value's identity, \
-             so an operation answering different VALUES for different spellings (as `%` did) is \
-             not a function on this type's equivalence classes",
+            ("Bool", "false"),
+            "`{lhs} == {rhs}` must be FALSE — `Fixed` identity is the raw `(unscaled, places)` \
+             pair since work item #200, and these are two different pairs denoting one number. \
+             Upstream answers `false` too",
         );
     }
 }
