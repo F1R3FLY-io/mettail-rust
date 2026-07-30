@@ -94,6 +94,46 @@
 //!    `wpda_codegen/factoring.rs`'s `Proc` method-cohort census made on 2026-07-29 (44 → 47).
 //!    It is *computed* here, so it cannot drift again.
 //!
+//! # ★★ #147's RULING LIVES HERE, because this is where the `__` convention's cost is MEASURED
+//!
+//! #147 proposed a validator ban on `__`-prefixed declarations. **No `__`-specific check is
+//! warranted**, and the reason is recorded here rather than in a report, because the two
+//! surviving instances are two rows of the table below.
+//!
+//! Re-derived 2026-07-30 across all 54 languages' generated `definition_source()` bodies —
+//! i.e. the `language!` body as written, including the languages that emit no tests:
+//!
+//! | population | count |
+//! |---|---|
+//! | `__`-prefixed **terminals** (where the convention actually lives) | **2**, in **1** of 54 languages: `__comm_where`, `__guard_then` (both Rholang) |
+//! | `__`-prefixed **declared names** (what the proposed ban would inspect) | **0** |
+//! | `__mettail_*` generated-symbol identifiers in `macros/src` | **182** occurrences across **15** files (the filing measured 167 — a +15 drift) |
+//!
+//! Four reasons, in order of decisiveness:
+//!
+//! 1. **A name-space ban has extension ZERO.** `is_reserved_reflect_label`, the model the ban
+//!    was to copy, is applied to `ty.name` / `rule.label` / `rewrite.name` / … — every one a
+//!    `syn::Ident`. The convention lives in `SyntaxExpr::Literal`, a *terminal spelling*. The
+//!    namespaces do not intersect, and the labels of the three rules that motivated the item
+//!    (`PParInternal`, `GuardThen`, `CommWhere`) start with no underscore at all: **the ban
+//!    would have caught none of them.**
+//! 2. **A terminal-space ban is a category error.** It would forbid a spelling in the *user's
+//!    object language* to encode a MeTTaIL host-side convention. `__init__` and
+//!    `__attribute__` are legitimate terminals of real target languages, and `MeTTaIL` is a
+//!    language *workbench*.
+//! 3. **`__` is already load-bearing for something else.** 182 `__mettail_*` occurrences plus
+//!    a large generated-local namespace (`__c`, `__i`, `__b`, `__term`, …) mean a ban would
+//!    collide with a live use of the same prefix.
+//! 4. ★ **The property that matters is already checked — by TERMINAL, right here.** What is
+//!    wrong is not the spelling but the *cost*: a rule with no user-facing surface consuming
+//!    object-language identifier space. That is what the two rows below measure, with their
+//!    reason attached, and it goes red if a third such terminal appears. A `__`-shaped ban
+//!    would detect the spelling and not the cost, and would fix neither.
+//!
+//! ⚠ The population has **not** drifted since #147 was filed (`8c946bff` had already removed
+//! `__ppar`), which makes it one of the few figures in this campaign that held. It is reported
+//! here anyway, because "it matched" is only knowable by measuring.
+//!
 //! # What this file does NOT do
 //!
 //! It does not un-reserve anything. Every residue row is a superset breach and each un-
@@ -434,15 +474,18 @@ const OVER_RESERVED_RESIDUE: &[OverReservation] = &[
     OverReservation {
         word: "__comm_where",
         owner: "CommWhere",
-        reason: "★ a MeTTaIL-INTERNAL rule terminal, one of the two surviving `__`-prefixed \
-                 terminals (#147). It reserves a word no user would write, so the breach is \
-                 theoretical — but it is a breach, and it is the concrete cost of encoding \
-                 non-surface-ness in a SPELLING.",
+        reason: "★★ a MeTTaIL-INTERNAL rule terminal, and ONE OF EXACTLY TWO `__`-prefixed \
+                 terminals in the whole repository (#147; re-derived 2026-07-30 over all 54 \
+                 generated `definition_source()` bodies — 2 terminals, in 1 language, and \
+                 ZERO `__`-prefixed DECLARED NAMES). This row IS the measured cost of the \
+                 `__` convention: encoding non-surface-ness in a SPELLING reserves a word of \
+                 the user's object language. See the module docs for why that does not \
+                 warrant a `__` ban.",
     },
     OverReservation {
         word: "__guard_then",
         owner: "GuardThen",
-        reason: "★ the second surviving `__`-prefixed terminal (#147); same shape as \
+        reason: "★ the second — and last — `__`-prefixed terminal (#147); same shape as \
                  `__comm_where`.",
     },
 ];
