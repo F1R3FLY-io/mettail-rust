@@ -1196,10 +1196,20 @@ fn emit_native_conversion(native_type: &syn::Type, family: LiteralFamily) -> Tok
         // FixedPoint / Float / Boolean / String: the user's rust_code
         // already returns the payload type directly (CanonicalFixedPoint /
         // CanonicalFloat64 / bool / String).
+        //
+        // `Custom` joins them, and for the strongest reason of the four: a `Custom` family
+        // EXISTS only because the author declared the `eval` body, and that body is the sole
+        // description of how the carrier is read. There is no built-in intermediate type to
+        // convert FROM — no `IntLit`, no `RationalLit` — so any conversion emitted here would be
+        // this file inventing a step the declaration did not ask for. The body's `Ok` payload IS
+        // the native value (for rholang's byte carrier: `Vec<u8>`), and the generated
+        // `Result<#native_type, ()>` signature is what type-checks that claim at the emission
+        // site rather than trusting it.
         LiteralFamily::FixedPoint
         | LiteralFamily::Float
         | LiteralFamily::Boolean
-        | LiteralFamily::String => quote! {
+        | LiteralFamily::String
+        | LiteralFamily::Custom => quote! {
             Ok(__intermediate)
         },
     }

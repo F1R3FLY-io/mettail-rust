@@ -84,105 +84,86 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
-        // ★★ `Bytes` IS A BYTE ARRAY, NOT A STRING (2026-07-29, ruled).
+        // ★★ `Bytes` IS A BYTE ARRAY, NOT A STRING — LANDED 2026-07-30 (ruled 2026-07-29).
         //
-        // This was `![String] as Bytes`. Both `Str` and `Bytes` were therefore
-        // STRING-SHAPED, so the generator emitted a `StringLit` variant for each
-        // and a `"…"` literal satisfied BOTH — every string literal in the
-        // language had two readings, `CastStr` and `CastBytes`. That was not an
-        // election between two designed alternatives; the DECLARATION created the
-        // ambiguity, and the disambiguator was left to clean it up.
+        // This was `![String] as Bytes`. Both `Str` and `Bytes` were therefore STRING-SHAPED, so
+        // the generator emitted a `StringLit` variant for each and a `"…"` literal satisfied
+        // BOTH — every string literal in the language had two readings, `CastStr` and
+        // `CastBytes`. That was not an election between two designed alternatives; the
+        // DECLARATION created the ambiguity, and the disambiguator was left to clean it up.
         //
         // Upstream has no such ambiguity, and cannot express one:
         //
-        //   * the wire model (`RhoTypes.proto`) has TWO DISTINCT CARRIERS —
+        //   * the wire model (`RhoTypes.proto:230-232`) has TWO DISTINCT CARRIERS —
         //     `string g_string = 3` and `bytes g_byte_array = 25`;
-        //   * the grammar (`rholang-tree-sitter/grammar.js`) has NO byte-array
-        //     literal: the ground-literal choice at `:435-436` is `string_literal`
-        //     and `uri_literal` ONLY, and `ByteArray` appears at `:424` solely as a
-        //     TYPE NAME in `simple_type` — usable in `matches`/type patterns and
-        //     produced by builtins, never written as a literal.
+        //   * the grammar (`rholang-tree-sitter/grammar.js`) has NO byte-array literal: the
+        //     ground-literal choice at `:435-436` is `string_literal` and `uri_literal` ONLY, and
+        //     `ByteArray` appears at `:424` solely as a TYPE NAME in `simple_type` — usable in
+        //     `matches`/type patterns and produced by builtins, never written as a literal.
         //
-        // So a `"…"` literal is a `GString` upstream, full stop. With a `Vec<u8>`
-        // carrier it is a `Str` HERE BY CONSTRUCTION: the ambiguity becomes
-        // UNSPELLABLE rather than elected — no disambiguator pin, no dependence on
-        // rule declaration order.
+        // So a `"…"` literal is a `GString` upstream, full stop. With the `Vec<u8>` carrier it is
+        // a `Str` HERE BY CONSTRUCTION: the ambiguity is UNSPELLABLE rather than elected — no
+        // disambiguator pin, no dependence on rule declaration order. The `Bytes` category's own
+        // literal variant is now `Bytes::BytesLit(Vec<u8>)`, which no `"…"` token can inhabit.
         //
-        // ⚠⚠ IMPLEMENTED, MEASURED, AND **NOT LANDED** — the carrier line below is
-        // commented out and `![String] as Bytes` is restored. Read this before
-        // re-attempting it.
+        // ── WHAT THIS WAITED ON, AND WHAT UNBLOCKED IT ──────────────────────────────────────
         //
-        // The change compiles cleanly workspace-wide (`cargo check --workspace
-        // --all-targets`, 0 errors, after the sibling `display.rs` emitter fix in
-        // `e54e85d7`), and it DOES achieve everything it was meant to:
+        // The carrier change was implemented and measured on 2026-07-29 and HELD (`2eebf722`),
+        // because it left `Bytes` with NO SURFACE FORM AT ALL — not merely "no literal", which is
+        // upstream's position, but nothing RENDERABLE either. MEASURED then:
         //
-        //   ★ `Bytes::ListLit(Vec<u8>)` replaces `Bytes::StringLit(String)`, so a
-        //     `"…"` literal can no longer be a `Bytes` — the `Str`/`Bytes`
-        //     ambiguity becomes UNSPELLABLE rather than elected.
-        //   ★ With it, the `semantic_hash` CATEGORY TAG (#151 thread 2) can be
-        //     ENABLED and the five goldens it used to move PASS **UNEDITED** —
-        //     `matches_forms_are_unambiguous`, `ppar_forms_are_unambiguous`,
-        //     `implies_forms_are_unambiguous`,
-        //     `the_pre_existing_propositional_forms_keep_their_parse_counts`, and
-        //     `rho_rholang_ast::a_s4_ground_width_fold_value_…`. They became TRUE
-        //     rather than re-blessed, which was the whole point of holding the tag
-        //     back.
-        //   ★ All 78 byte-identity / fingerprint / conformance pins PASS: zero
-        //     serialized bytes and zero fingerprints moved.
+        //     gen_rholang_prop::bytes_display_parse_roundtrip
+        //       arb_bytes produced unparseable surface term ""
         //
-        // ⚠ THE BLOCKER: `Bytes` is left with NO SURFACE FORM AT ALL — not merely
-        // "no literal", which is what upstream has, but nothing RENDERABLE either.
-        // A `Vec<u8>` payload is not string-shaped, so no `StringLit` is emitted;
-        // and because `Bytes` declares no collection delimiters, the Display arm
-        // wraps its elements in EMPTY open/close, so `Bytes::ListLit(vec![])`
-        // renders as the empty string. MEASURED:
+        // — eleven failures, because a `Vec<u8>` payload is not string-shaped (so no `StringLit`
+        // arm) and `Bytes` declares no collection delimiters (so the collection Display arm wrapped
+        // its bytes in EMPTY open/close). A `Bytes` value was constructible in Rust and could not
+        // be written or printed. That is a broken Display→parse invariant for a whole category,
+        // not a test artefact, and suppressing the generated rows would have hidden it.
         //
-        //   gen_rholang_prop::bytes_display_parse_roundtrip
-        //     arb_bytes produced unparseable surface term ""
+        // The missing surface is the `b"…"` literal declared in `literals { Bytes { … } }` below,
+        // ruled 2026-07-29 after asking how C++ spells a byte literal: **`b"deadbeef"`, via
+        // `LiteralFamily::Custom`**. Two of the arguments made for a different spelling were WRONG
+        // and are recorded so they are not restored:
         //
-        // and it takes four sibling round-trips down with it, because `Bytes` is
-        // reachable as a `CastBytes` sub-term: `proc_display_parse_roundtrip`,
-        // `name_display_parse_roundtrip`, `forrow_display_parse_roundtrip`,
-        // `inputbind_display_parse_roundtrip`; plus
-        // `unit_rholang_proc_castbytes`, `unit_rholang_auto_bytes_listlit`, and two
-        // `testkit::ctor_engine` rows. ELEVEN failures in total.
+        //   ✗ `0x…` on upstream-alignment grounds. INVERTED: mettail already spends `0x…` on
+        //     THREE hex integer forms (`Int`, `BigInt`, `BigRat` radix patterns), and upstream
+        //     Rholang has ZERO `0x…` syntax. `0x…` is refuted.
+        //   ✗ "the faithful shape is a builtin plus a type pattern, NOT a literal" (written in
+        //     `2eebf722`). It answers the wrong question: builtins give a byte array a
+        //     PRODUCER, and what was missing is a SURFACE — something `Display` can write and the
+        //     parser can read back. Upstream itself demonstrates the gap: its pretty-printer
+        //     ALREADY prints a byte array (`pretty_printer.rs:2860`, `hex::encode(bs)`) and its
+        //     own grammar cannot read that back. `b"…"` prints the same hex digits inside a frame
+        //     that parses. Fixing an upstream bug is BUG FIX, never DIVERGENT.
         //
-        // ⚠ These are NOT test-harness artefacts to be gated away. Display→parse is
-        // a real invariant of the language, and the change breaks it for an entire
-        // category: a `Bytes` value is constructible in Rust and then cannot be
-        // rendered. Suppressing the generated rows would hide that rather than fix
-        // it.
+        // ── WHAT THE CARRIER CHANGE DELIVERS ───────────────────────────────────────────────
         //
-        // ⇒ Landing this needs `Bytes` to gain a surface form — a GRAMMAR CHANGE
-        // the owner has not ruled on, and explicitly outside the scope that was
-        // given ("the carrier"). Upstream reaches `ByteArray` through BUILTINS and
-        // TYPE PATTERNS rather than literals, so the faithful shape is probably a
-        // builtin (`"…".toByteArray()`-style) plus `ByteArray` in the type-pattern
-        // position — not a new literal. That is the ruling this waits on.
+        //   ★ `Bytes::BytesLit(Vec<u8>)` replaces `Bytes::StringLit(String)`, so a `"…"` literal
+        //     CANNOT be a `Bytes`. Cohort 9 of `rholang_semantic_predicate_ambiguity`
+        //     (`[StringLit] CastStr vs CastBytes`) is removed at the DECLARATION.
+        //   ★ `lower_arm_cast_bytes` (`rholang-runtime/src/rholang_ast.rs`) lowers to
+        //     `new_gbytearray_par` instead of `new_gstring_par`. Under the `String` carrier a
+        //     `Bytes` and a `Str` of the same content produced IDENTICAL `Par`s, collapsing
+        //     upstream's two distinct wire carriers into one — latent only because `Bytes` was
+        //     unreachable in practice, and a genuine consensus defect the moment it was not.
         //
-        // ★ Everything needed to land it in one step is here: uncomment the line
-        // below, delete the `![String] as Bytes` line, re-point
-        // `rholang_ast.rs::lower_arm_cast_bytes` at `Bytes::ListLit` +
-        // `new_gbytearray_par` (see the note there), and re-enable the tag in
-        // `macros/src/gen/term_ops/semantic_hash.rs`.
-        //
-        // ![Vec<u8>] as Bytes
-        //
-        // ⚠ NOT in scope, and deliberately untouched: `Uri`. Upstream has
-        // `string g_uri = 4` with backtick literal syntax which we do not model at
-        // all; that is already pinned as unsupported by
+        // ⚠ NOT in scope, and deliberately untouched: `Uri`. Upstream has `string g_uri = 4` with
+        // backtick literal syntax which we do not model at all; that is already pinned as
+        // unsupported by
         // `languages/tests/rholang_new_official_syntax.rs::uri_declarations_are_not_yet_supported`
-        // (asserted `is_err()` so the day it starts parsing is a deliberate
-        // change) and tracked as convergence item §17.10-C1. There is also a live
-        // interaction to respect when it lands: mettail already spends the
-        // backtick on FLT syntax (`FltOpenBacktick`), and the two can coexist only
-        // because an FLT requires a lowercase prefix while a URI has none.
+        // (asserted `is_err()` so the day it starts parsing is a deliberate change) and tracked as
+        // convergence item §17.10-C1. There is also a live interaction to respect when it lands:
+        // mettail already spends the backtick on FLT syntax (`FltOpenBacktick`), and the two can
+        // coexist only because an FLT requires a lowercase prefix while a URI has none.
         //
-        // ⚠ THE STRING CARRIER IS STILL ACTIVE, and this is the defect, not the
-        // design: a `"…"` literal has BOTH a `CastStr` and a `CastBytes` reading
-        // because both categories are string-shaped. See the block above for the
-        // measured replacement and the one ruling it waits on.
-        ![String] as Bytes
+        // ⚠ ALSO OUT OF SCOPE HERE, and owed to whoever owns `macros/src/gen/term_ops/`: the
+        // `semantic_hash` CATEGORY TAG (#151 thread 2) is still disabled. `2eebf722` measured
+        // that with this carrier its five previously-moved goldens pass UNEDITED — they become
+        // TRUE rather than re-blessed — so enabling it is now unblocked. Its module comment still
+        // enumerates `Bytes::StringLit` among "ALL ELEVEN collection/literal arms"; that name is
+        // now `Bytes::BytesLit`.
+        ![Vec<u8>] as Bytes
         ![Vec<Proc>] as List {
             open_parts: ["["],
             close_parts: ["]"],
@@ -439,6 +420,103 @@ language! {
         Float {
             pattern: r"-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?|[eE][+-]?[0-9](_?[0-9])*)(f64)?|\.[0-9](_?[0-9])*([eE][+-]?[0-9](_?[0-9])*)?(f64)?)";
             eval: ![ { mettail_runtime::parse_float_lit(text).map_err(|_| ()) } ]
+        }
+        // ── THE BYTE-ARRAY LITERAL `b"deadbeef"` (ruled 2026-07-29, landed 2026-07-30) ────
+        //
+        // The `Bytes` category's SURFACE, and the thing whose absence held the `Vec<u8>` carrier
+        // back in `2eebf722`. See the `![Vec<u8>] as Bytes` note in `types { … }` above for the
+        // full history, the two refuted spellings, and the upstream evidence.
+        //
+        // ★ HEX, TWO DIGITS PER BYTE — the digits upstream ALREADY PRINTS. Upstream's
+        // pretty-printer renders a byte array as bare hex (`pretty_printer.rs:2860`,
+        // `GByteArray(bs) => Ok(hex::encode(bs))`) and its own grammar cannot read that back, so
+        // upstream prints a value it cannot parse. `b"…"` frames exactly those digits in
+        // something the parser accepts: the digits are byte-for-byte upstream's, and the
+        // round-trip upstream loses is recovered. That is a BUG FIX, not a divergence — the
+        // standing ruling is that upstream is a floor on semantics, not a ceiling on
+        // diagnostics. (`par_to_sexpr.rs:107` spells the same value `0x…`; upstream is
+        // internally inconsistent here and we rule rather than replicate. `0x…` is refuted
+        // twice over: it is already spent on three hex INTEGER forms in this very block, and it
+        // is absent from Rholang's grammar entirely.)
+        //
+        // ★ WHY EVEN-LENGTH IS THE PATTERN AND NOT A CHECK IN `eval`. A byte is two hex digits,
+        // so an odd digit count names no byte sequence. Encoding that in the REGEX
+        // (`([0-9A-Fa-f][0-9A-Fa-f])*`, pairs) makes the accepted surface language exactly the
+        // decodable one, so the `eval` below cannot fail on a token the lexer produced — the
+        // failure is impossible rather than handled. `b""` is the empty byte array and is
+        // deliberately in the language: it is what `Bytes::BytesLit(vec![])` renders as, and its
+        // unrenderability under the empty-delimiter collection arm was the MEASURED blocker.
+        //
+        // ★ BOTH CASES ACCEPTED, LOWERCASE WRITTEN. `Display` emits lowercase (matching
+        // `hex::encode`), so `b"DEADBEEF"` and `b"deadbeef"` are two spellings of one value and
+        // canonical idempotence holds after one round. Upstream's `hexToBytes`
+        // (`reduce.rs:4849`) is likewise case-insensitive, so accepting both is alignment, not
+        // licence.
+        //
+        // ★ WHY NO EXISTING RHOLANG PROGRAM CHANGES MEANING. Rholang has no juxtaposition, so
+        // an identifier immediately followed by a string literal — `b"…"` — is not a term in the
+        // language today: it does not parse, so no program contains it. Maximal munch
+        // (`LexicographicWeight::open_len`) prefers the 11-byte `b"deadbeef"` token over the
+        // 1-byte `Ident("b")`, and AMBIGUITY IS PRESERVED rather than resolved here: the lexer
+        // FORKS, the two-token reading stays in the lattice, and it dies on feasibility rather
+        // than by decree. A variable named `b` is unaffected in every position where it is not
+        // abutted to a `"` — `for (b <- ch) { b }` never reaches this pattern. Pinned by
+        // `languages/tests/rholang_byte_literal.rs`.
+        Bytes {
+            pattern: r#"b"([0-9A-Fa-f][0-9A-Fa-f])*""#;
+            eval: ![ {
+                // `text` is the whole token INCLUDING the `b"` frame, and the pattern guarantees
+                // its shape: a `b`, a `"`, an EVEN number of hex digits, a `"`. Every bound and
+                // every digit conversion below is therefore a fact about the token rather than a
+                // hope about it.
+                //
+                // ⚠ NEVER `panic!` here, and never index. This body runs inside the generated
+                // parser and, in a consensus setting, on remotely supplied source; a panic
+                // cannot be contained in this workspace at all — unwinding across the Cranelift
+                // frames of `[profile.dev] codegen-backend = "cranelift"` ABORTS the process
+                // rather than failing the parse. Every impossible case answers `Err(())`, which
+                // simply DECLINES the reading, so the parser moves on to another lattice branch
+                // instead of dying.
+                //
+                // The decode is a named inner `fn` (the shape `LNth`'s fold body already uses)
+                // so that its early exits are `return`s from the DECODER and cannot escape into
+                // the surrounding generated closure.
+                fn decode_byte_array_literal(text: &str) -> Result<Vec<u8>, ()> {
+                    let framed = text.as_bytes();
+                    // `b`, `"`, `"` — the shortest word in the language is `b""`, three bytes.
+                    if framed.len() < 3 {
+                        return Err(());
+                    }
+                    let digits = &framed[2..framed.len() - 1];
+                    if digits.len() % 2 != 0 {
+                        return Err(());
+                    }
+                    // Preallocated at the exact final length: one byte per digit PAIR.
+                    let mut decoded: Vec<u8> = Vec::with_capacity(digits.len() / 2);
+                    let mut pending_high_nibble: Option<u8> = None;
+                    for digit in digits.iter() {
+                        let nibble = match digit {
+                            b'0'..=b'9' => digit - b'0',
+                            b'a'..=b'f' => digit - b'a' + 10,
+                            b'A'..=b'F' => digit - b'A' + 10,
+                            _ => return Err(()),
+                        };
+                        match pending_high_nibble {
+                            None => pending_high_nibble = Some(nibble),
+                            Some(high) => {
+                                decoded.push((high << 4) | nibble);
+                                pending_high_nibble = None;
+                            },
+                        }
+                    }
+                    // Unreachable given the even-length check; answered rather than asserted.
+                    match pending_high_nibble {
+                        Some(_) => Err(()),
+                        None => Ok(decoded),
+                    }
+                }
+                decode_byte_array_literal(text)
+            } ]
         }
     },
 

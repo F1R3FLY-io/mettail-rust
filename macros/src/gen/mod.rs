@@ -2394,11 +2394,22 @@ pub fn generate_var_label(category: &Ident) -> Ident {
 /// - `StringLit` — `str`/`String`.
 /// - `RatLit` — `CanonicalBigRat`.
 /// - `FixedLit` — `CanonicalFixedPoint`.
+/// - `BytesLit` — `Vec<u8>`, the byte-sequence carrier (see [`native::is_byte_vector`]).
 /// - `Lit` — generic fallback for any other native type.
 ///
 /// Used for auto-generated literal constructor variants.
 pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
     use native::NativeType;
+    // ★ The BYTE carrier is asked FIRST, because `NativeType` cannot see it.
+    // `NativeType::from_syn_type` classifies by the last path segment, so `Vec<u8>` and
+    // `Vec<Proc>` are both `VecCollection` and would both be labelled `ListLit`. A `Vec<u8>` is
+    // not a collection of terms (see `native::is_byte_vector` for the full argument): its
+    // surface is ONE literal, `b"deadbeef"`, and `u8` is not a category. Labelling it `ListLit`
+    // put a scalar value into the collection Display path, which wrapped it in the EMPTY
+    // delimiters a non-`as List` category declares — the measured `Bytes::…(vec![])` ⇒ `""`.
+    if native::is_byte_vector(native_type) {
+        return quote::format_ident!("BytesLit");
+    }
     let nt = NativeType::from_syn_type(native_type);
     // Group integer-like (including `CanonicalBigInt`) before narrower classifiers
     // so `is_integer()` correctly covers arbitrary-precision ints.

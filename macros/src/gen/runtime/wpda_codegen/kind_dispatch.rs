@@ -1078,6 +1078,20 @@ fn emit_chain_atom_pushes_for_shape(
                         pushes,
                     );
                 },
+                // A DECLARED-pattern literal (`LiteralFamily::Custom`) reaches the parser as
+                // exactly one token kind: the per-category `TokenKind::Custom(cat)` compiled from
+                // its own regex. The `cat_name_lit` payload equality is what keeps two custom
+                // literal categories from consuming each other's tokens — identical discipline to
+                // the `Rational` / `FixedPoint` arms above, minus the legacy typed-lit variant
+                // (there is no `CustomLit(cat)` in `TokenKind`, and none is wanted: the whole
+                // point of the family is that the category's own pattern IS its token).
+                LiteralFamily::Custom => {
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
+                        pushes,
+                    );
+                },
             }
         },
         AtomicShape::TerminalKeyword { terminal_text, .. } => {
@@ -1216,6 +1230,20 @@ fn emit_chain_atom_producer_pushes_for_shape(
                 LiteralFamily::String => {
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::StringLit },
+                        pushes,
+                    );
+                },
+                // A DECLARED-pattern literal (`LiteralFamily::Custom`) reaches the parser as
+                // exactly one token kind: the per-category `TokenKind::Custom(cat)` compiled from
+                // its own regex. The `cat_name_lit` payload equality is what keeps two custom
+                // literal categories from consuming each other's tokens — identical discipline to
+                // the `Rational` / `FixedPoint` arms above, minus the legacy typed-lit variant
+                // (there is no `CustomLit(cat)` in `TokenKind`, and none is wanted: the whole
+                // point of the family is that the category's own pattern IS its token).
+                LiteralFamily::Custom => {
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
                         pushes,
                     );
                 },
@@ -1729,6 +1757,20 @@ fn emit_prefix_pushes_for_shape(
                 LiteralFamily::String => {
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::StringLit },
+                        prefix_pushes,
+                    );
+                },
+                // A DECLARED-pattern literal (`LiteralFamily::Custom`) reaches the parser as
+                // exactly one token kind: the per-category `TokenKind::Custom(cat)` compiled from
+                // its own regex. The `cat_name_lit` payload equality is what keeps two custom
+                // literal categories from consuming each other's tokens — identical discipline to
+                // the `Rational` / `FixedPoint` arms above, minus the legacy typed-lit variant
+                // (there is no `CustomLit(cat)` in `TokenKind`, and none is wanted: the whole
+                // point of the family is that the category's own pattern IS its token).
+                LiteralFamily::Custom => {
+                    push_payload_eq_atomic(
+                        quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
+                        cat_name_lit,
                         prefix_pushes,
                     );
                 },

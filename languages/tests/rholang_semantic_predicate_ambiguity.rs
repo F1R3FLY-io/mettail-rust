@@ -36,8 +36,8 @@
 //!     | awk '/warning\[D02\] \(Rholang\)/,/= hint: this is an inherent/'
 //! ```
 //!
-//! ★ GOLDEN — **verified before M-0, after M-0, after M-1b, and after divergence I**:
-//! **9 unresolvable ambiguities in 1 category**, all pre-existing and all in
+//! ★ GOLDEN — **verified before M-0, after M-0, after M-1b, after divergence I, and after the
+//! `Bytes` carrier landed (2026-07-30)**: **8 unresolvable ambiguities in 1 category**, all in
 //! `Proc`:
 //!
 //! ```text
@@ -49,8 +49,29 @@
 //!   6  [LParen, Bang]        POutput        vs POutputEmpty
 //!   7  [LParen, Tok_21_21]   PPersistOutput vs PPersistOutputEmpty
 //!   8  [Minus]               CastBigRat     vs CastInt vs CastBigInt
-//!   9  [StringLit]           CastStr        vs CastBytes
 //! ```
+//!
+//! ### ★ THE `[StringLit]` ROW IS GONE — 9 → 8, and it was REMOVED, not resolved
+//!
+//! Row 9 used to read `[StringLit] CastStr vs CastBytes`. It disappeared on 2026-07-30 when
+//! `Bytes` gained its real carrier, `![Vec<u8>] as Bytes` (see the `as Bytes` note in
+//! `languages/src/rholang.rs`). Under the retired `![String] as Bytes` BOTH categories were
+//! string-shaped, so the generator emitted a `StringLit` variant for each and **every** `"…"`
+//! literal in the language had two readings.
+//!
+//! ⚠ The distinction matters for how this golden should be read. The other eight rows are
+//! *inherent grammar conflicts*: no finite lookahead separates them, and a tropical weight elects
+//! a winner. Row 9 was never in that class — it was an artefact of a DECLARATION that made two
+//! semantically distinct categories share a token shape, and the repair makes the losing reading
+//! **unconstructible** rather than merely unelected: no `"…"` token can inhabit
+//! `Bytes::BytesLit(Vec<u8>)`. So the count fell by one without any conflict being *resolved*, and
+//! a future author must not read "8" as evidence that lookahead improved.
+//!
+//! Re-derived, not transcribed (2026-07-30, the recipe above):
+//! `warning[D02] (Rholang): 8 unresolvable ambiguity in 1 categories`.
+//! The companion row `a_string_literal_has_no_byte_array_reading`
+//! (`languages/tests/rholang_byte_literal.rs`) is the runtime-side assertion that the reading is
+//! gone, since D02 itself is a build-time diagnostic and cannot be asserted from a test.
 //!
 //! ### The divergence-I delta, and why it is not a regression
 //!
@@ -58,26 +79,35 @@
 //! reading `Int ▸ Proc` is elected over the promote-then-project chain:
 //!
 //! ```text
-//!   before (54531931)  CastBigRat  CastBigInt  CastUInt32  CastInt   CastStr CastBytes
-//!   after  (HEAD)      CastBigRat  CastInt     CastBigInt  CastUInt32  CastStr CastBytes
+//!   before (54531931)  CastBigRat  CastBigInt  CastUInt32  CastInt     CastStr CastBytes
+//!   at     (12704fc1)  CastBigRat  CastInt     CastBigInt  CastUInt32  CastStr CastBytes
+//!   now    (HEAD)      CastBigRat  CastInt     CastBigInt  CastUInt32  CastStr
 //! ```
+//!
+//! ⚠ The `CastBytes` column disappears in the third row for the reason given above (the carrier
+//! change), NOT as a further effect of divergence I. The two changes are independent and the
+//! third row is dated 2026-07-30.
 //!
 //! `D02` enumerates a row's alternatives in DECLARATION ORDER, so rows 5 and 8 —
 //! the only two rows whose alternatives are integer projections — re-order with
 //! it, and nothing else moves. The measurement that matters is invariant:
 //!
-//! | quantity | before | after |
-//! |---|---|---|
-//! | unresolvable ambiguities | 9 | 9 |
-//! | categories | 1 (`Proc`) | 1 (`Proc`) |
-//! | conflict PREFIXES | `[At,Bang] [At,Tok_21_21] [Ident,Bang] [Ident,Tok_21_21] [Integer] [LParen,Bang] [LParen,Tok_21_21] [Minus] [StringLit]` | identical |
-//! | constructor SET per prefix | — | identical at all 9 |
+//! | quantity | before divergence I | after divergence I | after the `Bytes` carrier |
+//! |---|---|---|---|
+//! | unresolvable ambiguities | 9 | 9 | **8** |
+//! | categories | 1 (`Proc`) | 1 (`Proc`) | 1 (`Proc`) |
+//! | conflict PREFIXES | `[At,Bang] [At,Tok_21_21] [Ident,Bang] [Ident,Tok_21_21] [Integer] [LParen,Bang] [LParen,Tok_21_21] [Minus] [StringLit]` | identical | identical **minus `[StringLit]`** |
+//! | constructor SET per prefix | — | identical at all 9 | identical at the 8 that remain |
 //!
 //! So divergence I introduced no new grammar conflict and resolved none: it
 //! permuted the alternatives WITHIN two existing conflicts, which is precisely
 //! the intentional election change and is invisible to the conflict structure.
 //! Compare SETS per prefix, not the printed sequence, when re-deriving this
 //! golden — the sequence is a declaration-order artifact.
+//!
+//! The `Bytes` carrier change is the one movement in this table's history that removed a PREFIX
+//! rather than permuting within one, and it did so by making a reading unspellable rather than by
+//! adding lookahead. That is why it changes the count and divergence I did not.
 //!
 //! `implies` and `matches` cannot add a row: `D02` reports conflicts at
 //! TRIE-DISPATCH prefixes, and an infix operator declared `a "op" b` contributes

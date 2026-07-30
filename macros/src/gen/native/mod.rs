@@ -183,6 +183,56 @@ pub fn native_type_to_full_string(native_type: &syn::Type) -> String {
     s
 }
 
+/// Is this native type the BYTE-SEQUENCE carrier `Vec<u8>`?
+///
+/// # Why this is a predicate on the `syn::Type` and not a [`NativeType`] variant
+///
+/// [`NativeType::from_type_str`] classifies by the type's LAST PATH SEGMENT alone, so it cannot
+/// tell `Vec<u8>` from `Vec<Proc>` — both are the string `"Vec"`. The distinction is in the
+/// generic ARGUMENT, which only the full `syn::Type` carries. Rather than widen
+/// `from_type_str`'s contract (its callers pass bare names such as `"HashSetLit"`), the byte
+/// question is asked here, of the type, by every site that needs it.
+///
+/// # Why the byte carrier is not a collection
+///
+/// A `Vec<Proc>` is a COLLECTION of terms: it is declared `as List`, it carries collection
+/// delimiters, its elements are themselves renderable terms, and `DisplayTask::DisplayProc`
+/// exists for them. A `Vec<u8>` is a SCALAR VALUE that happens to be backed by a vector: `u8`
+/// is not a category, there is no `DisplayTask::Displayu8`, and its surface is one indivisible
+/// literal (`b"deadbeef"`) rather than a delimited sequence of element surfaces. Treating it as
+/// a collection is exactly what produced the measured defect — the byte carrier rendered with
+/// EMPTY open/close delimiters, so `Bytes::…(vec![])` displayed as the empty string and no
+/// byte value round-tripped at all.
+///
+/// Three sites share this one predicate, so the classification cannot drift between them:
+///
+/// 1. [`crate::gen::generate_literal_label`] — names the AST variant `BytesLit`, not `ListLit`.
+/// 2. `crate::gen::syntax::display` — emits the `b"<hex>"` arm ahead of the collection arm.
+/// 3. `crate::gen::runtime::wpda_codegen::prefix` — routes it to `LiteralFamily::Custom`.
+pub fn is_byte_vector(native_type: &syn::Type) -> bool {
+    let syn::Type::Path(type_path) = native_type else {
+        return false;
+    };
+    let Some(segment) = type_path.path.segments.last() else {
+        return false;
+    };
+    if segment.ident != "Vec" {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return false;
+    };
+    if args.args.len() != 1 {
+        return false;
+    }
+    match args.args.first() {
+        Some(syn::GenericArgument::Type(syn::Type::Path(elem))) => {
+            elem.path.segments.last().is_some_and(|s| s.ident == "u8")
+        },
+        _ => false,
+    }
+}
+
 /// Extract the element type Ident from a collection native type (e.g. Vec<Proc> -> Proc, HashBag<Proc> -> Proc).
 pub fn native_type_element_ident(native_type: &syn::Type) -> Option<Ident> {
     use syn::GenericArgument;

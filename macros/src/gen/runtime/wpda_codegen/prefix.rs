@@ -35,6 +35,41 @@ pub enum LiteralFamily {
     Boolean,
     /// Maps to `TokenKind::StringLit`.
     String,
+    /// Maps to `TokenKind::Custom(cat)` — a category that DECLARES its own literal pattern
+    /// (`literals { Cat { pattern: …; eval: ![{ … }] } }`) but whose native carrier belongs to
+    /// no built-in token family.
+    ///
+    /// # Why this family exists at all
+    ///
+    /// The built-in families are keyed on [`NativeKind`], which knows the integer widths,
+    /// `f32`/`f64`, `bool`, `str`, and the three canonical wrappers — and nothing else. Every
+    /// other carrier resolved to `NativeKind::Other`, `literal_family_for` returned `None`, and
+    /// the category was classified [`AtomicShape::NonAtomic`]: **the declared `literals { … }`
+    /// block was silently discarded**, so the category had no literal reading and therefore no
+    /// surface form. It was constructible in Rust and unwritable and unrenderable in the
+    /// language — the exact defect measured for rholang's byte carrier
+    /// (`![Vec<u8>] as Bytes` ⇒ `Bytes::BytesLit(vec![])` displayed as `""`).
+    ///
+    /// # Why it is elected by the DECLARATION and not by the carrier
+    ///
+    /// The gate is "does this category declare a `literals { … }` block with an `eval` body?",
+    /// which is exactly the author's statement *this category has a literal surface, and here
+    /// is how to read it*. Keying on the carrier instead would need a new `NativeKind` variant
+    /// per carrier — a hand-maintained mirror of an open set — and would silently misfire on
+    /// carriers that deliberately have NO literal (rholang's `Set`, `Pathmap`, `ReadZipper` and
+    /// `WriteZipper` are all `NativeKind::Other` and declare no block, so they are untouched).
+    /// See `literal_family_for_category`, which is the single place the election happens.
+    ///
+    /// # Wire
+    ///
+    /// The lexer already routes such a category correctly with no change:
+    /// `NativeKind::Other::standard_token_variant()` is `None`, so `ast::language::parse` keeps
+    /// the CATEGORY NAME as the token name, `prattail_bridge` marks it
+    /// `is_builtin_override: false` with a `&'a str` payload, and `automata::nfa::build_nfa`
+    /// compiles its pattern to `TokenKind::Custom(cat)`. The `eval` body then runs at PARSE
+    /// time on the raw token text — identical plumbing to `Rational` / `FixedPoint`, both of
+    /// which already reach the parser as `TokenKind::Custom(cat)`.
+    Custom,
 }
 
 /// B11 fix: classifies the calling context that drives literal-pattern arm
@@ -80,7 +115,11 @@ fn home_polymorphic_token_arm(family: LiteralFamily) -> Option<TokenStream> {
         | LiteralFamily::FixedPoint
         | LiteralFamily::Float
         | LiteralFamily::Boolean
-        | LiteralFamily::String => None,
+        | LiteralFamily::String
+        // `Custom` has no polymorphic Token variant BY CONSTRUCTION: its token IS the
+        // per-category `TokenKind::Custom(cat)` compiled from its own declared pattern, so there
+        // is no shared family variant it could be routed through and no routing trap to gate.
+        | LiteralFamily::Custom => None,
     }
 }
 
@@ -421,18 +460,11 @@ fn classify_literal_patterned(cat_ident: &Ident, language: &LanguageDef) -> Opti
     let lang_type = language.types.iter().find(|t| &t.name == cat_ident)?;
     let native_type = lang_type.native_type.as_ref()?.clone();
     let kind = NativeKind::from_syn_type(&native_type);
-    let family = literal_family_for(&kind)?;
+    let family = literal_family_for_category(&cat_name, language)?;
     let wrapper_variant = crate::gen::generate_literal_label(&native_type);
 
     // Case (a): explicit literals block.
-    let token_def = language.token_defs.iter().find(|td| {
-        td.from_literals
-            && td
-                .category
-                .as_ref()
-                .map(|c| c == cat_ident)
-                .unwrap_or(false)
-    });
+    let token_def = declared_literal_token_def(&cat_name, language);
     if let Some(td) = token_def {
         if let Some(rust_code) = td.rust_code.clone() {
             return Some(AtomicShape::LiteralPatterned {
@@ -691,7 +723,15 @@ fn collect_first_set(
         {
             if let Some(nt) = lang_type.native_type.as_ref() {
                 let kind = NativeKind::from_syn_type(nt);
-                if let Some(family) = literal_family_for(&kind) {
+                // ⚠ `literal_family_for_category`, NOT `literal_family_for`: a category that
+                // DECLARED its own literal (`LiteralFamily::Custom`) must contribute its
+                // `TokenKind::Custom(cat)` to FIRST, or every cross-cat projection that reads it
+                // — rholang's `CastBytes . b:Bytes |- b : Proc` — fails to dispatch on the
+                // literal's own token and the literal is reachable only in its home category.
+                // This call site and `classify_literal_patterned` must elect the SAME family;
+                // sharing one function is what makes that true by construction rather than by
+                // discipline.
+                if let Some(family) = literal_family_for_category(&current_cat_name, language) {
                     for (pattern, extra_guard) in literal_patterned_pattern_and_guard_for_kind(
                         &current_cat_name,
                         family,
@@ -1334,7 +1374,69 @@ pub fn emit_paren_dispatch_arms(
     quote! { #(#arms)* }
 }
 
+/// The `literals { Cat { pattern: …; eval: ![{ … }] } }` declaration for `cat_name`, if the
+/// grammar has one that carries an `eval` body.
+///
+/// One lookup, so `classify_literal_patterned` (which needs the body) and
+/// [`literal_family_for_category`] (which needs only its existence) cannot disagree about
+/// whether a category declared a literal.
+fn declared_literal_token_def<'a>(
+    cat_name: &str,
+    language: &'a LanguageDef,
+) -> Option<&'a mettail_ast::language::TokenDef> {
+    language.token_defs.iter().find(|td| {
+        td.from_literals
+            && td.rust_code.is_some()
+            && td
+                .category
+                .as_ref()
+                .is_some_and(|c| c.to_string() == cat_name)
+    })
+}
+
+/// ★ THE SINGLE ELECTION SITE for a category's [`LiteralFamily`].
+///
+/// The built-in families come from the carrier ([`literal_family_for`]). When the carrier
+/// belongs to none of them, the category still HAS a literal surface if it DECLARED one, and
+/// that surface is [`LiteralFamily::Custom`].
+///
+/// # Why the fallback must be here rather than in `literal_family_for`
+///
+/// `literal_family_for` is a total function of the `NativeKind` alone and several emitters rely
+/// on that (they hold a kind, not a category). The `Custom` election is a fact about the
+/// GRAMMAR, not about the type: two categories with the same `NativeKind::Other` carrier differ
+/// precisely in whether they declared a pattern. Keeping the two functions separate keeps
+/// `literal_family_for` honest and makes this the only place a declaration can grant a family.
+///
+/// # The failure this closes
+///
+/// Before it, a declared `literals { … }` block on a category whose carrier had no built-in
+/// family was **read, validated, desugared into a `TokenDef`, compiled into the lexer DFA — and
+/// then dropped on the floor by the parser**, because `classify_literal_patterned` returned
+/// `None` at the family lookup and the rule fell through to `AtomicShape::NonAtomic`. The token
+/// was produced and nothing could consume it. That is a silent partial wiring, and it is why
+/// this returns a family for the declaration rather than requiring a carrier enumeration to be
+/// kept complete by hand.
+fn literal_family_for_category(cat_name: &str, language: &LanguageDef) -> Option<LiteralFamily> {
+    let lang_type = language
+        .types
+        .iter()
+        .find(|t| t.name.to_string() == cat_name)?;
+    let native_type = lang_type.native_type.as_ref()?;
+    match literal_family_for(&NativeKind::from_syn_type(native_type)) {
+        Some(family) => Some(family),
+        None if declared_literal_token_def(cat_name, language).is_some() => {
+            Some(LiteralFamily::Custom)
+        },
+        None => None,
+    }
+}
+
 /// Map a `NativeKind` to the lexer's `LiteralFamily`.
+///
+/// ⚠ Callers that hold a CATEGORY should use [`literal_family_for_category`] instead: a category
+/// whose carrier has no built-in family may still have declared its own literal, and only the
+/// category-level function can see that.
 fn literal_family_for(kind: &NativeKind) -> Option<LiteralFamily> {
     match kind {
         NativeKind::Int8
@@ -3280,6 +3382,18 @@ fn literal_patterned_pattern_and_guard_for_kind(
         LiteralFamily::String => {
             vec![(quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }, None)]
         },
+        // A declared-pattern category reaches the parser as ONE token kind: the per-category
+        // `TokenKind::Custom(cat)` the NFA builder compiled from its own regex
+        // (`automata::nfa::build_nfa`, the `!spec.is_builtin_override` arm). The `__cat` guard is
+        // what keeps two `Custom` categories from consuming each other's tokens — the same
+        // discipline `Rational` and `FixedPoint` use on their `Custom` arms above.
+        //
+        // No bare polymorphic arm and no typed-lit arm: there is no shared family variant for a
+        // custom literal to be spelled as, so `Custom(cat)` is the whole story.
+        LiteralFamily::Custom => vec![(
+            quote! { Some(mettail_prattail::automata::TokenKind::Custom(__cat)) },
+            Some(quote! { __cat == #cat_name }),
+        )],
     }
 }
 

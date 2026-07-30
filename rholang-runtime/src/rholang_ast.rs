@@ -3272,16 +3272,17 @@ fn lower_arm_cast_bytes(value: &std::sync::Arc<Bytes>) -> Result<Par, RholangAst
         // produce `GByteArray`), so this was not a divergence in semantics but a
         // loss of a distinction the wire model makes.
         //
-        // ⚠ This is INDEPENDENT of the held `![Vec<u8>] as Bytes` carrier change
-        // (see `languages/src/rholang.rs`, the `as Bytes` block). The carrier is
-        // still `String`, so the bytes are recovered with `into_bytes()` — UTF-8,
-        // which is exactly what `toUtf8Bytes` means upstream and therefore the only
-        // defensible reading of a `String`-carried byte array. When the carrier
-        // lands, this becomes `Bytes::ListLit(bytes) => …(bytes.clone(), …)` and the
-        // `into_bytes()` step disappears.
-        Bytes::StringLit(string) => {
-            Ok(new_gbytearray_par(string.clone().into_bytes(), Vec::new(), false))
-        },
+        // ★ THE CARRIER LANDED 2026-07-30, so this arm is now DIRECT.
+        //
+        // It previously read `Bytes::StringLit(string) =>
+        // new_gbytearray_par(string.clone().into_bytes(), …)` — a UTF-8 re-encode, which was the
+        // only defensible reading of a `String`-carried byte array (it is exactly what upstream's
+        // `toUtf8Bytes` means) but which could not express a byte sequence that is not valid
+        // UTF-8. `![Vec<u8>] as Bytes` (see `languages/src/rholang.rs`) makes the payload the
+        // bytes themselves, so there is nothing to re-encode and no unrepresentable value: the
+        // literal `b"deadbeef"` carries `[0xde, 0xad, 0xbe, 0xef]`, which no `String` payload
+        // could have held.
+        Bytes::BytesLit(bytes) => Ok(new_gbytearray_par(bytes.clone(), Vec::new(), false)),
         _ => Err(RholangAstLowerError::UnsupportedProc("non-ground bytes process")),
     }
 }

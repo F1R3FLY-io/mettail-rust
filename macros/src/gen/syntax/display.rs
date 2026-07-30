@@ -4507,7 +4507,53 @@ fn generate_engine_auto_literal_arm(
     let literal_label = generate_literal_label(native_type);
     let nt = crate::gen::native::NativeType::from_syn_type(native_type);
 
-    if nt.is_string() {
+    if crate::gen::native::is_byte_vector(native_type) {
+        // ★ THE BYTE CARRIER'S SURFACE: `b"<lowercase hex>"`, two hex digits per byte.
+        //
+        // # Why this arm comes FIRST, ahead of the collection arm
+        //
+        // `NativeType::from_syn_type` sees only the last path segment, so `Vec<u8>` is
+        // `VecCollection` and `nt.is_collection()` is TRUE for it. Without this arm the byte
+        // carrier fell into the collection body with `collection_kind == None` — because a
+        // `Vec<u8>` category is not declared `as List` and so has NO delimiters — which meant
+        // open and close were both the EMPTY STRING. MEASURED: `Bytes::BytesLit(vec![])`
+        // rendered as `""` and `gen_rholang_prop::bytes_display_parse_roundtrip` reported
+        // `arb_bytes produced unparseable surface term ""`, taking four sibling category
+        // round-trips down with it. A byte sequence is a scalar value, not a delimited sequence
+        // of element surfaces; see `native::is_byte_vector`.
+        //
+        // # Why HEX, and why this is a BUG FIX rather than a divergence
+        //
+        // Upstream's own pretty-printer already renders a byte array as bare hex —
+        // `f1r3node-rust-mettail/rholang/src/rust/interpreter/pretty_printer.rs:2860`,
+        // `GByteArray(bs) => Ok(hex::encode(bs))` — and upstream's grammar cannot READ that back
+        // (`rholang-tree-sitter/grammar.js:435-436` offers `string_literal` and `uri_literal`
+        // only; `ByteArray` at `:424` is a TYPE NAME). So upstream prints a value its own parser
+        // rejects. We print the SAME HEX DIGITS inside a `b"…"` frame that our parser does read,
+        // so the digits match upstream byte for byte and the round-trip that upstream loses is
+        // recovered. Upstream is a floor on semantics, not a ceiling on diagnostics.
+        //
+        // # Why the encoder is emitted inline
+        //
+        // Generated language crates are not required to depend on `hex`, and adding a
+        // dependency to express `x >> 4` would be a heavier contract than the four lines below.
+        // The table is `const`, the `String` is preallocated at exactly the final length
+        // (`2·len + 3` = two digits per byte, plus `b`, `"` and `"`), so this allocates once.
+        quote! {
+            #category::#literal_label(v) => {
+                const __HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+                let mut __rendered = String::with_capacity(2usize * v.len() + 3usize);
+                __rendered.push('b');
+                __rendered.push('"');
+                for __byte in v.iter() {
+                    __rendered.push(__HEX_DIGITS[(*__byte >> 4) as usize] as char);
+                    __rendered.push(__HEX_DIGITS[(*__byte & 0x0f) as usize] as char);
+                }
+                __rendered.push('"');
+                stack.push(DisplayTask::WriteString(__rendered));
+            }
+        }
+    } else if nt.is_string() {
         quote! {
             #category::#literal_label(v) => {
                 stack.push(DisplayTask::WriteString(
