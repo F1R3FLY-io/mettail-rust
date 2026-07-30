@@ -41,8 +41,8 @@ use typed_arena::Arena;
 
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_emap_par, new_eset_par, new_freevar_par, new_gbigint_expr,
-    new_gbigrat_expr, new_gbool_par, new_gdouble_expr, new_gfixedpoint_expr, new_gint_par,
-    new_gstring_par, new_key_value_pair, new_new_par, new_receive_par, new_send_par,
+    new_gbigrat_expr, new_gbool_par, new_gbytearray_par, new_gdouble_expr, new_gfixedpoint_expr,
+    new_gint_par, new_gstring_par, new_key_value_pair, new_new_par, new_receive_par, new_send_par,
     new_wildcard_par, union,
 };
 
@@ -3260,23 +3260,28 @@ fn lower_arm_cast_bytes(value: &std::sync::Arc<Bytes>) -> Result<Par, RholangAst
         // content produced IDENTICAL `Par`s, hence identical serialized bytes and
         // identical post-state contributions.
         //
-        // With `Bytes` given its real carrier (`![Vec<u8>] as Bytes`) the variant
-        // is `ListLit(Vec<u8>)` and the honest target already exists upstream:
-        // `models::rust::utils::new_gbytearray_par`. Written, compiled and measured
-        // — then held, because the carrier change is held (see
-        // `languages/src/rholang.rs`, the `as Bytes` block: `Bytes` would be left
-        // with no renderable surface form, which breaks Display→parse for the whole
-        // category and takes four sibling round-trips down with it).
+        // ★★ FIXED 2026-07-29: a `Bytes` lowers to `GByteArray`, not `GString`.
         //
-        // ⚠ SO THIS ARM IS STILL WRONG, KNOWINGLY: it lowers a `Bytes` to a
-        // `GString`, collapsing upstream's two distinct wire carriers
-        // (`string g_string = 3` vs `bytes g_byte_array = 25`) into one, so a
-        // `Bytes` and a `Str` of the same content produce IDENTICAL `Par`s and
-        // therefore identical serialized bytes. It is latent only because `Bytes`
-        // is unreachable in practice. Blocked on the same ruling.
+        // The two are DISTINCT upstream types, not two spellings of one:
+        // `rhoapi`'s `ExprInstance` carries `string g_string = 3` and
+        // `bytes g_byte_array = 25`. Lowering a `Bytes` through `new_gstring_par`
+        // CONFLATED them — a `Bytes` and a `Str` of the same content produced
+        // IDENTICAL `Par`s, hence identical serialized bytes (both formats),
+        // identical hashes, and identical post-state contributions. Upstream's own
+        // reducer keeps them apart (`hexToBytes`/`bytesToHex`/`toUtf8Bytes` all
+        // produce `GByteArray`), so this was not a divergence in semantics but a
+        // loss of a distinction the wire model makes.
         //
-        //   Bytes::ListLit(bytes) => Ok(new_gbytearray_par(bytes.clone(), Vec::new(), false)),
-        Bytes::StringLit(string) => Ok(new_gstring_par(string.clone(), Vec::new(), false)),
+        // ⚠ This is INDEPENDENT of the held `![Vec<u8>] as Bytes` carrier change
+        // (see `languages/src/rholang.rs`, the `as Bytes` block). The carrier is
+        // still `String`, so the bytes are recovered with `into_bytes()` — UTF-8,
+        // which is exactly what `toUtf8Bytes` means upstream and therefore the only
+        // defensible reading of a `String`-carried byte array. When the carrier
+        // lands, this becomes `Bytes::ListLit(bytes) => …(bytes.clone(), …)` and the
+        // `into_bytes()` step disappears.
+        Bytes::StringLit(string) => {
+            Ok(new_gbytearray_par(string.clone().into_bytes(), Vec::new(), false))
+        },
         _ => Err(RholangAstLowerError::UnsupportedProc("non-ground bytes process")),
     }
 }
