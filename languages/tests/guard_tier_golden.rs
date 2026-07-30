@@ -411,10 +411,51 @@ fn calculator_guard_tiers() {
 ///   `TermDef`. `metadata.terms()` carries declared rules plus the twelve auto-injected
 ///   numeric coercions only; `generate_term_defs` is byte-identical across the range; and the
 ///   auto-injected contribution is 12 fields on both sides of it (240 − 228 == 239 − 227).
+/// ★ The three byte-named methods (2026-07-30, RE-DERIVED not relaxed). `5a9efa00` closed the
+/// byte-method axis by declaring three rules, each carrying its own congruence:
+///
+/// ```text
+///     MHexToBytes      . s:Proc |- s "." "hexToBytes"   "(" ")" : Proc ![{ … }] fold;
+///     MBytesToHex      . b:Proc |- b "." "bytesToHex"   "(" ")" : Proc ![{ … }] fold;
+///     MToUtf8Bytes     . s:Proc |- s "." "toUtf8Bytes"  "(" ")" : Proc ![{ … }] fold;
+///     MHexToBytesCong  . | S ~> T |- (MHexToBytes  S) ~> (MHexToBytes  T);
+///     MBytesToHexCong  . | S ~> T |- (MBytesToHex  S) ~> (MBytesToHex  T);
+///     MToUtf8BytesCong . | S ~> T |- (MToUtf8Bytes S) ~> (MToUtf8Bytes T);
+/// ```
+///
+/// * **T1 239 → 242.** Each method rule declares exactly ONE operand — its receiver, a
+///   non-binder, non-`Guard` field of the non-scalar category `Proc`, decided by the structural
+///   classifier on the `True` skeleton. Three unary receivers ⇒ +3. The `fold` actions
+///   contribute nothing, for the reason already established for `LLast` and `PParInternal`
+///   above: an `![…]` body is neither a field nor a rewrite condition.
+/// * **T2 285 → 291, i.e. +6 from three rules.** ★ This is the `LLast` arithmetic applied three
+///   times, not a new phenomenon. `T2 == (Σ rewrite conditions) + (congruence premises) +
+///   (binder fields)`, and each generated congruence `RewriteDef` carries
+///   `conditions: &["S ~> T"]` *and* `premise: Some(("S", "T"))` — counted once in each sum, so
+///   **+2 per congruence**. Three congruences ⇒ +6. Measured after the addition: 148 rewrite
+///   conditions + 142 congruence premises + 1 binder = 291, i.e. conditions 145 → 148 and
+///   premises 139 → 142, each +3.
+/// * **total 524 → 533**, and `524 + 3 + 6 == 533 == 242 + 291` closes the arithmetic. No binder
+///   and no freshness condition is declared, so T3/T4 stay 0 and `worst` stays T2.
+///
+/// ★★ The `drift_shape` diagnostic added alongside the `PParInternal` re-derivation predicted
+/// this shape before the cause was known, which is the whole point of it: it printed
+/// `ΔT1 = +3 AND ΔT2 = +6 ⇒ BOTH a structural and a behavioral source moved. Do not attribute
+/// this to one commit without checking both; a single rule carrying its own congruence does
+/// exactly this (+1 T1, +2 T2).` The three-rule attribution was then confirmed against
+/// `5a9efa00`'s own diff, not inferred from the failure message.
+///
+/// ⚠ Do NOT read "+3 methods" as "+3 to the byte-method count on every axis" — that count is
+/// axis-dependent and four axes were measured. These three are the **byte-NAMED** methods
+/// (axis B, 1 → 4). Separately, `length`/`nth`/`last` gained a `Bytes` receiver **in the host
+/// fold lane** (axis D, 0 → 3) by *routing*, declaring no new rule, so they move neither tally.
+/// Axis D had never been measured and was the one that mattered: those three are reducer
+/// `method_table` keys, so the machine already answered them correctly while the fold answered
+/// `error` — a live fold/machine disagreement from the moment `b"…"` became spellable.
 #[test]
 fn rholang_guard_tiers() {
     let meta = mettail_languages::rholang::RholangLanguage.metadata();
-    assert_tier_tuple(meta, 524, 239, 285, 0, 0, T2);
+    assert_tier_tuple(meta, 533, 242, 291, 0, 0, T2);
 }
 
 /// **Ambient** — mobile ambients over `Proc`/`Name` (both non-scalar; no native
