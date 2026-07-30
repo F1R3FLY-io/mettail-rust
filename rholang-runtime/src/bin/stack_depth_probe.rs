@@ -990,6 +990,105 @@ fn set_pair_lower_body(depth: usize) {
     lower(term);
 }
 
+// ---------------------------------------------------------------------------
+// ★★ #174 — NAMING the hash-keyed collection cost, by taking the mechanism OUT of the pipeline.
+//
+// The three `*_pair_lower` rungs above localise the cost to "the hash-keyed literal" and to the
+// LOWER phase (the `*_pair_parse` rungs read flat), but a phase is not a mechanism. These two
+// subjects run the suspected mechanism on its own, with `lower_depth` — build + lower +
+// dismantle, no hashing — as the negative control on the identical term.
+//
+// ★ THE SUSPECT, read from the `models` crate (`../f1r3node-rust-mettail`) @ its checked-out
+// revision, following the ONE structural difference between an `EList` and an `EMap`/`ESet`:
+//
+//   `rholang_ast.rs:2460  new_emap_par(pairs, …)`
+//     → `models/src/rust/utils.rs:715  new_emap_expr`
+//     → `EMapBody(ParMapTypeMapper::par_map_to_emap(ParMap::new(…)))`
+//     → `models/src/rust/par_map.rs:18  ParMap::new`  → `SortedParMap::create_from_vec`
+//     → `models/src/rust/sorted_par_map.rs:30`  `let map: HashMap<Par, Par> = vec.into_iter().collect();`
+//     → `models/src/lib.rs:284  impl Hash for Par`  ← HAND-WRITTEN AND HOST-RECURSIVE
+//
+//   `rholang_ast.rs:2424  new_elist_par(items, …)`
+//     → `models/src/rust/utils.rs:897  new_elist_expr` → `EListBody(EList { ps: Vec<Par>, … })`
+//     → a plain vector. NO hash, NO sort, NO `Ord`.
+//
+// `impl Hash for Par` is `self.sends.hash(state); … self.exprs.hash(state); …` — `Vec<Expr>` →
+// `Expr` → nested `Par` → `Par::hash` again, on the native stack, once per level. `impl
+// PartialEq for Par` next to it (`:265`) has the same shape and runs on hash collision.
+//
+// ⚠ THIS IS NOT A MeTTaIL DRIVER, which is exactly why the figure "matched no driver measured
+// in isolation". It is in `models`, the same crate and the same class as `par_drop` — the
+// derived/hand-written impls this workspace's conversion does not own. It is recorded here so
+// the number has a NAME and an ADDRESS, and the repair is f1r3node's to make.
+// ---------------------------------------------------------------------------
+
+/// **`Par`'s hash, alone, on a term `lower_depth` already walks flat.**
+///
+/// Build `nested_list(depth)`, lower it with the CONVERTED iterative `drive` (flat — that is
+/// `lower_depth`), then hash the resulting `Par`. The only thing this subject adds over
+/// [`lower_depth_body`] is `models::lib.rs`'s `impl Hash for Par`, so the DIFFERENCE between
+/// the two ladders is that impl and nothing else.
+///
+/// ⚠ ANTI-VACUITY: two spines differing only at their deepest literal must hash DIFFERENTLY.
+/// A `Hash` impl that stopped at the top `Par` would agree on both and read flat for the wrong
+/// reason — the same failure `ast_cmp_body`'s twins guard against.
+fn par_hash_body(depth: usize) {
+    use std::hash::{Hash, Hasher};
+    let env = BoundEnv::new();
+    let a = nested_list_leaf(depth, 1);
+    let b = nested_list_leaf(depth, 2);
+    let par_a = lower_proc_in_env(&a, &env).expect("stack_depth_probe: par_hash lowering failed");
+    let par_b = lower_proc_in_env(&b, &env).expect("stack_depth_probe: par_hash lowering failed");
+    let digest = |p: &models::rhoapi::Par| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        p.hash(&mut hasher);
+        hasher.finish()
+    };
+    assert_ne!(
+        digest(&par_a),
+        digest(&par_b),
+        "stack_depth_probe: par_hash produced the SAME digest for two depth-{depth} Pars that \
+         differ only at their deepest literal — `Hash for Par` is not descending, so this ladder \
+         measures nothing"
+    );
+    dismantle(par_a);
+    dismantle(par_b);
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
+/// **The composed cell: the `HashMap<Par, Par>` collect that `SortedParMap::create_from_vec`
+/// performs, on deep keys.**
+///
+/// This is [`par_hash_body`]'s mechanism in the shape the lowering actually uses it — as MAP
+/// KEYS — so a slope here is the `map_pair_lower` residue reproduced with the parser, the
+/// `drive` worklist and the `Kont::MapLit` assembly all removed from the picture.
+///
+/// ⚠ ANTI-VACUITY: the two keys differ only at their deepest literal, so a map that ended up
+/// with ONE entry means `Hash`+`Eq` collapsed two distinct deep terms and the ladder is
+/// measuring a degenerate insert.
+fn par_hashmap_body(depth: usize) {
+    let env = BoundEnv::new();
+    let a = nested_list_leaf(depth, 1);
+    let b = nested_list_leaf(depth, 2);
+    let par_a = lower_proc_in_env(&a, &env).expect("stack_depth_probe: par_hashmap lowering failed");
+    let par_b = lower_proc_in_env(&b, &env).expect("stack_depth_probe: par_hashmap lowering failed");
+    let nil = models::rust::utils::new_gint_par(0, Vec::new(), false);
+    let map: std::collections::HashMap<models::rhoapi::Par, models::rhoapi::Par> =
+        vec![(par_a, nil.clone()), (par_b, nil)].into_iter().collect();
+    assert_eq!(
+        map.len(),
+        2,
+        "stack_depth_probe: par_hashmap collapsed two depth-{depth} keys that differ at their \
+         deepest literal into {} entry(ies) — `Hash`/`Eq` for `Par` did not descend, so the \
+         insert measured nothing",
+        map.len()
+    );
+    std::mem::forget(map);
+    std::mem::forget(a);
+    std::mem::forget(b);
+}
+
 /// ★ Not a ladder — an INSTRUMENT. Prints the byte length of each rung's source at `depth`, so
 /// "how many source bytes reach the ceiling" is read off the same string the ladder parses
 /// rather than recomputed by hand in a report.
@@ -1444,6 +1543,9 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
     ("ast_display_add", ast_display_add_body),
     ("ast_semantic_hash_add", ast_semantic_hash_add_body),
     ("ast_subst_add", ast_subst_add_body),
+    // -------- ★★ #174: the hash-keyed collection cost, isolated from its pipeline --------
+    ("par_hash", par_hash_body),
+    ("par_hashmap", par_hashmap_body),
     ("ast_normalize_add", ast_normalize_add_body),
     ("ast_match_pattern_add", ast_match_pattern_add_body),
     // -------- ★ Clone: stack-safe by REPRESENTATION, not by a driver --------

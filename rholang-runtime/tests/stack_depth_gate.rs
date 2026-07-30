@@ -760,6 +760,112 @@ fn residue_par_drop_has_not_got_worse() {
 // subject leaves this list by being converted, never by having its ceiling
 // raised."
 
+// ---------------------------------------------------------------------------
+// ★★ #174 — THE HASH-KEYED COLLECTION COST NOW HAS A NAME AND AN ADDRESS.
+//
+// The finding on file was: *"hash-keyed collection literals cost 11.0× a list literal, and
+// the figure matches no driver measured in isolation."* Both halves needed correcting.
+//
+// ⚠ IT WAS NEVER A PARSE-PHASE COST. `list_pair_parse` / `map_pair_parse` /
+// `set_pair_parse` — the rungs that exist precisely to separate the phases — read
+// **0 / 1 / 0 B/level** (debug, 16 → 4,096) and **−1 / −1 / 1** (release). The whole
+// residue is in the LOWER phase.
+//
+// ★ AND IT MATCHED NO DRIVER BECAUSE IT IS NOT A DRIVER. Following the ONE structural
+// difference between an `EList` and an `EMap`/`ESet`, through the `models` crate:
+//
+//   `rholang_ast.rs:2460  new_emap_par`   → `models/src/rust/utils.rs:715  new_emap_expr`
+//     → `ParMapTypeMapper::par_map_to_emap(ParMap::new(…))`
+//     → `models/src/rust/par_map.rs:18    ParMap::new` → `SortedParMap::create_from_vec`
+//     → `models/src/rust/sorted_par_map.rs:30`
+//            `let map: HashMap<Par, Par> = vec.into_iter().collect();`
+//     → `models/src/lib.rs:284           impl Hash for Par`  ← HAND-WRITTEN, HOST-RECURSIVE
+//
+//   `rholang_ast.rs:2424  new_elist_par`  → `models/src/rust/utils.rs:897  new_elist_expr`
+//     → `EListBody(EList { ps: Vec<Par>, … })` — a plain vector. No hash, no sort, no `Ord`.
+//
+// `impl Hash for Par` is `self.sends.hash(state); … self.exprs.hash(state); …`, i.e.
+// `Vec<Expr>` → `Expr` → nested `Par` → `Par::hash`, on the native stack, once per level.
+// `impl PartialEq for Par` (`:265`) has the same shape and runs on collision. This is the
+// SAME CLASS as `par_drop`: an impl in `models`, not a `macros/src/gen/` traversal, which is
+// exactly why no MeTTaIL driver measured in isolation ever matched it.
+//
+// MEASURED on the discriminating window 512 → 4,096, where the parser's depth-independent
+// ~483 KB floor no longer compresses the slope:
+//
+//   | subject            | what it runs                          | debug | release |
+//   |--------------------|---------------------------------------|------:|--------:|
+//   | `list_pair_lower`  | parse + lower, NO hash (the control)   |     0 |      −1 |
+//   | `par_hash`         | `lower_depth` + `Hash for Par`, alone |   625 |     113 |
+//   | `par_hashmap`      | the `HashMap<Par,Par>` collect        |   636 |     113 |
+//   | `map_pair_lower`   | the original #174 rung                |   597 |     144 |
+//   | `set_pair_lower`   | the #174 rung, plus the sort          |   572 |     144 |
+//
+// `lower_depth` — the same build-lower-dismantle pipeline with the hash removed — reads
+// **1 B/level debug, 0 release**. Adding nothing but `Hash for Par` to it produces 625.
+// Four subjects that share only that impl agree inside ±5.3% in debug.
+//
+// ⚠ THE 11.0× AND THE 10,491 B/level ARE BOTH STALE. Re-measured on this build,
+// `map_pair_lower` reads **227 B/level on the ladder the old figure was taken on**
+// (16 → 1,024) — a 46× reduction — and `list_pair_lower` reads 0 rather than 950. #162
+// and #189 converted the drivers that were stacked on top of the hash; what is left is the
+// hash alone. A ratio against a control that now reads zero is not a number.
+//
+// ★ It is a RESIDUE and not a defect of this workspace: the repair is f1r3node's, in the
+// `models` crate, and it is CONSENSUS-ADJACENT (`SortedParMap` feeds the canonical sort that
+// `cost_accounting/sig.rs` signs). Recorded here with a ceiling, exactly like `par_drop`,
+// so it cannot get worse unnoticed while it waits for its owner.
+// ---------------------------------------------------------------------------
+
+/// See [`residue_par_drop_has_not_got_worse`]. Ceilings ~1.5× the measured 625 / 113.
+#[test]
+fn residue_par_hash_has_not_got_worse() {
+    assert_slope_below("par_hash", ceiling(950, 200), 512, 4096);
+}
+
+/// See [`residue_par_drop_has_not_got_worse`]. Ceilings ~1.5× the measured 636 / 113.
+///
+/// ⚠ Kept as a SECOND row rather than folded into [`residue_par_hash_has_not_got_worse`],
+/// because the pair is the attribution. `par_hash` runs `Hash for Par` and nothing else;
+/// `par_hashmap` runs the `HashMap<Par, Par>` collect that `SortedParMap::create_from_vec`
+/// performs, which is that hash PLUS `Eq for Par` on collision. Their agreement (625 vs 636
+/// debug, 113 vs 113 release) is what says the collect adds nothing of its own — and if they
+/// ever diverge, the `Eq` half has started to matter and the attribution needs revisiting.
+#[test]
+fn residue_par_hashmap_has_not_got_worse() {
+    assert_slope_below("par_hashmap", ceiling(960, 200), 512, 4096);
+}
+
+/// ★ **The NEGATIVE control for the two rows above, and it is not optional.**
+///
+/// `par_hash` differs from [`lowering_is_depth_independent`]'s `lower_depth` in exactly one
+/// respect: it hashes the `Par` that `lower_depth` merely builds and dismantles. If
+/// `lower_depth` were ever to acquire a slope of its own, the two ceilinged rows above would
+/// go on passing while their ATTRIBUTION quietly became false — the slope would no longer be
+/// the hash's.
+///
+/// So this asserts the subtraction rather than the two ends: the excess of `par_hash` over
+/// `lower_depth` must not grow. Measured debug 512 → 4,096: `par_hash` 339,968 → 2,580,480,
+/// `lower_depth` flat at ~73,728, so the excess IS the whole slope and it is the hash's.
+#[test]
+fn par_hash_excess_over_the_unhashed_pipeline_is_the_whole_slope() {
+    let why = "the #174 attribution (the excess of `par_hash` over the identical pipeline \
+               with the hash removed)";
+    let lower_lo = min_stack_bytes("lower_depth", 512, why);
+    let lower_hi = min_stack_bytes("lower_depth", 4096, why);
+    let lower_growth = lower_hi.saturating_sub(lower_lo);
+    assert!(
+        lower_growth <= ZERO_SLOPE_TOLERANCE,
+        "#174 ATTRIBUTION BROKEN: `lower_depth` — the build-lower-dismantle pipeline with the \
+         hash REMOVED — grew {} KiB between depth 512 and 4,096. `par_hash` and `par_hashmap` \
+         are ceilinged on the premise that their slope is `models`' `impl Hash for Par` and \
+         nothing else; that premise holds only while this control reads flat. Find what the \
+         lowering acquired before trusting either ceiling again.",
+        lower_growth / 1024
+    );
+    println!("  lower_depth (the unhashed control): {lower_growth} B of growth, 512 → 4,096");
+}
+
 /// See [`residue_par_drop_has_not_got_worse`].
 #[test]
 fn residue_render_has_not_got_worse() {
