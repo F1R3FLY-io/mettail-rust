@@ -2296,6 +2296,56 @@ language! {
                             // pathmap has no values" of a mixed one would be
                             // false.
                             //
+                            // ── #163 Ruling F (2026-07-29): what the MIXED branch
+                            //    now MEANS ─────────────────────────────────────────
+                            //
+                            // A mixed pathmap is no longer reachable from a
+                            // LITERAL. `{| 1, 2 : 3 |}` is refused at the
+                            // collection close
+                            // (`macros/src/gen/runtime/wpda_codegen/semantic_actions.rs`,
+                            // the `else if` beside Ruling D), so every mixed
+                            // receiver that reaches here was ASSEMBLED AT RUNTIME —
+                            // through `pathmap_put` (`.set`), `pathmap_merge`
+                            // (`.union`), `write_zipper_set_leaf` (`.setLeaf`),
+                            // `set_subtrie`, `graft`, or `joinInto`. The branch is
+                            // therefore NOT dead and must not be deleted; it is the
+                            // only diagnostic those six paths have. Closing them is
+                            // #167.
+                            //
+                            // ⚠ WHY THE STATIC REFUSAL IS **NOT** WIRED INTO
+                            // `rholang/type_inference.rs`, AS #163 ASKED. Three
+                            // reasons, each independently sufficient, recorded so
+                            // the lane is not re-attempted:
+                            //
+                            //   1. NO ERROR CHANNEL. That module's entire public
+                            //      surface is `infer_var_types(&dyn Term) ->
+                            //      Vec<VarTypeInfo>` and `infer_var_type(&dyn Term,
+                            //      &str) -> Option<TermType>`. Neither can express
+                            //      a refusal, and no caller has anywhere to put
+                            //      one; giving it a diagnostic sink means changing
+                            //      `mettail_runtime::Language`, a cross-language
+                            //      API.
+                            //   2. WRONG DOMAIN. It infers the type of a FREE
+                            //      VARIABLE of a receive pattern (`Name` vs
+                            //      `Proc`). `.get` is a method APPLICATION with no
+                            //      variable to type; nothing in the module walks
+                            //      method terms at all.
+                            //   3. ★ IT WOULD CONTRADICT `55571eaf`. That ruling
+                            //      says `{| 1 |}.get(1)` **ERRS** — it evaluates to
+                            //      the `error` VALUE, which is observable. A static
+                            //      refusal would instead make the program
+                            //      UNPARSEABLE, a strictly different disposition on
+                            //      the very expression `55571eaf` ruled on. The two
+                            //      rulings cannot both hold, and the specific one
+                            //      wins.
+                            //
+                            // What Ruling F actually buys statically is narrower and
+                            // real: for a LITERAL-constructed receiver the
+                            // `all_unset` test below is now DECIDED BY THE LITERAL
+                            // ITSELF rather than merely observed, because the close
+                            // admits no mixed literal. The branch taken is a
+                            // property of the source text, not of the reduction.
+                            //
                             // ⚠ The message rides a debug-build diagnostic, not
                             // the returned value: `Err . |- "error" : Proc` is
                             // NULLARY, so the grammar has no value that can carry

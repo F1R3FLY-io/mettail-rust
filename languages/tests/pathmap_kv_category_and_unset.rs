@@ -614,3 +614,108 @@ fn deferred_mixed_cross_category_and_well_formed_pairs_still_error() {
          wrong-but-accepted reading; got {parsed:?}",
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ruling F (#163, 2026-07-29) — a pathmap literal is EITHER a set of paths OR a
+// map from paths to values, never both
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// # What is refused, and what is deliberately NOT
+//
+// `{| 1, 2 : 3 |}` writes TWO DISTINCT keys of DIFFERING VALUEDNESS: `1` is
+// bound to nothing, `2` is bound to `3`. Ruling D already refuses the SAME-key
+// form (`{| 1 : 2, 1 |}`), because `insert` is last-write-wins there and one
+// occurrence would silently delete the other. The distinct-key form has no
+// last-write-wins hazard at all — both entries survive — so it is refused for a
+// DIFFERENT reason, and it therefore gets a DIFFERENT message:
+//
+//   * Ruling D — ONE key, TWO contradictory bindings ⇒ a written contradiction.
+//   * Ruling F — TWO keys, TWO KINDS of binding    ⇒ a container with no
+//     single reading: `.get` on the unvalued half cannot answer, while `.get`
+//     on the valued half can.
+//
+// ⚠ SCOPE, RULED (#163): only the LITERAL is refused. The per-entry runtime
+// error of `55571eaf` remains the disposition for a mixed map assembled through
+// `pathmap_put` / `pathmap_merge` / `write_zipper_set_leaf` / `set_subtrie` /
+// `graft` / `joinInto`. Closing those five runtime paths is filed SEPARATELY as
+// #167 and is NOT attempted here.
+//
+// ⚠★ THIS CONTRADICTS #151's STATED DESIGN INTENT, DELIBERATELY. The #151 note
+// held that "the mixed form must stay expressible"; the #163 ruling supersedes
+// it. Both are quoted in the commit body so a future reader does not "restore"
+// the mixed form as a bug fix.
+
+/// ★ THE SUBJECT — two distinct keys, differing valuedness. REFUSED.
+#[test]
+fn ruling_f_mixed_valuedness_across_distinct_keys_refuses_the_literal() {
+    let ps = payloads("{| 1, 2 : 3 |}");
+    assert!(
+        ps.is_empty(),
+        "`{{| 1, 2 : 3 |}}` binds `1` to NOTHING and `2` to `3` — a container \
+         that is neither a set of paths nor a map from paths to values, so \
+         `.get` has no uniform answer over it. It must be refused at the \
+         literal. Got {ps:?}",
+    );
+}
+
+/// The same subject with the valued entry FIRST — order must not decide it.
+///
+/// Without this row a refusal implemented as "an unset entry after a set entry"
+/// would pass the row above and leave the mirror image accepted.
+#[test]
+fn ruling_f_refusal_is_order_independent() {
+    let ps = payloads("{| 1 : 2, 3 |}");
+    assert!(
+        ps.is_empty(),
+        "`{{| 1 : 2, 3 |}}` is the same mixed container written in the other \
+         order; a refusal that depends on entry order is not a refusal of the \
+         SHAPE. Got {ps:?}",
+    );
+}
+
+/// ⚠ CONTROL — the ALL-UNVALUED literal must still parse.
+///
+/// This is the row that keeps Ruling F from becoming "refuse any pathmap with a
+/// bare entry", which would delete the `{| k |}` surface that #74 exists to
+/// support.
+#[test]
+fn ruling_f_control_all_unvalued_still_parses() {
+    let (len, entries) = sole_payload("{| 1, 2 |}");
+    assert_eq!(len, 2, "`{{| 1, 2 |}}` is a two-entry SET of paths");
+    assert_eq!(
+        entries,
+        vec![("1".to_string(), "·".to_string()), ("2".to_string(), "·".to_string())],
+        "both entries are present and both are UNSET",
+    );
+}
+
+/// ⚠ CONTROL — the ALL-VALUED literal must still parse.
+#[test]
+fn ruling_f_control_all_valued_still_parses() {
+    let (len, entries) = sole_payload("{| 1 : 2, 3 : 4 |}");
+    assert_eq!(len, 2, "`{{| 1 : 2, 3 : 4 |}}` is a two-entry MAP");
+    assert_eq!(
+        entries,
+        vec![("1".to_string(), "2".to_string()), ("3".to_string(), "4".to_string())],
+    );
+}
+
+/// ★ TWO REFUSALS, TWO REASONS — Ruling D's message must not be absorbed.
+///
+/// Both inputs are refused, but they are refused by DIFFERENT predicates, and
+/// this row is what keeps the two from collapsing into one catch-all: the
+/// Ruling D subject has ONE key (so the Ruling F "distinct keys of differing
+/// valuedness" predicate does not even apply to it), and the Ruling F subject
+/// has NO duplicate key (so Ruling D's predicate does not apply to it).
+#[test]
+fn ruling_d_and_ruling_f_subjects_are_disjoint_and_both_refused() {
+    // Ruling D's subject: one key, two contradictory bindings.
+    assert!(payloads("{| 1 : 2, 1 |}").is_empty(), "Ruling D still refuses");
+    // Ruling F's subject: two keys, two kinds of binding.
+    assert!(payloads("{| 1, 2 : 3 |}").is_empty(), "Ruling F refuses");
+    // ★ ANTI-MERGE: a single-key pathmap of EITHER valuedness is accepted, so
+    // neither refusal is "refuse anything with a `:`" or "refuse anything
+    // without one".
+    assert_eq!(sole_payload("{| 1 |}").0, 1, "single unvalued entry accepted");
+    assert_eq!(sole_payload("{| 1 : 2 |}").0, 1, "single valued entry accepted");
+}

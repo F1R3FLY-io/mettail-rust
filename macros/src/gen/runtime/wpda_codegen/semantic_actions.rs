@@ -1485,6 +1485,10 @@ fn emit_collection_action_entry(
                     // (#125) gives pathmaps set semantics with no implicit
                     // multiplicity, so `{| k, k |}` and `{| k : 1, k : 1 |}`
                     // dedup cleanly.
+                    //
+                    // ★★ Ruling F (#163, 2026-07-29) is the `else` of this `if`,
+                    // and the two are DISJOINT BY CONSTRUCTION rather than by
+                    // ordering luck — see below.
                     if let Some(prev) = container.get(&k) {
                         if prev != &v {
                             #[cfg(debug_assertions)]
@@ -1498,6 +1502,72 @@ fn emit_collection_action_entry(
                                          `{}`: the literal binds it both with and \
                                          without a value (or to two different values) \
                                          — the literal is refused",
+                                        k,
+                                    );
+                                }
+                            }
+                            return;
+                        }
+                    } else if let Some((_, first)) = container.iter().next() {
+                        // ★★ Ruling F (#163, 2026-07-29): a pathmap literal is
+                        // EITHER a set of paths OR a map from paths to values,
+                        // never both. `{| 1, 2 : 3 |}` writes two DISTINCT keys of
+                        // DIFFERING valuedness, and the resulting container has no
+                        // single reading — `.get` can answer over the valued half
+                        // and cannot answer over the unvalued half, so no uniform
+                        // meaning exists for the literal the author wrote.
+                        //
+                        // ⚠ WHY THIS IS NOT RULING D, AND WHY THE MESSAGES DIFFER.
+                        // Ruling D refuses ONE key bound two contradictory ways,
+                        // where `insert` is last-write-wins and one binding would
+                        // silently DELETE the other. Here both entries survive
+                        // intact; there is no last-write-wins hazard at all. Two
+                        // refusals, two reasons — deliberately not merged into one
+                        // catch-all.
+                        //
+                        // ★ DISJOINTNESS IS STRUCTURAL, NOT ORDERING-DEPENDENT.
+                        // This arm is the `else` of "the key is already present",
+                        // so it fires only for a key that is NEW. Ruling D's
+                        // subject always has a REPEATED key and therefore can
+                        // never reach here, and Ruling F's subject has no repeated
+                        // key and therefore never reaches Ruling D. Had this been
+                        // written as a second `if` rather than an `else if`, the
+                        // Ruling D subject `{| k : 1, k |}` would have tripped
+                        // Ruling F first — its second entry differs in valuedness
+                        // from its first — and Ruling D's distinct diagnostic
+                        // would have been absorbed.
+                        //
+                        // ★ COMPARING AGAINST THE FIRST ENTRY IS SUFFICIENT, O(1).
+                        // This check is the INDUCTIVE STEP of the invariant it
+                        // maintains: every entry already in `container` agrees in
+                        // valuedness with the first (vacuous for one entry,
+                        // preserved by this refusal thereafter). So the first
+                        // entry is a representative of the whole container and no
+                        // scan is needed.
+                        //
+                        // ⚠ SCOPE, RULED: only the LITERAL is refused. A pathmap
+                        // assembled at RUNTIME through `pathmap_put` /
+                        // `pathmap_merge` / `write_zipper_set_leaf` /
+                        // `set_subtrie` / `graft` / `joinInto` can still become
+                        // mixed, and keeps the per-entry `.get` error of
+                        // `55571eaf`. Closing those five paths is filed
+                        // separately as #167 and is NOT attempted here.
+                        if first.is_unset() != v.is_unset() {
+                            #[cfg(debug_assertions)]
+                            {
+                                use std::sync::atomic::{AtomicU64, Ordering};
+                                static MIXED: AtomicU64 = AtomicU64::new(0);
+                                let n = MIXED.fetch_add(1, Ordering::Relaxed);
+                                if n < 8 {
+                                    eprintln!(
+                                        "[pathmap-finalize] MIXED VALUEDNESS at key \
+                                         `{}`: this literal binds some keys to a \
+                                         value and others to nothing, so it is \
+                                         neither a set of paths nor a map from \
+                                         paths to values and `.get` has no uniform \
+                                         answer over it — the literal is refused. \
+                                         Write either all-bare (`{{| a, b |}}`) or \
+                                         all-valued (`{{| a : 1, b : 2 |}}`).",
                                         k,
                                     );
                                 }
