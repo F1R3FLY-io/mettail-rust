@@ -3630,6 +3630,164 @@ mod tests {
             .unwrap_or_else(|| panic!("rule {label} present")) as u16
     }
 
+    /// The label of the probe rule [`rholang_with_one_extra_proc_rule`] injects.
+    const SHIFT_PROBE_LABEL: &str = "ZzShiftProbeOutput";
+
+    /// Rholang with **one extra `Proc` rule above the pinned ones**, standing in for
+    /// `PParInternal` as it was *before* `8c946bff` deleted it from `Proc` index 3.
+    ///
+    /// The two grammars are read in the incident's own direction: this one is the OLD tree,
+    /// [`rholang`] is the NEW tree the rule was deleted from. Modelling the DELETION rather
+    /// than an insertion matters, because the two shift indices OPPOSITE WAYS — under a
+    /// deletion a stale literal `N` selects the old `N + 1`, and in these cohorts the rule at
+    /// `N + 1` is the PERSIST TWIN; under an insertion it selects the old `N - 1`, an
+    /// unrelated predecessor that does not reproduce the hazard. The first version of this
+    /// fixture got that backwards and its own anti-vacuity assertion rejected it.
+    ///
+    /// The probe rule is a CLONE of the rule at that position under a fresh label, so it
+    /// perturbs exactly one thing: the positions.
+    fn rholang_with_one_extra_proc_rule() -> LanguageDef {
+        let mut def = rholang();
+        let first_proc = def
+            .terms
+            .iter()
+            .position(|t| t.category == "Proc")
+            .expect("Rholang declares at least one `Proc` rule");
+        // Three past the first `Proc` rule — the neighbourhood the real deletion occurred in —
+        // rather than at the very front, so the shift is not trivially the first index.
+        let at = (first_proc + 3).min(def.terms.len());
+        let mut probe = def.terms[at].clone();
+        probe.label = Ident::new(SHIFT_PROBE_LABEL, Span::call_site());
+        def.terms.insert(at, probe);
+        def
+    }
+
+    /// The `Proc` rules whose coordinates the pins in this module select.
+    ///
+    /// Every entry is resolved through [`rule_idx`], which panics on a label the grammar no
+    /// longer declares — so this list cannot drift away from the grammar silently.
+    const PINNED_PROC_LABELS: &[&str] = &[
+        "POutput",
+        "POutputEmpty",
+        "POutput2Plus",
+        "POutputNil",
+        "POutputQuoted",
+        "POutputShort",
+        "POutputNilEmpty",
+        "POutputNil2Plus",
+    ];
+
+    /// ★★ #152 — THE DISCRIMINATING CELL, MADE EXECUTABLE.
+    ///
+    /// A rule *index* is a coordinate into a list; a rule *name* is a property of a rule. This
+    /// test is the difference, measured on the real grammar under the real perturbation.
+    ///
+    /// # What went wrong, and why it was silent
+    ///
+    /// `8c946bff` deleted `PParInternal` from `Proc` index 3. Five pins failed loudly, off by
+    /// one, and were re-derived by dumping the regenerated rule list. A sixth — then named
+    /// `rholang_commit_coordinates_rule15_nullary_and_rule20_2plus` — **did not fail**: after
+    /// the shift its 15/20/10 selected `PPersistOutputNilEmpty`, `PPersistOutputNil2Plus` and
+    /// `PPersistOutputNil`, the PERSIST TWINS of the intended rules. Every assertion still
+    /// held, because a twin has the same kind, the same leaf edge, the same depth and the same
+    /// commit shape. **The loud failure is the lucky case.**
+    ///
+    /// # The two cells
+    ///
+    /// | cell | claim |
+    /// |---|---|
+    /// | derived | `rule_idx(rules, "POutputNil")` **moves with its rule** across the deletion |
+    /// | literal | the stale constant **selects a different rule**, and for most of these it is the persist twin — so a pin written with it keeps passing while describing something else |
+    ///
+    /// Neither cell can pass vacuously: the first fails if the probe shifts nothing, the second
+    /// fails if the shift retargets nothing, and a third assertion fails if *too few* retargets
+    /// land on a twin — which is what would mean the fixture had stopped reproducing the hazard
+    /// rather than the hazard having gone away.
+    #[test]
+    fn a_derived_coordinate_tracks_its_rule_across_a_shift_and_a_literal_does_not() {
+        // OLD: the tree that still carries the extra rule. NEW: the tree it was deleted from.
+        let old = rholang_with_one_extra_proc_rule();
+        let (_, old_per_cat) = cats_per_cat(&old);
+        let new = rholang();
+        let (_, new_per_cat) = cats_per_cat(&new);
+
+        let deleted_at = rule_idx(&old_per_cat[0], SHIFT_PROBE_LABEL);
+        assert_eq!(
+            old_per_cat[0].len(),
+            new_per_cat[0].len() + 1,
+            "the probe rule did not reach the materialised `Proc` list, so nothing shifted and \
+             every cell below is vacuous",
+        );
+
+        // ── CELL 1: a DERIVED coordinate moves with its rule. ──────────────
+        for label in PINNED_PROC_LABELS {
+            let before = rule_idx(&old_per_cat[0], label);
+            let after = rule_idx(&new_per_cat[0], label);
+            assert!(
+                before > deleted_at,
+                "`{label}` sits at {before}, at or above the deleted rule at {deleted_at} — it \
+                 would not shift, so it is the wrong witness for this cell",
+            );
+            assert_eq!(
+                after,
+                before - 1,
+                "`{label}` moved from {before} to {after} under a ONE-rule deletion above it. A \
+                 derived coordinate must track its rule exactly.",
+            );
+            assert_eq!(
+                new_per_cat[0][after as usize].label.to_string(),
+                *label,
+                "the derived coordinate must still name `{label}` after the deletion",
+            );
+        }
+
+        // ── CELL 2: the STALE LITERAL retargets. ───────────────────────────
+        // The silent failure, exhibited rather than described.
+        let mut retargets: Vec<(String, String)> = Vec::with_capacity(PINNED_PROC_LABELS.len());
+        for label in PINNED_PROC_LABELS {
+            let stale = rule_idx(&old_per_cat[0], label);
+            let now = new_per_cat[0][stale as usize].label.to_string();
+            assert_ne!(
+                now.as_str(),
+                *label,
+                "the stale constant {stale} still names `{label}` after the deletion, so this \
+                 cell cannot demonstrate a retarget",
+            );
+            retargets.push(((*label).to_string(), now));
+        }
+
+        // ★ THE HAZARD QUANTIFIED: how many stale literals land on the intended rule's PERSIST
+        // TWIN — a rule with the same kind, leaf edge, depth and commit shape, which keeps
+        // every structural assertion true and is therefore what makes the retarget SILENT
+        // rather than loud.
+        //
+        // The twin of `Pxxx` is `PPersistxxx`: the `Persist` is infixed after the category's
+        // `P`, not prefixed to the whole label. (A first version of this predicate spelled it
+        // `PPersist{intended}` and matched nothing — the assertion below rejected it.)
+        let twin_of = |label: &str| {
+            format!("PPersist{}", label.strip_prefix('P').unwrap_or(label))
+        };
+        let onto_a_twin: Vec<&(String, String)> = retargets
+            .iter()
+            .filter(|(intended, now)| *now == twin_of(intended))
+            .collect();
+        assert!(
+            !onto_a_twin.is_empty(),
+            "no stale literal retargeted onto a PERSIST TWIN ({retargets:?}). The twins are what \
+             make the retarget SILENT — without one in this neighbourhood the fixture no longer \
+             reproduces the hazard #152 is about, and the witnesses in `PINNED_PROC_LABELS` need \
+             re-choosing.",
+        );
+        assert!(
+            onto_a_twin.len() * 2 >= PINNED_PROC_LABELS.len(),
+            "only {} of {} stale literals retargeted onto a persist twin: {onto_a_twin:?}. The \
+             point of this cell is that the SILENT outcome is the COMMON one and not a corner \
+             case; if it has become rare, say so rather than keeping a weakened claim.",
+            onto_a_twin.len(),
+            PINNED_PROC_LABELS.len(),
+        );
+    }
+
     fn bucket<'a>(model: &'a [CategoryFactoring], cat: u16, literal: &str) -> &'a FactoringBucket {
         model
             .iter()
@@ -4178,7 +4336,20 @@ mod tests {
         if s1f5 {
             assert_eq!(ib_const.groups.len(), 1, "const ON ⇒ InputBind@ grouped");
             assert!(ib_const.ineligible.is_empty());
-            assert_eq!(ib_const.groups[0].member_rule_idxs(), BTreeSet::from([2, 3, 6]));
+            // #152: the members are NAMED, not numbered. A bare `[2, 3, 6]` here would keep
+            // passing after a rule was added or removed above them while describing three
+            // different rules — the failure mode that hit
+            // `rholang_commit_coordinates_nullary_and_2plus`.
+            let ib_rules = &per_cat[ib_src as usize];
+            assert_eq!(
+                ib_const.groups[0].member_rule_idxs(),
+                BTreeSet::from([
+                    rule_idx(ib_rules, "InputBindQuotedQuery"),
+                    rule_idx(ib_rules, "InputBindQuoted"),
+                    rule_idx(ib_rules, "InputBindQuotedPersistent"),
+                ]),
+                "the InputBind@ cohort is exactly the three quoted binds",
+            );
         } else {
             assert!(ib_const.groups.is_empty(), "const OFF ⇒ InputBind@ deferred");
             assert_eq!(ib_const.ineligible.len(), 1);
@@ -5188,40 +5359,57 @@ mod tests {
             "every dispositioned member appears in exactly one group list",
         );
 
-        // ── dispositions: Nil group 0xF800 keyed at min member 9 ──────────
-        // (Indices re-derived 2026-07-29 after `PParInternal` was deleted from
-        // `Proc` index 3; 9 = POutputNil, 11 = POutputQuoted, 12 = POutputShort.)
+        // ── dispositions: the Nil group 0xF800, keyed at its MIN member ────
+        //
+        // ★ #152: every coordinate below is DERIVED from a rule LABEL. It used to read
+        // `.get(&9)` / `weight_rule_idx: 9` under a comment stating the numbers had been
+        // "re-derived 2026-07-29 after `PParInternal` was deleted from `Proc` index 3".
+        // A comment cannot fail. `rule_idx` resolves a label to its CURRENT position, so a
+        // `Proc` rule added or removed above these cannot retarget the pin onto a neighbour —
+        // and a neighbour here is a PERSIST TWIN with the same kind, the same leaf edge, the
+        // same depth and the same commit shape, i.e. one that keeps every assertion below true
+        // while describing a different rule.
+        let proc_rules = &per_cat[0];
+        let nil = rule_idx(proc_rules, "POutputNil");
+        let quoted = rule_idx(proc_rules, "POutputQuoted");
+        let short = rule_idx(proc_rules, "POutputShort");
         let proc_dispositions = &bundle.dispositions[0];
         assert_eq!(
-            proc_dispositions.get(&9),
+            proc_dispositions.get(&nil),
             Some(&SpineDisposition::GroupFirst {
                 spine_id: SPINE_RULE_BASE,
                 body_src_idx: 0,
-                weight_rule_idx: 9, // AV5: MIN member, never SPINE_ID
+                weight_rule_idx: nil, // AV5: MIN member, never SPINE_ID
             }),
         );
-        for rest in [10u16, 14, 15, 19, 20] {
+        for rest in [
+            "PPersistOutputNil",
+            "POutputNilEmpty",
+            "PPersistOutputNilEmpty",
+            "POutputNil2Plus",
+            "PPersistOutputNil2Plus",
+        ] {
             assert_eq!(
-                proc_dispositions.get(&rest),
+                proc_dispositions.get(&rule_idx(proc_rules, rest)),
                 Some(&SpineDisposition::GroupRest),
                 "Nil-group member {rest} is GroupRest",
             );
         }
         assert_eq!(
-            proc_dispositions.get(&11),
+            proc_dispositions.get(&quoted),
             Some(&SpineDisposition::GroupFirst {
                 spine_id: SPINE_RULE_BASE + 1,
                 body_src_idx: 3,
-                weight_rule_idx: 11,
+                weight_rule_idx: quoted,
             }),
-            "Quoted group leads at rule 11 with the Name body",
+            "the Quoted group leads at `POutputQuoted` with the Name body",
         );
         assert_eq!(
-            proc_dispositions.get(&12),
+            proc_dispositions.get(&short),
             Some(&SpineDisposition::GroupFirst {
                 spine_id: SPINE_RULE_BASE + 2,
                 body_src_idx: 0,
-                weight_rule_idx: 12,
+                weight_rule_idx: short,
             }),
         );
         // The lex-alt surface mirrors the dispositions (A3).
@@ -5340,20 +5528,23 @@ mod tests {
         let bundle = build_spine_emission_from(&model, &def, &categories, &per_cat);
         assert!(bundle.any_groups());
 
-        // ── A2 dispositions: GroupFirst at min member 2 with the AV5 weight
+        // ── A2 dispositions: GroupFirst at the MIN member with the AV5 weight
         //    identity; per-category ordinal keeps the ib spine at 0xF800. ──
+        //    #152: the coordinates are derived from labels, not written down.
+        let ib_rules = &per_cat[ib as usize];
+        let min_member = rule_idx(ib_rules, "InputBindQuotedQuery");
         let ib_dispositions = &bundle.dispositions[ib as usize];
         assert_eq!(
-            ib_dispositions.get(&2),
+            ib_dispositions.get(&min_member),
             Some(&SpineDisposition::GroupFirst {
                 spine_id: SPINE_RULE_BASE,
                 body_src_idx: 0,
-                weight_rule_idx: 2,
+                weight_rule_idx: min_member,
             }),
         );
-        for rest in [3u16, 6] {
+        for rest in ["InputBindQuoted", "InputBindQuotedPersistent"] {
             assert_eq!(
-                ib_dispositions.get(&rest),
+                ib_dispositions.get(&rule_idx(ib_rules, rest)),
                 Some(&SpineDisposition::GroupRest),
                 "InputBind@ member {rest} is GroupRest",
             );
@@ -5862,6 +6053,14 @@ mod tests {
         let mixfix = build_mixfix_factoring(&def, &categories, &per_cat, &prefix);
         let bundle = build_spine_emission_from_parts(&prefix, &mixfix, &def, &categories, &per_cat);
         assert_eq!(bundle.mixfix_groups.len(), 2);
+        // ★ #152: the three `Proc` coordinates are DERIVED from their labels. The doc comment
+        // above states "3 = `POutput`, 5 = `POutputEmpty`, 7 = `POutput2Plus` … and their
+        // persist twins 4/6/8" — and a comment that has to name the twins is exactly the
+        // situation in which a silent retarget lands on one.
+        let proc_rules = &per_cat[0];
+        let output = rule_idx(proc_rules, "POutput");
+        let output_empty = rule_idx(proc_rules, "POutputEmpty");
+        let output_2plus = rule_idx(proc_rules, "POutput2Plus");
         assert_eq!(
             bundle.mixfix_groups[0],
             MixfixGroupEmission {
@@ -5870,8 +6069,8 @@ mod tests {
                 result_src_idx: 0,
                 spine_id: SPINE_RULE_BASE + 3,
                 min_l_bp: 2,
-                min_member_rule_idx: 3,
-                member_rule_idxs: vec![3, 5, 7],
+                min_member_rule_idx: output,
+                member_rule_idxs: vec![output, output_empty, output_2plus],
             },
         );
         // ── the fan arm ────────────────────────────────────────────────────
