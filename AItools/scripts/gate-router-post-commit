@@ -200,8 +200,18 @@ if [ "${#gates[@]}" -eq 0 ]; then
   # nothing actionable *for the reader* becomes wallpaper and then gets deleted — which is how
   # the fence being replaced came to be inert. Rate-limiting is what keeps a standing,
   # non-actionable notice alive. The stamp lives under .git/ and is not committable.
-  stamp="$root/$(git rev-parse --git-path gate-router-emptymap.stamp)"
-  case "$stamp" in "$root"/[!/]*) ;; *) stamp="$(git rev-parse --git-path gate-router-emptymap.stamp)" ;; esac
+  #
+  # ⚠ SIBLING OF THE LEDGER DEFECT — same family, so it gets the same shape of fix. This is a
+  # second consumer of `git rev-parse --git-path`, whose answer is RELATIVE in a plain clone
+  # (`.git/…`) and ABSOLUTE in a linked worktree (`…/.git/worktrees/<name>/…`). An earlier form
+  # here prefixed `$root/` unconditionally and then un-did it with a `case` glob when the
+  # result came out doubled. That happened to be correct in both layouts — tested, no leak —
+  # but it was convoluted, it spent a second `rev-parse` in its fallback, and a bare relative
+  # name reaching a redirect is precisely how the ledger dropped a file into the repo root.
+  # Absolutise once, the same way the ledger does, so both write sites share one idiom.
+  stamp=$(git rev-parse --git-path gate-router-emptymap.stamp 2>/dev/null)
+  [ -n "$stamp" ] || exit 0
+  case "$stamp" in /*) ;; *) stamp="$root/$stamp" ;; esac
   # ⚠ EVERY DEFAULT IN AN AGE COMPUTATION MUST FAIL LOUD, NEVER QUIET. A silent fallback in a
   # timestamp is the same shape as the dated time bomb removed by `cba740da`, and as the
   # `int(… or 0)` that aged a 20-minute-old commit to 20,664 days in a sibling checker: the
@@ -289,5 +299,43 @@ for d in "${decls[@]}"; do
   printf '{"sha":"%s","gate":"%s","pkg":"%s","target":"%s","watch":"%s","touched":"%s","at":%s}\n' \
     "$sha" "$gate" "$pkg" "$target" "$w" "$hit_path" "$(date +%s)" >> "$ledger"
 done
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ★★ THE ROUTER'S OWN GUARD — it checks what it LEFT BEHIND, not only what it printed.
+#
+# ⚠ This exists because the router shipped a defect of exactly this shape and a passing
+# end-to-end test did not see it. `git rev-parse` with several requests does NOT answer in
+# command-line order — it defers revs to last — so a POSITIONAL read
+# (`read root; read sha; read ledger`) assigned `sha` the git-path and `ledger` the short SHA.
+# `>> "$ledger"` then wrote to a RELATIVE name, dropping a file called `<sha>` into the
+# repository root whose JSON carried the ledger path in its `"sha"` field.
+#
+# ★ And it was not merely litter: a file named `ff244c69` SHADOWED the revision of the same
+# name, so a neighbouring gate's `git log -1 --format=%ct ff244c69` died with
+# "ambiguous argument … both revision and filename" and reported HISTORY UNAVAILABLE —
+# sending its reader to `git fetch --unshallow` when history was complete. ⇒ The router became
+# an instrument that produced a FALSE DIAGNOSIS in another gate. A side effect outside the
+# assertion's field of view is exactly how that survived a green end-to-end test.
+#
+# The invariant is therefore about RESIDUE: the ledger must exist where we meant it to, and no
+# path in the worktree may shadow a revision. Both are cheap and only run on the hit path.
+if [ "$hits" -gt 0 ]; then
+  if [ ! -s "$ledger" ]; then
+    printf '   %s⚠ ROUTER SELF-CHECK FAILED:%s the ledger is missing or empty at %s\n' \
+      "$C_ERR" "$C_0" "$ledger" >&2
+    printf '     the write went somewhere else — check the ledger path derivation\n' >&2
+  fi
+  # A worktree path whose basename is hex-SHA-shaped shadows `git <cmd> <rev>`. Reported for
+  # ANY such file, not only ones this hook made: the hazard is the shadowing, not the author.
+  shadow=$(git ls-files --others --exclude-standard 2>/dev/null |
+             grep -aE '(^|/)[0-9a-f]{7,40}$' | head -5)
+  if [ -n "$shadow" ]; then
+    printf '   %s⚠ ROUTER SELF-CHECK FAILED:%s untracked path(s) SHADOW a git revision:\n' \
+      "$C_ERR" "$C_0" >&2
+    printf '%s\n' "$shadow" | sed 's/^/       /' >&2
+    printf '     `git <cmd> <that name>` becomes ambiguous and neighbouring gates will\n' >&2
+    printf '     misdiagnose their own failures. MOVE it (do not delete) and fix the writer.\n' >&2
+  fi
+fi
 
 exit 0   # ★ ALWAYS 0. Advice, never a block.
