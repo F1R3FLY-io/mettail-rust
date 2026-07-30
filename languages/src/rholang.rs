@@ -2240,6 +2240,95 @@ language! {
                     }
                     _ => Proc::Err,
                 },
+                // ★★ #115, THE ONE TRUE MISSING OPERATOR (declared 2026-07-30).
+                //
+                // ⚠ THE FILING'S PREMISE WAS REFUTED AND THE DERIVED ANSWER IS A DIFFERENT SET.
+                // #115 was filed as "`BigRat` has no binary `-`; `UInt32` has no `-`, `*`, or `/`".
+                // Measured over the FULL operator × carrier cross product
+                // (`languages/tests/rholang_arith_carrier_matrix.rs`, 78 cells): all four of those
+                // cells WORK and preserve their carrier. The cells that did not were
+                // `BigRat %`, `Float %`, `Float bitand`, `Float bitor` — and of those four, only
+                // `BigRat %` is a gap against the upstream floor:
+                //
+                //   ▸ `Float %`   — upstream REFUSES IT DELIBERATELY. `combine_mod`'s `GDouble`
+                //     arm (`reduce.rs:3425`) is `Err("Modulus not defined on floating point")`, so
+                //     the `error` term here already AGREES with upstream. Not a gap; pinned as
+                //     floor-conformant rather than "fixed".
+                //   ▸ `Float bitand` / `Float bitor` — upstream has NO BITWISE OPERATORS AT ALL
+                //     (derived: zero occurrences of `bitand`/`bitor`/`bitnot` anywhere in
+                //     `f1r3node-rust-mettail`, and none in the consensus tree-sitter grammar), so
+                //     there is no floor to meet and the disposition is ours to rule. RULED: they
+                //     stay the `error` term. A bitwise operation on an IEEE-754 float has no
+                //     arithmetic meaning — the only implementable reading is masking the bit
+                //     PATTERN, which is not a function of the represented VALUE (`-0.0` and `0.0`
+                //     are equal floats with different patterns), so it would break the one
+                //     property every other arm here has: that the answer depends only on the
+                //     operands' values. Failing closed is the correct answer, not a missing one.
+                //
+                // `BigRat %` IS a gap: upstream's `combine_mod` `GBigRat` arm
+                // (`reduce.rs:3435-3444`) answers the RATIONAL ZERO for any non-zero divisor, and
+                // `Modulo by zero` when the divisor's numerator is zero. That is not an
+                // approximation — in the FIELD ℚ every non-zero `b` divides every `a` exactly
+                // (`a = (a/b)·b` with `a/b ∈ ℚ`), so the remainder is identically 0. This arm
+                // reproduces it exactly, including the divide-by-zero refusal.
+                (Proc::CastBigRat(a), Proc::CastBigRat(b)) => match (&**a, &**b) {
+                    (BigRat::RatLit(_), BigRat::RatLit(y)) => {
+                        // `y.get()` is the `Ratio<BigInt>`; `is_zero` is `num_traits::Zero`, the
+                        // same route `BigInt`'s arm above uses. A rational is zero exactly when its
+                        // numerator is, which is also upstream's test (`is_zero_twos_complement`
+                        // on `r2.numerator`).
+                        if y.get().is_zero() {
+                            Proc::Err
+                        } else {
+                            // The rational ZERO, built through the canonicalizing constructor so
+                            // the payload is the same interned value `0r` parses to. `try_from_nd`
+                            // is fallible only for a zero DENOMINATOR, which `1` is not; the
+                            // impossible branch is answered rather than asserted, because a
+                            // `panic!` in a fold body aborts the process under the cranelift dev
+                            // backend.
+                            match mettail_runtime::CanonicalBigRat::try_from_nd(
+                                num_bigint::BigInt::from(0),
+                                num_bigint::BigInt::from(1),
+                            ) {
+                                Some(zero) => {
+                                    Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(zero)))
+                                },
+                                None => Proc::Err,
+                            }
+                        }
+                    }
+                    _ => Proc::Err,
+                },
+                // ⚠ A DERIVED DIVERGENCE, REPORTED AND DELIBERATELY NOT CHANGED HERE.
+                //
+                // `CanonicalFixedPoint::checked_rem` (`runtime/src/canonical_fixed_point.rs:114`)
+                // implements a DIFFERENT DEFINITION of fixed-point `%` from upstream's, and both
+                // are internally consistent:
+                //
+                //   mettail   a % b = a − trunc_p(a/b)·b      remainder after dividing to p places
+                //   upstream  a % b = unscaled(a) % unscaled(b) at scale p, i.e. the
+                //                     INTEGER-quotient remainder (`reduce.rs:3446-3470`)
+                //
+                // MEASURED: `7.00p2 % 3.00p2` is `0.01p2` here (a/b = 2.33; 7.00 − 6.99) and
+                // `1.00p2` upstream (700 % 300 = 100). `7.50p2 % 2.00p2` is `0p0` here and
+                // `1.50p2` upstream.
+                //
+                // ★ WHY THIS IS NOT REPAIRED IN THIS COMMIT. mettail's `checked_rem` is the
+                // MATCHED PAIR of its `checked_div`, which also divides to `p` places, and the two
+                // together satisfy `q·b + r = a` — pinned by
+                // `canonical_fixed_point.rs::div_mod_example` and `::div_mod_with_negatives`.
+                // Adopting upstream's `%` therefore requires re-deciding `/` in the same breath,
+                // and it MOVES A COMPUTED VALUE on a consensus-visible operator. That is an owner
+                // ruling, not a defaulting decision, and it is a different defect from #115's
+                // "declare the missing operators". Reported with both formulas so it cannot be
+                // mistaken for an arithmetic slip; pinned as a KNOWN-DIVERGENT cell in the matrix
+                // gate so it cannot be forgotten.
+                //
+                // (Upstream additionally REQUIRES EQUAL SCALES for every fixed-point arithmetic
+                // operator — `combine_plus:3540`, `combine_mod:3446` — while mettail aligns to
+                // `max(places)`, so `7.00p2 + 3.000p3` is `10.000p3` here and an
+                // `OperatorExpectedError` upstream. A second, pre-existing, PERMISSIVE divergence
+                // on the same carrier, reported for the same reason.)
                 (Proc::CastFixed(a), Proc::CastFixed(b)) => match (&**a, &**b) {
                     (Fixed::FixedLit(x), Fixed::FixedLit(y)) => {
                         match x.checked_rem(*y) {
