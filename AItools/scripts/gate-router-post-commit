@@ -73,6 +73,46 @@
 # by the out-of-band census (`--census`), matching the convention `check_foreign_rows`
 # already uses when it demands a row NAME what checks it or say NOT_NAMED.
 #
+# ── ⚠ ENUMERATE THE GATE'S PATH-SENSITIVE CLAUSES, NOT JUST SOME PATHS ────────────────────
+# ★ The first declaration written for the register gate was FAITHFUL to its stated recipe and
+# still missed a whole clause. It derived from the gate's CITATION rows only — "a claim points
+# INTO this file" — and never named the second path-sensitive clause, the OBLIGATION SET:
+# "a commit HERE owes a register entry". The second set is strictly larger. Measured
+# consequence: three of six obligation-set frontier commits that session would not have been
+# routed (`87ee699c`, `1eb65221`, `88ec2734`), each because the declaration named the FILE
+# `models/build.rs` where the obligation clause is crate-rooted `models/` — and
+# `models/build/wire_schema.rs` is under the directory, not the file.
+#
+# ⇒ A declaration is complete only against a PER-GATE CLAUSE ENUMERATION. List the gate's
+# path-sensitive clauses, then show the prefix set covers each. The shortfall above was
+# invisible precisely because the recipe never named the clause it left uncovered — a recipe
+# that documents its derivation but not its SCOPE reads as complete while being partial.
+#
+# ★ And read a SHRINKING prefix set carefully: when the register's coordinates were repinned
+# to fixed SHAs the HEAD-pinned prefixes fell 8 → 4, which was fragility being REMOVED (a
+# SHA-pinned coordinate cannot go stale, so watching its file is noise), not coverage being
+# lost. Those two look identical in a diff and must be distinguished by argument.
+#
+# ── ⚠ AN ALTERNATE CHECKER THAT DRIFTS IS A NEW INSTANCE, NOT A MITIGATION ────────────────
+# A gate's canonical discharge is a cargo command, and a recipient under orders not to build
+# cannot take it — the signal arrives and cannot be acted on. A gate may therefore also
+# declare a build-free path:
+#
+#     //! @discharge: <command> @equivalence: <how the pairing to the gate is CHECKED>
+#
+# ★ But a checker LOOSER than its gate produces FALSE GREEN, which is strictly worse than no
+# checker. One such alternate was measured to diverge from its gate in FOUR ways, every one
+# permissive: it never evaluated the clause that was actually red; its fence detector
+# `lstrip`ped where the gate counts backticks from column 0, so an indented fence was
+# invisible; it asserted frontier coverage with NO grace window, i.e. stricter than the gate
+# and therefore red on the wrong thing; and an `int(… or 0)` fallback on a failed `git log`
+# silently aged a 20-minute-old commit to 20,664 days.
+#
+# ⇒ THIS ROUTER REFUSES TO ADVERTISE AN UNPAIRED ALTERNATE. `@discharge:` is printed only
+# when the same line also carries `@equivalence:`; otherwise the router prints the canonical
+# command and reports the alternate as UNPAIRED. False green is thus unspellable in the
+# routing path rather than merely discouraged.
+#
 # ── MEASURED COST ON EVERY COMMIT (hyperfine, 30 runs, warmed) ───────────────────────────
 #   f1r3node, one declaration, HIT path : 20.5 ms ± 1.2 ms
 #   mettail, empty map, early exit      : 14.0 ms ± 1.0 ms
@@ -135,9 +175,21 @@ C_WARN=$'\033[33m'; C_CMD=$'\033[36m'; C_ERR=$'\033[31m'; C_B=$'\033[1m'; C_0=$'
 # that merely discusses the convention — the register gate's own header does exactly that, and
 # an unanchored first cut counted it as a second, phantom gate whose watch list was the English
 # sentence. The declaration is a module-doc line at column 0, and nothing else is one.
-mapfile -t decls < <(git grep -I -e '^//! @watches:' -- '*/tests/*.rs' '*tests/**/*.rs' 2>/dev/null | sort -u)
-gates=()
-for d in "${decls[@]}"; do gates+=("${d%%:*}"); done
+#
+# ★ ONE grep collects BOTH declaration kinds — `@watches:` (what reddens me) and
+# `@discharge:` (how to settle me without a build). Two greps would be two spawns, and spawns
+# are the entire cost of this hook.
+mapfile -t lines < <(git grep -I -e '^//! @watches:' -e '^//! @discharge:' \
+                       -- '*/tests/*.rs' '*tests/**/*.rs' 2>/dev/null | sort -u)
+decls=(); gates=()
+declare -A discharge=()
+for l in "${lines[@]}"; do
+  f=${l%%:*}
+  case "${l#*//! }" in
+    @watches:*)   decls+=("$l"); gates+=("$f") ;;
+    @discharge:*) discharge["$f"]=${l#*@discharge:} ;;
+  esac
+done
 
 if [ "${#gates[@]}" -eq 0 ]; then
   # ★ Say so — a router with an empty map is a router that never fires, which is the defect
@@ -150,12 +202,18 @@ if [ "${#gates[@]}" -eq 0 ]; then
   # non-actionable notice alive. The stamp lives under .git/ and is not committable.
   stamp="$root/$(git rev-parse --git-path gate-router-emptymap.stamp)"
   case "$stamp" in "$root"/[!/]*) ;; *) stamp="$(git rev-parse --git-path gate-router-emptymap.stamp)" ;; esac
-  now=$(date +%s)
+  # ⚠ EVERY DEFAULT IN AN AGE COMPUTATION MUST FAIL LOUD, NEVER QUIET. A silent fallback in a
+  # timestamp is the same shape as the dated time bomb removed by `cba740da`, and as the
+  # `int(… or 0)` that aged a 20-minute-old commit to 20,664 days in a sibling checker: the
+  # number stays plausible and the verdict silently inverts. So an unreadable stamp and an
+  # unusable clock both resolve toward PRINTING (the loud direction), never toward suppressing.
+  now=$(date +%s 2>/dev/null)
+  case "$now" in ''|*[!0-9]*) now= ;; esac
   last=0
   [ -r "$stamp" ] && read -r last < "$stamp" 2>/dev/null
   case "$last" in ''|*[!0-9]*) last=0 ;; esac
-  if [ "$((now - last))" -ge 86400 ]; then
-    printf '%s' "$now" > "$stamp" 2>/dev/null
+  if [ -z "$now" ] || [ "$((now - last))" -ge 86400 ]; then
+    [ -n "$now" ] && printf "%s" "$now" > "$stamp" 2>/dev/null
     printf '%s━━ gate router ━━%s no gate declares %s@watches:%s — the router has an EMPTY MAP\n' \
       "$C_ERR" "$C_0" "$C_B" "$C_0"
     printf '   and cannot fire. Add one module-doc line to each gate that watches a domain:\n'
@@ -209,6 +267,25 @@ for d in "${decls[@]}"; do
   hits=$((hits + 1))
   printf '   • %s  (watches %s; you touched %s)\n' "$target" "$w" "$hit_path"
   printf '     %scargo test -p %s --test %s%s\n' "$C_CMD" "$pkg" "$target" "$C_0"
+
+  # ── the build-free alternate, advertised ONLY if its equivalence is declared ──
+  alt=${discharge[$gate]:-}
+  if [ -n "$alt" ]; then
+    case "$alt" in
+      *@equivalence:*)
+        printf '     %sor, without building:%s %s%s%s\n' \
+          "$C_B" "$C_0" "$C_CMD" "$(printf '%s' "${alt%%@equivalence:*}" | sed 's/^ *//;s/ *$//')" "$C_0"
+        ;;
+      *)
+        # ★ Refuse to advertise it. A checker looser than its gate is FALSE GREEN, which is
+        # worse than no checker; an alternate with no stated equivalence has not been shown
+        # not to be looser. Name the omission instead of the command.
+        printf '     %s⚠ an @discharge: alternate is declared but UNPAIRED (no @equivalence:) —%s\n' \
+          "$C_ERR" "$C_0"
+        printf '       not advertised; an alternate that drifts LOOSER than its gate is false green\n'
+        ;;
+    esac
+  fi
   printf '{"sha":"%s","gate":"%s","pkg":"%s","target":"%s","watch":"%s","touched":"%s","at":%s}\n' \
     "$sha" "$gate" "$pkg" "$target" "$w" "$hit_path" "$(date +%s)" >> "$ledger"
 done
