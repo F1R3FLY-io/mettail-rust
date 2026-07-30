@@ -40,11 +40,120 @@
 //! - `impl PartialOrd for Cat`: delegates to `Ord::cmp`
 //! - `impl Ord for Cat`: delegates to `cmp_iterative`
 
+use crate::gen::term_ops::collection_walk::{
+    for_each_subterm_pair, plan_for, CollectionPlan, OrderSensitivity, WalkOrder,
+};
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
+use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
+
+// =============================================================================
+// ★ #162 — the COLLECTION-ELEMENT BOUNDARY, for both comparison engines
+//
+// See `collection_walk`'s module header for the defect, the mechanism and the
+// proof of the boundary. These two functions are the only places `iterative_cmp`
+// decides what to do with a collection of sub-terms, and both route through
+// `collection_walk::plan_for` so the decision cannot drift between the eq and
+// cmp halves or between the four syntactic positions a collection can occupy
+// (`CollectionLiteral` category, `Collection` category, `Regular` field,
+// `Binder`/`MultiBinder` pre-scope field).
+// =============================================================================
+
+/// The **eq** side: statements that decide equality of the collection pair
+/// `(left_expr, right_expr)`, either by pushing one `CmpTask` per element or by
+/// the container's own `PartialEq`.
+///
+/// `PartialEq` is a conjunction, so the ORDER in which positions are compared is
+/// unobservable — the per-element pushes go on the stack forward, and the length
+/// check (which `Vec::eq` performs first) stays eager because it is O(1) and
+/// cannot be expressed as an element task.
+fn eq_collection_stmts(
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+    left_expr: &TokenStream,
+    right_expr: &TokenStream,
+    language: &LanguageDef,
+) -> TokenStream {
+    match plan_for(element_cat, coll_type, OrderSensitivity::OrderSensitive, language) {
+        CollectionPlan::PerElement { element_cat, coll_type } => {
+            let task_variant = format_ident!("Cmp{}", element_cat);
+            let pushes = for_each_subterm_pair(
+                &coll_type,
+                left_expr,
+                right_expr,
+                WalkOrder::Forward,
+                &|l, r| {
+                    quote! {
+                        stack.push(CmpTask::#task_variant(#l as *const _, #r as *const _));
+                    }
+                },
+            );
+            quote! {
+                // `Vec::eq` is `len` first, then element-wise — reproduced exactly.
+                if #left_expr.len() != #right_expr.len() {
+                    return false;
+                }
+                #pushes
+            }
+        },
+        // The declared residue: an unordered container's `PartialEq` is a
+        // membership/multiplicity question its own impl answers, and answering it
+        // element-wise from here would need the canonical order it computes
+        // internally. One host frame, then the element walk is flat again.
+        CollectionPlan::WholeValue { .. } => quote! {
+            if #left_expr != #right_expr {
+                return false;
+            }
+        },
+    }
+}
+
+/// The **cmp** side: statements that push the collection pair's contribution to
+/// the lexicographic ordering onto the work stack.
+///
+/// ★ The push order is the subtle part. `Vec<T>: Ord` compares elements over the
+/// common prefix and uses LENGTH only as the tiebreak, so the pop order must be
+/// `elem₀, elem₁, …, elemₘ₋₁, length`. On a LIFO stack that means pushing the
+/// length verdict FIRST and the elements in REVERSE index order.
+fn cmp_collection_push_stmts(
+    element_cat: &Ident,
+    coll_type: &CollectionType,
+    left_expr: &TokenStream,
+    right_expr: &TokenStream,
+    language: &LanguageDef,
+) -> TokenStream {
+    match plan_for(element_cat, coll_type, OrderSensitivity::OrderSensitive, language) {
+        CollectionPlan::PerElement { element_cat, coll_type } => {
+            let task_variant = format_ident!("Cmp{}", element_cat);
+            let pushes = for_each_subterm_pair(
+                &coll_type,
+                left_expr,
+                right_expr,
+                WalkOrder::ReverseForLifo,
+                &|l, r| {
+                    quote! {
+                        stack.push(CmpTask::#task_variant(#l as *const _, #r as *const _));
+                    }
+                },
+            );
+            quote! {
+                // Pushed first ⇒ popped LAST ⇒ the length is the tiebreak, which
+                // is what lexicographic order means.
+                stack.push(CmpTask::Verdict(#left_expr.len().cmp(&#right_expr.len())));
+                #pushes
+            }
+        },
+        // The declared residue — see `eq_collection_stmts`. The verdict is
+        // computed here and consulted in position order, so the ORDER of the
+        // comparison is unchanged from the eager form this replaced.
+        CollectionPlan::WholeValue { .. } => quote! {
+            stack.push(CmpTask::Verdict(#left_expr.cmp(#right_expr)));
+        },
+    }
+}
 
 // =============================================================================
 // Main Entry Point
@@ -92,12 +201,29 @@ fn generate_cmp_task_enum(language: &LanguageDef) -> TokenStream {
     quote! {
         /// Work item for the iterative comparison engines (eq and cmp).
         ///
-        /// Each variant wraps a pair of raw pointers to values of the same
-        /// category. The iterative engine pops tasks, compares discriminants
-        /// and leaf payloads, and pushes child-pair tasks for `Box<T>` fields.
+        /// Each per-category variant wraps a pair of raw pointers to values of
+        /// the same category. The iterative engine pops tasks, compares
+        /// discriminants, and pushes child-pair tasks for `Box<T>` fields and for
+        /// the ELEMENTS of every order-faithful collection.
         #[allow(dead_code)]
         enum CmpTask {
-            #(#variants),*
+            #(#variants,)*
+            /// ★ #162 — an ALREADY-COMPUTED verdict, consulted in field order.
+            ///
+            /// A comparison arm has to interleave two kinds of work: DESCENTS
+            /// into sub-terms (which must go on the stack, or the traversal is
+            /// Θ(depth)) and LEAF comparisons (which cannot go on a stack of
+            /// category-pointer pairs, because a leaf is not a category). Before
+            /// this variant existed the only way to order the two was to run the
+            /// leaf comparisons EAGERLY, up to and including the last collection
+            /// field — which forced every collection to be compared by a
+            /// whole-value `PartialEq`/`Ord` call, i.e. by host recursion.
+            ///
+            /// A leaf comparison is a pure function of that leaf pair alone, so
+            /// its RESULT can be computed when the arm runs and consulted when
+            /// the engine pops it. That makes the work stack able to express the
+            /// WHOLE comparison in field order, and the eager prefix dissolves.
+            Verdict(std::cmp::Ordering),
         }
 
         // SAFETY: CmpTask holds *const pointers that are only dereferenced
@@ -275,6 +401,14 @@ fn generate_eq_engine(language: &LanguageDef) -> TokenStream {
             while let Some(task) = stack.pop() {
                 match task {
                     #(#task_arms)*
+                    // ★ #162 — a precomputed leaf verdict. `PartialEq` only asks
+                    // whether every position agrees, so any non-`Equal` verdict
+                    // is a mismatch regardless of direction.
+                    CmpTask::Verdict(ord) => {
+                        if ord != std::cmp::Ordering::Equal {
+                            return false;
+                        }
+                    }
                 }
             }
             true
@@ -299,12 +433,31 @@ fn generate_eq_variant_arm(
             }
         },
 
-        // Stage 0 identity — STAYS. `PartialEq` on the wrapper is structural.
-        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
-            // Literal: compare payloads directly
+        // An OPAQUE native leaf (`NumLit(i32)`, `StrLit(String)`) has no
+        // sub-terms, so whole-value `PartialEq` is both correct and flat.
+        VariantKind::Literal { label } => {
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     if a != b { return false; }
+                }
+            }
+        },
+
+        // ★ #162 — a collection LITERAL is a container OF SUB-TERMS, and sharing
+        // the `Literal` arm above is what made `ast_eq` Θ(depth): `a != b` on
+        // `&Vec<Proc>` calls `Proc::eq` per element, re-entering this very driver
+        // by host recursion with no access to `stack`.
+        VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
+            let stmts = eq_collection_stmts(
+                element_cat,
+                coll_type,
+                &quote! { a },
+                &quote! { b },
+                language,
+            );
+            quote! {
+                (#category::#label(a), #category::#label(b)) => {
+                    #stmts
                 }
             }
         },
@@ -322,12 +475,19 @@ fn generate_eq_variant_arm(
             generate_eq_regular_arm(category, label, fields, language)
         },
 
-        VariantKind::Collection { label, coll_type: _, .. } => {
-            // Collection: delegate to the collection's own PartialEq
-            // (re-entrant via TLS pool — safe per Cell<Vec> pattern)
+        // ★ #162 — the category-DIRECT collection field (`PPar . ps:HashBag(Proc)`),
+        // the same boundary as `CollectionLiteral` above.
+        VariantKind::Collection { label, element_cat, coll_type } => {
+            let stmts = eq_collection_stmts(
+                element_cat,
+                coll_type,
+                &quote! { a },
+                &quote! { b },
+                language,
+            );
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
-                    if a != b { return false; }
+                    #stmts
                 }
             }
         },
@@ -347,7 +507,7 @@ fn generate_eq_regular_arm(
     category: &Ident,
     label: &Ident,
     fields: &[FieldInfo],
-    _language: &LanguageDef,
+    language: &LanguageDef,
 ) -> TokenStream {
     let left_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("l{}", i)).collect();
     let right_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("r{}", i)).collect();
@@ -392,10 +552,17 @@ fn generate_eq_regular_arm(
                 };
             }
             if field.is_collection {
-                // Collection field: delegate to collection's own PartialEq (re-entrant)
-                quote! {
-                    if #lname != #rname { return false; }
-                }
+                // ★ #162 — a collection FIELD is the third syntactic position the
+                // element boundary appears in, and it gets the same treatment as
+                // the two category positions.
+                let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
+                eq_collection_stmts(
+                    &field.category,
+                    &coll_type,
+                    &quote! { #lname },
+                    &quote! { #rname },
+                    language,
+                )
             } else {
                 // Box<T> field: push comparison task for children
                 let task_variant = format_ident!("Cmp{}", field.category);
@@ -419,7 +586,7 @@ fn generate_eq_binder_arm(
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
-    _language: &LanguageDef,
+    language: &LanguageDef,
 ) -> TokenStream {
     let total_fields = pre_scope_fields.len() + 1; // pre-scope fields + scope
     let left_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("l{}", i)).collect();
@@ -442,9 +609,16 @@ fn generate_eq_binder_arm(
             continue;
         }
         if field.is_collection {
-            compare_stmts.push(quote! {
-                if #lname != #rname { return false; }
-            });
+            // ★ #162 — the FOURTH syntactic position: a collection in a binder's
+            // pre-scope field list.
+            let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
+            compare_stmts.push(eq_collection_stmts(
+                &field.category,
+                &coll_type,
+                &quote! { #lname },
+                &quote! { #rname },
+                language,
+            ));
         } else {
             let task_variant = format_ident!("Cmp{}", field.category);
             compare_stmts.push(quote! {
@@ -479,7 +653,7 @@ fn generate_eq_multi_binder_arm(
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
-    _language: &LanguageDef,
+    language: &LanguageDef,
 ) -> TokenStream {
     let total_fields = pre_scope_fields.len() + 1;
     let left_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("l{}", i)).collect();
@@ -501,9 +675,15 @@ fn generate_eq_multi_binder_arm(
             continue;
         }
         if field.is_collection {
-            compare_stmts.push(quote! {
-                if #lname != #rname { return false; }
-            });
+            // ★ #162 — same boundary, MultiBinder pre-scope position.
+            let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
+            compare_stmts.push(eq_collection_stmts(
+                &field.category,
+                &coll_type,
+                &quote! { #lname },
+                &quote! { #rname },
+                language,
+            ));
         } else {
             let task_variant = format_ident!("Cmp{}", field.category);
             compare_stmts.push(quote! {
@@ -621,6 +801,16 @@ fn generate_cmp_engine(language: &LanguageDef) -> TokenStream {
             while let Some(task) = stack.pop() {
                 match task {
                     #(#task_arms)*
+                    // ★ #162 — a precomputed leaf verdict. Because tasks are
+                    // pushed in REVERSE position order, popping them yields
+                    // strict left-to-right (lexicographic) semantics: the FIRST
+                    // non-`Equal` verdict decides, exactly as `derive(Ord)` does.
+                    CmpTask::Verdict(ord) => {
+                        if ord != std::cmp::Ordering::Equal {
+                            stack.clear();
+                            return ord;
+                        }
+                    }
                 }
             }
             std::cmp::Ordering::Equal
@@ -645,9 +835,10 @@ fn generate_cmp_variant_arm(
             }
         },
 
-        // Stage 0 identity — STAYS. `Ord` on the wrapper is structural.
-        VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
-            // Literal: compare payloads with Ord
+        // An OPAQUE native leaf has no sub-terms: whole-value `Ord` is correct and
+        // flat, and it short-circuits here rather than through a `Verdict` push
+        // because there is nothing after it in this arm to order against.
+        VariantKind::Literal { label } => {
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
                     let ord = a.cmp(b);
@@ -655,6 +846,23 @@ fn generate_cmp_variant_arm(
                         stack.clear();
                         return ord;
                     }
+                }
+            }
+        },
+
+        // ★ #162 — the collection-literal boundary on the `Ord` side. `a.cmp(b)`
+        // on `&Vec<Proc>` was `Proc::cmp` per element, i.e. host recursion.
+        VariantKind::CollectionLiteral { label, element_cat, coll_type } => {
+            let pushes = cmp_collection_push_stmts(
+                element_cat,
+                coll_type,
+                &quote! { a },
+                &quote! { b },
+                language,
+            );
+            quote! {
+                (#category::#label(a), #category::#label(b)) => {
+                    #pushes
                 }
             }
         },
@@ -676,15 +884,18 @@ fn generate_cmp_variant_arm(
             generate_cmp_regular_arm(category, label, fields, language)
         },
 
-        VariantKind::Collection { label, coll_type: _, .. } => {
-            // Collection: delegate to collection's own Ord (re-entrant)
+        // ★ #162 — the category-DIRECT collection field, `Ord` side.
+        VariantKind::Collection { label, element_cat, coll_type } => {
+            let pushes = cmp_collection_push_stmts(
+                element_cat,
+                coll_type,
+                &quote! { a },
+                &quote! { b },
+                language,
+            );
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
-                    let ord = a.cmp(b);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
+                    #pushes
                 }
             }
         },
@@ -701,394 +912,218 @@ fn generate_cmp_variant_arm(
 
 /// Generate cmp arm for a Regular variant.
 ///
-/// Fields are compared left-to-right. For Box<T> fields, we must compare them
-/// eagerly (not push to stack) because the ordering of earlier fields takes
-/// precedence over later fields. We push child comparison tasks in reverse
-/// order so they are processed left-to-right from the LIFO stack.
+/// ## ★ #162 — the rewrite, and why the ORDER is provably unchanged
 ///
-/// However, for correctness with the LIFO stack pattern, we need to compare
-/// fields left-to-right with early exit. The trick: we push tasks for ALL
-/// Box<T> fields in reverse, and the engine processes them left-to-right.
-/// If any field returns non-Equal, it clears the stack and returns.
+/// `Ord` on a multi-field variant is LEXICOGRAPHIC in field order: the first
+/// field whose comparison is not `Equal` decides. This arm therefore has to
+/// interleave two kinds of work in exactly field order — descents into sub-terms
+/// and comparisons of leaves — and before `CmpTask::Verdict` existed the task
+/// enum could only carry the first kind. What it did instead was an EAGER PREFIX:
 ///
-/// For collection fields, we compare eagerly inline (they use their own Ord).
-/// For Box<T> fields, we push CmpTask variants. Since all fields must be
-/// compared left-to-right, we push them in reverse order on the LIFO stack.
+/// ```text
+///   eager_end = (index of the LAST collection field) + 1
+///   fields [0, eager_end)  → compared eagerly, in field order, early-returning
+///                            ⚠ INCLUDING `Box<Cat>` fields, as `(**l).cmp(&**r)`
+///                              — a whole-value re-entry, i.e. HOST RECURSION
+///   fields [eager_end, n)  → pushed in REVERSE, so they pop in field order
+/// ```
 ///
-/// BUT: if a collection field comes before a Box<T> field, we must early-exit
-/// on the collection comparison before pushing Box<T> tasks. So we split:
-/// compare collections eagerly, push Box<T> tasks in reverse for remaining.
+/// (Its 130-line comment block, preserved in git history at `iterative_cmp.rs`
+/// before this change, is the author walking into the wall from six directions:
+/// *"But `CmpTask` only holds `*const Cat`…"*.)
 ///
-/// Actually, the simplest correct approach: push ALL Box<T> child comparisons
-/// in reverse order. For collection fields between Box<T> fields, we can't
-/// use the stack since collections are compared eagerly. The solution:
-/// process fields strictly left-to-right, and for each field either compare
-/// eagerly (collection/leaf) or push a single child task and continue.
+/// The rewrite is:
 ///
-/// Wait - with a LIFO stack, pushing tasks in reverse processes them in order.
-/// But we need to early-exit on the FIRST non-Equal result. With the stack
-/// approach, all tasks are pushed before any are processed. So if field 0 is
-/// non-equal, field 1's task was already pushed but will be cleared.
+/// ```text
+///   split = index of the FIRST field that can be expressed as a task
+///   fields [0, split)      → compared eagerly, in field order, early-returning
+///                            (only leaves and unordered collections land here)
+///   fields [split, n)      → pushed in REVERSE field order; leaves become
+///                            `Verdict`, `Box<Cat>` becomes a descent, and an
+///                            order-faithful collection becomes ONE PUSH PER
+///                            ELEMENT plus a trailing length `Verdict`
+/// ```
 ///
-/// The approach: push all Box<T> field tasks in reverse. For collection fields,
-/// they are compared eagerly in a "pre-check" block. If any collection field
-/// is non-Equal, we early-exit before pushing any tasks.
+/// **Both schemes yield exactly strict field order**, so `Ord` is byte-for-byte
+/// the same relation and nothing that sorts `Proc`s moves. Proof: in each scheme
+/// the arm is a forward-ordered eager segment followed by a reverse-pushed
+/// segment, and a reverse-pushed segment pops in forward order; concatenating a
+/// forward prefix `[0, k)` with a forward suffix `[k, n)` is `[0, n)` for any `k`.
+/// The two schemes differ only in `k`, and `k` is not observable.
 ///
-/// Simplified approach: we push tasks in reverse so they process left-to-right.
-/// Collection/leaf fields are checked eagerly before pushing Box tasks. This
-/// ensures correct left-to-right ordering semantics.
+/// ⚠ That identity is the load-bearing claim of this change, and it is asserted
+/// mechanically rather than by argument alone — `iterative_cmp`'s own unit tests
+/// below pin the emitted order, and `ord_is_a_total_order_and_agrees_with_eq`
+/// exercises it behaviourally.
+///
+/// ## What short-circuiting survives
+///
+/// The eager segment still early-returns, so a leading leaf mismatch costs
+/// nothing. Within the pushed segment every `Verdict` is computed when the arm
+/// runs, so a variant whose FIRST field differs still evaluates the later
+/// leaves' comparisons — wasted work, never a wrong answer, and the scheme it
+/// replaced did the same thing for every field before the last collection.
+/// ★ #162 — the ONE construction of a `cmp` arm body, shared by `Regular`,
+/// `Binder` and `MultiBinder`.
+///
+/// `positions` are the arm's comparison positions in FIELD ORDER, plus — for the
+/// two binder kinds — a trailing `scope_pushes` group that carries the pattern
+/// verdict and the body descent. The emitted body is
+///
+/// ```text
+///   [0, split)   compared eagerly, in field order, early-returning
+///   [split, …]   pushed in REVERSE, so the engine pops them in field order
+/// ```
+///
+/// where `split` is the index of the first position expressible as a task. See
+/// [`generate_cmp_regular_arm`] for the proof that this is exactly strict field
+/// order and therefore leaves the `Ord` relation unchanged.
+fn cmp_arm_stmts(
+    fields: &[FieldInfo],
+    left_names: &[Ident],
+    right_names: &[Ident],
+    scope_pushes: Option<TokenStream>,
+    language: &LanguageDef,
+) -> Vec<TokenStream> {
+    // Can this field's contribution be expressed as work ON THE STACK? A leaf
+    // cannot (it is not a category), and neither can an unordered collection (its
+    // `Ord` is its own; see `collection_walk`'s boundary) — but a `Box<Cat>`
+    // child can, an `Option<Box<Cat>>` child can, and so can every element of an
+    // order-faithful collection.
+    let is_stack_expressible = |field: &FieldInfo| -> bool {
+        if field.is_predicate || field.is_opaque_leaf() {
+            return false;
+        }
+        if !field.is_collection {
+            // A boxed category child, optional or not.
+            return true;
+        }
+        // Phase 4 #3: `Option<Container>` is compared by `Option<C>::cmp`, which
+        // is the container's own `Ord` under a tag — one whole value, not a
+        // sequence of positions.
+        if field.is_optional {
+            return false;
+        }
+        let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
+        matches!(
+            plan_for(&field.category, &coll_type, OrderSensitivity::OrderSensitive, language),
+            CollectionPlan::PerElement { .. }
+        )
+    };
+
+    let split = fields.iter().position(is_stack_expressible).unwrap_or(fields.len());
+
+    let mut stmts: Vec<TokenStream> = Vec::with_capacity(fields.len() + 1);
+
+    // ── the eager segment: leaves and unordered containers, in field order ──
+    //
+    // Phase 3A-B2 / L9-3: `BehavioralPred` and token-text captures derive `Ord`
+    // and have no sub-terms. Phase 4 #3: `Option<Container>` delegates to
+    // `Option<C>::cmp`. An unordered container is the declared residue.
+    for i in 0..split {
+        let lname = &left_names[i];
+        let rname = &right_names[i];
+        stmts.push(quote! {
+            {
+                let ord = #lname.cmp(#rname);
+                if ord != std::cmp::Ordering::Equal {
+                    stack.clear();
+                    return ord;
+                }
+            }
+        });
+    }
+
+    // ── the pushed segment, in REVERSE position order ──
+    //
+    // The scope is the LAST position, so it is pushed FIRST.
+    if let Some(scope_pushes) = scope_pushes {
+        stmts.push(scope_pushes);
+    }
+
+    for (i, field) in fields.iter().enumerate().skip(split).rev() {
+        let lname = &left_names[i];
+        let rname = &right_names[i];
+
+        if field.is_predicate || field.is_opaque_leaf() {
+            // A leaf inside the pushed segment: its verdict is computed now and
+            // consulted in position order. This is the case the eager prefix
+            // could not express, and the reason it had to swallow collections.
+            stmts.push(quote! {
+                stack.push(CmpTask::Verdict(#lname.cmp(#rname)));
+            });
+            continue;
+        }
+
+        if field.is_optional {
+            if field.is_collection {
+                stmts.push(quote! {
+                    stack.push(CmpTask::Verdict(#lname.cmp(#rname)));
+                });
+                continue;
+            }
+            // Opt-Group, `Option<Box<Cat>>`: `None < Some(_)`, and `Some` vs
+            // `Some` is the inner comparison. Exactly one push on every path, so
+            // the reverse-push discipline is preserved.
+            //
+            // ★ This replaces an eager `(**__l).cmp(&**__r)` — a whole-value
+            // re-entry that was Θ(depth) in its own right, independently of any
+            // collection.
+            let task_variant = format_ident!("Cmp{}", field.category);
+            stmts.push(quote! {
+                match (#lname.as_ref(), #rname.as_ref()) {
+                    (None, None) => {}
+                    (None, Some(_)) => {
+                        stack.push(CmpTask::Verdict(std::cmp::Ordering::Less));
+                    }
+                    (Some(_), None) => {
+                        stack.push(CmpTask::Verdict(std::cmp::Ordering::Greater));
+                    }
+                    (Some(__l), Some(__r)) => {
+                        stack.push(CmpTask::#task_variant(
+                            __l.as_ref() as *const _,
+                            __r.as_ref() as *const _,
+                        ));
+                    }
+                }
+            });
+            continue;
+        }
+
+        if field.is_collection {
+            let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
+            stmts.push(cmp_collection_push_stmts(
+                &field.category,
+                &coll_type,
+                &quote! { #lname },
+                &quote! { #rname },
+                language,
+            ));
+            continue;
+        }
+
+        // ★ A boxed category child. Before #162 a child at a position BEFORE the
+        // last collection was compared by an eager `(**l).cmp(&**r)` — a
+        // whole-value re-entry — purely because the eager prefix had to reach the
+        // collection. Now every child is a task.
+        let task_variant = format_ident!("Cmp{}", field.category);
+        stmts.push(quote! {
+            stack.push(CmpTask::#task_variant(&**#lname as *const _, &**#rname as *const _));
+        });
+    }
+
+    stmts
+}
+
 fn generate_cmp_regular_arm(
     category: &Ident,
     label: &Ident,
     fields: &[FieldInfo],
-    _language: &LanguageDef,
+    language: &LanguageDef,
 ) -> TokenStream {
     let left_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("l{}", i)).collect();
     let right_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("r{}", i)).collect();
-
-    // Split into eager (collection) and deferred (Box<T>) comparisons.
-    // We need left-to-right semantics. Strategy:
-    // 1. Compare all collection fields eagerly, in order. If any is non-Equal, return.
-    // 2. Push all Box<T> fields as tasks in reverse order (LIFO -> left-to-right processing).
-    //
-    // This is correct because collection comparisons are self-contained (no child tasks),
-    // and Box<T> tasks will be processed left-to-right after this arm completes.
-    //
-    // HOWEVER: this breaks left-to-right field semantics when a collection field
-    // comes AFTER a Box<T> field. Example: Regular(Box<A>, Vec<B>, Box<C>).
-    // We'd compare Vec<B> eagerly, then push Box<A> and Box<C>. But Box<A> should
-    // be compared BEFORE Vec<B>.
-    //
-    // Correct solution: process ALL fields left-to-right. For Box<T> fields,
-    // recursively push and process (but that's what we're trying to avoid for stack safety).
-    //
-    // Better: push ALL work onto the stack in reverse. For collection fields,
-    // wrap them in a CmpTask that compares eagerly. But CmpTask only holds *const Cat...
-    //
-    // Simplest correct solution: push Box<T> tasks in reverse. Any collection
-    // comparisons are done eagerly. If a collection comparison would come after
-    // a Box<T> field in field order, we handle this by emitting comparison blocks
-    // in LEFT-TO-RIGHT order, where each block either pushes a task or compares eagerly.
-    // Since we push tasks in reverse and they'll be processed AFTER this arm body,
-    // we need a different approach.
-    //
-    // ACTUAL simplest approach: just push all Box<T> child pairs as CmpTask variants
-    // in REVERSE order. Collection fields are compared eagerly. The key insight is
-    // that the generated Ord is semantically equivalent to the derived one; we're just
-    // trampolining the Box<T> recursion. Collection fields already use their own Ord
-    // which handles their internal recursion. The only concern is field ordering.
-    //
-    // For field ordering: we push Box<T> tasks in reverse so they pop left-to-right.
-    // But eagerly-compared collection fields break left-to-right ordering if they
-    // come BETWEEN two Box<T> fields.
-    //
-    // Final approach: we accumulate comparison stmts in left-to-right order.
-    // For collection fields, emit eager comparison. For Box<T> fields, emit a push.
-    // BUT we need to push tasks in reverse for LIFO ordering. Since we process
-    // fields left-to-right in codegen, pushing them means they end up in reverse
-    // on the stack (last pushed = first popped). So we actually need to push
-    // Box<T> tasks in FIELD ORDER (not reversed), because the first push goes
-    // deepest on the stack and the last push is popped first.
-    //
-    // Wait: no. We push all tasks in this arm body, then the engine pops from
-    // the top. So the LAST pushed task is popped FIRST. To process field 0 first,
-    // we need field 0 to be pushed LAST (i.e., push in reverse field order).
-    //
-    // But collection fields between Box fields break this. Solution: Don't push
-    // collection comparisons as tasks. Instead, do a hybrid approach:
-    //
-    // Process fields left-to-right:
-    //   - Collection: compare eagerly. If non-Equal, clear stack and return.
-    //   - Box<T>: accumulate for later pushing.
-    // Then push accumulated Box<T> tasks in reverse field order.
-    //
-    // This is correct IF no collection field comes AFTER a Box<T> field in the
-    // same variant. But that's not guaranteed.
-    //
-    // So actually: for the first non-collection field that differs, we need to
-    // return that ordering. For collection fields that come between box fields,
-    // we need to ensure they're compared at the right time.
-    //
-    // The TRULY correct approach for heterogeneous fields: push tasks in reverse,
-    // but for collection fields, use an intermediate "compare and continue" approach.
-    //
-    // Let me just use a simple, correct approach:
-    // - For each field in LEFT-TO-RIGHT order, push a comparison task in REVERSE.
-    //   Collections are compared eagerly BEFORE pushing any box tasks.
-    //   If the collection comparison is non-equal, don't push anything, just return.
-    //
-    // Actually the simplest correct approach: just compare ALL fields in the match arm
-    // body, left-to-right. For Box<T> fields, dereference and push tasks. Push them
-    // in reverse to get left-to-right popping. For collection fields, compare inline.
-    //
-    // The only issue with pushing ALL fields' box tasks is that an earlier field's
-    // non-Equal result should prevent comparing later fields. But with the work stack,
-    // the engine WILL compare them (wasting work) unless we clear the stack on
-    // non-Equal. And Box<T> comparisons on the stack all compare in the engine loop,
-    // where non-Equal clears the stack and returns. So: the first non-Equal Box<T>
-    // comparison will clear remaining tasks and return. This is correct.
-    //
-    // For collection fields compared eagerly: if non-Equal, we return immediately
-    // (before reaching the stack). If Equal, we continue pushing Box<T> tasks.
-    //
-    // So the approach IS correct as long as we eagerly compare collections
-    // BEFORE pushing Box<T> tasks. But that means collection comparisons always
-    // happen before Box<T> comparisons, which breaks left-to-right ordering
-    // when a collection field comes AFTER a Box<T> field.
-    //
-    // To handle this correctly with mixed field types, I'll use a different strategy:
-    // Process fields sequentially, left to right. For each field:
-    //   - If collection/leaf: compare eagerly. If non-Equal, clear stack, return.
-    //   - If Box<T>: push a CmpTask.
-    // Push all Box<T> tasks in reverse order for LIFO processing.
-    //
-    // But this still has the problem that box field 0 may be pushed to the stack
-    // while collection field 1 is compared eagerly, and if collection field 1 is
-    // non-Equal, we clear the stack (dropping the pushed task for field 0).
-    // That's fine! The collection non-Equal result is the correct answer.
-    //
-    // Wait, but field 0 (Box) should be compared BEFORE field 1 (Collection).
-    // If we push field 0's task then eagerly compare field 1, field 1 might
-    // return non-Equal. But the correct result could be that field 0 is non-Equal
-    // in the other direction. This is wrong.
-    //
-    // So we must process them strictly left-to-right. For Box<T> fields, we
-    // can't defer them if there are later eager fields. The only safe approach
-    // when there are mixed field types is to NOT defer Box<T> comparisons.
-    //
-    // BUT deferring is the whole point (stack safety). The key insight: in practice,
-    // each field in a Regular variant is either all Box<T> or a mix. For mixed,
-    // the collection fields' comparison is already stack-safe (they use their own
-    // Ord impl which re-enters the trampoline). Box<T> fields are what need trampolining.
-    //
-    // SOLUTION: For all fields, push CmpTask variants in reverse order. For
-    // collection fields, they get compared via the CmpTask engine which calls
-    // the iterative cmp. But wait - CmpTask only holds category pointers, not
-    // arbitrary types.
-    //
-    // FINAL SOLUTION: Push Box<T> children as CmpTask in reverse field order.
-    // Compare collection fields eagerly. When mixing, always compare eagerly first
-    // (left to right), and for Box<T> fields that precede collection fields,
-    // push them. The engine processes remaining tasks after this arm.
-    //
-    // Actually, after much deliberation, the practical approach used by derive(Ord)
-    // is: compare field 0, then field 1, etc. Each field comparison short-circuits
-    // on non-Equal. The trampolined version does the same, just iteratively for
-    // Box<T> fields.
-    //
-    // The CORRECT trampolined approach: push ALL fields (reversed) as tasks.
-    // But we can only push category types. Collection fields hold elements of
-    // category types, and the collection's own Ord compares elements.
-    //
-    // I'll just push Box<T> fields in reverse and compare collection fields eagerly.
-    // Left-to-right ordering for the Box<T> fields is maintained by the stack.
-    // Collection fields compared eagerly will short-circuit before stack processing.
-    // This means collection results take priority over later Box<T> results, which
-    // violates strict left-to-right semantics when a Box<T> comes before a collection.
-    //
-    // To fix: any Box<T> field that comes BEFORE a collection field must also be
-    // compared eagerly (dereferenced inline). Only the TRAILING Box<T> fields
-    // (after all collection fields) can be deferred to the stack.
-    //
-    // Let me implement this cleanly. Find the index of the last collection field.
-    // All fields up to and including that index are compared eagerly. Fields after
-    // are pushed as tasks in reverse.
-
-    // Find the index of the last non-Box field (collection fields).
-    let last_eager_idx = fields.iter().rposition(|f| f.is_collection);
-
-    let mut stmts: Vec<TokenStream> = Vec::new();
-
-    // Fields that must be compared eagerly (up to and including last collection field)
-    let eager_end = last_eager_idx.map(|i| i + 1).unwrap_or(0);
-
-    for (i, field) in fields.iter().enumerate().take(eager_end) {
-        let lname = &left_names[i];
-        let rname = &right_names[i];
-        // Phase 3A-B2: predicate fields use direct cmp.
-        // BehavioralPred derives Ord, so the bare value comparison is sound.
-        // L9-3: token-text captures (bare `String`) compare identically.
-        if field.is_predicate || field.is_opaque_leaf() {
-            stmts.push(quote! {
-                {
-                    let ord = #lname.cmp(#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-            continue;
-        }
-        if field.is_optional {
-            if field.is_collection {
-                // Phase 4 #3 (2026-05-12): Optional-Collection — delegate to
-                // Option<Container>::cmp. Vec/HashSet impl Ord directly;
-                // HashBag impls Ord too (see mettail_runtime).
-                stmts.push(quote! {
-                    {
-                        let ord = #lname.cmp(#rname);
-                        if ord != std::cmp::Ordering::Equal {
-                            stack.clear();
-                            return ord;
-                        }
-                    }
-                });
-                continue;
-            }
-            // Opt-Group: order Option<Box<Cat>>. None < Some(_); Some(a)
-            // vs Some(b) compares inner via re-entrant trampolined cmp.
-            stmts.push(quote! {
-                {
-                    let ord = match (#lname.as_ref(), #rname.as_ref()) {
-                        (None, None) => std::cmp::Ordering::Equal,
-                        (None, Some(_)) => std::cmp::Ordering::Less,
-                        (Some(_), None) => std::cmp::Ordering::Greater,
-                        (Some(__l), Some(__r)) => (**__l).cmp(&**__r),
-                    };
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-            continue;
-        }
-        if field.is_collection {
-            stmts.push(quote! {
-                {
-                    let ord = #lname.cmp(#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-        } else {
-            // Box<T> field before a collection field — must compare eagerly
-            // to maintain left-to-right semantics. We dereference and push
-            // as a single task, then drain the stack for it before continuing.
-            //
-            // Actually, for simplicity and correctness, compare via the task
-            // mechanism but process immediately. We push a single task and
-            // let the engine loop handle it on the next iteration. But other
-            // tasks may be on the stack from a parent.
-            //
-            // Simplest: just push a single CmpTask. The engine will process
-            // it next. But the eager collection comparison below will happen
-            // in this arm body, not in the engine loop. So we can't push
-            // and then eagerly compare — the push goes to the stack, and
-            // the eager code runs in the arm body.
-            //
-            // True fix: compare Box<T> fields that precede collections eagerly too.
-            // Dereference and recursively compare. But that defeats trampolining.
-            //
-            // Pragmatic fix: for Box<T> fields that precede collections, push them
-            // as tasks. The task for the Box<T> field won't be processed until after
-            // this match arm returns. The collection comparison happens in the arm.
-            // This means the collection result might override the Box<T> result.
-            //
-            // For correctness: I'll just push ALL Box<T> fields as tasks, and
-            // compare ALL collection fields eagerly. The stack processes tasks
-            // in reverse-push order (LIFO). After the arm body, the engine pops
-            // the next task. If there's a collection non-Equal, we already returned.
-            // If not, the Box<T> tasks are processed. Since collection was Equal,
-            // the Box<T> result determines the final ordering.
-            //
-            // The ONLY incorrectness: if Box field 0 is Less and Collection field 1
-            // is Greater, we should return Less (field 0 takes priority). But we'd
-            // return Greater (collection compared eagerly first). To fix this, when
-            // a Box<T> field precedes a collection field, compare the Box<T> eagerly.
-            //
-            // For eager Box<T> comparison: use `cmp()` on the derefed values. This
-            // re-enters our Ord::cmp, which uses the trampoline. So it IS stack-safe!
-            // The re-entrant call gets a fresh stack from the pool.
-            stmts.push(quote! {
-                {
-                    let ord = (**#lname).cmp(&**#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-        }
-    }
-
-    // Remaining Box<T> fields after the last collection field — push in reverse
-    let deferred_fields: Vec<(usize, &FieldInfo)> =
-        fields.iter().enumerate().skip(eager_end).collect();
-
-    for &(i, field) in deferred_fields.iter().rev() {
-        let lname = &left_names[i];
-        let rname = &right_names[i];
-        // Phase 3A-B2: predicate fields use direct cmp inline.
-        // L9-3: token-text captures (bare `String`) compare identically.
-        if field.is_predicate || field.is_opaque_leaf() {
-            stmts.push(quote! {
-                {
-                    let ord = #lname.cmp(#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-            continue;
-        }
-        if field.is_optional {
-            if field.is_collection {
-                // Phase 4 #3 (2026-05-12): Optional-Collection — delegate to
-                // Option<Container>::cmp (eager — same rationale as in the
-                // eager-loop branch).
-                stmts.push(quote! {
-                    {
-                        let ord = #lname.cmp(#rname);
-                        if ord != std::cmp::Ordering::Equal {
-                            stack.clear();
-                            return ord;
-                        }
-                    }
-                });
-                continue;
-            }
-            // Opt-Group: same eager Optional-cmp as the eager-loop
-            // branch (deferred-trailing semantics don't help here
-            // because Some/None is a tag-discriminant compare).
-            stmts.push(quote! {
-                {
-                    let ord = match (#lname.as_ref(), #rname.as_ref()) {
-                        (None, None) => std::cmp::Ordering::Equal,
-                        (None, Some(_)) => std::cmp::Ordering::Less,
-                        (Some(_), None) => std::cmp::Ordering::Greater,
-                        (Some(__l), Some(__r)) => (**__l).cmp(&**__r),
-                    };
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-            continue;
-        }
-        if field.is_collection {
-            // Should not happen — we processed all collections above
-            stmts.push(quote! {
-                {
-                    let ord = #lname.cmp(#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-        } else {
-            let task_variant = format_ident!("Cmp{}", field.category);
-            stmts.push(quote! {
-                stack.push(CmpTask::#task_variant(&**#lname as *const _, &**#rname as *const _));
-            });
-        }
-    }
+    let stmts = cmp_arm_stmts(fields, &left_names, &right_names, None, language);
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -1098,12 +1133,17 @@ fn generate_cmp_regular_arm(
 }
 
 /// Generate cmp arm for a Binder variant.
+///
+/// The scope is the arm's LAST comparison position: its pattern is a leaf (a
+/// hash-ordered `Binder<String>`) and its body is a descent, so the group is one
+/// `Verdict` followed by one `Cmp{Body}`. Pushed FIRST, because the pushed
+/// segment goes on in reverse position order — see [`cmp_arm_stmts`].
 fn generate_cmp_binder_arm(
     category: &Ident,
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
-    _language: &LanguageDef,
+    language: &LanguageDef,
 ) -> TokenStream {
     let total_fields = pre_scope_fields.len() + 1;
     let left_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("l{}", i)).collect();
@@ -1111,87 +1151,33 @@ fn generate_cmp_binder_arm(
 
     let scope_left = &left_names[total_fields - 1];
     let scope_right = &right_names[total_fields - 1];
-
-    let mut stmts: Vec<TokenStream> = Vec::new();
-
-    // Compare pre-scope fields eagerly (left-to-right)
-    for (i, field) in pre_scope_fields.iter().enumerate() {
-        let lname = &left_names[i];
-        let rname = &right_names[i];
-        // Phase 3A-B2: predicate fields use direct cmp.
-        if field.is_predicate {
-            stmts.push(quote! {
-                {
-                    let ord = #lname.cmp(#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-            continue;
-        }
-        if field.is_collection {
-            stmts.push(quote! {
-                {
-                    let ord = #lname.cmp(#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-        } else {
-            // Box<T> pre-scope field — compare eagerly (re-entrant, stack-safe)
-            stmts.push(quote! {
-                {
-                    let ord = (**#lname).cmp(&**#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-        }
-    }
-
-    // Compare scope: pattern eagerly, body via task
     let body_task = format_ident!("Cmp{}", body_cat);
-    stmts.push(quote! {
-        {
-            let ord = #scope_left.cmp(&#scope_right);
-            // Scope::cmp already compares pattern hash then body.
-            // But the body comparison in Scope::cmp will be recursive.
-            // Instead, compare patterns eagerly and push body to stack.
-            // Actually, we can't easily split Scope::cmp. Let's compare
-            // patterns first, then push body.
-        }
-    });
 
-    // Clear the above empty block, and do the actual comparison:
-    stmts.pop(); // Remove the empty block
-    stmts.push(quote! {
+    // Pop order within the group must be pattern-then-body, so the pushes are
+    // body-then-pattern. Unchanged from the pre-#162 arm in WHAT it compares —
+    // only the body descent's ordering relative to the pre-scope fields moves,
+    // and it moves to the position the field order says it should have.
+    let scope_pushes = quote! {
         {
-            // Compare patterns eagerly (cheap: Binder<String>)
             let l_scope = #scope_left.inner();
             let r_scope = #scope_right.inner();
-            // Pattern comparison: use hash-based ordering (same as Scope::cmp)
+            // Pattern comparison: hash-based ordering, same as `Scope::cmp`.
             let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
                 let mut h = std::collections::hash_map::DefaultHasher::new();
                 std::hash::Hash::hash(p, &mut h);
                 std::hash::Hasher::finish(&h)
             };
-            let pat_ord = hash_pat(&l_scope.unsafe_pattern).cmp(&hash_pat(&r_scope.unsafe_pattern));
-            if pat_ord != std::cmp::Ordering::Equal {
-                stack.clear();
-                return pat_ord;
-            }
-            // Push body comparison
+            let pat_ord =
+                hash_pat(&l_scope.unsafe_pattern).cmp(&hash_pat(&r_scope.unsafe_pattern));
             let l_body: *const #body_cat = &*l_scope.unsafe_body;
             let r_body: *const #body_cat = &*r_scope.unsafe_body;
             stack.push(CmpTask::#body_task(l_body, r_body));
+            stack.push(CmpTask::Verdict(pat_ord));
         }
-    });
+    };
+
+    let stmts =
+        cmp_arm_stmts(pre_scope_fields, &left_names, &right_names, Some(scope_pushes), language);
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -1201,12 +1187,17 @@ fn generate_cmp_binder_arm(
 }
 
 /// Generate cmp arm for a MultiBinder variant.
+///
+/// Identical to [`generate_cmp_binder_arm`] except that the pattern is a
+/// `Vec<Binder<String>>`, ordered length-first and then element-wise by binder
+/// hash. That whole judgement is a leaf — no sub-terms — so it collapses to ONE
+/// `Verdict`, computed with `Ordering::then_with` so the length still dominates.
 fn generate_cmp_multi_binder_arm(
     category: &Ident,
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
-    _language: &LanguageDef,
+    language: &LanguageDef,
 ) -> TokenStream {
     let total_fields = pre_scope_fields.len() + 1;
     let left_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("l{}", i)).collect();
@@ -1214,80 +1205,38 @@ fn generate_cmp_multi_binder_arm(
 
     let scope_left = &left_names[total_fields - 1];
     let scope_right = &right_names[total_fields - 1];
-
-    let mut stmts: Vec<TokenStream> = Vec::new();
-
-    for (i, field) in pre_scope_fields.iter().enumerate() {
-        let lname = &left_names[i];
-        let rname = &right_names[i];
-        // Phase 3A-B2: predicate fields use direct cmp.
-        if field.is_predicate {
-            stmts.push(quote! {
-                {
-                    let ord = #lname.cmp(#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-            continue;
-        }
-        if field.is_collection {
-            stmts.push(quote! {
-                {
-                    let ord = #lname.cmp(#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-        } else {
-            stmts.push(quote! {
-                {
-                    let ord = (**#lname).cmp(&**#rname);
-                    if ord != std::cmp::Ordering::Equal {
-                        stack.clear();
-                        return ord;
-                    }
-                }
-            });
-        }
-    }
-
     let body_task = format_ident!("Cmp{}", body_cat);
-    stmts.push(quote! {
+
+    let scope_pushes = quote! {
         {
-            // Compare patterns eagerly (Vec<Binder<String>>)
             let l_scope = #scope_left.inner();
             let r_scope = #scope_right.inner();
-            // Compare pattern vecs: length then elements
             let l_pats = &l_scope.unsafe_pattern;
             let r_pats = &r_scope.unsafe_pattern;
-            let len_ord = l_pats.len().cmp(&r_pats.len());
-            if len_ord != std::cmp::Ordering::Equal {
-                stack.clear();
-                return len_ord;
-            }
-            for (lp, rp) in l_pats.iter().zip(r_pats.iter()) {
-                let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
-                    let mut h = std::collections::hash_map::DefaultHasher::new();
-                    std::hash::Hash::hash(p, &mut h);
-                    std::hash::Hasher::finish(&h)
-                };
-                let pat_ord = hash_pat(lp).cmp(&hash_pat(rp));
-                if pat_ord != std::cmp::Ordering::Equal {
-                    stack.clear();
-                    return pat_ord;
-                }
-            }
-            // Push body comparison
+            let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(p, &mut h);
+                std::hash::Hasher::finish(&h)
+            };
+            // Length dominates, then the binder hashes element-wise — the exact
+            // judgement the pre-#162 arm made with two early returns.
+            let pat_ord = l_pats.len().cmp(&r_pats.len()).then_with(|| {
+                l_pats
+                    .iter()
+                    .zip(r_pats.iter())
+                    .map(|(lp, rp)| hash_pat(lp).cmp(&hash_pat(rp)))
+                    .find(|o| *o != std::cmp::Ordering::Equal)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             let l_body: *const #body_cat = &*l_scope.unsafe_body;
             let r_body: *const #body_cat = &*r_scope.unsafe_body;
             stack.push(CmpTask::#body_task(l_body, r_body));
+            stack.push(CmpTask::Verdict(pat_ord));
         }
-    });
+    };
+
+    let stmts =
+        cmp_arm_stmts(pre_scope_fields, &left_names, &right_names, Some(scope_pushes), language);
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
