@@ -1842,8 +1842,8 @@ language! {
                         // The indeterminate forms this admits: `Inf - Inf` and `(-Inf) - (-Inf)` (IEEE 754 §7.2, magnitude subtraction of infinities),
                         // plus `NaN` PROPAGATION from either operand (§6.2). Overflow to `±Inf`
                         // was never declined and is unaffected.
-                        match (
-                            <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_sub(*x, *y)
+                        match mettail_runtime::nan_is_a_value(
+                            <mettail_runtime::CanonicalFloat64 as mettail_runtime::SafeArith>::safe_sub(*x, *y),
                         ) {
                             Ok(v) => Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(v))),
                             Err(_) => Proc::Err,

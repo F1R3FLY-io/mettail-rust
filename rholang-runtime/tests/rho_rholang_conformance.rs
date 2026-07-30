@@ -194,14 +194,31 @@
 //! and `-Inf` upstream — `-0.0` is not a representable `Float` term at all — and a produced `NaN`
 //! carries `f64::NAN`'s bits rather than the hardware's. Both are properties of the CARRIER.
 //!
-//! ⚠ **Three SIBLING arms still refuse an IEEE indeterminate form where upstream computes `NaN`,
-//! and were NOT part of this ruling.** `Add` (`rholang.rs:1678`), `Sub` (`:1733`) and `Mul`
-//! (`:1783`) route through `SafeArith`, whose `finite_or_inf_f64` declines `NaN`, so
-//! `Inf + (-Inf)`, `Inf - Inf` and `Inf * 0.0` answer the `error` term where `combine_plus` /
-//! `combine_minus` / `combine_mult`'s `GDouble` arms answer `NaN`. `Inf` is reachable in both
-//! (`1e308 * 10.0`). The same floor argument applies to all three; extending the ruling to them is
-//! a USER decision and is deliberately not taken here. `%` needs no change: MeTTaIL's `Mod` has no
-//! float arm and upstream's `combine_mod` refuses `(GDouble, GDouble)` outright.
+//! ★★ **RULING EXTENDED to every float arithmetic arm.** The three siblings that still refused an
+//! IEEE indeterminate form — `Add`, `Sub`, `Mul` — were ruled the same way on 2026-07-29 and now
+//! answer IEEE too, and a FOURTH was found by deriving the arm inventory instead of working from
+//! the list: the `Neg` rule's float arm reached `safe_neg` *implicitly*, through the operator
+//! rewrite, and stranded `-(0.0 / 0.0)` as a STUCK TERM rather than answering `error`. All five
+//! sites (`Add`, `Sub`, `Mul`, `Div`, `Neg`) now route through one adapter,
+//! `mettail_runtime::nan_is_a_value`, so the `UndefinedReason::NotANumber` match lives in exactly
+//! one place instead of being copied five times. `SafeArith`'s own NaN policy is untouched — the
+//! tropical and log-domain semirings depend on it, and the adapter is opt-in per call site. See
+//! [`every_float_arithmetic_arm_answers_ieee754_for_every_indeterminate_form`] for the case set
+//! derived from IEEE 754 §6.2/§6.3/§7.2/§7.4.
+//!
+//! `%` needs no change and that is now MEASURED on both sides
+//! ([`float_modulo_is_refused_by_both_evaluators_so_it_needs_no_ruling`]): MeTTaIL's `Mod` has no
+//! float arm and upstream's `combine_mod` refuses `(GDouble, GDouble)` outright, so no program's
+//! acceptance differs.
+//!
+//! ⚠★ **The rulings ACTIVATED a latent comparison divergence, which is FILED not fixed.** `NaN` was
+//! previously unreachable, so the comparison operators' `NaN` behaviour was unobservable. It is
+//! observable now: `NaN == NaN` is `true` here and `false` upstream, and `NaN > 1.0` is `true` here
+//! and `false` upstream, because the arms compare `CanonicalFloat64` values whose `PartialEq` is
+//! reflexive on `NaN` and whose `Ord` sorts `NaN` last — deliberately, so terms have a usable
+//! `Eq`/`Hash`/`Ord`. Measured and pinned in
+//! [`nan_comparisons_follow_the_carrier_not_ieee754_and_that_is_filed`], which also explains why
+//! the two-line arm-level fix is a semantics decision rather than a bug fix.
 //!
 //! ## Operational note: fold panics ABORT the process here
 //!
@@ -4048,4 +4065,270 @@ async fn c4_a_bare_element_walk_visits_every_element_in_order() {
         "C4-8: `walk until Nil` over a bare-element pathmap TERMINATES — this is the assertion the \
          retired witness recorded as false at six consecutive steps"
     );
+}
+
+/// ★★ **Every float arithmetic arm answers IEEE-754, and the case set is DERIVED from the
+/// standard rather than transcribed from a list.** RULED 2026-07-29, extending the `Div` ruling to
+/// the three siblings.
+///
+/// ## The derivation
+///
+/// IEEE 754-2019 §7.2 enumerates the *invalid operations*: for the four basic arithmetic
+/// operations on a binary format, exactly these produce `NaN` from non-`NaN` operands —
+///
+/// | operation | §7.2 invalid cases | reachable in Rholang? |
+/// |---|---|---|
+/// | `+` | `(+∞) + (−∞)`, `(−∞) + (+∞)` | yes |
+/// | `−` | `(+∞) − (+∞)`, `(−∞) − (−∞)` | yes |
+/// | `×` | `0 × ±∞`, `±∞ × 0` (either signed zero) | yes |
+/// | `÷` | `0 ÷ 0`, `±∞ ÷ ±∞` | yes |
+/// | `REM` | `x REM 0`, `±∞ REM y` | **no** — see below |
+/// | `√`  | negative operand | **no** — Rholang has no float `sqrt` |
+///
+/// §6.2 adds *propagation*: an operation with a quiet-`NaN` operand delivers a quiet `NaN`. §6.3
+/// adds that a `NaN`'s sign is not interpreted, so negation propagates it. §7.4 makes overflow
+/// deliver `±∞` under the default rounding attribute — an ANSWER, not an error.
+///
+/// Cross-checked against the arm inventory instead of against a wish-list: `rg` for
+/// `SafeArith>::safe_` in `languages/src/rholang.rs` returns fifteen call sites, of which exactly
+/// FOUR are on `CanonicalFloat64` — `safe_add`, `safe_sub`, `safe_mul`, `safe_div` — and the `Neg`
+/// rule's float arm is a fifth site that reached `safe_neg` *implicitly*, through the operator
+/// rewrite. All five are covered below. `safe_rem`'s only site is `i64`, and Rholang's `Mod` has no
+/// float arm at all, which is why `REM` is unreachable; upstream's `combine_mod` refuses
+/// `(GDouble, GDouble)` outright, so the two agree without any change.
+///
+/// ## ⚠ Why every assertion below is on a VALUE
+///
+/// A test of the form "this must not be `error`" passes on a STUCK TERM, and a stuck term is
+/// exactly what the second trap produces. `macros/src/gen/native/rust_code_rewrite.rs`
+/// (`binop_to_safe_method`, `:206-215`) rewrites every `+`, `-`, `*`, `/` inside a `![ … ]` block
+/// into `<_ as SafeArith>::safe_*(…)?` — including on raw `f64` — and the `?` short-circuits the
+/// whole fold body, so the rule never fires and the redex survives. The `Neg` arm was in precisely
+/// that state before this commit: `-(0.0 / 0.0)` folded to the unreduced `-NaN`. Only an assertion
+/// on the rendered VALUE distinguishes the three outcomes.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_float_arithmetic_arm_answers_ieee754_for_every_indeterminate_form() {
+    // Two ways to name an infinity in the surface syntax, so the cases below do not all depend on
+    // the one operator under test. `inf` is not a Float literal (`rholang.rs:342`'s pattern
+    // requires digits), so an infinity has to be COMPUTED.
+    const POS_INF: &str = "(float(1.0, 64) / float(0.0, 64))";
+    const NEG_INF: &str = "(float(-1.0, 64) / float(0.0, 64))";
+    const OVERFLOW_INF: &str = "(float(1e308, 64) * float(10.0, 64))";
+    const NAN: &str = "(float(0.0, 64) / float(0.0, 64))";
+
+    // ★ THE FLOOR, first: every building block above must itself be a VALUE. If `POS_INF` were a
+    // stuck term, every row built from it would be testing nothing.
+    for (source, expected) in [
+        (POS_INF, "inf"),
+        (NEG_INF, "-inf"),
+        (OVERFLOW_INF, "inf"),
+        (NAN, "NaN"),
+        // ...and ordinary float arithmetic still computes, on all four operators.
+        ("float(1.5, 64) + float(2.5, 64)", "4.0"),
+        ("float(5.0, 64) - float(1.5, 64)", "3.5"),
+        ("float(1.5, 64) * float(4.0, 64)", "6.0"),
+        ("float(7.0, 64) / float(2.0, 64)", "3.5"),
+        ("-float(2.5, 64)", "-2.5"),
+    ] {
+        assert_eq!(
+            fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}")),
+            expected,
+            "★ FLOOR: {source:?} must be a VALUE — every case below is built out of these",
+        );
+    }
+
+    let cases: Vec<(String, &str, &str)> = vec![
+        // ── §7.2, addition: magnitude subtraction of infinities ──────────────────────────────
+        (format!("{POS_INF} + {NEG_INF}"), "NaN", "+: (+Inf) + (-Inf)"),
+        (format!("{NEG_INF} + {POS_INF}"), "NaN", "+: (-Inf) + (+Inf)"),
+        // ...and the SAME-sign sums are NOT invalid; they are infinities.
+        (format!("{POS_INF} + {POS_INF}"), "inf", "+: (+Inf) + (+Inf) is not invalid"),
+        (format!("{NEG_INF} + {NEG_INF}"), "-inf", "+: (-Inf) + (-Inf) is not invalid"),
+
+        // ── §7.2, subtraction: magnitude subtraction of infinities ───────────────────────────
+        (format!("{POS_INF} - {POS_INF}"), "NaN", "-: (+Inf) - (+Inf)"),
+        (format!("{NEG_INF} - {NEG_INF}"), "NaN", "-: (-Inf) - (-Inf)"),
+        // ...and the OPPOSITE-sign differences are infinities.
+        (format!("{POS_INF} - {NEG_INF}"), "inf", "-: (+Inf) - (-Inf) is not invalid"),
+        (format!("{NEG_INF} - {POS_INF}"), "-inf", "-: (-Inf) - (+Inf) is not invalid"),
+
+        // ── §7.2, multiplication: zero times infinity, BOTH orders, BOTH signed zeros ────────
+        (format!("float(0.0, 64) * {POS_INF}"), "NaN", "*: 0 * (+Inf)"),
+        (format!("{POS_INF} * float(0.0, 64)"), "NaN", "*: (+Inf) * 0"),
+        (format!("float(0.0, 64) * {NEG_INF}"), "NaN", "*: 0 * (-Inf)"),
+        (format!("{NEG_INF} * float(0.0, 64)"), "NaN", "*: (-Inf) * 0"),
+        (format!("float(-0.0, 64) * {POS_INF}"), "NaN", "*: -0 * (+Inf)"),
+        (format!("{POS_INF} * float(-0.0, 64)"), "NaN", "*: (+Inf) * -0"),
+
+        // ── §7.2, division: the two the Div ruling already covered, via computed infinities ──
+        (format!("{POS_INF} / {POS_INF}"), "NaN", "/: (+Inf) / (+Inf)"),
+        (format!("{POS_INF} / {NEG_INF}"), "NaN", "/: (+Inf) / (-Inf)"),
+
+        // ── §7.4 overflow: an ANSWER (±Inf), never a decline — on all three operators ────────
+        ("float(1e308, 64) + float(1e308, 64)".to_string(), "inf", "+: overflow delivers +Inf"),
+        ("float(-1e308, 64) - float(1e308, 64)".to_string(), "-inf", "-: overflow delivers -Inf"),
+        ("float(1e308, 64) * float(10.0, 64)".to_string(), "inf", "*: overflow delivers +Inf"),
+        ("float(1e308, 64) * float(-10.0, 64)".to_string(), "-inf", "*: overflow delivers -Inf"),
+
+        // ── §6.2 propagation: a NaN operand poisons every operator ───────────────────────────
+        (format!("{NAN} + float(1.0, 64)"), "NaN", "+: NaN + 1.0 propagates"),
+        (format!("float(1.0, 64) + {NAN}"), "NaN", "+: 1.0 + NaN propagates"),
+        (format!("float(1.0, 64) - {NAN}"), "NaN", "-: 1.0 - NaN propagates"),
+        (format!("{NAN} - float(1.0, 64)"), "NaN", "-: NaN - 1.0 propagates"),
+        (format!("{NAN} * float(0.0, 64)"), "NaN", "*: NaN * 0.0 propagates (it is NOT 0.0)"),
+        (format!("float(2.0, 64) * {NAN}"), "NaN", "*: 2.0 * NaN propagates"),
+        (format!("{NAN} / float(1.0, 64)"), "NaN", "/: NaN / 1.0 propagates"),
+        (format!("float(1.0, 64) / {NAN}"), "NaN", "/: 1.0 / NaN propagates"),
+
+        // ── §6.3, and THE FOURTH ARM: negation propagates a NaN, and does not strand it ──────
+        (format!("-{NAN}"), "NaN", "unary -: -NaN propagates (was a STUCK TERM before this commit)"),
+        (format!("-{POS_INF}"), "-inf", "unary -: -(+Inf) is -Inf"),
+        (format!("-{NEG_INF}"), "inf", "unary -: -(-Inf) is +Inf"),
+    ];
+
+    for (source, expected, what) in cases {
+        let folded = fold(&parse(&source)).unwrap_or_else(|err| panic!("{what} — {source:?}: {err}"));
+        assert_eq!(
+            folded, expected,
+            "★★ {what}: must be the IEEE-754 VALUE {expected:?}, not {folded:?}.\n\
+             `error` means an arm is still declining an indeterminate form; anything that still \
+             looks like the input means the operator rewrite short-circuited the fold and left a \
+             stuck term.",
+        );
+    }
+}
+
+/// ⚠ **The signed-zero cases, asserted — they are the CARRIER's divergence, not the operators'.**
+///
+/// `CanonicalFloat64::canonicalize` (`runtime/src/canonical_float.rs:35-42`) maps `-0.0` to `+0.0`
+/// so that terms have a well-defined `Eq`/`Hash`/`Ord`, and it does so when the LITERAL is built:
+/// `float(-0.0, 64)` parses to `FloatLit(0.0)`. `CanonicalFloat64::safe_neg` normalises the same
+/// way. So a signed zero is not a representable `Float` term, and every IEEE rule whose result
+/// depends on a zero's sign has no operand to act on.
+///
+/// This cell records what we ACTUALLY do at each such point, so that a change to the carrier turns
+/// it red rather than passing silently. It is deliberately not a list of upstream's answers: those
+/// are named in the message of each assertion, and closing the gap would cost the term algebra its
+/// `Eq` — which is out of the 2026-07-29 ruling's scope.
+#[tokio::test(flavor = "multi_thread")]
+async fn signed_zero_is_the_carriers_divergence_and_it_is_pinned() {
+    for (source, ours, upstream, note) in [
+        ("float(-0.0, 64)", "0.0", "-0.0", "the literal itself collapses at parse time"),
+        ("-float(0.0, 64)", "0.0", "-0.0", "`safe_neg` normalises `-0.0` to `+0.0`"),
+        ("float(0.0, 64) - float(0.0, 64)", "0.0", "0.0", "IEEE agrees here: 0 - 0 is +0"),
+        ("float(-0.0, 64) * float(1.0, 64)", "0.0", "-0.0", "the sign is already gone"),
+        ("float(1.0, 64) / float(-0.0, 64)", "inf", "-inf", "IEEE's sign rule has no -0 to read"),
+        ("float(-1.0, 64) / float(-0.0, 64)", "-inf", "inf", "and likewise with the numerator negative"),
+    ] {
+        let folded = fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}"));
+        assert_eq!(
+            folded, ours,
+            "★ {source:?} answers {ours:?} here and {upstream:?} upstream ({note}). If this now \
+             reads {upstream:?}, `CanonicalFloat64` stopped canonicalising signed zero — update \
+             the module header's residual-divergence note, and check what it cost `Eq`/`Hash`.",
+        );
+    }
+}
+
+/// ⚠★ **FILED, NOT FIXED — making `NaN` reachable ACTIVATED a latent comparison divergence.**
+///
+/// Before the 2026-07-29 float rulings, every route to a `NaN` was declined, so `NaN` was not a
+/// representable `Float` term and the comparison operators' `NaN` behaviour was unobservable.
+/// `b77e657c` (`Div`) and this commit (`Add`/`Sub`/`Mul`/`Neg`) make it reachable, which turns a
+/// latent divergence into a live one. **It was not part of either ruling and is deliberately not
+/// changed here**; this cell records the MEASURED behaviour so it is a fact on the record and a
+/// change to it goes red.
+///
+/// | expression | here | upstream / IEEE 754 §5.11 |
+/// |---|---|---|
+/// | `NaN == NaN` | `true`  | `false` |
+/// | `NaN != NaN` | `false` | `true`  |
+/// | `NaN > 1.0`  | `true`  | `false` |
+/// | `NaN >= NaN` | `true`  | `false` |
+/// | `NaN < 1.0`  | `false` | `false` — agrees, by coincidence |
+///
+/// **The mechanism is the CARRIER, not the operator arms.** IEEE 754 §5.11 makes every ordered
+/// comparison involving a `NaN` false and `NaN == NaN` false, so `NaN` is *unordered*. But the
+/// comparison arms compare `CanonicalFloat64` values directly, and that type's `PartialEq` answers
+/// `true` for two `NaN`s while its `Ord` sorts `NaN` GREATER than every finite value
+/// (`runtime/src/canonical_float.rs:94-135`) — deliberately, because a term algebra needs a total,
+/// reflexive `Eq`/`Hash`/`Ord` to be usable as a map key, in a relation, and in
+/// `BoundTerm`/`SemanticHash`. Note also that `binop_to_safe_method` does NOT rewrite `==`, `>`,
+/// `<` — they are `BinOp::Eq`/`Gt`/`Lt` and fall through — so unlike the arithmetic arms these are
+/// not being safe-ified behind the author's back.
+///
+/// ★ **Why it needs a ruling rather than a patch.** The arms COULD be changed to compare
+/// `x.get()` against `y.get()` in raw `f64`, which would give IEEE semantics without touching the
+/// carrier's `Eq` at all. That is a two-line change. What it would BUY is upstream parity on
+/// comparisons; what it would COST is that Rholang's `==` operator would then disagree with the
+/// term algebra's own notion of equality — the same two `NaN` terms would be `==`-unequal while
+/// remaining `Eq`-equal, hence indistinguishable to pattern matching, to a `Map` key, and to
+/// `SemanticHash`. That trade is a semantics decision about what `NaN` *is* in this language, not a
+/// bug fix, so it is filed.
+///
+/// ⚠ Upstream is unambiguous about its own side: f1r3node has
+/// `rholang/tests/rholang_numeric_eval_spec.rs::float_nan_comparisons_return_false` and
+/// `::float_nan_equality_follows_ieee754`, both green, so this is a real divergence and not an
+/// assumption about upstream.
+#[tokio::test(flavor = "multi_thread")]
+async fn nan_comparisons_follow_the_carrier_not_ieee754_and_that_is_filed() {
+    const NAN: &str = "(float(0.0, 64) / float(0.0, 64))";
+
+    // FLOOR: `NaN` really is reachable now — otherwise every row below would be testing an
+    // expression that never produces one, and the divergence would be recorded where it is absent.
+    assert_eq!(
+        fold(&parse(NAN)).expect("the fold converges"),
+        "NaN",
+        "★ FLOOR: this cell is about comparisons ON a NaN; the NaN must exist first",
+    );
+
+    for (source, ours, ieee, note) in [
+        (format!("{NAN} == {NAN}"), "true", "false", "IEEE: NaN is not equal to itself"),
+        (format!("{NAN} != {NAN}"), "false", "true", "IEEE: the only true NaN predicate"),
+        (format!("{NAN} > float(1.0, 64)"), "true", "false", "the carrier's Ord sorts NaN last"),
+        (format!("{NAN} >= {NAN}"), "true", "false", "IEEE: unordered, so >= is false"),
+        (format!("{NAN} < float(1.0, 64)"), "false", "false", "agrees with IEEE, coincidentally"),
+        // The CONTROL: comparisons that do NOT involve a NaN are IEEE-correct, so this cell is
+        // about NaN specifically and not about the comparison operators being broken generally.
+        ("(float(1.0, 64) / float(0.0, 64)) > float(1e308, 64)".to_string(), "true", "true",
+         "CONTROL: +Inf > any finite — agrees"),
+        ("float(1.0, 64) < float(2.0, 64)".to_string(), "true", "true",
+         "CONTROL: ordinary floats compare correctly"),
+    ] {
+        let folded = fold(&parse(&source)).unwrap_or_else(|err| panic!("{source:?}: {err}"));
+        assert_eq!(
+            folded, ours,
+            "★ {source:?} answers {ours:?} here; IEEE and upstream answer {ieee:?} ({note}). This \
+             divergence is FILED, not fixed. If this assertion fails, someone has ruled on it — \
+             update the table in this cell's doc comment and the module header.",
+        );
+    }
+}
+
+/// ★ `%` on floats needs NO change — MEASURED on both sides, and they already agree.
+///
+/// Rholang's `Mod` rule has no `CastFloat` arm at all (its only `safe_rem` call site is `i64`), so
+/// two ground float operands fall to `binary_fallback` and answer the `error` term. Upstream's
+/// `combine_mod` refuses `(GDouble, GDouble)` outright
+/// (`rholang/src/rust/interpreter/reduce.rs:3424`). IEEE 754 §7.2 does make `x REM 0` and
+/// `∞ REM y` invalid operations, but the operation is not *offered* on floats by either evaluator,
+/// so there is no program whose acceptance differs — the floor is satisfied without a change.
+///
+/// ⚠ This is asserted rather than left as prose because "no float `%` arm" is a fact about the
+/// grammar that a future carrier addition could quietly change, and if a float `%` arm ever appears
+/// it must be built with `nan_is_a_value` from the start.
+#[tokio::test(flavor = "multi_thread")]
+async fn float_modulo_is_refused_by_both_evaluators_so_it_needs_no_ruling() {
+    for source in [
+        "float(5.0, 64) % float(2.0, 64)", // a TOTAL remainder — still refused, by both
+        "float(1.0, 64) % float(0.0, 64)", // and the §7.2 invalid case
+    ] {
+        assert_eq!(
+            fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}")),
+            "error",
+            "★ {source:?}: neither evaluator offers `%` on floats. If this ever computes, the arm \
+             that was added must route through `nan_is_a_value` like the other four, and upstream's \
+             `combine_mod` `GDouble` refusal has to be revisited at the same time.",
+        );
+    }
 }

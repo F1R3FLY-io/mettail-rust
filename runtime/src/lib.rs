@@ -122,7 +122,7 @@ pub use partiality::{
 // panicking Rust arithmetic into `Result`-returning steps that NAME the partiality
 // (`Partiality::{Undefined, NotRepresentable}`) rather than merely absenting a value.
 mod safe_arith;
-pub use safe_arith::{SafeArith, SafeFloat};
+pub use safe_arith::{nan_is_a_value, QuietNaN, SafeArith, SafeFloat};
 
 // Collection types
 mod hashbag;

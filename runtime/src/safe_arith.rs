@@ -555,6 +555,91 @@ fn finite_or_inf_f32(x: f32, operation: &'static str) -> Result<f32, Partiality>
     }
 }
 
+/// A carrier that can name IEEE 754's quiet `NaN`. Implemented for exactly the four float
+/// carriers, so [`nan_is_a_value`] cannot be applied to an integer result by accident.
+pub trait QuietNaN: Sized {
+    /// IEEE 754's quiet `NaN` in this carrier.
+    fn quiet_nan() -> Self;
+}
+
+impl QuietNaN for f64 {
+    #[inline]
+    fn quiet_nan() -> Self { f64::NAN }
+}
+
+impl QuietNaN for f32 {
+    #[inline]
+    fn quiet_nan() -> Self { f32::NAN }
+}
+
+impl QuietNaN for crate::CanonicalFloat64 {
+    #[inline]
+    fn quiet_nan() -> Self { crate::CanonicalFloat64::from(f64::NAN) }
+}
+
+impl QuietNaN for crate::CanonicalFloat32 {
+    #[inline]
+    fn quiet_nan() -> Self { crate::CanonicalFloat32::from(f32::NAN) }
+}
+
+/// ★★ Re-admit IEEE 754's `NaN` as a **VALUE**, for a caller that must reproduce IEEE exactly.
+///
+/// [`SafeArith`]'s float impls deliver `±Inf` but DECLINE `NaN` — see [`finite_or_inf_f64`] — which
+/// is the right default for a language that wants an indeterminate form to stop a computation. It
+/// is the WRONG answer for a language whose floor is an upstream evaluator that computes IEEE: for
+/// those, `0.0 / 0.0` has an answer (`NaN`) and refusing it rejects a program upstream accepts.
+///
+/// ⚠ **This does not change `SafeArith`'s policy for anybody.** It is an opt-in adapter applied at
+/// a single call site. The tropical and log-domain semirings, and every other consumer that wants
+/// the decline, are untouched — they simply do not call this.
+///
+/// ★ Only [`UndefinedReason::NotANumber`] is converted. Every other decline passes through
+/// unchanged, so a caller that wraps a `safe_div` still refuses a `DivisionByZero` on an integer
+/// carrier, and a future decline reason this function has never seen surfaces as a failure rather
+/// than being silently answered `NaN`.
+///
+/// ★ The conversion is EXACT, not a fallback. `finite_or_inf_f{32,64}` raise
+/// `NotANumber` precisely when the IEEE operation produced a `NaN`, and IEEE 754 §6.2 / §7.2 give
+/// `NaN` as the delivered result for every one of those cases (an operation with a `NaN` operand
+/// propagates one; the invalid operations `∞ − ∞`, `∞ + (−∞)`, `0 × ∞`, `0/0`, `∞/∞` deliver one).
+/// So there is no input for which this returns `NaN` where IEEE returns something else.
+///
+/// ⚠ It cannot be spelled with an operator. `macros/src/gen/native/rust_code_rewrite.rs`
+/// (`binop_to_safe_method`) rewrites every `+`, `-`, `*`, `/`, `%` and unary `-` inside a `![ … ]`
+/// grammar block into `<_ as SafeArith>::safe_*(…)?`, **including on raw `f64`**, and the `?`
+/// short-circuits the whole fold body — leaving a STUCK TERM rather than a value or an `error`.
+/// Wrapping the `safe_*` call in this function is therefore the only way a grammar arm can obtain
+/// IEEE semantics.
+///
+/// ```
+/// use mettail_runtime::{nan_is_a_value, CanonicalFloat64, SafeArith};
+///
+/// // `SafeArith` alone declines the indeterminate form...
+/// let zero = CanonicalFloat64::from(0.0);
+/// assert!(<CanonicalFloat64 as SafeArith>::safe_div(zero, zero).is_err());
+///
+/// // ...and with the adapter it is IEEE's answer.
+/// let nan = nan_is_a_value(<CanonicalFloat64 as SafeArith>::safe_div(zero, zero))
+///     .expect("IEEE delivers a NaN for 0/0");
+/// assert!(nan.get().is_nan());
+///
+/// // `±Inf` was never declined, so it is unaffected.
+/// let one = CanonicalFloat64::from(1.0);
+/// let inf = nan_is_a_value(<CanonicalFloat64 as SafeArith>::safe_div(one, zero))
+///     .expect("IEEE delivers +Inf for 1/0");
+/// assert_eq!(inf.get(), f64::INFINITY);
+/// ```
+#[inline]
+pub fn nan_is_a_value<T: QuietNaN>(r: Result<T, Partiality>) -> Result<T, Partiality> {
+    match r {
+        Err(Partiality::Undefined {
+            reason: UndefinedReason::NotANumber,
+            ..
+        }) => Ok(T::quiet_nan()),
+        other => other,
+    }
+}
+
 /// Float-only extension trait for transcendental functions.
 ///
 /// These wrap `f64::sqrt`, `f64::ln`, etc., in the same NaN-rejecting policy as
