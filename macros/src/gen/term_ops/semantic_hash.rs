@@ -469,7 +469,15 @@ fn generate_semantic_task_enum(language: &LanguageDef) -> TokenStream {
         /// child tasks for `Box<T>` fields.
         #[allow(dead_code)]
         enum SemanticHashTask {
-            #(#variants),*
+            #(#variants,)*
+            /// ★ #162 — a `usize` written to `state` at its own position in the
+            /// stream, so a collection's LENGTH PREFIX can precede element tasks.
+            ///
+            /// Without it the `Vec` arm had to write the prefix and then call
+            /// `Elem::semantic_hash(e, state)` per element — a whole-value
+            /// re-entry, Θ(depth). Measured 4,096 B/level (debug) the moment #154
+            /// routed the collection-literal arm here from structural `Hash`.
+            AbsorbUsize(usize),
         }
 
         // SAFETY: same justification as `HashTask` in iterative_hash.rs.
@@ -586,6 +594,11 @@ fn generate_semantic_engine(
             while let Some(task) = stack.pop() {
                 match task {
                     #(#task_arms)*
+                    // ★ #162 — `state.write_usize(n)`, the exact call the eager
+                    // form made, issued at its own position in the stream.
+                    SemanticHashTask::AbsorbUsize(n) => {
+                        std::hash::Hasher::write_usize(state, n);
+                    }
                 }
             }
         }
@@ -614,10 +627,19 @@ fn semantic_hash_collection(
     coll_type: &CollectionType,
 ) -> TokenStream {
     match coll_type {
-        CollectionType::Vec => quote! {
-            state.write_usize(#coll_expr.len());
-            for __e in #coll_expr.iter() {
-                #element_cat::semantic_hash(__e, state);
+        // ★ #162 — one task per element, so the walk stays on the work stack.
+        //
+        // ⚠ The LENGTH PREFIX is written FIRST, so on a LIFO stack it is pushed
+        // LAST. Same discipline as `iterative_hash::hash_collection_stmts`, and the
+        // OPPOSITE of `iterative_cmp`, where `Vec`'s length is the lexicographic
+        // tiebreak and therefore pops last.
+        CollectionType::Vec => {
+            let task_variant = format_ident!("SemHash{}", element_cat);
+            quote! {
+                for __e in #coll_expr.iter().rev() {
+                    stack.push(SemanticHashTask::#task_variant(__e as *const _));
+                }
+                stack.push(SemanticHashTask::AbsorbUsize(#coll_expr.len()));
             }
         },
         CollectionType::HashBag => quote! {
@@ -1019,14 +1041,42 @@ fn generate_semantic_variant_arm(
                     // ## The defect (PROVEN AT SOURCE, not merely suspected)
                     //
                     // This arm writes `(variant_idx, structural hash)` and NO
-                    // category discriminator. Measured on the generated rholang
-                    // artifact: ALL ELEVEN collection/literal arms
-                    // (`Float::FloatLit`, `Bool::BoolLit`, `Str::StringLit`,
-                    // `Bytes::StringLit`, `List::ListLit`, `Bag::BagLit`,
-                    // `Map::MapLit`, `Set::SetLit`, `Pathmap::PathmapLit`,
-                    // `ReadZipper::Lit`, `WriteZipper::Lit`) write
-                    // `variant_idx == 1`, and ALL ELEVEN reaching `Proc::Cast*`
-                    // wrappers are TRANSPARENT — a bare `stack.push`, zero bytes.
+                    // category discriminator.
+                    //
+                    // ⚠ THE ENUMERATION BELOW IS TRANSCRIBED, NOT DERIVED, and that
+                    // is worth saying out loud: a hand-maintained mirror of a
+                    // computable domain is the exact shape that has shipped as a
+                    // non-repair four times in this campaign. It cannot be derived
+                    // in place, because this comment lives in the EMITTER and the
+                    // domain is a property of a particular grammar's expansion —
+                    // `macros` unit tests reach only
+                    // `collection_literal_language_for_tests`, not rholang. It is
+                    // therefore recorded as a DATED MEASUREMENT with the command
+                    // that reproduces it:
+                    //
+                    //   python3 - <<'PY'   # over target/generated/rholang/semantic_hash.rs
+                    //   import re; t=open(...).read()
+                    //   re.finditer(r'([A-Za-z0-9_]+)::([A-Za-z0-9_]+)\((?:v|coll)\) => \{'
+                    //               r'\s*\n\s*state\.write_u8\((\d+)u8\);', t)
+                    //   PY
+                    //
+                    // RE-DERIVED 2026-07-30 (17 literal-ish arms in total; 11 of
+                    // them write `variant_idx == 1`):
+                    //
+                    //   `Float::FloatLit`, `Bool::BoolLit`, `Str::StringLit`,
+                    //   `Bytes::BytesLit`, `List::ListLit`, `Bag::BagLit`,
+                    //   `Map::MapLit`, `Set::SetLit`, `Pathmap::PathmapLit`,
+                    //   `ReadZipper::Lit`, `WriteZipper::Lit`
+                    //
+                    // ★ The count is UNCHANGED at eleven and exactly ONE name had
+                    // gone stale: `Bytes::StringLit` → `Bytes::BytesLit`, renamed by
+                    // `713e0364` when `b"deadbeef"` landed the `![Vec<u8>] as Bytes`
+                    // carrier. The remaining six arms carry the numeric family tags
+                    // (`0xFE`/`0xFD`) or a real per-variant index, so they were never
+                    // part of the colliding class.
+                    //
+                    // All eleven reaching `Proc::Cast*` wrappers are TRANSPARENT — a
+                    // bare `stack.push`, zero bytes.
                     //
                     // So the discriminating prefix of every one of those write
                     // streams is the same single byte `1`. Two pairs collide
@@ -1034,8 +1084,35 @@ fn generate_semantic_variant_arm(
                     //
                     //   Map::MapLit / Pathmap::PathmapLit   — `PathMapLit::hash`
                     //       delegates verbatim to `HashMapLit::hash`
-                    //   Str::StringLit / Bytes::StringLit   — both payloads are
+                    //   Str::StringLit / Bytes::BytesLit    — both payloads WERE
                     //       `String`, hashed structurally
+                    //
+                    // ★★ BOTH of those pairs have since been DISSOLVED, by two
+                    // unrelated changes, and the necessity claim above is therefore
+                    // NO LONGER what it says. Measured 2026-07-30:
+                    //
+                    //   * `Str`/`Bytes`: `713e0364` gave `Bytes` a real `Vec<u8>`
+                    //     carrier. `Hash for String` writes `(bytes, 0xff)` via
+                    //     `write_str`; `Hash for Vec<u8>` writes
+                    //     `(write_usize(len), bytes)` via `[T]`. Different streams —
+                    //     so the collision is gone WITHOUT the tag, which is why
+                    //     `2eebf722` found the five previously-moved goldens passing
+                    //     unedited.
+                    //   * `Map`/`Pathmap`: #154 (this change) routes the pathmap arm
+                    //     through a value closure that writes `PathValue`'s own 1-byte
+                    //     tag per entry; the map arm does not. Different streams for
+                    //     every NON-EMPTY pathmap.
+                    //
+                    // ⇒ The residual uncovered case is exactly `{||}` vs `{}`: two
+                    // EMPTY containers, both writing `variant_idx == 1` and a zero
+                    // length and nothing else. That is a one-pair residue rather than
+                    // the eleven-member class the block above describes.
+                    //
+                    // ⚠ The tag stays DISABLED regardless, and the reason has changed
+                    // from "the (a)-vs-(b) semantics ruling is unrecorded" to "it is a
+                    // CONSENSUS-VISIBLE change with one known beneficiary". Enabling
+                    // it needs an owner and a `docs/consensus/consensus-change-register.md`
+                    // entry; it is not #162's or #154's to take unilaterally.
                     //
                     // `semantic_fingerprint` records that stream verbatim, and
                     // the inner-enum discriminant does not help: `CastMap(..)`

@@ -204,6 +204,190 @@ fn a_binder_inside_a_par_bag_was_already_alpha_canonical() {
     );
 }
 
+/// ★★ **The COMPOSITION law for the semantic stream — a DIGEST comparison, not a
+/// length or count one.**
+///
+/// #162 moved the `Vec` arm of `semantic_hash_collection` from
+///
+/// ```text
+///   state.write_usize(len);  for e in coll { Elem::semantic_hash(e, state); }
+/// ```
+///
+/// (a whole-value re-entry per element, measured 4,096 B/level) to
+/// `AbsorbUsize(len)` plus one `SemHash{Elem}` task per element. That is claimed
+/// to emit the identical stream, and the claim needs an instrument that a
+/// *value-only* change cannot slip past: the converted and unconverted forms write
+/// the SAME NUMBER OF BYTES, so any length- or count-based check is blind to a
+/// reordering or a substituted element. This compares the bytes.
+///
+/// ```math
+/// \mathrm{key}\big(\mathtt{[e_0,\;\ldots,\;e_{n-1}]}\big)
+///   \;=\; P \;\Vert\; \mathrm{len}(n) \;\Vert\; \mathrm{key}(e_0) \;\Vert\; \cdots \;\Vert\; \mathrm{key}(e_{n-1})
+/// ```
+///
+/// **What breaks it:** pushing the length prefix on the wrong side of the elements
+/// (it is written FIRST here and LAST on the `Ord` side — opposite ends, and the
+/// first draft of the sibling `Hash` conversion had them interchanged), or walking
+/// the elements forward instead of reversed so the LIFO stack emits them backwards.
+#[test]
+fn the_semantic_stream_of_a_list_is_its_elements_streams_in_index_order() {
+    // Elements chosen to be pairwise DISTINCT and asymmetric, so a reversal is
+    // visible. A palindromic payload would make the reversed walk indistinguishable
+    // from the forward one.
+    let payloads: Vec<Vec<&str>> =
+        vec![vec![], vec!["1"], vec!["1", "2"], vec!["1", "2", "3"], vec!["[1]", "2", "Nil"]];
+
+    let mut prefixes: Vec<Vec<u8>> = Vec::with_capacity(payloads.len());
+
+    for sources in &payloads {
+        let whole = semantic_key(&parse(&format!("[{}]", sources.join(", "))));
+        // The concatenation of the elements' own semantic streams, in INDEX order.
+        let mut elements: Vec<u8> = Vec::new();
+        for source in sources {
+            elements.extend_from_slice(&semantic_key(&parse(source)));
+        }
+
+        assert!(
+            whole.len() >= elements.len() && whole.ends_with(&elements),
+            "the semantic stream of `[{}]` does not end with its elements' streams \
+             concatenated in INDEX order.\n\
+             `semantic_hash` is consensus-visible (`semantic_fingerprint` → \
+             `exact_key`/`content_key` realize dedup), and this change is value-only in a \
+             fixed-width encoding — the byte COUNT is unchanged either way, so only a digest \
+             comparison can see it.\n  \
+             whole    ({:>4} B): {:02x?}\n  elements ({:>4} B): {:02x?}",
+            sources.join(", "),
+            whole.len(),
+            &whole[..whole.len().min(56)],
+            elements.len(),
+            &elements[..elements.len().min(56)]
+        );
+
+        prefixes.push(whole[..whole.len() - elements.len()].to_vec());
+    }
+
+    // The prefix is `variant discriminant ++ length`, so it varies with the LENGTH
+    // but must be identical for two payloads of equal length. Without this the
+    // `ends_with` above proves nothing — any stream splits into (rest, suffix).
+    let two_of_length_two: Vec<Vec<u8>> = ["[1, 2]", "[3, 4]"]
+        .iter()
+        .map(|source| {
+            let whole = semantic_key(&parse(source));
+            let elements: Vec<u8> = source
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .split(", ")
+                .flat_map(|e| semantic_key(&parse(e)))
+                .collect();
+            whole[..whole.len() - elements.len()].to_vec()
+        })
+        .collect();
+    assert_eq!(
+        two_of_length_two[0], two_of_length_two[1],
+        "the prefix written before the element streams differs between two lists of the \
+         SAME length, so it is carrying payload information and the composition law above \
+         is not pinning anything. It must be exactly (variant discriminant, length)."
+    );
+
+    // And the prefix must GROW with length exactly once — a sanity check that the
+    // length is in the prefix at all rather than silently omitted.
+    assert!(
+        prefixes.iter().any(|p| p != &prefixes[0]),
+        "every payload length produced the SAME prefix, so the LENGTH PREFIX is not being \
+         written. Two lists of different lengths whose elements' streams concatenate to \
+         the same bytes would then collide."
+    );
+}
+
+/// ★★ **The COLLIDING-PAIR CENSUS, made executable.**
+///
+/// `semantic_hash.rs` carries a long #151 block asserting that every one of the
+/// eleven `variant_idx == 1` literal arms writes an indistinguishable discriminating
+/// prefix, and that TWO pairs collided COMPLETELY: `Map`/`Pathmap` (because
+/// `PathMapLit::hash` delegated verbatim to `HashMapLit::hash`) and `Str`/`Bytes`
+/// (because both payloads were `String`). On the strength of that, a category tag
+/// was written, PROVEN NECESSARY, and then disabled pending a semantics ruling.
+///
+/// Both pairs have since been dissolved by unrelated changes — `713e0364` gave
+/// `Bytes` a real `Vec<u8>` carrier, and #154 gave the pathmap arm `PathValue`'s
+/// per-entry tag. This test is that state as an ASSERTION instead of a comment,
+/// because "which fingerprints collide" is precisely the kind of claim that goes
+/// stale silently: nothing in the tree was watching either dissolution, and the
+/// block still reads as though both pairs were live.
+///
+/// ⚠ The residue is recorded as a live expectation too, not as prose: `{||}` and
+/// `{}` are both EMPTY, both write `variant_idx == 1` and a zero length, and
+/// therefore still collide. If a future change separates them this test goes RED —
+/// which is the correct outcome, and the row should then move to the
+/// distinguished set with the change that did it named.
+#[test]
+fn the_fingerprint_collision_census_is_exactly_the_declared_one() {
+    // Pairs that must be DISTINGUISHED, each with the change that distinguished them.
+    let distinguished: &[(&str, &str, &str)] = &[
+        (
+            "Str vs Bytes — `713e0364`'s `![Vec<u8>] as Bytes` carrier: `Hash for String` \
+             writes `(bytes, 0xff)` through `write_str`, `Hash for Vec<u8>` writes \
+             `(write_usize(len), bytes)` through `[T]`",
+            "\"a\"",
+            "b\"61\"",
+        ),
+        (
+            "Map vs Pathmap, NON-EMPTY — #154's pathmap value closure writes `PathValue`'s \
+             1-byte tag per entry and the map's does not",
+            "{1: 2}",
+            "{|1 : 2|}",
+        ),
+    ];
+    for (why, left_source, right_source) in distinguished {
+        let left = semantic_key(&parse(left_source));
+        let right = semantic_key(&parse(right_source));
+        assert_ne!(
+            left, right,
+            "`{left_source}` and `{right_source}` have IDENTICAL semantic fingerprints, but \
+             they are on record as distinguished — {why}.\n\
+             A collision here silently MERGES two readings at realize-time observational \
+             dedup, which is the defect the #151 category tag was written for."
+        );
+    }
+
+    // ★★ THE DECLARED RESIDUE IS REFUTED AT THE SURFACE, and this row records the
+    // measurement rather than the claim it replaces.
+    //
+    // The #151 block held the category tag open for one uncovered pair: "what
+    // remains uncovered is `{||}` vs `{}` (no value bytes to tag)". Measured
+    // 2026-07-30 with `Proc::parse`:
+    //
+    //   {}        => PPar(HashBag { counts: {}, total_count: 0 })
+    //   {||}      => CastPathmap(PathmapLit(PathMapLit(HashMapLit({}))))
+    //   []        => CastList(ListLit([]))
+    //   Set()     => CastSet(SetLit(HashSetLit({})))
+    //
+    // `{}` is not a map literal at all — it is the empty PAR, a `PPar` bag, a
+    // different `Proc` variant with a different index and a four-lane commutative
+    // digest. There is NO surface spelling in shipped rholang that yields
+    // `CastMap(MapLit(∅))`, so the empty-map/empty-pathmap collision is
+    // UNREACHABLE rather than merely latent.
+    assert_ne!(
+        semantic_key(&parse("{}")),
+        semantic_key(&parse("{||}")),
+        "`{{}}` and `{{||}}` now share a semantic fingerprint. Measured 2026-07-30 they did \
+         not, because `{{}}` parses to `PPar(HashBag{{}})` — the empty PAR — and not to an \
+         empty map literal. If they collide now, the SURFACE changed: some spelling has \
+         started producing `CastMap(MapLit(∅))`, and the #151 category tag's one \
+         remaining beneficiary has become reachable."
+    );
+
+    // The shape pin that makes the assertion above mean what it says. Without it,
+    // `assert_ne!` would keep passing for any reason at all — including `{}` ceasing
+    // to parse into anything comparable.
+    assert!(
+        matches!(parse("{}"), Proc::PPar(_)),
+        "`{{}}` no longer parses to `Proc::PPar`. The reasoning above — that the empty-map \
+         vs empty-pathmap collision is UNREACHABLE because no surface yields an empty map \
+         literal — rests entirely on that fact, so it has to be re-derived."
+    );
+}
+
 /// Determinism across repeated fingerprinting of the SAME term. Weaker than the
 /// alpha-twin test, but it catches a different failure: a work-stack pool that
 /// leaks state between `semantic_hash` calls.
