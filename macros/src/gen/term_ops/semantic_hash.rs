@@ -1224,19 +1224,97 @@ fn generate_semantic_variant_arm(
             // `|` (the braced-bag and numeric-literal paths are already canonicalized).
             //
             // Fix: write a UNIFORM var tag (independent of the source category's
-            // `variant_idx`) followed by the unchanged `OrdVar` hash, so every
+            // `variant_idx`) followed by the variable's identity, so every
             // type-reading of one identifier collapses to ONE realize-dedup key while
-            // DISTINCT variables (distinct `OrdVar`) stay distinct. Sound by the same
+            // DISTINCT variables stay distinct. Sound by the same
             // same-span argument as the numeric canon: the realize-dedup only compares
             // alternatives spanning the SAME source token, i.e. the SAME variable.
             // `0xFB` is a high sentinel distinct from the numeric tags (`0xFE`/`0xFD`)
             // and from any realistic per-category `variant_idx`; even a first-byte
-            // brush with idx `0xFB` is harmless because the framed `OrdVar` hash that
-            // follows disambiguates the full key.
+            // brush with idx `0xFB` is harmless because the framed identity payload
+            // that follows disambiguates the full key.
+            //
+            // ★★ #190 — the IDENTITY PAYLOAD, and why it is NOT `Hash::hash(v, …)`.
+            //
+            // This arm used to write `std::hash::Hash::hash(v, state)` on the `OrdVar`.
+            // `OrdVar(pub Var<String>)` derives `Hash`, so for a FREE variable the
+            // payload was whatever `moniker`'s `impl Hash for FreeVar` writes, and that
+            // impl (`moniker-0.5.0/src/free_var.rs:45`) is exactly
+            //
+            //     fn hash<H: Hasher>(&self, state: &mut H) { self.unique_id.hash(state); }
+            //
+            // — `unique_id` and NOTHING else. `UniqueId(u32)` is drawn from a
+            // process-global `AtomicUsize` that starts at 0 and is never reset
+            // (`unique_id.rs:9`), and `pretty_name` — the SOURCE NAME, the only
+            // deterministic identity a free variable has — was discarded.
+            //
+            // So the entire payload of a free-variable leaf in a CONSENSUS-VISIBLE
+            // fingerprint was an accident of how many variables the process had
+            // happened to allocate. Measured 2026-07-30, the bare term `a` parsed twice
+            // (with the name→var memo cleared between, i.e. what two different NODES
+            // always see) fingerprinted 24 B both times and DIFFERED at byte 20.
+            // `semantic_hash` backs `semantic_fingerprint` → `exact_key`/`content_key`
+            // realize dedup, so two nodes whose counters had diverged would disagree
+            // about which parse readings are the same reading. Same argument as #154,
+            // different arm — and reachable with no collection and no `Scope` in the
+            // term at all, which is why #154's collection-literal repair could not have
+            // covered it.
+            //
+            // ⚠ The witness is DETERMINISM, not alpha-invariance, and the distinction
+            // decides the fix. The defect was first reported as "`for(@a <- @"c"){ Nil }`
+            // differs from its alpha-renamed twin". It does — but at this layer that is
+            // CORRECT: Rholang's `for` binds semantically, yet the AST models the
+            // receive pattern as an ordinary free `PVar` with no `Scope` and resolves
+            // the binding at COMM time through the substitution TRS. `for(@a <- c){ Nil }`
+            // and `for(@b <- c){ Nil }` are two distinct terms that `Display` renders
+            // differently, so merging their fingerprints would merge two distinct source
+            // programs. Only the SAME-SOURCE-twice instability is a defect.
+            //
+            // The encoding: `FreeVar` has exactly two fields and one of them is
+            // nondeterministic by construction, so there is no design freedom — the
+            // source name is the only deterministic key available.
+            //
+            //     Var::Free(fv)  →  0u8  ++  (1u8 ++ hash(name)) | 0u8
+            //     Var::Bound(bv) →  1u8  ++  hash(scope) ++ hash(binder)
+            //
+            // The `Var::Bound` payload is unchanged in content from the derived `Hash`
+            // (`BoundVar`'s impl writes `scope` then `binder`, dropping `pretty_name`):
+            // de-Bruijn coordinates are already alpha-canonical, which is why a `PNew`
+            // binder was never part of this defect.
+            //
+            // ⚠ THE ONE THING TRADED AWAY, gated by
+            // `languages/tests/semantic_fingerprint_free_var_identity.rs`: two DISTINCT
+            // `FreeVar`s sharing a `pretty_name` now fingerprint identically. That is
+            // precisely what `languages/src/rholang/guard_substrate.rs`'s `var_key`
+            // refuses to do, and the two are not in conflict — they answer different
+            // questions. `var_key` needs WITHIN-PROCESS binder identity ("which binder
+            // does this guard constrain?"), so it keys on `name$unique_id`. A consensus
+            // fingerprint needs CROSS-PROCESS determinism, which forbids `unique_id`
+            // outright. The surface cannot separate them either: `Display` renders both
+            // as `a`, so `parse(display(t))` already merges them. An ANONYMOUS free
+            // variable (`pretty_name: None`) gets its own `0u8` tag — separated from
+            // every named one, merged with every other anonymous one, mirroring
+            // `Display`'s `_`.
             quote! {
                 #category::#label(v) => {
                     state.write_u8(0xFBu8);
-                    std::hash::Hash::hash(v, state);
+                    match &v.0 {
+                        mettail_runtime::Var::Free(__fv) => {
+                            state.write_u8(0u8);
+                            match &__fv.pretty_name {
+                                Some(__name) => {
+                                    state.write_u8(1u8);
+                                    std::hash::Hash::hash(__name.as_str(), state);
+                                },
+                                None => state.write_u8(0u8),
+                            }
+                        },
+                        mettail_runtime::Var::Bound(__bv) => {
+                            state.write_u8(1u8);
+                            std::hash::Hash::hash(&__bv.scope, state);
+                            std::hash::Hash::hash(&__bv.binder, state);
+                        },
+                    }
                 }
             }
         },
