@@ -181,10 +181,179 @@ fn runs_within(stack: usize, depth: usize, subject_name: &str) -> bool {
 /// tripwire's derived slope are quantised to this.
 const RESOLUTION: usize = 4096;
 
-/// Smallest stack (to [`RESOLUTION`] granularity) on which `name` survives at
-/// `depth`. Exponential probe, then bisect.
-fn min_stack_for(name: &str, depth: usize) -> usize {
-    let mut hi = 16 * 1024;
+/// Where the exponential probe starts. Also — and this is the whole of #187 — the thing
+/// that fixes the smallest answer [`measure_min_stack`] can ever produce.
+const PROBE_START: usize = 16 * 1024;
+
+/// ★★ #187 — **THE INSTRUMENT FLOOR, and it is a property of the instrument rather than
+/// of any subject.**
+///
+/// [`measure_min_stack`] starts its exponential probe at [`PROBE_START`] = 16,384 B. A
+/// subject that survives that bound never enters the doubling loop, so the bisection runs
+/// on `[PROBE_START/2, PROBE_START] = [8,192, 16,384]`, and at [`RESOLUTION`] = 4,096 it
+/// terminates the first time `hi - lo <= 4,096`:
+///
+/// ```text
+///   lo = 8,192   hi = 16,384        hi - lo = 8,192  > 4,096   ⇒  mid = 12,288
+///   survives 12,288  ⇒  hi = 12,288, lo = 8,192      hi - lo = 4,096  ⇒  STOP, answer 12,288
+/// ```
+///
+/// **So 12,288 B is the smallest number this function can return, for every subject, on
+/// every build.** A subject whose true requirement is anywhere in `(0, 12,288]` reports
+/// 12,288 — and, critically, so does a subject whose true requirement is 12,000. The
+/// answer is not a measurement; it is the bisection's floor showing through.
+///
+/// ⚠ **Twelve identical readings are ONE floor, not twelve agreeing measurements.** A
+/// reader takes twelve identical numbers as strong corroboration. Here it is the exact
+/// opposite: it is the signature of an instrument that cannot resolve any of them.
+///
+/// ★ **This floor is confined to ABSOLUTE readings. It does NOT touch the 0 B/level SLOPE
+/// conclusions**, and the reason is worth stating because it is what keeps
+/// `flat_generated_drivers_are_depth_independent`'s twenty-six rows standing: if a subject
+/// reads the floor at BOTH ends of the ladder then its requirement is bounded above by the
+/// floor at both ends, so its growth is bounded above by zero. Flat between two clamped
+/// points still establishes flatness. What the floor invalidates is (a) any absolute
+/// figure quoted as a measurement and (b) any derivation that *divides by* a floored
+/// value — which is why [`assert_slope_below`] and [`assert_no_slope_over_baseline`] refuse
+/// to compute rather than compute quietly.
+///
+/// ## What the achievable floor actually is, MEASURED — and the mechanism is NOT the one
+/// on record
+///
+/// The claim on file was that the floor is `PTHREAD_STACK_MIN`-bound (16,384 on glibc
+/// x86-64, `getconf PTHREAD_STACK_MIN`), because `std::thread::Builder::stack_size` clamps
+/// every smaller request up with `cmp::max(stack, min_stack_size(attr))`
+/// (`library/std/src/sys/thread/unix.rs:74`, where `min_stack_size` is glibc's
+/// `__pthread_get_minstack` = `PTHREAD_STACK_MIN` + TLS).
+///
+/// **That is true of a DIFFERENT gate.** `f1r3node-rust-mettail/rholang/tests/stack_depth_gate.rs`
+/// bisects `GATE_STACK` and its child runs the subject on
+/// `std::thread::Builder::new().stack_size(stack)`, so every bound it poses below 16,384 is
+/// silently clamped to 16,384 and its 12,288 answers are `PTHREAD_STACK_MIN`-bound exactly
+/// as recorded.
+///
+/// ⚠ **This gate's probe is not that instrument, so `PTHREAD_STACK_MIN` is inert here.**
+/// [`runs_within`] installs `RLIMIT_STACK` with `setrlimit` in the forked child *before
+/// `exec`*, and the subject runs on that child's MAIN thread — §1.1's whole reason for
+/// existing. `RLIMIT_STACK` is not a pthread attribute and is not clamped. Measured on this
+/// box, 2026-07-30, `ast_clone` at depth 4 under a plain `ulimit -s`:
+///
+/// | `RLIMIT_STACK` | outcome | what it means |
+/// |---|---|---|
+/// | ≤ 11 KiB | `execve` fails, `E2BIG` "argument list too long" | the question CANNOT BE POSED |
+/// | 12 – 20 KiB | `SIGSEGV` (139) | the child ran and genuinely wants more |
+/// | ≥ 24 KiB | exit 0 | survives |
+///
+/// So the real barrier is Linux's rule that a child's `argv` + `envp` block must fit inside
+/// the new `RLIMIT_STACK`: below 3 pages the kernel refuses the `exec` outright. And
+/// [`runs_within`] maps that refusal to `Err(_) => false` — **the same verdict it gives a
+/// genuine overflow.** That indistinguishability is the actual defect: the instrument cannot
+/// tell "this subject needs more" from "I cannot ask this question".
+///
+/// ⇒ The achievable floor is **12 KiB (3 pages)** here, and it is *environment-size*-bound,
+/// not `PTHREAD_STACK_MIN`-bound. That is a materially weaker claim than "a platform
+/// constant": a smaller `envp` could in principle lower it, so it is a *weak* tunable. It
+/// coincides numerically with the algorithmic floor above, which is why lowering
+/// [`PROBE_START`] would buy nothing on this platform.
+/// ## ⚠★★ THE PREMISE THAT BROUGHT #187 HERE IS REFUTED FOR THIS GATE — MEASURED
+///
+/// The report was: *"twelve of the fifteen depth subjects read exactly 12 KiB at 4, 12 KiB
+/// at 4,096 — that is ONE floor showing through, not twelve agreeing measurements."* The
+/// reasoning is exactly right and the diagnosis is exactly right for the gate it came from.
+/// It is **not** this gate's state. `report_slopes`'s fifteen subjects, bisected on this
+/// build 2026-07-30:
+///
+/// ```text
+///   lower_neg          61,440 B  ←  the SMALLEST reading in the file, 5.0× the floor
+///   lower_par          69,632
+///   lower_depth        73,728
+///   lower_leak         73,728
+///   lower_add          77,824
+///   lower_width        77,824
+///   par_drop          208,896 … 1,527,808
+///   lower_formula     249,856 … 1,507,328
+///   parse_depth       491,520      parse_width 491,520      reproducer 487,424
+///   new_build         561,152 … 4,349,952
+///   lower_new         598,016 … 4,382,720
+///   ast_drop / render  (per `residue_*`)
+/// ```
+///
+/// **Not one subject reads 12,288 B, at either end, on either axis.** The floor is REAL and
+/// provable from the algorithm, and it is entirely LATENT here — one leaner build away, which
+/// is why the instrument is fixed rather than the numbers. Recording the refutation rather
+/// than quietly acting on the premise, because "twelve identical readings" was itself the
+/// kind of transcribed claim this campaign keeps finding drifted.
+///
+/// ## ★ THE AUDIT of every absolute use, and its result — 2026-07-30
+///
+/// The floor invalidates absolute figures. So every absolute stack quantity in this file and
+/// in `docs/design/audits/lowering-stack-depth-audit-2026-07-27.md` was enumerated
+/// mechanically (byte / KiB / MiB quantities ≥ one page, EXCLUDING `B/level`, `B/step` and
+/// `B/sibling`, which are slopes) and compared against 12,288 B:
+///
+/// | artifact | absolute quantities | at or below the floor |
+/// |---|---:|---:|
+/// | `rholang-runtime/tests/stack_depth_gate.rs` | 35 | 11 |
+/// | `docs/design/audits/lowering-stack-depth-audit-2026-07-27.md` | 20 | 2 |
+/// | **total** | **55** | **13** |
+///
+/// **All 13 are references to the floor and the resolution CONSTANTS themselves** — the
+/// eleven in this doc block and its siblings, plus two mentions of the 4 KiB [`RESOLUTION`]
+/// in the audit. **ZERO recorded MEASUREMENTS are at or below the floor.** The closest is
+/// 24,576 B (2.0× the floor), and today's run puts the cheapest subject at 28,672 B (2.3×).
+///
+/// ⇒ **No figure in this repository needs restating.** What was missing was not a correction
+/// but the instrument change below, so that a future floored reading announces itself instead
+/// of arriving as `12288`.
+///
+/// ⚠ **`f1r3node-rust-mettail` IS the affected repository and is NOT changed here.** Its
+/// `rholang/tests/stack_depth_gate.rs` has a byte-identical `min_stack_for` but a
+/// `GATE_STACK` / `thread::Builder::stack_size` child, so its floor is genuinely
+/// `PTHREAD_STACK_MIN`-bound and its 12,288 answers are the clamp. Its
+/// `BUILD_DEPTH_INVENTORY` and `docs/design/stack-safety/stack-safety-report-2026-07-29.md`
+/// are where the absolute-figure audit has to be repeated. Reported, not edited — a
+/// different repository and a different owner.
+const SMALLEST_POSEABLE_STACK: usize = 12 * 1024;
+
+/// The result of a minimum-stack bisection — and the point of the type is that
+/// [`MinStack::BelowResolution`] is not spellable as a number.
+///
+/// ★ #187: `min_stack_for` used to return `usize`, so a subject under the instrument floor
+/// came back as `12288` and was indistinguishable from a subject genuinely measured at
+/// 12,288 B. Making the two cases different *variants* is what stops a below-floor subject
+/// masquerading as a 12 KiB subject; every caller now has to say what it does with the
+/// unresolved case, and the two callers that would have DIVIDED by it refuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MinStack {
+    /// Bisected to [`RESOLUTION`]: the subject needs at most this, and more than
+    /// `this - RESOLUTION`.
+    Bytes(usize),
+    /// The subject survived [`SMALLEST_POSEABLE_STACK`], the smallest bound the instrument
+    /// can pose at all. Its true requirement is somewhere in `(0, SMALLEST_POSEABLE_STACK]`
+    /// and this instrument cannot say where.
+    BelowResolution,
+}
+
+impl std::fmt::Display for MinStack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MinStack::Bytes(bytes) => write!(f, "{} KiB", bytes / 1024),
+            // ⚠ Never renders as a number. That is the entire mechanism.
+            MinStack::BelowResolution => {
+                write!(f, "<{} KiB (BELOW THE INSTRUMENT FLOOR)", SMALLEST_POSEABLE_STACK / 1024)
+            },
+        }
+    }
+}
+
+/// Smallest stack (to [`RESOLUTION`] granularity) on which `name` survives at `depth`.
+/// Exponential probe, then bisect.
+///
+/// ★ #187: answers [`MinStack::BelowResolution`] rather than the floor value when the
+/// subject survives [`SMALLEST_POSEABLE_STACK`]. See that constant for why the floor exists
+/// and what it does and does not invalidate.
+fn measure_min_stack(name: &str, depth: usize) -> MinStack {
+    let mut hi = PROBE_START;
     while hi <= 512 * 1024 * 1024 && !runs_within(hi, depth, name) {
         hi *= 2;
     }
@@ -194,6 +363,13 @@ fn min_stack_for(name: &str, depth: usize) -> usize {
         name,
         depth
     );
+    // ★ The floor check, and it is a MEASUREMENT rather than an inference from
+    // `hi == PROBE_START`. Asking the smallest poseable bound directly is what separates
+    // "survives 16 KiB" (which could still need 13 KiB) from "survives 12 KiB" (which the
+    // instrument cannot resolve further).
+    if hi == PROBE_START && runs_within(SMALLEST_POSEABLE_STACK, depth, name) {
+        return MinStack::BelowResolution;
+    }
     let mut lo = hi / 2;
     while hi - lo > RESOLUTION {
         let mid = (lo + hi) / 2;
@@ -203,7 +379,32 @@ fn min_stack_for(name: &str, depth: usize) -> usize {
             lo = mid;
         }
     }
-    hi
+    MinStack::Bytes(hi)
+}
+
+/// The bisected minimum in BYTES, for a caller that genuinely needs an absolute number.
+///
+/// ⚠ It refuses rather than substituting the floor. `why` names what the number was going
+/// to be used for, so the failure says which derivation became unsound rather than only
+/// that one did.
+fn min_stack_bytes(name: &str, depth: usize, why: &str) -> usize {
+    match measure_min_stack(name, depth) {
+        MinStack::Bytes(bytes) => bytes,
+        MinStack::BelowResolution => panic!(
+            "#187 INSTRUMENT FLOOR: `{name}` survives {} B at parameter {depth}, which is the \
+             smallest `RLIMIT_STACK` this instrument can pose — below it `execve` fails with \
+             `E2BIG` and `runs_within` cannot distinguish that from an overflow. So its \
+             minimum stack is UNRESOLVED, and {why} would be computed from a floor value \
+             rather than from a measurement.\n\
+             Substituting {} B here is exactly the defect #187 names: twelve subjects reading \
+             the same floor look like twelve agreeing measurements and are one instrument \
+             limit. Either raise the ladder's parameters until this end clears the floor, or \
+             state the conclusion as a BOUND (`≤ {} B`) instead of a value.",
+            SMALLEST_POSEABLE_STACK,
+            SMALLEST_POSEABLE_STACK,
+            SMALLEST_POSEABLE_STACK
+        ),
+    }
 }
 
 /// The maximum growth in minimum-stack, across the whole zero-slope ladder, that
@@ -253,32 +454,52 @@ fn assert_width_independent(name: &str, stack: usize) {
 
 /// The zero-slope half: minimum stack must not grow across a ~1,000× parameter
 /// range. Profile-independent — it compares a traversal against ITSELF.
+///
+/// ★★ #187 — **THE ONE CONCLUSION THE INSTRUMENT FLOOR DOES NOT INVALIDATE**, and the
+/// reason is stated here because this is the assertion that carries twenty-six rows.
+///
+/// If both ends read [`MinStack::BelowResolution`] the subject's requirement is bounded
+/// above by [`SMALLEST_POSEABLE_STACK`] at BOTH ends, so its growth is bounded above by
+/// zero. **Flat between two clamped points still establishes flatness.** The floor
+/// invalidates absolute figures and any derivation that DIVIDES by one; it does not
+/// invalidate a difference that is provably ≤ 0.
+///
+/// A MIXED pair — one end resolved, one below the floor — is still sound in the direction
+/// this gate cares about, and only in that direction: the below-floor end is `≤ floor`, so
+/// the growth is at most `resolved − 0` if the floor is at the low end, and at most
+/// `floor − resolved` (i.e. negative, hence 0) if it is at the high end. Both are computed
+/// as bounds below rather than as values.
 fn assert_no_slope(name: &str, lo_param: usize, hi_param: usize, axis: &str) {
-    let lo = min_stack_for(name, lo_param);
-    let hi = min_stack_for(name, hi_param);
-    let growth = hi.saturating_sub(lo);
+    let lo = measure_min_stack(name, lo_param);
+    let hi = measure_min_stack(name, hi_param);
+    // The GREATEST growth consistent with the two readings. A below-floor reading is an
+    // upper bound of `SMALLEST_POSEABLE_STACK` and a lower bound of 0, so the worst case
+    // puts the floor at the low end and the ceiling at the high end.
+    let growth = match (lo, hi) {
+        // Both clamped: growth ≤ floor − 0 is not tight enough, but growth ≤ 0 IS, because
+        // both are bounded by the SAME floor and the gate's question is whether the
+        // requirement grows with the parameter. Two values in `(0, floor]` differ by less
+        // than `floor`, which is under `ZERO_SLOPE_TOLERANCE` = 4·4,096 by construction.
+        (MinStack::BelowResolution, MinStack::BelowResolution) => 0,
+        (MinStack::BelowResolution, MinStack::Bytes(high)) => high.saturating_sub(0),
+        (MinStack::Bytes(_), MinStack::BelowResolution) => 0,
+        (MinStack::Bytes(low), MinStack::Bytes(high)) => high.saturating_sub(low),
+    };
     assert!(
         growth <= ZERO_SLOPE_TOLERANCE,
-        "ZERO-SLOPE GATE FAILED for `{}` on the {} axis: minimum stack grew {} KiB \
-         between {} = {} ({} KiB) and {} = {} ({} KiB), which is {} B per step.\n\
-         A converted traversal's native stack must not depend on {}.",
-        name,
-        axis,
+        "ZERO-SLOPE GATE FAILED for `{name}` on the {axis} axis: minimum stack grew {} KiB \
+         between {axis} = {lo_param} ({lo}) and {axis} = {hi_param} ({hi}), which is {} B per \
+         step.\n\
+         A converted traversal's native stack must not depend on {axis}.\n\
+         ⚠ #187: a reading rendered `<{} KiB (BELOW THE INSTRUMENT FLOOR)` is NOT a \
+         measurement of {} B — it is the smallest bound this instrument can pose. The growth \
+         above is the WORST CASE consistent with the readings, not a value.",
         growth / 1024,
-        axis,
-        lo_param,
-        lo / 1024,
-        axis,
-        hi_param,
-        hi / 1024,
         growth / (hi_param - lo_param),
-        axis
+        SMALLEST_POSEABLE_STACK / 1024,
+        SMALLEST_POSEABLE_STACK
     );
-    println!(
-        "  {name} ({axis}): O(1) — {} KiB at {lo_param}, {} KiB at {hi_param}",
-        lo / 1024,
-        hi / 1024
-    );
+    println!("  {name} ({axis}): O(1) — {lo} at {lo_param}, {hi} at {hi_param}");
 }
 
 /// **The bar for a subject whose ladder contains a Θ(depth) traversal it does not own.**
@@ -298,9 +519,17 @@ fn assert_no_slope(name: &str, lo_param: usize, hi_param: usize, axis: &str) {
 /// Measured 2026-07-27, debug: `lower_new` 618,496 @ 512 and 4,403,200 @ 4,096; `new_build`
 /// 561,152 and 4,341,760. Delta 57,344 → 61,440, i.e. **1.1 B/level**. In release both are flat
 /// (LLVM flattens the moniker walk), so the delta is 0.
+/// ⚠★ #187: this function SUBTRACTS two absolute readings, so it is one of the two
+/// derivations the instrument floor invalidates outright. `saturating_sub` of two floored
+/// values is 0 — a difference that would read as "the arm adds nothing" for a subject whose
+/// excess was never resolved at all. All four readings therefore go through
+/// [`min_stack_bytes`], which refuses rather than substituting the floor.
 fn assert_no_slope_over_baseline(name: &str, baseline: &str, lo_param: usize, hi_param: usize) {
-    let lo = min_stack_for(name, lo_param).saturating_sub(min_stack_for(baseline, lo_param));
-    let hi = min_stack_for(name, hi_param).saturating_sub(min_stack_for(baseline, hi_param));
+    let why = "the baseline-relative excess (a SUBTRACTION of two absolute readings)";
+    let lo = min_stack_bytes(name, lo_param, why)
+        .saturating_sub(min_stack_bytes(baseline, lo_param, why));
+    let hi = min_stack_bytes(name, hi_param, why)
+        .saturating_sub(min_stack_bytes(baseline, hi_param, why));
     let growth = hi.saturating_sub(lo);
     assert!(
         growth <= ZERO_SLOPE_TOLERANCE,
@@ -324,9 +553,16 @@ fn assert_no_slope_over_baseline(name: &str, baseline: &str, lo_param: usize, hi
 ///
 /// This deliberately does NOT claim the traversal is fixed. It claims only that
 /// it has not got worse. Every caller documents why its subject is still here.
+///
+/// ⚠★ #187: this function DIVIDES a difference of two absolute readings, so it is the second
+/// derivation the instrument floor invalidates outright — a floored end would make the
+/// derived B/step a function of the bisection's floor rather than of the subject. Both
+/// readings go through [`min_stack_bytes`], which refuses rather than substituting.
 fn assert_slope_below(name: &str, ceiling_bytes_per_step: usize, lo: usize, hi_param: usize) {
-    let s_lo = min_stack_for(name, lo);
-    let s_hi = min_stack_for(name, hi_param);
+    let why = "the derived B/step (a DIVISION by the parameter span of a difference of two \
+               absolute readings)";
+    let s_lo = min_stack_bytes(name, lo, why);
+    let s_hi = min_stack_bytes(name, hi_param, why);
     let per_step = s_hi.saturating_sub(s_lo) / (hi_param - lo);
 
     assert!(
@@ -1468,7 +1704,12 @@ fn parsing_is_width_independent() {
 ///
 /// The parser has a large fixed intercept — ~460 KiB of generated recognizer tables
 /// and driver frame. (It is genuinely the parser's, not the harness's: the cheapest
-/// subject in this binary, `lower_width`, bisects to 98,304 bytes.) Below depth
+/// *lowering* subject in this binary, `lower_width`, bisects to 73,728 B — the figure here
+/// read 98,304 B when it was written and is corrected rather than deleted, because a 25 %
+/// drift in an intercept is the kind of number that is worth knowing has moved. The
+/// cheapest subject overall is `ast_is_ground` / `ast_clone` at 28,672 B, which is where
+/// #187's instrument-floor question lands: 2.3× the floor, so still a measurement.) Below
+/// depth
 /// ≈ 256 the per-level cost is entirely **masked** by that intercept, so a ladder
 /// confined to 16 → 128 reads a flat line and reports a slope of zero.
 ///
@@ -1533,6 +1774,102 @@ fn reported_reproducer_survives_the_default_main_thread_stack() {
     );
 }
 
+/// ★★ **#187 — THE INSTRUMENT'S OWN FLOOR, ASSERTED RATHER THAN ASSUMED.**
+///
+/// Three claims, and each is a thing a reader would otherwise have to take on trust:
+///
+/// 1. **The floor is REAL.** One rung below [`SMALLEST_POSEABLE_STACK`] the instrument
+///    genuinely cannot pose the question: `execve` fails with `E2BIG` because Linux
+///    requires the child's `argv` + `envp` block to fit inside the new `RLIMIT_STACK`. If
+///    this ever starts *succeeding*, the floor has moved and the constant is stale — which
+///    matters, because the constant is what separates "unresolved" from "12,288 B".
+/// 2. **The floor is REPORTED, not disguised.** A reading below it must render as
+///    `<12 KiB (BELOW THE INSTRUMENT FLOOR)`. [`MinStack`] makes that structural — there is
+///    no `usize` for the caller to mistake for a measurement — and this row pins the
+///    rendering, because the whole defect was a value that *looked* like a measurement.
+/// 3. **No subject currently sits on the floor**, so every absolute figure this gate prints
+///    today is a measurement. That is a MEASURED claim about this build, not a property of
+///    the design: the cheapest subject in the binary bisects to 28,672 B, 2.3× the floor. If a
+///    leaner build ever puts a subject under it, the instrument now says so instead of
+///    quoting 12,288.
+///
+/// ⚠★★ **A SECOND TRAP IN THE SAME FAMILY, and it belongs where the instrument is
+/// documented: a slope measured from a SINGLE derived function does not transfer to a FAMILY
+/// of free functions that reproduces it.**
+///
+/// The worked case is `f1r3node-rust-mettail`'s `clone_oracle` — a hand-written family of
+/// free functions proved *semantically* identical to the pre-conversion
+/// `<Par as Clone>::clone` (byte-identical on eight axes over 67 enumerated shapes,
+/// `models/tests/clone_equivalence_corpus.rs`). Semantic identity is not frame-layout
+/// identity, and the divergence is PROFILE-DEPENDENT:
+///
+/// ```text
+///                    oracle (family of free fns)      derive (one function)
+///   debug                    16,128 B/level               16,493 B/level    − 2.2 %
+///   release                   7,021 B/level                3,254 B/level    + 116 %
+/// ```
+///
+/// Under `-O` a family of free functions inlines differently from one
+/// `<Par as Clone>::clone`, and the family costs **2.16×** more per level. Both numbers are
+/// correct about what they measured; only 3,254 answers "what does the derive cost".
+///
+/// ⇒ **The rule.** A per-level cost is a property of the *call chain that actually exists*,
+/// not of the semantics it implements. Re-measure after any change that splits or merges the
+/// functions in a chain, and never carry a slope across such a change — in debug you may get
+/// away with it (2.2 % here), in release you will not (116 %).
+///
+/// ★ Two qualifications that make the rule usable rather than merely alarming. First, the
+/// divergence there is CONSERVATIVE for every leg that uses the oracle as a *control*: those
+/// legs want the control to be expensive, so an over-costly control cannot manufacture a
+/// false green. Second, it is the RELEASE profile that diverges, so a debug-only
+/// cross-validation between a proxy and the real thing is weak evidence that they agree.
+#[test]
+fn the_instrument_floor_is_reported_and_no_subject_sits_on_it() {
+    // (1) One rung below the floor, the question cannot be posed at all.
+    let below = SMALLEST_POSEABLE_STACK - RESOLUTION;
+    assert!(
+        !runs_within(below, 4, "ast_clone"),
+        "#187: `ast_clone` now SURVIVES an `RLIMIT_STACK` of {below} B, one {RESOLUTION}-byte \
+         rung below `SMALLEST_POSEABLE_STACK`. Measured 2026-07-30 that bound made `execve` \
+         itself fail with `E2BIG` (Linux requires the child's argv+envp block to fit inside \
+         the new stack), so the floor constant was derived from where the instrument stops \
+         being able to ASK. If a child now runs there, the floor has moved and \
+         `SMALLEST_POSEABLE_STACK` is stale — which makes the difference between `unresolved` \
+         and a {SMALLEST_POSEABLE_STACK} B reading wrong in the direction that hides a \
+         subject."
+    );
+
+    // (2) The unresolved case NEVER renders as a number.
+    let rendered = MinStack::BelowResolution.to_string();
+    assert!(
+        !rendered.contains(&SMALLEST_POSEABLE_STACK.to_string())
+            && rendered.contains("BELOW THE INSTRUMENT FLOOR"),
+        "#187: `MinStack::BelowResolution` renders as {rendered:?}. It must not be mistakable \
+         for a measurement — the entire defect was that a floored bisection returned the \
+         floor VALUE, so twelve unresolved subjects read as twelve agreeing measurements of \
+         12 KiB. It has to say it is a bound."
+    );
+
+    // (3) No subject sits on the floor on this build. Scoped to the three cheapest subjects
+    //     in the binary — a full sweep would be ~45 bisections and these are the only
+    //     candidates, since every other subject's floor is strictly above theirs.
+    for name in ["ast_clone", "ast_is_ground", "lower_width"] {
+        let measured = measure_min_stack(name, 4);
+        assert!(
+            matches!(measured, MinStack::Bytes(bytes) if bytes > SMALLEST_POSEABLE_STACK),
+            "#187: `{name}` measured {measured} at parameter 4. It is at or below the \
+             instrument floor, so its absolute reading is a BOUND and not a value.\n\
+             This is not automatically a defect — a cheaper build is good news — but every \
+             absolute figure derived from it (the audit's §9 tables, the stack-safety report) \
+             must be restated as `<= {} B` rather than as a number, and \
+             `assert_slope_below` / `assert_no_slope_over_baseline` will now refuse to derive \
+             from it. ★ The SLOPE conclusions are unaffected: flat between two floored points \
+             still establishes flatness (see `assert_no_slope`).",
+            SMALLEST_POSEABLE_STACK
+        );
+    }
+}
+
 /// Measurement driver: prints the bisected minimum stack for every subject at a
 /// ladder of parameters, and the derived bytes-per-step. `#[ignore]`d because it
 /// is an INSTRUMENT, not an assertion — the assertions above are the gate.
@@ -1561,17 +1898,50 @@ fn report_slopes() {
         ("ast_drop", &[512, 4096]),
         ("render", &[512, 4096]),
     ];
+    // ★★ #187 — THESE FIFTEEN ROWS ARE THE INSTRUMENT-FLOOR EXHIBIT, and the reason this
+    // reporter changed shape.
+    //
+    // It printed one absolute byte count per rung and then divided the endpoints, so a
+    // subject sitting on the bisection floor produced the line `name,4,12288` — a number
+    // indistinguishable from a genuine 12,288 B measurement — and a derived slope of
+    // `(12288 - 12288)/span = 0.0` that looked like a result. Twelve such rows read as
+    // twelve agreeing measurements and are ONE floor showing through. See
+    // `SMALLEST_POSEABLE_STACK`.
+    //
+    // Now: a floored rung prints `BELOW-FLOOR` rather than a number, and the derived slope
+    // is printed only when BOTH endpoints resolved. When either is floored the slope line
+    // says which end could not be resolved, because a bound is a different claim from a
+    // value and a reader must not have to infer which one is on the page.
     println!("subject,param,min_stack_bytes");
     for (name, ladder) in subjects {
-        let mut points: Vec<(usize, usize)> = Vec::with_capacity(ladder.len());
+        let mut points: Vec<(usize, MinStack)> = Vec::with_capacity(ladder.len());
         for &p in *ladder {
-            let s = min_stack_for(name, p);
-            println!("{name},{p},{s}");
+            let s = measure_min_stack(name, p);
+            match s {
+                MinStack::Bytes(bytes) => println!("{name},{p},{bytes}"),
+                MinStack::BelowResolution => println!(
+                    "{name},{p},BELOW-FLOOR (<={}) # unresolved; the instrument cannot pose a \
+                     smaller bound",
+                    SMALLEST_POSEABLE_STACK
+                ),
+            }
             points.push((p, s));
         }
         let (p0, s0) = points[0];
         let (p1, s1) = points[points.len() - 1];
-        let slope = (s1 as f64 - s0 as f64) / (p1 as f64 - p0 as f64);
-        println!("# {name}: {slope:.1} B/step over {p0}..{p1}");
+        match (s0, s1) {
+            (MinStack::Bytes(b0), MinStack::Bytes(b1)) => {
+                let slope = (b1 as f64 - b0 as f64) / (p1 as f64 - p0 as f64);
+                println!("# {name}: {slope:.1} B/step over {p0}..{p1}");
+            },
+            _ => println!(
+                "# {name}: SLOPE NOT DERIVED over {p0}..{p1} — {p0} read {s0} and {p1} read \
+                 {s1}. Dividing a difference of floored readings yields the FLOOR's slope, \
+                 not the subject's. Raise the ladder until both ends clear {} B, or state \
+                 the result as the bound `<= {} B at both ends`, which is still enough to \
+                 establish FLATNESS (see `assert_no_slope`).",
+                SMALLEST_POSEABLE_STACK, SMALLEST_POSEABLE_STACK
+            ),
+        }
     }
 }
