@@ -101,11 +101,127 @@
 //! [`WholeValueReason::ElementIsNotACategory`] — which is *also* stack-safe,
 //! because a container of primitives has no sub-terms to recurse into.
 
+use super::subst::FieldInfo;
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
+
+/// ★ **THE CARRIER.** What a constructor field's runtime type actually *is*, as
+/// one closed value — the question every per-field traversal emitter has to
+/// answer before it can consult [`plan_for`].
+///
+/// ## Why this exists (#197)
+///
+/// [`plan_for`] answers *"how do I walk this container's elements?"*. It is
+/// handed an `element_cat` and a [`CollectionType`], and it never sees the
+/// `Option` layer — because the `Option` layer does not live in the collection
+/// type at all. It lives in a SEPARATE boolean, [`FieldInfo::is_optional`], and
+/// so the question *"is there an `Option` between the field and the container?"*
+/// was answered independently, by hand, at every emitter site — as an
+/// `if field.is_optional { … }` ladder that each site wrote for itself.
+///
+/// Nine such ladders were correct. Two were not:
+/// `iterative_cmp::generate_eq_binder_arm` and
+/// `…::generate_eq_multi_binder_arm` tested `is_collection` and never tested
+/// `is_optional`, so an `Option<Vec<Proc>>` pre-scope field was handed to the
+/// container walk and the generated tree failed to compile — `Option::len` is
+/// private (E0624) and `&Vec<Proc> as *const Proc` is not a cast (E0606).
+///
+/// ⚠ The defect is not a missing `match` arm. It is that the shape was spelled
+/// as *a conjunction of booleans re-derived per site*, and a boolean ladder has
+/// no exhaustiveness checker. This enum is the repair: the flag product is
+/// projected ONCE, by [`field_carrier`], into a value that consumers must match.
+/// `macros/src/gen/generatability.rs`'s 13 `GeneratorGap` discriminants are the
+/// precedent — **consumers match without a wildcard**, so a sixth carrier is a
+/// compile error at every site rather than a silent fall-through at some of them.
+///
+/// ## The five carriers, and why exactly five
+///
+/// The classification is derived from `FieldInfo`'s flags, not enumerated by
+/// hand. `is_predicate`/`is_opaque_leaf()` collapse to one carrier because their
+/// EMISSION is identical everywhere (a bare `Eq`/`Ord` on a value with no
+/// sub-terms), and both absorb `is_optional` because `Option<T>` is itself
+/// `Eq`/`Ord`/`Hash` whenever `T` is. That leaves the free product of the two
+/// remaining independent bits, `is_collection × is_optional`:
+///
+/// | `is_collection` | `is_optional` | carrier | runtime type |
+/// |---|---|---|---|
+/// | — | — | [`Leaf`](FieldCarrier::Leaf) (predicate / capture) | `BehavioralPred`, `String`, `Arc<FltNode>`, or their `Option`s |
+/// | `false` | `false` | [`Child`](FieldCarrier::Child) | `Box<Cat>` |
+/// | `false` | `true` | [`OptionalChild`](FieldCarrier::OptionalChild) | `Option<Box<Cat>>` / `Option<Scope<…>>` |
+/// | `true` | `false` | [`Collection`](FieldCarrier::Collection) | `Vec<E>`, `HashBag<E>`, `HashSetLit<E>`, `HashMapLit<K,V>`, `PathMapLit<K,V>` |
+/// | `true` | `true` | [`OptionalCollection`](FieldCarrier::OptionalCollection) | `Option<` any of the above `>` |
+///
+/// ⇒ `1 + 2 × 2 = 5`. Exhaustive by construction.
+///
+/// ★ Every one of these five is expressible by the DSL in EVERY field position —
+/// `Regular` fields, `Binder` pre-scope and `MultiBinder` pre-scope all build
+/// their `Vec<FieldInfo>` through the same
+/// [`field_infos_from_term_param`](super::subst::field_infos_from_term_param)
+/// call with `in_optional: false`, and `TermParam::Optional` flips the flag for
+/// everything nested inside it. So a position that no bundled grammar happens to
+/// exercise is VACUOUS BY CORPUS, never vacuous by construction, and an emitter
+/// that handles only the shapes today's grammars reach is wrong for a shape the
+/// DSL admits. That is why the repair is in the emitter and never in a fixture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FieldCarrier {
+    /// A semantic-predicate slot (`?g:Guard` → `BehavioralPred`) or an opaque
+    /// capture leaf (`v@Tok` → `String`, `*flt(…)` → `Arc<FltNode>`), optional or
+    /// not. No sub-terms, so no descent and no container walk: every traversal
+    /// compares/hashes it whole, and `Option<T>` behaves identically to `T`.
+    Leaf,
+    /// A `Box<Cat>` category child — the descent every work-stack driver exists
+    /// to express as a task.
+    Child,
+    /// An `Option<Box<Cat>>` / `Option<Scope<…>>` child (Opt-Group). Still one
+    /// descent, but guarded by a `Some`/`None` discriminant that the emitter has
+    /// to compare BEFORE it can push.
+    OptionalChild,
+    /// A container OF SUB-TERMS. `coll_type` selects the iteration shape; pass it
+    /// with the element category to [`plan_for`] to learn whether the elements
+    /// may be walked or the container must go whole.
+    Collection { coll_type: CollectionType },
+    /// An `Option<Container>`. ⚠ The container's elements are NOT reachable by the
+    /// same walk: `Option` has no public `len`, its `iter()` yields the CONTAINER
+    /// (not its elements), and there is no per-element task to push until the
+    /// `Option` has been destructured. Emitters either destructure it first (the
+    /// `semantic_hash` and `iterative_hash` form) or compare/hash the whole
+    /// `Option<Container>` through its own derived impl (the `Ord`/`Eq` form).
+    OptionalCollection { coll_type: CollectionType },
+}
+
+/// Project a [`FieldInfo`]'s flags onto its [`FieldCarrier`]. TOTAL: every
+/// `FieldInfo` has exactly one carrier, and the order of the tests is part of the
+/// contract — see the table on [`FieldCarrier`].
+///
+/// ⚠ `coll_type` is defaulted to [`CollectionType::HashBag`] when a collection
+/// field carries none, which reproduces the
+/// `field.coll_type.clone().unwrap_or(CollectionType::HashBag)` that every call
+/// site open-coded before this function existed. It is a fail-safe default rather
+/// than a live case — `variant_kind_from_items` and `field_info_from_type_expr`
+/// always record a `coll_type` for a collection field — and it is centralised
+/// here so the default cannot differ between two emitters.
+pub(crate) fn field_carrier(field: &FieldInfo) -> FieldCarrier {
+    // ★ Leaf FIRST, and it absorbs `is_optional`. A leaf's `category` is a
+    // PLACEHOLDER ident (`Guard`, `String`, `FltNode`) that names no category, so
+    // any later branch that reads `category` would build a task variant that does
+    // not exist. Every correct emitter in the tree tests these two flags first.
+    if field.is_predicate || field.is_opaque_leaf() {
+        return FieldCarrier::Leaf;
+    }
+    match (field.is_collection, field.is_optional) {
+        (true, true) => FieldCarrier::OptionalCollection {
+            coll_type: field.coll_type.clone().unwrap_or(CollectionType::HashBag),
+        },
+        (true, false) => FieldCarrier::Collection {
+            coll_type: field.coll_type.clone().unwrap_or(CollectionType::HashBag),
+        },
+        (false, true) => FieldCarrier::OptionalChild,
+        (false, false) => FieldCarrier::Child,
+    }
+}
 
 /// Direction in which the emitted loop visits a container's sub-term positions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -509,6 +625,192 @@ pub(crate) fn for_each_owned_subterm(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gen::term_ops::subst::OpaqueLeafKind;
+
+    /// Build a `FieldInfo` from the raw flag product, so the carrier census below
+    /// can enumerate the product rather than hand-listing the shapes it expects.
+    fn field_with(
+        is_collection: bool,
+        coll_type: Option<CollectionType>,
+        is_predicate: bool,
+        is_optional: bool,
+        opaque_leaf: Option<OpaqueLeafKind>,
+    ) -> FieldInfo {
+        FieldInfo {
+            category: quote::format_ident!("Proc"),
+            is_collection,
+            coll_type,
+            is_predicate,
+            is_optional,
+            opaque_leaf,
+        }
+    }
+
+    /// ★★ #197 — THE CENSUS, run over the CLASSIFIER rather than over generated
+    /// output.
+    ///
+    /// The defect this test exists to prevent was invisible to any inspection of
+    /// `target/generated/**`: a field position that no bundled grammar happens to
+    /// exercise emits nothing at all, so a grep over the artifact is structurally
+    /// blind to it. Only the deciding function can be asked. This walks the FULL
+    /// flag product — every combination of `is_collection`, `is_optional`,
+    /// `is_predicate` and `opaque_leaf` — and asserts [`field_carrier`] is TOTAL
+    /// (every input has a carrier) and DISCRIMINATING (each of the five is
+    /// actually produced by some input, so a classifier that collapsed to a single
+    /// constant would fail).
+    #[test]
+    fn the_carrier_classification_is_total_and_every_carrier_is_reachable() {
+        use std::collections::HashSet;
+
+        let leaf_kinds = [None, Some(OpaqueLeafKind::TokenText), Some(OpaqueLeafKind::GuestBody)];
+        let coll_types = [
+            None,
+            Some(CollectionType::Vec),
+            Some(CollectionType::HashBag),
+            Some(CollectionType::HashSet),
+            Some(CollectionType::HashMap),
+            Some(CollectionType::PathMap),
+        ];
+
+        let mut produced: HashSet<&'static str> = HashSet::new();
+        let mut cells = 0usize;
+
+        for is_collection in [false, true] {
+            for is_optional in [false, true] {
+                for is_predicate in [false, true] {
+                    for leaf in leaf_kinds {
+                        for coll_type in &coll_types {
+                            cells += 1;
+                            let field = field_with(
+                                is_collection,
+                                coll_type.clone(),
+                                is_predicate,
+                                is_optional,
+                                leaf,
+                            );
+                            // TOTALITY: the classifier returns for every input. A
+                            // `match` on the result with no wildcard is what makes
+                            // a future sixth carrier a compile error at every
+                            // consumer instead of a silent fall-through at some.
+                            produced.insert(match field_carrier(&field) {
+                                FieldCarrier::Leaf => "Leaf",
+                                FieldCarrier::Child => "Child",
+                                FieldCarrier::OptionalChild => "OptionalChild",
+                                FieldCarrier::Collection { .. } => "Collection",
+                                FieldCarrier::OptionalCollection { .. } => "OptionalCollection",
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(cells, 2 * 2 * 2 * 3 * 6, "the flag product must be walked in full");
+        let mut got: Vec<&str> = produced.into_iter().collect();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            vec!["Child", "Collection", "Leaf", "OptionalChild", "OptionalCollection"],
+            "every carrier must be REACHABLE from some flag combination. A carrier that no \
+             input produces is dead, and — worse — a classifier that produced only ONE carrier \
+             would satisfy a totality check while classifying nothing."
+        );
+    }
+
+    /// ★ The ordering contract: a leaf ABSORBS optionality and DOMINATES the
+    /// collection flags.
+    ///
+    /// A leaf's `category` is a placeholder ident (`Guard`, `String`, `FltNode`)
+    /// that names no term category, so any branch reached after it that reads
+    /// `category` would build a `CmpTask::Cmp<placeholder>` variant that does not
+    /// exist. `Option<T>` is `Eq`/`Ord`/`Hash` whenever `T` is, so the optional
+    /// leaf needs no separate carrier — which is exactly why the product collapses
+    /// to five and not eight.
+    #[test]
+    fn a_leaf_absorbs_optionality_and_dominates_the_collection_flags() {
+        for is_optional in [false, true] {
+            for (label, field) in [
+                (
+                    "predicate",
+                    field_with(false, None, true, is_optional, None),
+                ),
+                (
+                    "token-text capture",
+                    field_with(false, None, false, is_optional, Some(OpaqueLeafKind::TokenText)),
+                ),
+                (
+                    "guest-body capture",
+                    field_with(false, None, false, is_optional, Some(OpaqueLeafKind::GuestBody)),
+                ),
+                // ⚠ Contradictory flags: a leaf that also claims to be a
+                // collection. The classifier must still answer `Leaf`, because
+                // reading `category` for the container walk is what would not
+                // compile.
+                (
+                    "predicate wrongly flagged as a collection",
+                    field_with(true, Some(CollectionType::Vec), true, is_optional, None),
+                ),
+            ] {
+                assert_eq!(
+                    field_carrier(&field),
+                    FieldCarrier::Leaf,
+                    "{label} (is_optional={is_optional}) must classify as `Leaf`"
+                );
+            }
+        }
+    }
+
+    /// The two independent bits, spelled as the table on [`FieldCarrier`] spells
+    /// them. ⚠ This is the cell the two `iterative_cmp` eq binder arms got wrong:
+    /// `Option<Vec<Proc>>` classified as a plain `Collection` and was handed to
+    /// the container walk, emitting `Option::len` (E0624) and
+    /// `&Vec<Proc> as *const Proc` (E0606).
+    #[test]
+    fn the_optional_bit_is_independent_of_the_collection_bit() {
+        assert_eq!(field_carrier(&field_with(false, None, false, false, None)), FieldCarrier::Child);
+        assert_eq!(
+            field_carrier(&field_with(false, None, false, true, None)),
+            FieldCarrier::OptionalChild
+        );
+
+        for coll_type in [
+            CollectionType::Vec,
+            CollectionType::HashBag,
+            CollectionType::HashSet,
+            CollectionType::HashMap,
+            CollectionType::PathMap,
+        ] {
+            assert_eq!(
+                field_carrier(&field_with(true, Some(coll_type.clone()), false, false, None)),
+                FieldCarrier::Collection { coll_type: coll_type.clone() },
+                "{coll_type:?} without an `Option` is a plain collection"
+            );
+            assert_eq!(
+                field_carrier(&field_with(true, Some(coll_type.clone()), false, true, None)),
+                FieldCarrier::OptionalCollection { coll_type: coll_type.clone() },
+                "★ `Option<{coll_type:?}>` is its OWN carrier. Every container shape can be \
+                 wrapped by `*opt(…)`, so this row has five inhabitants and not one — an \
+                 emitter that handles only the shape its corpus happens to declare is wrong \
+                 for the other four."
+            );
+        }
+    }
+
+    /// The `coll_type` default is centralised, so two emitters cannot disagree
+    /// about what a collection field with no recorded container means.
+    #[test]
+    fn a_collection_without_a_recorded_container_defaults_once() {
+        assert_eq!(
+            field_carrier(&field_with(true, None, false, false, None)),
+            FieldCarrier::Collection { coll_type: CollectionType::HashBag },
+            "the fail-safe default reproduces the `unwrap_or(HashBag)` every call site \
+             open-coded before `field_carrier` existed"
+        );
+        assert_eq!(
+            field_carrier(&field_with(true, None, false, true, None)),
+            FieldCarrier::OptionalCollection { coll_type: CollectionType::HashBag },
+        );
+    }
 
     /// ★ The boundary is a CLOSED, EXHAUSTIVE statement about every container
     /// shape the AST admits — not a list that happens to cover today's grammars.

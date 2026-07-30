@@ -41,7 +41,8 @@
 //! - `impl Ord for Cat`: delegates to `cmp_iterative`
 
 use crate::gen::term_ops::collection_walk::{
-    for_each_subterm_pair, plan_for, CollectionPlan, OrderSensitivity, WalkOrder,
+    field_carrier, for_each_subterm_pair, plan_for, CollectionPlan, FieldCarrier, OrderSensitivity,
+    WalkOrder,
 };
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
@@ -502,43 +503,75 @@ fn generate_eq_variant_arm(
     }
 }
 
-/// Generate eq arm for a Regular variant.
-fn generate_eq_regular_arm(
-    category: &Ident,
-    label: &Ident,
+/// ★ #197 — the ONE construction of an `eq` arm body, shared by `Regular`,
+/// `Binder` and `MultiBinder`.
+///
+/// The counterpart of [`cmp_arm_stmts`], and it exists for the same reason. Before
+/// #197 the `cmp` side had this single shared builder while the `eq` side had
+/// THREE hand-copied per-arm-kind loops, and the copies had drifted: the
+/// `Regular` loop tested `is_opaque_leaf()` and `is_optional`, and the two binder
+/// loops tested neither. Every carrier they omitted was emitted as if it were the
+/// carrier they did test, which is why an `Option<Vec<Proc>>` pre-scope field
+/// reached the container walk and the generated tree stopped compiling.
+///
+/// ⇒ The repair is structural, not a third copy of the guard: ONE builder, and it
+/// dispatches on [`field_carrier`] with **no wildcard arm**, so a sixth carrier is
+/// a compile error here rather than a silent fall-through in whichever copy was
+/// not updated.
+///
+/// `PartialEq` is a conjunction and `&&` is commutative, so — unlike the `cmp`
+/// side, which needs the eager/pushed split to preserve lexicographic order —
+/// every position may be emitted in plain field order and the `scope_stmts` group
+/// simply goes last, exactly where the three loops it replaces put it.
+fn eq_arm_stmts(
     fields: &[FieldInfo],
+    left_names: &[Ident],
+    right_names: &[Ident],
+    scope_stmts: Option<TokenStream>,
     language: &LanguageDef,
-) -> TokenStream {
-    let left_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("l{}", i)).collect();
-    let right_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("r{}", i)).collect();
+) -> Vec<TokenStream> {
+    let mut stmts: Vec<TokenStream> = Vec::with_capacity(fields.len() + 1);
 
-    let compare_stmts: Vec<TokenStream> = fields
-        .iter()
-        .zip(left_names.iter().zip(right_names.iter()))
-        .map(|(field, (lname, rname))| {
-            // Phase 3A-B2: predicate fields use direct PartialEq.
-            // BehavioralPred derives Eq, so the bare value comparison
-            // is sound. L9-3: token-text captures are bare `String` leaves —
-            // the identical direct-Eq (String: Eq), no CmpTask descent.
-            if field.is_predicate || field.is_opaque_leaf() {
-                return quote! {
-                    if #lname != #rname { return false; }
-                };
-            }
-            if field.is_optional {
-                if field.is_collection {
-                    // Phase 4 #3 (2026-05-12): Optional-Collection — delegate
-                    // to Option<Container>::PartialEq directly. Vec/HashBag/HashSet
-                    // all implement PartialEq elementwise.
-                    return quote! {
-                        if #lname != #rname { return false; }
-                    };
-                }
-                // Opt-Group: equality on `Option<Box<Cat>>`. Push CmpTask
-                // recursively if both Some; mismatched Some/None or
-                // mismatched values short-circuit to false.
+    for (i, field) in fields.iter().enumerate() {
+        let lname = &left_names[i];
+        let rname = &right_names[i];
+
+        stmts.push(match field_carrier(field) {
+            // Phase 3A-B2: a predicate field uses direct `PartialEq` —
+            // `BehavioralPred` derives `Eq`, so the bare value comparison is sound.
+            // L9-3/L9-4: a token-text (`String`) or guest-body (`Arc<FltNode>`)
+            // capture is the identical direct-Eq with no `CmpTask` descent. All
+            // three are also correct under an `Option`, because `Option<T>: PartialEq`
+            // whenever `T` is — which is why the carrier absorbs optionality.
+            FieldCarrier::Leaf => quote! {
+                if #lname != #rname { return false; }
+            },
+
+            // Phase 4 #3 (2026-05-12): Optional-Collection — delegate to
+            // `Option<Container>::PartialEq`, which is the container's own
+            // element-wise `PartialEq` under a `Some`/`None` tag.
+            //
+            // ⚠ This is the arm the two binder loops did not have. Reaching the
+            // `Collection` arm instead emitted `Option::len` (E0624, the method is
+            // private) and `&Vec<Elem> as *const Elem` (E0606, not a cast), because
+            // `Option`'s `len`/`iter` describe the OPTION — one item, the container
+            // — and not the container's elements.
+            //
+            // ★ The residual host recursion here is the same DECLARED residue
+            // `collection_walk`'s header describes for an unordered container: one
+            // whole-value re-entry, after which the element walk is flat again. It
+            // is Θ(count of nested optional-container levels), not Θ(term depth),
+            // and `cmp_arm_stmts`'s `is_stack_expressible` already classified this
+            // carrier the same way on the `Ord` side.
+            FieldCarrier::OptionalCollection { .. } => quote! {
+                if #lname != #rname { return false; }
+            },
+
+            // Opt-Group: equality on `Option<Box<Cat>>`. Push a `CmpTask` when both
+            // are `Some`; a `Some`/`None` mismatch short-circuits to `false`.
+            FieldCarrier::OptionalChild => {
                 let task_variant = format_ident!("Cmp{}", field.category);
-                return quote! {
+                quote! {
                     match (#lname.as_ref(), #rname.as_ref()) {
                         (None, None) => {}
                         (Some(__l), Some(__r)) => {
@@ -549,29 +582,48 @@ fn generate_eq_regular_arm(
                         }
                         _ => return false,
                     }
-                };
-            }
-            if field.is_collection {
-                // ★ #162 — a collection FIELD is the third syntactic position the
-                // element boundary appears in, and it gets the same treatment as
-                // the two category positions.
-                let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
-                eq_collection_stmts(
-                    &field.category,
-                    &coll_type,
-                    &quote! { #lname },
-                    &quote! { #rname },
-                    language,
-                )
-            } else {
-                // Box<T> field: push comparison task for children
+                }
+            },
+
+            // ★ #162 — the collection-element boundary. Routed through
+            // `collection_walk::plan_for` so the per-element/whole-value decision
+            // cannot drift between the `eq` and `cmp` halves.
+            FieldCarrier::Collection { coll_type } => eq_collection_stmts(
+                &field.category,
+                &coll_type,
+                &quote! { #lname },
+                &quote! { #rname },
+                language,
+            ),
+
+            // A `Box<Cat>` category child: the descent, as a task.
+            FieldCarrier::Child => {
                 let task_variant = format_ident!("Cmp{}", field.category);
                 quote! {
                     stack.push(CmpTask::#task_variant(&**#lname as *const _, &**#rname as *const _));
                 }
-            }
-        })
-        .collect();
+            },
+        });
+    }
+
+    // The binder `Scope` is the arm's LAST position, so its group goes last.
+    if let Some(scope_stmts) = scope_stmts {
+        stmts.push(scope_stmts);
+    }
+
+    stmts
+}
+
+/// Generate eq arm for a Regular variant.
+fn generate_eq_regular_arm(
+    category: &Ident,
+    label: &Ident,
+    fields: &[FieldInfo],
+    language: &LanguageDef,
+) -> TokenStream {
+    let left_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("l{}", i)).collect();
+    let right_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("r{}", i)).collect();
+    let compare_stmts = eq_arm_stmts(fields, &left_names, &right_names, None, language);
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -595,41 +647,9 @@ fn generate_eq_binder_arm(
     let scope_left = &left_names[total_fields - 1];
     let scope_right = &right_names[total_fields - 1];
 
-    let mut compare_stmts: Vec<TokenStream> = Vec::new();
-
-    // Compare pre-scope fields
-    for (i, field) in pre_scope_fields.iter().enumerate() {
-        let lname = &left_names[i];
-        let rname = &right_names[i];
-        // Phase 3A-B2: predicate fields use direct PartialEq.
-        if field.is_predicate {
-            compare_stmts.push(quote! {
-                if #lname != #rname { return false; }
-            });
-            continue;
-        }
-        if field.is_collection {
-            // ★ #162 — the FOURTH syntactic position: a collection in a binder's
-            // pre-scope field list.
-            let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
-            compare_stmts.push(eq_collection_stmts(
-                &field.category,
-                &coll_type,
-                &quote! { #lname },
-                &quote! { #rname },
-                language,
-            ));
-        } else {
-            let task_variant = format_ident!("Cmp{}", field.category);
-            compare_stmts.push(quote! {
-                stack.push(CmpTask::#task_variant(&**#lname as *const _, &**#rname as *const _));
-            });
-        }
-    }
-
     // Compare scope: compare pattern directly, push body comparison task
     let body_task = format_ident!("Cmp{}", body_cat);
-    compare_stmts.push(quote! {
+    let scope_stmts = quote! {
         {
             let l_pat = &#scope_left.inner().unsafe_pattern;
             let r_pat = &#scope_right.inner().unsafe_pattern;
@@ -638,7 +658,13 @@ fn generate_eq_binder_arm(
             let r_body: *const #body_cat = &*#scope_right.inner().unsafe_body;
             stack.push(CmpTask::#body_task(l_body, r_body));
         }
-    });
+    };
+
+    // ★ #197 — the pre-scope fields go through the SHARED builder. This loop used
+    // to be a hand-copy that tested `is_predicate` and `is_collection` and nothing
+    // else, so three of the five carriers were emitted as the wrong shape.
+    let compare_stmts =
+        eq_arm_stmts(pre_scope_fields, &left_names, &right_names, Some(scope_stmts), language);
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -662,38 +688,8 @@ fn generate_eq_multi_binder_arm(
     let scope_left = &left_names[total_fields - 1];
     let scope_right = &right_names[total_fields - 1];
 
-    let mut compare_stmts: Vec<TokenStream> = Vec::new();
-
-    for (i, field) in pre_scope_fields.iter().enumerate() {
-        let lname = &left_names[i];
-        let rname = &right_names[i];
-        // Phase 3A-B2: predicate fields use direct PartialEq.
-        if field.is_predicate {
-            compare_stmts.push(quote! {
-                if #lname != #rname { return false; }
-            });
-            continue;
-        }
-        if field.is_collection {
-            // ★ #162 — same boundary, MultiBinder pre-scope position.
-            let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
-            compare_stmts.push(eq_collection_stmts(
-                &field.category,
-                &coll_type,
-                &quote! { #lname },
-                &quote! { #rname },
-                language,
-            ));
-        } else {
-            let task_variant = format_ident!("Cmp{}", field.category);
-            compare_stmts.push(quote! {
-                stack.push(CmpTask::#task_variant(&**#lname as *const _, &**#rname as *const _));
-            });
-        }
-    }
-
     let body_task = format_ident!("Cmp{}", body_cat);
-    compare_stmts.push(quote! {
+    let scope_stmts = quote! {
         {
             let l_pat = &#scope_left.inner().unsafe_pattern;
             let r_pat = &#scope_right.inner().unsafe_pattern;
@@ -702,7 +698,14 @@ fn generate_eq_multi_binder_arm(
             let r_body: *const #body_cat = &*#scope_right.inner().unsafe_body;
             stack.push(CmpTask::#body_task(l_body, r_body));
         }
-    });
+    };
+
+    // ★ #197 — the SHARED builder. This is the arm that went RED: `class3opt`'s
+    // `PInputsOptTagged . ns:Vec(Name), *opt(qs:Vec(Proc)), ^[xs].p:[Name* -> Proc]`
+    // puts an `Option<Vec<Proc>>` in a MultiBinder pre-scope slot, and the hand-copy
+    // this replaces had no `OptionalCollection` case.
+    let compare_stmts =
+        eq_arm_stmts(pre_scope_fields, &left_names, &right_names, Some(scope_stmts), language);
 
     quote! {
         (#category::#label(#(ref #left_names),*), #category::#label(#(ref #right_names),*)) => {
@@ -991,24 +994,20 @@ fn cmp_arm_stmts(
     // child can, an `Option<Box<Cat>>` child can, and so can every element of an
     // order-faithful collection.
     let is_stack_expressible = |field: &FieldInfo| -> bool {
-        if field.is_predicate || field.is_opaque_leaf() {
-            return false;
-        }
-        if !field.is_collection {
+        match field_carrier(field) {
+            // A leaf is not a category, so no `Cmp<Cat>` task can carry it.
+            FieldCarrier::Leaf => false,
             // A boxed category child, optional or not.
-            return true;
+            FieldCarrier::Child | FieldCarrier::OptionalChild => true,
+            // Phase 4 #3: `Option<Container>` is compared by `Option<C>::cmp`, which
+            // is the container's own `Ord` under a tag — one whole value, not a
+            // sequence of positions.
+            FieldCarrier::OptionalCollection { .. } => false,
+            FieldCarrier::Collection { coll_type } => matches!(
+                plan_for(&field.category, &coll_type, OrderSensitivity::OrderSensitive, language),
+                CollectionPlan::PerElement { .. }
+            ),
         }
-        // Phase 4 #3: `Option<Container>` is compared by `Option<C>::cmp`, which
-        // is the container's own `Ord` under a tag — one whole value, not a
-        // sequence of positions.
-        if field.is_optional {
-            return false;
-        }
-        let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
-        matches!(
-            plan_for(&field.category, &coll_type, OrderSensitivity::OrderSensitive, language),
-            CollectionPlan::PerElement { .. }
-        )
     };
 
     let split = fields.iter().position(is_stack_expressible).unwrap_or(fields.len());
@@ -1045,23 +1044,23 @@ fn cmp_arm_stmts(
         let lname = &left_names[i];
         let rname = &right_names[i];
 
-        if field.is_predicate || field.is_opaque_leaf() {
+        // ★ #197 — dispatched on the SAME carrier classification as the `eq` side,
+        // with no wildcard, so the two halves cannot disagree about what a field IS
+        // and a sixth carrier is a compile error in both.
+        stmts.push(match field_carrier(field) {
             // A leaf inside the pushed segment: its verdict is computed now and
             // consulted in position order. This is the case the eager prefix
             // could not express, and the reason it had to swallow collections.
-            stmts.push(quote! {
+            FieldCarrier::Leaf => quote! {
                 stack.push(CmpTask::Verdict(#lname.cmp(#rname)));
-            });
-            continue;
-        }
+            },
 
-        if field.is_optional {
-            if field.is_collection {
-                stmts.push(quote! {
-                    stack.push(CmpTask::Verdict(#lname.cmp(#rname)));
-                });
-                continue;
-            }
+            // Phase 4 #3: `Option<Container>: Ord` is the container's own `Ord`
+            // under a `None < Some` tag — one whole value, so one `Verdict`.
+            FieldCarrier::OptionalCollection { .. } => quote! {
+                stack.push(CmpTask::Verdict(#lname.cmp(#rname)));
+            },
+
             // Opt-Group, `Option<Box<Cat>>`: `None < Some(_)`, and `Some` vs
             // `Some` is the inner comparison. Exactly one push on every path, so
             // the reverse-push discipline is preserved.
@@ -1069,46 +1068,45 @@ fn cmp_arm_stmts(
             // ★ This replaces an eager `(**__l).cmp(&**__r)` — a whole-value
             // re-entry that was Θ(depth) in its own right, independently of any
             // collection.
-            let task_variant = format_ident!("Cmp{}", field.category);
-            stmts.push(quote! {
-                match (#lname.as_ref(), #rname.as_ref()) {
-                    (None, None) => {}
-                    (None, Some(_)) => {
-                        stack.push(CmpTask::Verdict(std::cmp::Ordering::Less));
-                    }
-                    (Some(_), None) => {
-                        stack.push(CmpTask::Verdict(std::cmp::Ordering::Greater));
-                    }
-                    (Some(__l), Some(__r)) => {
-                        stack.push(CmpTask::#task_variant(
-                            __l.as_ref() as *const _,
-                            __r.as_ref() as *const _,
-                        ));
+            FieldCarrier::OptionalChild => {
+                let task_variant = format_ident!("Cmp{}", field.category);
+                quote! {
+                    match (#lname.as_ref(), #rname.as_ref()) {
+                        (None, None) => {}
+                        (None, Some(_)) => {
+                            stack.push(CmpTask::Verdict(std::cmp::Ordering::Less));
+                        }
+                        (Some(_), None) => {
+                            stack.push(CmpTask::Verdict(std::cmp::Ordering::Greater));
+                        }
+                        (Some(__l), Some(__r)) => {
+                            stack.push(CmpTask::#task_variant(
+                                __l.as_ref() as *const _,
+                                __r.as_ref() as *const _,
+                            ));
+                        }
                     }
                 }
-            });
-            continue;
-        }
+            },
 
-        if field.is_collection {
-            let coll_type = field.coll_type.clone().unwrap_or(CollectionType::HashBag);
-            stmts.push(cmp_collection_push_stmts(
+            FieldCarrier::Collection { coll_type } => cmp_collection_push_stmts(
                 &field.category,
                 &coll_type,
                 &quote! { #lname },
                 &quote! { #rname },
                 language,
-            ));
-            continue;
-        }
+            ),
 
-        // ★ A boxed category child. Before #162 a child at a position BEFORE the
-        // last collection was compared by an eager `(**l).cmp(&**r)` — a
-        // whole-value re-entry — purely because the eager prefix had to reach the
-        // collection. Now every child is a task.
-        let task_variant = format_ident!("Cmp{}", field.category);
-        stmts.push(quote! {
-            stack.push(CmpTask::#task_variant(&**#lname as *const _, &**#rname as *const _));
+            // ★ A boxed category child. Before #162 a child at a position BEFORE the
+            // last collection was compared by an eager `(**l).cmp(&**r)` — a
+            // whole-value re-entry — purely because the eager prefix had to reach the
+            // collection. Now every child is a task.
+            FieldCarrier::Child => {
+                let task_variant = format_ident!("Cmp{}", field.category);
+                quote! {
+                    stack.push(CmpTask::#task_variant(&**#lname as *const _, &**#rname as *const _));
+                }
+            },
         });
     }
 
@@ -1347,6 +1345,349 @@ fn generate_category_trait_impls(category: &Ident) -> TokenStream {
                 )];
                 cmp_iterative(&mut stack)
             }
+        }
+    }
+}
+
+// =============================================================================
+// ★★ #197 — THE CELL CENSUS: every carrier, in every field position, on BOTH
+// comparison sides.
+//
+// The regression this pins was a DRIFT between copies, not a missing case in a
+// single function: `cmp_arm_stmts` was one shared builder used by all three arm
+// kinds, while the `eq` side had three hand-copied loops of which only one tested
+// `is_opaque_leaf()` and `is_optional`. `class3opt` exercised exactly ONE of the
+// six broken cells (MultiBinder × OptionalCollection) and that is the only reason
+// the defect was visible at all — the other five emitted nothing to look at,
+// because no bundled grammar declares those shapes.
+//
+// ⇒ A test over generated output cannot see a cell no grammar reaches. This
+// module drives the two arm BUILDERS directly, so all 5 × 3 × 2 = 30 cells are
+// exercised regardless of what the corpus happens to contain.
+// =============================================================================
+#[cfg(test)]
+mod carrier_cell_census {
+    use super::*;
+    use crate::gen::term_ops::subst::OpaqueLeafKind;
+    use mettail_ast::types::CollectionType;
+
+    fn field(
+        is_collection: bool,
+        coll_type: Option<CollectionType>,
+        is_predicate: bool,
+        is_optional: bool,
+        opaque_leaf: Option<OpaqueLeafKind>,
+    ) -> FieldInfo {
+        FieldInfo {
+            category: format_ident!("Proc"),
+            is_collection,
+            coll_type,
+            is_predicate,
+            is_optional,
+            opaque_leaf,
+        }
+    }
+
+    /// One `FieldInfo` per carrier, labelled. `Vec` is chosen for both collection
+    /// carriers because it is the ORDER-FAITHFUL container — the one whose plain
+    /// form is walked per-element — which makes the optional/non-optional contrast
+    /// maximally sharp: the plain form must produce a `len` + element walk and the
+    /// optional form must produce neither.
+    fn one_per_carrier() -> Vec<(&'static str, FieldInfo)> {
+        vec![
+            ("Leaf/predicate", field(false, None, true, false, None)),
+            (
+                "Leaf/token-text",
+                field(false, None, false, false, Some(OpaqueLeafKind::TokenText)),
+            ),
+            ("Child", field(false, None, false, false, None)),
+            ("OptionalChild", field(false, None, false, true, None)),
+            ("Collection", field(true, Some(CollectionType::Vec), false, false, None)),
+            (
+                "OptionalCollection",
+                field(true, Some(CollectionType::Vec), false, true, None),
+            ),
+        ]
+    }
+
+    /// ⚠ `TokenStream::to_string` spaces punctuation apart (`. len ()`), so every
+    /// needle is matched against a whitespace-STRIPPED rendering — the same trap
+    /// `collection_walk`'s walk test records having gone red on.
+    fn rendered(stmts: Vec<TokenStream>) -> String {
+        stmts
+            .into_iter()
+            .map(|t| t.to_string())
+            .collect::<String>()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
+    /// The three field POSITIONS, as the two arm builders see them: a `Regular`
+    /// variant has no trailing scope group, a `Binder` and a `MultiBinder` do.
+    /// The builders are position-agnostic by construction now, and this is the
+    /// assertion that they are.
+    fn positions() -> Vec<(&'static str, Option<TokenStream>)> {
+        vec![
+            ("Regular", None),
+            ("Binder pre-scope", Some(quote! { { __scope_group_binder(); } })),
+            ("MultiBinder pre-scope", Some(quote! { { __scope_group_multi(); } })),
+        ]
+    }
+
+    /// ★★ THE CELL GATE. For each of the five carriers, in each of the three
+    /// positions, on each of the two sides, the emitted statements must have the
+    /// carrier's shape.
+    ///
+    /// The load-bearing pair is `Collection` vs `OptionalCollection`: they differ
+    /// only in one boolean, and conflating them is precisely the defect. A plain
+    /// `Vec` MUST produce `l0.len()` and a zipped element walk; an
+    /// `Option<Vec<…>>` MUST produce neither, because `Option::len` is private
+    /// (E0624) and `Option::iter` yields the CONTAINER, whose reference is not
+    /// castable to an element pointer (E0606).
+    #[test]
+    fn every_carrier_is_handled_in_every_position_on_both_sides() {
+        let language = crate::gen::collection_literal_language_for_tests();
+        let left = vec![format_ident!("l0")];
+        let right = vec![format_ident!("r0")];
+
+        let mut cells = 0usize;
+        for (position, scope) in positions() {
+            for (carrier, f) in one_per_carrier() {
+                let fields = [f];
+                let eq = rendered(eq_arm_stmts(
+                    &fields,
+                    &left,
+                    &right,
+                    scope.clone(),
+                    &language,
+                ));
+                let cmp =
+                    rendered(cmp_arm_stmts(&fields, &left, &right, scope.clone(), &language));
+                cells += 1;
+
+                // Anti-vacuity: an emitter that produced nothing would satisfy
+                // every "must not contain" assertion below.
+                assert!(
+                    eq.contains("l0") && cmp.contains("l0"),
+                    "{position} / {carrier}: the field was not emitted at all — every \
+                     'must not contain' assertion below would pass vacuously"
+                );
+
+                match carrier {
+                    "Leaf/predicate" | "Leaf/token-text" => {
+                        assert!(
+                            eq.contains("ifl0!=r0"),
+                            "{position} / {carrier}: a leaf is compared whole by `!=`. Got: {eq}"
+                        );
+                        assert!(
+                            cmp.contains("l0.cmp(r0)"),
+                            "{position} / {carrier}: a leaf's `Ord` is a precomputed \
+                             `Verdict`. Got: {cmp}"
+                        );
+                        assert!(
+                            !eq.contains("CmpTask::CmpProc"),
+                            "{position} / {carrier}: a leaf's `category` is a PLACEHOLDER \
+                             ident, so pushing a per-category task would name a variant that \
+                             does not exist. Got: {eq}"
+                        );
+                    },
+                    "Child" => {
+                        assert!(
+                            eq.contains("CmpTask::CmpProc(&**l0"),
+                            "{position} / {carrier}: a boxed child is a DESCENT, pushed as a \
+                             task — that is the whole point of the work-stack driver. Got: {eq}"
+                        );
+                        assert!(cmp.contains("CmpTask::CmpProc(&**l0"), "{position}: {cmp}");
+                    },
+                    "OptionalChild" => {
+                        assert!(
+                            eq.contains("l0.as_ref()") && eq.contains("CmpTask::CmpProc"),
+                            "{position} / {carrier}: `Option<Box<Cat>>` destructures FIRST and \
+                             then descends. Got: {eq}"
+                        );
+                        assert!(
+                            cmp.contains("Ordering::Less") && cmp.contains("Ordering::Greater"),
+                            "{position} / {carrier}: `None < Some(_)` must be decided \
+                             explicitly, not by a whole-value re-entry. Got: {cmp}"
+                        );
+                    },
+                    "Collection" => {
+                        assert!(
+                            eq.contains("l0.len()") && eq.contains("l0.iter().zip(r0.iter())"),
+                            "{position} / {carrier}: an ORDER-FAITHFUL container is walked \
+                             per-element — `Vec::eq` is length-then-elements and the walk \
+                             reproduces it exactly. Got: {eq}"
+                        );
+                        assert!(
+                            cmp.contains("l0.len().cmp(&r0.len())"),
+                            "{position} / {carrier}: `Vec: Ord` uses length as the TIEBREAK, \
+                             pushed first so it pops last. Got: {cmp}"
+                        );
+                    },
+                    "OptionalCollection" => {
+                        // ★ THE REGRESSION CELL.
+                        assert!(
+                            eq.contains("ifl0!=r0"),
+                            "{position} / {carrier}: `Option<Container>` is compared by its own \
+                             `PartialEq` — the container's element-wise `PartialEq` under a \
+                             `Some`/`None` tag. Got: {eq}"
+                        );
+                        assert!(
+                            !eq.contains("l0.len()"),
+                            "★ {position} / {carrier}: emitted `Option::len`, which is a \
+                             PRIVATE method (E0624). This is the exact regression #197 \
+                             repaired: `Option`'s `len`/`iter` describe the OPTION — one item, \
+                             the container — and not the container's elements. Got: {eq}"
+                        );
+                        assert!(
+                            !eq.contains("as*const_"),
+                            "★ {position} / {carrier}: emitted an element-pointer cast. \
+                             `Option::iter` yields `&Vec<Elem>`, and `&Vec<Elem> as *const \
+                             Elem` is not a valid cast (E0606). Got: {eq}"
+                        );
+                        // ⚠ `l0.cmp(r0)` rather than `Verdict(l0.cmp(r0))`: a
+                        // whole-value position takes the EAGER form when it
+                        // precedes the first stack-expressible field (an early
+                        // `return ord`) and the `Verdict` form when it follows one.
+                        // Both are the same judgement — one whole value — and which
+                        // one appears is a function of the field's INDEX, not its
+                        // carrier. `the_pushed_segment_form_of_an_optional_collection`
+                        // pins the other form.
+                        assert!(
+                            cmp.contains("l0.cmp(r0)") && !cmp.contains("l0.len()"),
+                            "{position} / {carrier}: the `Ord` side must agree with the `eq` \
+                             side about what this carrier IS — one whole value, compared by \
+                             `Option<Container>::cmp`. Got: {cmp}"
+                        );
+                    },
+                    other => panic!(
+                        "unclassified carrier `{other}` in the cell census. Add its row \
+                         rather than widening the match: an unnamed carrier is exactly the \
+                         silent fall-through this test exists to forbid."
+                    ),
+                }
+            }
+        }
+
+        assert_eq!(
+            cells,
+            6 * 3,
+            "the census must cover every (carrier, position) cell — six labelled carrier \
+             fixtures (the five carriers, with `Leaf` sampled at both of its inhabitants) \
+             across all three field positions"
+        );
+    }
+
+    /// ★ The OTHER form of a whole-value position: inside the PUSHED segment.
+    ///
+    /// `cmp_arm_stmts` splits an arm at the first stack-expressible field —
+    /// everything before it is compared eagerly (with an early `return ord`),
+    /// everything from it onward is pushed in reverse so the engine pops it in
+    /// field order. A whole-value carrier therefore has two emissions, and which
+    /// one it gets depends on its INDEX and not on its carrier. Putting a `Child`
+    /// at index 0 forces `split = 0`, which puts the optional collection at index
+    /// 1 into the pushed segment where it must become a precomputed `Verdict`.
+    ///
+    /// ⚠ Without this cell the census would pin only the eager form, and a change
+    /// that broke the pushed form would pass — the `Verdict` variant is exactly
+    /// what #162 added to dissolve the eager prefix, so it is the form under the
+    /// most pressure from future edits.
+    #[test]
+    fn the_pushed_segment_form_of_an_optional_collection_is_a_verdict() {
+        let language = crate::gen::collection_literal_language_for_tests();
+        let fields = [
+            field(false, None, false, false, None),
+            field(true, Some(CollectionType::Vec), false, true, None),
+        ];
+        let left = vec![format_ident!("l0"), format_ident!("l1")];
+        let right = vec![format_ident!("r0"), format_ident!("r1")];
+
+        let cmp = rendered(cmp_arm_stmts(&fields, &left, &right, None, &language));
+        assert!(
+            cmp.contains("CmpTask::CmpProc(&**l0"),
+            "the control: index 0 is a boxed child and must be a DESCENT, which is what \
+             forces `split = 0` and puts index 1 into the pushed segment. Got: {cmp}"
+        );
+        assert!(
+            cmp.contains("CmpTask::Verdict(l1.cmp(r1))"),
+            "★ an `Option<Vec<…>>` in the PUSHED segment is a precomputed `Verdict` — the \
+             judgement is made when the arm runs and consulted when the engine pops it, which \
+             is what lets the stack express the whole comparison in field order. Got: {cmp}"
+        );
+        assert!(
+            !cmp.contains("l1.len()"),
+            "★ `Option::len` is private (E0624) — the #197 regression, on the `Ord` side. \
+             Got: {cmp}"
+        );
+
+        let eq = rendered(eq_arm_stmts(&fields, &left, &right, None, &language));
+        assert!(
+            eq.contains("ifl1!=r1") && !eq.contains("l1.len()"),
+            "the `eq` side of the same two-field arm must still compare the optional \
+             collection whole. Got: {eq}"
+        );
+    }
+
+    /// ★ The two sides must classify a field IDENTICALLY. Before #197 they did
+    /// not: `cmp_arm_stmts` treated `Option<Container>` as one whole value while
+    /// the eq binder arms treated it as a walkable container. Agreement is now
+    /// structural — both sides call `field_carrier` — and this asserts it stays so.
+    #[test]
+    fn the_eq_and_cmp_sides_agree_on_every_carrier() {
+        for (carrier, f) in one_per_carrier() {
+            let stack_expressible_as_cmp_sees_it = !matches!(
+                field_carrier(&f),
+                FieldCarrier::Leaf | FieldCarrier::OptionalCollection { .. }
+            );
+            let whole_value_on_the_eq_side = matches!(
+                field_carrier(&f),
+                FieldCarrier::Leaf | FieldCarrier::OptionalCollection { .. }
+            );
+            assert_ne!(
+                stack_expressible_as_cmp_sees_it, whole_value_on_the_eq_side,
+                "{carrier}: a carrier is either expressible as stack work or compared whole, \
+                 and both sides must reach the same verdict from the same classifier"
+            );
+        }
+    }
+
+    /// The scope group is emitted exactly once and LAST, in both binder positions
+    /// and on both sides — the property the three hand-copied loops maintained by
+    /// hand and the shared builders now maintain by construction.
+    #[test]
+    fn the_scope_group_is_emitted_once_and_last() {
+        let language = crate::gen::collection_literal_language_for_tests();
+        let fields = [field(false, None, false, false, None), field(false, None, true, false, None)];
+        let left = vec![format_ident!("l0"), format_ident!("l1")];
+        let right = vec![format_ident!("r0"), format_ident!("r1")];
+        let scope = quote! { { __scope_group(); } };
+
+        for (side, stmts) in [
+            ("eq", eq_arm_stmts(&fields, &left, &right, Some(scope.clone()), &language)),
+            ("cmp", cmp_arm_stmts(&fields, &left, &right, Some(scope.clone()), &language)),
+        ] {
+            let text = rendered(stmts.clone());
+            assert_eq!(
+                text.matches("__scope_group()").count(),
+                1,
+                "{side}: the scope group must appear exactly once"
+            );
+            // On the `eq` side the scope is the LAST statement (a conjunction is
+            // order-insensitive, so field order is kept verbatim). On the `cmp`
+            // side the pushed segment goes on in REVERSE position order, so the
+            // scope — being the last POSITION — is pushed FIRST.
+            let scope_index = stmts
+                .iter()
+                .position(|s| s.to_string().contains("__scope_group"))
+                .expect("the scope group must be present");
+            let expected = if side == "eq" { stmts.len() - 1 } else { 0 };
+            assert_eq!(
+                scope_index, expected,
+                "{side}: the scope group sits at the wrong index. `eq` emits positions in \
+                 field order so the scope is LAST; `cmp` reverse-pushes so the scope — the \
+                 last position — is pushed FIRST and therefore pops last."
+            );
         }
     }
 }
