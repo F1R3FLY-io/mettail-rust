@@ -69,22 +69,9 @@ fn assert_tier_tuple(
     worst: &str,
 ) {
     let r = check_guard_decidability(meta);
-    assert_eq!(
-        (
-            r.total_guards,
-            r.compile_time_decidable,
-            r.runtime_decidable,
-            r.semi_decidable,
-            r.undecidable,
-            r.worst_tier.as_str(),
-        ),
-        (total, t1, t2, t3, t4, worst),
-        "golden tier tuple changed for `{}` — re-derive from the code, do not relax: {}",
-        meta.name(),
-        r.summary,
-    );
 
-    // ── Cross-check the asserted T1/T2 against the raw guard-source inventory ──
+    // ── The raw guard-source inventory, computed BEFORE the golden assert so a
+    // ── mismatch can report the decomposition instead of only the totals.
     let structural_fields = meta
         .terms()
         .iter()
@@ -105,6 +92,31 @@ fn assert_tier_tuple(
         .count();
 
     assert_eq!(
+        (
+            r.total_guards,
+            r.compile_time_decidable,
+            r.runtime_decidable,
+            r.semi_decidable,
+            r.undecidable,
+            r.worst_tier.as_str(),
+        ),
+        (total, t1, t2, t3, t4, worst),
+        "golden tier tuple changed for `{}` — re-derive from the code, do not relax: {}\n\
+         {}",
+        meta.name(),
+        r.summary,
+        drift_shape(
+            meta,
+            (total, t1, t2),
+            (r.total_guards, r.compile_time_decidable, r.runtime_decidable),
+            structural_fields,
+            binder_fields,
+            conditions,
+            congruence_premises,
+        ),
+    );
+
+    assert_eq!(
         structural_fields,
         t1,
         "`{}`: T1 must equal the number of non-binder, non-Guard structural fields",
@@ -117,6 +129,90 @@ fn assert_tier_tuple(
         meta.name()
     );
     assert_eq!(t1 + t2, total, "`{}`: total must equal T1 + T2", meta.name());
+}
+
+/// Turn a golden-tuple mismatch into a **statement about the grammar**, derived from
+/// `check_guard_decidability`'s own tally rules rather than restated by hand.
+///
+/// `check_guard_decidability` ([`mettail_testkit::analytical::guards`]) computes
+///
+/// ```text
+///     T1 = #{ f ∈ fields(metadata.terms()) | ¬f.is_binder ∧ f.ty ∉ {Guard, Option<Guard>} }
+///     T2 = Σ_rw rw.conditions.len()  +  #{ rw | rw.premise.is_some() }  +  #{ f | f.is_binder }
+/// ```
+///
+/// so `ΔT1` and `ΔT2` **localise** a drift to one guard source before anyone opens a diff:
+/// `ΔT1 ≠ 0 ∧ ΔT2 = 0` can only be a constructor field appearing or disappearing; `ΔT1 = 0 ∧
+/// ΔT2 ≠ 0` can only be a rewrite condition, a congruence premise, or a binder; a field that
+/// merely *changed tier* (e.g. gained `is_binder`) shows as `ΔT1 = −k, ΔT2 = +k` with `Δtotal
+/// = 0`. This is diagnostics only — it pins no new constant and so cannot itself go stale —
+/// and it exists because the 2026-07-30 `PParInternal` investigation had to reconstruct
+/// exactly this inference, and then the raw decomposition, by hand from a totals-only message.
+fn drift_shape(
+    meta: &dyn LanguageMetadata,
+    expected: (usize, usize, usize),
+    actual: (usize, usize, usize),
+    structural_fields: usize,
+    binder_fields: usize,
+    conditions: usize,
+    congruence_premises: usize,
+) -> String {
+    let d = |a: usize, e: usize| a as isize - e as isize;
+    let (d_total, d_t1, d_t2) = (
+        d(actual.0, expected.0),
+        d(actual.1, expected.1),
+        d(actual.2, expected.2),
+    );
+
+    let mut s = String::with_capacity(1024);
+    s.push_str("    ── implied shape of the change (derived from guards.rs's tally rules) ──\n");
+    s.push_str(&format!(
+        "    Δtotal = {d_total:+}, ΔT1 = {d_t1:+}, ΔT2 = {d_t2:+}\n"
+    ));
+
+    match (d_t1, d_t2) {
+        (0, 0) => s.push_str(
+            "    T1 and T2 both match, so only `worst`/T3/T4 moved — the guard-TYPING logic \
+             changed, not the grammar.\n",
+        ),
+        (dt1, 0) => s.push_str(&format!(
+            "    ΔT2 = 0 ⇒ no rewrite condition, congruence premise, or binder field changed.\n    \
+             ΔT1 = {dt1:+} ⇒ exactly {n} non-binder, non-`Guard` constructor field(s) {verb} \
+             `metadata.terms()`.\n    Look for a rule ADDED TO or REMOVED FROM the declaring \
+             `language!` spec — not for a field changing type.\n",
+            n = dt1.abs(),
+            verb = if dt1 < 0 { "DISAPPEARED from" } else { "APPEARED in" },
+        )),
+        (0, dt2) => s.push_str(&format!(
+            "    ΔT1 = 0 ⇒ no constructor field was added or removed.\n    ΔT2 = {dt2:+} ⇒ the \
+             change is in the BEHAVIORAL sources: a rewrite condition, a congruence premise, \
+             or a binder field. Note a congruence contributes to BOTH sums, so one added \
+             congruence moves T2 by 2.\n",
+        )),
+        (dt1, dt2) if dt1 == -dt2 && d_total == 0 => s.push_str(&format!(
+            "    Δtotal = 0 with ΔT1 = {dt1:+}, ΔT2 = {dt2:+} ⇒ {n} field(s) CHANGED TIER \
+             rather than appearing or disappearing — the signature of `is_binder` flipping, \
+             or of a field's type becoming (or ceasing to be) `Guard`/`Option<Guard>`.\n",
+            n = dt1.abs(),
+        )),
+        (dt1, dt2) => s.push_str(&format!(
+            "    ΔT1 = {dt1:+} AND ΔT2 = {dt2:+} ⇒ BOTH a structural and a behavioral source \
+             moved. Do not attribute this to one commit without checking both; a single rule \
+             carrying its own congruence does exactly this (+1 T1, +2 T2).\n",
+        )),
+    }
+
+    s.push_str(&format!(
+        "    observed inventory NOW: structural={structural_fields} binders={binder_fields} \
+         conditions={conditions} premises={congruence_premises} \
+         (terms={terms}, rewrites={rewrites})\n    \
+         so T1 == {structural_fields} and T2 == {conditions} + {congruence_premises} + \
+         {binder_fields} == {t2sum}.\n",
+        terms = meta.terms().len(),
+        rewrites = meta.rewrites().len(),
+        t2sum = conditions + congruence_premises + binder_fields,
+    ));
+    s
 }
 
 const T2: &str = "T2 (runtime decidable)";
@@ -245,10 +341,61 @@ fn calculator_guard_tiers() {
 /// "LLastCong"` has one condition and one premise) — not read off the failure message. The
 /// cross-check inside `assert_tier_tuple` independently re-counts both from raw metadata and
 /// would reject a fitted number.
+///
+/// ★ `PParInternal` DELETED (2026-07-30, RE-DERIVED not relaxed). `8c946bff` deleted the
+/// dead `__ppar(…)` rule, declared at `languages/src/rholang.rs:450` as of `8c946bff^`:
+///
+/// ```text
+///     PParInternal . ps:HashBag(Proc)
+///     |- "__ppar" "(" ps.*sep(",") ")" : Proc ![{ Proc::PPar(ps.clone()) }] fold;
+/// ```
+///
+/// * **T1 240 → 239, total 525 → 524.** The rule declared exactly ONE field, `ps`, of type
+///   `HashBag(Proc)` — non-binder and non-`Guard`, hence one structural guard while it
+///   existed. `HashBag(Proc)` is a collection container, i.e. a non-scalar category decided
+///   by the structural classifier on the `True` skeleton, exactly like every other
+///   collection-payload field ⇒ it was T1, never T2.
+/// * **T2 unchanged at 285.** The rule declared no binder, no freshness condition and no
+///   congruence premise, and its `![…] fold` action is neither a field nor a rewrite
+///   condition — the same reason `LLast`'s fold moved T1 while leaving T2 alone, above.
+///   T3/T4 stay 0, so `worst` stays T2. Measured after the deletion: 145 rewrite conditions
+///   + 139 congruence premises + 1 binder = 285.
+///
+/// **The deletion is CORRECT and this pin was STALE** — not the other way round, which is the
+/// distinction that decides whether to fix the grammar or re-derive the number. `PParInternal`
+/// was a THIRD surface for a node that has two (the braced `PPar` collection rule and the
+/// infix `PParInfix`), and it was unreachable in BOTH directions: `__ppar(Nil, Nil)` did not
+/// parse at any arity (`TrailingTokens` at byte 5), and `Proc::PPar` renders through the
+/// braced `{ … | … }` form, never through `__ppar(…)`. A data-sort type assertion on a slot
+/// no term could ever reach is a guard this grammar genuinely no longer has, so 239 is the
+/// right answer and 240 was describing a rule that is gone. `8c946bff` re-derived SEVEN
+/// downstream consumers (`lowering_disposition_inventory`'s `COLLECTION_PARAMETER_FOLDS`,
+/// `wpda_codegen/factoring.rs`'s rule-index pins, the two `dovetail_report` narratives,
+/// `test_gen/strategies.rs`, and two manual pages) and missed only this one, which then stood
+/// red for 27 commits.
+///
+/// ⚠ The float rulings are NOT the cause, and neither is #98 — both were CHECKED AND
+/// EXCLUDED, not assumed away, because the arithmetic (total −1, T1 −1, T2 flat) pins the
+/// change to "exactly one non-binder, non-`Guard` field disappeared" and several plausible
+/// suspects had to be eliminated:
+///
+/// * Over the whole `bbceb6d9`→here range the complete `(term, field, ty, is_binder)`
+///   inventory of `languages/src/rholang.rs` differs by **exactly the one row above**. The
+///   other ten commits that touched the spec in that range — including the `!`-marked float
+///   rulings `b77e657c` / `ab885336` / `19510082`, the `#163` ruling `0d05986d`, and the
+///   `#151`/`#74` unset-value change `848d36ad` — changed rewrite bodies, actions and prose,
+///   and moved no constructor's field list at all.
+/// * #98 (`e6172128`, the demand-gated HOL family) cannot move ANY language's tally, which is
+///   a stronger statement than "rholang happens to be unaffected". The family
+///   (`Lam{D}`/`MLam{D}`/`Apply{D}`/`MApply{D}`) is emitted into the AST *enums* — rholang's
+///   `ast_enums.rs` carries 1520 such variants — and **no** HOL variant is ever emitted as a
+///   `TermDef`. `metadata.terms()` carries declared rules plus the twelve auto-injected
+///   numeric coercions only; `generate_term_defs` is byte-identical across the range; and the
+///   auto-injected contribution is 12 fields on both sides of it (240 − 228 == 239 − 227).
 #[test]
 fn rholang_guard_tiers() {
     let meta = mettail_languages::rholang::RholangLanguage.metadata();
-    assert_tier_tuple(meta, 525, 240, 285, 0, 0, T2);
+    assert_tier_tuple(meta, 524, 239, 285, 0, 0, T2);
 }
 
 /// **Ambient** — mobile ambients over `Proc`/`Name` (both non-scalar; no native
@@ -311,6 +458,85 @@ fn basemath_guard_tiers() {
 fn extmath_guard_tiers() {
     let meta = mettail_languages::extmath::ExtMathLanguage.metadata();
     assert_tier_tuple(meta, 12, 4, 8, 0, 0, T2);
+}
+
+/// **Anti-vacuity floor for [`drift_shape`].** The diagnostic only ever runs on the failure
+/// path of a golden assert, so nothing in the eight passing cases would notice if it silently
+/// degraded to an empty string — which is exactly the shape of vacuous guard this campaign has
+/// repeatedly shipped. This drives it directly with synthetic `(expected, actual)` pairs and
+/// asserts it LOCALISES each kind of drift, using a real `LanguageMetadata` for the inventory
+/// half so the observed-decomposition line is exercised too.
+///
+/// The four cases are the exhaustive partition of `(ΔT1, ΔT2)` that `drift_shape` discriminates:
+/// both zero (typing logic moved), structural only, behavioral only, and the tier-shift /
+/// mixed cases.
+#[test]
+fn drift_shape_localises_each_kind_of_change() {
+    let meta = mettail_languages::lambda::LambdaLanguage.metadata();
+    // Lambda's real inventory: 2 structural, 1 binder, 3 conditions, 3 premises ⇒ (9, 2, 7).
+    let shape = |expected: (usize, usize, usize), actual: (usize, usize, usize)| {
+        drift_shape(meta, expected, actual, 2, 1, 3, 3)
+    };
+
+    // (i) A vanished structural field: Δtotal = −1, ΔT1 = −1, ΔT2 = 0.
+    let structural_only = shape((9, 2, 7), (8, 1, 7));
+    assert!(
+        structural_only.contains("ΔT1 = -1")
+            && structural_only.contains("DISAPPEARED from")
+            && structural_only.contains("REMOVED FROM"),
+        "drift_shape must localise a lost field to the declaring spec's rule list, got:\n{structural_only}"
+    );
+
+    // (ii) An added structural field points the reader the other way.
+    let added = shape((9, 2, 7), (10, 3, 7));
+    assert!(
+        added.contains("ΔT1 = +1") && added.contains("APPEARED in"),
+        "drift_shape must distinguish an ADDED field from a lost one, got:\n{added}"
+    );
+
+    // (iii) Behavioral-only drift must NOT send the reader hunting for a field.
+    let behavioral = shape((9, 2, 7), (11, 2, 9));
+    assert!(
+        behavioral.contains("no constructor field was added or removed")
+            && behavioral.contains("BEHAVIORAL"),
+        "drift_shape must localise behavioral drift to conditions/premises/binders, got:\n{behavioral}"
+    );
+
+    // (iv) A tier shift (Δtotal == 0, ΔT1 == −ΔT2) is its own signature, not a lost field.
+    let tier_shift = shape((9, 2, 7), (9, 1, 8));
+    assert!(
+        tier_shift.contains("CHANGED TIER") && tier_shift.contains("is_binder"),
+        "drift_shape must recognise a tier shift rather than report a lost field, got:\n{tier_shift}"
+    );
+
+    // (v) Tuple-equal ⇒ the guard-TYPING logic moved, not the grammar.
+    let typing_only = shape((9, 2, 7), (9, 2, 7));
+    assert!(
+        typing_only.contains("guard-TYPING logic changed"),
+        "drift_shape must attribute a T1/T2-stable mismatch to the typing logic, got:\n{typing_only}"
+    );
+
+    // (vi) The observed decomposition is always reported — that is the line whose absence
+    // forced the 2026-07-30 investigation to write a metadata dumper by hand.
+    for (name, s) in [
+        ("structural_only", &structural_only),
+        ("added", &added),
+        ("behavioral", &behavioral),
+        ("tier_shift", &tier_shift),
+        ("typing_only", &typing_only),
+    ] {
+        assert!(
+            s.contains("structural=2 binders=1 conditions=3 premises=3")
+                && s.contains("terms=2, rewrites=4")
+                && s.contains("== 3 + 3 + 1 == 7"),
+            "`{name}`: drift_shape must always report the raw decomposition, got:\n{s}"
+        );
+        assert!(
+            s.len() > 200,
+            "`{name}`: drift_shape degenerated to a near-empty message ({} bytes)",
+            s.len()
+        );
+    }
 }
 
 /// **R1 containment**: a binder field NEVER lands in the structural tally. We
