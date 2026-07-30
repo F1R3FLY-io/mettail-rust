@@ -1,5 +1,6 @@
 use super::*;
 use crate::prediction::{FirstItem, FirstSet, RuleInfo};
+use std::collections::BTreeMap;
 
 /// Helper: create a RuleInfo with sensible defaults.
 fn rule(label: &str, category: &str) -> RuleInfo {
@@ -1135,7 +1136,7 @@ fn low_selectivity_is_not_reachability_under_any_normalisation() {
             total_selectivity: 0.8,
             mean_entropy: 1.5,
             low_selectivity_rules: vec!["low_1".into(), "low_2".into()],
-            rule_selectivities: HashMap::new(),
+            rule_selectivities: BTreeMap::new(),
         };
         // ★ THE CONTROL, on the same call: a guard proven UNSAT is a real proof.
         let sym = crate::symbolic::SymbolicAnalysis {
@@ -1222,7 +1223,7 @@ fn test_probabilistic_weight_blend() {
         mean_entropy: 0.0,
         low_selectivity_rules: Vec::new(),
         rule_selectivities: {
-            let mut m = HashMap::new();
+            let mut m = BTreeMap::new();
             m.insert("rule_1".into(), selectivity);
             m
         },
@@ -1286,7 +1287,7 @@ fn test_probabilistic_zero_selectivity_skipped() {
         mean_entropy: 0.0,
         low_selectivity_rules: Vec::new(),
         rule_selectivities: {
-            let mut m = HashMap::new();
+            let mut m = BTreeMap::new();
             m.insert("rule_z".into(), 0.0); // zero selectivity
             m
         },
@@ -2057,7 +2058,7 @@ fn empty_symbolic_analysis_no_disambiguated_tokens() {
 
 #[test]
 fn per_category_entropy_two_rules() {
-    let mut rule_selectivities = HashMap::new();
+    let mut rule_selectivities = BTreeMap::new();
     rule_selectivities.insert("Expr::A".to_string(), 0.7);
     rule_selectivities.insert("Expr::B".to_string(), 0.3);
 
@@ -2109,7 +2110,7 @@ fn per_category_entropy_no_analysis() {
 
 #[test]
 fn per_category_entropy_multiple_categories() {
-    let mut rule_selectivities = HashMap::new();
+    let mut rule_selectivities = BTreeMap::new();
     // Expr has 2 rules with uniform distribution
     rule_selectivities.insert("Expr::A".to_string(), 0.5);
     rule_selectivities.insert("Expr::B".to_string(), 0.5);

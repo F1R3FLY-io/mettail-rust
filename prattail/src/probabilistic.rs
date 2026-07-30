@@ -49,7 +49,7 @@
 //! - Mohri (2009), "Weighted Automata Algorithms." In *Handbook of Weighted
 //!   Automata*, Springer.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::automata::semiring::{EntropyWeight, LogWeight, Semiring, TropicalWeight};
 
@@ -1021,13 +1021,16 @@ impl ProbabilisticAutomaton {
         }
 
         // Build per-rule selectivity map from the forward probabilities.
-        let rule_selectivities: HashMap<String, f64> = if self.is_normalized {
+        //
+        // `low_selectivity_rules` is already deterministic here: it is built by
+        // walking states `0..n` in index order, not by iterating a hash map.
+        let rule_selectivities: BTreeMap<String, f64> = if self.is_normalized {
             low_selectivity_rules
                 .iter()
                 .map(|label| (label.clone(), 0.0))
                 .collect() // Approximation: low-selectivity rules get 0; others are unlisted
         } else {
-            HashMap::new()
+            BTreeMap::new()
         };
         ProbabilisticAnalysis {
             num_states: n,
@@ -1070,7 +1073,30 @@ pub struct ProbabilisticAnalysis {
     /// Per-rule selectivity scores (rule_label → selectivity in [0,1]).
     /// Populated only when `is_normalized` is true and the PA has been trained.
     /// Used by codegen to blend probabilistic weights into constructor ordering (PR01-WEIGHT).
-    pub rule_selectivities: HashMap<String, f64>,
+    ///
+    /// # Why a `BTreeMap` and not a `HashMap` (#173 sibling)
+    ///
+    /// Unlike [`PetriAnalysis::unbounded_places`](crate::petri::PetriAnalysis),
+    /// this field is a *keyed lookup*, not a sequence a human reads: nothing in
+    /// the grammar orders the entries of a function from label to weight. But its
+    /// **iteration** order is observed, in three places, and every one of them is
+    /// order-sensitive:
+    ///
+    /// 1. `total_selectivity` below is a sum of these values, and `f64` addition
+    ///    is not associative — two runs measurably produced `1.0` and
+    ///    `1.0000000000000002`;
+    /// 2. `build_pipeline_analysis` iterates it to accumulate
+    ///    `PipelineAnalysis::per_category_entropy`, again by `f64` folds;
+    /// 3. that entropy map then decides, in codegen, which category is named in a
+    ///    **generated** function signature.
+    ///
+    /// When a value has no natural sequence and yet its iteration order escapes,
+    /// canonicalising by key is the correct answer rather than a cop-out — it is
+    /// the *only* order available, and it makes every consumer deterministic
+    /// without any consumer having to know that it must sort. `O(log n)` lookup
+    /// on a compile-time rule table of tens of entries is not a cost worth
+    /// discussing.
+    pub rule_selectivities: BTreeMap<String, f64>,
 }
 
 /// Analyze grammar rule distribution using probabilistic automata.
@@ -1092,25 +1118,47 @@ pub fn analyze_from_bundle(
             total_selectivity: 0.0,
             mean_entropy: 0.0,
             low_selectivity_rules: Vec::new(),
-            rule_selectivities: HashMap::new(),
+            rule_selectivities: BTreeMap::new(),
         };
     }
 
     // Assign raw weights based on structural complexity:
     // weight(rule) = 1.0 / (1.0 + syntax_items.len() as f64)
     // Simpler rules (fewer syntax items) get higher raw weight (higher probability).
-    let mut per_cat_rules: HashMap<String, Vec<(String, f64)>> = HashMap::new();
+    //
+    // ── #173 sibling: the CATEGORY TRAVERSAL ORDER is part of the result ──
+    // This was a `HashMap<String, Vec<(String, f64)>>`, and the loop below folds
+    // `total_entropy` across categories with `+=`. `f64` addition is not
+    // associative, so iterating in hash order made `mean_entropy` — a *numeric
+    // result*, not merely a rendering — depend on the seed of a hash map. The
+    // carrier is now an insertion-ordered association list: `per_cat_rules`
+    // carries first-encounter order over `all_syntax` (the grammar's own rule
+    // order) and `cat_slot` is the O(1) index into it.
+    let mut per_cat_rules: Vec<(String, Vec<(String, f64)>)> = Vec::new();
+    let mut cat_slot: HashMap<&str, usize> = HashMap::with_capacity(all_syntax.len());
     for (label, cat, items) in all_syntax {
         let qualified = format!("{}::{}", cat, label);
         let raw_weight = 1.0 / (1.0 + items.len() as f64);
-        per_cat_rules
-            .entry(cat.clone())
-            .or_default()
-            .push((qualified, raw_weight));
+        let slot = match cat_slot.get(cat.as_str()) {
+            Some(&slot) => slot,
+            None => {
+                per_cat_rules.push((cat.clone(), Vec::new()));
+                let slot = per_cat_rules.len() - 1;
+                cat_slot.insert(cat.as_str(), slot);
+                slot
+            },
+        };
+        per_cat_rules[slot].1.push((qualified, raw_weight));
     }
 
     // Normalize per category: weights sum to 1.0 per category.
-    let mut rule_selectivities: HashMap<String, f64> = HashMap::new();
+    //
+    // `ordered_selectivities` mirrors `rule_selectivities` as a *sequence* in
+    // grammar order. It exists so that the two derived values below —
+    // `total_selectivity` and `low_selectivity_rules` — are folded over a
+    // sequence rather than over the map, whose iteration order is not an order.
+    let mut rule_selectivities: BTreeMap<String, f64> = BTreeMap::new();
+    let mut ordered_selectivities: Vec<(String, f64)> = Vec::with_capacity(num_rules);
     let mut total_entropy = 0.0_f64;
     let mut num_categories_with_rules = 0usize;
 
@@ -1128,6 +1176,7 @@ pub fn analyze_from_bundle(
             let cat_weight = rules.len() as f64 / num_rules as f64;
             let selectivity = normalized * cat_weight;
             rule_selectivities.insert(qualified.clone(), selectivity);
+            ordered_selectivities.push((qualified.clone(), selectivity));
 
             // Shannon entropy for this category: -p * ln(p).
             if normalized > 0.0 {
@@ -1143,13 +1192,22 @@ pub fn analyze_from_bundle(
         0.0
     };
 
-    // Total selectivity: sum of all rule selectivities.
-    let total_selectivity: f64 = rule_selectivities.values().sum();
+    // Total selectivity: sum of all rule selectivities, summed in grammar order.
+    //
+    // This was `rule_selectivities.values().sum()`. Because `f64` addition is not
+    // associative, the SUM ITSELF differed between runs of the same analysis —
+    // measured as `1.0` on one run and `1.0000000000000002` on the next. Summing
+    // the ordered sequence makes the value a function of the grammar alone.
+    let total_selectivity: f64 = ordered_selectivities.iter().map(|(_, sel)| sel).sum();
 
-    // Low selectivity rules: below 0.01 threshold.
-    let low_selectivity_rules: Vec<String> = rule_selectivities
+    // Low selectivity rules: below 0.01 threshold, in grammar order.
+    //
+    // Also derived from the ordered sequence rather than from the map: this list
+    // is emitted one diagnostic per element by `lint_pr01_low_selectivity_rule`,
+    // so its order is the order a human reads the warnings in.
+    let low_selectivity_rules: Vec<String> = ordered_selectivities
         .iter()
-        .filter(|(_, &sel)| sel < 0.01)
+        .filter(|(_, sel)| *sel < 0.01)
         .map(|(label, _)| label.clone())
         .collect();
 

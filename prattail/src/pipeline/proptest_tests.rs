@@ -1,7 +1,7 @@
 use super::*;
 use crate::prediction::RuleInfo;
 use proptest::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Helper: create a RuleInfo with sensible defaults.
 fn rule(label: &str, category: &str) -> RuleInfo {
@@ -442,12 +442,16 @@ proptest! {
 // Sprint C3: Per-category entropy (feature = "probabilistic")
 // ══════════════════════════════════════════════════════════════════════════
 
-/// Strategy: generate a HashMap of `"Cat::RuleN" -> selectivity` entries
+/// Strategy: generate a `BTreeMap` of `"Cat::RuleN" -> selectivity` entries
 /// for a single category, with `n` rules and positive selectivities.
+///
+/// `BTreeMap` to match `ProbabilisticAnalysis::rule_selectivities`, whose
+/// carrier is key-ordered so that the `f64` folds over it are reproducible
+/// (#173 sibling).
 fn arb_single_cat_selectivities(
     cat: &str,
     n: usize,
-) -> impl Strategy<Value = HashMap<String, f64>> {
+) -> impl Strategy<Value = BTreeMap<String, f64>> {
     let cat = cat.to_string();
     proptest::collection::vec(0.01_f64..10.0, n).prop_map(move |weights| {
         weights
@@ -506,7 +510,7 @@ proptest! {
     fn prop_single_rule_zero_entropy(
         selectivity in 0.01_f64..100.0,
     ) {
-        let mut rule_selectivities = HashMap::new();
+        let mut rule_selectivities = BTreeMap::new();
         rule_selectivities.insert("Expr::Only".to_string(), selectivity);
 
         let prob = crate::probabilistic::ProbabilisticAnalysis {
@@ -548,7 +552,7 @@ proptest! {
         n in 2_usize..=8,
         uniform_weight in 0.1_f64..10.0,
     ) {
-        let mut rule_selectivities = HashMap::new();
+        let mut rule_selectivities = BTreeMap::new();
         for i in 0..n {
             rule_selectivities.insert(format!("Expr::R{i}"), uniform_weight);
         }
@@ -595,7 +599,7 @@ proptest! {
         uniform_weight in 0.1_f64..10.0,
     ) {
         // Build "smaller" distribution: n uniform rules
-        let mut sels_small = HashMap::new();
+        let mut sels_small = BTreeMap::new();
         for i in 0..n {
             sels_small.insert(format!("Expr::R{i}"), uniform_weight);
         }
@@ -621,7 +625,7 @@ proptest! {
         );
 
         // Build "larger" distribution: n+1 uniform rules
-        let mut sels_large = HashMap::new();
+        let mut sels_large = BTreeMap::new();
         for i in 0..=n {
             sels_large.insert(format!("Expr::R{i}"), uniform_weight);
         }
