@@ -1678,14 +1678,10 @@ mod tests {
         }
 
         // An undecodable GPrivate id (a runtime-fresh name shape) is Other.
-        let fresh = Par {
-            unforgeables: vec![GUnforgeable {
-                unf_instance: Some(UnfInstance::GPrivateBody(GPrivate {
-                    id: vec![0xff, 0x00, 0x99],
-                })),
-            }],
-            ..Default::default()
-        };
+        let mut fresh = Par::default();
+        fresh.unforgeables = vec![GUnforgeable {
+            unf_instance: Some(UnfInstance::GPrivateBody(GPrivate { id: vec![0xff, 0x00, 0x99] })),
+        }];
         assert_eq!(
             counters.classify_channel(&fresh),
             CommChannelClass::Other,

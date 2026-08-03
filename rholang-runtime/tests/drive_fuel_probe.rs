@@ -79,16 +79,14 @@ fn probe_receiver() -> Par {
 
     // Wildcard arm (SECOND): `⌜probe⌝!(fuel - 1) | @"p2:ledger"!("dec")` — the decrement is
     // an `EMinus` IN THE SEND DATUM (`eval_send` evaluates it; probe fact 2).
-    let decrement_datum = Par {
-        exprs: vec![Expr {
-            expr_instance: Some(ExprInstance::EMinusBody(EMinus {
-                p1: Some(new_boundvar_par(0, Vec::new(), false)),
-                p2: Some(new_gint_par(1, Vec::new(), false)),
-            })),
-        }],
-        locally_free: fuel_bits.clone(),
-        ..Default::default()
-    };
+    let mut decrement_datum = Par::default();
+    decrement_datum.exprs = vec![Expr {
+        expr_instance: Some(ExprInstance::EMinusBody(EMinus {
+            p1: Some(new_boundvar_par(0, Vec::new(), false)),
+            p2: Some(new_gint_par(1, Vec::new(), false)),
+        })),
+    }];
+    decrement_datum.locally_free = fuel_bits.clone();
     let resend = new_send_par(
         probe_channel(),
         vec![decrement_datum],
@@ -148,10 +146,9 @@ fn probe_receiver() -> Par {
         connective_used: false,
         condition: None,
     };
-    Par {
-        receives: vec![receive],
-        ..Default::default()
-    }
+    let mut par = Par::default();
+    par.receives = vec![receive];
+    par
 }
 
 /// ★ Probe P2 (AM-7): drive fuel from 2 TO EXHAUSTION on the live reducer — exactly 2

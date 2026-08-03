@@ -584,10 +584,9 @@ mod tests {
     use rspace_plus_plus::rspace::r#match::Match;
 
     fn expr_par(instance: ExprInstance) -> Par {
-        Par {
-            exprs: vec![Expr { expr_instance: Some(instance) }],
-            ..Par::default()
-        }
+        let mut par = Par::default();
+        par.exprs = vec![Expr { expr_instance: Some(instance) }];
+        par
     }
 
     fn gbool(b: bool) -> Par {

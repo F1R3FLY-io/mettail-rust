@@ -4625,12 +4625,11 @@ fn ac_nonlinear_condition(element_vars: &[Ident], free_count: usize) -> Option<P
                         p2: Some(group),
                     })),
                 };
-                Par {
-                    exprs: vec![and],
-                    locally_free: union_free,
-                    connective_used: false,
-                    ..Par::default()
-                }
+                let mut par = Par::default();
+                par.exprs = vec![and];
+                par.locally_free = union_free;
+                par.connective_used = false;
+                par
             },
         });
     }
@@ -5291,12 +5290,11 @@ pub(crate) fn nonlinear_consistency_condition(occurrence_levels: &[usize], free_
 /// A ground `Par` carrying the single expression `instance`, locally-free in `free`. Mirrors
 /// `rho_net_automaton::expr_par`.
 fn expr_par_with(instance: Expr, free: &[usize]) -> Par {
-    Par {
-        exprs: vec![instance],
-        locally_free: create_bit_vector(free),
-        connective_used: false,
-        ..Par::default()
-    }
+    let mut par = Par::default();
+    par.exprs = vec![instance];
+    par.locally_free = create_bit_vector(free);
+    par.connective_used = false;
+    par
 }
 
 /// Build the Comm σ-receiver for `op{ E0, E1, ...rest } ~> op{ r_0, …, r_{m-1}, ...rest }`

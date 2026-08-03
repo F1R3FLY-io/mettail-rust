@@ -164,21 +164,18 @@ async fn u1_receive_pattern_cannot_destructure_epathmap() {
     assert!(built.omitted_value_locations.is_empty());
 
     // Destructuring attempt: pattern = {| free-var |} (connective marked).
-    let destructuring_pattern = Par {
-        exprs: vec![Expr {
-            // EPathMap fix P3 (PM-2): constructor instead of a struct literal
-            // (the wrapper's shadow cell is private).
-            expr_instance: Some(ExprInstance::EPathmapBody(EPathMap::new(
-                vec![new_freevar_par(0, Vec::new())],
-                Vec::new(),
-                true,
-                None,
-            ))),
-        }],
-        locally_free: Vec::new(),
-        connective_used: true,
-        ..Par::default()
-    };
+    let mut destructuring_pattern = Par::default();
+    destructuring_pattern.exprs = vec![Expr {
+        // EPathMap fix P3 (PM-2): constructor instead of a struct literal
+        // (the wrapper's shadow cell is private).
+        expr_instance: Some(ExprInstance::EPathmapBody(EPathMap::new(
+            vec![new_freevar_par(0, Vec::new())],
+            Vec::new(),
+            true,
+            None,
+        ))),
+    }];
+    destructuring_pattern.connective_used = true;
     let destructuring_receive = new_receive_par(
         vec![ReceiveBind {
             patterns: vec![destructuring_pattern],

@@ -330,12 +330,10 @@ mod tests {
 
     #[test]
     fn non_reflected_operand_fails_typed() {
-        let bare_int = Par {
-            exprs: vec![models::rhoapi::Expr {
-                expr_instance: Some(ExprInstance::GInt(7)),
-            }],
-            ..Default::default()
-        };
+        let mut bare_int = Par::default();
+        bare_int.exprs = vec![models::rhoapi::Expr {
+            expr_instance: Some(ExprInstance::GInt(7)),
+        }];
         assert_eq!(
             par_to_ground_term(&bare_int, FP),
             Err(NativeContractError::OperandNotReflectedTerm),

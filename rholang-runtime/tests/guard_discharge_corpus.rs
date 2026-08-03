@@ -668,10 +668,9 @@ fn the_three_codegen_guard_sites_are_all_residual() {
     use models::rust::utils::new_boundvar_par;
 
     fn expr_par(instance: ExprInstance) -> Par {
-        Par {
-            exprs: vec![Expr { expr_instance: Some(instance) }],
-            ..Par::default()
-        }
+        let mut par = Par::default();
+        par.exprs = vec![Expr { expr_instance: Some(instance) }];
+        par
     }
     fn slot_eq(i: usize, j: usize) -> Par {
         expr_par(ExprInstance::EEqBody(EEq {

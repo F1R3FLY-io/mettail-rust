@@ -42,12 +42,11 @@ use rspace_plus_plus::rspace::shared::key_value_store_manager::KeyValueStoreMana
 
 /// A quoted-name channel `@"<name>"` (a `Par` holding a single `GString`).
 pub(crate) fn quoted_channel(name: &str) -> Par {
-    Par {
-        exprs: vec![Expr {
-            expr_instance: Some(ExprInstance::GString(name.to_string())),
-        }],
-        ..Default::default()
-    }
+    let mut par = Par::default();
+    par.exprs = vec![Expr {
+        expr_instance: Some(ExprInstance::GString(name.to_string())),
+    }];
+    par
 }
 
 /// Pull the single ground `i64` out of a `Par` of the form `Par{exprs:[GInt(n)]}`.

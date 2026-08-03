@@ -259,7 +259,10 @@ impl fmt::Display for NaiveKtContextualUnsupported {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Context(reason) => {
-                write!(f, "naive Knotted-Topoi contextual driver: context shape check failed: {reason:?}")
+                write!(
+                    f,
+                    "naive Knotted-Topoi contextual driver: context shape check failed: {reason:?}"
+                )
             },
             Self::Naive(reason) => write!(f, "{reason}"),
         }
@@ -539,16 +542,12 @@ pub fn naive_kt_entry_receiver_par(
     let accept = build_accept_send(accept_channel, out_channel, k, &first_occ);
     let mut body = wrap_capture_chain(&schedule.captures, accept);
     for descent in schedule.descents.iter().rev() {
-        let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
-            language_fingerprint,
-            &descent.op,
-        ));
+        let tag =
+            GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &descent.op));
         body = naive_tag_receive(&descent.loc_channel, tag, body, false, encoding);
     }
-    let root_tag = GPrivateBuilder::new_par_from_string(reflect_tag(
-        language_fingerprint,
-        &schedule.root_op,
-    ));
+    let root_tag =
+        GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &schedule.root_op));
     Ok(naive_tag_receive(
         &spread_root_location(language_fingerprint, site),
         root_tag,
@@ -563,12 +562,7 @@ pub fn naive_kt_entry_receiver_par(
 /// `collect_redex_sites` walk, with the SAME site-string derivation
 /// ([`spread_child_location`] folded from `location`), so a receiver built at a
 /// collected site reads exactly the channels the ONE spread publishes there.
-fn collect_entry_sites(
-    node: &GroundTerm,
-    location: &str,
-    root_op: &str,
-    sites: &mut Vec<String>,
-) {
+fn collect_entry_sites(node: &GroundTerm, location: &str, root_op: &str, sites: &mut Vec<String>) {
     if node.constructor == root_op {
         sites.push(location.to_string());
     }
@@ -717,9 +711,10 @@ pub fn naive_kt_contextual_match_call_par(
         .hole_positions
         .iter()
         .map(|path| {
-            path.iter().fold(root_site.to_string(), |site, (op, index)| {
-                spread_child_location(&site, op, *index)
-            })
+            path.iter()
+                .fold(root_site.to_string(), |site, (op, index)| {
+                    spread_child_location(&site, op, *index)
+                })
         })
         .collect();
 
@@ -879,16 +874,14 @@ pub fn respread_reserved_labels() -> [&'static str; 3] {
 fn concat_str(a: trs::Node, b: trs::Node) -> trs::Node {
     let free = trs::union_free(&[a.free.as_slice(), b.free.as_slice()]);
     let free_bits = trs::free_bits(&free);
-    let par = Par {
-        exprs: vec![Expr {
-            expr_instance: Some(ExprInstance::EPlusPlusBody(EPlusPlus {
-                p1: Some(a.par),
-                p2: Some(b.par),
-            })),
-        }],
-        locally_free: free_bits,
-        ..Default::default()
-    };
+    let mut par = Par::default();
+    par.exprs = vec![Expr {
+        expr_instance: Some(ExprInstance::EPlusPlusBody(EPlusPlus {
+            p1: Some(a.par),
+            p2: Some(b.par),
+        })),
+    }];
+    par.locally_free = free_bits;
     trs::Node { par, free }
 }
 
@@ -970,10 +963,8 @@ fn selfdriving_entry_receiver_par(
     let accept = build_accept_send_to_name(accept_channel, respread_root, k, &first_occ);
     let mut body = wrap_capture_chain(&schedule.captures, accept);
     for descent in schedule.descents.iter().rev() {
-        let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
-            language_fingerprint,
-            &descent.op,
-        ));
+        let tag =
+            GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &descent.op));
         body = naive_tag_receive(
             &descent.loc_channel,
             tag,
@@ -982,10 +973,8 @@ fn selfdriving_entry_receiver_par(
             NaiveGuardEncoding::PatternGuard,
         );
     }
-    let root_tag = GPrivateBuilder::new_par_from_string(reflect_tag(
-        language_fingerprint,
-        &schedule.root_op,
-    ));
+    let root_tag =
+        GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &schedule.root_op));
     Ok(naive_tag_receive(
         &spread_root_location(language_fingerprint, site),
         root_tag,
@@ -1016,9 +1005,7 @@ fn collect_selfdriving_arity_map(
         });
     }
     if respread_reserved_labels().contains(&term.constructor.as_str()) {
-        return Err(NaiveKtUnsupported::SelfDrivingReservedLabel {
-            op: term.constructor.clone(),
-        });
+        return Err(NaiveKtUnsupported::SelfDrivingReservedLabel { op: term.constructor.clone() });
     }
     match map.get(&term.constructor) {
         Some(&arity) if arity != term.children.len() => {
@@ -1070,8 +1057,7 @@ pub fn respread_root_receiver_par(
     let fp = language_fingerprint;
     let chan = trs::tag_par(fp, RESPREAD_ROOT_RESERVED_LABEL);
     let env = trs::Env::root(&["t"]);
-    let mut cases: Vec<trs::Case> =
-        Vec::with_capacity(redex_root_ops.len() + nf_labels.len() + 1);
+    let mut cases: Vec<trs::Case> = Vec::with_capacity(redex_root_ops.len() + nf_labels.len() + 1);
     for op in redex_root_ops {
         cases.push(trs::Case {
             pattern: head_tag_remainder_pattern(fp, op),
@@ -1171,10 +1157,7 @@ pub fn respread_walker_receiver_par(
                 let mut composed =
                     trs::send(env.var("loc"), vec![trs::ground(trs::tag_par(fp, label))]);
                 // @cap!(t) — the reflected node IS its own collapse value.
-                composed = trs::par2(
-                    composed,
-                    trs::send(env.var("cap"), vec![env.var("t")]),
-                );
+                composed = trs::par2(composed, trs::send(env.var("cap"), vec![env.var("t")]));
                 for (i, child) in child_refs.iter().enumerate() {
                     // The `spread_child_location` suffix "/{op}.{index}",
                     // appended in-Rho to BOTH prefixes.
@@ -1301,10 +1284,7 @@ pub fn naive_kt_selfdriving_call_par(
         &redex_root_ops,
         &nf_labels,
     ));
-    call = call.append(respread_walker_receiver_par(
-        &ruleset.language_fingerprint,
-        &arity_map,
-    ));
+    call = call.append(respread_walker_receiver_par(&ruleset.language_fingerprint, &arity_map));
 
     let spread = spread_term_par(subject, &ruleset.language_fingerprint, root_site);
     Ok((call.append(spread), installed))
@@ -1403,7 +1383,10 @@ mod tests {
         assert!(root.persistent, "the Appendix-A rule receiver is persistent at its site");
         assert_eq!(root.bind_count, 0, "PatternGuard binds nothing at the tag");
         assert_eq!(root.binds[0].free_count, 0);
-        assert_eq!(gstring(root.binds[0].source.as_ref().expect("source")), Some(spread_root_location(FP, "site0").as_str()));
+        assert_eq!(
+            gstring(root.binds[0].source.as_ref().expect("source")),
+            Some(spread_root_location(FP, "site0").as_str())
+        );
         assert_eq!(
             root.binds[0].patterns[0],
             tag_par("Swap"),
@@ -1415,12 +1398,16 @@ mod tests {
         assert!(!cap_x.persistent, "captures are one-shot");
         assert_eq!(
             gstring(cap_x.binds[0].source.as_ref().expect("source")),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 0).as_str())
+            Some(
+                spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 0).as_str()
+            )
         );
         let cap_y = &cap_x.body.as_ref().expect("x body").receives[0];
         assert_eq!(
             gstring(cap_y.binds[0].source.as_ref().expect("source")),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 1).as_str())
+            Some(
+                spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 1).as_str()
+            )
         );
 
         // Accept: sa:acc!(BoundVar(1), BoundVar(0), @"OUT") — the SHARED
@@ -1459,7 +1446,10 @@ mod tests {
         // Level 1: persistent for(⌜f⌝ <= loc:site0).
         let root = &network.receives[0];
         assert!(root.persistent);
-        assert_eq!(gstring(root.binds[0].source.as_ref().expect("source")), Some(spread_root_location(FP, "site0").as_str()));
+        assert_eq!(
+            gstring(root.binds[0].source.as_ref().expect("source")),
+            Some(spread_root_location(FP, "site0").as_str())
+        );
         assert_eq!(root.binds[0].patterns[0], tag_par("f"));
         // Level 2: one-shot for(⌜g⌝ <- loc:site0/f.0).
         let descent = &root.body.as_ref().expect("root body").receives[0];
@@ -1473,7 +1463,14 @@ mod tests {
         let capture = &descent.body.as_ref().expect("descent body").receives[0];
         assert_eq!(
             gstring(capture.binds[0].source.as_ref().expect("source")),
-            Some(spread_child_location(&spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0), "g", 0).as_str())
+            Some(
+                spread_child_location(
+                    &spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0),
+                    "g",
+                    0
+                )
+                .as_str()
+            )
         );
         let accept = &capture.body.as_ref().expect("capture body").sends[0];
         assert_eq!(gstring(accept.chan.as_ref().expect("chan")), Some("sa:acc"));
@@ -1549,12 +1546,23 @@ mod tests {
         .expect("the mixed entry emits");
         assert_closed(&network, "the naive f(g(x), y) receiver");
 
-        let descent = &network.receives[0].body.as_ref().expect("root body").receives[0];
+        let descent = &network.receives[0]
+            .body
+            .as_ref()
+            .expect("root body")
+            .receives[0];
         assert_eq!(descent.binds[0].patterns[0], tag_par("g"));
         let cap_x = &descent.body.as_ref().expect("descent body").receives[0];
         assert_eq!(
             gstring(cap_x.binds[0].source.as_ref().expect("source")),
-            Some(spread_child_location(&spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0), "g", 0).as_str())
+            Some(
+                spread_child_location(
+                    &spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0),
+                    "g",
+                    0
+                )
+                .as_str()
+            )
         );
         let cap_y = &cap_x.body.as_ref().expect("x body").receives[0];
         assert_eq!(
@@ -1597,7 +1605,10 @@ mod tests {
             &new_wildcard_par(Vec::new(), true)
         );
         let republish = &m.cases[1].source.as_ref().expect("else body").sends[0];
-        assert_eq!(gstring(republish.chan.as_ref().expect("chan")), Some(spread_root_location(FP, "site0").as_str()));
+        assert_eq!(
+            gstring(republish.chan.as_ref().expect("chan")),
+            Some(spread_root_location(FP, "site0").as_str())
+        );
         assert_eq!(boundvar_index(&republish.data[0]), Some(0), "republishes the consumed tag");
 
         // The continuation under the tag case still ends in the SAME accept
@@ -1850,10 +1861,7 @@ mod tests {
         };
         let subject = GroundTerm::new(
             "Pair",
-            vec![
-                swap("A", "B"),
-                GroundTerm::new("Pair", vec![swap("B", "A"), swap("A", "A")]),
-            ],
+            vec![swap("A", "B"), GroundTerm::new("Pair", vec![swap("B", "A"), swap("A", "A")])],
         );
         let (call, installed) = naive_kt_match_call_par(
             &ruleset,
@@ -1874,13 +1882,19 @@ mod tests {
             .filter(|receive| receive.persistent)
             .map(|receive| gstring(receive.binds[0].source.as_ref().expect("source")))
             .collect();
-        for expected in
-            [
+        for expected in [
             spread_child_location(&spread_root_location(FP, "site0"), "Pair", 0),
-            spread_child_location(&spread_child_location(&spread_root_location(FP, "site0"), "Pair", 1), "Pair", 0),
-            spread_child_location(&spread_child_location(&spread_root_location(FP, "site0"), "Pair", 1), "Pair", 1),
-        ]
-        {
+            spread_child_location(
+                &spread_child_location(&spread_root_location(FP, "site0"), "Pair", 1),
+                "Pair",
+                0,
+            ),
+            spread_child_location(
+                &spread_child_location(&spread_root_location(FP, "site0"), "Pair", 1),
+                "Pair",
+                1,
+            ),
+        ] {
             assert!(
                 persistent_sources.contains(&Some(expected.as_str())),
                 "a per-site receiver must read {expected} (got {persistent_sources:?})"
@@ -1891,7 +1905,10 @@ mod tests {
         let root_tag_sends = call
             .sends
             .iter()
-            .filter(|send| gstring(send.chan.as_ref().expect("chan")) == Some(spread_root_location(FP, "site0").as_str()))
+            .filter(|send| {
+                gstring(send.chan.as_ref().expect("chan"))
+                    == Some(spread_root_location(FP, "site0").as_str())
+            })
             .count();
         assert_eq!(root_tag_sends, 1, "exactly ONE spread is appended");
     }
@@ -1991,7 +2008,10 @@ mod tests {
             .find(|receive| {
                 receive.persistent
                     && gstring(receive.binds[0].source.as_ref().expect("source"))
-                        == Some(spread_child_location(&spread_root_location(FP, "site0"), "Wrap", 0).as_str())
+                        == Some(
+                            spread_child_location(&spread_root_location(FP, "site0"), "Wrap", 0)
+                                .as_str(),
+                        )
             })
             .expect("the naive locator is installed at the hole site");
         let cap_x = &locator.body.as_ref().expect("locator body").receives[0];
@@ -2078,12 +2098,10 @@ mod tests {
         for variant in variants {
             assert!(!variant.to_string().is_empty(), "{variant:?} must render");
         }
-        let contextual = NaiveKtContextualUnsupported::Context(
-            AutomatonUnsupported::ContextualHoleMismatch,
-        );
+        let contextual =
+            NaiveKtContextualUnsupported::Context(AutomatonUnsupported::ContextualHoleMismatch);
         assert!(!contextual.to_string().is_empty());
-        let wrapped =
-            NaiveKtContextualUnsupported::Naive(NaiveKtUnsupported::NonLinearEntry);
+        let wrapped = NaiveKtContextualUnsupported::Naive(NaiveKtUnsupported::NonLinearEntry);
         assert!(!wrapped.to_string().is_empty());
     }
 
@@ -2131,9 +2149,7 @@ mod tests {
     fn persistent_receive_on<'a>(call: &'a Par, source: &Par, what: &str) -> &'a Receive {
         call.receives
             .iter()
-            .find(|receive| {
-                receive.persistent && receive.binds[0].source.as_ref() == Some(source)
-            })
+            .find(|receive| receive.persistent && receive.binds[0].source.as_ref() == Some(source))
             .unwrap_or_else(|| panic!("{what}: no persistent receive on {source:?}"))
     }
 
@@ -2145,9 +2161,8 @@ mod tests {
     #[test]
     fn selfdriving_call_emits_dispatcher_walker_and_the_rerouted_accept() {
         let (ruleset, chain) = beta_ruleset_and_chain();
-        let (call, installed) =
-            naive_kt_selfdriving_call_par(&ruleset, &chain, "site0", "OUT", )
-                .expect("the β chain admits the R3 self-driving call");
+        let (call, installed) = naive_kt_selfdriving_call_par(&ruleset, &chain, "site0", "OUT")
+            .expect("the β chain admits the R3 self-driving call");
         assert_eq!(installed, 1, "one entry ⇒ one installed R3 root receiver");
         assert_closed(&call, "the R3 self-driving call");
 
@@ -2195,7 +2210,10 @@ mod tests {
         let root_tag_sends = call
             .sends
             .iter()
-            .filter(|send| gstring(send.chan.as_ref().expect("chan")) == Some(spread_root_location(FP, "site0").as_str()))
+            .filter(|send| {
+                gstring(send.chan.as_ref().expect("chan"))
+                    == Some(spread_root_location(FP, "site0").as_str())
+            })
             .count();
         assert_eq!(root_tag_sends, 1, "exactly ONE spread is appended");
     }
@@ -2226,7 +2244,8 @@ mod tests {
                 case.pattern
                     .as_ref()
                     .is_some_and(|pattern| format!("{pattern:?}").contains("EListBody"))
-                    && format!("{:?}", case.pattern).contains(&format!("{:?}", tag_par("App").unforgeables[0]))
+                    && format!("{:?}", case.pattern)
+                        .contains(&format!("{:?}", tag_par("App").unforgeables[0]))
             })
             .expect("the App redex arm exists");
         let seed = &app_arm.source.as_ref().expect("App arm body").sends[0];
@@ -2245,7 +2264,8 @@ mod tests {
             .cases
             .iter()
             .find(|case| {
-                format!("{:?}", case.pattern).contains(&format!("{:?}", tag_par("A").unforgeables[0]))
+                format!("{:?}", case.pattern)
+                    .contains(&format!("{:?}", tag_par("A").unforgeables[0]))
             })
             .expect("the A NF arm exists");
         let out_send = &a_arm.source.as_ref().expect("A arm body").sends[0];
@@ -2335,10 +2355,7 @@ mod tests {
         // One label at two arities: f(A, f(B)) uses f at arity 2 and arity 1.
         let conflicted = GroundTerm::new(
             "f",
-            vec![
-                GroundTerm::nullary("A"),
-                GroundTerm::new("f", vec![GroundTerm::nullary("B")]),
-            ],
+            vec![GroundTerm::nullary("A"), GroundTerm::new("f", vec![GroundTerm::nullary("B")])],
         );
         assert_eq!(
             naive_kt_selfdriving_call_par(&ruleset, &conflicted, "site0", "OUT"),
@@ -2349,10 +2366,7 @@ mod tests {
             })
         );
         // A reserved rendezvous label as a subject constructor.
-        let reserved = GroundTerm::new(
-            RESPREAD_RESERVED_LABEL,
-            vec![GroundTerm::nullary("A")],
-        );
+        let reserved = GroundTerm::new(RESPREAD_RESERVED_LABEL, vec![GroundTerm::nullary("A")]);
         assert_eq!(
             naive_kt_selfdriving_call_par(&ruleset, &reserved, "site0", "OUT"),
             Err(NaiveKtUnsupported::SelfDrivingReservedLabel {

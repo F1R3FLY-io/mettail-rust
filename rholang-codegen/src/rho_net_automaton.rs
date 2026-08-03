@@ -321,12 +321,11 @@ fn build_nested_case_body(
 
 /// A ground `Par` carrying the single binary expression `instance`, free in `free`.
 fn expr_par(instance: ExprInstance, free: &[usize]) -> Par {
-    Par {
-        exprs: vec![Expr { expr_instance: Some(instance) }],
-        locally_free: bits(free),
-        connective_used: false,
-        ..Par::default()
-    }
+    let mut par = Par::default();
+    par.exprs = vec![Expr { expr_instance: Some(instance) }];
+    par.locally_free = bits(free);
+    par.connective_used = false;
+    par
 }
 
 /// The consistency `condition` for a NON-LINEAR op partition: the conjunction (`EAnd`) of
@@ -729,24 +728,36 @@ mod tests {
             ),
         )])
         .unwrap();
-        let network =
-            automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", FP)
-                .expect("a nested-App pattern now descends-then-collapses");
+        let network = automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", FP)
+            .expect("a nested-App pattern now descends-then-collapses");
         assert!(network.locally_free.is_empty(), "the nested network is a closed contract");
 
         // Root: for(h <- loc:site0){ match h { f => <descent> } }.
         let root = &network.receives[0];
-        assert_eq!(gstring(root.binds[0].source.as_ref().unwrap()), Some(spread_root_location(FP, "site0").as_str()));
+        assert_eq!(
+            gstring(root.binds[0].source.as_ref().unwrap()),
+            Some(spread_root_location(FP, "site0").as_str())
+        );
         let f_case = &root.body.as_ref().unwrap().matches[0].cases[0];
         // Descent: for(h1 <- loc:site0/f.0){ match h1 { g => <capture> } }.
         let descent = &f_case.source.as_ref().unwrap().receives[0];
-        assert_eq!(gstring(descent.binds[0].source.as_ref().unwrap()), Some(spread_child_location(&spread_root_location(FP, "site0"), "f", 0).as_str()));
+        assert_eq!(
+            gstring(descent.binds[0].source.as_ref().unwrap()),
+            Some(spread_child_location(&spread_root_location(FP, "site0"), "f", 0).as_str())
+        );
         let g_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
         // Capture: for(v <- cap:site0/f.0/g.0){ accept }.
         let capture = &g_case.source.as_ref().unwrap().receives[0];
         assert_eq!(
             gstring(capture.binds[0].source.as_ref().unwrap()),
-            Some(spread_child_location(&spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0), "g", 0).as_str()),
+            Some(
+                spread_child_location(
+                    &spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0),
+                    "g",
+                    0
+                )
+                .as_str()
+            ),
             "the Var leaf captures the COLLAPSED subterm at its deep cap: channel"
         );
         // Accept: sa:acc!( BoundVar(0), @"OUT" ) — the single σ slot ⟦subtree at f.0/g.0⟧.
@@ -770,17 +781,29 @@ mod tests {
             ),
         )])
         .unwrap();
-        let network =
-            automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", FP)
-                .expect("a nested pattern with a flat sibling serializes");
+        let network = automaton_receiver_network_par(&nested.view(), "site0", "sa:acc", "OUT", FP)
+            .expect("a nested pattern with a flat sibling serializes");
         let f_case = &network.receives[0].body.as_ref().unwrap().matches[0].cases[0];
         let descent = &f_case.source.as_ref().unwrap().receives[0];
         let g_case = &descent.body.as_ref().unwrap().matches[0].cases[0];
         // Inside the g descent: for(vx <- cap:site0/f.0/g.0){ for(vy <- cap:site0/f.1){ accept } }.
         let cap_x = &g_case.source.as_ref().unwrap().receives[0];
-        assert_eq!(gstring(cap_x.binds[0].source.as_ref().unwrap()), Some(spread_child_location(&spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0), "g", 0).as_str()));
+        assert_eq!(
+            gstring(cap_x.binds[0].source.as_ref().unwrap()),
+            Some(
+                spread_child_location(
+                    &spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0),
+                    "g",
+                    0
+                )
+                .as_str()
+            )
+        );
         let cap_y = &cap_x.body.as_ref().unwrap().receives[0];
-        assert_eq!(gstring(cap_y.binds[0].source.as_ref().unwrap()), Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 1).as_str()));
+        assert_eq!(
+            gstring(cap_y.binds[0].source.as_ref().unwrap()),
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 1).as_str())
+        );
         let accept = &cap_y.body.as_ref().unwrap().sends[0];
         assert_eq!(accept.data.len(), 3, "σ[x], σ[y], @out");
         assert_eq!(boundvar_index(&accept.data[0]), Some(1), "σ[x] = BoundVar(1) (DFS-first)");
@@ -812,8 +835,14 @@ mod tests {
 
         // Two binds, on the two child CAPTURE (collapse) channels — one atomic polyadic join.
         assert_eq!(join.bind_count, 2, "the join binds both children in one receive");
-        assert_eq!(gstring(join.binds[0].source.as_ref().unwrap()), Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0).as_str()));
-        assert_eq!(gstring(join.binds[1].source.as_ref().unwrap()), Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 1).as_str()));
+        assert_eq!(
+            gstring(join.binds[0].source.as_ref().unwrap()),
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 0).as_str())
+        );
+        assert_eq!(
+            gstring(join.binds[1].source.as_ref().unwrap()),
+            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "f", 1).as_str())
+        );
 
         // The consistency condition: EEq(BoundVar(1), BoundVar(0)) (occurrence 0 == occurrence 1).
         let guard = join
@@ -921,7 +950,10 @@ mod tests {
         assert!(network.locally_free.is_empty(), "the network is a closed contract");
         let root_recv = &network.receives[0];
         assert_eq!(root_recv.bind_count, 1);
-        assert_eq!(gstring(root_recv.binds[0].source.as_ref().unwrap()), Some(spread_root_location(FP, "site0").as_str()));
+        assert_eq!(
+            gstring(root_recv.binds[0].source.as_ref().unwrap()),
+            Some(spread_root_location(FP, "site0").as_str())
+        );
 
         // Root body: match BoundVar(0) { GPrivate(⌜Swap⌝) => <Var fors> }.
         let root_body = root_recv.body.as_ref().unwrap();
@@ -940,12 +972,16 @@ mod tests {
         let r1 = m.cases[0].source.as_ref().unwrap();
         assert_eq!(
             gstring(r1.receives[0].binds[0].source.as_ref().unwrap()),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 0).as_str())
+            Some(
+                spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 0).as_str()
+            )
         );
         let r1_body = r1.receives[0].body.as_ref().unwrap();
         assert_eq!(
             gstring(r1_body.receives[0].binds[0].source.as_ref().unwrap()),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 1).as_str())
+            Some(
+                spread_child_location(&collapse_capture_location(FP, "site0"), "Swap", 1).as_str()
+            )
         );
 
         // Accept send: sa:acc!( BoundVar(1), BoundVar(0), @"OUT" ) — each σ slot is the bound
@@ -988,17 +1024,26 @@ mod tests {
             .unwrap();
         assert_eq!(
             gstring(r_x.receives[0].binds[0].source.as_ref().unwrap()),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 0).as_str())
+            Some(
+                spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 0)
+                    .as_str()
+            )
         );
         let r_y = r_x.receives[0].body.as_ref().unwrap();
         assert_eq!(
             gstring(r_y.receives[0].binds[0].source.as_ref().unwrap()),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 1).as_str())
+            Some(
+                spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 1)
+                    .as_str()
+            )
         );
         let r_z = r_y.receives[0].body.as_ref().unwrap();
         assert_eq!(
             gstring(r_z.receives[0].binds[0].source.as_ref().unwrap()),
-            Some(spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 2).as_str())
+            Some(
+                spread_child_location(&collapse_capture_location(FP, "site0"), "Triple", 2)
+                    .as_str()
+            )
         );
         let accept = r_z.receives[0].body.as_ref().unwrap();
 
@@ -1043,13 +1088,15 @@ mod tests {
         ])
         .expect("two distinct-op patterns compile");
         let targets = [target(PatternId(0), "sa:swap"), target(PatternId(1), "sa:pair")];
-        let network =
-            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP)
-                .expect("two distinct-op patterns serialize");
+        let network = multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP)
+            .expect("two distinct-op patterns serialize");
 
         assert_eq!(network.receives.len(), 1, "one shared root receive");
         let root = &network.receives[0];
-        assert_eq!(gstring(root.binds[0].source.as_ref().unwrap()), Some(spread_root_location(FP, "site0").as_str()));
+        assert_eq!(
+            gstring(root.binds[0].source.as_ref().unwrap()),
+            Some(spread_root_location(FP, "site0").as_str())
+        );
         let m = &root.body.as_ref().unwrap().matches[0];
         assert_eq!(m.cases.len(), 2, "one Match case per distinct root op");
 
@@ -1082,9 +1129,8 @@ mod tests {
         ])
         .expect("two same-op rules compile");
         let targets = [target(PatternId(0), "sa:one"), target(PatternId(1), "sa:two")];
-        let network =
-            multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP)
-                .expect("two same-op rules serialize");
+        let network = multi_pattern_receiver_network_par(&automaton.view(), "site0", &targets, FP)
+            .expect("two same-op rules serialize");
 
         let m = &network.receives[0].body.as_ref().unwrap().matches[0];
         assert_eq!(m.cases.len(), 1, "one Match case for the shared op");

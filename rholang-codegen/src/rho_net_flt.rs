@@ -387,7 +387,11 @@ fn flt_receive_condition(
                 p2: Some(conjunct),
             })),
         };
-        combined = Par { exprs: vec![and], locally_free: free, connective_used: false, ..Par::default() };
+        let mut next = Par::default();
+        next.exprs = vec![and];
+        next.locally_free = free;
+        next.connective_used = false;
+        combined = next;
     }
     Some(combined)
 }
@@ -764,12 +768,15 @@ fn parse_pretty_name(debug: &str) -> Option<String> {
 /// Wrap one `Expr` in a `Par` carrying `free` as its `locally_free` bitset (empty → empty vec, so a
 /// free-free expr stays byte-clean rather than a `[0]` sentinel).
 fn par_from_expr(instance: Expr, free: &[usize]) -> Par {
-    Par {
-        exprs: vec![instance],
-        locally_free: if free.is_empty() { Vec::new() } else { create_bit_vector(free) },
-        connective_used: false,
-        ..Par::default()
-    }
+    let mut par = Par::default();
+    par.exprs = vec![instance];
+    par.locally_free = if free.is_empty() {
+        Vec::new()
+    } else {
+        create_bit_vector(free)
+    };
+    par.connective_used = false;
+    par
 }
 
 /// Shift a `locally_free` bitset down by `n` binders: keep set bits ≥ `n`, remap to `bit - n`. An

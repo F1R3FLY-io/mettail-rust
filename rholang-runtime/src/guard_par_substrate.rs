@@ -1801,10 +1801,9 @@ mod tests {
     use models::rhoapi::expr::ExprInstance as EI;
 
     fn expr(instance: EI) -> Par {
-        Par {
-            exprs: vec![Expr { expr_instance: Some(instance) }],
-            ..Default::default()
-        }
+        let mut par = Par::default();
+        par.exprs = vec![Expr { expr_instance: Some(instance) }];
+        par
     }
 
     fn gint(n: i64) -> Par {
@@ -1913,10 +1912,8 @@ mod tests {
 
     #[test]
     fn a_process_shaped_guard_fails_closed() {
-        let process = Par {
-            sends: vec![Default::default()],
-            ..Default::default()
-        };
+        let mut process = Par::default();
+        process.sends = vec![Default::default()];
         assert_eq!(substrate_verdict(&process), None);
         assert!(!encode_par_guard(&process).reaches_substrate());
     }

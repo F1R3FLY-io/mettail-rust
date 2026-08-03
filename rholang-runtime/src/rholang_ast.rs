@@ -2412,9 +2412,9 @@ impl<'a> Drive<'a> {
                 self.stacks.value(par);
             },
             Kont::MatchesStaticallyFalse => {
-                let target = self.stacks.pop_value();
+                let mut target = self.stacks.pop_value();
                 let mut folded = new_gbool_par(false, Vec::new(), false);
-                folded.locally_free = target.locally_free;
+                folded.locally_free = std::mem::take(&mut target.locally_free);
                 self.stacks.value(folded);
             },
             Kont::ListLit(n) => {

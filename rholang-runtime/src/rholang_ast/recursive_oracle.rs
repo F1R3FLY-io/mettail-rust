@@ -769,10 +769,10 @@ fn lower_arm_matches(
     formula: &std::sync::Arc<Proc>,
     env: &BoundEnv,
 ) -> Result<Par, RholangAstLowerError> {
-    let target = lower_proc(target.as_ref(), env)?;
+    let mut target = lower_proc(target.as_ref(), env)?;
     if mettail_languages::rholang::formula::is_statically_false(formula.as_ref()) {
         let mut folded = new_gbool_par(false, Vec::new(), false);
-        folded.locally_free = target.locally_free;
+        folded.locally_free = std::mem::take(&mut target.locally_free);
         return Ok(folded);
     }
     let pattern = crate::rholang_formula::lower_formula_in_env(formula.as_ref(), env)?;

@@ -307,12 +307,11 @@ mod tests {
     use models::rhoapi::Expr;
 
     fn gint_par(value: i64) -> Par {
-        Par {
-            exprs: vec![Expr {
-                expr_instance: Some(ExprInstance::GInt(value)),
-            }],
-            ..Default::default()
-        }
+        let mut par = Par::default();
+        par.exprs = vec![Expr {
+            expr_instance: Some(ExprInstance::GInt(value)),
+        }];
+        par
     }
 
     #[test]
@@ -324,10 +323,8 @@ mod tests {
     #[test]
     fn non_ground_operand_is_rejected() {
         // A send is not a value leaf.
-        let send_par = Par {
-            sends: vec![models::rhoapi::Send::default()],
-            ..Default::default()
-        };
+        let mut send_par = Par::default();
+        send_par.sends = vec![models::rhoapi::Send::default()];
         assert!(par_ground_to_proc(&send_par).is_none(), "a process is not a value leaf");
     }
 

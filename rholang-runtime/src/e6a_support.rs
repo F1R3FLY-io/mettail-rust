@@ -211,36 +211,34 @@ fn ground_list(elements: Vec<Par>) -> Par {
 /// every symbol under the 62-byte cap for any subtree whose token shape fits
 /// the arity cap (validated host-side by [`entry_fits_machine_caps`]).
 fn ground_tuple(inner: Par) -> Par {
-    Par {
-        exprs: vec![Expr {
-            expr_instance: Some(ExprInstance::ETupleBody(ETuple {
-                ps: vec![inner],
-                locally_free: Vec::new(),
-                connective_used: false,
-            })),
-        }],
-        ..Par::default()
-    }
+    let mut par = Par::default();
+    par.exprs = vec![Expr {
+        expr_instance: Some(ExprInstance::ETupleBody(ETuple {
+            ps: vec![inner],
+            locally_free: Vec::new(),
+            connective_used: false,
+        })),
+    }];
+    par
 }
 
 /// A `Par` carrying one method call `target.method_name(args…)`, free in the
 /// De Bruijn indices `free`.
 fn method_par(target: Par, method_name: &str, arguments: Vec<Par>, free: &[usize]) -> Par {
     let bits = create_bit_vector(free);
-    Par {
-        exprs: vec![Expr {
-            expr_instance: Some(ExprInstance::EMethodBody(EMethod {
-                method_name: method_name.to_string(),
-                target: Some(target),
-                arguments,
-                locally_free: bits.clone(),
-                connective_used: false,
-            })),
-        }],
-        locally_free: bits,
-        connective_used: false,
-        ..Par::default()
-    }
+    let mut par = Par::default();
+    par.exprs = vec![Expr {
+        expr_instance: Some(ExprInstance::EMethodBody(EMethod {
+            method_name: method_name.to_string(),
+            target: Some(target),
+            arguments,
+            locally_free: bits.clone(),
+            connective_used: false,
+        })),
+    }];
+    par.locally_free = bits;
+    par.connective_used = false;
+    par
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -803,17 +801,16 @@ fn sigma_chain_expr(components: &[String]) -> Par {
 fn and_all(mut conjuncts: Vec<Par>) -> Par {
     let mut guard = conjuncts.remove(0);
     for conjunct in conjuncts {
-        guard = Par {
-            exprs: vec![Expr {
-                expr_instance: Some(ExprInstance::EAndBody(EAnd {
-                    p1: Some(guard),
-                    p2: Some(conjunct),
-                })),
-            }],
-            locally_free: create_bit_vector(&[0]),
-            connective_used: false,
-            ..Par::default()
-        };
+        let mut combined = Par::default();
+        combined.exprs = vec![Expr {
+            expr_instance: Some(ExprInstance::EAndBody(EAnd {
+                p1: Some(guard),
+                p2: Some(conjunct),
+            })),
+        }];
+        combined.locally_free = create_bit_vector(&[0]);
+        combined.connective_used = false;
+        guard = combined;
     }
     guard
 }
@@ -884,73 +881,65 @@ pub fn entry_query_match_par(
 
     // ── the σ-extraction match (inside the true case) ────────────────────────
     let k = sigma_components.len();
-    let sigma_target = Par {
-        exprs: vec![Expr {
-            expr_instance: Some(ExprInstance::EListBody(EList {
-                ps: sigma_components
-                    .iter()
-                    .map(|components| sigma_chain_expr(components))
-                    .collect(),
-                locally_free: create_bit_vector(&[0]),
-                connective_used: false,
-                remainder: None,
-            })),
-        }],
-        locally_free: create_bit_vector(&[0]),
-        connective_used: false,
-        ..Par::default()
-    };
+    let mut sigma_target = Par::default();
+    sigma_target.exprs = vec![Expr {
+        expr_instance: Some(ExprInstance::EListBody(EList {
+            ps: sigma_components
+                .iter()
+                .map(|components| sigma_chain_expr(components))
+                .collect(),
+            locally_free: create_bit_vector(&[0]),
+            connective_used: false,
+            remainder: None,
+        })),
+    }];
+    sigma_target.locally_free = create_bit_vector(&[0]);
+    sigma_target.connective_used = false;
     // Pattern: per slot, the «v» entry list ["v", c₀, …, c_d, @val, (⟦t⟧,)]
     // matched as [_ × (d+3), (s,)] — wildcards for the family+components+@val
     // sentinel, a 1-tuple pattern binding the σ slot.
-    let sigma_pattern = Par {
-        exprs: vec![Expr {
-            expr_instance: Some(ExprInstance::EListBody(EList {
-                ps: sigma_components
-                    .iter()
-                    .enumerate()
-                    .map(|(slot, components)| {
-                        let arity = components.len() + 3; // "v" + components + @val + tuple
-                        let mut elements: Vec<Par> = Vec::with_capacity(arity);
-                        for _ in 0..arity - 1 {
-                            elements.push(new_wildcard_par(Vec::new(), true));
-                        }
-                        elements.push(Par {
-                            exprs: vec![Expr {
-                                expr_instance: Some(ExprInstance::ETupleBody(ETuple {
-                                    ps: vec![new_freevar_par(slot as i32, Vec::new())],
-                                    locally_free: Vec::new(),
-                                    connective_used: true,
-                                })),
-                            }],
+    let mut sigma_pattern = Par::default();
+    sigma_pattern.exprs = vec![Expr {
+        expr_instance: Some(ExprInstance::EListBody(EList {
+            ps: sigma_components
+                .iter()
+                .enumerate()
+                .map(|(slot, components)| {
+                    let arity = components.len() + 3; // "v" + components + @val + tuple
+                    let mut elements: Vec<Par> = Vec::with_capacity(arity);
+                    for _ in 0..arity - 1 {
+                        elements.push(new_wildcard_par(Vec::new(), true));
+                    }
+                    let mut tuple = Par::default();
+                    tuple.exprs = vec![Expr {
+                        expr_instance: Some(ExprInstance::ETupleBody(ETuple {
+                            ps: vec![new_freevar_par(slot as i32, Vec::new())],
                             locally_free: Vec::new(),
                             connective_used: true,
-                            ..Par::default()
-                        });
-                        Par {
-                            exprs: vec![Expr {
-                                expr_instance: Some(ExprInstance::EListBody(EList {
-                                    ps: elements,
-                                    locally_free: Vec::new(),
-                                    connective_used: true,
-                                    remainder: None,
-                                })),
-                            }],
+                        })),
+                    }];
+                    tuple.connective_used = true;
+                    elements.push(tuple);
+
+                    let mut entry = Par::default();
+                    entry.exprs = vec![Expr {
+                        expr_instance: Some(ExprInstance::EListBody(EList {
+                            ps: elements,
                             locally_free: Vec::new(),
                             connective_used: true,
-                            ..Par::default()
-                        }
-                    })
-                    .collect(),
-                locally_free: Vec::new(),
-                connective_used: true,
-                remainder: None,
-            })),
-        }],
-        locally_free: Vec::new(),
-        connective_used: true,
-        ..Par::default()
-    };
+                            remainder: None,
+                        })),
+                    }];
+                    entry.connective_used = true;
+                    entry
+                })
+                .collect(),
+            locally_free: Vec::new(),
+            connective_used: true,
+            remainder: None,
+        })),
+    }];
+    sigma_pattern.connective_used = true;
     // Body: accept!(s₀, …, sₖ₋₁, @out) — FreeVar(slot) is BoundVar(k−1−slot)
     // in the case body (the `build_accept_send` frame: DFS-first slot highest).
     let mut accept_data: Vec<Par> = Vec::with_capacity(k + 1);

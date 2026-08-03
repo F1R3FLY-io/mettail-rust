@@ -211,11 +211,13 @@ use crate::rho_net_lower::{
     DRIVE_AC_RESERVED_LABEL, DRIVE_ERR_RESERVED_LABEL, DRIVE_FUEL_RESERVED_LABEL,
     DRIVE_RESERVED_LABEL, FIRED_RESERVED_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
 };
-use crate::rho_net_ruleset::{compile_in_rho_matching_ruleset, in_rho_static_gate, InRhoMatchingRuleset};
+use crate::rho_net_ruleset::{
+    compile_in_rho_matching_ruleset, in_rho_static_gate, InRhoMatchingRuleset,
+};
 use crate::rho_net_subst_trs::{
-    for1, free_bits, ground, is_binder_term, join, match_, match_guarded, new_scope,
-    node_from_par, nullary_term, object_congruence_constructors, par2, pat_free, pat_tagged,
-    pat_wildcard, persistent_contract, send, tag_par, tagged, union_free, Case, Env, Node,
+    for1, free_bits, ground, is_binder_term, join, match_, match_guarded, new_scope, node_from_par,
+    nullary_term, object_congruence_constructors, par2, pat_free, pat_tagged, pat_wildcard,
+    persistent_contract, send, tag_par, tagged, union_free, Case, Env, Node,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -730,7 +732,8 @@ fn ac_carrier_spec(rewrite: &RewriteRule, def: &LanguageDef) -> Result<AcCarrier
         });
     }
     let resolved_kind = resolve_ac_collection_type(def, &rewrite.left);
-    if let Some(shape) = structural_ac_rule_shape(&rewrite.left, &rewrite.right, resolved_kind.as_ref())
+    if let Some(shape) =
+        structural_ac_rule_shape(&rewrite.left, &rewrite.right, resolved_kind.as_ref())
     {
         if !structural_ac_shape_is_match_representable(&shape) {
             return Err(format!(
@@ -752,12 +755,10 @@ fn ac_carrier_spec(rewrite: &RewriteRule, def: &LanguageDef) -> Result<AcCarrier
             rest_splices_at_top: true,
         });
     }
-    Err(
-        "a collection (AC) LHS that is neither a nested structural-AC nor a flat \
+    Err("a collection (AC) LHS that is neither a nested structural-AC nor a flat \
          structural-AC shape has no driver carrier arm (linear-AC / Comm families are \
          not driver-supported)"
-            .to_string(),
-    )
+        .to_string())
 }
 
 /// Build one AC carrier-ABI redex arm (check pattern + guard + carrier receiver) from a
@@ -1093,9 +1094,7 @@ fn rebuild_template_node(
                     // A σ-slot element: its THREE-CASE fragment was pre-computed onto
                     // `__frag…` (see [`ac_carrier_receiver_par`]) — composing it IS
                     // the one-level splice.
-                    AcReconstructTemplate::Var(name) => {
-                        env.var(&fragment_value_name(name, depth))
-                    },
+                    AcReconstructTemplate::Var(name) => env.var(&fragment_value_name(name, depth)),
                     // A constructor / binder element is statically non-bag ⟹ wrap.
                     AcReconstructTemplate::Node { .. } | AcReconstructTemplate::Binder { .. } => {
                         wrap_element_send(
@@ -1315,8 +1314,7 @@ fn ac_carrier_receiver_par(
         let p = shift_requirements.len();
         new_scope(p, {
             let shift_chan_names: Vec<String> = (0..p).map(|i| format!("__fs{i}")).collect();
-            let shift_chan_refs: Vec<&str> =
-                shift_chan_names.iter().map(String::as_str).collect();
+            let shift_chan_refs: Vec<&str> = shift_chan_names.iter().map(String::as_str).collect();
             let env = env.push(&shift_chan_refs);
             let mut composed: Option<Node> = None;
             for (i, (slot, depth)) in shift_requirements.iter().enumerate() {
@@ -1327,15 +1325,13 @@ fn ac_carrier_receiver_par(
                     Some(acc) => par2(acc, chain),
                 });
             }
-            let join_sources: Vec<Node> =
-                shift_chan_names.iter().map(|c| env.var(c)).collect();
+            let join_sources: Vec<Node> = shift_chan_names.iter().map(|c| env.var(c)).collect();
             let join_node = join(join_sources, {
                 let shifted_names: Vec<String> = shift_requirements
                     .iter()
                     .map(|(slot, depth)| slot_value_name(slot, *depth))
                     .collect();
-                let shifted_refs: Vec<&str> =
-                    shifted_names.iter().map(String::as_str).collect();
+                let shifted_refs: Vec<&str> = shifted_names.iter().map(String::as_str).collect();
                 let env = env.push(&shifted_refs);
                 stage_b(&env)
             });
@@ -1557,7 +1553,14 @@ pub(crate) fn firing_emission_node(
             );
             let emission_node = for1(env.var("r"), {
                 let env = env.push(&["c"]);
-                contractum_redrive_node(fingerprint, &env, fuel_var, ret_var, carrier, route_through_float)
+                contractum_redrive_node(
+                    fingerprint,
+                    &env,
+                    fuel_var,
+                    ret_var,
+                    carrier,
+                    route_through_float,
+                )
             });
             par2(par2(accept, ledger()), emission_node)
         }),
@@ -1607,11 +1610,7 @@ fn contractum_redrive_node(
             let env = env.push(&["cf"]);
             send(
                 ground(tag_par(fingerprint, DRIVE_RESERVED_LABEL)),
-                vec![
-                    env.var("cf"),
-                    eminus(env.var(fuel_var), gint(1)),
-                    env.var(ret_var),
-                ],
+                vec![env.var("cf"), eminus(env.var(fuel_var), gint(1)), env.var(ret_var)],
             )
         });
         par2(float_call, redrive)
@@ -1658,13 +1657,18 @@ fn ac_firing_emission_node(
             let env = env.push(&["r"]);
             // Deliver the whole subject operand + the fresh return through the carrier ABI.
             let operand = drive_subject_node(subject, &env, carrier);
-            let carrier_send = send(
-                ground(tag_par(fingerprint, &arm.carrier_label)),
-                vec![operand, env.var("r")],
-            );
+            let carrier_send =
+                send(ground(tag_par(fingerprint, &arm.carrier_label)), vec![operand, env.var("r")]);
             let emission_node = for1(env.var("r"), {
                 let env = env.push(&["c"]);
-                contractum_redrive_node(fingerprint, &env, fuel_var, ret_var, carrier, route_through_float)
+                contractum_redrive_node(
+                    fingerprint,
+                    &env,
+                    fuel_var,
+                    ret_var,
+                    carrier,
+                    route_through_float,
+                )
             });
             par2(par2(carrier_send, ledger()), emission_node)
         }),
@@ -1693,16 +1697,11 @@ fn gint(value: i64) -> Node {
 fn eminus(a: Node, b: Node) -> Node {
     let free = union_free(&[a.free.as_slice(), b.free.as_slice()]);
     let bits = free_bits(&free);
-    let par = Par {
-        exprs: vec![Expr {
-            expr_instance: Some(ExprInstance::EMinusBody(EMinus {
-                p1: Some(a.par),
-                p2: Some(b.par),
-            })),
-        }],
-        locally_free: bits,
-        ..Default::default()
-    };
+    let mut par = Par::default();
+    par.exprs = vec![Expr {
+        expr_instance: Some(ExprInstance::EMinusBody(EMinus { p1: Some(a.par), p2: Some(b.par) })),
+    }];
+    par.locally_free = bits;
     Node { par, free }
 }
 
@@ -1725,7 +1724,8 @@ fn collides_with_drive_frame(name: &str) -> bool {
         return true;
     }
     let mut chars = name.chars();
-    matches!(chars.next(), Some('c' | 'r' | 's')) && chars.as_str().chars().all(|c| c.is_ascii_digit())
+    matches!(chars.next(), Some('c' | 'r' | 's'))
+        && chars.as_str().chars().all(|c| c.is_ascii_digit())
         && name.len() > 1
 }
 
@@ -1800,26 +1800,28 @@ fn transcribe_lhs_pattern(
             }
             Ok(pat_tagged(fingerprint, tag, children))
         },
-        Pattern::Term(PatternTerm::Lambda { .. }) | Pattern::Term(PatternTerm::MultiLambda { .. }) => {
+        Pattern::Term(PatternTerm::Lambda { .. })
+        | Pattern::Term(PatternTerm::MultiLambda { .. }) => {
             Err("a literal binder pattern in a redex-arm LHS is not driver-supported this \
                  stage"
                 .to_string())
         },
-        Pattern::Term(PatternTerm::Subst { .. }) | Pattern::Term(PatternTerm::MultiSubst { .. }) => {
+        Pattern::Term(PatternTerm::Subst { .. })
+        | Pattern::Term(PatternTerm::MultiSubst { .. }) => {
             Err("a substitution node in a redex-arm LHS has no matching image".to_string())
         },
-        Pattern::Collection { .. } => Err(
-            "a collection inside a POSITIONAL redex-arm LHS has no σ-ABI image (a \
+        Pattern::Collection { .. } => {
+            Err("a collection inside a POSITIONAL redex-arm LHS has no σ-ABI image (a \
              collection-rooted LHS rides the A-S5.5 AC carrier arms instead)"
-                .to_string(),
-        ),
+                .to_string())
+        },
         Pattern::Map { .. } => Err("a map (AC) LHS is not driver-supported this stage".to_string()),
         Pattern::Zip { .. } => Err("a zip (AC) LHS is not driver-supported this stage".to_string()),
-        Pattern::IndexedVec { .. } => Err(
-            "an indexed-vec (ORDERED) LHS is not driver-supported this stage — and it must \
+        Pattern::IndexedVec { .. } => {
+            Err("an indexed-vec (ORDERED) LHS is not driver-supported this stage — and it must \
              not be routed to the AC carrier, which may permute the payload"
-                .to_string(),
-        ),
+                .to_string())
+        },
     }
 }
 
@@ -1842,15 +1844,21 @@ fn rebuild_from_pattern(
                 .iter()
                 .find(|term| term.label == label)
                 .ok_or_else(|| format!("unknown constructor {label:?} in a redex-arm rebuild"))?;
-            let tag = if is_binder_term(term) { LAMBDA_REFLECT_LABEL } else { label.as_str() };
+            let tag = if is_binder_term(term) {
+                LAMBDA_REFLECT_LABEL
+            } else {
+                label.as_str()
+            };
             let mut children = Vec::with_capacity(args.len());
             for arg in args {
                 children.push(rebuild_from_pattern(arg, def, fingerprint, env)?);
             }
             Ok(tagged(fingerprint, tag, children))
         },
-        _ => Err("redex-arm rebuild reached a shape the transcription admitted incorrectly"
-            .to_string()),
+        _ => {
+            Err("redex-arm rebuild reached a shape the transcription admitted incorrectly"
+                .to_string())
+        },
     }
 }
 
@@ -2143,11 +2151,7 @@ pub(crate) enum DriveSubject<'a> {
 /// Build the subject expression for the current frame (see [`DriveSubject`]). The
 /// carrier supplies the node reassembly (its reflected-tag discipline), so no
 /// fingerprint threads through here.
-fn drive_subject_node(
-    subject: &DriveSubject<'_>,
-    env: &Env,
-    carrier: &dyn DriveCarrier,
-) -> Node {
+fn drive_subject_node(subject: &DriveSubject<'_>, env: &Env, carrier: &dyn DriveCarrier) -> Node {
     match subject {
         DriveSubject::FrameT => env.var("t"),
         DriveSubject::ReassembledNode { label, child_names } => {
@@ -2221,7 +2225,9 @@ fn scion_contains_recheck(pat: &Pattern, fireable_lhs: &[&Pattern]) -> bool {
     match pat {
         Pattern::Term(PatternTerm::Apply { args, .. }) => {
             scion_position_is_recheck(pat, fireable_lhs)
-                || args.iter().any(|arg| scion_contains_recheck(arg, fireable_lhs))
+                || args
+                    .iter()
+                    .any(|arg| scion_contains_recheck(arg, fireable_lhs))
         },
         _ => false,
     }
@@ -2255,11 +2261,9 @@ fn scion_collect_slots(
             }
             Ok(())
         },
-        _ => Err(
-            "scion: non-positional RHS shape (binder / substitution / collection) is not \
+        _ => Err("scion: non-positional RHS shape (binder / substitution / collection) is not \
              driver-scion-supported this stage"
-                .to_string(),
-        ),
+            .to_string()),
     }
 }
 
@@ -2311,8 +2315,10 @@ fn scion_build_raw(pat: &Pattern, env: &Env, fingerprint: &str) -> Node {
         Pattern::Term(PatternTerm::Var(name)) => env.var(&name.to_string()),
         Pattern::Term(PatternTerm::Apply { constructor, args }) => {
             let label = constructor.to_string();
-            let children: Vec<Node> =
-                args.iter().map(|arg| scion_build_raw(arg, env, fingerprint)).collect();
+            let children: Vec<Node> = args
+                .iter()
+                .map(|arg| scion_build_raw(arg, env, fingerprint))
+                .collect();
             tagged(fingerprint, &label, children)
         },
         // Unreachable: `scion_collect_slots` fail-closed on every other shape before build.
@@ -2421,7 +2427,10 @@ fn scion_emit_point(
         // FOLD 3 (kept): a nested recheck (recheck strictly below this recheck root) is
         // unsupported this stage — `build_raw` reassembles the subtree raw and cannot host a
         // second drive-point below it. Fail closed.
-        if args.iter().any(|arg| scion_contains_recheck(arg, fireable_lhs)) {
+        if args
+            .iter()
+            .any(|arg| scion_contains_recheck(arg, fireable_lhs))
+        {
             return Err(
                 "scion: nested re-check (re-check above a re-check) unsupported this stage"
                     .to_string(),
@@ -2439,11 +2448,12 @@ fn scion_emit_point(
         ));
     }
     // FOLD 3 (kept): branching recheck (>1 recheck-bearing child) unsupported this stage.
-    let non_pure: Vec<usize> =
-        (0..args.len()).filter(|&i| scion_contains_recheck(&args[i], fireable_lhs)).collect();
+    let non_pure: Vec<usize> = (0..args.len())
+        .filter(|&i| scion_contains_recheck(&args[i], fireable_lhs))
+        .collect();
     if non_pure.len() > 1 {
         return Err(
-            "scion: branching re-check (>1 re-check child) unsupported this stage".to_string(),
+            "scion: branching re-check (>1 re-check child) unsupported this stage".to_string()
         );
     }
     // Recurse into the single recheck-bearing child, grafting THIS constructor around the result
@@ -2468,8 +2478,16 @@ fn scion_emit_point(
         tail(tagged(fingerprint, &label, children), tail_env)
     };
     scion_emit_point(
-        &args[j], &child_path, slot_index, fireable_lhs, redex_root_ctors, fingerprint, env,
-        fuel_var, next_index, &child_tail,
+        &args[j],
+        &child_path,
+        slot_index,
+        fireable_lhs,
+        redex_root_ctors,
+        fingerprint,
+        env,
+        fuel_var,
+        next_index,
+        &child_tail,
     )
 }
 
@@ -2518,10 +2536,15 @@ fn scion_bundle_for_rule(
     // Partition the σ-slots: BARE (driven + joined, v1-style — no resubmit covers them) vs
     // RECHECK-INTERNAL (ride RAW into a recheck drive-point via `scion_build_raw`). Only bare slots
     // get a join return channel + `s{i}` NF value; `slot_index` is over the bare slots alone.
-    let bare_slots: Vec<&(Vec<usize>, String)> =
-        slots.iter().filter(|(path, _)| scion_slot_is_bare(rhs, path, &fireable_lhs)).collect();
-    let slot_index: HashMap<Vec<usize>, usize> =
-        bare_slots.iter().enumerate().map(|(i, (p, _))| (p.clone(), i)).collect();
+    let bare_slots: Vec<&(Vec<usize>, String)> = slots
+        .iter()
+        .filter(|(path, _)| scion_slot_is_bare(rhs, path, &fireable_lhs))
+        .collect();
+    let slot_index: HashMap<Vec<usize>, usize> = bare_slots
+        .iter()
+        .enumerate()
+        .map(|(i, (p, _))| (p.clone(), i))
+        .collect();
     let k_bare = bare_slots.len();
     // Fresh `r#`/`c#` recheck indices start after the k_bare slot returns (SM-8c / R-5 namespace).
     let next_index = std::cell::Cell::new(k_bare);
@@ -2532,8 +2555,16 @@ fn scion_bundle_for_rule(
         // No bare slots (every slot rides raw into a recheck drive-point, or the RHS is ground) —
         // no join; the reassembly (with its drive-points) is emitted straight in the arm frame.
         return scion_emit_point(
-            rhs, &[], &slot_index, &fireable_lhs, &redex_root_ctors, fingerprint, env, fuel_var,
-            &next_index, &tail,
+            rhs,
+            &[],
+            &slot_index,
+            &fireable_lhs,
+            &redex_root_ctors,
+            fingerprint,
+            env,
+            fuel_var,
+            &next_index,
+            &tail,
         );
     }
     let slot_r_names: Vec<String> = (0..k_bare).map(|i| format!("r{i}")).collect();
@@ -2560,8 +2591,16 @@ fn scion_bundle_for_rule(
     let slot_val_refs: Vec<&str> = slot_val_names.iter().map(String::as_str).collect();
     let join_body_env = inner_env.push(&slot_val_refs);
     let reassembly = scion_emit_point(
-        rhs, &[], &slot_index, &fireable_lhs, &redex_root_ctors, fingerprint, &join_body_env,
-        fuel_var, &next_index, &tail,
+        rhs,
+        &[],
+        &slot_index,
+        &fireable_lhs,
+        &redex_root_ctors,
+        fingerprint,
+        &join_body_env,
+        fuel_var,
+        &next_index,
+        &tail,
     )?;
     let join_node = join(join_sources, reassembly);
     Ok(new_scope(k_bare, par2(composed.expect("k_bare ≥ 1"), join_node)))
@@ -2587,7 +2626,15 @@ fn fuel_gated_firing(
     // `ContractumRedrive` (SM-8). Production lowers under `AllRedrive` (`arm.scion == false`),
     // so this is inert and the emission is byte-identical.
     let emission = if arm.scion {
-        match scion_bundle_for_rule(&arm.rhs, &arm.sigma_vars, all_arms, fingerprint, env, "fuel", "ret") {
+        match scion_bundle_for_rule(
+            &arm.rhs,
+            &arm.sigma_vars,
+            all_arms,
+            fingerprint,
+            env,
+            "fuel",
+            "ret",
+        ) {
             Ok(bundle) => FiringEmission::ScionBundle { bundle: Box::new(bundle.par) },
             Err(_) => FiringEmission::ContractumRedrive,
         }
@@ -2695,10 +2742,22 @@ fn redex_cases(
                 let sigma_refs: Vec<&str> = arm.sigma_vars.iter().map(String::as_str).collect();
                 let body = {
                     let env = env.push(&sigma_refs);
-                    fuel_gated_firing(arm, arms, def, fingerprint, &env, carrier, route_through_float)?
+                    fuel_gated_firing(
+                        arm,
+                        arms,
+                        def,
+                        fingerprint,
+                        &env,
+                        carrier,
+                        route_through_float,
+                    )?
                 };
                 cases.push((
-                    Case { pattern: check.pattern, free_count: check.free_count, body },
+                    Case {
+                        pattern: check.pattern,
+                        free_count: check.free_count,
+                        body,
+                    },
                     None,
                 ));
             },
@@ -2717,7 +2776,11 @@ fn redex_cases(
                     )
                 };
                 cases.push((
-                    Case { pattern: check.pattern, free_count: check.free_count, body },
+                    Case {
+                        pattern: check.pattern,
+                        free_count: check.free_count,
+                        body,
+                    },
                     check.guard,
                 ));
             },
@@ -2743,10 +2806,7 @@ fn recheck_node(
         Case {
             pattern: pat_wildcard(),
             free_count: 0,
-            body: send(
-                env.var("ret"),
-                vec![drive_subject_node(subject, env, carrier)],
-            ),
+            body: send(env.var("ret"), vec![drive_subject_node(subject, env, carrier)]),
         },
         None,
     ));
@@ -2846,9 +2906,9 @@ pub(crate) fn drive_program_par(
         .iter()
         .any(|term| is_binder_term(term) && !is_multi_binder_term(term));
     if has_single_binder {
-        let binder_rooted_entry = arms.iter().any(|arm| {
-            matches!(arm, DriveArm::Positional(positional) if positional.root_is_binder)
-        });
+        let binder_rooted_entry = arms.iter().any(
+            |arm| matches!(arm, DriveArm::Positional(positional) if positional.root_is_binder),
+        );
         let body = {
             let env = env.push(&["b"]);
             new_scope(1, {
@@ -2931,10 +2991,7 @@ pub(crate) fn drive_program_par(
                                 def,
                                 fingerprint,
                                 &env,
-                                &DriveSubject::ReassembledSoup {
-                                    fragment: "w",
-                                    remainder: "vr",
-                                },
+                                &DriveSubject::ReassembledSoup { fragment: "w", remainder: "vr" },
                                 carrier,
                             )?
                         });
@@ -2945,7 +3002,11 @@ pub(crate) fn drive_program_par(
             })
         };
         cases.push((
-            Case { pattern: soup_peel_pattern(fingerprint, op), free_count: 2, body },
+            Case {
+                pattern: soup_peel_pattern(fingerprint, op),
+                free_count: 2,
+                body,
+            },
             None,
         ));
     }
@@ -2970,7 +3031,10 @@ pub(crate) fn drive_program_par(
             free_count: 1,
             body: {
                 let env = env.push(&["x"]);
-                send(env.var("ret"), vec![tagged(fingerprint, FREE_VAR_REFLECT_LABEL, vec![env.var("x")])])
+                send(
+                    env.var("ret"),
+                    vec![tagged(fingerprint, FREE_VAR_REFLECT_LABEL, vec![env.var("x")])],
+                )
             },
         },
         None,
@@ -2981,7 +3045,10 @@ pub(crate) fn drive_program_par(
             free_count: 1,
             body: {
                 let env = env.push(&["n"]);
-                send(env.var("ret"), vec![tagged(fingerprint, BOUND_VAR_REFLECT_LABEL, vec![env.var("n")])])
+                send(
+                    env.var("ret"),
+                    vec![tagged(fingerprint, BOUND_VAR_REFLECT_LABEL, vec![env.var("n")])],
+                )
             },
         },
         None,
@@ -3003,7 +3070,10 @@ pub(crate) fn drive_program_par(
     ));
 
     let body = match_guarded(env.var("t"), cases);
-    Ok(persistent_contract(tag_par(fingerprint, DRIVE_RESERVED_LABEL), frame.formals.len(), body).par)
+    Ok(
+        persistent_contract(tag_par(fingerprint, DRIVE_RESERVED_LABEL), frame.formals.len(), body)
+            .par,
+    )
 }
 
 /// The HashBag collection constructors of a language (`op` labels), in term-declaration
@@ -3094,15 +3164,13 @@ mod tests {
             &DriveAdmission::Admitted,
             "the Lambda-shaped opted-in def admits the driver"
         );
-        let drive = lowered.drive().expect("an admitted language carries the drive program");
+        let drive = lowered
+            .drive()
+            .expect("an admitted language carries the drive program");
         assert_eq!(drive.receives.len(), 1, "the driver is ONE persistent ^drive receiver");
         let receive = &drive.receives[0];
         assert!(receive.persistent, "the ^drive receiver is persistent");
-        assert_eq!(
-            receive.binds[0].patterns.len(),
-            3,
-            "the PS frame is (t, fuel, ret)"
-        );
+        assert_eq!(receive.binds[0].patterns.len(), 3, "the PS frame is (t, fuel, ret)");
         let expected_chan = tag_par(&lowered.language_fingerprint, DRIVE_RESERVED_LABEL);
         assert_eq!(
             receive.binds[0].source.as_ref(),
@@ -3148,7 +3216,9 @@ mod tests {
     fn sm6_contractum_redrive_synthetic_driver_par_byte_golden() {
         let def = production_lambda_shaped_def();
         let lowered = lowered_for(&def);
-        let drive = lowered.drive().expect("the Lambda-shaped def is drive-admitted");
+        let drive = lowered
+            .drive()
+            .expect("the Lambda-shaped def is drive-admitted");
         assert_eq!(
             par_fingerprint(drive),
             // ★ #36 S6 RE-CAPTURE (4357, 0xcd74c7d13495d5d5) → (4429, 0x0cfebce014446d5d).
@@ -3202,7 +3272,9 @@ mod tests {
             "a non-DRIVE_OPT_IN language never requests the driver"
         );
         assert!(lowered.drive().is_none(), "no drive program is built");
-        let installed = lowered.installed_program_par().expect("the renamed def installs");
+        let installed = lowered
+            .installed_program_par()
+            .expect("the renamed def installs");
         assert_eq!(
             installed.receives.len(),
             6,
@@ -3315,10 +3387,7 @@ mod tests {
             crate::rho_net_lower::FLOAT_HOIST_RESERVED_LABEL,
             crate::rho_net_lower::FLOAT_MERGE_RESERVED_LABEL,
         ] {
-            assert!(
-                reserved.contains(&label),
-                "the C2 reserved registry must guard {label:?}"
-            );
+            assert!(reserved.contains(&label), "the C2 reserved registry must guard {label:?}");
         }
     }
 
@@ -3328,8 +3397,7 @@ mod tests {
     /// a_s5c path) — the AC-arm tests run against the exact shipped declarations.
     fn production_ambient_def() -> LanguageDef {
         let source = include_str!("../../languages/src/ambient.rs");
-        let start =
-            source.find("language! {").expect("language! block") + "language! {".len();
+        let start = source.find("language! {").expect("language! block") + "language! {".len();
         let end = source.rfind('}').expect("closing brace");
         crate::reconstruct_language_def(&source[start..end])
             .expect("the production Ambient body must reconstruct")
@@ -3348,7 +3416,9 @@ mod tests {
             &DriveAdmission::Admitted,
             "A-S5.5: production Ambient admits the in-Rho quiescence driver"
         );
-        let drive = lowered.drive().expect("an admitted language carries the drive program");
+        let drive = lowered
+            .drive()
+            .expect("an admitted language carries the drive program");
         assert_eq!(
             drive.receives.len(),
             4,
@@ -3475,7 +3545,10 @@ mod tests {
                 receive.binds[0].source.as_ref() == Some(&tag_par(fp, DRIVE_RESERVED_LABEL))
             })
             .expect("the ^drive receiver is present");
-        let body = drive_receive.body.as_ref().expect("the ^drive receiver has a body");
+        let body = drive_receive
+            .body
+            .as_ref()
+            .expect("the ^drive receiver has a body");
         let top_match = &body.matches[0];
         // Arms: 3 AC redex + 5 congruence (PZero, PIn, POut, POpen, PAmb) + 1 binder
         // (PNew) + 1 bag (PPar) + 1 Nil + 2 passthroughs + 1 wildcard = 14.
@@ -3594,7 +3667,9 @@ mod tests {
             &DriveAdmission::Admitted,
             "the drive ADMITS the witness def (the A-S5.8 conjunct-1 discharge)"
         );
-        let drive = lowered.drive().expect("the witness def carries the drive program");
+        let drive = lowered
+            .drive()
+            .expect("the witness def carries the drive program");
         assert_eq!(
             drive.receives.len(),
             3,
@@ -3633,10 +3708,7 @@ mod tests {
         let arm = build_drive_ac_arm(rewrite, &def, "fp-witness")
             .expect("the Seal rewrite transcribes to a driver AC-carrier arm");
         assert_eq!(arm.carrier_label, "^drive-ac:Seal");
-        assert_eq!(
-            arm.free_count, 3,
-            "2 cross-level guard slots (N × 2) + the bound outer rest"
-        );
+        assert_eq!(arm.free_count, 3, "2 cross-level guard slots (N × 2) + the bound outer rest");
         assert!(!arm.guard.exprs.is_empty(), "the non-linear guard is real");
         // The carrier receiver: persistent, on the reserved channel, with the shift
         // pre-stage (a `^shift` send appears in its body — the F8-AM-1c σ-slot shifts)

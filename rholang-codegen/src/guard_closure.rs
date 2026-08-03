@@ -58,9 +58,9 @@ use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::var::VarInstance;
 use models::rhoapi::{
-    Bundle, Connective, EAnd, EDiv, EEq, EList, EMap, EMatches, EMethod, EMinus, EMinusMinus, EMod,
-    EMult, ENeg, ENeq, ENot, EOr, EPercentPercent, EPlus, EPlusPlus, ESet, ETuple, EVar, Expr, ELt,
-    ELte, EGt, EGte, GUnforgeable, If, KeyValuePair, Match, MatchCase, New, Par, Receive,
+    Bundle, Connective, EAnd, EDiv, EEq, EGt, EGte, EList, ELt, ELte, EMap, EMatches, EMethod,
+    EMinus, EMinusMinus, EMod, EMult, ENeg, ENeq, ENot, EOr, EPercentPercent, EPlus, EPlusPlus,
+    ESet, ETuple, EVar, Expr, GUnforgeable, If, KeyValuePair, Match, MatchCase, New, Par, Receive,
     ReceiveBind, Send, Var,
 };
 
@@ -102,7 +102,13 @@ fn opt_par_is_binder_closed(par: Option<&Par>) -> bool {
 }
 
 fn send_is_binder_closed(send: &Send) -> bool {
-    let Send { chan, data, persistent: _, locally_free: _, connective_used: _ } = send;
+    let Send {
+        chan,
+        data,
+        persistent: _,
+        locally_free: _,
+        connective_used: _,
+    } = send;
     opt_par_is_binder_closed(chan.as_ref()) && data.iter().all(is_binder_closed)
 }
 
@@ -138,7 +144,13 @@ fn receive_bind_is_binder_closed(bind: &ReceiveBind) -> bool {
 }
 
 fn new_is_binder_closed(new: &New) -> bool {
-    let New { bind_count, p, uri: _, injections, locally_free: _ } = new;
+    let New {
+        bind_count,
+        p,
+        uri: _,
+        injections,
+        locally_free: _,
+    } = new;
     // `new` introduces `bind_count` fresh UNFORGEABLE names whose identity is determined by
     // the deploy's random state at run time, not at lowering time. A non-trivial `new` is
     // therefore never closed. `injections` binds URI-referenced system values supplied by the
@@ -147,7 +159,12 @@ fn new_is_binder_closed(new: &New) -> bool {
 }
 
 fn match_is_binder_closed(m: &Match) -> bool {
-    let Match { target, cases, locally_free: _, connective_used: _ } = m;
+    let Match {
+        target,
+        cases,
+        locally_free: _,
+        connective_used: _,
+    } = m;
     opt_par_is_binder_closed(target.as_ref()) && cases.iter().all(match_case_is_binder_closed)
 }
 
@@ -168,7 +185,13 @@ fn bundle_is_binder_closed(bundle: &Bundle) -> bool {
 }
 
 fn if_is_binder_closed(conditional: &If) -> bool {
-    let If { condition, if_true, if_false, locally_free: _, connective_used: _ } = conditional;
+    let If {
+        condition,
+        if_true,
+        if_false,
+        locally_free: _,
+        connective_used: _,
+    } = conditional;
     opt_par_is_binder_closed(condition.as_ref())
         && opt_par_is_binder_closed(if_true.as_ref())
         && opt_par_is_binder_closed(if_false.as_ref())
@@ -185,9 +208,8 @@ fn connective_is_binder_closed(connective: &Connective) -> bool {
     match connective.connective_instance.as_ref() {
         // `~x` / `x /\ y` / `x \/ y` over closed bodies mention no variable.
         Some(ConnectiveInstance::ConnNotBody(body)) => is_binder_closed(body),
-        Some(ConnectiveInstance::ConnAndBody(body)) | Some(ConnectiveInstance::ConnOrBody(body)) => {
-            body.ps.iter().all(is_binder_closed)
-        },
+        Some(ConnectiveInstance::ConnAndBody(body))
+        | Some(ConnectiveInstance::ConnOrBody(body)) => body.ps.iter().all(is_binder_closed),
         // `=x` — a VARIABLE reference by construction. The whole point of D0.
         Some(ConnectiveInstance::VarRefBody(_)) => false,
         // Type connectives (`Bool`, `Int`, `String`, `Uri`, `ByteArray`) mention no variable.
@@ -261,16 +283,27 @@ fn expr_is_binder_closed(expr: &Expr) -> bool {
         },
 
         // ── Collections. A `remainder` is a BINDER (`xs` in `[1, 2 ... xs]`). ───────────────
-        ExprInstance::EListBody(EList { ps, remainder, locally_free: _, connective_used: _ })
-        | ExprInstance::ESetBody(ESet { ps, remainder, locally_free: _, connective_used: _ }) => {
-            remainder.is_none() && ps.iter().all(is_binder_closed)
-        },
+        ExprInstance::EListBody(EList {
+            ps,
+            remainder,
+            locally_free: _,
+            connective_used: _,
+        })
+        | ExprInstance::ESetBody(ESet {
+            ps,
+            remainder,
+            locally_free: _,
+            connective_used: _,
+        }) => remainder.is_none() && ps.iter().all(is_binder_closed),
         ExprInstance::ETupleBody(ETuple { ps, locally_free: _, connective_used: _ }) => {
             ps.iter().all(is_binder_closed)
         },
-        ExprInstance::EMapBody(EMap { kvs, remainder, locally_free: _, connective_used: _ }) => {
-            remainder.is_none() && kvs.iter().all(key_value_pair_is_binder_closed)
-        },
+        ExprInstance::EMapBody(EMap {
+            kvs,
+            remainder,
+            locally_free: _,
+            connective_used: _,
+        }) => remainder.is_none() && kvs.iter().all(key_value_pair_is_binder_closed),
 
         // ── Method dispatch. ────────────────────────────────────────────────────────────────
         ExprInstance::EMethodBody(EMethod {
@@ -382,14 +415,27 @@ fn expr_operands_ground(expr: &Expr) -> bool {
             opt_par_operands_ground(p1.as_ref()) && opt_par_operands_ground(p2.as_ref())
         },
 
-        ExprInstance::EListBody(EList { ps, remainder, locally_free: _, connective_used: _ })
-        | ExprInstance::ESetBody(ESet { ps, remainder, locally_free: _, connective_used: _ }) => {
-            remainder.is_none() && ps.iter().all(all_operands_ground)
-        },
+        ExprInstance::EListBody(EList {
+            ps,
+            remainder,
+            locally_free: _,
+            connective_used: _,
+        })
+        | ExprInstance::ESetBody(ESet {
+            ps,
+            remainder,
+            locally_free: _,
+            connective_used: _,
+        }) => remainder.is_none() && ps.iter().all(all_operands_ground),
         ExprInstance::ETupleBody(ETuple { ps, locally_free: _, connective_used: _ }) => {
             ps.iter().all(all_operands_ground)
         },
-        ExprInstance::EMapBody(EMap { kvs, remainder, locally_free: _, connective_used: _ }) => {
+        ExprInstance::EMapBody(EMap {
+            kvs,
+            remainder,
+            locally_free: _,
+            connective_used: _,
+        }) => {
             remainder.is_none()
                 && kvs.iter().all(|KeyValuePair { key, value }| {
                     opt_par_operands_ground(key.as_ref()) && opt_par_operands_ground(value.as_ref())
@@ -424,7 +470,9 @@ mod tests {
     };
 
     fn expr_par(instance: ExprInstance) -> Par {
-        Par { exprs: vec![Expr { expr_instance: Some(instance) }], ..Par::default() }
+        let mut par = Par::default();
+        par.exprs = vec![Expr { expr_instance: Some(instance) }];
+        par
     }
 
     fn eq(p1: Par, p2: Par) -> Par {
@@ -481,7 +529,10 @@ mod tests {
     #[test]
     fn a_var_inside_a_collection_is_found() {
         let list = expr_par(ExprInstance::EListBody(EList {
-            ps: vec![new_gint_par(1, Vec::new(), false), new_boundvar_par(0, create_bit_vector(&[0]), false)],
+            ps: vec![
+                new_gint_par(1, Vec::new(), false),
+                new_boundvar_par(0, create_bit_vector(&[0]), false),
+            ],
             locally_free: create_bit_vector(&[0]),
             connective_used: false,
             remainder: None,
@@ -496,7 +547,9 @@ mod tests {
             ps: vec![new_gint_par(1, Vec::new(), false)],
             locally_free: Vec::new(),
             connective_used: false,
-            remainder: Some(Var { var_instance: Some(VarInstance::FreeVar(0)) }),
+            remainder: Some(Var {
+                var_instance: Some(VarInstance::FreeVar(0)),
+            }),
         }));
         assert!(!is_binder_closed(&list), "`[1 ... xs]` binds `xs`");
         assert!(!all_operands_ground(&list));
@@ -504,67 +557,60 @@ mod tests {
 
     #[test]
     fn a_varref_connective_is_refused() {
-        let varref = Par {
-            connectives: vec![Connective {
-                connective_instance: Some(ConnectiveInstance::VarRefBody(
-                    models::rhoapi::VarRef { index: 0, depth: 1 },
-                )),
-            }],
-            ..Par::default()
-        };
+        let mut varref = Par::default();
+        varref.connectives = vec![Connective {
+            connective_instance: Some(ConnectiveInstance::VarRefBody(models::rhoapi::VarRef {
+                index: 0,
+                depth: 1,
+            })),
+        }];
         assert!(!is_binder_closed(&varref), "`=x` is a variable reference");
         assert!(!all_operands_ground(&varref));
     }
 
     #[test]
     fn an_unforgeable_name_is_a_runtime_identity_not_a_constant() {
-        let unf = Par {
-            unforgeables: vec![GUnforgeable {
-                unf_instance: Some(models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody(
-                    GPrivate { id: vec![1, 2, 3] },
-                )),
-            }],
-            ..Par::default()
-        };
+        let mut unf = Par::default();
+        unf.unforgeables = vec![GUnforgeable {
+            unf_instance: Some(models::rhoapi::g_unforgeable::UnfInstance::GPrivateBody(
+                GPrivate { id: vec![1, 2, 3] },
+            )),
+        }];
         assert!(!is_binder_closed(&unf));
         assert!(!all_operands_ground(&unf));
     }
 
     #[test]
     fn a_new_binder_is_refused_but_a_zero_width_new_is_transparent() {
-        let bound = Par {
-            news: vec![New {
-                bind_count: 1,
-                p: Some(new_gint_par(1, Vec::new(), false)),
-                uri: Vec::new(),
-                injections: Default::default(),
-                locally_free: Vec::new(),
-            }],
-            ..Par::default()
-        };
+        let mut bound = Par::default();
+        bound.news = vec![New {
+            bind_count: 1,
+            p: Some(new_gint_par(1, Vec::new(), false)),
+            uri: Vec::new(),
+            injections: Default::default(),
+            locally_free: Vec::new(),
+        }];
         assert!(!is_binder_closed(&bound), "`new x in 1` binds a fresh unforgeable");
     }
 
     #[test]
     fn a_receive_that_binds_is_refused() {
-        let recv = Par {
-            receives: vec![Receive {
-                binds: vec![ReceiveBind {
-                    patterns: vec![new_freevar_par(0, Vec::new())],
-                    source: Some(new_gstring_par("c".to_string(), Vec::new(), false)),
-                    remainder: None,
-                    free_count: 1,
-                }],
-                body: Some(Par::default()),
-                persistent: false,
-                peek: false,
-                bind_count: 1,
-                locally_free: Vec::new(),
-                connective_used: false,
-                condition: None,
+        let mut recv = Par::default();
+        recv.receives = vec![Receive {
+            binds: vec![ReceiveBind {
+                patterns: vec![new_freevar_par(0, Vec::new())],
+                source: Some(new_gstring_par("c".to_string(), Vec::new(), false)),
+                remainder: None,
+                free_count: 1,
             }],
-            ..Par::default()
-        };
+            body: Some(Par::default()),
+            persistent: false,
+            peek: false,
+            bind_count: 1,
+            locally_free: Vec::new(),
+            connective_used: false,
+            condition: None,
+        }];
         assert!(!is_binder_closed(&recv));
     }
 
@@ -572,16 +618,14 @@ mod tests {
     /// mentions no variable but is a COMPUTATION, not a settled operand.
     #[test]
     fn closedness_and_groundness_differ_on_a_literal_send() {
-        let send = Par {
-            sends: vec![Send {
-                chan: Some(new_gstring_par("c".to_string(), Vec::new(), false)),
-                data: vec![new_gint_par(1, Vec::new(), false)],
-                persistent: false,
-                locally_free: Vec::new(),
-                connective_used: false,
-            }],
-            ..Par::default()
-        };
+        let mut send = Par::default();
+        send.sends = vec![Send {
+            chan: Some(new_gstring_par("c".to_string(), Vec::new(), false)),
+            data: vec![new_gint_par(1, Vec::new(), false)],
+            persistent: false,
+            locally_free: Vec::new(),
+            connective_used: false,
+        }];
         assert!(is_binder_closed(&send), "no variable is mentioned");
         assert!(!all_operands_ground(&send), "a send is not a settled operand");
     }
@@ -697,14 +741,12 @@ mod tests {
     /// A `Bundle` is transparent to closedness: it is a permission wrapper, not a binder.
     #[test]
     fn a_bundle_is_transparent_to_closedness() {
-        let bundled = Par {
-            bundles: vec![Bundle {
-                body: Some(new_gint_par(1, Vec::new(), false)),
-                write_flag: true,
-                read_flag: true,
-            }],
-            ..Par::default()
-        };
+        let mut bundled = Par::default();
+        bundled.bundles = vec![Bundle {
+            body: Some(new_gint_par(1, Vec::new(), false)),
+            write_flag: true,
+            read_flag: true,
+        }];
         assert!(is_binder_closed(&bundled));
         assert!(!all_operands_ground(&bundled), "a bundle is not a settled operand");
     }
