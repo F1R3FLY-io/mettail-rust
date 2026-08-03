@@ -74,16 +74,10 @@ fn literal_payload_type(language: &LanguageDef, category: &Ident) -> Option<Toke
             CollectionCategory::Map(_) => {
                 quote! { ::mettail_runtime::HashMapLit<#elem, #elem> }
             },
-            // #74 (2026-07-29): a `Pathmap`'s value slot is OPTIONAL — the
-            // container kind has carried `kv_value_optional = true` since
-            // 2026-06-27 — so its value type is `PathValue<E>` wherever a
-            // `Map`'s is `E`. Derived structurally from the container kind here
-            // (not spelled in the DSL), so the TYPE agrees with what the SPEC
-            // already knew. See `runtime/src/path_value.rs`.
+            // Set/map optionality is a homogeneous container mode, so the AST
+            // carries `PathMapLit<E, E>` rather than a per-entry optional value.
             CollectionCategory::Pathmap(_) => {
-                quote! {
-                    ::mettail_runtime::PathMapLit<#elem, ::mettail_runtime::PathValue<#elem>>
-                }
+                quote! { ::mettail_runtime::PathMapLit<#elem, #elem> }
             },
         });
     }
@@ -190,6 +184,9 @@ struct OpVariant {
 /// errors pointing away from the cause. EMPTY for every grammar whose rules
 /// classify, which is every shipped one.
 fn collect_op_variants(language: &LanguageDef) -> (Vec<OpVariant>, Vec<TokenStream>) {
+    // ★ (#195) The categories some `| S ~/> T |-` declaration severs. Computed ONCE here
+    // and read below, from the SAME derivation `typed_lowering` and `reconstruct` read.
+    let withheld = super::withholding::classify_withholdings(language).earned_categories();
     let mut variants = Vec::new();
     let mut refusals: Vec<TokenStream> = Vec::new();
     let mut disc: u32 = 0;
@@ -339,7 +336,56 @@ fn collect_op_variants(language: &LanguageDef) -> (Vec<OpVariant>, Vec<TokenStre
         );
     }
 
+    // ★★★ (#195) The LABELLED, INVERTIBLE **WITHHELD-POSITION** leaf, one variant per
+    // category that some `| S ~/> T |-` declaration severs. Appended AFTER `FieldSeq*` so
+    // **no existing discriminant moves** — a language declaring no withholding produces
+    // byte-identical output, which is the change's strongest control — and emitted from
+    // [`super::withholding::WithholdingSet::earned_categories`], the same derivation the
+    // lowering and the inverse read, so the variant, the leaf and the inverse can never
+    // disagree about existence.
+    //
+    // ★ WHY THIS VARIANT MUST EXIST AT ALL (Theorem W1). An e-graph's e-node identity is
+    // `(operator, canonical child e-class ids)`. If a position holds a child e-class id
+    // then, the moment two children merge, the two parent e-nodes become the SAME hashcons
+    // key and inhabit the same e-class — so propagation through that position is not a
+    // policy the engine applies, it is an identity the data structure IS. Withholding is
+    // therefore realizable only by taking the position OUT of the child-e-class world: the
+    // field's value travels whole, inside one nullary leaf. See
+    // `macros/formal/rocq/CongruenceWithholding.v`.
+    //
+    // ⚠ THE PAYLOAD IS THE VALUE, and its content bytes are the category's own
+    // ALPHA-CANONICAL `semantic_hash` write stream — not `format!("{:?}", …)`. `Debug`
+    // prints a `Scope`'s raw binder names, so it distinguishes α-equivalent terms that `Eq`
+    // identifies; framing `Debug` bytes for a category payload would therefore VIOLATE the
+    // `SemanticHash` contract this enum's `unsafe impl` states (two values write the same
+    // bytes iff they are observationally equal). `FramedSemanticKeyHasher` records the exact
+    // framed stream rather than reducing it to a `u64`, so the key stays collision-free.
+    for category in withheld.iter() {
+        let display = format!("<field-withheld-{category}>");
+        push(
+            field_withheld_variant_ident(category),
+            Some(quote! { ::std::sync::Arc<#category> }),
+            quote! {
+                let mut __hasher = ::mettail_runtime::FramedSemanticKeyHasher::default();
+                __p.semantic_hash(&mut __hasher);
+                ::dovetail::key::write_framed(out, &__hasher.into_key());
+            },
+            display,
+        );
+    }
+
     (variants, refusals)
+}
+
+/// ★ (#195) The op-enum variant identifier for the withheld-position leaf of a category:
+/// `Proc` → `FieldWithheldProc`.
+///
+/// ⚠ Distinct from the `<Cat>_<Label>` constructor-variant form ([`op_variant_ident`]),
+/// which always contains an underscore, from `FieldSeq*` ([`field_seq_variant_ident`]), and
+/// from every spine sentinel (`BinderArity`, `FieldNone`, `FieldOpaque`, `FieldTokenText`)
+/// — so no category can collide with an existing variant.
+pub(crate) fn field_withheld_variant_ident(category: &Ident) -> Ident {
+    format_ident!("FieldWithheld{}", category)
 }
 
 /// (#101) The op-enum variant identifier for the ordered-sequence leaf of an element category:

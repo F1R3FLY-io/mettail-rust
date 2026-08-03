@@ -264,7 +264,10 @@ pub(crate) enum CollectionPlan {
     /// Push/visit ONE sub-term at a time. `element_cat` names the category whose
     /// per-category task variant to use; `coll_type` selects the iteration shape
     /// (pass both to [`for_each_subterm`]).
-    PerElement { element_cat: Ident, coll_type: CollectionType },
+    PerElement {
+        element_cat: Ident,
+        coll_type: CollectionType,
+    },
     /// Hand the container WHOLE to its own trait impl. Stack-safe only when the
     /// reason is [`WholeValueReason::ElementIsNotACategory`]; the other reason is
     /// the declared, measured residue described in the module header.
@@ -363,11 +366,10 @@ pub(crate) fn plan_for(
 /// | `HashSet` | `&E` | the element |
 /// | `HashBag` | `(&E, usize)` | the element (the `usize` multiplicity is not a term) |
 /// | `HashMap` | `(&K, &V)` | key, then value |
-/// | `PathMap` | `(&K, &PathValue<V>)` | key, then the value IF `PathValue::Set` |
+/// | `PathMap` | `PathMapEntryRef::{Set,Map}` | key, then the value in map mode |
 ///
-/// ★ `PathValue::Unset` contributes NO position. An unset pathmap entry is a
-/// bare key (#74 / Ruling B: "unset ≠ Nil"), so there is no value sub-term to
-/// visit, hash, compare or drop.
+/// A set-mode entry contributes only its key; a map-mode entry contributes its
+/// key and value. Homogeneity is a container invariant.
 ///
 /// ## Order
 ///
@@ -466,11 +468,10 @@ pub(crate) fn for_each_subterm(
             }
         },
         (CollectionType::PathMap, WalkOrder::Forward) => quote! {
-            for (__walk_index, (__walk_key, __walk_path_value)) in
-                #coll_expr.iter().enumerate()
-            {
+            for (__walk_index, __walk_entry) in #coll_expr.iter().enumerate() {
+                let __walk_key = __walk_entry.key();
                 #key_body
-                if let mettail_runtime::PathValue::Set(__walk_value) = __walk_path_value {
+                if let Some(__walk_value) = __walk_entry.value() {
                     #value_body
                 }
             }
@@ -478,10 +479,9 @@ pub(crate) fn for_each_subterm(
         (CollectionType::PathMap, WalkOrder::ReverseForLifo) => quote! {
             {
                 let __walk_items: Vec<_> = #coll_expr.iter().collect();
-                for (__walk_index, (__walk_key, __walk_path_value)) in
-                    __walk_items.into_iter().enumerate().rev()
-                {
-                    if let mettail_runtime::PathValue::Set(__walk_value) = __walk_path_value {
+                for (__walk_index, __walk_entry) in __walk_items.into_iter().enumerate().rev() {
+                    let __walk_key = __walk_entry.key();
+                    if let Some(__walk_value) = __walk_entry.value() {
                         #value_body
                     }
                     #key_body
@@ -605,17 +605,21 @@ pub(crate) fn for_each_owned_subterm(
                 #value_body
             }
         },
-        // A pathmap's value is a `PathValue<E>`; an `Unset` entry owns no sub-term
-        // at all (#74 / Ruling B: unset ≠ Nil).
+        // The owned entry enum exposes the container's homogeneous mode without
+        // attaching an optional-value tag to every member.
         CollectionType::PathMap => quote! {
-            for (__walk_owned_key, __walk_owned_path_value) in
-                std::mem::take(#coll_place).into_iter()
-            {
-                #key_body
-                if let mettail_runtime::PathValue::Set(__walk_owned_value) =
-                    __walk_owned_path_value
-                {
-                    #value_body
+            for __walk_owned_entry in std::mem::take(#coll_place).into_iter() {
+                match __walk_owned_entry {
+                    mettail_runtime::PathMapEntry::Set(__walk_owned_key) => {
+                        #key_body
+                    },
+                    mettail_runtime::PathMapEntry::Map(
+                        __walk_owned_key,
+                        __walk_owned_value,
+                    ) => {
+                        #key_body
+                        #value_body
+                    },
                 }
             }
         },
@@ -730,10 +734,7 @@ mod tests {
     fn a_leaf_absorbs_optionality_and_dominates_the_collection_flags() {
         for is_optional in [false, true] {
             for (label, field) in [
-                (
-                    "predicate",
-                    field_with(false, None, true, is_optional, None),
-                ),
+                ("predicate", field_with(false, None, true, is_optional, None)),
                 (
                     "token-text capture",
                     field_with(false, None, false, is_optional, Some(OpaqueLeafKind::TokenText)),
@@ -767,7 +768,10 @@ mod tests {
     /// `&Vec<Proc> as *const Proc` (E0606).
     #[test]
     fn the_optional_bit_is_independent_of_the_collection_bit() {
-        assert_eq!(field_carrier(&field_with(false, None, false, false, None)), FieldCarrier::Child);
+        assert_eq!(
+            field_carrier(&field_with(false, None, false, false, None)),
+            FieldCarrier::Child
+        );
         assert_eq!(
             field_carrier(&field_with(false, None, false, true, None)),
             FieldCarrier::OptionalChild
@@ -870,7 +874,9 @@ mod tests {
             assert!(
                 matches!(
                     plan_for(&proc, &coll_type, OrderSensitivity::OrderSensitive, &language),
-                    CollectionPlan::WholeValue { reason: WholeValueReason::UnorderedContainer }
+                    CollectionPlan::WholeValue {
+                        reason: WholeValueReason::UnorderedContainer
+                    }
                 ),
                 "{coll_type:?} must NOT be walked element-wise by an ORDER-SENSITIVE traversal \
                  — that would change the bytes `Hash`/`Ord` produce."
@@ -911,7 +917,10 @@ mod tests {
         // the literal `".rev()"` made this assertion read `false` for every shape
         // — which is how it was found: it went red on the very first run.
         let rendered = |t: TokenStream| -> String {
-            t.to_string().chars().filter(|c| !c.is_whitespace()).collect()
+            t.to_string()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect()
         };
 
         for coll_type in [

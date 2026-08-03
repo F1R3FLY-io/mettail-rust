@@ -590,27 +590,7 @@ fn collect_pattern_bindings(
         },
         (Proc::CastPathmap(p), Proc::CastPathmap(v)) => match (p.as_ref(), v.as_ref()) {
             (Pathmap::PathmapLit(pm), Pathmap::PathmapLit(vm)) => {
-                pm.len() == vm.len()
-                    && pm.iter().all(|(k, pv)| {
-                        vm.get(k)
-                            .map(|vv| match (pv, vv) {
-                                // #74: an UNSET pattern slot matches ONLY an
-                                // unset value slot. `{| k |}` must NOT match
-                                // `{| k : Nil |}` — that collapse is the defect,
-                                // and here it would additionally let a pattern
-                                // silently bind nothing while claiming a match.
-                                (
-                                    mettail_runtime::PathValue::Unset,
-                                    mettail_runtime::PathValue::Unset,
-                                ) => true,
-                                (
-                                    mettail_runtime::PathValue::Set(pi),
-                                    mettail_runtime::PathValue::Set(vi),
-                                ) => collect_pattern_bindings(pi, vi, env),
-                                _ => false,
-                            })
-                            .unwrap_or(false)
-                    })
+                collect_pathmap_pattern_bindings(pm, vm, env)
             },
             _ => pattern.term_eq(value),
         },
@@ -618,26 +598,7 @@ fn collect_pattern_bindings(
             (ReadZipper::Lit(pz), ReadZipper::Lit(vz)) => {
                 let pl = pz.as_ref();
                 let vl = vz.as_ref();
-                pl.1 == vl.1
-                    && pl.0.len() == vl.0.len()
-                    && pl.0.iter().all(|(k, pv)| {
-                        vl.0.get(k)
-                            // #74: a zipper literal's payload is a pathmap, so
-                            // its values are `PathValue`s. An UNSET pattern slot
-                            // matches ONLY an unset value slot.
-                            .map(|vv| match (pv, vv) {
-                                (
-                                    mettail_runtime::PathValue::Unset,
-                                    mettail_runtime::PathValue::Unset,
-                                ) => true,
-                                (
-                                    mettail_runtime::PathValue::Set(pi),
-                                    mettail_runtime::PathValue::Set(vi),
-                                ) => collect_pattern_bindings(pi, vi, env),
-                                _ => false,
-                            })
-                            .unwrap_or(false)
-                    })
+                pl.1 == vl.1 && collect_pathmap_pattern_bindings(&pl.0, &vl.0, env)
             },
             _ => pattern.term_eq(value),
         },
@@ -645,26 +606,7 @@ fn collect_pattern_bindings(
             (WriteZipper::Lit(pz), WriteZipper::Lit(vz)) => {
                 let pl = pz.as_ref();
                 let vl = vz.as_ref();
-                pl.1 == vl.1
-                    && pl.0.len() == vl.0.len()
-                    && pl.0.iter().all(|(k, pv)| {
-                        vl.0.get(k)
-                            // #74: a zipper literal's payload is a pathmap, so
-                            // its values are `PathValue`s. An UNSET pattern slot
-                            // matches ONLY an unset value slot.
-                            .map(|vv| match (pv, vv) {
-                                (
-                                    mettail_runtime::PathValue::Unset,
-                                    mettail_runtime::PathValue::Unset,
-                                ) => true,
-                                (
-                                    mettail_runtime::PathValue::Set(pi),
-                                    mettail_runtime::PathValue::Set(vi),
-                                ) => collect_pattern_bindings(pi, vi, env),
-                                _ => false,
-                            })
-                            .unwrap_or(false)
-                    })
+                pl.1 == vl.1 && collect_pathmap_pattern_bindings(&pl.0, &vl.0, env)
             },
             _ => pattern.term_eq(value),
         },
@@ -674,6 +616,31 @@ fn collect_pattern_bindings(
         },
         _ => pattern.term_eq(value),
     }
+}
+
+/// Match homogeneous path-map payloads without inventing a per-entry
+/// set/map discriminator. Container mode is part of the value and must agree.
+fn collect_pathmap_pattern_bindings(
+    pattern: &crate::rholang::pathmap::ProcPathMap,
+    value: &crate::rholang::pathmap::ProcPathMap,
+    env: &mut HashMap<FreeVar<String>, Proc>,
+) -> bool {
+    use mettail_runtime::PathMapEntryRef;
+
+    pattern.mode() == value.mode()
+        && pattern.len() == value.len()
+        && pattern.iter().all(|pattern_entry| {
+            let Some(value_entry) = value.entry(pattern_entry.key()) else {
+                return false;
+            };
+            match (pattern_entry, value_entry) {
+                (PathMapEntryRef::Set(_), PathMapEntryRef::Set(_)) => true,
+                (PathMapEntryRef::Map(_, pattern_value), PathMapEntryRef::Map(_, value)) => {
+                    collect_pattern_bindings(pattern_value, value, env)
+                },
+                _ => false,
+            }
+        })
 }
 
 fn match_set_pattern(
@@ -1963,9 +1930,7 @@ mod zipper_pattern_tests {
 
     fn pathmap_with_value(key: Proc, val: Proc) -> crate::rholang::pathmap::ProcPathMap {
         let mut lit = PathMapLit::new();
-        // #74: a written value is `Set(v)`; `Unset` is reachable only from the
-        // bare `{| k |}` literal.
-        lit.insert(key, mettail_runtime::PathValue::Set(val));
+        lit.insert_map(key, val).unwrap();
         lit
     }
 

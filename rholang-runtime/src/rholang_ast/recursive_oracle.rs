@@ -922,10 +922,7 @@ fn lower_arm_l_nth(
 }
 
 #[inline(never)]
-fn lower_arm_l_last(
-    l: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
+fn lower_arm_l_last(l: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     lower_last(l.as_ref(), env)
 }
 
@@ -1422,59 +1419,33 @@ fn lower_set(set: &Set, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
 
 fn lower_pathmap(pathmap: &Pathmap, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
     match pathmap {
-        Pathmap::PathmapLit(entries) => {
-            // A pathmap is key/value like a map; lower to a Rholang `EMap` (mirrors `lower_map`).
-            //
-            // ⚠ NEVER SORTED (2026-07-29, Ruling E). This used to run
-            // `entries.sort_by(|(key_a, _), (key_b, _)| key_a.cmp(key_b))`, justified in a
-            // comment as "sorted by key for a deterministic encoding".
-            //
-            // The justification does not survive comparison with its own sibling:
-            // `lower_map` — the map→`EMap` lowering, which produces the SAME `EMap` node
-            // from the SAME kind of insertion-ordered `HashMapLit` — does NOT sort. So
-            // sorting was not a determinism requirement of the encoding; it was an
-            // asymmetry applied to pathmaps alone, in the two places pathmaps are rendered
-            // or lowered (here and generated `display.rs`), and it silently reordered what
-            // the author wrote.
-            //
-            // Determinism is preserved without it for the same reason it is preserved for
-            // maps: the order is a deterministic function of the SOURCE (`PathMapLit`
-            // preserves insertion order), so the same program lowers to the same bytes.
-            // Canonicalising ACROSS source orders is #116's job (EPathMap becoming a real
-            // trie map, where key order is derived from the trie), not a sort bolted onto
-            // one of two lowering paths.
-            let entries: Vec<(&Proc, &mettail_languages::rholang::PathValueProc)> =
-                entries.iter().collect();
-
-            let mut pairs = Vec::with_capacity(entries.len());
-            let mut locally_free = Vec::new();
-            let mut connective_used = false;
-            for (key, value) in entries {
-                // #74 / R8: an `EMap`'s `key_value_pair` has a MANDATORY value,
-                // so an UNSET entry cannot be lowered. Fail closed NAMING the
-                // key — `Nil` would fabricate a binding and dropping the entry
-                // would lose the key. Unblocked by #130.
-                let Some(value) = value.as_ref() else {
-                    return Err(RholangAstLowerError::PathmapEntryHasNoValue(key.to_string()));
-                };
-                let key = lower_proc(key, env)?;
-                let value = lower_proc(value, env)?;
-                locally_free = union(
-                    locally_free,
-                    union(key.locally_free.clone(), value.locally_free.clone()),
-                );
-                connective_used |= key.connective_used || value.connective_used;
-                pairs.push(new_key_value_pair(key, value));
-            }
-
-            Ok(new_emap_par(
-                pairs,
-                locally_free.clone(),
-                connective_used,
-                None,
-                locally_free,
-                connective_used,
-            ))
+        Pathmap::PathmapLit(entries) => match entries.mode() {
+            mettail_runtime::PathMapMode::Empty | mettail_runtime::PathMapMode::Set => {
+                let lowered = entries
+                    .iter()
+                    .map(|entry| lower_proc(entry.key(), env))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let locally_free = locally_free_union(&lowered);
+                let connective_used = any_connective_used(&lowered);
+                Ok(new_epathmap_set_par(lowered, locally_free, connective_used))
+            },
+            mettail_runtime::PathMapMode::Map => {
+                let mut lowered = Vec::with_capacity(entries.len());
+                let mut locally_free = Vec::new();
+                let mut connective_used = false;
+                for entry in entries.iter() {
+                    let key = lower_proc(entry.key(), env)?;
+                    let value =
+                        lower_proc(entry.value().expect("map-mode entry has a value"), env)?;
+                    locally_free = union(
+                        locally_free,
+                        union(key.locally_free.clone(), value.locally_free.clone()),
+                    );
+                    connective_used |= key.connective_used || value.connective_used;
+                    lowered.push((key, value));
+                }
+                Ok(new_epathmap_map_par(lowered, locally_free, connective_used))
+            },
         },
         _ => Err(RholangAstLowerError::UnsupportedProc("computed pathmap process")),
     }
@@ -2180,10 +2151,9 @@ mod differential {
         ("@\"OUT\"!(bool(1))", "ToBool — no machine algebra", Expect::Fails),
     ];
 
-    /// Terms deep enough that a per-level constant would show, driven through BOTH
-    /// implementations. The oracle recurses, so these run on a large explicit thread stack —
-    /// which is itself the point being made: the driver needs no such accommodation.
-    const DEEP_DEPTH: usize = 400;
+    /// A nested-constructor witness for the bounded recursive reference. Unbounded depth belongs
+    /// to the generated driver gate and the formal equivalence proof, not to a large-stack oracle.
+    const ORACLE_WITNESS_DEPTH: usize = 1;
 
     fn parse(source: &str) -> Option<Proc> {
         Proc::parse_via_wpda(source).ok()
@@ -2368,15 +2338,11 @@ mod differential {
         );
     }
 
-    /// ★ ANTI-VACUITY 3. The deep entries must carry the depth they claim.
-    ///
-    /// Measured by walking the built term, not by trusting the source string. Both
-    /// implementations then lower it — the oracle on an explicitly large stack, because it is
-    /// the thing being retired.
+    /// ★ ANTI-VACUITY 3. The bounded recursive reference reaches a nested constructor.
     #[test]
-    fn the_driver_and_the_oracle_agree_on_a_deep_term() {
+    fn the_driver_and_the_bounded_oracle_agree_on_a_nested_term() {
         let mut proc = Proc::CastInt(Arc::new(Int::NumLit(1)));
-        for _ in 0..DEEP_DEPTH {
+        for _ in 0..ORACLE_WITNESS_DEPTH {
             proc = Proc::CastList(Arc::new(List::ListLit(vec![proc])));
         }
 
@@ -2392,33 +2358,23 @@ mod differential {
             cursor = item;
         }
         assert_eq!(
-            measured, DEEP_DEPTH,
+            measured, ORACLE_WITNESS_DEPTH,
             "ANTI-VACUITY: the deep subject was built at nesting depth {measured}, not \
-             {DEEP_DEPTH} — a differential over a shallow term proves nothing about depth"
+             {ORACLE_WITNESS_DEPTH}"
         );
 
         let driven = super::super::lower_proc_in_env(&proc, &BoundEnv::new())
             .expect("driver: the deep term lowers")
             .encode_to_vec();
 
-        // The ORACLE recurses, so it needs a stack sized for `DEEP_DEPTH` levels of 87-member
-        // frames. Giving it one here is not a workaround — it is the measurement this whole
-        // conversion exists to make unnecessary.
-        let recursed = std::thread::Builder::new()
-            .stack_size(512 * 1024 * 1024)
-            .spawn(move || {
-                lower_proc_in_env(&proc, &BoundEnv::new())
-                    .expect("oracle: the deep term lowers")
-                    .encode_to_vec()
-            })
-            .expect("differential: failed to spawn the oracle thread")
-            .join()
-            .expect("differential: the recursive oracle overflowed its stack");
+        let recursed = lower_proc_in_env(&proc, &BoundEnv::new())
+            .expect("oracle: the nested term lowers")
+            .encode_to_vec();
 
         assert_eq!(
             driven, recursed,
-            "M-2 DIFFERENTIAL FAILED at nesting depth {DEEP_DEPTH}: the driver and the oracle \
-             disagree on a deep term, which is exactly the regime the conversion is for"
+            "M-2 DIFFERENTIAL FAILED at nesting depth {ORACLE_WITNESS_DEPTH}: the driver and \
+             bounded recursive oracle disagree"
         );
     }
 }

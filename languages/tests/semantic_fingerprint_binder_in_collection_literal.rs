@@ -309,8 +309,8 @@ fn the_semantic_stream_of_a_list_is_its_elements_streams_in_index_order() {
 /// was written, PROVEN NECESSARY, and then disabled pending a semantics ruling.
 ///
 /// Both pairs have since been dissolved by unrelated changes — `713e0364` gave
-/// `Bytes` a real `Vec<u8>` carrier, and #154 gave the pathmap arm `PathValue`'s
-/// per-entry tag. This test is that state as an ASSERTION instead of a comment,
+/// `Bytes` a real `Vec<u8>` carrier, and the homogeneous pathmap representation
+/// gave the pathmap arm a container-mode discriminator. This test is that state as an ASSERTION instead of a comment,
 /// because "which fingerprints collide" is precisely the kind of claim that goes
 /// stale silently: nothing in the tree was watching either dissolution, and the
 /// block still reads as though both pairs were live.
@@ -332,8 +332,8 @@ fn the_fingerprint_collision_census_is_exactly_the_declared_one() {
             "b\"61\"",
         ),
         (
-            "Map vs Pathmap, NON-EMPTY — #154's pathmap value closure writes `PathValue`'s \
-             1-byte tag per entry and the map's does not",
+            "Map vs Pathmap, NON-EMPTY — the pathmap writes its homogeneous container-mode \
+             discriminator and the map does not",
             "{1: 2}",
             "{|1 : 2|}",
         ),

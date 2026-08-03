@@ -1259,11 +1259,9 @@ fn generate_collection_literal_visit_arm(
                 }
             }
         },
-        // #74 Pathmap: the same 2N-slot interleave, except the value is a
-        // `PathValue<E>`. An `Unset` value has NO sub-term to visit, so no task
-        // is pushed for its slot and the slot stays `None` — which the assemble
-        // arm reads back as `PathValue::Unset`. Substitution into an unset entry
-        // is the identity, which is correct: it binds nothing.
+        // Pathmap keeps the same 2N result layout. Set mode leaves every value
+        // slot empty; map mode visits every value. The assembler infers the one
+        // homogeneous mode from those slots (empty remains neutral).
         CollectionType::PathMap => quote! {
             #cat::#label(ref coll) => {
                 let elements_start = results.len();
@@ -1277,13 +1275,14 @@ fn generate_collection_literal_visit_arm(
                     elements_start,
                     elements_count,
                 });
-                for (pair_idx, (k, v)) in coll.iter().enumerate() {
+                for (pair_idx, entry) in coll.iter().enumerate() {
+                    let k = entry.key();
                     stack.push(SubstTask::#visit_task {
                         src: k as *const _,
                         slot: elements_start + pair_idx * 2,
                         op_idx,
                     });
-                    if let mettail_runtime::PathValue::Set(ref inner) = *v {
+                    if let Some(inner) = entry.value() {
                         stack.push(SubstTask::#visit_task {
                             src: inner as *const _,
                             slot: elements_start + pair_idx * 2 + 1,
@@ -2193,7 +2192,7 @@ fn generate_collection_literal_assemble_arm(
                     elements_start: usize,
                     elements_count: usize,
                 ) {
-                    let mut inner = mettail_runtime::HashMapLit::default();
+                    let mut inner = mettail_runtime::PathMapLit::new();
                     let mut idx = 0;
                     while idx < elements_count {
                         let k = match results[elements_start + idx].take()
@@ -2202,26 +2201,22 @@ fn generate_collection_literal_assemble_arm(
                             AnySubstTerm::#elem_wrap(v) => v,
                             _ => unreachable!("iterative subst: wrong category in pathmap-literal key slot"),
                         };
-                        // #74: an UNSET value has no sub-term, so the visit arm
-                        // pushed NO task for its slot and the slot is still
-                        // `None`. That is the carrier for `PathValue::Unset` —
-                        // `None` here means "no value was written", NOT "a value
-                        // went missing". A `Set(v)` slot carries the substituted
-                        // sub-term exactly as a `Map` value does.
-                        let v = match results[elements_start + idx + 1].take() {
-                            None => mettail_runtime::PathValue::Unset,
-                            Some(AnySubstTerm::#elem_wrap(v)) => {
-                                mettail_runtime::PathValue::Set(v)
-                            },
+                        let value = match results[elements_start + idx + 1].take() {
+                            None => None,
+                            Some(AnySubstTerm::#elem_wrap(v)) => Some(v),
                             Some(_) => unreachable!(
                                 "iterative subst: wrong category in pathmap-literal value slot"
                             ),
                         };
-                        inner.insert(k, v);
+                        let inserted = match value {
+                            None => inner.insert_set(k).map(|_| ()),
+                            Some(value) => inner.insert_map(k, value).map(|_| ()),
+                        };
+                        inserted.expect("iterative subst preserves homogeneous pathmap mode");
                         idx += 2;
                     }
                     results[slot] = Some(AnySubstTerm::#wrap(
-                        #cat::#label(mettail_runtime::PathMapLit(inner))
+                        #cat::#label(inner)
                     ));
                 }
                 assemble(results, slot, elements_start, elements_count);
@@ -3813,7 +3808,10 @@ mod shape_refusal_red {
         GrammarRule {
             items: vec![
                 binder_item,
-                GrammarItem::NonTerminal { ident: id("Term"), kind: NonTerminalKind::Category },
+                GrammarItem::NonTerminal {
+                    ident: id("Term"),
+                    kind: NonTerminalKind::Category,
+                },
             ],
             bindings: vec![(0usize, vec![1usize])],
             ..rule_fixture(id("Lam"), id("Term"))
@@ -3872,8 +3870,7 @@ mod shape_refusal_red {
         mutated.items[1] = GrammarItem::Terminal(".".to_string());
 
         let language = crate::gen::empty_language_for_tests();
-        let VariantKind::Refused { message, .. } = rule_to_variant_kind(&mutated, &language)
-        else {
+        let VariantKind::Refused { message, .. } = rule_to_variant_kind(&mutated, &language) else {
             panic!("a body index that does not point at a non-terminal must refuse");
         };
         assert!(

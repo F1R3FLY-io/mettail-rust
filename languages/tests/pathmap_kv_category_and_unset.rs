@@ -48,7 +48,6 @@
 //! set.
 
 use mettail_languages::rholang::*;
-use mettail_runtime::PathValue;
 use std::hash::Hasher;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -63,14 +62,13 @@ fn sem_hash(p: &Proc) -> u64 {
 
 /// The value's shape, as a short tag.
 ///
-/// `"·"` is `PathValue::Unset` — deliberately a character no `Proc` renders as,
-/// so a row that expects `Unset` cannot be satisfied by any term. A `Set(v)`
-/// reports `v`'s own `Display`.
-fn v_tag(v: &PathValue<Proc>) -> String {
-    match v {
-        PathValue::Unset => "·".to_string(),
-        PathValue::Set(inner) => inner.to_string(),
-    }
+/// `"·"` is set membership — deliberately a character no `Proc` renders as,
+/// so a set-mode row cannot be satisfied by a map value. Map entries report
+/// their value's own `Display`.
+fn entry_tag(entry: mettail_runtime::PathMapEntryRef<'_, Proc, Proc>) -> String {
+    entry
+        .value()
+        .map_or_else(|| "·".to_string(), ToString::to_string)
 }
 
 /// Direct payload introspection: `Some((len, entries))` for a `Pathmap` or `Map`
@@ -83,14 +81,18 @@ fn payload(p: &Proc) -> Option<(usize, Vec<(String, String)>)> {
         Proc::CastPathmap(inner) => match inner.as_ref() {
             Pathmap::PathmapLit(lit) => Some((
                 lit.len(),
-                lit.iter().map(|(k, v)| (k.to_string(), v_tag(v))).collect(),
+                lit.iter()
+                    .map(|entry| (entry.key().to_string(), entry_tag(entry)))
+                    .collect(),
             )),
             _ => None,
         },
         Proc::CastMap(inner) => match inner.as_ref() {
             Map::MapLit(lit) => Some((
                 lit.len(),
-                lit.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+                lit.iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
             )),
             _ => None,
         },
@@ -205,7 +207,7 @@ fn row_f_bare_cross_category_element_yields_no_empty_ghost() {
 
 /// Row D: `{| 1 |}` — the key is present and bound to NOTHING.
 ///
-/// The value must be `PathValue::Unset`. It used to be the KEY (`("1","1")`),
+/// The container must select set mode. It used to store the KEY as its value (`("1","1")`),
 /// because the parser materialised a bare entry by re-folding the key's own SPPF
 /// node into the value slot — destroying the "this was bare" fact before any
 /// action could see it.
@@ -226,9 +228,9 @@ fn row_d_bare_element_value_is_unset_not_the_key() {
 /// ★ Ruling B: `unset ≠ Nil`. `Nil` is a value a program can write, so encoding
 /// absence as `Nil` makes the two literals indistinguishable. The three-way
 /// `semantic_hash` separation is what makes the ruling ENFORCEABLE rather than
-/// conventional: `PathValue` writes a 1-byte tag before its payload, so the
-/// three write streams differ in their bytes and no downstream fingerprint can
-/// merge them.
+/// conventional: `PathMapLit` writes its container-mode discriminator before
+/// its payload, so the three write streams differ and no downstream
+/// fingerprint can merge them.
 #[test]
 fn row_e_unset_nil_and_a_real_value_are_three_distinct_terms() {
     let (len, entries) = sole_payload("{| 1 : Nil |}");
@@ -368,8 +370,8 @@ fn control_sequence_side_cross_category_refusals_are_unchanged() {
 // invalid fixes, and each of these rows kills one of them
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// An EMPTY container is still empty. `PathValue::Unset` is a value in a slot
-/// that EXISTS; nothing is ever inserted for an empty literal.
+/// An EMPTY container is still mode-neutral; nothing is ever inserted merely
+/// to guess whether a later use intends set or map mode.
 ///
 /// ⚠ `{ }` / `{}` are two-way ambiguous (empty par / empty map), so the empty-map
 /// READING is selected by payload rather than by `sole_payload` — see
@@ -577,10 +579,7 @@ fn rholang_has_exactly_two_kv_slots() {
          auto-injected `MApply*` variants used to inherit `\":\"` from their \
          home category",
     );
-    assert_eq!(
-        optional, 1,
-        "exactly ONE slot is value-optional (Pathmap::PathmapLit)",
-    );
+    assert_eq!(optional, 1, "exactly ONE slot is value-optional (Pathmap::PathmapLit)",);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

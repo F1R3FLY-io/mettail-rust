@@ -3061,8 +3061,7 @@ mod native_ops {
         /// 10850-test suite checks.
         #[test]
         fn last_joins_the_reserved_method_names_and_is_not_a_special_case() {
-            let bare_name_program =
-                |name: &str| format!("for(x <- {name}){{*(x)}} | {name}!(7)");
+            let bare_name_program = |name: &str| format!("for(x <- {name}){{*(x)}} | {name}!(7)");
 
             // `last` is reserved — as its four siblings already were.
             for reserved in ["last", "nth", "length", "keys", "concat"] {
@@ -3266,10 +3265,7 @@ mod native_ops {
         #[test]
         fn zipper_get_leaf_discriminates_unset_from_nil_from_a_real_value() {
             assert_reduces_to("{{| [1] |}.readZipper().descendTo([1]).getLeaf()}", "error");
-            assert_reduces_to(
-                "{{| [1] : Nil |}.readZipper().descendTo([1]).getLeaf()}",
-                "Nil",
-            );
+            assert_reduces_to("{{| [1] : Nil |}.readZipper().descendTo([1]).getLeaf()}", "Nil");
             assert_reduces_to("{{| [1] : 5 |}.readZipper().descendTo([1]).getLeaf()}", "5");
         }
 
@@ -5883,8 +5879,7 @@ mod par_reading_count_pins {
         fresh();
         let all = Proc::parse_via_wpda_all(src)
             .unwrap_or_else(|e| panic!("`{src}` must parse, got {e:?}"));
-        let mut rendered: Vec<String> =
-            all.iter().map(|p| mask_ids(&format!("{p:?}"))).collect();
+        let mut rendered: Vec<String> = all.iter().map(|p| mask_ids(&format!("{p:?}"))).collect();
         rendered.sort();
         rendered
     }
@@ -6007,13 +6002,12 @@ mod par_reading_count_pins {
         pin(
             "{| *@a : *@b |}",
             &[
-                // ★ The value reads `Set(…)` — the `PathValue` tag (#74). A bare
-                // `{| *@a |}` entry would read `Unset` here instead, and the two
-                // are distinct Debug renderings because they are distinct terms.
-                "CastPathmap(PathmapLit(PathMapLit(HashMapLit({PDrop(NQuoteShort(PVar(OrdVar(Free(\
+                // Map mode carries the value directly; a bare `{| *@a |}`
+                // selects the distinct set-mode variant.
+                "CastPathmap(PathmapLit(Map(HashMapLit({PDrop(NQuoteShort(PVar(OrdVar(Free(\
                  FreeVar { unique_id: UniqueId(#), pretty_name: Some(\"a\") }))))): \
-                 Set(PDrop(NQuoteShort(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(#), \
-                 pretty_name: Some(\"b\") }))))))}))))",
+                 PDrop(NQuoteShort(PVar(OrdVar(Free(FreeVar { unique_id: UniqueId(#), \
+                 pretty_name: Some(\"b\") })))))}))))",
             ],
         );
     }

@@ -17,9 +17,9 @@ use std::collections::HashMap;
 ///
 /// `![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap` declares its payload
 /// as a two-parameter wrapper, but only the first parameter is information: the
-/// second is derived from the container kind (#74 — a `Pathmap`'s value type is
-/// `PathValue<E>`, because a `Pathmap`'s value slot is optional). This extracts
-/// the `E`.
+/// second is the homogeneous map value type. This extracts the shared `E` used
+/// by `PathMapLit<E, E>`; set-vs-map optionality belongs to the container mode,
+/// never to each entry.
 ///
 /// Returns `None` when the native type has no angle-bracketed arguments (a bare
 /// `![HashMap] as Map`-style declaration), in which case the caller falls back to
@@ -110,10 +110,10 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                             quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
                         })
                     } else if matches!(collection_kind, CollectionCategory::Pathmap(_)) {
-                        // ★ #74 (2026-07-29). A `Pathmap`'s value slot is
-                        // OPTIONAL: `{| k |}` binds `k` to NOTHING, and that is
-                        // not the same term as `{| k : Nil |}`. So its value type
-                        // is `PathValue<E>` wherever a `Map`'s is `E`.
+                        // A pathmap is homogeneous: the whole literal is either
+                        // set-mode (`{| k |}` entries) or map-mode (`{| k:v |}`
+                        // entries). Optionality is represented once by
+                        // `PathMapLit`'s container mode, not once per entry.
                         //
                         // This is derived from the CONTAINER KIND, not spelled in
                         // the DSL, because the spec already knew: the parser has
@@ -134,10 +134,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                             .or_else(|| elem_type.map(|e| quote! { #e }))
                             .map(|elem| {
                                 quote! {
-                                    mettail_runtime::PathMapLit<
-                                        #elem,
-                                        mettail_runtime::PathValue<#elem>,
-                                    >
+                                    mettail_runtime::PathMapLit<#elem, #elem>
                                 }
                             })
                     } else {
@@ -155,15 +152,8 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                         CollectionCategory::Set(_) => {
                             quote! { mettail_runtime::HashSetLit<#elem_type> }
                         }
-                        // See the `Pathmap` arm above for why the value type is
-                        // `PathValue<E>` and not `E`.
                         CollectionCategory::Pathmap(_) => {
-                            quote! {
-                                mettail_runtime::PathMapLit<
-                                    #elem_type,
-                                    mettail_runtime::PathValue<#elem_type>,
-                                >
-                            }
+                            quote! { mettail_runtime::PathMapLit<#elem_type, #elem_type> }
                         }
                     })
                 };

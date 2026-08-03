@@ -80,6 +80,14 @@ impl<K, V> HashMapLit<K, V> {
     }
 
     #[inline]
+    pub fn get_key_value(&self, k: &K) -> Option<(&K, &V)>
+    where
+        K: Eq + Hash,
+    {
+        self.0.get_key_value(k)
+    }
+
+    #[inline]
     pub fn remove(&mut self, k: &K) -> Option<V>
     where
         K: Eq + Hash,
@@ -103,19 +111,25 @@ impl<K, V> HashMapLit<K, V> {
 
     /// Iterate entries in insertion order.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
+    pub fn iter(&self) -> indexmap::map::Iter<'_, K, V> {
         self.0.iter()
+    }
+
+    /// Mutably iterate entries in insertion order.
+    #[inline]
+    pub fn iter_mut(&mut self) -> indexmap::map::IterMut<'_, K, V> {
+        self.0.iter_mut()
     }
 
     /// Iterate keys in insertion order.
     #[inline]
-    pub fn keys(&self) -> impl Iterator<Item = &K> {
+    pub fn keys(&self) -> indexmap::map::Keys<'_, K, V> {
         self.0.keys()
     }
 
     /// Iterate values in insertion order.
     #[inline]
-    pub fn values(&self) -> impl Iterator<Item = &V> {
+    pub fn values(&self) -> indexmap::map::Values<'_, K, V> {
         self.0.values()
     }
 

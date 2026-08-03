@@ -37,10 +37,8 @@ fn infer_receive_pattern_names(pat: &Proc, out: &mut Vec<String>) {
         },
         Proc::CastPathmap(m) => {
             if let Pathmap::PathmapLit(items) = m.as_ref() {
-                // #74: an UNSET value slot contains no sub-term, so it binds no
-                // pattern names. Only a `Set` value is descended into.
-                for (_, value) in items.iter() {
-                    if let mettail_runtime::PathValue::Set(inner) = value {
+                for entry in items.iter() {
+                    if let Some(inner) = entry.value() {
                         infer_receive_pattern_names(inner, out);
                     }
                 }
@@ -48,8 +46,8 @@ fn infer_receive_pattern_names(pat: &Proc, out: &mut Vec<String>) {
         },
         Proc::CastReadZipper(z) => {
             if let ReadZipper::Lit(inner) = z.as_ref() {
-                for (_, value) in inner.as_ref().0.iter() {
-                    if let mettail_runtime::PathValue::Set(v) = value {
+                for entry in inner.as_ref().0.iter() {
+                    if let Some(v) = entry.value() {
                         infer_receive_pattern_names(v, out);
                     }
                 }
@@ -57,8 +55,8 @@ fn infer_receive_pattern_names(pat: &Proc, out: &mut Vec<String>) {
         },
         Proc::CastWriteZipper(z) => {
             if let WriteZipper::Lit(inner) = z.as_ref() {
-                for (_, value) in inner.as_ref().0.iter() {
-                    if let mettail_runtime::PathValue::Set(value) = value {
+                for entry in inner.as_ref().0.iter() {
+                    if let Some(value) = entry.value() {
                         infer_receive_pattern_names(value, out);
                     }
                 }

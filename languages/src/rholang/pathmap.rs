@@ -1,24 +1,28 @@
-//! Rholang `Proc` path encoding and trie-backed [`PathMapLit`] operations via
-//! [`mettail_runtime::pathmap_bridge`].
+//! Rholang path encoding and homogeneous trie-backed pathmap operations.
 
-use mettail_runtime::{PathMapLit, PathValue};
+use std::collections::HashMap;
+
+use mettail_runtime::{
+    homogeneous_lit_from_trie_and_keys, homogeneous_trie_and_key_index, HomogeneousPathTrie,
+    PathMapLit,
+};
+use pathmap::PathMap;
 
 use super::{List, Proc};
 
-/// The rholang pathmap payload.
-///
-/// #74 (2026-07-29): the VALUE is a [`PathValue<Proc>`], not a `Proc`, because a
-/// pathmap's value slot is optional — `{| k |}` binds `k` to NOTHING, and that is
-/// a different term from `{| k : Nil |}`. The parser has known the slot was
-/// optional since 2026-06-27 (`kv_value_optional` is a compile-time property of
-/// `CollectionType::PathMap`); this alias is the type agreeing with it.
-///
-/// The trie bridge (`mettail_runtime::pathmap_bridge`) is generic in the value
-/// type, so every operation below carries `PathValue` through without inspecting
-/// it: a path operation moves values, it does not read them.
-pub(crate) type ProcPathMap = PathMapLit<Proc, PathValue<Proc>>;
+pub(crate) type ProcPathMap = PathMapLit<Proc, Proc>;
 
-/// Path segments for trie keys. `None` when the path is not encodable (e.g. empty list path `[]`).
+/// Result of an exact-key lookup. Set membership and map values are separate
+/// outcomes; absence is separate from both.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PathmapLookup {
+    Absent,
+    SetMember,
+    MapValue(Proc),
+}
+
+/// Path segments for trie keys. `None` when the path is not encodable (for
+/// example the empty list path).
 fn proc_path_segments(key: &Proc) -> Option<Vec<Vec<u8>>> {
     match key {
         Proc::CastList(inner) => match inner.as_ref() {
@@ -43,84 +47,199 @@ pub(crate) fn encode_proc_path_entry(key: &Proc) -> Result<Vec<u8>, ()> {
     proc_to_path_key_bytes(key).ok_or(())
 }
 
-/// Look up `key`.
-///
-/// The three outcomes are genuinely three, and the caller must keep them apart
-/// (#74):
-///
-/// | result | meaning |
-/// |---|---|
-/// | `Ok(None)` | the key is ABSENT |
-/// | `Ok(Some(PathValue::Unset))` | the key is PRESENT and bound to nothing (`{\| k \|}`) |
-/// | `Ok(Some(PathValue::Set(v)))` | the key is present and bound to `v` |
-///
-/// ⚠ Collapsing the middle row into either neighbour is the defect this campaign
-/// removed: reporting it as `Ok(None)` claims the key is absent, and reporting it
-/// as `Set(Nil)` fabricates a value the source never wrote.
-pub(crate) fn pathmap_get(
+fn encoded(
     payload: &ProcPathMap,
-    key: &Proc,
-) -> Result<Option<PathValue<Proc>>, ()> {
-    let enc = encode_proc_path_entry(key)?;
-    let trie = mettail_runtime::trie_from_lit(payload, encode_proc_path_entry)?;
-    Ok(trie.get_val_at(&enc).cloned())
+) -> Result<(HomogeneousPathTrie<Proc>, HashMap<Vec<u8>, Proc>), ()> {
+    homogeneous_trie_and_key_index(payload, encode_proc_path_entry)
+}
+
+pub(crate) fn pathmap_get(payload: &ProcPathMap, key: &Proc) -> Result<PathmapLookup, ()> {
+    let key = encode_proc_path_entry(key)?;
+    let (trie, _) = encoded(payload)?;
+    Ok(match trie {
+        HomogeneousPathTrie::Empty => PathmapLookup::Absent,
+        HomogeneousPathTrie::Set(trie) => match trie.get(&key) {
+            Some(()) => PathmapLookup::SetMember,
+            None => PathmapLookup::Absent,
+        },
+        HomogeneousPathTrie::Map(trie) => match trie.get(&key) {
+            Some(value) => PathmapLookup::MapValue(value.clone()),
+            None => PathmapLookup::Absent,
+        },
+    })
 }
 
 pub(crate) fn pathmap_has(payload: &ProcPathMap, key: &Proc) -> Result<bool, ()> {
-    let enc = encode_proc_path_entry(key)?;
-    let trie = mettail_runtime::trie_from_lit(payload, encode_proc_path_entry)?;
-    Ok(trie.get_val_at(&enc).is_some())
+    Ok(!matches!(pathmap_get(payload, key)?, PathmapLookup::Absent))
 }
 
-/// Bind `key` to `value`.
-///
-/// `value` is a [`PathValue`] rather than a `Proc` so the caller states which
-/// binding it means: `.set(k, v)` supplies `PathValue::Set(v)`, while a
-/// hypothetical "declare the key with no value" operation would supply
-/// `PathValue::Unset`. Taking a bare `Proc` here and wrapping it internally would
-/// make `Unset` unreachable through this door — and an unreachable case is how
-/// #74 stayed invisible for as long as it did.
+/// Bind `key` to `value`. Empty selects map mode; set mode is rejected.
 pub(crate) fn pathmap_put(
     payload: &ProcPathMap,
     key: &Proc,
-    value: PathValue<Proc>,
+    value: Proc,
 ) -> Result<ProcPathMap, ()> {
-    let enc = encode_proc_path_entry(key)?;
-    let (mut trie, mut key_index) =
-        mettail_runtime::trie_and_key_index_from_lit(payload, encode_proc_path_entry)?;
-    mettail_runtime::trie_put_encoded(&mut trie, &mut key_index, enc, key.clone(), value);
-    Ok(mettail_runtime::pathmap_lit_from_trie_and_keys(&trie, key_index))
+    let encoded_key = encode_proc_path_entry(key)?;
+    let (trie, mut keys) = encoded(payload)?;
+    let trie = match trie {
+        HomogeneousPathTrie::Empty => {
+            let mut map = PathMap::new();
+            map.insert(&encoded_key, value);
+            HomogeneousPathTrie::Map(map)
+        },
+        HomogeneousPathTrie::Set(_) => return Err(()),
+        HomogeneousPathTrie::Map(mut map) => {
+            map.insert(&encoded_key, value);
+            HomogeneousPathTrie::Map(map)
+        },
+    };
+    keys.insert(encoded_key, key.clone());
+    Ok(homogeneous_lit_from_trie_and_keys(&trie, &keys))
 }
 
-pub(crate) fn pathmap_merge(
-    left: &ProcPathMap,
-    right: &ProcPathMap,
-) -> Result<ProcPathMap, ()> {
-    let (mut trie, mut key_index) =
-        mettail_runtime::trie_and_key_index_from_lit(left, encode_proc_path_entry)?;
-    mettail_runtime::trie_merge_lit(&mut trie, &mut key_index, right, encode_proc_path_entry)?;
-    Ok(mettail_runtime::pathmap_lit_from_trie_and_keys(&trie, key_index))
+fn merge_key_indexes(
+    mut left: HashMap<Vec<u8>, Proc>,
+    right: HashMap<Vec<u8>, Proc>,
+) -> HashMap<Vec<u8>, Proc> {
+    left.extend(right);
+    left
 }
 
-pub(crate) fn pathmap_restrict(
-    base: &ProcPathMap,
-    mask: &ProcPathMap,
-) -> Result<ProcPathMap, ()> {
-    mettail_runtime::trie_restrict_lit(base, mask, encode_proc_path_entry)
+pub(crate) fn pathmap_merge(left: &ProcPathMap, right: &ProcPathMap) -> Result<ProcPathMap, ()> {
+    let (left_trie, left_keys) = encoded(left)?;
+    let (right_trie, right_keys) = encoded(right)?;
+    let trie = match (left_trie, right_trie) {
+        (HomogeneousPathTrie::Empty, right) => right,
+        (left, HomogeneousPathTrie::Empty) => left,
+        (HomogeneousPathTrie::Set(mut left), HomogeneousPathTrie::Set(right)) => {
+            for (key, ()) in right.iter() {
+                left.insert(&key, ());
+            }
+            HomogeneousPathTrie::Set(left)
+        },
+        (HomogeneousPathTrie::Map(mut left), HomogeneousPathTrie::Map(right)) => {
+            for (key, value) in right.iter() {
+                left.insert(&key, value.clone());
+            }
+            HomogeneousPathTrie::Map(left)
+        },
+        _ => return Err(()),
+    };
+    let keys = merge_key_indexes(left_keys, right_keys);
+    Ok(homogeneous_lit_from_trie_and_keys(&trie, &keys))
 }
 
-pub(crate) fn pathmap_subtract(
-    left: &ProcPathMap,
-    right: &ProcPathMap,
-) -> Result<ProcPathMap, ()> {
-    mettail_runtime::trie_subtract_lit(left, right, encode_proc_path_entry)
+pub(crate) fn pathmap_restrict(base: &ProcPathMap, mask: &ProcPathMap) -> Result<ProcPathMap, ()> {
+    let (base_trie, base_keys) = encoded(base)?;
+    let (mask_trie, _) = encoded(mask)?;
+    let (trie, keys) = match (base_trie, mask_trie) {
+        (HomogeneousPathTrie::Empty, _) | (_, HomogeneousPathTrie::Empty) => {
+            (HomogeneousPathTrie::Empty, HashMap::new())
+        },
+        (HomogeneousPathTrie::Set(base), HomogeneousPathTrie::Set(mask)) => {
+            let mut out = PathMap::new();
+            let mut keys = HashMap::new();
+            for (key, ()) in base.iter() {
+                if mask.get(&key).is_some() {
+                    out.insert(&key, ());
+                    if let Some(source) = base_keys.get(key.as_slice()) {
+                        keys.insert(key, source.clone());
+                    }
+                }
+            }
+            (HomogeneousPathTrie::Set(out), keys)
+        },
+        (HomogeneousPathTrie::Map(base), HomogeneousPathTrie::Map(mask)) => {
+            let mut out = PathMap::new();
+            let mut keys = HashMap::new();
+            for (key, value) in base.iter() {
+                if mask.get(&key).is_some() {
+                    out.insert(&key, value.clone());
+                    if let Some(source) = base_keys.get(key.as_slice()) {
+                        keys.insert(key, source.clone());
+                    }
+                }
+            }
+            (HomogeneousPathTrie::Map(out), keys)
+        },
+        _ => return Err(()),
+    };
+    Ok(homogeneous_lit_from_trie_and_keys(&trie, &keys))
 }
 
-pub(crate) fn pathmap_meet(
-    left: &ProcPathMap,
-    right: &ProcPathMap,
-) -> Result<ProcPathMap, ()> {
-    mettail_runtime::trie_meet_lit(left, right, encode_proc_path_entry)
+pub(crate) fn pathmap_subtract(left: &ProcPathMap, right: &ProcPathMap) -> Result<ProcPathMap, ()> {
+    let (left_trie, left_keys) = encoded(left)?;
+    let (right_trie, _) = encoded(right)?;
+    let (trie, keys) = match (left_trie, right_trie) {
+        (HomogeneousPathTrie::Empty, _) => (HomogeneousPathTrie::Empty, HashMap::new()),
+        (left, HomogeneousPathTrie::Empty) => (left, left_keys),
+        (HomogeneousPathTrie::Set(left), HomogeneousPathTrie::Set(right)) => {
+            let mut out = PathMap::new();
+            let mut keys = HashMap::new();
+            for (key, ()) in left.iter() {
+                if right.get(&key).is_none() {
+                    out.insert(&key, ());
+                    if let Some(source) = left_keys.get(key.as_slice()) {
+                        keys.insert(key, source.clone());
+                    }
+                }
+            }
+            (HomogeneousPathTrie::Set(out), keys)
+        },
+        (HomogeneousPathTrie::Map(left), HomogeneousPathTrie::Map(right)) => {
+            let mut out = PathMap::new();
+            let mut keys = HashMap::new();
+            for (key, value) in left.iter() {
+                if right.get(&key).is_none() {
+                    out.insert(&key, value.clone());
+                    if let Some(source) = left_keys.get(key.as_slice()) {
+                        keys.insert(key, source.clone());
+                    }
+                }
+            }
+            (HomogeneousPathTrie::Map(out), keys)
+        },
+        _ => return Err(()),
+    };
+    Ok(homogeneous_lit_from_trie_and_keys(&trie, &keys))
+}
+
+pub(crate) fn pathmap_meet(left: &ProcPathMap, right: &ProcPathMap) -> Result<ProcPathMap, ()> {
+    let (left_trie, left_keys) = encoded(left)?;
+    let (right_trie, right_keys) = encoded(right)?;
+    let (trie, keys) = match (left_trie, right_trie) {
+        (HomogeneousPathTrie::Empty, _) | (_, HomogeneousPathTrie::Empty) => {
+            (HomogeneousPathTrie::Empty, HashMap::new())
+        },
+        (HomogeneousPathTrie::Set(left), HomogeneousPathTrie::Set(right)) => {
+            let mut out = PathMap::new();
+            let mut keys = HashMap::new();
+            for (key, ()) in left.iter() {
+                if right.get(&key).is_some() {
+                    out.insert(&key, ());
+                    if let Some(source) = left_keys.get(key.as_slice()) {
+                        keys.insert(key, source.clone());
+                    }
+                }
+            }
+            (HomogeneousPathTrie::Set(out), keys)
+        },
+        (HomogeneousPathTrie::Map(left), HomogeneousPathTrie::Map(right)) => {
+            let mut out = PathMap::new();
+            let mut keys = HashMap::new();
+            for (key, value) in right.iter() {
+                if left.get(&key).is_some() {
+                    out.insert(&key, value.clone());
+                    if let Some(source) = right_keys.get(key.as_slice()) {
+                        keys.insert(key, source.clone());
+                    }
+                }
+            }
+            (HomogeneousPathTrie::Map(out), keys)
+        },
+        _ => return Err(()),
+    };
+    Ok(homogeneous_lit_from_trie_and_keys(&trie, &keys))
 }
 
 #[cfg(test)]

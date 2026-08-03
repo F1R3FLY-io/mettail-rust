@@ -115,7 +115,7 @@ pub use numeric_cast_adapter::{
 // `safe_arith` (below) is its producer; the generated Dovetail dispatcher is its consumer.
 pub mod partiality;
 pub use partiality::{
-    DeclineSink, DeclinedFold, Declarable, FoldDisposition, Partiality, UndefinedReason,
+    Declarable, DeclineSink, DeclinedFold, FoldDisposition, Partiality, UndefinedReason,
 };
 
 // Overflow-safe / NaN-safe arithmetic used by generated eval and Ascent rules to convert
@@ -132,19 +132,18 @@ mod hashmap_lit;
 pub use hashmap_lit::HashMapLit;
 
 mod pathmap_lit;
-pub use pathmap_lit::PathMapLit;
-/// #74 — the value slot of a value-optional kv collection. `PathValue::Unset`
-/// is how `{| k |}` says "the key is present and bound to nothing"; it is NOT
-/// `Nil`, NOT a sentinel, and NOT the key. See `path_value.rs` for why every
-/// such encoding is unsound.
-pub mod path_value;
-pub use path_value::{path_value_order, write_path_value_tag, PathValue};
+pub use pathmap_lit::{
+    PathMapEntry, PathMapEntryRef, PathMapIntoIter, PathMapIter, PathMapKeys, PathMapLit,
+    PathMapMode, PathMapModeError,
+};
 mod pathmap_bridge;
 mod pathmap_codec;
 pub use pathmap::PathMap as RawPathMap;
 pub use pathmap_bridge::{
+    homogeneous_lit_from_trie_and_keys, homogeneous_trie_and_key_index,
     pathmap_lit_from_trie_and_keys, trie_and_key_index_from_lit, trie_from_lit, trie_meet_lit,
-    trie_merge_lit, trie_put_encoded, trie_restrict_lit, trie_subtract_lit, PathTrie,
+    trie_merge_lit, trie_put_encoded, trie_restrict_lit, trie_subtract_lit, HomogeneousPathTrie,
+    PathTrie,
 };
 pub use pathmap_codec::{flatten_segments, unflatten_segments, ESCAPE_BYTE, SEGMENT_DELIM};
 

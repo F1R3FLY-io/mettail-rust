@@ -2700,8 +2700,8 @@ fn generate_engine_regular_arm(
                                 .collect();
                             items.sort();
                         },
-                        // #74: a `PathMap` value is a `PathValue`; an `Unset`
-                        // entry renders as the BARE KEY, with no separator.
+                        // A set-mode path entry renders as the bare key; a
+                        // map-mode entry renders key, separator, and value.
                         // (`PathMap` is not admissible as an INLINE binder
                         // collection type — `binder.rs` rejects it at its
                         // `_ => return None` collection arm — so this arm is
@@ -2709,11 +2709,11 @@ fn generate_engine_regular_arm(
                         // merely compilably so it stays right if that changes.)
                         mettail_ast::types::CollectionType::PathMap => quote! {
                             let mut items: Vec<String> = #field_name.iter()
-                                .map(|(k, v)| match v {
-                                    mettail_runtime::PathValue::Unset => format!("{}", k),
-                                    mettail_runtime::PathValue::Set(inner) => {
+                                .map(|entry| match entry {
+                                    mettail_runtime::PathMapEntryRef::Set(k) => format!("{}", k),
+                                    mettail_runtime::PathMapEntryRef::Map(k, inner) => {
                                         format!("{} : {}", k, inner)
-                                    },
+                                    }
                                 })
                                 .collect();
                             items.sort();
@@ -4023,13 +4023,14 @@ fn generate_engine_pattern_op(
                     // (Unreachable for an INLINE binder collection — `PathMap`
                     // is not an admissible inline collection type.)
                     Some(mettail_ast::types::CollectionType::PathMap) => quote! {
-                        for (k, v) in #coll_ident.iter() {
+                        for entry in #coll_ident.iter() {
+                            let k = entry.key();
                             let k_s = mettail_runtime::group_if_bare_delims(
                                 &k.to_string(), #elem_delims,
                             );
-                            parts.push(match v {
-                                mettail_runtime::PathValue::Unset => k_s,
-                                mettail_runtime::PathValue::Set(inner) => format!(
+                            parts.push(match entry.value() {
+                                None => k_s,
+                                Some(inner) => format!(
                                     "{} : {}",
                                     k_s,
                                     mettail_runtime::group_if_bare_delims(
@@ -4295,14 +4296,14 @@ fn generate_engine_pattern_op(
                                 // bare key. (Unreachable for an INLINE binder
                                 // collection — see the sibling arms.)
                                 Some(mettail_ast::types::CollectionType::PathMap) => quote! {
-                                    for (k, v) in #inner_var.iter() {
-                                        parts.push(match v {
-                                            mettail_runtime::PathValue::Unset => {
+                                    for entry in #inner_var.iter() {
+                                        parts.push(match entry {
+                                            mettail_runtime::PathMapEntryRef::Set(k) => {
                                                 format!("{}", k)
-                                            },
-                                            mettail_runtime::PathValue::Set(inner) => {
+                                            }
+                                            mettail_runtime::PathMapEntryRef::Map(k, inner) => {
                                                 format!("{} : {}", k, inner)
-                                            },
+                                            }
                                         });
                                     }
                                     parts.sort();
@@ -4656,21 +4657,17 @@ fn generate_engine_auto_literal_arm(
             None => nt,
         };
 
-        // ★ #74 (2026-07-29): a `Pathmap`'s entries are `(K, PathValue<V>)`, and
-        // a `PathValue::Unset` entry prints as the BARE KEY — `{| k |}`, with no
-        // `:` and no value. This arm is emitted BEFORE the shared kv body,
-        // because it is the one place where the presence of the separator is a
-        // RUNTIME question rather than a static property of the container.
+        // A `Pathmap` is homogeneous: set-mode entries print as bare keys and
+        // map-mode entries print `key : value`. This arm is emitted before the
+        // shared kv body because the whole container's mode decides whether a
+        // value display task exists.
         //
         // ★ This is the self-check for Ruling B. `{| k |}` must be a fixpoint of
         // `parse ∘ display`: encoding the unset value as `Nil` would print
         // `{|k:Nil|}` for an input the user wrote as `{|k|}`, so the surface
         // would not round-trip. That is why "unset ≠ Nil" is a soundness
         // property here and not a preference.
-        if matches!(
-            collection_kind,
-            Some(mettail_ast::language::CollectionCategory::Pathmap(_))
-        ) {
+        if matches!(collection_kind, Some(mettail_ast::language::CollectionCategory::Pathmap(_))) {
             let kv = kv_sep.clone().unwrap_or_else(|| ":".to_string());
             let sep_with_space = format!("{} ", sep);
             if let (Some(key_task), Some(val_task)) =
@@ -4701,14 +4698,15 @@ fn generate_engine_auto_literal_arm(
                         // shared.
                         let entries: Vec<_> = v.iter().collect();
                         stack.push(DisplayTask::WriteString(#close.to_string()));
-                        for (i, (k, val)) in entries.iter().enumerate().rev() {
+                        for (i, entry) in entries.into_iter().enumerate().rev() {
                             // Tasks are pushed in REVERSE display order, so the
                             // value and its separator go on first.
-                            if let mettail_runtime::PathValue::Set(__inner) = *val {
+                            let k = entry.key();
+                            if let Some(__inner) = entry.value() {
                                 stack.push(DisplayTask::#val_task(__inner as *const _, 0u8));
                                 stack.push(DisplayTask::WriteLiteral(#kv));
                             }
-                            stack.push(DisplayTask::#key_task(*k as *const _, 0u8));
+                            stack.push(DisplayTask::#key_task(k as *const _, 0u8));
                             if i > 0 {
                                 stack.push(DisplayTask::WriteString(#sep_with_space.to_string()));
                             }
@@ -4725,15 +4723,15 @@ fn generate_engine_auto_literal_arm(
                     let mut s = String::from(#open);
                     // ⚠ NEVER SORTED — see the sibling arm above.
                     let entries: Vec<_> = v.iter().collect();
-                    for (i, (k, val)) in entries.iter().enumerate() {
+                    for (i, entry) in entries.into_iter().enumerate() {
                         if i > 0 { s.push_str(#sep); s.push(' '); }
-                        match val {
-                            mettail_runtime::PathValue::Unset => {
+                        match entry {
+                            mettail_runtime::PathMapEntryRef::Set(k) => {
                                 let _ = write!(s, "{}", k);
-                            },
-                            mettail_runtime::PathValue::Set(__inner) => {
+                            }
+                            mettail_runtime::PathMapEntryRef::Map(k, __inner) => {
                                 let _ = write!(s, "{}{}{}", k, #kv, __inner);
-                            },
+                            }
                         }
                     }
                     s.push_str(#close);

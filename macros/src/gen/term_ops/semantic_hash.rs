@@ -652,28 +652,13 @@ fn semantic_hash_collection(
                 |__v, __h| #element_cat::semantic_hash(__v, __h),
             );
         },
-        // ★ #74 / #154 — a pathmap's VALUE is a `PathValue<E>`, not an `E`. An
-        // `Unset` entry has no sub-term at all (Ruling B: unset ≠ Nil), so it
-        // contributes only its 1-byte tag; a `Set` entry contributes the tag and
-        // then its inner term's ALPHA-CANONICAL digest.
-        //
-        // ⚠ This arm used to share `HashMap`'s, which typechecked only because the
-        // value closure was never instantiated with a real `PathValue` — the
-        // `CollectionLiteral` route that reaches it was going through structural
-        // `Hash` instead.
+        // Pathmap mode is hashed once by the homogeneous container. Set mode
+        // hashes keys only; map mode hashes both key and value terms.
         CollectionType::PathMap => quote! {
             #coll_expr.semantic_hash_into(
                 state,
                 |__k, __h| #element_cat::semantic_hash(__k, __h),
-                |__v, __h| match __v {
-                    mettail_runtime::PathValue::Unset => {
-                        std::hash::Hasher::write_u8(__h, 0u8);
-                    },
-                    mettail_runtime::PathValue::Set(__inner) => {
-                        std::hash::Hasher::write_u8(__h, 1u8);
-                        #element_cat::semantic_hash(__inner, __h);
-                    },
-                },
+                |__v, __h| #element_cat::semantic_hash(__v, __h),
             );
         },
         // ★ #154 — was `std::hash::Hash::hash(#coll_expr, state)`, i.e. STRUCTURAL,
@@ -1058,11 +1043,9 @@ fn generate_semantic_variant_arm(
                     // is hardening, landed because it is proven, cheap and
                     // adjacent — not a blocker.
                     //
-                    // ⚠ `PathValue` alone does NOT close it. The value bytes gain
-                    // a tag, which separates NON-EMPTY pathmaps from maps, but
-                    // `{||}` and `{}` have no value bytes at all and would still
-                    // collide. The tag is written unconditionally, before the
-                    // variant index, so the empty case is covered too.
+                    // ⚠ A per-entry value tag would NOT close it: empty
+                    // containers have no entry bytes. The homogeneous PathMap
+                    // mode is instead hashed once at the container boundary.
                     //
                     // The tag is a compile-time FNV-1a of the CATEGORY NAME:
                     // deterministic across builds and independent of category
@@ -1133,10 +1116,9 @@ fn generate_semantic_variant_arm(
                     //     so the collision is gone WITHOUT the tag, which is why
                     //     `2eebf722` found the five previously-moved goldens passing
                     //     unedited.
-                    //   * `Map`/`Pathmap`: #154 (this change) routes the pathmap arm
-                    //     through a value closure that writes `PathValue`'s own 1-byte
-                    //     tag per entry; the map arm does not. Different streams for
-                    //     every NON-EMPTY pathmap.
+                    //   * `Map`/`Pathmap`: the pathmap arm hashes its homogeneous
+                    //     container mode before its entries; the map arm does
+                    //     not. Different streams without a per-entry tag.
                     //
                     // ⇒ The residual uncovered case is exactly `{||}` vs `{}`: two
                     // EMPTY containers, both writing `variant_idx == 1` and a zero
@@ -1215,11 +1197,9 @@ fn generate_semantic_variant_arm(
                     // The mechanism stays here, complete and one line from
                     // active, per the standing policy that disabled code is
                     // commented out with its reason rather than deleted. It is
-                    // NOT a blocker for #151/#74: `PathValue`'s own 1-byte tag
-                    // already separates `{|k|}` / `{|k:Nil|}` / `{|k:5|}` and
-                    // every NON-EMPTY pathmap from every map, which is what those
-                    // two issues require. What remains uncovered is `{||}` vs
-                    // `{}` (no value bytes to tag) and the `Str`/`Bytes` pair.
+                    // NOT a blocker for #151/#74: PathMap's container-mode
+                    // discriminator separates `{|k|}` / `{|k:Nil|}` /
+                    // `{|k:5|}` without attaching a tag to every leaf.
                     //
                     // To re-enable: delete the `_` from `_cat_tag`, uncomment the
                     // `state.write_u64(#cat_tag);` line, and land the five golden

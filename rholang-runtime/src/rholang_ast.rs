@@ -34,7 +34,7 @@ use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{
     EAnd, EDiv, EEq, EGt, EGte, ELt, ELte, EMatches, EMethod, EMinus, EMod, EMult, ENeg, ENeq,
-    ENot, EOr, EPlus, EPlusPlus, Expr, Par, ReceiveBind,
+    ENot, EOr, EPathMap, EPlus, EPlusPlus, Expr, Par, ReceiveBind,
 };
 use models::rust::rholang::implicits::GPrivateBuilder;
 use typed_arena::Arena;
@@ -309,21 +309,6 @@ pub enum RholangAstLowerError {
     /// channel) would require the engine to reduce an expression to a number first. That is a
     /// named follow-on, not a silent coercion — an unusable bound fails closed here.
     LookaheadBoundNotAGroundNonNegativeInt(String),
-    /// #74: a pathmap entry whose value is `PathValue::Unset` (`{| k |}`) reached
-    /// the lowering, which targets Rholang's `EMap` — and an `EMap`'s
-    /// `key_value_pair` has a MANDATORY value. "The key is present and bound to
-    /// nothing" is therefore not expressible on the wire yet.
-    ///
-    /// ⚠ The tempting repairs are both wrong and both silent:
-    ///
-    /// - lowering the unset value as `Nil` fabricates a binding the source never
-    ///   wrote, and makes `{\| k \|}` and `{\| k : Nil \|}` the same wire term;
-    /// - dropping the entry loses the key, turning a non-empty pathmap into a
-    ///   shorter one — the sub-multiset ghost this campaign exists to remove.
-    ///
-    /// So it fails closed, NAMING the offending key, until #130 lands the
-    /// pair-valued slot that can carry the distinction.
-    PathmapEntryHasNoValue(String),
 }
 
 /// Rholang language adapter for the AST-first Rho machine runtime path.
@@ -1304,9 +1289,10 @@ enum Kont<'a> {
     MapLit(usize),
     /// `lower_bag`'s tagged 2-element ABI encoding, carrying each item's multiplicity.
     BagLit(Vec<i64>),
-    /// `lower_pathmap` — the same `EMap` carrier as [`Kont::MapLit`] (divergence G), kept
-    /// separate because its diagnostics and its C4 disposition are not the map's.
-    PathmapLit(usize),
+    /// `lower_pathmap` — a homogeneous `EPathMap`. Set mode consumes `len`
+    /// keys; map mode consumes `2 * len` interleaved keys and values. Empty is
+    /// represented by `map == false, len == 0` and remains mode-neutral.
+    PathmapLit { map: bool, len: usize },
     /// `PNew`'s `new`-scope wrapper over its lowered body.
     New { binder_count: usize },
     /// `x!(P)[*]` — an unbounded speculation request over `(channel, payload)`.
@@ -1382,7 +1368,13 @@ impl Kont<'_> {
             Kont::SetLit(n) => *n,
             Kont::MapLit(n) => 2 * *n,
             Kont::BagLit(counts) => counts.len(),
-            Kont::PathmapLit(n) => 2 * *n,
+            Kont::PathmapLit { map, len } => {
+                if *map {
+                    2 * *len
+                } else {
+                    *len
+                }
+            },
             Kont::New { .. } => 1,
             Kont::SpecAll => 2,
             Kont::SpecN { .. } => 2,
@@ -1427,7 +1419,7 @@ impl Kont<'_> {
             Kont::SetLit(_) => "SetLit",
             Kont::MapLit(_) => "MapLit",
             Kont::BagLit(_) => "BagLit",
-            Kont::PathmapLit(_) => "PathmapLit",
+            Kont::PathmapLit { .. } => "PathmapLit",
             Kont::New { .. } => "New",
             Kont::SpecAll => "SpecAll",
             Kont::SpecN { .. } => "SpecN",
@@ -1894,34 +1886,33 @@ impl<'a> Drive<'a> {
             },
             Proc::CastPathmap(value) => match value.as_ref() {
                 Pathmap::PathmapLit(entries) => {
-                    // ⚠ NEVER SORTED (2026-07-29, Ruling E). The removed
-                    // `entries.sort_by_key(|(key_a, _)| *key_a)` had no sibling:
-                    // the `Map::MapLit` arm ~30 lines above lowers its
-                    // insertion-ordered `HashMapLit` to the SAME `EMap` node
-                    // WITHOUT sorting. (The `Bag::BagLit` arm does sort — but a
-                    // BAG IS UNORDERED, so a sort there is canonicalisation; a
-                    // pathmap's order is the source's, so a sort is a rewrite.)
-                    // See `recursive_oracle::lower_pathmap` for the full argument.
-                    let entries: Vec<(&Proc, &mettail_languages::rholang::PathValueProc)> =
-                        entries.iter().collect();
-                    let mut children = Vec::with_capacity(2 * entries.len());
-                    let pair_count = entries.len();
-                    for (key, value) in entries {
-                        // #74 / R8: the target is Rholang's `EMap`, whose
-                        // `key_value_pair` has a MANDATORY value, so an UNSET
-                        // entry is not expressible here. Fail closed NAMING the
-                        // key — never substitute `Nil` (that fabricates a
-                        // binding) and never drop the entry (that loses the key).
-                        // Unblocked by #130's pair-valued slot.
-                        let Some(value) = value.as_ref() else {
-                            return Err(RholangAstLowerError::PathmapEntryHasNoValue(
-                                key.to_string(),
-                            ));
-                        };
-                        children.push(Job::Proc(key, env));
-                        children.push(Job::Proc(value, env));
+                    // The continuation's arity follows the container mode:
+                    // set entries contribute one child, map entries two. This
+                    // feeds the target's specialized PathMap constructors
+                    // directly and never materializes an EMap or per-entry tag.
+                    match entries.mode() {
+                        mettail_runtime::PathMapMode::Empty | mettail_runtime::PathMapMode::Set => {
+                            let children = entries.iter().map(|entry| Job::Proc(entry.key(), env));
+                            self.push_children(
+                                Kont::PathmapLit { map: false, len: entries.len() },
+                                children,
+                            );
+                        },
+                        mettail_runtime::PathMapMode::Map => {
+                            let mut children = Vec::with_capacity(2 * entries.len());
+                            for entry in entries.iter() {
+                                children.push(Job::Proc(entry.key(), env));
+                                children.push(Job::Proc(
+                                    entry.value().expect("map-mode entry has a value"),
+                                    env,
+                                ));
+                            }
+                            self.push_children(
+                                Kont::PathmapLit { map: true, len: entries.len() },
+                                children,
+                            );
+                        },
                     }
-                    self.push_children(Kont::PathmapLit(pair_count), children);
                 },
                 _ => {
                     return Err(RholangAstLowerError::UnsupportedProc("computed pathmap process"));
@@ -2443,7 +2434,7 @@ impl<'a> Drive<'a> {
                     connective_used,
                 ));
             },
-            Kont::MapLit(n) | Kont::PathmapLit(n) => {
+            Kont::MapLit(n) => {
                 let children = self.stacks.pop_values(2 * n);
                 let mut pairs = Vec::with_capacity(n);
                 let mut locally_free = Vec::new();
@@ -2465,6 +2456,30 @@ impl<'a> Drive<'a> {
                     locally_free,
                     connective_used,
                 ));
+            },
+            Kont::PathmapLit { map: false, len } => {
+                let entries = self.stacks.pop_values(len);
+                let locally_free = locally_free_union(&entries);
+                let connective_used = any_connective_used(&entries);
+                self.stacks
+                    .value(new_epathmap_set_par(entries, locally_free, connective_used));
+            },
+            Kont::PathmapLit { map: true, len } => {
+                let children = self.stacks.pop_values(2 * len);
+                let mut entries = Vec::with_capacity(len);
+                let mut locally_free = Vec::new();
+                let mut connective_used = false;
+                let mut children = children.into_iter();
+                while let (Some(key), Some(value)) = (children.next(), children.next()) {
+                    locally_free = union(
+                        locally_free,
+                        union(key.locally_free.clone(), value.locally_free.clone()),
+                    );
+                    connective_used |= key.connective_used || value.connective_used;
+                    entries.push((key, value));
+                }
+                self.stacks
+                    .value(new_epathmap_map_par(entries, locally_free, connective_used));
             },
             // A `Bag` becomes `EList[GPrivate(RHOLANG_BAG_ABI_TAG), EList[pairs]]` — always
             // exactly 2 elements. That ABI shape is what the routed-method carrier map in
@@ -2549,7 +2564,8 @@ impl<'a> Drive<'a> {
                     remainder: None,
                     free_count: 1,
                 };
-                let recv_locally_free = receive_locally_free(std::slice::from_ref(&bind), &for_body, 1);
+                let recv_locally_free =
+                    receive_locally_free(std::slice::from_ref(&bind), &for_body, 1);
                 let recv = new_receive_par(
                     vec![bind],
                     for_body,
@@ -3765,6 +3781,29 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
 /// Assemble a binary Rholang `Expr` `Par` from two already-lowered operand `Par`s
 /// (`locally_free`/`connective_used` propagation shared by [`lower_binary_expr`] and the
 /// ground-string `Add` dispatch).
+fn epathmap_par(pathmap: EPathMap, locally_free: Vec<u8>, connective_used: bool) -> Par {
+    let mut par = Par::default().with_exprs(vec![Expr {
+        expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+    }]);
+    par.locally_free = locally_free;
+    par.connective_used = connective_used;
+    par
+}
+
+fn new_epathmap_set_par(entries: Vec<Par>, locally_free: Vec<u8>, connective_used: bool) -> Par {
+    let pathmap = EPathMap::new(entries, locally_free.clone(), connective_used, None);
+    epathmap_par(pathmap, locally_free, connective_used)
+}
+
+fn new_epathmap_map_par(
+    entries: Vec<(Par, Par)>,
+    locally_free: Vec<u8>,
+    connective_used: bool,
+) -> Par {
+    let pathmap = EPathMap::new_map(entries, locally_free.clone(), connective_used, None);
+    epathmap_par(pathmap, locally_free, connective_used)
+}
+
 fn binary_expr_par(
     lhs: Par,
     rhs: Par,

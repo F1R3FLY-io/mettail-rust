@@ -478,10 +478,7 @@ fn is_builtin_token_class(name: &str) -> bool {
 /// the successful body is emitted byte-for-byte as before. A helper that always
 /// wrapped the body in a block would move every generated file for every
 /// language, which is the opposite of what a refusal-path repair may do.
-fn coercion_table_refusal(
-    refusals: &[TokenStream],
-    fallback: TokenStream,
-) -> Option<TokenStream> {
+fn coercion_table_refusal(refusals: &[TokenStream], fallback: TokenStream) -> Option<TokenStream> {
     match refusals.is_empty() {
         true => None,
         false => Some(quote! {
@@ -1421,17 +1418,13 @@ fn emit_collection_action_entry(
                 // (the wrapper that `Pathmap::PathmapLit(...)` accepts — see
                 // runtime/src/pathmap_lit.rs; it derefs to HashMapLit for `insert`).
                 //
-                // ★ #74: the value is a `PathValue<E>`, NOT an `E`. A bare
-                // `{| k |}` entry arrives as `[k, ActionArg::UnsetCollectionValue]`
-                // — the walker splices a reserved UNSET marker where the source
-                // declined to write a value — and becomes `PathValue::Unset`.
-                // `Unset` is NOT `Nil`: encoding it as `Nil` would print
-                // `{|k:Nil|}` for an input written `{|k|}` and break the
-                // `parse ∘ display` fixpoint.
+                // A bare `{| k |}` entry arrives as
+                // `[k, ActionArg::UnsetCollectionValue]`. The marker selects
+                // set mode for the whole container; a written value selects map
+                // mode. Mixed membership is rejected by `PathMapLit` itself.
                 let mut iter = drained.into_iter();
                 let mut container = mettail_runtime::PathMapLit::<
-                    #element_cat_ident,
-                    mettail_runtime::PathValue<#element_cat_ident>,
+                    #element_cat_ident, #element_cat_ident,
                 >::new();
                 while let Some(k_arg) = iter.next() {
                     // A key is NEVER optional. An unset marker in a key slot is
@@ -1468,11 +1461,11 @@ fn emit_collection_action_entry(
                             return;
                         },
                     };
-                    let v = if v_arg.is_unset_collection_value() {
-                        mettail_runtime::PathValue::Unset
+                    let value = if v_arg.is_unset_collection_value() {
+                        None
                     } else {
                         match v_arg.try_into_term::<#element_cat_ident>() {
-                            Ok(v) => mettail_runtime::PathValue::Set(v),
+                            Ok(v) => Some(v),
                             Err(_mismatch) => {
                                 debug_assert!(
                                     false,
@@ -1499,8 +1492,15 @@ fn emit_collection_action_entry(
                     // ★★ Ruling F (#163, 2026-07-29) is the `else` of this `if`,
                     // and the two are DISJOINT BY CONSTRUCTION rather than by
                     // ordering luck — see below.
-                    if let Some(prev) = container.get(&k) {
-                        if prev != &v {
+                    if let Some(previous) = container.entry(&k) {
+                        let agrees = match (previous, value.as_ref()) {
+                            (mettail_runtime::PathMapEntryRef::Set(_), None) => true,
+                            (mettail_runtime::PathMapEntryRef::Map(_, previous), Some(value)) => {
+                                previous == value
+                            },
+                            _ => false,
+                        };
+                        if !agrees {
                             #[cfg(debug_assertions)]
                             {
                                 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1518,7 +1518,7 @@ fn emit_collection_action_entry(
                             }
                             return;
                         }
-                    } else if let Some((_, first)) = container.iter().next() {
+                    } else if container.mode() != mettail_runtime::PathMapMode::Empty {
                         // ★★ Ruling F (#163, 2026-07-29): a pathmap literal is
                         // EITHER a set of paths OR a map from paths to values,
                         // never both. `{| 1, 2 : 3 |}` writes two DISTINCT keys of
@@ -1562,7 +1562,12 @@ fn emit_collection_action_entry(
                         // mixed, and keeps the per-entry `.get` error of
                         // `55571eaf`. Closing those five paths is filed
                         // separately as #167 and is NOT attempted here.
-                        if first.is_unset() != v.is_unset() {
+                        let incoming_mode = if value.is_some() {
+                            mettail_runtime::PathMapMode::Map
+                        } else {
+                            mettail_runtime::PathMapMode::Set
+                        };
+                        if container.mode() != incoming_mode {
                             #[cfg(debug_assertions)]
                             {
                                 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1585,7 +1590,14 @@ fn emit_collection_action_entry(
                             return;
                         }
                     }
-                    container.insert(k, v);
+                    let inserted = match value {
+                        None => container.insert_set(k).map(|_| ()),
+                        Some(value) => container.insert_map(k, value).map(|_| ()),
+                    };
+                    if inserted.is_err() {
+                        debug_assert!(false, "pathmap mode changed after the homogeneity gate");
+                        return;
+                    }
                 }
                 b.push_term::<#cat_ident>(#cat_ident::#label_ident(container));
             }
@@ -1606,8 +1618,7 @@ fn emit_collection_action_entry(
                 // the parser uses to split pairs).
                 //
                 // A `HashMap`'s values are MANDATORY (`kv_value_optional` is
-                // false), so no `PathValue` here and no unset marker can reach
-                // this arm — the walker refuses one with
+                // false), so no unset marker can reach this arm — the walker refuses one with
                 // `FlatDisposition::UnsetValueForbidden`.
                 let mut iter = drained.into_iter();
                 let mut container = mettail_runtime::HashMapLit::<
@@ -2011,7 +2022,6 @@ fn emit_float_literal_action() -> TokenStream {
         }
     }
 }
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // #141 Part B RED — the SEVEN `.unwrap_or(0)` siblings, at the three coercion
@@ -2567,8 +2577,10 @@ mod tests {
             &red2_categories(categories),
             Span::call_site(),
         )
-        .expect("the fixture rule must yield an action entry in BOTH arms; a `None` here \
-                 would make the mutation and the control agree vacuously")
+        .expect(
+            "the fixture rule must yield an action entry in BOTH arms; a `None` here \
+                 would make the mutation and the control agree vacuously",
+        )
         .to_string()
     }
 

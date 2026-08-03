@@ -17,9 +17,8 @@ use mettail_ast::types::TypeExpr;
 /// collection's ELEMENT type.
 ///
 /// #74: rholang declares `![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap`,
-/// but only the first parameter is information — a `Pathmap`'s VALUE type is
-/// derived from the container kind as `PathValue<E>`, because its value slot is
-/// optional. This extracts the `E` so `eval()`'s return type is rebuilt the same
+/// and both parameters are the same generated element type. Set/map optionality
+/// is stored once in `PathMapLit`'s mode. This extracts `E` so `eval()`'s return type is rebuilt the same
 /// way `crate::gen::types::enums` builds the enum variant's payload. Keeping the
 /// two derivations textually parallel is deliberate: if they diverge the
 /// generated code does not compile, which is the failure mode we want.
@@ -990,7 +989,8 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                     // stack, exactly as the non-optional same-cat child's
                                     // does. See `CrossKind::OptionalSameCat`.
                                     if *same {
-                                        cross_kinds.push((name.clone(), CrossKind::OptionalSameCat));
+                                        cross_kinds
+                                            .push((name.clone(), CrossKind::OptionalSameCat));
                                         continue;
                                     }
                                     let target_native = language
@@ -1346,16 +1346,12 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 lang_type.collection_kind,
                 Some(mettail_ast::language::CollectionCategory::Pathmap(_))
             ) {
-                // #74: a `Pathmap`'s literal payload is
-                // `PathMapLit<E, PathValue<E>>` — the value slot is optional, so
-                // the value type is not `E`. The declared native type
-                // (`![PathMapLit<Proc, Proc>]`) supplies only `E`; the payload is
-                // rebuilt around it exactly as `types::enums` does, so `eval()`'s
-                // return type stays in lockstep with the enum variant's payload.
-                let elem = pathmap_element_type(native_type)
-                    .unwrap_or_else(|| quote! { #native_type });
+                // A pathmap's literal payload is homogeneous `PathMapLit<E,E>`;
+                // its set/map mode records whether values exist.
+                let elem =
+                    pathmap_element_type(native_type).unwrap_or_else(|| quote! { #native_type });
                 quote! {
-                    mettail_runtime::PathMapLit<#elem, mettail_runtime::PathValue<#elem>>
+                    mettail_runtime::PathMapLit<#elem, #elem>
                 }
             } else {
                 match nt {
@@ -1599,18 +1595,12 @@ mod tests {
     fn capture_term_field_same_category_discriminator_is_non_vacuous() {
         let category = format_ident!("Int");
         assert!(
-            capture_term_field_is_same_category(
-                &TypeExpr::Base(format_ident!("Int")),
-                &category
-            ),
+            capture_term_field_is_same_category(&TypeExpr::Base(format_ident!("Int")), &category),
             "a capture rule's `Term(Int)` field inside category `Int` IS the \
              same-category recursion the refusal exists for"
         );
         assert!(
-            !capture_term_field_is_same_category(
-                &TypeExpr::Base(format_ident!("Bool")),
-                &category
-            ),
+            !capture_term_field_is_same_category(&TypeExpr::Base(format_ident!("Bool")), &category),
             "a capture rule's `Term(Bool)` field inside category `Int` is a CROSS-category \
              hop, bounded by the cast lattice's height — refusing it would be wrong"
         );

@@ -35,16 +35,6 @@ pub(crate) mod runtime;
 mod type_inference;
 pub(crate) mod zipper;
 
-/// #74 — the value carried by a rholang pathmap entry.
-///
-/// A pathmap's value slot is OPTIONAL: `{| k |}` binds `k` to nothing, and that
-/// is a different term from `{| k : Nil |}`. The generated
-/// `Pathmap::PathmapLit(PathMapLit<Proc, PathValue<Proc>>)` payload reflects it;
-/// this alias names the value type so downstream crates (the AST lowering, the
-/// oracle) can spell it without importing `PathValue` and re-deriving the
-/// instantiation. See `runtime/src/path_value.rs`.
-pub type PathValueProc = mettail_runtime::PathValue<Proc>;
-
 language! {
     name: Rholang,
 
@@ -2453,12 +2443,8 @@ language! {
 
         PathmapEmpty .
         |- "Pathmap" "(" ")" : Proc ![{
-            // #74: a pathmap's value slot is optional, so the payload's value
-            // type is `PathValue<Proc>` (see `runtime/src/path_value.rs`). An
-            // EMPTY pathmap still has zero entries — `Unset` is a value in a slot
-            // that exists, never an entry that gets invented.
             Proc::CastPathmap(std::sync::Arc::new(Pathmap::PathmapLit(
-                mettail_runtime::PathMapLit::<Proc, mettail_runtime::PathValue<Proc>>::new(),
+                mettail_runtime::PathMapLit::<Proc, Proc>::new(),
             )))
         }] fold;
 
@@ -2472,125 +2458,20 @@ language! {
                 Proc::CastPathmap(inner) => match inner.as_ref() {
                     Pathmap::PathmapLit(ref payload) => {
                         match crate::rholang::pathmap::pathmap_get(payload, &k) {
-                            Ok(Some(mettail_runtime::PathValue::Set(v))) => v,
-                            // ★★ #74, RULED 2026-07-29 (USER): an UNSET value
-                            // ERRS. It does not block, and it does not invent a
-                            // value.
-                            //
-                            // The argument is STRUCTURAL. A stuck term asserts
-                            // "this may resolve later"; there is no future state
-                            // in which `.get` on a valueless entry becomes
-                            // answerable, so blocking would be a promise the term
-                            // cannot keep.
-                            //
-                            // ⚠ DELIBERATE DEPARTURE from the `MSet` precedent
-                            // below (user decision 2026-06-30), which stays stuck
-                            // on an unencodable path. That shape differs: an
-                            // unencodable path is a property of the ARGUMENT and a
-                            // later substitution really can make it encodable,
-                            // whereas an unset value is a property of the STORED
-                            // ENTRY, which `.get` cannot change. RULED, not
-                            // inferred — do not "restore consistency" by
-                            // reverting it.
-                            //
-                            // The diagnostic names the DISTINCTION rather than
-                            // reading like "key not found", because the key WAS
-                            // found — that confusion is the whole reason the
-                            // message exists. It reports the pathmap's KIND when
-                            // the pathmap is uniformly valueless (the shape the
-                            // ruling describes) and flags MIXEDNESS otherwise,
-                            // because a mixed pathmap is reachable (see the
-                            // commit body's path enumeration) and claiming "this
-                            // pathmap has no values" of a mixed one would be
-                            // false.
-                            //
-                            // ── #163 Ruling F (2026-07-29): what the MIXED branch
-                            //    now MEANS ─────────────────────────────────────────
-                            //
-                            // A mixed pathmap is no longer reachable from a
-                            // LITERAL. `{| 1, 2 : 3 |}` is refused at the
-                            // collection close
-                            // (`macros/src/gen/runtime/wpda_codegen/semantic_actions.rs`,
-                            // the `else if` beside Ruling D), so every mixed
-                            // receiver that reaches here was ASSEMBLED AT RUNTIME —
-                            // through `pathmap_put` (`.set`), `pathmap_merge`
-                            // (`.union`), `write_zipper_set_leaf` (`.setLeaf`),
-                            // `set_subtrie`, `graft`, or `joinInto`. The branch is
-                            // therefore NOT dead and must not be deleted; it is the
-                            // only diagnostic those six paths have. Closing them is
-                            // #167.
-                            //
-                            // ⚠ WHY THE STATIC REFUSAL IS **NOT** WIRED INTO
-                            // `rholang/type_inference.rs`, AS #163 ASKED. Three
-                            // reasons, each independently sufficient, recorded so
-                            // the lane is not re-attempted:
-                            //
-                            //   1. NO ERROR CHANNEL. That module's entire public
-                            //      surface is `infer_var_types(&dyn Term) ->
-                            //      Vec<VarTypeInfo>` and `infer_var_type(&dyn Term,
-                            //      &str) -> Option<TermType>`. Neither can express
-                            //      a refusal, and no caller has anywhere to put
-                            //      one; giving it a diagnostic sink means changing
-                            //      `mettail_runtime::Language`, a cross-language
-                            //      API.
-                            //   2. WRONG DOMAIN. It infers the type of a FREE
-                            //      VARIABLE of a receive pattern (`Name` vs
-                            //      `Proc`). `.get` is a method APPLICATION with no
-                            //      variable to type; nothing in the module walks
-                            //      method terms at all.
-                            //   3. ★ IT WOULD CONTRADICT `55571eaf`. That ruling
-                            //      says `{| 1 |}.get(1)` **ERRS** — it evaluates to
-                            //      the `error` VALUE, which is observable. A static
-                            //      refusal would instead make the program
-                            //      UNPARSEABLE, a strictly different disposition on
-                            //      the very expression `55571eaf` ruled on. The two
-                            //      rulings cannot both hold, and the specific one
-                            //      wins.
-                            //
-                            // What Ruling F actually buys statically is narrower and
-                            // real: for a LITERAL-constructed receiver the
-                            // `all_unset` test below is now DECIDED BY THE LITERAL
-                            // ITSELF rather than merely observed, because the close
-                            // admits no mixed literal. The branch taken is a
-                            // property of the source text, not of the reduction.
-                            //
-                            // ⚠ The message rides a debug-build diagnostic, not
-                            // the returned value: `Err . |- "error" : Proc` is
-                            // NULLARY, so the grammar has no value that can carry
-                            // a payload. Reported as a finding rather than worked
-                            // around — and `.expect(msg)` is NOT an alternative
-                            // here, because the `#153` rewrite turns it into a
-                            // `Partiality::Declared` DECLINE, which returns `None`
-                            // and leaves the term stuck: the exact disposition
-                            // this ruling overturns.
-                            Ok(Some(mettail_runtime::PathValue::Unset)) => {
+                            Ok(crate::rholang::pathmap::PathmapLookup::MapValue(v)) => v,
+                            // Set membership deliberately carries no value. A
+                            // value read cannot manufacture `Nil`, so it reduces
+                            // to the language's nullary error term.
+                            Ok(crate::rholang::pathmap::PathmapLookup::SetMember) => {
                                 #[cfg(debug_assertions)]
-                                {
-                                    let all_unset = payload.iter().all(|(_, v)| v.is_unset());
-                                    if all_unset {
-                                        eprintln!(
-                                            "[pathmap.get] this pathmap has no values, so \
-                                             `.get({})` is not a meaningful operation on it \
-                                             — the key IS present; nothing is stored under \
-                                             it. An unset value is not `Nil` and not \
-                                             absent.",
-                                            k,
-                                        );
-                                    } else {
-                                        eprintln!(
-                                            "[pathmap.get] this pathmap is MIXED (some \
-                                             entries carry values, some do not) and the \
-                                             entry for `{}` is one of the valueless ones, \
-                                             so `.get({})` has nothing to return — the key \
-                                             IS present. An unset value is not `Nil` and \
-                                             not absent.",
-                                            k, k,
-                                        );
-                                    }
-                                }
+                                eprintln!(
+                                    "[pathmap.get] `{}` is a set member, not a map entry; \
+                                     no value is stored under it",
+                                    k,
+                                );
                                 Proc::Err
                             },
-                            Ok(None) | Err(()) => Proc::Err,
+                            Ok(crate::rholang::pathmap::PathmapLookup::Absent) | Err(()) => Proc::Err,
                         }
                     },
                     _ => Proc::Err,
@@ -2612,14 +2493,10 @@ language! {
                 },
                 Proc::CastPathmap(inner) => match inner.as_ref() {
                     Pathmap::PathmapLit(ref payload) => {
-                        // #74: `.set(k, v)` means "bind k to v", so the value is
-                        // explicitly `Set(v)`. The `Unset` binding is reachable
-                        // only from the LITERAL `{| k |}` — no method fabricates
-                        // one, and none silently drops one either.
                         match crate::rholang::pathmap::pathmap_put(
                             payload,
                             &k,
-                            mettail_runtime::PathValue::Set(v.clone()),
+                            v.clone(),
                         ) {
                             Ok(updated) => Proc::CastPathmap(std::sync::Arc::new(Pathmap::PathmapLit(updated))),
                             // Invalid path encoding (e.g. empty list path) STAYS STUCK
@@ -3267,31 +3144,12 @@ language! {
             match &z {
                 Proc::CastReadZipper(inner) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rholang::zipper::zipper_get_leaf(z.as_ref()) {
-                        Ok(mettail_runtime::PathValue::Set(v)) => v,
-                        // ★★ #74, RULED 2026-07-29 (USER) — the ZIPPER SIBLING of
-                        // `MGet`'s unset arm, and the second of exactly TWO
-                        // value-reading pathmap surfaces.
-                        //
-                        // The leaf EXISTS but nothing is stored under it
-                        // (`{| k |}`). No reduction of `getLeaf()` can produce a
-                        // value that was never written, so this ERRS rather than
-                        // blocking — a stuck term would promise a future state
-                        // that does not exist. Same ruling, same reasoning, same
-                        // departure from the `MSet` precedent as `MGet` above.
-                        //
-                        // ⚠ NOTE THE ASYMMETRY WITH THE ARM BELOW, which is
-                        // deliberate and is exactly the distinction the ruling
-                        // turns on: a FAILED NAVIGATION (`Err(())` — there is no
-                        // leaf here at all) stays STUCK, because a later
-                        // reduction of the zipper expression really can move the
-                        // focus somewhere that has a leaf. A leaf that exists
-                        // and holds nothing cannot become non-empty.
-                        Ok(mettail_runtime::PathValue::Unset) => {
+                        Ok(crate::rholang::zipper::ZipperLeaf::MapValue(v)) => v,
+                        Ok(crate::rholang::zipper::ZipperLeaf::SetMember) => {
                             #[cfg(debug_assertions)]
                             eprintln!(
-                                "[readZipper.getLeaf] the leaf at this focus has no value, \
-                                 so `getLeaf()` has nothing to return — the leaf IS \
-                                 present. An unset value is not `Nil` and not absent.",
+                                "[readZipper.getLeaf] this focus is a set member, not a \
+                                 map entry; no value is stored under it",
                             );
                             Proc::Err
                         },
@@ -3533,12 +3391,10 @@ language! {
             match (&w, &full, &v) {
                 (Proc::CastWriteZipper(inner), fp, val) => match inner.as_ref() {
                     WriteZipper::Lit(z) => {
-                        // #74: `setLeaf` binds a value, so it is explicitly
-                        // `Set(v)`; no surface operation writes an `Unset`.
                         match crate::rholang::zipper::write_zipper_set_leaf(
                             z.as_ref(),
                             fp,
-                            mettail_runtime::PathValue::Set((*val).clone()),
+                            (*val).clone(),
                         ) {
                             Ok(out) => Proc::CastPathmap(std::sync::Arc::new(Pathmap::PathmapLit(out))),
                             Err(()) => Proc::Err,

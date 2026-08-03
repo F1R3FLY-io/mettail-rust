@@ -9,13 +9,96 @@ use std::hash::Hash;
 
 use pathmap::PathMap;
 
-use crate::PathMapLit;
+use crate::{PathMapEntryRef, PathMapLit};
 
 /// Crate trie type used for path-indexed values.
 pub type PathTrie<V> = PathMap<V>;
 
 /// Return type for [`trie_and_key_index_from_lit`].
 pub type TrieAndKeyIndex<K, V> = (PathTrie<V>, HashMap<Vec<u8>, K>);
+
+/// Trie specialization matching [`PathMapLit`]'s homogeneous container mode.
+#[derive(Clone)]
+pub enum HomogeneousPathTrie<V: Clone + Send + Sync + Unpin + 'static> {
+    Empty,
+    Set(PathTrie<()>),
+    Map(PathTrie<V>),
+}
+
+impl<V> HomogeneousPathTrie<V>
+where
+    V: Clone + Send + Sync + Unpin + 'static,
+{
+    pub fn mode(&self) -> crate::PathMapMode {
+        match self {
+            Self::Empty => crate::PathMapMode::Empty,
+            Self::Set(_) => crate::PathMapMode::Set,
+            Self::Map(_) => crate::PathMapMode::Map,
+        }
+    }
+}
+
+/// Encode a homogeneous literal once, retaining only the encoded-path to source
+/// key index needed to reconstruct the syntax carrier after trie algebra.
+pub fn homogeneous_trie_and_key_index<K, V, F, E>(
+    lit: &PathMapLit<K, V>,
+    mut encode: F,
+) -> Result<(HomogeneousPathTrie<V>, HashMap<Vec<u8>, K>), E>
+where
+    K: Clone + Eq + Hash,
+    V: Clone + Send + Sync + Unpin + 'static,
+    F: FnMut(&K) -> Result<Vec<u8>, E>,
+{
+    let mut keys = HashMap::new();
+    let trie = match lit {
+        PathMapLit::Empty => HomogeneousPathTrie::Empty,
+        PathMapLit::Set(entries) => {
+            let mut trie = PathTrie::new();
+            for (key, ()) in entries.iter() {
+                let encoded = encode(key)?;
+                trie.insert(&encoded, ());
+                keys.insert(encoded, key.clone());
+            }
+            HomogeneousPathTrie::Set(trie)
+        },
+        PathMapLit::Map(entries) => {
+            let mut trie = PathTrie::new();
+            for (key, value) in entries.iter() {
+                let encoded = encode(key)?;
+                trie.insert(&encoded, value.clone());
+                keys.insert(encoded, key.clone());
+            }
+            HomogeneousPathTrie::Map(trie)
+        },
+    };
+    Ok((trie, keys))
+}
+
+/// Reconstruct a syntax carrier in canonical trie order after a homogeneous
+/// algebra/zipper operation.
+pub fn homogeneous_lit_from_trie_and_keys<K, V>(
+    trie: &HomogeneousPathTrie<V>,
+    keys: &HashMap<Vec<u8>, K>,
+) -> PathMapLit<K, V>
+where
+    K: Clone + Eq + Hash,
+    V: Clone + Send + Sync + Unpin + 'static,
+{
+    match trie {
+        HomogeneousPathTrie::Empty => PathMapLit::new(),
+        HomogeneousPathTrie::Set(trie) => PathMapLit::from_set_iter(
+            trie.iter()
+                .filter_map(|(encoded, ())| keys.get(encoded.as_slice()).cloned()),
+        ),
+        HomogeneousPathTrie::Map(trie) => {
+            PathMapLit::from_map_iter(trie.iter().filter_map(|(encoded, value)| {
+                keys.get(encoded.as_slice())
+                    .cloned()
+                    .map(|key| (key, value.clone()))
+            }))
+        },
+    }
+}
 
 /// Build a trie from literal entries (no reverse key index).
 pub fn trie_from_lit<K, V, F, E>(lit: &PathMapLit<K, V>, mut encode: F) -> Result<PathTrie<V>, E>
@@ -25,7 +108,10 @@ where
     F: FnMut(&K) -> Result<Vec<u8>, E>,
 {
     let mut trie = PathTrie::new();
-    for (k, v) in lit.iter() {
+    for entry in lit.iter() {
+        let PathMapEntryRef::Map(k, v) = entry else {
+            continue;
+        };
         trie.set_val_at(&encode(k)?, v.clone());
     }
     Ok(trie)
@@ -43,7 +129,10 @@ where
 {
     let mut trie = PathTrie::new();
     let mut key_index = HashMap::new();
-    for (k, v) in lit.iter() {
+    for entry in lit.iter() {
+        let PathMapEntryRef::Map(k, v) = entry else {
+            continue;
+        };
         let enc = encode(k)?;
         trie.set_val_at(&enc, v.clone());
         key_index.insert(enc, k.clone());
@@ -106,7 +195,8 @@ where
     let mut out = PathMapLit::new();
     for (enc, v) in trie.iter() {
         if let Some(k) = key_index.get(enc.as_slice()) {
-            out.insert(k.clone(), v.clone());
+            out.insert_map(k.clone(), v.clone())
+                .expect("a fresh trie reconstruction cannot be in set mode");
         }
     }
     out
@@ -139,7 +229,10 @@ where
     V: Clone + Send + Sync + Unpin,
     F: FnMut(&K) -> Result<Vec<u8>, E>,
 {
-    for (k, v) in other.iter() {
+    for entry in other.iter() {
+        let PathMapEntryRef::Map(k, v) = entry else {
+            continue;
+        };
         let enc = encode(k)?;
         trie.set_val_at(&enc, v.clone());
         key_index.insert(enc, k.clone());
@@ -203,7 +296,8 @@ where
     let mut out = PathMapLit::new();
     for (enc, key) in left_keys {
         if let Some(v) = right_trie.get_val_at(&enc) {
-            out.insert(key, v.clone());
+            out.insert_map(key, v.clone())
+                .expect("a fresh trie intersection cannot be in set mode");
         }
     }
     Ok(out)
@@ -216,8 +310,8 @@ mod tests {
     #[test]
     fn trie_roundtrip_through_lit() {
         let mut lit = PathMapLit::<String, i32>::new();
-        lit.insert("a".into(), 1);
-        lit.insert("b".into(), 2);
+        lit.insert_map("a".into(), 1).unwrap();
+        lit.insert_map("b".into(), 2).unwrap();
         let (trie, keys) =
             trie_and_key_index_from_lit(&lit, |k| Ok::<Vec<u8>, ()>(k.as_bytes().to_vec()))
                 .unwrap();
@@ -228,8 +322,8 @@ mod tests {
     #[test]
     fn trie_from_lit_rejects_bad_key() {
         let mut lit = PathMapLit::<i32, ()>::new();
-        lit.insert(0, ());
-        lit.insert(1, ());
+        lit.insert_map(0, ()).unwrap();
+        lit.insert_map(1, ()).unwrap();
         let r: Result<_, ()> =
             trie_from_lit(&lit, |&k| if k == 1 { Err(()) } else { Ok(vec![k as u8]) });
         assert!(r.is_err());
@@ -238,49 +332,49 @@ mod tests {
     #[test]
     fn trie_restrict_keeps_overlap() {
         let mut base = PathMapLit::<String, i32>::new();
-        base.insert("a".into(), 1);
-        base.insert("b".into(), 2);
+        base.insert_map("a".into(), 1).unwrap();
+        base.insert_map("b".into(), 2).unwrap();
         let mut mask = PathMapLit::<String, i32>::new();
-        mask.insert("b".into(), 99);
+        mask.insert_map("b".into(), 99).unwrap();
         let out =
             trie_restrict_lit(&base, &mask, |k| Ok::<Vec<u8>, ()>(k.as_bytes().to_vec())).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out.get(&"b".to_string()), Some(&2));
+        assert_eq!(out.get_map(&"b".to_string()).unwrap(), Some(&2));
     }
 
     #[test]
     fn trie_subtract_removes_overlap() {
         let mut left = PathMapLit::<String, i32>::new();
-        left.insert("a".into(), 1);
-        left.insert("b".into(), 2);
+        left.insert_map("a".into(), 1).unwrap();
+        left.insert_map("b".into(), 2).unwrap();
         let mut right = PathMapLit::<String, i32>::new();
-        right.insert("b".into(), 9);
+        right.insert_map("b".into(), 9).unwrap();
         let out =
             trie_subtract_lit(&left, &right, |k| Ok::<Vec<u8>, ()>(k.as_bytes().to_vec())).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out.get(&"a".to_string()), Some(&1));
+        assert_eq!(out.get_map(&"a".to_string()).unwrap(), Some(&1));
     }
 
     #[test]
     fn trie_meet_intersects_with_right_values() {
         let mut left = PathMapLit::<String, i32>::new();
-        left.insert("a".into(), 1);
-        left.insert("b".into(), 2);
+        left.insert_map("a".into(), 1).unwrap();
+        left.insert_map("b".into(), 2).unwrap();
         let mut right = PathMapLit::<String, i32>::new();
-        right.insert("b".into(), 20);
+        right.insert_map("b".into(), 20).unwrap();
         let out =
             trie_meet_lit(&left, &right, |k| Ok::<Vec<u8>, ()>(k.as_bytes().to_vec())).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out.get(&"b".to_string()), Some(&20));
+        assert_eq!(out.get_map(&"b".to_string()).unwrap(), Some(&20));
     }
 
     #[test]
     fn trie_set_ops_reject_bad_key() {
         let mut left = PathMapLit::<i32, i32>::new();
-        left.insert(0, 0);
-        left.insert(1, 1);
+        left.insert_map(0, 0).unwrap();
+        left.insert_map(1, 1).unwrap();
         let mut right = PathMapLit::<i32, i32>::new();
-        right.insert(0, 9);
+        right.insert_map(0, 9).unwrap();
         let enc = |&k: &i32| if k == 1 { Err(()) } else { Ok(vec![k as u8]) };
         let r: Result<_, ()> = trie_restrict_lit(&left, &right, enc);
         assert!(r.is_err());

@@ -356,11 +356,8 @@ fn generate_ground_arm(
 /// `is_ground`, `term_depth` and `Drop` are the three traversals with no residue at the
 /// collection boundary, and for the same reason.
 ///
-/// ★ `PathMap` needs no special-casing any more. The pre-#189 emitter hand-wrote the
-/// `PathValue::Unset => true` / `Set(inner) => inner.is_ground()` split; `PathValue` is
-/// now [`for_each_subterm`]'s responsibility, and it contributes no position for
-/// `Unset` (#74 / Ruling B: "unset ≠ Nil", so an unset entry is a bare key with no
-/// value sub-term). Same verdict, one fewer place to state it.
+/// `PathMap` needs no special-casing: [`for_each_subterm`] reads the homogeneous
+/// container mode and contributes no value position for a set entry.
 fn collection_element_pushes(
     element_cat: &Ident,
     coll_type: &CollectionType,
@@ -464,8 +461,9 @@ fn generate_binder_ground_arm(
     body_cat: &Ident,
     language: &LanguageDef,
 ) -> TokenStream {
-    let field_names: Vec<Ident> =
-        (0..pre_scope_fields.len()).map(|i| format_ident!("f{}", i)).collect();
+    let field_names: Vec<Ident> = (0..pre_scope_fields.len())
+        .map(|i| format_ident!("f{}", i))
+        .collect();
     let pushes: Vec<TokenStream> = pre_scope_fields
         .iter()
         .zip(field_names.iter())
@@ -556,9 +554,7 @@ mod tests {
         }
     }
 
-    /// ★ `PathValue::Unset` must contribute NO position, and `Set` must contribute one.
-    /// The pre-#189 emitter hand-wrote that split; it is now `for_each_subterm`'s, and
-    /// this row is what says the delegation preserved it.
+    /// Set mode contributes no value position; map mode contributes one.
     #[test]
     fn a_pathmap_checks_the_key_always_and_the_value_only_when_set() {
         let language = crate::gen::collection_literal_language_for_tests();
@@ -569,13 +565,12 @@ mod tests {
         assert_eq!(
             generated.matches("GroundProc").count(),
             2,
-            "a pathmap entry has a KEY and (when Set) a VALUE: {generated}"
+            "a pathmap entry has a key and (in map mode) a value: {generated}"
         );
         assert!(
-            generated.contains("PathValue :: Set"),
-            "the value push is not guarded by `PathValue::Set`. #74 / Ruling B says an unset \
-             entry is a bare KEY — there is no value sub-term to check — so an unguarded push \
-             would either be a type error or would invent a value: {generated}"
+            generated.contains("entry . value"),
+            "the value push is not guarded by the homogeneous entry's value projection: \
+             {generated}"
         );
     }
 
@@ -601,7 +596,10 @@ mod tests {
         };
         let name = format_ident!("f0");
         assert!(
-            field_ground_pushes(&leaf, &name, &language).to_string().trim().is_empty(),
+            field_ground_pushes(&leaf, &name, &language)
+                .to_string()
+                .trim()
+                .is_empty(),
             "an opaque-capture leaf is a native `String` with no host term structure, so it \
              must emit no push — a push would need a `GroundString`, which does not exist"
         );
