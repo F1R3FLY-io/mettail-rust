@@ -114,8 +114,14 @@ pub enum RuntimeObservationValue {
     Uri(String),
     DoubleBits(u64),
     BigIntBytes(Vec<u8>),
-    BigRationalBytes { numerator: Vec<u8>, denominator: Vec<u8> },
-    FixedPointBytes { unscaled: Vec<u8>, scale: u32 },
+    BigRationalBytes {
+        numerator: Vec<u8>,
+        denominator: Vec<u8>,
+    },
+    FixedPointBytes {
+        unscaled: Vec<u8>,
+        scale: u32,
+    },
     PrivateName(Vec<u8>),
     DeployId(Vec<u8>),
     DeployerId(Vec<u8>),
@@ -133,7 +139,10 @@ pub enum RuntimeObservationValue {
     /// the runtime `decode_reflected_term`). Unlike the flat [`TermDisplay`], it
     /// preserves the full tree so a runtime observation can be compared for exact
     /// structural equality against a term's reflected normal form.
-    Term { constructor: String, children: Vec<RuntimeObservationValue> },
+    Term {
+        constructor: String,
+        children: Vec<RuntimeObservationValue>,
+    },
 }
 
 impl fmt::Display for RuntimeObservationValue {
@@ -357,10 +366,118 @@ pub struct RuntimeDovetailRuleFiring {
 ///
 /// [`GroundTerm`]: the Rho-codegen ground-term reflector input; this type mirrors
 /// its `{ constructor, children }` shape without taking that dependency.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeReflectedSubterm {
     pub constructor: String,
     pub children: Vec<RuntimeReflectedSubterm>,
+}
+
+impl fmt::Debug for RuntimeReflectedSubterm {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        enum DebugTask<'a> {
+            Visit(&'a RuntimeReflectedSubterm),
+            Separator,
+            Tail,
+        }
+
+        let mut tasks = vec![DebugTask::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                DebugTask::Visit(term) => {
+                    write!(
+                        formatter,
+                        "RuntimeReflectedSubterm {{ constructor: {:?}, children: [",
+                        term.constructor
+                    )?;
+                    tasks.push(DebugTask::Tail);
+                    for (index, child) in term.children.iter().enumerate().rev() {
+                        tasks.push(DebugTask::Visit(child));
+                        if index > 0 {
+                            tasks.push(DebugTask::Separator);
+                        }
+                    }
+                },
+                DebugTask::Separator => formatter.write_str(", ")?,
+                DebugTask::Tail => formatter.write_str("] }")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PartialEq for RuntimeReflectedSubterm {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some((left, right)) = pending.pop() {
+            if left.constructor != right.constructor || left.children.len() != right.children.len()
+            {
+                return false;
+            }
+            pending.extend(left.children.iter().zip(&right.children));
+        }
+        true
+    }
+}
+
+impl Eq for RuntimeReflectedSubterm {}
+
+impl Clone for RuntimeReflectedSubterm {
+    fn clone(&self) -> Self {
+        enum CloneTask<'a> {
+            Visit(&'a RuntimeReflectedSubterm),
+            Assemble { constructor: String, child_count: usize },
+        }
+
+        let mut tasks = vec![CloneTask::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                CloneTask::Visit(term) => {
+                    tasks.push(CloneTask::Assemble {
+                        constructor: term.constructor.clone(),
+                        child_count: term.children.len(),
+                    });
+                    for child in term.children.iter().rev() {
+                        tasks.push(CloneTask::Visit(child));
+                    }
+                },
+                CloneTask::Assemble { constructor, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("RuntimeReflectedSubterm clone PDA lost a child result");
+                    let children = values.split_off(first_child);
+                    values.push(Self { constructor, children });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("RuntimeReflectedSubterm clone PDA produced no result")
+    }
+}
+
+impl Drop for RuntimeReflectedSubterm {
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        pending.append(&mut self.children);
+        while let Some(mut child) = pending.pop() {
+            pending.append(&mut child.children);
+        }
+    }
+}
+
+impl RuntimeReflectedSubterm {
+    /// Rewrite every constructor label in pre-order without using the host call stack.
+    pub fn relabel_constructors(&mut self, mut relabel: impl FnMut(&str) -> String) {
+        let mut pending = vec![self];
+        while let Some(term) = pending.pop() {
+            term.constructor = relabel(&term.constructor);
+            for child in term.children.iter_mut().rev() {
+                pending.push(child);
+            }
+        }
+    }
 }
 
 /// One rewrite firing's justification projected into the runtime envelope: the
@@ -2191,6 +2308,67 @@ impl AscentResults {
 mod tests {
     use super::*;
     use crate::BackendCapabilityDef;
+
+    fn reflected_chain(depth: usize) -> RuntimeReflectedSubterm {
+        let mut term = RuntimeReflectedSubterm {
+            constructor: "Leaf".to_string(),
+            children: Vec::new(),
+        };
+        for _ in 0..depth {
+            term = RuntimeReflectedSubterm {
+                constructor: "Node".to_string(),
+                children: vec![term],
+            };
+        }
+        term
+    }
+
+    #[test]
+    fn reflected_subterm_lifecycle_and_relabel_are_stack_safe() {
+        let depth = 16_384;
+        let mut term = reflected_chain(depth);
+        let cloned = term.clone();
+        assert!(term == cloned);
+
+        term.relabel_constructors(|label| format!("Bare::{label}"));
+        let mut measured = 0usize;
+        let mut cursor = &term;
+        loop {
+            assert!(cursor.constructor.starts_with("Bare::"));
+            let Some(child) = cursor.children.first() else {
+                break;
+            };
+            measured += 1;
+            cursor = child;
+        }
+        assert_eq!(measured, depth);
+
+        let rendered = format!("{cloned:?}");
+        assert_eq!(rendered.matches("RuntimeReflectedSubterm").count(), depth + 1);
+        drop(term);
+        drop(cloned);
+    }
+
+    #[test]
+    fn reflected_subterm_debug_matches_derived_shape() {
+        let term = RuntimeReflectedSubterm {
+            constructor: "Pair".to_string(),
+            children: vec![
+                RuntimeReflectedSubterm {
+                    constructor: "Left".to_string(),
+                    children: Vec::new(),
+                },
+                RuntimeReflectedSubterm {
+                    constructor: "Right".to_string(),
+                    children: Vec::new(),
+                },
+            ],
+        };
+        assert_eq!(
+            format!("{term:?}"),
+            "RuntimeReflectedSubterm { constructor: \"Pair\", children: [RuntimeReflectedSubterm { constructor: \"Left\", children: [] }, RuntimeReflectedSubterm { constructor: \"Right\", children: [] }] }"
+        );
+    }
 
     #[derive(Debug, Clone)]
     struct DispatchTerm;

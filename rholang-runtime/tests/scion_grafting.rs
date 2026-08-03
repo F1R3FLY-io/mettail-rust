@@ -44,13 +44,9 @@
 //!   s ∈ {1, 2, 4, 8} × m ∈ {4, 8, 16} and INVERTS the v1 deviation gate — it now
 //!   asserts NO deviation (`per_r1 = s ±1` on every cell), plus the CORRECTNESS
 //!   invariants (same NF, same fired multiset, empty err/fuel). A deviation here
-//!   would be a real L1 regression (reported, never adjusted). ⚠ The drives run on
-//!   a 512MB-stack thread (`drive_both_arms_big_stack`): with the 8MB default BOTH
-//!   arms SIGABRT past NF-depth ≈ 17 — a SHARED f1r3node reducer recursion artifact
-//!   on result-term depth (`s·m + 1`, up to 129), NOT the scion (proven: treatment
-//!   DriveTau = 18 whether the NF is depth 17 or 33). The v1 "eager quadratic
-//!   overflow" was partly this depth limit; v2 removes the quadratic, the depth
-//!   artifact needs the bigger stack.
+//!   would be a real L1 regression (reported, never adjusted). The depth-129 cell
+//!   now runs on the ordinary Tokio test stack; requiring a dedicated large-stack
+//!   worker is itself a regression.
 //! * **W-C** (rule-count risk): `multi_rule_shared(r)` — r rules sharing the `C`
 //!   RHS sub-skeleton (the re-check pattern list grows with r); r ∈ {4, 8}. The
 //!   deterministic gate is fired-multiset equality on the confluent cell (the
@@ -456,13 +452,8 @@ async fn w_a_beta_chains_are_exact_aa_null() {
 // (same NF, same fired multiset, empty typed channels) must hold. A deviation is REPORTED (the
 // assertion below), never adjusted — the design is red-team-converged.
 //
-// ⚠ L2 FINDING (the design's "no SIGABRT at s≥2,m≥16" needed a stack caveat): with the 8MB default
-// BOTH arms SIGABRT past NF-depth ≈ 17 — a SHARED f1r3node reducer stack-recursion artifact on
-// RESULT-TERM DEPTH (`s·m + 1`, up to 129 here), NOT the scion (PROVEN: treatment DriveTau = 18 at
-// both s=1,m=16 [depth 17, passes on 8MB] and s=2,m=16 [depth 33, SIGABRTs on 8MB] — identical COMM
-// work, the overflow tracks DEPTH). The v1 SIGABRT conflated this with the quadratic; v2 removes the
-// quadratic but the depth artifact remains. `drive_both_arms_big_stack` gives the drive a 512MB
-// stack so the full uncapped grid runs and the recovery is validated on every cell.
+// The full grid now runs on the ordinary Tokio test stack. This preserves the historical
+// depth-129 stress cell while refusing the former 512 MiB worker-stack workaround.
 
 #[tokio::test]
 async fn w_b_scion_ladder_drivetau_linear_delta_s() {
@@ -481,10 +472,7 @@ async fn w_b_scion_ladder_drivetau_linear_delta_s() {
             &mut correctness,
         );
         for m in [4usize, 8, 16] {
-            // Drive on a LARGE-STACK thread: the ladder NF reaches depth `s·m + 1` (up to 129),
-            // past the 8MB default the f1r3node reducer recurses within — a SHARED reducer-depth
-            // artifact (both arms, orthogonal to the scion), see `drive_both_arms_big_stack`.
-            let (control, treatment) = drive_both_arms_big_stack(&def, &ladder_subject(m));
+            let (control, treatment) = drive_both_arms(&def, &ladder_subject(m)).await;
             let n_r1 = fired_count(&control.set, "R1");
             let n_r2 = fired_count(&control.set, "R2");
             let drive_c = control.comm.drive_tau as i64;
@@ -803,59 +791,6 @@ async fn fold1_inert_graft_rootedness_prevents_under_reduction() {
     let mut dev: Vec<String> = Vec::new();
     check_err_fuel_empty("Fold-1", &control, &treatment, &mut dev);
     assert!(dev.is_empty(), "Fold-1 typed-channel deviations:\n{}", dev.join("\n"));
-}
-
-/// Drive `subject` through BOTH arms of `def` on a dedicated LARGE-STACK thread (design v2 §5, the
-/// L2 SHARED-REDUCER-DEPTH finding). ROOT CAUSE (gdb-proven): the f1r3node reducer recurses on
-/// RESULT-TERM DEPTH via a mutual recursion `eval_expr_to_par ↔ eval_expr ↔ eval_expr_to_expr`
-/// (reduce.rs) that walks each nested reflected `EList` sub-`Par`, compounded by the prost-DERIVED
-/// `Clone` for `Par`/`Expr`/`EList` (generated `rhoapi.rs`) which recurses ~8 frames/level. The W-B
-/// ladder NF `(D1..Ds)^m (End)` reaches depth `s·m + 1` — up to 129 at s=8,m=16 — far past what the
-/// 8MB test-thread default holds (≈ depth 17). Without more stack the drive SIGABRTs on BOTH arms
-/// IDENTICALLY. That overflow is a SHARED reducer artifact, NOT a scion property: PROVEN by the
-/// treatment doing exactly 18 DriveTau whether the NF is depth 17 (s=1,m=16 — PASSES on 8MB) or
-/// depth 33 (s=2,m=16 — SIGABRTs on 8MB) — identical COMM work, the overflow tracks DEPTH not the
-/// scion's COMM count. The principled fix (trampoline the reducer eval + Clone) is a core reducer
-/// re-architecture (significant churn, generated-code Clone), so this test provisions a 512MB drive
-/// stack (comfortably past 129·≈0.5MB/level) — localized, zero reducer churn — to run the full
-/// uncapped grid and validate the ΔDriveTau/firing = s recovery on every cell. `#[tokio::test]` is
-/// current-thread, so blocking the test thread on `join` while the big-stack thread drives is fine.
-fn drive_both_arms_big_stack(
-    def: &mettail_ast::language::LanguageDef,
-    subject: &GroundTerm,
-) -> (ArmObservation, ArmObservation) {
-    let arms = scion_arm_programs(def).expect("both arms plan + install");
-    let control = arms.control_installed.clone();
-    let treatment = arms.treatment_installed.clone();
-    let fingerprint = arms.fingerprint.clone();
-    let subject = subject.clone();
-    std::thread::Builder::new()
-        .stack_size(512 * 1024 * 1024)
-        .spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("drive runtime builds");
-            rt.block_on(async move {
-                let reflected = reflect_ground_term_par(&subject, &fingerprint);
-                let call =
-                    rho_net_drive_call_par_with_fuel(&fingerprint, reflected, CELL_FUEL, "OUT");
-                let channels = DriveObservationChannels::for_fingerprint(&fingerprint, "OUT");
-                let (c_set, c_comm) = drive_arm_with_counters(&control, &call, &channels)
-                    .await
-                    .expect("control drive runs to quiescence");
-                let (t_set, t_comm) = drive_arm_with_counters(&treatment, &call, &channels)
-                    .await
-                    .expect("treatment drive runs to quiescence");
-                (
-                    ArmObservation { set: c_set, comm: c_comm },
-                    ArmObservation { set: t_set, comm: t_comm },
-                )
-            })
-        })
-        .expect("spawn big-stack drive thread")
-        .join()
-        .expect("big-stack drive thread joined")
 }
 
 // ══ W-D — the Ambient payoff cell: the demand-driven scion is INERT on Ambient (ΔDriveTau = 0) ══

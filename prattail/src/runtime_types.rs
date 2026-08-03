@@ -1356,7 +1356,6 @@ pub fn lex_dag_core<'a, T: Clone>(
     })
 }
 
-
 /// Multi-mode (L9) analogue of [`lex_dag_core`]: builds a [`crate::lexer_types::LexDag`]
 /// over `input` where each byte position is expanded with the DFA of its mode
 /// (from `mode_at`, a pure function of position under the Delimiter Unambiguity
@@ -1801,8 +1800,9 @@ pub fn lex_weighted_core_modal<'a, T: Clone>(
                     continue;
                 }
                 let text = &input[start..end];
-                if let Some((token, weight)) =
-                    accept_alternatives(mode, accept_state, text).into_iter().next()
+                if let Some((token, weight)) = accept_alternatives(mode, accept_state, text)
+                    .into_iter()
+                    .next()
                 {
                     tokens.push((
                         token,
@@ -1812,7 +1812,11 @@ pub fn lex_weighted_core_modal<'a, T: Clone>(
                                 line: start_line,
                                 column: start_col,
                             },
-                            end: Position { byte_offset: end, line: end_line, column: end_col },
+                            end: Position {
+                                byte_offset: end,
+                                line: end_line,
+                                column: end_col,
+                            },
                             file_id,
                         },
                         weight,
@@ -1931,8 +1935,16 @@ pub fn lex_lattice_core_modal<'a, T: Clone>(
                     continue;
                 }
                 let range = Range {
-                    start: Position { byte_offset: start, line: start_line, column: start_col },
-                    end: Position { byte_offset: end, line: end_line, column: end_col },
+                    start: Position {
+                        byte_offset: start,
+                        line: start_line,
+                        column: start_col,
+                    },
+                    end: Position {
+                        byte_offset: end,
+                        line: end_line,
+                        column: end_col,
+                    },
                     file_id,
                 };
                 if alts.len() > 1 {
@@ -2111,7 +2123,9 @@ pub fn lex_stream_core_modal<'a, T: Clone>(
         line = longest_line;
         col = longest_col;
 
-        stream.entries.push(LexEntry { byte_start: start, alternatives });
+        stream
+            .entries
+            .push(LexEntry { byte_start: start, alternatives });
     }
 
     let eof_pos = Position { byte_offset: pos, line, column: col };
@@ -2813,10 +2827,10 @@ mod tests {
             // Default mode: Ident + the three openers.
             0 => match state {
                 0 => match c {
-                    4 => 1,               // 'l' → lam-prefix
-                    1 => 10,              // 'b' → box-prefix
-                    3 => 20,              // 'f' → fen-prefix
-                    x if x <= 9 => 5,     // any other letter → generic Ident
+                    4 => 1,           // 'l' → lam-prefix
+                    1 => 10,          // 'b' → box-prefix
+                    3 => 20,          // 'f' → fen-prefix
+                    x if x <= 9 => 5, // any other letter → generic Ident
                     _ => u32::MAX,
                 },
                 1 => match c {
@@ -3038,10 +3052,9 @@ mod tests {
 
     #[test]
     fn compute_mode_map_backtick_balanced() {
-        let map = compute_mode_map(
-            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
-        )
-        .expect("balanced backtick region");
+        let map =
+            compute_mode_map("lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect("balanced backtick region");
         assert_eq!(map, vec![0, 0, 0, 0, 1, 1, 1]);
     }
 
@@ -3050,7 +3063,13 @@ mod tests {
         // "box{a{b}c}" — the mode stack IS the brace balancer; the whole
         // region is mode 2 (flt_body_brace) after the 4-byte opener.
         let map = compute_mode_map(
-            "box{a{b}c}", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+            "box{a{b}c}",
+            toy_cc,
+            toy_dnext,
+            toy_isacc,
+            toy_push,
+            toy_pop,
+            toy_israw,
         )
         .expect("balanced nested braces");
         assert_eq!(map, vec![0, 0, 0, 0, 2, 2, 2, 2, 2, 2]);
@@ -3059,7 +3078,13 @@ mod tests {
     #[test]
     fn compute_mode_map_fence_balanced() {
         let map = compute_mode_map(
-            "fen```hi```", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
+            "fen```hi```",
+            toy_cc,
+            toy_dnext,
+            toy_isacc,
+            toy_push,
+            toy_pop,
+            toy_israw,
         )
         .expect("balanced fence region");
         assert_eq!(map, vec![0, 0, 0, 0, 0, 0, 3, 3, 3, 3, 3]);
@@ -3068,10 +3093,9 @@ mod tests {
     #[test]
     fn compute_mode_map_unbalanced_errors() {
         // Opener with no closer → the mode stack is [0, 1] at EOF.
-        let err = compute_mode_map(
-            "lam`hi", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
-        )
-        .expect_err("unterminated backtick region must error");
+        let err =
+            compute_mode_map("lam`hi", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect_err("unterminated backtick region must error");
         assert!(err.contains("unterminated"), "diagnostic should mention unterminated: {err}");
     }
 
@@ -3082,10 +3106,9 @@ mod tests {
                 .expect("empty input");
         assert!(empty.is_empty());
         // Whitespace-only stays in the default mode (non-raw ⇒ skipped).
-        let ws = compute_mode_map(
-            "   ", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
-        )
-        .expect("whitespace-only input");
+        let ws =
+            compute_mode_map("   ", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect("whitespace-only input");
         assert_eq!(ws, vec![0, 0, 0]);
     }
 
@@ -3094,14 +3117,22 @@ mod tests {
         // At byte 0 of "lam`x`", maximal munch selects FltOpenBacktick@4; the
         // shorter Ident@3 survives as the SECONDARY edge (intra-mode ambiguity
         // preserved — two surviving edges of different kinds).
-        let map = compute_mode_map(
-            "lam`x`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
-        )
-        .expect("balanced");
+        let map =
+            compute_mode_map("lam`x`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect("balanced");
         assert_eq!(map, vec![0, 0, 0, 0, 1, 1]);
         let node = expand_lex_node_modal(
-            "lam`x`", 0, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
-            &toy_israw, &toy_stream_none, true,
+            "lam`x`",
+            0,
+            &map,
+            &toy_cc,
+            &toy_dnext,
+            &toy_isacc,
+            &toy_alts,
+            &toy_to_kind,
+            &toy_israw,
+            &toy_stream_none,
+            true,
         )
         .expect("expand ok");
         assert_eq!(node.edges.len(), 2, "opener + ident co-accepts survive");
@@ -3122,13 +3153,21 @@ mod tests {
         // '`'), still in the DEFAULT mode where a bare '`' has no token. As a
         // NON-primary position this is a structural rule-out (soft-fail: an
         // orphan node), NOT an input error.
-        let map = compute_mode_map(
-            "lam`x`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
-        )
-        .expect("balanced");
+        let map =
+            compute_mode_map("lam`x`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect("balanced");
         let orphan = expand_lex_node_modal(
-            "lam`x`", 3, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
-            &toy_israw, &toy_stream_none, false,
+            "lam`x`",
+            3,
+            &map,
+            &toy_cc,
+            &toy_dnext,
+            &toy_isacc,
+            &toy_alts,
+            &toy_to_kind,
+            &toy_israw,
+            &toy_stream_none,
+            false,
         )
         .expect("secondary dead-end is a soft-fail (Ok orphan)");
         assert!(orphan.edges.is_empty());
@@ -3136,8 +3175,17 @@ mod tests {
         assert!(!orphan.is_eof);
         // The SAME dead-end on the primary chain is a hard input error.
         let hard = expand_lex_node_modal(
-            "lam`x`", 3, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
-            &toy_israw, &toy_stream_none, true,
+            "lam`x`",
+            3,
+            &map,
+            &toy_cc,
+            &toy_dnext,
+            &toy_isacc,
+            &toy_alts,
+            &toy_to_kind,
+            &toy_israw,
+            &toy_stream_none,
+            true,
         );
         assert!(hard.is_err(), "primary-chain dead-end must hard-fail");
     }
@@ -3146,39 +3194,47 @@ mod tests {
     fn lex_dag_core_modal_primary_chain() {
         // The DAG's primary (maximal-munch) chain over "lam`hi`" is
         // FltOpenBacktick · GuestChunk · FltCloseBacktick.
-        let map = compute_mode_map(
-            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
-        )
-        .expect("balanced");
+        let map =
+            compute_mode_map("lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect("balanced");
         let dag = lex_dag_core_modal(
-            "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_to_kind, toy_israw,
+            "lam`hi`",
+            None,
+            &map,
+            toy_cc,
+            toy_dnext,
+            toy_isacc,
+            toy_alts,
+            toy_to_kind,
+            toy_israw,
             toy_stream_none,
         )
         .expect("modal dag builds");
         assert!(dag.has_ambiguity(), "opener vs ident is genuine intra-mode ambiguity");
         let path = dag.linear_path();
         let kinds: Vec<_> = path.iter().map(|(k, _)| k.clone()).collect();
-        assert_eq!(
-            kinds,
-            vec![tk("FltOpenBacktick"), tk("GuestChunk"), tk("FltCloseBacktick")]
-        );
+        assert_eq!(kinds, vec![tk("FltOpenBacktick"), tk("GuestChunk"), tk("FltCloseBacktick")]);
     }
 
     #[test]
     fn lex_weighted_core_modal_token_stream() {
-        let map = compute_mode_map(
-            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
-        )
-        .expect("balanced");
+        let map =
+            compute_mode_map("lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect("balanced");
         let (tokens, _eof) = lex_weighted_core_modal(
-            "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_israw, toy_stream_none,
+            "lam`hi`",
+            None,
+            &map,
+            toy_cc,
+            toy_dnext,
+            toy_isacc,
+            toy_alts,
+            toy_israw,
+            toy_stream_none,
         )
         .expect("modal weighted lex");
         let kinds: Vec<_> = tokens.iter().map(|(k, _, _)| k.clone()).collect();
-        assert_eq!(
-            kinds,
-            vec![tk("FltOpenBacktick"), tk("GuestChunk"), tk("FltCloseBacktick")]
-        );
+        assert_eq!(kinds, vec![tk("FltOpenBacktick"), tk("GuestChunk"), tk("FltCloseBacktick")]);
     }
 
     // ── Task #18: the alternative-token-channel trivia rule, gated on the CORE ──────────────
@@ -3190,12 +3246,18 @@ mod tests {
 
     #[test]
     fn channel_routed_accept_is_skipped_as_trivia_by_the_weighted_scanner() {
-        let map = compute_mode_map(
-            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
-        )
-        .expect("balanced");
+        let map =
+            compute_mode_map("lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect("balanced");
         let (tokens, _eof) = lex_weighted_core_modal(
-            "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_israw,
+            "lam`hi`",
+            None,
+            &map,
+            toy_cc,
+            toy_dnext,
+            toy_isacc,
+            toy_alts,
+            toy_israw,
             toy_stream_chunk,
         )
         .expect("modal weighted lex with a routed chunk");
@@ -3210,12 +3272,19 @@ mod tests {
 
     #[test]
     fn channel_routed_accept_produces_no_dag_edge() {
-        let map = compute_mode_map(
-            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
-        )
-        .expect("balanced");
+        let map =
+            compute_mode_map("lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect("balanced");
         let dag = lex_dag_core_modal(
-            "lam`hi`", None, &map, toy_cc, toy_dnext, toy_isacc, toy_alts, toy_to_kind, toy_israw,
+            "lam`hi`",
+            None,
+            &map,
+            toy_cc,
+            toy_dnext,
+            toy_isacc,
+            toy_alts,
+            toy_to_kind,
+            toy_israw,
             toy_stream_chunk,
         )
         .expect("modal dag builds with a routed chunk");
@@ -3237,24 +3306,44 @@ mod tests {
         // Expanding the node at byte 4 (the `hi` chunk): with the chunk routed, the trivia is
         // consumed and the node BEGINS at byte 6 — precisely the way a leading whitespace run
         // already moves `byte_start` past itself.
-        let map = compute_mode_map(
-            "lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw,
-        )
-        .expect("balanced");
+        let map =
+            compute_mode_map("lam`hi`", toy_cc, toy_dnext, toy_isacc, toy_push, toy_pop, toy_israw)
+                .expect("balanced");
         let node = expand_lex_node_modal(
-            "lam`hi`", 4, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
-            &toy_israw, &toy_stream_chunk, true,
+            "lam`hi`",
+            4,
+            &map,
+            &toy_cc,
+            &toy_dnext,
+            &toy_isacc,
+            &toy_alts,
+            &toy_to_kind,
+            &toy_israw,
+            &toy_stream_chunk,
+            true,
         )
         .expect("expand ok");
-        assert_eq!(node.byte_start, 6, "the routed chunk's span is consumed before the node starts");
+        assert_eq!(
+            node.byte_start, 6,
+            "the routed chunk's span is consumed before the node starts"
+        );
         assert_eq!(node.edges.len(), 1);
         assert_eq!(node.edges[0].kind, tk("FltCloseBacktick"));
 
         // …and with NOTHING routed, the very same position yields the chunk as an ordinary token,
         // so the difference is attributable to the routing alone.
         let plain = expand_lex_node_modal(
-            "lam`hi`", 4, &map, &toy_cc, &toy_dnext, &toy_isacc, &toy_alts, &toy_to_kind,
-            &toy_israw, &toy_stream_none, true,
+            "lam`hi`",
+            4,
+            &map,
+            &toy_cc,
+            &toy_dnext,
+            &toy_isacc,
+            &toy_alts,
+            &toy_to_kind,
+            &toy_israw,
+            &toy_stream_none,
+            true,
         )
         .expect("expand ok");
         assert_eq!(plain.byte_start, 4);

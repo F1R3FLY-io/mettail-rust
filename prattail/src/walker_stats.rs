@@ -408,7 +408,6 @@ pub struct WalkerStats {
     /// `walker-stats` feature; zero-cost when disabled.
     pub edge_kind_projection: EdgeKindProjection,
 
-
     /// Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27): CPS
     /// continuation size projection. Counterfactual measurement of the
     /// `Continuation::ApplyAction` record size distribution under the
@@ -1013,7 +1012,6 @@ impl EdgeKindProjection {
     }
 }
 
-
 /// Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): the coarse
 /// merge key that the planned `TomitaFrontierMap` would use. Drops the
 /// four lex provenance axes plus `cohort_origin` plus `sppf_top` from
@@ -1028,7 +1026,6 @@ pub struct TomitaKey {
     pub incoming_edge_top: Option<crate::gss::GssEdgeId>,
     pub collection_depth: u8,
 }
-
 
 /// Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27): CPS
 /// continuation record size projection. Counterfactual measurement of

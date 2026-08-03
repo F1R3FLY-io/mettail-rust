@@ -1,0 +1,12 @@
+// ADDITION IN PURE λ — no numbers, no arithmetic, only functions.
+//
+//   plus ≡ λm.λn.λf.λx. m f (n f x)        two ≡ λf.λx. f (f x)        three ≡ λf.λx. f (f (f x))
+//
+// The Rholang machine β-reduces `plus 2 3`. The answer is the Church numeral 5:
+// a function that applies its first argument to its second FIVE times.
+//
+//   target/debug/rhocalc demos/flt-lambda-lab/01-plus.rho
+//
+// EXPECT: a normal form with five nested applications, and a `^fired` ledger of Beta steps.
+
+lambda`((lam m. lam n. lam f. lam x. ((m, f), ((n, f), x)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`

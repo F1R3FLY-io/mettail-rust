@@ -49,7 +49,10 @@
 
 use std::sync::Arc;
 
-use mettail_languages::rholang::{BigRat, Int, List, Proc};
+use mettail_languages::rholang::{
+    BigRat, Int, List, Name, Proc, RholangEnv, RholangLanguage, RholangTerm, RholangTermInner,
+};
+use mettail_rholang_codegen::FltReflect;
 use mettail_rholang_runtime::rholang_ast::{lower_proc_in_env, BoundEnv};
 use mettail_runtime::{Binder, Scope};
 use models::rust::rholang::par_children::dismantle;
@@ -415,7 +418,10 @@ fn nested_list_var(depth: usize, name: &str) -> Proc {
 fn ast_eq_body(depth: usize) {
     let a = nested_list(depth);
     let b = nested_list(depth);
-    assert!(a == b, "stack_depth_probe: ast_eq twins must be EQUAL or the walk short-circuits");
+    assert!(
+        a == b,
+        "stack_depth_probe: ast_eq twins must be EQUAL or the walk short-circuits"
+    );
     std::mem::forget(a);
     std::mem::forget(b);
 }
@@ -511,12 +517,139 @@ fn ast_subst_body(depth: usize) {
     let term = nested_list_var(depth, "probe_subst_x");
     let fv = mettail_runtime::get_or_create_var("probe_subst_x".to_string());
     let replaced = term.substitute(&fv, &int(7));
+    assert!(replaced != term, "stack_depth_probe: ast_subst did not reach the LEAF variable");
+    std::mem::forget(term);
+    std::mem::forget(replaced);
+}
+
+/// Environment substitution through the same generated substitution PDA as
+/// [`ast_subst_body`].
+///
+/// The old generated-file census classified `env_subst.rs` as host-recursive because a
+/// textual self-call detector saw every host category's fixed-point wrapper call its own
+/// `subst_by_name_*` method. The method itself seeds `SUBST_TASK_POOL` and enters
+/// `subst_iterative`; it does not recursively descend the term. This subject exercises the
+/// environment-specific `SubstOp::EnvProc` arm so that correction is measured rather than
+/// inferred from the neighbouring eager-substitution subject.
+fn ast_env_subst_body(depth: usize) {
+    let term = nested_list_var(depth, "probe_env_subst_x");
+    let mut env = RholangEnv::new();
+    env.proc.set("probe_env_subst_x".to_owned(), int(7));
+    let replaced = term.substitute_env_no_normalize(&env);
+    let expected_depth = u32::try_from(depth)
+        .expect("stack_depth_probe: requested depth does not fit the generated u32 depth API");
+    let actual_depth = replaced.term_depth();
     assert!(
-        replaced != term,
-        "stack_depth_probe: ast_subst did not reach the LEAF variable"
+        actual_depth >= expected_depth,
+        "stack_depth_probe: ast_env_subst truncated the depth-{depth} spine to depth {actual_depth}"
+    );
+    assert!(
+        replaced.is_ground(),
+        "stack_depth_probe: ast_env_subst did not reach and replace the leaf variable"
     );
     std::mem::forget(term);
     std::mem::forget(replaced);
+}
+
+/// The generated parse-alternative filter on a pure same-category `Proc::Add` spine.
+///
+/// Every `Add` must be traversed before the deepest auto-injection-equivalent
+/// `Proc::POutputEmpty` wrapper can set the flag that makes the result `true`. A shallow or
+/// truncated traversal therefore answers `false`; the groundness conjunct independently drains
+/// the same spine through the generated ground-check PDA.
+fn ast_parse_alt_filter_body(depth: usize) {
+    // `CastInt` is a normal Rholang rule, not one of the generated filter's
+    // auto-injection-equivalent wrappers. Seed the leftmost leaf with a rule
+    // that is actually in that set, then hide it behind the full Add spine.
+    let mut term = Proc::POutputEmpty(Arc::new(Name::NQuoteNil));
+    for _ in 0..depth {
+        term = Proc::Add(Arc::new(term), Arc::new(int(1)));
+    }
+    assert!(
+        term.is_uniformly_auto_injected(),
+        "stack_depth_probe: ast_parse_alt_filter did not reach the deepest auto-injected wrapper"
+    );
+    std::mem::forget(term);
+}
+
+/// Both generated variable-inference visitors on a same-category spine whose only matching
+/// variable is the deepest leaf. Returning `Some` is the anti-vacuity witness that neither
+/// visitor skipped or truncated the traversal.
+fn ast_var_inference_body(depth: usize) {
+    const NAME: &str = "probe_var_inference_x";
+    let term = nested_add_var(depth, NAME);
+    assert!(
+        term.infer_var_category(NAME).is_some(),
+        "stack_depth_probe: infer_var_category did not reach the depth-{depth} leaf"
+    );
+    assert!(
+        term.infer_var_type(NAME).is_some(),
+        "stack_depth_probe: infer_var_type did not reach the depth-{depth} leaf"
+    );
+    std::mem::forget(term);
+}
+
+/// The generated Language-level all-variable collector. Its recursive predecessor walked the
+/// same-category tree separately from `infer_var_type`; this subject therefore cannot borrow the
+/// inference PDA's evidence. The deepest free variable must appear in the returned inventory.
+fn ast_language_var_collect_body(depth: usize) {
+    const NAME: &str = "probe_language_collect_x";
+    let term = RholangTerm(RholangTermInner::Proc(nested_add_var(depth, NAME)));
+    let variables = RholangLanguage.infer_var_types(&term);
+    assert!(
+        variables.iter().any(|info| info.name == NAME),
+        "stack_depth_probe: Language variable collector did not reach the depth-{depth} leaf"
+    );
+    std::mem::forget(term);
+}
+
+/// Generated `Term → GroundTerm` reflection, including the mutually-recursive cross-category
+/// calls used by match/drive and the public FLT bridge. The parser has its own independent flat
+/// subject; this one chooses the structurally reflectable `Add` spine and verifies the reflected
+/// result reaches the deepest literal before its stack-safe lifecycle dismantles it.
+fn ast_flt_reflect_body(depth: usize) {
+    let term = RholangTerm(RholangTermInner::Proc(nested_add(depth)));
+    let reflected = RholangLanguage
+        .reflect_flt_term(&term)
+        .expect("stack_depth_probe: generated FLT reflector rejected the Add spine");
+    let mut pending = vec![(&reflected, 0usize)];
+    let mut measured = 0usize;
+    while let Some((term, level)) = pending.pop() {
+        measured = measured.max(level);
+        pending.extend(term.children.iter().map(|child| (child, level + 1)));
+    }
+    assert!(
+        measured >= depth,
+        "stack_depth_probe: generated FLT reflection stopped at {measured}, before depth {depth}"
+    );
+    drop(reflected);
+    std::mem::forget(term);
+}
+
+/// Generated typed Dovetail lowering AND derivation reconstruction — the final uncovered
+/// mutually-recursive generated SCC in the artifact census.
+///
+/// The fixture deliberately uses the pure structural `Proc::Add` ladder. Unlike a `ListLit`
+/// category literal (which is one opaque Dovetail leaf), every `Add` level becomes an e-node and
+/// must be visited by typed lowering and typed reconstruction. The generated diagnostic seam
+/// skips saturation so rewrite complexity cannot mask the traversal's stack shape.
+fn ast_dovetail_report_body(depth: usize) {
+    let term = RholangTerm(RholangTermInner::Proc(nested_add(depth)));
+    let normal = RholangLanguage::__mettail_dovetail_structural_roundtrip(&term, 1_000_000)
+        .expect("stack_depth_probe: Dovetail structural roundtrip failed");
+    let measured = match normal.as_any().downcast_ref::<RholangTerm>().map(|t| &t.0) {
+        Some(RholangTermInner::Proc(proc)) => proc.term_depth() as usize,
+        other => panic!(
+            "stack_depth_probe: Dovetail structural roundtrip returned a non-Proc root: {other:?}"
+        ),
+    };
+    assert!(
+        measured >= depth,
+        "stack_depth_probe: Dovetail reconstruction stopped at {measured}, before depth {depth}",
+    );
+    // Teardown has its own subjects. This row isolates lowering + extraction + reconstruction.
+    std::mem::forget(term);
+    std::mem::forget(normal);
 }
 
 /// Collection canonicalisation — `normalize.rs`.
@@ -1071,11 +1204,15 @@ fn par_hashmap_body(depth: usize) {
     let env = BoundEnv::new();
     let a = nested_list_leaf(depth, 1);
     let b = nested_list_leaf(depth, 2);
-    let par_a = lower_proc_in_env(&a, &env).expect("stack_depth_probe: par_hashmap lowering failed");
-    let par_b = lower_proc_in_env(&b, &env).expect("stack_depth_probe: par_hashmap lowering failed");
+    let par_a =
+        lower_proc_in_env(&a, &env).expect("stack_depth_probe: par_hashmap lowering failed");
+    let par_b =
+        lower_proc_in_env(&b, &env).expect("stack_depth_probe: par_hashmap lowering failed");
     let nil = models::rust::utils::new_gint_par(0, Vec::new(), false);
     let map: std::collections::HashMap<models::rhoapi::Par, models::rhoapi::Par> =
-        vec![(par_a, nil.clone()), (par_b, nil)].into_iter().collect();
+        vec![(par_a, nil.clone()), (par_b, nil)]
+            .into_iter()
+            .collect();
     assert_eq!(
         map.len(),
         2,
@@ -1505,6 +1642,12 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
     ("ast_display", ast_display_body),
     ("ast_semantic_hash", ast_semantic_hash_body),
     ("ast_subst", ast_subst_body),
+    ("ast_env_subst", ast_env_subst_body),
+    ("ast_parse_alt_filter", ast_parse_alt_filter_body),
+    ("ast_var_inference", ast_var_inference_body),
+    ("ast_language_var_collect", ast_language_var_collect_body),
+    ("ast_flt_reflect", ast_flt_reflect_body),
+    ("ast_dovetail_report", ast_dovetail_report_body),
     ("ast_normalize", ast_normalize_body),
     ("ast_match_pattern", ast_match_pattern_body),
     // -------- ★ the TENTH driver: host-recursive, no worklist at all --------
@@ -1520,6 +1663,14 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
     // incomplete.
     ("ast_is_ground", ast_is_ground_body),
     ("ast_is_ground_add", ast_is_ground_add_body),
+    // -------- ★★ the TWELFTH driver: `try_eval`, whose census row was wrong about WHY -----
+    //
+    // The row said fifteen categories were "plain host recursion". The emitter says a category
+    // takes the recursive branch exactly when it has NO HOL rule, and a category with no HOL
+    // rule has no same-category child to recurse into. What is left is the CAST LATTICE, whose
+    // height is a property of the grammar and not of the term. See `ast_try_eval_body`.
+    ("ast_try_eval", ast_try_eval_body),
+    ("ast_try_eval_cast", ast_try_eval_cast_body),
     // The classifier's own non-vacuity anchor — see `ast_recursion_control_body`.
     ("ast_recursion_control", ast_recursion_control_body),
     // -------- ★ the CONFOUND CONTROL: the same drivers, anti-vacuity WITHOUT `PartialEq` -----
@@ -1535,6 +1686,9 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
     ("map_pair_lower", map_pair_lower_body),
     ("set_pair_lower", set_pair_lower_body),
     ("report_source_bytes", report_source_bytes_body),
+    // -------- ★★ #174: the hash-keyed collection cost, isolated from its pipeline --------
+    ("par_hash", par_hash_body),
+    ("par_hashmap", par_hashmap_body),
     // -------- the MECHANISM TEST: same drivers, no cross-type hop --------
     ("ast_eq_add", ast_eq_add_body),
     ("ast_cmp_add", ast_cmp_add_body),
@@ -1543,9 +1697,6 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
     ("ast_display_add", ast_display_add_body),
     ("ast_semantic_hash_add", ast_semantic_hash_add_body),
     ("ast_subst_add", ast_subst_add_body),
-    // -------- ★★ #174: the hash-keyed collection cost, isolated from its pipeline --------
-    ("par_hash", par_hash_body),
-    ("par_hashmap", par_hashmap_body),
     ("ast_normalize_add", ast_normalize_add_body),
     ("ast_match_pattern_add", ast_match_pattern_add_body),
     // -------- ★ Clone: stack-safe by REPRESENTATION, not by a driver --------
@@ -1569,7 +1720,10 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
 
 /// The body [`SUBJECTS`] names `name`, or a panic naming what was asked for.
 fn subject(name: &str) -> fn(usize) {
-    match SUBJECTS.iter().find(|(subject_name, _)| *subject_name == name) {
+    match SUBJECTS
+        .iter()
+        .find(|(subject_name, _)| *subject_name == name)
+    {
         Some((_, body)) => *body,
         None => panic!("stack_depth_probe: unknown GATE_SUBJECT={name:?}"),
     }
@@ -1597,11 +1751,3 @@ fn main() {
     // only thing bounding this call is the `RLIMIT_STACK` the parent installed before `exec`.
     subject(&name)(depth);
 }
-    // -------- ★★ the TWELFTH driver: `try_eval`, whose census row was wrong about WHY -----
-    //
-    // The row said fifteen categories were "plain host recursion". The emitter says a category
-    // takes the recursive branch exactly when it has NO HOL rule, and a category with no HOL
-    // rule has no same-category child to recurse into. What is left is the CAST LATTICE, whose
-    // height is a property of the grammar and not of the term. See `ast_try_eval_body`.
-    ("ast_try_eval", ast_try_eval_body),
-    ("ast_try_eval_cast", ast_try_eval_cast_body),

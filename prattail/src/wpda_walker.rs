@@ -68,13 +68,6 @@ use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-
-
-
-
-
-
-
 // SPPF-realize observational-dedup (2026-06-28) is now UNCONDITIONALLY ON: the
 // former `PRATTAIL_REALIZE_DEDUP` kill switch (and its off/pre-dedup arm) was
 // collapsed to its shipped default. `realize_*` always collapses observationally-
@@ -108,10 +101,6 @@ enum EpP2Mode {
     #[cfg_attr(not(test), allow(dead_code))]
     Shadow,
 }
-
-
-
-
 
 // The descriptor-pure canonical-GLL engine (the canonical `{R, U, P}` descriptor
 // worklist — [`WpdaWalker::step_canonical_pure`], reached via
@@ -299,7 +288,11 @@ struct CgllKTuple<W> {
 
 impl<W: crate::automata::semiring::StarSemiringRef> CgllKTuple<W> {
     fn neutral() -> Self {
-        CgllKTuple { lateness: 0, weight: W::one_ref(), decisions: Vec::new() }
+        CgllKTuple {
+            lateness: 0,
+            weight: W::one_ref(),
+            decisions: Vec::new(),
+        }
     }
 
     fn absorb_child(&mut self, child: CgllKTuple<W>) {
@@ -576,9 +569,9 @@ impl<W> KbestNode<W> {
     /// touch.
     fn sub_mut(&mut self, kind: KbestOrderKey) -> &mut KbestNodeSub<W> {
         match kind {
-            KbestOrderKey::FirstRaw => {
-                self.raw.get_or_insert_with(|| Box::new(KbestNodeSub::new()))
-            },
+            KbestOrderKey::FirstRaw => self
+                .raw
+                .get_or_insert_with(|| Box::new(KbestNodeSub::new())),
             _ => &mut self.main,
         }
     }
@@ -798,7 +791,9 @@ enum KbestFrameStage<W> {
         inner_idx: usize,
     },
     /// Post-seed candidate construction (reads child lists; no suspension).
-    SeedCands { pk_idx: usize },
+    SeedCands {
+        pk_idx: usize,
+    },
     LoopHead,
     /// Successor generation over the sub-state's `pending_succ` (suspends
     /// on child growth demands). `demanded` = the current slot's growth
@@ -827,8 +822,8 @@ use crate::gss::{WpdaGss, WpdaGssNode};
 use crate::recovery::RecoveryConfig;
 use crate::wpda_runtime::{
     ActionArg, ActionEntry, CollectionSpec, SemanticBuilder, StackSymbolV2, SymbolKind,
-    WpdaConfiguration, WpdaMaxStepsExceeded, WpdaMutableTokenSource,
-    WpdaResolveResult, WpdaState, WpdaTokenSource,
+    WpdaConfiguration, WpdaMaxStepsExceeded, WpdaMutableTokenSource, WpdaResolveResult, WpdaState,
+    WpdaTokenSource,
 };
 
 /// Token-level atom producer available to stack-safe chain synthesis.
@@ -1792,7 +1787,6 @@ pub enum WpdaStepAction<W: SemiringRef> {
     Idle,
 }
 
-
 // ══════════════════════════════════════════════════════════════════════════════
 // WpdaWalker
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1856,11 +1850,6 @@ struct CrossCatLhsBodyOrigin {
     source_src_idx: u16,
     origin: crate::gss::CrossCatLhsReentryOrigin,
 }
-
-
-
-
-
 
 pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     state: WpdaState,
@@ -2388,9 +2377,6 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
 /// that re-emits the same Fork) trip this guard immediately.
 pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
 
-
-
-
 /// One branch of a [`WpdaStepAction::Fork`] action. Codegen emits a
 /// `Vec<ForkBranch<W>>` when a parser-side ambiguity needs WPDS-driven
 /// disambiguation (binder multi-rule, cross-cat projection sharing a
@@ -2451,13 +2437,11 @@ impl<W: SemiringRef> ForkBranch<W> {
     }
 }
 
-
 #[derive(Clone)]
 struct SppfSymbolTerm {
     value: Arc<dyn Any + Send + Sync>,
     output_cat: Option<u16>,
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct TransparentSourceReentryKey {
@@ -2477,7 +2461,6 @@ struct TransparentSourceReentryKey {
     weight_rule_idx: u16,
     lex_fork_stamp: Option<LexForkStamp>,
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ProjectionTargetBoundary {
@@ -3656,7 +3639,8 @@ struct CgllRepairSource<'a> {
 impl<'a> CgllRepairSource<'a> {
     #[inline]
     fn virtual_at(&self, pos: usize) -> Option<&'a CgllRepairVirtual> {
-        pos.checked_sub(self.base).and_then(|i| self.virtuals.get(i))
+        pos.checked_sub(self.base)
+            .and_then(|i| self.virtuals.get(i))
     }
 }
 
@@ -3754,7 +3738,11 @@ enum CgllRepairKind {
     /// stay monotone), resuming at the real successor of `second_pos`.
     /// `cost` = the branch's `cost_tropical` (the classic swap replay's
     /// event cost — parity target @ the commit-replay SwapTokens arm).
-    SwapAdjacent { first_pos: usize, second_pos: usize, cost: f64 },
+    SwapAdjacent {
+        first_pos: usize,
+        second_pos: usize,
+        cost: f64,
+    },
     /// Task #10 item 4: `ApplyRecoverySequence` with at least one
     /// token-mutating member (by arm order after the PosOnly decode).
     /// Lowered at reseed by SIMULATING the actions over the real stream
@@ -4444,10 +4432,6 @@ impl<W: SemiringRef> BranchCursor<W> {
     }
 }
 
-
-
-
-
 /// Step 3 (Fork plan F4): deferred mutation of the live
 /// `SemanticBuilder` performed during a Fork branch's evaluation.
 ///
@@ -4616,7 +4600,7 @@ pub enum BuilderDelta {
     /// The key just spliced into the arena is followed by an UNSET marker, so the
     /// accumulator stays even-length `[k, UNSET]` — the kv arity gate
     /// (`items == 2·(seps+1)`) is unchanged — and the finalize action
-    /// materialises `k → PathValue::Unset`.
+    /// materialises `k` in the container's homogeneous set representation.
     ///
     /// ## What this replaces, and why a fix in the action was never possible
     ///
@@ -4839,12 +4823,6 @@ fn semiring_priority_cmp<W: SemiringRef>(a: &W, b: &W) -> std::cmp::Ordering {
     }
 }
 
-
-
-
-
-
-
 struct EoiCursorCandidate<W: SemiringRef> {
     cursor: BranchCursor<W>,
     weight: W,
@@ -4877,7 +4855,6 @@ fn sort_eoi_candidates_by_semiring_priority<W: SemiringRef>(
 ) {
     candidates.sort_by(|a, b| semiring_priority_cmp(&a.weight, &b.weight));
 }
-
 
 /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): detect whether a
 /// `WpdaStepAction::Fork` was emitted by `recovery_dispatch::emit_recovery_fork`
@@ -4950,11 +4927,6 @@ fn parse_ambiguity_budget_sentinel_ess(message: &str) -> Option<u32> {
     rest.split_whitespace()
         .find_map(|tok| tok.strip_prefix("ess_x1000=").and_then(|v| v.parse().ok()))
 }
-
-
-
-
-
 
 /// B12 / Candidate E (2026-05-07): extract the `(pos, cat_src_idx, cur_bp)`
 /// configuration at which a projection Fork fires. Returns `None` if the
@@ -5144,7 +5116,6 @@ impl ProjDescriptorKey {
     }
 }
 
-
 fn token_alt_count(tokens: &dyn WpdaTokenSource, pos: usize) -> usize {
     if tokens.peek_kind(pos).is_some() {
         1 + tokens.peek_alternatives(pos).len()
@@ -5152,7 +5123,6 @@ fn token_alt_count(tokens: &dyn WpdaTokenSource, pos: usize) -> usize {
         0
     }
 }
-
 
 fn token_alt_text(tokens: &dyn WpdaTokenSource, pos: usize, alt_idx: usize) -> Option<&str> {
     if alt_idx == 0 {
@@ -6189,9 +6159,6 @@ where
             .collect()
     }
 
-
-
-
     /// Stage 3.4 (2026-04-30): set the legacy beam-size bound in place.
     ///
     /// Same effect as [`Self::with_beam_size`] but mutates `self` instead
@@ -6287,7 +6254,6 @@ where
 
     // ─── Reactive driver ────────────────────────────────────────────────────
 
-
     /// Replace this walker's bounded-recovery configuration.
     ///
     /// The value is owned by the walker and is pinned as the active recovery
@@ -6302,7 +6268,6 @@ where
         self.set_recovery_config(recovery_config);
         self
     }
-
 
     /// Stage 3.5b (2026-05-01): WPDS-correct end-of-input driver.
     ///
@@ -7246,7 +7211,6 @@ where
         }
     }
 
-
     /// Cluster H (2026-05-29): build a `WpdaResolveResult::AcceptedWithTrailing`
     /// from the prefix-accepting cursors captured by the Phase E Fix A
     /// salvage path in `resolve_at_end_of_input`.
@@ -7350,10 +7314,7 @@ where
         // (per-root inclusion + the `roots.first()` recovery-events winner
         // keep today's fenced-family semantics). State shared across the
         // trailing candidates (the resolve-shared pattern, plan §2.8).
-        let mut kbest_session: (
-            KbestState<W>,
-            rustc_hash::FxHashMap<crate::sppf::SppfId, u32>,
-        ) = {
+        let mut kbest_session: (KbestState<W>, rustc_hash::FxHashMap<crate::sppf::SppfId, u32>) = {
             let mut st = KbestState::new();
             st.fence_election = true;
             (st, rustc_hash::FxHashMap::default())
@@ -7574,10 +7535,8 @@ where
                             }
                         }
                         if let Some(e) = kb_state.entry(root, KbestOrderKey::Election, 0) {
-                            if let KbestVal::Realized {
-                                arg: ActionArg::Term { value, .. },
-                                w,
-                            } = &e.val
+                            if let KbestVal::Realized { arg: ActionArg::Term { value, .. }, w } =
+                                &e.val
                             {
                                 return vec![(Arc::clone(value), w.clone())];
                             }
@@ -7589,13 +7548,8 @@ where
                                 Vec<(ActionArg, W)>,
                             > = std::collections::HashMap::new();
                             debug_assert!(
-                                self.cgll_realize_bin_symbol(
-                                    root,
-                                    &mut probe_memo,
-                                    Some(1),
-                                    false
-                                )
-                                .is_empty(),
+                                self.cgll_realize_bin_symbol(root, &mut probe_memo, Some(1), false)
+                                    .is_empty(),
                                 "kbest corruption: the family fallback realized a term the \
                                  exhaustive extractor missed (root {root})"
                             );
@@ -8239,7 +8193,14 @@ where
                         colors.insert(id, RealizeColor::Black);
                     }
                 },
-                LazyFrame::SymbolCollect { id, cap, next_idx, mut out, mut seen, packing } => {
+                LazyFrame::SymbolCollect {
+                    id,
+                    cap,
+                    next_idx,
+                    mut out,
+                    mut seen,
+                    packing,
+                } => {
                     if let Some(entries) = memo.get(&packing) {
                         for entry in entries {
                             self.dedup_push_realized(&mut out, &mut seen, entry.clone());
@@ -8344,9 +8305,7 @@ where
         let Some(&first) = children.first() else {
             return false;
         };
-        let Some(crate::sppf::SppfNode::Symbol {
-            non_terminal_tag, ..
-        }) = self.sppf.node(first)
+        let Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) = self.sppf.node(first)
         else {
             return false;
         };
@@ -8784,7 +8743,10 @@ where
                 rule_idx >> 16,
                 rule_idx & 0xFFFF,
                 children,
-                children.iter().map(|c| memo.get(c).map(|v| v.len())).collect::<Vec<_>>()
+                children
+                    .iter()
+                    .map(|c| memo.get(c).map(|v| v.len()))
+                    .collect::<Vec<_>>()
             );
         }
         // OPTIONAL_PRESENT_RULE_IDX sentinel: synthetic packing emitted
@@ -8886,7 +8848,9 @@ where
         // sibling flats (receipt: class3 `with [ ] ( ) . { 0 }`).
         {
             let expected_arity = action_entry
-                .expect("wpda_walker: action_entry is Some — the None arm returned Vec::new() above")
+                .expect(
+                    "wpda_walker: action_entry is Some — the None arm returned Vec::new() above",
+                )
                 .arity as usize;
             if expected_arity != arity {
                 #[cfg(debug_assertions)]
@@ -8965,8 +8929,7 @@ where
         // SPPF-realize observational-dedup (2026-06-28): per-packing dedup of
         // the cartesian-product output (the within-rule source of multiplicity).
         // No-op + byte-identical when the switch is off / fingerprint is None.
-        let mut seen: std::collections::HashMap<Vec<u8>, usize> =
-            std::collections::HashMap::new();
+        let mut seen: std::collections::HashMap<Vec<u8>, usize> = std::collections::HashMap::new();
         for (args, combo_w) in combos {
             let mut sb = SemanticBuilder::new();
             // B.1 (Phase E Stage 1, 2026-05-16): pre-allocate collection
@@ -9158,11 +9121,7 @@ where
                     // action's downcast refused — dump each action child's SPPF
                     // node (Symbol tag + span reveals the realized child's cat).
                     for &c in &action_children {
-                        eprintln!(
-                            "  [realize-diag] child sid={} node={:?}",
-                            c,
-                            self.sppf.node(c)
-                        );
+                        eprintln!("  [realize-diag] child sid={} node={:?}", c, self.sppf.node(c));
                     }
                 }
                 // Drain any stale state the action partially produced
@@ -9263,7 +9222,6 @@ where
         // would-refute ⟺ some obligated class is NOT in the suffix.
         (must & suffix) != must
     }
-
 
     fn is_accepting_config(&self, cursor: &BranchCursor<W>, tokens: &dyn WpdaTokenSource) -> bool {
         // Phase 5.6-tail-A (2026-05-12): replaces the pre-tail
@@ -9537,8 +9495,6 @@ where
 
     // ─── Internal step handler ──────────────────────────────────────────────
 
-
-
     fn category_changing_infix_source(
         symbol: &StackSymbolV2,
         new_state: &WpdaState,
@@ -9589,24 +9545,6 @@ where
         }
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     // CLUSTER-A FIX (2026-06-20): retained but no longer called — see
     // `normalize_crosscat_lhs_push_state` for the rationale. Kept (commented
     // out, per repo policy of not deleting disabled code) so the prefix-operand
@@ -9631,21 +9569,6 @@ where
     //     }
     // }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /// C3 / ROOT-PERSIST-`<=` (2026-07-04): is the receiver rule's operator
     /// literal SHADOWED by the completed body's category — i.e. does that
     /// category recognize the lookahead token as one of ITS OWN operators
@@ -9662,20 +9585,12 @@ where
     /// language whose channel-first receiver rule's operator literal collides
     /// with a same-category infix/postfix/mixfix operator, this returns `true`;
     /// otherwise `false` (fail-closed for test engines whose default is `false`).
-    fn channel_first_receiver_operator_is_shadowed(
-        &self,
-        body_cat: u16,
-        lookahead: &str,
-    ) -> bool {
-        !lookahead.is_empty() && self.engine.category_recognizes_operator(body_cat, lookahead)
+    fn channel_first_receiver_operator_is_shadowed(&self, body_cat: u16, lookahead: &str) -> bool {
+        !lookahead.is_empty()
+            && self
+                .engine
+                .category_recognizes_operator(body_cat, lookahead)
     }
-
-
-
-
-
-
-
 
     fn action_contains_category_changing_infix(action: &WpdaStepAction<W>) -> bool {
         match action {
@@ -9689,10 +9604,6 @@ where
         }
     }
 
-
-
-
-
     fn sppf_symbol_category(&self, symbol_id: crate::sppf::SppfId) -> Option<u16> {
         match self.sppf.node(symbol_id) {
             Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
@@ -9701,15 +9612,6 @@ where
             _ => None,
         }
     }
-
-
-
-
-
-
-
-
-
 
     fn category_transparently_satisfies(&self, produced: u16, requested: u16) -> bool {
         produced == requested
@@ -9723,14 +9625,6 @@ where
                 })
     }
 
-
-
-
-
-
-
-
-
     fn crosscat_lhs_boundary_branch(source_src_idx: u16) -> ForkBranch<W> {
         ForkBranch {
             symbol: StackSymbolV2::category_entry(source_src_idx),
@@ -9739,8 +9633,6 @@ where
             action_kind: ForkActionKind::Advance,
         }
     }
-
-
 
     fn iterative_chain_normal_branch(
         symbol: StackSymbolV2,
@@ -9843,7 +9735,6 @@ where
             || (!boundary.target_accepts_at_projection_floor && !satisfies_projection_target)
     }
 
-
     /// Construct a minimal cursor for read-only transient action firing.
     ///
     /// `fire_action_via_transient` reconstructs Symbol args from the
@@ -9857,18 +9748,6 @@ where
             WpdaState::Ready { min_bp: 0 },
         )
     }
-
-
-
-
-
-
-
-
-
-
-
-
 
     /// Drive one canonical-GLL step. The descriptor-pure engine is the SOLE
     /// parser after the classic engine was physically removed (2026-07-15, task
@@ -9884,7 +9763,6 @@ where
         self.deterministic = false;
         self.step_canonical_pure(tokens)
     }
-
 
     // ═══════════════════════════════════════════════════════════════════════
     // ROOT-P Canonical-GLL Stage E1 (2026-07-09) — BINARIZED getNodeP + realize
@@ -10060,11 +9938,7 @@ where
                                     continue;
                                 }
                                 let c = children[*child_idx];
-                                match Self::cgll_binarize_child_step(
-                                    &mut self.sppf,
-                                    map,
-                                    c,
-                                ) {
+                                match Self::cgll_binarize_child_step(&mut self.sppf, map, c) {
                                     Ok(bc) => {
                                         child_result = Some(bc);
                                         continue;
@@ -10078,34 +9952,30 @@ where
                         }
                     }
                 },
-                CgllBinarizeFrame::Coll { id, items, item_idx, bitems } => {
-                    loop {
-                        if let Some(bc) = child_result.take() {
-                            bitems.push(bc);
-                            *item_idx += 1;
+                CgllBinarizeFrame::Coll { id, items, item_idx, bitems } => loop {
+                    if let Some(bc) = child_result.take() {
+                        bitems.push(bc);
+                        *item_idx += 1;
+                    }
+                    if *item_idx == items.len() {
+                        let cid = self.sppf.intern_collection_id(*id, std::mem::take(bitems));
+                        stack.pop();
+                        if stack.is_empty() {
+                            return cid;
                         }
-                        if *item_idx == items.len() {
-                            let cid = self
-                                .sppf
-                                .intern_collection_id(*id, std::mem::take(bitems));
-                            stack.pop();
-                            if stack.is_empty() {
-                                return cid;
-                            }
-                            child_result = Some(cid);
+                        child_result = Some(cid);
+                        continue 'drive;
+                    }
+                    let it = items[*item_idx];
+                    match Self::cgll_binarize_child_step(&mut self.sppf, map, it) {
+                        Ok(bc) => {
+                            child_result = Some(bc);
+                            continue;
+                        },
+                        Err(f) => {
+                            stack.push(f);
                             continue 'drive;
-                        }
-                        let it = items[*item_idx];
-                        match Self::cgll_binarize_child_step(&mut self.sppf, map, it) {
-                            Ok(bc) => {
-                                child_result = Some(bc);
-                                continue;
-                            },
-                            Err(f) => {
-                                stack.push(f);
-                                continue 'drive;
-                            },
-                        }
+                        },
                     }
                 },
             }
@@ -10161,10 +10031,7 @@ where
         // The unweighted/weighted pair stays mirrored; allocation styles
         // are each original's own (plain `Vec::new` here, the exact
         // `with_capacity` in the weighted twin).
-        if !matches!(
-            self.sppf.node(id),
-            Some(crate::sppf::SppfNode::Intermediate { .. })
-        ) {
+        if !matches!(self.sppf.node(id), Some(crate::sppf::SppfNode::Intermediate { .. })) {
             return vec![vec![id]];
         }
         struct Frame {
@@ -10235,8 +10102,7 @@ where
                     },
                     Some((children, ci, acc)) => {
                         if *ci == children.len() {
-                            let (_, _, acc) =
-                                top.cur.take().expect("cur present at packing exit");
+                            let (_, _, acc) = top.cur.take().expect("cur present at packing exit");
                             top.out.extend(acc);
                             continue;
                         }
@@ -10297,21 +10163,14 @@ where
         // `with_capacity(acc.len() * max(cf,1))` preallocation kept).
         // Leaf children fold inline: `cf = [([c], one)]` ⇒ extend each
         // flat by `c`, weight `aw ⊗ one = aw` (identity — unchanged).
-        if !matches!(
-            self.sppf.node(id),
-            Some(crate::sppf::SppfNode::Intermediate { .. })
-        ) {
+        if !matches!(self.sppf.node(id), Some(crate::sppf::SppfNode::Intermediate { .. })) {
             return vec![(vec![id], W::one_ref())];
         }
         struct FrameW<W> {
             id: crate::sppf::SppfId,
             packings: Vec<crate::sppf::SppfId>,
             pk_idx: usize,
-            cur: Option<(
-                Vec<crate::sppf::SppfId>,
-                usize,
-                Vec<(Vec<crate::sppf::SppfId>, W)>,
-            )>,
+            cur: Option<(Vec<crate::sppf::SppfId>, usize, Vec<(Vec<crate::sppf::SppfId>, W)>)>,
             out: Vec<(Vec<crate::sppf::SppfId>, W)>,
             awaiting: bool,
         }
@@ -10369,8 +10228,7 @@ where
                     },
                     Some((children, ci, acc)) => {
                         if *ci == children.len() {
-                            let (_, _, acc) =
-                                top.cur.take().expect("cur present at packing exit");
+                            let (_, _, acc) = top.cur.take().expect("cur present at packing exit");
                             top.out.extend(acc);
                             continue;
                         }
@@ -10463,8 +10321,7 @@ where
     {
         let empty_colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
             std::collections::HashMap::new();
-        let mut stack: Vec<CgllRealizeFrame<W>> =
-            Vec::with_capacity(self.sppf.len().min(4096));
+        let mut stack: Vec<CgllRealizeFrame<W>> = Vec::with_capacity(self.sppf.len().min(4096));
         stack.push(seed);
         // R-D A1 over-accept EXACT fix (task #18b): the TOP frame's cross-packing
         // DISTINCT counter. `out` stays RAW (byte-identical return/memo); this
@@ -10479,7 +10336,13 @@ where
             std::collections::HashMap::new();
         'drive: while let Some(top) = stack.last_mut() {
             match top {
-                CgllRealizeFrame::Predep { walk, seen, deps, dep_idx, pending_walk_push } => {
+                CgllRealizeFrame::Predep {
+                    walk,
+                    seen,
+                    deps,
+                    dep_idx,
+                    pending_walk_push,
+                } => {
                     // Mirrors the former `cgll_prerealize_deps` while-pop
                     // loop verbatim: pop node → seen-dedup → snapshot deps
                     // → FORWARD dep loop (realize-at-discovery) → LIFO
@@ -10567,12 +10430,12 @@ where
                                     continue;
                                 }
                                 *deps = match self.sppf.node(n) {
-                                    Some(crate::sppf::SppfNode::CollectionId {
-                                        items, ..
-                                    }) => items.clone(),
-                                    Some(crate::sppf::SppfNode::Packing {
-                                        children, ..
-                                    }) => children.clone(),
+                                    Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
+                                        items.clone()
+                                    },
+                                    Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                                        children.clone()
+                                    },
                                     Some(crate::sppf::SppfNode::Intermediate { .. }) => {
                                         self.sppf.packings_of(n).to_vec()
                                     },
@@ -10587,7 +10450,16 @@ where
                         }
                     }
                 },
-                CgllRealizeFrame::Bin { sym, sym_lo, sym_hi, top, packings, pk_idx, cur, out } => {
+                CgllRealizeFrame::Bin {
+                    sym,
+                    sym_lo,
+                    sym_hi,
+                    top,
+                    packings,
+                    pk_idx,
+                    cur,
+                    out,
+                } => {
                     let (sym, sym_lo, sym_hi, top) = (*sym, *sym_lo, *sym_hi, *top);
                     loop {
                         match cur {
@@ -10602,15 +10474,14 @@ where
                                 }
                                 let p = packings[*pk_idx];
                                 *pk_idx += 1;
-                                let (rule_idx, pack_children, weight) =
-                                    match self.sppf.node(p) {
-                                        Some(crate::sppf::SppfNode::Packing {
-                                            rule_idx,
-                                            children,
-                                            weight,
-                                        }) => (*rule_idx, children.clone(), weight.clone()),
-                                        _ => continue,
-                                    };
+                                let (rule_idx, pack_children, weight) = match self.sppf.node(p) {
+                                    Some(crate::sppf::SppfNode::Packing {
+                                        rule_idx,
+                                        children,
+                                        weight,
+                                    }) => (*rule_idx, children.clone(), weight.clone()),
+                                    _ => continue,
+                                };
                                 // Flatten the packing's binary spine to
                                 // classic n-ary children lists (in-frame
                                 // cartesian; `cgll_flatten_ids_weighted` is
@@ -10619,8 +10490,7 @@ where
                                     vec![(Vec::new(), W::one_ref())];
                                 for &c in &pack_children {
                                     let cf = self.cgll_flatten_ids_weighted(c);
-                                    let mut next: Vec<(Vec<crate::sppf::SppfId>, W)> =
-                                        Vec::new();
+                                    let mut next: Vec<(Vec<crate::sppf::SppfId>, W)> = Vec::new();
                                     for (a, aw) in &flats {
                                         for (b, bw) in &cf {
                                             let mut x = a.clone();
@@ -10649,10 +10519,7 @@ where
                                 // `packing_satisfies_min_terminal_span`
                                 // call at flat entry).
                                 if bp.elem_idx == 0
-                                    && matches!(
-                                        bp.elem_stage,
-                                        CgllElemStage::PredepPending
-                                    )
+                                    && matches!(bp.elem_stage, CgllElemStage::PredepPending)
                                     && !self.packing_satisfies_min_terminal_span(
                                         bp.rule_idx,
                                         &bp.flats[bp.flat_idx].0,
@@ -10760,8 +10627,7 @@ where
                                     CgllElemStage::RealizePending => {
                                         if memo.contains_key(&c) {
                                             bp.elem_idx += 1;
-                                            bp.elem_stage =
-                                                CgllElemStage::PredepPending;
+                                            bp.elem_stage = CgllElemStage::PredepPending;
                                             continue;
                                         }
                                         match self.sppf.node(c) {
@@ -10782,8 +10648,7 @@ where
                                                 // Memo hit (raced) —
                                                 // advance.
                                                 bp.elem_idx += 1;
-                                                bp.elem_stage =
-                                                    CgllElemStage::PredepPending;
+                                                bp.elem_stage = CgllElemStage::PredepPending;
                                                 continue;
                                             },
                                             _ => {
@@ -10801,8 +10666,7 @@ where
                                                 );
                                                 memo.insert(c, cr);
                                                 bp.elem_idx += 1;
-                                                bp.elem_stage =
-                                                    CgllElemStage::PredepPending;
+                                                bp.elem_stage = CgllElemStage::PredepPending;
                                                 continue;
                                             },
                                         }
@@ -10814,9 +10678,7 @@ where
                 },
             }
         }
-
     }
-
 
     /// Bin-frame constructor = the recursion's callee ENTRY (memo check →
     /// provisional-empty publish → span/packings snapshot). `None` = memo
@@ -10852,7 +10714,6 @@ where
             out: Vec::new(),
         })
     }
-
 
     /// Stage-H disposition (2026-07-17, plan §5.2 KEEP row): the family
     /// realize is production-RETIRED from the routed surfaces (the
@@ -10952,8 +10813,7 @@ where
             let c = kids[*idx];
             *idx += 1;
             if on_stack.contains(&c) {
-                let mut path: Vec<crate::sppf::SppfId> =
-                    stack.iter().map(|(n, _, _)| *n).collect();
+                let mut path: Vec<crate::sppf::SppfId> = stack.iter().map(|(n, _, _)| *n).collect();
                 path.push(c);
                 return Some(path);
             }
@@ -11032,7 +10892,8 @@ where
                     packs.len(),
                 );
                 for p in packs {
-                    if let Some(crate::sppf::SppfNode::Packing { children, .. }) = self.sppf.node(p) {
+                    if let Some(crate::sppf::SppfNode::Packing { children, .. }) = self.sppf.node(p)
+                    {
                         let children = children.clone();
                         eprintln!("{pad}  IPacking[{p}] children={:?}", children);
                         for &c in &children {
@@ -11098,10 +10959,7 @@ where
         // including the `roots.first()` recovery-events winner — keep
         // today's fenced-family semantics (all-span-refuted forests stay
         // ParseError). OFF (`None`): zero new code runs.
-        let mut kbest_session: (
-            KbestState<W>,
-            rustc_hash::FxHashMap<crate::sppf::SppfId, u32>,
-        ) = {
+        let mut kbest_session: (KbestState<W>, rustc_hash::FxHashMap<crate::sppf::SppfId, u32>) = {
             let mut st = KbestState::new();
             st.fence_election = true;
             (st, rustc_hash::FxHashMap::default())
@@ -11132,8 +10990,7 @@ where
                 None => {
                     // POST-PASS: binarize the completed classic forest under
                     // this root.
-                    let bin_root =
-                        self.cgll_binarize_classic_symbol(classic_root, &mut bin_map);
+                    let bin_root = self.cgll_binarize_classic_symbol(classic_root, &mut bin_map);
                     if bin_root == classic_root {
                         continue; // classic root was not a Symbol (nothing to binarize)
                     }
@@ -11217,11 +11074,7 @@ where
                             weights.push(w.clone());
                             terms.push(value.clone());
                             roots.push(bin_root);
-                            self.dedup_push_realized(
-                                &mut budget_dedup,
-                                &mut budget_seen,
-                                (arg, w),
-                            );
+                            self.dedup_push_realized(&mut budget_dedup, &mut budget_seen, (arg, w));
                             if let Some(n) = budget_n {
                                 if budget_dedup.len() > n {
                                     return WpdaResolveResult::AmbiguityBudget {
@@ -11355,15 +11208,7 @@ where
     /// U add-once key = FxHash of ALL descriptor fields (and nothing else —
     /// the C7 fence).
     fn cgll_pure_key(d: &CgllPureDescriptor) -> u64 {
-        Self::cgll_pure_hash_of(&(
-            &d.state,
-            d.cur_sym,
-            d.frame_class,
-            d.ret_slot,
-            d.u,
-            d.pos,
-            d.w,
-        ))
+        Self::cgll_pure_hash_of(&(&d.state, d.cur_sym, d.frame_class, d.ret_slot, d.u, d.pos, d.w))
     }
 
     /// Finite, POSITION-FREE ident of a state for `Intermediate` slot ids:
@@ -11380,9 +11225,12 @@ where
             WpdaState::Ready { min_bp } => (0, *min_bp as u64),
             WpdaState::PrefixDispatch { cur_bp, .. } => (1, *cur_bp as u64),
             WpdaState::InfixLoop { cur_bp } => (2, *cur_bp as u64),
-            WpdaState::InfixChainIterative { result_src_idx, rule_idx, outer_bp, rhs_bp } => {
-                (3, pack4(*result_src_idx, *rule_idx, *outer_bp as u16, *rhs_bp as u16))
-            },
+            WpdaState::InfixChainIterative {
+                result_src_idx,
+                rule_idx,
+                outer_bp,
+                rhs_bp,
+            } => (3, pack4(*result_src_idx, *rule_idx, *outer_bp as u16, *rhs_bp as u16)),
             WpdaState::CollectionLoop {
                 result_src_idx,
                 rule_idx,
@@ -11422,9 +11270,12 @@ where
                     ((*kind as u16) << 8) | (*sub_pos as u16),
                 ),
             ),
-            WpdaState::BinderRule { result_src_idx, rule_idx, body_src_idx, outer_bp } => {
-                (8, pack4(*result_src_idx, *rule_idx, *body_src_idx, *outer_bp as u16))
-            },
+            WpdaState::BinderRule {
+                result_src_idx,
+                rule_idx,
+                body_src_idx,
+                outer_bp,
+            } => (8, pack4(*result_src_idx, *rule_idx, *body_src_idx, *outer_bp as u16)),
             WpdaState::OptionalGroup {
                 result_src_idx,
                 rule_idx,
@@ -11519,7 +11370,11 @@ where
             SymbolKind::OptionalGroupAt(_) => CGLL_KC_OPT_GROUP,
             SymbolKind::BinderListLoopAt(_) => CGLL_KC_BINDER_LIST,
         };
-        base | if matches!(class, CgllFrameClass::D2) { CGLL_KC_D2_BIT } else { 0 }
+        base | if matches!(class, CgllFrameClass::D2) {
+            CGLL_KC_D2_BIT
+        } else {
+            0
+        }
     }
 
     /// The seed (goal) frame's sentinel ret-slot.
@@ -11639,9 +11494,7 @@ where
                 owner_rule_idx,
                 text_handle,
                 ..
-            }) if *owner_rule_idx == u16::MAX - 1 => {
-                Some(self.sppf.text(*text_handle).to_string())
-            },
+            }) if *owner_rule_idx == u16::MAX - 1 => Some(self.sppf.text(*text_handle).to_string()),
             _ => None,
         }
     }
@@ -11757,7 +11610,9 @@ where
         } else {
             vec![leaf]
         };
-        let packing = self.sppf.intern_packing(wrap_slot, children, weight.clone());
+        let packing = self
+            .sppf
+            .intern_packing(wrap_slot, children, weight.clone());
         self.sppf.link_packing_to_symbol(inter, packing);
         run.stats.weight_carriers += 1;
         inter
@@ -11780,8 +11635,7 @@ where
             return w;
         }
         // POSITION-SALTED (see `cgll_pure_end_binder_scope`).
-        let slot =
-            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos as u32) << 1);
+        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos as u32) << 1);
         let carrier =
             self.cgll_pure_weight_carrier(run, slot, crate::sppf::SPPF_ID_NONE, pos, weight);
         // The ATTACH-fold lives in the WRAP namespace too (`slot |
@@ -11898,7 +11752,10 @@ where
     /// P4 lattice-order key lookup (identity fallback off the cached map).
     #[inline]
     fn cgll_pk(&self, pos: u32) -> u32 {
-        self.cgll_pure_pos_key.get(pos as usize).copied().unwrap_or(pos)
+        self.cgll_pure_pos_key
+            .get(pos as usize)
+            .copied()
+            .unwrap_or(pos)
     }
 
     /// P4 lattice-order fix, END side: the ORDER-KEY of the END of `id`'s
@@ -12080,8 +11937,8 @@ where
                     | Some(crate::sppf::SppfNode::Intermediate { .. })
             )
         };
-        let make_frame = |walker: &Self, n: crate::sppf::SppfId, d: u32, root: bool| {
-            CgllKtupleFrame::<W> {
+        let make_frame =
+            |walker: &Self, n: crate::sppf::SppfId, d: u32, root: bool| CgllKtupleFrame::<W> {
                 node: n,
                 depth: d,
                 at_root: root,
@@ -12094,8 +11951,7 @@ where
                 pk_idx: 0,
                 cur: None,
                 best: None,
-            }
-        };
+            };
         // Seed prologue (the recursion's entry for THIS call).
         if !at_root {
             if let Some(v) = memo.get(&node) {
@@ -12113,8 +11969,7 @@ where
             }
             return result;
         }
-        let mut stack: Vec<CgllKtupleFrame<W>> =
-            Vec::with_capacity(self.sppf.len().min(4096));
+        let mut stack: Vec<CgllKtupleFrame<W>> = Vec::with_capacity(self.sppf.len().min(4096));
         let mut child_result: Option<CgllKTuple<W>> = None;
         stack.push(make_frame(self, node, depth, at_root));
         'drive: while let Some(f) = stack.last_mut() {
@@ -12161,11 +12016,8 @@ where
                         if tabu.contains(&p) {
                             continue; // realize-refuted in an earlier attempt
                         }
-                        let Some(crate::sppf::SppfNode::Packing {
-                            rule_idx,
-                            children,
-                            weight,
-                        }) = self.sppf.node(p)
+                        let Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) =
+                            self.sppf.node(p)
                         else {
                             continue;
                         };
@@ -12341,7 +12193,6 @@ where
     #[allow(dead_code)]
     pub(crate) const CGLL_KBEST_EXTRACTION_ENABLED: bool = true;
 
-
     // ═════════════════════════════════════════════════════════════════════
     // ROOT-P Phase-2 S1: the k-best extractor (dormant — see
     // `CGLL_KBEST_EXTRACTION_ENABLED`). Design of record:
@@ -12473,10 +12324,7 @@ where
                     }
                 }
                 content.retain(|&el| {
-                    matches!(
-                        self.sppf.node(el),
-                        Some(crate::sppf::SppfNode::Symbol { .. })
-                    )
+                    matches!(self.sppf.node(el), Some(crate::sppf::SppfNode::Symbol { .. }))
                 });
                 if content.len() == 1 {
                     let declared_coercion = body_cat
@@ -12545,10 +12393,7 @@ where
     /// (`cgll_pure_ktuple` via `lazy_first_flat = false`) keeps calling
     /// `cgll_flatten_ids` — S1 byte-identity by construction.
     fn cgll_first_flat_of(&self, w: crate::sppf::SppfId) -> Option<Vec<crate::sppf::SppfId>> {
-        if !matches!(
-            self.sppf.node(w),
-            Some(crate::sppf::SppfNode::Intermediate { .. })
-        ) {
+        if !matches!(self.sppf.node(w), Some(crate::sppf::SppfNode::Intermediate { .. })) {
             return Some(vec![w]);
         }
         let first_packing_children = |x: crate::sppf::SppfId| -> Option<Vec<crate::sppf::SppfId>> {
@@ -12586,10 +12431,8 @@ where
                     on_path.remove(&owner);
                 },
                 Some(c) => {
-                    if matches!(
-                        self.sppf.node(c),
-                        Some(crate::sppf::SppfNode::Intermediate { .. })
-                    ) {
+                    if matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::Intermediate { .. }))
+                    {
                         if !on_path.insert(c) {
                             guard_hits += 1;
                             debug_assert!(
@@ -12652,10 +12495,18 @@ where
         for (ci, &c) in children.iter().enumerate() {
             match self.sppf.node(c) {
                 Some(crate::sppf::SppfNode::Intermediate { .. }) => {
-                    slots.push(KbestSlot { node: c, child_idx: ci as u32, inner: None });
+                    slots.push(KbestSlot {
+                        node: c,
+                        child_idx: ci as u32,
+                        inner: None,
+                    });
                 },
                 Some(crate::sppf::SppfNode::Symbol { .. }) => {
-                    slots.push(KbestSlot { node: c, child_idx: ci as u32, inner: None });
+                    slots.push(KbestSlot {
+                        node: c,
+                        child_idx: ci as u32,
+                        inner: None,
+                    });
                 },
                 Some(crate::sppf::SppfNode::Packing { rule_idx: pr, children: pch, .. })
                     if *pr == Self::OPTIONAL_PRESENT_RULE_IDX =>
@@ -12711,10 +12562,7 @@ where
     where
         W: StarSemiringRef,
     {
-        debug_assert!(
-            kind != KbestOrderKey::Election,
-            "kbest pair fold has no Election consumer"
-        );
+        debug_assert!(kind != KbestOrderKey::Election, "kbest pair fold has no Election consumer");
         let mut combo = W::one_ref();
         let mut flat_children = W::one_ref();
         let mut cur = 0usize;
@@ -12878,14 +12726,7 @@ where
                     }
                 }
                 self.cgll_kbest_decisions_block(
-                    *rule_idx,
-                    children,
-                    &mut t,
-                    fdepth,
-                    at_root,
-                    fis_symbol,
-                    fnode_span,
-                    goal_cat,
+                    *rule_idx, children, &mut t, fdepth, at_root, fis_symbol, fnode_span, goal_cat,
                     true,
                 );
                 // Scan absorb (see fn doc): decision push order preserved.
@@ -12903,8 +12744,10 @@ where
                             children: pch,
                             ..
                         }) if *pr == Self::OPTIONAL_PRESENT_RULE_IDX => {
-                            let pos =
-                                pch.first().and_then(|&ic| self.sppf.span_lo(ic)).unwrap_or(0);
+                            let pos = pch
+                                .first()
+                                .and_then(|&ic| self.sppf.span_lo(ic))
+                                .unwrap_or(0);
                             t.decisions.push((
                                 self.cgll_pk(pos),
                                 fdepth,
@@ -13035,11 +12878,8 @@ where
                         let e = state.entry(c, kind, sel.checked_sub(1)?)?;
                         (e.pk, e.j.clone())
                     };
-                    let Some(crate::sppf::SppfNode::Packing {
-                        children: ich,
-                        weight: iw,
-                        ..
-                    }) = self.sppf.node(ipk)
+                    let Some(crate::sppf::SppfNode::Packing { children: ich, weight: iw, .. }) =
+                        self.sppf.node(ipk)
                     else {
                         return None;
                     };
@@ -13110,9 +12950,8 @@ where
                             Some(crate::sppf::SppfNode::Symbol { .. }) => {
                                 if lvl1 && kind != KbestOrderKey::Election {
                                     let (arg, w) = {
-                                        let (_, lj, _, cur) = levels
-                                            .last_mut()
-                                            .expect("kbest walk level present");
+                                        let (_, lj, _, cur) =
+                                            levels.last_mut().expect("kbest walk level present");
                                         let sel = *lj.get(*cur)? as usize;
                                         *cur += 1;
                                         let e = state.entry(d, kind, sel.checked_sub(1)?)?;
@@ -13197,8 +13036,7 @@ where
         // (risk R-17 in the plan register; witness unit
         // `kbest_r17_resolve_emptiness_fenced_election`).
         if kind != KbestOrderKey::Election || state.fence_election {
-            if let Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) =
-                self.sppf.node(node)
+            if let Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) = self.sppf.node(node)
             {
                 if !self.packing_satisfies_min_terminal_span(
                     plan.rule_idx,
@@ -13302,10 +13140,7 @@ where
         if let KbestVal::Realized { arg: ActionArg::Term { value, .. }, .. } = &entry.val {
             if seen.is_empty() {
                 match list.iter().position(|e| {
-                    matches!(
-                        &e.val,
-                        KbestVal::Realized { arg: ActionArg::Term { .. }, .. }
-                    )
+                    matches!(&e.val, KbestVal::Realized { arg: ActionArg::Term { .. }, .. })
                 }) {
                     // First term candidate at this node: push UNKEYED (the
                     // A1 lazy-fingerprint discipline).
@@ -13492,7 +13327,12 @@ where
                         }
                     };
                 },
-                KbestFrameStage::Seed { mut pk_idx, mut scan_pass, mut child_idx, mut inner_idx } => {
+                KbestFrameStage::Seed {
+                    mut pk_idx,
+                    mut scan_pass,
+                    mut child_idx,
+                    mut inner_idx,
+                } => {
                     let child_depth = fdepths.get(&node).copied().unwrap_or(assign_depth) + 1;
                     loop {
                         let pk = {
@@ -13549,17 +13389,14 @@ where
                         }
                         if child_idx < children.len() {
                             let c = children[child_idx];
-                            let inners: Option<Vec<crate::sppf::SppfId>> =
-                                match self.sppf.node(c) {
-                                    Some(crate::sppf::SppfNode::Packing {
-                                        rule_idx: pr,
-                                        children: pch,
-                                        ..
-                                    }) if *pr == Self::OPTIONAL_PRESENT_RULE_IDX => {
-                                        Some(pch.clone())
-                                    },
-                                    _ => None,
-                                };
+                            let inners: Option<Vec<crate::sppf::SppfId>> = match self.sppf.node(c) {
+                                Some(crate::sppf::SppfNode::Packing {
+                                    rule_idx: pr,
+                                    children: pch,
+                                    ..
+                                }) if *pr == Self::OPTIONAL_PRESENT_RULE_IDX => Some(pch.clone()),
+                                _ => None,
+                            };
                             match inners {
                                 None => {
                                     child_idx += 1;
@@ -13631,16 +13468,14 @@ where
                         // child seeds no candidate — the demands above
                         // still ran (A1 pin (iii)).
                         let available = slots.iter().all(|s| {
-                            !state.on_stack.contains(&s.node)
-                                && state.list_len(s.node, kind) >= 1
+                            !state.on_stack.contains(&s.node) && state.list_len(s.node, kind) >= 1
                         });
                         if !available {
                             continue;
                         }
                         let j: Vec<u32> = vec![1; slots.len()];
                         {
-                            let n =
-                                state.nodes.get_mut(&node).expect("kbest node state exists");
+                            let n = state.nodes.get_mut(&node).expect("kbest node state exists");
                             if !n.sub_mut(kind).pushed.insert((pk, j.clone())) {
                                 continue;
                             }
@@ -13801,23 +13636,16 @@ where
                     // needs, then fire.
                     match self.cgll_kbest_candidate_walk(state, node, kind, cand.pk, &cand.j) {
                         None => {
-                            let n =
-                                state.nodes.get_mut(&node).expect("kbest node state exists");
+                            let n = state.nodes.get_mut(&node).expect("kbest node state exists");
                             n.infeasible_pops = n.infeasible_pops.saturating_add(1);
                             n.sub_mut(kind).pending_succ = Some((cand.pk, cand.pk_idx, cand.j));
                             state.stats.infeasible_pops += 1;
-                            frames[fi].stage = KbestFrameStage::Succ {
-                                d: 0,
-                                demanded: false,
-                                finishing: false,
-                            };
+                            frames[fi].stage =
+                                KbestFrameStage::Succ { d: 0, demanded: false, finishing: false };
                         },
                         Some(plan) => {
-                            frames[fi].stage = KbestFrameStage::EvalRaw {
-                                cand,
-                                plan: Box::new(plan),
-                                dem_idx: 0,
-                            };
+                            frames[fi].stage =
+                                KbestFrameStage::EvalRaw { cand, plan: Box::new(plan), dem_idx: 0 };
                         },
                     }
                 },
@@ -13838,16 +13666,12 @@ where
                     }
                     match self.cgll_kbest_realize_candidate(state, &plan) {
                         None => {
-                            let n =
-                                state.nodes.get_mut(&node).expect("kbest node state exists");
+                            let n = state.nodes.get_mut(&node).expect("kbest node state exists");
                             n.infeasible_pops = n.infeasible_pops.saturating_add(1);
                             n.sub_mut(kind).pending_succ = Some((cand.pk, cand.pk_idx, cand.j));
                             state.stats.infeasible_pops += 1;
-                            frames[fi].stage = KbestFrameStage::Succ {
-                                d: 0,
-                                demanded: false,
-                                finishing: false,
-                            };
+                            frames[fi].stage =
+                                KbestFrameStage::Succ { d: 0, demanded: false, finishing: false };
                         },
                         Some((arg, w)) => {
                             let kt = match cand.key {
@@ -13861,10 +13685,8 @@ where
                                 j: cand.j.clone(),
                             };
                             let appended = {
-                                let n = state
-                                    .nodes
-                                    .get_mut(&node)
-                                    .expect("kbest node state exists");
+                                let n =
+                                    state.nodes.get_mut(&node).expect("kbest node state exists");
                                 match kind {
                                     // Raw lists are dedup-free (family
                                     // parity for the FIRST feasible entry;
@@ -13909,11 +13731,8 @@ where
                                 Self::cgll_kbest_pop_frame(&mut frames, state);
                                 continue 'drive;
                             }
-                            frames[fi].stage = KbestFrameStage::Succ {
-                                d: 0,
-                                demanded: false,
-                                finishing: false,
-                            };
+                            frames[fi].stage =
+                                KbestFrameStage::Succ { d: 0, demanded: false, finishing: false };
                         },
                     }
                 },
@@ -13939,10 +13758,8 @@ where
                     loop {
                         if d >= slots.len() {
                             let frontier_nonempty = {
-                                let n = state
-                                    .nodes
-                                    .get_mut(&node)
-                                    .expect("kbest node state exists");
+                                let n =
+                                    state.nodes.get_mut(&node).expect("kbest node state exists");
                                 let sub = n.sub_mut(kind);
                                 sub.pending_succ = None;
                                 !sub.frontier.is_empty()
@@ -14008,10 +13825,8 @@ where
                             if let Some(key) = self.cgll_kbest_candidate_key(
                                 state, fdepths, node, kind, fr_at_root, goal_cat, pk, &j2,
                             ) {
-                                let n = state
-                                    .nodes
-                                    .get_mut(&node)
-                                    .expect("kbest node state exists");
+                                let n =
+                                    state.nodes.get_mut(&node).expect("kbest node state exists");
                                 let sub = n.sub_mut(kind);
                                 sub.pushed.insert((pk, j2.clone()));
                                 sub.frontier.push(std::cmp::Reverse(KbestCand {
@@ -14035,10 +13850,8 @@ where
                         // Suspend on the growth demand next(slot, need).
                         // A1 pin (iv): growth revisits already-encountered
                         // nodes — the fdepth insert-if-absent no-ops.
-                        let child_depth =
-                            fdepths.get(&node).copied().unwrap_or(assign_depth) + 1;
-                        frames[fi].stage =
-                            KbestFrameStage::Succ { d, demanded: true, finishing };
+                        let child_depth = fdepths.get(&node).copied().unwrap_or(assign_depth) + 1;
+                        frames[fi].stage = KbestFrameStage::Succ { d, demanded: true, finishing };
                         frames.push(KbestFrame {
                             node: slot_node,
                             kind,
@@ -14132,9 +13945,7 @@ where
         let goal_cat = self.cgll_pure_goal_cat;
         let _ = self.cgll_kbest_next(state, fdepths, root, demand_kind, k_distinct, true, goal_cat);
         let mut k_cur = k_distinct;
-        while state.list_len(root, demand_kind) == 0
-            && Self::cgll_kbest_session_truncated(state)
-        {
+        while state.list_len(root, demand_kind) == 0 && Self::cgll_kbest_session_truncated(state) {
             k_cur = k_cur.saturating_mul(2);
             let mut retry: KbestState<W> = KbestState::new();
             retry.fence_election = state.fence_election;
@@ -14255,8 +14066,7 @@ where
         // the frame that parked them, which may be nested — walk the first
         // flat RECURSIVELY through Symbol/Intermediate children.
         let mut stack: Vec<crate::sppf::SppfId> = flat.clone();
-        let mut seen: rustc_hash::FxHashSet<crate::sppf::SppfId> =
-            rustc_hash::FxHashSet::default();
+        let mut seen: rustc_hash::FxHashSet<crate::sppf::SppfId> = rustc_hash::FxHashSet::default();
         while let Some(id) = stack.pop() {
             if !seen.insert(id) {
                 continue;
@@ -14571,11 +14381,12 @@ where
     /// `GroupingClosePreservingInner` lookahead special is NOT recomputed at
     /// replay time — counted in `replay_structural_resumes`; B0 battery
     /// predicts 0 replays, reported honestly).
-    fn cgll_pure_replay_resume_state(
-        slot: &CgllRetSlot,
-        stats: &mut CgllPureStats,
-    ) -> WpdaState {
-        let bp = if slot.outer_bp == u16::MAX { 0 } else { slot.outer_bp as u8 };
+    fn cgll_pure_replay_resume_state(slot: &CgllRetSlot, stats: &mut CgllPureStats) -> WpdaState {
+        let bp = if slot.outer_bp == u16::MAX {
+            0
+        } else {
+            slot.outer_bp as u8
+        };
         match slot.kind_class & 0x0F {
             CGLL_KC_RETURN | CGLL_KC_RULE_AT | CGLL_KC_INFIX_CONT | CGLL_KC_MIXFIX_MARKER => {
                 WpdaState::InfixLoop { cur_bp: bp }
@@ -14616,10 +14427,7 @@ where
     ) {
         let pushed_rule = match pushed.kind {
             SymbolKind::CategoryEntry => CGLL_PURE_RULE_NONE,
-            _ => {
-                ((pushed.category_src_idx as u32) << 16)
-                    | (pushed.rule_index_in_category as u32)
-            },
+            _ => ((pushed.category_src_idx as u32) << 16) | (pushed.rule_index_in_category as u32),
         };
         // ── R-A (2026-07-11): the xcat=4 STAMP — record the CrossCat
         // PROJECTION evidence on the u-chain. Classic derives the
@@ -14727,8 +14535,8 @@ where
         // the O(1) fast-reject mirror of classic's
         // `crosscat_lhs_stack_has_scope_edge` (deep-chain inputs must not
         // pay an O(depth) walk per InfixLoop descriptor).
-        let has_xcat_ancestor = xcat != 0
-            || run.v_parent.get(&caller.u).map(|e| e.3).unwrap_or(false);
+        let has_xcat_ancestor =
+            xcat != 0 || run.v_parent.get(&caller.u).map(|e| e.3).unwrap_or(false);
         match run.v_parent.entry(v) {
             std::collections::hash_map::Entry::Vacant(e) => {
                 e.insert((caller_sym_now, caller.u, inherited_depth, has_xcat_ancestor));
@@ -14739,7 +14547,10 @@ where
                 }
             },
         }
-        let ctx = CgllPureCallerCtx { caller_sym: caller_sym_now, caller_class: caller.frame_class };
+        let ctx = CgllPureCallerCtx {
+            caller_sym: caller_sym_now,
+            caller_class: caller.frame_class,
+        };
         if let Some(prev) = run.edge_ctx.insert((v, caller.u, caller.w), ctx) {
             if prev != ctx {
                 run.stats.ctx_conflicts += 1;
@@ -14782,10 +14593,9 @@ where
             if rep.operand_w != crate::sppf::SPPF_ID_NONE
                 && rep.result_w != crate::sppf::SPPF_ID_NONE
             {
-                if let (Some(w_hi_key), Some(z_lo)) = (
-                    self.cgll_hi_key(rep.operand_w),
-                    self.sppf.span_lo(rep.result_w),
-                ) {
+                if let (Some(w_hi_key), Some(z_lo)) =
+                    (self.cgll_hi_key(rep.operand_w), self.sppf.span_lo(rep.result_w))
+                {
                     // ORDER-KEY space (lattice node ids are non-monotonic
                     // along a path — see `position_order_key` /
                     // `cgll_hi_key`).
@@ -14867,7 +14677,9 @@ where
                         W::one_ref(),
                     )
                 };
-                let z_e = self.sppf.intern_symbol(cat | CGLL_BIN_TAG, lo, rep.at_pos as u32);
+                let z_e = self
+                    .sppf
+                    .intern_symbol(cat | CGLL_BIN_TAG, lo, rep.at_pos as u32);
                 let children = if joined == crate::sppf::SPPF_ID_NONE {
                     Vec::new()
                 } else {
@@ -15147,8 +14959,7 @@ where
         );
         let w_c = self.cgll_pure_carry_scan_weight(run, d, d.w, pos_after, br_weight);
         // POSITION-SALTED (see `cgll_pure_end_binder_scope`).
-        let slot =
-            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1);
+        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1);
         let w_m = self.cgll_pure_fold(slot, w_c, marker, pos_after, W::one_ref());
         let w = if end_inline {
             let d_m = CgllPureDescriptor { w: w_m, ..d.clone() };
@@ -15271,10 +15082,8 @@ where
                 // pop; keeps sequential scopes in one frame disjoint).
                 let mut ns: Vec<String> = Vec::new();
                 for id in first {
-                    if matches!(
-                        self.sppf.node(id),
-                        Some(crate::sppf::SppfNode::BinderScope { .. })
-                    ) {
+                    if matches!(self.sppf.node(id), Some(crate::sppf::SppfNode::BinderScope { .. }))
+                    {
                         ns.clear();
                     } else if let Some(n) = self.cgll_pure_binder_name_of(id) {
                         ns.push(n);
@@ -15295,8 +15104,7 @@ where
         // GLL gives every fold a distinct advanced slot; salting by the
         // fold position restores that while preserving cross-lineage
         // sharing (same annotation at the same position ⇒ same identity).
-        let slot =
-            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((close_pos as u32) << 1);
+        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((close_pos as u32) << 1);
         self.cgll_pure_fold(slot, d.w, sid, close_pos, W::one_ref())
     }
 
@@ -15339,13 +15147,15 @@ where
                 text.clone(),
             )),
             BuilderDelta::ApplyRecoverySequence {
-                actions, target_pos, total_cost_tropical, ..
+                actions,
+                target_pos,
+                total_cost_tropical,
+                ..
             } if !family_b_pop
                 && actions.iter().all(|a| {
                     matches!(
                         a,
-                        ResolvedRepairAction::SkipToSync { .. }
-                            | ResolvedRepairAction::DeleteToken
+                        ResolvedRepairAction::SkipToSync { .. } | ResolvedRepairAction::DeleteToken
                     )
                 }) =>
             {
@@ -15360,16 +15170,14 @@ where
             // Task #10 item 4: direct adjacent transposition — the former
             // amendment-8 named drop, now lowered as a 2-token virtual
             // chain at reseed.
-            BuilderDelta::SwapTokens { pos_a, pos_b, cost_tropical } if !family_b_pop => {
-                Some((
-                    CgllRepairKind::SwapAdjacent {
-                        first_pos: *pos_a,
-                        second_pos: *pos_b,
-                        cost: *cost_tropical,
-                    },
-                    format!("swap{pos_a}<>{pos_b}"),
-                ))
-            },
+            BuilderDelta::SwapTokens { pos_a, pos_b, cost_tropical } if !family_b_pop => Some((
+                CgllRepairKind::SwapAdjacent {
+                    first_pos: *pos_a,
+                    second_pos: *pos_b,
+                    cost: *cost_tropical,
+                },
+                format!("swap{pos_a}<>{pos_b}"),
+            )),
             // Task #10 item 4: token-MUTATING ApplyRecoverySequence (at
             // least one Insert/Substitute/Swap member — everything the
             // all-pos-only arm above did not claim) — the former
@@ -15465,7 +15273,14 @@ where
         real_tokens: &dyn WpdaTokenSource,
         virtuals: &mut Vec<CgllRepairVirtual>,
     ) {
-        let CgllParkedRepair { d, kind, br_weight, br_state, br_symbol, at_pos } = parked;
+        let CgllParkedRepair {
+            d,
+            kind,
+            br_weight,
+            br_state,
+            br_symbol,
+            at_pos,
+        } = parked;
         let tag = match &kind {
             CgllRepairKind::PopInsert { .. } | CgllRepairKind::VirtualInsert { .. } => "⟂ins",
             CgllRepairKind::VirtualSubstitute { .. } => "⟂sub",
@@ -15563,9 +15378,8 @@ where
         }
         // Amendment 6: annotation-slot salt bit 28 (29 = empty-close,
         // 30 = WRAP, 31 = BIN), position-salted like every marker fold.
-        let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
-            ^ ((at_pos as u32) << 1)
-            ^ 0x1000_0000;
+        let slot =
+            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((at_pos as u32) << 1) ^ 0x1000_0000;
         let family_b = matches!(kind, CgllRepairKind::PopInsert { .. });
         // Family B folds the marker WEIGHT-ONE: its spine packing is
         // consumed by the collection close (flats → CollectionId) — the
@@ -15573,7 +15387,11 @@ where
         // charge), surviving into the root DAG for K-B. Families A/PosOnly
         // fold on a RULE-side spine that reaches the root directly — the
         // branch weight rides the marker packing verbatim (amendment 5).
-        let marker_weight = if family_b { W::one_ref() } else { br_weight.clone() };
+        let marker_weight = if family_b {
+            W::one_ref()
+        } else {
+            br_weight.clone()
+        };
         let w = self.cgll_pure_fold(slot, d.w, marker, at_pos, marker_weight);
         run.stats.repair_reseeded += 1;
         match kind {
@@ -15653,8 +15471,9 @@ where
                     (second_kind, second_text, first_pos),
                     (first_kind, first_text, second_pos),
                 ];
-                let resume_real =
-                    real_tokens.next_pos(second_pos, 0).unwrap_or(second_pos + 1);
+                let resume_real = real_tokens
+                    .next_pos(second_pos, 0)
+                    .unwrap_or(second_pos + 1);
                 let vp0 = self.cgll_pure_lower_repair_chain(served, resume_real, virtuals);
                 let state = Self::cgll_pure_repair_state_at(&br_state, vp0);
                 run.worklist.push_back(CgllPureDescriptor {
@@ -15770,7 +15589,11 @@ where
         let chain_len = served.len();
         virtuals.reserve(chain_len);
         for (i, (kind, text, at_real)) in served.into_iter().enumerate() {
-            let resume_pos = if i + 1 == chain_len { resume_real } else { vp0 + i + 1 };
+            let resume_pos = if i + 1 == chain_len {
+                resume_real
+            } else {
+                vp0 + i + 1
+            };
             // Amendment 7 + amendment 4: each entry TIES with ITS OWN real
             // slot anchor.
             let anchor_key = self.cgll_pk(at_real as u32);
@@ -15907,9 +15730,9 @@ where
             // classic order (classic: push side effects open the scope at
             // marker push; the close's `EndBinderScope` effect closes it
             // and the outer action pops [.., CID, BinderScope, body]).
-            let is_class3 =
-                self.engine
-                    .is_class3_collection_per_slot(cat_u16, rule_u16, slot_idx);
+            let is_class3 = self
+                .engine
+                .is_class3_collection_per_slot(cat_u16, rule_u16, slot_idx);
             let mut collection_zs: Vec<crate::sppf::SppfId> = Vec::with_capacity(flats.len());
             for flat in flats {
                 let mut items: Vec<crate::sppf::SppfId> = Vec::with_capacity(flat.len());
@@ -15959,9 +15782,8 @@ where
                 if is_kv {
                     run.stats.coll_kv_deferred += 1;
                 }
-                let disposition = self.classify_collection_flat(
-                    cat_u16, rule_u16, slot_idx, is_kv, &items, seps,
-                );
+                let disposition =
+                    self.classify_collection_flat(cat_u16, rule_u16, slot_idx, is_kv, &items, seps);
                 if !disposition.is_accepted() {
                     match &disposition {
                         crate::wpda_runtime::FlatDisposition::ArityUncovered { .. } => {
@@ -15972,15 +15794,13 @@ where
                             run.stats.coll_ecat_refuted += 1;
                         },
                         crate::wpda_runtime::FlatDisposition::UnsetInKeySlot { .. }
-                        | crate::wpda_runtime::FlatDisposition::UnsetValueForbidden {
-                            ..
-                        } => {
+                        | crate::wpda_runtime::FlatDisposition::UnsetValueForbidden { .. } => {
                             run.stats.coll_coverage_refuted += 1;
                             run.stats.coll_unset_misplaced += 1;
                         },
-                        crate::wpda_runtime::FlatDisposition::Accepted => unreachable!(
-                            "guarded by `!disposition.is_accepted()`"
-                        ),
+                        crate::wpda_runtime::FlatDisposition::Accepted => {
+                            unreachable!("guarded by `!disposition.is_accepted()`")
+                        },
                     }
                     // Q5: record the refusal so `resolve` can render a real
                     // diagnostic (`expected Proc, found @a`) instead of whatever
@@ -15989,8 +15809,10 @@ where
                     self.record_collection_refusal(run, &disposition, &items, d.pos);
                     #[cfg(feature = "walker-trace")]
                     if std::env::var_os("PRATTAIL_CGLL_PURE_COLLDIAG").is_some() {
-                        let its: Vec<String> =
-                            items.iter().map(|&it| self.sppf_trace_summary(it)).collect();
+                        let its: Vec<String> = items
+                            .iter()
+                            .map(|&it| self.sppf_trace_summary(it))
+                            .collect();
                         eprintln!(
                             "CGLL-PURE-COLLREFUTE({disposition:?}) cat={cat_u16} \
                              rule={rule_u16} slot={slot_idx} pos={} seps={seps} \
@@ -16006,8 +15828,10 @@ where
                 // spans, how many seps) is readable without a debugger.
                 #[cfg(feature = "walker-trace")]
                 if std::env::var_os("PRATTAIL_CGLL_PURE_COLLDIAG").is_some() {
-                    let item_summaries: Vec<String> =
-                        items.iter().map(|&it| self.sppf_trace_summary(it)).collect();
+                    let item_summaries: Vec<String> = items
+                        .iter()
+                        .map(|&it| self.sppf_trace_summary(it))
+                        .collect();
                     eprintln!(
                         "CGLL-PURE-COLLCLOSE cat={} rule={} slot={} pos={} w={} seps={} \
                          items={:?}",
@@ -16092,15 +15916,21 @@ where
                 let cat = cat_u16 as u32;
                 let rule_id = (cat << 16) | (rule_u16 as u32);
                 let lo = self.gss.node(d.u).map(|n| n.pos).unwrap_or(0) as u32;
-                let z = self.sppf.intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32);
+                let z = self
+                    .sppf
+                    .intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32);
                 for cid in collection_zs {
-                    let pk = self.sppf.intern_packing(rule_id, vec![cid], pop_weight.clone());
+                    let pk = self
+                        .sppf
+                        .intern_packing(rule_id, vec![cid], pop_weight.clone());
                     self.sppf.link_packing_to_symbol(z, pk);
                 }
                 // Task #10 item 3: record `pop_weight` — mirrors the packing
                 // intern above (one packing per surviving flat, all charged
                 // `pop_weight`).
-                let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, pop_weight);
+                let returns = self
+                    .gss
+                    .gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, pop_weight);
                 run.stats.gll_pops += 1;
                 for ret in &returns {
                     self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
@@ -16113,7 +15943,9 @@ where
                 // noted this site has no companion intern of its own; the
                 // owning rule frame's reduce interns downstream, so the pop
                 // weight is the honest per-site charge).
-                let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, pop_weight);
+                let returns = self
+                    .gss
+                    .gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, pop_weight);
                 run.stats.gll_pops += 1;
                 for ret in &returns {
                     self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
@@ -16127,10 +15959,12 @@ where
             match d.frame_class {
                 CgllFrameClass::D1 => {
                     // R1: one shared `z` for every caller.
-                    let lo = self.cgll_pure_span_lo_content(d.w).unwrap_or_else(|| {
-                        self.gss.node(d.u).map(|n| n.pos).unwrap_or(0) as u32
-                    });
-                    let z = self.sppf.intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32);
+                    let lo = self
+                        .cgll_pure_span_lo_content(d.w)
+                        .unwrap_or_else(|| self.gss.node(d.u).map(|n| n.pos).unwrap_or(0) as u32);
+                    let z = self
+                        .sppf
+                        .intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32);
                     let children = if d.w == crate::sppf::SPPF_ID_NONE {
                         Vec::new()
                     } else {
@@ -16179,13 +16013,17 @@ where
                         "S1 H9: spine id {:#06x} reached the pure reduce packing intern",
                         rule_id & 0xFFFF,
                     );
-                    let pk = self.sppf.intern_packing(rule_id, children, pk_weight.clone());
+                    let pk = self
+                        .sppf
+                        .intern_packing(rule_id, children, pk_weight.clone());
                     self.sppf.link_packing_to_symbol(z, pk);
                     // Task #10 item 3: record the fire's OWN packing weight
                     // (incl. the K-B coercion completion charge above) — a
                     // D1 replay twin never re-interns, but recording the true
                     // charge keeps the P entry honest.
-                    let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, &pk_weight);
+                    let returns = self
+                        .gss
+                        .gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, &pk_weight);
                     run.stats.gll_pops += 1;
                     for ret in &returns {
                         self.cgll_pure_resume_fold(run, d.u, ret, z, new_state);
@@ -16220,9 +16058,7 @@ where
                         let caller_is_marker = run
                             .edge_ctx
                             .get(&(d.u, ret.caller, ret.operand_w))
-                            .is_some_and(|c| {
-                                c.caller_sym.kind == SymbolKind::CollectionMarker
-                            });
+                            .is_some_and(|c| c.caller_sym.kind == SymbolKind::CollectionMarker);
                         let mut spine_prefix = crate::sppf::SPPF_ID_NONE;
                         let mut spine_trailers: Vec<(u32, crate::sppf::SppfId)> = Vec::new();
                         let mut refold_slot = 0u32;
@@ -16257,7 +16093,9 @@ where
                                 W::one_ref(),
                             )
                         };
-                        let z_e = self.sppf.intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32);
+                        let z_e = self
+                            .sppf
+                            .intern_symbol(cat | CGLL_BIN_TAG, lo, i_pop as u32);
                         let children = if joined == crate::sppf::SPPF_ID_NONE {
                             Vec::new()
                         } else {
@@ -16272,7 +16110,9 @@ where
                             "S1 H9: spine id {:#06x} reached the pure reduce Return-arm packing intern",
                             rule_id & 0xFFFF,
                         );
-                        let pk = self.sppf.intern_packing(rule_id, children, pop_weight.clone());
+                        let pk = self
+                            .sppf
+                            .intern_packing(rule_id, children, pop_weight.clone());
                         self.sppf.link_packing_to_symbol(z_e, pk);
                         if spine_prefix != crate::sppf::SPPF_ID_NONE {
                             // Chronological re-fold: prefix ⊕ trailers, then
@@ -16341,10 +16181,11 @@ where
             let z = d.w;
             // Task #10 item 3: `W::one_ref()` — structural passthrough pop
             // (`z := w`): no packing is interned and nothing is charged.
-            let returns = self.gss.gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, &W::one_ref());
+            let returns = self
+                .gss
+                .gll_pop(d.u, i_pop, z, CGLL_PURE_RULE_NONE, &W::one_ref());
             run.stats.gll_pops += 1;
-            let popped_is_category_entry =
-                matches!(d.cur_sym.kind, SymbolKind::CategoryEntry);
+            let popped_is_category_entry = matches!(d.cur_sym.kind, SymbolKind::CategoryEntry);
             for ret in &returns {
                 // ── Classic post-pop STATE RECOMPUTE for CategoryEntry pops
                 // (apply_pop_body ~36591-36646): the engine's
@@ -16429,7 +16270,6 @@ where
         }
     }
 
-
     /// STAGE D — forest WELL-FORMEDNESS self-check (env-gated
     /// `PRATTAIL_CGLL_PURE_WFCHECK`; diagnostic walk, no behavior change).
     /// For every BIN Symbol reachable from `root`, for every packing, for
@@ -16460,10 +16300,7 @@ where
             else {
                 continue;
             };
-            eprintln!(
-                "FDUMP sym={} tag={:#x} span=({},{})",
-                sym, non_terminal_tag, lo_pos, hi_pos
-            );
+            eprintln!("FDUMP sym={} tag={:#x} span=({},{})", sym, non_terminal_tag, lo_pos, hi_pos);
             for &p in self.sppf.packings_of(sym) {
                 if let Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) =
                     self.sppf.node(p)
@@ -16538,10 +16375,7 @@ where
     /// Flatten helper for the dump: flats of ONE packing's children.
     /// Diagnostic-only (sole caller is the gated `cgll_pure_forest_dump`).
     #[cfg(feature = "walker-trace")]
-    fn cgll_flatten_ids_all_of(
-        &self,
-        pk: crate::sppf::SppfId,
-    ) -> Vec<Vec<crate::sppf::SppfId>> {
+    fn cgll_flatten_ids_all_of(&self, pk: crate::sppf::SppfId) -> Vec<Vec<crate::sppf::SppfId>> {
         let Some(crate::sppf::SppfNode::Packing { children, .. }) = self.sppf.node(pk) else {
             return Vec::new();
         };
@@ -16579,11 +16413,9 @@ where
                 continue;
             }
             let (lo, hi) = match self.sppf.node(sym) {
-                Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, non_terminal_tag, .. })
-                    if non_terminal_tag & CGLL_BIN_TAG != 0 =>
-                {
-                    (*lo_pos, *hi_pos)
-                },
+                Some(crate::sppf::SppfNode::Symbol {
+                    lo_pos, hi_pos, non_terminal_tag, ..
+                }) if non_terminal_tag & CGLL_BIN_TAG != 0 => (*lo_pos, *hi_pos),
                 _ => continue,
             };
             symbols += 1;
@@ -16611,11 +16443,10 @@ where
                     flats_n += 1;
                     let mut cursor: Option<u32> = None;
                     for &el in &flat {
-                        let (el_lo, el_hi) =
-                            match (self.sppf.span_lo(el), self.sppf.span_hi(el)) {
-                                (Some(a), Some(b)) => (a, b),
-                                _ => continue, // span-less (CollectionId etc.)
-                            };
+                        let (el_lo, el_hi) = match (self.sppf.span_lo(el), self.sppf.span_hi(el)) {
+                            (Some(a), Some(b)) => (a, b),
+                            _ => continue, // span-less (CollectionId etc.)
+                        };
                         if el_lo == el_hi {
                             continue; // zero-width carriers
                         }
@@ -16722,10 +16553,9 @@ where
             // run (len()+1 covers the EOF node; out-of-range falls back to
             // identity in `cgll_pk`).
             if self.cgll_pure_pos_key.is_empty() {
-                self.cgll_pure_pos_key =
-                    (0..=tokens.len())
-                        .map(|p| tokens.position_order_key(p).unwrap_or(p) as u32)
-                        .collect();
+                self.cgll_pure_pos_key = (0..=tokens.len())
+                    .map(|p| tokens.position_order_key(p).unwrap_or(p) as u32)
+                    .collect();
                 self.cgll_pure_pos_is_bytes = !tokens.positions_are_linear_tokens();
             }
             // P3 Pocket-A4: the seed category IS the goal category —
@@ -16828,151 +16658,151 @@ where
         let mut repair_virtuals: Vec<CgllRepairVirtual> = Vec::new();
         let real_tokens: &dyn WpdaTokenSource = tokens;
         'rounds: loop {
-        // TASK-#16 A1 (LOAD-BEARING): invalidate the chain-peek suffix memo at
-        // the top of EVERY round — the token source below (`CgllRepairSource`) is
-        // rebuilt per round with new virtual repair positions, so a memo keyed by
-        // `pos` from a prior round would be stale. This clear precedes the round's
-        // first `peek_ternary_chain`, so the memo only ever caches results of the
-        // CURRENT round's stable source. Round 0 (the green-parse perf case)
-        // clears the already-empty entry-cleared map — O(1).
-        chain_peek_memo_clear();
-        // Amendment 4: the repair-lattice adapter — transparent forwarding
-        // until virtuals exist; rebuilt per round over the updated slice.
-        let repair_src = CgllRepairSource {
-            inner: real_tokens,
-            base: self.cgll_pure_virtual_base,
-            virtuals: &repair_virtuals,
-        };
-        let tokens: &dyn WpdaTokenSource = &repair_src;
-        while let Some(d) = run.worklist.pop_front() {
-            run.stats.processed += 1;
-            if run.stats.processed as usize > budget {
-                budget_exceeded = true;
-                break;
-            }
-            // ── P3.a KV-PHASE PATCH (pure form of `set_cursor_inner_state`
-            // @~33132). The engine's tables emit `CollectionLoop{kv_phase:0}`
-            // always; classic patches the phase from the accumulator-length
-            // parity at its single state-transition choke point. Pure analog:
-            // the marker frame's OWN spine (`d.w`) IS the accumulator — patch
-            // the phase from its non-sep item-count parity (odd ⇒ a key just
-            // folded ⇒ expect the kv separator). Per-frame spine parity also
-            // sidesteps classic's nested-map acc-id LIFO recovery (#307
-            // ROOT-F) — every marker frame carries its own spine. Applied
-            // BEFORE the dedup key so U-identity sees the resolved phase (a
-            // pure function of (state, w) — both are key fields).
-            let mut d = d;
-            if let WpdaState::CollectionLoop {
-                result_src_idx,
-                rule_idx,
-                slot_idx,
-                kv_phase: 0,
-                ..
-            } = &d.state
-            {
-                if self
-                    .engine
-                    .kv_separator_for_collection(*result_src_idx, *rule_idx, *slot_idx)
-                    .is_some()
+            // TASK-#16 A1 (LOAD-BEARING): invalidate the chain-peek suffix memo at
+            // the top of EVERY round — the token source below (`CgllRepairSource`) is
+            // rebuilt per round with new virtual repair positions, so a memo keyed by
+            // `pos` from a prior round would be stale. This clear precedes the round's
+            // first `peek_ternary_chain`, so the memo only ever caches results of the
+            // CURRENT round's stable source. Round 0 (the green-parse perf case)
+            // clears the already-empty entry-cleared map — O(1).
+            chain_peek_memo_clear();
+            // Amendment 4: the repair-lattice adapter — transparent forwarding
+            // until virtuals exist; rebuilt per round over the updated slice.
+            let repair_src = CgllRepairSource {
+                inner: real_tokens,
+                base: self.cgll_pure_virtual_base,
+                virtuals: &repair_virtuals,
+            };
+            let tokens: &dyn WpdaTokenSource = &repair_src;
+            while let Some(d) = run.worklist.pop_front() {
+                run.stats.processed += 1;
+                if run.stats.processed as usize > budget {
+                    budget_exceeded = true;
+                    break;
+                }
+                // ── P3.a KV-PHASE PATCH (pure form of `set_cursor_inner_state`
+                // @~33132). The engine's tables emit `CollectionLoop{kv_phase:0}`
+                // always; classic patches the phase from the accumulator-length
+                // parity at its single state-transition choke point. Pure analog:
+                // the marker frame's OWN spine (`d.w`) IS the accumulator — patch
+                // the phase from its non-sep item-count parity (odd ⇒ a key just
+                // folded ⇒ expect the kv separator). Per-frame spine parity also
+                // sidesteps classic's nested-map acc-id LIFO recovery (#307
+                // ROOT-F) — every marker frame carries its own spine. Applied
+                // BEFORE the dedup key so U-identity sees the resolved phase (a
+                // pure function of (state, w) — both are key fields).
+                let mut d = d;
+                if let WpdaState::CollectionLoop {
+                    result_src_idx,
+                    rule_idx,
+                    slot_idx,
+                    kv_phase: 0,
+                    ..
+                } = &d.state
                 {
-                    let (item_count, diverged) = self.cgll_pure_spine_item_parity(d.w);
-                    if diverged {
-                        run.stats.coll_kv_parity_divergence += 1;
-                    }
-                    if item_count % 2 == 1 {
-                        if let WpdaState::CollectionLoop { kv_phase, .. } = &mut d.state {
-                            *kv_phase = 1;
+                    if self
+                        .engine
+                        .kv_separator_for_collection(*result_src_idx, *rule_idx, *slot_idx)
+                        .is_some()
+                    {
+                        let (item_count, diverged) = self.cgll_pure_spine_item_parity(d.w);
+                        if diverged {
+                            run.stats.coll_kv_parity_divergence += 1;
+                        }
+                        if item_count % 2 == 1 {
+                            if let WpdaState::CollectionLoop { kv_phase, .. } = &mut d.state {
+                                *kv_phase = 1;
+                            }
                         }
                     }
                 }
-            }
-            // L-finiteness sentinel + REPAIR (P3 Pocket-C3, 2026-07-11):
-            // `PrefixDispatch.pos ≡ i` (plan §1). The engine tables emit
-            // `PrefixDispatch{pos}` values that are STALE on consuming fork
-            // branches (classic treats cursor.pos as authoritative and
-            // ignores state.pos; receipt: class3 nonempty bootstrap kind-16
-            // branch — st=PrefixDispatch{10} enqueued at pos 11; the stale
-            // state re-dispatched token 10 and U-dedup starved the lineage).
-            // The descriptor's own `pos` is the pure cursor.pos analog —
-            // patch the state to it BEFORE the dedup key (like the kv-phase
-            // patch) so the invariant holds BY CONSTRUCTION; counted +
-            // capped-diagnosed for observability.
-            if let WpdaState::PrefixDispatch { pos, .. } = &d.state {
-                if *pos != d.pos {
-                    run.stats.prefix_pos_desyncs += 1;
-                    if dump_stats && run.stats.prefix_pos_desyncs <= 8 {
-                        eprintln!(
+                // L-finiteness sentinel + REPAIR (P3 Pocket-C3, 2026-07-11):
+                // `PrefixDispatch.pos ≡ i` (plan §1). The engine tables emit
+                // `PrefixDispatch{pos}` values that are STALE on consuming fork
+                // branches (classic treats cursor.pos as authoritative and
+                // ignores state.pos; receipt: class3 nonempty bootstrap kind-16
+                // branch — st=PrefixDispatch{10} enqueued at pos 11; the stale
+                // state re-dispatched token 10 and U-dedup starved the lineage).
+                // The descriptor's own `pos` is the pure cursor.pos analog —
+                // patch the state to it BEFORE the dedup key (like the kv-phase
+                // patch) so the invariant holds BY CONSTRUCTION; counted +
+                // capped-diagnosed for observability.
+                if let WpdaState::PrefixDispatch { pos, .. } = &d.state {
+                    if *pos != d.pos {
+                        run.stats.prefix_pos_desyncs += 1;
+                        if dump_stats && run.stats.prefix_pos_desyncs <= 8 {
+                            eprintln!(
                             "CGLL-PURE-DESYNC state={:?} cur_sym={:?} class={:?} u={} pos={} w={}",
                             d.state, d.cur_sym, d.frame_class, d.u, d.pos, d.w
                         );
-                    }
-                    if let WpdaState::PrefixDispatch { pos, .. } = &mut d.state {
-                        *pos = d.pos;
-                    }
-                }
-            }
-            let d = d;
-            // U: global add-once by the pure key (ALL descriptor fields).
-            if !seen.insert(Self::cgll_pure_key(&d)) {
-                continue;
-            }
-            run.stats.u_count += 1;
-            *u_by_pos.entry(d.pos.min(max_pos)).or_insert(0) += 1;
-            if dump_stats {
-                // Slot-collision side-map (31-bit hash risk carried by gate).
-                let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
-                let disc = Self::cgll_pure_state_slot_ident(&d.state).0;
-                match run.slot_seen.get(&slot) {
-                    Some(&(sym, prev_disc)) => {
-                        if sym != d.cur_sym || prev_disc != disc {
-                            run.stats.slot_collisions += 1;
                         }
-                    },
-                    None => {
-                        run.slot_seen.insert(slot, (d.cur_sym, disc));
-                    },
+                        if let WpdaState::PrefixDispatch { pos, .. } = &mut d.state {
+                            *pos = d.pos;
+                        }
+                    }
                 }
-            }
-            if matches!(d.state, WpdaState::Accepted | WpdaState::Error { .. }) {
-                continue; // terminal states never step
-            }
-            // ── Transition: the SAME generated engine tables, fed a
-            // SYNTHESIZED frontier node (AV7: no emitter reads
-            // `frontier_top.pos`; the engine reads only `symbol.*`). The
-            // node position is `node(u).pos` — purely diagnostic.
-            let synthesized = crate::gss::WpdaGssNode {
-                pos: self.gss.node(d.u).map(|n| n.pos).unwrap_or(0),
-                symbol: d.cur_sym,
-            };
-            // P3.f: real structural-delimiter FrameCtx (the B0 EMPTY was the
-            // documented interim — pathmap `{| … |}` never engaged under it:
-            // the engine's open/close membership checks need the innermost
-            // enclosing collection's delimiters, receipt `{|1:2|}` accepts=0).
-            let frame_ctx = self.cgll_pure_frame_ctx(&run.v_parent, &d);
-            // ── ARM G hook (2026-07-12): pre-step effective-state correction —
-            // classic's exact alias-when-None pattern at its tomita apply site.
-            // Strictly AFTER the U add-once (the U keyspace is untouched; the
-            // descriptor keeps its stale floor exactly as classic's arcs do —
-            // successors carry engine-computed states); deliberately NOT joined
-            // to the two sanctioned pre-key patches (kv-phase, PrefixDispatch
-            // desync) — step-argument-only, per the standing do-not-resurrect
-            // entry against pre-key `d.state` mutation.
-            let mut __grp_excluded = false;
-            let __grp_reset =
-                self.cgll_pure_group_reentry_floor_reset(&d, tokens, &mut __grp_excluded);
-            if __grp_reset.is_some() {
-                run.stats.group_floor_resets += 1;
-            }
-            if __grp_excluded {
-                run.stats.group_floor_reset_excluded += 1;
-            }
-            // ARM-G OVER-FIRE PROBE (env-gated, measurement-only): per-fire /
-            // per-exclusion descriptor + slot inventory.
-            #[cfg(feature = "walker-trace")]
-            if (__grp_reset.is_some() || __grp_excluded)
-                && std::env::var_os("PRATTAIL_GRP_FIRE_DIAG").is_some()
-            {
-                eprintln!(
+                let d = d;
+                // U: global add-once by the pure key (ALL descriptor fields).
+                if !seen.insert(Self::cgll_pure_key(&d)) {
+                    continue;
+                }
+                run.stats.u_count += 1;
+                *u_by_pos.entry(d.pos.min(max_pos)).or_insert(0) += 1;
+                if dump_stats {
+                    // Slot-collision side-map (31-bit hash risk carried by gate).
+                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state);
+                    let disc = Self::cgll_pure_state_slot_ident(&d.state).0;
+                    match run.slot_seen.get(&slot) {
+                        Some(&(sym, prev_disc)) => {
+                            if sym != d.cur_sym || prev_disc != disc {
+                                run.stats.slot_collisions += 1;
+                            }
+                        },
+                        None => {
+                            run.slot_seen.insert(slot, (d.cur_sym, disc));
+                        },
+                    }
+                }
+                if matches!(d.state, WpdaState::Accepted | WpdaState::Error { .. }) {
+                    continue; // terminal states never step
+                }
+                // ── Transition: the SAME generated engine tables, fed a
+                // SYNTHESIZED frontier node (AV7: no emitter reads
+                // `frontier_top.pos`; the engine reads only `symbol.*`). The
+                // node position is `node(u).pos` — purely diagnostic.
+                let synthesized = crate::gss::WpdaGssNode {
+                    pos: self.gss.node(d.u).map(|n| n.pos).unwrap_or(0),
+                    symbol: d.cur_sym,
+                };
+                // P3.f: real structural-delimiter FrameCtx (the B0 EMPTY was the
+                // documented interim — pathmap `{| … |}` never engaged under it:
+                // the engine's open/close membership checks need the innermost
+                // enclosing collection's delimiters, receipt `{|1:2|}` accepts=0).
+                let frame_ctx = self.cgll_pure_frame_ctx(&run.v_parent, &d);
+                // ── ARM G hook (2026-07-12): pre-step effective-state correction —
+                // classic's exact alias-when-None pattern at its tomita apply site.
+                // Strictly AFTER the U add-once (the U keyspace is untouched; the
+                // descriptor keeps its stale floor exactly as classic's arcs do —
+                // successors carry engine-computed states); deliberately NOT joined
+                // to the two sanctioned pre-key patches (kv-phase, PrefixDispatch
+                // desync) — step-argument-only, per the standing do-not-resurrect
+                // entry against pre-key `d.state` mutation.
+                let mut __grp_excluded = false;
+                let __grp_reset =
+                    self.cgll_pure_group_reentry_floor_reset(&d, tokens, &mut __grp_excluded);
+                if __grp_reset.is_some() {
+                    run.stats.group_floor_resets += 1;
+                }
+                if __grp_excluded {
+                    run.stats.group_floor_reset_excluded += 1;
+                }
+                // ARM-G OVER-FIRE PROBE (env-gated, measurement-only): per-fire /
+                // per-exclusion descriptor + slot inventory.
+                #[cfg(feature = "walker-trace")]
+                if (__grp_reset.is_some() || __grp_excluded)
+                    && std::env::var_os("PRATTAIL_GRP_FIRE_DIAG").is_some()
+                {
+                    eprintln!(
                     "GRP-FIRE kind={} pos={} u={} w={} wcat={:?} state={:?} slot{{pushed_cat={} kind_class={} outer_bp={} xcat={}}} tok={:?}",
                     if __grp_reset.is_some() { "FIRE" } else { "EXCL" },
                     d.pos,
@@ -16986,217 +16816,230 @@ where
                     d.ret_slot.xcat,
                     tokens.peek_text(d.pos)
                 );
-            }
-            let action = self.engine.step(
-                __grp_reset.as_ref().unwrap_or(&d.state),
-                &self.gss,
-                Some(&synthesized),
-                d.pos,
-                tokens,
-                frame_ctx,
-            );
-            if run.trace_budget > 0 {
-                run.trace_budget -= 1;
-                let act = match &action {
-                    WpdaStepAction::Advance(s) => format!("Advance({s:?})"),
-                    WpdaStepAction::AdvanceWithEffect { new_state, .. } => {
-                        format!("AdvanceWithEffect({new_state:?})")
-                    },
-                    WpdaStepAction::Push { symbol, new_state, .. } => {
-                        format!("Push(sym={symbol:?}, st={new_state:?})")
-                    },
-                    WpdaStepAction::PushWithEdgeKind { symbol, new_state, edge_kind, .. } => {
-                        format!("PushEK(sym={symbol:?}, st={new_state:?}, ek={edge_kind:?})")
-                    },
-                    WpdaStepAction::Pop { new_state, .. } => format!("Pop(st={new_state:?})"),
-                    WpdaStepAction::Replace { symbol, new_state, .. } => {
-                        format!("Replace(sym={symbol:?}, st={new_state:?})")
-                    },
-                    WpdaStepAction::Fork { branches, consume_trigger } => {
-                        let kinds: Vec<String> = branches
-                            .iter()
-                            .map(|b| {
-                                format!(
-                                    "{:?}@sym={:?}/st={:?}",
-                                    std::mem::discriminant(&b.action_kind),
-                                    b.symbol,
-                                    b.new_state
-                                )
-                            })
-                            .collect();
-                        format!("Fork(ct={consume_trigger}, n={}, {:?})", branches.len(), kinds)
-                    },
-                    WpdaStepAction::ConsumeAndPush { symbol, new_state, trigger_mode, .. } => {
-                        format!(
+                }
+                let action = self.engine.step(
+                    __grp_reset.as_ref().unwrap_or(&d.state),
+                    &self.gss,
+                    Some(&synthesized),
+                    d.pos,
+                    tokens,
+                    frame_ctx,
+                );
+                if run.trace_budget > 0 {
+                    run.trace_budget -= 1;
+                    let act = match &action {
+                        WpdaStepAction::Advance(s) => format!("Advance({s:?})"),
+                        WpdaStepAction::AdvanceWithEffect { new_state, .. } => {
+                            format!("AdvanceWithEffect({new_state:?})")
+                        },
+                        WpdaStepAction::Push { symbol, new_state, .. } => {
+                            format!("Push(sym={symbol:?}, st={new_state:?})")
+                        },
+                        WpdaStepAction::PushWithEdgeKind {
+                            symbol, new_state, edge_kind, ..
+                        } => {
+                            format!("PushEK(sym={symbol:?}, st={new_state:?}, ek={edge_kind:?})")
+                        },
+                        WpdaStepAction::Pop { new_state, .. } => format!("Pop(st={new_state:?})"),
+                        WpdaStepAction::Replace { symbol, new_state, .. } => {
+                            format!("Replace(sym={symbol:?}, st={new_state:?})")
+                        },
+                        WpdaStepAction::Fork { branches, consume_trigger } => {
+                            let kinds: Vec<String> = branches
+                                .iter()
+                                .map(|b| {
+                                    format!(
+                                        "{:?}@sym={:?}/st={:?}",
+                                        std::mem::discriminant(&b.action_kind),
+                                        b.symbol,
+                                        b.new_state
+                                    )
+                                })
+                                .collect();
+                            format!("Fork(ct={consume_trigger}, n={}, {:?})", branches.len(), kinds)
+                        },
+                        WpdaStepAction::ConsumeAndPush {
+                            symbol, new_state, trigger_mode, ..
+                        } => {
+                            format!(
                             "ConsumeAndPush(sym={symbol:?}, st={new_state:?}, tm={trigger_mode:?})"
                         )
-                    },
-                    WpdaStepAction::IterativeChainAbsorb { symbol, new_state, .. } => {
-                        format!("IterAbsorb(sym={symbol:?}, st={new_state:?})")
-                    },
-                    WpdaStepAction::ConsumeAndPop { new_state, .. } => {
-                        format!("ConsumeAndPop(st={new_state:?})")
-                    },
-                    WpdaStepAction::ConsumeAtAndPop { new_state, next_pos, .. } => {
-                        format!("ConsumeAtAndPop(st={new_state:?}, np={next_pos})")
-                    },
-                    WpdaStepAction::Consume { new_state, .. } => {
-                        format!("Consume(st={new_state:?})")
-                    },
-                    WpdaStepAction::ConsumeIdentAndReplace { symbol, new_state, .. } => {
-                        format!("ConsumeIdentAndReplace(sym={symbol:?}, st={new_state:?})")
-                    },
-                    WpdaStepAction::ConsumeAndReplace { symbol, new_state, .. } => {
-                        format!("ConsumeAndReplace(sym={symbol:?}, st={new_state:?})")
-                    },
-                    WpdaStepAction::ConsumeAtAndReplace { symbol, new_state, next_pos, .. } => {
-                        format!(
+                        },
+                        WpdaStepAction::IterativeChainAbsorb { symbol, new_state, .. } => {
+                            format!("IterAbsorb(sym={symbol:?}, st={new_state:?})")
+                        },
+                        WpdaStepAction::ConsumeAndPop { new_state, .. } => {
+                            format!("ConsumeAndPop(st={new_state:?})")
+                        },
+                        WpdaStepAction::ConsumeAtAndPop { new_state, next_pos, .. } => {
+                            format!("ConsumeAtAndPop(st={new_state:?}, np={next_pos})")
+                        },
+                        WpdaStepAction::Consume { new_state, .. } => {
+                            format!("Consume(st={new_state:?})")
+                        },
+                        WpdaStepAction::ConsumeIdentAndReplace { symbol, new_state, .. } => {
+                            format!("ConsumeIdentAndReplace(sym={symbol:?}, st={new_state:?})")
+                        },
+                        WpdaStepAction::ConsumeAndReplace { symbol, new_state, .. } => {
+                            format!("ConsumeAndReplace(sym={symbol:?}, st={new_state:?})")
+                        },
+                        WpdaStepAction::ConsumeAtAndReplace {
+                            symbol, new_state, next_pos, ..
+                        } => {
+                            format!(
                             "ConsumeAtAndReplace(sym={symbol:?}, st={new_state:?}, np={next_pos})"
                         )
-                    },
-                    WpdaStepAction::ReplaceAndPush {
-                        replace_symbol, push_symbol, new_state, ..
-                    } => format!(
-                        "ReplaceAndPush(rep={replace_symbol:?}, push={push_symbol:?}, \
+                        },
+                        WpdaStepAction::ReplaceAndPush {
+                            replace_symbol,
+                            push_symbol,
+                            new_state,
+                            ..
+                        } => format!(
+                            "ReplaceAndPush(rep={replace_symbol:?}, push={push_symbol:?}, \
                          st={new_state:?})"
-                    ),
-                    WpdaStepAction::ParsePredicate { .. } => "ParsePredicate".to_string(),
-                    WpdaStepAction::OptGroupAbsent { .. } => "OptGroupAbsent".to_string(),
-                    WpdaStepAction::OptGroupFinalize { .. } => "OptGroupFinalize".to_string(),
-                    WpdaStepAction::Accept => "Accept".to_string(),
-                    WpdaStepAction::Error(m) => format!("Error({m})"),
-                    WpdaStepAction::Idle => "Idle".to_string(),
-                };
-                eprintln!(
-                    "CGLL-PURE-TR pos={} u={} w={} class={:?} state={:?} sym={:?} -> {}",
-                    d.pos, d.u, d.w, d.frame_class, d.state, d.cur_sym, act
-                );
-            }
-            // ── R-D v3 first-fan exact-window (plan §5.3 + F7/F9/N2; the
-            // hoist comment above carries the full derivation). All
-            // quantities from len/stat deltas around the single dispatch
-            // call; `forked` is the ARM detector (`stats.fork_dispatches`
-            // first line of the Fork arm — guard-synthesized Forks counted,
-            // the guard's Fork→Advance rewrite is not).
-            let len_before = if rd_track { run.worklist.len() } else { 0 };
-            let forks_before = if rd_track { run.stats.fork_dispatches } else { 0 };
-            let replays_before = if rd_track { run.stats.replays } else { 0 };
-            let twins_before = if rd_track { run.stats.rc_operand_yields } else { 0 };
-            self.cgll_pure_dispatch_action(&mut run, &d, action, tokens);
-            run.stats.peak_r = run.stats.peak_r.max(run.worklist.len());
-            if rd_track {
-                let len_after = run.worklist.len();
-                let delta = len_after - len_before;
-                let twins = (run.stats.rc_operand_yields - twins_before) as usize;
-                let echo = (run.stats.replays - replays_before) as usize;
-                let forked = run.stats.fork_dispatches > forks_before;
-                if forked {
-                    run.stats.max_fork_width =
-                        run.stats.max_fork_width.max(delta.saturating_sub(echo));
-                }
-                if fan_window_open {
-                    if !forked && delta.saturating_sub(twins) >= 2 {
-                        // F2: pre-fan re-expansion — window-theorem
-                        // precondition monitor. Observability ONLY; the
-                        // window NEVER closes on this.
-                        run.stats.prefan_reexpansions += 1;
-                    }
-                    // Event width (AM-1/F7): forks = delta minus the replay
-                    // echo (twin + injection stay INSIDE the fork delta —
-                    // classic's waiter/InfixLoop-injection widen the same
-                    // ForkInto; adding twins here would double-count). A
-                    // non-fork twin event = classic's fork-at-that-site:
-                    // twins + the forker's own continuation if it survived
-                    // (F7's form — never hard-code survival).
-                    let event_width = if forked {
-                        delta.saturating_sub(echo)
-                    } else if twins > 0 {
-                        twins + if delta > twins { 1 } else { 0 }
-                    } else {
-                        0
+                        ),
+                        WpdaStepAction::ParsePredicate { .. } => "ParsePredicate".to_string(),
+                        WpdaStepAction::OptGroupAbsent { .. } => "OptGroupAbsent".to_string(),
+                        WpdaStepAction::OptGroupFinalize { .. } => "OptGroupFinalize".to_string(),
+                        WpdaStepAction::Accept => "Accept".to_string(),
+                        WpdaStepAction::Error(m) => format!("Error({m})"),
+                        WpdaStepAction::Idle => "Idle".to_string(),
                     };
-                    if event_width >= 1 {
-                        if let crate::wpda_runtime::CursorBoundingMode::BeamSize(n)
-                        | crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(n) = bound
-                        {
-                            if event_width > n {
-                                // Report position (A2): furthest REAL
-                                // pending position in order-key space
-                                // (mirror of the trailing/reject
-                                // reporters); repair virtuals filtered
-                                // (`p < cgll_pure_virtual_base`), orphan
-                                // soft-fail DAG nodes clamped to eof_node;
-                                // the `d.pos` fallback clamped too.
-                                let eof = tokens.eof_node();
-                                let position = run
-                                    .worklist
-                                    .iter()
-                                    .map(|x| x.pos)
-                                    .filter(|&p| {
-                                        p < self.cgll_pure_virtual_base && p <= eof
-                                    })
-                                    .max_by_key(|&p| {
-                                        tokens.position_order_key(p).unwrap_or(p)
-                                    })
-                                    .unwrap_or_else(|| d.pos.min(eof))
-                                    .min(eof);
-                                run.stats.ambiguity_overflows += 1;
-                                // ── R-D A1 (task #18, 2026-07-15): NEUTRALIZED
-                                // fan-window early-abort. AmbiguityBudget/BeamSize
-                                // enforcement moved WHOLE-RUN to
-                                // `cgll_resolve_binarized`, where it counts the
-                                // DISTINCT REALIZED TERMS the goal admits
-                                // (`|R|_distinct > N`) — the same semantic-key
-                                // surface the `_all` facade returns. The former
-                                // abort set an Error SENTINEL that
-                                // `resolve_at_end_of_input` decodes BEFORE the pure
-                                // dispatch, short-circuiting the new resolve check;
-                                // so a bounded parse must NOT abort mid-parse here —
-                                // it runs to completion and fires (or not) at
-                                // resolve. Detection is retained as a DIAGNOSTIC
-                                // (`ambiguity_overflows` above + `post_window_*`
-                                // below); ONLY the enforcement ACTION is removed.
-                                // This is a surgical change: `rd_track` (shared with
-                                // `dump_stats`/`rd_u1_diag`) and every stat/diag
-                                // capture stay byte-identical, and UNBOUNDED parses
-                                // never enter this `fan_window_open` block at all.
-                                // Former abort:
-                                //     ambiguity_overflow = Some((n, event_width, position));
-                                //     break;
-                                let _ = position; // diagnostic-only now; drives no abort
+                    eprintln!(
+                        "CGLL-PURE-TR pos={} u={} w={} class={:?} state={:?} sym={:?} -> {}",
+                        d.pos, d.u, d.w, d.frame_class, d.state, d.cur_sym, act
+                    );
+                }
+                // ── R-D v3 first-fan exact-window (plan §5.3 + F7/F9/N2; the
+                // hoist comment above carries the full derivation). All
+                // quantities from len/stat deltas around the single dispatch
+                // call; `forked` is the ARM detector (`stats.fork_dispatches`
+                // first line of the Fork arm — guard-synthesized Forks counted,
+                // the guard's Fork→Advance rewrite is not).
+                let len_before = if rd_track { run.worklist.len() } else { 0 };
+                let forks_before = if rd_track {
+                    run.stats.fork_dispatches
+                } else {
+                    0
+                };
+                let replays_before = if rd_track { run.stats.replays } else { 0 };
+                let twins_before = if rd_track {
+                    run.stats.rc_operand_yields
+                } else {
+                    0
+                };
+                self.cgll_pure_dispatch_action(&mut run, &d, action, tokens);
+                run.stats.peak_r = run.stats.peak_r.max(run.worklist.len());
+                if rd_track {
+                    let len_after = run.worklist.len();
+                    let delta = len_after - len_before;
+                    let twins = (run.stats.rc_operand_yields - twins_before) as usize;
+                    let echo = (run.stats.replays - replays_before) as usize;
+                    let forked = run.stats.fork_dispatches > forks_before;
+                    if forked {
+                        run.stats.max_fork_width =
+                            run.stats.max_fork_width.max(delta.saturating_sub(echo));
+                    }
+                    if fan_window_open {
+                        if !forked && delta.saturating_sub(twins) >= 2 {
+                            // F2: pre-fan re-expansion — window-theorem
+                            // precondition monitor. Observability ONLY; the
+                            // window NEVER closes on this.
+                            run.stats.prefan_reexpansions += 1;
+                        }
+                        // Event width (AM-1/F7): forks = delta minus the replay
+                        // echo (twin + injection stay INSIDE the fork delta —
+                        // classic's waiter/InfixLoop-injection widen the same
+                        // ForkInto; adding twins here would double-count). A
+                        // non-fork twin event = classic's fork-at-that-site:
+                        // twins + the forker's own continuation if it survived
+                        // (F7's form — never hard-code survival).
+                        let event_width = if forked {
+                            delta.saturating_sub(echo)
+                        } else if twins > 0 {
+                            twins + if delta > twins { 1 } else { 0 }
+                        } else {
+                            0
+                        };
+                        if event_width >= 1 {
+                            if let crate::wpda_runtime::CursorBoundingMode::BeamSize(n)
+                            | crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(n) = bound
+                            {
+                                if event_width > n {
+                                    // Report position (A2): furthest REAL
+                                    // pending position in order-key space
+                                    // (mirror of the trailing/reject
+                                    // reporters); repair virtuals filtered
+                                    // (`p < cgll_pure_virtual_base`), orphan
+                                    // soft-fail DAG nodes clamped to eof_node;
+                                    // the `d.pos` fallback clamped too.
+                                    let eof = tokens.eof_node();
+                                    let position = run
+                                        .worklist
+                                        .iter()
+                                        .map(|x| x.pos)
+                                        .filter(|&p| p < self.cgll_pure_virtual_base && p <= eof)
+                                        .max_by_key(|&p| tokens.position_order_key(p).unwrap_or(p))
+                                        .unwrap_or_else(|| d.pos.min(eof))
+                                        .min(eof);
+                                    run.stats.ambiguity_overflows += 1;
+                                    // ── R-D A1 (task #18, 2026-07-15): NEUTRALIZED
+                                    // fan-window early-abort. AmbiguityBudget/BeamSize
+                                    // enforcement moved WHOLE-RUN to
+                                    // `cgll_resolve_binarized`, where it counts the
+                                    // DISTINCT REALIZED TERMS the goal admits
+                                    // (`|R|_distinct > N`) — the same semantic-key
+                                    // surface the `_all` facade returns. The former
+                                    // abort set an Error SENTINEL that
+                                    // `resolve_at_end_of_input` decodes BEFORE the pure
+                                    // dispatch, short-circuiting the new resolve check;
+                                    // so a bounded parse must NOT abort mid-parse here —
+                                    // it runs to completion and fires (or not) at
+                                    // resolve. Detection is retained as a DIAGNOSTIC
+                                    // (`ambiguity_overflows` above + `post_window_*`
+                                    // below); ONLY the enforcement ACTION is removed.
+                                    // This is a surgical change: `rd_track` (shared with
+                                    // `dump_stats`/`rd_u1_diag`) and every stat/diag
+                                    // capture stay byte-identical, and UNBOUNDED parses
+                                    // never enter this `fan_window_open` block at all.
+                                    // Former abort:
+                                    //     ambiguity_overflow = Some((n, event_width, position));
+                                    //     break;
+                                    let _ = position; // diagnostic-only now; drives no abort
+                                }
+                            }
+                            if event_width >= 2 {
+                                // The first multi-way event: the run leaves the
+                                // provably classic-synchronous window.
+                                fan_window_open = false;
+                                run.stats.window_closed_at_fork = run.stats.fork_dispatches;
                             }
                         }
-                        if event_width >= 2 {
-                            // The first multi-way event: the run leaves the
-                            // provably classic-synchronous window.
-                            fan_window_open = false;
-                            run.stats.window_closed_at_fork = run.stats.fork_dispatches;
-                        }
+                    } else if forked {
+                        // Post-window diagnostic: the disclosed
+                        // under-enforcement quantum (never checked).
+                        run.stats.post_window_max_width = run
+                            .stats
+                            .post_window_max_width
+                            .max(delta.saturating_sub(echo));
+                    } else if twins > 0 {
+                        // N2: post-window twins-only event — the classic-fork-
+                        // equivalent width feeds the same diagnostic.
+                        run.stats.post_window_max_width =
+                            run.stats.post_window_max_width.max(1 + twins);
                     }
-                } else if forked {
-                    // Post-window diagnostic: the disclosed
-                    // under-enforcement quantum (never checked).
-                    run.stats.post_window_max_width = run
-                        .stats
-                        .post_window_max_width
-                        .max(delta.saturating_sub(echo));
-                } else if twins > 0 {
-                    // N2: post-window twins-only event — the classic-fork-
-                    // equivalent width feeds the same diagnostic.
-                    run.stats.post_window_max_width =
-                        run.stats.post_window_max_width.max(1 + twins);
-                }
-                // ── R-D U1/V1 probe (env-gated, measurement-only; F8: the
-                // `live` column is retired — `event_width` = the fork's
-                // delta − echo).
-                if forked && rd_u1_diag {
-                    let child_pos: Vec<usize> = run
-                        .worklist
-                        .iter()
-                        .skip(len_before)
-                        .map(|x| x.pos)
-                        .collect();
-                    eprintln!(
+                    // ── R-D U1/V1 probe (env-gated, measurement-only; F8: the
+                    // `live` column is retired — `event_width` = the fork's
+                    // delta − echo).
+                    if forked && rd_u1_diag {
+                        let child_pos: Vec<usize> = run
+                            .worklist
+                            .iter()
+                            .skip(len_before)
+                            .map(|x| x.pos)
+                            .collect();
+                        eprintln!(
                         "RD-U1 fork d.pos={} len_before={} len_after={} delta={} event_width={} \
                          child_pos={:?} echo={} twins={} boundary_yields={} replays={} \
                          unwind_m1={} unwind_m5={} unwind_m234={} rc_yields={} eof={}",
@@ -17216,35 +17059,40 @@ where
                         run.stats.rc_operand_yields,
                         tokens.eof_node(),
                     );
+                    }
                 }
             }
-        }
-        // ── ROUND TRIGGER: death check (worklist drained here) ───────────
-        drop(repair_src);
-        if budget_exceeded
+            // ── ROUND TRIGGER: death check (worklist drained here) ───────────
+            drop(repair_src);
+            if budget_exceeded
             || ambiguity_overflow.is_some() // R-D: overflow never seeds a repair round
             || !run.accepting.is_empty()
             || !run.prefix_accepting.is_empty()
             || recovery_round >= recovery_rounds_max
             || self.cgll_pure_parked.is_empty()
-        {
-            break 'rounds;
-        }
-        recovery_round += 1;
-        run.stats.repair_rounds += 1;
-        let parked = std::mem::take(&mut self.cgll_pure_parked);
-        for parked_repair in parked {
-            self.cgll_pure_reseed_repair(&mut run, parked_repair, real_tokens, &mut repair_virtuals);
-        }
-        // R-D v3 (§5.4): a repair round seeds a multi-descriptor pool with
-        // no fork — the chain invariant is gone, so the window CLOSES (the
-        // budget enforces the primary round's first fan). Bounded facades
-        // pin recovery depth 0; only language-level budget+recovery callers
-        // reach here. Overflow itself never seeds a round (trigger above).
-        fan_window_open = false;
-        if run.worklist.is_empty() {
-            break 'rounds; // reseeds all resolved inline (family B) or none
-        }
+            {
+                break 'rounds;
+            }
+            recovery_round += 1;
+            run.stats.repair_rounds += 1;
+            let parked = std::mem::take(&mut self.cgll_pure_parked);
+            for parked_repair in parked {
+                self.cgll_pure_reseed_repair(
+                    &mut run,
+                    parked_repair,
+                    real_tokens,
+                    &mut repair_virtuals,
+                );
+            }
+            // R-D v3 (§5.4): a repair round seeds a multi-descriptor pool with
+            // no fork — the chain invariant is gone, so the window CLOSES (the
+            // budget enforces the primary round's first fan). Bounded facades
+            // pin recovery depth 0; only language-level budget+recovery callers
+            // reach here. Overflow itself never seeds a round (trigger above).
+            fan_window_open = false;
+            if run.worklist.is_empty() {
+                break 'rounds; // reseeds all resolved inline (family B) or none
+            }
         } // 'rounds
 
         // ── Publish: AMENDMENT-4 boundary fill-list per accepting root —
@@ -17312,10 +17160,7 @@ where
                         // (counted). Intermediate-ONLY cycles (the PNew
                         // recursive-flatten divergence class) remain REFUSED.
                         let symbol_mediated = path.iter().any(|&n| {
-                            matches!(
-                                self.sppf.node(n),
-                                Some(crate::sppf::SppfNode::Symbol { .. })
-                            )
+                            matches!(self.sppf.node(n), Some(crate::sppf::SppfNode::Symbol { .. }))
                         });
                         if symbol_mediated {
                             run.stats.cyclic_roots_tolerated += 1;
@@ -17327,23 +17172,22 @@ where
                                 path.iter().map(|&n| self.sppf_trace_summary(n)).collect();
                             eprintln!("CGLL-PURE-CYCLE root={root} path={chain:?}");
                             for &n in &path {
-                                let packs: Vec<(crate::sppf::SppfId, Vec<crate::sppf::SppfId>)> = self
-                                    .sppf
-                                    .packings_of(n)
-                                    .iter()
-                                    .filter_map(|&p| match self.sppf.node(p) {
-                                        Some(crate::sppf::SppfNode::Packing {
-                                            children, ..
-                                        }) => Some((p, children.clone())),
-                                        _ => None,
-                                    })
-                                    .collect();
+                                let packs: Vec<(crate::sppf::SppfId, Vec<crate::sppf::SppfId>)> =
+                                    self.sppf
+                                        .packings_of(n)
+                                        .iter()
+                                        .filter_map(|&p| match self.sppf.node(p) {
+                                            Some(crate::sppf::SppfNode::Packing {
+                                                children,
+                                                ..
+                                            }) => Some((p, children.clone())),
+                                            _ => None,
+                                        })
+                                        .collect();
                                 eprintln!("CGLL-PURE-CYCLE-NODE {n}: packings={packs:?}");
                                 for (p, kids) in &packs {
-                                    let ksum: Vec<String> = kids
-                                        .iter()
-                                        .map(|&k| self.sppf_trace_summary(k))
-                                        .collect();
+                                    let ksum: Vec<String> =
+                                        kids.iter().map(|&k| self.sppf_trace_summary(k)).collect();
                                     eprintln!("CGLL-PURE-CYCLE-KIDS {p}: {ksum:?}");
                                 }
                             }
@@ -17401,8 +17245,7 @@ where
                         .to_vec()
                         .into_iter()
                         .filter(|(c, r)| {
-                            *c == goal
-                                && self.action_accepts_single_body_category(*c, *r, produced)
+                            *c == goal && self.action_accepts_single_body_category(*c, *r, produced)
                         })
                         .min_by_key(|(_, r)| *r);
                     if let Some((c, r)) = pick {
@@ -17411,8 +17254,7 @@ where
                         let rule_id = ((c as u32) << 16) | (r as u32);
                         let z = self.sppf.intern_symbol((c as u32) | CGLL_BIN_TAG, lo, hi);
                         if !self.sppf.packing_exists(rule_id, &[root]) {
-                            let pk =
-                                self.sppf.intern_packing(rule_id, vec![root], W::one_ref());
+                            let pk = self.sppf.intern_packing(rule_id, vec![root], W::one_ref());
                             self.sppf.link_packing_to_symbol(z, pk);
                         }
                         run.stats.goal_coercions += 1;
@@ -17724,7 +17566,10 @@ where
         for _ in 0..24 {
             let edges = self.gss.gll_edges(cur);
             let first = edges.first()?;
-            let ctx = run.edge_ctx.get(&(cur, first.target, first.operand_w)).copied()?;
+            let ctx = run
+                .edge_ctx
+                .get(&(cur, first.target, first.operand_w))
+                .copied()?;
             for e in &edges[1..] {
                 if let Some(other) = run.edge_ctx.get(&(cur, e.target, e.operand_w)) {
                     if other.caller_sym != ctx.caller_sym {
@@ -17775,8 +17620,13 @@ where
         let mut cur = u;
         for _ in 0..24 {
             let edges = self.gss.gll_edges(cur);
-            let Some(first) = edges.first() else { return false };
-            let Some(ctx) = run.edge_ctx.get(&(cur, first.target, first.operand_w)).copied()
+            let Some(first) = edges.first() else {
+                return false;
+            };
+            let Some(ctx) = run
+                .edge_ctx
+                .get(&(cur, first.target, first.operand_w))
+                .copied()
             else {
                 return false;
             };
@@ -17810,7 +17660,10 @@ where
         for _ in 0..24 {
             let edges = self.gss.gll_edges(cur);
             let first = edges.first()?;
-            let ctx = run.edge_ctx.get(&(cur, first.target, first.operand_w)).copied()?;
+            let ctx = run
+                .edge_ctx
+                .get(&(cur, first.target, first.operand_w))
+                .copied()?;
             match ctx.caller_sym.kind {
                 SymbolKind::CollectionMarker => {
                     return self
@@ -17822,9 +17675,9 @@ where
                         )
                         .map(|spec| spec.sep);
                 },
-                SymbolKind::GroupingMarker
-                | SymbolKind::MixfixMarker
-                | SymbolKind::RuleAt(_) => return None,
+                SymbolKind::GroupingMarker | SymbolKind::MixfixMarker | SymbolKind::RuleAt(_) => {
+                    return None
+                },
                 _ => cur = first.target,
             }
         }
@@ -17901,7 +17754,9 @@ where
             return None;
         }
         let triple = self.engine.category_recognizes_operator(cat, tok)
-            && !self.engine.category_accepts_operator_at_floor(cat, tok, cur_bp)
+            && !self
+                .engine
+                .category_accepts_operator_at_floor(cat, tok, cur_bp)
             && self.engine.category_accepts_operator_at_floor(cat, tok, 0);
         if !triple {
             return None;
@@ -17956,29 +17811,21 @@ where
             // Member-5 morph evidence: this CategoryEntry frame was MINTED
             // as a GroupingMarker descent (the grouping close's
             // ConsumeAndReplace re-tag — classic CategoryEntryContinuation).
-            let morphed_from_group =
-                (d.ret_slot.kind_class & 0x0F) == CGLL_KC_GROUPING_MARKER;
+            let morphed_from_group = (d.ret_slot.kind_class & 0x0F) == CGLL_KC_GROUPING_MARKER;
             if morphed_from_group {
                 if let Some((cat, rule, slot)) = self.cgll_pure_enclosing_receiver(run, d.u) {
                     if let Some(body_cat) = self.sppf_symbol_category(d.w) {
                         let lookahead = tokens.peek_text(d.pos).unwrap_or("");
-                        member5 = self
-                            .binder_slot_accepts_body_category(cat, rule, slot, body_cat)
-                            && self.channel_first_receiver_operator_is_shadowed(
-                                body_cat, lookahead,
-                            );
+                        member5 = self.binder_slot_accepts_body_category(cat, rule, slot, body_cat)
+                            && self
+                                .channel_first_receiver_operator_is_shadowed(body_cat, lookahead);
                     }
                 }
             }
             // Members 2/3/4 (2026-07-11): ACTIVE — CrossCatLhs evidence +
             // enclosing-acceptor walk (see `cgll_pure_enclosing_acceptor`).
             // Census retained for the no-acceptor candidates.
-            if !member5
-                && matches!(
-                    d.ret_slot.xcat,
-                    1 | 2 | 3
-                )
-            {
+            if !member5 && matches!(d.ret_slot.xcat, 1 | 2 | 3) {
                 if let Some(body_cat) = self.sppf_symbol_category(d.w) {
                     member234 = self.cgll_pure_enclosing_acceptor(run, d.u, body_cat);
                 }
@@ -17996,10 +17843,8 @@ where
         } else {
             return;
         }
-        run.worklist.push_back(CgllPureDescriptor {
-            state: WpdaState::Unwinding,
-            ..d.clone()
-        });
+        run.worklist
+            .push_back(CgllPureDescriptor { state: WpdaState::Unwinding, ..d.clone() });
     }
 
     /// Dispatch ONE engine action against ONE pure descriptor (plan §2
@@ -18172,7 +18017,9 @@ where
                 xcat_wrap: slot.xcat_wrap,
                 pushed_cat: slot.pushed_cat,
                 caller_kind: caller.map(|(csym, _, _, _)| csym.kind),
-                caller_cat: caller.map(|(csym, _, _, _)| csym.category_src_idx).unwrap_or(u16::MAX),
+                caller_cat: caller
+                    .map(|(csym, _, _, _)| csym.category_src_idx)
+                    .unwrap_or(u16::MAX),
             };
             let __verdict = crate::crosscat_boundary::classify_hop(&__hop);
             if __verdict.dies_before_mapping {
@@ -18317,11 +18164,8 @@ where
                             consume_trigger: false,
                         }
                     },
-                    None => WpdaStepAction::ConsumeAndPush {
-                        symbol,
-                        weight,
-                        new_state,
-                        trigger_mode,
+                    None => {
+                        WpdaStepAction::ConsumeAndPush { symbol, weight, new_state, trigger_mode }
                     },
                 }
             },
@@ -18351,11 +18195,8 @@ where
                             consume_trigger: false,
                         }
                     },
-                    None => WpdaStepAction::IterativeChainAbsorb {
-                        symbol,
-                        weight,
-                        new_state,
-                        spec,
+                    None => {
+                        WpdaStepAction::IterativeChainAbsorb { symbol, weight, new_state, spec }
                     },
                 }
             },
@@ -18366,8 +18207,7 @@ where
                 // both-accept case too).
                 let b0 = boundaries[0];
                 let degraded = boundaries.iter().any(|b| {
-                    !b.source_accepts_at_source_floor
-                        || !b.target_accepts_at_projection_floor
+                    !b.source_accepts_at_source_floor || !b.target_accepts_at_projection_floor
                 });
                 if degraded {
                     if consume_trigger {
@@ -18405,8 +18245,7 @@ where
                             }
                         }
                         run.stats.boundary_yields += 1;
-                        branches
-                            .push(Self::crosscat_lhs_boundary_branch(b0.source_src_idx));
+                        branches.push(Self::crosscat_lhs_boundary_branch(b0.source_src_idx));
                         return WpdaStepAction::Fork { branches, consume_trigger: false };
                     }
                     branches.retain(|branch| {
@@ -18425,11 +18264,13 @@ where
                         return WpdaStepAction::Fork { branches, consume_trigger };
                     }
                     for branch in &mut branches {
-                        branch.action_kind = ForkActionKind::ConsumeAndPush {
-                            trigger_mode: TriggerMode::Discard,
-                        };
+                        branch.action_kind =
+                            ForkActionKind::ConsumeAndPush { trigger_mode: TriggerMode::Discard };
                     }
-                } else if !branches.iter().any(Self::fork_branch_consumes_current_token) {
+                } else if !branches
+                    .iter()
+                    .any(Self::fork_branch_consumes_current_token)
+                {
                     return WpdaStepAction::Fork { branches, consume_trigger };
                 }
                 run.stats.boundary_yields += 1;
@@ -18476,9 +18317,9 @@ where
             let consuming = match &action {
                 WpdaStepAction::ConsumeAndPush { .. }
                 | WpdaStepAction::IterativeChainAbsorb { .. } => true,
-                WpdaStepAction::Fork { branches, .. } => {
-                    branches.iter().any(Self::fork_branch_consumes_current_token)
-                },
+                WpdaStepAction::Fork { branches, .. } => branches
+                    .iter()
+                    .any(Self::fork_branch_consumes_current_token),
                 _ => false,
             };
             if consuming
@@ -18488,8 +18329,7 @@ where
             {
                 if let Some(&(csym, cu, _, _)) = run.v_parent.get(&d.u) {
                     let mid_rule = matches!(csym.kind, SymbolKind::RuleAt(k) if k > 0);
-                    let xcat_above =
-                        run.v_parent.get(&cu).map(|e| e.3).unwrap_or(false);
+                    let xcat_above = run.v_parent.get(&cu).map(|e| e.3).unwrap_or(false);
                     if mid_rule && xcat_above {
                         let body_cat = self
                             .sppf_symbol_category(d.w)
@@ -18538,8 +18378,7 @@ where
                 WpdaStepAction::ConsumeAndPush { .. }
                     | WpdaStepAction::IterativeChainAbsorb { .. }
                     | WpdaStepAction::Fork { .. }
-            )
-        {
+            ) {
             match self.cgll_pure_enclosing_collection_sep(run, d.u) {
                 Some(sep) if tokens.peek_text(d.pos) == Some(sep) => match action {
                     WpdaStepAction::ConsumeAndPush { .. }
@@ -18549,8 +18388,7 @@ where
                     },
                     WpdaStepAction::Fork { mut branches, consume_trigger } => {
                         let before = branches.len();
-                        branches
-                            .retain(|b| !Self::fork_branch_consumes_current_token(b));
+                        branches.retain(|b| !Self::fork_branch_consumes_current_token(b));
                         if branches.is_empty() {
                             run.stats.collsep_guard_rewrites += 1;
                             WpdaStepAction::Advance(WpdaState::Unwinding)
@@ -18570,11 +18408,13 @@ where
         };
         // D2 = operand-consuming descents: pushes taken FROM the Pratt
         // operator loop states (the caller's running `w` is the LHS).
-        let is_d2_source = matches!(
-            d.state,
-            WpdaState::InfixLoop { .. } | WpdaState::InfixChainIterative { .. }
-        );
-        let class_by_state = if is_d2_source { CgllFrameClass::D2 } else { CgllFrameClass::D1 };
+        let is_d2_source =
+            matches!(d.state, WpdaState::InfixLoop { .. } | WpdaState::InfixChainIterative { .. });
+        let class_by_state = if is_d2_source {
+            CgllFrameClass::D2
+        } else {
+            CgllFrameClass::D1
+        };
         // Guard-4 static census (AV6): the classic
         // `guard_category_changing_infix` would inspect this action; the
         // pure arm counts the site instead of running the classic-residue
@@ -18590,7 +18430,8 @@ where
                     // Guard-1 (transparent-projection re-entry) census site.
                     run.stats.guard1_sites += 1;
                 }
-                run.worklist.push_back(CgllPureDescriptor { state: new_state, ..d.clone() });
+                run.worklist
+                    .push_back(CgllPureDescriptor { state: new_state, ..d.clone() });
             },
             WpdaStepAction::AdvanceWithEffect { new_state, effect } => {
                 // AMENDMENT 8: recovery stays HARD-DISABLED. A recovery
@@ -18602,7 +18443,14 @@ where
                     // R1: PARK (pos-only sequences twin at the target; other
                     // shapes named-drop). No symbol change on Advance.
                     self.cgll_pure_park_repair(
-                        run, &d, &effect, &W::one_ref(), &new_state, None, d.pos, false,
+                        run,
+                        &d,
+                        &effect,
+                        &W::one_ref(),
+                        &new_state,
+                        None,
+                        d.pos,
+                        false,
                     );
                     return;
                 }
@@ -18635,7 +18483,8 @@ where
                 // B0: non-recovery effects are no-ops (EndBinderScope etc. =
                 // B2 scope discipline) — counted, never silent.
                 run.stats.effects_skipped += 1;
-                run.worklist.push_back(CgllPureDescriptor { state: new_state, ..d.clone() });
+                run.worklist
+                    .push_back(CgllPureDescriptor { state: new_state, ..d.clone() });
             },
             WpdaStepAction::Push { symbol, weight: _, new_state } => {
                 self.cgll_pure_descend(
@@ -18648,7 +18497,8 @@ where
                     class_by_state,
                     crate::sppf::SPPF_ID_NONE,
                     0,
-                None,);
+                    None,
+                );
             },
             WpdaStepAction::PushWithEdgeKind { symbol, weight: _, new_state, edge_kind } => {
                 // xcat marker preserves the cross-cat-LHS evidence class on
@@ -18692,7 +18542,12 @@ where
                     ..d.clone()
                 });
             },
-            WpdaStepAction::ConsumeAndPush { symbol, weight: _, new_state, trigger_mode } => {
+            WpdaStepAction::ConsumeAndPush {
+                symbol,
+                weight: _,
+                new_state,
+                trigger_mode,
+            } => {
                 // Leaf per TriggerMode (classic arms 14342-14369): the leaf
                 // is the CHILD frame's first `getNodeP` child (`w₀`).
                 let w0 = match trigger_mode {
@@ -18735,7 +18590,8 @@ where
                     class_by_state,
                     w0,
                     0,
-                None,);
+                    None,
+                );
             },
             WpdaStepAction::IterativeChainAbsorb { symbol, weight: _, new_state, spec } => {
                 // Pure form (plan §2 row 9): NO chart/synth absorption and
@@ -18759,9 +18615,7 @@ where
                     // itself through the normal InfixLoop path — U add-once
                     // bounds the re-dispatch). Counted.
                     run.stats.iterchain_witness += 1;
-                    let resume = WpdaState::InfixLoop {
-                        cur_bp: d.cur_sym.bp.unwrap_or(0),
-                    };
+                    let resume = WpdaState::InfixLoop { cur_bp: d.cur_sym.bp.unwrap_or(0) };
                     self.cgll_pure_reduce(run, d, d.pos, &W::one_ref(), &resume, tokens);
                     return;
                 }
@@ -18769,11 +18623,8 @@ where
                     // Mirror the classic mixfix fall-through (14498-14523):
                     // marker + MixfixLiteralRun{kind:2}; trigger consumed,
                     // no leaf.
-                    let marker = StackSymbolV2::mixfix_marker(
-                        spec.op_cat_src_idx,
-                        spec.op_rule_idx,
-                        0,
-                    );
+                    let marker =
+                        StackSymbolV2::mixfix_marker(spec.op_cat_src_idx, spec.op_rule_idx, 0);
                     let st = WpdaState::MixfixLiteralRun {
                         result_src_idx: spec.op_cat_src_idx,
                         rule_idx: spec.op_rule_idx,
@@ -18791,7 +18642,8 @@ where
                         CgllFrameClass::D2,
                         crate::sppf::SPPF_ID_NONE,
                         0,
-                    None,);
+                        None,
+                    );
                 } else if spec.assoc_right {
                     // Mirror `normal_infix_rhs_state_for_iter_absorb` (the
                     // classic notes the pre-fork absorb action's `new_state`
@@ -18819,7 +18671,8 @@ where
                         CgllFrameClass::D2,
                         crate::sppf::SPPF_ID_NONE,
                         0,
-                    None,);
+                        None,
+                    );
                 } else {
                     // Left-assoc singleton path: the action's `new_state` IS
                     // the valid continuation (classic 14802-14817).
@@ -18833,7 +18686,8 @@ where
                         CgllFrameClass::D2,
                         crate::sppf::SPPF_ID_NONE,
                         0,
-                    None,);
+                        None,
+                    );
                 }
             },
             WpdaStepAction::ConsumeAndPop { weight, new_state } => {
@@ -18874,7 +18728,12 @@ where
                     ..d.clone()
                 });
             },
-            WpdaStepAction::ConsumeIdentAndReplace { symbol, weight: _, new_state, start_scope } => {
+            WpdaStepAction::ConsumeIdentAndReplace {
+                symbol,
+                weight: _,
+                new_state,
+                start_scope,
+            } => {
                 // Ident-Terminal leaf fold into the FRAME's `w` (the binder
                 // ident is a child of the current rule — classic pushes
                 // ActionArg::Ident). P3.e Class-3 exception (2026-07-11): a
@@ -18886,8 +18745,7 @@ where
                 // (pred3/pred4 receipt: the plain Terminal became a phantom
                 // collection ITEM). BinderRule ident slots keep the classic
                 // Ident-arg fold.
-                let zip_binder =
-                    start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
+                let zip_binder = start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
                 if start_scope && !zip_binder {
                     run.stats.effects_skipped += 1;
                 }
@@ -18903,8 +18761,7 @@ where
                                 u16::MAX,
                                 u16::MAX - 1,
                             ),
-                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
-                                ^ ((d.pos as u32) << 1),
+                            Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((d.pos as u32) << 1),
                         )
                     } else {
                         (
@@ -18944,7 +18801,12 @@ where
                     ..d.clone()
                 });
             },
-            WpdaStepAction::ReplaceAndPush { replace_symbol, push_symbol, weight: _, new_state } => {
+            WpdaStepAction::ReplaceAndPush {
+                replace_symbol,
+                push_symbol,
+                weight: _,
+                new_state,
+            } => {
                 // Replace half FIRST: the ret-slot folds the caller symbol
                 // AFTER the replace (amendment 1), and the resumed caller
                 // returns with `cur_sym = replace_symbol`.
@@ -18958,7 +18820,8 @@ where
                     class_by_state,
                     crate::sppf::SPPF_ID_NONE,
                     0,
-                None,);
+                    None,
+                );
             },
             WpdaStepAction::ParsePredicate { replace_symbol, weight, new_state } => {
                 // ── P3.d (F1, 2026-07-11): the PREDICATE CHANNEL ─────────
@@ -19107,7 +18970,9 @@ where
                     );
                     // Task #10 item 3: record the take-branch `weight` —
                     // mirrors the OPTIONAL_PRESENT packing intern above.
-                    let returns = self.gss.gll_pop(d.u, d.pos, z, CGLL_PURE_RULE_NONE, &weight);
+                    let returns = self
+                        .gss
+                        .gll_pop(d.u, d.pos, z, CGLL_PURE_RULE_NONE, &weight);
                     run.stats.gll_pops += 1;
                     for ret in &returns {
                         let Some(ctx) =
@@ -19124,9 +18989,8 @@ where
                         let y = if ret.operand_w == crate::sppf::SPPF_ID_NONE {
                             z
                         } else {
-                            let slot =
-                                Self::cgll_pure_slot_hash(&replace_symbol, &new_state)
-                                    ^ ((ret.at_pos as u32) << 1);
+                            let slot = Self::cgll_pure_slot_hash(&replace_symbol, &new_state)
+                                ^ ((ret.at_pos as u32) << 1);
                             self.cgll_pure_fold(slot, ret.operand_w, z, ret.at_pos, W::one_ref())
                         };
                         run.worklist.push_back(CgllPureDescriptor {
@@ -19155,8 +19019,8 @@ where
             },
             WpdaStepAction::Error(_msg) => {
                 run.stats.engine_errors += 1; // descriptor dies (no recovery — amendment 8)
-                // Capped diagnostic (stats-gated): WHICH configs die tells
-                // the P3 burn-down where a table path is unreachable purely.
+                                              // Capped diagnostic (stats-gated): WHICH configs die tells
+                                              // the P3 burn-down where a table path is unreachable purely.
                 #[cfg(feature = "walker-trace")]
                 if run.stats.engine_errors <= 8
                     && std::env::var_os("PRATTAIL_CANONICAL_GLL_STATS").is_some()
@@ -19179,7 +19043,11 @@ where
                 // B1: the classic walker's InfixLoop-Fork Unwinding-injection
                 // family, pure form (see `cgll_pure_inject_unwind_reading`).
                 self.cgll_pure_inject_unwind_reading(run, d, &branches, tokens);
-                let pos_after = if consume_trigger { next_of(d.pos) } else { d.pos };
+                let pos_after = if consume_trigger {
+                    next_of(d.pos)
+                } else {
+                    d.pos
+                };
                 for branch in branches {
                     self.cgll_pure_dispatch_fork_branch(
                         run,
@@ -19313,14 +19181,19 @@ where
         tokens: &dyn WpdaTokenSource,
     ) {
         let next_of = |p: usize| tokens.next_pos(p, 0).unwrap_or(p + 1);
-        let ForkBranch { symbol: br_symbol, weight: br_weight, new_state: br_state, action_kind } =
-            branch;
+        let ForkBranch {
+            symbol: br_symbol,
+            weight: br_weight,
+            new_state: br_state,
+            action_kind,
+        } = branch;
         match action_kind {
             ForkActionKind::Advance => {
                 // Classic parity (Fork-Advance arm ~15928): the Advance child
                 // KEEPS the parent's position even under `consume_trigger`
                 // (`child = cursor.clone()` — only state/weight change).
-                run.worklist.push_back(CgllPureDescriptor { state: br_state, ..d.clone() });
+                run.worklist
+                    .push_back(CgllPureDescriptor { state: br_state, ..d.clone() });
             },
             ForkActionKind::ConsumeAtAndReplace { next_pos } => {
                 // S1-FACTORING F5-2 D-3 (red-team A-M1): honor `br_symbol` —
@@ -19342,8 +19215,7 @@ where
                     ..d.clone()
                 });
             },
-            ForkActionKind::Push
-            | ForkActionKind::PushProjectionInline => {
+            ForkActionKind::Push | ForkActionKind::PushProjectionInline => {
                 // AMENDMENT 6: the tier branch weight rides an EMPTY carrier
                 // as the child's `w₀` (classic: fork-child pending ⊗ weight).
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
@@ -19364,7 +19236,8 @@ where
                     class_by_state,
                     w0,
                     0,
-                None,);
+                    None,
+                );
             },
             ForkActionKind::PushWithTriggerTerminal => {
                 let leaf = match tokens.peek_kind(d.pos) {
@@ -19393,13 +19266,18 @@ where
                     class_by_state,
                     w0,
                     0,
-                None,);
+                    None,
+                );
             },
             ForkActionKind::PushCrossCatLhs => {
                 // Mirror 15977-15999: a CategoryEntry push carries the full
                 // CrossCatLhs scope; any other symbol is evidence-only
                 // Reentry.
-                let xcat = if br_symbol.kind == SymbolKind::CategoryEntry { 1 } else { 3 };
+                let xcat = if br_symbol.kind == SymbolKind::CategoryEntry {
+                    1
+                } else {
+                    3
+                };
                 let child_slot = Self::cgll_pure_slot_hash(&br_symbol, &br_state);
                 let w0 = self.cgll_pure_weight_carrier(
                     run,
@@ -19418,7 +19296,8 @@ where
                     class_by_state,
                     w0,
                     xcat,
-                None,);
+                    None,
+                );
             },
             ForkActionKind::OptGroupAbsent { replace_symbol } => {
                 // P3.c: skip path — fold the OptAbsent leaf (realize →
@@ -19502,7 +19381,8 @@ where
                     class_by_state,
                     w0,
                     0,
-                None,);
+                    None,
+                );
             },
             ForkActionKind::ConsumeIdentAndReplace { start_scope } => {
                 // P3.e Class-3 (2026-07-11): a `start_scope` ident consumed
@@ -19510,8 +19390,7 @@ where
                 // a BINDER name — fold the reserved BINDER-NAME marker, not
                 // a plain Terminal (which becomes a phantom collection item
                 // and breaks the close's coverage gate — pred3/4 receipt).
-                let zip_binder =
-                    start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
+                let zip_binder = start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
                 if start_scope && !zip_binder {
                     run.stats.effects_skipped += 1;
                 }
@@ -19629,13 +19508,23 @@ where
                     ..d.clone()
                 });
             },
-            ForkActionKind::LexAlt { alt_idx: _, kind, text, next_pos, rule_idx: _ } => {
+            ForkActionKind::LexAlt {
+                alt_idx: _,
+                kind,
+                text,
+                next_pos,
+                rule_idx: _,
+            } => {
                 // Literal-rule lex alternative: Terminal leaf (the captured
                 // token) = the pushed literal-rule frame's `w₀`, wrapped in
                 // the AMENDMENT-6 weight carrier so `lex_w_alt` rides the
                 // reading (flats unchanged — the wrapper flattens to the
                 // bare leaf).
-                let text_opt = if text.is_empty() { None } else { Some(text.as_str()) };
+                let text_opt = if text.is_empty() {
+                    None
+                } else {
+                    Some(text.as_str())
+                };
                 let leaf = self.sppf.intern_terminal(
                     kind,
                     crate::sppf::PosOrSynth::Real(pos_after as u32),
@@ -19655,10 +19544,22 @@ where
                     class_by_state,
                     w0,
                     0,
-                None,);
+                    None,
+                );
             },
-            ForkActionKind::LexAltPrefixOp { alt_idx: _, trigger, rule_idx: _, next_pos, .. }
-            | ForkActionKind::LexAltNullaryRun { alt_idx: _, trigger, rule_idx: _, next_pos } => {
+            ForkActionKind::LexAltPrefixOp {
+                alt_idx: _,
+                trigger,
+                rule_idx: _,
+                next_pos,
+                ..
+            }
+            | ForkActionKind::LexAltNullaryRun {
+                alt_idx: _,
+                trigger,
+                rule_idx: _,
+                next_pos,
+            } => {
                 let leaf = self.sppf.intern_trigger_terminal(
                     TokenKind::Fixed(trigger.clone()),
                     crate::sppf::PosOrSynth::Real(pos_after as u32),
@@ -19679,7 +19580,8 @@ where
                     class_by_state,
                     w0,
                     0,
-                None,);
+                    None,
+                );
             },
             ForkActionKind::LexAltPostfixOp { next_pos, .. }
             | ForkActionKind::LexAltInfixOp { next_pos, .. }
@@ -19705,7 +19607,8 @@ where
                     CgllFrameClass::D2,
                     w0,
                     0,
-                None,);
+                    None,
+                );
             },
             ForkActionKind::ConsumeAndCaptureAndPush => {
                 let leaf = match tokens.peek_kind(pos_after) {
@@ -19734,7 +19637,8 @@ where
                     class_by_state,
                     w0,
                     0,
-                None,);
+                    None,
+                );
             },
             ForkActionKind::GuardedConsumeAndReplace { expected_text, required_top_cat } => {
                 if tokens.peek_text(pos_after).unwrap_or("") != expected_text.as_str() {
@@ -19881,8 +19785,7 @@ where
                 }
                 // P3.e Class-3: zip-binder idents fold the reserved
                 // BINDER-NAME marker (see ConsumeIdentAndReplace above).
-                let zip_binder =
-                    start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
+                let zip_binder = start_scope && matches!(d.state, WpdaState::BinderListLoop { .. });
                 if start_scope && !zip_binder {
                     run.stats.effects_skipped += 1;
                 }
@@ -19896,8 +19799,7 @@ where
                             u16::MAX,
                             u16::MAX - 1,
                         ),
-                        Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
-                            ^ ((pos_after as u32) << 1),
+                        Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1),
                     )
                 } else {
                     (
@@ -19953,8 +19855,7 @@ where
                         d.cur_sym.category_src_idx,
                         d.cur_sym.rule_index_in_category,
                         d.cur_sym.bp.unwrap_or(0),
-                    )
-                {
+                    ) {
                     self.cgll_pure_fold_sep_marker(run, d, pos_after)
                 } else {
                     d.w
@@ -20026,8 +19927,9 @@ where
                     BuilderDelta::StartBinderScope { names } => Some(names.as_slice()),
                     _ => None,
                 });
-                let has_end =
-                    effects.iter().any(|e| matches!(e, BuilderDelta::EndBinderScope));
+                let has_end = effects
+                    .iter()
+                    .any(|e| matches!(e, BuilderDelta::EndBinderScope));
                 let coll_id = if effects
                     .iter()
                     .any(|e| matches!(e, BuilderDelta::StartCollection))
@@ -20100,8 +20002,8 @@ where
                         u16::MAX,
                         u16::MAX - 1,
                     );
-                    let slot = Self::cgll_pure_slot_hash(&d.cur_sym, &d.state)
-                        ^ ((pos_after as u32) << 1);
+                    let slot =
+                        Self::cgll_pure_slot_hash(&d.cur_sym, &d.state) ^ ((pos_after as u32) << 1);
                     folded.w = self.cgll_pure_fold(slot, d.w, leaf, pos_after, W::one_ref());
                 }
                 self.cgll_pure_reduce(
@@ -20171,11 +20073,11 @@ where
                     class_by_state,
                     crate::sppf::SPPF_ID_NONE,
                     0,
-                None,);
+                    None,
+                );
             },
         }
     }
-
 
     /// Stage 3.5b (2026-05-01): WPDS configuration ⊕-merging.
     ///
@@ -20245,23 +20147,6 @@ where
     /// - `state` dominates: relaxed-state merge candidate — Branch C.
     /// - `depth` dominates: collection-depth desync bug — Branch D.
     /// - `multi` dominates: no single fix sufficient; H11a rejected.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     // M7c (2026-05-13): `subsume_lex_dominated_cursors` DELETED.
     //
@@ -20641,9 +20526,6 @@ where
         })];
     }
 
-
-
-
     // Phase 5.6-tail follow-up (2026-05-12): two more orphaned methods
     // DELETED here.
     //
@@ -20704,7 +20586,6 @@ where
     // SPPF mirror writes are the new source of truth. Rustc flagged
     // the function as `dead_code` after F.3c.4. Now removed.
 
-
     // Phase F.3c.7 (2026-05-20): `fire_action_for_on_builder` DELETED.
     // This static helper fired a semantic action on a `SemanticBuilder`
     // reference (rather than `self.builder`); its sole caller was the
@@ -20753,13 +20634,6 @@ where
     // (Phase 5.3+), and self.builder is brought up-to-date via
     // `install_singleton_cursor_builder` at resolve time (and at any
     // post-step boundary where downstream consumers read self.builder).
-
-
-
-
-
-
-
 
     /// Phase F.1 (2026-05-18): SPPF-derived equivalent of
     /// `cursor.builder.is_accepting_terminal()`.
@@ -21348,8 +21222,6 @@ where
         Some(rewritten)
     }
 
-
-
     fn fire_action_via_transient_without_child_coercions(
         &mut self,
         cursor: &BranchCursor<W>,
@@ -21529,19 +21401,11 @@ where
         Some((result_arc, output_cat, drains_count, fire_children))
     }
 
-
-
-
-
-
-
     /// Sentinel rule_idx for the synthetic Packing that wraps the contents
     /// of a present optional group. Distinct from any real `rule_idx`
     /// because user rules occupy `0..u32::MAX - 1`. The realization pass
     /// recognizes this sentinel and produces `Some(...)` for the user AST.
     const OPTIONAL_PRESENT_RULE_IDX: u32 = u32::MAX - 1;
-
-
 
     // ─── 4 mode-agnostic helpers (mirror to live walker fields when deterministic) ──
     //
@@ -21597,29 +21461,6 @@ where
         })
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     fn intern_coercion_over_body(
         &mut self,
         body_symbol_id: crate::sppf::SppfId,
@@ -21672,16 +21513,10 @@ where
         let wrapped_symbol_id = self.sppf.intern_symbol(coercion_cat as u32, lo, hi);
         self.sppf
             .link_packing_to_symbol(wrapped_symbol_id, packing_id);
-        self.sppf_symbol_terms.insert(
-            wrapped_symbol_id,
-            SppfSymbolTerm {
-                value: result_arc,
-                output_cat,
-            },
-        );
+        self.sppf_symbol_terms
+            .insert(wrapped_symbol_id, SppfSymbolTerm { value: result_arc, output_cat });
         Some(wrapped_symbol_id)
     }
-
 
     fn action_accepts_single_body_category(
         &self,
@@ -21731,16 +21566,6 @@ where
                 })
     }
 
-
-
-
-
-
-
-
-
-
-
     // Phase F.13 Stage 2.3.8 (2026-05-23): non-kinded `cursor_gss_push`
     // helper DELETED — orphaned by H13. All push sites migrated to
     // `cursor_gss_push_auto` (auto-derives EdgeKind from SymbolKind) or
@@ -21757,9 +21582,6 @@ where
     // under GSS dedup. All call sites migrated to the via_edge variant;
     // the standalone helper was orphaned.
 
-
-
-
     // Phase 5.6-tail follow-up (2026-05-12): `cursor_gss_pop_all`
     // DELETED. The Tomita-style multi-predecessor pop was planned for
     // fork-on-pop dispatching but never connected — all pop paths use
@@ -21767,8 +21589,6 @@ where
     // `incoming_edge_stack` to a single predecessor). Multi-predecessor
     // fan-out would require a new caller protocol that was never
     // designed; the orphaned helper is removed.
-
-
 
     // Phase F.13 Stage 2.3.8 (2026-05-23): non-kinded
     // `cursor_gss_replace_top` helper DELETED — orphaned by H13.
@@ -21808,15 +21628,9 @@ impl<W: SemiringRef> WpdaEngine<W> for IdleEngine {
 // WalkerConsumer trait (Stage 5: M2 — observer is SECONDARY contract)
 // ══════════════════════════════════════════════════════════════════════════════
 
-
-
-
-
-
 // ══════════════════════════════════════════════════════════════════════════════
 // Stage 6 G6+ (2026-05-02): Cursor-level observer (side-channel to WalkerConsumer)
 // ══════════════════════════════════════════════════════════════════════════════
-
 
 /// A flat per-cursor snapshot for tracing/dump. Excludes heavy fields
 /// (recovery_deltas contents, collection_stack contents) — only
@@ -21846,19 +21660,9 @@ pub struct StepSnapshot<W: SemiringRef> {
     pub cursors: Vec<CursorSnapshot<W>>,
 }
 
-
-
-
-
-
-
 // ══════════════════════════════════════════════════════════════════════════════
 // Stage 6 G6+ (2026-05-02): RichTracingConsumer — dual WalkerConsumer + CursorObserver
 // ══════════════════════════════════════════════════════════════════════════════
-
-
-
-
 
 // ══════════════════════════════════════════════════════════════════════════════
 // WpdaWalker::run_with_consumer
@@ -21882,7 +21686,6 @@ where
         + crate::automata::semiring::LexProvenance,
     E: WpdaEngine<W>,
 {
-
     /// Env-aware run driver for codegen facades.
     ///
     /// Reads `PRATTAIL_MAX_STEPS` (fallback `default_max_steps`) and drives the
@@ -21929,7 +21732,6 @@ where
             .unwrap_or(default_max_steps);
         self.run_to_end_of_input_until_accepting(max_steps, tokens)
     }
-
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -21976,13 +21778,6 @@ mod tests {
         }
     }
 
-
-
-
-
-
-
-
     fn queue_cursor(pos: usize, weight: LexicographicWeight) -> BranchCursor<LexicographicWeight> {
         BranchCursor::seed_from_live(
             crate::gss::GSS_NODE_NONE,
@@ -21991,8 +21786,6 @@ mod tests {
             WpdaState::Ready { min_bp: 0 },
         )
     }
-
-
 
     #[test]
     fn eoi_candidate_sort_prefers_semiring_min_and_preserves_ties() {
@@ -22025,8 +21818,6 @@ mod tests {
         let roots: Vec<crate::sppf::SppfId> = candidates.iter().map(|c| c.root).collect();
         assert_eq!(roots, vec![30, 20, 40, 10]);
     }
-
-
 
     /// EP-P2 (Stage B) Step-0: a probe engine that emits a non-trivial
     /// Parikh model so the obligation gate can actually FIRE in a unit
@@ -22414,7 +22205,6 @@ mod tests {
         assert_token_dependent_caches_invalidated_preserving_diagnostics(&w);
     }
 
-
     #[test]
     fn mutable_token_source_rebind_invalidates_token_dependent_caches_preserving_diagnostics() {
         let mut w: WpdaWalker<LexicographicWeight, _> =
@@ -22438,36 +22228,6 @@ mod tests {
         assert_eq!(w.beam_size(), Some(8));
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     #[test]
     fn walker_control_pause_variant_exists() {
         // Sanity check that the re-export works.
@@ -22479,26 +22239,9 @@ mod tests {
 
     // ─── WalkerConsumer tests (Stage 5) ─────────────────────────────────────
 
-
-
-
-
-
     // ─── Phase A.2: atomic-rule plumbing integration tests ──────────────────
 
-
-
-
-
-
     use crate::wpda_runtime::{ActionArg, ActionEntry, SemanticBuilder};
-
-
-
-
-
-
-
 
     // ⚠ PER-THREAD, not a process-global atomic. `cargo test` runs a binary's
     // tests as threads in ONE process (`cargo nextest` forks a process per
@@ -22584,8 +22327,6 @@ mod tests {
         walker.sppf.link_packing_to_symbol(root, second);
         root
     }
-
-
 
     #[test]
     fn capped_realization_forces_only_demanded_root_packings() {
@@ -22833,8 +22574,7 @@ mod tests {
     }
     fn kbest_act_opt2(b: &mut SemanticBuilder, args: Vec<ActionArg>) {
         if let [ActionArg::Optional(Some(inner))] = &args[..] {
-            if let [ActionArg::Term { value: a, .. }, ActionArg::Term { value: c, .. }] =
-                &inner[..]
+            if let [ActionArg::Term { value: a, .. }, ActionArg::Term { value: c, .. }] = &inner[..]
             {
                 if let (Some(x), Some(y)) = (a.downcast_ref::<i64>(), c.downcast_ref::<i64>()) {
                     b.push_term::<i64>(10_000 + x * 100 + y);
@@ -23120,9 +22860,7 @@ mod tests {
             .cgll_realize_bin_symbol(root, &mut memo, None, false)
             .iter()
             .filter_map(|(arg, w)| match arg {
-                ActionArg::Term { value, .. } => {
-                    value.downcast_ref::<i64>().map(|v| (*v, *w))
-                },
+                ActionArg::Term { value, .. } => value.downcast_ref::<i64>().map(|v| (*v, *w)),
                 _ => None,
             })
             .collect()
@@ -23238,11 +22976,7 @@ mod tests {
         // ── Deterministic layer: Weight k=3 (the enumeration shape). ──
         let (all3, st_w) = kbest_extract_i64(&walker, root, KbestOrderKey::Weight, 3);
         assert_eq!(all3.len(), 3);
-        assert_eq!(
-            all3.first().map(|(v, _)| *v),
-            Some(all_double),
-            "W-min = the all-double chain"
-        );
+        assert_eq!(all3.first().map(|(v, _)| *v), Some(all_double), "W-min = the all-double chain");
         let budget_w = (32 * (DEPTH as u64 + 1)).max(128);
         assert!(
             st_w.stats.pops <= budget_w,
@@ -23702,10 +23436,7 @@ mod tests {
         walker2.sppf.link_packing_to_symbol(y, y_edge);
         let family = kbest_family_i64(&walker2, y);
         let (all, state2) = kbest_extract_i64(&walker2, y, KbestOrderKey::Weight, 4);
-        assert_eq!(
-            all, family,
-            "cyclic k>1 Weight session ≡ the provisional-empty family"
-        );
+        assert_eq!(all, family, "cyclic k>1 Weight session ≡ the provisional-empty family");
         assert!(
             state2
                 .nodes
@@ -23758,10 +23489,7 @@ mod tests {
         );
         let (weighted, wstate) = kbest_extract_i64(&walker, p, KbestOrderKey::Weight, 4);
         assert_eq!(weighted, family, "Weight session: fenced (family parity)");
-        assert!(
-            wstate.stats.infeasible_pops >= 1,
-            "the fence counts as an infeasible pop"
-        );
+        assert!(wstate.stats.infeasible_pops >= 1, "the fence counts as an infeasible pop");
         let (raw, _) = kbest_extract_i64(&walker, p, KbestOrderKey::FirstRaw, 1);
         assert_eq!(
             raw.first().copied(),
@@ -23843,9 +23571,7 @@ mod tests {
         let project = |v: &[(ActionArg, LexicographicWeight)]| -> Vec<(i64, LexicographicWeight)> {
             v.iter()
                 .filter_map(|(arg, w)| match arg {
-                    ActionArg::Term { value, .. } => {
-                        value.downcast_ref::<i64>().map(|x| (*x, *w))
-                    },
+                    ActionArg::Term { value, .. } => value.downcast_ref::<i64>().map(|x| (*x, *w)),
                     _ => None,
                 })
                 .collect()
@@ -23908,9 +23634,10 @@ mod tests {
         let mut walker = kbest_walker(true);
         let a = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
         for (local, cost) in [(0u16, 0.125f64), (1, 0.25), (2, 0.5)] {
-            let pk = walker
-                .sppf
-                .intern_packing(kbest_rule(0, local), Vec::new(), lex(cost, 0, local));
+            let pk =
+                walker
+                    .sppf
+                    .intern_packing(kbest_rule(0, local), Vec::new(), lex(cost, 0, local));
             walker.sppf.link_packing_to_symbol(a, pk);
         }
         let p = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 0, 1);
@@ -23996,10 +23723,7 @@ mod tests {
             family.first().copied(),
             "FirstRaw ≡ family .first() across the refuted-combo j boundary"
         );
-        assert!(
-            rstate.stats.infeasible_pops >= 1,
-            "the refuted (pk1, [1]) raw pop is counted"
-        );
+        assert!(rstate.stats.infeasible_pops >= 1, "the refuted (pk1, [1]) raw pop is counted");
         assert_eq!(
             rstate.list_len(a, KbestOrderKey::FirstRaw),
             2,
@@ -24086,11 +23810,8 @@ mod tests {
     /// child-process (debug) reading drive a byte-identical construction. A synthetic
     /// zero-width flat carrying the SAME OR-node twice, demanded through the full
     /// `cgll_kbest_next` path.
-    fn kbest_u5_drive() -> (
-        KbestDemandOutcome,
-        KbestState<LexicographicWeight>,
-        crate::sppf::SppfId,
-    ) {
+    fn kbest_u5_drive() -> (KbestDemandOutcome, KbestState<LexicographicWeight>, crate::sppf::SppfId)
+    {
         let mut walker = kbest_walker(true);
         let z = walker.sppf.intern_symbol(CGLL_BIN_TAG, 5, 5);
         let z1 = walker
@@ -24098,9 +23819,10 @@ mod tests {
             .intern_packing(kbest_rule(0, 0), Vec::new(), lex(0.125, 0, 0));
         walker.sppf.link_packing_to_symbol(z, z1);
         let p = walker.sppf.intern_symbol(1 | CGLL_BIN_TAG, 5, 5);
-        let pk_zz = walker
-            .sppf
-            .intern_packing(kbest_rule(1, 1), vec![z, z], LexicographicWeight::one());
+        let pk_zz =
+            walker
+                .sppf
+                .intern_packing(kbest_rule(1, 1), vec![z, z], LexicographicWeight::one());
         walker.sppf.link_packing_to_symbol(p, pk_zz);
         let mut state: KbestState<LexicographicWeight> = KbestState::new();
         let mut fdepths = rustc_hash::FxHashMap::default();
@@ -24224,11 +23946,7 @@ mod tests {
                 .sub(p, KbestOrderKey::Election)
                 .map(|s| s.list.iter().map(kbest_entry_i64).collect::<Vec<_>>())
                 .unwrap_or_default();
-            assert_eq!(
-                vals.first().map(|(v, _)| *v),
-                Some(101),
-                "PAIR over the collapsed [1, 1]"
-            );
+            assert_eq!(vals.first().map(|(v, _)| *v), Some(101), "PAIR over the collapsed [1, 1]");
         }
     }
 
@@ -24255,7 +23973,10 @@ mod tests {
                 &mut choices,
                 &mut on_path,
             );
-            let off_pk = choices.get(&root).copied().expect("OFF election chose a packing");
+            let off_pk = choices
+                .get(&root)
+                .copied()
+                .expect("OFF election chose a packing");
             let mut state: KbestState<LexicographicWeight> = KbestState::new();
             let mut fdepths = rustc_hash::FxHashMap::default();
             let outcome = walker.cgll_kbest_next(
@@ -24302,9 +24023,10 @@ mod tests {
             let p_take = walker
                 .sppf
                 .intern_packing(kbest_rule(1, 2), vec![leaf], lex(0.125, 1, 2));
-            let p_skip = walker
-                .sppf
-                .intern_packing(kbest_rule(1, 2), vec![absent], lex(0.125, 1, 2));
+            let p_skip =
+                walker
+                    .sppf
+                    .intern_packing(kbest_rule(1, 2), vec![absent], lex(0.125, 1, 2));
             walker.sppf.link_packing_to_symbol(root, p_take);
             walker.sppf.link_packing_to_symbol(root, p_skip);
             assert_parity(&walker, root, "shape A (TAKE/SKIP ordinal tie)");
@@ -24328,9 +24050,10 @@ mod tests {
             let p_take = walker
                 .sppf
                 .intern_packing(kbest_rule(1, 2), vec![leaf], lex(0.125, 1, 2));
-            let p_skip = walker
-                .sppf
-                .intern_packing(kbest_rule(1, 2), vec![absent], lex(0.125, 1, 2));
+            let p_skip =
+                walker
+                    .sppf
+                    .intern_packing(kbest_rule(1, 2), vec![absent], lex(0.125, 1, 2));
             walker.sppf.link_packing_to_symbol(root, p_take);
             walker.sppf.link_packing_to_symbol(root, p_skip);
             assert_parity(&walker, root, "shape B (inner-kt weight leg)");
@@ -24395,11 +24118,7 @@ mod tests {
         let (root, _, _) = kbest_install_two_level(&mut walker);
         let (all, _) = kbest_extract_i64(&walker, root, KbestOrderKey::Weight, 3);
         let values: Vec<i64> = all.iter().map(|(v, _)| *v).collect();
-        assert_eq!(
-            values,
-            vec![1, 103, 2],
-            "push-all first-3 in (W, pk_idx, j) extraction order"
-        );
+        assert_eq!(values, vec![1, 103, 2], "push-all first-3 in (W, pk_idx, j) extraction order");
     }
 
     /// Listed shape: twin-packing dedup — the ⊕-min representative with
@@ -24489,9 +24208,10 @@ mod tests {
         let mut walker = kbest_walker(true);
         let t = walker.sppf.intern_symbol(CGLL_BIN_TAG, 0, 1);
         for (local, cost) in [(0u16, 0.125f64), (1, 0.25), (2, 0.5)] {
-            let pk = walker
-                .sppf
-                .intern_packing(kbest_rule(0, local), Vec::new(), lex(cost, 0, local));
+            let pk =
+                walker
+                    .sppf
+                    .intern_packing(kbest_rule(0, local), Vec::new(), lex(cost, 0, local));
             walker.sppf.link_packing_to_symbol(t, pk);
         }
         let (short, state) = kbest_extract_i64(&walker, t, KbestOrderKey::Weight, 2);
@@ -24691,16 +24411,15 @@ mod tests {
             .downcast_ref::<i64>()
             .expect("OFF election realizes the i64 term");
         let (elected, _) = kbest_extract_i64(&walker, root, KbestOrderKey::Election, 1);
-        let (on_v, on_w) = elected.first().copied().expect("extractor elected an entry");
+        let (on_v, on_w) = elected
+            .first()
+            .copied()
+            .expect("extractor elected an entry");
         assert_eq!(on_v, off_v, "elected term parity (wrap(1) = 1)");
         assert_eq!(on_w, off[0].1, "elected weight parity (.375)");
         assert_eq!(on_v, 1);
         assert_eq!(on_w, lex(0.125, 0, 0).times(&lex(0.25, 1, 0)));
     }
-
-
-
-
 
     // ─────────────────────────────────────────────────────────────────────
     // Option A cleanup tests (2026-04-28)
@@ -24713,16 +24432,6 @@ mod tests {
     // - commit_winner terminal-state guard
     // ─────────────────────────────────────────────────────────────────────
 
-
-
-
-
-
-
-
-
-
-
     // Phase 5.6-tail-E (2026-05-12): predicate_in_fork_branch_clone_path
     // DELETED. Pre-tail it exercised the BranchCursor::clone() path
     // against a `BuilderDelta::PushPredicate` entry in pending_builder_ops
@@ -24732,7 +24441,6 @@ mod tests {
     //      forks a cursor exercises this).
     //   2. predicate-carrying parsers in the language test corpus
     //      (gen_rholang_op cross_cat tests).
-
 
     // ══════════════════════════════════════════════════════════════════════
     // Stage 3.9 / ι Phase 4 (2026-05-01): always-cursor walker invariant tests
@@ -24759,15 +24467,6 @@ mod tests {
         assert!(cursors[0].recovery_deltas.is_empty(), "recovery_deltas empty at construction");
     }
 
-
-
-
-
-
-
-
-
-
     // ════════════════════════════════════════════════════════════════════════
     // Stage 3.16 / Cluster 1+2+3 Mechanism γ — Fork-emission invariants
     // (Commit 2 closure, 2026-05-06).
@@ -24784,32 +24483,6 @@ mod tests {
     // grammars exercise Mechanism γ end-to-end via gen_calculator_op (1331+),
     // gen_rholang_op (532), gen_optsmoke_op (25), gen_mixedmath_op (199).
     // ════════════════════════════════════════════════════════════════════════
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     /// Mechanism γ — BP_TIER_* ordering invariant: the lex_weight constants
     /// are strictly increasing so lex-min picks lower tiers on weight ties.
@@ -24908,12 +24581,9 @@ mod tests {
         // spelled.
         let zero = PackedDispatchConfig::try_pack(0, 0, 0).expect("0 is in domain");
         assert_eq!(zero.pos(), 0, "position 0 round-trips");
-        for aliased in [
-            first_invalid,
-            first_invalid + 1,
-            first_invalid.saturating_mul(2),
-            usize::MAX,
-        ] {
+        for aliased in
+            [first_invalid, first_invalid + 1, first_invalid.saturating_mul(2), usize::MAX]
+        {
             assert!(
                 PackedDispatchConfig::try_pack(aliased, 0, 0).is_none(),
                 "position {aliased} is outside the 40-bit domain and must be refused; \
@@ -24928,29 +24598,11 @@ mod tests {
         for pos in [0usize, 1, 2, last_valid - 1, last_valid] {
             assert_eq!(
                 PackedDispatchConfig::pack(pos, 17, 23),
-                PackedDispatchConfig::try_pack(pos, 17, 23)
-                    .expect("in-domain position packs"),
+                PackedDispatchConfig::try_pack(pos, 17, 23).expect("in-domain position packs"),
                 "pack and try_pack disagree at position {pos}"
             );
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     // ════════════════════════════════════════════════════════════════════════
     // Task #10 item 4 (2026-07-14): Swap/ApplySeq virtual-chain lowering —
@@ -24968,8 +24620,7 @@ mod tests {
     /// cache per-entry with each entry's own anchor.
     #[test]
     fn item4_lower_repair_chain_anchors_each_entry_at_its_filled_slot() {
-        let mut w: WpdaWalker<LexicographicWeight, IdleEngine> =
-            WpdaWalker::new(IdleEngine, 0);
+        let mut w: WpdaWalker<LexicographicWeight, IdleEngine> = WpdaWalker::new(IdleEngine, 0);
         let real_len = 5usize;
         // Mirror `step_canonical_pure`'s seed: virtuals live above every real
         // position; the pos-key cache is identity over the real range here
@@ -25053,10 +24704,11 @@ mod tests {
         let d = item4_seed_descriptor(1);
 
         let mut run = CgllPureRun::default();
-        let effect =
-            BuilderDelta::SwapTokens { pos_a: 1, pos_b: 2, cost_tropical: 1.25 };
+        let effect = BuilderDelta::SwapTokens { pos_a: 1, pos_b: 2, cost_tropical: 1.25 };
         // Recovery deltas are the park trigger; SwapTokens is one.
-        assert!(WpdaWalker::<LexicographicWeight, IdleEngine>::cgll_pure_is_recovery_delta(&effect));
+        assert!(WpdaWalker::<LexicographicWeight, IdleEngine>::cgll_pure_is_recovery_delta(
+            &effect
+        ));
         w.cgll_pure_park_repair(
             &mut run,
             &d,
@@ -25079,7 +24731,9 @@ mod tests {
             w.cgll_pure_parked[0].kind,
         );
 
-        let parked = std::mem::take(&mut w.cgll_pure_parked).pop().expect("one parked");
+        let parked = std::mem::take(&mut w.cgll_pure_parked)
+            .pop()
+            .expect("one parked");
         let mut virtuals: Vec<CgllRepairVirtual> = Vec::new();
         w.cgll_pure_reseed_repair(&mut run, parked, &src, &mut virtuals);
 
@@ -25159,7 +24813,9 @@ mod tests {
             w.cgll_pure_parked[0].kind,
         );
 
-        let parked = std::mem::take(&mut w.cgll_pure_parked).pop().expect("one parked");
+        let parked = std::mem::take(&mut w.cgll_pure_parked)
+            .pop()
+            .expect("one parked");
         let mut virtuals: Vec<CgllRepairVirtual> = Vec::new();
         w.cgll_pure_reseed_repair(&mut run, parked, &src, &mut virtuals);
 
@@ -25316,7 +24972,14 @@ mod task16_chain_peek_memo_tests {
         for lvl in 0..depth {
             toks.push("?".to_string()); // trigger
             toks.push("1".to_string()); // then
-            toks.push(if malformed_level == Some(lvl) { "X" } else { ":" }.to_string()); // sep
+            toks.push(
+                if malformed_level == Some(lvl) {
+                    "X"
+                } else {
+                    ":"
+                }
+                .to_string(),
+            ); // sep
             toks.push("0".to_string()); // next cond / final else
         }
         MockChainSource { toks }
@@ -25364,7 +25027,9 @@ mod task16_chain_peek_memo_tests {
         assert_agrees(&MockChainSource { toks: vec!["?".into()] }, "?", ":");
         assert_agrees(&MockChainSource { toks: vec!["0".into()] }, "?", ":");
         assert_agrees(
-            &MockChainSource { toks: vec!["?".into(), "1".into(), ":".into()] },
+            &MockChainSource {
+                toks: vec!["?".into(), "1".into(), ":".into()],
+            },
             "?",
             ":",
         );

@@ -341,7 +341,7 @@ fn off_leg(switch: &str) -> BTreeMap<String, Obs> {
         .arg("--nocapture")
         .env(CHILD_MARKER, "1")
         .env(switch, "1")
-        .env("RUST_MIN_STACK", "8388608")
+        .env_remove("RUST_MIN_STACK")
         .output()
         .unwrap_or_else(|e| panic!("spawn OFF-leg child for {switch}: {e}"));
     assert!(

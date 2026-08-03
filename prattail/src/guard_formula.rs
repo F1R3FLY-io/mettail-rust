@@ -103,9 +103,9 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 
 use crate::algebra_tower::Sat3;
-use crate::ordered_field::OrderedF64;
 use crate::any_algebra::{AnyDomain, AnyPred, Sort};
 use crate::kat::BooleanTest;
+use crate::ordered_field::OrderedF64;
 use crate::presburger::{
     evaluate_presburger_checked, is_satisfiable_nfa, IntAssignment, LinearConstraint,
     PresburgerPred, DEFAULT_BIT_WIDTH,
@@ -223,7 +223,10 @@ impl GuardVarMap {
     /// An empty map with room for `capacity` binders — a receive knows its binder count up
     /// front, so the allocation is preallocated rather than grown.
     pub fn with_capacity(capacity: usize) -> Self {
-        GuardVarMap { names: Vec::with_capacity(capacity), index: BTreeMap::new() }
+        GuardVarMap {
+            names: Vec::with_capacity(capacity),
+            index: BTreeMap::new(),
+        }
     }
 
     /// The index of `name`, interning it if new. Idempotent.
@@ -679,9 +682,7 @@ impl GuardFormula {
             | GuardFormula::Scalar { .. }
             | GuardFormula::ScalarRel { .. } => true,
             GuardFormula::Not(inner) => inner.reaches_substrate(),
-            GuardFormula::And(a, b)
-            | GuardFormula::Or(a, b)
-            | GuardFormula::Implies(a, b) => {
+            GuardFormula::And(a, b) | GuardFormula::Or(a, b) | GuardFormula::Implies(a, b) => {
                 a.reaches_substrate() && b.reaches_substrate()
             },
         }
@@ -1298,10 +1299,9 @@ fn to_any_pred(formula: &GuardFormula, var: usize) -> Option<AnyPred> {
         GuardFormula::True => AnyPred::True,
         GuardFormula::False => AnyPred::False,
         GuardFormula::Scalar { var: v, pred } if *v == var => pred.clone(),
-        GuardFormula::And(a, b) => AnyPred::And(
-            Box::new(to_any_pred(a, var)?),
-            Box::new(to_any_pred(b, var)?),
-        ),
+        GuardFormula::And(a, b) => {
+            AnyPred::And(Box::new(to_any_pred(a, var)?), Box::new(to_any_pred(b, var)?))
+        },
         GuardFormula::Or(a, b) => {
             AnyPred::Or(Box::new(to_any_pred(a, var)?), Box::new(to_any_pred(b, var)?))
         },
@@ -1552,8 +1552,12 @@ fn project_bool(pred: &AnyPred) -> Option<BooleanTest> {
         AnyPred::True => BooleanTest::True,
         AnyPred::False => BooleanTest::False,
         AnyPred::Bool(t) => t.clone(),
-        AnyPred::And(a, b) => BooleanTest::And(Box::new(project_bool(a)?), Box::new(project_bool(b)?)),
-        AnyPred::Or(a, b) => BooleanTest::Or(Box::new(project_bool(a)?), Box::new(project_bool(b)?)),
+        AnyPred::And(a, b) => {
+            BooleanTest::And(Box::new(project_bool(a)?), Box::new(project_bool(b)?))
+        },
+        AnyPred::Or(a, b) => {
+            BooleanTest::Or(Box::new(project_bool(a)?), Box::new(project_bool(b)?))
+        },
         AnyPred::Not(inner) => BooleanTest::Not(Box::new(project_bool(inner)?)),
         _ => return None,
     })
@@ -1602,7 +1606,10 @@ impl LinearForm {
         }
         terms.retain(|&(_, c)| c != 0);
         terms.sort_unstable_by_key(|&(v, _)| v);
-        Some(LinearForm { terms, constant: self.constant.checked_add(other.constant)? })
+        Some(LinearForm {
+            terms,
+            constant: self.constant.checked_add(other.constant)?,
+        })
     }
 
     /// `-self`. Returns `None` on overflow (`i64::MIN`).
@@ -1611,7 +1618,10 @@ impl LinearForm {
         for &(var, coeff) in &self.terms {
             terms.push((var, coeff.checked_neg()?));
         }
-        Some(LinearForm { terms, constant: self.constant.checked_neg()? })
+        Some(LinearForm {
+            terms,
+            constant: self.constant.checked_neg()?,
+        })
     }
 
     /// `self - other`.
@@ -1628,7 +1638,10 @@ impl LinearForm {
                 terms.push((var, scaled));
             }
         }
-        Some(LinearForm { terms, constant: self.constant.checked_mul(k)? })
+        Some(LinearForm {
+            terms,
+            constant: self.constant.checked_mul(k)?,
+        })
     }
 
     /// The comparison `self ⋈ other` as a [`PresburgerPred`].
@@ -1721,20 +1734,14 @@ mod tests {
         let x = LinearForm::var(0);
         let x_plus_1 = x.add(&LinearForm::constant(1)).expect("no overflow");
         let pred = x.compare(CmpOp::Lt, &x_plus_1).expect("no overflow");
-        assert_eq!(
-            static_verdict(&GuardFormula::Linear(pred), cfg()),
-            StaticVerdict::Valid(cfg())
-        );
+        assert_eq!(static_verdict(&GuardFormula::Linear(pred), cfg()), StaticVerdict::Valid(cfg()));
     }
 
     #[test]
     fn an_open_contradiction_is_statically_unsatisfiable() {
         // x == 1 and x == 2
         let formula = GuardFormula::and(int_eq(0, 1), int_eq(0, 2));
-        assert_eq!(
-            static_verdict(&formula, cfg()),
-            StaticVerdict::Unsatisfiable(cfg())
-        );
+        assert_eq!(static_verdict(&formula, cfg()), StaticVerdict::Unsatisfiable(cfg()));
     }
 
     #[test]
@@ -1765,10 +1772,7 @@ mod tests {
         // (x == 1 and x == 2) and b   ⇒ unsat, because the Int conjunct alone is unsat.
         let ints = GuardFormula::and(int_eq(0, 1), int_eq(0, 2));
         let formula = GuardFormula::and(ints, GuardFormula::Prop(prop_var("b")));
-        assert_eq!(
-            static_verdict(&formula, cfg()),
-            StaticVerdict::Unsatisfiable(cfg())
-        );
+        assert_eq!(static_verdict(&formula, cfg()), StaticVerdict::Unsatisfiable(cfg()));
     }
 
     /// A DISJUNCTION across two theories is outside the covered fragment, and the module says so
@@ -1800,10 +1804,7 @@ mod tests {
             Some(narrow),
             "a verdict must carry its domain — the bounded-domain caveat is not optional"
         );
-        assert_eq!(
-            StaticVerdict::Undecided(UndecidedCause::Budget).domain(),
-            None
-        );
+        assert_eq!(StaticVerdict::Undecided(UndecidedCause::Budget).domain(), None);
     }
 
     // ── The ground leg ───────────────────────────────────────────────────────
@@ -1969,10 +1970,7 @@ mod tests {
         };
         assert_eq!(ground_verdict(&formula, &assignment, &vars, cfg()), Sat3::Sat);
         // ...but statically undecided: `AnyPred` is unary.
-        assert!(matches!(
-            static_verdict(&formula, cfg()),
-            StaticVerdict::Undecided(_)
-        ));
+        assert!(matches!(static_verdict(&formula, cfg()), StaticVerdict::Undecided(_)));
     }
 
     /// The connective discipline is the LEFT-STRICT one, not full Kleene. `DontKnow or Sat` must
@@ -2052,32 +2050,20 @@ mod tests {
             "`phi or true` must NOT collapse to `true`: the left-strict discipline answers \
              DontKnow, and collapsing fires a COMM the reducer does not fire"
         );
-        assert_eq!(
-            ground_verdict(&disjunction, &assignment, &vars, cfg()),
-            Sat3::DontKnow
-        );
+        assert_eq!(ground_verdict(&disjunction, &assignment, &vars, cfg()), Sat3::DontKnow);
 
         let conjunction = GuardFormula::and(unknown.clone(), GuardFormula::False);
         assert!(!matches!(conjunction, GuardFormula::False));
-        assert_eq!(
-            ground_verdict(&conjunction, &assignment, &vars, cfg()),
-            Sat3::DontKnow
-        );
+        assert_eq!(ground_verdict(&conjunction, &assignment, &vars, cfg()), Sat3::DontKnow);
 
         // The three surviving simplifications on each side ARE applied — they are the
         // discipline's own behaviour, so withholding them would only cost work.
         assert_eq!(GuardFormula::and(GuardFormula::True, unknown.clone()), unknown);
         assert_eq!(GuardFormula::and(unknown.clone(), GuardFormula::True), unknown);
-        assert_eq!(
-            GuardFormula::and(GuardFormula::False, unknown.clone()),
-            GuardFormula::False
-        );
+        assert_eq!(GuardFormula::and(GuardFormula::False, unknown.clone()), GuardFormula::False);
         assert_eq!(GuardFormula::or(GuardFormula::False, unknown.clone()), unknown);
         assert_eq!(GuardFormula::or(unknown.clone(), GuardFormula::False), unknown);
-        assert_eq!(
-            GuardFormula::or(GuardFormula::True, unknown),
-            GuardFormula::True
-        );
+        assert_eq!(GuardFormula::or(GuardFormula::True, unknown), GuardFormula::True);
     }
 
     /// The only way a spatial atom is ever decided is through the caller's resolver — there is
@@ -2122,8 +2108,7 @@ mod tests {
     #[test]
     fn the_consensus_budget_is_a_fixed_network_wide_constant() {
         assert_eq!(
-            CONSENSUS_SUBSTRATE_CONFIG.bit_width,
-            DEFAULT_BIT_WIDTH,
+            CONSENSUS_SUBSTRATE_CONFIG.bit_width, DEFAULT_BIT_WIDTH,
             "the guard path's budget is a CONSENSUS PARAMETER, not a tuning knob: two nodes \
              with different budgets can disagree about whether a COMM happened. Changing this \
              value is a protocol change and needs the process that governs those."
@@ -2174,7 +2159,9 @@ mod tests {
     #[test]
     fn compare_normalizes_both_sides_to_the_leq_form() {
         // x + 3 > 5   ⇔   x > 2
-        let lhs = LinearForm::var(0).add(&LinearForm::constant(3)).expect("no overflow");
+        let lhs = LinearForm::var(0)
+            .add(&LinearForm::constant(3))
+            .expect("no overflow");
         let rhs = LinearForm::constant(5);
         let pred = lhs.compare(CmpOp::Gt, &rhs).expect("no overflow");
         let formula = GuardFormula::Linear(pred);
@@ -2196,9 +2183,6 @@ mod tests {
             assert_eq!(op.decide(&a, &b), op.flipped().decide(&b, &a));
         }
         // A cross-sort comparison is not a question this operator answers.
-        assert_eq!(
-            CmpOp::Eq.decide(&GuardValue::Int(1), &GuardValue::Str("1".into())),
-            None
-        );
+        assert_eq!(CmpOp::Eq.decide(&GuardValue::Int(1), &GuardValue::Str("1".into())), None);
     }
 }

@@ -1878,9 +1878,10 @@ pub fn build_dispatch_action_tables(
             // `NonTerminal` operand. Otherwise it must go through the prefix
             // dispatcher on its leading terminal like any other rule.
             let is_pure_collection_literal = rd_rule.is_collection
-                && !rd_rule.items.iter().any(|it| {
-                    matches!(it, crate::grammar::ir::RDSyntaxItem::NonTerminal { .. })
-                });
+                && !rd_rule
+                    .items
+                    .iter()
+                    .any(|it| matches!(it, crate::grammar::ir::RDSyntaxItem::NonTerminal { .. }));
             if is_pure_collection_literal || rd_rule.prefix_bp.is_some() {
                 continue;
             }
@@ -3191,8 +3192,8 @@ mod incremental_first_follow_tests {
     /// because "FOLLOW(Term) changed" wrongly re-marked {Int, Real} (which have
     /// no inputs of their own) instead of re-marking Term. The worklist fix
     /// (mark X itself) reaches the fixpoint under every order.
-    fn fortran_shaped_follow_fixture() -> (Vec<String>, HashMap<String, FirstSet>, Vec<FollowSetInput>)
-    {
+    fn fortran_shaped_follow_fixture(
+    ) -> (Vec<String>, HashMap<String, FirstSet>, Vec<FollowSetInput>) {
         let categories: Vec<String> = vec!["Stmt", "Term", "Int", "Real"]
             .into_iter()
             .map(String::from)
@@ -3213,8 +3214,14 @@ mod incremental_first_follow_tests {
         let term = |t: &str| crate::SyntaxItemSpec::Terminal(t.to_string());
 
         let inputs = vec![
-            FollowSetInput { category: "Term".to_string(), syntax: vec![nt("Int", "i")] },
-            FollowSetInput { category: "Term".to_string(), syntax: vec![nt("Real", "r")] },
+            FollowSetInput {
+                category: "Term".to_string(),
+                syntax: vec![nt("Int", "i")],
+            },
+            FollowSetInput {
+                category: "Term".to_string(),
+                syntax: vec![nt("Real", "r")],
+            },
             FollowSetInput {
                 category: "Stmt".to_string(),
                 syntax: vec![term("@"), nt("Term", "n"), term("!")],
@@ -3256,8 +3263,7 @@ mod incremental_first_follow_tests {
         // Pin the true fixpoint so a regression that changes BOTH paths in lockstep
         // still fails here.
         assert!(
-            incremental["Int"].tokens.contains("Bang")
-                && incremental["Int"].tokens.contains("Eq"),
+            incremental["Int"].tokens.contains("Bang") && incremental["Int"].tokens.contains("Eq"),
             "FOLLOW(Int) must reach the true fixpoint {{Bang, Eq}}, got {:?}",
             incremental["Int"].tokens,
         );

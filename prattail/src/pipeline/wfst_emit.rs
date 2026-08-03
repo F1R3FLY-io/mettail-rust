@@ -60,8 +60,9 @@ pub(crate) fn generate_lexer_code_with_map(
     // and the FINAL terminal set (after any boolean-literal-driven True/False
     // removal above, so we never reserve a keyword that is no longer a
     // terminal).
-    lexer_input.reserved_kinds =
-        bundle.reservation_policy.reserved_kinds(&lexer_input.terminals);
+    lexer_input.reserved_kinds = bundle
+        .reservation_policy
+        .reserved_kinds(&lexer_input.terminals);
 
     let (lexer_str, stats) = try_generate_lexer_as_string_hybrid(&lexer_input, hybrid_lexer)?;
     Ok((lexer_str, stats.variant_map, stats.ambiguity_info))

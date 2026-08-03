@@ -29,6 +29,7 @@
 
 use std::collections::BTreeMap;
 
+use mettail_ast::types::CollectionType;
 use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{EAnd, EEq, Expr, Par, ReceiveBind};
@@ -40,7 +41,8 @@ use models::rust::utils::{
 use crate::rho_net_lower::{
     ground_marker_tag_par, is_ground_marker_par, is_marked_object_label, par_carries_ground_marker,
     reflect_ground_term_par, reflect_tag, GroundTerm, BOUND_VAR_REFLECT_LABEL,
-    FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+    FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
+    PEANO_ZERO_REFLECT_LABEL,
 };
 
 // ── Public types ────────────────────────────────────────────────────────────────────────────
@@ -68,7 +70,10 @@ impl FltHole {
 
     /// A category-declared hole `${name:category}`.
     pub fn typed(name: impl Into<String>, category: impl Into<String>) -> Self {
-        Self { name: name.into(), category: Some(category.into()) }
+        Self {
+            name: name.into(),
+            category: Some(category.into()),
+        }
     }
 }
 
@@ -112,10 +117,9 @@ impl std::fmt::Display for FltReflectError {
             FltReflectError::UnknownHole { hole } => {
                 write!(f, "FLT hole ${{{hole}}} has no provided fill")
             },
-            FltReflectError::CategoryMismatch { hole, expected, found } => write!(
-                f,
-                "FLT hole ${{{hole}}} declared as :{expected} but used as :{found}"
-            ),
+            FltReflectError::CategoryMismatch { hole, expected, found } => {
+                write!(f, "FLT hole ${{{hole}}} declared as :{expected} but used as :{found}")
+            },
             FltReflectError::ArityMismatch { hole } => {
                 write!(f, "FLT hole ${{{hole}}} cannot be placed at its occurrence (no flat positional image)")
             },
@@ -271,10 +275,7 @@ impl<'a> PatternWalk<'a> {
         elements.extend(child_pars);
         // An FLT pattern carries only FreeVar/Wildcard connectives + ground reflections, none of
         // which contribute a locally-free (de-Bruijn) index — so the pattern's free-set is empty.
-        Ok((
-            new_elist_par(elements, Vec::new(), true, None, Vec::new(), true),
-            true,
-        ))
+        Ok((new_elist_par(elements, Vec::new(), true, None, Vec::new(), true), true))
     }
 }
 
@@ -571,7 +572,11 @@ fn host_oshift(par: &Par, cutoff: usize, fingerprint: &str) -> Par {
     } else {
         // (4) a generic object node → recurse every child at the SAME cutoff, preserving the marker.
         let marked = ps.len() >= 2 && is_ground_marker_par(&ps[1], fingerprint);
-        let (marker, children_start) = if marked { (ps.get(1).cloned(), 2) } else { (None, 1) };
+        let (marker, children_start) = if marked {
+            (ps.get(1).cloned(), 2)
+        } else {
+            (None, 1)
+        };
         let children: Vec<Par> = ps[children_start..]
             .iter()
             .map(|child| host_oshift(child, cutoff, fingerprint))
@@ -628,7 +633,11 @@ fn peano_value(par: Option<&Par>, fingerprint: &str) -> Option<usize> {
 
 /// Borrow a reflected object `Par`'s `EList.ps`, or `None` if `par` is not a single-`EList` Par.
 fn elist_ps(par: &Par) -> Option<&Vec<Par>> {
-    match par.exprs.first().and_then(|expr| expr.expr_instance.as_ref()) {
+    match par
+        .exprs
+        .first()
+        .and_then(|expr| expr.expr_instance.as_ref())
+    {
         Some(ExprInstance::EListBody(list)) => Some(&list.ps),
         _ => None,
     }
@@ -655,6 +664,11 @@ fn elist_ps(par: &Par) -> Option<&Vec<Par>> {
 /// `^free(f)` (the stable moniker `pretty_name`) rather than the reflector's unstable
 /// `format!("{:?}", fv)` debug string.
 pub trait FltReflect: mettail_runtime::Language {
+    /// Reflect an already-parsed guest term through the generated structural bridge used by
+    /// match/drive. This parser-independent seam lets integration code reuse a typed term and
+    /// lets depth gates isolate reflection from parsing.
+    fn reflect_flt_term(&self, term: &dyn mettail_runtime::Term) -> Result<GroundTerm, String>;
+
     /// Parse `body` in the guest's own surface syntax (holes rendered as ordinary guest free
     /// variables) and reflect it into a [`GroundTerm`] whose hole leaves are STABLE
     /// `^free(pretty_name)` nodes. Fails closed with a typed message on a parse error or a
@@ -732,22 +746,58 @@ impl FltResolve for FltRegistry {
 /// `pretty_name` hint (an anonymous free variable) is left verbatim, so it still reflects as a
 /// ground `^free` literal (matched literally by [`reflect_flt_pattern`]).
 pub fn flt_normalize_hole_names(term: GroundTerm) -> GroundTerm {
-    let GroundTerm { constructor, children, coll_type } = term;
-    if constructor == FREE_VAR_REFLECT_LABEL {
-        if let [name_leaf] = children.as_slice() {
-            if name_leaf.children.is_empty() && name_leaf.coll_type.is_none() {
-                let pretty = parse_pretty_name(&name_leaf.constructor)
-                    .unwrap_or_else(|| name_leaf.constructor.clone());
-                return GroundTerm {
-                    constructor,
-                    children: vec![GroundTerm::nullary(pretty)],
-                    coll_type,
-                };
-            }
+    enum NormalizeTask {
+        Visit(GroundTerm),
+        Assemble {
+            constructor: String,
+            coll_type: Option<CollectionType>,
+            child_count: usize,
+        },
+    }
+
+    let mut tasks = vec![NormalizeTask::Visit(term)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            NormalizeTask::Visit(mut term) => {
+                let constructor = std::mem::take(&mut term.constructor);
+                let children = std::mem::take(&mut term.children);
+                let coll_type = term.coll_type.take();
+                if constructor == FREE_VAR_REFLECT_LABEL {
+                    if let [name_leaf] = children.as_slice() {
+                        if name_leaf.children.is_empty() && name_leaf.coll_type.is_none() {
+                            let pretty = parse_pretty_name(&name_leaf.constructor)
+                                .unwrap_or_else(|| name_leaf.constructor.clone());
+                            values.push(GroundTerm {
+                                constructor,
+                                children: vec![GroundTerm::nullary(pretty)],
+                                coll_type,
+                            });
+                            continue;
+                        }
+                    }
+                }
+
+                let child_count = children.len();
+                tasks.push(NormalizeTask::Assemble { constructor, coll_type, child_count });
+                for child in children.into_iter().rev() {
+                    tasks.push(NormalizeTask::Visit(child));
+                }
+            },
+            NormalizeTask::Assemble { constructor, coll_type, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("FLT hole-normalization PDA lost a child result");
+                let children = values.split_off(first_child);
+                values.push(GroundTerm { constructor, children, coll_type });
+            },
         }
     }
-    let children = children.into_iter().map(flt_normalize_hole_names).collect();
-    GroundTerm { constructor, children, coll_type }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("FLT hole-normalization PDA produced no result")
 }
 
 /// Extract the `pretty_name` hint from a moniker `FreeVar` debug string
@@ -982,7 +1032,8 @@ mod tests {
     /// A bare whole-term hole `${t}` reflects to just `FreeVar(0)` — the Beat-5 consumer-1 shape.
     #[test]
     fn bare_hole_reflects_to_a_freevar() {
-        let reflection = reflect_flt_pattern(&g_free("t"), &[FltHole::new("t")], FP).expect("reflects");
+        let reflection =
+            reflect_flt_pattern(&g_free("t"), &[FltHole::new("t")], FP).expect("reflects");
         assert_eq!(reflection.pattern, new_freevar_par(0, Vec::new()));
         assert_eq!(reflection.free_count, 1);
     }
@@ -1022,9 +1073,13 @@ mod tests {
             reflect_flt_pattern(&normalized, &[FltHole::new("f")], FP)
                 .expect("normalized template reflects")
                 .pattern,
-            reflect_flt_pattern(&GroundTerm::new("App", vec![g_free("f"), g_k()]), &[FltHole::new("f")], FP)
-                .expect("hand-built template reflects")
-                .pattern,
+            reflect_flt_pattern(
+                &GroundTerm::new("App", vec![g_free("f"), g_k()]),
+                &[FltHole::new("f")],
+                FP
+            )
+            .expect("hand-built template reflects")
+            .pattern,
         );
     }
 
@@ -1033,7 +1088,11 @@ mod tests {
     #[test]
     fn flt_normalize_hole_names_preserves_anonymous_and_collections() {
         let anon = "FreeVar { unique_id: UniqueId(3), pretty_name: None }";
-        assert_eq!(flt_normalize_hole_names(g_free(anon)), g_free(anon), "anonymous free leaf verbatim");
+        assert_eq!(
+            flt_normalize_hole_names(g_free(anon)),
+            g_free(anon),
+            "anonymous free leaf verbatim"
+        );
 
         // A collection node keeps its coll_type through the normalization walk.
         let bag = GroundTerm::collection(
@@ -1043,7 +1102,11 @@ mod tests {
         );
         let normalized = flt_normalize_hole_names(bag);
         assert_eq!(normalized.coll_type, Some(mettail_ast::types::CollectionType::HashBag));
-        assert_eq!(normalized.children[0], g_free("x"), "the bag element's ^free leaf still normalizes");
+        assert_eq!(
+            normalized.children[0],
+            g_free("x"),
+            "the bag element's ^free leaf still normalizes"
+        );
     }
 
     /// A free leaf whose name is NOT a declared hole reflects to the GROUND `^free` literal
@@ -1060,8 +1123,7 @@ mod tests {
     #[test]
     fn repeated_hole_binds_distinct_freevars_with_a_linearity_guard() {
         let term = GroundTerm::new("App", vec![g_free("f"), g_free("f")]);
-        let reflection =
-            reflect_flt_pattern(&term, &[FltHole::new("f")], FP).expect("reflects");
+        let reflection = reflect_flt_pattern(&term, &[FltHole::new("f")], FP).expect("reflects");
         assert_eq!(reflection.free_count, 2, "two occurrences ⟹ two FreeVars");
         assert_eq!(
             reflection.hole_bindings,
@@ -1105,7 +1167,8 @@ mod tests {
         let term = GroundTerm::new("App", vec![g_free("f"), g_free("f")]);
         let reflection = reflect_flt_pattern(&term, &[FltHole::new("f")], FP).expect("reflects");
         let source = models::rust::utils::new_gstring_par("fltX".to_string(), Vec::new(), false);
-        let continuation = models::rust::utils::new_gstring_par("done".to_string(), Vec::new(), false);
+        let continuation =
+            models::rust::utils::new_gstring_par("done".to_string(), Vec::new(), false);
         let receive = flt_receive_par(&reflection, source, None, continuation);
         let condition = receive.receives[0]
             .condition
@@ -1114,7 +1177,10 @@ mod tests {
         // free_count = 2, so FreeVar(0) → BoundVar(1) and FreeVar(1) → BoundVar(0): EEq(BoundVar(1), BoundVar(0)).
         assert!(
             matches!(
-                condition.exprs.first().and_then(|e| e.expr_instance.as_ref()),
+                condition
+                    .exprs
+                    .first()
+                    .and_then(|e| e.expr_instance.as_ref()),
                 Some(ExprInstance::EEqBody(_))
             ),
             "the condition is an EEq over the two captured occurrences"
@@ -1138,7 +1204,9 @@ mod tests {
     fn reflect_flt_construction_round_trips_to_the_ground_reflection() {
         let template = GroundTerm::new("App", vec![g_free("f"), g_k()]);
         let fills: BTreeMap<String, Par> =
-            [("f".to_string(), reflect_ground_term_par(&g_id(), FP))].into_iter().collect();
+            [("f".to_string(), reflect_ground_term_par(&g_id(), FP))]
+                .into_iter()
+                .collect();
 
         let constructed = reflect_flt_construction(&template, &fills, FP).expect("constructs");
         let ground = reflect_ground_term_par(&GroundTerm::new("App", vec![g_id(), g_k()]), FP);
@@ -1173,8 +1241,11 @@ mod tests {
 
         // (a) fill x with a GROUND nullary ⟦A⟧ ⟹ Foo is hereditarily ground ⟹ ^gnd.
         let ground_fill: BTreeMap<String, Par> =
-            [("x".to_string(), reflect_ground_term_par(&g_nullary("A"), FP))].into_iter().collect();
-        let with_ground = reflect_flt_construction(&template, &ground_fill, FP).expect("constructs");
+            [("x".to_string(), reflect_ground_term_par(&g_nullary("A"), FP))]
+                .into_iter()
+                .collect();
+        let with_ground =
+            reflect_flt_construction(&template, &ground_fill, FP).expect("constructs");
         assert_eq!(
             marker_of(&with_ground),
             ground_marker_tag_par(FP, true),
@@ -1184,7 +1255,9 @@ mod tests {
         // (b) fill x with a `^bound`-carrying reflected term ⟹ Foo is NOT ground ⟹ ^nog.
         //     (A stale template ^gnd here would let the reducer short-circuit subst — the C2 hazard.)
         let bound_fill: BTreeMap<String, Par> =
-            [("x".to_string(), reflect_ground_term_par(&g_bound(0), FP))].into_iter().collect();
+            [("x".to_string(), reflect_ground_term_par(&g_bound(0), FP))]
+                .into_iter()
+                .collect();
         let with_bound = reflect_flt_construction(&template, &bound_fill, FP).expect("constructs");
         assert_eq!(
             marker_of(&with_bound),
@@ -1197,7 +1270,8 @@ mod tests {
     #[test]
     fn reflect_flt_construction_unfilled_hole_is_rejected() {
         let template = GroundTerm::new("App", vec![g_free("f"), g_k()]);
-        let err = reflect_flt_construction(&template, &BTreeMap::new(), FP).expect_err("must reject");
+        let err =
+            reflect_flt_construction(&template, &BTreeMap::new(), FP).expect_err("must reject");
         assert_eq!(err, FltReflectError::UnknownHole { hole: "f".to_string() });
     }
 

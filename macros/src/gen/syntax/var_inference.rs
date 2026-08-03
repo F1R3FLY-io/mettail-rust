@@ -2,9 +2,10 @@
 
 use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 
 use crate::gen::capture::capture_layout;
+use crate::gen::term_ops::collection_walk::{for_each_subterm, WalkOrder};
 use crate::gen::{generate_var_label, is_var_rule};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, TermParam},
@@ -55,167 +56,79 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
 
     let cat_names: Vec<_> = categories.iter().map(|e| &e.name).collect();
 
-    // Generate the inference methods for each category
-    let impls: Vec<TokenStream> = categories.iter().map(|export| {
-        let cat_name = &export.name;
+    let task_variants: Vec<TokenStream> = categories
+        .iter()
+        .map(|export| {
+            let cat = &export.name;
+            let variant = format_ident!("Infer{}", cat);
+            quote! { #variant(*const #cat) }
+        })
+        .collect();
 
-        // Get rules for this category
-        let rules: Vec<_> = language.terms.iter()
-            .filter(|r| r.category == *cat_name)
-            .collect();
+    let category_handlers: Vec<TokenStream> = categories
+        .iter()
+        .map(|export| generate_category_handler(&export.name, &cat_names, language))
+        .collect();
+    let type_handlers: Vec<TokenStream> = categories
+        .iter()
+        .map(|export| generate_type_handler(&export.name, &cat_names, language))
+        .collect();
 
-        // Generate match arms for basic category inference
-        let mut match_arms: Vec<TokenStream> = rules.iter().filter_map(|rule| {
-            generate_var_inference_arm(rule, &cat_names, language)
-        }).collect();
+    let category_dispatch: Vec<TokenStream> = categories
+        .iter()
+        .map(|export| {
+            let cat = &export.name;
+            let variant = format_ident!("Infer{}", cat);
+            let handler = format_ident!("infer_category_handle_{}", cat.to_string().to_lowercase());
+            quote! { InferenceTask::#variant(ptr) => #handler(stack, ptr, var_name) }
+        })
+        .collect();
+    let type_dispatch: Vec<TokenStream> = categories
+        .iter()
+        .map(|export| {
+            let cat = &export.name;
+            let variant = format_ident!("Infer{}", cat);
+            let handler = format_ident!("infer_type_handle_{}", cat.to_string().to_lowercase());
+            quote! { InferenceTask::#variant(ptr) => #handler(stack, ptr, var_name) }
+        })
+        .collect();
 
-        // Add arm for Var variant - if variable name matches, return this category
-        let var_label = generate_var_label(cat_name);
-        match_arms.push(quote! {
-            #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
-                if fv.pretty_name.as_deref() == Some(var_name) {
-                    return Some(VarCategory::#cat_name);
-                }
-                None
-            }
-        });
-
-        // Add wildcard arm for other variants (lambdas, etc.)
-        match_arms.push(quote! {
-            _ => None
-        });
-
-        // Generate match arms for full type inference (including function types)
-        let mut type_match_arms: Vec<TokenStream> = rules.iter().filter_map(|rule| {
-            generate_var_type_inference_arm(rule, &cat_names)
-        }).collect();
-
-        // Add arm for Var variant - returns base type
-        type_match_arms.push(quote! {
-            #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
-                if fv.pretty_name.as_deref() == Some(var_name) {
-                    return Some(InferredType::Base(VarCategory::#cat_name));
-                }
-                None
-            }
-        });
-
-        // Generate arms for Apply/Lam variants for domains that actually have
-        // HOL variants auto-gen'd on this category. Post-HOL-B: matches only
-        // pairs flagged by `compute_hol_domain_pairs`; emitting an arm
-        // referencing a non-existent variant would be a compile error.
-        let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
-        let cat_str_inf = cat_name.to_string();
-        let domain_cats: Vec<_> = cat_names
-            .iter()
-            .filter(|c| {
-                language.types.iter().any(|t| t.name.to_string() == c.to_string())
-                    && hol_pairs.contains(&(cat_str_inf.clone(), c.to_string()))
-            })
-            .collect();
-        for domain in &domain_cats {
-            let apply_variant = syn::Ident::new(&format!("Apply{}", domain), proc_macro2::Span::call_site());
-            type_match_arms.push(quote! {
-                #cat_name::#apply_variant(ref lam, ref arg) => {
-                    // Check if variable is in function position
-                    if let #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) = **lam {
-                        if fv.pretty_name.as_deref() == Some(var_name) {
-                            // Variable is being applied - it's a function type
-                            return Some(InferredType::Arrow(
-                                Box::new(InferredType::Base(VarCategory::#domain)),
-                                Box::new(InferredType::Base(VarCategory::#cat_name))
-                            ));
-                        }
+    let impls: Vec<TokenStream> = categories
+        .iter()
+        .map(|export| {
+            let cat = &export.name;
+            let task = format_ident!("Infer{}", cat);
+            quote! {
+                impl #cat {
+                    /// Find the first use of `var_name` in recursive field order and return
+                    /// its base category. Uses an explicit PDA worklist, so native stack
+                    /// consumption is independent of term depth.
+                    pub fn infer_var_category(&self, var_name: &str) -> Option<VarCategory> {
+                        let mut stack = INFERENCE_TASK_POOL.with(|pool| pool.take());
+                        stack.clear();
+                        stack.push(InferenceTask::#task(self as *const _));
+                        let result = infer_var_category_iterative(&mut stack, var_name);
+                        stack.clear();
+                        INFERENCE_TASK_POOL.with(|pool| pool.set(stack));
+                        result
                     }
-                    // Otherwise recurse into lambda and argument
-                    if let Some(t) = lam.infer_var_type(var_name) {
-                        return Some(t);
-                    }
-                    if let Some(t) = arg.infer_var_type(var_name) {
-                        return Some(t);
-                    }
-                    None
-                }
-            });
 
-            // MApply variant
-            let mapply_variant = syn::Ident::new(&format!("MApply{}", domain), proc_macro2::Span::call_site());
-            type_match_arms.push(quote! {
-                #cat_name::#mapply_variant(ref lam, ref args) => {
-                    // Check if variable is in function position
-                    if let #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) = **lam {
-                        if fv.pretty_name.as_deref() == Some(var_name) {
-                            // Variable is being applied - it's a multi-arg function type
-                            return Some(InferredType::MultiArrow(
-                                Box::new(InferredType::Base(VarCategory::#domain)),
-                                Box::new(InferredType::Base(VarCategory::#cat_name))
-                            ));
-                        }
-                    }
-                    // Otherwise recurse
-                    if let Some(t) = lam.infer_var_type(var_name) {
-                        return Some(t);
-                    }
-                    for arg in args.iter() {
-                        if let Some(t) = arg.infer_var_type(var_name) {
-                            return Some(t);
-                        }
-                    }
-                    None
-                }
-            });
-
-            // Lam variant - recurse into body
-            let lam_variant = syn::Ident::new(&format!("Lam{}", domain), proc_macro2::Span::call_site());
-            type_match_arms.push(quote! {
-                #cat_name::#lam_variant(ref scope) => {
-                    // Recurse into lambda body
-                    if let Some(t) = scope.unsafe_body().infer_var_type(var_name) {
-                        return Some(t);
-                    }
-                    None
-                }
-            });
-
-            // MLam variant - recurse into body
-            let mlam_variant = syn::Ident::new(&format!("MLam{}", domain), proc_macro2::Span::call_site());
-            type_match_arms.push(quote! {
-                #cat_name::#mlam_variant(ref scope) => {
-                    // Recurse into multi-lambda body
-                    if let Some(t) = scope.unsafe_body().infer_var_type(var_name) {
-                        return Some(t);
-                    }
-                    None
-                }
-            });
-        }
-
-        // Add wildcard arm for other variants
-        type_match_arms.push(quote! {
-            _ => None
-        });
-
-        quote! {
-            impl #cat_name {
-                /// Find what category a variable is used as in this term (base type only)
-                pub fn infer_var_category(&self, var_name: &str) -> Option<VarCategory> {
-                    match self {
-                        #(#match_arms),*
-                    }
-                }
-
-                /// Find the full type of a variable from its usage in this term
-                ///
-                /// Returns function types when variable is used in application position.
-                /// For example, in `$name(f, x)`, `f` has type `[Name -> Proc]`.
-                pub fn infer_var_type(&self, var_name: &str) -> Option<InferredType> {
-                    match self {
-                        #(#type_match_arms),*
+                    /// Find the first full type of `var_name` in recursive field order.
+                    /// Application-position variables produce function types. Uses the same
+                    /// pooled explicit PDA as base-category inference.
+                    pub fn infer_var_type(&self, var_name: &str) -> Option<InferredType> {
+                        let mut stack = INFERENCE_TASK_POOL.with(|pool| pool.take());
+                        stack.clear();
+                        stack.push(InferenceTask::#task(self as *const _));
+                        let result = infer_var_type_iterative(&mut stack, var_name);
+                        stack.clear();
+                        INFERENCE_TASK_POOL.with(|pool| pool.set(stack));
+                        result
                     }
                 }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     quote! {
         /// Enum representing possible variable categories for type inference
@@ -259,22 +172,202 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
             }
         }
 
+        /// A node awaiting the ordered depth-first variable-inference visit.
+        #[allow(dead_code)]
+        enum InferenceTask {
+            #(#task_variants),*
+        }
+
+        // SAFETY: every pointer is derived from a live public-method `&self`,
+        // consumed on that same thread before the method returns, and never
+        // retained in the pool.
+        unsafe impl Send for InferenceTask {}
+        unsafe impl Sync for InferenceTask {}
+
+        thread_local! {
+            static INFERENCE_TASK_POOL: std::cell::Cell<Vec<InferenceTask>> =
+                std::cell::Cell::new(Vec::new());
+        }
+
+        #(#category_handlers)*
+        #(#type_handlers)*
+
+        fn infer_var_category_iterative(
+            stack: &mut Vec<InferenceTask>,
+            var_name: &str,
+        ) -> Option<VarCategory> {
+            while let Some(task) = stack.pop() {
+                let result = match task {
+                    #(#category_dispatch),*
+                };
+                if result.is_some() {
+                    return result;
+                }
+            }
+            None
+        }
+
+        fn infer_var_type_iterative(
+            stack: &mut Vec<InferenceTask>,
+            var_name: &str,
+        ) -> Option<InferredType> {
+            while let Some(task) = stack.pop() {
+                let result = match task {
+                    #(#type_dispatch),*
+                };
+                if result.is_some() {
+                    return result;
+                }
+            }
+            None
+        }
+
         #(#impls)*
+    }
+}
+
+fn generate_category_handler(
+    cat_name: &syn::Ident,
+    cat_names: &[&syn::Ident],
+    language: &LanguageDef,
+) -> TokenStream {
+    let rules: Vec<_> = language
+        .terms
+        .iter()
+        .filter(|rule| rule.category == *cat_name)
+        .collect();
+    let mut arms: Vec<TokenStream> = rules
+        .iter()
+        .filter_map(|rule| generate_var_inference_arm(rule, cat_names, language))
+        .collect();
+    let var_label = generate_var_label(cat_name);
+    arms.push(quote! {
+        #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
+            (fv.pretty_name.as_deref() == Some(var_name))
+                .then_some(VarCategory::#cat_name)
+        }
+    });
+    arms.push(quote! { _ => None });
+    let handler = format_ident!("infer_category_handle_{}", cat_name.to_string().to_lowercase());
+    quote! {
+        #[inline(never)]
+        #[allow(dead_code, unused_variables, non_snake_case)]
+        fn #handler(
+            stack: &mut Vec<InferenceTask>,
+            ptr: *const #cat_name,
+            var_name: &str,
+        ) -> Option<VarCategory> {
+            let value = unsafe { &*ptr };
+            match value { #(#arms),* }
+        }
+    }
+}
+
+fn generate_type_handler(
+    cat_name: &syn::Ident,
+    cat_names: &[&syn::Ident],
+    language: &LanguageDef,
+) -> TokenStream {
+    let rules: Vec<_> = language
+        .terms
+        .iter()
+        .filter(|rule| rule.category == *cat_name)
+        .collect();
+    let mut arms: Vec<TokenStream> = rules
+        .iter()
+        .filter_map(|rule| generate_var_type_inference_arm(rule, cat_names))
+        .collect();
+    let var_label = generate_var_label(cat_name);
+    arms.push(quote! {
+        #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
+            (fv.pretty_name.as_deref() == Some(var_name))
+                .then_some(InferredType::Base(VarCategory::#cat_name))
+        }
+    });
+
+    let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
+    let cat_string = cat_name.to_string();
+    for domain in cat_names
+        .iter()
+        .filter(|domain| hol_pairs.contains(&(cat_string.clone(), domain.to_string())))
+    {
+        let apply = format_ident!("Apply{}", domain);
+        let multi_apply = format_ident!("MApply{}", domain);
+        let lambda = format_ident!("Lam{}", domain);
+        let multi_lambda = format_ident!("MLam{}", domain);
+        let task = format_ident!("Infer{}", cat_name);
+        let argument_task = format_ident!("Infer{}", domain);
+        arms.push(quote! {
+            #cat_name::#apply(ref lam, ref arg) => {
+                if let #cat_name::#var_label(
+                    mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))
+                ) = **lam {
+                    if fv.pretty_name.as_deref() == Some(var_name) {
+                        return Some(InferredType::Arrow(
+                            Box::new(InferredType::Base(VarCategory::#domain)),
+                            Box::new(InferredType::Base(VarCategory::#cat_name)),
+                        ));
+                    }
+                }
+                // LIFO reverse of the recursive order: lambda, then argument.
+                stack.push(InferenceTask::#argument_task(&**arg as *const _));
+                stack.push(InferenceTask::#task(&**lam as *const _));
+                None
+            }
+        });
+        arms.push(quote! {
+            #cat_name::#multi_apply(ref lam, ref args) => {
+                if let #cat_name::#var_label(
+                    mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))
+                ) = **lam {
+                    if fv.pretty_name.as_deref() == Some(var_name) {
+                        return Some(InferredType::MultiArrow(
+                            Box::new(InferredType::Base(VarCategory::#domain)),
+                            Box::new(InferredType::Base(VarCategory::#cat_name)),
+                        ));
+                    }
+                }
+                for arg in args.iter().rev() {
+                    stack.push(InferenceTask::#argument_task(arg as *const _));
+                }
+                stack.push(InferenceTask::#task(&**lam as *const _));
+                None
+            }
+        });
+        for lambda_variant in [lambda, multi_lambda] {
+            arms.push(quote! {
+                #cat_name::#lambda_variant(ref scope) => {
+                    stack.push(InferenceTask::#task(&**scope.unsafe_body() as *const _));
+                    None
+                }
+            });
+        }
+    }
+    arms.push(quote! { _ => None });
+
+    let handler = format_ident!("infer_type_handle_{}", cat_name.to_string().to_lowercase());
+    quote! {
+        #[inline(never)]
+        #[allow(dead_code, unused_variables, non_snake_case)]
+        fn #handler(
+            stack: &mut Vec<InferenceTask>,
+            ptr: *const #cat_name,
+            var_name: &str,
+        ) -> Option<InferredType> {
+            let value = unsafe { &*ptr };
+            match value { #(#arms),* }
+        }
     }
 }
 
 /// Field kind for inference generation
 #[derive(Clone)]
 enum InferFieldKind {
-    Simple,  // Regular field
-    HashBag, // HashBag collection (iter returns (&T, usize))
-    Vec,     // Vec collection (iter returns &T)
-    /// Phase 4 #5b (2026-05-12): HashMap collection. `iter()` returns
-    /// `(&K, &V)`. Inference must visit BOTH k and v (each may
-    /// contain free variables). For the Phase 4 #5b empty-only pilot
-    /// invariant `K == V`, both are the same category, so the recursive
-    /// call yields the same result type whether invoked on k or v.
-    HashMap,
+    Simple,
+    /// A container of subterms. Ordered inference uses the shared collection
+    /// boundary in reverse-for-LIFO mode, including PathMap's keys and the
+    /// value positions present only in homogeneous map mode.
+    Collection(CollectionType),
     Binder,      // Scope with single binder
     MultiBinder, // Scope with multiple binders
 }
@@ -314,18 +407,10 @@ fn collect_inference_fields(
                     .any(|c| c.to_string() == field_cat.to_string())
                 {
                     let kind = match ty {
-                        TypeExpr::Collection { coll_type: CollectionType::HashBag, .. } => {
-                            InferFieldKind::HashBag
+                        TypeExpr::Collection { coll_type, .. } => {
+                            InferFieldKind::Collection(coll_type.clone())
                         },
-                        TypeExpr::Collection { coll_type: CollectionType::Vec, .. } => {
-                            InferFieldKind::Vec
-                        },
-                        TypeExpr::Collection { coll_type: CollectionType::HashSet, .. } => {
-                            InferFieldKind::Vec
-                        },
-                        // Phase 4 #5b (2026-05-12): HashMap(K, V).
-                        TypeExpr::Collection { coll_type: CollectionType::HashMap, .. }
-                        | TypeExpr::Map { .. } => InferFieldKind::HashMap,
+                        TypeExpr::Map { .. } => InferFieldKind::Collection(CollectionType::HashMap),
                         _ => InferFieldKind::Simple,
                     };
                     let name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
@@ -381,6 +466,48 @@ fn flat_term_param_count(params: &[TermParam]) -> usize {
             _ => 1,
         })
         .sum()
+}
+
+/// Push one field's child positions onto the ordered inference worklist.
+/// Callers emit fields in reverse and this helper emits collection positions
+/// in reverse, so LIFO pop order is byte-for-byte the recursive visitor's
+/// original field/element order.
+fn inference_field_push(
+    name: &syn::Ident,
+    field_cat: &syn::Ident,
+    kind: &InferFieldKind,
+    wrap: InferFieldWrap,
+) -> TokenStream {
+    let task = format_ident!("Infer{}", field_cat);
+    let inner = match kind {
+        InferFieldKind::Simple => quote! {
+            stack.push(InferenceTask::#task(&**__v as *const _));
+        },
+        InferFieldKind::Binder | InferFieldKind::MultiBinder => quote! {
+            stack.push(InferenceTask::#task(&**__v.unsafe_body() as *const _));
+        },
+        InferFieldKind::Collection(coll_type) => for_each_subterm(
+            coll_type,
+            &quote! { __v },
+            WalkOrder::ReverseForLifo,
+            &|element, _| {
+                quote! {
+                    stack.push(InferenceTask::#task(#element as *const _));
+                }
+            },
+        ),
+    };
+    match wrap {
+        InferFieldWrap::Direct => quote! {{
+            let __v = #name;
+            #inner
+        }},
+        InferFieldWrap::Optional => quote! {
+            if let Some(__v) = #name.as_ref() {
+                #inner
+            }
+        },
+    }
 }
 
 /// Generate a match arm for variable inference in a constructor
@@ -448,13 +575,7 @@ fn generate_var_inference_arm(
                             .iter()
                             .any(|c| c.to_string() == element_type.to_string())
                         {
-                            let kind = match coll_type {
-                                CollectionType::HashBag
-                                | CollectionType::HashMap
-                                | CollectionType::PathMap => InferFieldKind::HashBag,
-                                CollectionType::Vec => InferFieldKind::Vec,
-                                CollectionType::HashSet => InferFieldKind::Vec,
-                            };
+                            let kind = InferFieldKind::Collection(coll_type.clone());
                             Some((field_name, element_type.clone(), kind, InferFieldWrap::Direct))
                         } else {
                             None
@@ -573,52 +694,8 @@ fn generate_var_inference_arm(
 
     let recursive_calls: Vec<TokenStream> = fields
         .iter()
-        .map(|(name, _field_cat, kind, wrap)| {
-            let inner = match kind {
-                InferFieldKind::HashBag => quote! {
-                    for (item, _count) in __v.iter() {
-                        if let Some(cat) = item.infer_var_category(var_name) {
-                            return Some(cat);
-                        }
-                    }
-                },
-                InferFieldKind::Vec => quote! {
-                    for item in __v.iter() {
-                        if let Some(cat) = item.infer_var_category(var_name) {
-                            return Some(cat);
-                        }
-                    }
-                },
-                // Phase 4 #5b (2026-05-12): HashMap iter yields (&K, &V) —
-                // probe both since either side may carry a free variable.
-                InferFieldKind::HashMap => quote! {
-                    for (k, v) in __v.iter() {
-                        if let Some(cat) = k.infer_var_category(var_name) {
-                            return Some(cat);
-                        }
-                        if let Some(cat) = v.infer_var_category(var_name) {
-                            return Some(cat);
-                        }
-                    }
-                },
-                InferFieldKind::Binder | InferFieldKind::MultiBinder => quote! {
-                    if let Some(cat) = __v.unsafe_body().infer_var_category(var_name) {
-                        return Some(cat);
-                    }
-                },
-                InferFieldKind::Simple => quote! {
-                    if let Some(cat) = __v.infer_var_category(var_name) {
-                        return Some(cat);
-                    }
-                },
-            };
-            match wrap {
-                InferFieldWrap::Direct => quote! { { let __v = #name; #inner } },
-                InferFieldWrap::Optional => quote! {
-                    if let Some(__v) = #name.as_ref() { #inner }
-                },
-            }
-        })
+        .rev()
+        .map(|(name, field_cat, kind, wrap)| inference_field_push(name, field_cat, kind, *wrap))
         .collect();
 
     if field_patterns.is_empty() {
@@ -695,13 +772,7 @@ fn generate_var_type_inference_arm(
                             .iter()
                             .any(|c| c.to_string() == element_type.to_string())
                         {
-                            let kind = match coll_type {
-                                CollectionType::HashBag
-                                | CollectionType::HashMap
-                                | CollectionType::PathMap => InferFieldKind::HashBag,
-                                CollectionType::Vec => InferFieldKind::Vec,
-                                CollectionType::HashSet => InferFieldKind::Vec,
-                            };
+                            let kind = InferFieldKind::Collection(coll_type.clone());
                             Some((field_name, element_type.clone(), kind, InferFieldWrap::Direct))
                         } else {
                             None
@@ -804,52 +875,8 @@ fn generate_var_type_inference_arm(
 
     let recursive_calls: Vec<TokenStream> = fields
         .iter()
-        .map(|(name, _field_cat, kind, wrap)| {
-            let inner = match kind {
-                InferFieldKind::HashBag => quote! {
-                    for (item, _count) in __v.iter() {
-                        if let Some(t) = item.infer_var_type(var_name) {
-                            return Some(t);
-                        }
-                    }
-                },
-                InferFieldKind::Vec => quote! {
-                    for item in __v.iter() {
-                        if let Some(t) = item.infer_var_type(var_name) {
-                            return Some(t);
-                        }
-                    }
-                },
-                // Phase 4 #5b (2026-05-12): HashMap iter yields (&K, &V) —
-                // probe both since either side may carry a free variable.
-                InferFieldKind::HashMap => quote! {
-                    for (k, v) in __v.iter() {
-                        if let Some(t) = k.infer_var_type(var_name) {
-                            return Some(t);
-                        }
-                        if let Some(t) = v.infer_var_type(var_name) {
-                            return Some(t);
-                        }
-                    }
-                },
-                InferFieldKind::Binder | InferFieldKind::MultiBinder => quote! {
-                    if let Some(t) = __v.unsafe_body().infer_var_type(var_name) {
-                        return Some(t);
-                    }
-                },
-                InferFieldKind::Simple => quote! {
-                    if let Some(t) = __v.infer_var_type(var_name) {
-                        return Some(t);
-                    }
-                },
-            };
-            match wrap {
-                InferFieldWrap::Direct => quote! { { let __v = #name; #inner } },
-                InferFieldWrap::Optional => quote! {
-                    if let Some(__v) = #name.as_ref() { #inner }
-                },
-            }
-        })
+        .rev()
+        .map(|(name, field_cat, kind, wrap)| inference_field_push(name, field_cat, kind, *wrap))
         .collect();
 
     if field_patterns.is_empty() {

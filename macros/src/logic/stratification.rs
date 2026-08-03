@@ -256,8 +256,13 @@ fn add_premise_edge(
         Premise::ForAll { body, .. } => {
             add_premise_edge(source, body, graph, node_set);
         },
-        Premise::Freshness(_) | Premise::Congruence { .. } | Premise::SyntheticInjGuard { .. } => {
-        },
+        // ★ (#195) A WITHHELD congruence adds no dependency edge, for the same reason a
+        // declared one does not: neither names a RELATION. Listed explicitly so a future
+        // edge on either polarity cannot be added to one and forgotten on the other.
+        Premise::Freshness(_)
+        | Premise::Congruence { .. }
+        | Premise::CongruenceWithheld { .. }
+        | Premise::SyntheticInjGuard { .. } => {},
     }
 }
 

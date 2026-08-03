@@ -268,7 +268,7 @@ fn off_leg() -> std::collections::BTreeMap<String, Obs> {
         .arg("--nocapture")
         .env(CHILD_MARKER, "1")
         .env(KILL_SWITCH, "1")
-        .env("RUST_MIN_STACK", "8388608")
+        .env_remove("RUST_MIN_STACK")
         .output()
         .expect("spawn OFF-leg child");
     assert!(

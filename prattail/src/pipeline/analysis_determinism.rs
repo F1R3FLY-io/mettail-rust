@@ -228,10 +228,26 @@ fn wide_bundle() -> ParserBundle {
         ),
         ("NQuote".to_string(), "Name".to_string(), vec![term("@"), nt("Proc", "p")]),
         ("CName".to_string(), "Chan".to_string(), vec![nt("Name", "n")]),
-        ("Add".to_string(), "Int".to_string(), vec![nt("Int", "a"), term("+"), nt("Int", "b")]),
-        ("Cat".to_string(), "Str".to_string(), vec![nt("Str", "a"), term("++"), nt("Str", "b")]),
-        ("Lt".to_string(), "Bool".to_string(), vec![nt("Int", "a"), term("<"), nt("Int", "b")]),
-        ("And".to_string(), "Bool".to_string(), vec![nt("Bool", "a"), term("&&"), nt("Bool", "b")]),
+        (
+            "Add".to_string(),
+            "Int".to_string(),
+            vec![nt("Int", "a"), term("+"), nt("Int", "b")],
+        ),
+        (
+            "Cat".to_string(),
+            "Str".to_string(),
+            vec![nt("Str", "a"), term("++"), nt("Str", "b")],
+        ),
+        (
+            "Lt".to_string(),
+            "Bool".to_string(),
+            vec![nt("Int", "a"), term("<"), nt("Int", "b")],
+        ),
+        (
+            "And".to_string(),
+            "Bool".to_string(),
+            vec![nt("Bool", "a"), term("&&"), nt("Bool", "b")],
+        ),
     ];
     // ★ #183: appended rather than interleaved, so the structural rules above keep
     // their grammar positions and every other analysis this gate observes sees the
@@ -350,7 +366,10 @@ fn field_name(line: &str) -> Option<&str> {
 /// field — including the ones #164's cross-path guard has to exclude — is
 /// in scope here.
 fn render(results: MathAnalysisResults) -> Vec<String> {
-    format!("{results:#?}").lines().map(str::to_string).collect()
+    format!("{results:#?}")
+        .lines()
+        .map(str::to_string)
+        .collect()
 }
 
 /// The field paths the analysis phase could not reproduce, with the distinct

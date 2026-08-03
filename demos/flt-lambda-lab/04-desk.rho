@@ -1,0 +1,34 @@
+// THE DESK — pattern-match INTO a foreign language, then filter what matched.
+//
+// Three results rest on @"numerals". Two are Church numerals computed by 01 and 02;
+// one is the identity function, which is NOT a numeral.
+//
+//   5  ≡ lam f. lam x. f (f (f (f (f x))))     the sum      from 01-plus
+//   6  ≡ lam f. lam x. f (f (f (f (f (f x))))) the product  from 02-mult
+//   I  ≡ lam x. x                              not a numeral at all
+//
+// TWO FILTERS, DOING DIFFERENT JOBS
+// ─────────────────────────────────
+//   for( @lambda`lam f. lam x. ${body}` <- @"numerals" where ... )
+//
+//   * The PATTERN is a Foreign Language Term with a hole in a NESTED position. It matches
+//     only terms shaped `lam f. lam x. _` — so the identity is rejected structurally — and
+//     binds the λ-term's BODY out into Rholang. That is pattern matching into a foreign
+//     language: `body` is now a RhoCalc value holding a sub-term of a λ-term.
+//   * The `where` clause then decides among what matched. The substrate makes that call.
+//
+// WHAT IS LEFT BEHIND
+// ───────────────────
+// The rejected results are not consumed and not destroyed — they are still resting on
+// @"numerals" when the program comes to rest.
+//
+// EXPECT: @"OUT" carries the body of the sum; the product and the identity still rest.
+
+@"numerals"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) |
+@"numerals"!(lambda`lam f. lam x. (f, (f, (f, (f, (f, (f, x))))))`) |
+@"numerals"!(lambda`lam x. x`) |
+
+for(@lambda`lam f. lam x. ${body}` <- @"numerals"
+    where lambda`lam f. lam x. ${body}` == lambda`lam f. lam x. (f, (f, (f, (f, (f, x)))))`) {
+  @"OUT"!(lambda`${body}`)
+}

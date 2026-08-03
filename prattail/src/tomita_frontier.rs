@@ -40,7 +40,6 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-
 use crate::automata::semiring::{LexProvenance, SemiringRef};
 use crate::dispatch_cohort::DispatchKey;
 use crate::edge_stack_arena::EdgeStackId;

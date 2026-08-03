@@ -441,8 +441,9 @@ fn parse_collection_delimiters_dict(
     let span = proc_macro2::Span::call_site();
     let open = open
         .ok_or_else(|| syn::Error::new(span, "collection delimiters dict requires `open_parts`"))?;
-    let close = close
-        .ok_or_else(|| syn::Error::new(span, "collection delimiters dict requires `close_parts`"))?;
+    let close = close.ok_or_else(|| {
+        syn::Error::new(span, "collection delimiters dict requires `close_parts`")
+    })?;
     let sep =
         sep.ok_or_else(|| syn::Error::new(span, "collection delimiters dict requires `sep`"))?;
     if !allow_kv && key_val_sep.is_some() {
@@ -455,7 +456,11 @@ fn parse_collection_delimiters_dict(
     // whose dict block need not restate `:`) defaults to `":"`, matching the no-block
     // `pathmap_defaults()`. Without this it would parse as a single-element collection
     // and reject `{| k: v |}` at the `:`.
-    let key_val_sep = if allow_kv { key_val_sep.or_else(|| Some(":".to_string())) } else { key_val_sep };
+    let key_val_sep = if allow_kv {
+        key_val_sep.or_else(|| Some(":".to_string()))
+    } else {
+        key_val_sep
+    };
     Ok(CollectionDelimiters { open, close, sep, key_val_sep })
 }
 
@@ -519,7 +524,8 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
                     syn::parenthesized!(paren_content in content);
                     // Consume legacy params: List(Proc), Bag(Proc), Set(Proc), Map(Proc, Proc), Pathmap(Proc, Proc)
                     let _ = paren_content.parse::<Ident>()?;
-                    if (name_str == "Map" || name_str == "Pathmap") && paren_content.peek(Token![,]) {
+                    if (name_str == "Map" || name_str == "Pathmap") && paren_content.peek(Token![,])
+                    {
                         let _ = paren_content.parse::<Token![,]>()?;
                         let _ = paren_content.parse::<Ident>()?;
                     }
@@ -1431,11 +1437,7 @@ fn parse_tokens(input: ParseStream) -> SynResult<TokensBlock> {
 
 /// Public wrapper for `parse_tokens` for use by `fragment.rs`.
 pub fn parse_tokens_public(input: ParseStream) -> SynResult<(Vec<TokenDef>, Vec<ModeDef>)> {
-    let TokensBlock {
-        token_defs,
-        mode_defs,
-        ..
-    } = parse_tokens(input)?;
+    let TokensBlock { token_defs, mode_defs, .. } = parse_tokens(input)?;
     Ok((token_defs, mode_defs))
 }
 
@@ -2300,6 +2302,7 @@ fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {
 /// Grammar: freshness | congruence | relation_query | forall
 ///   freshness  ::= ident "#" (ident | "..." ident)
 ///   congruence ::= ident "~>" ident
+///   withheld   ::= ident "~/>" ident      -- ★ (#195) a DENIED congruence
 ///   relation   ::= ident "(" (ident ("," ident)*)? ")"
 ///   forall     ::= ident "." "*" "map" "(" "|" ident "|" premise ")"
 fn parse_premise(input: ParseStream) -> SynResult<Premise> {
@@ -2315,6 +2318,16 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
             FreshnessTarget::Var(input.parse::<Ident>()?)
         };
         Ok(Premise::Freshness(FreshnessCondition { var: first, term }))
+    } else if input.peek(Token![~]) && input.peek2(Token![/]) {
+        // ★ (#195) WITHHELD congruence: S ~/> T — the slash-negated rewrite arrow
+        // (`↛`). Peeked BEFORE the plain `~>` arm: `~/>` and `~>` share the leading
+        // `~`, and `peek2` distinguishes them on the second token, so the order of
+        // these two arms is load-bearing and `~/>` must come first.
+        let _ = input.parse::<Token![~]>()?;
+        let _ = input.parse::<Token![/]>()?;
+        let _ = input.parse::<Token![>]>()?;
+        let target = input.parse::<Ident>()?;
+        Ok(Premise::CongruenceWithheld { source: first, target })
     } else if input.peek(Token![~]) && input.peek2(Token![>]) {
         // Congruence: S ~> T
         let _ = input.parse::<Token![~]>()?;
@@ -3430,7 +3443,8 @@ fn find_sole_rewrites_block(source: &str) -> Result<RewritesBlock, String> {
                 && !next_is_ident_byte(bytes, index + "rewrites".len()) =>
             {
                 let after_keyword = index + "rewrites".len();
-                if let Some(open) = next_non_ws(bytes, after_keyword).filter(|&at| bytes[at] == b'{')
+                if let Some(open) =
+                    next_non_ws(bytes, after_keyword).filter(|&at| bytes[at] == b'{')
                 {
                     let close = matching_close_brace(source, open)?;
                     blocks.push(RewritesBlock { close_index: close });
@@ -3443,7 +3457,9 @@ fn find_sole_rewrites_block(source: &str) -> Result<RewritesBlock, String> {
         }
     }
     match blocks.len() {
-        1 => Ok(blocks.pop().expect("exactly one rewrites block was collected")),
+        1 => Ok(blocks
+            .pop()
+            .expect("exactly one rewrites block was collected")),
         0 => Err("definition source has no `rewrites { … }` block to splice into".to_string()),
         n => Err(format!(
             "definition source has {n} `rewrites {{ … }}` blocks — the splice point is ambiguous"
@@ -3595,10 +3611,9 @@ mod rewrite_fragment_tests {
 
     #[test]
     fn parses_multiple_rules_and_rejects_garbage() {
-        let rules = parse_rewrite_fragment(
-            "A0 . |- (R0 x) ~> (Wrap x) ; A1 . |- (R1 x) ~> (Wrap x) ;",
-        )
-        .expect("two rewrite lines parse");
+        let rules =
+            parse_rewrite_fragment("A0 . |- (R0 x) ~> (Wrap x) ; A1 . |- (R1 x) ~> (Wrap x) ;")
+                .expect("two rewrite lines parse");
         assert_eq!(rules.len(), 2);
         assert!(
             parse_rewrite_fragment("not a rewrite ~~~").is_err(),
@@ -3645,24 +3660,21 @@ mod rewrite_fragment_tests {
                 M0 . |- (Brace x) ~> (Brace x) ;
             }
         "#;
-        let extended = splice_rewrite_into_source(source, "M1 . |- (Brace (Brace x)) ~> (Brace x) ;")
-            .expect("comment/string guards hold");
+        let extended =
+            splice_rewrite_into_source(source, "M1 . |- (Brace (Brace x)) ~> (Brace x) ;")
+                .expect("comment/string guards hold");
         let def = syn::parse_str::<LanguageDef>(&extended).expect("the extended source parses");
         assert_eq!(def.rewrites.len(), 2);
     }
 
     #[test]
     fn splice_fails_closed_without_exactly_one_block() {
-        assert!(
-            splice_rewrite_into_source("name: NoBlock, types { Proc }", "M . |- x ~> x ;")
-                .expect_err("zero blocks fail closed")
-                .contains("no `rewrites"),
-        );
+        assert!(splice_rewrite_into_source("name: NoBlock, types { Proc }", "M . |- x ~> x ;")
+            .expect_err("zero blocks fail closed")
+            .contains("no `rewrites"),);
         let two = "rewrites { } rewrites { }";
-        assert!(
-            splice_rewrite_into_source(two, "M . |- x ~> x ;")
-                .expect_err("two blocks fail closed")
-                .contains("ambiguous"),
-        );
+        assert!(splice_rewrite_into_source(two, "M . |- x ~> x ;")
+            .expect_err("two blocks fail closed")
+            .contains("ambiguous"),);
     }
 }

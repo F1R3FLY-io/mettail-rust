@@ -582,6 +582,8 @@ fn classify_reflect_field(field: &FieldInfo) -> ReflectField {
 /// STRUCTURALLY instead of failing closed. A guest-body field (`OpaqueLeafKind::GuestBody`)
 /// still fails closed: an `Arc<FltNode>` is an opaque foreign payload, and a `{:?}` tag over
 /// it would make the reflection LOOK total while giving the automaton nothing it can match on.
+#[cfg(test)]
+#[allow(dead_code)]
 fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream {
     let fn_name = reflect_fn_name(category);
     let ground = quote!(::mettail_rholang_codegen::GroundTerm);
@@ -843,6 +845,384 @@ fn reflect_category_fn(language: &LanguageDef, category: &Ident) -> TokenStream 
     }
 }
 
+/// Handler name for one category in the shared stack-safe reflection PDA.
+fn reflect_handler_name(category: &Ident) -> Ident {
+    format_ident!("__mettail_rho_net_reflect_handle_{}", to_snake(&category.to_string()))
+}
+
+/// Task variant for one category in the shared stack-safe reflection PDA.
+fn reflect_task_variant(category: &Ident) -> Ident {
+    format_ident!("Visit{}", category)
+}
+
+/// Generate the task algebra, reusable allocation pools, and single dispatch engine used by all
+/// category reflectors in one language. Raw pointers make the task type lifetime-free so its
+/// allocation can be retained between calls; every pointer is derived from the wrapper's live
+/// input borrow and consumed synchronously before that wrapper returns.
+fn reflect_pda_support(language: &LanguageDef) -> TokenStream {
+    let task_variants: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|ty| {
+            let category = &ty.name;
+            let variant = reflect_task_variant(category);
+            quote! { #variant(*const #category) }
+        })
+        .collect();
+    let dispatch: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|ty| {
+            let category = &ty.name;
+            let variant = reflect_task_variant(category);
+            let handler = reflect_handler_name(category);
+            quote! {
+                __MettailReflectTask::#variant(__ptr) => {
+                    // SAFETY: the wrapper creates this pointer from its borrowed input and the
+                    // synchronous engine drains every task before the borrow can end.
+                    #handler(unsafe { &*__ptr }, &mut __tasks, &mut __values)?;
+                }
+            }
+        })
+        .collect();
+    let ident_label_lit = lit(mettail_rholang_codegen::IDENT_TEXT_REFLECT_LABEL);
+
+    quote! {
+        #[allow(dead_code)]
+        enum __MettailReflectTask {
+            #(#task_variants,)*
+            IdentText(*const ::std::string::String),
+            Assemble {
+                constructor: &'static str,
+                coll_type: ::core::option::Option<
+                    ::mettail_rholang_codegen::CollectionType,
+                >,
+                child_count: usize,
+            },
+        }
+
+        ::std::thread_local! {
+            static __METTAIL_REFLECT_TASK_POOL:
+                ::std::cell::Cell<::std::vec::Vec<__MettailReflectTask>> =
+                    const { ::std::cell::Cell::new(::std::vec::Vec::new()) };
+            static __METTAIL_REFLECT_VALUE_POOL:
+                ::std::cell::Cell<
+                    ::std::vec::Vec<::mettail_rholang_codegen::GroundTerm>,
+                > = const { ::std::cell::Cell::new(::std::vec::Vec::new()) };
+        }
+
+        fn __mettail_rho_net_reflect_run(
+            __seed: __MettailReflectTask,
+        ) -> ::core::result::Result<
+            ::mettail_rholang_codegen::GroundTerm,
+            ::std::string::String,
+        > {
+            let mut __tasks = __METTAIL_REFLECT_TASK_POOL.with(|__pool| __pool.take());
+            let mut __values = __METTAIL_REFLECT_VALUE_POOL.with(|__pool| __pool.take());
+            __tasks.clear();
+            __values.clear();
+            __tasks.push(__seed);
+
+            let __result = (|| {
+                while let ::core::option::Option::Some(__task) = __tasks.pop() {
+                    match __task {
+                        #(#dispatch)*
+                        __MettailReflectTask::IdentText(__ptr) => {
+                            // SAFETY: identical lifetime argument to category task pointers.
+                            let __text = unsafe { &*__ptr };
+                            __values.push(::mettail_rholang_codegen::GroundTerm::new(
+                                ::std::format!("{}({:?})", #ident_label_lit, __text),
+                                ::std::vec::Vec::new(),
+                            ));
+                        },
+                        __MettailReflectTask::Assemble {
+                            constructor,
+                            coll_type,
+                            child_count,
+                        } => {
+                            let __first_child = __values.len().checked_sub(child_count)
+                                .ok_or_else(|| ::std::string::String::from(
+                                    "generated reflection PDA lost a child result",
+                                ))?;
+                            let __children = __values.split_off(__first_child);
+                            __values.push(::mettail_rholang_codegen::GroundTerm {
+                                constructor: ::std::string::String::from(constructor),
+                                children: __children,
+                                coll_type,
+                            });
+                        },
+                    }
+                }
+
+                if __values.len() != 1 {
+                    return ::core::result::Result::Err(::std::format!(
+                        "generated reflection PDA produced {} root results",
+                        __values.len(),
+                    ));
+                }
+                ::core::result::Result::Ok(__values.pop().expect(
+                    "generated reflection PDA checked its root-result count",
+                ))
+            })();
+
+            // The returned root has been moved out. On error, stack-safe GroundTerm::drop makes
+            // clearing partially assembled results safe at arbitrary input depth.
+            __tasks.clear();
+            __values.clear();
+            __METTAIL_REFLECT_TASK_POOL.with(|__pool| __pool.set(__tasks));
+            __METTAIL_REFLECT_VALUE_POOL.with(|__pool| __pool.set(__values));
+            __result
+        }
+    }
+}
+
+/// Generate one category handler and its thin wrapper for the shared reflection PDA.
+fn reflect_category_pda_fn(language: &LanguageDef, category: &Ident) -> TokenStream {
+    let fn_name = reflect_fn_name(category);
+    let handler_name = reflect_handler_name(category);
+    let seed_variant = reflect_task_variant(category);
+    let ground = quote!(::mettail_rholang_codegen::GroundTerm);
+    let arms: Vec<TokenStream> = collect_category_variants(category, language)
+        .into_iter()
+        .map(|variant| match variant {
+            VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
+            VariantKind::Nullary { label } => {
+                let label_lit = lit(&label.to_string());
+                quote! {
+                    #category::#label => {
+                        __values.push(#ground::new(#label_lit, ::std::vec::Vec::new()));
+                        ::core::result::Result::Ok(())
+                    }
+                }
+            },
+            VariantKind::Regular { label, fields }
+                if fields
+                    .iter()
+                    .all(|field| classify_reflect_field(field) != ReflectField::NotReflectable) =>
+            {
+                let label_lit = lit(&label.to_string());
+                let field_vars: Vec<Ident> =
+                    (0..fields.len()).map(|index| format_ident!("__field_{index}")).collect();
+                let child_pushes: Vec<TokenStream> = fields
+                    .iter()
+                    .zip(field_vars.iter())
+                    .rev()
+                    .map(|(field, var)| match classify_reflect_field(field) {
+                        ReflectField::Structural => {
+                            let child_variant = reflect_task_variant(&field.category);
+                            quote! {
+                                __tasks.push(__MettailReflectTask::#child_variant(
+                                    #var.as_ref() as *const _,
+                                ));
+                            }
+                        },
+                        ReflectField::IdentText => quote! {
+                            __tasks.push(__MettailReflectTask::IdentText(#var as *const _));
+                        },
+                        ReflectField::NotReflectable => {
+                            let message = format!(
+                                "mettail internal error: reflection PDA admission and field classifier drifted for constructor `{label}`"
+                            );
+                            quote! { compile_error!(#message); }
+                        },
+                    })
+                    .collect();
+                let child_count = fields.len();
+                quote! {
+                    #category::#label(#(#field_vars),*) => {
+                        __tasks.push(__MettailReflectTask::Assemble {
+                            constructor: #label_lit,
+                            coll_type: ::core::option::Option::None,
+                            child_count: #child_count,
+                        });
+                        #(#child_pushes)*
+                        ::core::result::Result::Ok(())
+                    }
+                }
+            },
+            VariantKind::Regular { label, .. } => {
+                let message = lit(&format!(
+                    "in-Rho match reflection: constructor {label} has a non-structural field with no positional ground image"
+                ));
+                quote! {
+                    #category::#label(..) => ::core::result::Result::Err(
+                        ::std::string::String::from(#message),
+                    )
+                }
+            },
+            VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
+                let label_lit = lit(&label.to_string());
+                quote! {
+                    #category::#label(__value) => {
+                        __values.push(#ground::new(
+                            ::std::format!("{}({:?})", #label_lit, __value),
+                            ::std::vec::Vec::new(),
+                        ));
+                        ::core::result::Result::Ok(())
+                    }
+                }
+            },
+            VariantKind::Var { label } => {
+                let bound_lit = lit(mettail_rholang_codegen::BOUND_VAR_REFLECT_LABEL);
+                let free_lit = lit(mettail_rholang_codegen::FREE_VAR_REFLECT_LABEL);
+                let zero_lit = lit(mettail_rholang_codegen::PEANO_ZERO_REFLECT_LABEL);
+                let succ_lit = lit(mettail_rholang_codegen::PEANO_SUCC_REFLECT_LABEL);
+                quote! {
+                    #category::#label(__ordvar) => {
+                        let __reflected = match &__ordvar.0 {
+                            mettail_runtime::Var::Bound(__bv) => {
+                                let mut __peano = #ground::new(
+                                    #zero_lit,
+                                    ::std::vec::Vec::new(),
+                                );
+                                for _ in 0..__bv.scope.0 {
+                                    __peano = #ground::new(#succ_lit, ::std::vec![__peano]);
+                                }
+                                #ground::new(#bound_lit, ::std::vec![__peano])
+                            },
+                            mettail_runtime::Var::Free(__fv) => #ground::new(
+                                #free_lit,
+                                ::std::vec![#ground::new(
+                                    ::std::format!("{:?}", __fv),
+                                    ::std::vec::Vec::new(),
+                                )],
+                            ),
+                        };
+                        __values.push(__reflected);
+                        ::core::result::Result::Ok(())
+                    }
+                }
+            },
+            VariantKind::Collection { label, element_cat, coll_type } => match coll_type {
+                mettail_ast::types::CollectionType::HashBag => {
+                    let label_lit = lit(&label.to_string());
+                    let child_variant = reflect_task_variant(&element_cat);
+                    quote! {
+                        #category::#label(__bag) => {
+                            __tasks.push(__MettailReflectTask::Assemble {
+                                constructor: #label_lit,
+                                coll_type: ::core::option::Option::Some(
+                                    ::mettail_rholang_codegen::CollectionType::HashBag,
+                                ),
+                                child_count: __bag.len(),
+                            });
+                            let __first_child_task = __tasks.len();
+                            for __element in __bag.iter_elements() {
+                                __tasks.push(__MettailReflectTask::#child_variant(
+                                    __element as *const _,
+                                ));
+                            }
+                            __tasks[__first_child_task..].reverse();
+                            ::core::result::Result::Ok(())
+                        }
+                    }
+                },
+                mettail_ast::types::CollectionType::HashSet => {
+                    let label_lit = lit(&label.to_string());
+                    let child_variant = reflect_task_variant(&element_cat);
+                    quote! {
+                        #category::#label(__set) => {
+                            __tasks.push(__MettailReflectTask::Assemble {
+                                constructor: #label_lit,
+                                coll_type: ::core::option::Option::Some(
+                                    ::mettail_rholang_codegen::CollectionType::HashSet,
+                                ),
+                                child_count: __set.len(),
+                            });
+                            let __first_child_task = __tasks.len();
+                            for __element in __set.iter() {
+                                __tasks.push(__MettailReflectTask::#child_variant(
+                                    __element as *const _,
+                                ));
+                            }
+                            __tasks[__first_child_task..].reverse();
+                            ::core::result::Result::Ok(())
+                        }
+                    }
+                },
+                _ => {
+                    let message = lit(&format!(
+                        "in-Rho match reflection: {label} is a non-bare-var ({coll_type:?}) collection with no in-Rho AC carrier via this arm"
+                    ));
+                    quote! {
+                        #category::#label(..) => ::core::result::Result::Err(
+                            ::std::string::String::from(#message),
+                        )
+                    }
+                },
+            },
+            VariantKind::Binder { label, pre_scope_fields, body_cat, .. }
+                if pre_scope_fields.is_empty() =>
+            {
+                let lambda_lit = lit(mettail_rholang_codegen::LAMBDA_REFLECT_LABEL);
+                let body_variant = reflect_task_variant(&body_cat);
+                quote! {
+                    #category::#label(__scope) => {
+                        __tasks.push(__MettailReflectTask::Assemble {
+                            constructor: #lambda_lit,
+                            coll_type: ::core::option::Option::None,
+                            child_count: 1,
+                        });
+                        __tasks.push(__MettailReflectTask::#body_variant(
+                            __scope.unsafe_body().as_ref() as *const _,
+                        ));
+                        ::core::result::Result::Ok(())
+                    }
+                }
+            },
+            VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. }
+                if pre_scope_fields.is_empty() =>
+            {
+                let lambda_lit = lit(mettail_rholang_codegen::MULTILAMBDA_REFLECT_LABEL);
+                let body_variant = reflect_task_variant(&body_cat);
+                quote! {
+                    #category::#label(__scope) => {
+                        __tasks.push(__MettailReflectTask::Assemble {
+                            constructor: #lambda_lit,
+                            coll_type: ::core::option::Option::None,
+                            child_count: 1,
+                        });
+                        __tasks.push(__MettailReflectTask::#body_variant(
+                            __scope.unsafe_body().as_ref() as *const _,
+                        ));
+                        ::core::result::Result::Ok(())
+                    }
+                }
+            },
+            VariantKind::Binder { label, .. } | VariantKind::MultiBinder { label, .. } => {
+                let message = lit(&format!(
+                    "in-Rho match reflection: {label} is a binder node with pre-scope fields — no single-child ^lambda ground image in this slice"
+                ));
+                quote! {
+                    #category::#label(..) => ::core::result::Result::Err(
+                        ::std::string::String::from(#message),
+                    )
+                }
+            },
+        })
+        .collect();
+
+    quote! {
+        fn #handler_name(
+            __term: &#category,
+            __tasks: &mut ::std::vec::Vec<__MettailReflectTask>,
+            __values: &mut ::std::vec::Vec<#ground>,
+        ) -> ::core::result::Result<(), ::std::string::String> {
+            match __term {
+                #(#arms),*
+            }
+        }
+
+        fn #fn_name(
+            __term: &#category,
+        ) -> ::core::result::Result<#ground, ::std::string::String> {
+            __mettail_rho_net_reflect_run(__MettailReflectTask::#seed_variant(
+                __term as *const _,
+            ))
+        }
+    }
+}
+
 /// The M-reflect subject binding for `match_body`: the `k` per-category reflection fns plus the
 /// `let __subject = …;` that reflects the runtime subject term `typed_term.0` into a
 /// `GroundTerm` — WITHOUT reading `report.rewrite_justifications` (no host σ). For a
@@ -877,10 +1257,11 @@ fn reflect_subject_binding_inner(language: &LanguageDef, canonicalize: bool) -> 
     let name = &language.name;
     let language_lit = lit(&name.to_string());
     let term_name = format_ident!("{}Term", name);
+    let reflect_pda = reflect_pda_support(language);
     let reflect_fns: Vec<TokenStream> = language
         .types
         .iter()
-        .map(|ty| reflect_category_fn(language, &ty.name))
+        .map(|ty| reflect_category_pda_fn(language, &ty.name))
         .collect();
     let primary = language
         .types
@@ -959,6 +1340,7 @@ fn reflect_subject_binding_inner(language: &LanguageDef, canonicalize: bool) -> 
     };
 
     quote! {
+        #reflect_pda
         #(#reflect_fns)*
 
         let __typed_term = term
@@ -998,6 +1380,19 @@ pub fn generate_flt_reflect(language: &LanguageDef) -> TokenStream {
     quote! {
         #[cfg(feature = "rho-codegen")]
         impl ::mettail_rholang_codegen::FltReflect for #language_struct {
+            fn reflect_flt_term(
+                &self,
+                term: &dyn mettail_runtime::Term,
+            ) -> ::core::result::Result<
+                ::mettail_rholang_codegen::GroundTerm,
+                ::std::string::String,
+            > {
+                #reflect_subject
+                ::core::result::Result::Ok(
+                    ::mettail_rholang_codegen::flt_normalize_hole_names(__subject),
+                )
+            }
+
             fn parse_and_reflect_flt(
                 &self,
                 body: &str,
@@ -1009,18 +1404,14 @@ pub fn generate_flt_reflect(language: &LanguageDef) -> TokenStream {
                 // variables); `parse_term_for_env` does NOT clear the var cache, so the caller's
                 // interning is undisturbed when a lowering pass reflects several FLTs in a row.
                 let __parsed = mettail_runtime::Language::parse_term_for_env(self, body)?;
-                let term: &dyn mettail_runtime::Term = __parsed.as_ref();
-                #reflect_subject
-                ::core::result::Result::Ok(
-                    ::mettail_rholang_codegen::flt_normalize_hole_names(__subject),
-                )
+                self.reflect_flt_term(__parsed.as_ref())
             }
         }
     }
 }
 
 /// A-S3: the native-scalar types whose LITERAL-LEAF ground tags (`"{Lit}({:?})"`, the
-/// [`reflect_category_fn`] literal arm's format) parse back FAITHFULLY via `FromStr` — the
+/// generated reflection PDA's literal-arm format) parse back FAITHFULLY via `FromStr` — the
 /// registrability whitelist for machine-side native handlers. For each of these,
 /// `parse ∘ debug-format = identity` on every value the leaf tag can carry (integers, IEEE
 /// floats including `NaN`/`inf`/`-0.0`, booleans), and the generated ground-eval leaf arm
@@ -2890,6 +3281,15 @@ mod tests {
         syn::parse_str(fragment).expect("test language fragment must parse")
     }
 
+    /// Render the production reflection engine, not the retained recursive reference emitter.
+    /// Keeping generator tests on this helper prevents the two implementations from drifting
+    /// while the reference remains available for differential-equivalence work.
+    fn reflect_pda_tokens(language: &LanguageDef, category: &Ident) -> String {
+        let support = reflect_pda_support(language);
+        let category = reflect_category_pda_fn(language, category);
+        quote! { #support #category }.to_string()
+    }
+
     /// **A-7.** A constructor carrying an `m:Ident` token-text field REFLECTS — it emits an
     /// `Ok(GroundTerm)` arm whose token-text position is the reserved nullary leaf
     /// `^ident("…")` — while a constructor carrying a `*flt(…)` guest-body field still fails
@@ -2930,7 +3330,7 @@ mod tests {
                 rewrites { Drop . |- (Named m) ~> (Nil) ; }
             "#,
         );
-        let reflect = reflect_category_fn(&language, &format_ident!("Proc")).to_string();
+        let reflect = reflect_pda_tokens(&language, &format_ident!("Proc"));
         let ident_tag = format!("{:?}", mettail_rholang_codegen::IDENT_TEXT_REFLECT_LABEL);
 
         // The token-text positions reflect, through the reserved `^ident` tag.
@@ -2941,8 +3341,8 @@ mod tests {
         // `Call`'s category child still RECURSES — the mixed variant reflects both shapes,
         // so admitting the text position did not turn the whole variant into a leaf.
         assert!(
-            reflect.contains("__mettail_rho_net_reflect_proc"),
-            "the mixed variant's category child must still recurse; got:\n{reflect}",
+            reflect.contains("__MettailReflectTask :: VisitProc"),
+            "the mixed variant's category child must enqueue a structural visit; got:\n{reflect}",
         );
         // CONTROL: the guest-body constructor keeps the fail-closed arm.
         assert!(
@@ -3225,6 +3625,15 @@ mod tests {
     /// changed path, or a re-ordered field would not land on +2. The S2 float-branch
     /// invariants (legacy seed path, no float token) are unaffected and still asserted
     /// above the pin.
+    ///
+    /// RE-CAPTURED (campaign root 4131, 2026-07-31) — explained diff: the embedded mutually
+    /// recursive `__mettail_rho_net_reflect_*` helpers were replaced by the generated shared
+    /// PDA: one task algebra, pooled task/value stacks, per-category handlers, and thin seed
+    /// wrappers. This intentionally changes the complete function-item fingerprint
+    /// (5030 → 8610 rendered bytes); the assertions immediately below continue to pin the
+    /// unchanged non-float seed route and absence of float machinery. Production-PDA token
+    /// tests separately pin child ordering, collection tagging/reversal, binders, identifiers,
+    /// and fail-closed fields.
     #[test]
     fn lambda_drive_fn_item_is_byte_identical_across_the_s2_seed_switch() {
         use std::hash::{Hash, Hasher};
@@ -3242,14 +3651,13 @@ mod tests {
         item.hash(&mut hasher);
         assert_eq!(
             (item.len(), hasher.finish()),
-            (5030, 0x6d0b15ae799c671e),
+            (8610, 0x6b3b3a697c484929),
             "the Lambda drive fn item must be byte-identical to the E-3 T-LAZY emission \
              (the S2 switch's non-float branch interpolates the SAME \
              `::mettail_rholang_codegen::rho_net_drive_invocation` path tokens the \
              pre-A-S5.8 quote! wrote literally — identical token stream by construction; \
-             captured at the A-S5.8 leg-1 tree, RE-CAPTURED at the E-3 T-LAZY accessor \
-             switch [see the doc comment's explained diff]; re-capture only with an \
-             explained diff)"
+             captured at the A-S5.8 leg-1 tree and recaptured only for the explained \
+             changes documented above)"
         );
     }
 
@@ -3384,12 +3792,14 @@ mod tests {
                 rewrites {}
             "##,
         );
-        let reflect = reflect_category_fn(&language, &format_ident!("Proc")).to_string();
-        // The reflect fn emits the `HashSet` collection arm (native `ESet` carrier), iterating by
-        // `.iter()` and tagging the reflected `GroundTerm` `HashSet`.
+        let reflect = reflect_pda_tokens(&language, &format_ident!("Proc"));
+        // The production PDA emits the `HashSet` collection arm (native `ESet` carrier), iterating
+        // by `.iter()`, enqueueing element visits, and tagging the assembled `GroundTerm`.
         assert!(reflect.contains("CollectionType :: HashSet"));
-        assert!(reflect.contains("GroundTerm :: collection"));
+        assert!(reflect.contains("__MettailReflectTask :: VisitProc"));
+        assert!(reflect.contains("__MettailReflectTask :: Assemble"));
         assert!(reflect.contains(". iter ()"));
+        assert!(reflect.contains(". reverse ()"));
     }
 
     /// Stage 4 S-binder SLICE 3a (Ambient OpenRule structural-AC under a `new`): the PNew binder
@@ -3424,13 +3834,13 @@ mod tests {
         // The `Proc` reflection emits the PNew binder arm: a single-child `^lambda` over the reflected
         // scope body (read via `unsafe_body`, preserving the de-Bruijn coordinates). PNew has EMPTY
         // pre-scope fields, so it takes the single-child `^lambda` arm (not the fail-closed arm).
-        let proc_reflect = reflect_category_fn(&language, &format_ident!("Proc")).to_string();
+        let proc_reflect = reflect_pda_tokens(&language, &format_ident!("Proc"));
         assert!(proc_reflect.contains("\"^lambda\""), "PNew reflects to the ^lambda tag");
         assert!(proc_reflect.contains("unsafe_body"), "the ^lambda arm reads the scope body");
         // The `Name` reflection emits the de-Bruijn Var arm: a BOUND occurrence → `^bound(peano)`, a
         // FREE occurrence → `^free`. A bound `new`-scoped ambient name rides `^bound(peano(depth))`,
         // so the non-linear guard `N ≡ N` compares the two occurrences' de-Bruijn depths.
-        let name_reflect = reflect_category_fn(&language, &format_ident!("Name")).to_string();
+        let name_reflect = reflect_pda_tokens(&language, &format_ident!("Name"));
         assert!(
             name_reflect.contains("\"^bound\""),
             "a bound Name occurrence reflects to ^bound"

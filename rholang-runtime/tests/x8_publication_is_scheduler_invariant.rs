@@ -198,13 +198,9 @@ type Published = BTreeMap<&'static str, Vec<Vec<u8>>>;
 ///
 /// ★ The width is set on a runtime built here rather than through `TOKIO_WORKER_THREADS`,
 /// because that variable is read once per process and this test needs several widths in one.
-/// The stack size is set for the same reason the workspace exports `RUST_MIN_STACK`: the
-/// reducer's traversal is deep, and a worker thread that overflows would fail this test for a
-/// reason that has nothing to do with what it measures.
 fn publish_at_width(threads: usize, program: Par) -> Published {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(threads)
-        .thread_stack_size(32 * 1024 * 1024)
         .enable_all()
         .build()
         .expect("a tokio runtime of the requested width must build");
@@ -451,7 +447,6 @@ fn the_published_leaf_is_invariant_under_permuting_the_retained_store() {
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
-        .thread_stack_size(32 * 1024 * 1024)
         .enable_all()
         .build()
         .expect("a tokio runtime must build");

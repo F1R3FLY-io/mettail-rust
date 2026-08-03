@@ -3,36 +3,8 @@
 // This crate contains the core language definitions used across examples and the REPL.
 // Each language is defined in its own module using the language! macro.
 
-// ★ (Task #101) AUTO-TRAIT SEARCH DEPTH, not an "obligation overflow".
-//
-// The generated Dovetail report memoizes its compiled rule set in
-// `static __DOVETAIL_COMPILED_RULES: OnceLock<CompiledRuleSet<<Lang>DovetailOp>>`, and a
-// `static` requires `Sync`. Proving `<Lang>DovetailOp: Send + Sync` walks the op enum's payload
-// types, which for Rholang means nineteen mutually recursive AST categories, each reaching the
-// others through `Scope<Binder<String>, Arc<Cat>>` and `Arc<CatLit>` wrappers. That graph is
-// FINITE and acyclic in the auto-trait sense — every obligation terminates — but it is deep, and
-// rustc's default `recursion_limit` of 128 is a fixed SEARCH BOUND on obligation depth, not a
-// statement about the program.
-//
-// Measured: Rholang sat immediately under that bound. Task #101 gave ordered collection fields a
-// labelled carrier (`FieldSeq<Elem>(Vec<Elem>)`, so a fold operand has an inverse to bind
-// through), which adds `Vec<Name>` / `Vec<ForRow>` / `Vec<InputBind>` nodes — one extra level
-// each on paths that were already at 128 — and the search reported
-// `E0275: overflow evaluating the requirement Arc<WriteZipperLit>: Send`. Reproducibly, and
-// UNIT-DEPENDENTLY: the same source type-checked in `cargo build -p languages --lib` and
-// overflowed in `cargo check --workspace --all-targets`, because dev-dependency feature
-// unification changes the dependency graph and with it the solver's query order. A bound that
-// close is a latent build break regardless of #101.
-//
-// Raising it is rustc's own documented remedy (the diagnostic emits exactly this suggestion) and
-// costs nothing but compiler search headroom: it admits no program that was previously rejected
-// as ILL-TYPED, only ones that were previously abandoned as too deep to search.
-//
-// ⚠ It belongs HERE and only here. The bound applies to the crate in which the `static` is
-// expanded, and Rholang — much the largest language in the tree — is a module of this crate.
-// The test-hosted fixture grammars under `languages/tests/definitions/` are an order of
-// magnitude smaller and are nowhere near the default.
-#![recursion_limit = "256"]
+// Generated Dovetail rule caches are thread-local, so this crate compiles under rustc's default
+// solver bounds without a crate-level `recursion_limit` override.
 #![allow(
     clippy::cloned_ref_to_slice_refs,
     clippy::type_complexity,

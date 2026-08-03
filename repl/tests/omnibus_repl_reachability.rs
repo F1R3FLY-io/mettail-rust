@@ -42,7 +42,7 @@ fn run_repl_in(language: &str, script: &[&str]) -> String {
         .arg(language)
         .current_dir(workspace_root())
         .env("NO_COLOR", "1")
-        .env("RUST_MIN_STACK", "8388608")
+        .env_remove("RUST_MIN_STACK")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

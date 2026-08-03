@@ -22,15 +22,27 @@
 //! them alive through to `commit_winner`, requiring this filter at
 //! the parse_preserving_vars boundary.
 //!
-//! ## Recursion strategy
+//! ## Stack-safety and equivalence
 //!
-//! Recursive `match self { ... }` mirrors the `is_ground` template.
-//! Skips foreign-category sub-trees (auto-injection wrappers wrap a
-//! different category's term — that subtree's auto-injection status
-//! is governed by ITS home category's visitor when ITS parse runs).
-//! Stack-safe for typical parses (depth < 100); pathological depth
-//! is bounded by `iterative_drop`-style rewrite if it ever surfaces.
+//! The generated visitor is an explicit pushdown traversal. It skips
+//! foreign-category sub-trees (an auto-injection wrapper's foreign term is
+//! governed by that category's visitor when that parse runs) and folds two
+//! booleans over the home-category descendant set:
+//!
+//! ```text
+//! has_auto_injected = OR(node is an auto-injected wrapper)
+//! has_native_literal = OR(node is a native literal)
+//! ```
+//!
+//! Both joins are associative, commutative, and idempotent. Replacing recursive
+//! calls with a LIFO worklist therefore preserves the result without a result
+//! stack or combine frames. Encountering a native literal may stop immediately:
+//! `has_auto_injected && !has_native_literal` is then false regardless of the
+//! unvisited suffix. Native stack usage is independent of term depth.
 
+use crate::gen::term_ops::collection_walk::{
+    for_each_subterm, plan_for, CollectionPlan, OrderSensitivity, WalkOrder,
+};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
@@ -70,9 +82,9 @@ fn is_cross_cat_unary_cast(rule: &mettail_ast::grammar::GrammarRule) -> bool {
     source.to_string() != rule.category.to_string()
 }
 
-/// Generate `is_uniformly_auto_injected()` and `_collect_uniform_flags()`
-/// methods for all categories in the language. Plus the inner-enum
-/// dispatch on `<LangName>TermInner`.
+/// Generate the shared uniform-filter PDA, `is_uniformly_auto_injected()`
+/// methods for all categories, and the inner-enum dispatch on
+/// `<LangName>TermInner`.
 pub fn generate_parse_alt_filter_methods(language: &LanguageDef) -> TokenStream {
     let inner_enum_name = format_ident!("{}TermInner", language.name);
     let inner_enum_name = &inner_enum_name;
@@ -110,53 +122,14 @@ pub fn generate_parse_alt_filter_methods(language: &LanguageDef) -> TokenStream 
         .map(|r| r.label.to_string())
         .collect();
 
-    // Per-category `impl Cat { ... }` blocks with the visitor methods.
+    let task_enum = generate_uniform_task_enum(language);
+    let engine = generate_uniform_engine(language, &auto_inj_labels);
+
+    // Per-category wrappers seed the shared worklist engine.
     let cat_impls: Vec<TokenStream> = language
         .types
         .iter()
-        .map(|lang_type| {
-            let category = &lang_type.name;
-            let variants = collect_category_variants(category, language);
-            let match_arms: Vec<TokenStream> = variants
-                .iter()
-                .map(|v| generate_arm(category, v, &auto_inj_labels))
-                .collect();
-            quote! {
-                impl #category {
-                    /// Stage 3.12.8 M2 (2026-05-03): returns `true` if this
-                    /// term is a "uniformly auto-injected" parse alternative
-                    /// — auto-injection wrappers around a foreign category
-                    /// with no same-category native literal anchor.
-                    ///
-                    /// Cat-A v3 refinement (2026-05-13): additionally requires
-                    /// `is_ground()`. The auto-inj-no-native-lit shape is only
-                    /// spurious when the tree is fully ground — i.e., a lossy
-                    /// cast actually fires. Var-containing trees (where env-
-                    /// substitution will ground a foreign-cat var later) must
-                    /// be KEPT so the var-bearing alt survives the filter and
-                    /// reduces correctly post-substitute (e.g.,
-                    /// `Float::BoolToFloat(Bool::BVar(x))` with
-                    /// `env.bool["x"]=BoolLit(true)` reduces to FloatLit(1.0)
-                    /// only if the alt is preserved during parse).
-                    pub fn is_uniformly_auto_injected(&self) -> bool {
-                        let mut has_auto_inj = false;
-                        let mut has_native_lit = false;
-                        self._collect_uniform_flags(&mut has_auto_inj, &mut has_native_lit);
-                        has_auto_inj && !has_native_lit && self.is_ground()
-                    }
-
-                    fn _collect_uniform_flags(
-                        &self,
-                        has_auto_inj: &mut bool,
-                        has_native_lit: &mut bool,
-                    ) {
-                        match self {
-                            #(#match_arms),*
-                        }
-                    }
-                }
-            }
-        })
+        .map(|lang_type| generate_uniform_wrapper(&lang_type.name))
         .collect();
 
     // Inner enum dispatch — emitted only for multi-type languages where
@@ -196,8 +169,144 @@ pub fn generate_parse_alt_filter_methods(language: &LanguageDef) -> TokenStream 
     };
 
     quote! {
+        #task_enum
+        #engine
         #(#cat_impls)*
         #inner_impl
+    }
+}
+
+fn generate_uniform_task_enum(language: &LanguageDef) -> TokenStream {
+    let variants: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("Uniform{}", cat);
+            quote! { #variant(*const #cat) }
+        })
+        .collect();
+
+    quote! {
+        /// One home-category node awaiting inspection by the uniformly-injected
+        /// alternative filter.
+        #[allow(dead_code)]
+        enum UniformTask {
+            #(#variants),*
+        }
+
+        // SAFETY: pointers are derived from the wrapper's live `&self`, are
+        // dereferenced only while that borrow remains live, and never leave the
+        // invoking thread. These marker impls match the generated PDA task
+        // families used by the other term operations.
+        unsafe impl Send for UniformTask {}
+        unsafe impl Sync for UniformTask {}
+
+        thread_local! {
+            /// Reuses the task allocation across calls. A re-entrant call takes
+            /// an empty vector while the outer call owns the pooled vector.
+            static UNIFORM_TASK_POOL: std::cell::Cell<Vec<UniformTask>> =
+                std::cell::Cell::new(Vec::new());
+        }
+    }
+}
+
+fn generate_uniform_engine(
+    language: &LanguageDef,
+    auto_inj_labels: &HashSet<String>,
+) -> TokenStream {
+    let handlers: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let helper = format_ident!("uniform_handle_{}", cat.to_string().to_lowercase());
+            let arms: Vec<TokenStream> = collect_category_variants(cat, language)
+                .iter()
+                .map(|variant| generate_arm(cat, variant, auto_inj_labels, language))
+                .collect();
+            quote! {
+                #[inline(never)]
+                #[allow(dead_code, unused_variables, non_snake_case)]
+                fn #helper(
+                    stack: &mut Vec<UniformTask>,
+                    ptr: *const #cat,
+                    has_auto_inj: &mut bool,
+                    has_native_lit: &mut bool,
+                ) {
+                    let value = unsafe { &*ptr };
+                    match value {
+                        #(#arms)*
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let dispatch: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("Uniform{}", cat);
+            let helper = format_ident!("uniform_handle_{}", cat.to_string().to_lowercase());
+            quote! {
+                UniformTask::#variant(ptr) => {
+                    #helper(stack, ptr, &mut has_auto_inj, &mut has_native_lit);
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        #(#handlers)*
+
+        /// Drains the explicit worklist and returns the two disjunctions used by
+        /// `is_uniformly_auto_injected`. A native literal is an absorbing
+        /// negative result for the caller, so the remaining tasks need not run.
+        #[allow(dead_code, unused_variables)]
+        fn uniform_flags_iterative(stack: &mut Vec<UniformTask>) -> (bool, bool) {
+            let mut has_auto_inj = false;
+            let mut has_native_lit = false;
+            while let Some(task) = stack.pop() {
+                match task {
+                    #(#dispatch),*
+                }
+                if has_native_lit {
+                    break;
+                }
+            }
+            (has_auto_inj, has_native_lit)
+        }
+    }
+}
+
+fn generate_uniform_wrapper(category: &Ident) -> TokenStream {
+    let task_variant = format_ident!("Uniform{}", category);
+    quote! {
+        impl #category {
+            /// Returns `true` when this is a ground, uniformly auto-injected
+            /// alternative with no native literal anchor.
+            ///
+            /// The flag walk uses a pooled explicit worklist, so native stack
+            /// usage is independent of term nesting depth.
+            pub fn is_uniformly_auto_injected(&self) -> bool {
+                let mut stack = UNIFORM_TASK_POOL.with(|pool| pool.take());
+                stack.clear();
+                stack.push(UniformTask::#task_variant(self as *const _));
+                let (has_auto_inj, has_native_lit) = uniform_flags_iterative(&mut stack);
+                // `uniform_flags_iterative` can stop with queued pointers when a
+                // native literal makes the final predicate false. Never return
+                // those borrowed pointers to the reusable pool.
+                stack.clear();
+                UNIFORM_TASK_POOL.with(|pool| pool.set(stack));
+
+                // Groundness is intentionally checked last. Var-containing
+                // alternatives must survive until environment substitution can
+                // ground their foreign-category variables.
+                has_auto_inj && !has_native_lit && self.is_ground()
+            }
+        }
     }
 }
 
@@ -206,41 +315,42 @@ fn generate_arm(
     category: &Ident,
     variant: &VariantKind,
     auto_inj_labels: &HashSet<String>,
+    language: &LanguageDef,
 ) -> TokenStream {
     match variant {
         // ★ #141 G5 — a classification that refuses carries its diagnostic into
         // the emitted code, where `rustc` renders it. See `VariantKind::Refused`.
         VariantKind::Refused { message, .. } => quote! { compile_error!(#message); },
         VariantKind::Var { label } => {
-            quote! { #category::#label(_) => {} }
+            quote! { #category::#label(_) => {}, }
         },
         // Stage 0 identity — STAYS. This asks "is this alternative a native
         // literal reading?", which is true of a collection literal as well.
         VariantKind::Literal { label } | VariantKind::CollectionLiteral { label, .. } => {
-            quote! { #category::#label(_) => { *has_native_lit = true; } }
+            quote! { #category::#label(_) => { *has_native_lit = true; }, }
         },
         VariantKind::Nullary { label } => {
-            quote! { #category::#label => {} }
+            quote! { #category::#label => {}, }
         },
         VariantKind::Regular { label, fields } => {
             let label_str = label.to_string();
             let is_auto_inj = auto_inj_labels.contains(&label_str);
-            generate_regular_arm(category, label, fields, is_auto_inj)
+            generate_regular_arm(category, label, fields, is_auto_inj, language)
         },
         VariantKind::Collection { label, element_cat, coll_type } => {
             // Recurse into elements only if they're same-category.
             let recurse = if element_cat == category {
-                collection_walk(quote! { coll }, coll_type)
+                collection_pushes(category, coll_type, &quote! { coll }, language)
             } else {
                 quote! {}
             };
             quote! {
-                #category::#label(coll) => { #recurse }
+                #category::#label(coll) => { #recurse },
             }
         },
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. }
         | VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-            generate_binder_arm(category, label, pre_scope_fields, body_cat)
+            generate_binder_arm(category, label, pre_scope_fields, body_cat, language)
         },
     }
 }
@@ -251,13 +361,14 @@ fn generate_regular_arm(
     label: &Ident,
     fields: &[FieldInfo],
     is_auto_inj: bool,
+    language: &LanguageDef,
 ) -> TokenStream {
     let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
 
     let recurse_calls: Vec<TokenStream> = fields
         .iter()
         .zip(field_names.iter())
-        .filter_map(|(field, name)| field_walk(field, name, category))
+        .filter_map(|(field, name)| field_walk(field, name, category, language))
         .collect();
 
     // Wildcard pattern for fields we don't recurse into (predicates,
@@ -300,13 +411,19 @@ fn generate_regular_arm(
     };
 
     quote! {
-        #category::#label(#(#pattern_fields),*) => { #body }
+        #category::#label(#(#pattern_fields),*) => { #body },
     }
 }
 
 /// Generate a recursion call for a single field, returning None if
 /// the field shouldn't be visited (predicate, or foreign-cat).
-fn field_walk(field: &FieldInfo, name: &Ident, home_cat: &Ident) -> Option<TokenStream> {
+fn field_walk(
+    field: &FieldInfo,
+    name: &Ident,
+    home_cat: &Ident,
+    language: &LanguageDef,
+) -> Option<TokenStream> {
+    let task_variant = format_ident!("Uniform{}", home_cat);
     if field.is_predicate {
         return None;
     }
@@ -318,7 +435,7 @@ fn field_walk(field: &FieldInfo, name: &Ident, home_cat: &Ident) -> Option<Token
         // Option first, then dispatch by collection kind.
         if field.is_collection {
             let coll = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
-            let inner_walk = collection_walk(quote! { __c }, coll);
+            let inner_walk = collection_pushes(home_cat, coll, &quote! { __c }, language);
             return Some(quote! {
                 if let Some(__c) = #name.as_ref() {
                     #inner_walk
@@ -327,7 +444,7 @@ fn field_walk(field: &FieldInfo, name: &Ident, home_cat: &Ident) -> Option<Token
         }
         return Some(quote! {
             if let Some(__b) = #name.as_ref() {
-                __b._collect_uniform_flags(has_auto_inj, has_native_lit);
+                stack.push(UniformTask::#task_variant(__b.as_ref() as *const _));
             }
         });
     }
@@ -336,36 +453,38 @@ fn field_walk(field: &FieldInfo, name: &Ident, home_cat: &Ident) -> Option<Token
             return None;
         }
         let coll = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
-        return Some(collection_walk(quote! { #name }, coll));
+        return Some(collection_pushes(home_cat, coll, &quote! { #name }, language));
     }
     // Plain Box<Cat> field. Only recurse if same-cat.
     if field.category != *home_cat {
         return None;
     }
     Some(quote! {
-        #name._collect_uniform_flags(has_auto_inj, has_native_lit);
+        stack.push(UniformTask::#task_variant(&**#name as *const _));
     })
 }
 
-/// Generate the per-element walk for a collection.
-fn collection_walk(name: TokenStream, coll: &CollectionType) -> TokenStream {
-    match coll {
-        CollectionType::HashBag => quote! {
-            for (__elt, _count) in #name.iter() {
-                __elt._collect_uniform_flags(has_auto_inj, has_native_lit);
-            }
+/// Push every term position of a same-category collection. The two flag joins
+/// are order-agnostic, so all collection representations—including PathMap's
+/// key plus optional Set value—can use the common element boundary.
+fn collection_pushes(
+    category: &Ident,
+    coll: &CollectionType,
+    expression: &TokenStream,
+    language: &LanguageDef,
+) -> TokenStream {
+    match plan_for(category, coll, OrderSensitivity::OrderAgnostic, language) {
+        CollectionPlan::PerElement { coll_type, .. } => {
+            let task_variant = format_ident!("Uniform{}", category);
+            for_each_subterm(&coll_type, expression, WalkOrder::Forward, &|element, _| {
+                quote! {
+                    stack.push(UniformTask::#task_variant(#element as *const _));
+                }
+            })
         },
-        CollectionType::Vec | CollectionType::HashSet => quote! {
-            for __elt in #name.iter() {
-                __elt._collect_uniform_flags(has_auto_inj, has_native_lit);
-            }
-        },
-        CollectionType::HashMap | CollectionType::PathMap => quote! {
-            for (__k, __v) in #name.iter() {
-                __k._collect_uniform_flags(has_auto_inj, has_native_lit);
-                __v._collect_uniform_flags(has_auto_inj, has_native_lit);
-            }
-        },
+        // `category` is a known language category, so the order-agnostic plan
+        // is necessarily per-element.
+        CollectionPlan::WholeValue { .. } => quote! {},
     }
 }
 
@@ -375,6 +494,7 @@ fn generate_binder_arm(
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
+    language: &LanguageDef,
 ) -> TokenStream {
     let field_names: Vec<Ident> = (0..pre_scope_fields.len())
         .map(|i| format_ident!("f{}", i))
@@ -383,12 +503,14 @@ fn generate_binder_arm(
     let pre_recurses: Vec<TokenStream> = pre_scope_fields
         .iter()
         .zip(field_names.iter())
-        .filter_map(|(field, name)| field_walk(field, name, category))
+        .filter_map(|(field, name)| field_walk(field, name, category, language))
         .collect();
 
+    let task_variant = format_ident!("Uniform{}", category);
     let body_recurse = if body_cat == category {
         quote! {
-            scope.inner().unsafe_body._collect_uniform_flags(has_auto_inj, has_native_lit);
+            let __body: *const #category = &*scope.inner().unsafe_body;
+            stack.push(UniformTask::#task_variant(__body));
         }
     } else {
         quote! {}
@@ -425,6 +547,6 @@ fn generate_binder_arm(
             #(#suppress_unused)*
             #body_recurse
             #scope_unused
-        }
+        },
     }
 }

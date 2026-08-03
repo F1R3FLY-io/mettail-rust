@@ -141,7 +141,7 @@ fn run_interpreter(demo: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_rholang"))
         .arg(format!("{DEMO_DIR}/{demo}"))
         .current_dir(workspace_root())
-        .env("RUST_MIN_STACK", "8388608")
+        .env_remove("RUST_MIN_STACK")
         .output()
         .expect("the rholang binary must run")
 }
@@ -373,7 +373,7 @@ fn each_desk_payload_is_the_normal_form_its_contract_reduced_to() {
             .expect("the probe term must be writable to a temporary file");
         let output = Command::new(env!("CARGO_BIN_EXE_rholang"))
             .arg(&scratch)
-            .env("RUST_MIN_STACK", "8388608")
+            .env_remove("RUST_MIN_STACK")
             .output()
             .expect("the rholang binary must run");
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();

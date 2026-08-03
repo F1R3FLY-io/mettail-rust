@@ -67,6 +67,10 @@ rholang-runtime = [
     "dep:mettail-languages",
     "dep:syn",
     "mettail-languages/rholang",
+    # The generated stack-safety gate exercises the same public `FltReflect` bridge used by
+    # production match/drive reflection. Keeping this forward on the Rholang runtime surface
+    # prevents a no-default-features build from silently compiling away that implementation.
+    "mettail-languages/rho-codegen",
     # The two-stage Dovetail+Rho Rholang wrapper (`dovetail_rho_backed_rholang`) needs the generated
     # `RholangLanguage::dovetail_report_for` / `dovetail_normal_term` (E2), which are emitted only
     # under the language crate's `dovetail-codegen` feature.

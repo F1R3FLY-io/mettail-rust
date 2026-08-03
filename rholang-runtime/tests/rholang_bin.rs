@@ -34,7 +34,7 @@ fn run_interpreter_with(demo_file: &str, flags: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rholang"));
     command.args(flags).arg(demo_path(demo_file));
     command
-        .env("RUST_MIN_STACK", "8388608")
+        .env_remove("RUST_MIN_STACK")
         .output()
         .expect("the rholang binary must run")
 }

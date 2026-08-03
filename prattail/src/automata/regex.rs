@@ -610,9 +610,9 @@ fn parse_escape_atom(
         },
 
         /* Escaped metacharacters. `$` (the end-of-input anchor outside a char
-           class, and the L9-4 FLT `${…}` hole delimiter) escapes to a literal
-           `$`; without it `\$` was an "invalid escape" error that the modal
-           lexer path surfaced as a hard codegen abort. */
+        class, and the L9-4 FLT `${…}` hole delimiter) escapes to a literal
+        `$`; without it `\$` was an "invalid escape" error that the modal
+        lexer path surfaced as a hard codegen abort. */
         b'.' | b'\\' | b'[' | b']' | b'(' | b')' | b'|' | b'+' | b'*' | b'?' | b'^' | b'"'
         | b'{' | b'}' | b'/' | b'$' => {
             nfa.add_transition(start, accept, CharClass::Single(escaped));

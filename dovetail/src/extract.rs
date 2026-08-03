@@ -30,15 +30,15 @@
 //! [`ExtractionCompleteness::BoundedByCycleCut`] instead of claiming complete
 //! cyclic exhaustion.
 
-use std::cmp::{Ordering, Reverse};
 use crate::hash::{HashMap, HashSet};
+use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use std::rc::Rc;
 
 use rigail::Semiring;
 
 use crate::egraph::{EClassId, EGraph, ENode};
-use crate::key::{write_ordered_framed, ContentKey, SemanticHash};
+use crate::key::{ContentKey, SemanticHash};
 
 /// The best-first order on weights: `cmp_best(a, b) == Less` means `a` is the
 /// BETTER (preferred-earlier) derivation weight — "smaller = better". Named
@@ -113,7 +113,6 @@ pub enum ExtractionStep<T> {
 /// A fully-chosen derivation tree of an e-class: the root operator, the chosen
 /// child derivations (shared via `Rc`), the composed weight, and the exact,
 /// injective [`ContentKey`] of the whole tree (equal key ⟺ identical tree).
-#[derive(Debug)]
 pub struct Derivation<L, W> {
     pub op: L,
     pub class: EClassId,
@@ -122,11 +121,141 @@ pub struct Derivation<L, W> {
     pub key: ContentKey,
 }
 
+impl<L, W> Drop for Derivation<L, W> {
+    fn drop(&mut self) {
+        let mut pending = std::mem::take(&mut self.children);
+        while let Some(child) = pending.pop() {
+            if let Ok(mut uniquely_owned) = Rc::try_unwrap(child) {
+                pending.append(&mut uniquely_owned.children);
+                // `uniquely_owned` now has no recursive children, so its own `Drop` is constant
+                // stack. Shared children are merely decremented and will be drained by whichever
+                // owner eventually becomes last.
+            }
+        }
+    }
+}
+
+impl<L: std::fmt::Debug, W: std::fmt::Debug> std::fmt::Debug for Derivation<L, W> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        enum Task<'a, L, W> {
+            Node(&'a Derivation<L, W>),
+            Separator,
+            Tail(&'a Derivation<L, W>),
+        }
+
+        let mut tasks = vec![Task::Node(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Node(node) => {
+                    write!(
+                        formatter,
+                        "Derivation {{ op: {:?}, class: {:?}, children: [",
+                        node.op, node.class,
+                    )?;
+                    tasks.push(Task::Tail(node));
+                    for (index, child) in node.children.iter().enumerate().rev() {
+                        tasks.push(Task::Node(child));
+                        if index > 0 {
+                            tasks.push(Task::Separator);
+                        }
+                    }
+                },
+                Task::Separator => formatter.write_str(", ")?,
+                Task::Tail(node) => {
+                    write!(formatter, "], weight: {:?}, key: {:?} }}", node.weight, node.key,)?
+                },
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Visit a derivation tree in root-first, left-to-right order without using the host call stack.
+pub fn visit_derivation_preorder<L, W>(
+    root: &Rc<Derivation<L, W>>,
+    mut visit: impl FnMut(&Rc<Derivation<L, W>>),
+) {
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        visit(node);
+        for child in node.children.iter().rev() {
+            pending.push(child);
+        }
+    }
+}
+
+/// Replace every selected subtree and rebuild its ancestors with an explicit post-order PDA.
+///
+/// Rebuilt nodes retain the source node's e-class as provenance while their exact key and
+/// composed weight are recalculated from the replacement children. This is the step-graph
+/// operation: the returned tree is consumed structurally by a reconstructor and is not inserted
+/// back into the source e-graph.
+pub fn splice_derivation_tree<L, W>(
+    root: &Rc<Derivation<L, W>>,
+    replacement: &Rc<Derivation<L, W>>,
+    mut weigh: impl FnMut(&ENode<L>) -> W,
+    mut replace: impl FnMut(&Derivation<L, W>) -> bool,
+) -> Rc<Derivation<L, W>>
+where
+    L: Clone + SemanticHash,
+    W: Semiring + Clone,
+{
+    enum SpliceTask<'a, L, W> {
+        Visit(&'a Rc<Derivation<L, W>>),
+        Assemble(&'a Rc<Derivation<L, W>>, usize),
+    }
+
+    let mut tasks = vec![SpliceTask::Visit(root)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            SpliceTask::Visit(node) => {
+                if replace(node) {
+                    values.push(Rc::clone(replacement));
+                } else {
+                    let arity = node.children.len();
+                    tasks.push(SpliceTask::Assemble(node, arity));
+                    for child in node.children.iter().rev() {
+                        tasks.push(SpliceTask::Visit(child));
+                    }
+                }
+            },
+            SpliceTask::Assemble(node, arity) => {
+                let first_child = values
+                    .len()
+                    .checked_sub(arity)
+                    .expect("derivation splice PDA lost a child result");
+                let children = values.split_off(first_child);
+                let op = node.op.clone();
+                let child_classes = children.iter().map(|child| child.class).collect();
+                let mut weight = weigh(&ENode::new(op.clone(), child_classes));
+                let mut key_children = Vec::with_capacity(children.len());
+                for child in &children {
+                    weight = weight.times(&child.weight);
+                    key_children.push(child.key.clone());
+                }
+                let key = ContentKey::tree(&op, key_children);
+                values.push(Rc::new(Derivation {
+                    op,
+                    class: node.class,
+                    children,
+                    weight,
+                    key,
+                }));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("derivation splice PDA produced no result")
+}
+
 /// A frontier candidate: the fully-built derivation for a hyperedge of a class at a
 /// given per-child rank vector, plus the `(edge_idx, ranks)` that identify it.
 ///
 /// The derivation is composed exactly once — when the candidate is CREATED in
-/// [`Extractor::make_candidate`], which already computes the full
+/// the PDA's `Compose` continuation, which computes the full
 /// `(op, w, key, children)` — and then reused by an `Rc::clone` when the candidate
 /// is popped, so the pop path never recomposes (removing the former
 /// `build_derivation` recompute, ~half of all `compose` calls). Heap order is best
@@ -165,7 +294,54 @@ struct ClassState<L, W> {
     built: Vec<Rc<Derivation<L, W>>>,
     built_keys: HashSet<ContentKey>,
     cand: BinaryHeap<Reverse<Candidate<L, W>>>,
+    pending_expansions: Vec<Candidate<L, W>>,
     seen: HashSet<(usize, Vec<usize>)>,
+}
+
+/// Explicit continuation algebra for [`Extractor::kth_raw`]. `Compose` is the recursive
+/// call-site continuation from the former `compose -> kth_raw` SCC; the two `Accept*` frames
+/// preserve the exact heap-insertion points of initialization and successor expansion.
+enum KthTask<L, W> {
+    Kth {
+        class: EClassId,
+        rank: usize,
+    },
+    Drive {
+        class: EClassId,
+        rank: usize,
+    },
+    EnsureInit {
+        class: EClassId,
+        next_edge: usize,
+    },
+    AcceptInitCandidate {
+        class: EClassId,
+    },
+    ExpandCandidate {
+        class: EClassId,
+        candidate: Candidate<L, W>,
+        next_child: usize,
+    },
+    AcceptSuccessorCandidate {
+        class: EClassId,
+    },
+    Compose {
+        class: EClassId,
+        edge_idx: usize,
+        ranks: Vec<usize>,
+        child_classes: Vec<EClassId>,
+        next_child: usize,
+        awaiting_child: bool,
+        op: L,
+        weight: W,
+        key_children: Vec<ContentKey>,
+        children: Vec<Rc<Derivation<L, W>>>,
+    },
+}
+
+enum UniqueDerivationTask {
+    Visit(EClassId),
+    Assemble(EClassId),
 }
 impl<L, W> Default for ClassState<L, W> {
     fn default() -> Self {
@@ -176,6 +352,7 @@ impl<L, W> Default for ClassState<L, W> {
             built: Vec::new(),
             built_keys: HashSet::default(),
             cand: BinaryHeap::new(),
+            pending_expansions: Vec::new(),
             seen: HashSet::default(),
         }
     }
@@ -284,95 +461,299 @@ where
         Extraction::new(value, self.completeness())
     }
 
-    /// Internal raw k-th lookup used by recursive composition. Public callers use
-    /// [`Extractor::kth`] so cycle-cut boundedness is not silently lost.
-    fn kth_raw(&mut self, root: EClassId, k: usize) -> Option<Rc<Derivation<L, W>>> {
-        let q = self.egraph.find(root);
+    /// Build the only derivation of a structurally unique e-graph region in iterative postorder.
+    /// Returns `None` when any reachable class has zero or multiple e-nodes. This is intended for
+    /// diagnostics and unsaturated structural roundtrips; normal best-first extraction remains
+    /// [`Self::funded_best`].
+    pub fn unique_derivation(
+        &mut self,
+        root: EClassId,
+    ) -> Extraction<Option<Rc<Derivation<L, W>>>> {
+        let root = self.egraph.find(root);
+        let mut tasks = vec![UniqueDerivationTask::Visit(root)];
+        let mut values = Vec::<Rc<Derivation<L, W>>>::new();
+        let mut memo = HashMap::<EClassId, Rc<Derivation<L, W>>>::default();
+        let mut active = HashSet::<EClassId>::default();
 
-        // Cyclic re-entry: this class is already being computed on the stack.
-        if self.state.get(&q).is_some_and(|s| s.on_stack) {
-            self.cycle_cut = true;
-            return None;
-        }
-        // Fast memoized path.
-        if let Some(d) = self.state.get(&q).and_then(|s| s.built.get(k).cloned()) {
-            return Some(d);
-        }
-        if self.state.get(&q).is_some_and(|s| s.exhausted) {
-            return None;
-        }
-        // Admissible reachability skip (no result change: a 0̄-inside class has
-        // no non-0̄ derivation anyway).
-        if self.use_heuristic {
-            if let Some(inside) = &self.inside {
-                if inside.get(&q).copied().is_some_and(|w| w.is_zero()) {
-                    return None;
-                }
+        while let Some(task) = tasks.pop() {
+            match task {
+                UniqueDerivationTask::Visit(class) => {
+                    let class = self.egraph.find(class);
+                    if let Some(derivation) = memo.get(&class) {
+                        values.push(Rc::clone(derivation));
+                        continue;
+                    }
+                    if !active.insert(class) {
+                        self.cycle_cut = true;
+                        return Extraction::new(None, ExtractionCompleteness::BoundedByCycleCut);
+                    }
+                    let nodes = self.egraph.nodes(class);
+                    if nodes.len() != 1 {
+                        active.remove(&class);
+                        return Extraction::new(None, self.completeness());
+                    }
+                    tasks.push(UniqueDerivationTask::Assemble(class));
+                    for &child in nodes[0].children.iter().rev() {
+                        tasks.push(UniqueDerivationTask::Visit(self.egraph.find(child)));
+                    }
+                },
+                UniqueDerivationTask::Assemble(class) => {
+                    let node = &self.egraph.nodes(class)[0];
+                    let first = values
+                        .len()
+                        .checked_sub(node.children.len())
+                        .expect("unique-derivation PDA lost a child result");
+                    let children = values.split_off(first);
+                    let op = node.op.clone();
+                    let mut weight = (self.weigh)(node);
+                    let mut key_children = Vec::with_capacity(children.len());
+                    for child in &children {
+                        weight = weight.times(&child.weight);
+                        key_children.push(child.key.clone());
+                    }
+                    let key = ContentKey::tree(&op, key_children);
+                    let derivation = Rc::new(Derivation { op, class, children, weight, key });
+                    active.remove(&class);
+                    memo.insert(class, Rc::clone(&derivation));
+                    values.push(derivation);
+                },
             }
         }
 
-        self.state.entry(q).or_default().on_stack = true;
-        self.ensure_init(q);
+        let value = if values.len() == 1 {
+            values.pop()
+        } else {
+            None
+        };
+        Extraction::new(value, self.completeness())
+    }
 
-        while self.state.get(&q).map_or(0, |s| s.built.len()) <= k {
-            let popped = {
-                let st = self.state.get_mut(&q).expect("class state present");
-                st.cand.pop()
-            };
-            let cand = match popped {
-                Some(Reverse(c)) => c,
-                None => {
-                    self.state
-                        .get_mut(&q)
-                        .expect("class state present")
-                        .exhausted = true;
-                    break;
+    /// Internal raw k-th lookup used by composition. Public callers use [`Extractor::kth`] so
+    /// cycle-cut boundedness is not silently lost.
+    ///
+    /// This is an explicit PDA for the former `kth_raw -> ensure_init/make_candidate -> compose
+    /// -> kth_raw` mutually-recursive SCC. The task order is the recursive DFS order: initialize
+    /// edges in declaration order, compose children left-to-right, then expand successor ranks
+    /// left-to-right. Consequently candidate/key order and first cycle-cut behavior are unchanged.
+    fn kth_raw(&mut self, root: EClassId, k: usize) -> Option<Rc<Derivation<L, W>>> {
+        let mut tasks = vec![KthTask::Kth { class: self.egraph.find(root), rank: k }];
+        let mut derivation_result: Option<Option<Rc<Derivation<L, W>>>> = None;
+        let mut candidate_result: Option<Option<Candidate<L, W>>> = None;
+
+        while let Some(task) = tasks.pop() {
+            match task {
+                KthTask::Kth { class, rank } => {
+                    let class = self.egraph.find(class);
+                    if self.state.get(&class).is_some_and(|state| state.on_stack) {
+                        self.cycle_cut = true;
+                        derivation_result = Some(None);
+                        continue;
+                    }
+                    if let Some(found) = self
+                        .state
+                        .get(&class)
+                        .and_then(|state| state.built.get(rank).cloned())
+                    {
+                        derivation_result = Some(Some(found));
+                        continue;
+                    }
+                    if self.state.get(&class).is_some_and(|state| state.exhausted)
+                        || (self.use_heuristic
+                            && self.inside.as_ref().is_some_and(|inside| {
+                                inside.get(&class).copied().is_some_and(|w| w.is_zero())
+                            }))
+                    {
+                        derivation_result = Some(None);
+                        continue;
+                    }
+
+                    self.state.entry(class).or_default().on_stack = true;
+                    tasks.push(KthTask::Drive { class, rank });
+                    tasks.push(KthTask::EnsureInit { class, next_edge: 0 });
                 },
-            };
+                KthTask::EnsureInit { class, next_edge } => {
+                    if next_edge == 0 {
+                        if self
+                            .state
+                            .get(&class)
+                            .is_some_and(|state| state.initialized)
+                        {
+                            continue;
+                        }
+                        self.state.entry(class).or_default().initialized = true;
+                    }
+                    let edge_count = self.egraph.nodes(class).len();
+                    if next_edge >= edge_count {
+                        continue;
+                    }
 
-            // Reuse the derivation composed when this candidate was created — no
-            // recompose (the former `build_derivation` recompute is gone).
-            let built_d = Some(Rc::clone(&cand.derivation));
-
-            // Push successors that bump exactly one child's rank (always — never
-            // close the lattice on a zero/duplicate).
-            for i in 0..cand.ranks.len() {
-                let mut r = cand.ranks.clone();
-                r[i] += 1;
-                let fresh = self
-                    .state
-                    .get_mut(&q)
-                    .expect("class state present")
-                    .seen
-                    .insert((cand.edge_idx, r.clone()));
-                if fresh {
-                    if let Some(c2) = self.make_candidate(q, cand.edge_idx, r) {
+                    tasks.push(KthTask::EnsureInit { class, next_edge: next_edge + 1 });
+                    let arity = self.egraph.nodes(class)[next_edge].children.len();
+                    let ranks = vec![0usize; arity];
+                    let fresh = self
+                        .state
+                        .get_mut(&class)
+                        .expect("class state present")
+                        .seen
+                        .insert((next_edge, ranks.clone()));
+                    if fresh {
+                        tasks.push(KthTask::AcceptInitCandidate { class });
+                        tasks.push(self.compose_task(class, next_edge, ranks));
+                    }
+                },
+                KthTask::AcceptInitCandidate { class } => {
+                    if let Some(candidate) = candidate_result
+                        .take()
+                        .expect("compose task must produce an initialization candidate")
+                    {
                         self.state
-                            .get_mut(&q)
+                            .get_mut(&class)
                             .expect("class state present")
                             .cand
-                            .push(Reverse(c2));
+                            .push(Reverse(candidate));
                     }
-                }
-            }
+                },
+                KthTask::Drive { class, rank } => {
+                    if self.state.get(&class).map_or(0, |state| state.built.len()) > rank {
+                        self.state
+                            .get_mut(&class)
+                            .expect("class state present")
+                            .on_stack = false;
+                        derivation_result = Some(
+                            self.state
+                                .get(&class)
+                                .and_then(|state| state.built.get(rank).cloned()),
+                        );
+                        continue;
+                    }
 
-            // Append iff non-`0̄` and key-fresh (the only removal is `0̄`; the
-            // key-fresh check drops only genuinely identical trees).
-            if let Some(d) = built_d {
-                if !d.weight.is_zero() {
-                    let st = self.state.get_mut(&q).expect("class state present");
-                    if st.built_keys.insert(d.key.clone()) {
-                        st.built.push(d);
+                    if let Some(candidate) = self
+                        .state
+                        .get_mut(&class)
+                        .expect("class state present")
+                        .pending_expansions
+                        .pop()
+                    {
+                        tasks.push(KthTask::Drive { class, rank });
+                        tasks.push(KthTask::ExpandCandidate { class, candidate, next_child: 0 });
+                        continue;
                     }
-                }
+
+                    let popped = self
+                        .state
+                        .get_mut(&class)
+                        .expect("class state present")
+                        .cand
+                        .pop();
+                    let Some(Reverse(candidate)) = popped else {
+                        let state = self.state.get_mut(&class).expect("class state present");
+                        state.exhausted = true;
+                        state.on_stack = false;
+                        derivation_result = Some(state.built.get(rank).cloned());
+                        continue;
+                    };
+                    let built = Rc::clone(&candidate.derivation);
+                    if !built.weight.is_zero() {
+                        let state = self.state.get_mut(&class).expect("class state present");
+                        if state.built_keys.insert(built.key.clone()) {
+                            state.built.push(built);
+                        }
+                    }
+                    self.state
+                        .get_mut(&class)
+                        .expect("class state present")
+                        .pending_expansions
+                        .push(candidate);
+                    tasks.push(KthTask::Drive { class, rank });
+                },
+                KthTask::ExpandCandidate { class, candidate, next_child } => {
+                    if next_child >= candidate.ranks.len() {
+                        continue;
+                    }
+
+                    let mut ranks = candidate.ranks.clone();
+                    ranks[next_child] += 1;
+                    let fresh = self
+                        .state
+                        .get_mut(&class)
+                        .expect("class state present")
+                        .seen
+                        .insert((candidate.edge_idx, ranks.clone()));
+                    let edge_idx = candidate.edge_idx;
+                    tasks.push(KthTask::ExpandCandidate {
+                        class,
+                        candidate,
+                        next_child: next_child + 1,
+                    });
+                    if fresh {
+                        tasks.push(KthTask::AcceptSuccessorCandidate { class });
+                        tasks.push(self.compose_task(class, edge_idx, ranks));
+                    }
+                },
+                KthTask::AcceptSuccessorCandidate { class } => {
+                    if let Some(candidate) = candidate_result
+                        .take()
+                        .expect("compose task must produce a successor candidate")
+                    {
+                        self.state
+                            .get_mut(&class)
+                            .expect("class state present")
+                            .cand
+                            .push(Reverse(candidate));
+                    }
+                },
+                KthTask::Compose {
+                    class,
+                    edge_idx,
+                    ranks,
+                    child_classes,
+                    mut next_child,
+                    awaiting_child,
+                    op,
+                    mut weight,
+                    mut key_children,
+                    mut children,
+                } => {
+                    if awaiting_child {
+                        let Some(child) = derivation_result
+                            .take()
+                            .expect("child kth task must produce a derivation result")
+                        else {
+                            candidate_result = Some(None);
+                            continue;
+                        };
+                        weight = weight.times(&child.weight);
+                        key_children.push(child.key.clone());
+                        children.push(child);
+                        next_child += 1;
+                    }
+
+                    if next_child < child_classes.len() {
+                        let child_class = child_classes[next_child];
+                        let child_rank = ranks[next_child];
+                        tasks.push(KthTask::Compose {
+                            class,
+                            edge_idx,
+                            ranks,
+                            child_classes,
+                            next_child,
+                            awaiting_child: true,
+                            op,
+                            weight,
+                            key_children,
+                            children,
+                        });
+                        tasks.push(KthTask::Kth { class: child_class, rank: child_rank });
+                    } else {
+                        let key = ContentKey::tree(&op, key_children);
+                        let derivation = Rc::new(Derivation { op, class, children, weight, key });
+                        candidate_result = Some(Some(Candidate { derivation, edge_idx, ranks }));
+                    }
+                },
             }
         }
 
-        self.state
-            .get_mut(&q)
-            .expect("class state present")
-            .on_stack = false;
-        self.state.get(&q).and_then(|s| s.built.get(k).cloned())
+        derivation_result.expect("top-level kth task must produce a derivation result")
     }
 
     /// A lazy, best-first derivation stream over `root`.
@@ -390,79 +771,28 @@ where
 
     // --- internals ---------------------------------------------------------
 
-    /// Seed a class's candidate heap with the zero-rank candidate of each edge.
-    fn ensure_init(&mut self, q: EClassId) {
-        if self.state.get(&q).is_some_and(|s| s.initialized) {
-            return;
-        }
-        self.state.entry(q).or_default().initialized = true;
-        let eg = self.egraph;
-        let n_edges = eg.nodes(q).len();
-        for edge_idx in 0..n_edges {
-            let arity = eg.nodes(q)[edge_idx].children.len();
-            let ranks = vec![0usize; arity];
-            let fresh = self
-                .state
-                .get_mut(&q)
-                .expect("class state present")
-                .seen
-                .insert((edge_idx, ranks.clone()));
-            if fresh {
-                if let Some(c) = self.make_candidate(q, edge_idx, ranks) {
-                    self.state
-                        .get_mut(&q)
-                        .expect("class state present")
-                        .cand
-                        .push(Reverse(c));
-                }
-            }
-        }
-    }
-
-    /// Compose the derivation denoted by `(edge_idx, ranks)`: pull each child's
-    /// `ranks[i]`-th derivation (RECURSES), fold the weight, build the tree key.
-    /// Returns `None` if any child has no `ranks[i]`-th derivation (exhausted or
-    /// cycle-cut), i.e. the combination does not exist.
-    #[allow(clippy::type_complexity)]
-    fn compose(
-        &mut self,
-        q: EClassId,
-        edge_idx: usize,
-        ranks: &[usize],
-    ) -> Option<(L, W, ContentKey, Vec<Rc<Derivation<L, W>>>)> {
-        // `eg` is a copy of the `&'g` reference, decoupled from `self`, so the
-        // node borrow does not conflict with the `&mut self` recursion below.
-        let eg = self.egraph;
-        let node = &eg.nodes(q)[edge_idx];
+    /// Materialize the non-recursive prefix of candidate composition and return its continuation.
+    fn compose_task(&self, class: EClassId, edge_idx: usize, ranks: Vec<usize>) -> KthTask<L, W> {
+        let node = &self.egraph.nodes(class)[edge_idx];
         let op = node.op.clone();
-        let w_edge = (self.weigh)(node); // `self.weigh` borrow ends here
-        let child_classes: Vec<EClassId> = node.children.iter().map(|&c| eg.find(c)).collect();
-
-        let mut key_bytes = Vec::new();
-        op.write_content(&mut key_bytes);
-        let mut w = w_edge;
-        let mut children: Vec<Rc<Derivation<L, W>>> = Vec::with_capacity(child_classes.len());
-        for (i, &ci) in child_classes.iter().enumerate() {
-            let cd = self.kth_raw(ci, ranks[i])?; // recurse; None ⟹ combination absent
-            w = w.times(&cd.weight);
-            write_ordered_framed(&mut key_bytes, cd.key.as_bytes());
-            children.push(cd);
+        let weight = (self.weigh)(node);
+        let child_classes = node
+            .children
+            .iter()
+            .map(|&child| self.egraph.find(child))
+            .collect::<Vec<_>>();
+        KthTask::Compose {
+            class,
+            edge_idx,
+            ranks,
+            child_classes,
+            next_child: 0,
+            awaiting_child: false,
+            op,
+            weight,
+            key_children: Vec::with_capacity(node.children.len()),
+            children: Vec::with_capacity(node.children.len()),
         }
-        Some((op, w, ContentKey::from_bytes(key_bytes), children))
-    }
-
-    fn make_candidate(
-        &mut self,
-        q: EClassId,
-        edge_idx: usize,
-        ranks: Vec<usize>,
-    ) -> Option<Candidate<L, W>> {
-        // `compose` already computes the full `(op, w, key, children)`; keep them as
-        // the built `Rc<Derivation>` so the pop path reuses it via `Rc::clone` instead
-        // of recomposing (`w`/`key` move into the derivation — no extra storage).
-        let (op, w, key, children) = self.compose(q, edge_idx, &ranks)?;
-        let derivation = Rc::new(Derivation { op, class: q, children, weight: w, key });
-        Some(Candidate { derivation, edge_idx, ranks })
     }
 
     fn funded_derivation_is_certified(
@@ -597,6 +927,79 @@ mod tests {
         let all = ex2.derivations(l).collect_checked();
         assert_eq!(all.completeness, ExtractionCompleteness::Complete);
         assert_eq!(all.value.len(), 1);
+    }
+
+    #[test]
+    fn deep_unique_derivation_and_lifecycle_are_stack_safe() {
+        let depth = 16_384usize;
+        let mut eg = EGraph::<String>::new();
+        let mut root = eg.add(ENode::leaf("b".into()));
+        for _ in 0..depth {
+            root = eg.add(ENode::new("f".into(), vec![root]));
+        }
+
+        let mut extractor = Extractor::new(&eg, weigh);
+        let extraction = extractor.unique_derivation(root);
+        assert_eq!(extraction.completeness, ExtractionCompleteness::Complete);
+        let mut cursor = extraction.value.expect("unique deep derivation");
+        let mut measured = 0usize;
+        while let Some(child) = cursor.children.first() {
+            measured += 1;
+            cursor = child.clone();
+        }
+        assert_eq!(measured, depth);
+    }
+
+    #[test]
+    fn deep_kth_pda_and_persistent_keys_are_stack_safe() {
+        let depth = 16_384usize;
+        let mut eg = EGraph::<String>::new();
+        let mut root = eg.add(ENode::leaf("b".into()));
+        for _ in 0..depth {
+            root = eg.add(ENode::new("f".into(), vec![root]));
+        }
+
+        let mut extractor = Extractor::new(&eg, weigh);
+        let derivation = extractor
+            .kth(root, 0)
+            .value
+            .expect("deep 1-best derivation");
+        assert!(derivation.key.len() > depth);
+        assert!(extractor.kth(root, 1).value.is_none());
+    }
+
+    #[test]
+    fn deep_derivation_splice_and_preorder_visit_are_stack_safe() {
+        let depth = 16_384usize;
+        let mut eg = EGraph::<String>::new();
+        let leaf = eg.add(ENode::leaf("b".into()));
+        let replacement_leaf = eg.add(ENode::leaf("x".into()));
+        let mut root = leaf;
+        for _ in 0..depth {
+            root = eg.add(ENode::new("f".into(), vec![root]));
+        }
+
+        let mut extractor = Extractor::new(&eg, weigh);
+        let original = extractor
+            .unique_derivation(root)
+            .value
+            .expect("deep source derivation");
+        let replacement = extractor
+            .unique_derivation(replacement_leaf)
+            .value
+            .expect("replacement derivation");
+        let spliced =
+            splice_derivation_tree(&original, &replacement, weigh, |node| node.class == leaf);
+
+        let mut visited = 0usize;
+        let mut last_op = None;
+        visit_derivation_preorder(&spliced, |node| {
+            visited += 1;
+            last_op = Some(node.op.clone());
+        });
+        assert_eq!(visited, depth + 1);
+        assert_eq!(last_op.as_deref(), Some("x"));
+        assert_ne!(spliced.key, original.key);
     }
 
     #[test]

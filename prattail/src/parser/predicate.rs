@@ -222,7 +222,8 @@ mod tests {
         let (kinds, texts) = build_tokens(&["halts", "(", "x", ")", "and", "safe", "(", "x", ")"]);
         let texts_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
         let src = SliceTokenSource::with_texts(&kinds, &texts_refs);
-        let (pred, _) = parse_predicate_via_token_source(&src, 0).expect("parses the first conjunct");
+        let (pred, _) =
+            parse_predicate_via_token_source(&src, 0).expect("parses the first conjunct");
         assert!(
             matches!(pred, BehavioralPred::RelationQuery { .. }),
             "MEASURED 2026-07-26: this adapter truncates a conjunction to its first conjunct \

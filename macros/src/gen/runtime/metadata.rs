@@ -668,6 +668,14 @@ fn premise_to_display_string(p: &Premise) -> String {
         Premise::Congruence { source, target } => {
             format!("{} ~> {}", source, target)
         },
+        // ★ (#195) The reflected spelling of a WITHHELD congruence is the surface
+        // spelling: `S ~/> T`. It must NOT render as `S ~> T` — the reflected metadata is
+        // what `languages/tests/congruence_declaration_witness.rs` derives its declared
+        // set from, and a denial that renders as an assertion would make that derivation
+        // count a withholding as a propagating congruence.
+        Premise::CongruenceWithheld { source, target } => {
+            format!("{} ~/> {}", source, target)
+        },
         Premise::ForAll { collection, param, body } => {
             format!("{}.*map(|{}| {})", collection, param, premise_to_display_string(body))
         },

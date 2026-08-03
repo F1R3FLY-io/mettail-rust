@@ -564,22 +564,30 @@ pub trait QuietNaN: Sized {
 
 impl QuietNaN for f64 {
     #[inline]
-    fn quiet_nan() -> Self { f64::NAN }
+    fn quiet_nan() -> Self {
+        f64::NAN
+    }
 }
 
 impl QuietNaN for f32 {
     #[inline]
-    fn quiet_nan() -> Self { f32::NAN }
+    fn quiet_nan() -> Self {
+        f32::NAN
+    }
 }
 
 impl QuietNaN for crate::CanonicalFloat64 {
     #[inline]
-    fn quiet_nan() -> Self { crate::CanonicalFloat64::from(f64::NAN) }
+    fn quiet_nan() -> Self {
+        crate::CanonicalFloat64::from(f64::NAN)
+    }
 }
 
 impl QuietNaN for crate::CanonicalFloat32 {
     #[inline]
-    fn quiet_nan() -> Self { crate::CanonicalFloat32::from(f32::NAN) }
+    fn quiet_nan() -> Self {
+        crate::CanonicalFloat32::from(f32::NAN)
+    }
 }
 
 /// ★★ Re-admit IEEE 754's `NaN` as a **VALUE**, for a caller that must reproduce IEEE exactly.
@@ -632,10 +640,9 @@ impl QuietNaN for crate::CanonicalFloat32 {
 #[inline]
 pub fn nan_is_a_value<T: QuietNaN>(r: Result<T, Partiality>) -> Result<T, Partiality> {
     match r {
-        Err(Partiality::Undefined {
-            reason: UndefinedReason::NotANumber,
-            ..
-        }) => Ok(T::quiet_nan()),
+        Err(Partiality::Undefined { reason: UndefinedReason::NotANumber, .. }) => {
+            Ok(T::quiet_nan())
+        },
         other => other,
     }
 }
@@ -1045,11 +1052,7 @@ const fn arbitrary_precision_div_zero(
     carrier: &'static str,
     reason: UndefinedReason,
 ) -> Partiality {
-    Partiality::Undefined {
-        operation,
-        carrier,
-        reason,
-    }
+    Partiality::Undefined { operation, carrier, reason }
 }
 
 // `&num_bigint::BigInt` impl: the safeify pass rewrites `a.get() - b.get()`
@@ -1075,11 +1078,7 @@ impl SafeArith for &num_bigint::BigInt {
     fn safe_div(self, r: Self) -> Result<Self::Output, Partiality> {
         use num_traits::Zero;
         if r.is_zero() {
-            Err(arbitrary_precision_div_zero(
-                "div",
-                "BigInt",
-                UndefinedReason::DivisionByZero,
-            ))
+            Err(arbitrary_precision_div_zero("div", "BigInt", UndefinedReason::DivisionByZero))
         } else {
             Ok(self / r)
         }
@@ -1088,11 +1087,7 @@ impl SafeArith for &num_bigint::BigInt {
     fn safe_rem(self, r: Self) -> Result<Self::Output, Partiality> {
         use num_traits::Zero;
         if r.is_zero() {
-            Err(arbitrary_precision_div_zero(
-                "rem",
-                "BigInt",
-                UndefinedReason::RemainderByZero,
-            ))
+            Err(arbitrary_precision_div_zero("rem", "BigInt", UndefinedReason::RemainderByZero))
         } else {
             Ok(self % r)
         }
@@ -1139,11 +1134,7 @@ impl SafeArith for num_bigint::BigInt {
     fn safe_div(self, r: Self) -> Result<Self, Partiality> {
         use num_traits::Zero;
         if r.is_zero() {
-            Err(arbitrary_precision_div_zero(
-                "div",
-                "BigInt",
-                UndefinedReason::DivisionByZero,
-            ))
+            Err(arbitrary_precision_div_zero("div", "BigInt", UndefinedReason::DivisionByZero))
         } else {
             Ok(self / r)
         }
@@ -1152,11 +1143,7 @@ impl SafeArith for num_bigint::BigInt {
     fn safe_rem(self, r: Self) -> Result<Self, Partiality> {
         use num_traits::Zero;
         if r.is_zero() {
-            Err(arbitrary_precision_div_zero(
-                "rem",
-                "BigInt",
-                UndefinedReason::RemainderByZero,
-            ))
+            Err(arbitrary_precision_div_zero("rem", "BigInt", UndefinedReason::RemainderByZero))
         } else {
             Ok(self % r)
         }
@@ -1200,11 +1187,7 @@ impl SafeArith for crate::CanonicalBigInt {
     fn safe_div(self, r: Self) -> Result<Self, Partiality> {
         use num_traits::Zero;
         if r.get().is_zero() {
-            Err(arbitrary_precision_div_zero(
-                "div",
-                "BigInt",
-                UndefinedReason::DivisionByZero,
-            ))
+            Err(arbitrary_precision_div_zero("div", "BigInt", UndefinedReason::DivisionByZero))
         } else {
             Ok(Self::from(self.get() / r.get()))
         }
@@ -1213,11 +1196,7 @@ impl SafeArith for crate::CanonicalBigInt {
     fn safe_rem(self, r: Self) -> Result<Self, Partiality> {
         use num_traits::Zero;
         if r.get().is_zero() {
-            Err(arbitrary_precision_div_zero(
-                "rem",
-                "BigInt",
-                UndefinedReason::RemainderByZero,
-            ))
+            Err(arbitrary_precision_div_zero("rem", "BigInt", UndefinedReason::RemainderByZero))
         } else {
             Ok(Self::from(self.get() % r.get()))
         }
@@ -1262,11 +1241,7 @@ impl SafeArith for crate::CanonicalBigRat {
     fn safe_div(self, r: Self) -> Result<Self, Partiality> {
         use num_traits::Zero;
         if r.get().is_zero() {
-            Err(arbitrary_precision_div_zero(
-                "div",
-                "BigRat",
-                UndefinedReason::DivisionByZero,
-            ))
+            Err(arbitrary_precision_div_zero("div", "BigRat", UndefinedReason::DivisionByZero))
         } else {
             Ok(Self::from(self.get() / r.get()))
         }
@@ -1275,11 +1250,7 @@ impl SafeArith for crate::CanonicalBigRat {
     fn safe_rem(self, r: Self) -> Result<Self, Partiality> {
         use num_traits::Zero;
         if r.get().is_zero() {
-            Err(arbitrary_precision_div_zero(
-                "rem",
-                "BigRat",
-                UndefinedReason::RemainderByZero,
-            ))
+            Err(arbitrary_precision_div_zero("rem", "BigRat", UndefinedReason::RemainderByZero))
         } else {
             Ok(Self::from(self.get() % r.get()))
         }
@@ -1375,12 +1346,12 @@ mod tests {
 
     /// The `(a)`-side reason a declining call must carry, spelled once so the cells below read as
     /// assertions about the PARTITION rather than as spellings of an enum literal.
-    fn undefined(operation: &'static str, carrier: &'static str, reason: UndefinedReason) -> Partiality {
-        Partiality::Undefined {
-            operation,
-            carrier,
-            reason,
-        }
+    fn undefined(
+        operation: &'static str,
+        carrier: &'static str,
+        reason: UndefinedReason,
+    ) -> Partiality {
+        Partiality::Undefined { operation, carrier, reason }
     }
 
     /// The `(b)`-side reason: the value exists, this carrier is too narrow.
@@ -1500,8 +1471,11 @@ mod tests {
             num_bigint::BigInt::from(3),
             num_bigint::BigInt::from(1),
         ));
-        let got = seven.safe_rem(three).expect("3r is non-zero, so `%` is defined");
-        let one = num_rational::Ratio::new(num_bigint::BigInt::from(1), num_bigint::BigInt::from(1));
+        let got = seven
+            .safe_rem(three)
+            .expect("3r is non-zero, so `%` is defined");
+        let one =
+            num_rational::Ratio::new(num_bigint::BigInt::from(1), num_bigint::BigInt::from(1));
         assert_eq!(
             got.get(),
             &one,
@@ -1645,14 +1619,8 @@ mod tests {
     fn string_other_ops_are_not_defined_for_the_carrier() {
         let reason = UndefinedReason::NotDefinedForCarrier;
         let a = "x".to_string();
-        assert_eq!(
-            a.clone().safe_sub("y".to_string()),
-            Err(undefined("sub", "String", reason)),
-        );
-        assert_eq!(
-            a.clone().safe_mul("y".to_string()),
-            Err(undefined("mul", "String", reason)),
-        );
+        assert_eq!(a.clone().safe_sub("y".to_string()), Err(undefined("sub", "String", reason)),);
+        assert_eq!(a.clone().safe_mul("y".to_string()), Err(undefined("mul", "String", reason)),);
         assert_eq!(a.safe_neg(), Err(undefined("neg", "String", reason)));
     }
 
@@ -1752,10 +1720,7 @@ mod tests {
 
     #[test]
     fn f64_ln_negative_is_not_a_number() {
-        assert_eq!(
-            (-1.0_f64).safe_ln(),
-            Err(undefined("ln", "f64", UndefinedReason::NotANumber)),
-        );
+        assert_eq!((-1.0_f64).safe_ln(), Err(undefined("ln", "f64", UndefinedReason::NotANumber)),);
     }
 
     #[test]
@@ -1796,10 +1761,7 @@ mod tests {
     fn f64_sum_mixed_inf_is_not_a_number() {
         // +Inf + -Inf = NaN.
         let xs = vec![f64::INFINITY, f64::NEG_INFINITY];
-        assert_eq!(
-            f64::safe_sum(xs),
-            Err(undefined("add", "f64", UndefinedReason::NotANumber)),
-        );
+        assert_eq!(f64::safe_sum(xs), Err(undefined("add", "f64", UndefinedReason::NotANumber)),);
     }
 
     #[test]
@@ -1883,13 +1845,13 @@ mod tests {
         let zero = CanonicalBigInt::from(num_bigint::BigInt::from(0));
         let one = CanonicalBigInt::from(num_bigint::BigInt::from(1));
         assert_eq!(
-            one.clone().safe_div(zero.clone()).unwrap_err().reason_token(),
+            one.clone()
+                .safe_div(zero.clone())
+                .unwrap_err()
+                .reason_token(),
             "DivisionByZero",
         );
-        assert_eq!(
-            one.clone().safe_rem(zero).unwrap_err().reason_token(),
-            "RemainderByZero",
-        );
+        assert_eq!(one.clone().safe_rem(zero).unwrap_err().reason_token(), "RemainderByZero",);
         assert_eq!(one.clone().safe_pow(-1).unwrap_err().reason_token(), "NegativeExponent");
         assert_eq!(one.clone().safe_pow(-1).unwrap_err().carrier(), Some("BigInt"));
         // And the total direction still computes.

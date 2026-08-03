@@ -558,9 +558,7 @@ fn parse_two_list_rules_second_has_int_param() {
     assert_eq!(concat.label.to_string(), "ConcatList");
     let ctx0 = concat.term_context.as_ref().unwrap();
     assert_eq!(ctx0.len(), 2);
-    assert!(
-        matches!(&ctx0[1], TermParam::Simple { ty: TypeExpr::Base(id), .. } if id == "List")
-    );
+    assert!(matches!(&ctx0[1], TermParam::Simple { ty: TypeExpr::Base(id), .. } if id == "List"));
 
     let delete = &language.terms[1];
     assert_eq!(delete.label.to_string(), "DeleteList");
@@ -1182,10 +1180,7 @@ fn parse_literals_block_shared_family_variant_allowed() {
     assert_eq!(language.token_defs.len(), 2);
     // Both share the standard Integer family variant.
     assert!(
-        language
-            .token_defs
-            .iter()
-            .all(|td| td.name == "Integer"),
+        language.token_defs.iter().all(|td| td.name == "Integer"),
         "both literals should map to Token::Integer family"
     );
     // The original block names are recoverable via `category`.
@@ -1223,10 +1218,7 @@ fn parse_literals_block_shared_family_variant_allowed_i32_i64() {
         .expect("Int + Long sharing Token::Integer should parse");
     assert_eq!(language.token_defs.len(), 2);
     assert!(
-        language
-            .token_defs
-            .iter()
-            .all(|td| td.name == "Integer"),
+        language.token_defs.iter().all(|td| td.name == "Integer"),
         "both literals should map to Token::Integer family"
     );
     let cats: Vec<String> = language

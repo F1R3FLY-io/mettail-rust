@@ -1,0 +1,13 @@
+// Ω — THE TERM THAT REDUCES TO ITSELF, FOREVER.
+//
+//   Ω ≡ (λx. x x) (λx. x x)
+//
+// One β step takes Ω to Ω. There is no normal form. The machine does not hang and does not
+// lie about it: the driver is fuel-bounded, and exhaustion is REPORTED on `^drive-fuel`.
+//
+//   target/debug/rhocalc demos/flt-lambda-lab/03-omega.rho
+//
+// EXPECT: no normal form on @"OUT"; a non-empty `^drive-fuel`. The machine says what it
+// could not finish, rather than pretending it did.
+
+lambda`(lam x. (x, x), lam x. (x, x))`

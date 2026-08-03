@@ -586,10 +586,7 @@ fn token_mode_effect(kind: &TokenKind, custom_tokens: &[CustomTokenSpec]) -> Mod
 /// annotation declares. Only `Custom` tokens can carry a channel; a built-in
 /// kind is always `DEFAULT`. `-> main` is spelled out as `DEFAULT` so the two
 /// spellings of the parse stream compare equal.
-fn token_channel<'a>(
-    kind: &TokenKind,
-    custom_tokens: &'a [CustomTokenSpec],
-) -> Option<&'a str> {
+fn token_channel<'a>(kind: &TokenKind, custom_tokens: &'a [CustomTokenSpec]) -> Option<&'a str> {
     if let TokenKind::Custom(name) = kind {
         if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
             return spec.stream.as_deref().filter(|stream| *stream != "main");
@@ -973,12 +970,20 @@ mod dui_tests {
         accepting.accept = Some(primary.clone());
         if !alts.is_empty() {
             // `alt_accepts` includes the primary winner (per DfaState docs).
-            accepting.alt_accepts.push((primary, TropicalWeight::new(1.0)));
+            accepting
+                .alt_accepts
+                .push((primary, TropicalWeight::new(1.0)));
             for (i, a) in alts.into_iter().enumerate() {
-                accepting.alt_accepts.push((a, TropicalWeight::new(2.0 + i as f64)));
+                accepting
+                    .alt_accepts
+                    .push((a, TropicalWeight::new(2.0 + i as f64)));
             }
         }
-        Dfa { states: vec![DfaState::with_classes(1), accepting], start: 0, num_classes: 1 }
+        Dfa {
+            states: vec![DfaState::with_classes(1), accepting],
+            start: 0,
+            num_classes: 1,
+        }
     }
 
     fn build_default_dfa(custom_tokens: &[CustomTokenSpec], needs: BuiltinNeeds) -> Dfa {
@@ -1014,10 +1019,7 @@ mod dui_tests {
             TokenKind::Custom("CloseA".into()),
             vec![TokenKind::Custom("CloseB".into())],
         );
-        let specs = vec![
-            dui_spec("CloseA", "`", None, true),
-            dui_spec("CloseB", "`", None, true),
-        ];
+        let specs = vec![dui_spec("CloseA", "`", None, true), dui_spec("CloseB", "`", None, true)];
         assert!(check_dui_soundness("m", &dfa, &specs).is_ok());
     }
 
@@ -1054,10 +1056,7 @@ mod dui_tests {
     fn dui_push_vs_ident_rejected_with_keyword_hint() {
         // A push token that ALSO lexes as a bare identifier → keyword-reservation
         // flavored diagnostic.
-        let dfa = dfa_with_accepts(
-            TokenKind::Custom("BareOpener".into()),
-            vec![TokenKind::Ident],
-        );
+        let dfa = dfa_with_accepts(TokenKind::Custom("BareOpener".into()), vec![TokenKind::Ident]);
         let specs = vec![dui_spec("BareOpener", "[a-z]+", Some("guest"), false)];
         let err = check_dui_soundness("default", &dfa, &specs).expect_err("must reject");
         assert!(err.contains("reserve it as a keyword"), "keyword hint: {err}");

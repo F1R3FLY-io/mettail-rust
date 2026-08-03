@@ -728,6 +728,18 @@ fn write_premise(premise: &Premise, out: &mut String) {
             push_ident(out, target);
             out.push(')');
         },
+        // ★ (#195) A WITHHELD congruence renders under its OWN constructor name, so a
+        // denial can never fingerprint-alias the assertion it denies. A language that
+        // declares no withholding emits nothing here, which is why every pre-#195
+        // language's `language_definition_fingerprint` is byte-identical across #195
+        // (pinned by `ast/tests/congruence_withholding.rs`).
+        Premise::CongruenceWithheld { source, target } => {
+            out.push_str("ncong(");
+            push_ident(out, source);
+            out.push(',');
+            push_ident(out, target);
+            out.push(')');
+        },
         Premise::RelationQuery { relation, args } => {
             out.push_str("rel(");
             push_ident(out, relation);

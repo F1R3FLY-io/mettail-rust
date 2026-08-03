@@ -39,7 +39,7 @@ fn run(name: &str, program: &str) -> String {
 
     let output = Command::new(env!("CARGO_BIN_EXE_rholang"))
         .arg(&path)
-        .env("RUST_MIN_STACK", "8388608")
+        .env_remove("RUST_MIN_STACK")
         .output()
         .expect("the rholang binary must run");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();

@@ -24,6 +24,7 @@ pub(crate) mod op_enum;
 pub(crate) mod reconstruct;
 pub(crate) mod typed_lowering;
 pub(crate) mod typed_report;
+pub(crate) mod withholding;
 
 /// Whether a language gets the typed-`L` Dovetail path (Increment 2/3 + E1). A language needs
 /// the typed path when it has either:
@@ -122,6 +123,30 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
         .iter()
         .any(|rw| is_nested_structural_ac_rewrite(language, rw).is_some())
         && !crate::gen::runtime::binder_congruence::should_emit_binder_congruence(language);
+    // ★★★ (#195) A language declaring a WITHHELD congruence (`| S ~/> T |-`) MUST take the
+    // typed path, and the reason is structural rather than a preference.
+    //
+    // Withholding is honoured by lowering the severed field to a payload-verbatim leaf
+    // (Theorem W1: an e-graph can only withhold propagation at a position that holds no
+    // child e-class id). On the typed path that leaf is `FieldWithheld<Cat>(Arc<Cat>)`, which
+    // `reconstruct::withheld_reconstruct` inverts with a `clone()` — total and lossless. The
+    // `EGraph<String>` path has no typed op-enum to hang a payload-bearing variant on and no
+    // reconstructor to invert one with, so severance there could only be spelled as the LOSSY
+    // `FieldOpaque(Debug)` leaf — which would make every term containing a withheld field a
+    // STUCK RECONSTRUCTION, exactly the Turing failure (`languages/tests/turing.rs`): a
+    // non-invertible carrier breaks `dovetail_normal_term` for terms with no redex at all.
+    //
+    // Routing typed makes the invertible carrier available by construction, so the untyped
+    // path never has to spell severance and no `compile_error!` about paths is needed.
+    //
+    // ⚠ Includes REFUSED withholdings (`WithholdingSet::is_empty` covers both), so a language
+    // whose only `~/>` declaration the classifier refused still takes the path that emits the
+    // refusal's `compile_error!`.
+    //
+    // ⚠ BYTE-IDENTICAL FOR EVERY SHIPPED LANGUAGE: no production grammar declares `~/>`
+    // (Ambient/Calculator/Json/Lambda/Monoid/Pi/Rholang/Turing: zero), so this disjunct is
+    // `false` throughout the corpus and no language's path assignment moves.
+    let has_withheld_congruence = !withholding::classify_withholdings(language).is_empty();
     has_native_fold
         || has_substitution_rewrite
         || has_native_system_process
@@ -129,6 +154,7 @@ pub(crate) fn needs_typed_dovetail_path(language: &LanguageDef) -> bool {
         || has_comm_rewrite
         || has_structural_ac_rewrite
         || has_nested_structural_ac_rewrite
+        || has_withheld_congruence
 }
 
 /// Backward-compatible alias for [`needs_typed_dovetail_path`] (the typed path is no longer
@@ -1511,6 +1537,107 @@ fn collapse_binder_scope(
     }
 }
 
+/// ★★ (#195) Whether a DECLARED congruence names a position the e-graph closure **cannot
+/// reach**, and if so why — the *under-reach* half of
+/// `languages/tests/congruence_declaration_witness.rs`'s measurement, turned from a comment
+/// into a value in the reflected metadata.
+///
+/// # The intuition
+///
+/// Congruence closure propagates a merge of a CHILD E-CLASS into every enclosing e-node.
+/// A declaration `| S ~> T |- (C … S …) ~> (C … T …)` therefore describes something the
+/// closure actually does **iff** the position `S` occupies holds a child e-class *that some
+/// rule can merge*. Two field shapes hold no such thing:
+///
+///  * a **collection field** whose carrier is `OrderedSeq` (`FieldSeq<Elem>`) or `Opaque`
+///    (`FieldOpaque`): the whole container travels inside ONE nullary leaf whose content is
+///    fixed bytes, so no rewrite can ever produce a `T` for its `S`;
+///  * a **non-category leaf** — a builtin, a `?g:Guard` predicate slot, or a `v@Tok` /
+///    `*flt` capture: same reason, one fixed-content leaf.
+///
+/// In both cases the declaration is *dead*: it asks for propagation through a position no
+/// step can occur at. Reporting `DeliveredElsewhere { EGraphCongruenceClosure }` for one
+/// was the lane claiming coverage it does not have — a declaration that reads load-bearing
+/// and is not, which is exactly #195's complaint. It is now `Declined`, naming the carrier.
+///
+/// # ⚠ What this deliberately does NOT flag
+///
+/// Returns `None` — i.e. *the existing `DeliveredElsewhere` claim stands* — for every
+/// position that genuinely holds a mergeable child e-class, including the two the corpus is
+/// full of:
+///
+///  * an **AC bag member** (`(PPar {S, ...rest})`, `ParCong`): bag elements ARE the
+///    constructor's e-node children, so the closure reaches them;
+///  * a **binder body** (`(PNew ^[xs].S)`, `NewCong`): the body IS a child e-class.
+///
+/// and for any pattern shape it cannot analyse, which fails **open** on purpose: a false
+/// `Declined` would be a new wrong claim, and the pre-#195 claim is the one the witness
+/// measured to be true for every reachable position.
+///
+/// ★ BEHAVIOUR-NEUTRAL BY CONSTRUCTION. Both outcomes emit ZERO rewrite rules, on every
+/// lane. This function changes only which *disposition* is recorded, so no program's
+/// reduction can move because of it.
+fn congruence_position_unreachable(language: &LanguageDef, rw: &RewriteRule) -> Option<String> {
+    let (source, _target) = rw.congruence_premise()?;
+    let AstPattern::Term(PatternTerm::Apply { constructor, args }) = &rw.left else {
+        return None;
+    };
+    let field_index = args
+        .iter()
+        .position(|arg| matches!(arg, AstPattern::Term(PatternTerm::Var(v)) if v == source))?;
+    let fields = regular_constructor_fields(language, constructor)?;
+    if args.len() != fields.len() {
+        return None;
+    }
+    let field = &fields[field_index];
+    let carrier_note = if field.is_collection {
+        match collection_carrier(field.coll_type.as_ref()) {
+            // An AC bag's members ARE the e-node's children: the closure reaches them.
+            CollectionCarrier::AcBag => return None,
+            CollectionCarrier::OrderedSeq => "an ordered `FieldSeq` carrier leaf",
+            CollectionCarrier::Opaque => "an unordered `FieldOpaque` carrier leaf",
+        }
+    } else if NonTerminalKind::classify(&field.category.to_string()).is_builtin() {
+        "a builtin `FieldOpaque` leaf"
+    } else if field.is_predicate {
+        "a semantic-predicate `FieldOpaque` leaf"
+    } else if field.is_opaque_leaf() {
+        "a capture `FieldTokenText`/`FieldOpaque` leaf"
+    } else {
+        return None;
+    };
+    Some(format!(
+        "declares a congruence into `{constructor}` field {field_index} (`{source}`), which \
+         lowers to {carrier_note} rather than to a child e-class. Congruence closure propagates a \
+         merge of a CHILD e-class into its parents; a fixed-content leaf can never be merged, so \
+         no step can occur at this position and the declaration is DEAD on this lane. This is the \
+         under-reach `languages/tests/congruence_declaration_witness.rs` measures with its \
+         SEVERED probe. To make the position an evaluation context, give it a child e-class (a \
+         scalar category field, or an AC `HashBag` container); to state that it is deliberately \
+         not one, declare `| {source} ~/> …` instead of `| {source} ~> …`"
+    ))
+}
+
+/// The positional field list of `constructor` if it is a `Regular` constructor of some
+/// declared category. Shared by [`congruence_position_unreachable`] and
+/// [`withholding::classify_withholdings`], so the two polarities analyse positions the
+/// same way.
+fn regular_constructor_fields(
+    language: &LanguageDef,
+    constructor: &Ident,
+) -> Option<Vec<FieldInfo>> {
+    for ty in &language.types {
+        for variant in collect_category_variants(&ty.name, language) {
+            if let VariantKind::Regular { label, fields } = variant {
+                if label == *constructor {
+                    return Some(fields);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn premise_supported(premise: &Premise) -> bool {
     // EXHAUSTIVE over every `Premise` variant (no catch-all): only a congruence
     // premise is supplied by the e-graph congruence closure; all side-condition
@@ -1519,6 +1646,16 @@ fn premise_supported(premise: &Premise) -> bool {
     // fail closed. Mirrors `GeneratedReportCompiler.premise_supported`.
     match premise {
         Premise::Congruence { .. } => true,
+        // ★ (#195) A WITHHELD congruence is likewise supplied by the e-graph lane — not by
+        // its closure but by SEVERANCE of the named position (`withholding::
+        // classify_withholdings`), which needs no evidence at rule-lowering time. It is
+        // therefore `true` on the same grounds its positive twin is: no side condition.
+        //
+        // ⚠ `lower_rewrite` tests `rw.withholds_congruence()` BEFORE it reaches the
+        // structural lowering, so a `true` here can never let a withholding be emitted as
+        // an identity rewrite rule. That ordering is load-bearing and pinned by
+        // `a_withholding_emits_no_rewrite_rule`.
+        Premise::CongruenceWithheld { .. } => true,
         Premise::Freshness(_) => false,
         Premise::RelationQuery { .. } => false,
         Premise::ForAll { .. } => false,
@@ -1645,6 +1782,26 @@ fn lower_equation(
 ///
 /// Each of the five now returns [`LoweringOutcome::DeliveredElsewhere`] naming the covering
 /// lane, so the distinction is a fact in the generated metadata rather than a comment.
+///
+/// # ★★★ (#195) THE THREE STATES OF CONGRUENCE PROPAGATION MEET HERE
+///
+/// Before #195 this function had **two** answers for a congruence-shaped rule and they were
+/// the same answer: every rule satisfying `is_congruence_rule()` left through the single
+/// `DeliveredElsewhere { EGraphCongruenceClosure }` branch below, and a rule declaring
+/// *nothing* also produced no rule. So "the author asked for propagation here" and "the
+/// author has no opinion" were indistinguishable, and "the author refused propagation here"
+/// was **unspellable**. `languages/tests/congruence_declaration_witness.rs` measured the
+/// consequence in both directions: an *undeclared* scalar position reduced anyway
+/// (over-reach) while a `Vec`-carrier position did not, declared or otherwise
+/// (under-reach).
+///
+/// The three answers are now distinct, and each is a VALUE in the reflected metadata:
+///
+/// | declaration | branch | disposition |
+/// |---|---|---|
+/// | `\| S ~/> T \|-` — **withheld** | [`withholding`] | `Suppressed`, naming the severed position (or `Declined`, naming why the lane cannot honour it) |
+/// | `\| S ~> T \|-` — **declared** | the congruence branch | `DeliveredElsewhere { EGraphCongruenceClosure }` when the closure REACHES the position; `Declined` naming the carrier when it does not |
+/// | nothing declared | not reached | the intrinsic closure — the sensible default, unchanged |
 fn lower_rewrite(
     language: &LanguageDef,
     rw: &RewriteRule,
@@ -1676,10 +1833,55 @@ fn lower_rewrite(
     if !rw.premises.iter().all(premise_supported) {
         return (Vec::new(), declined("has side conditions".to_string()));
     }
+    // ★★★ (#195) STATE 3 — a DECLARED WITHHOLDING. Handled FIRST, and before
+    // `is_congruence_rule()`, because a withholding is neither a rule of this lane nor a
+    // rule of any other: it is discharged by SEVERING the named position in the lowering
+    // (`withholding::classify_withholdings` → `typed_lowering::field_child_expr_typed`).
+    // Emitting the conclusion it spells out would build the very step the author denied.
+    if rw.withholds_congruence() {
+        let set = withholding::classify_withholdings(language);
+        let mine: Vec<LoweringDisposition> = set
+            .dispositions()
+            .into_iter()
+            .filter(|d| d.construct == rw.name.to_string())
+            .collect();
+        // ⚠ NON-VACUITY FLOOR. `classify_withholdings` is total over the rewrites — every
+        // `~/>` rule yields either a severed position or a named refusal — so this vector
+        // is non-empty by construction. Asserting it here rather than trusting it means a
+        // future classifier that silently dropped a shape would fail LOUDLY instead of
+        // reintroducing #195's exact defect (a declaration that reads load-bearing and is
+        // not) one level up.
+        if mine.is_empty() {
+            return (
+                Vec::new(),
+                declined(format!(
+                    "declares a withheld congruence (`| S ~/> T |-`) that the withholding \
+                     classifier neither severed nor refused. That is a GENERATOR defect, not a \
+                     grammar defect: `withholding::classify_withholdings` must be total over \
+                     `{}`",
+                    rw.name
+                )),
+            );
+        }
+        return (Vec::new(), mine);
+    }
     if rw.is_congruence_rule() {
-        // The e-graph congruence closure supplies context closure after the
-        // premise-free kernel rewrite has merged the child e-class, so explicit
-        // generated congruence rules are not emitted as separate Dovetail data.
+        // ★★ (#195) STATE 1 — a DECLARED congruence. The e-graph congruence closure supplies
+        // context closure after the premise-free kernel rewrite has merged the child
+        // e-class, so no explicit rule is emitted.
+        //
+        // ★ WHAT CHANGED. This branch used to make that claim UNCONDITIONALLY, for all 142
+        // of Rholang's augmented congruences. It is not unconditionally true: the closure
+        // reaches a position only if the position holds a CHILD E-CLASS, and a position
+        // whose field lowers to one carrier leaf (an unordered collection's `FieldOpaque`,
+        // an ordered collection's `FieldSeq`) holds no child e-class — so a congruence
+        // declared into such a position is DECLARED AND NOT HONOURED. That is the
+        // under-reach half of `congruence_declaration_witness.rs`'s measurement, and
+        // reporting `DeliveredElsewhere` for it was the lane claiming coverage it does not
+        // have. It now `Declined`s, naming the carrier.
+        if let Some(reason) = congruence_position_unreachable(language, rw) {
+            return (Vec::new(), declined(reason));
+        }
         return (
             Vec::new(),
             elsewhere(

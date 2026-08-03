@@ -74,11 +74,11 @@ query = { path = "query" }
 # formal/rocq/rho_bridge/theories/BridgeInertness.v). Sibling checkout at
 # ../f1r3node-rust (publish=false crates → path deps). Toolchain note: f1r3node-rust
 # pins nightly-2026-02-09; mettail-rust floats `nightly` + cranelift dev backend.
-models = { path = "../f1r3node-rust/models" }
-rholang = { path = "../f1r3node-rust/rholang" }
-rho-pure-eval = { path = "../f1r3node-rust/rho-pure-eval" }
-rspace_plus_plus = { path = "../f1r3node-rust/rspace++" }
-crypto = { path = "../f1r3node-rust/crypto" }
+models = { path = "../f1r3node-rust-mettail/models" }
+rholang = { path = "../f1r3node-rust-mettail/rholang" }
+rho-pure-eval = { path = "../f1r3node-rust-mettail/rho-pure-eval" }
+rspace_plus_plus = { path = "../f1r3node-rust-mettail/rspace++" }
+crypto = { path = "../f1r3node-rust-mettail/crypto" }
 tokio = { version = "1", features = ["full"] }
 
 # ── rholang-parser override (TEMPORARY) — mirrors f1r3node-rust's root [patch] ────

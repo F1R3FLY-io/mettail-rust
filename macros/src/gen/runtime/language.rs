@@ -4,6 +4,7 @@
 //! - `{Name}Term` wrapper implementing `mettail_runtime::Term`
 //! - `{Name}Language` struct implementing `mettail_runtime::Language`
 
+use crate::gen::term_ops::collection_walk::{for_each_subterm, WalkOrder};
 use crate::gen::{generate_literal_label, generate_var_label};
 use mettail_ast::grammar::GrammarItem;
 use mettail_ast::language::LanguageDef;
@@ -1101,9 +1102,65 @@ fn generate_language_struct(
                 result: &mut Vec<mettail_runtime::VarTypeInfo>,
                 seen: &mut std::collections::HashSet<std::string::String>,
             ) {
-                match term {
-                    #var_collection_impl
+                enum CollectTask {
+                    Visit(*const #primary_type),
+                    Binder(*const mettail_runtime::Scope<
+                        mettail_runtime::Binder<String>,
+                        std::sync::Arc<#primary_type>,
+                    >, &'static str),
+                    MultiBinder(*const mettail_runtime::Scope<
+                        Vec<mettail_runtime::Binder<String>>,
+                        std::sync::Arc<#primary_type>,
+                    >, &'static str),
                 }
+                thread_local! {
+                    static COLLECT_TASK_POOL: std::cell::Cell<Vec<CollectTask>> =
+                        std::cell::Cell::new(Vec::new());
+                }
+
+                let mut stack = COLLECT_TASK_POOL.with(|pool| pool.take());
+                stack.clear();
+                stack.push(CollectTask::Visit(term as *const _));
+                while let Some(task) = stack.pop() {
+                    match task {
+                        CollectTask::Visit(ptr) => {
+                            let term = unsafe { &*ptr };
+                            match term { #var_collection_impl }
+                        }
+                        CollectTask::Binder(ptr, domain) => {
+                            let scope = unsafe { &*ptr };
+                            let binder = scope.unsafe_pattern();
+                            let body = scope.unsafe_body();
+                            if let Some(name) = &binder.0.pretty_name {
+                                if seen.insert(name.clone()) {
+                                    let var_type = body.infer_var_type(name)
+                                        .map(|t| Self::inferred_to_term_type(&t))
+                                        .unwrap_or_else(|| mettail_runtime::TermType::Base(domain.to_string()));
+                                    result.push(mettail_runtime::VarTypeInfo { name: name.clone(), ty: var_type });
+                                }
+                            }
+                            stack.push(CollectTask::Visit(&**body as *const _));
+                        }
+                        CollectTask::MultiBinder(ptr, domain) => {
+                            let scope = unsafe { &*ptr };
+                            let binders = scope.unsafe_pattern();
+                            let body = scope.unsafe_body();
+                            for binder in binders {
+                                if let Some(name) = &binder.0.pretty_name {
+                                    if seen.insert(name.clone()) {
+                                        let var_type = body.infer_var_type(name)
+                                            .map(|t| Self::inferred_to_term_type(&t))
+                                            .unwrap_or_else(|| mettail_runtime::TermType::Base(domain.to_string()));
+                                        result.push(mettail_runtime::VarTypeInfo { name: name.clone(), ty: var_type });
+                                    }
+                                }
+                            }
+                            stack.push(CollectTask::Visit(&**body as *const _));
+                        }
+                    }
+                }
+                stack.clear();
+                COLLECT_TASK_POOL.with(|pool| pool.set(stack));
             }
         }
     }
@@ -1113,7 +1170,7 @@ fn generate_language_struct(
 fn generate_var_collection_impl(
     primary_type: &Ident,
     language: &LanguageDef,
-    impl_fn_name: &Ident,
+    _impl_fn_name: &Ident,
 ) -> TokenStream {
     let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
@@ -1134,51 +1191,18 @@ fn generate_var_collection_impl(
         let lam_variant = format_ident!("Lam{}", domain);
         let mlam_variant = format_ident!("MLam{}", domain);
 
-        // LamX variant - extract binder and recurse into body
+        // A binder is a phase task: its binding must be recorded immediately
+        // before its body is visited, preserving recursive first-seen order.
         lambda_arms.push(quote! {
             #primary_type::#lam_variant(scope) => {
-                // Use unbind to get the binder with proper type
-                let (binder, body) = scope.clone().unbind();
-                if let Some(name) = &binder.0.pretty_name {
-                    if !seen.contains(name) {
-                        seen.insert(name.clone());
-                        // Infer the binder's type from how it's used in the body
-                        let var_type = body.infer_var_type(name)
-                            .map(|t| Self::inferred_to_term_type(&t))
-                            .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
-                        result.push(mettail_runtime::VarTypeInfo {
-                            name: name.clone(),
-                            ty: var_type,
-                        });
-                    }
-                }
-                // Recurse into body (body is Box<T>, so deref it)
-                Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
+                stack.push(CollectTask::Binder(scope as *const _, #domain_lit));
             }
         });
 
         // MLamX variant - extract all binders and recurse into body
         lambda_arms.push(quote! {
             #primary_type::#mlam_variant(scope) => {
-                // Use unbind to get binders and body with proper types
-                let (binders, body) = scope.clone().unbind();
-                for binder in &binders {
-                    if let Some(name) = &binder.0.pretty_name {
-                        if !seen.contains(name) {
-                            seen.insert(name.clone());
-                            // Infer the binder's type from how it's used in the body
-                            let var_type = body.infer_var_type(name)
-                                .map(|t| Self::inferred_to_term_type(&t))
-                                .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
-                            result.push(mettail_runtime::VarTypeInfo {
-                                name: name.clone(),
-                                ty: var_type,
-                            });
-                        }
-                    }
-                }
-                // Recurse into body (body is Box<T>, so deref it)
-                Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
+                stack.push(CollectTask::MultiBinder(scope as *const _, #domain_lit));
             }
         });
 
@@ -1187,7 +1211,7 @@ fn generate_var_collection_impl(
         let apply_variant = format_ident!("Apply{}", domain);
         lambda_arms.push(quote! {
             #primary_type::#apply_variant(lam, _arg) => {
-                Self::#impl_fn_name(root_term, lam.as_ref(), result, seen);
+                stack.push(CollectTask::Visit(lam.as_ref() as *const _));
                 // Note: _arg is of type #domain, not #primary_type, so we can't recurse on it here
             }
         });
@@ -1196,7 +1220,7 @@ fn generate_var_collection_impl(
         let mapply_variant = format_ident!("MApply{}", domain);
         lambda_arms.push(quote! {
             #primary_type::#mapply_variant(lam, _args) => {
-                Self::#impl_fn_name(root_term, lam.as_ref(), result, seen);
+                stack.push(CollectTask::Visit(lam.as_ref() as *const _));
                 // Note: _args contains #domain values, not #primary_type, so we can't recurse on them here
             }
         });
@@ -1304,7 +1328,6 @@ fn generate_var_collection_impl(
                     field_idx: &mut usize,
                     optional_wrap: bool,
                     primary_type: &syn::Ident,
-                    impl_fn_name: &syn::Ident,
                     recurse_calls: &mut Vec<TokenStream>,
                 ) {
                     for param in params {
@@ -1317,31 +1340,22 @@ fn generate_var_collection_impl(
                                         if ident.to_string() == primary_type.to_string() =>
                                     {
                                         Some(quote! {
-                                            Self::#impl_fn_name(root_term, __v.as_ref(), result, seen);
+                                            stack.push(CollectTask::Visit(__v.as_ref() as *const _));
                                         })
                                     },
                                     TypeExpr::Collection { coll_type, element } => {
                                         if let TypeExpr::Base(id) = element.as_ref() {
                                             if id.to_string() == primary_type.to_string() {
-                                                // B9 / Class 2 (2026-05-08):
-                                                // branch on coll_type. Vec
-                                                // yields bare elements;
-                                                // HashBag/HashSet yield
-                                                // (elem, count) tuples.
-                                                Some(match coll_type {
-                                                    mettail_ast::types::CollectionType::Vec => {
+                                                Some(for_each_subterm(
+                                                    coll_type,
+                                                    &quote! { __v },
+                                                    WalkOrder::ReverseForLifo,
+                                                    &|elem, _| {
                                                         quote! {
-                                                            for elem in __v.iter() {
-                                                                Self::#impl_fn_name(root_term, elem, result, seen);
-                                                            }
+                                                            stack.push(CollectTask::Visit(#elem as *const _));
                                                         }
                                                     },
-                                                    _ => quote! {
-                                                        for (elem, _) in __v.iter() {
-                                                            Self::#impl_fn_name(root_term, elem, result, seen);
-                                                        }
-                                                    },
-                                                })
+                                                ))
                                             } else {
                                                 None
                                             }
@@ -1384,20 +1398,10 @@ fn generate_var_collection_impl(
                                             let domain_lit =
                                                 LitStr::new(&domain_str, Span::call_site());
                                             let body_block = quote! {
-                                                let (binder, body) = __scope.clone().unbind();
-                                                if let Some(name) = &binder.0.pretty_name {
-                                                    if !seen.contains(name) {
-                                                        seen.insert(name.clone());
-                                                        let var_type = body.infer_var_type(name)
-                                                            .map(|t| Self::inferred_to_term_type(&t))
-                                                            .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
-                                                        result.push(mettail_runtime::VarTypeInfo {
-                                                            name: name.clone(),
-                                                            ty: var_type,
-                                                        });
-                                                    }
-                                                }
-                                                Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
+                                                stack.push(CollectTask::Binder(
+                                                    __scope as *const _,
+                                                    #domain_lit,
+                                                ));
                                             };
                                             if optional_wrap {
                                                 recurse_calls.push(quote! {
@@ -1439,22 +1443,10 @@ fn generate_var_collection_impl(
                                             let domain_lit =
                                                 LitStr::new(&domain_str, Span::call_site());
                                             let body_block = quote! {
-                                                let (binders, body) = __scope.clone().unbind();
-                                                for binder in &binders {
-                                                    if let Some(name) = &binder.0.pretty_name {
-                                                        if !seen.contains(name) {
-                                                            seen.insert(name.clone());
-                                                            let var_type = body.infer_var_type(name)
-                                                                .map(|t| Self::inferred_to_term_type(&t))
-                                                                .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
-                                                            result.push(mettail_runtime::VarTypeInfo {
-                                                                name: name.clone(),
-                                                                ty: var_type,
-                                                            });
-                                                        }
-                                                    }
-                                                }
-                                                Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
+                                                stack.push(CollectTask::MultiBinder(
+                                                    __scope as *const _,
+                                                    #domain_lit,
+                                                ));
                                             };
                                             if optional_wrap {
                                                 recurse_calls.push(quote! {
@@ -1483,7 +1475,6 @@ fn generate_var_collection_impl(
                                     field_idx,
                                     true, // wrap inner recursions in `if let Some(...)`
                                     primary_type,
-                                    impl_fn_name,
                                     recurse_calls,
                                 );
                             },
@@ -1498,7 +1489,6 @@ fn generate_var_collection_impl(
                     &mut idx,
                     false,
                     primary_type,
-                    &impl_fn_name,
                     &mut recurse_calls,
                 );
             } else {
@@ -1515,7 +1505,7 @@ fn generate_var_collection_impl(
                             // Only recurse if it's the primary type
                             if nt_str == primary_type.to_string() {
                                 recurse_calls.push(quote! {
-                                    Self::#impl_fn_name(root_term, #field_name.as_ref(), result, seen);
+                                    stack.push(CollectTask::Visit(#field_name.as_ref() as *const _));
                                 });
                             }
                             field_idx += 1;
@@ -1525,21 +1515,16 @@ fn generate_var_collection_impl(
                             let field_name = &field_names[field_idx];
                             let elem_str = element_type.to_string();
                             if elem_str == primary_type.to_string() {
-                                // B9 / Class 2 (2026-05-08): branch on
-                                // coll_type. Vec yields bare elements;
-                                // HashBag/HashSet yield (elem, count).
-                                let iter_body = match coll_type {
-                                    mettail_ast::types::CollectionType::Vec => quote! {
-                                        for elem in #field_name.iter() {
-                                            Self::#impl_fn_name(root_term, elem, result, seen);
+                                let iter_body = for_each_subterm(
+                                    coll_type,
+                                    &quote! { #field_name },
+                                    WalkOrder::ReverseForLifo,
+                                    &|elem, _| {
+                                        quote! {
+                                            stack.push(CollectTask::Visit(#elem as *const _));
                                         }
                                     },
-                                    _ => quote! {
-                                        for (elem, _) in #field_name.iter() {
-                                            Self::#impl_fn_name(root_term, elem, result, seen);
-                                        }
-                                    },
-                                };
+                                );
                                 recurse_calls.push(iter_body);
                             }
                             field_idx += 1;
@@ -1559,21 +1544,10 @@ fn generate_var_collection_impl(
                                     let body_str = body_type.to_string();
                                     if body_str == primary_type.to_string() {
                                         recurse_calls.push(quote! {
-                                            // Extract binder from scope using unbind
-                                            let (binder, body) = #field_name.clone().unbind();
-                                            if let Some(name) = &binder.0.pretty_name {
-                                                if !seen.contains(name) {
-                                                    seen.insert(name.clone());
-                                                    let var_type = body.infer_var_type(name)
-                                                        .map(|t| Self::inferred_to_term_type(&t))
-                                                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
-                                                    result.push(mettail_runtime::VarTypeInfo {
-                                                        name: name.clone(),
-                                                        ty: var_type,
-                                                    });
-                                                }
-                                            }
-                                            Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
+                                            stack.push(CollectTask::Binder(
+                                                #field_name as *const _,
+                                                #domain_lit,
+                                            ));
                                         });
                                     }
                                 }
@@ -1587,6 +1561,12 @@ fn generate_var_collection_impl(
                     }
                 }
             }
+
+            // The recursive implementation visited fields from left to right
+            // and fully drained each subtree before the next. Push the field
+            // tasks in reverse so the explicit LIFO worklist preserves that
+            // exact first-seen order.
+            recurse_calls.reverse();
 
             if recurse_calls.is_empty() {
                 constructor_arms.push(quote! {
@@ -1887,9 +1867,65 @@ fn generate_language_struct_multi(
                     result: &mut Vec<mettail_runtime::VarTypeInfo>,
                     seen: &mut std::collections::HashSet<std::string::String>,
                 ) {
-                    match term {
-                        #var_impl
+                    enum CollectTask {
+                        Visit(*const #cat),
+                        Binder(*const mettail_runtime::Scope<
+                            mettail_runtime::Binder<String>,
+                            std::sync::Arc<#cat>,
+                        >, &'static str),
+                        MultiBinder(*const mettail_runtime::Scope<
+                            Vec<mettail_runtime::Binder<String>>,
+                            std::sync::Arc<#cat>,
+                        >, &'static str),
                     }
+                    thread_local! {
+                        static COLLECT_TASK_POOL: std::cell::Cell<Vec<CollectTask>> =
+                            std::cell::Cell::new(Vec::new());
+                    }
+
+                    let mut stack = COLLECT_TASK_POOL.with(|pool| pool.take());
+                    stack.clear();
+                    stack.push(CollectTask::Visit(term as *const _));
+                    while let Some(task) = stack.pop() {
+                        match task {
+                            CollectTask::Visit(ptr) => {
+                                let term = unsafe { &*ptr };
+                                match term { #var_impl }
+                            }
+                            CollectTask::Binder(ptr, domain) => {
+                                let scope = unsafe { &*ptr };
+                                let binder = scope.unsafe_pattern();
+                                let body = scope.unsafe_body();
+                                if let Some(name) = &binder.0.pretty_name {
+                                    if seen.insert(name.clone()) {
+                                        let var_type = body.infer_var_type(name)
+                                            .map(|t| Self::inferred_to_term_type(&t))
+                                            .unwrap_or_else(|| mettail_runtime::TermType::Base(domain.to_string()));
+                                        result.push(mettail_runtime::VarTypeInfo { name: name.clone(), ty: var_type });
+                                    }
+                                }
+                                stack.push(CollectTask::Visit(&**body as *const _));
+                            }
+                            CollectTask::MultiBinder(ptr, domain) => {
+                                let scope = unsafe { &*ptr };
+                                let binders = scope.unsafe_pattern();
+                                let body = scope.unsafe_body();
+                                for binder in binders {
+                                    if let Some(name) = &binder.0.pretty_name {
+                                        if seen.insert(name.clone()) {
+                                            let var_type = body.infer_var_type(name)
+                                                .map(|t| Self::inferred_to_term_type(&t))
+                                                .unwrap_or_else(|| mettail_runtime::TermType::Base(domain.to_string()));
+                                            result.push(mettail_runtime::VarTypeInfo { name: name.clone(), ty: var_type });
+                                        }
+                                    }
+                                }
+                                stack.push(CollectTask::Visit(&**body as *const _));
+                            }
+                        }
+                    }
+                    stack.clear();
+                    COLLECT_TASK_POOL.with(|pool| pool.set(stack));
                 }
             }
         })

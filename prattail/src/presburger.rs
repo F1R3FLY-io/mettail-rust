@@ -2021,10 +2021,7 @@ mod tests {
         assert_eq!(c.evaluate_checked(&assignment), Some(false));
         // …and the symmetric underflow: `x₀ + x₁ ≤ −1` at `i64::MIN` is TRUE over ℤ.
         let c = LinearConstraint::new(vec![(0, 1), (1, 1)], -1);
-        assert_eq!(
-            c.evaluate_checked(&IntAssignment::new(vec![i64::MIN, i64::MIN])),
-            Some(true)
-        );
+        assert_eq!(c.evaluate_checked(&IntAssignment::new(vec![i64::MIN, i64::MIN])), Some(true));
     }
 
     #[test]
@@ -2050,11 +2047,10 @@ mod tests {
 
     #[test]
     fn the_three_valued_evaluator_follows_kleenes_strong_tables() {
-        let undetermined =
-            PresburgerPred::Atom(LinearConstraint::new(
-                vec![(0, i64::MAX), (1, i64::MAX), (2, i64::MAX)],
-                0,
-            ));
+        let undetermined = PresburgerPred::Atom(LinearConstraint::new(
+            vec![(0, i64::MAX), (1, i64::MAX), (2, i64::MAX)],
+            0,
+        ));
         let assignment = IntAssignment::new(vec![i64::MAX, i64::MAX, i64::MAX]);
         assert_eq!(evaluate_presburger_checked(&undetermined, &assignment, 8), None);
 
@@ -2101,7 +2097,11 @@ mod tests {
             ),
             None
         );
-        assert!(!evaluate_presburger(&PresburgerPred::Not(Box::new(undetermined)), &assignment, 8));
+        assert!(!evaluate_presburger(
+            &PresburgerPred::Not(Box::new(undetermined)),
+            &assignment,
+            8
+        ));
     }
 
     #[test]

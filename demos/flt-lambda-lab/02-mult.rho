@@ -1,0 +1,11 @@
+// MULTIPLICATION IN PURE λ.
+//
+//   mult ≡ λm.λn.λf. m (n f)               two ≡ λf.λx. f (f x)        three ≡ λf.λx. f (f (f x))
+//
+// `mult 2 3` β-reduces to the Church numeral 6 — six nested applications.
+//
+//   target/debug/rhocalc demos/flt-lambda-lab/02-mult.rho
+//
+// Same machine, same driver, a different answer. Compare the `^fired` count against 01-plus.
+
+lambda`((lam m. lam n. lam f. (m, (n, f)), lam f. lam x. (f, (f, x))), lam f. lam x. (f, (f, (f, x))))`

@@ -30,6 +30,11 @@ fn classify_premise(premise: &Premise) -> Coverage {
     match premise {
         Premise::Freshness(_) => Coverage::DovetailCore,
         Premise::Congruence { .. } => Coverage::DovetailCore,
+        // ★ (#195) A WITHHELD congruence (`S ~/> T`) is covered by the Dovetail core for
+        // the same reason its positive twin is — it is discharged inside the e-graph
+        // lowering, by SEVERING the named position rather than by emitting a rule. No
+        // native handler, no external contract.
+        Premise::CongruenceWithheld { .. } => Coverage::DovetailCore,
         Premise::RelationQuery { .. } => Coverage::DovetailCore,
         Premise::ForAll { body, .. } => classify_premise(body),
         Premise::BehavioralGuard(pred) => classify_behavioral_pred(pred),

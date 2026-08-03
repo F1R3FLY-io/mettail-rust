@@ -2588,11 +2588,12 @@ mod prop_tests {
     #[test]
     fn the_recorded_entries_survive_an_incremental_round_trip() {
         let entries = recorded_entries();
-        let path = std::env::temp_dir().join(format!(
-            "prattail_promoted_decision_tree_rt_{}",
-            std::process::id()
-        ));
-        let mut state = IncrementalState { version: CACHE_VERSION, ..Default::default() };
+        let path = std::env::temp_dir()
+            .join(format!("prattail_promoted_decision_tree_rt_{}", std::process::id()));
+        let mut state = IncrementalState {
+            version: CACHE_VERSION,
+            ..Default::default()
+        };
 
         let mut seen = std::collections::HashSet::new();
         for (name, hash, code) in &entries {

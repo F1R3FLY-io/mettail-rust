@@ -380,8 +380,13 @@ fn collect_premise_guard_obligations(
                 ));
             },
             Premise::ForAll { body, .. } => walk(owner_kind, owner_name, body, index, out),
+            // ★ (#195) `CongruenceWithheld` carries no guard obligation for the same
+            // reason `Congruence` does not: neither is a semantic predicate. It is
+            // listed explicitly (not defaulted) so the day a polarity acquires an
+            // obligation, the compiler asks about BOTH.
             Premise::Freshness(_)
             | Premise::Congruence { .. }
+            | Premise::CongruenceWithheld { .. }
             | Premise::RelationQuery { .. }
             | Premise::SyntheticInjGuard { .. } => {},
         }

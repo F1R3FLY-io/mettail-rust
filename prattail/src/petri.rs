@@ -1194,13 +1194,7 @@ pub fn analyze_from_bundle(
 
     for (label, _category, syntax) in all_syntax {
         for item in syntax {
-            scan_item(
-                item,
-                label,
-                &mut transition_names,
-                &mut channel_refs,
-                &mut channel_seen,
-            );
+            scan_item(item, label, &mut transition_names, &mut channel_refs, &mut channel_seen);
         }
     }
 

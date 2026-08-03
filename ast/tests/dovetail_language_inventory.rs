@@ -299,6 +299,23 @@ fn add_premise_requirements(premise: &Premise, out: &mut BTreeSet<Requirement>) 
         Premise::Congruence { .. } => {
             out.insert(Requirement::CongruencePremise);
         },
+        // ★ (#195) `Requirement::CongruencePremise` names the congruence DECLARATION
+        // SURFACE, and both polarities share it: the same premise slot, the same parser
+        // capability, the same `(constructor, field)` position analysis. It is recorded
+        // here deliberately rather than as a new taxonomy row.
+        //
+        // ⚠ STATED, NOT SILENT: the genuinely NEW capability a withholding demands is
+        // SEVERANCE of the named position in the e-graph lowering, and folding it into
+        // this row would under-describe it. Severance therefore carries its own
+        // dedicated executable gate (`languages/tests/congruence_declaration_witness.rs`,
+        // the three-state table) and its own machine-checked proof
+        // (`macros/formal/rocq/CongruenceWithholding.v`, theorem `withholding_requires_severance`)
+        // — a sharper audit than a coarse requirement row, and one that cannot pass
+        // vacuously because the same test measures a withheld and an un-withheld sibling
+        // position side by side.
+        Premise::CongruenceWithheld { .. } => {
+            out.insert(Requirement::CongruencePremise);
+        },
         Premise::RelationQuery { .. } => {
             out.insert(Requirement::EnvRelationPremise);
         },

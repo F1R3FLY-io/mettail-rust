@@ -165,9 +165,7 @@ impl FrameCtx {
     #[inline]
     pub fn matches_delim(&self, text: &str) -> bool {
         self.has_frame
-            && (text == self.close
-                || text == self.sep
-                || self.kv_sep.is_some_and(|k| k == text))
+            && (text == self.close || text == self.sep || self.kv_sep.is_some_and(|k| k == text))
     }
 }
 
@@ -1064,7 +1062,6 @@ impl std::fmt::Display for WpdaMaxStepsExceeded {
 
 impl std::error::Error for WpdaMaxStepsExceeded {}
 
-
 /// Reason a checkpoint is being recorded.
 ///
 /// Tags why a checkpoint was taken so a checkpoint cache can decide which to
@@ -1082,7 +1079,6 @@ pub enum CheckpointReason {
     /// Pre-pause snapshot before halting (paired with `WpdaControl::Pause`).
     PrePause,
 }
-
 
 /// A WPDS configuration snapshot suitable for checkpointing or replay.
 ///
@@ -2759,12 +2755,12 @@ pub enum ActionArg {
     /// ⚠ It is deliberately NOT an `ActionArg::Term`: the generated finalize
     /// action must be unable to mistake it for a value the user wrote. It has no
     /// `into_term` and no downcast — the only thing an action can do with it is
-    /// recognise it and emit `mettail_runtime::PathValue::Unset`.
+    /// recognise it and select homogeneous set mode for the collection.
     ///
     /// Before this variant existed, a bare entry was materialised by
     /// *duplicating the key into the value slot*, which destroyed the
     /// distinction inside the SPPF before any action could see it. See
-    /// `runtime/src/path_value.rs` for the full rationale.
+    /// `runtime/src/pathmap_lit.rs` for the homogeneous representation.
     UnsetCollectionValue,
 }
 
@@ -2988,9 +2984,7 @@ impl ActionArg {
     /// in the language" into "an accepted, shorter container" — the sub-multiset
     /// ghost. `into_term` is retained verbatim as `try_into_term().ok()` so its
     /// existing callers are untouched.
-    pub fn try_into_term<T: 'static + Send + Sync + Clone>(
-        self,
-    ) -> Result<T, ActionArgMismatch> {
+    pub fn try_into_term<T: 'static + Send + Sync + Clone>(self) -> Result<T, ActionArgMismatch> {
         let requested = std::any::type_name::<T>();
         match self {
             ActionArg::Term { value, type_name } => match Arc::downcast::<T>(value) {
@@ -3852,7 +3846,10 @@ pub fn lex_w_alt_with_len(
     lex_alt_idx: u16,
 ) -> crate::automata::lex_weight::LexicographicWeight {
     crate::automata::lex_weight::LexicographicWeight::from_cost_with_lex(
-        cost, src_idx, rule_idx, lex_alt_idx,
+        cost,
+        src_idx,
+        rule_idx,
+        lex_alt_idx,
     )
     .with_open_len(open_len)
 }
@@ -4096,8 +4093,6 @@ mod tests {
             .expect_err("slice source has no byte-addressed backing text");
         assert!(err.contains("token-addressed"), "unexpected error: {}", err);
     }
-
-
 
     #[test]
     fn wpds_control_pause_exists() {

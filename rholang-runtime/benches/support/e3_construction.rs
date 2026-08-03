@@ -1193,16 +1193,53 @@ fn instantiate_state(
     state: StateId,
     eg: &mut EGraph<String>,
 ) -> EClassId {
-    match view.node(state) {
-        AutomatonNode::Var(name) => eg.add(ENode::leaf(format!("cvar:{name}"))),
-        AutomatonNode::App { op, args } => {
-            let children: Vec<EClassId> = args
-                .iter()
-                .map(|&arg| instantiate_state(view, arg, eg))
-                .collect();
-            eg.add(ENode::new(op.clone(), children))
-        },
+    enum Task {
+        Visit(StateId),
+        Assemble { state: StateId, op: String, arity: usize },
     }
+
+    let mut tasks = vec![Task::Visit(state)];
+    let mut values = Vec::new();
+    let mut memo = HashMap::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(current) => {
+                if let Some(&class) = memo.get(&current) {
+                    values.push(class);
+                    continue;
+                }
+                match view.node(current) {
+                    AutomatonNode::Var(name) => {
+                        let class = eg.add(ENode::leaf(format!("cvar:{name}")));
+                        memo.insert(current, class);
+                        values.push(class);
+                    },
+                    AutomatonNode::App { op, args } => {
+                        tasks.push(Task::Assemble {
+                            state: current,
+                            op: op.clone(),
+                            arity: args.len(),
+                        });
+                        for &arg in args.iter().rev() {
+                            tasks.push(Task::Visit(arg));
+                        }
+                    },
+                }
+            },
+            Task::Assemble { state, op, arity } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(arity)
+                    .expect("E-3 instantiate PDA lost a child result");
+                let children = values.split_off(first_child);
+                let class = eg.add(ENode::new(op, children));
+                memo.insert(state, class);
+                values.push(class);
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("E-3 instantiate PDA produced no root")
 }
 
 /// The `(pattern, root)` count-multiset of a match list.
@@ -1216,22 +1253,15 @@ fn match_multiset(
     counts
 }
 
-/// Run `f` on a FRESH thread (fresh `thread_local!` artifact cache ⇒ a true first
-/// touch) with a stack of at least 8 MiB (the workspace's `RUST_MIN_STACK` floor;
-/// a larger env value is honored), returning its `Send`-safe result.
+/// Run `f` on a fresh ordinary thread (fresh `thread_local!` artifact cache ⇒ a true first
+/// touch), returning its `Send`-safe result.
 pub fn in_fresh_thread<T, F>(f: F) -> T
 where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
 {
-    let stack_bytes = std::env::var("RUST_MIN_STACK")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(0)
-        .max(8 * 1024 * 1024);
     std::thread::Builder::new()
         .name("e3-cell".to_string())
-        .stack_size(stack_bytes)
         .spawn(f)
         .expect("the E-3 cell thread spawns")
         .join()

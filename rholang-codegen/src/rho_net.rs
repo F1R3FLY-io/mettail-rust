@@ -550,6 +550,20 @@ impl RhoNetProgram {
 
     fn add_rewrites(&mut self, rewrites: &[RewriteRule]) {
         for (index, rewrite) in rewrites.iter().enumerate() {
+            // ★★ (#195) A WITHHELD congruence (`| S ~/> T |-`) declares that the
+            // inference its own conclusion spells out is NEVER DRAWN. It is therefore
+            // not a rule of this net — not a `ContextualRewrite` (which would build the
+            // very join the author refused) and not a `BaseRewrite` (which would fire
+            // `POutput N S ~> POutput N S`, an identity step that saturation would
+            // re-derive forever). It contributes nothing at all.
+            //
+            // ⚠ The `index` is still CONSUMED from the enumeration, deliberately: rule
+            // ids are `rule_id_rewrite(index, name)` and the disposition inventory keys
+            // on them, so compacting indices around a skipped rewrite would silently
+            // RETARGET every later rule id. `#152` pinned eight such coordinates.
+            if rewrite.withholds_congruence() {
+                continue;
+            }
             let name = rewrite.name.to_string();
             let input = self.pattern_trace_channel(&rewrite.left);
             let output = RhoNetChannel::location(&self.language_fingerprint, format!("rewrite/{index}/{name}/rhs"));
@@ -739,6 +753,18 @@ impl RhoNetProgram {
                 inputs.push(channel.name.clone());
                 self.push_channel(channel);
             },
+            // ★★ (#195) A WITHHELD congruence contributes NO input channel and NO
+            // channel declaration — the whole point of the declaration is that the
+            // inference it spells out is never drawn, so there is nothing for a join to
+            // wait on. `plan` additionally emits no `RhoNetRule` for the owning rewrite
+            // at all (see `add_rewrites`), so a withholding is invisible to the in-Rho
+            // net rather than a rule that fires and does nothing.
+            //
+            // ⚠ CONSENSUS-VISIBLE SURFACE, MEASURED NEUTRAL: this arm can only be
+            // reached by a language that declares `S ~/> T`, and no production language
+            // does (Ambient/Calculator/Json/Lambda/Monoid/Pi/Rholang/Turing: zero), so
+            // every shipped Rho net plan is byte-identical across #195.
+            Premise::CongruenceWithheld { .. } => {},
             Premise::ForAll { body, .. } => {
                 self.push_consistency_input(
                     format!("{owner_kind}/{owner_name}/forall/{index}"),

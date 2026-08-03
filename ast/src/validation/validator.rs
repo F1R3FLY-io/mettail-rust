@@ -21,7 +21,6 @@ use crate::{
 };
 use std::collections::HashSet;
 
-
 /// S2 — THE reserved-reflect-namespace predicate, defined once.
 ///
 /// The in-Rho runtime mints an unforgeable ABI tag `mettail.term.{fp}.{label}`
@@ -108,7 +107,11 @@ pub fn validate_reserved_reflect_names(language: &LanguageDef) -> Result<(), Val
             });
         }
     }
-    for relation in language.logic.iter().flat_map(|logic| logic.relations.iter()) {
+    for relation in language
+        .logic
+        .iter()
+        .flat_map(|logic| logic.relations.iter())
+    {
         let label = relation.name.to_string();
         if is_reserved_reflect_label(&label) {
             return Err(ValidationError::ReservedReflectLabel {
@@ -120,7 +123,10 @@ pub fn validate_reserved_reflect_names(language: &LanguageDef) -> Result<(), Val
     }
     // Token and mode names, including the token defs nested inside each mode —
     // a mode-local token is as capable of naming a category as a top-level one.
-    let nested_tokens = language.mode_defs.iter().flat_map(|mode| mode.token_defs.iter());
+    let nested_tokens = language
+        .mode_defs
+        .iter()
+        .flat_map(|mode| mode.token_defs.iter());
     for token in language.token_defs.iter().chain(nested_tokens) {
         let label = token.name.to_string();
         if is_reserved_reflect_label(&label) {
@@ -524,7 +530,14 @@ fn validate_premise(
             inner_bound.insert(param.to_string());
             validate_premise(body, pattern_vars, &inner_bound)?;
         },
-        Premise::Congruence { .. } | Premise::RelationQuery { .. } => {},
+        // ★ (#195) The two congruence POLARITIES validate identically: both name a
+        // source/target metavariable pair that the enclosing rule's own patterns bind,
+        // so there is no additional scope obligation. They are listed as one arm rather
+        // than defaulted, so a future obligation on either cannot be added to one and
+        // forgotten on the other.
+        Premise::Congruence { .. }
+        | Premise::CongruenceWithheld { .. }
+        | Premise::RelationQuery { .. } => {},
         // Phase A (2026-05-16): synthetic-injection guard is emitted
         // exclusively by codegen for auto-injected NormCast rules. It
         // references the auto-injected rule's inner_var (which IS in

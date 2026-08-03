@@ -113,6 +113,51 @@ pub enum Premise {
     /// Only valid in rewrites, not equations
     Congruence { source: Ident, target: Ident },
 
+    /// ★ (#195) **Withheld** congruence: `S ~/> T` — the author DECLARES that the
+    /// context named by the enclosing rule's LHS is **not an evaluation context**.
+    ///
+    /// Read the whole rule as a *denial* of the inference it spells out:
+    ///
+    /// ```text
+    /// OutputPayloadWithheld . | S ~/> T |- (POutput N S) ~> (POutput N T) ;
+    /// ```
+    ///
+    /// says "the rule you would expect here — `S ~> T` licensing
+    /// `POutput N S ~> POutput N T` — is WITHHELD". The conclusion is written out in
+    /// full precisely so a reader sees exactly which inference is being denied, and so
+    /// the *position* (`POutput`, field 1) is **derived from the pattern** rather than
+    /// transcribed into a list somebody must remember to update.
+    ///
+    /// # Why this is a third VALUE and not the absence of `Congruence`
+    ///
+    /// Before #195 congruence propagation had two states — *declared* and *undeclared* —
+    /// and the second conflated two different authorial intents:
+    ///
+    /// | intent | pre-#195 | now |
+    /// |---|---|---|
+    /// | propagate here | [`Premise::Congruence`] | unchanged |
+    /// | no opinion; infer it | declare nothing | the sensible default (unchanged) |
+    /// | **withhold propagation** | ⚠ **unspellable** — reads as "no opinion" | **this variant** |
+    ///
+    /// A disposition is a value, not an absence. This variant is that value.
+    ///
+    /// # What reads it
+    ///
+    /// * [`RewriteRule::withholds_congruence`] — the predicate; **disjoint** from
+    ///   [`RewriteRule::is_congruence_rule`], so no reader that routes on "is this a
+    ///   congruence?" can silently treat a denial as an assertion.
+    /// * `macros/src/gen/runtime/dovetail_report.rs` — derives the severed position set
+    ///   and lowers the field to a payload-verbatim leaf, which is the ONLY way an
+    ///   e-graph can honour a non-congruence (see `macros/docs/codegen/congruence-closure.md`).
+    /// * `rholang-codegen/src/rho_net.rs` — emits no rule at all for it.
+    ///
+    /// # Fingerprint
+    ///
+    /// `crate::identity::write_premise` renders this as `ncong(S,T)`; a language that
+    /// declares none emits nothing, so every pre-#195 language's
+    /// `language_definition_fingerprint` is byte-identical.
+    CongruenceWithheld { source: Ident, target: Ident },
+
     /// Relation query: rel(arg1, arg2, ...)
     /// Currently used for env_var(x, v), extensible to arbitrary relations
     RelationQuery { relation: Ident, args: Vec<Ident> },
@@ -835,6 +880,33 @@ impl RewriteRule {
     /// Check if this is a congruence rule (has a Premise::Congruence)
     pub fn is_congruence_rule(&self) -> bool {
         self.congruence_premise().is_some()
+    }
+
+    /// ★ (#195) Extract the WITHHELD-congruence premise (`S ~/> T`), if any.
+    ///
+    /// The sibling of [`Self::congruence_premise`], and deliberately a separate
+    /// accessor rather than a polarity field on the same one: a reader that asks
+    /// "does this rule carry `S ~> T`?" must not be answered `true` by a rule that
+    /// carries `S ~/> T`. See [`Premise::CongruenceWithheld`].
+    pub fn withheld_congruence_premise(&self) -> Option<(&Ident, &Ident)> {
+        self.premises.iter().find_map(|p| {
+            if let Premise::CongruenceWithheld { source, target } = p {
+                Some((source, target))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// ★ (#195) Whether this rule DENIES a congruence (has a
+    /// [`Premise::CongruenceWithheld`]).
+    ///
+    /// ⚠ **Disjoint from [`Self::is_congruence_rule`] by construction**, and the
+    /// disjointness is enforced at parse time: `crate::language::parse` rejects a rule
+    /// carrying both polarities for the same source metavariable, because such a rule
+    /// would assert and deny the same inference.
+    pub fn withholds_congruence(&self) -> bool {
+        self.withheld_congruence_premise().is_some()
     }
 }
 

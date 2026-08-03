@@ -1336,15 +1336,7 @@ pub fn native_locate_contract_bridge_par(
     let all_free = create_bit_vector(&(0..formal_count).collect::<Vec<_>>());
     // Body: `native_channel!(a₀, …, a_{k-1}, out)` — the channel is the closed unforgeable
     // `[0xF1, rule_index]` Par, so the send is free exactly in the forwarded formals.
-    let body = new_send_par(
-        native_channel,
-        data,
-        false,
-        all_free.clone(),
-        false,
-        all_free,
-        false,
-    );
+    let body = new_send_par(native_channel, data, false, all_free.clone(), false, all_free, false);
     let source = new_gstring_par(trigger_channel.to_string(), Vec::new(), false);
     let receive = Receive {
         binds: vec![ReceiveBind {
@@ -1824,7 +1816,6 @@ pub fn reflected_tag_string(language_fingerprint: &str, constructor_label: &str)
 /// a σ argument. Because dovetail has already matched the LHS, every σ argument
 /// is a fully-instantiated ground term, so this representation carries no bound
 /// variables (unlike an RHS pattern, which does).
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroundTerm {
     /// The constructor label (a grammar term's label, e.g. `Pair`), reflected
     /// verbatim into the unforgeable tag via [`reflect_tag`].
@@ -1838,6 +1829,115 @@ pub struct GroundTerm {
     /// spatial matcher can AC-match it. `None` (the common case) reflects positionally
     /// as the tagged `EList`.
     pub coll_type: Option<CollectionType>,
+}
+
+impl std::fmt::Debug for GroundTerm {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        enum DebugTask<'a> {
+            Visit(&'a GroundTerm),
+            Separator,
+            Tail(&'a Option<CollectionType>),
+        }
+
+        let mut tasks = vec![DebugTask::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                DebugTask::Visit(term) => {
+                    write!(
+                        formatter,
+                        "GroundTerm {{ constructor: {:?}, children: [",
+                        term.constructor
+                    )?;
+                    tasks.push(DebugTask::Tail(&term.coll_type));
+                    for (index, child) in term.children.iter().enumerate().rev() {
+                        tasks.push(DebugTask::Visit(child));
+                        if index > 0 {
+                            tasks.push(DebugTask::Separator);
+                        }
+                    }
+                },
+                DebugTask::Separator => formatter.write_str(", ")?,
+                DebugTask::Tail(coll_type) => {
+                    write!(formatter, "], coll_type: {coll_type:?} }}")?;
+                },
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PartialEq for GroundTerm {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some((left, right)) = pending.pop() {
+            if left.constructor != right.constructor
+                || left.coll_type != right.coll_type
+                || left.children.len() != right.children.len()
+            {
+                return false;
+            }
+            pending.extend(left.children.iter().zip(&right.children));
+        }
+        true
+    }
+}
+
+impl Eq for GroundTerm {}
+
+impl Clone for GroundTerm {
+    fn clone(&self) -> Self {
+        enum CloneTask<'a> {
+            Visit(&'a GroundTerm),
+            Assemble {
+                constructor: String,
+                coll_type: Option<CollectionType>,
+                child_count: usize,
+            },
+        }
+
+        let mut tasks = Vec::new();
+        let mut values = Vec::new();
+        tasks.push(CloneTask::Visit(self));
+        while let Some(task) = tasks.pop() {
+            match task {
+                CloneTask::Visit(term) => {
+                    tasks.push(CloneTask::Assemble {
+                        constructor: term.constructor.clone(),
+                        coll_type: term.coll_type.clone(),
+                        child_count: term.children.len(),
+                    });
+                    for child in term.children.iter().rev() {
+                        tasks.push(CloneTask::Visit(child));
+                    }
+                },
+                CloneTask::Assemble { constructor, coll_type, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("GroundTerm clone PDA lost a child result");
+                    let children = values.split_off(first_child);
+                    values.push(GroundTerm { constructor, children, coll_type });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("GroundTerm clone PDA produced no result")
+    }
+}
+
+impl Drop for GroundTerm {
+    fn drop(&mut self) {
+        // Empty each descendant before it is dropped. Every implicit call to
+        // this `Drop` implementation therefore sees an empty `children` vec,
+        // keeping native stack usage independent of term depth.
+        let mut pending = Vec::new();
+        pending.append(&mut self.children);
+        while let Some(mut child) = pending.pop() {
+            pending.append(&mut child.children);
+        }
+    }
 }
 
 impl GroundTerm {
@@ -2124,11 +2224,8 @@ pub fn rho_net_contextual_injection_sites(def: &LanguageDef) -> Vec<RhoNetContex
         };
         // The premise channels are `input_channels[1..]` (channel 0 is the LHS trace
         // channel). A materialized `ContextualRewrite` has at least one premise channel.
-        let premise_channels: Vec<String> = program_rule
-            .input_channels
-            .get(1..)
-            .unwrap_or(&[])
-            .to_vec();
+        let premise_channels: Vec<String> =
+            program_rule.input_channels.get(1..).unwrap_or(&[]).to_vec();
         if premise_channels.is_empty() {
             continue;
         }
@@ -2497,8 +2594,7 @@ pub struct RhoNetAcMatchEntry {
 /// receivers share ([`language_definition_fingerprint`](mettail_ast::identity::language_definition_fingerprint)).
 /// Only rewrites with a materialized AC receiver are surfaced, so an entry is always executable.
 pub fn rho_net_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetAcMatchEntry> {
-    let language_fingerprint =
-        mettail_ast::identity::language_definition_fingerprint(def);
+    let language_fingerprint = mettail_ast::identity::language_definition_fingerprint(def);
     let sites = rho_net_ac_injection_sites(def);
     let mut entries = Vec::with_capacity(sites.len());
     for site in sites {
@@ -2619,10 +2715,10 @@ pub fn rho_net_contextual_match_entries(def: &LanguageDef) -> Vec<RhoNetContextu
                         .premises
                         .iter()
                         .filter_map(|premise| match premise {
-                            Premise::Congruence { source, .. } => {
-                                Some(contextual_source_path(&rewrite.left, &source.to_string())
-                                    .unwrap_or_default())
-                            },
+                            Premise::Congruence { source, .. } => Some(
+                                contextual_source_path(&rewrite.left, &source.to_string())
+                                    .unwrap_or_default(),
+                            ),
                             _ => None,
                         })
                         .collect()
@@ -2739,7 +2835,9 @@ fn instantiate_rhs(
 /// is uniform: marked ⟺ not `^`-prefixed, plus the four binder/variable leaves.
 pub fn is_marked_object_label(label: &str) -> bool {
     match label {
-        LAMBDA_REFLECT_LABEL | MULTILAMBDA_REFLECT_LABEL | BOUND_VAR_REFLECT_LABEL
+        LAMBDA_REFLECT_LABEL
+        | MULTILAMBDA_REFLECT_LABEL
+        | BOUND_VAR_REFLECT_LABEL
         | FREE_VAR_REFLECT_LABEL => true,
         // ★ #36 S3: REDUNDANT once the Peano labels are `^`-prefixed — the generic
         // `other => !other.starts_with('^')` arm below now covers them. Retained,
@@ -2760,7 +2858,11 @@ pub fn is_marked_object_label(label: &str) -> bool {
 pub fn ground_marker_tag_par(fp: &str, is_ground: bool) -> Par {
     GPrivateBuilder::new_par_from_string(reflect_tag(
         fp,
-        if is_ground { GROUND_MARK_REFLECT_LABEL } else { NONGROUND_MARK_REFLECT_LABEL },
+        if is_ground {
+            GROUND_MARK_REFLECT_LABEL
+        } else {
+            NONGROUND_MARK_REFLECT_LABEL
+        },
     ))
 }
 
@@ -2981,7 +3083,10 @@ fn reflect_ac_map_par(term: &GroundTerm, language_fingerprint: &str) -> Par {
         let value_par = reflect_ground_term_par(value, language_fingerprint);
         locally_free = union(locally_free, key_par.locally_free.clone());
         locally_free = union(locally_free, value_par.locally_free.clone());
-        kvs.push(KeyValuePair { key: Some(key_par), value: Some(value_par) });
+        kvs.push(KeyValuePair {
+            key: Some(key_par),
+            value: Some(value_par),
+        });
     }
     // A GROUND map: no free vars, no connective, no remainder. `ParMap::new` sorts by key + dedupes
     // on key (so duplicate keys collapse to the last write — the key-uniqueness invariant).
@@ -3018,8 +3123,12 @@ pub fn ac_collection_pattern(
 /// match — inside one atomic `consume`. The remainder is a `FreeVar(k)` `Var` (exactly the
 /// `remainder_var_opt` level the matcher reads); element `i` binds `FreeVar(i)`.
 pub fn ac_set_pattern(k: usize) -> Par {
-    let elements: Vec<Par> = (0..k).map(|i| new_freevar_par(i as i32, Vec::new())).collect();
-    let remainder = Var { var_instance: Some(VarInstance::FreeVar(k as i32)) };
+    let elements: Vec<Par> = (0..k)
+        .map(|i| new_freevar_par(i as i32, Vec::new()))
+        .collect();
+    let remainder = Var {
+        var_instance: Some(VarInstance::FreeVar(k as i32)),
+    };
     new_eset_par(elements, Vec::new(), true, Some(remainder), Vec::new(), true)
 }
 
@@ -3037,7 +3146,9 @@ pub fn ac_map_pattern(k: usize) -> Par {
             value: Some(new_freevar_par((2 * i + 1) as i32, Vec::new())),
         })
         .collect();
-    let remainder = Var { var_instance: Some(VarInstance::FreeVar((2 * k) as i32)) };
+    let remainder = Var {
+        var_instance: Some(VarInstance::FreeVar((2 * k) as i32)),
+    };
     new_emap_par(kvs, Vec::new(), true, Some(remainder), Vec::new(), true)
 }
 
@@ -3121,7 +3232,9 @@ pub fn ac_set_paired_receiver_par(
     source: Par,
 ) -> Par {
     let free_count = element_slots + 2; // element slots + rest + out
-    let remainder = Var { var_instance: Some(VarInstance::FreeVar(element_slots as i32)) };
+    let remainder = Var {
+        var_instance: Some(VarInstance::FreeVar(element_slots as i32)),
+    };
     let eset_pattern =
         new_eset_par(element_patterns, Vec::new(), true, Some(remainder), Vec::new(), true);
     let out_channel = bound_formal(free_count, element_slots + 1); // out = BoundVar(0)
@@ -3229,11 +3342,7 @@ pub fn contextual_contract_call(
 ) -> Par {
     let n = premise_channels.len().min(reduced_holes.len());
     let mut call = Par::default();
-    for (index, (channel, hole)) in premise_channels
-        .iter()
-        .zip(reduced_holes)
-        .enumerate()
-    {
+    for (index, (channel, hole)) in premise_channels.iter().zip(reduced_holes).enumerate() {
         // The last premise send also carries the dynamic out channel (a quoted GString name,
         // exactly how `term_contract_call` lowers its return channel).
         let data = if index + 1 == n {
@@ -3511,8 +3620,10 @@ pub fn ac_match_call_par(
     if entries.is_empty() {
         return Par::default();
     }
-    let by_op: HashMap<&str, &RhoNetAcMatchEntry> =
-        entries.iter().map(|entry| (entry.op.as_str(), entry)).collect();
+    let by_op: HashMap<&str, &RhoNetAcMatchEntry> = entries
+        .iter()
+        .map(|entry| (entry.op.as_str(), entry))
+        .collect();
     ac_match_install_at(
         subject,
         &spread_root_location(language_fingerprint, root_site),
@@ -3702,8 +3813,7 @@ fn collapse_publish(
             Some(m) => vec![head_tag, m],
             None => vec![head_tag],
         };
-        let collapsed =
-            new_elist_par(leaf_elements, Vec::new(), false, None, Vec::new(), false);
+        let collapsed = new_elist_par(leaf_elements, Vec::new(), false, None, Vec::new(), false);
         let chain = new_send_par(
             new_gstring_par(chain_location.to_string(), Vec::new(), false),
             vec![collapsed.clone()],
@@ -4184,7 +4294,8 @@ fn reflect_term_par_env(
         // which the host-contractum path cannot supply. So a substitution node reaching THIS reflector
         // (only a NESTED subst — a top-level one is routed to the seed) has no in-Rho image this slice
         // and fails closed, exactly like the LHS subst arm (`collect_lhs_vars_term`).
-        Pattern::Term(PatternTerm::MultiSubst { .. }) | Pattern::Term(PatternTerm::Subst { .. }) => {
+        Pattern::Term(PatternTerm::MultiSubst { .. })
+        | Pattern::Term(PatternTerm::Subst { .. }) => {
             // RETIRED (host-σ-slot reduct): `reflect_subst_scope_slot(scope, vars, k)`.
             Err(UnsupportedFamily::Substitution)
         },
@@ -4638,7 +4749,9 @@ fn ac_nonlinear_condition(element_vars: &[Ident], free_count: usize) -> Option<P
     // by construction, 0% dischargeable. See `crate::guard_closure` and
     // `mettail_rholang_runtime::guard_discharge`.
     debug_assert!(
-        condition.as_ref().is_none_or(|cond| !crate::guard_closure::is_binder_closed(cond)),
+        condition
+            .as_ref()
+            .is_none_or(|cond| !crate::guard_closure::is_binder_closed(cond)),
         "an AC non-linear consistency guard is EEq over the receiver's own element slots and \
          can never be binder-closed"
     );
@@ -4767,7 +4880,10 @@ pub(crate) fn ac_effective_bare_var_kind(
         },
         _ => None,
     };
-    pattern_kind.or(resolved_kind).cloned().unwrap_or(CollectionType::HashBag)
+    pattern_kind
+        .or(resolved_kind)
+        .cloned()
+        .unwrap_or(CollectionType::HashBag)
 }
 
 /// Resolve the collection kind a CONSTRUCTOR declares, keyed on the op label, from EITHER
@@ -4788,7 +4904,10 @@ pub(crate) fn ac_effective_bare_var_kind(
 /// AND the AC bag-VALUED RHS reflection ([`reflect_hashbag_soup_par`], Stage AC2b) resolve it here.
 /// Returns `None` when `op` is not a constructor over a collection parameter under EITHER form — so
 /// a non-collection or unknown constructor is never mis-classified as a HashBag.
-pub(crate) fn resolve_constructor_collection_type(def: &LanguageDef, op: &str) -> Option<CollectionType> {
+pub(crate) fn resolve_constructor_collection_type(
+    def: &LanguageDef,
+    op: &str,
+) -> Option<CollectionType> {
     let rule = def.terms.iter().find(|rule| rule.label == op)?;
     rule.term_context
         .as_ref()
@@ -4815,7 +4934,10 @@ pub(crate) fn resolve_constructor_collection_type(def: &LanguageDef, op: &str) -
 /// Resolve the collection kind the AC rule's constructor declares (`op . ps:HashBag(..) |- ..`) —
 /// [`resolve_constructor_collection_type`] keyed on the LHS `Apply`'s constructor. Returns `None`
 /// when the LHS is not a constructor application.
-pub(crate) fn resolve_ac_collection_type(def: &LanguageDef, left: &Pattern) -> Option<CollectionType> {
+pub(crate) fn resolve_ac_collection_type(
+    def: &LanguageDef,
+    left: &Pattern,
+) -> Option<CollectionType> {
     let op = match left {
         Pattern::Term(PatternTerm::Apply { constructor, .. }) => constructor.to_string(),
         _ => return None,
@@ -5118,7 +5240,9 @@ pub(crate) fn comm_rule_shape(
                 reducts.push(CommReduct::Substitution);
             },
             None => match element {
-                Pattern::Term(PatternTerm::Var(name)) => reducts.push(CommReduct::Var(name.clone())),
+                Pattern::Term(PatternTerm::Var(name)) => {
+                    reducts.push(CommReduct::Var(name.clone()))
+                },
                 _ => return None,
             },
         }
@@ -5242,7 +5366,10 @@ fn comm_element_pattern(element: &CommElement, nl_level: usize, language_fingerp
 /// conjunction as a `MatchCase.guard` (evaluated in the case env, which shares the
 /// reverse-De-Bruijn frame convention with a receive of the same `free_count` — F12), so
 /// the driver's non-linear checks can never drift from the installed receivers'.
-pub(crate) fn nonlinear_consistency_condition(occurrence_levels: &[usize], free_count: usize) -> Par {
+pub(crate) fn nonlinear_consistency_condition(
+    occurrence_levels: &[usize],
+    free_count: usize,
+) -> Par {
     let mut conjuncts: Vec<(Par, Vec<usize>)> = Vec::with_capacity(occurrence_levels.len());
     let idx0 = free_count - 1 - occurrence_levels[0];
     for &level in &occurrence_levels[1..] {
@@ -6074,10 +6201,7 @@ pub fn rho_net_structural_ac_match_entries(def: &LanguageDef) -> Vec<RhoNetStruc
         if !structural_ac_shape_is_match_representable(&shape) {
             continue;
         }
-        entries.push(RhoNetStructuralAcMatchEntry {
-            fired_rule_label: site.rule_label,
-            shape,
-        });
+        entries.push(RhoNetStructuralAcMatchEntry { fired_rule_label: site.rule_label, shape });
     }
     entries
 }
@@ -6105,8 +6229,10 @@ pub fn structural_ac_match_call_par(
     if entries.is_empty() {
         return Par::default();
     }
-    let by_op: HashMap<&str, &RhoNetStructuralAcMatchEntry> =
-        entries.iter().map(|entry| (entry.shape.op.as_str(), entry)).collect();
+    let by_op: HashMap<&str, &RhoNetStructuralAcMatchEntry> = entries
+        .iter()
+        .map(|entry| (entry.shape.op.as_str(), entry))
+        .collect();
     structural_ac_match_install_at(
         subject,
         &spread_root_location(language_fingerprint, root_site),
@@ -6612,18 +6738,11 @@ fn instantiate_ac_reconstruct_template_at_depth(
                 let rest_ground = shifted_sigma(rest_var)?;
                 ground_children.extend(rest_ground.children.iter().cloned());
             }
-            Some(GroundTerm::collection(
-                CollectionType::HashBag,
-                op.clone(),
-                ground_children,
-            ))
+            Some(GroundTerm::collection(CollectionType::HashBag, op.clone(), ground_children))
         },
         AcReconstructTemplate::Binder { body } => {
-            let ground_body = instantiate_ac_reconstruct_template_at_depth(
-                body,
-                find_sigma,
-                binder_depth + 1,
-            )?;
+            let ground_body =
+                instantiate_ac_reconstruct_template_at_depth(body, find_sigma, binder_depth + 1)?;
             Some(GroundTerm::new(LAMBDA_REFLECT_LABEL, vec![ground_body]))
         },
     }
@@ -6666,10 +6785,7 @@ fn shift_reflected_ground_term(term: &GroundTerm, cutoff: usize) -> Option<Groun
             };
             let n = decode_peano_ground(numeral)?;
             if n >= cutoff {
-                Some(GroundTerm::new(
-                    BOUND_VAR_REFLECT_LABEL,
-                    vec![encode_peano_ground(n + 1)],
-                ))
+                Some(GroundTerm::new(BOUND_VAR_REFLECT_LABEL, vec![encode_peano_ground(n + 1)]))
             } else {
                 Some(term.clone())
             }
@@ -6687,9 +6803,14 @@ fn shift_reflected_ground_term(term: &GroundTerm, cutoff: usize) -> Option<Groun
         // Reserved reduction machinery the in-Rho `^shift` has no arm for (it would stall):
         // fail closed rather than guess. (`Z`/`S` are only meaningful UNDER `^bound`, which the
         // `^bound` arm consumed; a bare numeral here is a malformed subject.)
-        MULTILAMBDA_REFLECT_LABEL | SUBST_RESERVED_LABEL | SHIFT_RESERVED_LABEL
-        | SHIFTK_RESERVED_LABEL | CMP_RESERVED_LABEL | PRED_RESERVED_LABEL
-        | PEANO_ZERO_REFLECT_LABEL | PEANO_SUCC_REFLECT_LABEL => None,
+        MULTILAMBDA_REFLECT_LABEL
+        | SUBST_RESERVED_LABEL
+        | SHIFT_RESERVED_LABEL
+        | SHIFTK_RESERVED_LABEL
+        | CMP_RESERVED_LABEL
+        | PRED_RESERVED_LABEL
+        | PEANO_ZERO_REFLECT_LABEL
+        | PEANO_SUCC_REFLECT_LABEL => None,
         _ => {
             // A positional object constructor: structural descent, cutoff unchanged.
             let mut children = Vec::with_capacity(term.children.len());
@@ -6831,15 +6952,13 @@ fn collect_pattern_lhs_vars(pattern: &Pattern, out: &mut HashSet<String>) {
 /// channel variable's `Ident` (preserving its span) after locating it by name via occurrence counts.
 fn find_var_ident(pattern: &Pattern, name: &str) -> Option<Ident> {
     match pattern {
-        Pattern::Term(PatternTerm::Var(ident)) => {
-            (ident == name).then(|| ident.clone())
-        },
+        Pattern::Term(PatternTerm::Var(ident)) => (ident == name).then(|| ident.clone()),
         Pattern::Term(PatternTerm::Apply { args, .. }) => {
             args.iter().find_map(|arg| find_var_ident(arg, name))
         },
-        Pattern::Collection { elements, .. } => {
-            elements.iter().find_map(|element| find_var_ident(element, name))
-        },
+        Pattern::Collection { elements, .. } => elements
+            .iter()
+            .find_map(|element| find_var_ident(element, name)),
         _ => None,
     }
 }
@@ -7397,7 +7516,11 @@ pub fn float_satellite_table(def: &LanguageDef) -> FloatSatelliteTable {
     for equation in &def.equations {
         match classify_float_across_constructor_equation(def, equation, &binder_label) {
             Some(FloatAcrossClassification::Prefix { constructor, float_index, arity }) => {
-                if !table.hoist.iter().any(|(label, _, _)| *label == constructor) {
+                if !table
+                    .hoist
+                    .iter()
+                    .any(|(label, _, _)| *label == constructor)
+                {
                     table.hoist.push((constructor, float_index, arity));
                 }
             },
@@ -7720,8 +7843,10 @@ fn float_across_sides(
     if c_ctor == binder_label {
         return None;
     }
-    let Pattern::Term(PatternTerm::Apply { constructor: b_inner_ctor, args: b_inner_args }) =
-        b_inner
+    let Pattern::Term(PatternTerm::Apply {
+        constructor: b_inner_ctor,
+        args: b_inner_args,
+    }) = b_inner
     else {
         return None;
     };
@@ -7793,7 +7918,10 @@ fn float_across_prefix(
             if b_var != body_var {
                 return None;
             }
-            if float_position.replace((index, body_var.to_string())).is_some() {
+            if float_position
+                .replace((index, body_var.to_string()))
+                .is_some()
+            {
                 // Two binder-scoped arguments — not the single-float shape.
                 return None;
             }
@@ -7869,7 +7997,10 @@ fn float_across_collection(
             if b_var != body_var {
                 return None;
             }
-            if float_position.replace((index, body_var.to_string())).is_some() {
+            if float_position
+                .replace((index, body_var.to_string()))
+                .is_some()
+            {
                 return None;
             }
         } else {
@@ -7890,20 +8021,26 @@ fn float_across_collection(
     }
     // AM-6e: `C` must be the handler's bag-extrusion shape — the primary-category collection
     // constructor (the bag arm extrudes a binder MEMBER against the whole residual).
-    (matches!(float_constructor_shape(def, c_ctor), FloatConstructorShape::CollectionOverPrimary)
-        && premises_are_exactly_float_freshness(
-            premises,
-            binder_name,
-            &floated_past,
-            c_rest.map(|rest| rest.to_string()).as_deref(),
-        ))
+    (matches!(
+        float_constructor_shape(def, c_ctor),
+        FloatConstructorShape::CollectionOverPrimary
+    ) && premises_are_exactly_float_freshness(
+        premises,
+        binder_name,
+        &floated_past,
+        c_rest.map(|rest| rest.to_string()).as_deref(),
+    ))
     .then(|| FloatAcrossClassification::Collection { op: c_ctor.to_string() })
 }
 
 /// The float's metavariables must be pairwise distinct — the binder, the body variable, and every
 /// floated-past field variable. A shared name (e.g. the body variable doubling as a sibling field)
 /// would make the equation assert more than the handler's float performs — fail closed.
-fn float_metavariables_distinct(binder_name: &str, body_var: &str, floated_past: &[String]) -> bool {
+fn float_metavariables_distinct(
+    binder_name: &str,
+    body_var: &str,
+    floated_past: &[String],
+) -> bool {
     let mut seen: HashSet<&str> = HashSet::with_capacity(floated_past.len() + 2);
     seen.insert(binder_name);
     if !seen.insert(body_var) {
@@ -7990,7 +8127,11 @@ struct RestatedField {
 
 /// Classify constructor `label` by the float handler's arm shapes ([`FloatConstructorShape`]).
 fn float_constructor_shape(def: &LanguageDef, label: &Ident) -> FloatConstructorShape {
-    let Some(primary) = def.types.first().map(|lang_type| lang_type.name.to_string()) else {
+    let Some(primary) = def
+        .types
+        .first()
+        .map(|lang_type| lang_type.name.to_string())
+    else {
         return FloatConstructorShape::Other;
     };
     let Some(rule) = def.get_constructor(label) else {
@@ -8218,8 +8359,7 @@ pub fn rho_net_nested_structural_ac_injection_sites(
         };
         // A `NestedStructuralAcRewrite` lowered iff `nested_structural_ac_rule_shape` succeeded, so
         // this cannot fail; a defensive `continue` keeps the derivation total.
-        let Some(shape) =
-            nested_structural_ac_rule_shape(&rewrite.left, &rewrite.right, def)
+        let Some(shape) = nested_structural_ac_rule_shape(&rewrite.left, &rewrite.right, def)
         else {
             continue;
         };
@@ -8526,8 +8666,12 @@ fn reflect_ac_template_bound_par(
             let element_channel = ac_soup_channel(language_fingerprint, op);
             let mut soup = Par::default();
             for element in elements {
-                let element =
-                    reflect_ac_template_bound_par(element, slot_of, free_count, language_fingerprint);
+                let element = reflect_ac_template_bound_par(
+                    element,
+                    slot_of,
+                    free_count,
+                    language_fingerprint,
+                );
                 let free = element.locally_free.clone();
                 let send = new_send_par(
                     new_gstring_par(element_channel.clone(), Vec::new(), false),
@@ -8736,7 +8880,8 @@ pub fn rho_net_nested_structural_ac_match_entries(
         };
         // A `NestedStructuralAcRewrite` lowered iff `nested_structural_ac_rule_shape` succeeded, so
         // this cannot fail; a defensive skip keeps the derivation total.
-        let Some(shape) = nested_structural_ac_rule_shape(&rewrite.left, &rewrite.right, def) else {
+        let Some(shape) = nested_structural_ac_rule_shape(&rewrite.left, &rewrite.right, def)
+        else {
             continue;
         };
         // Fail-closed: a shape the MATCH receiver cannot faithfully bind stays on the host-σ path.
@@ -8869,6 +9014,27 @@ mod tests {
     const TEST_FP: &str = "mettail-langdef-v1:0000000000000000";
     use mettail_ast::language::{Equation, FreshnessCondition, FreshnessTarget};
 
+    /// Every public lifecycle traversal over a generated reflection result is heap-bounded.
+    /// A stack-safe reflector would still be unsafe if its result recursively cloned, compared,
+    /// formatted, or dropped after the traversal returned.
+    #[test]
+    fn ground_term_lifecycle_is_stack_safe_at_depth() {
+        const DEPTH: usize = 16_384;
+
+        let mut term = GroundTerm::nullary("leaf");
+        for _ in 0..DEPTH {
+            term = GroundTerm::new("node", vec![term]);
+        }
+
+        let cloned = term.clone();
+        assert_eq!(term, cloned);
+        let rendered = format!("{term:?}");
+        assert!(rendered.contains("leaf"));
+
+        drop(cloned);
+        drop(term);
+    }
+
     /// S1 — the reflected-tag ABI has ONE writer and ONE reader, and they are
     /// mutual inverses on every label the tree can mint, INCLUDING dotted ones.
     ///
@@ -8890,8 +9056,12 @@ mod tests {
         // exactly the invariant `reflect_tag` asserts and the parse relies on.
         // The parse is LENGTH-agnostic, so a wider future scheme still round-trips;
         // the short and long rows below pin that.
-        let fingerprints =
-            ["mettail-langdef-v1:0123456789abcdef", "mettail-langdef-v1:0", "x", &"f".repeat(83)];
+        let fingerprints = [
+            "mettail-langdef-v1:0123456789abcdef",
+            "mettail-langdef-v1:0",
+            "x",
+            &"f".repeat(83),
+        ];
 
         let mut labels: Vec<String> = vec![
             // Ordinary constructor labels (`syn::Ident`s — dot-free by construction).
@@ -8910,12 +9080,20 @@ mod tests {
         ];
         // Every reserved label, so a future addition to any reserved family is
         // automatically covered by this round trip.
-        labels.extend(crate::rho_net_subst_trs::reserved_subst_trs_labels().iter().map(|l| (*l).to_string()));
+        labels.extend(
+            crate::rho_net_subst_trs::reserved_subst_trs_labels()
+                .iter()
+                .map(|l| (*l).to_string()),
+        );
         // The `^respread` family is bench-quarantined behind `bench-naive-baseline`,
         // so it only exists to be round-tripped when that feature is on. The CI gate
         // runs `--all-features`, so CI always covers the complete set.
         #[cfg(feature = "bench-naive-baseline")]
-        labels.extend(crate::rho_net_naive_kt::respread_reserved_labels().iter().map(|l| (*l).to_string()));
+        labels.extend(
+            crate::rho_net_naive_kt::respread_reserved_labels()
+                .iter()
+                .map(|l| (*l).to_string()),
+        );
         labels.push(DRIVE_RESERVED_LABEL.to_string());
         labels.push(GROUND_MARK_REFLECT_LABEL.to_string());
         labels.push(NONGROUND_MARK_REFLECT_LABEL.to_string());
@@ -9057,11 +9235,11 @@ mod tests {
     fn parse_reflected_tag_rejects_non_tags() {
         for bad in [
             "",
-            "mettail.term.",                       // prefix only — no separator
-            "mettail.term.fingerprint",            // no separator after the fingerprint
-            "mettail.term.fingerprint.",           // empty label
-            "sa:pattern/lhs:0123",                 // a different channel family entirely
-            "mettail.bag.fingerprint.Label",       // adjacent ABI, wrong prefix
+            "mettail.term.",                 // prefix only — no separator
+            "mettail.term.fingerprint",      // no separator after the fingerprint
+            "mettail.term.fingerprint.",     // empty label
+            "sa:pattern/lhs:0123",           // a different channel family entirely
+            "mettail.bag.fingerprint.Label", // adjacent ABI, wrong prefix
         ] {
             assert_eq!(parse_reflected_tag(bad), None, "must reject {bad:?}");
         }
@@ -9566,7 +9744,8 @@ mod tests {
             crate::rho_net::RhoNetChannel::set_automaton_trace(
                 &program.language_fingerprint,
                 "scalar/AddInt",
-            ).name
+            )
+            .name
         );
 
         // The program installs cleanly (the firing receiver is a real materialized contract).
@@ -10026,7 +10205,11 @@ mod tests {
         );
         // x = rhs_var_index(1, 0) = 1.
         assert_eq!(rhs_var_index(1, 0), 1);
-        assert_eq!(boundvar_index(&inner.ps[2]), Some(1), "inner child is x (E-2-D marker at ps[1])");
+        assert_eq!(
+            boundvar_index(&inner.ps[2]),
+            Some(1),
+            "inner child is x (E-2-D marker at ps[1])"
+        );
 
         assert!(lowered.errors().is_empty());
     }
@@ -10518,7 +10701,11 @@ mod tests {
         assert_eq!(shape.scope_var.to_string(), "p", "`^x.p` contributes its body variable");
         assert_eq!(shape.arg_var.to_string(), "m");
         assert_eq!(
-            shape.elements.iter().map(|e| e.constructor.clone()).collect::<Vec<_>>(),
+            shape
+                .elements
+                .iter()
+                .map(|e| e.constructor.clone())
+                .collect::<Vec<_>>(),
             vec!["PIn".to_string(), "POut".to_string()]
         );
         assert_eq!(
@@ -10564,7 +10751,10 @@ mod tests {
         // The non-linear guard still compares the two channel slots, in the WIDER frame:
         // `BoundVar(free_count - 1 - level)` = 5 and 4.
         let condition = receive.condition.as_ref().expect("non-linear condition");
-        let expr = condition.exprs.first().expect("a single condition expression");
+        let expr = condition
+            .exprs
+            .first()
+            .expect("a single condition expression");
         let ExprInstance::EEqBody(eq) = expr.expr_instance.as_ref().expect("condition expr") else {
             panic!("the Comm consistency condition must be an EEq, got {expr:?}");
         };
@@ -10572,7 +10762,10 @@ mod tests {
         assert_eq!(boundvar_index(eq.p2.as_ref().expect("EEq p2")), Some(4));
         // The body emits BOTH reduct sends plus the `rest` remainder.
         let body = receive.body.as_ref().expect("the receiver has a body");
-        let soup = body.sends[0].data.first().expect("the out-send carries the bag soup");
+        let soup = body.sends[0]
+            .data
+            .first()
+            .expect("the out-send carries the bag soup");
         assert_eq!(soup.sends.len(), 2, "one `@\"ac:PPar\"!(r_j)` send per reduct element");
     }
 
@@ -11094,10 +11287,8 @@ mod tests {
             // The pre-A-S5.4b vacuous-binder premise (freshness on the BODY, not the passed field).
             "InNew . | x # P |- (PIn N (PNew ^x.P)) = (PNew ^x.(PIn N P));",
         ] {
-            let variant = MINI_CORRECTED_AMBIENT_FRAGMENT.replace(
-                "InNew . | x # N |- (PIn N (PNew ^x.P)) = (PNew ^x.(PIn N P));",
-                wrong,
-            );
+            let variant = MINI_CORRECTED_AMBIENT_FRAGMENT
+                .replace("InNew . | x # N |- (PIn N (PNew ^x.P)) = (PNew ^x.(PIn N P));", wrong);
             let def = syn::parse_str::<LanguageDef>(&variant).expect("fragment must parse");
             let in_new = def
                 .equations
@@ -11266,10 +11457,7 @@ mod tests {
             ("M", GroundTerm::nullary("Nb")),
             ("P", GroundTerm::nullary("PZero")),
             ("R", GroundTerm::nullary("PZero")),
-            (
-                "rest1",
-                GroundTerm::collection(CollectionType::HashBag, "PPar", Vec::new()),
-            ),
+            ("rest1", GroundTerm::collection(CollectionType::HashBag, "PPar", Vec::new())),
         ]);
         let find = |name: &str| sigma.get(name).cloned();
         let reduct = instantiate_ac_reconstruct_template(reduct_template, &find)
@@ -11345,10 +11533,7 @@ mod tests {
             assert_eq!(receiver.receives.len(), 1, "{label}: one receive");
             let receive = &receiver.receives[0];
             assert!(receive.persistent, "{label}: the match receiver is persistent");
-            assert!(
-                receive.condition.is_some(),
-                "{label}: the cross-level M ≡ M guard is present"
-            );
+            assert!(receive.condition.is_some(), "{label}: the cross-level M ≡ M guard is present");
             assert_eq!(receive.binds.len(), 1, "{label}: one polyadic bind");
             assert_eq!(
                 receive.binds[0].patterns.len(),
@@ -11422,10 +11607,7 @@ mod tests {
                                     "PPar",
                                     vec![GroundTerm::new(
                                         "POut",
-                                        vec![
-                                            GroundTerm::nullary("Nb"),
-                                            GroundTerm::nullary("PA"),
-                                        ],
+                                        vec![GroundTerm::nullary("Nb"), GroundTerm::nullary("PA")],
                                     )],
                                 ),
                             ],
@@ -11520,7 +11702,12 @@ mod tests {
         assert_eq!(entries[0].fired_rule_label, "OpenRule");
         assert_eq!(entries[0].op(), "PPar");
         assert_eq!(
-            entries[0].shape.reduct_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+            entries[0]
+                .shape
+                .reduct_vars
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>(),
             vec!["P".to_string(), "Q".to_string()]
         );
     }
@@ -11570,7 +11757,10 @@ mod tests {
             CollectionType::HashBag,
             "PPar",
             vec![
-                GroundTerm::new("POpen", vec![GroundTerm::nullary("Na"), GroundTerm::nullary("PA")]),
+                GroundTerm::new(
+                    "POpen",
+                    vec![GroundTerm::nullary("Na"), GroundTerm::nullary("PA")],
+                ),
                 GroundTerm::new("PAmb", vec![GroundTerm::nullary("Na"), GroundTerm::nullary("PB")]),
             ],
         );
@@ -11909,9 +12099,12 @@ mod tests {
     #[test]
     fn native_locate_contract_bridge_is_a_value_free_forwarder() {
         let k = 2;
-        let native_channel =
-            crate::native_handler::native_contract_channel(0, "mettail-langdef-v1:6ef0c40636bb0bca");
-        let bridge = native_locate_contract_bridge_par("sa:scalar/PowInt", k, native_channel.clone());
+        let native_channel = crate::native_handler::native_contract_channel(
+            0,
+            "mettail-langdef-v1:6ef0c40636bb0bca",
+        );
+        let bridge =
+            native_locate_contract_bridge_par("sa:scalar/PowInt", k, native_channel.clone());
 
         let [receive] = bridge.receives.as_slice() else {
             panic!("the bridge is a single receive, got {bridge:?}");
@@ -12412,7 +12605,11 @@ mod tests {
             GPrivateBuilder::new_par_from_string(format!("mettail.term.{fp}.Wrap")),
             "the transformed element is Wrap(...)"
         );
-        assert_eq!(boundvar_index(&elem.ps[2]), Some(2), "x = element BoundVar(2) (E-2-D marker at ps[1])");
+        assert_eq!(
+            boundvar_index(&elem.ps[2]),
+            Some(2),
+            "x = element BoundVar(2) (E-2-D marker at ps[1])"
+        );
         // The rest σ-slot BoundVar(1) at the soup top level splices the residual bag.
         assert_eq!(
             boundvar_index(soup),
@@ -12461,7 +12658,11 @@ mod tests {
         );
         let rhs = elist_body(&send.data[0]);
         assert_eq!(rhs.ps.len(), 3, "Wrap tag + E-2-D marker + the element σ");
-        assert_eq!(boundvar_index(&rhs.ps[2]), Some(2), "element x = BoundVar(2) (the AC frame; E-2-D marker at ps[1])");
+        assert_eq!(
+            boundvar_index(&rhs.ps[2]),
+            Some(2),
+            "element x = BoundVar(2) (the AC frame; E-2-D marker at ps[1])"
+        );
 
         // A non-AC rule (structural Swap) is NOT un-skipped — stays on its existing path.
         let swap = apply("Swap", vec![var_pattern("a"), var_pattern("b")]);
@@ -12559,8 +12760,7 @@ mod tests {
         // `GrammarItem::Collection` in `rule.items` — the items fallback that admits the real
         // Ambient AC family (the term-context scan stays primary, so the admitted corpus is
         // byte-identical).
-        let def: LanguageDef =
-            syn::parse_str(AC_COLONS_FRAGMENT).expect("the ::= fragment parses");
+        let def: LanguageDef = syn::parse_str(AC_COLONS_FRAGMENT).expect("the ::= fragment parses");
         let ppar = def
             .terms
             .iter()
@@ -12597,8 +12797,7 @@ mod tests {
         // A-S5.3 (leg ii): a `::=`-declared NON-collection rule must stay `None` under the items
         // fallback — never mis-classified as a HashBag (the resolver's fail-closed contract is
         // syntax-form-independent).
-        let def: LanguageDef =
-            syn::parse_str(AC_COLONS_FRAGMENT).expect("the ::= fragment parses");
+        let def: LanguageDef = syn::parse_str(AC_COLONS_FRAGMENT).expect("the ::= fragment parses");
         assert_eq!(
             resolve_constructor_collection_type(&def, "Wrap"),
             None,
@@ -13205,14 +13404,11 @@ mod tests {
         let program = RhoNetProgram::from_language_def(&def, &lowering);
         let lowered = program.lower_to_par(&def, &lowering);
         assert!(
-            lowered
-                .rules()
-                .iter()
-                .any(|rule| matches!(
-                    rule,
-                    RhoNetLoweredRule::ContextualRewrite { rule_id, .. }
-                        if rule_id == "rule:rewrite:1:NodeCong"
-                )),
+            lowered.rules().iter().any(|rule| matches!(
+                rule,
+                RhoNetLoweredRule::ContextualRewrite { rule_id, .. }
+                    if rule_id == "rule:rewrite:1:NodeCong"
+            )),
             "NodeCong MATERIALIZES the 2-ary contextual join (reality pin)"
         );
         assert!(

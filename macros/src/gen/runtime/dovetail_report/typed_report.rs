@@ -851,17 +851,17 @@ fn generate_helpers(
         // (MF1) A REDEX head: a fold redex OR a substitution-rewrite LHS head (e.g. `App`). The
         // name is kept as `__is_fold_redex` for call-site stability; its set now also covers
         // β-redex heads (E1.5). An un-reduced `App(Lam.., ..)` therefore counts as a redex.
-        fn __is_fold_redex(__op: &#enum_id) -> bool { #is_redex_body }
-        fn __is_var_op(__op: &#enum_id) -> bool { #is_var_body }
+        pub(super) fn __is_fold_redex(__op: &#enum_id) -> bool { #is_redex_body }
+        pub(super) fn __is_var_op(__op: &#enum_id) -> bool { #is_var_body }
         // A value op is fully reduced: not a redex (fold or β) and not a free variable (a var
         // defers a FOLD — `int(x, 8)` stays unchanged). `Cast*` literals, `Err`, structural
         // non-fold/non-redex constructors are values.
-        fn __is_value_op(__op: &#enum_id) -> bool {
+        pub(super) fn __is_value_op(__op: &#enum_id) -> bool {
             !__is_fold_redex(__op) && !__is_var_op(__op)
         }
         // Progress weight: a redex (fold or β) is strictly more expensive than its reduced
         // result, so funded 1-best extraction surfaces the normal form once the redex has fired.
-        fn __weigh(__n: &::dovetail::egraph::ENode<#enum_id>) -> ::rigail::TropicalWeight {
+        pub(super) fn __weigh(__n: &::dovetail::egraph::ENode<#enum_id>) -> ::rigail::TropicalWeight {
             ::rigail::TropicalWeight(if __is_fold_redex(&__n.op) { 100.0 } else { 1.0 })
         }
         // Fold-readiness (no extraction): a class is value-ready iff some e-node in it is a
@@ -869,7 +869,7 @@ fn generate_helpers(
         // the __weigh-weighted 1-best reconstructs the value. Used to gate a fold's object
         // operands AND a substitution's SCOPE (a binder is a value op; an un-reduced redex is
         // not — so a substitution defers until its scope reduces to a binder).
-        fn __class_is_fold_value(
+        pub(super) fn __class_is_fold_value(
             __eg: &::dovetail::egraph::EGraph<#enum_id>,
             __cls: ::dovetail::egraph::EClassId,
         ) -> bool {
@@ -882,7 +882,7 @@ fn generate_helpers(
         // It still defers on an un-reduced redex argument, preserving the bottom-up saturation
         // MF1 relies on. (Unused-allow because a fold-only language has no substitution rules.)
         #[allow(dead_code)]
-        fn __class_has_normal_form(
+        pub(super) fn __class_has_normal_form(
             __eg: &::dovetail::egraph::EGraph<#enum_id>,
             __cls: ::dovetail::egraph::EClassId,
         ) -> bool {
@@ -1759,16 +1759,6 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
     let inner_enum = format_ident!("{}TermInner", language.name);
     let language_lit = lit(&language.name.to_string());
 
-    let typed_category_fns: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|ty| typed_lowering::category_lowering_typed(language, &ty.name))
-        .collect();
-    // (A4) `all_reconstructors` = one per category PLUS the single shared token-text
-    // inverse. Collected there rather than here so the three typed-path assembly sites
-    // cannot drift apart about which inverses exist.
-    let reconstruct_fns: Vec<TokenStream> = reconstruct::all_reconstructors(language);
-
     let (folds, fold_dispositions) = collect_fold_rules(language);
     // (E1.3) Substitution rules share the native op-id counter with the folds (ids start at
     // `folds.len()`), so the helpers (redex-head set) and the native-rule/dispatcher generator
@@ -1789,14 +1779,6 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
         language,
         folds.len() + substs.len() + comms.len() + structural_acs.len(),
     );
-    let helpers = generate_helpers(
-        language,
-        &folds,
-        &substs,
-        &comms,
-        &structural_acs,
-        &nested_structural_acs,
-    );
     let (native_rules_expr, dispatch) = generate_native_rules_and_dispatch(
         language,
         &folds,
@@ -1813,13 +1795,12 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
     dispositions.extend(fold_dispositions);
     // ★ #141 G9 — EMPTY unless a declared construct left the lowering with no
     // disposition, in which case it is a `compile_error!` naming the constructs.
-    let disposition_refusal =
-        crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
-            language,
-            &dispositions,
-            true,
-            "generate_dovetail_normal_term (typed path)",
-        );
+    let disposition_refusal = crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
+        language,
+        &dispositions,
+        true,
+        "generate_dovetail_normal_term (typed path)",
+    );
 
     let primary_cat = &language.types.first().expect("language has a type").name;
     let primary_add = category_lowering_fn(primary_cat);
@@ -1892,7 +1873,11 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
             // ambiguity yields the most roots, so the per-root inside recompute hurt most here.
             let mut __extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
             for (__root, __cat_idx) in __roots {
-                let __extracted = __extractor.funded_best(eg.find(__root));
+                let __extracted = if __saturate {
+                    __extractor.funded_best(eg.find(__root))
+                } else {
+                    __extractor.unique_derivation(eg.find(__root))
+                };
                 if __extracted.completeness
                     == ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut
                 {
@@ -1943,7 +1928,11 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
             // cumulative completeness.
             let mut __extractor = ::dovetail::extract::Extractor::new(&eg, __weigh);
             for __root in __roots {
-                let __extracted = __extractor.funded_best(eg.find(__root));
+                let __extracted = if __saturate {
+                    __extractor.funded_best(eg.find(__root))
+                } else {
+                    __extractor.unique_derivation(eg.find(__root))
+                };
                 if __extracted.completeness
                     == ::dovetail::extract::ExtractionCompleteness::BoundedByCycleCut
                 {
@@ -1985,23 +1974,16 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
         // ★ #141 G9 — the disposition census's refusal. EMPTY unless a declared
         // construct left this lowering with no account of itself.
         #disposition_refusal
-        /// (E2.2) Reduce `term` to a typed Dovetail normal form and reconstruct it as a typed
-        /// AST term. Same saturation as `dovetail_report_for`, but returns the reduced
-        /// `<Lang>Term` (boxed) instead of a runtime report. Fail-closed: `Err` on
-        /// non-convergence, a cycle cut, or a stuck (non-invertible) reconstruction.
-        pub fn dovetail_normal_term(
+        fn __dovetail_normal_term_impl(
             term: &dyn mettail_runtime::Term,
             max_iters: usize,
             max_nodes: usize,
+            __saturate: bool,
         ) -> Result<Box<dyn mettail_runtime::Term>, String> {
             let typed_term = term
                 .as_any()
                 .downcast_ref::<#term_name>()
                 .ok_or_else(|| format!("expected {}Term, got {:?}", #language_lit, term))?;
-
-            #(#typed_category_fns)*
-            #(#reconstruct_fns)*
-            #helpers
 
             let mut eg = ::dovetail::egraph::EGraph::<#enum_id>::with_config(
                 ::dovetail::egraph::EGraphConfig { max_nodes },
@@ -2015,29 +1997,65 @@ fn generate_dovetail_normal_term(language: &LanguageDef, struct_slack: usize) ->
                 ));
             }
 
-            let __iters = ((__max_depth as usize) + #struct_slack).max(max_iters);
-            // The dispatcher's decline sink. `dovetail_normal_term` answers a TERM, not a
-            // report, so it has nowhere to publish the records — but the sink must still exist
-            // for the closure to capture, and it costs one empty `Vec` per call.
-            #[allow(unused_variables)]
-            let __mettail_declines = ::mettail_runtime::DeclineSink::new();
-            let __dispatch = #dispatch;
-            static __DOVETAIL_COMPILED_RULES: ::std::sync::OnceLock<
-                ::dovetail::rules::CompiledRuleSet<#enum_id>,
-            > = ::std::sync::OnceLock::new();
-            let __compiled_rules = __DOVETAIL_COMPILED_RULES.get_or_init(|| {
-                ::dovetail::rules::CompiledRuleSet::new(#rules_expr, #native_rules_expr)
-            });
-            let sat = eg.saturate_compiled_with_native(__compiled_rules, &__dispatch, __iters);
-            if sat.outcome != ::dovetail::rules::SaturationOutcome::Converged {
-                return Err(format!(
-                    "generated Dovetail saturation for language {} stopped before convergence: {:?}",
-                    #language_lit,
-                    sat.outcome,
-                ));
+            if __saturate {
+                let __iters = ((__max_depth as usize) + #struct_slack).max(max_iters);
+                // The dispatcher's decline sink. `dovetail_normal_term` answers a TERM, not a
+                // report, so it has nowhere to publish the records — but the sink must still
+                // exist for the closure to capture, and it costs one empty `Vec` per call.
+                #[allow(unused_variables)]
+                let __mettail_declines = ::mettail_runtime::DeclineSink::new();
+                let __dispatch = #dispatch;
+                ::std::thread_local! {
+                    static __DOVETAIL_COMPILED_RULES: ::std::cell::OnceCell<
+                        ::std::rc::Rc<::dovetail::rules::CompiledRuleSet<#enum_id>>,
+                    > = const { ::std::cell::OnceCell::new() };
+                }
+                let __compiled_rules = __DOVETAIL_COMPILED_RULES.with(|__slot| {
+                    ::std::rc::Rc::clone(__slot.get_or_init(|| {
+                        ::std::rc::Rc::new(::dovetail::rules::CompiledRuleSet::new(
+                            #rules_expr,
+                            #native_rules_expr,
+                        ))
+                    }))
+                });
+                let sat = eg.saturate_compiled_with_native(
+                    __compiled_rules.as_ref(),
+                    &__dispatch,
+                    __iters,
+                );
+                if sat.outcome != ::dovetail::rules::SaturationOutcome::Converged {
+                    return Err(format!(
+                        "generated Dovetail saturation for language {} stopped before convergence: {:?}",
+                        #language_lit,
+                        sat.outcome,
+                    ));
+                }
             }
 
             #reconstruct_wrap
+        }
+
+        /// (E2.2) Reduce `term` to a typed Dovetail normal form and reconstruct it as a typed
+        /// AST term. Same saturation as `dovetail_report_for`, but returns the reduced
+        /// `<Lang>Term` (boxed) instead of a runtime report. Fail-closed: `Err` on
+        /// non-convergence, a cycle cut, or a stuck (non-invertible) reconstruction.
+        pub fn dovetail_normal_term(
+            term: &dyn mettail_runtime::Term,
+            max_iters: usize,
+            max_nodes: usize,
+        ) -> Result<Box<dyn mettail_runtime::Term>, String> {
+            Self::__dovetail_normal_term_impl(term, max_iters, max_nodes, true)
+        }
+
+        /// Unsaturated typed lowering → funded extraction → reconstruction seam used by the
+        /// main-stack depth gate. It isolates the structural traversals from rewrite saturation;
+        /// production reduction continues through [`Self::dovetail_normal_term`].
+        #[doc(hidden)]
+        pub fn __mettail_dovetail_structural_roundtrip(
+            term: &dyn mettail_runtime::Term,
+            max_nodes: usize,
+        ) -> Result<Box<dyn mettail_runtime::Term>, String> {
+            Self::__dovetail_normal_term_impl(term, 0, max_nodes, false)
         }
     }
 }
@@ -2073,16 +2091,6 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
     let inner_enum = format_ident!("{}TermInner", language.name);
     let language_lit = lit(&language.name.to_string());
 
-    let typed_category_fns: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|ty| typed_lowering::category_lowering_typed(language, &ty.name))
-        .collect();
-    // (A4) `all_reconstructors` = one per category PLUS the single shared token-text
-    // inverse. Collected there rather than here so the three typed-path assembly sites
-    // cannot drift apart about which inverses exist.
-    let reconstruct_fns: Vec<TokenStream> = reconstruct::all_reconstructors(language);
-
     let (folds, fold_dispositions) = collect_fold_rules(language);
     let substs = collect_substitution_rules(language, folds.len());
     // (A-3) Comm rewrites share the native op-id counter with the folds ∪ substitution rules (ids
@@ -2100,14 +2108,6 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
         language,
         folds.len() + substs.len() + comms.len() + structural_acs.len(),
     );
-    let helpers = generate_helpers(
-        language,
-        &folds,
-        &substs,
-        &comms,
-        &structural_acs,
-        &nested_structural_acs,
-    );
     let (native_rules_expr, dispatch) = generate_native_rules_and_dispatch(
         language,
         &folds,
@@ -2122,13 +2122,12 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
     dispositions.extend(fold_dispositions);
     // ★ #141 G9 — EMPTY unless a declared construct left the lowering with no
     // disposition, in which case it is a `compile_error!` naming the constructs.
-    let disposition_refusal =
-        crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
-            language,
-            &dispositions,
-            true,
-            "generate_step_graph (typed path)",
-        );
+    let disposition_refusal = crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
+        language,
+        &dispositions,
+        true,
+        "generate_step_graph (typed path)",
+    );
 
     let primary_cat = &language.types.first().expect("language has a type").name;
     let primary_add = category_lowering_fn(primary_cat);
@@ -2287,37 +2286,25 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
                 .downcast_ref::<#term_name>()
                 .ok_or_else(|| format!("expected {}Term, got {:?}", #language_lit, term))?;
 
-            #(#typed_category_fns)*
-            #(#reconstruct_fns)*
-            #helpers
-
             #lower_fn
             #build_fn_def
             #render_fn
 
-            // Per-class splice: replace every subtree of `__d` whose canonical e-class is `__target`
-            // with `__repl`. `key`/`weight` of rebuilt interior nodes are carried forward verbatim —
-            // the reconstructor reads only `op`/`children`, so they are irrelevant to the result.
+            // Per-class splice: replace every subtree of `__d` whose canonical e-class is
+            // `__target` with `__repl`. The shared post-order PDA recalculates the exact key and
+            // composed weight of every rebuilt ancestor; its retained class is source provenance.
             fn __step_splice(
                 __d: &::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>>,
                 __target: ::dovetail::egraph::EClassId,
                 __repl: &::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>>,
                 __eg: &::dovetail::egraph::EGraph<#enum_id>,
             ) -> ::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>> {
-                if __eg.find(__d.class) == __target {
-                    return ::std::rc::Rc::clone(__repl);
-                }
-                ::std::rc::Rc::new(::dovetail::extract::Derivation {
-                    op: ::core::clone::Clone::clone(&__d.op),
-                    class: __d.class,
-                    children: __d
-                        .children
-                        .iter()
-                        .map(|__c| __step_splice(__c, __target, __repl, __eg))
-                        .collect(),
-                    weight: ::core::clone::Clone::clone(&__d.weight),
-                    key: ::core::clone::Clone::clone(&__d.key),
-                })
+                ::dovetail::extract::splice_derivation_tree(
+                    __d,
+                    __repl,
+                    __weigh,
+                    |__node| __eg.find(__node.class) == __target,
+                )
             }
 
             // The whole-state one-step successors of `__alt` (a single typed alternative under
@@ -2369,11 +2356,18 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
                 // Structural rewrite rules: instantiate the RHS pattern on the fresh graph. The
                 // explicit type lets `vec![]` (a language with no structural rewrites, e.g. Lambda)
                 // infer; with rules the element type already matches.
-                static __DOVETAIL_COMPILED_RULES: ::std::sync::OnceLock<
-                    ::dovetail::rules::CompiledRuleSet<#enum_id>,
-                > = ::std::sync::OnceLock::new();
-                let __compiled_rules = __DOVETAIL_COMPILED_RULES.get_or_init(|| {
-                    ::dovetail::rules::CompiledRuleSet::new(#rules_expr, #native_rules_expr)
+                ::std::thread_local! {
+                    static __DOVETAIL_COMPILED_RULES: ::std::cell::OnceCell<
+                        ::std::rc::Rc<::dovetail::rules::CompiledRuleSet<#enum_id>>,
+                    > = const { ::std::cell::OnceCell::new() };
+                }
+                let __compiled_rules = __DOVETAIL_COMPILED_RULES.with(|__slot| {
+                    ::std::rc::Rc::clone(__slot.get_or_init(|| {
+                        ::std::rc::Rc::new(::dovetail::rules::CompiledRuleSet::new(
+                            #rules_expr,
+                            #native_rules_expr,
+                        ))
+                    }))
                 });
                 for __rule in __compiled_rules.rewrite_rules() {
                     for (__c, __subst) in __eg.search(&__rule.lhs) {
@@ -2429,14 +2423,12 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
                 __out
             };
 
-            // Bounded BFS over states, keyed by rendered source. `__nodes` preserves discovery order
-            // (entry first) so ordinals are stable; `__edges` are (from-source, to-source, label).
-            const MAX_STEP_NODES: usize = 256;
-            const MAX_STEP_DEPTH: usize = 64;
-            // `max_iters` is a per-term saturation floor for the report/normal-form paths; the
-            // small-step BFS is bounded by `MAX_STEP_NODES`/`MAX_STEP_DEPTH` instead, so it is unused
-            // here (kept in the signature for a uniform stepper API across languages).
+            // Worklist BFS over states, keyed by rendered source. `__nodes` preserves discovery
+            // order (entry first) so ordinals are stable; `__edges` are
+            // (from-source, to-source, label). The caller's explicit node budget bounds both the
+            // fresh e-graphs and this state graph; traversal depth has no independent cutoff.
             let _ = max_iters;
+            let __state_budget = max_nodes.max(1);
 
             let __entry: #node_ty = {
                 let __input = &typed_term.0;
@@ -2447,8 +2439,6 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
             let mut __order: Vec<String> = Vec::new();
             let mut __states: ::std::collections::HashMap<String, #node_ty> =
                 ::std::collections::HashMap::new();
-            let mut __depth: ::std::collections::HashMap<String, usize> =
-                ::std::collections::HashMap::new();
             let mut __edges: Vec<(String, String, ::core::option::Option<String>)> = Vec::new();
             let mut __edge_seen: ::std::collections::HashSet<(String, String)> =
                 ::std::collections::HashSet::new();
@@ -2457,14 +2447,9 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
 
             __order.push(__entry_src.clone());
             __states.insert(__entry_src.clone(), __entry);
-            __depth.insert(__entry_src.clone(), 0);
             __queue.push_back(__entry_src.clone());
 
             while let ::core::option::Option::Some(__cur_src) = __queue.pop_front() {
-                let __cur_depth = *__depth.get(&__cur_src).unwrap_or(&0);
-                if __cur_depth >= MAX_STEP_DEPTH {
-                    continue;
-                }
                 let __cur_state = match __states.get(&__cur_src) {
                     ::core::option::Option::Some(__s) => ::core::clone::Clone::clone(__s),
                     ::core::option::Option::None => continue,
@@ -2472,14 +2457,13 @@ fn generate_step_graph(language: &LanguageDef) -> TokenStream {
                 for (__label, __next) in __successors_of_state(&__cur_state, max_nodes) {
                     let __next_src = __step_render(&__next);
                     if !__states.contains_key(&__next_src) {
-                        if __order.len() >= MAX_STEP_NODES {
+                        if __order.len() >= __state_budget {
                             // Node budget hit: record no further new states (and so no edges into
                             // them), keeping the graph bounded. Existing edges remain valid.
                             continue;
                         }
                         __order.push(__next_src.clone());
                         __states.insert(__next_src.clone(), __next);
-                        __depth.insert(__next_src.clone(), __cur_depth + 1);
                         __queue.push_back(__next_src.clone());
                     }
                     if __edge_seen.insert((__cur_src.clone(), __next_src.clone())) {
@@ -2575,15 +2559,21 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     let language_struct = format_ident!("{}Language", language.name);
     let term_name = format_ident!("{}Term", language.name);
     let language_lit = lit(&language.name.to_string());
+    let shared_pda_mod =
+        format_ident!("__mettail_{}_dovetail_pda", to_snake(&language.name.to_string()),);
 
-    let typed_category_fns: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|ty| typed_lowering::category_lowering_typed(language, &ty.name))
-        .collect();
-    // (A4) `all_reconstructors` = one per category PLUS the single shared token-text
-    // inverse. Collected there rather than here so the three typed-path assembly sites
-    // cannot drift apart about which inverses exist.
+    let mut typed_category_fns: Vec<TokenStream> =
+        vec![typed_lowering::lowering_pda_support(language)];
+    typed_category_fns.extend(
+        language
+            .types
+            .iter()
+            .map(|ty| typed_lowering::category_lowering_typed(language, &ty.name)),
+    );
+    // One generated lowering/reconstruction engine per language. All typed report entry
+    // points import this module instead of emitting private copies into their function bodies.
+    // Besides preventing drift, this makes rustc type-check and codegen the large Rholang PDA
+    // once rather than three times.
     let reconstruct_fns: Vec<TokenStream> = reconstruct::all_reconstructors(language);
 
     let (folds, fold_dispositions) = collect_fold_rules(language);
@@ -2635,13 +2625,12 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
     dispositions.extend(fold_dispositions);
     // ★ #141 G9 — EMPTY unless a declared construct left the lowering with no
     // disposition, in which case it is a `compile_error!` naming the constructs.
-    let disposition_refusal =
-        crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
-            language,
-            &dispositions,
-            true,
-            "generate_typed_dovetail_report (typed path)",
-        );
+    let disposition_refusal = crate::gen::runtime::disposition::every_construct_disposed_or_refusal(
+        language,
+        &dispositions,
+        true,
+        "generate_typed_dovetail_report (typed path)",
+    );
 
     let primary_cat = &language.types.first().expect("language has a type").name;
     let primary_add = category_lowering_fn(primary_cat);
@@ -2714,15 +2703,14 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
             __d: &::std::rc::Rc<::dovetail::extract::Derivation<#enum_id, ::rigail::TropicalWeight>>,
             __map: &mut ::std::collections::HashMap<Vec<u8>, String>,
         ) {
-            let __k = __d.key.as_bytes().to_vec();
-            if !__map.contains_key(&__k) {
-                if let ::core::option::Option::Some(__s) = __source_of(__d) {
-                    __map.insert(__k, __s);
+            ::dovetail::extract::visit_derivation_preorder(__d, |__node| {
+                let __k = __node.key.as_bytes().to_vec();
+                if !__map.contains_key(&__k) {
+                    if let ::core::option::Option::Some(__s) = __source_of(__node) {
+                        __map.insert(__k, __s);
+                    }
                 }
-            }
-            for __c in &__d.children {
-                __collect_sources(__c, __map);
-            }
+            });
         }
     };
 
@@ -2810,14 +2798,6 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                     fn __mettail_bareify_label(__label: &str) -> String {
                         __label.split("::").nth(2).unwrap_or(__label).to_string()
                     }
-                    fn __mettail_bareify_subterm(
-                        __subterm: &mut mettail_runtime::RuntimeReflectedSubterm,
-                    ) {
-                        __subterm.constructor = __mettail_bareify_label(&__subterm.constructor);
-                        for __child in &mut __subterm.children {
-                            __mettail_bareify_subterm(__child);
-                        }
-                    }
                     fn __mettail_bareify_rewrite_justifications(
                         __justifications: &mut Vec<mettail_runtime::RuntimeRewriteJustification>,
                     ) {
@@ -2825,12 +2805,12 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                             __justification.rule_label =
                                 __mettail_bareify_label(&__justification.rule_label);
                             for (_, __subterm) in __justification.sigma.iter_mut() {
-                                __mettail_bareify_subterm(__subterm);
+                                __subterm.relabel_constructors(__mettail_bareify_label);
                             }
                             if let ::core::option::Option::Some(__contractum) =
                                 __justification.contractum.as_mut()
                             {
-                                __mettail_bareify_subterm(__contractum);
+                                __contractum.relabel_constructors(__mettail_bareify_label);
                             }
                         }
                     }
@@ -2851,6 +2831,18 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
         #op_enum_decl
 
         #[cfg(feature = "dovetail-codegen")]
+        mod #shared_pda_mod {
+            use super::*;
+
+            #(#typed_category_fns)*
+            #(#reconstruct_fns)*
+            #helpers
+        }
+
+        #[cfg(feature = "dovetail-codegen")]
+        use #shared_pda_mod::*;
+
+        #[cfg(feature = "dovetail-codegen")]
         impl #language_struct {
             /// Shared report builder. `record_source = false` is the production `exec` path —
             /// byte-identical to the pre-step-feature build: no source reconstruction runs and every
@@ -2868,9 +2860,6 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("expected {}Term, got {:?}", #language_lit, term))?;
 
-                #(#typed_category_fns)*
-                #(#reconstruct_fns)*
-                #helpers
                 #source_helpers
 
                 let mut eg = ::dovetail::egraph::EGraph::<#enum_id>::with_config(
@@ -2897,13 +2886,24 @@ pub(crate) fn generate_typed_dovetail_report(language: &LanguageDef) -> TokenStr
                 // is the overwhelming majority — one `Vec::new()` per report.
                 let __mettail_declines = ::mettail_runtime::DeclineSink::new();
                 let __dispatch = #dispatch;
-                static __DOVETAIL_COMPILED_RULES: ::std::sync::OnceLock<
-                    ::dovetail::rules::CompiledRuleSet<#enum_id>,
-                > = ::std::sync::OnceLock::new();
-                let __compiled_rules = __DOVETAIL_COMPILED_RULES.get_or_init(|| {
-                    ::dovetail::rules::CompiledRuleSet::new(#rules_expr, #native_rules_expr)
+                ::std::thread_local! {
+                    static __DOVETAIL_COMPILED_RULES: ::std::cell::OnceCell<
+                        ::std::rc::Rc<::dovetail::rules::CompiledRuleSet<#enum_id>>,
+                    > = const { ::std::cell::OnceCell::new() };
+                }
+                let __compiled_rules = __DOVETAIL_COMPILED_RULES.with(|__slot| {
+                    ::std::rc::Rc::clone(__slot.get_or_init(|| {
+                        ::std::rc::Rc::new(::dovetail::rules::CompiledRuleSet::new(
+                            #rules_expr,
+                            #native_rules_expr,
+                        ))
+                    }))
                 });
-                let sat = eg.saturate_compiled_with_native(__compiled_rules, &__dispatch, __iters);
+                let sat = eg.saturate_compiled_with_native(
+                    __compiled_rules.as_ref(),
+                    &__dispatch,
+                    __iters,
+                );
                 if sat.outcome != ::dovetail::rules::SaturationOutcome::Converged {
                     return Err(format!(
                         "generated Dovetail saturation for language {} stopped before convergence: {:?}",

@@ -1434,8 +1434,7 @@ impl<W: SemiringRef> WpdaGss<W> {
                 // here (probe P2 — sole consumer is the D2 replay, which a
                 // D1-recorded node never reaches), so this preserves set
                 // semantics: no second P entry, no returns.
-                existing.pop_action_weight =
-                    existing.pop_action_weight.plus_ref(pop_action_weight);
+                existing.pop_action_weight = existing.pop_action_weight.plus_ref(pop_action_weight);
                 return Vec::new();
             }
             pops.push(RecordedPop {
@@ -1499,7 +1498,10 @@ impl<W: SemiringRef> WpdaGss<W> {
     // pop weights via `gll_recorded_pop_action_weight`. Dead in the non-test lib build.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn gll_recorded_pops(&self, node: GssNodeId) -> &[RecordedPop<W>] {
-        match self.canonical_ref().and_then(|st| st.recorded_pops.get(&node)) {
+        match self
+            .canonical_ref()
+            .and_then(|st| st.recorded_pops.get(&node))
+        {
             Some(pops) => pops.as_slice(),
             None => &[],
         }
@@ -1526,7 +1528,6 @@ impl<W: SemiringRef> WpdaGss<W> {
                     .map(|p| &p.pop_action_weight)
             })
     }
-
 }
 
 impl<W: SemiringRef> Default for WpdaGss<W> {
@@ -1937,7 +1938,14 @@ mod tests {
         });
         let w: SppfId = 42;
         let l = slot_sym(1, 0, 1);
-        let (v, replays) = g.gll_create(caller, l, 3, w, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+        let (v, replays) = g.gll_create(
+            caller,
+            l,
+            3,
+            w,
+            crate::path_tree_arena::STACK_ID_ROOT,
+            crate::path_tree_arena::STACK_ID_ROOT,
+        );
         assert!(replays.is_empty(), "no pops recorded yet ⇒ no replay");
 
         // Enumerate: predecessor + operand label round-trip.
@@ -1978,7 +1986,14 @@ mod tests {
         let (w1, w2): (SppfId, SppfId) = (10, 20);
 
         // 1. First caller edge, then pop → return goes to c1.
-        let (v, r0) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+        let (v, r0) = g.gll_create(
+            c1,
+            l,
+            3,
+            w1,
+            crate::path_tree_arena::STACK_ID_ROOT,
+            crate::path_tree_arena::STACK_ID_ROOT,
+        );
         assert!(r0.is_empty());
         let z: SppfId = 7;
         let popret = g.gll_pop(v, 8, z, u32::MAX, &lex(0.0, 0, 0));
@@ -1987,7 +2002,14 @@ mod tests {
         assert_eq!(g.gll_recorded_pops(v).len(), 1, "z recorded in P[v]");
 
         // 2. NEW caller edge AFTER the pop ⇒ replay yields the return for z.
-        let (v2, replays) = g.gll_create(c2, l, 3, w2, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+        let (v2, replays) = g.gll_create(
+            c2,
+            l,
+            3,
+            w2,
+            crate::path_tree_arena::STACK_ID_ROOT,
+            crate::path_tree_arena::STACK_ID_ROOT,
+        );
         assert_eq!(v2, v, "same (slot, pos) ⇒ same node");
         assert_eq!(replays.len(), 1, "create-after-pop replays the recorded pop");
         let r = replays[0];
@@ -2014,7 +2036,14 @@ mod tests {
             .collect();
         let mut v: GssNodeId = 0;
         for &(c, w) in &callers {
-            let (vv, _) = g.gll_create(c, l, 4, w, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+            let (vv, _) = g.gll_create(
+                c,
+                l,
+                4,
+                w,
+                crate::path_tree_arena::STACK_ID_ROOT,
+                crate::path_tree_arena::STACK_ID_ROOT,
+            );
             v = vv;
         }
         assert_eq!(g.gll_edges(v).len(), 3, "three distinct predecessor edges");
@@ -2047,22 +2076,50 @@ mod tests {
         let l = slot_sym(1, 0, 1);
         let w1: SppfId = 11;
 
-        let (v, _) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
-        let (v_again, replays) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT); // identical
+        let (v, _) = g.gll_create(
+            c1,
+            l,
+            3,
+            w1,
+            crate::path_tree_arena::STACK_ID_ROOT,
+            crate::path_tree_arena::STACK_ID_ROOT,
+        );
+        let (v_again, replays) = g.gll_create(
+            c1,
+            l,
+            3,
+            w1,
+            crate::path_tree_arena::STACK_ID_ROOT,
+            crate::path_tree_arena::STACK_ID_ROOT,
+        ); // identical
         assert_eq!(v_again, v);
         assert!(replays.is_empty(), "idempotent re-add ⇒ no replay");
         assert_eq!(g.gll_edges(v).len(), 1, "identical edge added exactly once");
 
         // Different operand into the SAME caller ⇒ a distinct canonical edge.
         let w2: SppfId = 22;
-        let _ = g.gll_create(c1, l, 3, w2, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT);
+        let _ = g.gll_create(
+            c1,
+            l,
+            3,
+            w2,
+            crate::path_tree_arena::STACK_ID_ROOT,
+            crate::path_tree_arena::STACK_ID_ROOT,
+        );
         assert_eq!(g.gll_edges(v).len(), 2, "distinct operand ⇒ distinct edge");
 
         // Re-adding an existing edge AFTER a pop must ALSO be idempotent AND must
         // NOT re-fire the replay (double-count guard — the subtle GLL bug class).
         let z: SppfId = 3;
         let _ = g.gll_pop(v, 6, z, u32::MAX, &lex(0.0, 0, 0));
-        let (_, replays_after_pop) = g.gll_create(c1, l, 3, w1, crate::path_tree_arena::STACK_ID_ROOT, crate::path_tree_arena::STACK_ID_ROOT); // already present
+        let (_, replays_after_pop) = g.gll_create(
+            c1,
+            l,
+            3,
+            w1,
+            crate::path_tree_arena::STACK_ID_ROOT,
+            crate::path_tree_arena::STACK_ID_ROOT,
+        ); // already present
         assert!(
             replays_after_pop.is_empty(),
             "re-adding an existing edge after a pop must NOT re-fire the replay"
@@ -2221,11 +2278,7 @@ mod tests {
 
         // (b) stored weight = the ⊕-min. hi→lo is the panicking arrival order
         // (a recorded hi, then a strictly-smaller lo replay).
-        assert_eq!(
-            run(&w_hi, &w_lo),
-            Some(w_lo),
-            "(b) hi→lo: stored weight is the ⊕-min (w_lo)",
-        );
+        assert_eq!(run(&w_hi, &w_lo), Some(w_lo), "(b) hi→lo: stored weight is the ⊕-min (w_lo)",);
         // (c) order-independence: lo→hi yields the SAME ⊕-min.
         assert_eq!(
             run(&w_lo, &w_hi),

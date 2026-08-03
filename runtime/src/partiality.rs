@@ -220,15 +220,12 @@ impl Partiality {
 impl fmt::Display for Partiality {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Undefined {
-                operation,
-                carrier,
-                reason,
-            } => write!(f, "`{operation}` on `{carrier}` is undefined here: {reason}"),
-            Self::NotRepresentable { operation, carrier } => write!(
-                f,
-                "the result of `{operation}` is not representable in `{carrier}`",
-            ),
+            Self::Undefined { operation, carrier, reason } => {
+                write!(f, "`{operation}` on `{carrier}` is undefined here: {reason}")
+            },
+            Self::NotRepresentable { operation, carrier } => {
+                write!(f, "the result of `{operation}` is not representable in `{carrier}`",)
+            },
             Self::Declared { message } => write!(f, "{message}"),
             Self::NotReduced => f.write_str("an operand is still a redex"),
             Self::Unreported => f.write_str("declined without stating a reason"),
@@ -466,10 +463,7 @@ mod tests {
             carrier: "i64",
             reason: UndefinedReason::DivisionByZero,
         };
-        let overflow = Partiality::NotRepresentable {
-            operation: "add",
-            carrier: "i64",
-        };
+        let overflow = Partiality::NotRepresentable { operation: "add", carrier: "i64" };
         assert_eq!(undefined.reason_token(), "DivisionByZero");
         assert_eq!(overflow.reason_token(), "NotRepresentable");
         assert_ne!(undefined.reason_token(), overflow.reason_token());
@@ -483,11 +477,7 @@ mod tests {
         assert!(!Partiality::NotReduced.is_decline());
         assert!(Partiality::Unreported.is_decline());
         assert!(Partiality::Declared { message: "m" }.is_decline());
-        assert!(Partiality::NotRepresentable {
-            operation: "add",
-            carrier: "i64"
-        }
-        .is_decline());
+        assert!(Partiality::NotRepresentable { operation: "add", carrier: "i64" }.is_decline());
         assert!(Partiality::Undefined {
             operation: "div",
             carrier: "i64",
@@ -542,10 +532,7 @@ mod tests {
         );
         sink.record(
             "L::fold::X",
-            Partiality::NotRepresentable {
-                operation: "div",
-                carrier: "i64",
-            },
+            Partiality::NotRepresentable { operation: "div", carrier: "i64" },
         );
         assert_eq!(sink.len(), 2);
     }
@@ -554,10 +541,7 @@ mod tests {
     #[test]
     fn classify_routes_structural_to_defer_and_semantic_to_declined() {
         assert_eq!(classify::<i64>(Ok(3)), FoldDisposition::Ran(3));
-        assert_eq!(
-            classify::<i64>(Err(Partiality::NotReduced)),
-            FoldDisposition::Defer,
-        );
+        assert_eq!(classify::<i64>(Err(Partiality::NotReduced)), FoldDisposition::Defer,);
         assert_eq!(
             classify::<i64>(Err(Partiality::Declared { message: "boom" })),
             FoldDisposition::Declined(Partiality::Declared { message: "boom" }),
@@ -569,16 +553,10 @@ mod tests {
     fn a_declared_message_survives_from_both_carriers() {
         let from_option: Result<i32, Partiality> =
             Declarable::declared(None::<i32>, "get: key not found");
-        assert_eq!(
-            from_option.unwrap_err().message(),
-            Some("get: key not found"),
-        );
+        assert_eq!(from_option.unwrap_err().message(), Some("get: key not found"),);
         let from_result: Result<i32, Partiality> =
             Declarable::declared(Err::<i32, &str>("inner"), "ElemList: invalid index");
-        assert_eq!(
-            from_result.unwrap_err().message(),
-            Some("ElemList: invalid index"),
-        );
+        assert_eq!(from_result.unwrap_err().message(), Some("ElemList: invalid index"),);
     }
 
     /// `.unwrap()` has no message, and `Unreported` says exactly that.

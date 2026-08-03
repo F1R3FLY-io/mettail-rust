@@ -11,7 +11,9 @@ use crate::hash::HashMap;
 use std::rc::Rc;
 
 use crate::egraph::{EClassId, EGraph, ENode};
-use crate::extract::{Derivation, Extraction, ExtractionCompleteness, Extractor, MonotoneBestOrder};
+use crate::extract::{
+    Derivation, Extraction, ExtractionCompleteness, Extractor, MonotoneBestOrder,
+};
 use crate::key::{ContentKey, SemanticHash};
 use crate::rules::{RewriteJustification, RuleFiring};
 
@@ -48,10 +50,96 @@ pub struct DovetailDerivationEdge {
 /// String) and the extracted child sub-terms in child order. This is the
 /// substrate-neutral image of one [`Derivation`] node with weights and keys
 /// dropped, retaining only what a downstream reflector needs to rebuild the term.
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JustifiedSubterm<L> {
     pub op: L,
     pub children: Vec<JustifiedSubterm<L>>,
+}
+
+impl<L> Drop for JustifiedSubterm<L> {
+    fn drop(&mut self) {
+        let mut pending = std::mem::take(&mut self.children);
+        while let Some(mut child) = pending.pop() {
+            pending.append(&mut child.children);
+        }
+    }
+}
+
+impl<L: Clone> Clone for JustifiedSubterm<L> {
+    fn clone(&self) -> Self {
+        enum Task<'a, L> {
+            Visit(&'a JustifiedSubterm<L>),
+            Assemble { op: L, child_count: usize },
+        }
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::<JustifiedSubterm<L>>::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(node) => {
+                    tasks.push(Task::Assemble {
+                        op: node.op.clone(),
+                        child_count: node.children.len(),
+                    });
+                    for child in node.children.iter().rev() {
+                        tasks.push(Task::Visit(child));
+                    }
+                },
+                Task::Assemble { op, child_count } => {
+                    let first = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("JustifiedSubterm clone PDA lost a child");
+                    let children = values.split_off(first);
+                    values.push(JustifiedSubterm { op, children });
+                },
+            }
+        }
+        values
+            .pop()
+            .expect("JustifiedSubterm clone PDA must produce a root")
+    }
+}
+
+impl<L: PartialEq> PartialEq for JustifiedSubterm<L> {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some((left, right)) = pending.pop() {
+            if left.op != right.op || left.children.len() != right.children.len() {
+                return false;
+            }
+            pending.extend(left.children.iter().zip(&right.children));
+        }
+        true
+    }
+}
+
+impl<L: Eq> Eq for JustifiedSubterm<L> {}
+
+impl<L: std::fmt::Debug> std::fmt::Debug for JustifiedSubterm<L> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        enum Task<'a, L> {
+            Node(&'a JustifiedSubterm<L>),
+            Separator,
+            Close,
+        }
+        let mut tasks = vec![Task::Node(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Node(node) => {
+                    write!(formatter, "JustifiedSubterm {{ op: {:?}, children: [", node.op)?;
+                    tasks.push(Task::Close);
+                    for (index, child) in node.children.iter().enumerate().rev() {
+                        tasks.push(Task::Node(child));
+                        if index > 0 {
+                            tasks.push(Task::Separator);
+                        }
+                    }
+                },
+                Task::Separator => formatter.write_str(", ")?,
+                Task::Close => formatter.write_str("] }")?,
+            }
+        }
+        Ok(())
+    }
 }
 
 /// A rewrite firing's justification with each σ variable resolved to its
@@ -186,40 +274,68 @@ where
     L: Clone,
     W: Clone,
 {
-    let ordinal = match seen.get(&derivation.key).copied() {
-        Some(ordinal) => {
-            if is_root {
-                report.terms[ordinal].is_root = true;
-            }
-            ordinal
+    enum Task<'a, L, W> {
+        Visit {
+            derivation: &'a Rc<Derivation<L, W>>,
+            is_root: bool,
         },
-        None => {
-            let ordinal = report.terms.len();
-            seen.insert(derivation.key.clone(), ordinal);
-            report.terms.push(DovetailTermRecord {
-                ordinal,
-                class: derivation.class,
-                key: derivation.key.clone(),
-                op: derivation.op.clone(),
-                weight: derivation.weight.clone(),
-                is_root,
-            });
-            ordinal
+        Child {
+            parent_key: ContentKey,
+            child: &'a Rc<Derivation<L, W>>,
+            child_index: usize,
         },
-    };
-
-    for (child_index, child) in derivation.children.iter().enumerate() {
-        let edge_ordinal = report.derivation_edges.len();
-        report.derivation_edges.push(DovetailDerivationEdge {
-            ordinal: edge_ordinal,
-            parent_key: derivation.key.clone(),
-            child_key: child.key.clone(),
-            child_index,
-        });
-        record_derivation(child, false, report, seen);
     }
 
-    ordinal
+    let mut tasks = vec![Task::Visit { derivation, is_root }];
+    let mut root_ordinal = None;
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit { derivation, is_root } => {
+                let (ordinal, fresh) = match seen.get(&derivation.key).copied() {
+                    Some(ordinal) => {
+                        if is_root {
+                            report.terms[ordinal].is_root = true;
+                        }
+                        (ordinal, false)
+                    },
+                    None => {
+                        let ordinal = report.terms.len();
+                        seen.insert(derivation.key.clone(), ordinal);
+                        report.terms.push(DovetailTermRecord {
+                            ordinal,
+                            class: derivation.class,
+                            key: derivation.key.clone(),
+                            op: derivation.op.clone(),
+                            weight: derivation.weight.clone(),
+                            is_root,
+                        });
+                        (ordinal, true)
+                    },
+                };
+                root_ordinal.get_or_insert(ordinal);
+                if fresh {
+                    for (child_index, child) in derivation.children.iter().enumerate().rev() {
+                        tasks.push(Task::Child {
+                            parent_key: derivation.key.clone(),
+                            child,
+                            child_index,
+                        });
+                    }
+                }
+            },
+            Task::Child { parent_key, child, child_index } => {
+                let ordinal = report.derivation_edges.len();
+                report.derivation_edges.push(DovetailDerivationEdge {
+                    ordinal,
+                    parent_key,
+                    child_key: child.key.clone(),
+                    child_index,
+                });
+                tasks.push(Task::Visit { derivation: child, is_root: false });
+            },
+        }
+    }
+    root_ordinal.expect("record_derivation always visits its root")
 }
 
 /// A funded-best [`Derivation`] tree projected to a [`JustifiedSubterm`]: keep
@@ -228,14 +344,36 @@ fn derivation_to_subterm<L, W>(derivation: &Derivation<L, W>) -> JustifiedSubter
 where
     L: Clone,
 {
-    JustifiedSubterm {
-        op: derivation.op.clone(),
-        children: derivation
-            .children
-            .iter()
-            .map(|child| derivation_to_subterm(child))
-            .collect(),
+    enum Task<'a, L, W> {
+        Visit(&'a Derivation<L, W>),
+        Assemble { op: L, child_count: usize },
     }
+    let mut tasks = vec![Task::Visit(derivation)];
+    let mut values = Vec::<JustifiedSubterm<L>>::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(node) => {
+                tasks.push(Task::Assemble {
+                    op: node.op.clone(),
+                    child_count: node.children.len(),
+                });
+                for child in node.children.iter().rev() {
+                    tasks.push(Task::Visit(child));
+                }
+            },
+            Task::Assemble { op, child_count } => {
+                let first = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("derivation projection PDA lost a child");
+                let children = values.split_off(first);
+                values.push(JustifiedSubterm { op, children });
+            },
+        }
+    }
+    values
+        .pop()
+        .expect("derivation projection PDA must produce one root")
 }
 
 /// Resolve the substrate-level [`RewriteJustification`]s captured during
@@ -441,27 +579,34 @@ mod tests {
         let justification = &sat.rewrite_justifications[0];
         assert_eq!(justification.rule_label, Some("SwapStep".to_string()));
         assert_eq!(eg.find(justification.root), eg.find(swap));
-        assert_eq!(
-            justification.subst.get("x").map(|&c| eg.find(c)),
-            Some(eg.find(a))
-        );
-        assert_eq!(
-            justification.subst.get("y").map(|&c| eg.find(c)),
-            Some(eg.find(b))
-        );
+        assert_eq!(justification.subst.get("x").map(|&c| eg.find(c)), Some(eg.find(a)));
+        assert_eq!(justification.subst.get("y").map(|&c| eg.find(c)), Some(eg.find(b)));
 
         // Resolving σ against the live e-graph extracts each variable's
         // funded-best sub-term (the nullary A / B constructors), ordered by name.
-        let resolved =
-            resolve_rewrite_justifications(&eg, &sat.rewrite_justifications, |_| TropicalWeight(0.0));
+        let resolved = resolve_rewrite_justifications(&eg, &sat.rewrite_justifications, |_| {
+            TropicalWeight(0.0)
+        });
         assert_eq!(resolved.len(), 1);
         let resolved = &resolved[0];
         assert_eq!(resolved.rule_label, Some("SwapStep".to_string()));
         assert_eq!(
             resolved.sigma,
             vec![
-                ("x".to_string(), JustifiedSubterm { op: "A".to_string(), children: Vec::new() }),
-                ("y".to_string(), JustifiedSubterm { op: "B".to_string(), children: Vec::new() }),
+                (
+                    "x".to_string(),
+                    JustifiedSubterm {
+                        op: "A".to_string(),
+                        children: Vec::new()
+                    }
+                ),
+                (
+                    "y".to_string(),
+                    JustifiedSubterm {
+                        op: "B".to_string(),
+                        children: Vec::new()
+                    }
+                ),
             ]
         );
     }

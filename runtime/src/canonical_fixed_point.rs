@@ -591,10 +591,7 @@ mod tests {
     /// fractional places (`10.0p1 / 3.0p1 == 3.3p1`); the division identity
     /// `q·b + r == a` holds for the INTEGER quotient only. Written out here so the two tests
     /// below can name the distinction instead of implying it.
-    fn integer_quotient(
-        a: CanonicalFixedPoint,
-        b: CanonicalFixedPoint,
-    ) -> CanonicalFixedPoint {
+    fn integer_quotient(a: CanonicalFixedPoint, b: CanonicalFixedPoint) -> CanonicalFixedPoint {
         let (ua, ub, _p) = CanonicalFixedPoint::align_pair(a, b);
         CanonicalFixedPoint::new(ua / ub, 0)
     }
@@ -693,7 +690,8 @@ mod tests {
             let r = a.checked_rem(b).expect("rem");
             let want = CanonicalFixedPoint::new(BigInt::from(ai % bi) * 100, 2);
             assert_eq!(
-                r, want,
+                r,
+                want,
                 "`{ai}.00p2 % {bi}.00p2` must equal `{}` — the value of `{ai}i64 % {bi}i64`, \
                  truncated toward zero with the sign of the dividend",
                 ai % bi,
@@ -776,8 +774,11 @@ mod tests {
             );
             // …and are nonetheless DISTINCT VALUES for `p != 0`, which is the #200 ruling.
             if p != 0 {
-                assert_ne!(a, seven, "`{label}`'s dividend is not `Eq` to `7p0` — identity is \
-                                      the raw `(unscaled, places)` pair since work item #200");
+                assert_ne!(
+                    a, seven,
+                    "`{label}`'s dividend is not `Eq` to `7p0` — identity is \
+                                      the raw `(unscaled, places)` pair since work item #200"
+                );
             }
         }
 
@@ -908,11 +909,7 @@ mod tests {
         // relops (`reduce.rs:9772-9783`), which is a separate, owner-blocked change.
         let seven_p2 = CanonicalFixedPoint::new(BigInt::from(700), 2);
         let seven_p1 = CanonicalFixedPoint::new(BigInt::from(70), 1);
-        assert_eq!(
-            seven_p2.value_ratio(),
-            seven_p1.value_ratio(),
-            "premise: equal VALUE",
-        );
+        assert_eq!(seven_p2.value_ratio(), seven_p1.value_ratio(), "premise: equal VALUE",);
         assert_eq!(
             seven_p2.cmp(&seven_p1),
             Ordering::Greater,
@@ -1009,11 +1006,7 @@ mod tests {
         assert_eq!(s, expected, "1p0 + 0.5p1 == 1.5p1, at p1 on both sides — identity holds");
 
         let back = s - half;
-        assert_eq!(
-            back.value_ratio(),
-            one.value_ratio(),
-            "the round trip recovers the NUMBER 1",
-        );
+        assert_eq!(back.value_ratio(), one.value_ratio(), "the round trip recovers the NUMBER 1",);
         assert_ne!(
             back, one,
             "⚠ …but not the VALUE `1p0`: `align_pair` widened to p1, so the result is `1.0p1`. \

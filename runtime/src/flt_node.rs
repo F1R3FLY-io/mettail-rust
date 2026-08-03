@@ -106,15 +106,16 @@ mod tests {
         let n = FltNode::new(
             "lam".into(),
             "App(${f}, K)".into(),
-            vec![FltHole { name: "f".into(), category: None, offset: 4 }],
+            vec![FltHole {
+                name: "f".into(),
+                category: None,
+                offset: 4,
+            }],
             0,
         );
         // Equal by value; distinct tags/bodies differ.
         assert_eq!(n.clone(), n);
-        assert_ne!(
-            n,
-            FltNode::new("id".into(), "App(${f}, K)".into(), n.holes.clone(), 0)
-        );
+        assert_ne!(n, FltNode::new("id".into(), "App(${f}, K)".into(), n.holes.clone(), 0));
         // `body_src[offset..]` locates the hole verbatim.
         assert_eq!(&n.body_src[n.holes[0].offset..n.holes[0].offset + 4], "${f}");
     }
