@@ -309,7 +309,8 @@ fn add_premise_requirements(premise: &Premise, out: &mut BTreeSet<Requirement>) 
         // this row would under-describe it. Severance therefore carries its own
         // dedicated executable gate (`languages/tests/congruence_declaration_witness.rs`,
         // the three-state table) and its own machine-checked proof
-        // (`macros/formal/rocq/CongruenceWithholding.v`, theorem `withholding_requires_severance`)
+        // (`dovetail/formal/rocq/theories/Lowering/CongruenceWithholding.v`, theorem
+        // `withholding_requires_severance`)
         // — a sharper audit than a coarse requirement row, and one that cannot pass
         // vacuously because the same test measures a withheld and an un-withheld sibling
         // position side by side.

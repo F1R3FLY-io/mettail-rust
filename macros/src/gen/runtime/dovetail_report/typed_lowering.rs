@@ -250,12 +250,14 @@ fn ordered_seq_leaf_typed(op: &SeqLeafOp, payload: TokenStream) -> TokenStream {
 /// `FieldSeq<Elem>` (#101)) was byte-for-byte equivalence-preserving: the payload bytes were
 /// already what `FieldOpaque` framed, and only the label and the inverse were new. Here the
 /// field STOPS being a child e-class, which is exactly what withholding means — see
-/// `withholding`'s Theorem W1 and `macros/formal/rocq/CongruenceWithholding.v`.
+/// `withholding`'s Theorem W1 and
+/// `dovetail/formal/rocq/theories/Lowering/CongruenceWithholding.v`.
 ///
 /// ⚠ Emitted ONLY for a position some `| S ~/> T |-` declaration severs
 /// (`WithholdingSet::is_severed`). No production language declares one, so every shipped
 /// language's lowering is byte-identical across #195; the mechanism is pinned by the live
-/// `CongruenceWithholdingDemo` fixture instead of by the corpus.
+/// `languages/tests/definitions/congruence_withholding_demo.rs` fixture instead of by the
+/// production corpus.
 fn withheld_leaf_typed(enum_id: &Ident, category: &Ident, payload: TokenStream) -> TokenStream {
     let variant = field_withheld_variant_ident(category);
     quote! { #enum_id::#variant(#payload.clone()) }

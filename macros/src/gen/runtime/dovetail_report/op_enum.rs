@@ -351,7 +351,7 @@ fn collect_op_variants(language: &LanguageDef) -> (Vec<OpVariant>, Vec<TokenStre
     // policy the engine applies, it is an identity the data structure IS. Withholding is
     // therefore realizable only by taking the position OUT of the child-e-class world: the
     // field's value travels whole, inside one nullary leaf. See
-    // `macros/formal/rocq/CongruenceWithholding.v`.
+    // `dovetail/formal/rocq/theories/Lowering/CongruenceWithholding.v`.
     //
     // ⚠ THE PAYLOAD IS THE VALUE, and its content bytes are the category's own
     // ALPHA-CANONICAL `semantic_hash` write stream — not `format!("{:?}", …)`. `Debug`

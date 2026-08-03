@@ -30,6 +30,7 @@ theories/Requirements/LanguageDefInventoryGenerated.v
 theories/Requirements/LanguageDefInventory.v
 theories/Lowering/PatternLoweringSoundness.v
 theories/Lowering/CollectionAcLowering.v
+theories/Lowering/CongruenceWithholding.v
 theories/Lowering/GeneratedReportCompiler.v
 theories/Lowering/AmbientBinderHandler.v
 theories/Refinement/RuntimeReportBridge.v

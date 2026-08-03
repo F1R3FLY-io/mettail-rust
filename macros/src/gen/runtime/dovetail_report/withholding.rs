@@ -53,8 +53,9 @@
 //! > child e-class id.**
 //!
 //! The machine-checked statement and proof are in
-//! `macros/formal/rocq/CongruenceWithholding.v` (`withholding_requires_severance`,
-//! `severance_removes_exactly_the_withheld_edges`), which also records **why the property
+//! `dovetail/formal/rocq/theories/Lowering/CongruenceWithholding.v`
+//! (`withholding_requires_severance`, `severance_removes_exactly_the_withheld_edges`),
+//! which also records **why the property
 //! the defect report first proposed is FALSE**: "the e-graph's equivalence equals the
 //! declared-plus-inferred closure minus the withheld edges" cannot hold for *any* e-graph,
 //! because the right-hand side is not a congruence and an e-graph's quotient always is.
@@ -543,7 +544,9 @@ mod tests {
         assert_eq!(set.refusals()[0].rule, "ParWithheld");
         assert!(
             set.refusals()[0].reason.contains("not a DIRECT argument")
-                || set.refusals()[0].reason.contains("no positional field list"),
+                || set.refusals()[0]
+                    .reason
+                    .contains("no positional field list"),
             "the refusal must NAME the shape: {}",
             set.refusals()[0].reason
         );
