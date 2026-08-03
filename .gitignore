@@ -170,6 +170,7 @@ rustc-ice-*.txt
 .pgmcp.toml
 
 # ── Campaign scratch (session-local working dirs / one-off dumps — never tracked) ──
+/scratch/
 /scratchpad/
 /scratchpad_*.out
 
