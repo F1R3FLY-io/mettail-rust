@@ -37,8 +37,8 @@ The data-flow from analysis modules through the pipeline to consumer subsystems:
          │                   │                      │
  ┌───────┴────────┐  ┌──────┴─────────┐  ┌─────────┴──────────┐
  │ M4 VPA         │  │ M6 Register    │  │ M7 Probabilistic   │
- │ max_nesting    │  │ dead_registers │  │ rule_selectivities │
- │   _bound       │  │ dead_binder    │  │ entropy()          │
+ │ state_count    │  │ dead_registers │  │ rule_selectivities │
+ │ determinizable │  │ dead_binder    │  │ entropy()          │
  │ bracket        │  │   _categories  │  │ is_normalized      │
  │   _mismatches  │  │                │  │                    │
  └───────┬────────┘  └───────┬────────┘  └─────────┬──────────┘
@@ -56,8 +56,7 @@ The data-flow from analysis modules through the pipeline to consumer subsystems:
  ┌────────────────────────────────────────────────────────────────┐
  │              build_pipeline_analysis()  (pipeline.rs)          │
  │                                                                │
- │  vpa_max_nesting_bound ────────────┐                          │
- │  bracket_mismatch_tokens ──────────┤                          │
+ │  bracket_mismatch_tokens ──────────┐                          │
  │  guard_disambiguated_tokens ───────┤  PipelineAnalysis        │
  │  recursive_scc_categories ─────────┤  (pub struct)            │
  │  per_category_entropy ─────────────┤                          │
@@ -68,8 +67,8 @@ The data-flow from analysis modules through the pipeline to consumer subsystems:
  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐
  │prediction.rs │  │ recovery.rs  │  │ predicate_dispatch.rs  │
  │              │  │              │  │                        │
- │guard_disamb  │  │nesting ceil  │  │order_by_specificity()  │
- │  _tokens     │  │bracket pen   │  │most-specific-first    │
+ │guard_disamb  │  │explicit depth│  │order_by_specificity()  │
+ │  _tokens     │  │policy + pen  │  │most-specific-first    │
  │→ skip known  │  │SCC discount  │  │dispatch ordering      │
  │  subsumed    │  │→ cost mods   │  │                        │
  └──────────────┘  └──────────────┘  └────────────────────────┘
@@ -79,7 +78,7 @@ The data-flow from analysis modules through the pipeline to consumer subsystems:
 
 | Source Module | PipelineAnalysis Field | Consumer | Effect |
 |---------------|----------------------|----------|--------|
-| M4 VPA | `vpa_max_nesting_bound` | recovery.rs | 0.3x skip multiplier beyond ceiling |
+| Caller policy | `RecoveryConfig.vpa_nesting_ceiling` | recovery.rs | Optional 0.3x skip multiplier beyond an explicitly configured ceiling |
 | M4 VPA | `bracket_mismatch_tokens` | recovery.rs | 2.0x insert penalty for dual-role brackets |
 | M3 Alternating | constructor_weights (adjusted) | pipeline.rs | +0.5 penalty on bisimilar-redundant categories |
 | M1 Symbolic | `guard_disambiguated_tokens` | prediction.rs | Skip subsumed-guard alternatives |
@@ -92,12 +91,13 @@ The data-flow from analysis modules through the pipeline to consumer subsystems:
 Phase A wires already-computed analysis results into downstream consumers. No new
 analysis algorithms are introduced; the work is purely plumbing.
 
-### A1: VPA Nesting Depth to Recovery Cost Modulation
+### A1 correction: explicit depth policy
 
-**Rationale.** VPA analysis computes `max_nesting_bound` (bounded by VPA state
-count). When the parser's current nesting depth exceeds this bound during error
-recovery, the input is structurally beyond what the grammar can describe. Skip
-actions should be strongly favored to exit the over-deep context quickly.
+**Rationale.** VPA state count does not bound nesting depth. A fixed three-state
+VPA can accept balanced words of arbitrary depth because its stack—not its
+finite control—records nesting. The previous derivation has been removed. A
+caller may still set `RecoveryConfig.vpa_nesting_ceiling` as an operational
+policy, but exceeding it does not prove that input is outside the grammar.
 
 **Formal Transformation.** Let `d` be the current nesting depth and `c` be the
 VPA nesting ceiling:
@@ -111,14 +111,15 @@ RecoveryCost_modified = if d > c then
     RecoveryCost_insert * 1.0   (neutral)
 ```
 
-**Algorithm.** In `RecoveryConfig`, the `vpa_nesting_ceiling` field (Option<usize>)
-is set from `PipelineAnalysis.vpa_max_nesting_bound`. During `find_best_recovery()`,
-if `current_depth > vpa_nesting_ceiling`, the skip action multiplier is set to 0.3.
+**Algorithm.** `RecoveryConfig.vpa_nesting_ceiling` defaults to `None`. If a
+caller explicitly sets it, recovery applies the `0.3` skip multiplier when
+`current_depth` exceeds the selected ceiling. Pipeline VPA analysis never sets
+the field.
 
 **Code References.**
-- `vpa.rs`: `VpaAnalysis.max_nesting_bound` field
-- `recovery.rs`: `RecoveryConfig.vpa_nesting_ceiling`, depth check in `find_best_recovery()`
-- `pipeline.rs`: `PipelineAnalysis.vpa_max_nesting_bound`, wiring in `build_pipeline_analysis()`
+- `recovery/config.rs`: explicit `RecoveryConfig.vpa_nesting_ceiling` policy
+- `recovery/context.rs`: depth check in the skip multiplier
+- `vpa.rs`: state count and determinism analysis, with no nesting-bound claim
 
 ### A2: Bracket Mismatch Penalty in Recovery
 
@@ -485,7 +486,7 @@ all valid paths remain in the candidate set, correctness is preserved.
 | `prattail/src/predicate_dispatch.rs` | C4 | `order_by_specificity()` |
 | `prattail/src/pipeline.rs` | A3, C1, C3 | `build_pipeline_analysis()`, field population |
 | `prattail/src/recovery.rs` | A1, A2, C2 | `RecoveryWfst`, cost modulation |
-| `prattail/src/vpa.rs` | A1, A2 | `VpaAnalysis.max_nesting_bound`, bracket mismatches |
+| `prattail/src/vpa.rs` | A1 correction, A2 | unbounded-depth counterexample, bracket mismatches |
 | `prattail/src/alternating.rs` | A3 | `AlternatingAnalysis.non_bisimilar_pairs` |
 | `prattail/src/lib.rs` | all | `PipelineAnalysis` struct fields |
 

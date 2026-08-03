@@ -5906,8 +5906,8 @@ pub(crate) fn lint_v05_weighted_vpa_non_determinizable(
         Some(r) => r,
         None => return,
     };
-    // A non-determinizable VPA with alphabet mismatches suggests
-    // exponential blowup risk during determinization.
+    // Alphabet overlap violates the visible-partition precondition. Every
+    // valid Boolean VPA is determinizable; this is not a complexity verdict.
     if !result.is_determinizable && !result.alphabet_mismatches.is_empty() {
         diagnostics.push(LintDiagnostic {
             id: DiagnosticId::V05,
@@ -5916,10 +5916,12 @@ pub(crate) fn lint_v05_weighted_vpa_non_determinizable(
             category: None,
             rule: None,
             message: format!(
-                "weighted VPA is non-determinizable with {} alphabet mismatches — determinization may cause exponential blowup",
+                "VPA alphabet has {} conflicting symbol classifications",
                 result.alphabet_mismatches.len()
             ),
-            hint: Some("consider restricting call/return patterns to reduce nondeterminism".to_string()),
+            hint: Some(
+                "assign each terminal exactly one call, return, or internal role".to_string(),
+            ),
             grammar_name: Some(ctx.grammar_name.to_string()),
             source_location: None,
         });
@@ -5934,8 +5936,7 @@ pub(crate) fn lint_v06_weighted_vpa_inclusion_failure(
         Some(r) => r,
         None => return,
     };
-    // Non-determinizable VPA with large state count suggests inclusion
-    // checking will be expensive or may fail.
+    // This is a preflight complexity advisory, not an inclusion verdict.
     if !result.is_determinizable && result.state_count > 20 {
         diagnostics.push(LintDiagnostic {
             id: DiagnosticId::V06,
@@ -5944,10 +5945,12 @@ pub(crate) fn lint_v06_weighted_vpa_inclusion_failure(
             category: None,
             rule: None,
             message: format!(
-                "weighted VPA inclusion check may fail — {} states and non-determinizable",
+                "exact VPA language decisions are unavailable for a {}-state structurally invalid analysis",
                 result.state_count
             ),
-            hint: Some("tighten recovery predicates or increase cost thresholds".to_string()),
+            hint: Some(
+                "resolve visible-alphabet conflicts before requesting exact decisions".to_string(),
+            ),
             grammar_name: Some(ctx.grammar_name.to_string()),
             source_location: None,
         });

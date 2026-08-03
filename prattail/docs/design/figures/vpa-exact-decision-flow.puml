@@ -1,0 +1,63 @@
+@startuml
+skinparam backgroundColor #FAFCFF
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam component {
+  BackgroundColor #DCEEFF
+  BorderColor #24557A
+  FontColor #102A43
+}
+skinparam note {
+  BackgroundColor #FFF4CC
+  BorderColor #9A6700
+  FontColor #4A3300
+}
+
+rectangle "WeightedVpa<W>" as source #DCEEFF
+rectangle "Requested operation" as choice #FFF0C2
+rectangle "weighted_run(word)" as run #DDF5E3
+rectangle "VpaDecisionSemiring" as cap #F2E5FF
+rectangle "validate structural invariants" as validate #DCEEFF
+rectangle "balanced-summary emptiness" as empty #CDEFD8
+rectangle "(S,R) determinization" as det #CDEFD8
+rectangle "total complement + product" as closure #CDEFD8
+rectangle "exact Boolean inclusion/equivalence" as decision #CDEFD8
+rectangle "compile-time type rejection" as reject #FFD7D7
+
+source --> choice
+choice --> run : fixed-word value
+choice --> cap : language decision
+cap --> validate : BooleanWeight
+cap --> reject : unsupported weight domain
+validate --> empty : emptiness
+validate --> det : determinize
+det --> closure
+closure --> empty
+empty --> decision
+
+note right of run
+  Any Semiring
+  Exact for the supplied word
+end note
+
+note right of det
+  State = summary relation S
+  plus reachable set R
+  Generated frames retain caller + call symbol
+end note
+
+note bottom of decision
+  No concrete-stack depth cutoff
+  False Boolean edges are absent
+  Bottom returns read Z0 without popping it
+end note
+
+legend right
+  |= Color |= Meaning |
+  |<#DCEEFF>| representation or validation |
+  |<#DDF5E3>| generic weighted evaluation |
+  |<#F2E5FF>| explicit capability boundary |
+  |<#CDEFD8>| exact Boolean decision procedure |
+  |<#FFD7D7>| unsupported operation rejected |
+endlegend
+@enduml

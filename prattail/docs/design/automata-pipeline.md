@@ -1407,8 +1407,10 @@ guest body is verbatim guest text. This replaced a pre-parse string strip in the
 ### 10.4 VPA Delimiter Grouping (feature = "vpa")
 
 Post-lex, `build_skip_table()` constructs an O(n) skip table from the flat token
-stream using VPA call/return classification of push/pop tokens. `build_token_tree()`
-converts the flat stream + skip table into nested `TokenTree` structures in O(n).
+stream using `DelimiterClass<K>`. The classifier retains both direction and pair
+identity, so a closer pops only a same-kind opener; `(]` is never grouped.
+`build_token_tree()` converts the flat stream and skip table into nested
+`TokenTree` structures in O(n).
 
 ### 10.5 Tree Automata Validation (feature = "tree-automata" + "vpa")
 

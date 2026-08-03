@@ -24,7 +24,7 @@ zero-admission (enforced by `rocq-critical-zero-admission`; ~154 `.v` across the
 | Rocq — ascent_optimizations | `formal/rocq/ascent_optimizations/theories` | 7 | retired-Ascent-era optimization proofs |
 | Rocq — trampoline | `formal/rocq/trampoline/theories` | 7 | Tier-3 held-fold trampoline soundness |
 | Rocq — sft | `formal/rocq/sft/theories` | 6 | symbolic finite transducers |
-| Rocq — mathematical_analyses | `formal/rocq/mathematical_analyses/theories` | 6 | KAT soundness / analyses |
+| Rocq — mathematical_analyses | `formal/rocq/mathematical_analyses/theories` | 9 | KAT, exact VPA decisions/delimiters, and analysis soundness |
 | Rocq — rule_consolidation | `formal/rocq/rule_consolidation/theories` | 5 | **Dovetail** disjoint-pattern consolidation |
 | Rocq — egraph | `formal/rocq/egraph/theories` | 3 | **Dovetail** e-graph saturation |
 | Rocq — lattice / logict / predicate_dispatch / presburger / unification | `formal/rocq/*/theories` | 1 each | supporting theories |

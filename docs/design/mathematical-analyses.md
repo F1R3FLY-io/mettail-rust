@@ -289,6 +289,16 @@ Machine-checkable correctness proofs in `formal/rocq/mathematical_analyses/`:
   soundness: `{p} e {q} ↔ test(p) · e · test(¬q) = 0`.
 - **`BuchiWpdsProduct.v`** (6.5): Buchi × WPDS product construction, SCC-based
   emptiness soundness.
+- **`CegarSoundness.v`** (6.6): abstraction-ladder soundness and completeness.
+- **`VpaDelimiterSoundness.v`** (6.7): typed same-kind delimiter pairing,
+  mismatch preservation, ordered pairs, and the unbounded-depth counterexample
+  that prohibits a VPA-state-count nesting ceiling.
+- **`VpaReachability.v`** (6.8): permanent-bottom return semantics, the least
+  balanced-summary relation, ground/prefix reachability, normalization of every
+  concrete run, and exact equivalence of summary and operational nonemptiness.
+- **`VpaDeterminization.v`** (6.9): the exact $`(S,R)`$ transition
+  equations, same-stack-symbol call/return correlation, cross-gamma exclusion,
+  bottom-return behavior, and total successor functions.
 
 ## Test Counts
 
@@ -316,6 +326,8 @@ Machine-checkable correctness proofs in `formal/rocq/mathematical_analyses/`:
 - [Semiring Laws](../../prattail/docs/theory/formal-verification/semiring-laws.md) — SemiringLaws.v
 - [WPDS Correctness](../../prattail/docs/theory/formal-verification/wpds-correctness.md) — WpdsCorrectness.v
 - [VPA Closure](../../prattail/docs/theory/formal-verification/vpa-closure.md) — VpaClosureProperties.v
+- [VPA nesting and explicit recovery policy](../../prattail/docs/theory/disambiguation/vpa-nesting-recovery.md) — VpaDelimiterSoundness.v
+- [Exact VPA decisions and weighted boundary](../../prattail/docs/theory/vpa/weighted-determinization.md) — VpaReachability.v and VpaDeterminization.v
 - [KAT Soundness](../../prattail/docs/theory/formal-verification/kat-soundness.md) — KatSoundness.v
 - [Buchi × WPDS](../../prattail/docs/theory/formal-verification/buchi-wpds-product.md) — BuchiWpdsProduct.v
 

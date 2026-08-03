@@ -174,15 +174,17 @@ Key operations: `weighted_emptiness()`, `weighted_parity_value()`,
 **Feature gate**: `vpa` (existing)
 
 Generalizes VPA transitions to carry semiring weights. The visible stack
-discipline means weighted determinization uses macro-states of type
-`HashMap<usize, W>` (weighted powersets). At call symbols, push the entire
-weighted macro-state; at return, pop and compose.
+discipline supports generic fixed-word evaluation. Exact language decisions
+are deliberately Boolean-only: determinization uses summary states
+$`(S,R)`$, generated frames retain the caller state and call symbol, and
+matched returns require one shared stack-symbol witness.
 
-Key operations: `weighted_determinize()`, `weighted_run(word)`,
-`weighted_inclusion()` (requires `W: IdempotentSemiring`).
+Key operations: `weighted_run(word)` for any `Semiring`; and
+`weighted_determinize()` / `weighted_inclusion()` through the sealed
+`VpaDecisionSemiring` capability, currently `BooleanWeight` only.
 
-**Lints**: V05 (weighted-vpa-non-determinizable), V06
-(weighted-vpa-inclusion-failure).
+**Lints**: V05 reports a conflicting visible-alphabet classification; V06 is
+an exact-decision complexity/readiness advisory, not an inclusion verdict.
 
 ### M5: Parity Alternating Tree Automata (`parity_tree.rs`)
 
@@ -602,7 +604,7 @@ Each module uses specific semirings from the existing catalog:
 | M1 Symbolic | `BooleanWeight` | -- |
 | M2 W. Buchi | Parameterized `W: Semiring` | `TropicalWeight` (StarSemiring required) |
 | M3 Poly. AWA | Parameterized `W: Semiring` | `TropicalWeight`, `CountingWeight` |
-| M4 W. VPA | Parameterized `W: Semiring` | `TropicalWeight` (IdempotentSemiring for inclusion) |
+| M4 W. VPA | Parameterized `W: Semiring` for fixed-word evaluation | `BooleanWeight` for sealed exact language decisions |
 | M5 Parity Tree | Parameterized `W: Semiring` | -- |
 | M6 Register | Parameterized `W: Semiring` | `BooleanWeight` |
 | M7 Probabilistic | `LogWeight` | `EntropyWeight`, `ProductWeight<LogWeight, TropicalWeight>` |
@@ -787,4 +789,4 @@ Formal proofs and analysis supporting the integration:
 | SCC liveness | [buchi-scc-liveness.md](../theory/disambiguation/buchi-scc-liveness.md) | Tarjan SCC identifies recursive categories; recovery modulation preserves correctness |
 | Entropy dispatch | [information-theoretic-dispatch.md](../theory/disambiguation/information-theoretic-dispatch.md) | Shannon entropy drives beam width; structure-weighted entropy outperforms uniform |
 | Predicate ordering | [predicate-dispatch-ordering.md](../theory/disambiguation/predicate-dispatch-ordering.md) | Most-specific-first dispatch is safe (Ernst et al. 1998) |
-| VPA nesting | [vpa-nesting-recovery.md](../theory/disambiguation/vpa-nesting-recovery.md) | VPA state count bounds well-formed nesting depth |
+| VPA nesting | [vpa-nesting-recovery.md](../theory/disambiguation/vpa-nesting-recovery.md) | VPAs permit unbounded nesting; recovery ceilings are explicit policy, never derived from state count |

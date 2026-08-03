@@ -189,7 +189,8 @@ All tests pass under both `cargo test --workspace` (default features) and `cargo
 
 ## 9. Future Work
 
-- **M4 VPA**: Bounded stack depth optimization (requires `max_nesting_depth` in `VpaAnalysis`)
+- **M4 VPA**: Stack-storage optimization may use an explicit application limit,
+  but cannot infer a bound from VPA state count because VPA nesting is unbounded.
 - **M8 Multi-Tape**: Parallel tape processing (requires non-trivial `disconnected_tapes` detection)
 - **M5 Parity Tree**: AST invariant verification gating
 - **M2 Büchi**: Liveness-based dead cycle elimination

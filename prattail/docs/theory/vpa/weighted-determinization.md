@@ -1,261 +1,280 @@
-# Weighted Visibly Pushdown Automata — Determinization and Inclusion Theory
+# Exact VPA decisions and the weighted boundary
 
-## Motivation
+## Question answered
 
-Context-free languages are not closed under complement or intersection, and equivalence is undecidable. **Visibly pushdown automata** (VPA) restrict pushdown automata so that the stack discipline is determined entirely by the input — call symbols push, return symbols pop, internal symbols are stack-neutral. This "visible" stack discipline yields a language class (**visibly pushdown languages**, VPL) that is closed under all Boolean operations with decidable equivalence and inclusion, while still capturing nested structure (matched parentheses, XML, recursive function calls).
+This chapter explains why ordinary subset construction is insufficient for a
+visibly pushdown automaton (VPA), how PraTTaIL performs exact Boolean
+determinization and emptiness, and why those results do not automatically
+extend to arbitrary semiring-valued languages.
 
-**Core question**: How can we verify structural equivalence and inclusion of grammars with nested constructs (brackets, blocks, function calls) in a decidable framework, and extend this to quantitative analysis with semiring weights?
+A visibly pushdown language (VPL) is more expressive than a regular language
+but retains effective Boolean closure. The crucial restriction is visibility:
+the input symbol itself fixes whether every run pushes, returns, or leaves the
+stack unchanged.
 
-**Historical context**: Alur & Madhusudan (2004) introduced VPAs and proved their remarkable closure and decidability properties. The key insight is that when the input determines the stack behavior, the subset construction for determinization remains well-defined despite the stack. Alur, Kumar, Madhusudan & Viswanathan (2005) established a Myhill-Nerode theorem for VPLs, enabling minimization.
+## Formal model
 
-**Connection to the Chomsky hierarchy**: VPLs sit strictly between regular and context-free languages. They properly contain all regular languages and are properly contained in the deterministic context-free languages (DCFL). Unlike general CFLs, VPLs are closed under complement and intersection.
+A visibly pushdown alphabet is a pairwise-disjoint triple
+$`\widetilde{\Sigma}=(\Sigma_c,\Sigma_r,\Sigma_i)`$. A nondeterministic
+VPA is
 
-```
-Regular ⊂ VPL ⊂ DCFL ⊂ CFL ⊂ CSL
-  (FA)    (VPA)  (DPDA)  (PDA)  (LBA)
-```
-
-## Definitions
-
-**Definition 4.1** (Visibly Pushdown Alphabet). A **visibly pushdown alphabet** is a triple Σ̃ = (Σ_c, Σ_r, Σ_int) where:
-- Σ_c is the set of **call** symbols (push onto stack)
-- Σ_r is the set of **return** symbols (pop from stack)
-- Σ_int is the set of **internal** symbols (stack-neutral)
-- Σ = Σ_c ∪ Σ_r ∪ Σ_int and all three sets are pairwise disjoint
-
-*Intuition*: The alphabet partition determines the stack behavior. When reading a call symbol, the automaton must push; when reading a return symbol, it must pop. The automaton has no choice in its stack operations — only in its state transitions.
-
-*Example*: For PraTTaIL bracket matching: Σ_c = {(, {, [}, Σ_r = {), }, ]}, Σ_int = {+, -, id, if, ...}.
-
-**Definition 4.2** (Nondeterministic Visibly Pushdown Automaton). An **NVPA** over Σ̃ is a tuple M = (Q, Σ̃, Γ, δ, Q₀, Z₀, F) where:
-- Q is a finite set of states
-- Γ is the stack alphabet
-- δ = (δ_c, δ_r, δ_int) is the transition function:
-  - δ_c : Q × Σ_c → 2^{Q × Γ} — call transitions (push γ)
-  - δ_r : Q × Σ_r × Γ → 2^Q — return transitions (pop γ)
-  - δ_int : Q × Σ_int → 2^Q — internal transitions (stack unchanged)
-- Q₀ ⊆ Q is the set of initial states
-- Z₀ ∈ Γ is the initial stack symbol
-- F ⊆ Q is the set of accepting states
-
-*Intuition*: The crucial restriction: the type of stack operation (push/pop/neutral) is determined by the input symbol, not by the automaton's choice. This makes the stack height a function of the input word alone.
-
-**Definition 4.3** (Weighted VPA). A **weighted VPA** over semiring (K, ⊕, ⊗, 0̄, 1̄) is an NVPA where each transition carries a weight from K:
-- δ_c : Q × Σ_c → 2^{Q × Γ × K} — call transitions with weight
-- δ_r : Q × Σ_r × Γ → 2^{Q × K} — return transitions with weight
-- δ_int : Q × Σ_int → 2^{Q × K} — internal transitions with weight
-
-The weight of a run is the semiring product (⊗) of transition weights along the path. The total weight of a word is the semiring sum (⊕) over all accepting runs.
-
-*Example*: In MeTTaIL, `WeightedVpa<W>` parameterizes over semiring W. `Vpa = WeightedVpa<BooleanWeight>` is the classical unweighted case. `WeightedVpa<TropicalWeight>` computes shortest-path parsing cost.
-
-**Definition 4.4** (Macro-State). In the determinization of an NVPA, a **macro-state** S ⊆ Q is a set of micro-states from the original automaton. The key insight of VPA determinization is that the stack contents at any point in the computation are determined by the input word (not by nondeterministic choices), so macro-states need only track state sets, not stack configurations.
-
-## Key Theorems
-
-**Theorem 4.1** (VPA Determinization; Alur & Madhusudan, 2004, Theorem 1):
-For every NVPA M with n states, there exists an equivalent deterministic VPA (DVPA) with at most 2^{n²+n} states.
-
-*Intuition*: The determinization uses a subset construction adapted for the visible stack discipline. Internal transitions use standard powerset construction. Call transitions push the current macro-state (as a stack symbol) and compute the successor macro-state. Return transitions pop the caller macro-state and combine return targets appropriately. The n² factor (rather than 2^n) comes from tracking summary information across matched call-return pairs.
-
-*Proof sketch*:
-1. **Internal transitions**: For macro-state S and internal symbol a, compute S' = ⋃_{q∈S} δ_int(q, a). This is the standard powerset construction.
-2. **Call transitions**: For macro-state S and call symbol c, push S onto the stack (encoded as a stack symbol), then compute S' = ⋃_{q∈S} {q' : (q', γ) ∈ δ_c(q, c)}.
-3. **Return transitions**: For macro-state S, return symbol r, and popped stack symbol S_caller, compute S' = ⋃_{q∈S, p∈S_caller} {q' : q' ∈ δ_r(q, r, γ) where (·, γ) was pushed by p on the matching call}.
-4. **Acceptance**: Macro-state S is accepting iff S ∩ F ≠ ∅.
-
-*Consequence for MeTTaIL*: The `WeightedVpa::determinize()` method implements this algorithm. The resulting DVPA is **total** — every (macro-state, symbol) pair has exactly one successor, with missing transitions routed to a dead/sink state.
-
-*Reference*: Alur, R. & Madhusudan, P. (2004). "Visibly Pushdown Languages." *STOC*, pp. 202–211. ACM.
-
-**Theorem 4.2** (VPL Closure Properties; Alur & Madhusudan, 2004, Theorem 2):
-Visibly pushdown languages are effectively closed under:
-1. **Union**: O(n₁ + n₂) states (disjoint union with new initial state)
-2. **Intersection**: O(n₁ · n₂) states (product construction)
-3. **Complement**: determinize (2^{O(n²)} states) then flip accepting states
-4. **Concatenation**: O(n₁ · n₂) states
-5. **Kleene star**: O(n²) states
-
-*Consequence for MeTTaIL*: Complementation enables inclusion checking: L(A) ⊆ L(B) iff L(A) ∩ L(B)^c = ∅. The `weighted_inclusion()` method uses this approach with weight comparison at accepting configurations.
-
-*Reference*: Alur, R. & Madhusudan, P. (2004). "Visibly Pushdown Languages." *STOC*, pp. 202–211. ACM. Theorem 2.
-
-**Theorem 4.3** (VPL Decidability; Alur & Madhusudan, 2009, Theorem 5):
-The following problems are decidable for VPAs:
-1. **Emptiness**: NLOGSPACE-complete (graph reachability)
-2. **Universality**: EXPTIME-complete (determinize + complement + empty)
-3. **Inclusion**: EXPTIME-complete (complement + intersect + empty)
-4. **Equivalence**: EXPTIME-complete (double inclusion)
-
-*Intuition*: These are the same decidability results as for regular languages, despite VPLs being strictly more expressive. The visible stack discipline ensures that the subset construction (the source of complexity) remains finite.
-
-*Consequence for MeTTaIL*: All these operations are T1 (compile-time decidable). The `is_deterministic()`, `reachable_states()`, `trim()`, and `weighted_inclusion()` methods enable complete structural verification of grammar transformations at compile time.
-
-*Reference*: Alur, R. & Madhusudan, P. (2009). "Adding Nesting Structure to Words." *J. ACM*, 56(3), Article 16.
-
-**Theorem 4.4** (Myhill-Nerode for VPLs; Alur, Kumar, Madhusudan & Viswanathan, 2005):
-For every VPL L, there exists a unique minimal DVPA recognizing L (up to isomorphism). The minimal DVPA can be computed in polynomial time from any DVPA for L using a congruence-based construction analogous to the classical Myhill-Nerode theorem.
-
-*Consequence for MeTTaIL*: The `trim()` method removes unreachable states as a first step toward minimization. Full minimization via the VPL congruence is a future extension.
-
-*Reference*: Alur, R., Kumar, V., Madhusudan, P. & Viswanathan, M. (2005). "Congruences for Visibly Pushdown Languages." *ICALP*, LNCS 3580, pp. 1102–1114. Springer.
-
-## Algorithms
-
-### Algorithm 1: VPA Determinization (Subset Construction)
-
-```
-PROCEDURE VPA-DETERMINIZE(M = (Q, Σ̃, Γ, δ, Q₀, Z₀, F))
-  INPUT:  NVPA M
-  OUTPUT: Equivalent DVPA M'
-
-  1. Dead state: S_dead = ∅ (sink for missing transitions)
-  2. Initial macro-state: S₀ = Q₀
-  3. Worklist ← {S₀, S_dead}; macro_states ← {S₀ → id₀, S_dead → id_dead}
-  4. While Worklist ≠ ∅:
-       S ← pop from Worklist
-       For each internal symbol a ∈ Σ_int:
-         S' ← ⋃_{q∈S} δ_int(q, a)
-         Register S' → add transition S --a--> S'
-       For each call symbol c ∈ Σ_c:
-         S' ← ⋃_{q∈S} {q' : (q', γ) ∈ δ_c(q, c)}
-         stack_sym ← encode(S)  // push caller macro-state identity
-         Register S' → add call transition S --c/push(stack_sym)--> S'
-       For each return symbol r ∈ Σ_r:
-         For each known caller macro-state S_caller:
-           stack_sym ← encode(S_caller)
-           S' ← ⋃_{q∈S, p∈S_caller, (·,γ)∈δ_c(p,·)} δ_r(q, r, γ)
-           Register S' → add return transition S --r/pop(stack_sym)--> S'
-  5. F' ← {S : S ∩ F ≠ ∅}
-  6. Return M' = (macro_states, Σ̃, stack_syms, transitions, {S₀}, encode(S_dead), F')
-
-  COMPLEXITY: O(2^{n²+n} · |Σ|) worst case
+```math
+M=(Q,\widetilde{\Sigma},\Gamma,\delta,Q_0,Z_0,F).
 ```
 
-### Algorithm 2: Weighted VPA Run Simulation
+Call transitions have shape
+$`q\xrightarrow{c/\operatorname{push}(\gamma)}q'`$, return transitions
+have shape $`q\xrightarrow{r/\gamma}q'`$, and internal transitions do
+not inspect the stack. PraTTaIL keeps $`Z_0`$ permanently: a return at
+bottom reads $`Z_0`$ but does not pop it. Acceptance depends on the final
+control state, not on an empty stack.
 
-```
-PROCEDURE WEIGHTED-RUN(M, word)
-  INPUT:  Weighted VPA M, input word w₁w₂...wₙ
-  OUTPUT: Total acceptance weight ∈ K
+For a semiring $`(K,\oplus,\otimes,\bar 0,\bar 1)`$, the weight of a
+run is the $`\otimes`$-product of its initial, transition, and final
+weights; the word value is the $`\oplus`$-sum over accepting runs.
+`weighted_run` implements exactly this fixed-word semantics.
 
-  1. configs ← {(q₀, [Z₀]) → w₀ : q₀ ∈ Q₀, w₀ = initial_weight(q₀)}
-  2. For each symbol wᵢ:
-     next_configs ← ∅
-     For each ((q, stack), w) ∈ configs:
-       Case classify(wᵢ):
-         Internal: for (q', tw) ∈ δ_int(q, wᵢ):
-           next_configs[(q', stack)] ⊕← w ⊗ tw
-         Call: for (q', γ, tw) ∈ δ_c(q, wᵢ):
-           next_configs[(q', stack·γ)] ⊕← w ⊗ tw
-         Return: if |stack| > 1, top = stack.last():
-           for (q', tw) ∈ δ_r(q, wᵢ, top):
-             next_configs[(q', stack[0..-1])] ⊕← w ⊗ tw
-     configs ← next_configs
-  3. total ← 0̄
-     For each ((q, _), w) ∈ configs where q ∈ F:
-       total ⊕← w ⊗ accepting_weight(q)
-  4. Return total
+The **support language** keeps precisely the runs whose participating weights
+are nonzero. For `BooleanWeight`, support and ordinary language membership
+coincide.
 
-  COMPLEXITY: O(|w| · |Q|^k · |δ|) where k depends on stack depth
-```
+## Why a control-state subset loses information
 
-## Decidability Analysis
+Consider a call with two nondeterministic branches:
 
-| Property | Complexity | Tier |
-|----------|-----------|------|
-| Emptiness | NLOGSPACE-complete | T1 |
-| Membership | O(\|w\| · \|Q\|) | T1 |
-| Determinization | EXPTIME (2^{O(n²)}) | T1 |
-| Equivalence | EXPTIME-complete | T1 |
-| Inclusion L(A) ⊆ L(B) | EXPTIME-complete | T1 |
-| Weighted inclusion (idempotent K) | EXPTIME | T1 |
-| Minimization | PTIME (from DVPA) | T1 |
+```text
+q0 --c/push A--> q1
+q0 --c/push B--> q2
 
-**Boundary cases**: If the alphabet partition were not fixed (i.e., the automaton could choose whether a symbol pushes or pops), we would recover general pushdown automata, and equivalence/inclusion become undecidable. The visible stack discipline is the exact boundary between decidability and undecidability for these problems.
-
-## Diagrams
-
-### VPA Alphabet Partition
-
-```
-Input alphabet Σ = Σ_c ∪ Σ_r ∪ Σ_int
-
-  ┌──────────────────────────────────────────────┐
-  │                    Σ                         │
-  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
-  │  │  Σ_c     │ │  Σ_r     │ │  Σ_int       │ │
-  │  │  (call)  │ │ (return) │ │ (internal)   │ │
-  │  │          │ │          │ │              │ │
-  │  │  ( { [   │ │  ) } ]   │ │ + - id if    │ │
-  │  │  PUSH    │ │  POP     │ │ NO-OP       │ │
-  │  └──────────┘ └──────────┘ └──────────────┘ │
-  └──────────────────────────────────────────────┘
+q1 --r/read B--> qf
+q2 --r/read A--> qf
 ```
 
-### VPA Determinization: Macro-State Construction
+No concrete run accepts `c r`: each return asks for the other branch's frame.
+A macro-state containing only $`\{q_1,q_2\}`$ can nevertheless combine
+the call of one branch with the return of the other and falsely accept. Exact
+determinization must retain the relation between caller states, pushed stack
+symbols, nested behavior, and returns.
 
-```
-Original NVPA with states {q₀, q₁, q₂}:
+## Summary states
 
-   q₀ ──(──▶ q₁    q₀ ──(──▶ q₂    (nondeterministic call)
-   q₁ ──)──▶ q₀    q₂ ──)──▶ q₀    (return transitions)
+For $`n=|Q|`$, a deterministic state is $`(S,R)`$:
 
-Determinized DVPA:
+- $`S\subseteq Q\times Q`$ is a summary relation for well-matched
+  factors read since the current unmatched call;
+- $`R\subseteq Q`$ is the set of source states reachable at the current
+  stack level.
 
-   {q₀} ──(/ push M{q₀}──▶ {q₁,q₂}
-   {q₁,q₂} ──)/ pop M{q₀}──▶ {q₀}
+There are at most $`2^{n^2+n}`$ such pairs. The initial pair is
+$`(I_Q,Q_0^{active})`$, where $`I_Q`$ is identity and
+$`Q_0^{active}`$ excludes zero-weight initial states.
 
-   Macro-state {q₁,q₂} tracks both possibilities
-   Stack symbol M{q₀} remembers the caller macro-state
-```
+### Internal transition
 
-### VPL Position in the Language Hierarchy
+For internal symbol $`a`$:
 
-```
-  ┌────────────────────────────────────────────────┐
-  │  Context-Sensitive Languages (CSL)             │
-  │  ┌──────────────────────────────────────────┐  │
-  │  │  Context-Free Languages (CFL)            │  │
-  │  │  ┌────────────────────────────────────┐  │  │
-  │  │  │  DCFL (Deterministic CFL)          │  │  │
-  │  │  │  ┌──────────────────────────────┐  │  │  │
-  │  │  │  │  VPL (Visibly Pushdown)      │  │  │  │
-  │  │  │  │  ┌────────────────────────┐  │  │  │  │
-  │  │  │  │  │  Regular Languages     │  │  │  │  │
-  │  │  │  │  │  (no stack needed)     │  │  │  │  │
-  │  │  │  │  └────────────────────────┘  │  │  │  │
-  │  │  │  │  Closed under ∪,∩,¬,·,*     │  │  │  │
-  │  │  │  │  Decidable: =,⊆,∅          │  │  │  │
-  │  │  │  └──────────────────────────────┘  │  │  │
-  │  │  │  Closed under ∪,∩,¬               │  │  │
-  │  │  └────────────────────────────────────┘  │  │
-  │  │  NOT closed under ∩ or ¬                 │  │
-  │  └──────────────────────────────────────────┘  │
-  └────────────────────────────────────────────────┘
+```math
+S'(p,q) \iff \exists m.\; S(p,m)\land\delta_i(m,a,q),
 ```
 
-## Connections
+```math
+R'(q) \iff \exists p.\; R(p)\land\delta_i(p,a,q).
+```
 
-**To Module 2 (Buchi)**: VPA-Buchi automata combine visible stack discipline with Buchi acceptance for ω-regular properties of infinite recursive computations. The `from_wpds()` bridge in `buchi.rs` converts WPDS call graphs to Buchi automata, which could be extended to VPA-Buchi for stack-aware liveness analysis.
+### Call transition
 
-**To Module 3 (Alternating)**: Alternating VPAs combine the visible stack with existential/universal branching. This would model "all possible parsings of nested input must satisfy a property" (universal) or "some parsing suffices" (existential).
+For call symbol $`c`$, push a generated frame containing both the caller
+deterministic-state ID and $`c`$. The nested successor is
+$`(I_Q,R')`$, where:
 
-**To WPDS module**: VPAs and weighted pushdown systems (WPDS) are closely related. A VPA can be viewed as a WPDS where the push/pop discipline is determined by the input rather than by the system's choice. The `wpds.rs` module's `poststar`/`prestar` algorithms apply to VPAs with the additional constraint of input-determined stack operations.
+```math
+R'(q) \iff \exists p,\gamma.\;
+R(p)\land\delta_c(p,c,\gamma,q).
+```
 
-**Open problems**:
-1. **Weighted VPA minimization**: Extend the Myhill-Nerode congruence for VPLs to weighted VPAs over arbitrary semirings.
-2. **Symbolic VPA**: Combine VPAs with symbolic guards (Module 1) for infinite-alphabet nested structures.
-3. **VPA learning**: Extend Angluin's L* algorithm to learn VPAs from membership and equivalence queries.
+The call symbol in the generated frame is necessary because a return must use
+the same call transition family that opened the current nested factor.
 
-## Bibliography
+### Matched return transition
 
-1. Alur, R. & Madhusudan, P. (2004). "Visibly Pushdown Languages." *STOC*, pp. 202–211. ACM.
+Let `caller` be the popped deterministic state, `nested` the current state,
+$`c`$ the stored call symbol, and $`r`$ the current return. Define:
 
-2. Alur, R. & Madhusudan, P. (2009). "Adding Nesting Structure to Words." *J. ACM*, 56(3), Article 16.
+```math
+U(p,q) \iff
+\exists x,y,\gamma.\;
+\delta_c(p,c,\gamma,x)
+\land S_{nested}(x,y)
+\land \delta_r(y,r,\gamma,q).
+```
 
-3. Alur, R., Kumar, V., Madhusudan, P. & Viswanathan, M. (2005). "Congruences for Visibly Pushdown Languages." *ICALP*, LNCS 3580, pp. 1102–1114. Springer.
+The single quantified $`\gamma`$ is the correlation invariant. The
+successor is:
 
-4. Alur, R. & Madhusudan, P. (2006). "Visibly Pushdown Languages." *STOC 2004 Extended Version*, available as technical report.
+```math
+(S_{caller}\circ U,\;R_{caller}\circ U).
+```
 
-5. von Braunmuhl, B. & Verbeek, R. (1983). "Input-Driven Languages are Recognized in log n Space." *Annals of Discrete Mathematics*, 24, pp. 1–19.
+### Bottom return
+
+At the generated bottom marker, a return is evaluated against the source
+automaton's $`Z_0`$ relation. It advances both $`S`$ and $`R`$
+but leaves the generated bottom marker present. This exactly matches repeated
+bottom-return execution.
+
+### Totalization
+
+Each discovered pair is processed for every declared internal, call, and
+return symbol and for every reachable generated caller frame. A pair with empty
+$`R`$ is canonicalized to one dead state. Therefore every stored transition
+key has exactly one target and missing behavior reaches a nonaccepting sink.
+
+```text
+DETERMINIZE(M)
+  validate M
+  initial <- intern(identity(Q), active_initials(M))
+  worklist <- [initial]
+
+  while worklist is not empty
+    current <- pop(worklist)
+    intern one internal successor for every internal symbol
+    intern one call successor for every call symbol
+      and push encode(current_id, call_symbol)
+    intern one bottom-return successor for every return symbol
+    for every generated caller frame
+      intern the same-gamma matched-return successor
+
+  mark (S,R) final iff R intersects the active finals of M
+  return the total deterministic automaton
+```
+
+## Exact emptiness by balanced summaries
+
+Determining emptiness by exploring concrete stacks to a chosen depth is
+unsound. Instead, compute the least relation $`B\subseteq Q\times Q`$
+generated by:
+
+```math
+\frac{}{B(q,q)}
+\qquad
+\frac{\delta_i(p,a,q)}{B(p,q)}
+\qquad
+\frac{B(p,m)\quad B(m,q)}{B(p,q)}
+```
+
+and:
+
+```math
+\frac{
+  \delta_c(p,c,\gamma,x)
+  \quad B(x,y)
+  \quad \delta_r(y,r,\gamma,q)
+}{
+  B(p,q)
+}.
+```
+
+Because $`B`$ contains at most $`n^2`$ facts, worklist saturation
+terminates. Ground reachability closes active initial states under $`B`$
+and $`Z_0`$ returns. Prefix reachability then closes under $`B`$ and
+unmatched calls. Final-state acceptance permits the remaining unmatched
+frames, so the language is nonempty iff prefix reachability intersects the
+active final states.
+
+This finite abstraction is independent of accepted nesting depth.
+
+## Boolean closure and decisions
+
+For support languages:
+
+- complement first determinizes and totalizes, then flips final states;
+- intersection synchronizes the two visible stacks in a product automaton;
+- inclusion checks $`L(A)\cap\overline{L(B)}=\varnothing`$;
+- equivalence checks inclusion in both directions.
+
+Alphabet alignment precedes complement. If $`a`$ occurs only in $`A`$,
+then the aligned and totalized $`B`$ must route $`a`$ to its dead state
+before final states are flipped.
+
+The product stack encoding is length-prefixed. Concatenating user names with a
+comma is not injective: the pairs `("a,b", "c")` and `("a", "b,c")`
+would collide.
+
+## Why idempotence is not enough
+
+An idempotent semiring satisfies $`x\oplus x=x`$. That law permits a
+natural preorder in many semirings, but it does not supply:
+
+- a determinization theorem preserving arbitrary quantitative series;
+- a decision procedure for universal comparison over all nested words;
+- exact handling of nondeterministic branches with distinct accumulated
+  weights;
+- numeric comparison semantics, convergence conditions, or a witness bound.
+
+Accordingly, `VpaDecisionSemiring` is an explicit capability boundary, not a
+blanket alias for `IdempotentSemiring`. Its current implementation is
+`BooleanWeight`. Tropical and other weighted automata may call
+`weighted_run`, but cannot call exact determinization or inclusion merely
+because their addition is idempotent.
+
+## Complexity
+
+Let $`n=|Q|`$, $`m`$ be the number of active transitions, and
+$`s=|\widetilde{\Sigma}|`$.
+
+| Operation | Worst-case scale | Explanation |
+|---|---:|---|
+| Validate | $`O(n+m+s)`$ | Check partitions, IDs, keys, and endpoints |
+| Fixed-word weighted run | proportional to explored configurations | Exact concrete-stack simulation for one word |
+| Balanced-summary emptiness | polynomial in finite state/transition relations | At most $`n^2`$ summary facts |
+| Determinization | $`2^{O(n^2)}`$ states | Reachable subset of $`2^{n^2+n}`$ pairs |
+| Complement | determinization plus linear final-state flip | Requires total DVPA |
+| Inclusion/equivalence | exponential time in general | Determinization dominates |
+
+Thus VPL inclusion and equivalence are decidable but not polynomial-time in the
+general nondeterministic case.
+
+## Implementation correspondence
+
+| Mathematical object | Rust implementation |
+|---|---|
+| $`(S,R)`$ | private `DetState { summary, reachable }` |
+| balanced-summary least fixpoint | `decision::is_language_empty` |
+| internal equation | `internal_successor` |
+| call equation | `call_successor` |
+| matched-return bridge | `matched_return_successor` |
+| bottom-return equation | `bottom_return_successor` |
+| canonical dead state | `canonical_state` |
+| support projection | `boolean_support` |
+| structural preconditions | `VpaValidationError` |
+
+## Verification strategy
+
+The verification stack deliberately uses complementary tools:
+
+1. `VpaClosureProperties.v` proves the final-state semantics of complement
+   and product intersection.
+2. `VpaReachability.v` proves balanced-summary leastness, normalizes every
+   operational run, and establishes both directions between summary and
+   operational language nonemptiness.
+3. `VpaDeterminization.v` proves the exact transition equations, the shared
+   stack witness, exclusion of cross-gamma bridges, bottom-return behavior, and
+   total-function properties.
+4. Rust unit and integration examples target bottom returns, residual stacks,
+   alphabet validation, product encodings, and the old depth-cap counterexample.
+5. Property tests compare internal-only emptiness with an independent graph
+   oracle and compare bounded source/determinized membership over generated
+   two-state VPAs and every short word.
+
+The formal models contain no `Axiom`, `Admitted`, or `admit` commands.
+Property tests provide executable refinement evidence between those
+mathematical relations and the Rust matrices, queues, and interned states.
+
+## References
+
+1. Rajeev Alur and P. Madhusudan, “Visibly Pushdown Languages,” *Proceedings
+   of STOC 2004*, pp. 202–211.
+   [DOI: 10.1145/1007352.1007390](https://doi.org/10.1145/1007352.1007390).
+2. Rajeev Alur and P. Madhusudan, “Adding Nesting Structure to Words,”
+   *Journal of the ACM* 56(3), Article 16, 2009.
+   [DOI: 10.1145/1516512.1516518](https://doi.org/10.1145/1516512.1516518).

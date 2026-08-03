@@ -6,13 +6,15 @@ This document records the integration of advanced automata analysis (modules M1-
 
 ## Phase A: Leverage Existing REAL Analysis (Sprints A1--A3)
 
-### A1: VPA Nesting Depth → Recovery Cost Modulation
+### A1 correction: explicit recovery policy, not a VPA nesting theorem
 
 **Files**: `vpa.rs`, `lib.rs`, `recovery.rs`, `pipeline.rs`
 
-Added `max_nesting_bound` field to `VpaAnalysis` (set to VPA state count). When current parse depth exceeds this bound during error recovery, skip actions are strongly favored (0.3x multiplier) since input is structurally beyond the grammar's capacity. The VPA state count bounds well-formed nesting: each nesting level requires a distinct stack state.
-
-**New fields**: `VpaAnalysis.max_nesting_bound`, `PipelineAnalysis.vpa_max_nesting_bound`, `RecoveryConfig.vpa_nesting_ceiling`
+The original implementation derived a nesting bound from VPA state count. That
+derivation was unsound: a fixed-state VPA can accept arbitrarily deep nesting.
+`VpaAnalysis.max_nesting_bound` and `PipelineAnalysis.vpa_max_nesting_bound`
+have therefore been removed. `RecoveryConfig.vpa_nesting_ceiling` remains only
+as an explicit caller-selected policy and defaults to `None`.
 
 ### A2: VPA Bracket Mismatches → Recovery Insert Penalty
 
@@ -154,7 +156,7 @@ Five formal theory documents support the disambiguation integration, located in
 | [buchi-scc-liveness.md](../../prattail/docs/theory/disambiguation/buchi-scc-liveness.md) | Tarjan SCC on category dependency graph | Accepting SCCs = recursive categories; recovery cost modulation preserves correctness |
 | [information-theoretic-dispatch.md](../../prattail/docs/theory/disambiguation/information-theoretic-dispatch.md) | Shannon entropy for per-category beam width | High-entropy categories need wider beams; structure-weighted entropy outperforms uniform |
 | [predicate-dispatch-ordering.md](../../prattail/docs/theory/disambiguation/predicate-dispatch-ordering.md) | Most-specific-first dispatch via subsumption | Specificity-ordered dispatch is a permutation; Ernst et al. 1998 |
-| [vpa-nesting-recovery.md](../../prattail/docs/theory/disambiguation/vpa-nesting-recovery.md) | VPA state count bounds well-formed nesting | Depth exceeding bound implies structural violation; skip-favoring is sound |
+| [vpa-nesting-recovery.md](../../prattail/docs/theory/disambiguation/vpa-nesting-recovery.md) | VPA nesting is unbounded | Caller-selected ceilings are operational policy, not grammar facts |
 
 ## Testing Strategy
 

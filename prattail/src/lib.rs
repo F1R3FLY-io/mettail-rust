@@ -1464,10 +1464,6 @@ pub struct PipelineAnalysis {
     /// Currently informational; may enable future optimizations (V05-INFO).
     pub bracket_deterministic: bool,
 
-    /// Upper bound on valid nesting depth from VPA analysis.
-    /// Recovery at depths exceeding this bound strongly favors skip.
-    pub vpa_max_nesting_bound: Option<usize>,
-
     /// Tokens that VPA analysis found used as both call and return symbols.
     /// Recovery should penalize InsertToken for these tokens (Sprint A2).
     pub bracket_mismatch_tokens: HashSet<String>,

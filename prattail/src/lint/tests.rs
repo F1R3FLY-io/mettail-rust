@@ -3211,7 +3211,6 @@ fn v01_fires_when_determinizable() {
         is_determinizable: true,
         alphabet_mismatches: vec![],
         state_count: 5,
-        max_nesting_bound: 5,
     });
     let mut diags = Vec::new();
     lint_v01_vpa_determinizable(&b.ctx(), &mut diags);
@@ -3227,7 +3226,6 @@ fn v01_silent_when_not_determinizable() {
         is_determinizable: false,
         alphabet_mismatches: vec![],
         state_count: 5,
-        max_nesting_bound: 5,
     });
     let mut diags = Vec::new();
     lint_v01_vpa_determinizable(&b.ctx(), &mut diags);
@@ -3241,7 +3239,6 @@ fn v02_fires_on_mismatch() {
         is_determinizable: false,
         alphabet_mismatches: vec!["|".to_string()],
         state_count: 3,
-        max_nesting_bound: 3,
     });
     let mut diags = Vec::new();
     lint_v02_vpa_alphabet_mismatch(&b.ctx(), &mut diags);
@@ -3257,7 +3254,6 @@ fn v02_silent_when_no_mismatch() {
         is_determinizable: true,
         alphabet_mismatches: vec![],
         state_count: 3,
-        max_nesting_bound: 3,
     });
     let mut diags = Vec::new();
     lint_v02_vpa_alphabet_mismatch(&b.ctx(), &mut diags);

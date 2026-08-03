@@ -1,233 +1,160 @@
-# VpaClosureProperties.v -- VPA Closure and Decidable Equivalence
+# Rocq verification of VPA closure and exact decisions
 
-**File:** `formal/rocq/mathematical_analyses/theories/VpaClosureProperties.v`
-**Lines:** 518
-**Admitted:** 0
-**Dependencies:** Standalone (no imports from other proof files)
+## Artifact set
 
+PraTTaIL splits its VPA argument across four assumption-free Rocq files:
 
-## Intuition
+| Artifact | Mechanized concern |
+|---|---|
+| `VpaClosureProperties.v` | final-state acceptance, deterministic complement, synchronized product intersection, equivalence reduction |
+| `VpaDelimiterSoundness.v` | typed delimiter pairing, mismatch preservation, unbounded-depth counterexample |
+| `VpaReachability.v` | balanced-summary leastness and sound/complete exact emptiness abstraction |
+| `VpaDeterminization.v` | $`(S,R)`$ transition equations and same-stack-symbol return correlation |
 
-A Visibly Pushdown Automaton (VPA) is a pushdown automaton where the
-stack operation -- push, pop, or no-op -- is determined entirely by the
-input symbol, not by the automaton's state. This "input-driven" stack
-discipline is exactly what PraTTaIL's grammar categories exhibit:
-parentheses and brackets are always call/return symbols regardless of
-parsing state.
+All reside in
+`formal/rocq/mathematical_analyses/theories/` and are registered in that
+suite's `_CoqProject`.
 
-This seemingly minor restriction has profound consequences. General
-pushdown automata cannot be determinized, cannot be complemented, and
-have undecidable equivalence. VPAs can do *all three*. This proof file
-establishes these closure properties, which PraTTaIL uses for grammar
-equivalence checking and inclusion testing between VPA models of
-grammar categories.
+## Operational semantics
 
+A configuration contains a control state and the frames above the permanent
+bottom marker. The proof represents the permanent marker by the empty list:
 
-## What It Proves
+- an internal edge preserves the list;
+- a call conses one frame;
+- an above-bottom return removes the head frame;
+- a bottom return uses a separate edge relation and preserves the empty list.
 
-### Part 1: Closure Under Complement
+Acceptance requires a final state but permits any residual list. This matches
+`WeightedVpa::weighted_run`; it deliberately does not impose empty-stack
+acceptance.
 
-```
+## Closure proof
+
+`VpaClosureProperties.v` first proves that deterministic complementation
+flips final-state acceptance for every word:
+
+```coq
 Theorem complement_correctness : forall w,
-  complement_accepts w = true <->
-  (accepts w = false /\
-   match snd (run initial_config w) with [] => True | _ => False end).
+  complement_accepts w = true <-> accepts w = false.
 ```
 
-The complement VPA accepts exactly those well-matched words that the
-original VPA rejects. The construction simply swaps the acceptance
-predicate: `complement_is_final q = negb (is_final q)`.
+Because acceptance does not require an empty residual stack, the theorem has no
+spurious well-matchedness side condition. The involution theorem then shows
+that flipping twice restores the original acceptance predicate.
 
-```
-Theorem complement_involution : forall w,
-  double_comp_accepts = accepts w.
-```
+For intersection, both automata use the same visible symbol class at each
+input position. Product states and product stack symbols therefore advance in
+lockstep. Projection lemmas prove that the product run's two components equal
+the corresponding source runs; intersection correctness follows:
 
-Complementing twice recovers the original language.
-
-### Part 2: Closure Under Intersection
-
-```
+```coq
 Theorem intersection_correctness : forall w,
-  prod_accepts w = true <-> (accepts w = true /\ accepts2 w = true).
+  prod_accepts w = true <-> accepts w = true /\ accepts2 w = true.
 ```
 
-The product VPA accepts exactly the intersection of the two component
-languages. The construction runs both VPAs in lockstep.
+The equivalence theorem reduces equality to emptiness of both Boolean
+differences. The Rust implementation supplies the concrete exact emptiness
+procedure described below.
 
-### Part 3: Decidable Equivalence
+## Balanced-summary emptiness proof
 
-```
-Theorem vpa_equivalence_decidable :
-  (forall P : list Symbol -> bool,
-    (exists w, P w = true) \/ (forall w, P w = false)) ->
-  (forall w, accepts w = accepts2 w) \/
-  (exists w, accepts w <> accepts2 w).
-```
+The least relation `balanced_summary p q` has four constructors:
 
-Given a decidable emptiness oracle for Boolean predicates on words,
-VPA language equivalence is decidable. The proof reduces equivalence to
-two emptiness checks on symmetric difference languages.
+1. identity;
+2. an internal edge;
+3. composition of two summaries;
+4. a call and return that share one pushed frame around a nested summary.
 
+`balanced_summary_run_sound` proves by induction that every summary denotes a
+concrete word which leaves any surrounding stack unchanged.
+`balanced_summary_is_least` proves that every relation closed under the four
+rules contains this inductively generated relation.
 
-## Why It Matters
+Ground reachability begins in an initial state and closes under balanced
+summaries and bottom returns. Prefix reachability additionally closes under
+calls whose frames may remain unmatched at the accepting state. The theorems
+`ground_reachable_run_sound` and `prefix_reachable_run_sound` construct
+concrete runs. For the converse, `normalized_reachable` represents every
+concrete configuration as ground reachability followed by zero or more
+unmatched frames whose current segments are balanced summaries.
+`steps_preserve_normalized` proves that every operational transition
+preserves this form, and `normalized_implies_prefix` projects it back to the
+finite prefix relation. Therefore
+`summary_operational_nonempty_iff` proves exact equivalence between summary
+nonemptiness and operational final-state nonemptiness.
 
-```
-  ┌─────────────────────────────────────────────────────────────┐
-  │  Grammar Equivalence Checking                               │
-  │  (are two grammar versions equivalent?)                     │
-  ├─────────────────────────────────────────────────────────────┤
-  │  VPA Intersection  +  VPA Complement  +  Emptiness Check    │ <-- THIS
-  ├─────────────────────────────────────────────────────────────┤
-  │  VPA Model of Grammar Categories                            │
-  │  (call = open bracket, return = close bracket)              │
-  └─────────────────────────────────────────────────────────────┘
-```
+Executable property tests additionally compare the Rust matrix/work-queue
+saturation with independent graph and bounded-word oracles.
 
-PraTTaIL models grammar categories as VPAs (`vpa.rs`). The alphabet
-partition maps grammar symbols to call/return/internal based on their
-role in the grammar's delimiter structure. The closure properties enable:
+## Determinization invariant
 
-- **Grammar refinement checking:** is the new grammar a subset of the old?
-  (complement + intersection + emptiness)
-- **Ambiguity detection:** do two categories overlap?
-  (intersection + emptiness)
-- **Equivalence after optimization:** did an optimization preserve the
-  language? (full equivalence check)
+A deterministic state is:
 
-Without these closure properties, these questions would be undecidable.
-
-
-## Proof Strategy
-
-### Complement: Determinism Is the Key
-
-The complement construction is trivial for deterministic automata: swap
-accepting and non-accepting states. The entire proof reduces to:
-
-```
-rewrite Bool.negb_true_iff.   (* complement correctness *)
-rewrite Bool.negb_involutive.  (* involution *)
+```coq
+Record det_state : Type := DetState {
+  summary : State -> State -> Prop;
+  reachable : State -> Prop
+}.
 ```
 
-The subtlety is in the well-matchedness condition. The complement only
-applies to words where the stack is empty at the end (well-matched
-words). For non-well-matched words, neither the original nor the
-complement accepts:
+The matched-return bridge quantifies one frame `pushed` and uses that same
+witness in the opening call and closing return. Consequently:
 
-```
-  ┌─────────────────────────────────────────────────────┐
-  │ Word class          │ accepts │ complement_accepts │
-  ├─────────────────────┼─────────┼────────────────────┤
-  │ Well-matched, final │  true   │  false             │
-  │ Well-matched, !final│  false  │  true              │
-  │ Not well-matched    │  false  │  false             │
-  └─────────────────────┴─────────┴────────────────────┘
-```
+- `matched_return_reachable_iff` unfolds the exact successor equation;
+- `matched_return_uses_one_stack_witness` exposes the correlation witness;
+- `cross_gamma_cannot_create_bridge` excludes a successor assembled from
+  incompatible call branches;
+- `bottom_return_is_stack_neutral_relation` records bottom-return behavior;
+- the update-totality theorems show every input pair has one mathematical
+  successor, including the empty/dead pair.
 
-### Intersection: Product Construction
+## Rust correspondence
 
-The product construction runs two VPAs in parallel on the same input.
-The key insight is that because both VPAs share the *same* alphabet
-partition (same `classify` function), their stacks push and pop in
-lockstep. This means the product stack can use paired symbols:
+| Rocq definition | Rust counterpart |
+|---|---|
+| `transition_bottom_return` | return using `initial_stack_symbol` without `pop()` |
+| `balanced_summary` | summary matrix and work queue in `decision::is_language_empty` |
+| `ground_reachable` | first finite reachability phase |
+| `prefix_reachable` | above-bottom phase with unmatched calls |
+| `normalized_reachable` | completeness invariant for concrete configurations |
+| `det_state` | private `DetState { summary, reachable }` |
+| `return_bridge` | `matched_return_successor` |
+| `relation_compose` | caller-summary composition |
+| `bottom_return_update` | `bottom_return_successor` |
 
-```
-  Product state:     (State1 x State2)
-  Product stack sym: (StackSym1 x StackSym2)
+## Property-test counterparts
 
-  On call symbol a:
-    VPA1: (q1, stk1) -> (q1', g1 :: stk1)
-    VPA2: (q2, stk2) -> (q2', g2 :: stk2)
-    Product: ((q1,q2), stk) -> ((q1',q2'), (g1,g2) :: stk)
+`prattail/tests/vpa_decision_soundness.rs` exercises proof invariants as
+executable properties:
 
-  On return symbol a:
-    Both pop simultaneously -- stacks stay synchronized.
+- repeated bottom returns preserve the bottom marker;
+- accepting states may retain unmatched call frames;
+- a 20-state language whose shortest witness reaches depth 91 defeats the old
+  $`4|Q|+2`$ cutoff but is found by summaries;
+- cross-gamma nondeterministic branches cannot create an accepting run;
+- complement is total over missing transitions;
+- false Boolean edges do not create support reachability;
+- product stack-symbol encoding is injective;
+- random internal-only emptiness matches an independent graph oracle;
+- source and determinized membership agree for every generated short word.
 
-  On internal symbol a:
-    Both update state only -- stacks unchanged.
-```
+## Running the proof
 
-The correctness proof uses **projection lemmas** that show the product
-run decomposes cleanly into individual runs:
+From the repository root:
 
-```
-Lemma prod_run_proj1 : forall w c,
-  proj1_config (prod_run c w) = run (proj1_config c) w.
-
-Lemma prod_run_proj2 : forall w c,
-  proj2_config (prod_run c w) = run2 (proj2_config c) w.
-```
-
-These are proven by induction on the word `w`, with the step case using
-`prod_step_proj1` / `prod_step_proj2` (case analysis on `classify a`).
-
-### Determinization Diagram
-
-General PDAs cannot be determinized because the stack operation depends
-on the current state, making the subset construction blow up. VPAs avoid
-this because the stack operation is fixed by the input symbol:
-
-```
-  General PDA:                    VPA (Input-Driven):
-
-  State determines               Input symbol determines
-  push/pop/noop                   push/pop/noop
-       │                                │
-       v                                v
-  ┌──────────┐                   ┌──────────┐
-  │ State q1 │──push──>          │ Symbol a │──push──>  (always)
-  │ State q2 │──pop───>          │ Symbol b │──pop───>  (always)
-  │ State q3 │──noop──>          │ Symbol c │──noop──>  (always)
-  └──────────┘                   └──────────┘
-       │                                │
-  Cannot determinize             Subset construction works:
-  (different states do           all states in the powerset
-   different stack ops           do the SAME stack op
-   on the same input)            on the same input
+```sh
+make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-mathematical-analyses
 ```
 
-This is why VPAs have the same closure properties as finite automata
-but strictly more expressive power.
+The capped runner limits memory, disables swap, uses one build job, and invokes
+the suite's zero-admission checks. A direct source scan must also find no
+`Axiom`, `Conjecture`, `Parameter`, `Admitted`, or `admit` command.
 
-### Decidable Equivalence: Symmetric Difference
+## References
 
-The equivalence decision procedure decomposes into two inclusion checks:
-
-```
-L(A1) = L(A2)
-  <-> L(A1) \ L(A2) = empty  AND  L(A2) \ L(A1) = empty
-  <-> L(A1) cap complement(L(A2)) = empty
-      AND  complement(L(A1)) cap L(A2) = empty
-```
-
-Each check uses:
-1. **Complement** (swap is_final to negb is_final) -- proven sound
-2. **Intersection** (product construction) -- proven sound
-3. **Emptiness** (reachability on finite state space) -- assumed as oracle
-
-The proof uses the decidable emptiness oracle `Hempty_dec` to check
-both symmetric difference directions. If either direction has a witness,
-the languages differ. If both are empty, the languages are equal.
-
-
-## Rust Code Traceability
-
-| Rocq Definition | Rust Counterpart | File |
-|----------------|-----------------|------|
-| `symbol_kind` (Call/Return/Internal) | `SymbolKind` enum | `vpa.rs:100-110` |
-| `classify` | `VpaAlphabet::classify()` | `vpa.rs:75-86` |
-| `step` | Single-step VPA transition | `vpa.rs:130-175` |
-| `run` | VPA run (fold over word) | `vpa.rs` |
-| `accepts` | VPA acceptance predicate | `vpa.rs` |
-| `complement_is_final` | `complement()` function | `vpa.rs` |
-| `prod_step` / `prod_run` | `intersect()` function | `vpa.rs` |
-| `vpa_equivalence_decidable` | `check_vpa_equivalence()` | `vpa.rs` |
-
-
-## Theoretical References
-
-- Alur, R. & Madhusudan, P. (2004). "Visibly pushdown languages."
-  STOC 2004. Introduced VPAs and proved closure under Boolean operations.
-- Alur, R. & Madhusudan, P. (2009). "Adding nesting structure to words."
-  Extended journal version with additional decidability results.
+- Rajeev Alur and P. Madhusudan, “Visibly Pushdown Languages,” STOC 2004.
+  [DOI: 10.1145/1007352.1007390](https://doi.org/10.1145/1007352.1007390).
+- Rajeev Alur and P. Madhusudan, “Adding Nesting Structure to Words,”
+  *Journal of the ACM* 56(3), 2009.
+  [DOI: 10.1145/1516512.1516518](https://doi.org/10.1145/1516512.1516518).

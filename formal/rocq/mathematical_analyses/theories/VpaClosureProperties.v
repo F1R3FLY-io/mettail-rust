@@ -147,11 +147,11 @@ Section VPA.
   (** Initial configuration *)
   Definition initial_config : config := (q0, []).
 
-  (** Acceptance: the VPA accepts word w iff the final state is accepting
-      AND the stack is empty (well-matched word). *)
+  (** Standard VPA acceptance: final control state, with arbitrary residual
+      stack. The bottom marker is represented by the empty list. *)
   Definition accepts (w : list Symbol) : bool :=
-    let (qf, stk) := run initial_config w in
-    is_final qf && match stk with [] => true | _ => false end.
+    let (qf, _) := run initial_config w in
+    is_final qf.
 
   (* ================================================================== *)
   (*  PART 1: Closure Under Complement                                   *)
@@ -166,32 +166,25 @@ Section VPA.
   Definition complement_is_final (q : State) : bool := negb (is_final q).
 
   Definition complement_accepts (w : list Symbol) : bool :=
-    let (qf, stk) := run initial_config w in
-    complement_is_final qf && match stk with [] => true | _ => false end.
+    let (qf, _) := run initial_config w in
+    complement_is_final qf.
 
-  (** The complement VPA accepts exactly those well-matched words that
-      the original rejects. *)
+  (** A total deterministic complement accepts exactly the words rejected by
+      the original, including words ending above bottom. *)
   Theorem complement_correctness : forall w,
-    complement_accepts w = true <->
-    (accepts w = false /\
-     match snd (run initial_config w) with [] => True | _ => False end).
+    complement_accepts w = true <-> accepts w = false.
   Proof.
     intros w. unfold complement_accepts, accepts, complement_is_final.
     destruct (run initial_config w) as [qf stk]. simpl.
-    destruct stk as [| g stk'].
-    - (* Stack empty: well-matched word *)
-      simpl. rewrite !Bool.andb_true_r, Bool.negb_true_iff. tauto.
-    - (* Stack non-empty: neither accepts *)
-      simpl. rewrite !Bool.andb_false_r.
-      split; [discriminate | intros [_ []]].
+    rewrite Bool.negb_true_iff. tauto.
   Qed.
 
   (** Complement is an involution: complementing twice gives the original. *)
   Theorem complement_involution : forall w,
     let double_comp_final q := negb (complement_is_final q) in
     let double_comp_accepts :=
-      let (qf, stk) := run initial_config w in
-      double_comp_final qf && match stk with [] => true | _ => false end
+      let (qf, _) := run initial_config w in
+      double_comp_final qf
     in
     double_comp_accepts = accepts w.
   Proof.
@@ -246,8 +239,8 @@ Section VPA.
   Definition initial_config2 : State2 * list StackSym2 := (q0_2, []).
 
   Definition accepts2 (w : list Symbol) : bool :=
-    let (qf, stk) := run2 initial_config2 w in
-    is_final2 qf && match stk with [] => true | _ => false end.
+    let (qf, _) := run2 initial_config2 w in
+    is_final2 qf.
 
   (* -- Product construction -------------------------------------------- *)
 
@@ -309,8 +302,8 @@ Section VPA.
     is_final q1 && is_final2 q2.
 
   Definition prod_accepts (w : list Symbol) : bool :=
-    let (qsf, stk) := prod_run prod_initial w in
-    prod_is_final qsf && match stk with [] => true | _ => false end.
+    let (qsf, _) := prod_run prod_initial w in
+    prod_is_final qsf.
 
   (* -- Projection lemmas ----------------------------------------------- *)
 
@@ -406,10 +399,7 @@ Section VPA.
     pose proof (prod_run_relates w) as [Hrun1 Hrun2]. simpl in *.
     destruct (prod_run prod_initial w) as [[qf1 qf2] prod_stk] eqn:Hprod.
     simpl in *. rewrite Hrun1, Hrun2. unfold prod_is_final. simpl.
-    destruct prod_stk as [| gs prod_stk'].
-    - simpl. rewrite !Bool.andb_true_r, Bool.andb_true_iff. tauto.
-    - simpl. rewrite !Bool.andb_false_r.
-      split; [discriminate | intros [H1 H2]; discriminate].
+    rewrite Bool.andb_true_iff. tauto.
   Qed.
 
   (* ================================================================== *)

@@ -1709,7 +1709,6 @@ fn test_vpa_bracket_deterministic_true() {
         is_determinizable: true,
         alphabet_mismatches: Vec::new(),
         state_count: 5,
-        max_nesting_bound: 5,
     };
     let mut bundle = empty_bundle();
     bundle.vpa = Some(&vpa);
@@ -1736,7 +1735,6 @@ fn test_vpa_bracket_not_deterministic() {
         is_determinizable: false,
         alphabet_mismatches: Vec::new(),
         state_count: 3,
-        max_nesting_bound: 3,
     };
     let mut bundle = empty_bundle();
     bundle.vpa = Some(&vpa);
@@ -1763,7 +1761,6 @@ fn test_vpa_mismatches_not_deterministic() {
         is_determinizable: true,
         alphabet_mismatches: vec!["(".into()],
         state_count: 3,
-        max_nesting_bound: 3,
     };
     let mut bundle = empty_bundle();
     bundle.vpa = Some(&vpa);
@@ -1782,53 +1779,6 @@ fn test_vpa_mismatches_not_deterministic() {
     );
 }
 
-// ── Test A1: VPA nesting bound wired into PipelineAnalysis ──────────────
-
-#[test]
-fn test_vpa_nesting_bound_wired() {
-    let vpa = crate::vpa::VpaAnalysis {
-        is_determinizable: true,
-        alphabet_mismatches: Vec::new(),
-        state_count: 7,
-        max_nesting_bound: 7,
-    };
-    let mut bundle = empty_bundle();
-    bundle.vpa = Some(&vpa);
-
-    let categories = vec![category("Expr", true)];
-    let rule_infos = vec![rule("r1", "Expr")];
-    let dead_rules = HashSet::new();
-    let prediction_wfsts = HashMap::new();
-
-    let analysis =
-        run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
-
-    assert_eq!(
-        analysis.vpa_max_nesting_bound,
-        Some(7),
-        "vpa_max_nesting_bound should be Some(7) when VPA analysis is present"
-    );
-}
-
-#[test]
-fn test_vpa_nesting_bound_none_without_vpa() {
-    let bundle = empty_bundle();
-    // No VPA analysis → vpa_max_nesting_bound should be None
-
-    let categories = vec![category("Expr", true)];
-    let rule_infos = vec![rule("r1", "Expr")];
-    let dead_rules = HashSet::new();
-    let prediction_wfsts = HashMap::new();
-
-    let analysis =
-        run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
-
-    assert_eq!(
-        analysis.vpa_max_nesting_bound, None,
-        "vpa_max_nesting_bound should be None when no VPA analysis is available"
-    );
-}
-
 // ── Test A2a: VPA bracket mismatch tokens wired into PipelineAnalysis ──
 
 #[test]
@@ -1837,7 +1787,6 @@ fn test_vpa_bracket_mismatch_tokens_populated() {
         is_determinizable: true,
         alphabet_mismatches: vec!["|".into(), "`".into()],
         state_count: 4,
-        max_nesting_bound: 4,
     };
     let mut bundle = empty_bundle();
     bundle.vpa = Some(&vpa);
@@ -1871,7 +1820,6 @@ fn test_vpa_bracket_mismatch_empty_when_no_mismatches() {
         is_determinizable: true,
         alphabet_mismatches: Vec::new(),
         state_count: 3,
-        max_nesting_bound: 3,
     };
     let mut bundle = empty_bundle();
     bundle.vpa = Some(&vpa);

@@ -284,8 +284,8 @@ Each sprint includes boundary conditions that test degenerate inputs.
 
 | Sprint | Edge Case | Expected Behavior |
 |--------|-----------|-------------------|
-| A1 | vpa_nesting_ceiling = None | No depth modulation, all depths neutral |
-| A1 | vpa_nesting_ceiling = Some(0) | All non-zero depths exceed ceiling |
+| A1 policy | `vpa_nesting_ceiling = None` | No policy-derived depth modulation |
+| A1 policy | caller sets `vpa_nesting_ceiling = Some(0)` | All non-zero depths receive the configured factor; nothing is inferred from VPA state count |
 | A2 | bracket_mismatch_ids = emptyset | All insert penalties = 1.0 |
 | C2 | recursive_scc_categories = emptyset | All categories non-recursive |
 

@@ -1,317 +1,251 @@
-# Weighted Visibly Pushdown Automata -- Decidable Nested-Word Analysis with Semiring Weights
+# Weighted visibly pushdown automata
 
-## Quick Start
+## Purpose and supported boundary
 
-Visibly Pushdown Automata (VPA) are a subclass of pushdown automata where the input alphabet is partitioned into call, return, and internal symbols. The stack discipline is determined entirely by the input word -- call symbols push, return symbols pop, internal symbols leave the stack unchanged. This visible stack discipline yields a class closed under all Boolean operations with decidable equivalence and inclusion, making VPAs ideal for verifying bracket/delimiter-structure properties of PraTTaIL grammars.
+PraTTaIL represents nested-word behavior with `WeightedVpa<W>`. The input
+alphabet is partitioned into call, return, and internal symbols. Calls push,
+returns inspect the top stack symbol and normally pop it, and internal symbols
+leave the stack unchanged.
 
-The module generalizes the classical Boolean-weighted VPA to `WeightedVpa<W>`, where each transition carries a semiring weight. The type alias `Vpa = WeightedVpa<BooleanWeight>` preserves backward compatibility. Weighted extensions enable shortest-path parsing (`TropicalWeight`), derivation counting (`CountingWeight`), and probabilistic parsing (`LogWeight`).
+The module deliberately separates two capabilities:
 
-**Motivating example**: In a PraTTaIL grammar with parenthesized expressions, `(`, `{`, `[` are call symbols and `)`, `}`, `]` are return symbols. The VPA determinization guarantees that bracket-matching analysis remains polynomial, and weighted inclusion checking ensures error recovery never accepts inputs rejected by the original grammar.
+- `weighted_run` evaluates a fixed word over every implemented `Semiring`.
+- Exact determinization, emptiness, complement, equivalence, and inclusion are
+  support-language operations. They are exposed through
+  `VpaDecisionSemiring`, whose implemented decision domain is
+  `BooleanWeight`.
 
+Idempotence alone is not a sufficient theorem for quantitative weighted-VPA
+determinization or inclusion. Tropical, counting, log, and other weights remain
+valid for run evaluation, but their quantitative languages are not silently
+projected or compared by the decision API.
+
+![Exact VPA decision flow](figures/vpa-exact-decision-flow.svg)
+
+## Vocabulary and semantics
+
+Let the visibly pushdown alphabet be the disjoint triple
+$`\widetilde{\Sigma}=(\Sigma_c,\Sigma_r,\Sigma_i)`$. A weighted VPA is
+$`M=(Q,\widetilde{\Sigma},\Gamma,\delta,Q_0,Z_0,F)`$, where:
+
+- $`Q`$ is a finite state set;
+- $`\Gamma`$ is the stack alphabet;
+- $`Z_0`$ is the permanent bottom marker;
+- $`Q_0`$ and $`F`$ are the initial and final states;
+- $`\delta_c`$, $`\delta_r`$, and $`\delta_i`$ are call,
+  return, and internal transitions.
+
+PraTTaIL uses final-state acceptance: a run accepts when it finishes in
+$`F`$, regardless of residual frames above $`Z_0`$. This admits
+pending calls, as standard VPA semantics may do.
+
+A return has two cases:
+
+1. Above the bottom, it reads the top frame and pops that frame.
+2. At the bottom, it reads $`Z_0`$ and leaves $`Z_0`$ in place.
+
+Consequently, any number of declared bottom-return transitions may run in
+sequence. An unknown input symbol has no classification, so every current
+configuration dies. A transition whose Boolean weight is false is absent from
+the support language.
+
+## Representation invariants
+
+`validate()` checks the invariants required by exact decision procedures:
+
+- the three alphabet partitions are pairwise disjoint;
+- each public state ID equals its vector index;
+- all state references exist;
+- every transition key uses a symbol of the corresponding class;
+- a nonzero call transition never pushes the reserved bottom marker.
+
+`try_is_language_empty()` returns `VpaValidationError` for invalid public
+representations. Convenience operations that return a plain automaton or
+`bool` panic with an explanatory message rather than compute from malformed
+input.
+
+## Exact emptiness without a depth cap
+
+The number of VPA states does not bound nesting depth. A three-state VPA can
+accept arbitrarily deep balanced words. Concrete-stack breadth-first search
+with a cutoff such as $`4|Q|+2`$ is therefore incomplete.
+
+PraTTaIL computes the least balanced summary relation
+$`B\subseteq Q\times Q`$. A fact $`B(p,q)`$ means that some
+well-matched word moves from $`p`$ to $`q`$ without changing the
+surrounding stack. Saturation closes $`B`$ under:
+
+- identity;
+- nonzero internal edges;
+- relational composition;
+- a call and same-stack-symbol return wrapped around an existing summary.
+
+The finite relation then supports two reachability phases:
+
+- **ground reachability** uses balanced summaries and bottom returns;
+- **above-bottom reachability** additionally uses unmatched calls.
+
+The language is nonempty exactly when an active accepting state is reachable
+in the second phase. The algorithm never enumerates a concrete stack.
+
+```text
+EXACT-EMPTY(M)
+  validate M
+  B <- least relation containing identity and active internal edges
+  saturate B under composition and same-gamma call/B/return wrapping
+
+  G <- active initial states
+  close G under B and active returns that read Z0
+
+  P <- G
+  close P under B and active calls whose frames may remain unmatched
+
+  return no active final state occurs in P
 ```
-Grammar bracket structure
-      |
-      v
-VpaAlphabet (call / return / internal partition)
-      |
-      v
-WeightedVpa<W>
-      |
-      +---> determinize()            (subset construction for VPA)
-      +---> weighted_run()           (semiring evaluation on word)
-      +---> weighted_determinize()   (weight-propagating determinization)
-      +---> weighted_inclusion()     (IdempotentSemiring inclusion test)
-      +---> reachable_states()       (BFS reachability)
-      +---> trim()                   (dead-state elimination)
+
+## Exact determinization
+
+Ordinary powerset construction is unsound for VPAs: two call branches can push
+different stack symbols, and a later return must be correlated with the branch
+that actually pushed its symbol.
+
+Each deterministic state is a pair $`(S,R)`$:
+
+- $`S\subseteq Q\times Q`$ records well-matched summaries since the
+  current unmatched call;
+- $`R\subseteq Q`$ records currently reachable source states.
+
+The initial state uses the identity relation and active initial states.
+Internal input advances both components. A call pushes an encoding of the
+caller deterministic-state ID together with the call symbol, resets $`S`$
+to identity, and advances $`R`$. A matched return pops that generated frame
+and constructs a bridge with one shared stack-symbol witness:
+
+```math
+U(p,q) \iff
+\exists c,e,\gamma.\;
+  \delta_c(p,a,\gamma,c)
+  \land S_{nested}(c,e)
+  \land \delta_r(e,b,\gamma,q).
 ```
 
-## Intuition
+The successor is
+$`(S_{caller}\circ U,\;R_{caller}\circ U)`$. Reusing the same
+$`\gamma`$ in both transition predicates prevents cross-branch false
+acceptance. A bottom return instead advances the current pair through
+$`Z_0`$ transitions and keeps the generated bottom marker.
 
-Think of a VPA as a security guard at a building with revolving doors (call/return symbols) and hallways (internal symbols). The guard can verify that every person who enters through a revolving door eventually exits through the matching revolving door, because the doors themselves dictate push/pop behavior. The guard does not need to know the building's internal layout -- the visible door types determine the stack. Weights assign a cost to each passage.
+Every declared symbol receives one successor. Empty reachability is interned
+as a canonical nonaccepting dead state, so the output is total as well as
+deterministic. With $`n=|Q|`$, the classical worst-case state bound is
+$`2^{n^2+n}`$, not $`2^n`$.
 
-**Before this module**: PraTTaIL's bracket-matching analysis used ad-hoc parenthesis counting that could not express weighted nesting properties or verify structural equivalence between grammar variants.
+## Inclusion, equivalence, and complement
 
-**After this module**: Bracket structure is formalized with decidable equivalence, determinization, and weighted inclusion. Error recovery can be verified to never accept structurally malformed inputs that the original grammar rejects.
+For Boolean support languages:
 
-**Key insight**: The visible stack discipline -- where the input alone determines push/pop behavior -- is the crucial restriction that makes VPAs closed under complement, intersection, and determinization, while general pushdown automata are not.
-
-## Theoretical Foundations
-
-**Definition 4.1 (Partitioned Alphabet).** A VPA alphabet is a triple `(Sigma_c, Sigma_r, Sigma_int)` where the input alphabet `Sigma = Sigma_c ∪ Sigma_r ∪ Sigma_int` is partitioned into:
-- `Sigma_c` (call symbols): trigger a push onto the stack
-- `Sigma_r` (return symbols): trigger a pop from the stack
-- `Sigma_int` (internal symbols): leave the stack unchanged
-
-**Definition 4.2 (Weighted Visibly Pushdown Automaton).** A weighted VPA over semiring `W` is `M = (Q, Sigma, Gamma, delta, Q_0, Z_0, F)` where:
-- `Q` is a finite set of states
-- `Sigma = Sigma_c ∪ Sigma_r ∪ Sigma_int` is the partitioned alphabet
-- `Gamma` is the stack alphabet
-- `delta` consists of three weighted transition functions:
-  - `delta_c: Q x Sigma_c -> 2^(Q x Gamma x W)` (call: push `gamma`, weight `w`)
-  - `delta_r: Q x Sigma_r x Gamma -> 2^(Q x W)` (return: pop `gamma`, weight `w`)
-  - `delta_int: Q x Sigma_int -> 2^(Q x W)` (internal: no stack change, weight `w`)
-- `Q_0 ⊆ Q` are initial states with weights `initial_weights: Q -> W`
-- `Z_0 in Gamma` is the initial stack symbol
-- `F ⊆ Q` are accepting states with weights `accepting_weights: Q -> W`
-
-**Theorem 4.1 (Closure Properties, Alur & Madhusudan 2004).** The class of visibly pushdown languages is effectively closed under union, intersection, complement, concatenation, and Kleene star. Equivalence and inclusion are decidable.
-
-**Theorem 4.2 (Determinization).** Every nondeterministic VPA can be determinized via a subset construction adapted to the visible stack discipline. The determinized VPA has at most `2^|Q|` macro-states, and the visible stack discipline ensures that stack height is determined by the input, preventing exponential stack blow-up.
-
-**Theorem 4.3 (Weighted Inclusion, Idempotent Semirings).** For idempotent semirings `W` (where `a ⊕ a = a`), weighted inclusion `L_w(A) ⊆ L_w(B)` is decidable: for every word `w`, `A.weighted_run(w) ⊕ B.weighted_run(w) = B.weighted_run(w)`. This reduces to a product construction + weighted emptiness check.
-
-## Activation: Paired Bracket Terminals → M4
-
-M4 (VPA) is activated by predicate dispatch when the grammar or its predicates
-indicate visible pushdown structure requiring balanced-delimiter analysis.
-
-```
-Grammar Rules                     Predicate Expressions
-      │                                 │
-      ▼                                 ▼
-classify_grammar()               extract_features() / walk_mso()
-      │                                 │
-      ▼                                 ▼
-PairedDelimiters                 is_fixpoint_relation()
-  "()" / "{}" / "[]"              "letprop" / "fixpoint" / "mu" / "nu"
-  "begin"..."end"                  Recursive predicate scope
-      │                                 │
-      └──────────┬──────────────────────┘
-                 ▼
-        M4_VPA bit set
+```math
+L(A)\subseteq L(B)
+\iff
+L(A)\cap\overline{L(B)}=\varnothing.
 ```
 
-**Grammar heuristic**: Scan terminal symbols for paired brackets — `(` and `)`,
-`{` and `}`, `[` and `]`, `begin` and `end`, `do` and `done`. Both a call symbol
-and a return symbol must be present; an unpaired bracket does not trigger VPA.
+PraTTaIL first aligns both automata to the union alphabet. This must happen
+before complementing $`B`$; otherwise a symbol absent from $`B`$ would
+not be routed to its deterministic dead state. Complement determinizes and
+flips final states. Intersection uses product states and length-prefixed product
+stack symbols, avoiding collisions between arbitrary user stack-symbol names.
+Equivalence is mutual inclusion.
 
-**Predicate trigger**: Relations named `letprop`, `fixpoint`, `mu`, `nu`, `letrec`,
-or `recursive` indicate recursive predicate definitions with scope nesting.
+## Weighted execution versus language decisions
 
-**Example grammar rule triggering M4**:
-```
-("Paren", "Expr", [Terminal("("), NonTerminal("Expr","inner"), Terminal(")")])
-   ↑ has "(" and ")" → paired brackets → M4 activated
-```
+| Operation | Weight domain | Meaning |
+|---|---|---|
+| `weighted_run(word)` | any `Semiring` | Semiring sum of accepting-run products |
+| `validate()` | any `Semiring` | Structural representation validation |
+| `determinize()` | `VpaDecisionSemiring` | Exact support-language determinization |
+| `weighted_determinize()` | `VpaDecisionSemiring` | Compatibility name for the same exact support construction |
+| `weighted_inclusion()` | `VpaDecisionSemiring` | Exact support-language inclusion |
+| `try_is_language_empty()` | `BooleanWeight` | Validated exact Boolean emptiness |
+| `check_inclusion()` | `BooleanWeight` | Exact Boolean language inclusion |
+| `check_equivalence()` | `BooleanWeight` | Exact Boolean language equivalence |
 
-**Theoretical justification**: Paired delimiters create a visible pushdown structure.
-The Alur-Madhusudan theorem (2004) shows VPA is the right model for bracket-matching:
-neither weaker (regular) nor stronger (full CFL) captures the structure with
-full Boolean closure and decidable equivalence.
+`is_deterministic()` checks partial determinism: one initial state and at most
+one target for every stored key. It does not claim totality. Automata returned
+by `determinize()` are total by construction.
 
-## Design
-
-### Core types
+## Valid Rust example
 
 ```rust
-pub struct VpaAlphabet {
-    pub call_symbols: HashSet<String>,
-    pub return_symbols: HashSet<String>,
-    pub internal_symbols: HashSet<String>,
-}
+use std::collections::HashSet;
 
-pub enum SymbolKind { Call, Return, Internal }
+use mettail_prattail::automata::semiring::{BooleanWeight, Semiring};
+use mettail_prattail::vpa::{check_equivalence, Vpa, VpaAlphabet};
 
-pub struct VpaState {
-    pub id: usize,
-    pub label: Option<String>,
-}
-
-pub struct WeightedVpa<W: Semiring> {
-    pub states: Vec<VpaState>,
-    pub alphabet: VpaAlphabet,
-    pub call_transitions: HashMap<(usize, String), Vec<(usize, String, W)>>,
-    pub return_transitions: HashMap<(usize, String, String), Vec<(usize, W)>>,
-    pub internal_transitions: HashMap<(usize, String), Vec<(usize, W)>>,
-    pub initial_states: HashSet<usize>,
-    pub accepting_states: HashSet<usize>,
-    pub initial_stack_symbol: String,
-    pub initial_weights: HashMap<usize, W>,
-    pub accepting_weights: HashMap<usize, W>,
-}
-
-pub type Vpa = WeightedVpa<BooleanWeight>;
-```
-
-### State machine diagram
-
-```
-  Internal         Call (push gamma)         Return (pop gamma)
-     |                  |                         |
-     v                  v                         v
- +--------+     +--------+     +--------+     +--------+
- | q0     | -a->| q1     | -(->| q2     | -)->| q3     |
- | (init) |     |        |     |stack:   |     | (acc)  |
- +--------+     +--------+     |[Z0,gamma]+    +--------+
-                                                  |
-   Sigma_int         Sigma_c        Sigma_r       |
-   no stack          push           pop            v
-   change            gamma          gamma       accept
-```
-
-## Algorithms
-
-### Determinization (Subset Construction for VPA)
-
-```
-Input:  Nondeterministic WeightedVpa<W>
-Output: Deterministic WeightedVpa<W>
-
-1. Create dead/sink macro-state {} (ID 0)
-2. Create initial macro-state S_0 = {q | q in Q_0}
-3. Worklist <- {S_0, {}}
-4. While worklist not empty:
-   a. S <- pop(worklist)
-   b. For each internal symbol a:
-      T <- {q' | q in S, (q,a,q') in delta_int}
-      Add transition S --a--> T
-   c. For each call symbol c:
-      T <- {q' | q in S, (q,c,q',gamma) in delta_c}
-      Push stack symbol "M{id(S)}"
-      Add call transition S --c/push M{id(S)}--> T
-   d. For each return symbol r, for each stack symbol M{caller_id}:
-      T <- {q' | q in S, caller_q in S_caller, (q,r,gamma,q') in delta_r}
-      Add return transition S --r/pop M{caller_id}--> T
-   e. Acceptance: S is accepting iff S ∩ F != emptyset
-5. Result is total and deterministic
-```
-
-**Complexity**: O(2^|Q| * |Sigma| * |Q|) worst case; typically much smaller due to reachability pruning.
-
-### Weighted Run Simulation
-
-```
-Input:  WeightedVpa<W>, word w = a_1 ... a_n
-Output: W (total acceptance weight)
-
-1. configs <- {(q0, [Z0]) -> initial_weights[q0] | q0 in Q_0}
-2. For each symbol a_i in w:
-   next_configs <- {}
-   Match classify(a_i):
-     Internal: for each (q, stack, w) in configs:
-       for each (q', tw) in delta_int(q, a_i):
-         next_configs[(q', stack)] ⊕= w ⊗ tw
-     Call: for each (q, stack, w) in configs:
-       for each (q', gamma, tw) in delta_c(q, a_i):
-         next_configs[(q', stack ++ gamma)] ⊕= w ⊗ tw
-     Return: for each (q, stack, w) in configs:
-       if |stack| > 1:
-         top = stack.last()
-         for each (q', tw) in delta_r(q, a_i, top):
-           next_configs[(q', stack.pop())] ⊕= w ⊗ tw
-   configs <- next_configs
-3. Return ⊕_{(q,_,w) in configs, q in F} w ⊗ accepting_weights[q]
-```
-
-**Complexity**: O(|w| * |configs| * |delta|). The number of distinct stack configurations is bounded by the nesting depth of the word.
-
-### Weighted Inclusion Check
-
-```
-Input:  WeightedVpa<W> A, B where W: IdempotentSemiring
-Output: true if L_w(A) ⊆ L_w(B)
-
-1. Product BFS over (state_a, state_b?, stack_a, stack_b)
-2. state_b = None represents dead/sink (no matching transition in B)
-3. For each accepting config where A accepts:
-   a. Compute total_a = w_a ⊗ accept_weight_a
-   b. If B is dead or not accepting: inclusion violated
-   c. Else: total_b = w_b ⊗ accept_weight_b
-      If total_a ⊕ total_b != total_b: inclusion violated
-4. Return true iff no violation found
-```
-
-**Complexity**: O(|Q_A| * |Q_B| * depth * |delta|) with bounded exploration depth.
-
-## Integration
-
-- **Pipeline** (`pipeline.rs`): `VpaAnalysis` reports bracket structure properties and inclusion violations.
-- **Decision tree** (`decision_tree.rs`): VPA determinization feeds into bracket-dispatch optimization.
-- **Lint module** (`lint.rs`): V05 (weighted transition anomaly) and V06 (weighted inclusion violation) diagnostics.
-
-## Diagnostics
-
-### V05 -- Weighted Transition Anomaly
-
-**Severity**: Warning. Fires when a weighted VPA has transitions with anomalous weights (all-zero outgoing weights from a non-dead state, or vacuous identity weights). Indicates dead weighted paths or effectively unweighted structure.
-
-### V06 -- Weighted Inclusion Violation
-
-**Severity**: Error. Fires when `weighted_inclusion(A, B)` detects `L_w(A) not⊆ L_w(B)` -- there exists a word with higher weight in A than B. Guards grammar transformations that must preserve or reduce weights.
-
-## Examples
-
-### Example 1: Bracket matching
-
-```rust
-let alpha = VpaAlphabet::new(
-    HashSet::from(["(".into()]),  // call
-    HashSet::from([")".into()]),  // return
-    HashSet::from(["x".into()]), // internal
+let alphabet = VpaAlphabet::new(
+    HashSet::from(["(".to_string()]),
+    HashSet::from([")".to_string()]),
+    HashSet::from(["x".to_string()]),
 );
-let mut vpa = Vpa::new(alpha);
-let q0 = vpa.add_state(Some("start".into()));
-let q1 = vpa.add_state(Some("inside".into()));
-vpa.initial_states.insert(q0);
-vpa.accepting_states.insert(q0);
-// ( pushes, x is internal, ) pops
-// After "(x)", stack returns to Z0 and we are in accepting state
-```
-
-### Example 2: Weighted inclusion check
-
-```rust
-use crate::automata::semiring::TropicalWeight;
-
-let alpha = VpaAlphabet::new(
-    HashSet::from(["(".into()]),
-    HashSet::from([")".into()]),
-    HashSet::from(["a".into()]),
+let mut vpa = Vpa::new(alphabet);
+let start = vpa.add_state(Some("start".into()));
+let nested = vpa.add_state(Some("nested".into()));
+vpa.initial_states.insert(start);
+vpa.accepting_states.insert(start);
+vpa.call_transitions.insert(
+    (start, "(".into()),
+    vec![(nested, "paren".into(), BooleanWeight::one())],
 );
-let mut a = WeightedVpa::<TropicalWeight>::new(alpha.clone());
-let mut b = WeightedVpa::<TropicalWeight>::new(alpha);
-// Configure A with higher weights than B
-// weighted_inclusion(&a, &b) checks that A's weights
-// are absorbed by B under the tropical natural order
+vpa.internal_transitions.insert(
+    (nested, "x".into()),
+    vec![(nested, BooleanWeight::one())],
+);
+vpa.return_transitions.insert(
+    (nested, ")".into(), "paren".into()),
+    vec![(start, BooleanWeight::one())],
+);
+
+assert!(vpa.weighted_run(&["(", "x", ")"]).0);
+let deterministic = vpa.determinize();
+assert!(deterministic.is_deterministic());
+assert!(check_equivalence(&vpa, &deterministic));
 ```
 
-## Advanced Topics
+## Diagnostics and operational limits
 
-**Edge cases**: A VPA with no initial states has empty language. Return transitions on an empty stack (only Z_0) are blocked -- the automaton halts. Unknown symbols (not in any partition) cause all configurations to die.
+V05 reports an invalid/conflicting visible alphabet classification. V06 is a
+complexity advisory for a large VPA that cannot enter the exact Boolean
+decision pipeline; it is not evidence that inclusion was attempted or failed.
+Neither diagnostic authorizes approximate language decisions.
 
-**Interaction with other modules**: VPA determinization connects to the WPDS module for context-free reachability analysis. The `weighted_run()` method shares the semiring evaluation pattern with the WFST pipeline.
+Determinization is exponential in the worst case and may require memory
+proportional to the reachable subset of the $`2^{n^2+n}`$ state space.
+Exact emptiness avoids that determinization when used directly, but summary
+saturation is still polynomial in the finite transition/state relations.
+Callers should validate and trim structural overapproximations before
+determinizing large models.
 
-**Performance**: Determinization is exponential in the worst case (subset construction) but is typically small for PraTTaIL grammars with bounded bracket nesting. The `trim()` method removes unreachable states to minimize the VPA before expensive operations.
+## Verification evidence
 
-**Future extensions**: Myhill-Nerode minimization for VPAs (Alur, Kumar, Madhusudan & Viswanathan 2005) would complement the existing determinization.
+- `VpaClosureProperties.v` models final-state acceptance, complement, and
+  product intersection.
+- `VpaReachability.v` defines the least balanced summaries, normalizes every
+  concrete run into ground reachability plus unmatched frames, and proves
+  summary nonemptiness equivalent to operational final-state nonemptiness.
+- `VpaDeterminization.v` proves the transition equations, same-stack-symbol
+  witness invariant, cross-gamma exclusion, bottom-return equation, and update
+  totality.
+- `vpa_decision_soundness.rs` converts these invariants into adversarial
+  examples and property checks against independent bounded oracles.
 
-## Reference
+The Rocq files contain no axioms or admissions. Executable array/work-queue
+refinement is additionally checked by property tests; the mathematical
+emptiness abstraction itself is proved sound and complete.
 
-### API Table
+## References
 
-| Function | Input | Output | Complexity |
-|----------|-------|--------|------------|
-| `determinize()` | `&self` | `WeightedVpa<W>` | O(2^\|Q\| * \|Sigma\|) |
-| `is_deterministic()` | `&self` | `bool` | O(\|delta\|) |
-| `reachable_states()` | `&self` | `HashSet<VpaState>` | O(\|Q\| + \|delta\|) |
-| `trim()` | `&self` | `WeightedVpa<W>` | O(\|Q\| + \|delta\|) |
-| `weighted_run(word)` | `&self, &[&str]` | `W` | O(\|w\| * \|Q\| * \|delta\|) |
-| `weighted_determinize()` | `&self` | `WeightedVpa<W>` | O(2^\|Q\| * \|Sigma\|) |
-| `weighted_inclusion(other)` | `&self, &WeightedVpa<W>` | `bool` | O(\|Q_A\|\|Q_B\| * depth) |
-
-### Lint codes
-
-| Code | Severity | Description |
-|------|----------|-------------|
-| V05 | Warning | Weighted transition anomaly (dead/vacuous weights) |
-| V06 | Error | Weighted inclusion violation |
-
-### Feature gate
-
-Always available (core module).
-
-### Citations
-
-- Alur, R. & Madhusudan, P. (2004). "Visibly pushdown languages." *STOC 2004*, 202--211.
-- Alur, R. & Madhusudan, P. (2009). "Adding nesting structure to words." *Journal of the ACM*, 56(3), 1--43.
-- Alur, R., Kumar, V., Madhusudan, P. & Viswanathan, M. (2005). "Congruences for visibly pushdown languages." *ICALP 2005*, LNCS 3580, 1102--1114.
+- Rajeev Alur and P. Madhusudan, “Visibly Pushdown Languages,” STOC 2004,
+  pp. 202–211. [DOI: 10.1145/1007352.1007390](https://doi.org/10.1145/1007352.1007390).
+- Rajeev Alur and P. Madhusudan, “Adding Nesting Structure to Words,”
+  *Journal of the ACM* 56(3), 2009.
+  [DOI: 10.1145/1516512.1516518](https://doi.org/10.1145/1516512.1516518).

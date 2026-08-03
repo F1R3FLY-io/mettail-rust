@@ -28,8 +28,8 @@ Every automata module in MeTTaIL faces the same fundamental question: **which pr
 | M1 Symbolic | SFA equivalence | 2x complement + intersection + emptiness | Symmetric difference |
 | M2 Buchi | Buchi emptiness | O(\|Q\|+\|delta\|) | Tarjan SCC reachability |
 | M3 Alternating | Boolean AFA emptiness | O(2^{\|Q\|}) | Subset construction |
-| M4 VPA | VPA emptiness | O(\|Q\|+\|delta\|) | BFS reachability |
-| M4 VPA | VPA determinization | O(2^{\|Q\|^2}) | Saturation-based |
+| M4 VPA | Boolean VPA emptiness | polynomial finite summary saturation | Balanced summaries + ground/prefix reachability |
+| M4 VPA | Boolean VPA determinization | O(2^{\|Q\|²+\|Q\|}) states | Alur-Madhusudan $`(S,R)`$ summaries |
 | M5 Parity Tree | PATA emptiness | O(\|Q\|^{O(k)}) | Parity game solving |
 | M6 Register | RA emptiness (fixed k) | O(\|Q\|^{k+1}) | Configuration graph |
 | M7 Probabilistic | Forward/backward | O(\|w\|·\|Q\|²) | Matrix multiplication |
@@ -52,7 +52,7 @@ Every automata module in MeTTaIL faces the same fundamental question: **which pr
 |--------|---------|-----------|--------|
 | M1 Symbolic | Predicate evaluation on data | O(1) per predicate | Requires runtime data |
 | M3 Alternating | Weighted emptiness | O(\|Q\|² · \|delta\|) | Weight computation may need runtime context |
-| M4 VPA | Weighted inclusion | O(2^{\|Q\|^2} · \|delta\|) | Exponential but decidable |
+| M4 VPA | Fixed-word weighted evaluation | finite concrete configuration exploration | Requires the runtime word; available for every `Semiring` |
 | M6 Register | RA evaluation | O(\|w\| · \|Q\| · k!) | Requires input word |
 | M7 Probabilistic | Viterbi best path | O(\|w\| · \|Q\|²) | Requires input word |
 | M7 Probabilistic | Baum-Welch training | O(\|corpus\| · \|Q\|² · iterations) | Requires training corpus |
@@ -93,7 +93,6 @@ Every automata module in MeTTaIL faces the same fundamental question: **which pr
 | Module | Problem | Undecidable Because |
 |--------|---------|-------------------|
 | M3 Alternating | AFA equivalence over infinite semiring | Reduces to halting problem |
-| M4 VPA | VPA equivalence with unbounded stack | Context-free language equivalence |
 | M5 Parity Tree | PATA universality | Complement + emptiness over infinite trees |
 | M8 Multi-tape | K-tape universality (K >= 2) | Reduces to Post correspondence problem |
 | M10 MSO | Full MSO with forall X | Encodes arithmetic over unbounded integers |
@@ -106,13 +105,13 @@ The following matrix summarizes the decidability tier for each property across a
 
 | Property | M1 SFA | M2 Buchi | M3 AWA | M4 VPA | M5 PATA |
 |----------|:------:|:--------:|:------:|:------:|:-------:|
-| Emptiness | T1 O(n+m) | T1 SCC | T1 2^n | T1 O(n+m) | T1 n^O(k) |
-| Membership | T1 O(\|w\|·n) | T1 O(\|w\|·n) | T1 O(\|w\|·2^n) | T1 O(\|w\|·n) | T1 on trees |
-| Equivalence | T1 PSPACE | T2 complement | T4 infinite K | T4 CF equiv | T4 |
-| Universality | T1 PSPACE | T2 complement | T4 infinite K | T4 | T4 |
-| Inclusion | T1 compl+inter | T2 | T2/T4 | T2 weighted | T2 on trees |
-| Determinization | T1 2^n | N/A (omega) | N/A (alternating) | T1 2^{n²} | N/A |
-| Minimization | T1 n² | T2 | N/A | T2 | N/A |
+| Emptiness | T1 O(n+m) | T1 SCC | T1 2^n | T1 polynomial summaries | T1 n^O(k) |
+| Membership | T1 O(\|w\|·n) | T1 O(\|w\|·n) | T1 O(\|w\|·2^n) | T1 finite-word simulation | T1 on trees |
+| Equivalence | T1 PSPACE | T2 complement | T4 infinite K | T1 EXPTIME | T4 |
+| Universality | T1 PSPACE | T2 complement | T4 infinite K | T1 EXPTIME | T4 |
+| Inclusion | T1 compl+inter | T2 | T2/T4 | T1 EXPTIME | T2 on trees |
+| Determinization | T1 2^n | N/A (omega) | N/A (alternating) | T1 2^{n²+n} | N/A |
+| Minimization | T1 n² | T2 | N/A | domain/construction dependent | N/A |
 
 | Property | M6 RA | M7 Prob | M8 K-Tape | M9 Multiset | M10 MSO | M11 W2T |
 |----------|:-----:|:------:|:---------:|:-----------:|:-------:|:-------:|

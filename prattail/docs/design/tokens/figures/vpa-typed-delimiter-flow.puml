@@ -1,0 +1,38 @@
+@startuml
+skinparam backgroundColor #FAFCFF
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #DCEEFF
+  BorderColor #24557A
+  DiamondBackgroundColor #FFF0C2
+  DiamondBorderColor #9A6700
+  StartColor #2E7D32
+  EndColor #7B1FA2
+  FontColor #102A43
+}
+
+start
+:Classify token as\nDelimiterClass<K>;
+if (class?) then (Open(kind))
+  :Push (index, kind)\nonto typed stack;
+elseif (Close(kind)) then
+  if (top kind equals close kind?) then (yes)
+    :Pop top frame;
+    :Record opener -> closer;
+  else (no)
+    #FFD7D7:Leave stack and table unchanged;
+  endif
+else (Internal)
+  :Leave stack and table unchanged;
+endif
+#DDF5E3:Continue with next token;
+stop
+
+legend right
+  |= Color |= Meaning |
+  |<#DCEEFF>| normal typed-stack action |
+  |<#FFF0C2>| equality decision |
+  |<#FFD7D7>| mismatched closer, no pair |
+  |<#DDF5E3>| invariant-preserving continuation |
+endlegend
+@enduml

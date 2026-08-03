@@ -17,7 +17,7 @@ infinite configuration spaces. Machine-checked proofs in Rocq (Coq 9.1)
 provide the strongest possible assurance: every theorem is verified by
 the Rocq kernel, and every axiom is explicit.
 
-The five proof files together contain **3,474 lines** of Rocq with
+The nine proof files together contain **5,123 lines** of Rocq with
 **zero `Admitted`** stubs -- every proof obligation is fully discharged.
 
 
@@ -27,9 +27,13 @@ The five proof files together contain **3,474 lines** of Rocq with
 |---|------|------:|---------|-----|
 | 6.1 | `SemiringLaws.v` | 877 | Semiring axioms for Provenance, Relational, and KAT weight domains | [semiring-laws.md](semiring-laws.md) |
 | 6.2 | `WpdsCorrectness.v` | 950 | Poststar/prestar soundness, saturation convergence, MOVP fixpoint | [wpds-correctness.md](wpds-correctness.md) |
-| 6.3 | `VpaClosureProperties.v` | 518 | VPA complement, intersection, decidable equivalence | [vpa-closure.md](vpa-closure.md) |
+| 6.3 | `VpaClosureProperties.v` | 507 | VPA complement, intersection, decidable equivalence | [vpa-closure.md](vpa-closure.md) |
 | 6.4 | `KatSoundness.v` | 494 | KAT denotational semantics, Hoare triple soundness & completeness | [kat-soundness.md](kat-soundness.md) |
-| 6.5 | `BuchiWpdsProduct.v` | 635 | Buchi x WPDS product construction, SCC-based emptiness | [buchi-wpds-product.md](buchi-wpds-product.md) |
+| 6.5 | `BuchiWpdsProduct.v` | 634 | Buchi x WPDS product construction, SCC-based emptiness | [buchi-wpds-product.md](buchi-wpds-product.md) |
+| 6.6 | `CegarSoundness.v` | 954 | CEGAR abstraction ladder soundness and completeness | [coverage matrix](coverage-matrix.md) |
+| 6.7 | `VpaDelimiterSoundness.v` | 157 | Same-kind delimiter pairing and refutation of finite nesting bounds | [nesting and recovery policy](../disambiguation/vpa-nesting-recovery.md) |
+| 6.8 | `VpaReachability.v` | 371 | Bottom-return semantics and sound/complete balanced-summary nonemptiness | [vpa-closure.md](vpa-closure.md) |
+| 6.9 | `VpaDeterminization.v` | 179 | Summary-state transition and same-gamma correlation invariants | [weighted determinization](../vpa/weighted-determinization.md) |
 
 All proofs reside in:
 
@@ -49,17 +53,26 @@ formal/rocq/mathematical_analyses/theories/
 
    VpaClosureProperties.v
         (6.3)              standalone
+
+   VpaDelimiterSoundness.v
+        (6.7)              standalone
+
+   VpaReachability.v
+        (6.8)              standalone
+
+   VpaDeterminization.v
+        (6.9)              standalone
 ```
 
 KatSoundness imports the semiring type class from SemiringLaws.
 BuchiWpdsProduct builds on the WPDS model from WpdsCorrectness.
-VpaClosureProperties is self-contained.
+All four VPA proof files are self-contained.
 
 
 ## Proof Traceability Table
 
 Every Rocq definition maps to a specific Rust construct. This table
-consolidates the traceability from all five proof files.
+consolidates the traceability from all nine proof files.
 
 ### SemiringLaws.v
 
@@ -107,6 +120,37 @@ consolidates the traceability from all five proof files.
 | `prod_step` / `prod_run` | `intersect()` | `vpa.rs` |
 | `vpa_equivalence_decidable` | `check_vpa_equivalence()` | `vpa.rs` |
 
+### VpaDelimiterSoundness.v
+
+| Rocq Definition | Rust Code | Location |
+|----------------|-----------|----------|
+| `delimiter` | `DelimiterClass<K>` | `vpa.rs` |
+| `delimiter_step` | `build_skip_table()` loop body | `vpa.rs` |
+| `close_mismatch_preserves` | mismatched closer leaves stack/table unchanged | `vpa.rs` |
+| `close_match_same_kind` | equal-kind pop and pair insertion | `vpa.rs` |
+| `dyck_depth_unbounded` | deep-nesting regression over `construct_vpa()` | `vpa.rs` tests |
+
+### VpaReachability.v
+
+| Rocq Definition | Rust Code | Location |
+|----------------|-----------|----------|
+| `transition_bottom_return` | bottom return reads `initial_stack_symbol` without popping | `vpa.rs::weighted_run` |
+| `balanced_summary` | least Boolean summary matrix | `vpa_decision.rs::is_language_empty` |
+| `ground_reachable` | summary plus bottom-return closure | `vpa_decision.rs::is_language_empty` |
+| `prefix_reachable` | summary plus unmatched-call closure | `vpa_decision.rs::is_language_empty` |
+| `summary_operational_nonempty_iff` | exact equivalence of summary and operational nonemptiness | VPA decision integration tests |
+
+### VpaDeterminization.v
+
+| Rocq Definition | Rust Code | Location |
+|----------------|-----------|----------|
+| `det_state` | `DetState { summary, reachable }` | `vpa_decision.rs` |
+| `internal_update` | `internal_successor` | `vpa_decision.rs` |
+| `call_update` | `call_successor` | `vpa_decision.rs` |
+| `return_bridge` | same-gamma bridge in `matched_return_successor` | `vpa_decision.rs` |
+| `bottom_return_update` | `bottom_return_successor` | `vpa_decision.rs` |
+| `cross_gamma_cannot_create_bridge` | cross-branch false-acceptance regression | `tests/vpa_decision_soundness.rs` |
+
 ### KatSoundness.v
 
 | Rocq Definition | Rust Code | Location |
@@ -138,41 +182,18 @@ consolidates the traceability from all five proof files.
 All proofs require Rocq 9.1 with the `coq-hammer-tactics` and
 `coq-equations` packages installed.
 
-### Standard Build
+The repository requires its capped entry point:
 
-```bash
-cd formal/rocq/mathematical_analyses
-make
+```sh
+make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-mathematical-analyses
 ```
 
-### Resource-Limited Build (recommended)
+The wrapper uses `systemd-run --user`, a 32 GiB hard memory cap, a 28 GiB
+high-water mark, no swap, `TasksMax=128`, and one build job. Uncapped direct
+proof builds are intentionally rejected.
 
-To prevent the proof checker from consuming excessive system resources,
-use `systemd-run` with resource limits:
-
-```bash
-cd formal/rocq/mathematical_analyses
-systemd-run --user --scope \
-  -p MemoryMax=126G \
-  -p CPUQuota=1800% \
-  -p IOWeight=30 \
-  -p TasksMax=200 \
-  make -j1
-```
-
-The `-j1` flag ensures serial compilation, which is important for
-memory-intensive modular proofs. The memory cap of 126 GB is 50% of the
-development machine's 252 GB RAM, and 1800% CPU quota allows up to 18
-cores.
-
-### Clean
-
-```bash
-make clean
-```
-
-This removes all generated `.vo`, `.vok`, `.vos`, `.glob` files and the
-auto-generated `CoqMakefile`.
+Generated artifacts are managed by the formal suite; do not use an uncapped
+direct build as a substitute for the registered gate.
 
 
 ## External Dependencies
@@ -188,10 +209,10 @@ auto-generated `CoqMakefile`.
 
 | Metric | Value |
 |--------|------:|
-| Total files | 5 |
-| Total lines | 3,474 |
+| Total files | 9 |
+| Total lines | 5,123 |
 | `Admitted` stubs | 0 |
-| Theorem/Lemma count | ~75 |
+| Theorem/Lemma/Corollary declarations | 237 |
 | Semiring instances | 3 (Provenance, Relational, KAT) |
 | Classical logic use | WpdsCorrectness only (MOVP convergence) |
 | Rocq version | 9.1 |

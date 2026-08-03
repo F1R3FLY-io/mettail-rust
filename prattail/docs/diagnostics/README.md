@@ -247,8 +247,8 @@ always run — see [OSLF analysis substrate](#oslf-analysis-substrate-prattail-a
 
 | ID | Name | Severity | Feature Gate | Description |
 |---|---|---|---|---|
-| V05 | weighted-vpa-non-determinizable | Warning | `vpa` | Non-idempotent semiring weights combined with ambiguous transitions — weighted subset construction may diverge |
-| V06 | weighted-vpa-inclusion-failure | Warning | `vpa` | Recovery automaton accepts inputs with cost exceeding threshold — stack-bounded repair too expensive |
+| [V05](vpa/V05.md) | weighted-vpa-non-determinizable (compatibility name) | Warning | `vpa` | Visible-alphabet partition conflict; exact VPA decisions reject the malformed model |
+| [V06](vpa/V06.md) | weighted-vpa-inclusion-failure (compatibility name) | Warning | `vpa` | Large invalid model cannot enter the exact Boolean decision path; no inclusion verdict has run |
 
 ### Parity Tree Automata (PT01–PT03)
 

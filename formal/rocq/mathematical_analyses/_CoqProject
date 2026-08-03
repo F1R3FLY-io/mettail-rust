@@ -8,11 +8,17 @@
 #   6.4. KAT Soundness           — Hoare triple encoding soundness
 #   6.5. Buchi × WPDS Product    — Product construction correctness
 #   6.6. CEGAR Soundness         — Abstraction ladder soundness + completeness
+#   6.7. VPA Delimiter Soundness — typed pairing + unbounded nesting refutation
+#   6.8. VPA Reachability       — exact balanced-summary emptiness semantics
+#   6.9. VPA Determinization    — summary-state transition equations
 #
 # Dependency order:
 #   SemiringLaws.v          — 6.1 (standalone)
 #   WpdsCorrectness.v       — 6.2 (standalone)
 #   VpaClosureProperties.v  — 6.3 (standalone)
+#   VpaDelimiterSoundness.v — 6.7 (standalone)
+#   VpaReachability.v       — 6.8 (standalone)
+#   VpaDeterminization.v    — 6.9 (standalone)
 #   KatSoundness.v          — 6.4 (depends on SemiringLaws)
 #   BuchiWpdsProduct.v      — 6.5 (depends on WpdsCorrectness)
 #   CegarSoundness.v        — 6.6 (depends on SemiringLaws, WpdsCorrectness)
@@ -23,6 +29,9 @@
 theories/SemiringLaws.v
 theories/WpdsCorrectness.v
 theories/VpaClosureProperties.v
+theories/VpaDelimiterSoundness.v
+theories/VpaReachability.v
+theories/VpaDeterminization.v
 theories/KatSoundness.v
 theories/BuchiWpdsProduct.v
 theories/CegarSoundness.v

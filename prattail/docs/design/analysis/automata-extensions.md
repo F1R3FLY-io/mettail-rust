@@ -36,7 +36,9 @@ by the input.  The input alphabet is partitioned into three disjoint sets:
 Call symbols push, return symbols pop, internal symbols leave the stack
 unchanged.  This restriction -- the stack height is a function of the input
 prefix alone -- yields a class closed under all Boolean operations with
-decidable equivalence and inclusion (in polynomial time).
+decidable equivalence and inclusion. Nondeterministic inclusion and
+equivalence are exponential-time in general because complementation requires
+the $`2^{O(|Q|^2)}`$ summary determinizer.
 
 PraTTaIL's structural delimiters `(`, `)`, `{`, `}`, `[`, `]` are natural
 call/return symbols.  Keywords and operators are internal symbols.
@@ -57,38 +59,39 @@ A VPA is `A = (Q, Sigma, Gamma, delta, Q0, Qf, gamma_bot)` where:
 
 ### 1.3 Determinization
 
-Unlike general PDA, VPA can always be determinised.  The key construction
-uses *summary edges* that compress matched call-return pairs:
+Unlike a general PDA, a VPA can always be determinised. An ordinary subset of
+control states is insufficient because it loses the correlation between a
+call branch, its pushed stack symbol, and the matching return. The exact state
+is a pair $`(S,R)`$, where $`S\subseteq Q\times Q`$ records
+well-matched summaries and $`R\subseteq Q`$ records currently reachable
+states:
 
 ```
-function determinize_vpa(nfa_vpa) -> det_vpa:
-    // States of the DFA are subsets of Q (powerset construction)
-    // Stack symbols of the DFA are pairs (source_state_set, pushed_symbol)
-    initial_set := epsilon_closure(nfa_vpa.Q0)
-    worklist := [initial_set]
-    visited := {initial_set}
-    det_transitions := {}
+function determinize_vpa(source) -> deterministic_vpa:
+    initial := intern(identity_relation(Q), active_initial_states(source))
+    worklist := [initial]
 
-    while worklist is non-empty:
-        S := worklist.pop()
-        for each symbol a in Sigma:
-            if a in Sigma_call:
-                T := union { delta_c(q, a).states | q in S }
-                stack_sym := (S, union { delta_c(q, a).gamma | q in S })
-                det_transitions.add_push(S, a, T, stack_sym)
-            else if a in Sigma_return:
-                // For each possible stack top (S', gamma):
-                for each (S', gamma) seen as stack symbol:
-                    T := union { delta_r(q, a, gamma) | q in S }
-                    det_transitions.add_pop(S, a, (S', gamma), T)
-            else:  // internal
-                T := union { delta_i(q, a) | q in S }
-                det_transitions.add_internal(S, a, T)
+    while current := worklist.pop():
+        for each internal symbol:
+            intern relational_image(current, internal_edges)
 
-            if T not in visited:
-                visited.add(T); worklist.push(T)
+        for each call symbol c:
+            push encode(current.id, c)
+            intern (identity_relation(Q), call_image(current.R, c))
 
-    return det_vpa
+        for each return symbol r and generated caller frame:
+            bridge(p, q) :=
+                exists x, y, gamma:
+                    call(p, c, gamma, x)
+                    and current.S(x, y)
+                    and return(y, r, gamma, q)
+            intern (caller.S compose bridge, caller.R compose bridge)
+
+        for each return symbol at bottom:
+            intern image(current, return_edges_that_read_Z0)
+
+    route empty successors to one nonaccepting dead state
+    return total deterministic_vpa
 ```
 
 ### 1.4 Closure Properties
@@ -99,8 +102,8 @@ function determinize_vpa(nfa_vpa) -> det_vpa:
 | Intersection    | Closed   | Not closed  |
 | Complement      | Closed   | Not closed  |
 | Determinization | Always   | Impossible  |
-| Equivalence     | Decidable (PTIME) | Undecidable |
-| Inclusion       | Decidable (PTIME) | Undecidable |
+| Equivalence     | Decidable (EXPTIME-complete) | Undecidable |
+| Inclusion       | Decidable (EXPTIME-complete) | Undecidable |
 
 ### 1.5 Diagram: VPA Stack Discipline
 
@@ -126,8 +129,9 @@ pub fn analyze_from_bundle(
 ```
 
 Constructs a VPA from the grammar's delimiter structure, performs
-determinization, and checks inclusion against a reference VPA derived
-from the grammar's category hierarchy.
+determinization, and reports whether the structurally valid model enters the
+exact Boolean decision path. It does not perform quantitative weighted
+inclusion against a second automaton.
 
 ---
 

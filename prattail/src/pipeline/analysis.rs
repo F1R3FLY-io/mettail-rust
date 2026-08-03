@@ -1692,9 +1692,6 @@ pub(crate) fn build_pipeline_analysis(
         .vpa
         .map_or(false, |v| v.is_determinizable && v.alphabet_mismatches.is_empty());
 
-    // ── Sprint A1: VPA nesting depth bound ──
-    let vpa_max_nesting_bound = _advanced.vpa.map(|v| v.max_nesting_bound);
-
     // ── Sprint A2: VPA bracket mismatch tokens ──
     let bracket_mismatch_tokens: HashSet<String> = _advanced
         .vpa
@@ -1737,40 +1734,39 @@ pub(crate) fn build_pipeline_analysis(
     // `per_category_entropy` itself is key-ordered because codegen resolves an
     // argmax over it with `max_by`, whose tie-break is "last element in iteration
     // order" — see the field's own documentation in `lib.rs`.
-    let per_category_entropy: std::collections::BTreeMap<String, f64> = if let Some(prob) =
-        _advanced.probabilistic
-    {
-        // Group rule selectivities by category and compute per-category entropy.
-        let mut cat_probs: std::collections::BTreeMap<String, Vec<f64>> =
-            std::collections::BTreeMap::new();
-        for (qualified_label, &selectivity) in &prob.rule_selectivities {
-            // qualified_label format is "Category::Rule"
-            if let Some(cat) = qualified_label.split("::").next() {
-                cat_probs
-                    .entry(cat.to_string())
-                    .or_default()
-                    .push(selectivity);
-            }
-        }
-
-        let mut entropy_map = std::collections::BTreeMap::new();
-        for (cat, probs) in &cat_probs {
-            let sum: f64 = probs.iter().sum();
-            if sum > 0.0 {
-                let mut entropy = 0.0_f64;
-                for &p in probs {
-                    let normalized = p / sum;
-                    if normalized > 0.0 {
-                        entropy -= normalized * normalized.ln();
-                    }
+    let per_category_entropy: std::collections::BTreeMap<String, f64> =
+        if let Some(prob) = _advanced.probabilistic {
+            // Group rule selectivities by category and compute per-category entropy.
+            let mut cat_probs: std::collections::BTreeMap<String, Vec<f64>> =
+                std::collections::BTreeMap::new();
+            for (qualified_label, &selectivity) in &prob.rule_selectivities {
+                // qualified_label format is "Category::Rule"
+                if let Some(cat) = qualified_label.split("::").next() {
+                    cat_probs
+                        .entry(cat.to_string())
+                        .or_default()
+                        .push(selectivity);
                 }
-                entropy_map.insert(cat.clone(), entropy);
             }
-        }
-        entropy_map
-    } else {
-        std::collections::BTreeMap::new()
-    };
+
+            let mut entropy_map = std::collections::BTreeMap::new();
+            for (cat, probs) in &cat_probs {
+                let sum: f64 = probs.iter().sum();
+                if sum > 0.0 {
+                    let mut entropy = 0.0_f64;
+                    for &p in probs {
+                        let normalized = p / sum;
+                        if normalized > 0.0 {
+                            entropy -= normalized * normalized.ln();
+                        }
+                    }
+                    entropy_map.insert(cat.clone(), entropy);
+                }
+            }
+            entropy_map
+        } else {
+            std::collections::BTreeMap::new()
+        };
 
     // ── Recursive SCC categories from Buchi analysis ──
     // Categories participating in accepting SCCs (recursive grammar loops).
@@ -1791,7 +1787,6 @@ pub(crate) fn build_pipeline_analysis(
         decision_trees,
         dead_binder_categories,
         bracket_deterministic,
-        vpa_max_nesting_bound,
         bracket_mismatch_tokens,
         independent_categories,
         guard_disambiguated_tokens,

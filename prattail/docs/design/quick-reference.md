@@ -2164,14 +2164,12 @@ struct WeightedVpa<W: Semiring> {
 **Pipeline integration:** `build_alphabet_from_syntax()` derives the
 alphabet partition from grammar rules.  Bracket tokens (`(`, `)`, `{`, `}`,
 `[`, `]`) are classified as call/return; all others as internal.  Results
-feed V01-V06 lints including determinization opportunities and nesting
-bound analysis.
+feed the implemented VPA diagnostics and determinization analysis.
 
-**VPA nesting bound:** When `vpa_max_nesting_bound` is computed, it provides
-an upper bound on bracket depth.  This bound feeds into:
-- Recovery: `vpa_nesting_ceiling` in `RecoveryConfig`
-- Parser: stack depth pre-allocation hints
-- Lint V06: stack alphabet optimization suggestions
+**VPA nesting is unbounded:** finite control-state count is not a delimiter
+depth bound; the VPA stack is unbounded. `RecoveryConfig.vpa_nesting_ceiling`
+is an optional caller-selected recovery policy and defaults to `None`. It is
+not populated by `VpaAnalysis` or `PipelineAnalysis`.
 
 **Applications:**
 - `check_equivalence()` detects redundant bracket rules;
@@ -2184,13 +2182,11 @@ an upper bound on bracket depth.  This bound feeds into:
   within enclosing binders (e.g., Rholang `new x in { P }`), quantifier
   nesting is well-formed, and suffix language analysis determines whether
   more input is needed to close open brackets.
-- `vpa_max_nesting_bound` feeds `RecoveryConfig.vpa_nesting_ceiling`
-  (bracket-mismatch repair cost scaling) and trampoline parser stack
-  pre-allocation, avoiding dynamic resizing for well-bounded grammars.
-- V05 flags exponential determinization blowup (too many stack symbols);
-  V06 suggests stack alphabet simplification.
-- `analyze_from_bundle()` produces `VpaAnalysis` (nesting bound,
-  alphabet partition, determinization feasibility) wired into
+- An application may explicitly set `RecoveryConfig.vpa_nesting_ceiling` to
+  express a resource or interaction policy; exceeding it is not a grammar
+  violation proof.
+- `analyze_from_bundle()` produces `VpaAnalysis` containing state count,
+  alphabet mismatches, and determinization feasibility, wired into
   `LintContext.vpa_result`.
 
 **Lints:** V01-V06.
@@ -3471,8 +3467,6 @@ pub struct PipelineAnalysis {
     pub dead_binder_categories: HashSet<String>,
     #[cfg(feature = "vpa")]
     pub bracket_deterministic: bool,
-    #[cfg(feature = "vpa")]
-    pub vpa_max_nesting_bound: Option<usize>,
     #[cfg(feature = "multi-tape")]
     pub independent_categories: HashSet<String>,
     #[cfg(feature = "symbolic-automata")]

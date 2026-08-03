@@ -68,8 +68,10 @@ where:
 - **q_0 in Q** is the initial state
 - **F subset Q** is the set of accepting states
 
-A word w in Sigma* is accepted iff A can consume w starting from q_0 with
-an empty stack and end in some state in F (with empty stack).
+A word $`w\in\Sigma^*`$ is accepted iff the automaton can consume
+$`w`$ from $`q_0`$ and finish in a state in $`F`$. PraTTaIL
+uses final-state acceptance and permits residual frames. The permanent bottom
+marker is never popped: a bottom return reads it and leaves it in place.
 
 ### Closure Properties (Alur & Madhusudan, 2004)
 
@@ -167,22 +169,33 @@ At runtime, the VPA alphabet classification enables an O(n) single-pass
 algorithm to find matching delimiters across the entire token stream.
 
 ```rust
-pub fn build_skip_table<T>(
+pub fn build_skip_table<T, K>(
     tokens: &[(T, Range)],
-    classify: impl Fn(&T) -> SymbolKind,
+    classify: impl Fn(&T) -> DelimiterClass<K>,
 ) -> Vec<Option<usize>>
+where
+    K: Eq,
 ```
 
-**Algorithm**: Maintain a stack of opener indices. For each token:
-- **Call**: push current index onto stack
-- **Return**: pop stack; if non-empty, record `skip_table[opener] = i`
-- **Internal**: skip
+**Algorithm**: Maintain a stack of `(opener_index, delimiter_kind)` frames. For
+each token:
+- **Open(kind)**: push the current index and `kind`.
+- **Close(kind)**: pop and record `skip_table[opener] = i` only when `kind`
+  equals the top frame's kind. A mismatch leaves the stack unchanged.
+- **Internal**: leave the stack and table unchanged.
 
 **Invariants**:
-- `skip_table[i] = Some(j)` implies i < j and tokens[i] is Call, tokens[j]
-  is Return
+- `skip_table[i] = Some(j)` implies $`i < j`$ and the opener and closer have
+  the same delimiter kind.
 - `skip_table[i] = None` for Internal tokens and unmatched openers
-- Unmatched closers (Return with empty stack) produce no entry
+- A closer with an empty delimiter-pairing stack produces no entry
+- Recorded intervals are laminar: two intervals are disjoint or one contains
+  the other; they never cross.
+
+A direction-only classifier is insufficient for multiple delimiter kinds. It
+would pair `(]` merely because `(` is an opener and `]` is a closer. Retaining
+the pair identity in `DelimiterClass<K>` makes that invalid state
+unrepresentable at the pairing boundary.
 
 ### Worked Example
 
@@ -365,7 +378,9 @@ build_vpa_alphabet_from_modes()   Classify tokens into Sigma_c/Sigma_r/Sigma_int
       |         |         v
       |         |     V01/V02 diagnostics
       |         |
-      |         +---> [runtime] build_skip_table()
+      |         +---> [runtime] typed DelimiterClass<K>
+      |                   |
+      |                   +---> build_skip_table()
       |                   |
       |                   v
       |               skip_table: Vec<Option<usize>>
