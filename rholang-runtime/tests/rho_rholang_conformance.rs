@@ -71,7 +71,7 @@
 //! | **D** | `Fixed` arithmetic on **mismatched scales** | rescales | `OperatorExpectedError` | C1 | open |
 //! | **E** | canonical **collection order** for `toByteArray` | protobuf byte order | `ScoredTerm` value order | C2 | ★ CLOSED |
 //! | **F** | `.toByteArray()` | a hex `GString` — and unreachable from source | a real `GByteArray` | C2 | ★ CLOSED |
-//! | **G** | `Pathmap` / zippers | own carriers + 20+ methods | `EPathmapBody`/`EZipperBody` exist, unused | C4 | open |
+//! | **G** | `Pathmap` / zippers | homogeneous trie carriers + 20+ methods | native `EPathmapBody` / `EZipperBody` | C4 | ★ CLOSED |
 //! | **H** | `==` / `!=` on **`Bool`** | `Bool` (was: `error`, no fold arm) | `Bool(true)` | — | ★ CLOSED |
 //! | **I** | a numeral's **carrier** depends on syntax (`@(1)`:`Int` vs `@1`:`BigInt`, `5u32`:`BigInt`) | `*(@(1)) + 2` ⟹ `error` | Rholang has ONE integer | the GRAMMAR (partitioned literal domains), NOT the WPDA projection | ★ CLOSED |
 //! | **J** | `x!()` satisfies `for(@y <- x)` | fires, `y = []` | arity-checked COMM: rests | C1 | open |
@@ -264,23 +264,11 @@ fn parse(source: &str) -> Proc {
 /// ① the FOLD side: reduce `proc` to a Dovetail normal form and render it in Rholang surface
 /// syntax.
 ///
-/// Runs on a worker thread with a 32 MiB stack. The thread is not a panic *guard* (see the module
-/// header — unwinding across Cranelift frames aborts); it exists so the deeply recursive generated
-/// saturation code has the same headroom `RUST_MIN_STACK` gives the main test thread.
 fn fold(proc: &Proc) -> Result<String, String> {
-    let owned = proc.clone();
-    std::thread::Builder::new()
-        .name("rholang-fold".into())
-        .stack_size(32 * 1024 * 1024)
-        .spawn(move || {
-            let term = RholangTerm(RholangTermInner::Proc(owned));
-            RholangLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
-                .map(|normal_form| normal_form.to_string())
-                .map_err(|err| format!("dovetail: {err}"))
-        })
-        .expect("spawn the rholang fold worker")
-        .join()
-        .unwrap_or_else(|_| unreachable!("a fold panic aborts the process; it never unwinds here"))
+    let term = RholangTerm(RholangTermInner::Proc(proc.clone()));
+    RholangLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
+        .map(|normal_form| normal_form.to_string())
+        .map_err(|err| format!("dovetail: {err}"))
 }
 
 /// ① the FOLD side for a whole PROGRAM: a bounded COMM+normalize fixpoint.
@@ -291,35 +279,26 @@ fn fold(proc: &Proc) -> Result<String, String> {
 /// language test oracle runs (`languages/tests/rholang_tests.rs:331` `run_fixpoint`), reduced to
 /// the single-successor case this suite needs.
 fn fold_program(proc: &Proc) -> Result<String, String> {
-    let owned = proc.clone();
-    std::thread::Builder::new()
-        .name("rholang-fold-program".into())
-        .stack_size(32 * 1024 * 1024)
-        .spawn(move || {
-            let mut current = owned;
-            for _ in 0..COMM_STEP_BOUND {
-                // Fold first: a send payload must be a value before the rendezvous delivers it.
-                let term = RholangTerm(RholangTermInner::Proc(current.clone()));
-                if let Ok(normal_form) =
-                    RholangLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
-                {
-                    if let Some(folded) = proc_of(normal_form.as_ref()) {
-                        if !folded.term_eq(&current) {
-                            current = folded;
-                            continue;
-                        }
-                    }
-                }
-                match current.try_comm_once() {
-                    Some(next) if !next.term_eq(&current) => current = next,
-                    _ => return Ok(current.to_string()),
+    let mut current = proc.clone();
+    for _ in 0..COMM_STEP_BOUND {
+        // Fold first: a send payload must be a value before the rendezvous delivers it.
+        let term = RholangTerm(RholangTermInner::Proc(current.clone()));
+        if let Ok(normal_form) =
+            RholangLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
+        {
+            if let Some(folded) = proc_of(normal_form.as_ref()) {
+                if !folded.term_eq(&current) {
+                    current = folded;
+                    continue;
                 }
             }
-            Err(format!("comm+fold fixpoint did not settle within {COMM_STEP_BOUND} steps"))
-        })
-        .expect("spawn the rholang program-fold worker")
-        .join()
-        .unwrap_or_else(|_| unreachable!("a fold panic aborts the process; it never unwinds here"))
+        }
+        match current.try_comm_once() {
+            Some(next) if !next.term_eq(&current) => current = next,
+            _ => return Ok(current.to_string()),
+        }
+    }
+    Err(format!("comm+fold fixpoint did not settle within {COMM_STEP_BOUND} steps"))
 }
 
 /// The FOLD side, returning the normal form as a `Proc` rather than its rendered string, so a test
@@ -328,20 +307,10 @@ fn fold_program(proc: &Proc) -> Result<String, String> {
 fn fold_to_proc(source: &str) -> Proc {
     let owned = parse(source);
     let label = source.to_string();
-    std::thread::Builder::new()
-        .name("rholang-fold-to-proc".into())
-        .stack_size(32 * 1024 * 1024)
-        .spawn(move || {
-            let term = RholangTerm(RholangTermInner::Proc(owned));
-            let normal_form =
-                RholangLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
-                    .unwrap_or_else(|err| panic!("dovetail failed for {label:?}: {err}"));
-            proc_of(normal_form.as_ref())
-                .unwrap_or_else(|| panic!("{label:?} did not fold to a Proc"))
-        })
-        .expect("spawn the rholang fold-to-proc worker")
-        .join()
-        .unwrap_or_else(|_| unreachable!("a fold panic aborts the process; it never unwinds here"))
+    let term = RholangTerm(RholangTermInner::Proc(owned));
+    let normal_form = RholangLanguage::dovetail_normal_term(&term, DOVETAIL_ITERS, DOVETAIL_NODES)
+        .unwrap_or_else(|err| panic!("dovetail failed for {label:?}: {err}"));
+    proc_of(normal_form.as_ref()).unwrap_or_else(|| panic!("{label:?} did not fold to a Proc"))
 }
 
 /// Unwrap a boxed `RholangTerm` back to its `Proc` alternative (`None` for a non-`Proc` category
@@ -720,9 +689,9 @@ async fn divergence_a_witness_int_overflow_folds_to_the_error_term() {
         "A: Rholang's fold fails CLOSED on i64 overflow — never a fabricated value"
     );
 
-    let err = reduce(&proc)
-        .await
-        .expect_err("the consensus reducer refuses an unrepresentable sum (checked since 2026-07-29)");
+    let err = reduce(&proc).await.expect_err(
+        "the consensus reducer refuses an unrepresentable sum (checked since 2026-07-29)",
+    );
     assert!(
         err.contains("Arithmetic overflow in addition"),
         "A: the consensus reducer must REFUSE, naming the operation and the operands — it wrapped \
@@ -738,7 +707,9 @@ async fn divergence_a_witness_int_overflow_folds_to_the_error_term() {
     // ── THE CONTROL: a TOTAL sum still computes, on the machine, to the same value. If this
     // moves, the upstream fix broke addition rather than its overflow disposition.
     let total = parse("int(7, 64) + int(8, 64)");
-    let observed = reduce(&total).await.expect("a representable sum still evaluates");
+    let observed = reduce(&total)
+        .await
+        .expect("a representable sum still evaluates");
     assert_eq!(
         observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["15".to_string()],
@@ -1454,130 +1425,37 @@ async fn c2_closed_bag_to_byte_array_keeps_the_bag_abi_tag() {
 
 // ── G — Pathmap and zipper carriers ──────────────────────────────────────────────────────────────
 
-/// **Divergence G (witness) — `Pathmap` lowers to `EMap`, so the trie carrier is discarded.**
+/// **Divergence G — ★ CLOSED 2026-08-01.**
 ///
-/// `rhoapi` already declares `e_pathmap_body = 32` and `e_zipper_body = 33`, and
-/// `rholang/src/rust/interpreter/reduce.rs` already implements
-/// `readZipper/writeZipper/descendTo/getLeaf/getSubtrie/graft/joinInto/ascend/childCount/…`. But
-/// `rholang-runtime/src/rholang_ast.rs::lower_pathmap` (line 2317) lowers `Pathmap` to **`EMap`**,
-/// discarding the trie structure, so the ~8 pathmap and ~15 zipper methods implemented MeTTaIL-side
-/// (`languages/src/rholang/{pathmap,zipper}.rs`) never reach their native counterpart.
+/// A Rholang pathmap now lowers directly to the homogeneous native carrier:
+/// set literals select `PathMap<()>`, map literals select `PathMap<Par>`, and an
+/// empty literal stays neutral until its first typed insertion.  Generic map
+/// methods and zipper methods both dispatch on `EPathmapBody`; no `EMap`
+/// compatibility encoding or decoded entry vector sits on either route.
 ///
-/// ★ AMENDED by C1 (2026-07-26). The second half of this witness used to assert that pathmap and
-/// zipper methods "never reach the machine at all", i.e. that they were rejected at the LOWERING:
-///
-///     for (source, expected_error) in [
-///         ("{|1:2|}.get(1)", "unsupported: m.get(k) map method"),
-///         ("{|1:2|}.union({|3:4|})", "unsupported: m.union(n) map method"),
-///         ("{|1:2|}.readZipper()", "unsupported: p.readZipper() zipper method"),
-///     ] { … }
-///
-/// That is no longer the shape of G. C1 routes all three, so they now reach the reducer and are
-/// refused at the CARRIER instead — which is a strictly better statement of the same divergence,
-/// because the carrier is the thing C4 fixes. The two live halves below are the amended assertions;
-/// the full method-by-method picture is
-/// [`c1_pathmap_methods_answer_through_the_emap_encoding`] and
-/// [`c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`].
-///
-/// *Delete when C4 lands.*
+/// `RuntimeObservationValue` intentionally has no pathmap/zipper variant, so
+/// this closure test observes operations *through* the carrier: value lookup
+/// proves the map specialization survived, and `leafCount` proves the zipper
+/// sees the same trie.
 #[tokio::test(flavor = "multi_thread")]
-async fn divergence_g_witness_pathmap_lowers_to_emap_and_zippers_are_unsupported() {
-    // The pathmap literal round-trips through the fold as a pathmap …
+async fn divergence_g_closed_pathmaps_and_zippers_use_native_homogeneous_tries() {
     assert_eq!(fold(&parse("{|1:2|}")).expect("the fold converges"), "{|1:2|}");
-    // … but the machine only ever sees a Map.
-    let observed = reduce(&parse("{|1:2|}")).await.expect("the literal lowers");
-    assert!(
-        matches!(observed.as_slice(), [RuntimeObservationValue::Map(_)]),
-        "G: the trie carrier is discarded — the machine observes an EMap, got {observed:?}"
-    );
 
-    // ① A method Rholang defines on a Map now ANSWERS, through the encoding, because the encoding
-    //    happens to be key-faithful. The value is right; it is the carrier that was lost.
     let observed = reduce(&parse("{|1:2|}.get(1)"))
         .await
-        .expect("get routes and answers");
+        .expect("map lookup reaches PathMap<Par>");
     assert_eq!(
         observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec!["2".to_string()]
     );
 
-    // ② A method that needs the TRIE cannot be rescued by a key-faithful encoding: it reaches the
-    //    reducer and is refused at the carrier. This is G, stated where it actually bites.
+    let observed = reduce(&parse("{|1:2|}.readZipper().leafCount()"))
+        .await
+        .expect("zipper construction reaches the native trie");
     assert_eq!(
-        reduce(&parse("{|1:2|}.readZipper()"))
-            .await
-            .expect_err("no EPathmapBody exists yet"),
-        r#"reduce: inj: MethodNotDefined { method: "readZipper", other_type: "map" }"#,
-        "G: a zipper cannot be built over an EMap — this is exactly what C4 closes"
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
+        vec!["1".to_string()]
     );
-}
-
-/// **Divergence G (target) — `Pathmap` is `EPathmapBody` and zippers are `EZipperBody`.**
-///
-/// Closed by **C4**. This is the divergence with the most strategic weight: the in-flight EPathMap
-/// wire-model campaign needs Rholang pathmaps to land on the *real* `EPathMap` carrier, not on an
-/// `EMap` that has already thrown the trie structure away.
-///
-/// ★★ AMENDED (C4 investigation, 2026-07-26 — MEASURED). The middle assertion used to be
-///
-/// ```ignore
-///     reduce(&parse("{|1:2|}.get(1)"))
-///         .await
-///         .expect("G: pathmap methods must reach the reducer's own pathmap method table");
-/// ```
-///
-/// and it encoded a **target that can never be reached**: `get` accepts `EMapBody` and nothing
-/// else, so on the native carrier it answers `MethodNotDefined { other_type: "pathmap" }` — pinned
-/// by [`c4_the_native_carrier_refuses_the_map_method_surface`]. A target test whose assertion is
-/// unsatisfiable is worse than no target test: flipping the carrier would turn this from
-/// `#[ignore]`d-and-red into red, and the natural repair — "make `get` work on a pathmap" — invents
-/// consensus semantics.
-///
-/// The replacement is `getSubtrie()`, chosen because it satisfies both sides of the constraint: the
-/// interpreter's `getSubtrie` accepts an `EPathmapBody` receiver (`reduce.rs:5322`), and Rholang
-/// HAS the method (`Proc::PGetSubtrie`, routed by C1b). The carrier's own key lookup, `atPath`, is
-/// the semantically closer counterpart to `get` but is NOT reachable from Rholang source — Rholang
-/// has no `atPath` production at all — so it cannot appear in a test that parses Rholang.
-///
-/// The `#[ignore]` reason has been corrected too. G is NOT blocked on a lowering that simply has
-/// not been written; it is blocked on a semantic decision, because `EPathMap` has no value slot for
-/// Rholang's `{| k : v |}` to land in. See the C1b block in `rholang-runtime/src/rholang_ast.rs`.
-///
-/// ★★ AMENDED AGAIN (2026-07-27) — **half of the stated blocker is gone.** The reason above used to
-/// name a SECOND blocker: *"Rholang keys are BARE, the shape whose walk does not terminate on the
-/// interpreter"*. That is no longer true of the interpreter — the bare-element enumeration surface
-/// is sound and is pinned by [`c4_a_bare_element_walk_visits_every_element_in_order`] and
-/// [`c4_a_bare_element_reads_back_as_itself`]. Re-measured with the blocker removed, this test
-/// still fails, and it fails at the FIRST assertion for the ORIGINAL reason: `{|1:2|}` still
-/// observes as an `EMap`, because `lower_pathmap` still emits one. Nothing downstream of the
-/// lowering is what holds G — the value-slot decision is, alone.
-///
-/// ⚠ Note also what this test can and cannot say about VALUES. Under a key-≡-value carrier
-/// `{|1:2|}` cannot round-trip: the value `2` has nowhere to live. So a future version of this test
-/// must assert whatever the carrier decision settles on, and asserting a value readout today would
-/// be pre-judging it. It therefore asserts only that the calls REACH the pathmap surface.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "divergence G: blocked on the C4 CARRIER DECISION, not on unwritten plumbing — EPathMap \
-            has no value slot for Rholang's `{| k : v |}` (proto fields 6/7 were the retired \
-            value_form/value_entries experiment; the ground wire is a KEY stream). ⚠ The former \
-            second clause — `Rholang keys are BARE, the shape whose walk does not terminate` — is \
-            RETIRED: that interpreter defect is fixed (f1r3node 5aacebc3 + 0a6d2ce0 + 7dcff96f). \
-            Re-measured 2026-07-27 with it gone: this still fails at its FIRST assertion, because \
-            `lower_pathmap` still emits an EMap, which is the value-slot decision itself"]
-async fn divergence_g_target_pathmap_and_zippers_use_their_native_carriers() {
-    let observed = reduce(&parse("{|1:2|}"))
-        .await
-        .expect("the pathmap literal lowers");
-    assert!(
-        !matches!(observed.as_slice(), [RuntimeObservationValue::Map(_)]),
-        "G: a Pathmap must not observe as an EMap — the trie carrier must survive lowering"
-    );
-    reduce(&parse("{|1:2|}.getSubtrie()"))
-        .await
-        .expect("G: pathmap methods must reach the reducer's own pathmap method table");
-    reduce(&parse("{|1:2|}.readZipper()"))
-        .await
-        .expect("G: zipper construction must reach EZipperBody");
 }
 
 // ── H — boolean equality (discovered by this suite) ──────────────────────────────────────────────
@@ -1966,92 +1844,56 @@ async fn c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime() {
     );
 }
 
-/// **C1b — the Pathmap/Zipper family is routed, and blocked at the CARRIER by C4.**
+/// **C1b/C4 — the routed Pathmap/Zipper family now reaches the native trie.**
 ///
-/// Every one of these methods requires an `EPathmapBody` or `EZipperBody` receiver
-/// (`reduce.rs:4926` `readZipper`, `5322` `getSubtrie`, …), and Rholang's `Pathmap` still lowers
-/// to a plain `EMap` — divergence **G**. So the routing is correct and inert: the machine names
-/// the carrier that is wrong, which is exactly what C4 fixes.
-///
-/// ★ This is the answer to "is C4 still a blocker for C1?": **yes, but only for this family.** The
-/// ordinary list/string/set/map surface routes and agrees today, with no dependency on C4 at all.
+/// These calls are parsed and lowered from Rholang source; there is no synthetic
+/// target carrier in this test.  Successful reduction therefore proves that C4
+/// removed the former `EMap` carrier block rather than merely adding isolated
+/// target-side APIs.
 #[tokio::test(flavor = "multi_thread")]
-async fn c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier() {
-    for (source, method) in [
-        ("{| 1 : 10, 2 : 20 |}.readZipper().leafCount()", "readZipper"),
-        ("{| 1 : 10, 2 : 20 |}.readZipper().toNextLeaf().getPath()", "readZipper"),
-        ("{| 1 : 10, 2 : 20 |}.readZipper().childCount()", "readZipper"),
-        ("{| 1 : 10 |}.getSubtrie()", "getSubtrie"),
+async fn c1b_pathmap_zipper_family_reaches_the_native_carrier() {
+    let observed = reduce(&parse("{| 1 : 10, 2 : 20 |}.readZipper().leafCount()"))
+        .await
+        .expect("readZipper reaches EPathmapBody");
+    assert_eq!(
+        observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
+        vec!["2".to_string()]
+    );
+
+    for source in [
+        "{| 1 : 10, 2 : 20 |}.readZipper().toNextLeaf().getPath()",
+        "{| 1 : 10, 2 : 20 |}.readZipper().childCount()",
+        "{| 1 : 10 |}.getSubtrie()",
     ] {
-        let proc = parse(source);
-        let error = reduce(&proc)
-            .await
-            .expect_err("the EMap carrier must be refused");
-        assert_eq!(
-            error,
-            format!(r#"reduce: inj: MethodNotDefined {{ method: "{method}", other_type: "map" }}"#),
-            "C1b: {source:?} — the method must reach the reducer and be refused at the CARRIER \
-             (divergence G / C4), not rejected at the lowering"
-        );
+        reduce(&parse(source)).await.unwrap_or_else(|error| {
+            panic!("C1b/C4: {source:?} must reach the native trie: {error}")
+        });
     }
 }
 
-/// **Divergence G, sharpened by C1: a routed Pathmap method answers through the `EMap` encoding.**
+/// **C1/C4 — generic collection methods preserve the native PathMap carrier.**
 ///
-/// Because `lower_pathmap` emits a plain `EMap`, a routed method sees a Map. That splits three
-/// ways, and all three are measured here rather than assumed:
-///
-/// 1. **key-faithful and AGREEING** — `get`/`contains` read the same key/value relation the fold
-///    reads, so both sides answer identically;
-/// 2. **the machine is MORE DEFINED than the fold** — `size`/`keys`/`delete` answer on the machine
-///    where Rholang's fold bodies have no `Pathmap` arm and reduce to `error`. Under "the reducer
-///    is normative" the machine is right and the fold is incomplete;
-/// 3. **⚠ the CARRIER of the result differs** — `set`/`union` return a `Pathmap` from the fold and
-///    a `Map` from the machine. The VALUE is the same relation; the type is not, and a `Pathmap`
-///    method applied to that result would then fail. This is the concrete cost of divergence G and
-///    it closes with C4.
+/// Observable lookup/cardinality results pin the relation, while method chains
+/// pin carrier preservation: a result accidentally converted to `EMap` would
+/// fail when the following zipper method dispatches.
 #[tokio::test(flavor = "multi_thread")]
-async fn c1_pathmap_methods_answer_through_the_emap_encoding() {
-    // ① key-faithful: the two sides agree outright.
+async fn c1_pathmap_methods_answer_through_native_pathmap_storage() {
     assert_conformant("{| 1 : 10, 2 : 20 |}.get(1)", "10").await;
     assert_conformant("{| 1 : 10, 2 : 20 |}.contains(1)", "true").await;
 
-    // ② the machine is more defined than the fold.
-    for (source, machine_answer) in [
+    for (source, answer) in [
         ("{| 1 : 10, 2 : 20 |}.size()", "2"),
         ("{| 1 : 10, 2 : 20 |}.keys()", "Set(1, 2)"),
-        ("{| 1 : 10, 2 : 20 |}.delete(1)", "{2:20}"),
+        ("{| 1 : 10, 2 : 20 |}.delete(1).size()", "1"),
+        ("{| 1 : 10, 2 : 20 |}.set(3, 30).get(3)", "30"),
+        ("{| 1 : 10, 2 : 20 |}.union({| 3 : 30 |}).get(3)", "30"),
+        ("{| 1 : 10, 2 : 20 |}.set(3, 30).readZipper().leafCount()", "3"),
     ] {
-        let proc = parse(source);
-        assert_eq!(
-            fold(&proc).expect("the fold converges"),
-            "error",
-            "G: {source:?} — Rholang's fold body has no Pathmap arm"
-        );
-        let observed = reduce(&proc).await.expect("the machine reduces");
+        let observed = reduce(&parse(source)).await.expect("the machine reduces");
         assert_eq!(
             observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
-            vec![machine_answer.to_string()],
-            "G: {source:?} — the machine answers through the EMap encoding"
-        );
-    }
-
-    // ③ ⚠ same value, different CARRIER: `{|…|}` from the fold, `{…}` from the machine.
-    for (source, fold_answer, machine_answer) in [
-        ("{| 1 : 10, 2 : 20 |}.set(3, 30)", "{|1:10, 2:20, 3:30|}", "{1:10, 2:20, 3:30}"),
-        (
-            "{| 1 : 10, 2 : 20 |}.union({| 3 : 30 |})",
-            "{|1:10, 2:20, 3:30|}",
-            "{1:10, 2:20, 3:30}",
-        ),
-    ] {
-        let proc = parse(source);
-        assert_eq!(fold(&proc).expect("the fold converges"), fold_answer);
-        let observed = reduce(&proc).await.expect("the machine reduces");
-        assert_eq!(
-            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
-            vec![machine_answer.to_string()],
-            "G: {source:?} — the machine cannot return a Pathmap it has no carrier for"
+            vec![answer.to_string()],
+            "C1/C4: {source:?} must answer through EPathmapBody"
         );
     }
 }
@@ -2085,16 +1927,16 @@ async fn c1_length_on_a_map_is_fold_only() {
 /// the one thing option C exists to prevent. `values`/`count`/`remove`/`subtract` have no key at
 /// all.
 ///
-/// ★ AMENDED by the C4 investigation (2026-07-26). This used to say `restrict`/`meet`/`getSubtrieAt`
-/// carried "plausible but UNVERIFIED candidates … which cannot be exercised even once while
-/// `Pathmap` lowers to `EMap`". They CAN be exercised — a real `EPathMap` is constructible in this
-/// file regardless of what `lower_pathmap` emits — and now have been. One guess was wrong:
+/// ★ AMENDED by the C4 investigation (2026-07-26) and carrier closure (2026-08-01).
+/// `restrict`/`meet`/`getSubtrieAt` can be exercised directly and source pathmaps
+/// now reach `EPathMap`. One candidate mapping was nevertheless wrong:
 /// `restrict` is exact-key membership and `restriction` is PREFIX containment, so the candidate
 /// mapping would have silently widened the operation. See
 /// [`c4_restrict_is_not_restriction_and_meet_is_intersection`] and
 /// [`c4_get_subtrie_at_is_read_zipper_at_then_get_subtrie`] for the measurements, and the
 /// `unsupported_construct_name` block in `rholang_ast.rs` for why all three are nevertheless still
-/// held: they are decided by the C4 carrier question, not by the mapping.
+/// held: their operation/arity contracts still differ, independently of the
+/// now-closed carrier question.
 ///
 /// Each error names the construct and the reason it is held.
 #[tokio::test(flavor = "multi_thread")]
@@ -2795,16 +2637,21 @@ fn zipper_expr_par(instance: ZExprInstance) -> Par {
     Par::default().with_exprs(vec![ZExpr { expr_instance: Some(instance) }])
 }
 
-/// A ground `EPathMap` over the given elements. In Rholang a PathMap element is BOTH the key and
-/// the value it stores, which is why `getLeaf()` at a leaf returns the same list `getPath()` does.
-///
-/// ★ This is the C4 STAND-IN. Rholang source cannot produce an `EPathmapBody` today — a `Pathmap`
-/// literal lowers to `EMap` (divergence G), which is exactly what
-/// [`c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`] measures. Building the carrier here
-/// exercises the routed method names against the real reducer NOW, so that when C4 lands the
-/// contract is already proved rather than discovered.
+/// A set-specialized `EPathMap` over the given elements.  Each member is its
+/// canonical trie key and the semantic value returned by `getLeaf`.
 fn zipper_epathmap(elements: Vec<Par>) -> Par {
     zipper_expr_par(ZExprInstance::EPathmapBody(ZEPathMap::new(elements, Vec::new(), false, None)))
+}
+
+/// A map-specialized `EPathMap`; keys remain canonical compressed paths while
+/// the associated `Par`s occupy PathMap value slots.
+fn zipper_epathmap_map(entries: Vec<(Par, Par)>) -> Par {
+    zipper_expr_par(ZExprInstance::EPathmapBody(ZEPathMap::new_map(
+        entries,
+        Vec::new(),
+        false,
+        None,
+    )))
 }
 
 fn zipper_gstring(text: &str) -> Par {
@@ -3188,13 +3035,12 @@ async fn c1_rholang_side_still_reports_exhaustion_as_stuck() {
 }
 
 /// **★ Every routed zipper/pathmap method is exercised against a REAL `EPathMap` — the check that
-/// caught `setLeaf`.**
+/// caught the historical `setLeaf` mismatch.**
 ///
 /// A shared method NAME is not a shared operation, and this family is the one place where that
-/// cannot be checked by the ordinary conformance rows: `Pathmap` lowers to `EMap`, so none of these
-/// calls can reach their carrier from Rholang source until C4
-/// ([`c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`]). Without this test the entire
-/// family would be routed on the strength of name matching alone.
+/// cannot be checked completely by ordinary observation rows because zipper
+/// and pathmap results have no `RuntimeObservationValue` variant. Without this
+/// test the family would be routed on the strength of name matching alone.
 ///
 /// It already earned its keep. `setLeaf` is **not** in the list below because this check found that
 /// Rholang's `w.setLeaf(full, v)` writes at an ABSOLUTE PATH ARGUMENT while Rholang's
@@ -3275,54 +3121,22 @@ async fn c1b_routed_zipper_family_matches_the_interpreter_arity() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// C4 — THE NATIVE PATHMAP CARRIER: what it is, and what it provably cannot hold
+// C4 — THE NATIVE HOMOGENEOUS PATHMAP CARRIER
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
-// C1b routed twenty-two Pathmap/Zipper methods and recorded that they were "UNREACHABLE until C4",
-// on the understanding that C4 was a plumbing change: point `lower_pathmap` at `EPathmapBody`
-// instead of `EMap` and the family starts working "with no further change here".
-//
-// ★ THAT UNDERSTANDING IS REFUTED, and this section is the refutation — measured, not read.
-//
-// Rholang's `Pathmap` is `mettail_runtime::PathMapLit<Proc, Proc>`: a KEY→VALUE map whose key and
-// value are independent (`{| 1 : 10 |}` is a well-formed Rholang literal, and
-// `languages/src/rholang/pathmap.rs::pathmap_get` reads a value out at a key).
-//
-// Rholang's `EPathMap` is a SET OF PATHS. An element IS its own key AND its own value:
-//
-//   * `models/src/rust/pathmap_integration.rs::create_pathmap_from_elements` inserts
-//     `encode_trie_path(par) ↦ par.clone()` — the value is the element, and the key is DERIVED
-//     from it;
-//   * `models/src/rust/pathmap_crate_type_mapper.rs::rholang_pathmap_to_e_pathmap` walks the trie
-//     and keeps only the VALUES, discarding the keys — so a key that is not its own value cannot
-//     survive one round trip through the mapper;
-//   * and the GROUND WIRE settles it. Since f1r3node `f34c2d7e` a ground `EPathMap` serialises as
-//     `bytes serialized_paths = 8` — U(m), the uncompressed trie-ordered KEY STREAM — and
-//     `merge_field` reconstructs `ps` by `decode_trie_path` of each key. Proto fields 6 and 7,
-//     which that commit RESERVED, were "a retired value_form/value_entries experiment". A value
-//     distinct from its key is not merely unrepresented in the carrier; it is unrepresentable on
-//     the consensus wire, and it is the hash preimage, so it cannot be added without a protocol
-//     commitment.
-//
-// [`c4_the_native_carrier_has_no_value_slot`] measures this from the reducer's own answers.
-//
-// The consequence for C4 is that "lower `Pathmap` to `EPathmapBody`" is not a plumbing change: it
-// requires DECIDING what Rholang's value slot becomes, and every available answer costs something
-// that is not a lowering's to spend (drop the values; fuse them into the key path, which changes
-// what `getPath`/`getLeaf` mean; or add a value arm to the consensus wire). That decision is
-// presented rather than taken. Everything below it that IS determinate is measured here.
+// C4 is closed with one discriminated representation, not a mixed entry list:
+// neutral empty makes no premature choice; set mode is `PathMap<()>`; and map
+// mode is `PathMap<Par>`. Both concrete modes keep canonical compressed byte
+// keys and serialize as the native EPM1 snapshot.
 
-/// **★ C4-1 — the native carrier has NO VALUE SLOT: an element is its own key and its own value.**
+/// **★ C4-1 — set mode remains the key-as-member specialization.**
 ///
-/// This is THE C4 blocker, stated as the reducer states it. If the carrier had a value slot then
-/// some element could have `getPath() != getLeaf()`; the reducer answers that they are equal, at
-/// every leaf, and `atPath(k)` answers `k` itself.
-///
-/// Rholang's `Pathmap` therefore does not embed: `{| 1 : 10 |}` has a key (`1`) and a value (`10`)
-/// that are different terms, and the target has one slot for both.
+/// In `PathMap<()>` there is deliberately no duplicate `Par` value. A present
+/// member reads back from its canonical key. Map mode, tested separately below,
+/// retains values distinct from their keys.
 #[tokio::test(flavor = "multi_thread")]
-async fn c4_the_native_carrier_has_no_value_slot() {
-    // ① `getPath() == getLeaf()` at EVERY leaf — the key and the value are the same term.
+async fn c4_set_specialization_reads_each_member_from_its_canonical_key() {
+    // ① `getPath() == getLeaf()` at every set leaf.
     for steps in 1..=4usize {
         let key_is_value = zipper_expr_par(ZExprInstance::EEqBody(ZEEq {
             p1: Some(zipper_method("getPath", leaf_walk(steps), Vec::new())),
@@ -3334,9 +3148,7 @@ async fn c4_the_native_carrier_has_no_value_slot() {
         assert_eq!(
             observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
             vec!["true".to_string()],
-            "C4-1: at leaf {steps} the carrier's key and value must be THE SAME TERM. A `false` \
-             here would mean the carrier grew a value slot, and C4's whole blocking argument would \
-             have to be re-derived."
+            "C4-1: at set leaf {steps}, membership is represented by PathMap<()>"
         );
     }
 
@@ -3351,68 +3163,66 @@ async fn c4_the_native_carrier_has_no_value_slot() {
     assert_eq!(
         observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
         vec![r#"["b"]"#.to_string()],
-        "C4-1: `atPath` is the carrier's `get`, and what it returns is the KEY ITSELF"
+        "C4-1: set-mode `atPath` decodes the present member key"
     );
 }
 
-/// **★ C4-2 — the native carrier REFUSES the Map method surface, so the flip is not free.**
+/// **★ C4-2 — map mode preserves distinct keys and values on native methods.**
 ///
-/// Five of the thirteen methods that work end-to-end today do so on a `Pathmap` receiver only
-/// because `lower_pathmap` emits an `EMap` (see [`c1_pathmap_methods_answer_through_the_emap_encoding`]).
-/// Every one of them is rejected by the NATIVE carrier — measured here rather than assumed, because
-/// "flip the carrier and the 22 start working" quietly implies "and nothing stops working".
-///
-/// Note the `other_type`: an `EPathmapBody` receiver reports **`"pathmap"`**, where the `EMap`
-/// encoding reports `"map"`. The two are distinguishable in an error message, which is how a future
-/// reader can tell which carrier a failing call actually reached.
+/// The key and value deliberately differ. Chaining `set`, `get`, and zipper
+/// `leafCount` proves both value retention and carrier retention: an accidental
+/// conversion to `EMap` would fail the following zipper dispatch.
 #[tokio::test(flavor = "multi_thread")]
-async fn c4_the_native_carrier_refuses_the_map_method_surface() {
-    let key = || zipper_elist(vec![zipper_gstring("b")]);
-    for (method, arguments) in [
-        ("get", vec![key()]),
-        ("set", vec![key(), zipper_expr_par(ZExprInstance::GInt(1))]),
-        ("contains", vec![key()]),
-        ("delete", vec![key()]),
-        ("keys", vec![]),
-        ("size", vec![]),
-        ("length", vec![]),
+async fn c4_map_specialization_preserves_distinct_values_and_native_methods() {
+    let one = || zipper_expr_par(ZExprInstance::GInt(1));
+    let ten = || zipper_expr_par(ZExprInstance::GInt(10));
+    let two = || zipper_expr_par(ZExprInstance::GInt(2));
+    let twenty = || zipper_expr_par(ZExprInstance::GInt(20));
+    let base = || zipper_epathmap_map(vec![(one(), ten())]);
+
+    for (label, call, expected) in [
+        ("get", zipper_method("get", base(), vec![one()]), "10"),
+        ("contains", zipper_method("contains", base(), vec![one()]), "true"),
+        ("size", zipper_method("size", base(), Vec::new()), "1"),
+        (
+            "set then get",
+            zipper_method("get", zipper_method("set", base(), vec![two(), twenty()]), vec![two()]),
+            "20",
+        ),
+        (
+            "set stays pathmap",
+            zipper_method(
+                "leafCount",
+                zipper_method(
+                    "readZipper",
+                    zipper_method("set", base(), vec![two(), twenty()]),
+                    Vec::new(),
+                ),
+                Vec::new(),
+            ),
+            "2",
+        ),
     ] {
-        let error = reduce_expression(zipper_method(method, four_leaf_pathmap(), arguments))
+        let observed = reduce_expression(call)
             .await
-            .expect_err("the native carrier must refuse the Map surface");
-        assert!(
-            error.contains(&format!(
-                r#"MethodNotDefined {{ method: "{method}", other_type: "pathmap" }}"#
-            )),
-            "C4-2: `{method}` must fail closed on an `EPathmapBody` receiver, naming the PATHMAP \
-             carrier. Got {error}"
+            .unwrap_or_else(|error| panic!("C4-2 {label}: {error}"));
+        assert_eq!(
+            observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
+            vec![expected.to_string()],
+            "C4-2 {label}: map-mode EPathMap must retain key/value semantics"
         );
     }
 }
 
-/// **★ C4-3 — `setLeaf` APPENDS an element. The zipper's focus is never consulted.**
+/// **★ C4-3 — set-mode `setLeaf` inserts membership; map-mode writes the focused value.**
 ///
-/// C1b left `setLeaf` fail-closed and recorded the reason as an arity-plus-semantics mismatch:
-/// "Rholang's `w.setLeaf(full, v)` writes at an ABSOLUTE PATH ARGUMENT while Rholang's
-/// `z.setLeaf(v)` writes at the zipper's FOCUS". The arity half was right. **The semantics half was
-/// wrong, and this test is what corrects it.**
-///
-/// `reduce.rs::set_leaf_method` does `pathmap.ps_make_mut().push(value)` on BOTH its arms and never
-/// reads `zipper.current_path`. Its doc comment still says "set value at current position" — a
-/// leftover from the retired value-arm experiment (proto fields 6/7, reserved by `f34c2d7e`) — and
-/// that stale comment is what the C1b note was written from.
-///
-/// ⚠ **Why this matters more than a documentation fix.** C1b named `writeZipperAt(full).setLeaf(v)`
-/// as "expressing Rholang's meaning on the machine … a REWRITE, not a routing". That rewrite is
-/// REFUTED below: `writeZipperAt(full)` contributes NOTHING, so the rewrite silently writes at the
-/// wrong place. It is precisely the "fix the arity by dropping the path" failure C1b set out to
-/// prevent, wearing a different hat — and it would have looked correct in review.
-///
-/// The true reason `setLeaf` cannot be routed is C4-1: a path-addressed write needs a value slot,
-/// and the carrier has none. `setLeaf(v)` is the only write the carrier can express — *insert the
-/// element `v`* — and Rholang's `setLeaf(full, v)` is not that operation.
+/// This fixture is deliberately set-specialized, so its one-argument `setLeaf`
+/// cannot manufacture a key/value pair: it inserts the supplied member under
+/// that member's canonical key. Map-mode focus replacement is covered by the
+/// target zipper specifications; keeping the modes explicit prevents either
+/// behavior from being generalized incorrectly to the other specialization.
 #[tokio::test(flavor = "multi_thread")]
-async fn c4_set_leaf_appends_an_element_and_ignores_the_focus() {
+async fn c4_set_mode_set_leaf_adds_membership_independent_of_focus() {
     let new_element = || zipper_elist(vec![zipper_gstring("z")]);
     let write_at = |segment: &str| {
         zipper_method(
@@ -3501,8 +3311,7 @@ async fn c4_set_leaf_appends_an_element_and_ignores_the_focus() {
     );
 }
 
-/// **★ C4-4 — `restrict` is NOT `restriction`; `restrict` and `meet` are both key-level
-/// `intersection`, and are told apart only by a value slot the carrier does not have.**
+/// **★ C4-4 — `restrict` is NOT `restriction`; exact intersection and prefix restriction differ.**
 ///
 /// C1b left all three fail-closed with "plausible but not verified counterparts … could not be
 /// exercised against the reducer even once". The premise was wrong — a real `EPathMap` is
@@ -3519,10 +3328,9 @@ async fn c4_set_leaf_appends_an_element_and_ignores_the_focus() {
 /// | `intersection` (4589) | base keys **exactly present** in other (`PathMap::meet`) |
 ///
 /// So `restrict` ↦ `restriction` is a mis-mapping: it would silently widen exact membership into
-/// prefix containment. `restrict` and `meet` both mean key-level `intersection`; they differ ONLY
-/// in whose values survive, which is invisible on a carrier where the value IS the key (C4-1) —
-/// and that is exactly why routing them now would bake in the very carrier decision C4 must present
-/// rather than take.
+/// prefix containment. The set-mode fixture below isolates that topology
+/// distinction. Map-mode value provenance is tested by the target's native
+/// EPathMap algebra suite, where `PathMap<Par>` makes it observable.
 #[tokio::test(flavor = "multi_thread")]
 async fn c4_restrict_is_not_restriction_and_meet_is_intersection() {
     // base = {["a","x"], ["a","y"], ["b"]}; mask = {["a"], ["c"]} — `["a"]` is a strict PREFIX of
@@ -3584,8 +3392,8 @@ async fn c4_restrict_is_not_restriction_and_meet_is_intersection() {
         );
     }
 
-    // The surviving entry under the exact mask is the same one on both operators — key-level
-    // agreement, which is all the carrier can express.
+    // The surviving entry under the exact mask is the same one on both operators — set-mode
+    // key-level agreement.
     for method in ["restriction", "intersection"] {
         let observed = reduce_expression(zipper_method(
             "atPath",
@@ -3760,8 +3568,8 @@ async fn c4_a_bare_element_reads_back_as_itself() {
         );
     }
 
-    // ② Every VALUE read answers the element. In an `EPathMap` an element is its own key AND its
-    //    own value, so `getLeaf()` at a stop equals `getPath()` there, and `atPath(k)` returns `k`.
+    // ② Every set-mode VALUE read answers the member. In `PathMap<()>`, `getLeaf()` at a stop
+    //    decodes the present key and `atPath(k)` returns that member.
     for steps in 1..=3usize {
         let expected = steps.to_string();
         let observed = reduce_expression(zipper_method(
@@ -4166,14 +3974,12 @@ async fn every_float_arithmetic_arm_answers_ieee754_for_every_indeterminate_form
         // ...and the SAME-sign sums are NOT invalid; they are infinities.
         (format!("{POS_INF} + {POS_INF}"), "inf", "+: (+Inf) + (+Inf) is not invalid"),
         (format!("{NEG_INF} + {NEG_INF}"), "-inf", "+: (-Inf) + (-Inf) is not invalid"),
-
         // ── §7.2, subtraction: magnitude subtraction of infinities ───────────────────────────
         (format!("{POS_INF} - {POS_INF}"), "NaN", "-: (+Inf) - (+Inf)"),
         (format!("{NEG_INF} - {NEG_INF}"), "NaN", "-: (-Inf) - (-Inf)"),
         // ...and the OPPOSITE-sign differences are infinities.
         (format!("{POS_INF} - {NEG_INF}"), "inf", "-: (+Inf) - (-Inf) is not invalid"),
         (format!("{NEG_INF} - {POS_INF}"), "-inf", "-: (-Inf) - (+Inf) is not invalid"),
-
         // ── §7.2, multiplication: zero times infinity, BOTH orders, BOTH signed zeros ────────
         (format!("float(0.0, 64) * {POS_INF}"), "NaN", "*: 0 * (+Inf)"),
         (format!("{POS_INF} * float(0.0, 64)"), "NaN", "*: (+Inf) * 0"),
@@ -4181,35 +3987,56 @@ async fn every_float_arithmetic_arm_answers_ieee754_for_every_indeterminate_form
         (format!("{NEG_INF} * float(0.0, 64)"), "NaN", "*: (-Inf) * 0"),
         (format!("float(-0.0, 64) * {POS_INF}"), "NaN", "*: -0 * (+Inf)"),
         (format!("{POS_INF} * float(-0.0, 64)"), "NaN", "*: (+Inf) * -0"),
-
         // ── §7.2, division: the two the Div ruling already covered, via computed infinities ──
         (format!("{POS_INF} / {POS_INF}"), "NaN", "/: (+Inf) / (+Inf)"),
         (format!("{POS_INF} / {NEG_INF}"), "NaN", "/: (+Inf) / (-Inf)"),
-
         // ── §7.4 overflow: an ANSWER (±Inf), never a decline — on all three operators ────────
-        ("float(1e308, 64) + float(1e308, 64)".to_string(), "inf", "+: overflow delivers +Inf"),
-        ("float(-1e308, 64) - float(1e308, 64)".to_string(), "-inf", "-: overflow delivers -Inf"),
-        ("float(1e308, 64) * float(10.0, 64)".to_string(), "inf", "*: overflow delivers +Inf"),
-        ("float(1e308, 64) * float(-10.0, 64)".to_string(), "-inf", "*: overflow delivers -Inf"),
-
+        (
+            "float(1e308, 64) + float(1e308, 64)".to_string(),
+            "inf",
+            "+: overflow delivers +Inf",
+        ),
+        (
+            "float(-1e308, 64) - float(1e308, 64)".to_string(),
+            "-inf",
+            "-: overflow delivers -Inf",
+        ),
+        (
+            "float(1e308, 64) * float(10.0, 64)".to_string(),
+            "inf",
+            "*: overflow delivers +Inf",
+        ),
+        (
+            "float(1e308, 64) * float(-10.0, 64)".to_string(),
+            "-inf",
+            "*: overflow delivers -Inf",
+        ),
         // ── §6.2 propagation: a NaN operand poisons every operator ───────────────────────────
         (format!("{NAN} + float(1.0, 64)"), "NaN", "+: NaN + 1.0 propagates"),
         (format!("float(1.0, 64) + {NAN}"), "NaN", "+: 1.0 + NaN propagates"),
         (format!("float(1.0, 64) - {NAN}"), "NaN", "-: 1.0 - NaN propagates"),
         (format!("{NAN} - float(1.0, 64)"), "NaN", "-: NaN - 1.0 propagates"),
-        (format!("{NAN} * float(0.0, 64)"), "NaN", "*: NaN * 0.0 propagates (it is NOT 0.0)"),
+        (
+            format!("{NAN} * float(0.0, 64)"),
+            "NaN",
+            "*: NaN * 0.0 propagates (it is NOT 0.0)",
+        ),
         (format!("float(2.0, 64) * {NAN}"), "NaN", "*: 2.0 * NaN propagates"),
         (format!("{NAN} / float(1.0, 64)"), "NaN", "/: NaN / 1.0 propagates"),
         (format!("float(1.0, 64) / {NAN}"), "NaN", "/: 1.0 / NaN propagates"),
-
         // ── §6.3, and THE FOURTH ARM: negation propagates a NaN, and does not strand it ──────
-        (format!("-{NAN}"), "NaN", "unary -: -NaN propagates (was a STUCK TERM before this commit)"),
+        (
+            format!("-{NAN}"),
+            "NaN",
+            "unary -: -NaN propagates (was a STUCK TERM before this commit)",
+        ),
         (format!("-{POS_INF}"), "-inf", "unary -: -(+Inf) is -Inf"),
         (format!("-{NEG_INF}"), "inf", "unary -: -(-Inf) is +Inf"),
     ];
 
     for (source, expected, what) in cases {
-        let folded = fold(&parse(&source)).unwrap_or_else(|err| panic!("{what} — {source:?}: {err}"));
+        let folded =
+            fold(&parse(&source)).unwrap_or_else(|err| panic!("{what} — {source:?}: {err}"));
         assert_eq!(
             folded, expected,
             "★★ {what}: must be the IEEE-754 VALUE {expected:?}, not {folded:?}.\n\
@@ -4239,8 +4066,18 @@ async fn signed_zero_is_the_carriers_divergence_and_it_is_pinned() {
         ("-float(0.0, 64)", "0.0", "-0.0", "`safe_neg` normalises `-0.0` to `+0.0`"),
         ("float(0.0, 64) - float(0.0, 64)", "0.0", "0.0", "IEEE agrees here: 0 - 0 is +0"),
         ("float(-0.0, 64) * float(1.0, 64)", "0.0", "-0.0", "the sign is already gone"),
-        ("float(1.0, 64) / float(-0.0, 64)", "inf", "-inf", "IEEE's sign rule has no -0 to read"),
-        ("float(-1.0, 64) / float(-0.0, 64)", "-inf", "inf", "and likewise with the numerator negative"),
+        (
+            "float(1.0, 64) / float(-0.0, 64)",
+            "inf",
+            "-inf",
+            "IEEE's sign rule has no -0 to read",
+        ),
+        (
+            "float(-1.0, 64) / float(-0.0, 64)",
+            "-inf",
+            "inf",
+            "and likewise with the numerator negative",
+        ),
     ] {
         let folded = fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}"));
         assert_eq!(
