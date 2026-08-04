@@ -151,9 +151,8 @@ fn layout_only_guest_renderer_survives_a_deep_application_spine() {
     assert_eq!(rendered.bytes().filter(|byte| *byte == b'(').count(), DEPTH);
     assert!(rendered.starts_with('(') && rendered.ends_with(')'));
 
-    // `RuntimeObservationValue`'s derived destructor is the next independently tracked closure
-    // item. Do not let that known recursive traversal contaminate this renderer witness.
-    std::mem::forget(value);
+    // The owned tree drops here as a second deep witness: `RuntimeObservationValue::drop` drains
+    // recursive children through its explicit work stack rather than the libtest thread's stack.
 }
 
 #[test]

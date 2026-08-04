@@ -103,7 +103,6 @@ impl fmt::Display for RuntimeBackendArtifact {
 }
 
 /// Ground observation value returned by a non-Ascent runtime backend.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum RuntimeObservationValue {
     Int(i64),
@@ -145,95 +144,1023 @@ pub enum RuntimeObservationValue {
     },
 }
 
+fn observation_variant_rank(value: &RuntimeObservationValue) -> u8 {
+    match value {
+        RuntimeObservationValue::Int(_) => 0,
+        RuntimeObservationValue::Bool(_) => 1,
+        RuntimeObservationValue::Text(_) => 2,
+        RuntimeObservationValue::TermDisplay(_) => 3,
+        RuntimeObservationValue::Bytes(_) => 4,
+        RuntimeObservationValue::Uri(_) => 5,
+        RuntimeObservationValue::DoubleBits(_) => 6,
+        RuntimeObservationValue::BigIntBytes(_) => 7,
+        RuntimeObservationValue::BigRationalBytes { .. } => 8,
+        RuntimeObservationValue::FixedPointBytes { .. } => 9,
+        RuntimeObservationValue::PrivateName(_) => 10,
+        RuntimeObservationValue::DeployId(_) => 11,
+        RuntimeObservationValue::DeployerId(_) => 12,
+        RuntimeObservationValue::SysAuthToken => 13,
+        RuntimeObservationValue::List(_) => 14,
+        RuntimeObservationValue::Tuple(_) => 15,
+        RuntimeObservationValue::Set(_) => 16,
+        RuntimeObservationValue::Map(_) => 17,
+        RuntimeObservationValue::Bag(_) => 18,
+        RuntimeObservationValue::Term { .. } => 19,
+    }
+}
+
+fn compare_observation_values(
+    left: &RuntimeObservationValue,
+    right: &RuntimeObservationValue,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    enum Work<'a> {
+        Value(&'a RuntimeObservationValue, &'a RuntimeObservationValue),
+        Values(&'a [RuntimeObservationValue], &'a [RuntimeObservationValue], usize),
+        Map(
+            &'a [(RuntimeObservationValue, RuntimeObservationValue)],
+            &'a [(RuntimeObservationValue, RuntimeObservationValue)],
+            usize,
+        ),
+        Bag(
+            &'a [(RuntimeObservationValue, usize)],
+            &'a [(RuntimeObservationValue, usize)],
+            usize,
+        ),
+        Count(usize, usize),
+    }
+
+    let mut work = vec![Work::Value(left, right)];
+    while let Some(step) = work.pop() {
+        match step {
+            Work::Value(left, right) => {
+                let ordering = observation_variant_rank(left).cmp(&observation_variant_rank(right));
+                if ordering != Ordering::Equal {
+                    return ordering;
+                }
+                match (left, right) {
+                    (RuntimeObservationValue::Int(left), RuntimeObservationValue::Int(right)) => {
+                        if left != right {
+                            return left.cmp(right);
+                        }
+                    },
+                    (RuntimeObservationValue::Bool(left), RuntimeObservationValue::Bool(right)) => {
+                        if left != right {
+                            return left.cmp(right);
+                        }
+                    },
+                    (RuntimeObservationValue::Text(left), RuntimeObservationValue::Text(right))
+                    | (
+                        RuntimeObservationValue::TermDisplay(left),
+                        RuntimeObservationValue::TermDisplay(right),
+                    )
+                    | (RuntimeObservationValue::Uri(left), RuntimeObservationValue::Uri(right)) => {
+                        if left != right {
+                            return left.cmp(right);
+                        }
+                    },
+                    (
+                        RuntimeObservationValue::Bytes(left),
+                        RuntimeObservationValue::Bytes(right),
+                    )
+                    | (
+                        RuntimeObservationValue::BigIntBytes(left),
+                        RuntimeObservationValue::BigIntBytes(right),
+                    )
+                    | (
+                        RuntimeObservationValue::PrivateName(left),
+                        RuntimeObservationValue::PrivateName(right),
+                    )
+                    | (
+                        RuntimeObservationValue::DeployId(left),
+                        RuntimeObservationValue::DeployId(right),
+                    )
+                    | (
+                        RuntimeObservationValue::DeployerId(left),
+                        RuntimeObservationValue::DeployerId(right),
+                    ) => {
+                        if left != right {
+                            return left.cmp(right);
+                        }
+                    },
+                    (
+                        RuntimeObservationValue::DoubleBits(left),
+                        RuntimeObservationValue::DoubleBits(right),
+                    ) => {
+                        if left != right {
+                            return left.cmp(right);
+                        }
+                    },
+                    (
+                        RuntimeObservationValue::BigRationalBytes {
+                            numerator: left_numerator,
+                            denominator: left_denominator,
+                        },
+                        RuntimeObservationValue::BigRationalBytes {
+                            numerator: right_numerator,
+                            denominator: right_denominator,
+                        },
+                    ) => {
+                        let ordering = left_numerator.cmp(right_numerator);
+                        if ordering != Ordering::Equal {
+                            return ordering;
+                        }
+                        let ordering = left_denominator.cmp(right_denominator);
+                        if ordering != Ordering::Equal {
+                            return ordering;
+                        }
+                    },
+                    (
+                        RuntimeObservationValue::FixedPointBytes {
+                            unscaled: left_unscaled,
+                            scale: left_scale,
+                        },
+                        RuntimeObservationValue::FixedPointBytes {
+                            unscaled: right_unscaled,
+                            scale: right_scale,
+                        },
+                    ) => {
+                        let ordering = left_unscaled.cmp(right_unscaled);
+                        if ordering != Ordering::Equal {
+                            return ordering;
+                        }
+                        if left_scale != right_scale {
+                            return left_scale.cmp(right_scale);
+                        }
+                    },
+                    (
+                        RuntimeObservationValue::SysAuthToken,
+                        RuntimeObservationValue::SysAuthToken,
+                    ) => {},
+                    (RuntimeObservationValue::List(left), RuntimeObservationValue::List(right))
+                    | (
+                        RuntimeObservationValue::Tuple(left),
+                        RuntimeObservationValue::Tuple(right),
+                    )
+                    | (RuntimeObservationValue::Set(left), RuntimeObservationValue::Set(right)) => {
+                        work.push(Work::Values(left, right, 0));
+                    },
+                    (RuntimeObservationValue::Map(left), RuntimeObservationValue::Map(right)) => {
+                        work.push(Work::Map(left, right, 0));
+                    },
+                    (RuntimeObservationValue::Bag(left), RuntimeObservationValue::Bag(right)) => {
+                        work.push(Work::Bag(left, right, 0));
+                    },
+                    (
+                        RuntimeObservationValue::Term {
+                            constructor: left_constructor,
+                            children: left_children,
+                        },
+                        RuntimeObservationValue::Term {
+                            constructor: right_constructor,
+                            children: right_children,
+                        },
+                    ) => {
+                        let ordering = left_constructor.cmp(right_constructor);
+                        if ordering != Ordering::Equal {
+                            return ordering;
+                        }
+                        work.push(Work::Values(left_children, right_children, 0));
+                    },
+                    _ => unreachable!("equal observation variant ranks must have equal variants"),
+                }
+            },
+            Work::Values(left, right, index) => {
+                let shared_len = left.len().min(right.len());
+                if index == shared_len {
+                    let ordering = left.len().cmp(&right.len());
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                } else {
+                    work.push(Work::Values(left, right, index + 1));
+                    work.push(Work::Value(&left[index], &right[index]));
+                }
+            },
+            Work::Map(left, right, index) => {
+                let shared_len = left.len().min(right.len());
+                if index == shared_len {
+                    let ordering = left.len().cmp(&right.len());
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                } else {
+                    work.push(Work::Map(left, right, index + 1));
+                    work.push(Work::Value(&left[index].1, &right[index].1));
+                    work.push(Work::Value(&left[index].0, &right[index].0));
+                }
+            },
+            Work::Bag(left, right, index) => {
+                let shared_len = left.len().min(right.len());
+                if index == shared_len {
+                    let ordering = left.len().cmp(&right.len());
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                } else {
+                    work.push(Work::Bag(left, right, index + 1));
+                    work.push(Work::Count(left[index].1, right[index].1));
+                    work.push(Work::Value(&left[index].0, &right[index].0));
+                }
+            },
+            Work::Count(left, right) => {
+                if left != right {
+                    return left.cmp(&right);
+                }
+            },
+        }
+    }
+    Ordering::Equal
+}
+
+impl PartialEq for RuntimeObservationValue {
+    fn eq(&self, other: &Self) -> bool {
+        compare_observation_values(self, other).is_eq()
+    }
+}
+
+impl Eq for RuntimeObservationValue {}
+
+impl PartialOrd for RuntimeObservationValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(compare_observation_values(self, other))
+    }
+}
+
+impl Ord for RuntimeObservationValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        compare_observation_values(self, other)
+    }
+}
+
+impl std::hash::Hash for RuntimeObservationValue {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        enum Work<'a> {
+            Value(&'a RuntimeObservationValue),
+            Values(&'a [RuntimeObservationValue], usize),
+            Map(&'a [(RuntimeObservationValue, RuntimeObservationValue)], usize),
+            Bag(&'a [(RuntimeObservationValue, usize)], usize),
+            Count(usize),
+        }
+
+        let mut work = vec![Work::Value(self)];
+        while let Some(step) = work.pop() {
+            match step {
+                Work::Value(value) => {
+                    std::mem::discriminant(value).hash(state);
+                    match value {
+                        RuntimeObservationValue::Int(value) => value.hash(state),
+                        RuntimeObservationValue::Bool(value) => value.hash(state),
+                        RuntimeObservationValue::Text(value)
+                        | RuntimeObservationValue::TermDisplay(value)
+                        | RuntimeObservationValue::Uri(value) => value.hash(state),
+                        RuntimeObservationValue::Bytes(value)
+                        | RuntimeObservationValue::BigIntBytes(value)
+                        | RuntimeObservationValue::PrivateName(value)
+                        | RuntimeObservationValue::DeployId(value)
+                        | RuntimeObservationValue::DeployerId(value) => value.hash(state),
+                        RuntimeObservationValue::DoubleBits(value) => value.hash(state),
+                        RuntimeObservationValue::BigRationalBytes { numerator, denominator } => {
+                            numerator.hash(state);
+                            denominator.hash(state);
+                        },
+                        RuntimeObservationValue::FixedPointBytes { unscaled, scale } => {
+                            unscaled.hash(state);
+                            scale.hash(state);
+                        },
+                        RuntimeObservationValue::SysAuthToken => {},
+                        RuntimeObservationValue::List(children)
+                        | RuntimeObservationValue::Tuple(children)
+                        | RuntimeObservationValue::Set(children) => {
+                            children.len().hash(state);
+                            work.push(Work::Values(children, 0));
+                        },
+                        RuntimeObservationValue::Map(entries) => {
+                            entries.len().hash(state);
+                            work.push(Work::Map(entries, 0));
+                        },
+                        RuntimeObservationValue::Bag(entries) => {
+                            entries.len().hash(state);
+                            work.push(Work::Bag(entries, 0));
+                        },
+                        RuntimeObservationValue::Term { constructor, children } => {
+                            constructor.hash(state);
+                            children.len().hash(state);
+                            work.push(Work::Values(children, 0));
+                        },
+                    }
+                },
+                Work::Values(values, index) => {
+                    if index < values.len() {
+                        work.push(Work::Values(values, index + 1));
+                        work.push(Work::Value(&values[index]));
+                    }
+                },
+                Work::Map(entries, index) => {
+                    if index < entries.len() {
+                        work.push(Work::Map(entries, index + 1));
+                        work.push(Work::Value(&entries[index].1));
+                        work.push(Work::Value(&entries[index].0));
+                    }
+                },
+                Work::Bag(entries, index) => {
+                    if index < entries.len() {
+                        work.push(Work::Bag(entries, index + 1));
+                        work.push(Work::Count(entries[index].1));
+                        work.push(Work::Value(&entries[index].0));
+                    }
+                },
+                Work::Count(count) => count.hash(state),
+            }
+        }
+    }
+}
+
+impl Clone for RuntimeObservationValue {
+    fn clone(&self) -> Self {
+        #[derive(Clone, Copy)]
+        enum Build<'a> {
+            List(usize),
+            Tuple(usize),
+            Set(usize),
+            Map(usize),
+            Bag(&'a [(RuntimeObservationValue, usize)]),
+            Term { constructor: &'a str, arity: usize },
+        }
+
+        enum Work<'a> {
+            Visit(&'a RuntimeObservationValue),
+            Build(Build<'a>),
+        }
+
+        let mut work = vec![Work::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(step) = work.pop() {
+            match step {
+                Work::Visit(value) => match value {
+                    RuntimeObservationValue::Int(value) => {
+                        values.push(RuntimeObservationValue::Int(*value))
+                    },
+                    RuntimeObservationValue::Bool(value) => {
+                        values.push(RuntimeObservationValue::Bool(*value))
+                    },
+                    RuntimeObservationValue::Text(value) => {
+                        values.push(RuntimeObservationValue::Text(value.clone()))
+                    },
+                    RuntimeObservationValue::TermDisplay(value) => {
+                        values.push(RuntimeObservationValue::TermDisplay(value.clone()))
+                    },
+                    RuntimeObservationValue::Bytes(value) => {
+                        values.push(RuntimeObservationValue::Bytes(value.clone()))
+                    },
+                    RuntimeObservationValue::Uri(value) => {
+                        values.push(RuntimeObservationValue::Uri(value.clone()))
+                    },
+                    RuntimeObservationValue::DoubleBits(value) => {
+                        values.push(RuntimeObservationValue::DoubleBits(*value))
+                    },
+                    RuntimeObservationValue::BigIntBytes(value) => {
+                        values.push(RuntimeObservationValue::BigIntBytes(value.clone()))
+                    },
+                    RuntimeObservationValue::BigRationalBytes { numerator, denominator } => values
+                        .push(RuntimeObservationValue::BigRationalBytes {
+                            numerator: numerator.clone(),
+                            denominator: denominator.clone(),
+                        }),
+                    RuntimeObservationValue::FixedPointBytes { unscaled, scale } => {
+                        values.push(RuntimeObservationValue::FixedPointBytes {
+                            unscaled: unscaled.clone(),
+                            scale: *scale,
+                        })
+                    },
+                    RuntimeObservationValue::PrivateName(value) => {
+                        values.push(RuntimeObservationValue::PrivateName(value.clone()))
+                    },
+                    RuntimeObservationValue::DeployId(value) => {
+                        values.push(RuntimeObservationValue::DeployId(value.clone()))
+                    },
+                    RuntimeObservationValue::DeployerId(value) => {
+                        values.push(RuntimeObservationValue::DeployerId(value.clone()))
+                    },
+                    RuntimeObservationValue::SysAuthToken => {
+                        values.push(RuntimeObservationValue::SysAuthToken)
+                    },
+                    RuntimeObservationValue::List(children) => {
+                        work.push(Work::Build(Build::List(children.len())));
+                        work.extend(children.iter().rev().map(Work::Visit));
+                    },
+                    RuntimeObservationValue::Tuple(children) => {
+                        work.push(Work::Build(Build::Tuple(children.len())));
+                        work.extend(children.iter().rev().map(Work::Visit));
+                    },
+                    RuntimeObservationValue::Set(children) => {
+                        work.push(Work::Build(Build::Set(children.len())));
+                        work.extend(children.iter().rev().map(Work::Visit));
+                    },
+                    RuntimeObservationValue::Map(entries) => {
+                        work.push(Work::Build(Build::Map(entries.len())));
+                        for (key, value) in entries.iter().rev() {
+                            work.push(Work::Visit(value));
+                            work.push(Work::Visit(key));
+                        }
+                    },
+                    RuntimeObservationValue::Bag(entries) => {
+                        work.push(Work::Build(Build::Bag(entries)));
+                        work.extend(entries.iter().rev().map(|(value, _)| Work::Visit(value)));
+                    },
+                    RuntimeObservationValue::Term { constructor, children } => {
+                        work.push(Work::Build(Build::Term { constructor, arity: children.len() }));
+                        work.extend(children.iter().rev().map(Work::Visit));
+                    },
+                },
+                Work::Build(build) => {
+                    let arity = match build {
+                        Build::List(arity)
+                        | Build::Tuple(arity)
+                        | Build::Set(arity)
+                        | Build::Map(arity)
+                        | Build::Term { arity, .. } => arity,
+                        Build::Bag(entries) => entries.len(),
+                    };
+                    let value_arity = if matches!(build, Build::Map(_)) {
+                        arity * 2
+                    } else {
+                        arity
+                    };
+                    let split = values
+                        .len()
+                        .checked_sub(value_arity)
+                        .expect("observation clone PDA: continuation underflow");
+                    let children = values.split_off(split);
+                    let value = match build {
+                        Build::List(_) => RuntimeObservationValue::List(children),
+                        Build::Tuple(_) => RuntimeObservationValue::Tuple(children),
+                        Build::Set(_) => RuntimeObservationValue::Set(children),
+                        Build::Map(_) => {
+                            let mut children = children.into_iter();
+                            let mut entries = Vec::with_capacity(arity);
+                            while let Some(key) = children.next() {
+                                let value = children
+                                    .next()
+                                    .expect("observation clone PDA: map value is missing");
+                                entries.push((key, value));
+                            }
+                            RuntimeObservationValue::Map(entries)
+                        },
+                        Build::Bag(entries) => RuntimeObservationValue::Bag(
+                            children
+                                .into_iter()
+                                .zip(entries.iter().map(|(_, count)| *count))
+                                .collect(),
+                        ),
+                        Build::Term { constructor, .. } => RuntimeObservationValue::Term {
+                            constructor: constructor.to_owned(),
+                            children,
+                        },
+                    };
+                    values.push(value);
+                },
+            }
+        }
+
+        assert_eq!(
+            values.len(),
+            1,
+            "observation clone PDA: final value stack must contain one result"
+        );
+        values
+            .pop()
+            .expect("observation clone PDA: missing root value")
+    }
+}
+
+impl Drop for RuntimeObservationValue {
+    fn drop(&mut self) {
+        fn move_children_to(
+            value: &mut RuntimeObservationValue,
+            work: &mut Vec<RuntimeObservationValue>,
+        ) {
+            match value {
+                RuntimeObservationValue::List(children)
+                | RuntimeObservationValue::Tuple(children)
+                | RuntimeObservationValue::Set(children)
+                | RuntimeObservationValue::Term { children, .. } => work.append(children),
+                RuntimeObservationValue::Map(entries) => {
+                    for (key, value) in std::mem::take(entries) {
+                        work.push(key);
+                        work.push(value);
+                    }
+                },
+                RuntimeObservationValue::Bag(entries) => {
+                    work.extend(std::mem::take(entries).into_iter().map(|(value, _)| value));
+                },
+                _ => {},
+            }
+        }
+
+        let mut work = Vec::new();
+        move_children_to(self, &mut work);
+        while let Some(mut value) = work.pop() {
+            move_children_to(&mut value, &mut work);
+            // `value` now contains no recursive children, so its automatic call back into this
+            // destructor is constant-stack and performs no allocation.
+        }
+    }
+}
+
 impl fmt::Display for RuntimeObservationValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RuntimeObservationValue::Int(value) => write!(f, "{}", value),
-            RuntimeObservationValue::Bool(value) => write!(f, "{}", value),
-            RuntimeObservationValue::Text(value) => write!(f, "{:?}", value),
-            RuntimeObservationValue::TermDisplay(value) => write!(f, "{}", value),
-            RuntimeObservationValue::Bytes(value) => write!(f, "0x{}", hex_bytes(value)),
-            RuntimeObservationValue::Uri(value) => write!(f, "Uri({:?})", value),
-            RuntimeObservationValue::DoubleBits(value) => write!(f, "DoubleBits(0x{value:016x})"),
-            RuntimeObservationValue::BigIntBytes(value) => {
-                write!(f, "BigInt(0x{})", hex_bytes(value))
-            },
-            RuntimeObservationValue::BigRationalBytes { numerator, denominator } => {
-                write!(f, "BigRat(0x{}/0x{})", hex_bytes(numerator), hex_bytes(denominator))
-            },
-            RuntimeObservationValue::FixedPointBytes { unscaled, scale } => {
-                write!(f, "FixedPoint(0x{} scale {scale})", hex_bytes(unscaled))
-            },
-            RuntimeObservationValue::PrivateName(value) => {
-                write!(f, "Private(0x{})", hex_bytes(value))
-            },
-            RuntimeObservationValue::DeployId(value) => {
-                write!(f, "DeployId(0x{})", hex_bytes(value))
-            },
-            RuntimeObservationValue::DeployerId(value) => {
-                write!(f, "DeployerId(0x{})", hex_bytes(value))
-            },
-            RuntimeObservationValue::SysAuthToken => write!(f, "SysAuthToken"),
-            RuntimeObservationValue::List(values) => fmt_observation_sequence(f, "[", values, "]"),
-            RuntimeObservationValue::Tuple(values) => fmt_observation_sequence(f, "(", values, ")"),
-            RuntimeObservationValue::Set(values) => {
-                fmt_observation_sequence(f, "Set{", values, "}")
-            },
-            RuntimeObservationValue::Map(entries) => {
-                write!(f, "{{")?;
-                for (idx, (key, value)) in entries.iter().enumerate() {
-                    if idx > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}: {}", key, value)?;
-                }
-                write!(f, "}}")
-            },
-            RuntimeObservationValue::Bag(entries) => {
-                write!(f, "Bag{{")?;
-                for (idx, (value, count)) in entries.iter().enumerate() {
-                    if idx > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{} * {}", value, count)?;
-                }
-                write!(f, "}}")
-            },
-            RuntimeObservationValue::Term { constructor, children } => {
-                write!(f, "{constructor}")?;
-                if !children.is_empty() {
-                    fmt_observation_sequence(f, "(", children, ")")?;
-                }
-                Ok(())
-            },
+        enum Work<'a> {
+            Value(&'a RuntimeObservationValue),
+            Text(&'static str),
+            Count(usize),
         }
+
+        fn push_sequence<'a>(
+            work: &mut Vec<Work<'a>>,
+            values: &'a [RuntimeObservationValue],
+            close: &'static str,
+        ) {
+            work.push(Work::Text(close));
+            for (index, value) in values.iter().enumerate().rev() {
+                work.push(Work::Value(value));
+                if index > 0 {
+                    work.push(Work::Text(", "));
+                }
+            }
+        }
+
+        fn write_hex(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
+            for byte in bytes {
+                write!(f, "{byte:02x}")?;
+            }
+            Ok(())
+        }
+
+        let mut work = vec![Work::Value(self)];
+        while let Some(step) = work.pop() {
+            match step {
+                Work::Text(text) => f.write_str(text)?,
+                Work::Count(count) => write!(f, "{count}")?,
+                Work::Value(value) => match value {
+                    RuntimeObservationValue::Int(value) => write!(f, "{value}")?,
+                    RuntimeObservationValue::Bool(value) => write!(f, "{value}")?,
+                    RuntimeObservationValue::Text(value) => write!(f, "{value:?}")?,
+                    RuntimeObservationValue::TermDisplay(value) => f.write_str(value)?,
+                    RuntimeObservationValue::Bytes(value) => {
+                        f.write_str("0x")?;
+                        write_hex(f, value)?;
+                    },
+                    RuntimeObservationValue::Uri(value) => write!(f, "Uri({value:?})")?,
+                    RuntimeObservationValue::DoubleBits(value) => {
+                        write!(f, "DoubleBits(0x{value:016x})")?
+                    },
+                    RuntimeObservationValue::BigIntBytes(value) => {
+                        f.write_str("BigInt(0x")?;
+                        write_hex(f, value)?;
+                        f.write_str(")")?;
+                    },
+                    RuntimeObservationValue::BigRationalBytes { numerator, denominator } => {
+                        f.write_str("BigRat(0x")?;
+                        write_hex(f, numerator)?;
+                        f.write_str("/0x")?;
+                        write_hex(f, denominator)?;
+                        f.write_str(")")?;
+                    },
+                    RuntimeObservationValue::FixedPointBytes { unscaled, scale } => {
+                        f.write_str("FixedPoint(0x")?;
+                        write_hex(f, unscaled)?;
+                        write!(f, " scale {scale})")?;
+                    },
+                    RuntimeObservationValue::PrivateName(value) => {
+                        f.write_str("Private(0x")?;
+                        write_hex(f, value)?;
+                        f.write_str(")")?;
+                    },
+                    RuntimeObservationValue::DeployId(value) => {
+                        f.write_str("DeployId(0x")?;
+                        write_hex(f, value)?;
+                        f.write_str(")")?;
+                    },
+                    RuntimeObservationValue::DeployerId(value) => {
+                        f.write_str("DeployerId(0x")?;
+                        write_hex(f, value)?;
+                        f.write_str(")")?;
+                    },
+                    RuntimeObservationValue::SysAuthToken => f.write_str("SysAuthToken")?,
+                    RuntimeObservationValue::List(values) => {
+                        f.write_str("[")?;
+                        push_sequence(&mut work, values, "]");
+                    },
+                    RuntimeObservationValue::Tuple(values) => {
+                        f.write_str("(")?;
+                        push_sequence(&mut work, values, ")");
+                    },
+                    RuntimeObservationValue::Set(values) => {
+                        f.write_str("Set{")?;
+                        push_sequence(&mut work, values, "}");
+                    },
+                    RuntimeObservationValue::Map(entries) => {
+                        f.write_str("{")?;
+                        work.push(Work::Text("}"));
+                        for (index, (key, value)) in entries.iter().enumerate().rev() {
+                            work.push(Work::Value(value));
+                            work.push(Work::Text(": "));
+                            work.push(Work::Value(key));
+                            if index > 0 {
+                                work.push(Work::Text(", "));
+                            }
+                        }
+                    },
+                    RuntimeObservationValue::Bag(entries) => {
+                        f.write_str("Bag{")?;
+                        work.push(Work::Text("}"));
+                        for (index, (value, count)) in entries.iter().enumerate().rev() {
+                            work.push(Work::Count(*count));
+                            work.push(Work::Text(" * "));
+                            work.push(Work::Value(value));
+                            if index > 0 {
+                                work.push(Work::Text(", "));
+                            }
+                        }
+                    },
+                    RuntimeObservationValue::Term { constructor, children } => {
+                        f.write_str(constructor)?;
+                        if !children.is_empty() {
+                            f.write_str("(")?;
+                            push_sequence(&mut work, children, ")");
+                        }
+                    },
+                },
+            }
+        }
+        Ok(())
     }
 }
 
-fn fmt_observation_sequence(
+impl fmt::Debug for RuntimeObservationValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            return fmt_observation_debug_pretty(self, f);
+        }
+
+        enum Work<'a> {
+            Value(&'a RuntimeObservationValue),
+            Text(&'static str),
+            Count(usize),
+        }
+
+        fn push_values<'a>(
+            work: &mut Vec<Work<'a>>,
+            values: &'a [RuntimeObservationValue],
+            close: &'static str,
+        ) {
+            work.push(Work::Text(close));
+            for (index, value) in values.iter().enumerate().rev() {
+                work.push(Work::Value(value));
+                if index > 0 {
+                    work.push(Work::Text(", "));
+                }
+            }
+        }
+
+        let mut work = vec![Work::Value(self)];
+        while let Some(step) = work.pop() {
+            match step {
+                Work::Text(text) => f.write_str(text)?,
+                Work::Count(count) => write!(f, "{count:?}")?,
+                Work::Value(value) => match value {
+                    RuntimeObservationValue::Int(value) => write!(f, "Int({value:?})")?,
+                    RuntimeObservationValue::Bool(value) => write!(f, "Bool({value:?})")?,
+                    RuntimeObservationValue::Text(value) => write!(f, "Text({value:?})")?,
+                    RuntimeObservationValue::TermDisplay(value) => {
+                        write!(f, "TermDisplay({value:?})")?
+                    },
+                    RuntimeObservationValue::Bytes(value) => write!(f, "Bytes({value:?})")?,
+                    RuntimeObservationValue::Uri(value) => write!(f, "Uri({value:?})")?,
+                    RuntimeObservationValue::DoubleBits(value) => {
+                        write!(f, "DoubleBits({value:?})")?
+                    },
+                    RuntimeObservationValue::BigIntBytes(value) => {
+                        write!(f, "BigIntBytes({value:?})")?
+                    },
+                    RuntimeObservationValue::BigRationalBytes { numerator, denominator } => {
+                        write!(
+                            f,
+                            "BigRationalBytes {{ numerator: {numerator:?}, denominator: {denominator:?} }}"
+                        )?
+                    },
+                    RuntimeObservationValue::FixedPointBytes { unscaled, scale } => {
+                        write!(
+                            f,
+                            "FixedPointBytes {{ unscaled: {unscaled:?}, scale: {scale:?} }}"
+                        )?
+                    },
+                    RuntimeObservationValue::PrivateName(value) => {
+                        write!(f, "PrivateName({value:?})")?
+                    },
+                    RuntimeObservationValue::DeployId(value) => {
+                        write!(f, "DeployId({value:?})")?
+                    },
+                    RuntimeObservationValue::DeployerId(value) => {
+                        write!(f, "DeployerId({value:?})")?
+                    },
+                    RuntimeObservationValue::SysAuthToken => f.write_str("SysAuthToken")?,
+                    RuntimeObservationValue::List(values) => {
+                        f.write_str("List([")?;
+                        push_values(&mut work, values, "])");
+                    },
+                    RuntimeObservationValue::Tuple(values) => {
+                        f.write_str("Tuple([")?;
+                        push_values(&mut work, values, "])");
+                    },
+                    RuntimeObservationValue::Set(values) => {
+                        f.write_str("Set([")?;
+                        push_values(&mut work, values, "])");
+                    },
+                    RuntimeObservationValue::Map(entries) => {
+                        f.write_str("Map([")?;
+                        work.push(Work::Text("])") );
+                        for (index, (key, value)) in entries.iter().enumerate().rev() {
+                            work.push(Work::Text(")"));
+                            work.push(Work::Value(value));
+                            work.push(Work::Text(", "));
+                            work.push(Work::Value(key));
+                            work.push(Work::Text("("));
+                            if index > 0 {
+                                work.push(Work::Text(", "));
+                            }
+                        }
+                    },
+                    RuntimeObservationValue::Bag(entries) => {
+                        f.write_str("Bag([")?;
+                        work.push(Work::Text("])") );
+                        for (index, (value, count)) in entries.iter().enumerate().rev() {
+                            work.push(Work::Text(")"));
+                            work.push(Work::Count(*count));
+                            work.push(Work::Text(", "));
+                            work.push(Work::Value(value));
+                            work.push(Work::Text("("));
+                            if index > 0 {
+                                work.push(Work::Text(", "));
+                            }
+                        }
+                    },
+                    RuntimeObservationValue::Term { constructor, children } => {
+                        write!(f, "Term {{ constructor: {constructor:?}, children: [")?;
+                        push_values(&mut work, children, "] }");
+                    },
+                },
+            }
+        }
+        Ok(())
+    }
+}
+
+fn fmt_observation_debug_pretty(
+    root: &RuntimeObservationValue,
     f: &mut fmt::Formatter<'_>,
-    open: &str,
-    values: &[RuntimeObservationValue],
-    close: &str,
 ) -> fmt::Result {
-    write!(f, "{open}")?;
-    for (idx, value) in values.iter().enumerate() {
-        if idx > 0 {
-            write!(f, ", ")?;
-        }
-        write!(f, "{value}")?;
+    enum Work<'a> {
+        Value(&'a RuntimeObservationValue, usize),
+        Values(&'a [RuntimeObservationValue], usize),
+        Map(&'a [(RuntimeObservationValue, RuntimeObservationValue)], usize),
+        Bag(&'a [(RuntimeObservationValue, usize)], usize),
+        Bytes(&'a [u8], usize),
+        Text(&'static str),
+        Indent(usize),
+        String(&'a str),
+        I64(i64),
+        U64(u64),
+        U32(u32),
+        Usize(usize),
+        Bool(bool),
     }
-    write!(f, "{close}")
-}
 
-fn hex_bytes(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
+    fn push_tuple<'a>(work: &mut Vec<Work<'a>>, indent: usize, field: Work<'a>) {
+        work.push(Work::Text(")"));
+        work.push(Work::Indent(indent));
+        work.push(Work::Text("\n"));
+        work.push(Work::Text(","));
+        work.push(field);
+        work.push(Work::Indent(indent + 1));
     }
-    out
+
+    fn push_struct_field<'a>(
+        work: &mut Vec<Work<'a>>,
+        indent: usize,
+        name: &'static str,
+        field: Work<'a>,
+    ) {
+        work.push(Work::Text("\n"));
+        work.push(Work::Text(","));
+        work.push(field);
+        work.push(Work::Text(name));
+        work.push(Work::Indent(indent));
+    }
+
+    let mut work = vec![Work::Value(root, 0)];
+    while let Some(step) = work.pop() {
+        match step {
+            Work::Text(text) => f.write_str(text)?,
+            Work::Indent(depth) => {
+                for _ in 0..depth {
+                    f.write_str("    ")?;
+                }
+            },
+            Work::String(value) => write!(f, "{value:?}")?,
+            Work::I64(value) => write!(f, "{value:?}")?,
+            Work::U64(value) => write!(f, "{value:?}")?,
+            Work::U32(value) => write!(f, "{value:?}")?,
+            Work::Usize(value) => write!(f, "{value:?}")?,
+            Work::Bool(value) => write!(f, "{value:?}")?,
+            Work::Bytes(bytes, indent) => {
+                if bytes.is_empty() {
+                    f.write_str("[]")?;
+                } else {
+                    f.write_str("[\n")?;
+                    work.push(Work::Text("]"));
+                    work.push(Work::Indent(indent));
+                    for byte in bytes.iter().rev() {
+                        work.push(Work::Text(",\n"));
+                        work.push(Work::U64(u64::from(*byte)));
+                        work.push(Work::Indent(indent + 1));
+                    }
+                }
+            },
+            Work::Values(values, indent) => {
+                if values.is_empty() {
+                    f.write_str("[]")?;
+                } else {
+                    f.write_str("[\n")?;
+                    work.push(Work::Text("]"));
+                    work.push(Work::Indent(indent));
+                    for value in values.iter().rev() {
+                        work.push(Work::Text(",\n"));
+                        work.push(Work::Value(value, indent + 1));
+                        work.push(Work::Indent(indent + 1));
+                    }
+                }
+            },
+            Work::Map(entries, indent) => {
+                if entries.is_empty() {
+                    f.write_str("[]")?;
+                } else {
+                    f.write_str("[\n")?;
+                    work.push(Work::Text("]"));
+                    work.push(Work::Indent(indent));
+                    for (key, value) in entries.iter().rev() {
+                        work.push(Work::Text("),\n"));
+                        work.push(Work::Indent(indent + 1));
+                        work.push(Work::Text(",\n"));
+                        work.push(Work::Value(value, indent + 2));
+                        work.push(Work::Indent(indent + 2));
+                        work.push(Work::Text(",\n"));
+                        work.push(Work::Value(key, indent + 2));
+                        work.push(Work::Indent(indent + 2));
+                        work.push(Work::Text("(\n"));
+                        work.push(Work::Indent(indent + 1));
+                    }
+                }
+            },
+            Work::Bag(entries, indent) => {
+                if entries.is_empty() {
+                    f.write_str("[]")?;
+                } else {
+                    f.write_str("[\n")?;
+                    work.push(Work::Text("]"));
+                    work.push(Work::Indent(indent));
+                    for (value, count) in entries.iter().rev() {
+                        work.push(Work::Text("),\n"));
+                        work.push(Work::Indent(indent + 1));
+                        work.push(Work::Text(",\n"));
+                        work.push(Work::Usize(*count));
+                        work.push(Work::Indent(indent + 2));
+                        work.push(Work::Text(",\n"));
+                        work.push(Work::Value(value, indent + 2));
+                        work.push(Work::Indent(indent + 2));
+                        work.push(Work::Text("(\n"));
+                        work.push(Work::Indent(indent + 1));
+                    }
+                }
+            },
+            Work::Value(value, indent) => match value {
+                RuntimeObservationValue::Int(value) => {
+                    f.write_str("Int(\n")?;
+                    push_tuple(&mut work, indent, Work::I64(*value));
+                },
+                RuntimeObservationValue::Bool(value) => {
+                    f.write_str("Bool(\n")?;
+                    push_tuple(&mut work, indent, Work::Bool(*value));
+                },
+                RuntimeObservationValue::Text(value) => {
+                    f.write_str("Text(\n")?;
+                    push_tuple(&mut work, indent, Work::String(value));
+                },
+                RuntimeObservationValue::TermDisplay(value) => {
+                    f.write_str("TermDisplay(\n")?;
+                    push_tuple(&mut work, indent, Work::String(value));
+                },
+                RuntimeObservationValue::Bytes(value) => {
+                    f.write_str("Bytes(\n")?;
+                    push_tuple(&mut work, indent, Work::Bytes(value, indent + 1));
+                },
+                RuntimeObservationValue::Uri(value) => {
+                    f.write_str("Uri(\n")?;
+                    push_tuple(&mut work, indent, Work::String(value));
+                },
+                RuntimeObservationValue::DoubleBits(value) => {
+                    f.write_str("DoubleBits(\n")?;
+                    push_tuple(&mut work, indent, Work::U64(*value));
+                },
+                RuntimeObservationValue::BigIntBytes(value) => {
+                    f.write_str("BigIntBytes(\n")?;
+                    push_tuple(&mut work, indent, Work::Bytes(value, indent + 1));
+                },
+                RuntimeObservationValue::BigRationalBytes { numerator, denominator } => {
+                    f.write_str("BigRationalBytes {\n")?;
+                    work.push(Work::Text("}"));
+                    work.push(Work::Indent(indent));
+                    push_struct_field(
+                        &mut work,
+                        indent + 1,
+                        "denominator: ",
+                        Work::Bytes(denominator, indent + 1),
+                    );
+                    push_struct_field(
+                        &mut work,
+                        indent + 1,
+                        "numerator: ",
+                        Work::Bytes(numerator, indent + 1),
+                    );
+                },
+                RuntimeObservationValue::FixedPointBytes { unscaled, scale } => {
+                    f.write_str("FixedPointBytes {\n")?;
+                    work.push(Work::Text("}"));
+                    work.push(Work::Indent(indent));
+                    push_struct_field(&mut work, indent + 1, "scale: ", Work::U32(*scale));
+                    push_struct_field(
+                        &mut work,
+                        indent + 1,
+                        "unscaled: ",
+                        Work::Bytes(unscaled, indent + 1),
+                    );
+                },
+                RuntimeObservationValue::PrivateName(value) => {
+                    f.write_str("PrivateName(\n")?;
+                    push_tuple(&mut work, indent, Work::Bytes(value, indent + 1));
+                },
+                RuntimeObservationValue::DeployId(value) => {
+                    f.write_str("DeployId(\n")?;
+                    push_tuple(&mut work, indent, Work::Bytes(value, indent + 1));
+                },
+                RuntimeObservationValue::DeployerId(value) => {
+                    f.write_str("DeployerId(\n")?;
+                    push_tuple(&mut work, indent, Work::Bytes(value, indent + 1));
+                },
+                RuntimeObservationValue::SysAuthToken => f.write_str("SysAuthToken")?,
+                RuntimeObservationValue::List(values) => {
+                    f.write_str("List(\n")?;
+                    push_tuple(&mut work, indent, Work::Values(values, indent + 1));
+                },
+                RuntimeObservationValue::Tuple(values) => {
+                    f.write_str("Tuple(\n")?;
+                    push_tuple(&mut work, indent, Work::Values(values, indent + 1));
+                },
+                RuntimeObservationValue::Set(values) => {
+                    f.write_str("Set(\n")?;
+                    push_tuple(&mut work, indent, Work::Values(values, indent + 1));
+                },
+                RuntimeObservationValue::Map(entries) => {
+                    f.write_str("Map(\n")?;
+                    push_tuple(&mut work, indent, Work::Map(entries, indent + 1));
+                },
+                RuntimeObservationValue::Bag(entries) => {
+                    f.write_str("Bag(\n")?;
+                    push_tuple(&mut work, indent, Work::Bag(entries, indent + 1));
+                },
+                RuntimeObservationValue::Term { constructor, children } => {
+                    f.write_str("Term {\n")?;
+                    work.push(Work::Text("}"));
+                    work.push(Work::Indent(indent));
+                    push_struct_field(
+                        &mut work,
+                        indent + 1,
+                        "children: ",
+                        Work::Values(children, indent + 1),
+                    );
+                    push_struct_field(
+                        &mut work,
+                        indent + 1,
+                        "constructor: ",
+                        Work::String(constructor),
+                    );
+                },
+            },
+        }
+    }
+    Ok(())
 }
 
 /// Values observed on one runtime output channel.

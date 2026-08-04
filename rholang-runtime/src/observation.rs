@@ -676,29 +676,10 @@ fn write_hex(rendered: &mut String, bytes: &[u8]) {
     }
 }
 
-/// Release an owned observation tree without invoking the enum's recursive,
-/// derived destructor on a nested child. This is the by-move companion to the
-/// borrowing decoder and renderer PDAs.
+/// Release an owned observation tree through `RuntimeObservationValue`'s iterative destructor.
+/// Kept as the by-move companion name used by the decoder's error paths.
 fn dismantle_runtime_observation_value(root: RuntimeObservationValue) {
-    let mut work = vec![root];
-    while let Some(value) = work.pop() {
-        match value {
-            RuntimeObservationValue::List(children)
-            | RuntimeObservationValue::Tuple(children)
-            | RuntimeObservationValue::Set(children)
-            | RuntimeObservationValue::Term { children, .. } => work.extend(children),
-            RuntimeObservationValue::Map(entries) => {
-                for (key, value) in entries {
-                    work.push(key);
-                    work.push(value);
-                }
-            },
-            RuntimeObservationValue::Bag(entries) => {
-                work.extend(entries.into_iter().map(|(value, _)| value));
-            },
-            _ => {},
-        }
-    }
+    drop(root);
 }
 
 fn dismantle_runtime_observation_values(values: Vec<RuntimeObservationValue>) {
