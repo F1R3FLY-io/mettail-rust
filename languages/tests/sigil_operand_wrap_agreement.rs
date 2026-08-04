@@ -22,7 +22,8 @@
 //!
 //! The first version of this file asked the question of every rule from a SAMPLE SURFACE the macro
 //! composed out of that rule's syntax pattern — and then recovered the term by PARSING that
-//! surface. It stayed green while `Display(NQuote(MGet(NegProc(a), PZero)))` emitted the
+//! surface. It stayed green while the then-current
+//! `Display(NQuote(MGet(NegProc(a), PZero)))` emitted the
 //! unparseable `@-a.get(Nil)`, and a controlled A/B (the fix reverted, the defect re-armed)
 //! confirmed it could not go red. Two reasons, both measured:
 //!
@@ -30,8 +31,9 @@
 //!    defect class is exactly *"terms whose `Display` surface the parser does not elect back"*, so
 //!    those terms are unreachable from a composed string by construction.
 //! 2. **Depth, and folding.** Sample parameters were nullary FILLERS: ground, and self-delimiting.
-//!    A ground argument is what a `fold` rule consumes, so `- Nil . get ( Nil )` did not even
-//!    denote `MGet(NegProc(…), …)` — it denoted `MGet(error, Nil)`. And the composition is
+//!    A ground argument was what the former name-specific `fold` rule consumed, so
+//!    `- Nil . get ( Nil )` did not even denote `MGet(NegProc(…), …)` — it denoted
+//!    `MGet(error, Nil)`. And the composition is
 //!    space-joined, which moves the election on its own:
 //!
 //!    ```text
@@ -189,19 +191,27 @@ fn the_table_contains_the_shapes_the_defects_lived_on() {
 /// depth-1 re-run wearing a longer table.
 #[cfg(feature = "rholang")]
 #[test]
-fn the_term_first_table_reaches_a_prefix_application_in_the_leading_slot() {
+fn the_term_first_table_records_the_generic_method_prefix_witness() {
     let rows = mettail_languages::rholang::__SIGIL_OPERAND_WRAP_TERM_ROWS;
     assert!(!rows.is_empty(), "no term-first sigil-operand rows were derived at all");
     assert!(
         rows.iter()
-            .any(|(_, _, _, _, op, ld)| *op == "MGet" && *ld == "NegProc"),
-        "the term table no longer carries `MGet` with `NegProc` in its leading slot — the exact \
-         pair `gen_rholang_prop::name_display_parse_roundtrip` failed on (2026-07-28).\n  \
-         MGet rows present: {:?}",
+            .any(|(_, _, _, _, op, ld)| *op == "MethodCall" && *ld == "NegProc"),
+        "the term table no longer records generic `MethodCall` with `NegProc` in its receiver \
+         slot — the successor of the exact `MGet<NegProc>` pair that \
+         `gen_rholang_prop::name_display_parse_roundtrip` failed on (2026-07-28).\n  \
+         MethodCall rows present: {:?}",
         rows.iter()
-            .filter(|(_, _, _, _, op, _)| *op == "MGet")
+            .filter(|(_, _, _, _, op, _)| *op == "MethodCall")
             .map(|(_, _, _, _, _, ld)| *ld)
             .collect::<Vec<_>>()
+    );
+    assert!(
+        (mettail_languages::rholang::__sigil_term_frame_surface)("Proc", "MethodCall", "NegProc",)
+            .is_none(),
+        "the generic method carries an arbitrary-length argument vector, so the generic \
+         single-child constructor must not fabricate one; the named parser-built witness below \
+         supplies this deliberately uncovered shape",
     );
     // The operand is WRAPPED iff the frame's own prefix is followed by the bracket, which the row
     // carries so this test needs no knowledge of the language's sigil.
@@ -414,7 +424,7 @@ fn every_term_first_sigil_frame_surface_is_a_display_fixpoint() {
 /// frame's tail is stranded.
 ///
 /// ```text
-///   term       NQuote(MGet(NegProc(PVar a), PZero))
+///   term       NQuote(MethodCall(NegProc(PVar a), "get", [PZero]))
 ///   before     @-a.get(Nil)     1:13 no accepting branch reached end of input   ✗
 ///   after      @(-a.get(Nil))   parses, canonical `@-(a.get(Nil))`, fixpoint    ✓
 /// ```
@@ -428,7 +438,8 @@ fn every_term_first_sigil_frame_surface_is_a_display_fixpoint() {
 fn a_sigil_led_prefix_application_does_not_delimit_the_frame_it_leads() {
     use mettail_languages::rholang::{Name, Proc};
     // Built by parsing, so the pin cannot drift from the surface it is about: this is exactly
-    // the shrunk counterexample `MGet(NegProc(PVar a), PZero)`.
+    // the shrunk counterexample, now represented by the generic
+    // `MethodCall(NegProc(PVar a), "get", [PZero])` constructor.
     let inner = Proc::parse("-a.get(Nil)").expect("`-a.get(Nil)` parses at Proc");
     assert_eq!(
         format!("{inner}"),

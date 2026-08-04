@@ -167,16 +167,19 @@ fn drift_shape(
     congruence_premises: usize,
 ) -> String {
     let d = |a: usize, e: usize| a as isize - e as isize;
-    let (d_total, d_t1, d_t2) = (
-        d(actual.0, expected.0),
-        d(actual.1, expected.1),
-        d(actual.2, expected.2),
-    );
+    let (d_total, d_t1, d_t2) =
+        (d(actual.0, expected.0), d(actual.1, expected.1), d(actual.2, expected.2));
 
     // `{:+}` renders zero as `+0`, which reads as a change when it is the absence of one —
     // and "ΔT2 = 0" is the single most load-bearing token in this message, because it is what
     // rules out a tier shift. So sign only the non-zero deltas.
-    let signed = |v: isize| if v == 0 { "0".to_string() } else { format!("{v:+}") };
+    let signed = |v: isize| {
+        if v == 0 {
+            "0".to_string()
+        } else {
+            format!("{v:+}")
+        }
+    };
 
     let mut s = String::with_capacity(1024);
     s.push_str("    ── implied shape of the change (derived from guards.rs's tally rules) ──\n");
@@ -452,10 +455,34 @@ fn calculator_guard_tiers() {
 /// Axis D had never been measured and was the one that mattered: those three are reducer
 /// `method_table` keys, so the machine already answered them correctly while the fold answered
 /// `error` — a live fold/machine disagreement from the moment `b"…"` became spellable.
+///
+/// ★ Generic `MethodCall` collapse (2026-08-04, RE-DERIVED not relaxed). The reducer is now the
+/// sole method registry and evaluator. The grammar replaced 47 method-name-specific terms and
+/// their 70 positional congruences with these two declarations:
+///
+/// ```text
+/// MethodCall . receiver:Proc, method_name:Ident, arguments:Vec(Proc)
+/// |- receiver "." method_name "(" arguments.*sep(",") ")" : Proc;
+///
+/// MethodCallReceiverWithheld . | S ~/> T
+/// |- (MethodCall S M Args) ~> (MethodCall T M Args);
+/// ```
+///
+/// * **T1 242 → 172 (−70).** The 47 former term declarations carried 73 structural fields.
+///   `MethodCall` carries three (`Proc`, captured `Ident`, and ordered `Vec(Proc)`), so the net
+///   change is `−73 + 3 == −70`. The vector is deliberately one ordered carrier, not one grammar
+///   field per argument.
+/// * **T2 291 → 152 (−139).** Each of the 70 removed congruences contributed one rewrite
+///   condition and one premise. The replacement withholding rule contributes one condition and
+///   no congruence premise: conditions `148 → 79` (−69), premises `142 → 72` (−70), and the
+///   single binder is unchanged. Therefore `−69 + −70 == −139`.
+/// * **total 533 → 324**, and `172 + 152 == 324`. T3/T4 remain zero and `worst` remains T2.
+///   The metadata inventory independently reports 116 terms, 88 rewrites, 172 structural fields,
+///   1 binder, 79 conditions, and 72 premises.
 #[test]
 fn rholang_guard_tiers() {
     let meta = mettail_languages::rholang::RholangLanguage.metadata();
-    assert_tier_tuple(meta, 533, 242, 291, 0, 0, T2);
+    assert_tier_tuple(meta, 324, 172, 152, 0, 0, T2);
 }
 
 /// **Ambient** — mobile ambients over `Proc`/`Name` (both non-scalar; no native

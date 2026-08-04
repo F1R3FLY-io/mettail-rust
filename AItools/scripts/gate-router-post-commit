@@ -81,7 +81,7 @@
 # consequence: three of six obligation-set frontier commits that session would not have been
 # routed (`87ee699c`, `1eb65221`, `88ec2734`), each because the declaration named the FILE
 # `models/build.rs` where the obligation clause is crate-rooted `models/` — and
-# `models/build/wire_schema.rs` is under the directory, not the file.
+# `models/codegen/schema.rs` is under the directory, not the file.
 #
 # ⇒ A declaration is complete only against a PER-GATE CLAUSE ENUMERATION. List the gate's
 # path-sensitive clauses, then show the prefix set covers each. The shortfall above was

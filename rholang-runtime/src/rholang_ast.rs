@@ -50,6 +50,7 @@ use models::rust::utils::{
 /// and compiled only under `cfg(test)`. See its module header for why a twin exists and why it
 /// is not a fallback.
 #[cfg(test)]
+#[path = "../tests/support/rholang_ast_recursive_oracle.rs"]
 mod recursive_oracle;
 
 const FREE_NAME_PREFIX: &str = "mtl:";
@@ -1134,8 +1135,8 @@ enum BinOp {
     Gte,
     And,
     Or,
-    /// `++` — string/list concatenation (`Proc::LConcat`, and `Proc::Add` over two ground
-    /// strings).
+    /// `++` — the target string-concatenation expression selected by `Proc::Add` over two ground
+    /// strings.
     PlusPlus,
     /// `+` — numeric addition.
     Plus,
@@ -1272,8 +1273,10 @@ enum Kont<'a> {
     AddParity,
     /// `Proc::Implies` — `(not a) or b`, with the negation wrapping ONLY the antecedent.
     Implies,
-    /// `lower_method`: an `EMethod` over `1 + argc` children, receiver first.
-    Method { name: &'static str, argc: usize },
+    /// `lower_method`: an `EMethod` over `1 + argc` children, receiver first. The name is
+    /// borrowed from `Proc::MethodCall`; accepting `&'a str` keeps arbitrary identifier
+    /// names allocation-free until the final protobuf node is assembled.
+    Method { name: &'a str, argc: usize },
     /// `EMatches` over `(target, pattern)`.
     Matches,
     /// §18.1's static-`false` fold: the formula is unsatisfiable by construction, so the whole
@@ -1971,103 +1974,22 @@ impl<'a> Drive<'a> {
             // M-1b — `PPar(φ, ψ)` is a PATTERN former, not a term former.
             Proc::SpatialPPar(..) => self.stacks.value(lower_arm_spatial_p_par()?),
             // ── Methods routed to the reducer's OWN method table (option C, C1/C2) ───────────
-            Proc::MToByteArray(m) => self.method("toByteArray", m, &[], env),
-            // The three byte-named methods (2026-07-30). Each names a key of the reducer's
-            // `method_table`: `hexToBytes` at `reduce.rs:9346`, `bytesToHex` at `:9347`,
-            // `toUtf8Bytes` at `:9348`. Routed rather than host-computed for the same reason as
-            // every sibling — the reducer owns the semantics and the metering.
-            Proc::MHexToBytes(s) => self.method("hexToBytes", s, &[], env),
-            Proc::MBytesToHex(b) => self.method("bytesToHex", b, &[], env),
-            Proc::MToUtf8Bytes(s) => self.method("toUtf8Bytes", s, &[], env),
-            Proc::MGet(m, k) => self.method("get", m, &[k], env),
-            Proc::MSet(m, k, v) => self.method("set", m, &[k, v], env),
-            Proc::MContains(m, k) => self.method("contains", m, &[k], env),
-            Proc::MDelete(m, k) => self.method("delete", m, &[k], env),
-            Proc::MUnion(a, b) => self.method("union", a, &[b], env),
-            Proc::MSize(m) => self.method("size", m, &[], env),
-            Proc::MKeys(m) => self.method("keys", m, &[], env),
-            Proc::BDiff(a, b) => self.method("diff", a, &[b], env),
-            Proc::SAdd(s, e) => self.method("add", s, &[e], env),
-            // ⚠ `length`/`nth`/`last`/`concat` are the FOUR routed operations whose interpreter
-            // implementation ACCEPTS an `EList`, so they would compute over a lowered `Bag`'s
-            // 2-element ABI encoding and answer something plausible and wrong. Gated on the
-            // RECEIVER'S SYNTAX, before anything is lowered — same order as the recursive form.
-            // (`last` joined the set on 2026-07-28, when `method_table` gained its `last` key.)
-            Proc::LLength(l) => match receiver_is_literal_bag(l.as_ref()) {
-                true => {
+            Proc::MethodCall(receiver, method_name, arguments) => {
+                // A literal Bag lowers through a two-element EList ABI. The three
+                // list-indexing methods would therefore return a plausible answer about
+                // the ABI rather than the multiset. Preserve the syntax-level refusal
+                // before lowering; all other membership, arity, carrier, metering, and
+                // result decisions belong to the reducer's method table.
+                if receiver_is_literal_bag(receiver.as_ref())
+                    && matches!(method_name.as_str(), "length" | "nth" | "last")
+                {
                     return Err(RholangAstLowerError::UnsupportedProc(
-                        "#{…}#.length() bag cardinality (no Rholang analog — the machine would \
-                         measure the 2-element bag ABI encoding, not the multiset; C3 residue)",
+                        "list-style indexing/cardinality on a bag (the machine would observe \
+                         the bag's two-element ABI encoding rather than the multiset)",
                     ));
-                },
-                false => self.method("length", l, &[], env),
-            },
-            Proc::LNth(l, i) => match receiver_is_literal_bag(l.as_ref()) {
-                true => {
-                    return Err(RholangAstLowerError::UnsupportedProc(
-                        "#{…}#.nth(i) bag indexing (no Rholang analog — the machine would index \
-                         the 2-element bag ABI encoding, not the multiset; C3 residue)",
-                    ));
-                },
-                false => self.method("nth", l, &[i], env),
-            },
-            // `last` — ROUTED 2026-07-28 (was C3 residue). `last_method` accepts `EListBody`
-            // exactly as `nth_method` does, so it takes the identical bag gate: ungated,
-            // `#{1|2|2}#.last()` would answer the ABI encoding's SECOND element (the pairs
-            // list), which is plausible and wrong.
-            //
-            // ⚠ The routed method is NATIVE, not `l.nth(l.length() - 1)`: that desugaring names
-            // the receiver twice and so evaluates it twice, and duplicated evaluation is
-            // duplicated gas.
-            Proc::LLast(l) => match receiver_is_literal_bag(l.as_ref()) {
-                true => {
-                    return Err(RholangAstLowerError::UnsupportedProc(
-                        "#{…}#.last() bag final-element access (no Rholang analog — the machine \
-                         would index the 2-element bag ABI encoding, not the multiset; C3 \
-                         residue)",
-                    ));
-                },
-                false => self.method("last", l, &[], env),
-            },
-            Proc::LConcat(l, r) => {
-                match receiver_is_literal_bag(l.as_ref()) || receiver_is_literal_bag(r.as_ref()) {
-                    true => {
-                        return Err(RholangAstLowerError::UnsupportedProc(
-                            "#{…}#.concat(…) bag concatenation (no Rholang analog — `++` would \
-                             concatenate the 2-element bag ABI encodings, tags and all; C3 \
-                             residue)",
-                        ));
-                    },
-                    false => self.bin(Kont::BinExpr(BinOp::PlusPlus), l, r, env),
                 }
+                self.method(method_name.as_str(), receiver, arguments, env);
             },
-            // ── C1b — the Pathmap/Zipper family: routed, but UNREACHABLE until C4 ────────────
-            Proc::PGetSubtrie(m) => self.method("getSubtrie", m, &[], env),
-            Proc::PReadZipper(m) => self.method("readZipper", m, &[], env),
-            Proc::PReadZipperAt(m, p) => self.method("readZipperAt", m, &[p], env),
-            Proc::PWriteZipper(m) => self.method("writeZipper", m, &[], env),
-            Proc::PWriteZipperAt(m, p) => self.method("writeZipperAt", m, &[p], env),
-            Proc::RZGetLeaf(z) => self.method("getLeaf", z, &[], env),
-            Proc::RZDescendTo(z, rel) => self.method("descendTo", z, &[rel], env),
-            Proc::RZChildCount(z) => self.method("childCount", z, &[], env),
-            Proc::RZDescendFirst(z) => self.method("descendFirst", z, &[], env),
-            Proc::RZToNextSibling(z) => self.method("toNextSibling", z, &[], env),
-            Proc::RZToPrevSibling(z) => self.method("toPrevSibling", z, &[], env),
-            Proc::RZDescendIndexedBranch(z, i) => self.method("descendIndexedBranch", z, &[i], env),
-            Proc::RZAscendOne(z) => self.method("ascendOne", z, &[], env),
-            Proc::RZAscend(z, n) => self.method("ascend", z, &[n], env),
-            Proc::RZGetPath(z) => self.method("getPath", z, &[], env),
-            Proc::RZToNextLeaf(z) => self.method("toNextLeaf", z, &[], env),
-            Proc::RZLeafCount(z) => self.method("leafCount", z, &[], env),
-            // ⚠ `setLeaf` is NOT routed: Rholang's `w.setLeaf(full, v)` writes at an ABSOLUTE
-            // path and Rholang's `z.setLeaf(v)` APPENDS an element at the path `v` derives for
-            // itself. Same name, different operation; the carrier has no value slot to write
-            // into. It falls through to the fail-closed arm.
-            Proc::WZSetSubtrie(w, rel) => self.method("setSubtrie", w, &[rel], env),
-            Proc::WZRemoveLeaf(w) => self.method("removeLeaf", w, &[], env),
-            Proc::WZRemoveBranches(w) => self.method("removeBranches", w, &[], env),
-            Proc::WZGraft(w, rz) => self.method("graft", w, &[rz], env),
-            Proc::WZJoinInto(w, rz) => self.method("joinInto", w, &[rz], env),
             // A-S4 fail-closed: every remaining construct has no machine algebra. The typed
             // error NAMES the construct; nothing silently host-evaluates.
             other => self.stacks.value(lower_arm_unsupported(other)?),
@@ -2080,22 +2002,12 @@ impl<'a> Drive<'a> {
         self.push_children(kont, [Job::Proc(a.as_ref(), env), Job::Proc(b.as_ref(), env)]);
     }
 
-    /// The `EMethod` shape, which 27 arms share. The receiver is child 0.
-    fn method(
-        &mut self,
-        name: &'static str,
-        target: &'a Arc<Proc>,
-        arguments: &[&'a Arc<Proc>],
-        env: EnvId,
-    ) {
+    /// The generic `EMethod` shape. The receiver is child 0 and the ordered argument
+    /// vector follows without temporary `Arc` references or name-specific dispatch.
+    fn method(&mut self, name: &'a str, target: &'a Arc<Proc>, arguments: &'a [Proc], env: EnvId) {
         let mut children = Vec::with_capacity(1 + arguments.len());
         children.push(Job::Proc(target.as_ref(), env));
-        // `*argument` before `.as_ref()`: iterating `&[&'a Arc<Proc>]` yields `&&'a Arc<Proc>`,
-        // and auto-deref through the OUTER reference would tie the child's lifetime to this
-        // slice's borrow rather than to the term's.
-        for argument in arguments {
-            children.push(Job::Proc((*argument).as_ref(), env));
-        }
+        children.extend(arguments.iter().map(|argument| Job::Proc(argument, env)));
         self.push_children(Kont::Method { name, argc: arguments.len() }, children);
     }
 
@@ -3100,8 +3012,8 @@ fn lower_arm_p_flt(
 ///
 /// ⚠ M-2: the DRIVER calls [`lower_int_value`] directly (there is no frame to save by going
 /// through a one-line forwarder in a machine that has no frames), so this is reached only from
-/// [`recursive_oracle`]. It is kept rather than deleted because the oracle must stay verbatim —
-/// a twin that had been edited to compile is not a twin.
+/// [`recursive_oracle`]. It is retained because the bounded oracle deliberately preserves the
+/// old recursive call graph; the differential suite compares that graph with the PDA driver.
 #[cfg_attr(not(test), allow(dead_code))]
 #[inline(never)]
 fn lower_arm_cast_int(
@@ -3456,146 +3368,6 @@ fn lower_arm_spatial_p_par() -> Result<Par, RholangAstLowerError> {
     ))
 }
 
-/// The `Proc::MToByteArray(m)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::MGet(m, k)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::MSet(m, k, v)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::MContains(m, k)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::MDelete(m, k)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::MUnion(a, b)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::MSize(m)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::MKeys(m)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::BDiff(a, b)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::SAdd(s, e)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::LLength(l)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::LNth(l, i)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::LConcat(l, r)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::PGetSubtrie(m)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::PReadZipper(m)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::PReadZipperAt(m, p)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::PWriteZipper(m)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::PWriteZipperAt(m, p)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZGetLeaf(z)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZDescendTo(z, rel)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZChildCount(z)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZDescendFirst(z)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZToNextSibling(z)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZToPrevSibling(z)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZDescendIndexedBranch(z, i)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZAscendOne(z)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZAscend(z, n)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZGetPath(z)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZToNextLeaf(z)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::RZLeafCount(z)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::WZSetSubtrie(w, rel)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::WZRemoveLeaf(w)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::WZRemoveBranches(w)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::WZGraft(w, rz)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
-/// The `Proc::WZJoinInto(w, rz)` arm.
-///
-/// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
-/// reasoning behind them, are documented at the call site.
 /// The `other` arm.
 ///
 /// Hoisted out of [`lower_proc`] by M-1 — pure code motion. The semantics, and the
@@ -3619,153 +3391,9 @@ fn unsupported_construct_name(proc: &Proc) -> &'static str {
         Proc::BitNot(..) => "bitnot bitwise-not (no Rholang bitwise Expr)",
         Proc::MapEmpty => "Map() empty-map constructor",
         Proc::PathmapEmpty => "Pathmap() empty-pathmap constructor",
-        // ── The C1 residue: methods with NO counterpart in `reduce.rs::method_table` ────────
-        //
-        // Everything here was checked against the interpreter's table by name (that table is at
-        // `rholang/src/rust/interpreter/reduce.rs:9023` in `../f1r3node-rust-mettail` — MEASURED
-        // 2026-07-28; the ":8464" that stood here was stale). Each has no key there, so there is
-        // nothing to route TO — the fold body is the only implementation that exists, and routing
-        // would have to invent one. They stay fail-closed and named, which is the A-S4 contract.
-        //
-        // ⚠ A COUNT was deliberately NOT restated here. The wording that stood ("These six")
-        // did not match the block, which carried EIGHT no-key constructs plus `WZSetLeaf` (whose
-        // name IS a key, for a different operation); the numeral had gone stale silently across
-        // the C4 amendment. A count that no test derives is a comment that rots, so it is gone
-        // rather than re-guessed.
-        //
-        // `.values()` — the table provides `keys` but not `values`; a Rholang Map's values are
-        // reachable only via `toList`/`get`.
-        Proc::MValues(..) => "m.values() map method (no Rholang analog; C3 residue)",
-        // `.count(e)` / `.remove(e)` — Bag multiplicity operations. Rholang has no multiset.
-        Proc::BCount(..) => "b.count(e) bag method (no Rholang analog; C3 residue)",
-        Proc::BRemove(..) => "b.remove(e) bag method (no Rholang analog; C3 residue)",
-        // ── DISABLED, not deleted: `.last()` became ROUTED on 2026-07-28 ───────────────────
-        //
-        // This arm named a fail-closed error from the day `last()` landed until the interpreter's
-        // `method_table` gained a `last` key (`reduce.rs::last_method`, registered at :9026
-        // immediately after `nth` at :9025). There is now something to route TO, so `lower_proc`
-        // handles `Proc::LLast` in its C1 block and this arm became unreachable. Kept commented,
-        // exactly as the 31 arms C1 superseded below are, so the transition stays legible and the
-        // prior error string — quoted verbatim by tests and by the `recursive_oracle` corpus —
-        // remains findable by grep:
-        //
-        //   Proc::LLast(..) => "l.last() list method (no Rholang analog; C3 residue)",
-        //
-        // ⚠ The routed method is NATIVE, and that is the whole point. The alternative was the
-        // desugaring `l.last()` ⇒ `l.nth(l.length() - 1)`, which is expressible entirely in
-        // methods that already existed and would have run on the machine without any interpreter
-        // change — but it names the receiver TWICE, so the receiver is EVALUATED twice, and
-        // duplicated evaluation is duplicated gas. `last_method` evaluates the receiver once and
-        // projects at `len - 1` through the same bounds-checked `local_nth` that `nth` uses.
-        //
-        // ★ ADDITIVE. No program that does not call `last()` is affected, and before the
-        // `method_table` key existed `last()` did not execute at all — it failed closed here —
-        // so no existing behaviour changed. Upstream Rholang has no `last`, so no upstream
-        // program can observe the difference either.
-        // `.subtract(q)` — no `subtract` key at all.
-        Proc::PSubtract(..) => "p.subtract(q) pathmap method (no Rholang analog; C3 residue)",
-        // `.restrict(q)` / `.meet(q)` / `.getSubtrieAt(p)`
-        //
-        // ★★ CORRECTION (C4 investigation, 2026-07-26 — MEASURED). These three used to be recorded
-        // as carrying "PLAUSIBLE but not verified" candidates that "could not be exercised against
-        // the reducer even once" while `Pathmap` lowers to `EMap`. **That premise was false**: a
-        // real `EPathMap` is constructible in the conformance harness independently of what
-        // `lower_pathmap` emits — that is exactly what
-        // `c1b_routed_zipper_family_matches_the_interpreter_arity` already did for the other 22 —
-        // so the mappings were measurable all along. They have now been measured, and one of the
-        // two guesses was WRONG.
-        //
-        //   Rholang (`runtime/src/pathmap_bridge.rs`)   keys kept                        values
-        //   ─────────────────────────────────────────   ──────────────────────────────   ────────
-        //   restrict(base, mask)  `trie_restrict_lit`   base keys EXACTLY in mask        base's
-        //   meet(left, right)     `trie_meet_lit`       left keys EXACTLY in right       right's
-        //
-        //   Rholang (`reduce.rs`)                       keys kept
-        //   ─────────────────────────────────────────   ──────────────────────────────────────────
-        //   restriction (4666)                          base keys under a PREFIX in other
-        //   intersection (4589)                         base keys EXACTLY in other
-        //
-        // So `restrict ↦ restriction` — the candidate that stood here — is a MIS-MAPPING: it would
-        // silently widen exact membership into prefix containment. Measured by
-        // `c4_restrict_is_not_restriction_and_meet_is_intersection`, whose discriminating fixture
-        // is a mask holding a strict PREFIX of two base entries and an exact match for none:
-        // `restriction` keeps 2, `intersection` keeps 0. An exact-only fixture — the obvious one to
-        // reach for — cannot tell them apart, which is why the guess looked safe.
-        //
-        // `restrict` and `meet` BOTH mean key-level `intersection`. They differ only in whose
-        // VALUES survive, and the target carrier has no value slot (see the C1b block), so on the
-        // machine they would coincide. ⚠ Routing them to one name is therefore not a free rename:
-        // it would BAKE IN the key-≡-value carrier decision that C4 must present rather than take.
-        // They stay fail-closed until that decision is made, now for a measured reason.
-        //
-        // `.getSubtrieAt(p)` is `readZipperAt(p).getSubtrie()` — measured by
-        // `c4_get_subtrie_at_is_read_zipper_at_then_get_subtrie`, including that the result keeps
-        // ABSOLUTE paths (a caller assuming relative ones would index one segment short on every
-        // entry) and that a miss is the EMPTY pathmap rather than an error. The composition is with
-        // `readZipperAt`, a focus move — NOT with `atPath`, a value lookup, which is what the old
-        // note guessed. It is a two-method REWRITE rather than a routing, and it is held with
-        // `restrict`/`meet` because it inherits the same carrier decision.
-        Proc::PRestrict(..) => "p.restrict(q) pathmap method (MEASURED: `restriction` is PREFIX \
-                                containment, this is EXACT — the key-level target is \
-                                `intersection`, held on the C4 carrier decision)",
-        Proc::PMeet(..) => "p.meet(q) pathmap method (MEASURED: key-level `intersection`; differs \
-                            from `restrict` only in value provenance, which the target carrier \
-                            cannot express — held on the C4 carrier decision)",
-        Proc::PGetSubtrieAt(..) => "p.getSubtrieAt(q) pathmap method (MEASURED: \
-                                    `readZipperAt(q).getSubtrie()`, absolute paths — a rewrite, \
-                                    held on the C4 carrier decision)",
-        // `setLeaf` shares a NAME with `reduce.rs::set_leaf_method` and not an operation: Rholang's
-        // writes a value at an absolute path argument; Rholang's APPENDS its one argument to the
-        // map as a new element and never consults the zipper's focus (MEASURED — see the C1b block
-        // in `lower_proc`, which also records why the once-proposed `writeZipperAt(full).setLeaf(v)`
-        // rewrite is a silent no-op on the path).
-        Proc::WZSetLeaf(..) => "z.setLeaf(path, v) write-zipper method (Rholang's `setLeaf` APPENDS \
-                                an element and takes 1 argument; this writes a value at an absolute \
-                                path — same name, different operation, and the carrier has no value \
-                                slot to write into)",
-        //
-        // ── DISABLED, not deleted: the arms C1 superseded ───────────────────────────────────
-        //
-        // These 31 variants named a fail-closed error until 2026-07-26. They are now ROUTED to
-        // the reducer's method table in `lower_proc` (see the C1 / C1b blocks there), so these
-        // arms became unreachable. Kept commented so the transition is legible and so the exact
-        // prior error strings — which several tests and the settlement RUN-SHEET quote verbatim
-        // — remain findable by grep:
-        //
-        //   Proc::MGet(..) => "m.get(k) map method",
-        //   Proc::MSet(..) => "m.set(k, v) map method",
-        //   Proc::MContains(..) => "m.contains(k) map method",
-        //   Proc::MDelete(..) => "m.delete(k) map method",
-        //   Proc::MUnion(..) => "m.union(n) map method",
-        //   Proc::MSize(..) => "m.size() map method",
-        //   Proc::MKeys(..) => "m.keys() map method",
-        //   Proc::LLength(..) => "l.length() list method",
-        //   Proc::LNth(..) => "l.nth(i) list method",
-        //   Proc::LConcat(..) => "l.concat(m) list method",
-        //   Proc::SAdd(..) => "s.add(e) set method",
-        //   Proc::BDiff(..) => "b.diff(c) bag method",
-        //   Proc::PGetSubtrie(..) => "p.getSubtrie() pathmap method",
-        //   Proc::PReadZipper(..) => "p.readZipper() zipper method",
-        //   Proc::PReadZipperAt(..) => "p.readZipperAt(q) zipper method",
-        //   Proc::PWriteZipper(..) => "p.writeZipper() zipper method",
-        //   Proc::PWriteZipperAt(..) => "p.writeZipperAt(q) zipper method",
-        //   Proc::RZGetLeaf(..) => "z.getLeaf() read-zipper method",
-        //   Proc::RZDescendTo(..) => "z.descendTo(p) read-zipper method",
-        //   Proc::RZChildCount(..) => "z.childCount() read-zipper method",
-        //   Proc::RZDescendFirst(..) => "z.descendFirst() read-zipper method",
-        //   Proc::RZToNextSibling(..) => "z.toNextSibling() read-zipper method",
-        //   Proc::RZToPrevSibling(..) => "z.toPrevSibling() read-zipper method",
-        //   Proc::RZDescendIndexedBranch(..) => "z.descendIndexedBranch(i) read-zipper method",
-        //   Proc::RZAscendOne(..) => "z.ascendOne() read-zipper method",
-        //   Proc::RZAscend(..) => "z.ascend(n) read-zipper method",
-        //   Proc::WZSetSubtrie(..) => "z.setSubtrie(…) write-zipper method",
-        //   Proc::WZRemoveLeaf(..) => "z.removeLeaf() write-zipper method",
-        //   Proc::WZRemoveBranches(..) => "z.removeBranches() write-zipper method",
-        //   Proc::WZGraft(..) => "z.graft(…) write-zipper method",
-        //   Proc::WZJoinInto(..) => "z.joinInto(…) write-zipper method",
-        //
-        // `RZGetPath` / `RZToNextLeaf` / `RZLeafCount` never had arms here — they landed already
-        // routed (`07ea75eb`), reaching the `_` catch-all before C1.
+        // Every method spelling is represented by `MethodCall` and handled before this
+        // fail-closed table. Unknown names are intentionally lowered to `EMethod`; the
+        // reducer's own table returns the typed method-not-found diagnostic.
         Proc::ToBool(..) => "bool(a) boolean conversion",
         Proc::ToStr(..) => "str(a) string conversion",
         Proc::CastReadZipper(..) => "read-zipper literal",
@@ -3819,26 +3447,6 @@ fn binary_expr_par(
     par
 }
 
-/// Lower a Rholang **method call** to Rholang's own `EMethod` — the single-evaluator seam.
-///
-/// This is the mechanism of "option C — different carriers, ONE evaluator". Instead of Rholang
-/// carrying a second implementation of a method Rholang already has, the method name is handed to
-/// the reducer's own method table (`rholang/src/rust/interpreter/reduce.rs::method_table`, at
-/// :9023 — MEASURED 2026-07-28; the "8197-8256" that stood here was stale), which dispatches on
-/// the *evaluated* receiver. Consequences that matter:
-///
-/// * the semantics are the consensus semantics, by construction — there is nothing left to
-///   diverge from;
-/// * dispatch is dynamic, so a COMM-bound receiver works exactly like a literal one (the class of
-///   bug that divergence B is an instance of); and
-/// * receivers Rholang supports but Rholang's fold bodies did not (e.g. `nth` over `ETuple` and
-///   `GByteArray`, `reduce.rs:4106-4118`) come for free.
-///
-/// `locally_free`/`connective_used` are unioned over the receiver and every argument, exactly as
-/// [`binary_expr_par`] does for operators, so a method call over bound/free variables stays
-/// correctly tracked. `EMethod` carries its own copy of both (proto fields 5 and 6) in addition to
-/// the enclosing `Par`'s, and the reducer reads the `EMethod`'s copy when it substitutes
-/// (`reduce.rs:466`), so both are set.
 /// Is this receiver a `Bag` **written literally at the call site**, so the C1 routing can see that
 /// the machine would be handed the bag ENCODING rather than a bag?
 ///
@@ -3846,7 +3454,7 @@ fn binary_expr_par(
 /// `EList[GPrivate(RHOLANG_BAG_ABI_TAG), EList[pairs]]` — an `EList` of **exactly two** elements,
 /// whatever the multiset's cardinality. Most routed methods are safe from this by construction
 /// (`size`, `union`, `diff`, `contains`, `keys`, … accept only `EMapBody`/`ESetBody`/`EPathmapBody`
-/// and so reject the encoding outright), but `length` and `nth` accept `EListBody` and would
+/// and so reject the encoding outright), but `length`, `nth`, and `last` accept `EListBody` and would
 /// happily answer *about the encoding*: `#{1|2|2}#.length()` would be `2` — the tag plus the pairs
 /// list — where the fold body answers the multiset cardinality `3`.
 ///
@@ -3859,7 +3467,7 @@ fn binary_expr_par(
 /// divergence B. The residue is MEASURED and pinned rather than assumed, by
 /// `rho_rholang_conformance.rs::c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime`.
 ///
-/// Closing it completely needs **C3** (a bag-aware `length`/`nth` injected as a system-process
+/// Closing it completely needs **C3** (bag-aware collection methods injected as system-process
 /// `Definition`, so the machine has a real bag algebra instead of an encoding) — it is NOT
 /// closeable by changing [`lower_bag`], because the two-element tagged-`EList` shape is the wire
 /// ABI that `run.rs:166` decodes.
@@ -3867,22 +3475,6 @@ fn receiver_is_literal_bag(proc: &Proc) -> bool {
     matches!(proc, Proc::CastBag(..))
 }
 
-/// `l.length()` → the reducer's `length` (`reduce.rs:7893`), gated on the bag encoding.
-///
-/// See [`receiver_is_literal_bag`] for why the gate exists and exactly how far it reaches.
-/// `l.nth(i)` → the reducer's `nth` (`reduce.rs:4078`), gated on the bag encoding.
-///
-/// Rholang's `nth` additionally accepts `ETuple` and `GByteArray` receivers, which Rholang's own
-/// fold body rejects — routed receivers Rholang supports come for free, which is the point of
-/// option C. See [`receiver_is_literal_bag`] for the gate.
-/// `l.concat(r)` → Rholang's `++` (`EPlusPlus`, `reduce.rs::combine_plus_plus`), gated on the bag
-/// encoding on EITHER side.
-///
-/// `++` accepts `EList`, so a lowered `Bag` would be concatenated as the 2-element tagged list it
-/// is encoded as: `#{1|2}#.concat(#{3}#)` would answer a 4-element list containing two
-/// `RHOLANG_BAG_ABI_TAG` unforgeables, where the fold body answers `error`. Both operands are
-/// checked because either position can supply the bag. See [`receiver_is_literal_bag`] for how far
-/// the gate reaches and why it cannot reach further.
 /// Assemble a unary Rholang `Expr` `Par` from an already-lowered operand `Par` (the `ENeg`/`ENot`
 /// propagation shape).
 fn unary_expr_par(operand: Par, build: impl FnOnce(Option<Par>) -> ExprInstance) -> Par {
@@ -4428,7 +4020,8 @@ fn record_guard_outcome(outcome: guard_discharge::GuardDischarge, guard: &Proc) 
 
 /// ⚠ M-2: superseded in production by [`decompose_for_row_borrowed`], which returns the same
 /// decomposition without cloning an `InputBind` out of its `Arc` per row. Reached only from
-/// [`recursive_oracle`], which must stay verbatim — a twin edited to compile is not a twin.
+/// [`recursive_oracle`], which deliberately preserves the superseded recursive traversal for the
+/// byte-equivalence differential.
 #[cfg_attr(not(test), allow(dead_code))]
 /// Lower a `PForUser` receive (rows + body) into a normalized Rholang `Receive` `Par`.
 ///

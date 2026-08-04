@@ -475,8 +475,30 @@ fn render_fixed_point(unscaled: &[u8], scale: u32) -> String {
 // The conformance assertion
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-/// The suite's core assertion: `fold(e)`, `reduce(lower(e))`, and the human-written `expected`
-/// Rholang surface form all agree.
+/// Assert the consensus path: `reduce(lower(e))` agrees with the human-written `expected`
+/// Rholang surface form.
+///
+/// This is the only semantic assertion for `MethodCall`.  The grammar intentionally retains a
+/// method call as `(receiver, identifier text, ordered arguments)`; f1r3node's method table is the
+/// sole evaluator and sole registry for method names and arities.
+async fn assert_reducer_result(source: &str, expected: &str) {
+    let proc = parse(source);
+    let observed = reduce(&proc)
+        .await
+        .unwrap_or_else(|err| panic!("{source:?}: the Rholang REDUCE side failed: {err}"));
+    let [value] = observed.as_slice() else {
+        panic!("{source:?}: expected exactly one observation on @\"OUT\", got {observed:?}");
+    };
+    let rendered = render_as_rholang(value);
+    assert_eq!(
+        rendered, expected,
+        "{source:?}: the Rholang REDUCER (f1r3node reduce.rs) disagrees with the specified value \
+         (raw observation: {value:?})"
+    );
+}
+
+/// The suite's differential assertion for constructs that still have an independent MeTTaIL
+/// fold: `fold(e)`, `reduce(lower(e))`, and the human-written `expected` form all agree.
 ///
 /// `expected` is stated explicitly rather than only asserting `fold == reduce`, so a *mutual*
 /// drift (both sides changing together) still fails.
@@ -491,18 +513,7 @@ async fn assert_conformant(source: &str, expected: &str) {
          disagrees with the specified value"
     );
 
-    let observed = reduce(&proc)
-        .await
-        .unwrap_or_else(|err| panic!("{source:?}: the Rholang REDUCE side failed: {err}"));
-    let [value] = observed.as_slice() else {
-        panic!("{source:?}: expected exactly one observation on @\"OUT\", got {observed:?}");
-    };
-    let rendered = render_as_rholang(value);
-    assert_eq!(
-        rendered, expected,
-        "{source:?}: the Rholang REDUCER (f1r3node reduce.rs) disagrees with the specified value \
-         (raw observation: {value:?})"
-    );
+    assert_reducer_result(source, expected).await;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1027,48 +1038,38 @@ async fn divergence_b_target_string_add_is_position_independent() {
 
 // ── C — `nth` error discipline ───────────────────────────────────────────────────────────────────
 
-/// **Divergence C (parts 1 + 2) — ★ CLOSED 2026-07-25 on the FOLD side.**
+/// **Divergence C (parts 1 + 2) — ★ CLOSED on the reducer-owned method path.**
 ///
-/// Two of C's three symptoms were defects in `languages/src/rholang.rs`'s `LNth` body, and both
-/// are fixed:
-///
-/// | symptom | before | now |
-/// |---|---|---|
-/// | out-of-range index | `v.get(n).cloned().expect("at: index out of bounds")` — a panic, which **aborts the process** here (unwinding across this workspace's Cranelift frames dies with `failed to initiate panic, error 5`) | the `error` term |
-/// | index carrier | the arm matched only `(CastList, CastInt)`, so a PLAIN Rholang integer — which is `BigInt` — was rejected and `[1,2,3].nth(0)` answered `error` | `Int`, `BigInt` and `UInt32` indices all accepted |
-///
-/// This test is now a REGRESSION PIN, and it proves the panic is gone by construction: it calls
-/// the out-of-range fold **in-process**. A panic would take the whole binary with it, so the test
-/// cannot pass unless the fold returns.
-///
-/// The deleted machinery is worth naming: this used to be
-/// `divergence_c_witness_out_of_bounds_nth_aborts_the_process`, which re-executed THIS test binary
-/// as a child (armed by `MTL_DIVERGENCE_C_PROBE`) and asserted the child's death, because the abort
-/// could not be observed any other way. With the panic gone there is nothing to survive.
-///
-/// The LOWERING half — `nth` never reaching the machine — was the remainder of C, and **C1 closed
-/// it on 2026-07-26**: `nth` now routes to the reducer's own `nth`. See
-/// [`divergence_c_target_nth_is_the_reducers_nth`], which is no longer `#[ignore]`d.
+/// The former `LNth` fold and its panic-prone host implementation no longer exist. Every spelling
+/// below is the generic `MethodCall` constructor, lowers to `EMethod("nth")`, and is decided by
+/// f1r3node's reducer. This pins both value and recoverable-error behavior without recreating a
+/// second evaluator in the grammar.
 #[tokio::test(flavor = "multi_thread")]
 async fn divergence_c_closed_nth_is_total_and_carrier_agnostic() {
-    // Out of range: the `error` term, IN PROCESS (a panic here would abort the binary).
-    for source in ["[1, 2, 3].nth(10)", "[1, 2, 3].nth(int(10, 64))", "[].nth(0)"] {
-        assert_eq!(
-            fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}")),
-            "error",
-            "C: {source:?} — an out-of-range `nth` is a value, never a panic"
+    // Out of range is a recoverable reducer error, never a host panic.
+    for source in ["[1, 2, 3].nth(10)", "[1, 2, 3].nth(10u32)", "[].nth(0)"] {
+        let error = reduce(&parse(source))
+            .await
+            .expect_err("out-of-range nth must fail recoverably");
+        assert!(
+            error.contains("index out of bound"),
+            "C: {source:?} — expected the reducer's bounds error, got {error:?}",
         );
     }
-    // Every integer carrier Rholang can write is accepted, and they agree.
-    for source in ["[1, 2, 3].nth(0)", "[1, 2, 3].nth(int(0, 64))", "[1, 2, 3].nth(uint(0, 32))"] {
-        assert_eq!(
-            fold(&parse(source)).unwrap_or_else(|err| panic!("{source:?}: {err}")),
-            "1",
-            "C: {source:?} — `nth` does not care which integer carrier the index rode in on"
-        );
+    // Both direct surface spellings that lower to the reducer's GInt carrier agree. The
+    // MeTTaIL-only `int(a, width)` fold is deliberately not smuggled into method-argument
+    // evaluation now that methods have no host fold lane.
+    for source in ["[1, 2, 3].nth(0)", "[1, 2, 3].nth(0u32)"] {
+        assert_reducer_result(source, "1").await;
     }
-    // A NON-integer index is still refused, as a value.
-    assert_eq!(fold(&parse(r#"[1, 2, 3].nth("0")"#)).expect("the fold converges"), "error");
+    // A NON-integer index is refused by the same reducer method.
+    let error = reduce(&parse(r#"[1, 2, 3].nth("0")"#))
+        .await
+        .expect_err("a string index must be rejected");
+    assert!(
+        error.contains("expression didn't evaluate to integer"),
+        "C: expected a typed reducer refusal for a string index, got {error:?}",
+    );
 
     // ★ CLOSED by C1 (2026-07-26). The tail that stood here asserted the lowering gap:
     //
@@ -1102,8 +1103,8 @@ async fn divergence_c_closed_nth_is_total_and_carrier_agnostic() {
 #[tokio::test(flavor = "multi_thread")]
 async fn divergence_c_target_nth_is_the_reducers_nth() {
     // A plain (BigInt) index works, on both sides.
-    assert_conformant("[1, 2, 3].nth(0)", "1").await;
-    assert_conformant("[1, 2, 3].nth(2)", "3").await;
+    assert_reducer_result("[1, 2, 3].nth(0)", "1").await;
+    assert_reducer_result("[1, 2, 3].nth(2)", "3").await;
     // Out of bounds is a RECOVERABLE error, never a panic.
     let err = reduce(&parse("[1, 2, 3].nth(10)"))
         .await
@@ -1135,9 +1136,9 @@ async fn divergence_c_target_nth_is_the_reducers_nth() {
 
 /// ★★ **`[1, 2, 3].last()` RUNS ON THE RHO MACHINE AND OBSERVES `3` — and `last` is not `first`.**
 ///
-/// Not that it parses; not that it folds. `assert_conformant` lowers the term, evaluates it on the
-/// real f1r3node reducer, and reads the value resting on `@"OUT"` — while also requiring the fold
-/// to agree, so a mutual drift still fails.
+/// Not that it parses; not that a duplicate host evaluator can imitate it.
+/// [`assert_reducer_result`] lowers the term, evaluates it on the real f1r3node reducer, and reads
+/// the value resting on `@"OUT"`.
 ///
 /// ⚠ **The discriminator is in this test on purpose.** `[111, 222, 333].last()` is `333` while the
 /// **same list**'s `.nth(0)` is `111`. A `[1].last() == 1` assertion would pass under BOTH the
@@ -1147,11 +1148,11 @@ async fn divergence_c_target_nth_is_the_reducers_nth() {
 async fn last_executes_on_the_machine_and_is_not_the_first_element() {
     // The row that used to sit in `c3_residue_mettail_only_operations_fail_closed_and_named`
     // asserting the machine REFUSED this program. It now answers.
-    assert_conformant("[1, 2, 3].last()", "3").await;
+    assert_reducer_result("[1, 2, 3].last()", "3").await;
 
     // ★ The discriminator: head ≠ last, on the SAME list, both on the machine.
-    assert_conformant("[111, 222, 333].last()", "333").await;
-    assert_conformant("[111, 222, 333].nth(0)", "111").await;
+    assert_reducer_result("[111, 222, 333].last()", "333").await;
+    assert_reducer_result("[111, 222, 333].nth(0)", "111").await;
 
     // …and stated as an inequality too, so the pair cannot be "fixed" by making both 333.
     let last = reduce(&parse("[111, 222, 333].last()"))
@@ -1175,11 +1176,8 @@ async fn last_executes_on_the_machine_and_is_not_the_first_element() {
 /// that `nth` calls, so on the empty list they are literally the same call and a divergence means
 /// someone broke the sharing.
 ///
-/// ⚠ **Lane discipline.** The FOLD answers the `error` term for both programs; the MACHINE raises
-/// a recoverable out-of-bounds reduction error for both. Those two lane answers differ, and that
-/// difference is `nth`'s documented, normative behaviour (see
-/// [`divergence_c_target_nth_is_the_reducers_nth`]) — inherited here rather than re-litigated.
-/// What is asserted is agreement *within* each lane.
+/// There is deliberately no host fold lane: `MethodCall` is a pure syntax constructor and the
+/// reducer's recoverable error is the one normative answer.
 #[tokio::test(flavor = "multi_thread")]
 async fn last_on_the_empty_list_agrees_with_nth_zero_on_the_machine() {
     // ① the MACHINE lane: identical recoverable errors.
@@ -1208,10 +1206,6 @@ async fn last_on_the_empty_list_agrees_with_nth_zero_on_the_machine() {
         "this must be the REDUCER's error, not the lowering's refusal — got {last_error:?}, \
          which is the pre-routing signature"
     );
-
-    // ② the FOLD lane: identical `error` terms.
-    assert_eq!(fold(&parse("[].last()")).expect("the fold converges"), "error");
-    assert_eq!(fold(&parse("[].nth(0)")).expect("the fold converges"), "error");
 }
 
 // ── D — `Fixed` scale mismatch ───────────────────────────────────────────────────────────────────
@@ -1352,6 +1346,54 @@ async fn c2_closed_to_byte_array_is_the_reducers_own_encoding() {
             panic!("{source:?}: `toByteArray` must return a GByteArray, got {observed:?}");
         };
         assert_eq!(hex_of(bytes), expected, "{source:?}");
+    }
+}
+
+/// **E3 — byte methods are evaluated only by f1r3node's method table.**
+///
+/// These rows replace the retired host folds. They pin the byte carrier, unsigned indexing,
+/// canonical hex rendering, UTF-8 conversion, and upstream's deliberately permissive
+/// filter-and-left-pad hex decoder through the production lowering/reducer path.
+#[tokio::test(flavor = "multi_thread")]
+async fn e3_byte_methods_are_owned_by_the_reducer() {
+    for (source, expected) in [
+        (r#"b"dead".length()"#, "2"),
+        (r#"b"deadbeef".nth(1)"#, "173"),
+        (r#"b"deadbeef".last()"#, "239"),
+        (r#"b"80".nth(0)"#, "128"),
+        (r#"b"000f".bytesToHex()"#, r#""000f""#),
+    ] {
+        assert_reducer_result(source, expected).await;
+    }
+
+    for (source, expected) in [
+        (r#""deadbeef".hexToBytes()"#, vec![0xde, 0xad, 0xbe, 0xef]),
+        // Match the reducer's Scala-compatible decoder: filter non-hex characters, then
+        // left-pad an odd digit count.
+        (r#""abc".hexToBytes()"#, vec![0x0a, 0xbc]),
+        (r#""de-ad".hexToBytes()"#, vec![0xde, 0xad]),
+        (r#""hello world".hexToBytes()"#, vec![0xed]),
+        (r#""dead".toUtf8Bytes()"#, b"dead".to_vec()),
+        (r#""λ".toUtf8Bytes()"#, "λ".as_bytes().to_vec()),
+    ] {
+        let observed = reduce(&parse(source))
+            .await
+            .unwrap_or_else(|error| panic!("{source:?}: reducer byte method failed: {error}"));
+        assert_eq!(
+            observed,
+            vec![RuntimeObservationValue::Bytes(expected)],
+            "{source:?}: byte result drifted",
+        );
+    }
+
+    for source in [r#"b"dead".hexToBytes()"#, r#""dead".bytesToHex()"#] {
+        let error = reduce(&parse(source))
+            .await
+            .expect_err("a known method on the wrong carrier must fail closed");
+        assert!(
+            error.contains("MethodNotDefined"),
+            "{source:?}: expected the reducer's carrier diagnostic, got {error:?}",
+        );
     }
 }
 
@@ -1543,16 +1585,9 @@ async fn divergence_i_closed_numeral_carrier_is_syntax_independent() {
     // The parenthesis witness itself: one pair of parentheses used to change the carrier.
     assert_conformant("*(@1) + 2", "3").await;
     assert_conformant("*(@(1)) + 2", "3").await;
-    // The computed-vs-literal witness. `.length()` is C1 residue (no Rholang list method — see
-    // `c1_inventory_witness_collection_methods_are_not_lowered`), so only the FOLD side can be
-    // asserted; what matters here is that a COMPUTED integer and a LITERAL one are now the same
-    // carrier. Before divergence I closed, every computed integer was an `Int` and every literal
-    // was a `BigInt`, so this answered `error`.
-    assert_eq!(
-        fold(&parse("[1, 2, 3].length() == 3")).expect("the fold converges"),
-        "true",
-        "a computed integer and a literal one share one carrier"
-    );
+    // The computed-vs-literal witness. The reducer owns `.length()` and the surrounding equality;
+    // this proves the computed and literal integers share one machine carrier.
+    assert_reducer_result("[1, 2, 3].length() == 3", "true").await;
 }
 
 /// **The f1r3node fact divergence I rested on, kept as a standalone pin.**
@@ -1680,8 +1715,8 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
         // with no Rholang counterpart, and it stays MeTTaIL-only under C3.
         (
             "{1 : 10}.values()",
-            "[10]",
-            "unsupported: m.values() map method (no Rholang analog; C3 residue)",
+            "{1:10}.values()",
+            r#"reduce: inj: ReduceError("Unimplemented method: values")"#,
         ),
         // ★★ `.last()` WAS PINNED HERE AS RESIDUE, AND HAS MOVED OUT DELIBERATELY (2026-07-28).
         //
@@ -1731,33 +1766,25 @@ async fn c3_residue_mettail_only_operations_fail_closed_and_named() {
 /// [`c1_bag_length_and_nth_are_gated_at_lowering`] and the residue witness
 /// [`c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime`].
 ///
-/// Every row here is a method whose fold body accepts a `Bag`. The machine must fail CLOSED —
-/// never answer about the encoding.
+/// The former host method folds have been deleted. The machine must fail CLOSED — never answer
+/// about the encoding — and this test now observes only the reducer-owned method path.
 #[tokio::test(flavor = "multi_thread")]
 async fn c1_bag_encoding_is_rejected_by_every_routed_method() {
-    for (source, fold_answer, machine_error) in [
+    for (source, machine_error) in [
         (
             "#{1 | 2 | 2}#.size()",
-            "3",
             r#"reduce: inj: MethodNotDefined { method: "size", other_type: "list" }"#,
         ),
         (
             "#{1 | 2 | 2}#.union(#{3}#)",
-            "#{1| 2| 2| 3}#",
             r#"reduce: inj: MethodNotDefined { method: "union", other_type: "list" }"#,
         ),
         (
             "#{1 | 2 | 2}#.diff(#{2}#)",
-            "#{1| 2}#",
             r#"reduce: inj: MethodNotDefined { method: "diff", other_type: "list" }"#,
         ),
     ] {
         let proc = parse(source);
-        assert_eq!(
-            fold(&proc).expect("the fold converges"),
-            fold_answer,
-            "C1: {source:?} — the MeTTaIL-side multiset answer"
-        );
         assert_eq!(
             reduce(&proc)
                 .await
@@ -1768,7 +1795,7 @@ async fn c1_bag_encoding_is_rejected_by_every_routed_method() {
     }
 }
 
-/// **`length`, `nth` and `concat` are gated at the lowering, because the reducer WOULD answer.**
+/// **`length`, `nth`, and `last` are gated at lowering, because the reducer WOULD answer.**
 ///
 /// These are exactly the routed operations whose interpreter implementation accepts `EListBody`,
 /// and therefore exactly the ones that could measure the 2-element bag ABI encoding and return
@@ -1778,7 +1805,6 @@ async fn c1_bag_encoding_is_rejected_by_every_routed_method() {
 /// |---|---|---|---|
 /// | `length` | `length_method` (7893) | **yes** | `2` — tag + pairs — not the cardinality `3` |
 /// | `nth` | `nth_method` (4078) | **yes** | the ABI tag, or the pairs list |
-/// | `concat` | `combine_plus_plus` | **yes** | a 4-element list carrying TWO ABI tags |
 /// | `last` | `last_method` (4449) | **yes** | the PAIRS LIST — the encoding's 2nd element |
 ///
 /// ⚠ The `last` row was added on 2026-07-28 when `last` became routed. Routing an operation that
@@ -1789,37 +1815,27 @@ async fn c1_bag_encoding_is_rejected_by_every_routed_method() {
 /// Every other routed method accepts only `EMapBody`/`ESetBody`/`EPathmapBody` and so refuses the
 /// encoding by itself — measured in [`c1_bag_encoding_is_rejected_by_every_routed_method`]. The
 /// gate ([`receiver_is_literal_bag`] in `rholang_ast.rs`) covers the case decidable at lowering
-/// time; `concat` checks BOTH operands, since either position can supply the bag.
+/// time. `concat` has no reducer method and therefore fails closed as an unimplemented name.
 #[tokio::test(flavor = "multi_thread")]
 async fn c1_bag_length_and_nth_are_gated_at_lowering() {
-    for (source, expected_error) in [
-        ("#{1 | 2 | 2}#.length()", "bag cardinality"),
-        ("#{1 | 2 | 2}#.nth(0)", "bag indexing"),
-        ("#{1 | 2 | 2}#.concat(#{3}#)", "bag concatenation"),
-        // the bag in the RIGHT operand only — the gate is not left-biased
-        ("[1, 2].concat(#{3}#)", "bag concatenation"),
-        // `last` joined the gate when it became routed (2026-07-28)
-        ("#{1 | 2 | 2}#.last()", "bag final-element access"),
-    ] {
+    for source in ["#{1 | 2 | 2}#.length()", "#{1 | 2 | 2}#.nth(0)", "#{1 | 2 | 2}#.last()"] {
         let proc = parse(source);
         let error = reduce(&proc).await.expect_err("the bag gate must fire");
         assert!(
-            error.starts_with("unsupported: ") && error.contains(expected_error),
+            error.starts_with("unsupported: ")
+                && error.contains("list-style indexing/cardinality on a bag"),
             "C1: {source:?} — expected a fail-closed LOWERING error naming the bag, got {error:?}"
-        );
-        assert!(
-            error.contains("C3 residue"),
-            "C1: {source:?} — the error must name the stage that closes it, got {error:?}"
         );
     }
 }
 
 /// **⚠ THE MEASURED RESIDUE: the bag gate cannot see a carrier that is only known at run time.**
 ///
-/// `[#{1|2|2}#].nth(0)` has receiver type `Bag`, but its *syntax* is `LNth`, not `CastBag`, so no
-/// shape check at the lowering can refuse it — and neither can one refuse a COMM-bound variable.
-/// The reducer then measures the bag ABI encoding: **2**, where the fold answers the multiset
-/// cardinality **3**.
+/// `[#{1|2|2}#].nth(0)` has receiver type `Bag`, but the outer receiver's *syntax* is a generic
+/// `MethodCall`, not `CastBag`, so no shape check at lowering can refuse it — and neither can one
+/// refuse a COMM-bound variable.
+/// The reducer then measures the bag ABI encoding: **2**. There is no longer a host fold that
+/// manufactures an alternate multiset-cardinality answer.
 ///
 /// This is a NEW divergence introduced by C1 (before routing, the whole program failed to lower)
 /// and it is recorded here rather than hidden. It is narrow — it needs a bag to reach `length` or
@@ -1834,7 +1850,6 @@ async fn c1_bag_length_and_nth_are_gated_at_lowering() {
 async fn c1_bag_length_residue_when_the_carrier_is_only_known_at_runtime() {
     let source = "[#{1 | 2 | 2}#].nth(0).length()";
     let proc = parse(source);
-    assert_eq!(fold(&proc).expect("the fold converges"), "3", "the fold measures the MULTISET");
     let observed = reduce(&proc).await.expect("the machine reduces");
     assert_eq!(
         observed.iter().map(render_as_rholang).collect::<Vec<_>>(),
@@ -1878,8 +1893,8 @@ async fn c1b_pathmap_zipper_family_reaches_the_native_carrier() {
 /// fail when the following zipper method dispatches.
 #[tokio::test(flavor = "multi_thread")]
 async fn c1_pathmap_methods_answer_through_native_pathmap_storage() {
-    assert_conformant("{| 1 : 10, 2 : 20 |}.get(1)", "10").await;
-    assert_conformant("{| 1 : 10, 2 : 20 |}.contains(1)", "true").await;
+    assert_reducer_result("{| 1 : 10, 2 : 20 |}.get(1)", "10").await;
+    assert_reducer_result("{| 1 : 10, 2 : 20 |}.contains(1)", "true").await;
 
     for (source, answer) in [
         ("{| 1 : 10, 2 : 20 |}.size()", "2"),
@@ -1898,19 +1913,14 @@ async fn c1_pathmap_methods_answer_through_native_pathmap_storage() {
     }
 }
 
-/// **`length` on a Map/Set: Rholang's fold body is MORE PERMISSIVE than Rholang.**
+/// **`length` on a Map/Set is rejected by the sole method evaluator.**
 ///
-/// `fold_proc_length` (`languages/src/rholang/runtime.rs:217`) answers for `CastMap` and
-/// `CastSet`; Rholang's `length` (`reduce.rs:7893`) accepts only `EList`/`GString`/`GByteArray`
-/// and spells map/set cardinality `size`. Since the reducer is normative, the fold is the side
-/// that is wrong, and routing makes the machine fail closed rather than inventing an answer.
+/// Rholang's `length` accepts only list/string/byte-array carriers and spells map/set cardinality
+/// `size`. E3 removed the host fold that used to invent a more permissive answer.
 #[tokio::test(flavor = "multi_thread")]
-async fn c1_length_on_a_map_is_fold_only() {
-    for (source, fold_answer, other_type) in
-        [("{1 : 10}.length()", "1", "map"), ("Set(1, 2).length()", "2", "set")]
-    {
+async fn c1_length_on_a_map_or_set_is_rejected_by_the_reducer() {
+    for (source, other_type) in [("{1 : 10}.length()", "map"), ("Set(1, 2).length()", "set")] {
         let proc = parse(source);
-        assert_eq!(fold(&proc).expect("the fold converges"), fold_answer);
         assert_eq!(
             reduce(&proc).await.expect_err("Rholang spells this `size`"),
             format!(
@@ -1921,89 +1931,44 @@ async fn c1_length_on_a_map_is_fold_only() {
     }
 }
 
-/// **The C1 residue: methods with NO key in `reduce.rs::method_table`, fail-closed and NAMED.**
+/// **The E3 residue: identifiers with NO key in `reduce.rs::method_table` fail closed and named.**
 ///
-/// There is nothing to route these to — routing would have to *invent* an implementation, which is
-/// the one thing option C exists to prevent. `values`/`count`/`remove`/`subtract` have no key at
-/// all.
-///
-/// ★ AMENDED by the C4 investigation (2026-07-26) and carrier closure (2026-08-01).
-/// `restrict`/`meet`/`getSubtrieAt` can be exercised directly and source pathmaps
-/// now reach `EPathMap`. One candidate mapping was nevertheless wrong:
-/// `restrict` is exact-key membership and `restriction` is PREFIX containment, so the candidate
-/// mapping would have silently widened the operation. See
-/// [`c4_restrict_is_not_restriction_and_meet_is_intersection`] and
-/// [`c4_get_subtrie_at_is_read_zipper_at_then_get_subtrie`] for the measurements, and the
-/// `unsupported_construct_name` block in `rholang_ast.rs` for why all three are nevertheless still
-/// held: their operation/arity contracts still differ, independently of the
-/// now-closed carrier question.
-///
-/// Each error names the construct and the reason it is held.
+/// The grammar accepts each spelling as identifier data and lowering always emits `EMethod`.
+/// The reducer's `ReduceError("Unimplemented method: …")` diagnostic is therefore the single,
+/// non-duplicated
+/// answer. In particular, E3 does not preserve former host-only names (`concat`, `values`, bag
+/// `count`/`remove`, or the PathMap aliases) as hidden language semantics.
 #[tokio::test(flavor = "multi_thread")]
 async fn c1_residue_without_an_interpreter_counterpart_fails_closed_and_named() {
-    for (source, expected_error) in [
-        (
-            "{1 : 10}.values()",
-            "unsupported: m.values() map method (no Rholang analog; C3 residue)",
-        ),
-        (
-            "#{1 | 2 | 2}#.count(2)",
-            "unsupported: b.count(e) bag method (no Rholang analog; C3 residue)",
-        ),
-        (
-            "#{1 | 2 | 2}#.remove(2)",
-            "unsupported: b.remove(e) bag method (no Rholang analog; C3 residue)",
-        ),
-        (
-            "{| 1 : 10 |}.subtract({| 1 : 10 |})",
-            "unsupported: p.subtract(q) pathmap method (no Rholang analog; C3 residue)",
-        ),
+    for (source, method) in [
+        ("[1].concat([2])", "concat"),
+        (r#""a".concat("b")"#, "concat"),
+        ("{1 : 10}.values()", "values"),
+        ("#{1 | 2 | 2}#.count(2)", "count"),
+        ("#{1 | 2 | 2}#.remove(2)", "remove"),
+        ("{| 1 : 10 |}.subtract({| 1 : 10 |})", "subtract"),
+        ("{| 1 : 10 |}.restrict({| 1 : 10 |})", "restrict"),
+        ("{| 1 : 10 |}.meet({| 1 : 10 |})", "meet"),
+        ("{| 1 : 10 |}.getSubtrieAt(1)", "getSubtrieAt"),
     ] {
         let proc = parse(source);
         assert_eq!(
             reduce(&proc).await.expect_err("no counterpart exists"),
-            expected_error,
-            "C1: {source:?} — must fail closed, NAMING the construct"
-        );
-    }
-    // The three whose mapping is now MEASURED but whose routing is held by the C4 carrier decision.
-    // Each error must carry the measurement (so the next reader inherits the fact, not the guess)
-    // and must say what it is waiting on.
-    for (source, measured_fact) in [
-        // ⚠ the mapping the old record guessed — `restriction` — is the one this refutes.
-        ("{| 1 : 10 |}.restrict({| 1 : 10 |})", "`restriction` is PREFIX containment"),
-        ("{| 1 : 10 |}.meet({| 1 : 10 |})", "key-level `intersection`"),
-        ("{| 1 : 10 |}.getSubtrieAt(1)", "`readZipperAt(q).getSubtrie()`"),
-    ] {
-        let proc = parse(source);
-        let error = reduce(&proc)
-            .await
-            .expect_err("routing is held by the carrier decision");
-        assert!(
-            error.contains(measured_fact) && error.contains("C4 carrier decision"),
-            "C1: {source:?} — the error must carry the MEASURED mapping and name what holds it, \
-             got {error:?}"
-        );
-        assert!(
-            error.contains("MEASURED"),
-            "C1: {source:?} — an unverified candidate must never be reinstated silently; the error \
-             says the mapping was measured, and {} is the test that measured it. Got {error:?}",
-            "c4_restrict_is_not_restriction_and_meet_is_intersection"
+            format!(r#"reduce: inj: ReduceError("Unimplemented method: {method}")"#),
+            "E3: {source:?} must fail closed through the reducer's method table"
         );
     }
 }
 
-/// **★ C1, LANDED — every routed collection method is evaluated by the reducer's own method
-/// table, and agrees with the fold body it now shares the surface with.**
+/// **★ C1/E3, LANDED — every routed collection method is evaluated by the reducer's own method
+/// table.**
 ///
-/// Each row is a DIFFERENTIAL: the same parsed `Proc` is folded by MeTTaIL's Dovetail saturation
-/// and lowered to the real reducer, and the two observable values must match. Both paths still
-/// exist — C1 routed the LOWERING; it did not delete the `![{…}]` fold bodies (that is C1's
-/// sequel, and it needs C3/C4 first, since some fold bodies are the only implementation of an
-/// operation Rholang cannot perform). So this suite is exactly the instrument that proves the two
-/// implementations agree wherever both are defined.
+/// E3 retired the independent method fold bodies. Each row now proves the entire production path:
+/// generic `MethodCall` parse, ordered carrier preservation, lowering to `EMethod`, reducer-table
+/// dispatch, and observation decoding. There is no second method registry whose agreement can
+/// drift or whose extra names can accidentally become language semantics.
 ///
-/// `assert_conformant` compares the Rholang-rendered values, so a row passing here also pins the
+/// `assert_reducer_result` compares the Rholang-rendered values, so a row passing here also pins the
 /// **canonical order** question: a set/map result flowing back from the reducer has been through
 /// `ScoredTerm` sorting (`models/src/rust/sorted_par_hash_set.rs`), and `Set(1, 2).union(Set(3))`
 /// rendering as `Set(1, 2, 3)` on both sides is the evidence that the two orders coincide for
@@ -2011,27 +1976,25 @@ async fn c1_residue_without_an_interpreter_counterpart_fails_closed_and_named() 
 /// separate them.
 #[tokio::test(flavor = "multi_thread")]
 async fn c1_target_collection_methods_route_to_the_reducer() {
-    // list / string — `length`, `nth`, and `concat`
-    assert_conformant("[1, 2, 3].length()", "3").await;
-    assert_conformant("[10, 20, 30].nth(1)", "20").await;
-    assert_conformant("[1, 2, 3].concat([4])", "[1, 2, 3, 4]").await;
-    assert_conformant(r#""abc".length()"#, "3").await;
-    assert_conformant(r#""con".concat("cat")"#, r#""concat""#).await;
+    // list / string
+    assert_reducer_result("[1, 2, 3].length()", "3").await;
+    assert_reducer_result("[10, 20, 30].nth(1)", "20").await;
+    assert_reducer_result(r#""abc".length()"#, "3").await;
     // set
-    assert_conformant("Set(1, 2).add(3)", "Set(1, 2, 3)").await;
-    assert_conformant("Set(1, 2).contains(1)", "true").await;
-    assert_conformant("Set(1, 2).size()", "2").await;
-    assert_conformant("Set(1, 2).union(Set(3))", "Set(1, 2, 3)").await;
-    assert_conformant("Set(1, 2).delete(1)", "Set(2)").await;
-    assert_conformant("Set(1, 2).diff(Set(1))", "Set(2)").await;
+    assert_reducer_result("Set(1, 2).add(3)", "Set(1, 2, 3)").await;
+    assert_reducer_result("Set(1, 2).contains(1)", "true").await;
+    assert_reducer_result("Set(1, 2).size()", "2").await;
+    assert_reducer_result("Set(1, 2).union(Set(3))", "Set(1, 2, 3)").await;
+    assert_reducer_result("Set(1, 2).delete(1)", "Set(2)").await;
+    assert_reducer_result("Set(1, 2).diff(Set(1))", "Set(2)").await;
     // map
-    assert_conformant("{1 : 10}.get(1)", "10").await;
-    assert_conformant("{1 : 10}.set(2, 20)", "{1:10, 2:20}").await;
-    assert_conformant("{1 : 10}.contains(1)", "true").await;
-    assert_conformant("{1 : 10}.size()", "1").await;
-    assert_conformant("{1 : 10}.keys()", "Set(1)").await;
-    assert_conformant("{1 : 10}.delete(1)", "{}").await;
-    assert_conformant("{1 : 10}.union({2 : 20})", "{1:10, 2:20}").await;
+    assert_reducer_result("{1 : 10}.get(1)", "10").await;
+    assert_reducer_result("{1 : 10}.set(2, 20)", "{1:10, 2:20}").await;
+    assert_reducer_result("{1 : 10}.contains(1)", "true").await;
+    assert_reducer_result("{1 : 10}.size()", "1").await;
+    assert_reducer_result("{1 : 10}.keys()", "Set(1)").await;
+    assert_reducer_result("{1 : 10}.delete(1)", "{}").await;
+    assert_reducer_result("{1 : 10}.union({2 : 20})", "{1:10, 2:20}").await;
     // `.values()` is NOT here: `reduce.rs::method_table` has `keys` but no `values`, so it is
     // MeTTaIL-only residue and belongs to C3 — see
     // `c3_residue_mettail_only_operations_fail_closed_and_named`.
@@ -2178,12 +2141,11 @@ async fn divergence_l_witness_collection_order_is_lexicographic_in_the_fold() {
         );
     }
 
-    // ③ Where the two orders COINCIDE, the routed method and the fold agree outright — so the
-    //    divergence really is about ordering and not about the values themselves.
-    assert_conformant("Set(3, 2, 1).add(4)", "Set(1, 2, 3, 4)").await;
-    assert_conformant(r#"Set("b", "a").add("c")"#, r#"Set("a", "b", "c")"#).await;
-    // A List is ordered, not sorted, so it is order-stable on both sides by construction.
-    assert_conformant("[10, 2].concat([3])", "[10, 2, 3]").await;
+    // ③ Where the literal and routed-result orders COINCIDE, the reducer preserves the values.
+    assert_reducer_result("Set(3, 2, 1).add(4)", "Set(1, 2, 3, 4)").await;
+    assert_reducer_result(r#"Set("b", "a").add("c")"#, r#"Set("a", "b", "c")"#).await;
+    // A List is ordered, not sorted, so a routed list method preserves source order.
+    assert_reducer_result("[10, 2, 3].take(3)", "[10, 2, 3]").await;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -4260,8 +4222,6 @@ async fn float_comparison_is_a_numeric_predicate_and_follows_ieee754() {
 #[tokio::test(flavor = "multi_thread")]
 async fn two_nan_terms_stay_structurally_identical_and_that_is_deliberate() {
     use std::collections::HashMap;
-
-    use mettail_runtime::BoundTerm;
 
     /// The hash a term-keyed container would use: `Proc::semantic_hash` run to a `u64`.
     fn sem(p: &Proc) -> u64 {

@@ -1,149 +1,5 @@
-use super::{Bag, Bytes, ForRow, Int, List, Map, Name, Proc, Set, Str};
+use super::{Bag, ForRow, List, Map, Name, Proc, Set};
 use mettail_runtime::{BoundTerm, HashBag};
-
-// ══════════════════════════════════════════════════════════════════════════════════════════
-// The byte-array methods (2026-07-30)
-// ══════════════════════════════════════════════════════════════════════════════════════════
-//
-// Reachable only since the `b"…"` literal (`713e0364`) gave `Bytes` a surface. The upstream
-// definitions these mirror are in `f1r3node-rust-mettail/rholang/src/rust/interpreter/reduce.rs`
-// and are cited per function; the fold lane must agree with the machine lane, and before these
-// arms existed it did not — `b"dead".length()` folded to the `error` term while the reducer
-// answered `2`.
-
-/// The ground byte payload of a `Proc`, or `None` when it is not a ground byte array.
-///
-/// One extractor, so every byte-method arm agrees about what "a byte array" is. A `Bytes` that is
-/// still a variable or a redex yields `None`, which the callers turn into "no arm" rather than
-/// into a wrong answer.
-fn ground_bytes(proc: &Proc) -> Option<&Vec<u8>> {
-    match proc {
-        Proc::CastBytes(inner) => match inner.as_ref() {
-            Bytes::BytesLit(bytes) => Some(bytes),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Wrap a byte vector as a `Proc`.
-fn proc_bytes(bytes: Vec<u8>) -> Proc {
-    Proc::CastBytes(std::sync::Arc::new(Bytes::BytesLit(bytes)))
-}
-
-/// `"…".hexToBytes()` — upstream `reduce.rs:4849`, whose decoder is
-/// `StringOps::unsafe_decode_hex` (`models/src/rust/string_ops.rs:17-28`).
-///
-/// ⚠ **THE FILTER-AND-PAD BEHAVIOUR IS REPRODUCED DELIBERATELY, AND MUST NOT BE "FIXED".**
-/// Upstream FILTERS every non-hex-digit character out of the input and then LEFT-PADS an
-/// odd-length result with a `0` nibble, with the comment *"Match Scala Base16.unsafeDecode"*. The
-/// consequences are lossy and surprising:
-///
-/// | input | upstream result | why |
-/// |---|---|---|
-/// | `"deadbeef"` | `[de ad be ef]` | the ordinary case |
-/// | `"abc"` | `[0a bc]` | odd length ⇒ left-padded to `"0abc"` |
-/// | `"de-ad"` | `[de ad]` | `-` is filtered out |
-/// | `"hello world"` | `[ed]` | only `e` and `d` are hex digits |
-///
-/// It is nonetheless the CORRECT behaviour to implement here, and rejecting the odd or dirty input
-/// would be the defect. `hexToBytes` is consensus-reachable upstream — `Registry.rho` calls it on
-/// public keys — so its decoder decides COMPUTED VALUES on a live path. Upstream is a floor on
-/// semantics: a deliberate, documented, load-bearing behaviour is not a bug to repair. Pinned by
-/// `languages/tests/rholang_byte_methods.rs::hex_to_bytes_filters_and_pads_exactly_as_upstream_does`.
-///
-/// ★ NOTE THE ASYMMETRY WITH THE LITERAL, WHICH IS INTENTIONAL. The `b"…"` literal's decoder
-/// (`languages/src/rholang.rs`, the `literals { Bytes { … } }` eval) accepts ONLY an even run of
-/// hex digits, because a literal's job is to have exactly one reading and the regex can enforce
-/// that at the lexer. A METHOD's argument is run-time data that upstream has already decided how
-/// to interpret. Two decoders, two different jobs; neither should be made to serve the other.
-pub(crate) fn fold_hex_to_bytes(receiver: &Proc) -> Proc {
-    let text = match receiver {
-        Proc::CastStr(inner) => match inner.as_ref() {
-            Str::StringLit(text) => text,
-            _ => return Proc::Err,
-        },
-        _ => return Proc::Err,
-    };
-    // Upstream step 1: keep only ASCII hex digits.
-    let digits: Vec<u8> = text
-        .bytes()
-        .filter(|byte| byte.is_ascii_hexdigit())
-        .collect();
-    // Upstream step 2: left-pad an odd count with a zero nibble. Preallocated at the exact final
-    // byte count, which is `ceil(digits / 2)`.
-    let mut decoded: Vec<u8> = Vec::with_capacity(digits.len().div_ceil(2));
-    let mut pending_high_nibble: Option<u8> = if digits.len() % 2 == 0 { None } else { Some(0) };
-    for digit in digits {
-        // Total on the filtered alphabet — `is_ascii_hexdigit` admits exactly these three ranges,
-        // so the `else` branch is unreachable and is answered rather than asserted (a `panic!`
-        // here would abort the process under the cranelift dev backend).
-        let nibble = match digit {
-            b'0'..=b'9' => digit - b'0',
-            b'a'..=b'f' => digit - b'a' + 10,
-            b'A'..=b'F' => digit - b'A' + 10,
-            _ => return Proc::Err,
-        };
-        match pending_high_nibble {
-            None => pending_high_nibble = Some(nibble),
-            Some(high) => {
-                decoded.push((high << 4) | nibble);
-                pending_high_nibble = None;
-            },
-        }
-    }
-    match pending_high_nibble {
-        // Unreachable: the parity was fixed before the loop. Fail closed rather than assert.
-        Some(_) => Proc::Err,
-        None => proc_bytes(decoded),
-    }
-}
-
-/// `b"…".bytesToHex()` — upstream `reduce.rs:4893`,
-/// `bytes.iter().map(|byte| format!("{:02x}", byte)).collect()`. Lowercase, two digits per byte,
-/// so leading zeros are preserved and the result is a word of the `b"…"` literal language.
-pub(crate) fn fold_bytes_to_hex(receiver: &Proc) -> Proc {
-    let Some(bytes) = ground_bytes(receiver) else {
-        return Proc::Err;
-    };
-    const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut rendered = String::with_capacity(2 * bytes.len());
-    for byte in bytes {
-        rendered.push(HEX_DIGITS[(*byte >> 4) as usize] as char);
-        rendered.push(HEX_DIGITS[(*byte & 0x0f) as usize] as char);
-    }
-    Proc::CastStr(std::sync::Arc::new(Str::StringLit(rendered)))
-}
-
-/// `"…".toUtf8Bytes()` — upstream `reduce.rs:4948`, `utf8_string.as_bytes().to_vec()`.
-///
-/// ⚠ A DIFFERENT FUNCTION FROM `hexToBytes`, and the pair `"dead"` separates them sharply: as hex
-/// it is the two bytes `de ad`, as UTF-8 it is the four bytes `64 65 61 64`. Rust's `String` is
-/// UTF-8 by construction, so this is total and lossless in the direction it runs.
-pub(crate) fn fold_to_utf8_bytes(receiver: &Proc) -> Proc {
-    match receiver {
-        Proc::CastStr(inner) => match inner.as_ref() {
-            Str::StringLit(text) => proc_bytes(text.as_bytes().to_vec()),
-            _ => Proc::Err,
-        },
-        _ => Proc::Err,
-    }
-}
-
-/// The byte-array arm of `nth` / `last`: the UNSIGNED byte at `index`, as an `Int`.
-///
-/// Upstream `reduce.rs:4670` (`nth`) and `:4753` (`last`, which binds the index to
-/// `len.saturating_sub(1)` and then runs `nth`'s arm verbatim). ⚠ `new_gint_par(b as i64, …)` —
-/// the cast is from `u8`, so `0x80` is `128` and never `-128`; upstream's own comment on that line
-/// reads *"Convert to unsigned"*. Out of range is the `error` term, matching what every other
-/// out-of-domain collection access answers here.
-pub(crate) fn fold_bytes_nth(receiver: &Proc, index: usize) -> Option<Proc> {
-    let bytes = ground_bytes(receiver)?;
-    Some(match bytes.get(index) {
-        Some(byte) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(i64::from(*byte)))),
-        None => Proc::Err,
-    })
-}
 
 fn is_collection_cast(proc: &Proc) -> bool {
     matches!(proc, Proc::CastList(_) | Proc::CastBag(_) | Proc::CastMap(_) | Proc::CastSet(_))
@@ -276,28 +132,6 @@ pub(crate) fn mk_proc_list(items: Vec<Proc>) -> Proc {
     Proc::CastList(std::sync::Arc::new(List::ListLit(items)))
 }
 
-pub(crate) fn mk_proc_set(items: impl IntoIterator<Item = Proc>) -> Proc {
-    let mut set = mettail_runtime::HashSetLit::new();
-    for item in items {
-        set.insert(item);
-    }
-    Proc::CastSet(std::sync::Arc::new(Set::SetLit(set)))
-}
-
-pub(crate) fn normalize_collection_element(elem: &Proc) -> Proc {
-    match elem {
-        Proc::PDrop(n) => match n.as_ref() {
-            super::Name::NQuote(p) => p.as_ref().clone(),
-            super::Name::NParen(inner) => match inner.as_ref() {
-                super::Name::NQuote(p) => p.as_ref().clone(),
-                _ => elem.clone(),
-            },
-            _ => elem.clone(),
-        },
-        _ => elem.clone(),
-    }
-}
-
 /// Build `name!(items…)` / `name!!(items…)` under Rholang's SEND ARITY CONVENTION.
 ///
 /// A send carries exactly ONE datum `Par`, so the surface arity is encoded into that datum —
@@ -387,56 +221,6 @@ pub(crate) fn normalize_bag_elements(bag: &HashBag<Proc>) -> HashBag<Proc> {
         }
     }
     out
-}
-
-/// Length of a folded `CastStr` / `CastList` / `CastMap` / `CastBag` / `CastSet` literal.
-pub(crate) fn fold_proc_length(p: &Proc) -> Proc {
-    match p {
-        Proc::CastStr(inner) => match &**inner {
-            Str::StringLit(x) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(x.len() as i64))),
-            _ => Proc::Err,
-        },
-        Proc::CastList(l) => match l.as_ref() {
-            List::ListLit(v) => Proc::CastInt(std::sync::Arc::new(Int::NumLit(v.len() as i64))),
-            _ => Proc::Err,
-        },
-        Proc::CastMap(m) => match m.as_ref() {
-            Map::MapLit(ref payload) => {
-                Proc::CastInt(std::sync::Arc::new(Int::NumLit(payload.len() as i64)))
-            },
-            _ => Proc::Err,
-        },
-        Proc::CastBag(b) => match b.as_ref() {
-            Bag::BagLit(h) => {
-                let normalized = normalize_bag_elements(h);
-                Proc::CastInt(std::sync::Arc::new(Int::NumLit(normalized.len() as i64)))
-            },
-            _ => Proc::Err,
-        },
-        Proc::CastSet(s) => match s.as_ref() {
-            Set::SetLit(ref payload) => {
-                Proc::CastInt(std::sync::Arc::new(Int::NumLit(payload.len() as i64)))
-            },
-            _ => Proc::Err,
-        },
-        // ★ THE BYTE ARM (2026-07-30) — upstream `reduce.rs:8775`,
-        // `GByteArray(bytes) => new_gint_expr(bytes.len() as i64)`.
-        //
-        // ⚠ Its absence was a FOLD/MACHINE DISAGREEMENT, not merely a missing feature. `length` IS
-        // a key of the interpreter's `method_table`, so `l.length()` lowers to `EMethod("length")`
-        // and the reducer has answered correctly for a byte array all along; this lane answered the
-        // `error` term. It was unreachable only because `Bytes` had no surface, so the disagreement
-        // became live at the moment the `b"…"` literal landed and is repaired in the same campaign.
-        //
-        // The unit is BYTES, not hex digits: `b"dead"` is two bytes.
-        Proc::CastBytes(b) => match b.as_ref() {
-            Bytes::BytesLit(bytes) => {
-                Proc::CastInt(std::sync::Arc::new(Int::NumLit(bytes.len() as i64)))
-            },
-            _ => Proc::Err,
-        },
-        _ => Proc::Err,
-    }
 }
 
 /// The `@`-send-sugar canonicalization (2026-07-06) is UNCONDITIONAL — the former
@@ -693,49 +477,12 @@ fn normalize_send_sugar_canon(p: &Proc) -> Proc {
         Proc::FixedBinProc(a, w) => Proc::FixedBinProc(rc(a), w.clone()),
         Proc::BigintCastProc(a) => Proc::BigintCastProc(rc(a)),
         Proc::BigratCastProc(a) => Proc::BigratCastProc(rc(a)),
-        // map / list / bag / set method ops
-        Proc::MGet(a, b) => Proc::MGet(rc(a), rc(b)),
-        Proc::MSet(a, b, c) => Proc::MSet(rc(a), rc(b), rc(c)),
-        Proc::MContains(a, b) => Proc::MContains(rc(a), rc(b)),
-        Proc::MDelete(a, b) => Proc::MDelete(rc(a), rc(b)),
-        Proc::MUnion(a, b) => Proc::MUnion(rc(a), rc(b)),
-        Proc::MSize(a) => Proc::MSize(rc(a)),
-        Proc::MToByteArray(a) => Proc::MToByteArray(rc(a)),
-        Proc::MKeys(a) => Proc::MKeys(rc(a)),
-        Proc::MValues(a) => Proc::MValues(rc(a)),
-        Proc::LLength(a) => Proc::LLength(rc(a)),
-        Proc::LNth(a, b) => Proc::LNth(rc(a), rc(b)),
-        Proc::LLast(a) => Proc::LLast(rc(a)),
-        Proc::LConcat(a, b) => Proc::LConcat(rc(a), rc(b)),
-        Proc::BCount(a, b) => Proc::BCount(rc(a), rc(b)),
-        Proc::BDiff(a, b) => Proc::BDiff(rc(a), rc(b)),
-        Proc::BRemove(a, b) => Proc::BRemove(rc(a), rc(b)),
-        Proc::SAdd(a, b) => Proc::SAdd(rc(a), rc(b)),
-        // pathmap / zipper ops (Proc-arg positions)
-        Proc::PRestrict(a, b) => Proc::PRestrict(rc(a), rc(b)),
-        Proc::PSubtract(a, b) => Proc::PSubtract(rc(a), rc(b)),
-        Proc::PMeet(a, b) => Proc::PMeet(rc(a), rc(b)),
-        Proc::PGetSubtrie(a) => Proc::PGetSubtrie(rc(a)),
-        Proc::PGetSubtrieAt(a, b) => Proc::PGetSubtrieAt(rc(a), rc(b)),
-        Proc::PReadZipper(a) => Proc::PReadZipper(rc(a)),
-        Proc::PReadZipperAt(a, b) => Proc::PReadZipperAt(rc(a), rc(b)),
-        Proc::PWriteZipper(a) => Proc::PWriteZipper(rc(a)),
-        Proc::PWriteZipperAt(a, b) => Proc::PWriteZipperAt(rc(a), rc(b)),
-        Proc::RZGetLeaf(a) => Proc::RZGetLeaf(rc(a)),
-        Proc::RZDescendTo(a, b) => Proc::RZDescendTo(rc(a), rc(b)),
-        Proc::RZChildCount(a) => Proc::RZChildCount(rc(a)),
-        Proc::RZDescendFirst(a) => Proc::RZDescendFirst(rc(a)),
-        Proc::RZToNextSibling(a) => Proc::RZToNextSibling(rc(a)),
-        Proc::RZToPrevSibling(a) => Proc::RZToPrevSibling(rc(a)),
-        Proc::RZDescendIndexedBranch(a, b) => Proc::RZDescendIndexedBranch(rc(a), rc(b)),
-        Proc::RZAscendOne(a) => Proc::RZAscendOne(rc(a)),
-        Proc::RZAscend(a, b) => Proc::RZAscend(rc(a), rc(b)),
-        Proc::WZSetLeaf(a, b, c) => Proc::WZSetLeaf(rc(a), rc(b), rc(c)),
-        Proc::WZSetSubtrie(a, b) => Proc::WZSetSubtrie(rc(a), rc(b)),
-        Proc::WZRemoveLeaf(a) => Proc::WZRemoveLeaf(rc(a)),
-        Proc::WZRemoveBranches(a) => Proc::WZRemoveBranches(rc(a)),
-        Proc::WZGraft(a, b) => Proc::WZGraft(rc(a), rc(b)),
-        Proc::WZJoinInto(a, b) => Proc::WZJoinInto(rc(a), rc(b)),
+        // Method syntax is one data-bearing constructor. Preserve its exact name and
+        // positional argument vector while canonicalizing send sugar structurally;
+        // method membership and semantics remain reducer-owned.
+        Proc::MethodCall(receiver, method_name, arguments) => {
+            Proc::MethodCall(rc(receiver), method_name.clone(), rcv(arguments))
+        },
         // application (λ-bodies carry no operand projection surface → left to the identity arm)
         Proc::ApplyProc(a, b) => Proc::ApplyProc(rc(a), rc(b)),
         Proc::MApplyProc(a, bs) => Proc::MApplyProc(rc(a), rcv(bs)),

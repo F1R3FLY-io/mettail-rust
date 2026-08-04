@@ -12,7 +12,7 @@
 
 #![allow(clippy::cmp_owned)]
 
-use crate::gen::capture::{capture_layout, CaptureFieldKind};
+use crate::gen::capture::capture_layout;
 use crate::gen::native::has_native_type;
 use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
@@ -1609,19 +1609,16 @@ fn generate_sigil_operand_wrap_gate(
 ) -> TokenStream {
     use crate::gen::syntax::synonymy::{
         nonground_filler_surfaces, nullary_filler_surfaces, sample_surface_for,
-        sample_surface_with_lead,
     };
     if sigil_operand_cats.is_empty() {
         return quote! {};
     }
-    // ★ TWO FILLER REGIMES, because ONE of them cannot express a shape.
+    // ★ TWO FILLER REGIMES, because ONE of them cannot express every shape.
     //
-    // `nullary_filler_surfaces` is GROUND, and a ground argument is what a `fold` rule consumes:
-    // `- Nil . get ( Nil )` parses to `MGet(error, Nil)`, not to the `MGet(NegProc(…), …)` the
-    // sample was written for, so a row built that way reports on `error`. The VARIABLE regime is
-    // opaque to evaluation (folds are demand-gated on ground operands) and preserves the shape.
-    // Both are kept: the ground rows exercise the folded VALUES a program really writes, the
-    // variable rows exercise the CONSTRUCTORS. Neither subsumes the other.
+    // `nullary_filler_surfaces` exercises closed values, while the VARIABLE regime keeps each
+    // child visibly distinct and prevents an unrelated host fold from changing a sample before
+    // this display-only gate sees it. Both remain useful even though Rholang's generic
+    // `MethodCall` is now a pure constructor: other rules and other languages can still fold.
     let ground_filler = nullary_filler_surfaces(language);
     let filler = nonground_filler_surfaces(language);
 
@@ -1798,8 +1795,8 @@ fn generate_sigil_operand_wrap_gate(
     //     changes the election:
     //
     //     ```text
-    //       Proc::parse("- a . get ( a )")  ─▶  NegProc(MGet(a, a))     ← what the row measured
-    //       Proc::parse("-a.get(a)")        ─▶  MGet(NegProc(a), a)     ← the shape at issue
+    //       Proc::parse("- a . get ( a )")  ─▶  NegProc(MethodCall(a,"get",[a]))
+    //       Proc::parse("-a.get(a)")        ─▶  MethodCall(NegProc(a),"get",[a])
     //     ```
     //
     //  A controlled A/B proved it rather than argued it: with the `classify_unary_prefix_shape`
@@ -2211,7 +2208,7 @@ fn constructor_field_count(rule: &GrammarRule) -> usize {
 /// and whatever the enclosing frame appends is stranded:
 ///
 /// ```text
-///   Display(NQuote(MGet(NegProc(a), PZero)))   emitted  @-a.get(Nil)
+///   Display(NQuote(MethodCall(NegProc(a), "get", [PZero]))) emitted @-a.get(Nil)
 ///   Name::parse("@-a.get(Nil)")                1:13 no accepting branch reached end of input
 /// ```
 ///
@@ -3124,6 +3121,22 @@ fn generate_engine_syntax_pattern_arm_inner(
     // surface-synonymy re-route.
     let match_label: &syn::Ident = match_label_override.unwrap_or(label);
 
+    // Receiver-first member calls use punctuation as lexical glue:
+    // `receiver.member(arguments, ...)`. Recognize the syntax shape instead of a
+    // language-specific rule label so generated displays do not fall back to the generic
+    // infix/list spacing `receiver . member(arguments , ...)`.
+    let is_member_call_pattern = matches!(
+        syntax_pattern,
+        [
+            SyntaxExpr::Param(_),
+            SyntaxExpr::Literal(dot),
+            SyntaxExpr::Param(_),
+            SyntaxExpr::Literal(open),
+            SyntaxExpr::Op(PatternOp::Sep { separator, .. }),
+            SyntaxExpr::Literal(close),
+        ] if dot == "." && open == "(" && separator == "," && close == ")"
+    );
+
     // L9-3 (ROUND-TRIP-CRITICAL): a rule with a `v@Tok` capture is never an
     // infix Pratt operator — it renders LINEARLY. Bind fields in
     // `capture_layout` order (matching the enum) and print each syntax
@@ -3474,7 +3487,9 @@ fn generate_engine_syntax_pattern_arm_inner(
                 let is_word = !s.is_empty()
                     && s.chars().all(|c| c.is_alphanumeric() || c == '_')
                     && !s.chars().next().unwrap().is_numeric();
-                let (prefix, suffix) = if prev_param && next_param.unwrap_or(false) {
+                let (prefix, suffix) = if is_member_call_pattern && s == "." {
+                    ("", "")
+                } else if prev_param && next_param.unwrap_or(false) {
                     (" ", " ")
                 } else if next_param == Some(true) && is_word {
                     // Word-literal FOLLOWED by a param (existing behavior: space
@@ -3791,6 +3806,7 @@ fn generate_engine_syntax_pattern_arm_inner(
                     prev_outer_is_param,
                     next_outer_is_param,
                     outer_fence.as_deref(),
+                    is_member_call_pattern,
                 );
                 forward_ops.push(op_code);
             },
@@ -3930,6 +3946,7 @@ fn generate_engine_pattern_op(
     prev_outer_is_param: bool,
     next_outer_is_param: bool,
     outer_fence: Option<&str>,
+    compact_member_arguments: bool,
 ) -> TokenStream {
     // Sep / Var ignore the outer flags; their emission already produces
     // self-contained spacing or atomic ident formatting.
@@ -3940,7 +3957,11 @@ fn generate_engine_pattern_op(
                 return generate_engine_chained_sep(chain_source, separator);
             }
             let coll_name = collection.to_string();
-            let sep_with_spaces = format!(" {} ", separator);
+            let sep_with_spaces = if compact_member_arguments && separator == "," {
+                ", ".to_string()
+            } else {
+                format!(" {} ", separator)
+            };
 
             if abstraction_binder.as_ref().map(|s| s.as_str()) == Some(&coll_name) {
                 // Iterate binder_names

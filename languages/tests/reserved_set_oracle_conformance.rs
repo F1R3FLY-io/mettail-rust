@@ -68,15 +68,15 @@
 //! still probed. Each word in that domain is then measured *behaviourally*, with the probe
 //! #128 asks for — `new <word> in { Nil }` — so the verdict is the parser's, not a struct's.
 //!
-//! # ★★ THE MEASUREMENT — 2026-07-30, and the filing was off in both directions
+//! # ★★ THE MEASUREMENT — re-derived 2026-08-04 after #123
 //!
 //! | quantity | filing | **derived** |
 //! |---|---|---|
 //! | oracle's reserved words | 17 (incl. `in`) | **16** — `in` is not in `reserved.global` |
-//! | comparison domain | — | **85** |
-//! | reserved by MeTTaIL over that domain | — | **78** |
-//! | over-reserved (reserved here, free upstream) | 5 | **69** |
-//! |   ⤷ dotted-method family, #122/#123's lane | 44 | **47** (derived, not listed) |
+//! | comparison domain | — | **38** |
+//! | reserved by MeTTaIL over that domain | — | **31** |
+//! | over-reserved (reserved here, free upstream) | 5 | **22** |
+//! |   ⤷ dotted-method family, #122/#123's lane | 44 | **0** — replaced by one `Ident` capture |
 //! |   ⤷ residue, this item's own | 5 | **22** |
 //! | under-reserved (free here, reserved upstream) | 1 (`bundle`) | **7** |
 //!
@@ -90,9 +90,10 @@
 //!    `else`, `match`, `let`, `select`, `contract` or `bundle`. Reserving them would make
 //!    MeTTaIL strictly worse. See
 //!    [`under_reservation_is_a_missing_construct_not_a_missing_reservation`].
-//! 3. **The dotted-method family is 47, not 44** — the same re-derivation
-//!    `wpda_codegen/factoring.rs`'s `Proc` method-cohort census made on 2026-07-29 (44 → 47).
-//!    It is *computed* here, so it cannot drift again.
+//! 3. **The dotted-method family was 47, not 44, and is now zero.** The generic
+//!    `MethodCall(receiver, Ident, Vec<Proc>)` rule removed all 47 literal terminals at once.
+//!    The census remains computed as a zero-cardinality tripwire, so a name-specific method
+//!    terminal cannot silently re-enter the grammar.
 //!
 //! # ★★ #147's RULING LIVES HERE, because this is where the `__` convention's cost is MEASURED
 //!
@@ -136,11 +137,11 @@
 //!
 //! # What this file does NOT do
 //!
-//! It does not un-reserve anything. Every residue row is a superset breach and each un-
-//! reservation changes the accepted language, so the repair is a per-word ruling; the
-//! dotted-method family is #123's fix and lands there. This file makes the divergence a
+//! It does not un-reserve any of the 22 non-method residue words. Every residue row is a
+//! superset breach and each un-reservation changes the accepted language, so those repairs
+//! require per-word rulings. The dotted-method family was removed by #123. This file makes the divergence a
 //! MEASURED, DRIFT-DETECTING artifact instead of a sampled anecdote, and it goes red the
-//! moment either side moves — including when #123 lands, which is the correct behaviour.
+//! moment either side moves.
 
 #![cfg(feature = "rholang")]
 
@@ -258,8 +259,10 @@ fn contextual_collection_openers(def: &LanguageDef) -> BTreeSet<String> {
     openers
 }
 
-/// Identifier-shaped literals that occupy a METHOD position — the item immediately before
-/// them in their rule's syntax pattern is the literal `"."`.
+/// Identifier-shaped literals that occupy a METHOD position — a forbidden residue after #123.
+///
+/// The generic `MethodCall` rule captures an `Ident` after `"."`; therefore this set must be
+/// empty. Keeping the census derived makes a future name-specific method rule fail the gate.
 fn dotted_method_literals(def: &LanguageDef) -> BTreeSet<String> {
     let mut dotted = BTreeSet::new();
     for rule in &def.terms {
@@ -311,14 +314,11 @@ fn comparison_domain(def: &LanguageDef) -> BTreeSet<String> {
 // The recorded divergence — a DERIVED family plus a typed exception table
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// ★★ THE OVER-RESERVED SET SPLITS INTO ONE DERIVED FAMILY AND A RESIDUE.
+/// ★★ THE OVER-RESERVED SET AFTER THE METHOD-LITERAL FAMILY WAS REMOVED.
 ///
-/// The larger part is the **dotted-method family** — every identifier-shaped literal whose
-/// predecessor in its rule's syntax pattern is `"."`. That family is #122's lane and #123's
-/// fix, and it is *computed* by [`dotted_method_literals`]: adding `Proc.foo(…)` to the
-/// grammar enrols `foo` automatically, with no edit here. Only the RESIDUE — the words that
-/// are over-reserved for reasons that are **not** the method surface — is written down, and
-/// each row carries its own reason.
+/// #123 replaced every identifier-shaped literal after `"."` with one `Ident` capture. The
+/// method family is now a zero-cardinality tripwire derived by [`dotted_method_literals`]. The
+/// remaining over-reservations are the typed RESIDUE below, each with its owning rule and reason.
 ///
 /// # ⚠ The filing sampled, and the sample was off by 16
 ///
@@ -556,7 +556,7 @@ fn the_derived_domain_reaches_the_grammar() {
     let def = rholang_def();
     let literals = declared_literals(&def);
     assert!(
-        literals.len() > 100,
+        literals.len() > 50,
         "only {} literal terminals were harvested from the reconstructed grammar; the walk \
          is not reaching the syntax patterns, so every set below is a subset of nothing.",
         literals.len(),
@@ -597,7 +597,7 @@ fn the_reserved_set_diverges_from_the_oracle_exactly_as_recorded() {
         .cloned()
         .collect();
 
-    // ── The DERIVED family: dotted-method names. #122's lane, #123's fix.
+    // ── The DERIVED tripwire: #123 leaves no dotted method-name literals. ────────────────
     let dotted = dotted_method_literals(&def);
     let (over_dotted, over_residue): (BTreeSet<String>, BTreeSet<String>) =
         over.iter().cloned().partition(|word| dotted.contains(word));
@@ -617,16 +617,14 @@ fn the_reserved_set_diverges_from_the_oracle_exactly_as_recorded() {
     }
 
     assert!(
-        !dotted.is_empty(),
-        "no dotted-method literals were derived from the grammar, so the family split below \
-         is vacuous and the whole over-reserved set would be reported as residue.",
+        dotted.is_empty(),
+        "name-specific dotted method literals reappeared: {dotted:?}. Method names must be \
+         captured by the generic `MethodCall` Ident field, not installed as lexer terminals.",
     );
     assert_eq!(
         over_dotted,
-        dotted.intersection(&domain).cloned().collect::<BTreeSet<String>>(),
-        "\nsome dotted-method literal is NOT over-reserved, which means the method surface \
-         has partly stopped being reserved. That is #123's fix landing: move the family \
-         boundary rather than adding residue rows.",
+        BTreeSet::new(),
+        "\na dotted method-name literal remains over-reserved after #123: {over_dotted:?}",
     );
 
     // ── The RESIDUE: a typed exception table, diffed as a set.
@@ -647,8 +645,8 @@ fn the_reserved_set_diverges_from_the_oracle_exactly_as_recorded() {
          {:?}\n  no longer over-reserved: {:?}\n\
          Each residue word is a SUPERSET BREACH: an upstream program using it as an \
          identifier parses upstream and is rejected here. Add a row with its owning rule and \
-         its reason, or un-reserve it. The dotted-method family is derived and excluded from \
-         this diff — a new `Proc.foo(…)` method does NOT belong here.",
+         its reason, or un-reserve it. A method name must remain an `Ident` capture and never \
+         become a literal terminal or residue row.",
         over_residue.len(),
         over_residue,
         recorded_residue.len(),

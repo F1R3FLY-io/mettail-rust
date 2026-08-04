@@ -1,4 +1,4 @@
-//! The RECURSIVE lowering, retained verbatim as a differential ORACLE (M-2).
+//! The RECURSIVE lowering, retained as a test-only differential ORACLE (M-2).
 //!
 //! # Why a twin exists at all
 //!
@@ -8,16 +8,17 @@
 //! check. What a reader *can* check is that the two implementations were run against the
 //! same inputs and produced **byte-identical** `Par`s, error cases included.
 //!
-//! So the superseded implementation is kept here, verbatim — not paraphrased, not
-//! simplified, not re-indented. Every function below is the exact text that stood in
-//! `rholang_ast.rs` at commit `1b334d62`, moved by
-//! `scratch/extract.py` (an item-span extractor that edits nothing inside a span).
+//! The superseded implementation was extracted verbatim from `rholang_ast.rs` at commit
+//! `1b334d62`. It remains intentionally recursive and structurally independent of the driver.
+//! When the language model changes (for example, the generic `MethodCall` collapse), the oracle
+//! receives only the corresponding source-shape compatibility edit; the differential corpus
+//! then proves that the recursive and iterative traversals still produce byte-identical results.
 //! Its call sites into the NON-recursive helpers (`binary_expr_par`, `send_par`,
 //! `new_elist_par`, the 21 leaf `lower_arm_*` functions, …) resolve through
 //! `use super::*` to the very same code the driver calls, so the differential compares
 //! *traversal strategy* and nothing else.
 //!
-//! # What "verbatim" costs, and why it is worth it
+//! # What the bounded recursive twin costs, and why it is worth it
 //!
 //! It costs ~1,700 lines that are compiled only under `cfg(test)`. It buys a test that
 //! fails on the first term where the driver's child ORDER, ENVIRONMENT threading, or
@@ -189,250 +190,23 @@ fn lower_proc(proc: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> 
         // different (`a | b` builds a process; `PPar(a,b)` asserts a split).
         // A program that wants parallel composition writes `{ a | b }` or `a | b`.
         Proc::SpatialPPar(..) => lower_arm_spatial_p_par(),
-        // ── Methods routed to the reducer's OWN method table (option C, C1/C2) ───────────────
-        //
-        // Every name below is a key of `reduce.rs::method_table` (8197-8256). Dispatch is on the
-        // EVALUATED receiver, so one arm covers every receiver type Rholang supports — `size` on
-        // a Map and on a Set, `length` on a List and on a String, `nth` on an `EList`, an
-        // `ETuple` AND a `GByteArray` (`reduce.rs:4106-4118`) — and a COMM-bound receiver works
-        // exactly like a literal one. See [`lower_method`].
-        //
-        // `.toByteArray()` (C2) replaces the retired `rhoapi` schema fork
-        // (`languages/proto/rholang_wire.proto` + `languages/src/rholang/wire.rs`), which encoded
-        // a hex `GString` in protobuf BYTE order and could not encode any collection the Rholang
-        // grammar actually produces.
-        Proc::MToByteArray(m) => lower_arm_m_to_byte_array(m, env),
-        // The three byte-named methods (2026-07-30) — keys of the reducer's `method_table`
-        // at `reduce.rs:9346`, `:9347`, `:9348`.
-        Proc::MHexToBytes(s) => lower_arm_m_hex_to_bytes(s, env),
-        Proc::MBytesToHex(b) => lower_arm_m_bytes_to_hex(b, env),
-        Proc::MToUtf8Bytes(s) => lower_arm_m_to_utf8_bytes(s, env),
-        //
-        // ── C1 — the collection method surface (landed 2026-07-26) ──────────────────────────
-        //
-        // Each arm names a key of `reduce.rs::method_table` (`method_table` is at
-        // `rholang/src/rust/interpreter/reduce.rs:9023` in the pinned `../f1r3node-rust-mettail`
-        // worktree — MEASURED 2026-07-28; the citations "8197-8256" and ":8464" that stood here
-        // in turn each predated several edits). The reducer dispatches on the EVALUATED receiver,
-        // so a COMM-bound receiver works exactly like a literal one.
-        //
-        // ★ SOUNDNESS RESTS ON A MEASURED CARRIER MAP, NOT ON THE METHOD NAME.
-        //
-        // Rholang has two carriers with no Rholang analog, and both survive lowering only as an
-        // ENCODING: a `Bag` becomes `EList[GPrivate(RHOLANG_BAG_ABI_TAG), EList[pairs]]` (always
-        // exactly 2 elements — see [`lower_bag`]), and a `Pathmap` becomes a plain `EMap`,
-        // discarding the trie (divergence G — see [`lower_pathmap`]). Routing a method whose
-        // interpreter implementation ACCEPTS that encoding would compute over the encoding and
-        // answer something plausible and wrong. So every arm below was checked against the
-        // accepted-carrier set of the interpreter method it targets, read from the method bodies
-        // themselves (line numbers are the pinned worktree's):
-        //
-        //   method    interpreter accepts            reduce.rs   encoding reachable?
-        //   ────────  ─────────────────────────────  ─────────   ───────────────────────────────
-        //   get       EMap                                7593   Pathmap→EMap: KEY-FAITHFUL, ok
-        //   set       EMap                                7707   Pathmap→EMap: key-faithful, ok
-        //   contains  EMap, ESet, GBool                   7528   Pathmap→EMap: key-faithful, ok
-        //   delete    EMap, ESet                          7444   Pathmap→EMap: key-faithful, ok
-        //   keys      EMap, ESet                          7770   Pathmap→EMap: key-faithful, ok
-        //   size      EMap, ESet                          7829   Bag→EList REJECTED ⇒ closed
-        //   union     EMap, ESet, EPathmap                4336   Bag→EList REJECTED ⇒ closed
-        //   diff      EMap, ESet, EPathmap                4463   Bag→EList REJECTED ⇒ closed
-        //   add       ESet                                7378   —
-        //   length    EList, GString, GByteArray          7893   ⚠ Bag→EList ACCEPTED ⇒ GATED
-        //   nth       EList, ETuple, GByteArray           4078   ⚠ Bag→EList ACCEPTED ⇒ GATED
-        //   last      EList, ETuple, GByteArray           4449   ⚠ Bag→EList ACCEPTED ⇒ GATED
-        //
-        // The note that stood here asserted that routing would make `#{1|2|2}#.size()` answer the
-        // tagged list's pair count. That is FALSE and was the reason C1 was held: `size_method`
-        // (reduce.rs:7829) accepts only `EMapBody`/`ESetBody`, so a lowered `Bag` fails closed
-        // with `MethodNotDefined { method: "size", other_type: "List" }`. The hazard is real but
-        // lives on `length`, `nth` and `last` — the routed methods that DO accept `EListBody` —
-        // and those are gated by [`lower_length`] / [`lower_nth`] / [`lower_last`]. Measured, not
-        // hypothesized: `rho_rholang_conformance.rs::c1_bag_encoding_is_rejected_by_every_routed_method`.
-        Proc::MGet(m, k) => lower_arm_m_get(m, k, env),
-        Proc::MSet(m, k, v) => lower_arm_m_set(m, k, v, env),
-        Proc::MContains(m, k) => lower_arm_m_contains(m, k, env),
-        Proc::MDelete(m, k) => lower_arm_m_delete(m, k, env),
-        Proc::MUnion(a, b) => lower_arm_m_union(a, b, env),
-        Proc::MSize(m) => lower_arm_m_size(m, env),
-        Proc::MKeys(m) => lower_arm_m_keys(m, env),
-        Proc::BDiff(a, b) => lower_arm_b_diff(a, b, env),
-        Proc::SAdd(s, e) => lower_arm_s_add(s, e, env),
-        Proc::LLength(l) => lower_arm_l_length(l, env),
-        Proc::LNth(l, i) => lower_arm_l_nth(l, i, env),
-        // `last` — ROUTED as of 2026-07-28, having been C3 residue since it landed. The
-        // `method_table` gained a `last` key (`reduce.rs::last_method`, registered at :9026
-        // immediately after `nth`), so there is now something to route TO and the projection no
-        // longer has to live only in the fold body.
-        //
-        // ⚠ The routed method is NATIVE, not the desugaring `l.last()` ⇒ `l.nth(l.length()-1)`:
-        // that rewrite names the receiver twice and so EVALUATES it twice, and duplicated
-        // evaluation is duplicated gas. `last_method` evaluates the receiver once and projects.
-        Proc::LLast(l) => lower_arm_l_last(l, env),
-        // `concat` is the one C1 method with NO `method_table` key: Rholang spells list/string
-        // concatenation as the `++` OPERATOR (`EPlusPlus`), not as a method. Routing to `++`
-        // still hands the operation to the reducer's own evaluator — the single-evaluator
-        // property C1 exists for — so this is a name change, not a second implementation.
-        //
-        // ⚠ `combine_plus_plus` accepts `EList`, `EMap`, `ESet`, `GByteArray` and `GString`, so it
-        // is a THIRD `EList`-accepting operation and takes the same bag gate as `length`/`nth`.
-        // Ungated, `#{1|2}#.concat(#{3}#)` would concatenate the two ENCODINGS into a 4-element
-        // list carrying two ABI tags — where the fold body, which accepts only (List, List) and
-        // (Str, Str), answers `error`. See [`lower_concat`].
-        Proc::LConcat(l, r) => lower_arm_l_concat(l, r, env),
-        //
-        // ── C1b — the Pathmap/Zipper family: routed, but UNREACHABLE until C4 ───────────────
-        //
-        // These are routed for the same reason as the rest — the reducer owns the semantics — but
-        // every one of them requires an `EPathmapBody` or `EZipperBody` receiver, and Rholang's
-        // `Pathmap` still lowers to `EMap` (divergence G). So on the machine they all fail closed
-        // at REDUCE time with `MethodNotDefined { other_type: "map" }` rather than at LOWER time.
-        // That is strictly more informative (it names the carrier that is actually wrong, which
-        // is the thing C4 fixes) and it is still fail-closed — measured by
-        // `c1b_pathmap_zipper_family_is_c4_blocked_at_the_carrier`.
-        //
-        // ★★ CORRECTION (C4 investigation, 2026-07-26 — MEASURED). The sentence that stood here,
-        // "when C4 gives `Pathmap` its native carrier these arms start working with no further
-        // change here", is FALSE, and the reason is worth more than the sentence.
-        //
-        // C4 is not a plumbing change, because **Rholang's `Pathmap` and Rholang's `EPathMap` are
-        // different types**:
-        //
-        //   Rholang   `PathMapLit<Proc, Proc>`  a KEY→VALUE map. `{| 1 : 10 |}` is well formed and
-        //                                       `pathmap_get` reads a value out at a key.
-        //   Rholang   `EPathMap { ps }`         a SET OF PATHS. An element is its own key AND its
-        //                                       own value.
-        //
-        // The second is measured three independent ways, not read off a comment:
-        //
-        //   1. the reducer answers `getPath() == getLeaf()` ▸ `true` at every leaf, and `atPath(k)`
-        //      returns `k` itself
-        //      (`rho_rholang_conformance.rs::c4_the_native_carrier_has_no_value_slot`);
-        //   2. `models/.../pathmap_crate_type_mapper.rs::rholang_pathmap_to_e_pathmap` keeps only
-        //      the trie's VALUES and discards its keys, so a key that is not its own value cannot
-        //      survive one round trip through the mapper; and
-        //   3. decisively, the GROUND WIRE. Since f1r3node `f34c2d7e` a ground `EPathMap`
-        //      serialises as `bytes serialized_paths = 8` — the uncompressed trie-ordered KEY
-        //      STREAM — and `merge_field` rebuilds `ps` by `decode_trie_path` of each key. Proto
-        //      fields 6 and 7, RESERVED by that same commit, were "a retired value_form/
-        //      value_entries experiment". A value distinct from its key is not merely unrepresented
-        //      in the carrier: it is unrepresentable on the consensus wire, and that wire is the
-        //      hash preimage.
-        //
-        // Two further measured consequences, both of which a naive flip would hit immediately:
-        //
-        //   * the native carrier REFUSES the Map surface — `get`/`set`/`contains`/`delete`/`keys`/
-        //     `size`/`length` all answer `MethodNotDefined { other_type: "pathmap" }` on an
-        //     `EPathmapBody` receiver. Five of them work on a `Pathmap` receiver TODAY only because
-        //     this file emits an `EMap` (`c1_pathmap_methods_answer_through_the_emap_encoding`), so
-        //     the flip trades twenty-two dead methods for seven newly dead ones unless each is
-        //     re-expressed. Measured by `c4_the_native_carrier_refuses_the_map_method_surface`.
-        //   * ✅ RETIRED 2026-07-27 — a SECOND blocker used to be recorded here and it no longer
-        //     exists. A Rholang pathmap key is BARE by default (`{| 1 : 10 |}` has key `1`), and
-        //     that element shape used to read back as `Nil` while `toNextLeaf` sat on a FIXED
-        //     POINT, so a walk-until-`Nil` over `{| 1, 2, 3 |}` did not terminate; pointing
-        //     `lower_pathmap` at `EPathmapBody` would have made the very enumeration surface C4
-        //     exists to unlock HANG rather than work. f1r3node closed it in three commits —
-        //     `5aacebc3` (the walk primitive `next_value_key` is total for a `from_key` that does
-        //     not exist, which is where the fixed point actually lived: an upstream pathmap-0.2.2
-        //     iteration rewind, NOT key termination), `0a6d2ce0` (`entry_key_at`: a reader holding
-        //     the whole path `Par` asks the codec), and `7dcff96f` (`EZipper.cursor_kind`: the
-        //     cursor carries its own Split/Bare/Prefix arm). No canonical key moved and no
-        //     activation height was needed. Now measured SOUND by
-        //     `rho_rholang_conformance.rs::c4_a_bare_element_reads_back_as_itself` and
-        //     `::c4_a_bare_element_walk_visits_every_element_in_order`, and the bare row is back in
-        //     `::c1_zipper_walk_exhaustion_terminates_within_leaf_count` where it was written.
-        //     ⚠ So the VALUE SLOT below is the whole of what holds C4 — do not cite the walk.
-        //
-        // So C4 requires DECIDING what Rholang's value slot becomes — drop it, fuse it into the key
-        // path (which changes what `getPath`/`getLeaf` mean), or add a value arm to the consensus
-        // wire — and every answer costs something that is not a lowering's to spend. The decision
-        // is presented, not taken here; `lower_pathmap` keeps emitting `EMap` until it is made.
-        //
-        // ★ `toNextLeaf` carries a DELIBERATE CROSS-ENDPOINT CONVENTION MISMATCH, and
-        // mistranslating it does not error — it LOOPS FOREVER. The reducer reports an exhausted
-        // walk as `Nil` (`Ok(Par::default())`); Rholang's fold body reports it as `Err(())`, the
-        // house "failed navigation stays STUCK" form. See
-        // `languages/src/rholang/zipper.rs::zipper_to_next_leaf` and its f1r3node twin
-        // `rholang/tests/zipper_enumeration_spec.rs::to_next_leaf_returns_nil_when_exhausted`,
-        // which name each other.
-        //
-        // What C1 owes the contract is that the `Nil` NEVER becomes a usable zipper on this side.
-        // It cannot, and the reason is structural rather than defensive, so there is no predicate
-        // here to call: `Nil` is not an `EZipperBody`, so the reducer's own zipper methods reject
-        // it (`MethodNotDefined`), a walk cannot continue on it, and mettail has no decoder that
-        // could lift it back — `RuntimeObservationValue` (`runtime/src/language.rs:108`) has no
-        // zipper variant and `Proc::CastReadZipper` is deliberately NOT lowered (see
-        // [`unsupported_construct_name`]). The property is proved end-to-end, against the real
-        // reducer and BOUNDED so a violation fails instead of hanging, by
-        // `rho_rholang_conformance.rs::c1_zipper_walk_exhaustion_terminates_within_leaf_count`.
-        Proc::PGetSubtrie(m) => lower_arm_p_get_subtrie(m, env),
-        Proc::PReadZipper(m) => lower_arm_p_read_zipper(m, env),
-        Proc::PReadZipperAt(m, p) => lower_arm_p_read_zipper_at(m, p, env),
-        Proc::PWriteZipper(m) => lower_arm_p_write_zipper(m, env),
-        Proc::PWriteZipperAt(m, p) => lower_arm_p_write_zipper_at(m, p, env),
-        Proc::RZGetLeaf(z) => lower_arm_r_z_get_leaf(z, env),
-        Proc::RZDescendTo(z, rel) => lower_arm_r_z_descend_to(z, rel, env),
-        Proc::RZChildCount(z) => lower_arm_r_z_child_count(z, env),
-        Proc::RZDescendFirst(z) => lower_arm_r_z_descend_first(z, env),
-        Proc::RZToNextSibling(z) => lower_arm_r_z_to_next_sibling(z, env),
-        Proc::RZToPrevSibling(z) => lower_arm_r_z_to_prev_sibling(z, env),
-        Proc::RZDescendIndexedBranch(z, i) => lower_arm_r_z_descend_indexed_branch(z, i, env),
-        Proc::RZAscendOne(z) => lower_arm_r_z_ascend_one(z, env),
-        Proc::RZAscend(z, n) => lower_arm_r_z_ascend(z, n, env),
-        Proc::RZGetPath(z) => lower_arm_r_z_get_path(z, env),
-        Proc::RZToNextLeaf(z) => lower_arm_r_z_to_next_leaf(z, env),
-        Proc::RZLeafCount(z) => lower_arm_r_z_leaf_count(z, env),
-        // ⚠ `setLeaf` is NOT routed, and it is the reason this file checks ARITY and SEMANTICS
-        // rather than trusting a shared name. The two `setLeaf`s are different operations:
-        //
-        //   Rholang  `w.setLeaf(full, v)`  writes at the ABSOLUTE path given as an argument —
-        //                                  `write_zipper_set_leaf` is
-        //                                  `pm.set_val_at(encode_proc_path_entry(full), v)`
-        //                                  (`languages/src/rholang/zipper.rs:529`). The zipper's
-        //                                  focus is not consulted at all.
-        //   Rholang  `z.setLeaf(v)`        APPENDS `v` to the map as a new element, at the path `v`
-        //                                  derives for ITSELF. One argument. The zipper's focus is
-        //                                  not consulted either — see the correction below.
-        //
-        // Emitting `EMethod("setLeaf")` with Rholang's two arguments would raise
-        // `MethodArgumentNumberMismatch` — fail-closed, but for the WRONG reason, and it would
-        // leave a mapping that becomes silently incorrect the moment anyone "fixes" the arity by
-        // dropping `full`.
-        //
-        // ★★ CORRECTION (C4 investigation, 2026-07-26 — MEASURED). This note used to say Rholang's
-        // `setLeaf` "writes at the zipper's CURRENT FOCUS", and to name `writeZipperAt(full)
-        // .setLeaf(v)` as the rewrite that would express Rholang's meaning on the machine. **Both
-        // halves were wrong, and the second was a trap.**
-        //
-        // `reduce.rs::set_leaf_method` does `pathmap.ps_make_mut().push(value)` on BOTH of its arms
-        // and never reads `zipper.current_path`. Its doc comment still reads "set value at current
-        // position" — a leftover from the retired value-arm experiment (proto fields 6/7, RESERVED
-        // by `f34c2d7e`) — and that stale comment is what the old note was written from. Measured
-        // by `rho_rholang_conformance.rs::c4_set_leaf_appends_an_element_and_ignores_the_focus`:
-        // the map GROWS by one, the focused entry SURVIVES, the new element lands at its own path,
-        // and `writeZipperAt("b").setLeaf(v)`, `writeZipperAt("c").setLeaf(v)` and
-        // `writeZipper().setLeaf(v)` all produce the SAME map. `writeZipperAt(p)` is inert in front
-        // of `setLeaf`.
-        //
-        // So the proposed rewrite would have written at the wrong place while looking correct in
-        // review — the same "fix the arity by dropping the path" failure this note exists to
-        // prevent, wearing a different hat.
-        //
-        // The REAL reason `setLeaf` cannot be routed is the C4 carrier fact above: a path-addressed
-        // write needs a value slot, and `EPathMap` has none. `setLeaf(v)` is the only write the
-        // carrier can express — *insert the element `v`*, whose key is derived from `v` — and
-        // Rholang's `setLeaf(full, v)` is simply not that operation. It stays fail-closed and
-        // named, and it will still be fail-closed after a naive carrier flip, because the obstacle
-        // is the missing value slot rather than the argument count.
-        //
-        // The arity of every other routed zipper method was checked against the interpreter's own
-        // `expected:` counts, and `setLeaf` is the only mismatch.
-        Proc::WZSetSubtrie(w, rel) => lower_arm_w_z_set_subtrie(w, rel, env),
-        Proc::WZRemoveLeaf(w) => lower_arm_w_z_remove_leaf(w, env),
-        Proc::WZRemoveBranches(w) => lower_arm_w_z_remove_branches(w, env),
-        Proc::WZGraft(w, rz) => lower_arm_w_z_graft(w, rz, env),
-        Proc::WZJoinInto(w, rz) => lower_arm_w_z_join_into(w, rz, env),
+        // Method syntax carries its name and ordered arguments as data. This recursive
+        // oracle deliberately shares only the non-recursive EMethod assembler with the
+        // production PDA; its descent remains recursive so the differential still has
+        // independent traversal control flow.
+        Proc::MethodCall(receiver, method_name, arguments) => {
+            if receiver_is_literal_bag(receiver.as_ref())
+                && matches!(method_name.as_str(), "length" | "nth" | "last")
+            {
+                Err(RholangAstLowerError::UnsupportedProc(
+                    "list-style indexing/cardinality on a bag (the machine would observe \
+                     the bag's two-element ABI encoding rather than the multiset)",
+                ))
+            } else {
+                let argument_refs: Vec<&Proc> = arguments.iter().collect();
+                lower_method(method_name, receiver.as_ref(), &argument_refs, env)
+            }
+        },
         //
         // A-S4 fail-closed: every remaining construct has no machine algebra (bitwise ops,
         // cross-type conversions, the MeTTaIL-only collection residue, lambda forms, internal
@@ -795,330 +569,6 @@ fn lower_arm_matches(
     Ok(par)
 }
 
-#[inline(never)]
-fn lower_arm_m_to_byte_array(
-    m: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("toByteArray", m.as_ref(), &[], env)
-}
-
-/// The `Proc::MHexToBytes(s)` arm — `"…".hexToBytes()`.
-#[inline(never)]
-fn lower_arm_m_hex_to_bytes(
-    s: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("hexToBytes", s.as_ref(), &[], env)
-}
-
-/// The `Proc::MBytesToHex(b)` arm — `b"…".bytesToHex()`.
-#[inline(never)]
-fn lower_arm_m_bytes_to_hex(
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("bytesToHex", b.as_ref(), &[], env)
-}
-
-/// The `Proc::MToUtf8Bytes(s)` arm — `"…".toUtf8Bytes()`.
-#[inline(never)]
-fn lower_arm_m_to_utf8_bytes(
-    s: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("toUtf8Bytes", s.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_m_get(
-    m: &std::sync::Arc<Proc>,
-    k: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("get", m.as_ref(), &[k.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_m_set(
-    m: &std::sync::Arc<Proc>,
-    k: &std::sync::Arc<Proc>,
-    v: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("set", m.as_ref(), &[k.as_ref(), v.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_m_contains(
-    m: &std::sync::Arc<Proc>,
-    k: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("contains", m.as_ref(), &[k.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_m_delete(
-    m: &std::sync::Arc<Proc>,
-    k: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("delete", m.as_ref(), &[k.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_m_union(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("union", a.as_ref(), &[b.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_m_size(m: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
-    lower_method("size", m.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_m_keys(m: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
-    lower_method("keys", m.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_b_diff(
-    a: &std::sync::Arc<Proc>,
-    b: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("diff", a.as_ref(), &[b.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_s_add(
-    s: &std::sync::Arc<Proc>,
-    e: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("add", s.as_ref(), &[e.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_l_length(
-    l: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_length(l.as_ref(), env)
-}
-
-#[inline(never)]
-fn lower_arm_l_nth(
-    l: &std::sync::Arc<Proc>,
-    i: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_nth(l.as_ref(), i.as_ref(), env)
-}
-
-#[inline(never)]
-fn lower_arm_l_last(l: &std::sync::Arc<Proc>, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
-    lower_last(l.as_ref(), env)
-}
-
-#[inline(never)]
-fn lower_arm_l_concat(
-    l: &std::sync::Arc<Proc>,
-    r: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_concat(l.as_ref(), r.as_ref(), env)
-}
-
-#[inline(never)]
-fn lower_arm_p_get_subtrie(
-    m: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("getSubtrie", m.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_p_read_zipper(
-    m: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("readZipper", m.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_p_read_zipper_at(
-    m: &std::sync::Arc<Proc>,
-    p: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("readZipperAt", m.as_ref(), &[p.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_p_write_zipper(
-    m: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("writeZipper", m.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_p_write_zipper_at(
-    m: &std::sync::Arc<Proc>,
-    p: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("writeZipperAt", m.as_ref(), &[p.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_get_leaf(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("getLeaf", z.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_descend_to(
-    z: &std::sync::Arc<Proc>,
-    rel: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("descendTo", z.as_ref(), &[rel.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_child_count(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("childCount", z.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_descend_first(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("descendFirst", z.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_to_next_sibling(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("toNextSibling", z.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_to_prev_sibling(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("toPrevSibling", z.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_descend_indexed_branch(
-    z: &std::sync::Arc<Proc>,
-    i: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("descendIndexedBranch", z.as_ref(), &[i.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_ascend_one(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("ascendOne", z.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_ascend(
-    z: &std::sync::Arc<Proc>,
-    n: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("ascend", z.as_ref(), &[n.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_get_path(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("getPath", z.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_to_next_leaf(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("toNextLeaf", z.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_r_z_leaf_count(
-    z: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("leafCount", z.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_w_z_set_subtrie(
-    w: &std::sync::Arc<Proc>,
-    rel: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("setSubtrie", w.as_ref(), &[rel.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_w_z_remove_leaf(
-    w: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("removeLeaf", w.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_w_z_remove_branches(
-    w: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("removeBranches", w.as_ref(), &[], env)
-}
-
-#[inline(never)]
-fn lower_arm_w_z_graft(
-    w: &std::sync::Arc<Proc>,
-    rz: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("graft", w.as_ref(), &[rz.as_ref()], env)
-}
-
-#[inline(never)]
-fn lower_arm_w_z_join_into(
-    w: &std::sync::Arc<Proc>,
-    rz: &std::sync::Arc<Proc>,
-    env: &BoundEnv,
-) -> Result<Par, RholangAstLowerError> {
-    lower_method("joinInto", w.as_ref(), &[rz.as_ref()], env)
-}
-
 fn lower_binary_expr(
     a: &Proc,
     b: &Proc,
@@ -1161,55 +611,6 @@ fn lower_method(
     par.locally_free = locally_free;
     par.connective_used = connective_used;
     Ok(par)
-}
-
-fn lower_length(target: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
-    match receiver_is_literal_bag(target) {
-        true => Err(RholangAstLowerError::UnsupportedProc(
-            "#{…}#.length() bag cardinality (no Rholang analog — the machine would measure the \
-             2-element bag ABI encoding, not the multiset; C3 residue)",
-        )),
-        false => lower_method("length", target, &[], env),
-    }
-}
-
-fn lower_nth(target: &Proc, index: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
-    match receiver_is_literal_bag(target) {
-        true => Err(RholangAstLowerError::UnsupportedProc(
-            "#{…}#.nth(i) bag indexing (no Rholang analog — the machine would index the 2-element \
-             bag ABI encoding, not the multiset; C3 residue)",
-        )),
-        false => lower_method("nth", target, &[index], env),
-    }
-}
-
-/// `l.last()` ⇒ `EMethod("last")`, with the SAME bag gate `nth` takes.
-///
-/// `last_method` accepts `EListBody`, and a `Bag` lowers to the 2-element ABI encoding
-/// `EList[GPrivate(tag), EList[pairs]]` — so an ungated `#{1|2|2}#.last()` would answer the
-/// PAIRS LIST (the encoding's second element), which is plausible and wrong, exactly the hazard
-/// [`lower_length`] and [`lower_nth`] were gated for. `last` is the fourth `EList`-accepting
-/// routed operation and takes the identical gate.
-fn lower_last(target: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
-    match receiver_is_literal_bag(target) {
-        true => Err(RholangAstLowerError::UnsupportedProc(
-            "#{…}#.last() bag final-element access (no Rholang analog — the machine would index \
-             the 2-element bag ABI encoding, not the multiset; C3 residue)",
-        )),
-        false => lower_method("last", target, &[], env),
-    }
-}
-
-fn lower_concat(left: &Proc, right: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
-    match receiver_is_literal_bag(left) || receiver_is_literal_bag(right) {
-        true => Err(RholangAstLowerError::UnsupportedProc(
-            "#{…}#.concat(…) bag concatenation (no Rholang analog — `++` would concatenate the \
-             2-element bag ABI encodings, tags and all; C3 residue)",
-        )),
-        false => Ok(binary_expr_par(lower_proc(left, env)?, lower_proc(right, env)?, |p1, p2| {
-            ExprInstance::EPlusPlusBody(EPlusPlus { p1, p2 })
-        })),
-    }
 }
 
 fn lower_body_lifting_folds(body: &Proc, env: &BoundEnv) -> Result<Par, RholangAstLowerError> {
@@ -1966,31 +1367,28 @@ mod differential {
             Expect::Lowers,
         ),
         // ── methods ─────────────────────────────────────────────────────────────────────────
-        ("@\"OUT\"!({1 : 2}.get(1))", "MGet", Expect::Lowers),
-        ("@\"OUT\"!({1 : 2}.set(3, 4))", "MSet", Expect::Lowers),
-        ("@\"OUT\"!({1 : 2}.contains(1))", "MContains", Expect::Lowers),
-        ("@\"OUT\"!({1 : 2}.delete(1))", "MDelete", Expect::Lowers),
-        ("@\"OUT\"!({1 : 2}.size())", "MSize", Expect::Lowers),
-        ("@\"OUT\"!({1 : 2}.keys())", "MKeys", Expect::Lowers),
-        ("@\"OUT\"!({1 : 2}.union({3 : 4}))", "MUnion", Expect::Lowers),
-        ("@\"OUT\"!(Set(1).diff(Set(2)))", "BDiff", Expect::Lowers),
-        ("@\"OUT\"!(Set(1).add(2))", "SAdd", Expect::Lowers),
-        ("@\"OUT\"!([1, 2].length())", "LLength", Expect::Lowers),
-        ("@\"OUT\"!([1, 2].nth(0))", "LNth", Expect::Lowers),
-        ("@\"OUT\"!([1].concat([2]))", "LConcat", Expect::Lowers),
-        ("@\"OUT\"!(1.toByteArray())", "MToByteArray", Expect::Lowers),
+        ("@\"OUT\"!({1 : 2}.get(1))", "MethodCall(get)", Expect::Lowers),
+        ("@\"OUT\"!({1 : 2}.set(3, 4))", "MethodCall(set)", Expect::Lowers),
+        ("@\"OUT\"!({1 : 2}.contains(1))", "MethodCall(contains)", Expect::Lowers),
+        ("@\"OUT\"!({1 : 2}.delete(1))", "MethodCall(delete)", Expect::Lowers),
+        ("@\"OUT\"!({1 : 2}.size())", "MethodCall(size)", Expect::Lowers),
+        ("@\"OUT\"!({1 : 2}.keys())", "MethodCall(keys)", Expect::Lowers),
+        ("@\"OUT\"!({1 : 2}.union({3 : 4}))", "MethodCall(union)", Expect::Lowers),
+        ("@\"OUT\"!(Set(1).diff(Set(2)))", "MethodCall(diff)", Expect::Lowers),
+        ("@\"OUT\"!(Set(1).add(2))", "MethodCall(add)", Expect::Lowers),
+        ("@\"OUT\"!([1, 2].length())", "MethodCall(length)", Expect::Lowers),
+        ("@\"OUT\"!([1, 2].nth(0))", "MethodCall(nth)", Expect::Lowers),
+        ("@\"OUT\"!([1].concat([2]))", "MethodCall(concat)", Expect::Lowers),
+        ("@\"OUT\"!(1.toByteArray())", "MethodCall(toByteArray)", Expect::Lowers),
         // ★ MOVED DELIBERATELY, 2026-07-28: this row read `Expect::Fails` and pinned `.last()`
         // as C3 residue. `method_table` gained a `last` key (`reduce.rs::last_method`), so the
         // construct now ROUTES and the row is inverted rather than deleted — a green suite must
         // not be able to hide the transition.
-        ("@\"OUT\"!([1, 2].last())", "LLast (routed)", Expect::Lowers),
-        // ── the C3 bag gates: four routed operations that must FAIL on a bag receiver ──────
-        ("@\"OUT\"!(#{1 | 2}#.length())", "LLength bag gate", Expect::Fails),
-        ("@\"OUT\"!(#{1 | 2}#.nth(0))", "LNth bag gate", Expect::Fails),
-        ("@\"OUT\"!(#{1}#.concat(#{2}#))", "LConcat bag gate", Expect::Fails),
-        // `last` accepts `EList` exactly as `nth` does, so routing it added a FOURTH way to
-        // measure the bag ABI encoding; it takes the same gate.
-        ("@\"OUT\"!(#{1 | 2}#.last())", "LLast bag gate", Expect::Fails),
+        ("@\"OUT\"!([1, 2].last())", "MethodCall(last)", Expect::Lowers),
+        // ── the C3 bag gates: list methods that would inspect the bag ABI must FAIL ─────────
+        ("@\"OUT\"!(#{1 | 2}#.length())", "MethodCall(length) bag gate", Expect::Fails),
+        ("@\"OUT\"!(#{1 | 2}#.nth(0))", "MethodCall(nth) bag gate", Expect::Fails),
+        ("@\"OUT\"!(#{1 | 2}#.last())", "MethodCall(last) bag gate", Expect::Fails),
         // ── binders ─────────────────────────────────────────────────────────────────────────
         ("new c in { @\"OUT\"!(1) }", "PNew", Expect::Lowers),
         ("new c in { c!(1) }", "PNew, binder referenced", Expect::Lowers),

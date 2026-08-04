@@ -760,7 +760,7 @@ fn finalize_leaf(
                 Some(&coord) => coord,
                 None => {
                     refusals.push(format!(
-                    "{LIMIT_REFUSAL} the mixfix member at rule index {} recorded {} spine \
+                        "{LIMIT_REFUSAL} the mixfix member at rule index {} recorded {} spine \
                      coordinates but leafs at depth {leaf_depth}, so the discovery walk and \
                      the item list disagree. This is a macro bug, not a grammar bug — \
                      please report it.",
@@ -1173,7 +1173,11 @@ pub(crate) fn emission_partition(
                 singletons,
             })
             .collect();
-        out.push(CategoryFactoring { category_src_idx, buckets, refusals: Vec::new() });
+        out.push(CategoryFactoring {
+            category_src_idx,
+            buckets,
+            refusals: Vec::new(),
+        });
     }
     out
 }
@@ -1674,7 +1678,11 @@ pub(crate) fn build_mixfix_factoring(
         let buckets = per_dispatch
             .remove(&cat)
             .expect("dispatch cat key collected from the map");
-        out.push(MixfixFactoring { dispatch_cat_src_idx: cat, buckets, refusals: Vec::new() });
+        out.push(MixfixFactoring {
+            dispatch_cat_src_idx: cat,
+            buckets,
+            refusals: Vec::new(),
+        });
     }
     // ★ #141 G8 — the sink is builder-wide (its ceilings are computed over the
     // SHARED `next_ordinal` allocation, not per dispatch category), so it is
@@ -1771,8 +1779,7 @@ fn build_mixfix_group(
                  for the cohort), so the spine's method-name prune would diverge from its \
                  members'. Uniformity is implied by the shared root item, so this is a \
                  macro bug, not a grammar bug — please report it.",
-                cand.fixb_literal,
-                cand.member.rule_idx,
+                cand.fixb_literal, cand.member.rule_idx,
             ));
         }
     }
@@ -1979,7 +1986,11 @@ pub(crate) fn mixfix_identity_partition(
         let buckets = per_dispatch
             .remove(&cat)
             .expect("dispatch cat key collected from the map");
-        out.push(MixfixFactoring { dispatch_cat_src_idx: cat, buckets, refusals: Vec::new() });
+        out.push(MixfixFactoring {
+            dispatch_cat_src_idx: cat,
+            buckets,
+            refusals: Vec::new(),
+        });
     }
     out
 }
@@ -3450,7 +3461,10 @@ mod limit_refusal_red {
 
     fn leaf(rule_idx: u16) -> SpineTree {
         SpineTree::Leaf {
-            item: SpineItem::Literal { text: "x".to_string(), required_top_cat: None },
+            item: SpineItem::Literal {
+                text: "x".to_string(),
+                required_top_cat: None,
+            },
             member: GroupMember {
                 kind: MemberKind::Nullary,
                 rule_idx,
@@ -3764,9 +3778,7 @@ mod tests {
         // The twin of `Pxxx` is `PPersistxxx`: the `Persist` is infixed after the category's
         // `P`, not prefixed to the whole label. (A first version of this predicate spelled it
         // `PPersist{intended}` and matched nothing — the assertion below rejected it.)
-        let twin_of = |label: &str| {
-            format!("PPersist{}", label.strip_prefix('P').unwrap_or(label))
-        };
+        let twin_of = |label: &str| format!("PPersist{}", label.strip_prefix('P').unwrap_or(label));
         let onto_a_twin: Vec<&(String, String)> = retargets
             .iter()
             .filter(|(intended, now)| *now == twin_of(intended))
@@ -4106,8 +4118,7 @@ mod tests {
 
         let nil = &bucket(&model, 0, "@").groups[0];
 
-        let (edge_nullary, m_nullary) =
-            nil.leaf_for(NULLARY_IDX).expect("POutputNilEmpty leaf");
+        let (edge_nullary, m_nullary) = nil.leaf_for(NULLARY_IDX).expect("POutputNilEmpty leaf");
         assert_eq!(m_nullary.kind, MemberKind::Nullary);
         assert!(
             matches!(
@@ -4116,10 +4127,7 @@ mod tests {
             ),
             "POutputNilEmpty commits on the `)` leaf edge: {edge_nullary:?}",
         );
-        assert_eq!(
-            m_nullary.leaf_depth, 4,
-            "spine consumed Nil ! ( ) for POutputNilEmpty",
-        );
+        assert_eq!(m_nullary.leaf_depth, 4, "spine consumed Nil ! ( ) for POutputNilEmpty",);
         assert_eq!(
             m_nullary.commit,
             MemberCommit::Nullary {
@@ -4135,33 +4143,25 @@ mod tests {
         );
         assert!(!m_nullary.has_post_spine_remainder);
 
-        let (edge_2plus, m_2plus) =
-            nil.leaf_for(TWO_PLUS_IDX).expect("POutputNil2Plus leaf");
+        let (edge_2plus, m_2plus) = nil.leaf_for(TWO_PLUS_IDX).expect("POutputNil2Plus leaf");
         assert_eq!(m_2plus.kind, MemberKind::Binder);
         assert!(
             matches!(edge_2plus, SpineItem::Literal { text, .. } if text == ","),
             "POutputNil2Plus commits on the `,` leaf edge: {edge_2plus:?}",
         );
-        assert_eq!(
-            m_2plus.leaf_depth, 5,
-            "spine consumed Nil ! ( <a> , for POutputNil2Plus",
-        );
+        assert_eq!(m_2plus.leaf_depth, 5, "spine consumed Nil ! ( <a> , for POutputNil2Plus",);
         assert_eq!(
             m_2plus.commit,
             MemberCommit::Binder { rule_idx: TWO_PLUS_IDX, resume_pos: 6 },
             "2Plus commit resumes BinderRule at pos 6 (the collection slot)",
         );
-        assert_eq!(
-            m_2plus.pos_map,
-            SpinePosMap::Binder { pos_at_depth: vec![1, 2, 3, 4, 5, 6] },
-        );
+        assert_eq!(m_2plus.pos_map, SpinePosMap::Binder { pos_at_depth: vec![1, 2, 3, 4, 5, 6] },);
         assert!(
             m_2plus.has_post_spine_remainder,
             "the 2Plus collection tail runs in the member's own machinery",
         );
 
-        let (edge_control, m_control) =
-            nil.leaf_for(CONTROL_IDX).expect("POutputNil leaf");
+        let (edge_control, m_control) = nil.leaf_for(CONTROL_IDX).expect("POutputNil leaf");
         assert!(matches!(edge_control, SpineItem::Literal { text, .. } if text == ")"));
         assert_eq!(
             m_control.commit,
@@ -5802,9 +5802,7 @@ mod tests {
         );
         // Label-bound coordinates: a rule-index shift must fail HERE, loudly,
         // rather than silently selecting a neighbouring send rule.
-        for (idx, label) in
-            [(3u16, "POutput"), (5u16, "POutputEmpty"), (7u16, "POutput2Plus")]
-        {
+        for (idx, label) in [(3u16, "POutput"), (5u16, "POutputEmpty"), (7u16, "POutput2Plus")] {
             assert_eq!(
                 per_cat[0][idx as usize].label.to_string(),
                 label,
@@ -5883,7 +5881,8 @@ mod tests {
     /// A-M5 census errata pins: every OTHER bundled mixfix cohort stays
     /// unfactored with the recorded reason — Name `,` (rep-part-0 ⇒
     /// EmptySequence ×2), Name `<-` (1-member slice ⇒ LoneRootChild), the
-    /// Proc `.` cohort (44 distinct method names ⇒ 44 LoneRootChild), and
+    /// Proc `.` bucket (one generic method rule whose captured name terminates the literal spine
+    /// ⇒ EmptySequence), and
     /// InputBind `&`/`where` (rep-part-0 ×2 / singleton).
     ///
     /// Census delta (2026-07-26): the trie-enumeration surface added
@@ -5913,6 +5912,12 @@ mod tests {
     /// factorable groups. As with `last`, `slice.len()` and `singletons.len()`
     /// move TOGETHER (44 → 47), which is the evidence that three singletons were
     /// added rather than a group; the property this pin exists for is untouched.
+    ///
+    /// Architecture delta (2026-08-04): all 47 name-specific rules collapsed into one
+    /// `MethodCall(receiver, Ident, Vec(Proc))`. The dot bucket therefore has one rule and one
+    /// `EmptySequence`: its first post-dot item is captured identifier text, not a mergeable
+    /// literal. It still has zero factorable groups. Method names are data now, not 47
+    /// grammar paths; retaining the former count here would reintroduce the deleted registry.
     #[test]
     fn rholang_mixfix_other_cohorts_stay_unfactored() {
         let def = rholang();
@@ -5942,12 +5947,9 @@ mod tests {
         assert_eq!(query.singletons[0].reason, SingletonReason::LoneRootChild);
         let dot = bucket(proc_src, ".");
         assert!(dot.groups.is_empty());
-        assert_eq!(dot.slice.len(), 47, "the 47-method cohort");
-        assert_eq!(dot.singletons.len(), 47);
-        assert!(dot
-            .singletons
-            .iter()
-            .all(|s| s.reason == SingletonReason::LoneRootChild));
+        assert_eq!(dot.slice.len(), 1, "the single generic method-call rule");
+        assert_eq!(dot.singletons.len(), 1);
+        assert_eq!(dot.singletons[0].reason, SingletonReason::EmptySequence);
         let amp = bucket(ib_src, "&");
         assert!(amp.groups.is_empty());
         assert!(amp
