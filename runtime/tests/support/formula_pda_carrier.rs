@@ -1,8 +1,8 @@
-//! Minimal generated-AST carrier for executable checks of the production formula PDA source.
+//! Minimal generated-AST carrier for executable checks of the production formula adapter.
 //!
-//! The full generated `languages` crate exceeds the local 4 GiB code-generation envelope. This
-//! module supplies every constructor read by the formula classifier while importing the exact
-//! production implementation with `#[path]`; neither its traversal nor its reductions are copied.
+//! This module supplies every constructor read by the formula classifier while importing the exact
+//! production adapter with `#[path]`. The adapter calls the shared
+//! `mettail_runtime::formula_pda` machine, so neither traversal nor reduction is copied.
 
 #![allow(dead_code)]
 

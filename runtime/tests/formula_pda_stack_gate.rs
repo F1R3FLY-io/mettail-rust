@@ -1,4 +1,4 @@
-//! Main-thread zero-slope gate for the exact production Rholang formula PDA source.
+//! Main-thread zero-slope gate for the shared production Rholang formula PDA.
 //!
 //! This is a `harness = false` integration test because libtest executes test functions on a
 //! spawned thread. The child mode runs the included production traversal directly on the process
@@ -26,7 +26,7 @@ fn probe_body(depth: usize) {
 
     // The minimal carrier deliberately retains derived recursive Drop. Production's generated
     // AST has an iterative destructor, so forgetting only removes adapter teardown from this
-    // measurement of the exact formula traversal source.
+    // measurement of the shared production traversal.
     std::mem::forget(root);
 }
 

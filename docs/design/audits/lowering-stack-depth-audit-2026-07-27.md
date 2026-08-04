@@ -7,7 +7,8 @@ Appendix A). Numbers reproduced from an earlier report rather than re-measured a
 *reported*.
 
 **Scope.** `rholang-runtime/src/rholang_ast.rs` — the translation from MeTTaIL's `rholang`
-AST (`Proc`, `Name`, …) to a normalized `rhoapi::Par`. This is the **lowering**. It is not the
+AST (abstract syntax tree), comprising `Proc`, `Name`, and related nodes, to a normalized
+`rhoapi::Par`. This is the **lowering**. It is not the
 parser (measured here, and clean — §6) and it is not the f1r3node reducer (a separate,
 independently-measured family — §2).
 
@@ -80,9 +81,9 @@ whichever limit binds first at a given depth is the one that reports:
 
 | depth range | outcome |
 |---|---|
-| `d ≤ 132` | both survive |
-| `133 ≤ d ≤ 169` | main survives; the **tokio worker** overflows |
-| `d ≥ 170` | **main** overflows; the worker is never reached |
+| $`d \leq 132`$ | both survive |
+| $`133 \leq d \leq 169`$ | main survives; the **tokio worker** overflows |
+| $`d \geq 170`$ | **main** overflows; the worker is never reached |
 
 ★ **Consequence worth stating plainly.** The user-visible "it stops working somewhere around
 130" boundary is *not* `lower_proc`. It is the reducer, on the worker. `lower_proc`'s own
@@ -96,8 +97,8 @@ things; the discrepancy was not a measurement error.
 
 | source | claim | resolution |
 |---|---|---|
-| bug report | "depth 128 runs, 144 faults" at the default stack | an **upper bound**: the `nest-*.rho` ladder steps 128 → 144, so the true value lies in `(128, 144]`. Bisected: `D_max` = **132**, first failure **133** — and that failure is on the **tokio worker**. |
-| least-squares fit | `D_max ≈ 167` | a fit of the **main-thread-isolated** bisection, so it predicts the main-thread threshold. Bisected: `D_max` = **169**. Agreement 1.2%. |
+| bug report | "depth 128 runs, 144 faults" at the default stack | an **upper bound**: the `nest-*.rho` ladder steps $`128 \rightarrow 144`$, so the true value lies in $`(128, 144]`$. Bisected: $`D_{\max}=132`$, first failure **133** — and that failure is on the **tokio worker**. |
+| least-squares fit | $`D_{\max} \approx 167`$ | a fit of the **main-thread-isolated** bisection, so it predicts the main-thread threshold. Bisected: $`D_{\max}=169`$. Agreement 1.2%. |
 
 The probe program was verified byte-identical between the two experiments with `cmp`, so the
 probe is excluded as a source of the difference.
@@ -145,11 +146,11 @@ function carrying `A` arms therefore reserves, in one frame, the sum of every ar
 
 and because the function is self-recursive, that sum is paid **once per nesting level**. With
 `Par` being a `prost` message of eight `Vec` fields plus a bitset (~224 bytes), and most arms
-needing two or three `Par`/`Result<Par, _>` temporaries, `89 × 3 × 224 ≈ 60` KB is the right
+needing two or three `Par`/`Result<Par, _>` temporaries, $`89 \times 3 \times 224 \approx 60`$ KB is the right
 order of magnitude for the measured 48 KB — so the hypothesis was quantitatively plausible
 before it was tested.
 
-### 4.1 ★ The recursion SCC has 19 members, not one — and 87 after M-1
+### 4.1 ★ The recursion SCC (strongly connected component) has 19 members, not one — and 87 after M-1
 
 This is the audit's most consequential structural finding, and it invalidates any conversion
 scoped to "the self-recursive call sites of `lower_proc`".
@@ -190,7 +191,7 @@ A Tarjan strongly-connected-component decomposition of the call graph of `rholan
 
 Every edge in this component is traversable an unbounded number of times by a program, so
 **the whole component must be driven by one machine**. A conversion covering a proper subset
-leaves a reachable Θ(depth) path.
+leaves a reachable $`\Theta(d)`$ path.
 
 #### 4.1.1 ★ RE-DERIVED after M-1: the component has **87** members, not 19
 
@@ -216,7 +217,11 @@ The component is recovered from source by the following procedure, which needs n
 type information. It is stated in full rather than cited, because the *only* thing that makes
 "87" checkable is being able to run it again.
 
-```
+**Algorithm 1 (Derived lowering SCC census).** The procedure removes lexical noise, reconstructs
+function boundaries, derives call edges, and enumerates recursive components without relying on a
+hand-maintained function list.
+
+```pseudocode
 INPUT   the translation units that form the lowering:
         rholang-runtime/src/rholang_ast.rs, rholang-runtime/src/rholang_formula.rs
 
@@ -243,7 +248,7 @@ INPUT   the translation units that form the lowering:
 
 Step 4's second clause is not a detail: it is what surfaced `lower_int_value`, a
 **self-recursive function that is not in the component** (it calls nothing that reaches
-`lower_proc`) and therefore had its own Θ(depth) axis through nested `Int::NegInt`. A
+`lower_proc`) and therefore had its own $`\Theta(d)`$ axis through nested `Int::NegInt`. A
 conversion scoped to the component would have left `- - - … - 5` exactly as it was. It is
 converted, and gated by the `lower_neg` subject.
 
@@ -304,8 +309,8 @@ S^{\text{rel}}_{\text{M-1}}(N) &= \phantom{0}75.2 + \phantom{0}7.096\,N
 
 | profile | baseline B/level | M-1 B/level | factor | `D_max` @ 8 MiB |
 |---|---|---|---|---|
-| **debug** | 48,392 | **15,132** | **3.20×** (68.7% removed) | 169 → 542 |
-| **release** | 7,777 | **7,266** | **1.07×** (6.6% removed) | 1,069 → 1,143 |
+| **debug** | 48,392 | **15,132** | **$`3.20\times`$** (68.7% removed) | $`169 \rightarrow 542`$ |
+| **release** | 7,777 | **7,266** | **$`1.07\times`$** (6.6% removed) | $`1{,}069 \rightarrow 1{,}143`$ |
 
 ### 5.1 ★ M-1 is a DEBUG-PROFILE result, and the release numbers say why
 
@@ -329,7 +334,7 @@ build never paid**.
 Two consequences, and both matter more than the headline factor:
 
 1. **The win is not worthless — debug is where this code is exercised.** The gate runs debug, CI
-   runs debug, and every demo run sheet drives `target/debug/rholang`. Depth 169 → 542 in the
+   runs debug, and every demo run sheet drives `target/debug/rholang`. Depth $`169 \rightarrow 542`$ in the
    profile a presenter actually uses is a real improvement, and it is what let the run-sheet
    prefixes come off (§7).
 2. **★ Release is where the STRUCTURAL cost is visible, and it is 7,266 B/level — essentially
@@ -351,7 +356,7 @@ them would make M-2 look like a bigger win than it is. Release profile, B/level:
 | gate `reproducer` | parse + lower + **iterative** teardown | 2,128 |
 | `bisect_ulimit` on `target/release/rholang` | **everything on the main thread** | **7,266** |
 
-`reproducer` ≈ `lower_depth`, so parsing and lowering do not sum — the deeper of the two
+`reproducer` $`\approx`$ `lower_depth`, so parsing and lowering do not sum — the deeper of the two
 dominates. But the binary costs **~5,100 B/level more than parse + lower together**, and that
 residue is neither of them. It is the work the gate deliberately excludes so that each subject
 measures one traversal: **rendering the observation**, and the **derived, recursive `Drop` of
@@ -392,7 +397,7 @@ introduces, which bisects at *both ends of a wide ladder* rather than sampling a
 | 4,096 | 5,861,376 | 1,408 |
 
 The asymptotic slope is **1,408 B/level**, stable to the byte across the last three intervals.
-Growth is flat to depth ≈ 256 and linear thereafter; the mechanism behind the knee is not
+Growth is flat to depth $`\approx 256`$ and linear thereafter; the mechanism behind the knee is not
 established here and is deliberately not guessed at.
 
 The **width** axis is genuinely flat — 471,040 B at width 16, 32, 64, 128, 256, 1,024 and
@@ -405,7 +410,7 @@ tables and driver frame), not an artifact of the harness: the cheapest subject i
 binary, `lower_width`, bisects to 98,304 B.
 
 §8 of this document, and the gate's own module header, warn that *a large intercept with a
-small slope passes a fixed-stack ladder while still being Θ(depth)*. The retracted claim is
+small slope passes a fixed-stack ladder while still being $`\Theta(d)`$*. The retracted claim is
 that hazard's **dual**: a large intercept with a small slope also reads as **zero slope** on a
 ladder that never leaves the intercept-dominated regime.
 
@@ -432,7 +437,7 @@ the retracted claim.
 
 ### 6.4 Disposition
 
-The parser is Θ(depth) at 1,408 B/level, but it was never the binding constraint: 10.7× cheaper
+The parser is $`\Theta(d)`$ at 1,408 B/level, but it was never the binding constraint: 10.7× cheaper
 per level than the M-1 lowering (15,132) and 34× cheaper than the original (48,392). It sits in
 `parser_theta_depth_tripwire` with a ceiling at ~1.5× measured, and the width axis sits in
 `parsing_is_width_independent`.
@@ -497,18 +502,18 @@ transition-by-transition below — every reachable configuration, not a spot che
 |---|---|---|---|---|---|---|
 | 0 | initial: `work = [Enter(root)]` | 0 | 1 | 0 | 0 | **1** ✓ |
 | 1 | after `Enter` of an `n`-ary node: pop the `Enter`, push `Combine(k)` with `arity(k) = n`, push `n` `Enter`s | 0 | `n` | 1 | `n` | **1** ✓ |
-| 2 | after `Enter` of a leaf (`n = 0`): pop the `Enter`, push one value | +1 | −1 | 0 | 0 | **1** ✓ |
-| 3 | after `j` of those `n` children have resolved | `j` | `n − j` | 1 | `n` | **1** ✓ |
+| 2 | after `Enter` of a leaf (`n = 0`): pop the `Enter`, push one value | +1 | $`-1`$ | 0 | 0 | **1** ✓ |
+| 3 | after `j` of those `n` children have resolved | `j` | $`n - j`$ | 1 | `n` | **1** ✓ |
 | 4 | all `n` resolved | `n` | 0 | 1 | `n` | **1** ✓ |
-| 5 | after `Combine(k)`: pop `n` values, pop the `Combine`, push one value | `n − n + 1` | 0 | 0 | 0 | **1** ✓ |
+| 5 | after `Combine(k)`: pop `n` values, pop the `Combine`, push one value | $`n - n + 1`$ | 0 | 0 | 0 | **1** ✓ |
 | 6 | final: work empty, exactly one value | 1 | 0 | 0 | 0 | **1** ✓ |
 
-Rows 1–5 are the only two transition shapes `δ` has, in their general form, so the table is
+Rows 1 through 5 are the only two transition shapes `δ` has, in their general form, so the table is
 exhaustive over reachable configurations rather than illustrative.
 
-⚠ **Maintain it with incremental counters, not an O(n) rescan.** `D`, `|C|` and `Σ arity` are
-each updated by a constant on every push and pop, so the assertion is `O(1)` per step. A rescan
-would make the debug build `O(n²)` on exactly the deep terms the gate gives it — the gate
+⚠ **Maintain it with incremental counters, not an $`O(n)`$ rescan.** `D`, `|C|` and `Σ arity` are
+each updated by a constant on every push and pop, so the assertion is $`O(1)`$ per step. A rescan
+would make the debug build $`O(n^2)`$ on exactly the deep terms the gate gives it — the gate
 bisects at depth 4,096.
 
 `arity` is written as an exhaustive `match` over `Kont`, deliberately duplicating the pop counts,
@@ -520,19 +525,19 @@ happens to contain the witness.
 
 * **`BoundEnv` is carried as a delta, never owned per work item.** `BoundEnv` holds a
   `HashMap<FreeVar<String>, usize>`, FLT hole levels and a resolver. An owned environment per
-  work item clones that map per level, which leaves the traversal Θ(depth) anyway — refuted
+  work item clones that map per level, which leaves the traversal $`\Theta(d)`$ anyway — refuted
   experimentally on the sibling f1r3node conversion. Work items carry an index into an
   environment arena; a new environment is materialised once per **binder site**, exactly as the
   recursive form does.
 * **No weight domain.** An earlier design proposed `impl HeapSemiring for LowerWeight`. It was
-  withdrawn on analysis: the one genuine `⊕` (`lower_proc_alternatives`' `Par::append` fold)
+  withdrawn on analysis: the one genuine $`\oplus`$ (`lower_proc_alternatives`' `Par::append` fold)
   fires **once, at the root**, over already-lowered whole alternatives — not at every meet point
-  of a reachability computation — and `⊗` fails outright, because `Par` construction is n-ary
+  of a reachability computation — and $`\otimes`$ fails outright, because `Par` construction is n-ary
   and labelled, hence non-associative with no identity. `zero`/`is_zero`/`approx_eq` would be
   vacuous, and the impl would imply `poststar`/`prestar` apply to the lowering, which they do
   not. The depth fix comes from the pushdown part, not from a weight.
 * **★ No early disambiguation.** Folding the recursion out of `collect_proc_alternatives` must
-  not move the `⊕` from the root into per-node merges. Merging at every node *is* the weighted
+  not move the $`\oplus`$ from the root into per-node merges. Merging at every node *is* the weighted
   reading, and it would collapse readings early — the loss the project's standing
   "never disambiguate early" mandate forbids, reached by the back door of "integrating the merge
   into the driver". The fold removes *recursion*; it must not move the *merge point*.
@@ -541,13 +546,13 @@ happens to contain the witness.
 
 | # | gate | discharge |
 |---|---|---|
-| 1 | `⊕` fires once, at the root, over whole lowered alternatives | code + test |
+| 1 | $`\oplus`$ fires once, at the root, over whole lowered alternatives | code + test |
 | 2 | pre-dedup set, post-dedup set and dedup keys identical to a retained recursive oracle twin | differential test |
 | 3 | the `Par::append` fold is invariant under permutation of the alternative list | property test |
 | 4 | the driver is a genuine instance of `sppf_realize.rs:164`'s idiom; any divergence named with a one-sentence reason | doc comment + review |
 | 5 | `lower_depth`, `lower_add`, `lower_par` move from the tripwire into the converted list, **in both profiles** | `stack_depth_gate.rs` |
 
-⚠ The `.collect::<Result<Vec<_>, _>>()` → `for` + `with_capacity` + `push` change is worth
+⚠ The `.collect::<Result<Vec<_>, _>>()` $`\rightarrow`$ `for` + `with_capacity` + `push` change is worth
 roughly 12 of the 15 frames per level, and must be **absorbed into M-2** rather than committed
 alone: a ~4× constant win moves `D_max` from ~542 to ~2,000 and would read as success while
 leaving the class intact.
@@ -557,7 +562,7 @@ leaving the class intact.
 Two candidates were examined and **excluded on evidence**. They are recorded here so that
 "not converted" is never later mistaken for "not examined".
 
-#### PAR01 — a static constant, not a growth axis
+#### PAR01 (Prattail audit rule 01) — a static constant, not a growth axis
 
 `prattail/src/lint/lints.rs:5193`'s `max_depth` walks the **category reference digraph** with
 cycle cutting. Its value is bounded by the number of categories and fixed at grammar-compile
@@ -615,7 +620,7 @@ over 97 surface-syntax entries plus a depth-400 term, with all 31 continuations 
 Every number below is a **direct bisection of `RLIMIT_STACK`, installed in a forked child before
 `exec`, with the subject running on that child's MAIN thread**. The gate's previous probe ran each
 subject on a `std::thread::Builder::stack_size` thread. That is precise but it is not the thing:
-a spawned thread's stack is one `mmap` with a guard page; a main thread's is a kernel-grown VMA
+a spawned thread's stack is one `mmap` with a guard page; a main thread's is a kernel-grown VMA (virtual memory area)
 bounded by the rlimit, and §1.1 is the whole reason it is the latter that production faults on.
 
 The probe therefore had to stop being a `#[test]`, for a mechanical reason: **libtest runs every
@@ -629,7 +634,7 @@ bisects to **7,277 B/level** against §5's least-squares 7,266 — 0.15%.
 
 ### 9.2 The lowering
 
-B/level, bisected 16 → 4,096 (width subjects 4 → 65,536):
+B/level, bisected $`16 \rightarrow 4{,}096`$ (width subjects $`4 \rightarrow 65{,}536`$):
 
 | subject | traversal | debug | release |
 |---|---|---|---|
@@ -639,8 +644,8 @@ B/level, bisected 16 → 4,096 (width subjects 4 → 65,536):
 | `lower_par` | `PParInfix` — recurses on BOTH operands | **1** | **0** |
 | `lower_neg` | `Int::NegInt` ⇄ `lower_int_value` (§4.1.2) | **0** | **1** |
 | `lower_width` | sibling count | **1** | **0** |
-| `lower_new` − `new_build` | the `PNew` arm, minus its own builder | **1** | **0** |
-| `lower_formula` | exact production formula PDA source, 512 → 4,096 | **0–1** | **0** |
+| $`\texttt{lower\_new} - \texttt{new\_build}`$ | the `PNew` arm, minus its own builder | **1** | **0** |
+| `lower_formula` | shared production formula PDA (pushdown automaton), $`512 \rightarrow 4{,}096`$ | **0–1** | **0** |
 
 A reading of 0 or 1 B/level is one 4 KiB bisection bucket across a 4,080-step ladder — the
 instrument's floor. Several readings are NEGATIVE before clamping, which is what a flat subject
@@ -663,17 +668,17 @@ The gate's earlier claim that a plain `drop(term)` is correct here — on the gr
 `language!` macro emits a pooled iterative `Drop` — is **superseded**. It is true of a pure
 `Proc` chain and false across a type hop; see §9.4.
 
-### 9.4 ★ THE RESIDUE — every Θ(depth) traversal still on the main thread
+### 9.4 ★ THE RESIDUE — every $`\Theta(d)`$ traversal still on the main thread
 
 | subject | traversal | owner | debug | release |
 |---|---|---|---|---|
 | `par_drop` | `drop_in_place::<Par>` — `prost`'s DERIVED recursive `Drop` | `models` (f1r3node) | 368 | 95 |
 | `ast_drop` | the `language!` iterative `Drop`, ACROSS a cross-type hop | `macros/src/gen/` | 271 | 96 |
-| ~~`render`~~ | ~~recursive observation decode + format~~ — converted by the observation PDA | this crate | ~~3,665~~ → **0** | ~~911~~ → **0** |
-| ~~`lower_formula`~~ | ~~`is_statically_false` ⇄ `is_statically_true`~~ — converted by the one-pass formula PDA | `languages/src/` | ~~4,094~~ → **0** | ~~978~~ → **0** |
-| `parse_depth` | the WPDA parser (§6) | `prattail` | 1,408 | 303 |
+| ~~`render`~~ | ~~recursive observation decode + format~~ — converted by the observation PDA | this crate | ~~3,665~~ $`\rightarrow`$ **0** | ~~911~~ $`\rightarrow`$ **0** |
+| ~~`lower_formula`~~ | ~~`is_statically_false` ⇄ `is_statically_true`~~ — converted by the one-pass formula PDA | `languages/src/` | ~~4,094~~ $`\rightarrow`$ **0** | ~~978~~ $`\rightarrow`$ **0** |
+| `parse_depth` | the WPDA (weighted pushdown automaton) parser (§6) | `prattail` | 1,408 | 303 |
 
-★ **The two `Drop`s belong to the DERIVED-IMPL class and are not reachable by the pushdown
+★ **The two `Drop`s belong to the derived-implementation class and are not reachable by the pushdown
 transform this audit specifies.** A pushdown transform rewrites a traversal *whose text you own*
 into a worklist. `drop_in_place::<Par>` has no text: it is glue the compiler derives from the
 type, and the only repairs are to change the type or to intercept at the call site. f1r3node's
@@ -697,11 +702,14 @@ resolution** in both profiles. The bounded executable oracle
 imports the production source rather than a copy and covers all constructors and all three
 separation spellings; a 32,768-level witness survives. Rocq's `FormulaPdaEquivalence` proves the
 recursive specification and instruction/value-stack machine equal for every formula,
-continuation, and arbitrary-arity separation, with no admissions. The full generated-language
-LLVM test binary exceeds this host's 4 GiB validation envelope, so the local executable evidence
-uses the exact formula source with a minimal generated-AST carrier; the production adapter remains
-type-checked in the actual crate and the full `lower_formula` subject remains in the zero-slope
-gate for higher-memory CI.
+continuation, and arbitrary-arity separation, with no admissions. The formula PDA now lives in
+`runtime/src/formula_pda.rs`, independent of the generated term representation. Local executable
+evidence imports the exact generated-Rholang adapter against a minimal carrier, so it executes the
+same shared production machine that the fully generated adapter calls. The adapter is type-checked
+against the real generated `Proc`, while the representation-independent machine is executable,
+stack-gated, and formally proved under the 4 GiB envelope. Full-language code generation is
+therefore no longer part of this formula-PDA proof obligation; no higher-memory validation deferral
+remains.
 
 ### 9.5 ★ The whole binary — and a superseded attribution
 
@@ -752,7 +760,7 @@ runs() { ( ulimit -c 0; ulimit -s "$1"; exec target/debug/rholang "$2" >/dev/nul
 * **`ulimit -c 0` on every probe.** A core dump of this binary is ~305 MB, and a bisection
   produces dozens of faults.
 * **`RUST_MIN_STACK` pinned high** (1 GiB) when measuring the lowering. Leaving it unset makes
-  the tokio worker bind first beyond depth ≈ 133 and reports "no `ulimit` works" — which is
+  the tokio worker bind first beyond depth $`\approx 133`$ and reports "no `ulimit` works" — which is
   true, and about the wrong traversal (§2).
 
 In-process, profile-independent measurement is `rholang-runtime/tests/stack_depth_gate.rs`,

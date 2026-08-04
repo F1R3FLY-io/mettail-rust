@@ -2,17 +2,18 @@
  * FormulaPdaEquivalence: recursive Rholang formula semantics = explicit PDA.
  *
  * The proof models every reduction performed by
- * languages/src/rholang/formula.rs::analyze_formula: static-false/static-true facts,
+ * runtime/src/formula_pda.rs::analyze_formula: static-false/static-true facts,
  * strong-Kleene host verdicts, implication, and arbitrary-arity separating conjunction.
  * `compile_formula` defunctionalizes the recursive specification into a post-order
  * instruction stream; `run` is its explicit value-stack machine. The main theorem is
  * suffix-parametric, so it proves each compiled subtree preserves its continuation.
  *
- * The production Rust traversal constructs the same post-order schedule dynamically with
- * Visit/Build work items and additionally memoizes pure node results by address. The executable
- * test runtime/tests/formula_pda_source_equivalence.rs imports that exact Rust source and checks
- * its memoized implementation against the old recursive equations. This proof establishes the
- * unbounded semantic argument underneath that source-level differential.
+ * The representation-independent production Rust traversal constructs the same post-order
+ * schedule dynamically with Visit/Build work items and additionally memoizes pure node results by
+ * address. The executable test runtime/tests/formula_pda_source_equivalence.rs imports the exact
+ * generated-Rholang adapter, which calls that shared machine, and checks it against the old
+ * recursive equations. This proof establishes the unbounded semantic argument underneath that
+ * source-level differential.
  *
  * Rocq 9.1 compatible. No axioms and no proof holes.
  *)

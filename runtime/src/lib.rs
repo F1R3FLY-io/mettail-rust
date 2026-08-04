@@ -174,6 +174,9 @@ pub use hash_consing::*;
 // See `runtime/src/visitor.rs` docs for scope + non-goals.
 pub mod visitor;
 
+/// Shared, representation-independent spatial-formula pushdown machine.
+pub mod formula_pda;
+
 // Runtime behavioral predicate AST for source-level predicated types.
 // Phase 2A of the predicated-types implementation plan.
 //

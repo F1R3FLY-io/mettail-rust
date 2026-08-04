@@ -1,10 +1,11 @@
 //! Executable recursive-oracle equivalence for the production Rholang formula PDA source.
 //!
-//! The production `languages` crate expands a multi-megabyte generated Rholang module whose LLVM
-//! codegen exceeds the local 4 GiB validation envelope. This test avoids weakening that envelope:
-//! it includes the exact production `languages/src/rholang/formula.rs` source into a minimal
-//! test-only syntax carrier containing every constructor the classifier reads. The PDA code under
-//! test is therefore not copied or reimplemented; only its generated-AST adapter is minimized.
+//! The production PDA lives in the small, representation-independent
+//! `mettail_runtime::formula_pda` module. The exact
+//! `languages/src/rholang/formula.rs` production adapter is included against a
+//! minimal syntax carrier containing every constructor its total classifier
+//! reads. The machine and adapter under test are therefore neither copied nor
+//! reimplemented; only the generated term representation is minimized.
 
 #[path = "support/formula_pda_carrier.rs"]
 mod rholang;
@@ -131,6 +132,6 @@ fn production_formula_pda_source_survives_deep_mutual_recursion_shape() {
     assert_eq!(host_matches_verdict(&Proc::PZero, &formula), Some(true));
 
     // This minimal carrier intentionally retains derived recursive Drop. The production generated
-    // AST has its own iterative destructor, so forgetting here isolates the exact included PDA.
+    // AST has its own iterative destructor, so forgetting here isolates the shared production PDA.
     std::mem::forget(formula);
 }
