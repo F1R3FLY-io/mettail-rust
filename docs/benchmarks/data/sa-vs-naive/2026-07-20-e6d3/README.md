@@ -1,5 +1,11 @@
 # 2026-07-20-e6d3 — E-6d #3: the L2 shared-ps FALSIFICATION re-measure
 
+> **Historical measurement record.** The phase labels and architecture below describe the exact
+> commits benchmarked on 2026-07-20. They are not the current EPathMap design: the intern store,
+> shadow-cell/shared-list representation, and compatibility projections were later replaced by
+> homogeneous `Empty | Set(PathMap<()>) | Map(PathMap<Par>)` storage and canonical EPM1 snapshots.
+> Preserve the old terminology only as provenance for these recorded measurements.
+
 Pre-registered pgmcp **experiment 150** (criteria FROZEN before the run). Re-run of the full
 E-6a measured corpus (same workloads, seeds, 33-rep/3-warmup protocol, `taskset -c 0-7` as
 `../2026-07-19-e6a/`, `../2026-07-19-e6a-postfix/`, `../2026-07-20-e6d1/`,

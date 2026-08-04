@@ -660,8 +660,8 @@ fn run_stepped_inj(
                 if let Some(out) = &out_channel {
                     let data = rho_runtime.get_data(&crate::run::quoted_channel(out)).await;
                     for datum in data {
-                        // EPathMap fix P4.1 coupling: Datum.a is Arc-shared —
-                        // materialize the readback (cold path, once per run).
+                        // Datum payloads are Arc-shared; materialize this cold-path
+                        // readback once per run.
                         for value in std::sync::Arc::unwrap_or_clone(datum.a).pars {
                             output_observer.emit_output(out.clone(), value);
                         }

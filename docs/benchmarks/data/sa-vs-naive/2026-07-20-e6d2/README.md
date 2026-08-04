@@ -1,5 +1,11 @@
 # 2026-07-20-e6d2 — E-6d #2: final E-6a re-measure after the FULL EPathMap fix stack
 
+> **Historical measurement record.** The phase labels and architecture below describe the exact
+> commits benchmarked on 2026-07-20. They are not the current EPathMap design: the intern store,
+> shadow-cell representation, and list-oriented compatibility surfaces were later replaced by the
+> homogeneous `Empty | Set(PathMap<()>) | Map(PathMap<Par>)` representation and canonical EPM1
+> snapshot. Preserve these labels only as provenance for the recorded results.
+
 Pre-registered pgmcp **experiment 149** (criteria FROZEN before the run). Final re-run of the
 full E-6a measured corpus (same workloads, seeds, 33-rep/3-warmup protocol, `taskset -c 0-7`
 as `../2026-07-19-e6a/`, `../2026-07-19-e6a-postfix/`, `../2026-07-20-e6d1/`) against

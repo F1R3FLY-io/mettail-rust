@@ -574,7 +574,7 @@ consumed figure (`accounting/mod.rs:1227-1238`). Supporting readouts:
 | `cost().total_cost()` | `accounting/mod.rs:1227` | The consensus-relevant aggregate |
 | `cost().get()` / `remaining()` | `:935`, `:1240` | Initial minus consumed |
 | `get_cost_event_log()` | `rho_runtime.rs:278` | Per-event `BillableTokenEvent` stream |
-| `get_canonical_event_log()` | used by `rholang/tests/epathmap_charge_trace_spec.rs` | The rendered charge trace — the finest-grained view, and the model to copy |
+| `get_canonical_event_log()` | diagnostic event-log API | Non-consensus diagnostics only under the current COMM-only accounting model |
 
 **The instrument has exactly one way to lie, and it is a silent zero.** If the
 budget is in unmetered mode, `total_cost()` returns a hard-coded `0`
@@ -584,10 +584,14 @@ argues from source that mettail's runtime is *not* in that mode — but an
 argument from source is exactly what a measurement is supposed to replace.
 Hence T0.
 
-`rholang/tests/epathmap_charge_trace_spec.rs` is the recommended template for
-every experiment below: it already builds a fresh runtime, evaluates with a
-fixed `Blake2b512Random` seed, renders the canonical event log to a stable
-string form, and asserts determinism across two fresh runtimes.
+The former `rholang/tests/epathmap_charge_trace_spec.rs` must not be copied: it
+pinned primitive and substitution weights from the superseded per-operation
+model and has been removed. The current reference is
+`rholang/tests/epathmap_fusion_equivalence_spec.rs`. It builds fresh runtimes
+with fixed `Blake2b512Random` seeds, asserts exact semantic observations and
+budget behavior, and checks that consumed consensus cost equals the number of
+committed COMMs. Its canonical primitive, substitution, and structural rows are
+diagnostic-equivalence data only, not metering goldens (CBR-044).
 
 ### 7.2 T0 — the teeth test (mandatory gate)
 
@@ -787,14 +791,16 @@ substrate wire possible in the first place.
 
 - **Fixed seed.** `Blake2b512Random::create_from_bytes(…)`, never
   `create_from_length` (thread-`rng` nondeterminism); see the note in
-  `epathmap_charge_trace_spec.rs`.
+  `epathmap_fusion_equivalence_spec.rs`.
 - **Determinism check.** Run each cell twice on fresh runtimes and require
-  identical charge traces before believing either, as
-  `deterministic_trace` in that spec does.
+  identical semantic observations and committed-COMM counts before believing
+  either; diagnostic traces may be compared for path equivalence but are not
+  consensus-cost fixtures.
 - **Crate-scoped runs.** The workspace gate is broken by unrelated in-flight
   work; use `cargo test -p <crate>` and say so when reporting.
-- **Resource limits.** `systemd-run --user --scope -p MemoryMax=28G` for any
-  heavy subprocess.
+- **Resource limits.** Use the campaign's current bounded runner:
+  `systemd-run --user --scope -p MemoryHigh=7G -p MemoryMax=9G
+  -p MemorySwapMax=0 --setenv=CARGO_BUILD_JOBS=1`, and pass `-j1` to Cargo.
 - **Tee everything** to a file so each cell is run once.
 
 ---
@@ -871,7 +877,8 @@ f1r3node side of the seam — and for the guard lane, in Greg's design.
 - `rholang/src/rust/interpreter/compiler/normalizer/processes/p_input_normalizer.rs` — guard normalization `:489-507`, `:526`, `:563`
 - `rspace++/src/rspace/match.rs:30` — the `Match::check_commit` default
 - `rspace++/src/rspace/space_matcher.rs` — cost documentation `:311-339`, `extract_guarded_data_candidates` `:340`, `search_candidate_selection` `:387`, the leaf `:396-405`
-- `rholang/tests/epathmap_charge_trace_spec.rs` — the charge-trace harness template
+- `rholang/tests/epathmap_fusion_equivalence_spec.rs` — current semantic and
+  committed-COMM accounting reference; non-COMM event rows are diagnostic only
 - `casper/src/rust/rholang/runtime.rs:570` — `play_deploy_with_cost_accounting_cosigned`
 
 **mettail** (`/home/dylon/Workspace/f1r3fly.io/mettail-rust`)

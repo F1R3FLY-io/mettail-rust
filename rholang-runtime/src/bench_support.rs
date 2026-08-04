@@ -728,8 +728,8 @@ struct CountingMatcher {
 }
 
 impl Match<BindPattern, ListParWithRandom, TaggedContinuation> for CountingMatcher {
-    // EPathMap fix P4.2 coupling (f1r3node-rust-mettail fix/epathmap-value-handling):
-    // the `Match` trait is borrowed — `get(&P, &A)`, `check_commit(&K, &[&A])`.
+    // EPathMap integration: the `Match` trait is borrowed — `get(&P, &A)`,
+    // `check_commit(&K, &[&A])`.
     // Pure signature adaptation; the delegation and the counting semantics are
     // unchanged (a guard veto is still not counted as a spatial-match failure).
     fn get(&self, pattern: &BindPattern, data: &ListParWithRandom) -> Option<ListParWithRandom> {
@@ -992,8 +992,7 @@ pub async fn bench_inj_and_read<R: RhoRuntime>(
     let mut observed: Vec<Par> =
         Vec::with_capacity(data.iter().map(|datum| datum.a.pars.len()).sum());
     for datum in data {
-        // EPathMap fix P4.1 coupling: Datum.a is Arc-shared — materialize
-        // the readback (cold path, once per run).
+        // Datum payloads are Arc-shared; materialize this cold-path readback once per run.
         for par in std::sync::Arc::unwrap_or_clone(datum.a).pars {
             observed.push(par);
         }

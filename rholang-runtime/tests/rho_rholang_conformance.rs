@@ -2914,8 +2914,8 @@ async fn c1_zipper_counted_walk_visits_every_leaf_once_in_order() {
 /// text says *"Multiple expressions given."* — it is `eval_single_expr`'s `_`-arm
 /// (`reduce.rs::descend_single`, `match p.exprs.as_slice() { [e] => …, _ => Err(…) }`), which
 /// catches both zero and many. f1r3node names this exact string `NIL_MID_CHAIN_ERROR`
-/// (`fused_pathmap_chain.rs`, *"the misleading string IS the pin"*) and asserts it as the PM-4(d)
-/// Nil-source parity target in `rholang/tests/epathmap_differential_scaffold.rs`, so the fused
+/// (`fused_pathmap_chain.rs`, *"the misleading string IS the pin"*) and asserts it as the
+/// Nil-source parity target in the f1r3node EPathMap differential suite, so the fused
 /// chain and the unfused one fail identically. It is a diagnostic-quality wart with a consensus
 /// obligation attached, NOT a semantic defect — pinned here rather than worked around, and
 /// asserted as EQUAL ACROSS CARRIERS so a bare-element chain cannot start failing differently.
@@ -2969,7 +2969,7 @@ async fn c1_zipper_walk_cannot_continue_past_exhaustion() {
     );
     assert_eq!(
         list_path, r#"reduce: inj: ReduceError("Error: Multiple expressions given.")"#,
-        "★ PM-4(d): the exhausted accessor raises `eval_single_expr`'s `_`-arm. `Nil` has ZERO \
+        "★ The exhausted accessor raises `eval_single_expr`'s `_`-arm. `Nil` has ZERO \
          expressions, so the wording is wrong and DELIBERATELY pinned upstream \
          (`fused_pathmap_chain.rs::NIL_MID_CHAIN_ERROR`) because the fused chain must fail with \
          the identical string. If this moves, mettail is reading a DIFFERENT failure than the one \

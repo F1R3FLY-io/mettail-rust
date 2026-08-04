@@ -1128,18 +1128,14 @@ const EXPECTED_DRIVER_SHAPE: &[(&str, Shape)] = &[
     // What remains is the lossless CAST LATTICE, whose height (`BigRat ▸ BigInt ▸ Int ▸ UInt32
     // ▸ Bool`) bounds the host depth at five frames for a term of ANY depth.
     //
-    // ⚠⚠ **THAT BOUND IS RHOLANG-SCOPED AND MEASURED — it is NOT a property of the emitter.**
-    // The same census over the whole workspace finds **63 eager non-cast `try_eval()` sites**:
-    // `calculator` 59, `ledtest` 4, `optsmoke` 1. Rholang's row is zero because all twelve of
-    // its sites are cast arms, which is a fact about Rholang's grammar, not about what the
-    // generator can emit. A reader who takes the five-frame bound as generator-wide will
-    // conclude the class is closed when it is not: `calculator` carries a live CROSS-category
-    // cycle (`Int::BoolToInt` ⇄ `Bool::EqInt`) that descends `Int → Bool → Int → …` entirely on
-    // the host stack, and `ledtest` carries its twin (`Num::PredToNum` ⇄ `Pred::EqNum`).
-    // ⇒ The generator-wide repair is a category dependency GRAPH refusing on any CYCLE, not the
-    // same-category identity check this row is about. Tracked as its own item; ⚠ and the graph
-    // must be built over the POST-auto-injection rule set, because `Num::PredToNum` is not
-    // declared anywhere — `ast/src/auto_inject.rs:321` synthesises it.
+    // **Historical closure note.** The five-frame bound is Rholang-scoped, not a property of the
+    // original emitter. A workspace census found 63 eager non-cast `try_eval()` sites and exposed
+    // live Calculator and LedTest cross-category cycles. Commit `b0aa4e09` closed that generator
+    // class with one typed pushdown machine per SCC of the post-auto-injection category graph.
+    // `languages/tests/evaluator_cross_category_stack_safety.rs` now holds shallow recursive-oracle
+    // equivalence, generated-shape refusal, and 20,000-edge small-stack regressions. This Rholang
+    // row remains useful as its own grammar-specific gate; it is no longer evidence of an open
+    // generator-wide residue.
     //
     // Two subjects rather than one, because a single ladder could not tell "the worklist is
     // flat" from "the lattice hop is per-edge": `ast_try_eval` drives the worklist down a
@@ -1481,13 +1477,10 @@ const GENERATED_FILE_CENSUS: &[(&str, &str, Coverage)] = &[
     // host frames (`BigRat ▸ BigInt ▸ Int ▸ UInt32 ▸ Bool`) for a term of any depth. Both
     // subjects measure it — see `EXPECTED_DRIVER_SHAPE`'s note.
     //
-    // ⚠⚠ **RHOLANG-SCOPED, and this file is the Rholang gate — so the row is right and the
-    // SENTENCE would be wrong if read as a generator property.** Workspace-wide the same
-    // census finds 63 eager non-cast `try_eval()` sites (`calculator` 59, `ledtest` 4,
-    // `optsmoke` 1), including two live CROSS-category cycles that this gate cannot see
-    // because it only probes Rholang. See `EXPECTED_DRIVER_SHAPE`'s note for the mechanism
-    // and why the generator-wide repair is a cycle-refusing category graph rather than the
-    // same-category check that closed this row.
+    // **RHOLANG-SCOPED.** This row is correct for this Rholang gate, but it was never a
+    // generator-wide proof. The former Calculator/LedTest cyclic residue is now closed by the
+    // SCC pushdown machines at `b0aa4e09`; its independent oracle and deep small-stack gates live
+    // in `languages/tests/evaluator_cross_category_stack_safety.rs`.
     ("eval.rs", "try_eval", Coverage::Subject("ast_try_eval")),
     // ── the RECOGNIZER: a traversal of the INPUT, measured on both axes ─────────────
     ("parser.rs", "parse", Coverage::Subject("parse_depth")),

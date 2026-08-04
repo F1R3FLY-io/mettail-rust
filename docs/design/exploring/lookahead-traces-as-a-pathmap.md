@@ -1,9 +1,14 @@
 # Storing lookahead traces in a PathMap
 
-> **Status: PROPOSED — awaiting user decision. Nothing implemented.**
-> Commissioned 2026-07-27. Eight decisions remain open; see [§8](#8-open-decisions).
-> Superseded framing: [`speculation/delivery.rs`](../../../rholang-runtime/src/speculation/delivery.rs)'s
-> module header currently states the rationale this document replaces.
+> **Status: SUPERSEDED AS AN IMPLEMENTATION PLAN; retained as design history.**
+> Commissioned 2026-07-27. The current integration publishes complete traces through the
+> homogeneous EPathMap representation (`Empty | Set(PathMap<()>) | Map(PathMap<Par>)`) and
+> canonical EPM1 serialization. Present-tense references below to a list-backed EPathMap, a
+> global intern store, a shadow cell, ground-only trie serialization, or a missing EPathMap
+> matcher arm describe the pre-integration baseline and must not be treated as current design.
+> Current implementation/evidence is tracked by f1r3node CBR-044 and its PathMap and stack-safety
+> reports; unresolved lookahead-language choices remain design questions rather than EPathMap
+> representation work.
 
 ---
 
@@ -435,8 +440,8 @@ Rust.
 
 Absent, confirmed. It should mirror `ESetBody` exactly, with one substitution: where `ESetBody`
 converts through `ParSetTypeMapper::eset_to_par_set` (which sorts and dedups), `EPathmapBody`
-converts through the **trie** — dedup by path is dedup by value under an injective codec, and the
-intern shadow cell makes it $`O(1)`$ after first touch.
+converts through the **trie** — dedup by path is dedup by value under an injective codec. In the
+current implementation, direct PathMap lookup replaces the historical intern-shadow-cell premise.
 
 **Consensus exposure: high and unavoidable.** The arm makes a pattern that today matches *nothing*
 match *something* — a program stuck today would fire. That is a widening of the matching relation.

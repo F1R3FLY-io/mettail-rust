@@ -450,10 +450,9 @@ pub fn build_pathmap_index(
     // f1r3node-exposed `encode_trie_path` reproduces the reducer's order exactly (no f1r3node edit).
     entries.sort_by_cached_key(encode_trie_path);
     let index = Par::default().with_exprs(vec![Expr {
-        // EPathMap fix P3 (f1r3node-rust-mettail, PM-2): `EPathMap` is now the
-        // hand-maintained extern_path wrapper with a private shadow cell —
-        // struct literals are impossible out of crate; construct via
-        // `EPathMap::new` (same four proto fields, cell starts empty).
+        // `EPathMap` is a hand-maintained `extern_path` wrapper with a private
+        // trie representation, so out-of-crate struct literals are intentionally
+        // impossible. Construct through the mode-aware public API.
         expr_instance: Some(ExprInstance::EPathmapBody(EPathMap::new(
             entries,
             Vec::new(),
@@ -1247,8 +1246,7 @@ pub async fn drive_e6a_treatment(
     let mut observed: Vec<Par> =
         Vec::with_capacity(out_data.iter().map(|datum| datum.a.pars.len()).sum());
     for datum in out_data {
-        // EPathMap fix P4.1 coupling: Datum.a is Arc-shared — materialize
-        // the readback (cold path, once per run).
+        // Datum payloads are Arc-shared; materialize this cold-path readback once per run.
         for par in std::sync::Arc::unwrap_or_clone(datum.a).pars {
             observed.push(par);
         }
