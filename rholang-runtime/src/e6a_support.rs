@@ -99,6 +99,7 @@ use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{EAnd, EList, EMethod, EPathMap, ETuple, Expr, MatchCase, Par, ReceiveBind};
 use models::rust::canonical_path::encode_trie_path;
+use models::rust::epathmap_trie_codec::EPathMapMode;
 use models::rust::par_to_sexpr::ParToSExpr;
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_freevar_par, new_gbool_par, new_gstring_par,
@@ -594,12 +595,11 @@ pub fn decode_sites_par(sites_value: &Par, expected_tag: &str) -> Result<Vec<Str
     let Some(ExprInstance::EPathmapBody(pathmap)) = &expr.expr_instance else {
         return Err(format!("sites value is not an EPathMap: {expr:?}"));
     };
-    // `EPathMap` stores an `EntryTrie`, not a `Vec<Par>` (models `9994a75b`); `ps()` is the
-    // memoized canonical projection and returns `&Vec<Par>`, so binding it once borrows the
-    // entries for both the preallocation and the walk without cloning them.
-    let entries = pathmap.ps();
-    let mut sites: Vec<String> = Vec::with_capacity(entries.len());
-    for entry in entries {
+    if pathmap.mode() == EPathMapMode::Map {
+        return Err("sites value is a map-mode EPathMap; expected a set subtrie".to_string());
+    }
+    let mut sites: Vec<String> = Vec::with_capacity(pathmap.len());
+    pathmap.entry_trie().try_for_each_entry(|entry| {
         let [entry_expr] = entry.exprs.as_slice() else {
             return Err(format!("subtrie entry is not a single expr: {entry:?}"));
         };
@@ -621,7 +621,8 @@ pub fn decode_sites_par(sites_value: &Par, expected_tag: &str) -> Result<Vec<Str
             })?);
         }
         sites.push(components.join("/"));
-    }
+        Ok(())
+    })?;
     Ok(sites)
 }
 

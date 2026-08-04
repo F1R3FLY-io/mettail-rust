@@ -114,7 +114,8 @@ use mettail_rholang_codegen::{
 use models::rhoapi::connective::ConnectiveInstance;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
-use models::rhoapi::{BindPattern, Expr, ListParWithRandom, Par, TaggedContinuation};
+use models::rhoapi::{BindPattern, EPathMap, Expr, ListParWithRandom, Par, TaggedContinuation};
+use models::rust::epathmap_trie_codec::EPathMapMode;
 use prost::Message;
 use rho_pure_eval::Env;
 use rholang::rust::interpreter::accounting::costs::Cost;
@@ -1111,21 +1112,10 @@ fn visit_expr(expr: &Expr, count: &mut usize) {
                 visit_par(p, count);
             }
         },
-        // `EPathMap` stores an `EntryTrie`, not a `Vec<Par>` (models `9994a75b`), so its
-        // entries arrive through the `ps()` PROJECTION rather than a field. It returns
-        // `&Vec<Par>` off a `OnceLock<Arc<..>>`, so this walk borrows — it does not clone,
-        // and the memo is shared across the clone family. Note there is no `&`: `ps()`
-        // already yields the reference, and `&pathmap.ps()` would be `&&Vec<Par>`.
-        ExprInstance::EPathmapBody(pathmap) => {
-            for p in pathmap.ps() {
-                visit_par(p, count);
-            }
-        },
+        ExprInstance::EPathmapBody(pathmap) => visit_epathmap(pathmap, count),
         ExprInstance::EZipperBody(zipper) => {
             if let Some(pathmap) = &zipper.pathmap {
-                for p in pathmap.ps() {
-                    visit_par(p, count);
-                }
+                visit_epathmap(pathmap, count);
             }
         },
         ExprInstance::EMapBody(map) => {
@@ -1221,6 +1211,21 @@ fn visit_expr(expr: &Expr, count: &mut usize) {
         | ExprInstance::GBigRat(_)
         | ExprInstance::GFixedPoint(_)
         | ExprInstance::EVarBody(_) => {},
+    }
+}
+
+fn visit_epathmap(pathmap: &EPathMap, count: &mut usize) {
+    match pathmap.mode() {
+        EPathMapMode::Empty => {},
+        EPathMapMode::Set => pathmap.entry_trie().for_each_entry(|entry| {
+            visit_par(entry, count);
+        }),
+        EPathMapMode::Map => pathmap
+            .for_each_map_entry(|key, value| {
+                visit_par(key, count);
+                visit_par(value, count);
+            })
+            .expect("map-mode EPathMap rejected its own map visitor"),
     }
 }
 
