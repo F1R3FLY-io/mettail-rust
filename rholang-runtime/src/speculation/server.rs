@@ -681,8 +681,8 @@ impl LookaheadEngine {
 /// | the **order** | the sequence of [`LookaheadEngine::with_guest`] calls, which no deploy can observe or reproduce |
 ///
 /// ★ It is the one member of this defect class that **no deploy-derived seed could ever
-/// repair**: `step_digest`'s store indices and `reify`'s map order are at least computed from
-/// the configuration, so canonicalising them recovers a function of the program. A list of what
+/// repair**: the former store indices in `step_digest` and `reify`'s map order were at least
+/// computed from the configuration, so canonicalising them recovers a function of the program. A list of what
 /// some other binary was compiled with is not in the program at all. Two validators built from
 /// the same source with different feature sets would publish different bytes for the same
 /// refusal — and *neither would be wrong*.
@@ -994,7 +994,10 @@ mod tests {
             parse_request(&[subject.clone(), bound, reply.clone()], true).expect("the `[n]` shape");
         assert_eq!(lookahead, Lookahead::Steps(7));
 
-        assert!(parse_request(std::slice::from_ref(&subject), false).is_err(), "arity 1 is not a request");
+        assert!(
+            parse_request(std::slice::from_ref(&subject), false).is_err(),
+            "arity 1 is not a request"
+        );
         assert!(
             parse_request(&[subject.clone(), reply.clone(), reply.clone()], true).is_err(),
             "a non-integer bound must be refused, never coerced"

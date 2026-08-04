@@ -21,9 +21,10 @@
 //! | [`truncated`](LookaheadResponse::truncated) | `SPEC_TRUNCATED_CHANNEL` — `[trace, handle]` per branch |
 //! | [`error`](LookaheadResponse::error) | `SPEC_ERR_CHANNEL` — a typed *request*-level refusal, distinct from a branch failure |
 //!
-//! A trace rides the wire as an `EList` of 32-byte step digests
-//! ([`delivery::step_digest`]); a handle is the 32-byte
-//! [`delivery::trace_digest`] of the branch's whole trace, which is also the key
+//! A trace rides the wire as an `EList` containing the complete root-to-leaf
+//! process/configuration sequence: input, saturated initial configuration, and
+//! every reified successor. A handle is the 32-byte [`delivery::trace_digest`]
+//! of that whole sequence, which is also the key
 //! [`LookaheadService::resume`] takes back.
 //!
 //! ## What a branch's "term" is
@@ -64,14 +65,14 @@ use rholang::rust::interpreter::accounting::costs::Cost;
 use rholang::rust::interpreter::accounting::RuntimeBudget;
 use rholang::rust::interpreter::system_processes::Definition;
 
-use super::delivery::{
-    reify, resting_on, step_digest, trace_digest, ReificationError, SpeculationDelivery,
-};
+use super::delivery::{reify, resting_on, trace_digest, ReificationError, SpeculationDelivery};
 use super::search::{
     AbortedLeaf, ErrorCode, Exploration, Explorer, Lookahead, QuiescentLeaf, TraceMode,
     TruncatedLeaf,
 };
-use super::{RendezvousName, ResumableBranch, SpeculationError, SpeculativeSandbox};
+#[cfg(test)]
+use super::RendezvousName;
+use super::{ReductionTrace, ResumableBranch, SpeculationError, SpeculativeSandbox};
 
 // ══════════════════════════════════════════════════════════════════════════
 // What a leaf's "term" is
@@ -184,11 +185,11 @@ impl LookaheadRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BranchReport {
     /// The wire form: the two-element `EList` `[trace, [term…]]` — ready to be
-    /// published as one datum. The trace is its own `EList` of step digests and
+    /// published as one datum. The trace is its own `EList` of actual processes and
     /// the projected terms are their own `EList` **nested inside** it; a
     /// consumer therefore destructures `[trace, terms]` and indexes `terms`.
     ///
-    /// ⚠ This doc used to say *"an `EList` of the branch's step digests followed
+    /// ⚠ This doc used to say *"an `EList` of the branch's trace nodes followed
     /// by the branch's term(s)"* — i.e. the FLAT, concatenated shape. That is
     /// the FIPS `success`-map ENTRY ([`super::delivery::success_entry`]), not
     /// what this field holds, and the two are not interchangeable: the flat
@@ -405,15 +406,9 @@ fn ground_list(elements: Vec<Par>) -> Par {
     new_elist_par(elements, Vec::new(), false, None::<Var>, Vec::new(), false)
 }
 
-/// A trace as an `EList` of 32-byte step digests.
-fn trace_list(trace: &[RendezvousName]) -> Par {
-    let mut steps = Vec::with_capacity(trace.len());
-    steps.extend(
-        trace
-            .iter()
-            .map(|name| new_gbytearray_par(step_digest(name).bytes(), Vec::new(), false)),
-    );
-    ground_list(steps)
+/// A trace as the complete root-to-leaf process/configuration sequence.
+fn trace_list(trace: &ReductionTrace) -> Par {
+    ground_list(trace.processes())
 }
 
 /// `[left, right]` — the two-element list every report datum is.
@@ -473,24 +468,34 @@ mod wire_shape_tests {
         }
     }
 
+    fn trace(steps: impl IntoIterator<Item = (RendezvousName, i64)>) -> ReductionTrace {
+        let mut trace = ReductionTrace::from_process(new_gint_par(0, Vec::new(), false));
+        for (name, result) in steps {
+            trace = trace.extend(name, new_gint_par(result, Vec::new(), false));
+        }
+        trace
+    }
+
     /// ★ LAYER 4, on this module's own wire shape. [`trace_list`] is what every
     /// `^spec-success` / `^spec-truncated` / `^spec-failure` datum carries as its first
-    /// element, and it folds [`step_digest`] — so it inherits the index-freedom only if
-    /// nothing here re-adds a position. Nothing does, and this says so rather than assuming it.
+    /// element. It materializes the complete process sequence, so it is index-free only if
+    /// nothing here re-adds a local store position. Nothing does, and this says so rather than
+    /// assuming it.
     #[test]
     fn the_wire_trace_list_does_not_carry_a_store_index() {
-        let indexed = vec![name(1, 2, 0, 0), name(3, 4, 5, 6)];
-        let renumbered = vec![name(1, 2, 9, 9), name(3, 4, 0, 1)];
+        let indexed = trace([(name(1, 2, 0, 0), 1), (name(3, 4, 5, 6), 2)]);
+        let renumbered = trace([(name(1, 2, 9, 9), 1), (name(3, 4, 0, 1), 2)]);
         assert_eq!(
             trace_list(&indexed).encode_to_vec(),
             trace_list(&renumbered).encode_to_vec(),
             "★ a published trace keyed by store position is keyed by task-arrival order"
         );
         // …and it still separates traces that differ in content or order.
+        let reordered = trace([(name(3, 4, 5, 6), 2), (name(1, 2, 0, 0), 1)]);
         assert_ne!(
             trace_list(&indexed).encode_to_vec(),
-            trace_list(&[indexed[1].clone(), indexed[0].clone()]).encode_to_vec(),
-            "the ORDER of the steps is the branch's identity and must survive"
+            trace_list(&reordered).encode_to_vec(),
+            "the ORDER of the resulting configurations is the branch's identity and must survive"
         );
     }
 

@@ -263,7 +263,7 @@
 //! | module | what it is |
 //! |---|---|
 //! | [`search`] | the **branching engine**: BFS over `E(S)` with an explicit preallocated frontier, the `[n]`/`[*]` bracket as a first-class mode, the three-outcome classification, and resumption for beam search. It builds no `Par`, so the search cannot depend on the shape of a leaf. |
-//! | [`delivery`] | **result assembly**: a configuration reified as a process, and the three collections a receiving program reads (`ESet` of `EList`, the FIPS's own entry shape). It runs no reduction, so the delivery cannot depend on how a leaf was found. |
+//! | [`delivery`] | **result assembly**: a configuration reified as a process, and the three collections a receiving program reads (set-mode `EPathMap` / `PathMap<()>` of complete process paths, the FIPS's own entry shape). It runs no reduction, so the delivery cannot depend on how a leaf was found. |
 //!
 //! The entry points are [`search::Explorer::explore`] (`x!(P)[n]`),
 //! [`search::Explorer::resume`] (beam search's second half),
@@ -555,6 +555,228 @@ pub struct FiredStep {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// A persistent, stack-safe reduction trace
+// ══════════════════════════════════════════════════════════════════════════
+
+/// A complete process trace, shared by prefix rather than copied per branch.
+///
+/// The root contains the submitted process and, when distinct, the
+/// administratively-saturated initial configuration.  Every [`TraceLink`]
+/// then records both the structured rendezvous identity and the reified
+/// configuration after that COMM.  Consequently [`ReductionTrace::processes`]
+/// is the actual path from input to result; a digest is only a handle derived
+/// from that path and is never substituted for one of its nodes.
+///
+/// Cloning is one `Arc` increment.  Materialisation and destruction are
+/// iterative, so neither operation consumes native stack in trace depth.
+pub struct ReductionTrace {
+    root: Arc<[Par]>,
+    tail: Option<Arc<TraceLink>>,
+    steps: usize,
+    digest: Blake2b256Hash,
+}
+
+struct TraceLink {
+    parent: Option<Arc<TraceLink>>,
+    name: RendezvousName,
+    result: Par,
+}
+
+impl ReductionTrace {
+    /// An unrooted trace used only when even the initial configuration cannot
+    /// be reified. Production lookahead traces are rooted before search.
+    pub fn empty() -> Self {
+        Self::from_processes(Vec::new())
+    }
+
+    /// Start a trace at one process/configuration.
+    pub fn from_process(process: Par) -> Self {
+        Self::from_processes(vec![process])
+    }
+
+    /// Start at the submitted process and its saturated configuration.
+    ///
+    /// Keeping both is intentional: administrative saturation is a real part
+    /// of the execution from source to result even though the lookahead bound
+    /// counts only COMM transitions.
+    pub fn from_input_and_configuration(input: Par, configuration: Par) -> Self {
+        Self::from_processes(vec![input, configuration])
+    }
+
+    fn from_processes(processes: Vec<Par>) -> Self {
+        let digest = trace_root_digest(&processes);
+        Self {
+            root: Arc::from(processes),
+            tail: None,
+            steps: 0,
+            digest,
+        }
+    }
+
+    /// Extend by one fired COMM and its resulting configuration.
+    pub fn extend(&self, name: RendezvousName, result: Par) -> Self {
+        let digest = trace_extend_digest(&self.digest, &result);
+        Self {
+            root: Arc::clone(&self.root),
+            tail: Some(Arc::new(TraceLink { parent: self.tail.clone(), name, result })),
+            steps: self.steps + 1,
+            digest,
+        }
+    }
+
+    /// Number of fired COMMs. The root process/configuration nodes do not
+    /// consume the caller's lookahead bound.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.steps
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.steps == 0
+    }
+
+    /// Deterministic handle for the complete process path.
+    #[inline]
+    pub fn digest(&self) -> Blake2b256Hash {
+        self.digest.clone()
+    }
+
+    /// Materialise the process/configuration path in root-to-leaf order.
+    pub fn processes(&self) -> Vec<Par> {
+        let root_len = self.root.len();
+        let mut out = vec![None; root_len + self.steps];
+        for (index, process) in self.root.iter().enumerate() {
+            out[index] = Some(process.clone());
+        }
+
+        let mut cursor = self.tail.as_deref();
+        let mut index = out.len();
+        while let Some(link) = cursor {
+            index -= 1;
+            out[index] = Some(link.result.clone());
+            cursor = link.parent.as_deref();
+        }
+        debug_assert_eq!(index, root_len);
+        out.into_iter()
+            .map(|process| process.expect("every trace slot is initialized"))
+            .collect()
+    }
+
+    /// Materialise the structured scheduling choices for replay diagnostics.
+    pub fn rendezvous_names(&self) -> Vec<RendezvousName> {
+        let mut out = vec![None; self.steps];
+        let mut cursor = self.tail.as_deref();
+        let mut index = out.len();
+        while let Some(link) = cursor {
+            index -= 1;
+            out[index] = Some(link.name.clone());
+            cursor = link.parent.as_deref();
+        }
+        debug_assert_eq!(index, 0);
+        out.into_iter()
+            .map(|name| name.expect("every rendezvous slot is initialized"))
+            .collect()
+    }
+
+    /// Continue this trace with the transitions of `suffix`.
+    ///
+    /// Used by the single-branch resumption API: `suffix` starts by reifying
+    /// the configuration at which `self` stopped. The join is refused when
+    /// those boundary configurations differ, preventing a handle from being
+    /// spliced onto an unrelated execution.
+    pub fn concatenate(&self, suffix: &ReductionTrace) -> Option<ReductionTrace> {
+        let left_terminal = self.processes().pop()?;
+        let right_root = suffix.root.first()?;
+        if &left_terminal != right_root {
+            return None;
+        }
+
+        let mut links = Vec::with_capacity(suffix.steps);
+        let mut cursor = suffix.tail.as_deref();
+        while let Some(link) = cursor {
+            links.push(link);
+            cursor = link.parent.as_deref();
+        }
+
+        let mut joined = self.clone();
+        for link in links.into_iter().rev() {
+            joined = joined.extend(link.name.clone(), link.result.clone());
+        }
+        Some(joined)
+    }
+}
+
+impl Clone for ReductionTrace {
+    fn clone(&self) -> Self {
+        Self {
+            root: Arc::clone(&self.root),
+            tail: self.tail.clone(),
+            steps: self.steps,
+            digest: self.digest.clone(),
+        }
+    }
+}
+
+impl Drop for ReductionTrace {
+    fn drop(&mut self) {
+        // `Arc<TraceLink>` is a persistent list. Letting the last tail drop
+        // normally would recursively release every unique parent. Unwrap the
+        // unique suffix explicitly; stop at the first shared prefix.
+        let mut cursor = self.tail.take();
+        while let Some(link) = cursor {
+            match Arc::try_unwrap(link) {
+                Ok(mut owned) => cursor = owned.parent.take(),
+                Err(shared) => {
+                    drop(shared);
+                    break;
+                },
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for ReductionTrace {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReductionTrace")
+            .field("process_nodes", &(self.root.len() + self.steps))
+            .field("steps", &self.steps)
+            .field("digest", &self.digest.bytes())
+            .finish()
+    }
+}
+
+impl PartialEq for ReductionTrace {
+    fn eq(&self, other: &Self) -> bool {
+        self.steps == other.steps
+            && self.root.as_ref() == other.root.as_ref()
+            && self.rendezvous_names() == other.rendezvous_names()
+            && self.processes() == other.processes()
+    }
+}
+
+impl Eq for ReductionTrace {}
+
+fn trace_root_digest(processes: &[Par]) -> Blake2b256Hash {
+    let seed = Blake2b256Hash::new(b"mettail reduction trace v1");
+    processes
+        .iter()
+        .fold(seed, |digest, process| trace_extend_digest(&digest, process))
+}
+
+fn trace_extend_digest(prefix: &Blake2b256Hash, process: &Par) -> Blake2b256Hash {
+    use prost::Message;
+
+    let body = process.encode_to_vec();
+    let mut bytes = Vec::with_capacity(32 + 8 + body.len());
+    bytes.extend_from_slice(&prefix.bytes());
+    bytes.extend_from_slice(&(body.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&body);
+    Blake2b256Hash::new(&bytes)
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // How a branch ended — and the handle that makes truncation resumable
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -578,7 +800,7 @@ pub struct ResumableBranch {
     pub state: SpeculativeState,
     /// The trace that produced it — the sequence of scheduling choices, in
     /// order. This is what the FIPS keys its `PathMap`s by.
-    pub trace: Vec<RendezvousName>,
+    pub trace: ReductionTrace,
     /// `|E(S)|` at the truncation point: how many ways this branch could have
     /// continued. Non-zero by construction — a branch with an empty `E(S)` is
     /// [`BranchOutcome::Quiescent`], not truncated.
@@ -604,7 +826,7 @@ pub enum BranchOutcome {
         /// The terminal configuration.
         state: SpeculativeState,
         /// The trace that reached it.
-        trace: Vec<RendezvousName>,
+        trace: ReductionTrace,
     },
     /// The step bound ran out while `E(S)` was still non-empty. Neither a
     /// success nor a failure: the evaluation as it stood at exhaustion,
@@ -615,7 +837,7 @@ pub enum BranchOutcome {
     /// message appended.
     Aborted {
         /// The trace up to the failing step.
-        trace: Vec<RendezvousName>,
+        trace: ReductionTrace,
         /// What went wrong. Classifying this into the FIPS's (code, message)
         /// pair is the `PathMap` stage's job; nothing is discarded here.
         error: SpeculationError,
@@ -624,7 +846,7 @@ pub enum BranchOutcome {
 
 impl BranchOutcome {
     /// The trace this branch made, whatever its outcome.
-    pub fn trace(&self) -> &[RendezvousName] {
+    pub fn trace(&self) -> &ReductionTrace {
         match self {
             BranchOutcome::Quiescent { trace, .. } => trace,
             BranchOutcome::Truncated(branch) => &branch.trace,
@@ -1169,7 +1391,7 @@ impl SpeculativeSandbox {
     pub async fn resume(
         &self,
         branch: ResumableBranch,
-    ) -> Result<Vec<RendezvousName>, SpeculationError> {
+    ) -> Result<ReductionTrace, SpeculationError> {
         self.load(branch.state).await?;
         Ok(branch.trace)
     }
@@ -1197,7 +1419,18 @@ impl SpeculativeSandbox {
         steps: usize,
         mut choose: impl FnMut(&[Rendezvous]) -> usize,
     ) -> BranchOutcome {
-        let mut trace: Vec<RendezvousName> = Vec::with_capacity(steps);
+        let initial = match delivery::reify(&self.snapshot()) {
+            Ok(process) => process,
+            Err(error) => {
+                return BranchOutcome::Aborted {
+                    trace: ReductionTrace::empty(),
+                    error: SpeculationError::Bootstrap(format!(
+                        "initial trace configuration could not be reified: {error}"
+                    )),
+                };
+            },
+        };
+        let mut trace = ReductionTrace::from_process(initial);
         for _ in 0..steps {
             let enabled = self.enabled();
             if enabled.is_empty() {
@@ -1208,7 +1441,20 @@ impl SpeculativeSandbox {
                 return BranchOutcome::Aborted { trace, error: SpeculationError::NotFired };
             }
             match self.fire(enabled[index].clone()).await {
-                Ok(step) => trace.push(step.name),
+                Ok(step) => {
+                    let result = match delivery::reify(&self.snapshot()) {
+                        Ok(process) => process,
+                        Err(error) => {
+                            return BranchOutcome::Aborted {
+                                trace,
+                                error: SpeculationError::Bootstrap(format!(
+                                    "trace configuration could not be reified: {error}"
+                                )),
+                            };
+                        },
+                    };
+                    trace = trace.extend(step.name, result);
+                },
                 Err(error) => return BranchOutcome::Aborted { trace, error },
             }
         }
@@ -1432,6 +1678,79 @@ pub fn content_fingerprint(state: &SpeculativeState) -> Vec<String> {
     lines
 }
 
+/// The exact [`content_fingerprint`] equivalence, retained as one 32-byte key.
+///
+/// This is the search/visited representation. It excludes empty materialised
+/// buckets and installed system continuations exactly as the human-readable
+/// fingerprint does, sorts the same channel and per-channel multisets, and
+/// length-frames every component before hashing. It therefore changes only
+/// representation and allocation cost, never which configurations compare
+/// equal.
+pub fn content_fingerprint_digest(state: &SpeculativeState) -> Blake2b256Hash {
+    let mut lines: Vec<Vec<u8>> = Vec::with_capacity(state.data.len() + state.continuations.len());
+
+    for (channel, data) in state.data.iter().filter(|(_, data)| !data.is_empty()) {
+        let mut records: Vec<[u8; 33]> = Vec::with_capacity(data.len());
+        for datum in data {
+            let mut record = [0u8; 33];
+            record[..32].copy_from_slice(&datum.source.hash.bytes());
+            record[32] = u8::from(datum.persist);
+            records.push(record);
+        }
+        records.sort_unstable();
+
+        let channel_body = prost_bytes(channel);
+        let mut line = Vec::with_capacity(1 + 8 + channel_body.len() + 8 + 33 * records.len());
+        line.push(b'd');
+        line.extend_from_slice(&(channel_body.len() as u64).to_le_bytes());
+        line.extend_from_slice(&channel_body);
+        line.extend_from_slice(&(records.len() as u64).to_le_bytes());
+        for record in records {
+            line.extend_from_slice(&record);
+        }
+        lines.push(line);
+    }
+
+    for (channels, continuations) in state
+        .continuations
+        .iter()
+        .filter(|(_, continuations)| !continuations.is_empty())
+    {
+        let mut records: Vec<[u8; 34]> = Vec::with_capacity(continuations.len());
+        for waiting in continuations {
+            let mut record = [0u8; 34];
+            record[..32].copy_from_slice(&waiting.source.hash.bytes());
+            record[32] = u8::from(waiting.persist);
+            record[33] = u8::from(!waiting.peeks.is_empty());
+            records.push(record);
+        }
+        records.sort_unstable();
+
+        let mut line = Vec::new();
+        line.push(b'c');
+        line.extend_from_slice(&(channels.len() as u64).to_le_bytes());
+        for channel in channels {
+            let body = prost_bytes(channel);
+            line.extend_from_slice(&(body.len() as u64).to_le_bytes());
+            line.extend_from_slice(&body);
+        }
+        line.extend_from_slice(&(records.len() as u64).to_le_bytes());
+        for record in records {
+            line.extend_from_slice(&record);
+        }
+        lines.push(line);
+    }
+
+    lines.sort_unstable();
+    let total = lines.iter().map(|line| 8 + line.len()).sum();
+    let mut bytes = Vec::with_capacity(total);
+    for line in lines {
+        bytes.extend_from_slice(&(line.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&line);
+    }
+    Blake2b256Hash::new(&bytes)
+}
+
 fn prost_bytes(par: &Par) -> Vec<u8> {
     use prost::Message;
     par.encode_to_vec()
@@ -1443,6 +1762,56 @@ fn hex(bytes: &[u8]) -> String {
         rendered.push_str(&format!("{byte:02x}"));
     }
     rendered
+}
+
+#[cfg(test)]
+mod reduction_trace_tests {
+    use super::*;
+    use models::rust::utils::new_gint_par;
+
+    fn name(index: usize) -> RendezvousName {
+        RendezvousName {
+            consume: Blake2b256Hash::new(&(index as u64).to_le_bytes()),
+            data: Vec::new(),
+            continuation_index: index as i32,
+            datum_indices: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn trace_materialisation_is_the_full_process_path() {
+        let input = new_gint_par(0, Vec::new(), false);
+        let initial = new_gint_par(1, Vec::new(), false);
+        let first = new_gint_par(2, Vec::new(), false);
+        let second = new_gint_par(3, Vec::new(), false);
+        let trace = ReductionTrace::from_input_and_configuration(input.clone(), initial.clone())
+            .extend(name(0), first.clone())
+            .extend(name(1), second.clone());
+
+        assert_eq!(trace.len(), 2, "the bound counts COMM transitions");
+        assert_eq!(trace.processes(), vec![input, initial, first, second]);
+        assert_eq!(trace.rendezvous_names(), vec![name(0), name(1)]);
+    }
+
+    #[test]
+    fn deep_shared_trace_drop_is_iterative() {
+        const DEPTH: usize = 20_000;
+        let result = new_gint_par(1, Vec::new(), false);
+        let mut trace = ReductionTrace::from_process(Par::default());
+        for index in 0..DEPTH {
+            trace = trace.extend(name(index), result.clone());
+        }
+        let shared = trace.clone();
+        assert!(Arc::ptr_eq(
+            trace.tail.as_ref().expect("non-empty tail"),
+            shared.tail.as_ref().expect("non-empty tail"),
+        ));
+        drop(trace);
+        assert_eq!(shared.len(), DEPTH);
+        // The final owner releases 20,000 links here. A derived Arc-list Drop
+        // would recurse through them; ReductionTrace::drop unwraps in a loop.
+        drop(shared);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1560,7 +1929,7 @@ mod published_message_tests {
     fn an_aborted_leaf_publishes_bounded_source_text() {
         // ~20 KB, the order of magnitude a prost `Debug` of a reflected redex reaches.
         let dump = "Par { sends: [], receives: [], ".repeat(700);
-        let leaf = AbortedLeaf::of(Vec::new(), &reducer_error(&dump));
+        let leaf = AbortedLeaf::of(ReductionTrace::empty(), &reducer_error(&dump));
 
         assert!(
             leaf.message

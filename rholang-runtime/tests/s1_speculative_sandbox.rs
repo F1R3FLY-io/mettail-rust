@@ -1488,13 +1488,15 @@ async fn t11_truncation_is_resumable_and_resumption_is_faithful() {
         "teeth: the sandbox really was scrubbed before the resume"
     );
 
-    let mut trace = broken.resume(parked).await.expect("resume");
+    let trace = broken.resume(parked).await.expect("resume");
     let resumed = broken.run_trace(8, |_| 0).await;
     let (resumed_state, tail) = match resumed {
         BranchOutcome::Quiescent { state, trace } => (state, trace),
         other => panic!("the resumed branch must reach quiescence, got {other:?}"),
     };
-    trace.extend(tail);
+    let trace = trace
+        .concatenate(&tail)
+        .expect("the resumed tail starts at the truncation configuration");
 
     assert_eq!(
         trace, unbroken_trace,

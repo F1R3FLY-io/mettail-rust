@@ -7,60 +7,54 @@
 //! is that something, and every choice it makes is a choice about what a Rholang
 //! program on the other end can do with the answer.
 //!
-//! ## ★ What the delivery is NOT built on, and why
-//!
-//! The FIPS names the collection a `PathMap`, and `{| … |}` is Rholang's PathMap
-//! literal. **PathMap methods do not lower on the reducer path** — all 22 zipper
-//! methods fail, and a `Pathmap` lowers to an `EMap` — so a receiving program
-//! cannot iterate, filter, or fold a delivered PathMap. Delivering one would be
-//! delivering a value whose only useful operations are unavailable: the demo
-//! would type-check and do nothing.
-//!
-//! Nondeterministic *pattern* peeling is not the answer either. The FIPS's own
-//! consumption pattern `for (@{| trace, ..._ |}, _ <- x)` peels one arbitrary
-//! entry, which is sound in its λ example **only because confluence makes the
-//! choice unobservable**. Over a non-confluent guest — the case `[*]` exists for
-//! — peeling one entry silently discards the others.
-//!
-//! ## ★ What it IS built on: `ESet` of `EList`
+//! ## Representation: a set-mode `EPathMap`
 //!
 //! ```text
-//!   success  ::=  {| entry , … |}                    -- an ESet
-//!   entry    ::=  [ step₀ , … , step_{k-1} , leaf ]  -- an EList: the trace, then the leaf
-//!   step     ::=  GByteArray(32)                     -- the content digest of one named selection
+//!   collection      ::= EPathMap::Set(PathMap<()>)
+//!   process-trace   ::= [input, initial, state₁, …, terminal]
+//!   success-entry   ::= process-trace
+//!   truncated-entry ::= process-trace ++ [(handle, frontier)]
+//!   failure-entry   ::= process-prefix ++ [[code, message]]
 //! ```
 //!
-//! Four properties, each load-bearing:
+//! The trace is the complete root-to-leaf sequence of Rholang processes: the
+//! submitted input, the saturated initial configuration, and the reified
+//! successor configuration after every selected communication. A trace node is
+//! never replaced by a digest. [`ReductionTrace`] shares branch prefixes in
+//! memory; the published `EPathMap` inserts each complete entry directly into
+//! `PathMap<()>`, whose trie shares common encoded prefixes across entries.
 //!
-//! 1. **`ESet` and `EList` are native `rhoapi` and lower.** They are ordinary
-//!    Rholang collections: the reducer constructs them, sorts them, rests them
-//!    on a channel, and pattern-matches them. Nothing here depends on a method
-//!    that does not lower.
+//! Five properties are load-bearing:
+//!
+//! 1. **The collection remains a trie.** Delivery does not project entries
+//!    through `Vec<Par>`, `HashMap`, or `ESet`. `EPathMap::from_set_iter`
+//!    streams them into `PathMap<()>`; the trie owns membership, canonical
+//!    order, deduplication, prefix compression, and serialization.
 //! 2. **The entry is the FIPS's own shape.** The FIPS says of a failure that
 //!    *"an extra two-element list containing an error code for the failure and a
 //!    message is **concatenated to the end of the trace**"* — the trace with its
 //!    leaf appended IS the entry, and the FIPS's own reader takes the leaf as
 //!    `trace.last()`. The success and truncated maps use the same shape so a
 //!    consumer needs one rule, not three.
-//! 3. **A set, not a list.** Branches are unordered; delivering a list would
+//! 3. **A prefix-compressed set, not a list.** Branches are unordered; delivering a list would
 //!    make enumeration order an observable, and two validators that agree on the
-//!    branch *set* must agree on the delivered value. `ParSet` sorts, so the
-//!    encoding is canonical.
-//! 4. **A step is one 32-byte digest.** A [`RendezvousName`] is a `Consume`
-//!    hash, the selected data's `Produce` hashes, and the store positions; all
-//!    of it is folded into one content digest ([`step_digest`]) because a
-//!    consumer *keys* on a trace — it never destructures one — and because the
-//!    digest of a whole trace ([`trace_digest`]) is then the natural **handle
-//!    name** for resuming a truncated branch. The structured form remains
-//!    available Rust-side on [`RendezvousName`] and is where a replay
-//!    differential looks.
+//!    branch *set* must agree on the delivered value. PathMap's canonical byte
+//!    representation makes producer enumeration order unobservable.
+//! 4. **Configurations are canonicalized by their producer.** PathMap preserves
+//!    a member's semantic bytes; it does not rewrite a `Par` placed inside a
+//!    key. [`reify`] therefore emits store members in content-derived order.
+//! 5. **Digests are names, not trace nodes.** [`trace_digest`] is the compact
+//!    handle used to resume a retained truncated branch. [`step_digest`] names
+//!    the semantic rendezvous edge for diagnostics and replay comparison. The
+//!    actual process/configuration sequence remains available both in memory
+//!    and in the published trie.
 //!
 //! ## The three leaves
 //!
 //! | map | leaf | why |
 //! |---|---|---|
 //! | `success` | the reified terminal **configuration**, as a process | the FIPS's leaf is *the contents of* `empty_t`; its Lambdas example pattern-matches the leaf as a running process (`match inst { for (_, _ <- instCh) { _ } => … }`) |
-//! | `truncated` | `(handle, frontier, configuration)` | the USER decision: the leaf is a **handle to a retained configuration**, resumable — `handle` names it, `frontier` is `\|E(S)\|` at the cut (how many ways it could have continued), and the configuration is there to be inspected before deciding whether to resume |
+//! | `truncated` | `(handle, frontier)` after the terminal configuration | the USER decision: the leaf is a **handle to a retained configuration**, resumable — `handle` names it and `frontier` is `\|E(S)\|` at the cut (how many ways it could have continued); the preceding trace node is the inspectable configuration |
 //! | `failure` | `[code, message]` | the FIPS verbatim: *"a two-element list containing an error code for the failure and a message"* |
 //!
 //! ⚠ The truncated leaf's handle is a **name**, not the resumable state itself.
@@ -108,24 +102,24 @@
 //! weaker process presented as the configuration — reification fails closed with
 //! [`ReificationError::SystemContinuation`].
 
+use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::tagged_continuation::TaggedCont;
-use models::rhoapi::{Expr, Par, Receive, ReceiveBind, Send, Var};
+use models::rhoapi::{EPathMap, Expr, Par, Receive, ReceiveBind, Send, Var};
 use models::rust::utils::{
-    new_elist_par, new_eset_par, new_etuple_par, new_gbytearray_par, new_gint_par, new_gstring_par,
-    union,
+    new_elist_par, new_etuple_par, new_gbytearray_par, new_gint_par, new_gstring_par, union,
 };
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 
 use super::search::{AbortedLeaf, Exploration, QuiescentLeaf, TruncatedLeaf};
-use super::{RendezvousName, SpeculativeState};
+use super::{ReductionTrace, RendezvousName, SpeculativeState};
 use crate::lookahead::{SPEC_FAILURE_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATED_CHANNEL};
 
 // ══════════════════════════════════════════════════════════════════════════
 // Trace naming
 // ══════════════════════════════════════════════════════════════════════════
 
-/// The **content digest of one named selection** — what a delivered trace
-/// element is.
+/// The **content digest of one named selection** used for diagnostics and
+/// replay comparison.
 ///
 /// Folds the [`RendezvousName`]'s **semantic** identity — the `Consume` content
 /// hash and every selected datum's `Produce` content hash in bind order — into
@@ -170,9 +164,9 @@ use crate::lookahead::{SPEC_FAILURE_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATE
 ///
 /// ## What this costs
 ///
-/// Two byte-identical sends on one channel are now indistinguishable in a
-/// published trace. By the old comment's own argument that is semantically
-/// nothing — firing either yields the same successor. It does cost a
+/// Two byte-identical sends on one channel are indistinguishable in this edge
+/// identity. By the old comment's own argument that is semantically nothing —
+/// firing either yields the same successor. It does cost a
 /// replay-equivalence differential its index leg, but that leg was comparing
 /// scheduler noise and would have reported spurious mismatches on every honest
 /// replay; the structured [`RendezvousName`] is still available in-process for a
@@ -180,15 +174,10 @@ use crate::lookahead::{SPEC_FAILURE_CHANNEL, SPEC_SUCCESS_CHANNEL, SPEC_TRUNCATE
 ///
 /// ## Why it mattered beyond reproducibility
 ///
-/// The digest is published — `^spec-success`, `^spec-failure`, `^spec-truncated`
-/// and all three `^spec-delivery` collections carry it — and publication is a
-/// `produce` into the live tuplespace. A local address promoted into a published
-/// name is a value two validators can disagree on *without either being wrong*:
-/// core count, load and tokio version all move it, and no deploy-derived seed
-/// can fix it, because it is not about randomness. `[*]` is on no deploy path
-/// today, so this was prospective — but it was prospective on a worse footing
-/// than the injection-randomness cause beside it, which the deploy envelope does
-/// determine.
+/// The digest used to be published as a trace node. Published traces now carry
+/// the actual process/configuration sequence, but the same rule remains
+/// necessary for stable replay diagnostics: a local address must not be
+/// promoted into semantic edge identity.
 pub fn step_digest(name: &RendezvousName) -> Blake2b256Hash {
     // 32 (consume) + 32 per datum.
     let mut bytes = Vec::with_capacity(32 + 32 * name.data.len());
@@ -550,7 +539,7 @@ mod reify_tests {
 #[cfg(test)]
 mod publication_law {
     use super::*;
-    use crate::speculation::content_fingerprint;
+    use crate::speculation::{content_fingerprint, content_fingerprint_digest};
     use models::rhoapi::{BindPattern, ListParWithRandom, ParWithRandom, TaggedContinuation};
     use models::rust::utils::new_freevar_par;
     use proptest::prelude::*;
@@ -696,22 +685,26 @@ mod publication_law {
     /// `truncated_entry` (which reifies inside a tuple) and `failure_entry` (which does not) in
     /// one comparison.
     fn delivered(state: &SpeculativeState) -> Vec<Vec<u8>> {
+        let terminal = reify(state).expect("the fixture configuration reifies");
+        let trace = ReductionTrace::from_process(terminal);
         let exploration = Exploration {
-            success: vec![QuiescentLeaf { trace: Vec::new(), state: state.clone() }],
+            success: vec![QuiescentLeaf {
+                trace: trace.clone(),
+                state: state.clone(),
+            }],
             truncated: vec![TruncatedLeaf {
                 branch: ResumableBranch {
                     state: state.clone(),
-                    trace: Vec::new(),
+                    trace: trace.clone(),
                     frontier: 1,
                 },
             }],
             failure: vec![AbortedLeaf {
-                trace: Vec::new(),
+                trace,
                 code: ErrorCode::Interpreter,
                 message: "a fixed message, so the failure leaf cannot mask a real difference"
                     .to_string(),
             }],
-            root: state.clone(),
             stats: ExplorationStats::default(),
         };
         let delivery = deliver(&exploration).expect("the fixture configurations reify");
@@ -771,6 +764,11 @@ mod publication_law {
             "the two realisations must be the SAME configuration — if this fails the \
              generator is wrong and everything below it would be vacuous"
         );
+        assert_eq!(
+            content_fingerprint_digest(&left),
+            content_fingerprint_digest(&right),
+            "the retained 32-byte visited key must implement the same configuration equivalence"
+        );
 
         // ── 1. `reify` ───────────────────────────────────────────────────────────────
         let left_reified = reify(&left).expect("a fixture configuration reifies");
@@ -783,10 +781,14 @@ mod publication_law {
 
         // ── 2. `resting_on`, on every channel the blueprint names ────────────────────
         for chan in every_channel(blueprint) {
-            let left_resting: Vec<Vec<u8>> =
-                resting_on(&left, &chan).iter().map(|par| par.encode_to_vec()).collect();
-            let right_resting: Vec<Vec<u8>> =
-                resting_on(&right, &chan).iter().map(|par| par.encode_to_vec()).collect();
+            let left_resting: Vec<Vec<u8>> = resting_on(&left, &chan)
+                .iter()
+                .map(|par| par.encode_to_vec())
+                .collect();
+            let right_resting: Vec<Vec<u8>> = resting_on(&right, &chan)
+                .iter()
+                .map(|par| par.encode_to_vec())
+                .collect();
             assert_eq!(
                 left_resting, right_resting,
                 "★ the projection onto one channel depended on the store order — and the \
@@ -840,7 +842,10 @@ mod publication_law {
         vec![
             (
                 "cc 1beb13f20de71f472a9dbe92e4d019396387727e0238bd2e0606141a8b616500",
-                Blueprint { data: vec![(7, vec![0, 1])], continuations: vec![] },
+                Blueprint {
+                    data: vec![(7, vec![0, 1])],
+                    continuations: vec![],
+                },
                 1_975_084_938_108_235_344,
                 5_325_277_032_162_912_311,
             ),
@@ -887,8 +892,10 @@ mod publication_law {
             (66_386_669_701_651_024, 514_744_355_798_159_001),
             (351_989_959_022_981_567, 1_549_762_917_972_644_042),
         ];
-        for (((label, blueprint, l, r), want), (wl, wr)) in
-            recorded_cases().into_iter().zip(expected).zip(expected_seeds)
+        for (((label, blueprint, l, r), want), (wl, wr)) in recorded_cases()
+            .into_iter()
+            .zip(expected)
+            .zip(expected_seeds)
         {
             assert_eq!(
                 format!("{blueprint:?}"),
@@ -957,6 +964,14 @@ mod step_digest_tests {
         }
     }
 
+    fn trace(steps: impl IntoIterator<Item = (RendezvousName, i64)>) -> ReductionTrace {
+        let mut trace = ReductionTrace::from_process(new_gint_par(0, Vec::new(), false));
+        for (name, result) in steps {
+            trace = trace.extend(name, new_gint_par(result, Vec::new(), false));
+        }
+        trace
+    }
+
     /// ★ THE INVARIANT, in one line and with no runtime: store positions do not name a
     /// selection. Two rendezvous identical in `consume` and `data` but differing in the
     /// scheduler-assigned indices are the SAME step, because firing either yields the same
@@ -988,55 +1003,53 @@ mod step_digest_tests {
         }
     }
 
-    // ── LAYER 4: the same invariant, on everything DOWNSTREAM of the digest ─────────────
+    // ── LAYER 4: the same invariant, on trace identity and publication ─────────────────
     //
-    // ★ `store_indices_do_not_change_the_digest` covers `step_digest` alone. Every published
-    // artifact that folds it — the trace handle, the wire trace list, the three collections —
-    // inherits the property only if nothing along the way reintroduces an index. Asserting
-    // that at the leaf and hoping it propagates is exactly the reasoning that left D1 and D3
-    // in place.
+    // ★ `store_indices_do_not_change_the_digest` covers edge identity alone. The trace handle
+    // is derived from the actual process sequence, and the wire publishes that sequence, so
+    // neither is allowed to reintroduce the local store address.
 
     /// The **trace handle** — what a truncated leaf publishes and what `resume` takes back —
     /// is index-free too.
     #[test]
     fn store_indices_do_not_change_the_trace_digest() {
-        let indexed = vec![name(1, &[2, 3], 0, &[0, 1]), name(4, &[5], 2, &[7])];
-        let renumbered = vec![name(1, &[2, 3], 9, &[6, 4]), name(4, &[5], 0, &[3])];
+        let indexed = trace([(name(1, &[2, 3], 0, &[0, 1]), 1), (name(4, &[5], 2, &[7]), 2)]);
+        let renumbered = trace([(name(1, &[2, 3], 9, &[6, 4]), 1), (name(4, &[5], 0, &[3]), 2)]);
         assert_eq!(
             trace_digest(&indexed),
             trace_digest(&renumbered),
             "★ a resumption handle keyed by store position would name a branch nobody else \
              can reproduce"
         );
-        // …and the handle still separates traces that differ in CONTENT, and in ORDER.
+        // …and the handle separates the actual process sequence, including order.
+        let reordered = trace([(name(4, &[5], 2, &[7]), 2), (name(1, &[2, 3], 0, &[0, 1]), 1)]);
         assert_ne!(
             trace_digest(&indexed),
-            trace_digest(&[indexed[1].clone(), indexed[0].clone()]),
-            "two branches that fired the same rendezvous in different orders are different \
-             branches"
+            trace_digest(&reordered),
+            "two different configuration sequences are different branches"
         );
     }
 
-    /// The **wire trace list** — the `EList` of step digests every report datum carries —
-    /// is index-free, encoded.
+    /// The **wire trace list** — the complete process/configuration sequence every report
+    /// datum carries — is index-free, encoded.
     #[test]
     fn store_indices_do_not_change_the_published_trace_list() {
         use prost::Message;
-        let indexed = vec![name(1, &[2, 3], 0, &[0, 1]), name(4, &[5], 2, &[7])];
-        let renumbered = vec![name(1, &[2, 3], 9, &[6, 4]), name(4, &[5], 0, &[3])];
-        let encode = |trace: &[RendezvousName]| -> Vec<Vec<u8>> {
+        let indexed = trace([(name(1, &[2, 3], 0, &[0, 1]), 1), (name(4, &[5], 2, &[7]), 2)]);
+        let renumbered = trace([(name(1, &[2, 3], 9, &[6, 4]), 1), (name(4, &[5], 0, &[3]), 2)]);
+        let encode = |trace: &ReductionTrace| -> Vec<Vec<u8>> {
             trace_pars(trace)
                 .iter()
                 .map(|par| par.encode_to_vec())
                 .collect()
         };
         assert_eq!(encode(&indexed), encode(&renumbered));
-        assert_eq!(encode(&indexed).len(), 2, "and it is not empty");
+        assert_eq!(encode(&indexed).len(), 3, "root plus two results are published");
     }
 
-    /// ★ …and the whole [`deliver`] output. This is the end of the chain: three collections,
-    /// each folding trace digests and reified configurations, byte-identical under a
-    /// renumbering of every store index in every trace.
+    /// ★ …and the whole [`deliver`] output. This is the end of the chain: three trie
+    /// collections of complete process paths, byte-identical under a renumbering of every
+    /// store index in every trace.
     #[test]
     fn store_indices_do_not_change_the_delivered_collections() {
         use crate::speculation::search::{
@@ -1045,7 +1058,7 @@ mod step_digest_tests {
         use crate::speculation::ResumableBranch;
         use prost::Message;
 
-        let build = |trace: Vec<RendezvousName>| -> Vec<Vec<u8>> {
+        let build = |trace: ReductionTrace| -> Vec<Vec<u8>> {
             let state = SpeculativeState::default();
             let exploration = Exploration {
                 success: vec![QuiescentLeaf {
@@ -1064,7 +1077,6 @@ mod step_digest_tests {
                     code: ErrorCode::NotFired,
                     message: "fixed".to_string(),
                 }],
-                root: state,
                 stats: ExplorationStats::default(),
             };
             deliver(&exploration)
@@ -1076,8 +1088,14 @@ mod step_digest_tests {
         };
 
         assert_eq!(
-            build(vec![name(1, &[2, 3], 0, &[0, 1])]),
-            build(vec![name(1, &[2, 3], 9, &[6, 4])]),
+            build(
+                ReductionTrace::from_process(Par::default())
+                    .extend(name(1, &[2, 3], 0, &[0, 1]), Par::default(),)
+            ),
+            build(
+                ReductionTrace::from_process(Par::default())
+                    .extend(name(1, &[2, 3], 9, &[6, 4]), Par::default(),)
+            ),
             "★ the three FIPS collections must not carry a store index either"
         );
     }
@@ -1087,19 +1105,16 @@ mod step_digest_tests {
     /// ★★ **`^spec-delivery`'s order-independence is a side effect, and this is what stops it
     /// from evaporating silently.**
     ///
-    /// [`deliver`] wraps each collection in [`ground_set`] → `new_eset_par` →
-    /// `SortedParHashSet::create_from_vec` → `Ordering::sort_pars`, which canonicalises the
-    /// entries. So the order in which leaves happen to be enumerated does not reach the
-    /// published bytes — but **only because a set type was chosen**, not because anybody
-    /// decided the order was not content. `^spec-success` and the bare reply use
-    /// [`ground_list`], which sorts nothing; the difference is invisible at every call site.
+    /// [`deliver`] streams each collection into set-mode `EPathMap`, which inserts directly
+    /// into `PathMap<()>`. The trie's canonical representation absorbs leaf enumeration order
+    /// without flattening the collection or recursively rewriting a member. `^spec-success`
+    /// and the bare reply use [`ground_list`], which remains positional.
     ///
-    /// This cell asserts both halves: the three collections **are** `ESet`s, and permuting the
-    /// leaves leaves the bytes alone. Changing `deliver` to emit a list would fail the first
-    /// assertion at the moment of the edit rather than at the moment somebody notices two
-    /// validators disagreeing.
+    /// This cell asserts both halves: the three collections are set-mode `EPathMap`s, and
+    /// permuting the leaves leaves the bytes alone. Changing `deliver` to emit a flat carrier
+    /// fails at the representation boundary.
     #[test]
-    fn the_delivered_collections_are_sets_and_not_lists() {
+    fn the_delivered_collections_are_set_mode_pathmaps_and_not_lists() {
         use crate::speculation::search::{
             AbortedLeaf, ErrorCode, Exploration, ExplorationStats, QuiescentLeaf, TruncatedLeaf,
         };
@@ -1107,14 +1122,19 @@ mod step_digest_tests {
         use models::rhoapi::expr::ExprInstance;
         use prost::Message;
 
-        let step = |byte: u8| name(byte, &[byte.wrapping_add(1)], 0, &[0]);
+        let trace = |byte: u8| {
+            ReductionTrace::from_input_and_configuration(
+                new_gint_par(byte as i64, Vec::new(), false),
+                Par::default(),
+            )
+        };
         let leaves = |order: [u8; 3]| -> Exploration {
             let state = SpeculativeState::default();
             Exploration {
                 success: order
                     .iter()
                     .map(|byte| QuiescentLeaf {
-                        trace: vec![step(*byte)],
+                        trace: trace(*byte),
                         state: state.clone(),
                     })
                     .collect(),
@@ -1123,7 +1143,7 @@ mod step_digest_tests {
                     .map(|byte| TruncatedLeaf {
                         branch: ResumableBranch {
                             state: state.clone(),
-                            trace: vec![step(*byte)],
+                            trace: trace(*byte),
                             frontier: 1,
                         },
                     })
@@ -1131,12 +1151,11 @@ mod step_digest_tests {
                 failure: order
                     .iter()
                     .map(|byte| AbortedLeaf {
-                        trace: vec![step(*byte)],
+                        trace: trace(*byte),
                         code: ErrorCode::Interpreter,
                         message: "fixed".to_string(),
                     })
                     .collect(),
-                root: state,
                 stats: ExplorationStats::default(),
             }
         };
@@ -1153,11 +1172,13 @@ mod step_digest_tests {
                 .exprs
                 .first()
                 .and_then(|expr| expr.expr_instance.as_ref());
-            assert!(
-                matches!(instance, Some(ExprInstance::ESetBody(_))),
-                "★ the `{label}` collection must be an ESet. Its order-independence is a \
-                 CONSEQUENCE of that choice — `ParSet` sorts, `EList` does not — so an edit \
-                 that emits a list here silently republishes enumeration order: {instance:?}"
+            let Some(ExprInstance::EPathmapBody(pathmap)) = instance else {
+                panic!("★ the `{label}` collection must be an EPathMap, got {instance:?}");
+            };
+            assert_eq!(
+                pathmap.mode(),
+                models::rust::epathmap_trie_codec::EPathMapMode::Set,
+                "★ trace collections use PathMap<()> rather than a value-bearing or flat carrier"
             );
         }
 
@@ -1174,32 +1195,27 @@ mod step_digest_tests {
         }
     }
 
-    /// ★★ **The incidental protection, MEASURED — and it is broader than "the set is sorted".**
+    /// ★★ **The representation boundary, measured.**
     ///
-    /// `new_eset_par` → `SortedParHashSet::create_from_vec` → `Ordering::sort_pars`, and
-    /// `sort_pars` is f1r3node's **normalizer sorter** (`ParSortMatcher::sort_match`): it
-    /// canonicalises each entry *recursively*, so a configuration's `sends` come out sorted too
-    /// — not merely the set's members reordered. [`ground_list`] does none of it.
+    /// PathMap canonicalises collection membership and member order, but deliberately does not
+    /// normalize the `Par` inside a key. [`reify`] owns process canonicalization; PathMap owns
+    /// trie identity. Keeping those responsibilities separate prevents collection insertion
+    /// from hiding a non-canonical producer.
     ///
     /// The consequence is the one a reader has to know before trusting any of these bytes:
     ///
-    /// | published as | constructor | order-protected? |
+    /// | published as | constructor | responsibility |
     /// |---|---|---|
-    /// | `^spec-delivery`'s three collections | [`ground_set`] | **yes**, by `sort_pars` |
-    /// | `^spec-success` / `^spec-truncated` / `^spec-failure` entries | [`ground_list`] | **no** |
-    /// | the bare reply datum on `x` | published verbatim | **no** |
+    /// | `^spec-delivery`'s three collections | `EPathMap::from_set_iter` | canonical set membership and prefix compression |
+    /// | each process/configuration trace node | [`reify`] | canonical process bytes |
+    /// | `^spec-success` / `^spec-truncated` / `^spec-failure` report data | [`ground_list`] | preserves path position |
+    /// | the bare reply datum on `x` | published verbatim | preserves projected term identity |
     ///
-    /// So `^spec-delivery` was never exposed to the within-channel defect this file fixes, and
-    /// the two rows below it always were — which is why a cell written against [`deliver`]
-    /// alone would have passed with [`reify`]'s sort reverted. Measured against exactly that
-    /// revert, through `x8_publication_is_scheduler_invariant`: `^spec-delivery` byte-identical
-    /// across widths, `^spec-success` and the reply different.
-    ///
-    /// This cell demonstrates the mechanism directly and without going through [`reify`], so it
-    /// keeps holding whatever `reify` later does — and it is what makes the table above a
-    /// *measurement* rather than a paragraph.
+    /// This cell demonstrates both halves directly: insertion order cannot affect collection
+    /// bytes, while changing a process's own bytes must change the key. That makes producer
+    /// canonicalization an explicit invariant rather than a side effect of a legacy set sorter.
     #[test]
-    fn the_set_constructor_canonicalises_each_entry_and_the_list_constructor_does_not() {
+    fn the_pathmap_constructor_absorbs_member_order_but_does_not_rewrite_a_process() {
         use models::rust::utils::new_gstring_par;
         use prost::Message;
 
@@ -1221,38 +1237,35 @@ mod step_digest_tests {
             "the fixture's premise: the two processes really do differ as raw bytes"
         );
 
+        assert_ne!(
+            trace_pathmap([forward.clone()]).encode_to_vec(),
+            trace_pathmap([reverse.clone()]).encode_to_vec(),
+            "PathMap preserves semantic entry identity; producer-side reification must canonicalise a process"
+        );
         assert_eq!(
-            ground_set(vec![forward.clone()]).encode_to_vec(),
-            ground_set(vec![reverse.clone()]).encode_to_vec(),
-            "★ an ESet canonicalises its entries RECURSIVELY, so `^spec-delivery` is protected \
-             from a send order it never chose"
+            trace_pathmap([forward.clone(), reverse.clone()]).encode_to_vec(),
+            trace_pathmap([reverse.clone(), forward.clone()]).encode_to_vec(),
+            "PathMap's trie, not producer enumeration order, determines collection identity"
         );
         assert_ne!(
             ground_list(vec![forward]).encode_to_vec(),
             ground_list(vec![reverse]).encode_to_vec(),
-            "★★ …and an EList is NOT. `^spec-success`, `^spec-truncated`, `^spec-failure` and \
-             the bare reply all use this constructor, so their order-independence has to be \
-             established by the PRODUCER — which is what `reify`'s canonical ordering is for. \
-             If this assertion ever flips, the delivery side stopped needing that argument and \
-             somebody should find out why before relying on it."
+            "an EList remains positional, so process canonicalisation is still a producer obligation"
         );
     }
 }
 
-/// The **handle name of a whole trace**: the digest of the concatenated step
-/// digests, in order.
+/// The **handle name of a whole trace**: the rolling digest of its complete,
+/// length-framed process/configuration sequence.
 ///
 /// This is what a truncated leaf carries and what a program passes back to say
 /// *"resume that one"*. Order-sensitive by construction — two branches that
 /// fired the same rendezvous in different orders are different branches — and
 /// the empty trace has a well-defined digest (the digest of no bytes), so the
-/// root is nameable too.
-pub fn trace_digest(trace: &[RendezvousName]) -> Blake2b256Hash {
-    let mut bytes = Vec::with_capacity(32 * trace.len());
-    for name in trace.iter() {
-        bytes.extend_from_slice(&step_digest(name).bytes());
-    }
-    Blake2b256Hash::new(&bytes)
+/// root is nameable too. This digest names the path; it does not replace any
+/// process node in the published trace.
+pub fn trace_digest(trace: &ReductionTrace) -> Blake2b256Hash {
+    trace.digest()
 }
 
 /// f1r3node's `filter_and_adjust_bitset`, mirrored **verbatim**
@@ -1285,14 +1298,8 @@ fn filter_and_adjust_bitset(bitset: Vec<u8>, bound_count: usize) -> Vec<u8> {
 }
 
 /// One trace as the `Par`s a delivered entry's prefix is made of.
-fn trace_pars(trace: &[RendezvousName]) -> Vec<Par> {
-    let mut pars = Vec::with_capacity(trace.len() + 1);
-    pars.extend(
-        trace
-            .iter()
-            .map(|name| new_gbytearray_par(step_digest(name).bytes(), Vec::new(), false)),
-    );
-    pars
+fn trace_pars(trace: &ReductionTrace) -> Vec<Par> {
+    trace.processes()
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1318,6 +1325,10 @@ pub enum ReificationError {
     /// A waiting continuation's channel group is empty. A `for` with no binds is
     /// not a process.
     EmptyChannelGroup,
+    /// The retained leaf state and the final configuration already recorded
+    /// in its trace disagree. This is an internal search/trace integrity
+    /// failure; publishing either value would make the trace lie.
+    TraceTerminalMismatch,
 }
 
 impl std::fmt::Display for ReificationError {
@@ -1329,6 +1340,9 @@ impl std::fmt::Display for ReificationError {
             ),
             ReificationError::EmptyChannelGroup => {
                 write!(formatter, "a waiting continuation has no channels")
+            },
+            ReificationError::TraceTerminalMismatch => {
+                write!(formatter, "the trace terminal differs from the retained leaf state")
             },
         }
     }
@@ -1363,8 +1377,8 @@ impl std::error::Error for ReificationError {}
 /// via `LeafProjection::Configuration`) inside the bare reply term published on
 /// the caller's own channel. Nothing in any transcript shows it.
 ///
-/// It is the same class as the store-index defect in
-/// [`step_digest`] — a local, host-assigned ordering promoted into published
+/// It is the same class as the former store-index defect documented by
+/// [`step_digest`] — a local, host-assigned ordering promoted into semantic
 /// bytes — and it is fixed the same way: **iterate a canonical, content-derived
 /// order**, not the map's.
 ///
@@ -1488,7 +1502,7 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
                     waiting.continuation.guard.clone(),
                 ),
                 Some(TaggedCont::ScalaBodyRef(body_ref)) => {
-                    return Err(ReificationError::SystemContinuation { body_ref: *body_ref })
+                    return Err(ReificationError::SystemContinuation { body_ref: *body_ref });
                 },
                 // `TaggedContinuation { tagged_cont: None }` is the dispatcher's
                 // `Skip`: a receive whose body really is `Nil`.
@@ -1563,16 +1577,19 @@ pub fn reify(state: &SpeculativeState) -> Result<Par, ReificationError> {
 /// The three collections `x!(P)[n]` places on `x`: the FIPS's `success` and
 /// `failure`, plus the USER-decided third map `truncated`.
 ///
-/// Each is an `ESet` of `EList` entries. See the module header for the shape and
-/// the reasoning.
+/// Each is a homogeneous set-mode `EPathMap` whose members are `EList` trace
+/// paths. Prefixes are shared by PathMap's trie rather than duplicated in a
+/// flat collection.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpeculationDelivery {
-    /// Branches that reached quiescence. Entry: `[step…, configuration]`.
+    /// Branches that reached quiescence. Entry:
+    /// `[input, initial, state₁, …, terminal]`.
     pub success: Par,
     /// Branches the depth bound cut short. Entry:
-    /// `[step…, (handle, frontier, configuration)]`.
+    /// `[input, initial, state₁, …, configuration, (handle, frontier)]`.
     pub truncated: Par,
-    /// Branches that raised. Entry: `[step…, [code, message]]`.
+    /// Branches that raised. Entry:
+    /// `[input, initial, state₁, …, [code, message]]`.
     pub failure: Par,
 }
 
@@ -1613,10 +1630,16 @@ impl SpeculationDelivery {
     }
 }
 
-/// A ground `ESet` over `elements` — no remainder, no free variables, no
-/// connective. `ParSet` sorts, so the encoding is canonical.
-fn ground_set(elements: Vec<Par>) -> Par {
-    new_eset_par(elements, Vec::new(), false, None::<Var>, Vec::new(), false)
+/// A set-mode `EPathMap` over trace entries. `EPathMap::new` inserts each
+/// canonical path directly into `PathMap<()>`; construction order and
+/// duplicates are absorbed by the trie and no `Vec<Par>` projection is kept.
+fn trace_pathmap(elements: impl IntoIterator<Item = Par>) -> Par {
+    let pathmap = EPathMap::from_set_iter(elements, Vec::new(), false, None);
+    let mut par = Par::default();
+    par.exprs.push(Expr {
+        expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+    });
+    par
 }
 
 /// A ground `EList` over `elements`.
@@ -1624,30 +1647,38 @@ fn ground_list(elements: Vec<Par>) -> Par {
     new_elist_par(elements, Vec::new(), false, None::<Var>, Vec::new(), false)
 }
 
-/// One `success` entry: `[step₀, …, step_{k-1}, ⟦configuration⟧]`.
+/// One `success` entry: `[input, initial, …, ⟦terminal configuration⟧]`.
 pub fn success_entry(leaf: &QuiescentLeaf) -> Result<Par, ReificationError> {
-    let mut elements = trace_pars(&leaf.trace);
-    elements.push(reify(&leaf.state)?);
+    // Reify once more as an integrity assertion: the retained terminal state
+    // and the last trace node must denote the same published configuration.
+    let terminal = reify(&leaf.state)?;
+    let elements = trace_pars(&leaf.trace);
+    if elements.last() != Some(&terminal) {
+        return Err(ReificationError::TraceTerminalMismatch);
+    }
     Ok(ground_list(elements))
 }
 
-/// One `truncated` entry: `[step₀, …, step_{k-1}, (handle, frontier,
-/// ⟦configuration⟧)]`.
+/// One `truncated` entry: `[input, initial, …, ⟦configuration⟧,
+/// (handle, frontier)]`.
 ///
 /// `handle` is [`trace_digest`] of the branch's trace — the name a program uses
 /// to say which branch to resume; `frontier` is `|E(S)|` at the cut, i.e. how
 /// many ways this branch could have continued.
 pub fn truncated_entry(leaf: &TruncatedLeaf) -> Result<Par, ReificationError> {
     let mut elements = trace_pars(&leaf.branch.trace);
+    let terminal = reify(&leaf.branch.state)?;
+    if elements.last() != Some(&terminal) {
+        return Err(ReificationError::TraceTerminalMismatch);
+    }
     elements.push(new_etuple_par(vec![
         new_gbytearray_par(trace_digest(&leaf.branch.trace).bytes(), Vec::new(), false),
         new_gint_par(leaf.branch.frontier as i64, Vec::new(), false),
-        reify(&leaf.branch.state)?,
     ]));
     Ok(ground_list(elements))
 }
 
-/// One `failure` entry: `[step₀, …, step_{k-1}, [code, message]]` — the FIPS's
+/// One `failure` entry: `[input, initial, state₁, …, [code, message]]` — the FIPS's
 /// *"extra two-element list containing an error code for the failure and a
 /// message … concatenated to the end of the trace"*.
 pub fn failure_entry(leaf: &AbortedLeaf) -> Par {
@@ -1678,9 +1709,9 @@ pub fn deliver(exploration: &Exploration) -> Result<SpeculationDelivery, Reifica
     failure.extend(exploration.failure.iter().map(failure_entry));
 
     Ok(SpeculationDelivery {
-        success: ground_set(success),
-        truncated: ground_set(truncated),
-        failure: ground_set(failure),
+        success: trace_pathmap(success),
+        truncated: trace_pathmap(truncated),
+        failure: trace_pathmap(failure),
     })
 }
 

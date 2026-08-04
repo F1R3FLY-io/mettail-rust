@@ -297,8 +297,8 @@ fn two_runs_at_one_width_publish_the_same_data() {
 /// race.
 ///
 /// Two runs per width, so a single differing run reads as a flake at that width rather than as
-/// a width effect — the distinction the four-row dose-response table in
-/// `delivery::step_digest`'s header turned on.
+/// a width effect — the distinction the recorded scheduler-width dose-response
+/// measurement turned on.
 #[test]
 fn the_published_data_do_not_depend_on_the_scheduler_width() {
     let baseline = publish_at_width(1, two_data_on_one_channel());
@@ -416,15 +416,11 @@ fn the_fixture_really_does_put_two_data_on_one_channel() {
 /// | `reify(leaf)` | the bare reply datum on `x`, and the term inside `^spec-success` | every non-guest `[*]` (`LeafProjection::Configuration`) | D1 / D2 |
 /// | `resting_on(leaf, x)` | the same two, one datum per term | every registered-guest `[*]` (`LeafProjection::RestingOn`) | D3 |
 ///
-/// ★ **`deliver` is deliberately NOT the comparison here, and finding out why is a result.**
-/// The three FIPS collections go through [`ground_set`] → `new_eset_par` →
-/// `SortedParHashSet::create_from_vec` → `Ordering::sort_pars`, and `sort_pars` is f1r3node's
-/// normalizer sorter: it canonicalises **each entry recursively**, sends and all. So
-/// `^spec-delivery` was never exposed to D1 or D2, and a cell comparing it would have passed
-/// with the fix reverted. Measured — the run of this file against a reverted `reify` shows
-/// byte-identical `^spec-delivery` beside a `^spec-success` and a reply that differ. The
-/// protection is a side effect of choosing a set type, which is exactly why
-/// `delivery::reify_tests`' structural pin exists.
+/// ★ **`deliver` is deliberately NOT the comparison here.** The three FIPS collections are
+/// set-mode `EPathMap`s. PathMap absorbs collection enumeration order but preserves the bytes
+/// of every process placed in a key; it cannot repair non-canonical `reify` output. This cell
+/// therefore compares the process-producing boundary directly, while delivery's own tests pin
+/// the separate trie-membership invariant.
 ///
 /// ★ `reverse()` rather than a shuffle: `HotStore::put_datum` **prepends**, so a channel's
 /// `Vec` is reverse-arrival order and reversing it is precisely *"the same data, staged in the

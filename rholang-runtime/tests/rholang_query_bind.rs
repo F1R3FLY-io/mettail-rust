@@ -96,8 +96,8 @@ async fn markers(source: &str) -> Vec<String> {
         .unwrap_or_else(|err| panic!("reduction failed for {source:?}: {err}"));
     let mut texts: Vec<String> = observed
         .into_iter()
-        .filter_map(|value| match value {
-            RuntimeObservationValue::Text(text) => Some(text),
+        .filter_map(|value| match &value {
+            RuntimeObservationValue::Text(text) => Some(text.clone()),
             _ => None,
         })
         .collect();

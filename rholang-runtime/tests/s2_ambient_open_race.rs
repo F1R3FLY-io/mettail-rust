@@ -463,8 +463,8 @@ async fn the_three_collections_assemble_over_the_drive() {
         .first()
         .and_then(|expr| expr.expr_instance.as_ref())
     {
-        Some(ExprInstance::ESetBody(set)) => set.ps.len(),
-        other => panic!("a delivered collection must be an ESet, got {other:?}"),
+        Some(ExprInstance::EPathmapBody(pathmap)) => pathmap.len(),
+        other => panic!("a delivered collection must be an EPathMap, got {other:?}"),
     };
     assert_eq!(count(&delivery.success), 1);
     assert_eq!(count(&delivery.truncated), 0);

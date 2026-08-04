@@ -170,8 +170,8 @@ use rholang::rust::interpreter::metering::MeteredMachine;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
 
 use super::{
-    content_fingerprint, Rendezvous, RendezvousName, ResumableBranch, SpeculationError,
-    SpeculativeSandbox, SpeculativeState,
+    content_fingerprint_digest, ReductionTrace, Rendezvous, RendezvousName, ResumableBranch,
+    SpeculationError, SpeculativeSandbox, SpeculativeState,
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -203,19 +203,6 @@ impl Lookahead {
         match self {
             Lookahead::Steps(bound) => depth < *bound,
             Lookahead::Unbounded => true,
-        }
-    }
-
-    /// The bound as a capacity hint for the trace vector: the FIPS's `n`, or a
-    /// small non-zero start for `[*]` (whose length is not known in advance).
-    fn trace_capacity(&self) -> usize {
-        match self {
-            // A `u64` bound may exceed `usize`; a capacity hint must never be
-            // the reason an exploration allocates the whole address space, so
-            // the hint is clamped. Correctness does not depend on it — a `Vec`
-            // grows.
-            Lookahead::Steps(bound) => (*bound).min(64) as usize,
-            Lookahead::Unbounded => 8,
         }
     }
 }
@@ -394,8 +381,8 @@ fn conflict_class(resource_sets: &[BTreeSet<Resource>]) -> Vec<usize> {
 /// `success`.
 #[derive(Clone, Debug)]
 pub struct QuiescentLeaf {
-    /// The sequence of named selections that reached it.
-    pub trace: Vec<RendezvousName>,
+    /// The complete, prefix-shared process path that reached it.
+    pub trace: ReductionTrace,
     /// The terminal configuration.
     pub state: SpeculativeState,
 }
@@ -410,7 +397,7 @@ pub struct TruncatedLeaf {
 
 impl TruncatedLeaf {
     /// The trace that reached the cut.
-    pub fn trace(&self) -> &[RendezvousName] {
+    pub fn trace(&self) -> &ReductionTrace {
         &self.branch.trace
     }
 }
@@ -419,8 +406,8 @@ impl TruncatedLeaf {
 /// two-element list containing an error code for the failure and a message"*.
 #[derive(Clone, Debug)]
 pub struct AbortedLeaf {
-    /// The trace up to the failing step.
-    pub trace: Vec<RendezvousName>,
+    /// The complete process trace up to the failing step.
+    pub trace: ReductionTrace,
     /// The FIPS error code. See [`ErrorCode`].
     pub code: ErrorCode,
     /// The FIPS message — f1r3node's own rendering of the error, never a
@@ -557,7 +544,7 @@ impl AbortedLeaf {
     /// hand-written `Display` of `InterpreterError` / `RSpaceError`;
     /// [`super::budgeted_message`] then bounds the result. See [`AbortedLeaf::message`] for why
     /// both halves are load-bearing rather than cosmetic.
-    pub fn of(trace: Vec<RendezvousName>, error: &SpeculationError) -> Self {
+    pub fn of(trace: ReductionTrace, error: &SpeculationError) -> Self {
         AbortedLeaf {
             trace,
             code: ErrorCode::of(error),
@@ -583,10 +570,6 @@ pub struct Exploration {
     pub truncated: Vec<TruncatedLeaf>,
     /// Branches that raised — the FIPS `failure`.
     pub failure: Vec<AbortedLeaf>,
-    /// The configuration the exploration started from: `P` administratively
-    /// saturated, before any COMM. Retained so a caller can diff a leaf against
-    /// the root, and so a resumption can be re-rooted.
-    pub root: SpeculativeState,
     /// Counters — see [`ExplorationStats`].
     pub stats: ExplorationStats,
 }
@@ -606,10 +589,10 @@ impl Exploration {
     /// construction; under [`TraceMode::EveryTrace`] it is generally smaller,
     /// and the gap is exactly the confluence of the guest.
     pub fn distinct_success_configurations(&self) -> usize {
-        let mut seen: std::collections::HashSet<Vec<String>> =
+        let mut seen: std::collections::HashSet<Blake2b256Hash> =
             std::collections::HashSet::with_capacity(self.success.len());
         for leaf in self.success.iter() {
-            seen.insert(content_fingerprint(&leaf.state));
+            seen.insert(content_fingerprint_digest(&leaf.state));
         }
         seen.len()
     }
@@ -680,7 +663,7 @@ pub struct ExplorationStats {
 #[derive(Clone, Debug)]
 struct Node {
     state: SpeculativeState,
-    trace: Vec<RendezvousName>,
+    trace: ReductionTrace,
     sleep: SleepSet,
 }
 
@@ -907,18 +890,20 @@ impl<'sandbox> Explorer<'sandbox> {
         // The root: a clean sandbox, `P` injected, administrative saturation to
         // quiescence. Nothing has fired.
         self.sandbox.load(SpeculativeState::default()).await?;
-        if let Err(error) = self.sandbox.saturate(program, rand).await {
+        // The submitted process is the first published trace node. Saturation
+        // consumes its argument, so keep the original and give the sandbox the
+        // stack-safe generated clone.
+        let input = program;
+        if let Err(error) = self.sandbox.saturate(input.clone(), rand).await {
             // ★ A root that cannot even be saturated is ONE aborted branch with
             // an EMPTY trace — not an `Err`. Out of phlogistons arrives here
             // when the deploy cannot afford the injection at all, and the FIPS
             // is explicit that running out of gas is a `failure`, not an
             // infrastructure fault.
-            let root = self.sandbox.snapshot();
             return Ok(Exploration {
                 success: Vec::new(),
                 truncated: Vec::new(),
-                failure: vec![AbortedLeaf::of(Vec::new(), &error)],
-                root,
+                failure: vec![AbortedLeaf::of(ReductionTrace::from_process(input), &error)],
                 stats: ExplorationStats {
                     consumed: self.sandbox.consumed(),
                     ..ExplorationStats::default()
@@ -926,13 +911,18 @@ impl<'sandbox> Explorer<'sandbox> {
             });
         }
         let root = self.sandbox.snapshot();
+        let root_process = super::delivery::reify(&root).map_err(|error| {
+            SpeculationError::Bootstrap(format!(
+                "initial trace configuration could not be reified: {error}"
+            ))
+        })?;
+        let trace = ReductionTrace::from_input_and_configuration(input, root_process);
         self.search(
             vec![Node {
-                state: root.clone(),
-                trace: Vec::with_capacity(lookahead.trace_capacity()),
+                state: root,
+                trace,
                 sleep: SleepSet::new(),
             }],
-            root,
             lookahead,
             0,
         )
@@ -971,13 +961,9 @@ impl<'sandbox> Explorer<'sandbox> {
                 sleep: SleepSet::new(),
             });
         }
-        let root = match handles.len() {
-            1 => handles[0].state.clone(),
-            _ => SpeculativeState::default(),
-        };
         // The bound is on ADDITIONAL steps, so the level counter starts at the
         // depth already travelled; `Lookahead::Steps(n)` then admits `n` more.
-        self.search(frontier, root, lookahead, deepest).await
+        self.search(frontier, lookahead, deepest).await
     }
 
     /// **Charge the host what the exploration spent.**
@@ -1015,7 +1001,6 @@ impl<'sandbox> Explorer<'sandbox> {
     async fn search(
         &mut self,
         mut frontier: Vec<Node>,
-        root: SpeculativeState,
         lookahead: Lookahead,
         depth_offset: u64,
     ) -> Result<Exploration, SpeculationError> {
@@ -1035,11 +1020,11 @@ impl<'sandbox> Explorer<'sandbox> {
         // running INTERSECTION and re-expanding whenever a new arrival is not a
         // superset of it is the standard sound rule, and it terminates because
         // sleep sets only ever shrink and are finite.
-        let mut visited: HashMap<Vec<String>, SleepSet> = HashMap::new();
+        let mut visited: HashMap<Blake2b256Hash, SleepSet> = HashMap::new();
         if self.mode.merges() {
             visited.reserve(frontier.len());
             for node in frontier.iter() {
-                visited.insert(content_fingerprint(&node.state), node.sleep.clone());
+                visited.insert(content_fingerprint_digest(&node.state), node.sleep.clone());
             }
         }
 
@@ -1062,8 +1047,16 @@ impl<'sandbox> Explorer<'sandbox> {
             };
 
             for node in frontier.drain(..) {
-                // Install the node's configuration and enumerate `E(S)`.
-                self.sandbox.load(node.state.clone()).await?;
+                let Node {
+                    state: node_state,
+                    trace: node_trace,
+                    sleep: node_sleep,
+                } = node;
+
+                // Install the node BY MOVE and enumerate `E(S)`. A singleton
+                // conflict class can now fire without cloning the complete
+                // HotStoreState at all.
+                self.sandbox.load(node_state).await?;
                 let enabled = self.sandbox.enabled();
                 stats.nodes_expanded += 1;
                 stats.max_out_degree = stats.max_out_degree.max(enabled.len());
@@ -1072,7 +1065,10 @@ impl<'sandbox> Explorer<'sandbox> {
 
                 if enabled.is_empty() {
                     report.quiescent += 1;
-                    success.push(QuiescentLeaf { trace: node.trace, state: node.state });
+                    success.push(QuiescentLeaf {
+                        trace: node_trace,
+                        state: self.sandbox.snapshot(),
+                    });
                     continue;
                 }
 
@@ -1098,11 +1094,6 @@ impl<'sandbox> Explorer<'sandbox> {
                 // also reaches.
                 let mut fired_earlier: Vec<(SemanticName, BTreeSet<Resource>)> =
                     Vec::with_capacity(planned.len());
-                // Whether the sandbox still holds `node.state`. The first
-                // expanded sibling inherits the enumeration above; every later
-                // one re-installs, because firing moved the configuration.
-                let mut dirty = false;
-
                 // ★ THE PERSISTENT SET. Under the reduction only the conflict
                 // class of `E(S)[0]` is expanded: the members of other classes
                 // are not alternatives to it, they are things that will also
@@ -1126,23 +1117,46 @@ impl<'sandbox> Explorer<'sandbox> {
                 report.class_sizes.push(expanded.len());
                 stats.max_conflict_class = stats.max_conflict_class.max(expanded.len());
 
-                next.reserve(expanded.len());
-                for index in expanded.into_iter() {
-                    let (planned_name, semantic, resource_set) = &planned[index];
-
-                    // Asleep: this branch is covered by an earlier sibling's.
-                    if self.mode.reduces() && node.sleep.contains_key(semantic) {
+                // Remove asleep alternatives before deciding whether the
+                // parent configuration has to be retained for a sibling.
+                let mut attempts = Vec::with_capacity(expanded.len());
+                for index in expanded {
+                    let (_, semantic, _) = &planned[index];
+                    if self.mode.reduces() && node_sleep.contains_key(semantic) {
                         stats.independence_pruned += 1;
                         report.pruned += 1;
-                        continue;
+                    } else {
+                        attempts.push(index);
                     }
+                }
 
-                    // Re-install for every sibling after the first — firing the
-                    // previous one moved the configuration.
-                    if dirty {
-                        self.sandbox.load(node.state.clone()).await?;
+                // Only a real second attempt needs the pre-fire state. This is
+                // one snapshot per branching node, never one per singleton.
+                let mut parent_state = match attempts.len() > 1 {
+                    true => Some(self.sandbox.snapshot()),
+                    false => None,
+                };
+
+                next.reserve(attempts.len());
+                let attempt_count = attempts.len();
+                for (attempt, index) in attempts.into_iter().enumerate() {
+                    let (planned_name, semantic, resource_set) = &planned[index];
+
+                    // Re-install for every sibling after the first. The final
+                    // sibling consumes the retained parent state instead of
+                    // cloning it once more.
+                    if attempt > 0 {
+                        let state = match attempt + 1 == attempt_count {
+                            true => parent_state
+                                .take()
+                                .expect("a branching node retained its parent state"),
+                            false => parent_state
+                                .as_ref()
+                                .expect("a branching node retained its parent state")
+                                .clone(),
+                        };
+                        self.sandbox.load(state).await?;
                     }
-                    dirty = true;
                     let live = self.sandbox.enabled();
                     // Teeth: f1r3node's enumeration is deterministic (pinned by
                     // `enabled_rendezvous_spec.rs::t4`) and this does not assume
@@ -1151,14 +1165,14 @@ impl<'sandbox> Explorer<'sandbox> {
                         || RendezvousName::of(&live[index]) != *planned_name
                     {
                         failure
-                            .push(AbortedLeaf::of(node.trace.clone(), &SpeculationError::NotFired));
+                            .push(AbortedLeaf::of(node_trace.clone(), &SpeculationError::NotFired));
                         continue;
                     }
 
                     // The child's sleep set, computed BEFORE the firing (it is a
                     // function of the plan alone).
                     let mut child_sleep = match self.mode.reduces() {
-                        true => inherit_sleep(&node.sleep, &fired_earlier, resource_set),
+                        true => inherit_sleep(&node_sleep, &fired_earlier, resource_set),
                         false => SleepSet::new(),
                     };
 
@@ -1167,12 +1181,16 @@ impl<'sandbox> Explorer<'sandbox> {
                             stats.edges_fired += 1;
                             fired_earlier.push((semantic.clone(), resource_set.clone()));
                             let child_state = self.sandbox.snapshot();
-                            let mut child_trace = Vec::with_capacity(node.trace.len() + 1);
-                            child_trace.extend_from_slice(&node.trace);
-                            child_trace.push(step.name);
+                            let child_process =
+                                super::delivery::reify(&child_state).map_err(|error| {
+                                    SpeculationError::Bootstrap(format!(
+                                        "trace configuration could not be reified: {error}"
+                                    ))
+                                })?;
+                            let child_trace = node_trace.extend(step.name, child_process);
 
                             if self.mode.merges() {
-                                let fingerprint = content_fingerprint(&child_state);
+                                let fingerprint = content_fingerprint_digest(&child_state);
                                 match visited.get_mut(&fingerprint) {
                                     Some(seen) if permits_at_least(seen, &child_sleep) => {
                                         // Already expanded under a sleep set that
@@ -1210,7 +1228,7 @@ impl<'sandbox> Explorer<'sandbox> {
                             // step, plus a code and a message. The step is NOT
                             // appended — it did not happen.
                             report.aborted += 1;
-                            failure.push(AbortedLeaf::of(node.trace.clone(), &error));
+                            failure.push(AbortedLeaf::of(node_trace.clone(), &error));
                         },
                     }
                 }
@@ -1249,6 +1267,6 @@ impl<'sandbox> Explorer<'sandbox> {
         }
 
         stats.consumed = self.sandbox.consumed();
-        Ok(Exploration { success, truncated, failure, root, stats })
+        Ok(Exploration { success, truncated, failure, stats })
     }
 }

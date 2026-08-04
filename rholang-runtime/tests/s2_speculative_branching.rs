@@ -681,7 +681,7 @@ async fn the_host_is_charged_one_per_comm() {
 // Delivery
 // ══════════════════════════════════════════════════════════════════════════
 
-/// The three collections assemble as `ESet`s with one entry per branch, and a
+/// The three collections assemble as set-mode `EPathMap`s with one entry per branch, and a
 /// truncated branch is never folded into `failure`.
 #[tokio::test]
 async fn the_three_collections_are_separate_and_complete() {
@@ -692,26 +692,26 @@ async fn the_three_collections_are_separate_and_complete() {
     )
     .await;
     let delivery = deliver(&exploration).expect("every leaf must reify");
-    assert_eq!(set_len(&delivery.success), 0, "nothing finished under `[0]`");
-    assert_eq!(set_len(&delivery.truncated), 1, "one truncated entry");
-    assert_eq!(set_len(&delivery.failure), 0, "and it is NOT a failure");
+    assert_eq!(pathmap_len(&delivery.success), 0, "nothing finished under `[0]`");
+    assert_eq!(pathmap_len(&delivery.truncated), 1, "one truncated entry");
+    assert_eq!(pathmap_len(&delivery.failure), 0, "and it is NOT a failure");
 
     let finished = explore(send("c", 1).append(send("c", 2)).append(forward("c", OUT))).await;
     let delivered = deliver(&finished).expect("reify");
-    assert_eq!(set_len(&delivered.success), 2, "two success entries");
-    assert_eq!(set_len(&delivered.truncated), 0);
-    assert_eq!(set_len(&delivered.failure), 0);
+    assert_eq!(pathmap_len(&delivered.success), 2, "two success entries");
+    assert_eq!(pathmap_len(&delivered.truncated), 0);
+    assert_eq!(pathmap_len(&delivered.failure), 0);
 }
 
-fn set_len(collection: &Par) -> usize {
+fn pathmap_len(collection: &Par) -> usize {
     use models::rhoapi::expr::ExprInstance;
     match collection
         .exprs
         .first()
         .and_then(|expr| expr.expr_instance.as_ref())
     {
-        Some(ExprInstance::ESetBody(set)) => set.ps.len(),
-        other => panic!("a delivered collection must be an ESet, got {other:?}"),
+        Some(ExprInstance::EPathmapBody(pathmap)) => pathmap.len(),
+        other => panic!("a delivered collection must be an EPathMap, got {other:?}"),
     }
 }
 
