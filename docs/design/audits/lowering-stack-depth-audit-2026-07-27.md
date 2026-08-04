@@ -437,14 +437,23 @@ the retracted claim.
 
 ### 6.4 Disposition
 
-The parser is $`\Theta(d)`$ at 1,408 B/level, but it was never the binding constraint: 10.7× cheaper
-per level than the M-1 lowering (15,132) and 34× cheaper than the original (48,392). It sits in
-`parser_theta_depth_tripwire` with a ceiling at ~1.5× measured, and the width axis sits in
-`parsing_is_width_independent`.
+In the historical build above, the parser path was $`\Theta(d)`$ at 1,408 B/level, although it was
+never the binding constraint: 10.7× cheaper per level than the M-1 lowering (15,132) and 34×
+cheaper than the original (48,392).
 
 ⚠ The claim in the M-5/M-6 commit message that the parser measures "0 B/level" on the depth
 axis is **superseded by this section**. It is left in the history rather than rewritten, because
 the retraction is part of the record.
+
+**Living disposition (2026-08-03).** The current path, rebuilt against f1r3node `26876b65`,
+requires 476 KiB at depth 4 and 472 KiB at depth 4,096: **zero growth within the 4 KiB
+instrument resolution**. Later generated
+semantic-hash and collection-element driver conversions removed the native-stack growth exercised
+while parsing and tearing down this fixture; the parser algorithm itself was not rewritten as part
+of this closure. The old ceiling has been deleted. `parsing_is_depth_independent` now enforces the
+same $`4 \rightarrow 4{,}096`$ zero-slope invariant as every other converted traversal, and
+`parsing_is_width_independent` continues to cover the width axis. The historical measurement and
+retraction remain above because they establish why a narrow ladder is insufficient evidence.
 
 ## 7. M-7 — the run-sheet prefixes (retired)
 
@@ -628,9 +637,11 @@ test on a spawned thread**, so a `#[test]` body cannot execute on a main thread 
 parent sets. It is now `rholang-runtime/src/bin/stack_depth_probe.rs`, a program whose `main`
 runs the subject directly.
 
-Two independent cross-validations say the instruments agree where they overlap: `parse_depth`
-bisects to **1,408 B/level**, reproducing §6.2 to the byte; and the pre-M-2 release binary
-bisects to **7,277 B/level** against §5's least-squares 7,266 — 0.15%.
+Two independent historical cross-validations showed the instruments agreeing where they
+overlapped: `parse_depth` bisected to **1,408 B/level**, reproducing §6.2 to the byte; and the
+pre-M-2 release binary bisected to **7,277 B/level** against §5's least-squares 7,266 — 0.15%.
+The current `parse_depth` result is **0 B/step**; §6.4 records the conversion and the permanent
+wide-ladder gate.
 
 ### 9.2 The lowering
 
@@ -664,32 +675,57 @@ The discriminator is `lower_leak`: build, lower, `mem::forget` both sides. It re
 probe SUBJECTS: **a subject that contains two traversals measures neither**, and the only way to
 know which one a slope belongs to is to build the subject that contains one of them.
 
-The gate's earlier claim that a plain `drop(term)` is correct here — on the grounds that the
-`language!` macro emits a pooled iterative `Drop` — is **superseded**. It is true of a pure
-`Proc` chain and false across a type hop; see §9.4.
+The gate's earlier claim that a plain `drop(term)` was already correct here — on the grounds that
+the `language!` macro emitted a pooled iterative `Drop` — was **superseded on that tree**. It was
+true of a pure `Proc` chain and false at the collection-element boundary in the alternating
+`Proc`/`List` fixture. The later collection PDA closed that escape, so plain `drop(term)` is now
+again the production operation and is zero-slope gated; see §9.4.
 
-### 9.4 ★ THE RESIDUE — every $`\Theta(d)`$ traversal still on the main thread
+### 9.4 ★ THE FORMER RESIDUE — zero production slope ceilings remain
 
 | subject | traversal | owner | debug | release |
 |---|---|---|---|---|
-| `par_drop` | `drop_in_place::<Par>` — `prost`'s DERIVED recursive `Drop` | `models` (f1r3node) | 368 | 95 |
-| `ast_drop` | the `language!` iterative `Drop`, ACROSS a cross-type hop | `macros/src/gen/` | 271 | 96 |
+| ~~`par_drop`~~ | ~~`drop_in_place::<Par>` — `prost`'s derived recursive `Drop`~~ — generated trait PDA | `models` (f1r3node) | ~~368~~ $`\rightarrow`$ **0** | ~~95~~ $`\rightarrow`$ **0** |
+| ~~`par_hash`~~ | ~~host-recursive `Hash for Par`~~ — generated trait PDA | `models` (f1r3node) | ~~625~~ $`\rightarrow`$ **0** | ~~113~~ $`\rightarrow`$ **0** |
+| ~~`par_hashmap`~~ | ~~`HashMap<Par, Par>` collection path (`Hash` plus collision `Eq`)~~ — generated trait PDA | `models` (f1r3node) | ~~636~~ $`\rightarrow`$ **0** | ~~113~~ $`\rightarrow`$ **0** |
+| ~~`ast_drop`~~ | ~~the `language!` iterative `Drop` collection-element escape~~ — generated collection PDA | `macros/src/gen/` | ~~271~~ $`\rightarrow`$ **0** | ~~96~~ $`\rightarrow`$ **0** |
 | ~~`render`~~ | ~~recursive observation decode + format~~ — converted by the observation PDA | this crate | ~~3,665~~ $`\rightarrow`$ **0** | ~~911~~ $`\rightarrow`$ **0** |
 | ~~`lower_formula`~~ | ~~`is_statically_false` ⇄ `is_statically_true`~~ — converted by the one-pass formula PDA | `languages/src/` | ~~4,094~~ $`\rightarrow`$ **0** | ~~978~~ $`\rightarrow`$ **0** |
-| `parse_depth` | the WPDA (weighted pushdown automaton) parser (§6) | `prattail` | 1,408 | 303 |
+| ~~`parse_depth`~~ | ~~the historical parser-path residue (§6)~~ — generated traversal closure | `prattail` plus generated drivers | ~~1,408~~ $`\rightarrow`$ **0** | ~~303~~ $`\rightarrow`$ **0** |
 
-★ **The two `Drop`s belong to the derived-implementation class and are not reachable by the pushdown
-transform this audit specifies.** A pushdown transform rewrites a traversal *whose text you own*
-into a worklist. `drop_in_place::<Par>` has no text: it is glue the compiler derives from the
-type, and the only repairs are to change the type or to intercept at the call site. f1r3node's
-`par_children::dismantle` IS that call-site interception, which is why `par_drop` — the one
-subject that deliberately does not use it — is the only one still paying.
+★ **The two `Drop`s belonged to a generated-implementation repair class.** A pushdown transform
+rewrites a traversal whose text is available into a worklist. f1r3node therefore changed schema
+codegen to emit `Drop`, `Clone`, `Hash`, equality, ordering, and the other recursive trait
+implementations over explicit PDA machinery. `par_children::dismantle` remains useful for
+isolating other probes, while `par_drop` now exercises and gates the production destructor itself.
 
-`ast_drop` is the same class with a twist worth recording: the macro **does** emit a pooled
+`ast_drop` was the same class with a twist worth recording: the macro **did** emit a pooled
 iterative `Drop`, and `lower_add` (a pure `Proc::Add(Arc<Proc>, …)` chain) is flat under it. But
 `nested_list` alternates `Proc::CastList(Arc<List>)` with `List::ListLit(Vec<Proc>)`, and the
-worklist does not follow the hop through `List`. The generated teardown is iterative *within* a
-type and recursive *across* types.
+old collection arm delegated the whole `Vec<Proc>` to a trait method that could not see the
+worklist. Generated collection-element tasks closed that escape; the earlier cross-type-hop
+explanation was refuted by the generated artifact census and is retained only in the historical
+discussion above.
+
+**Integration closure measurement (2026-08-03).** A freshly rebuilt MeTTaIL probe against
+f1r3node `26876b65` measured `par_drop` at 100 / 100 KiB, `par_hash` at 88 / 84 KiB,
+`par_hashmap` at 84 / 84 KiB, and `parse_depth` at 476 / 472 KiB (depth 4 / 4,096). The three
+`Par` gates peak at 35,628 KiB RSS (resident set size); the parser gate peaks at 80,472 KiB; both
+runs use zero swap. Each now has a $`4 \rightarrow 4{,}096`$ zero-slope assertion, so no production
+traversal is accepted under a non-zero per-profile ceiling. The only intentionally sloped subject
+left in the generated driver classifier is `ast_recursion_control`, a hand-written test-only
+recursion that proves the instrument can distinguish flat from sloped behavior.
+
+The complete non-ignored integration gate passes **12 / 12** in 5 minutes 20 seconds under a
+4 GiB hard cgroup limit, peaking at **2,172,168 KiB RSS** with zero swap. That aggregate peak is
+reported separately because the exhaustive gate includes the 65,536-sibling lowering ladder and
+16,384-sibling parser ladder; it is not the working set of any of the four focused depth probes.
+
+Compile-time memory is a separate result. A single-job `cargo test --no-run` for this monolithic
+generated-language binary completes in 2 minutes 54 seconds at a maximum RSS of **5,847,016
+KiB**, with zero swap, inside a 10 GiB high / 12 GiB hard cgroup envelope. A 4 GiB attempt became
+reclaim-bound and was stopped rather than allowed to thrash. This 5.58 GiB compile peak is the
+current generated-code-volume optimization baseline, not a runtime stack requirement.
 
 **Living disposition (2026-08-03).** `lower_formula`'s slope was not the formula compiler — that
 was already driven by `Job::Formula`/`Kont::Formula*` — but the syntactic static-falsity
@@ -711,7 +747,7 @@ stack-gated, and formally proved under the 4 GiB envelope. Full-language code ge
 therefore no longer part of this formula-PDA proof obligation; no higher-memory validation deferral
 remains.
 
-### 9.5 ★ The whole binary — and a superseded attribution
+### 9.5 ★ The historical whole-binary measurement — superseded attribution and closure
 
 `ulimit -s` bisection of `rholang` on a `nest-d.rho` ladder at `d` = 100 and 400,
 `RUST_MIN_STACK` pinned to 1 GiB so only the main thread binds:
@@ -721,8 +757,9 @@ remains.
 | release | 7,277 | **2,567** | **2.83×** |
 | debug | 15,132 *(§5, reproduced)* | **15,155** | **1.00×** |
 
-The release result is the expected one: the lowering was the binding main-thread traversal, and
-removing it leaves the residue of §9.4. `D_max` on the 8 MiB default rises from ~1,140 to ~3,260.
+The release result was the expected one on that tree: the lowering was the binding main-thread
+traversal, and removing it left the then-live residue of §9.4. `D_max` on the 8 MiB default rose
+from ~1,140 to ~3,260.
 
 ★ **The debug result is a finding, and it supersedes §5's attribution.** Minimum stack is a
 `max` over the deepest single path, not a sum over traversals — parsing, lowering, rendering and
@@ -732,11 +769,13 @@ build**; something else costs ~15,150 B/level there and always did. §5 recorded
 M-1 lowering", and that is now known to be a coincidence of magnitude rather than an attribution:
 the gate's debug lowering subjects read 0.
 
-The residues of §9.4 sum to ~5,700 B/level in debug, so ~9,400 B/level of the debug binary's
-main-thread cost is **still unattributed**. The likely candidate — f1r3node's normalizer /
-`substitute` / sort running on the main thread before the reduction is handed to tokio — is
-named as a candidate and deliberately **not** claimed: it has not been measured, and this
-document's standard is that an unmeasured mechanism is written down as a question.
+On that tree the rows then known in §9.4 summed to ~5,700 B/level in debug, leaving ~9,400
+B/level unattributed. That is no longer an open safety finding about the current tree. The later
+generated-artifact census found the collection-element escapes and previously unenumerated trait
+drivers, converted every production row, and attached a probe to each. The current exhaustive
+driver classifier admits no sloped production row, and the rebuilt integration closure probes in
+§9.4 are flat. The old whole-binary values remain as historical before/after data; they must not
+be quoted as the current binary's stack slope.
 
 ---
 
@@ -785,8 +824,8 @@ cargo test -p rholang-runtime --features "rholang-runtime lambda-runtime calcula
 | M-1 per-arm split | ✅ landed | debug 15,132 B/level (3.20×); release 7,266 (1.07×) — §5.1 |
 | M-2 explicit-stack driver | ✅ landed `3c0c3585` | lowering **0 B/level**, both profiles — §9.2 |
 | M-3/M-4 `collect_proc_alternatives`, ambiguity-nesting axis | ✅ | §8.3 — bounded by 2, no axis |
-| M-8 the residue (`par_drop`, `ast_drop`, `render`, static falsity) | ☐ outstanding | §9.4 — each has a gate subject and a number |
-| M-9 the debug binary's unattributed ~9,400 B/level | ☐ open question | §9.5 |
+| M-8 the residue (`par_drop`, generated traits, `ast_drop`, `render`, static falsity) | ✅ | §9.4 — all production rows converted and zero-slope gated |
+| M-9 the historical debug binary's unattributed ~9,400 B/level | ✅ superseded | exhaustive generated-driver census and closure gates; §9.5 |
 | M-5 gate | ✅ landed | tripwire + width axis green |
-| M-6 parser probe | ✅ | depth 1,408 B/level (asymptotic); width 0 B/sibling — §6 |
+| M-6 parser probe | ✅ | historical depth 1,408 B/level; current depth **0 B/step**; width 0 B/sibling — §6 |
 | M-7 run-sheet prefixes | ✅ landed | 13 demos green at the default stack |

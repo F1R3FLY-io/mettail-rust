@@ -62,13 +62,12 @@
 //! It compares a traversal against **itself**, so it is profile-independent by
 //! construction — it asserts a *shape*, never a byte count.
 //!
-//! ## ⚠ Why the tripwire's constants are per-profile
+//! ## No production slope ceilings remain
 //!
-//! Frame sizes differ several-fold between profiles because `rustc` does not
-//! overlay the stack slots of mutually exclusive `match` arms at `-O0`, and this
-//! crate additionally sets `codegen-backend = "cranelift"` for `[profile.dev]`.
-//! Only [`assert_slope_below`] takes ceilings, and it selects them per profile
-//! via `cfg!(debug_assertions)`.
+//! Earlier revisions retained per-profile ceilings for known recursive residues.
+//! Those rows are now converted: a production subject is accepted only by
+//! [`assert_no_slope`] over a wide ladder. Debug and release may have different
+//! fixed intercepts, but neither profile is allowed growth with input depth.
 //!
 //! ## ⚠ Probing has to FORK
 //!
@@ -83,12 +82,13 @@
 //! this binary is ~305 MB and a single bisection produces dozens of faults; a
 //! run that filled the disk would look like a gate failure and would not be one.
 //!
-//! ## ⚠ Teardown is a DIFFERENT traversal, and only ONE side of it needs help
+//! ## ⚠ Teardown is a DIFFERENT traversal
 //!
 //! Both the input and the output of a lowering are deeply nested trees, and a
 //! *recursive* `Drop` on either would make every reading `max(lowering, drop)` —
 //! keeping this gate red for a reason that has nothing to do with the lowering.
-//! The two sides are not in the same state, and the asymmetry is the finding:
+//! Both sides now use generated, explicit worklists, but they remain separate
+//! measurements so a teardown regression cannot be misattributed to lowering:
 //!
 //! * **`Proc` (the input) is already safe.** The `language!` macro generates a
 //!   hand-written *iterative* `Drop` for the whole AST family — a pooled
@@ -98,10 +98,11 @@
 //!   destructured by value at all — `E0509`, cannot move out of a type that
 //!   implements `Drop` — so a hand-rolled teardown here is not merely redundant,
 //!   it does not compile.)
-//! * **`Par` (the output) is not.** It is a `prost` message tree with a *derived*
-//!   recursive `Drop`, so subjects tear it down with
-//!   `models::rust::rholang::par_children::dismantle`, f1r3node's own iterative
-//!   teardown, written for exactly this reason.
+//! * **`Par` (the output) is now safe too.** f1r3node's schema generator emits
+//!   `Drop` and the other recursive trait implementations over one explicit PDA.
+//!   Lowering-only subjects still use
+//!   `models::rust::rholang::par_children::dismantle` to isolate the lowering,
+//!   while `par_drop` independently gates the generated destructor itself.
 //!
 //! ★ Worth stating because it frames Stage M: mettail's AST family had already
 //! been converted to heap-bounded traversals. The **lowering** — the bridge from
@@ -214,8 +215,8 @@ const PROBE_START: usize = 16 * 1024;
 /// floor at both ends, so its growth is bounded above by zero. Flat between two clamped
 /// points still establishes flatness. What the floor invalidates is (a) any absolute
 /// figure quoted as a measurement and (b) any derivation that *divides by* a floored
-/// value — which is why [`assert_slope_below`] and [`assert_no_slope_over_baseline`] refuse
-/// to compute rather than compute quietly.
+/// value — which is why [`assert_no_slope_over_baseline`] refuses to compute rather than
+/// compute quietly.
 ///
 /// ## What the achievable floor actually is, MEASURED — and the mechanism is NOT the one
 /// on record
@@ -546,49 +547,6 @@ fn assert_no_slope_over_baseline(name: &str, baseline: &str, lo_param: usize, hi
     );
 }
 
-/// **Tripwire for traversals not yet converted.** Bisects the minimum stack at
-/// two parameters, derives bytes-per-step, and fails if it exceeds `ceiling`.
-///
-/// This deliberately does NOT claim the traversal is fixed. It claims only that
-/// it has not got worse. Every caller documents why its subject is still here.
-///
-/// ⚠★ #187: this function DIVIDES a difference of two absolute readings, so it is the second
-/// derivation the instrument floor invalidates outright — a floored end would make the
-/// derived B/step a function of the bisection's floor rather than of the subject. Both
-/// readings go through [`min_stack_bytes`], which refuses rather than substituting.
-fn assert_slope_below(name: &str, ceiling_bytes_per_step: usize, lo: usize, hi_param: usize) {
-    let why = "the derived B/step (a DIVISION by the parameter span of a difference of two \
-               absolute readings)";
-    let s_lo = min_stack_bytes(name, lo, why);
-    let s_hi = min_stack_bytes(name, hi_param, why);
-    let per_step = s_hi.saturating_sub(s_lo) / (hi_param - lo);
-
-    assert!(
-        per_step <= ceiling_bytes_per_step,
-        "Θ(DEPTH) TRIPWIRE for `{}`: {} B/step exceeds the {} B/step ceiling \
-         ({} KiB @ {} -> {} KiB @ {}).\n\
-         Either a traversal regressed, or codegen changed materially.",
-        name,
-        per_step,
-        ceiling_bytes_per_step,
-        s_lo / 1024,
-        lo,
-        s_hi / 1024,
-        hi_param
-    );
-    println!("  {name}: {per_step} B/step (ceiling {ceiling_bytes_per_step})");
-}
-
-/// Per-profile ceiling. Debug frames are several times release because `-O0` does
-/// not overlay `match`-arm stack slots; see the module header.
-fn ceiling(debug: usize, release: usize) -> usize {
-    if cfg!(debug_assertions) {
-        debug
-    } else {
-        release
-    }
-}
-
 // ---------------------------------------------------------------------------
 // THE GATE
 // ---------------------------------------------------------------------------
@@ -648,7 +606,7 @@ fn lowering_is_depth_independent() {
     assert_no_slope_over_baseline("lower_new", "new_build", 512, 4096);
 }
 
-/// ★ **THE RESIDUE — every Θ(depth) traversal M-2 does NOT fix, with its number and its owner.**
+/// ★ **THE FORMER RESIDUE — retained as a historical attribution, now closed.**
 ///
 /// The whole `rholang` binary went from **7,277 to 2,567 B/level** on its main thread (release,
 /// bisected `ulimit -s` at depths 100 and 400, `RUST_MIN_STACK` pinned so only the main thread
@@ -658,18 +616,18 @@ fn lowering_is_depth_independent() {
 ///
 /// | subject | traversal | owner | debug | release |
 /// |---|---|---|---|---|
-/// | `par_drop` | `drop_in_place::<Par>` — `prost`'s DERIVED recursive `Drop` | `models` (f1r3node) | 368 | 95 |
+/// | ~~`par_drop`~~ | ~~`drop_in_place::<Par>` — `prost`'s derived recursive `Drop`~~ — **CONVERTED by f1r3node's generated trait PDA**, now **0** | `models` (f1r3node) | ~~368~~ → **0** | ~~95~~ → **0** |
 /// | ~~`ast_drop`~~ | ~~the `language!` iterative `Drop`~~ — **CONVERTED by #162**, now −1 / 0 | `macros/src/gen/` | ~~271~~ | ~~96~~ |
 /// | ~~`render`~~ | ~~recursive observation decode + format~~ — **CONVERTED by the observation PDA** | `runtime` / `rholang-runtime` | ~~3,674~~ → **0** | ~~911~~ → **0** |
 /// | ~~`lower_formula`~~ | ~~mutual `is_statically_false` ⇄ `is_statically_true` recursion~~ — **CONVERTED by the one-pass formula PDA** | `languages/src/` | ~~4,097~~ → **0** | ~~978~~ → **0** |
 ///
-/// ★ **Why the two `Drop`s are not this conversion's to fix, stated precisely.** A pushdown
-/// transform rewrites a traversal *whose text you own* into a worklist. `drop_in_place::<Par>` has
-/// no text: it is glue the compiler derives from the type, and the only ways to change it are to
-/// change the type or to intercept it at the call site. That is the **derived-impl class** — a
-/// different repair with a different shape (f1r3node's own `par_children::dismantle` is the
-/// call-site interception, and every subject above uses it, which is why `par_drop` is the only
-/// one still paying). `ast_drop` is the same class with a twist worth recording: the `language!`
+/// ★ **Why the two `Drop`s were a different repair class, stated precisely.** A pushdown
+/// transform rewrites a traversal *whose text you own* into a worklist. `drop_in_place::<Par>` had
+/// no hand-written text: it was compiler-derived glue. f1r3node therefore changed schema codegen
+/// to emit the recursive trait implementations, including `Drop`, over an explicit PDA. Its
+/// `par_children::dismantle` call-site interception remains useful for isolating other subjects,
+/// but `par_drop` now gates the production destructor directly. `ast_drop` was the same class
+/// with a twist worth recording: the `language!`
 /// macro DOES emit a pooled iterative `Drop`, and `lower_add` — a pure `Proc::Add(Arc<Proc>, …)`
 /// chain — is flat under it. But `nested_list` alternates `Proc::CastList(Arc<List>)` with
 /// `List::ListLit(Vec<Proc>)`, and somewhere across that alternation the worklist is abandoned.
@@ -740,20 +698,16 @@ fn lowering_is_depth_independent() {
 /// arbitrary-arity separation.
 ///
 /// **"The lowering is fixed" and "`rholang` is depth-independent" are different claims.** The
-/// observation and formula rows therefore received their own conversions before moving into
-/// constant-stack gates. A subject leaves this list by being converted, never by having its
-/// ceiling raised.
+/// observation, formula, parser, generated AST traits, and generated `Par` traits therefore
+/// received their own conversions before moving into constant-stack gates. A subject leaves
+/// this historical list only by being converted, never by having its ceiling raised.
 ///
-/// Ceilings are ~1.5× the measured values, per profile, as everywhere else in this file.
-///
-/// ⚠ **One `#[test]` per row, and that is a harness constraint rather than taste.** Each
-/// `assert_slope_below` bisects twice and each bisection is ~20 child processes at depth 4,096,
-/// so all four in one test ran ~500 s and `cargo nextest` terminated it at its 300 s per-test
-/// cap — a RED gate that measured nothing. Split, each test fits comfortably, and a failure
-/// names the one residue that regressed instead of the group.
+/// Rebuilt against f1r3node `26876b65` on 2026-08-03, `par_drop` requires the same minimum
+/// native stack at depths 512 and 4,096 (0 B/step). The wider 4 → 4,096 ladder below is the
+/// permanent regression condition.
 #[test]
-fn residue_par_drop_has_not_got_worse() {
-    assert_slope_below("par_drop", ceiling(600, 200), 512, 4096);
+fn par_drop_is_depth_independent() {
+    assert_depth_independent("par_drop", 1024 * 1024);
 }
 
 // ★★ `residue_ast_drop_has_not_got_worse` IS GONE, and that is how a subject is
@@ -821,59 +775,30 @@ fn residue_par_drop_has_not_got_worse() {
 // and #189 converted the drivers that were stacked on top of the hash; what is left is the
 // hash alone. A ratio against a control that now reads zero is not a number.
 //
-// ★ It is a RESIDUE and not a defect of this workspace: the repair is f1r3node's, in the
-// `models` crate, and it is CONSENSUS-ADJACENT (`SortedParMap` feeds the canonical sort that
-// `cost_accounting/sig.rs` signs). Recorded here with a ceiling, exactly like `par_drop`,
-// so it cannot get worse unnoticed while it waits for its owner.
+// ★ LIVING DISPOSITION (2026-08-03): f1r3node's schema codegen now emits `Hash`, `Eq`,
+// `Ord`, and the other recursive trait implementations over the same explicit PDA used for
+// `Drop`. Rebuilt against f1r3node `26876b65`, both `par_hash` and `par_hashmap` require the
+// same minimum native stack at depths 512 and 4,096: **0 B/step**. The historical attribution
+// above remains useful because it identifies what was converted; it no longer authorizes a
+// non-zero slope.
 // ---------------------------------------------------------------------------
 
-/// See [`residue_par_drop_has_not_got_worse`]. Ceilings ~1.5× the measured 625 / 113.
+/// Generated `Hash for Par` must use constant native stack across term depth.
 #[test]
-fn residue_par_hash_has_not_got_worse() {
-    assert_slope_below("par_hash", ceiling(950, 200), 512, 4096);
+fn par_hash_is_depth_independent() {
+    assert_depth_independent("par_hash", 1024 * 1024);
 }
 
-/// See [`residue_par_drop_has_not_got_worse`]. Ceilings ~1.5× the measured 636 / 113.
+/// The `HashMap<Par, Par>` collection path must remain constant-stack too.
 ///
-/// ⚠ Kept as a SECOND row rather than folded into [`residue_par_hash_has_not_got_worse`],
-/// because the pair is the attribution. `par_hash` runs `Hash for Par` and nothing else;
+/// Kept as a second row rather than folded into [`par_hash_is_depth_independent`] because the
+/// pair preserves the original attribution. `par_hash` runs `Hash for Par` and nothing else;
 /// `par_hashmap` runs the `HashMap<Par, Par>` collect that `SortedParMap::create_from_vec`
-/// performs, which is that hash PLUS `Eq for Par` on collision. Their agreement (625 vs 636
-/// debug, 113 vs 113 release) is what says the collect adds nothing of its own — and if they
-/// ever diverge, the `Eq` half has started to matter and the attribution needs revisiting.
+/// performs, which is that hash plus `Eq for Par` on collision. Requiring both to be flat catches
+/// a regression in either generated trait path without relying on their former byte ceilings.
 #[test]
-fn residue_par_hashmap_has_not_got_worse() {
-    assert_slope_below("par_hashmap", ceiling(960, 200), 512, 4096);
-}
-
-/// ★ **The NEGATIVE control for the two rows above, and it is not optional.**
-///
-/// `par_hash` differs from [`lowering_is_depth_independent`]'s `lower_depth` in exactly one
-/// respect: it hashes the `Par` that `lower_depth` merely builds and dismantles. If
-/// `lower_depth` were ever to acquire a slope of its own, the two ceilinged rows above would
-/// go on passing while their ATTRIBUTION quietly became false — the slope would no longer be
-/// the hash's.
-///
-/// So this asserts the subtraction rather than the two ends: the excess of `par_hash` over
-/// `lower_depth` must not grow. Measured debug 512 → 4,096: `par_hash` 339,968 → 2,580,480,
-/// `lower_depth` flat at ~73,728, so the excess IS the whole slope and it is the hash's.
-#[test]
-fn par_hash_excess_over_the_unhashed_pipeline_is_the_whole_slope() {
-    let why = "the #174 attribution (the excess of `par_hash` over the identical pipeline \
-               with the hash removed)";
-    let lower_lo = min_stack_bytes("lower_depth", 512, why);
-    let lower_hi = min_stack_bytes("lower_depth", 4096, why);
-    let lower_growth = lower_hi.saturating_sub(lower_lo);
-    assert!(
-        lower_growth <= ZERO_SLOPE_TOLERANCE,
-        "#174 ATTRIBUTION BROKEN: `lower_depth` — the build-lower-dismantle pipeline with the \
-         hash REMOVED — grew {} KiB between depth 512 and 4,096. `par_hash` and `par_hashmap` \
-         are ceilinged on the premise that their slope is `models`' `impl Hash for Par` and \
-         nothing else; that premise holds only while this control reads flat. Find what the \
-         lowering acquired before trusting either ceiling again.",
-        lower_growth / 1024
-    );
-    println!("  lower_depth (the unhashed control): {lower_growth} B of growth, 512 → 4,096");
+fn par_hashmap_is_depth_independent() {
+    assert_depth_independent("par_hashmap", 1024 * 1024);
 }
 
 /// Observation decoding, rendering, and their temporary-value teardown must use constant native
@@ -1369,13 +1294,10 @@ fn measured_shape(name: &str) -> Shape {
 ///    subject whose fixture stops parsing fails the deep probe and reads as "sloped" — a defect
 ///    reported as a confirmation.
 ///
-/// ⚠ **Why there is no `assert_slope_below` on the sloped rows, stated once so it is not
-/// re-litigated.** A ceiling records a defect as a budget: it passes forever at 10,591 B/level and
-/// says nothing about whether that number should exist. `ast_display` walks the identical shape at
-/// 0 B/level, so the achievable figure is known and it is zero. A subject leaves this set by being
-/// CONVERTED — by moving to [`flat_generated_drivers_are_depth_independent`] — never by having a
-/// ceiling raised. That is the same rule `residue_par_drop_has_not_got_worse` states for the
-/// lowering residue, and the prior agent declined to ceiling these deliberately.
+/// ⚠ **Why there is no slope ceiling on the sloped row, stated once so it is not
+/// re-litigated.** A ceiling records a defect as a budget and says nothing about whether that
+/// number should exist. Every production driver is flat. The sole sloped row is the deliberately
+/// recursive classifier control; it measures the instrument, not generated production code.
 ///
 /// ⚠ **This gate does not bisect**, and that is why it can afford to be exhaustive: two `exec`s
 /// per subject rather than ~40. See [`CLASSIFY_DEPTH`] for the calibration that makes a single
@@ -1962,10 +1884,10 @@ fn parsing_is_width_independent() {
 /// | 2,048 | 2,977,792 | 1,408 |
 /// | 4,096 | 5,861,376 | 1,408 |
 ///
-/// The asymptote is **1,408 B/level**, stable to the byte across the last three
-/// intervals. The parse path is therefore Θ(depth) after all — it was simply never
-/// the binding constraint, at 10.7× cheaper than the M-1 lowering (15,132) and 34×
-/// cheaper than the original (48,392).
+/// This historical build's asymptote was **1,408 B/level**, stable to the byte across the last
+/// three intervals. The parse path in that build was therefore Θ(depth), although it was never
+/// the binding constraint: 10.7× cheaper than the M-1 lowering (15,132) and 34× cheaper than
+/// the original (48,392).
 ///
 /// ★ **The methodological lesson, which generalises past this subject.** The module
 /// header warns that a large intercept with a small slope passes a FIXED-STACK
@@ -1973,16 +1895,18 @@ fn parsing_is_width_independent() {
 /// with a small slope also reads as *zero slope* on a ladder that never leaves the
 /// intercept-dominated regime. Both probe points of a slope measurement must sit
 /// clear of the subject's own floor, or the derived slope is understated — here, to
-/// zero. That is why the ceilings below are probed at 512 and 4,096 rather than at
+/// zero. That is why the permanent gate probes 4 and 4,096 rather than using only
 /// the 16 and 128 that produced the retracted claim.
 ///
-/// The shape of the growth (flat to ≈256, then linear) is reported as measured; the
-/// mechanism behind the knee is not established here and is deliberately not
-/// guessed at.
+/// **Living disposition (2026-08-03).** Rebuilt against f1r3node `26876b65`, the current
+/// production path requires the same minimum native stack at depths 512 and 4,096:
+/// **0 B/step**. The later generated semantic-hash and collection-element driver conversions
+/// removed the native-stack growth exercised while parsing and tearing down this fixture; the
+/// parser algorithm itself was not rewritten as part of this closure. The historical knee is
+/// retained above because it explains why a narrow ladder is not acceptable evidence.
 #[test]
-fn parser_theta_depth_tripwire() {
-    // ~1.5× the measured 1,408 B/level, per profile, as everywhere else in this file.
-    assert_slope_below("parse_depth", ceiling(2_200, 900), 512, 4096);
+fn parsing_is_depth_independent() {
+    assert_depth_independent("parse_depth", 1024 * 1024);
 }
 
 /// The reported reproducer, end-to-end (parse **and** lower), at a depth far past
@@ -1999,11 +1923,9 @@ fn reported_reproducer_survives_the_default_main_thread_stack() {
     // worker; see the ledger §2). Before M-2 this constant read 256, chosen to sit well inside
     // the M-1 ceiling of 542.
     //
-    // ⚠ It is 4,096 rather than something absurd because this subject still has the PARSER in
-    // its path, and the parser is Θ(depth) at ~1,240 B/level debug (`parse_depth`, and see
-    // `parser_theta_depth_tripwire`). Measured: 5,865,472 B at depth 4,096, comfortably inside
-    // 8 MiB; the next rung would not be. The lowering's own contribution is 0 — that is what
-    // `lower_depth` and `lower_leak` assert.
+    // The parser and lowering are now independently flat. Depth 4,096 remains a useful
+    // end-to-end witness because it is far beyond the original failure and exercises both
+    // machines without turning this smoke assertion into an unbounded resource test.
     assert!(
         runs_within(DEFAULT_MAIN_THREAD_STACK, 4096, "reproducer"),
         "REGRESSION: `@\"OUT\"!([[…[1]…]])` at depth 4,096 no longer survives parse+lower on \
@@ -2100,7 +2022,7 @@ fn the_instrument_floor_is_reported_and_no_subject_sits_on_it() {
              This is not automatically a defect — a cheaper build is good news — but every \
              absolute figure derived from it (the audit's §9 tables, the stack-safety report) \
              must be restated as `<= {} B` rather than as a number, and \
-             `assert_slope_below` / `assert_no_slope_over_baseline` will now refuse to derive \
+             `assert_no_slope_over_baseline` will now refuse to derive \
              from it. ★ The SLOPE conclusions are unaffected: flat between two floored points \
              still establishes flatness (see `assert_no_slope`).",
             SMALLEST_POSEABLE_STACK
@@ -2128,11 +2050,13 @@ fn report_slopes() {
         ("new_build", &[512, 4096]),
         ("lower_leak", &[4, 16, 64, 256, 1024, 4096]),
         ("lower_width", &[4, 256, 4096, 65536]),
-        ("parse_depth", &[4, 16, 64, 128]),
+        ("parse_depth", &[4, 512, 4096]),
         ("parse_width", &[4, 16, 64, 128]),
         ("reproducer", &[4, 16, 64, 128]),
-        // ★ THE RESIDUE — expected to have a slope; measured so it is a number.
-        ("par_drop", &[512, 4096]),
+        // ★ Former residues, retained in the reporter as zero-slope regression evidence.
+        ("par_drop", &[4, 512, 4096]),
+        ("par_hash", &[4, 512, 4096]),
+        ("par_hashmap", &[4, 512, 4096]),
         ("ast_drop", &[512, 4096]),
         ("render", &[512, 4096]),
     ];

@@ -34,18 +34,19 @@
 //! the shell harness of the audit's Appendix A. Exit status 0 means the subject survived;
 //! anything else (including the `SIGSEGV` of a guard-page hit) means it did not.
 //!
-//! # ⚠ Teardown is a DIFFERENT traversal, and only one side of it needs help
+//! # ⚠ Teardown is a DIFFERENT traversal
 //!
 //! * `Proc` (the input) is already safe: the `language!` macro gives the AST family a pooled,
 //!   *iterative* `Drop`. A plain `drop` is correct, and the fact that it is correct is part of
 //!   what the gate asserts — if that ever became derived glue, every depth subject would grow a
 //!   slope and the gate would go red without needing a new subject to notice.
-//! * `Par` (the output) is not: it is a `prost` message tree with a **derived recursive**
-//!   `Drop`, so every subject tears it down with f1r3node's own iterative
-//!   `par_children::dismantle`, written for exactly this reason.
+//! * `Par` (the output) is safe too: f1r3node's schema generator emits recursive trait
+//!   implementations, including `Drop`, over an explicit PDA. Most subjects still use
+//!   `par_children::dismantle` to isolate the traversal they intend to measure; `par_drop`
+//!   independently gates the production destructor.
 //!
-//! ★ That `Par::drop` is one of the two traversals the lowering conversion does NOT fix. See
-//! the gate's `THE_RESIDUE` note.
+//! ★ Keeping teardown as a separate subject is what prevents a regression there from being
+//! misattributed to lowering.
 
 use std::sync::Arc;
 
@@ -238,8 +239,9 @@ fn reproducer_body(depth: usize) {
     lower(term);
 }
 
-/// **M-6 — the PARSER's own constant.** It is not binding at the depths the lowering used to
-/// fault at, but "not binding" and "not present" are different claims.
+/// **M-6 — the parser path in isolation.** The historical path grew after its large fixed
+/// intercept; current generated semantic-hash and collection drivers make this fixture flat.
+/// It retains an independent wide-ladder gate so that state cannot regress silently.
 fn parse_depth_body(depth: usize) {
     let source = reproducer_source(depth);
     let term = Proc::parse_via_wpda(&source).expect("stack_depth_probe: reproducer did not parse");
@@ -260,13 +262,12 @@ fn parse_width_body(width: usize) {
     drop(term);
 }
 
-/// ★ THE RESIDUE, subject 1: the derived recursive `Drop` of a deep `Par`.
+/// The generated production `Drop` of a deep `Par`.
 ///
 /// Lower the term, then let the `Par` fall out of scope INSTEAD of dismantling it. Everything
 /// else is `lower_depth`, so the difference between the two ladders is the teardown and nothing
-/// else. This subject is expected to have a slope: it measures a traversal the lowering
-/// conversion does not touch, and it exists so that "not fixed" is a NUMBER rather than a
-/// footnote.
+/// else. The schema generator now implements this traversal with an explicit PDA; this subject
+/// proves its native-stack requirement remains independent of nesting depth.
 fn par_drop_body(depth: usize) {
     let term = nested_list(depth);
     let env = BoundEnv::new();
@@ -281,9 +282,8 @@ fn par_drop_body(depth: usize) {
 /// `observation::render_par_text` — which decodes the `Par` back to a
 /// `RuntimeObservationValue` and formats it. Same construction as [`lower_depth_body`]: lower,
 /// render, dismantle the `Par`, and forget the generated AST. Forgetting the input is
-/// deliberate: `nested_list`'s cross-category `Proc`/`List` teardown has its own measured
-/// slope (`ast_drop`), and including it here would make this subject measure the maximum of two
-/// unrelated traversals.
+/// deliberate: `nested_list`'s cross-category `Proc`/`List` teardown has its own probe
+/// (`ast_drop`), and including it here would make this subject measure two unrelated traversals.
 fn render_body(depth: usize) {
     let term = nested_list(depth);
     let env = BoundEnv::new();
@@ -295,19 +295,19 @@ fn render_body(depth: usize) {
     std::mem::forget(term);
 }
 
-/// ★ THE RESIDUE, subject 3: the AST's own teardown across a CROSS-TYPE hop.
+/// Historical AST teardown residue, retained as a flat regression subject.
 ///
 /// Build the deep `Proc` and drop it — no lowering at all, so the ladder is the teardown and the
 /// (iterative, flat) builder. Bisected debug at 16 and 4,096: **254 B/level**, against **0** for
-/// [`lower_leak_body`], which builds the identical term and forgets it. So the build is flat and
-/// the DROP is not.
+/// [`lower_leak_body`], which builds the identical term and forgets it. In that build the slope
+/// belonged to `Drop`, not the builder.
 ///
 /// The `language!` macro's pooled iterative `Drop` covers a pure `Proc` chain — `lower_add`
 /// (`Proc::Add(Arc<Proc>, Arc<Proc>)`) is flat — but `nested_list` alternates
 /// `Proc::CastList(Arc<List>)` with `List::ListLit(Vec<Proc>)`, and somewhere across that
 /// alternation the worklist is abandoned. That is a defect in the generated teardown, in
 /// `macros/src/gen/`, NOT in the lowering, and it is recorded here so it is a number rather than
-/// a suspicion.
+/// a suspicion. The collection-element driver conversion subsequently closed that escape.
 ///
 /// ★★ **CORRECTION (2026-07-29).** This note used to say the worklist *"does not follow the hop
 /// through `List`"* — i.e. that a driver abandons its work stack when an edge leaves its own
@@ -333,6 +333,8 @@ fn render_body(depth: usize) {
 /// ★ And `display.rs` proves flat is achievable on the identical shape — `:14827` pushes one
 /// `DisplayTask::DisplayProc` per element instead of delegating, and `ast_display` measures
 /// **0 B/level in both profiles**. It is the model the rewrite should copy, not a lucky case.
+/// The generated `Drop` now follows that model, and the permanent gate requires `ast_drop` to
+/// remain flat across the wide ladder.
 fn ast_drop_body(depth: usize) {
     let term = nested_list(depth);
     drop(term);
@@ -363,20 +365,20 @@ fn new_build_body(depth: usize) {
 }
 
 // ---------------------------------------------------------------------------
-// ★★ THE GENERATED TRAIT DRIVERS — nine `*_iterative` engines, eight of which had
-// NO subject here at all.
+// ★★ THE GENERATED TRAIT DRIVERS — historical census and current closure probes.
 //
 // `macros/src/gen/` emits nine work-stack drivers over the AST family:
 // `iterative_cmp` (PartialEq/Eq/PartialOrd/Ord), `iterative_hash` (Hash),
 // `iterative_drop` (Drop), `debug` (Debug), `display` (Display), plus the inherent
-// `semantic_hash`, `subst`, `normalize` and `match_pattern`. Only `Drop` was gated
-// (as `ast_drop`) — and it is the one that turned out NOT to be flat, at 254 B/level,
+// `semantic_hash`, `subst`, `normalize` and `match_pattern`. Initially only `Drop` was gated
+// (as `ast_drop`) — and it was the one that turned out NOT to be flat, at 254 B/level,
 // because `nested_list` alternates `Proc::CastList(Arc<List>)` with
 // `List::ListLit(Vec<Proc>)` and the worklist is abandoned somewhere in that alternation.
 //
 // ★★ ...and there is a TENTH, `term_depth`, which has no work stack at all. See
 // `ast_term_depth_body`. The count of nine was itself the kind of hand-maintained figure this
-// gate exists to distrust.
+// gate exists to distrust. The derived census and per-driver subjects below now cover the
+// generated family, and all production rows are required to be flat.
 //
 // ⚠ WHERE the worklist is abandoned was long recorded WRONGLY as "the cross-type hop". It is
 // the COLLECTION-ELEMENT boundary; see the correction on `ast_drop_body` for the generated
@@ -1711,7 +1713,7 @@ const SUBJECTS: &[(&str, fn(usize))] = &[
     ("build_twins", build_twins_body),
     ("build_twins_add", build_twins_add_body),
     ("new_build", new_build_body),
-    // -------- depth axis: NOT converted, measured anyway --------
+    // -------- independent closure probes for non-lowering production paths --------
     ("parse_depth", parse_depth_body),
     ("par_drop", par_drop_body),
     ("render", render_body),
