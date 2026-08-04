@@ -47,9 +47,12 @@ use mettail_rholang_codegen::{
     BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
 };
 use mettail_runtime::RuntimeObservationValue;
+use std::{collections::BTreeMap, convert::Infallible, fmt::Write as _};
+
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
 use models::rhoapi::Par;
+use models::rust::rholang::drive::{drive, Outcome, Step, Traversal};
 use models::rust::rholang::implicits::GPrivateBuilder;
 use prost::Message;
 use rspace_plus_plus::rspace::hashing::blake2b256_hash::Blake2b256Hash;
@@ -104,23 +107,6 @@ fn par_as_unforgeable_observation(par: &Par) -> Option<RuntimeObservationValue> 
     }
 }
 
-fn decode_runtime_values(pars: &[Par]) -> Option<Vec<RuntimeObservationValue>> {
-    pars.iter().map(par_as_runtime_observation_value).collect()
-}
-
-fn decode_runtime_map(
-    pairs: &[models::rhoapi::KeyValuePair],
-) -> Option<Vec<(RuntimeObservationValue, RuntimeObservationValue)>> {
-    let mut out = Vec::with_capacity(pairs.len());
-    for pair in pairs {
-        let key = par_as_runtime_observation_value(pair.key.as_ref()?)?;
-        let value = par_as_runtime_observation_value(pair.value.as_ref()?)?;
-        out.push((key, value));
-    }
-    out.sort();
-    Some(out)
-}
-
 fn list_body(par: &Par) -> Option<&models::rhoapi::EList> {
     match single_expr_instance(par)? {
         ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
@@ -130,9 +116,7 @@ fn list_body(par: &Par) -> Option<&models::rhoapi::EList> {
     }
 }
 
-fn decode_rholang_bag(
-    list: &models::rhoapi::EList,
-) -> Option<Vec<(RuntimeObservationValue, usize)>> {
+fn rholang_bag_plan(list: &models::rhoapi::EList) -> Option<(&models::rhoapi::EList, Vec<usize>)> {
     let [tag, entries] = list.ps.as_slice() else {
         return None;
     };
@@ -142,21 +126,19 @@ fn decode_rholang_bag(
     }
 
     let entries = list_body(entries)?;
-    let mut counts = std::collections::BTreeMap::<RuntimeObservationValue, usize>::new();
+    let mut counts = Vec::with_capacity(entries.ps.len());
     for entry in &entries.ps {
         let entry = list_body(entry)?;
-        let [value, count] = entry.ps.as_slice() else {
+        let [_value, count] = entry.ps.as_slice() else {
             return None;
         };
-        let value = par_as_runtime_observation_value(value)?;
-        let count = match par_as_runtime_observation_value(count)? {
-            RuntimeObservationValue::Int(count) if count >= 0 => usize::try_from(count).ok()?,
+        let count = match single_expr_instance(count)? {
+            ExprInstance::GInt(count) if *count >= 0 => usize::try_from(*count).ok()?,
             _ => return None,
         };
-        let slot = counts.entry(value).or_insert(0);
-        *slot = slot.checked_add(count)?;
+        counts.push(count);
     }
-    Some(counts.into_iter().collect())
+    Some((entries, counts))
 }
 
 /// Whether `par` is a NON-empty sends-only parallel composition — the AC bag-carrier soup shape
@@ -232,12 +214,11 @@ fn ac_soup_carrier_identity(chan: &Par) -> Option<&str> {
 /// such a soup — a tagged-`EList` term, a scalar, an unforgeable, a `for`-carrying process, or a
 /// mixed-operator soup — so this never mis-claims another observation shape (the `"ac:"` channel
 /// prefix + sends-only shape are disjoint from every other decoder's head).
-fn decode_ac_bag_soup(par: &Par) -> Option<Vec<(RuntimeObservationValue, usize)>> {
+fn ac_bag_soup_arity(par: &Par) -> Option<usize> {
     if !par_is_only_sends(par) {
         return None;
     }
     let mut carrier: Option<&str> = None;
-    let mut counts = std::collections::BTreeMap::<RuntimeObservationValue, usize>::new();
     for send in &par.sends {
         if send.persistent {
             return None;
@@ -250,14 +231,11 @@ fn decode_ac_bag_soup(par: &Par) -> Option<Vec<(RuntimeObservationValue, usize)>
             // INV-S6) two LANGUAGES. Fail closed rather than merge two bags.
             Some(_) => return None,
         }
-        let [datum] = send.data.as_slice() else {
+        let [_datum] = send.data.as_slice() else {
             return None;
         };
-        let value = par_as_runtime_observation_value(datum)?;
-        let slot = counts.entry(value).or_insert(0);
-        *slot = slot.checked_add(1)?;
     }
-    Some(counts.into_iter().collect())
+    Some(par.sends.len())
 }
 
 /// Recover the UTF-8 tag string carried by a private-name `Par`, when that name
@@ -306,7 +284,7 @@ fn private_name_tag(par: &Par) -> Option<String> {
 /// error. The split now goes through the single shared inverse
 /// [`mettail_rholang_codegen::parse_reflected_tag`], whose correctness rests on
 /// the one invariant the writer asserts: the fingerprint is dot-free.
-fn decode_reflected_term(list: &models::rhoapi::EList) -> Option<RuntimeObservationValue> {
+fn reflected_term_plan(list: &models::rhoapi::EList) -> Option<(String, &[Par])> {
     let (head, children) = list.ps.split_first()?;
     let tag = private_name_tag(head)?;
     let (fingerprint, label) = mettail_rholang_codegen::parse_reflected_tag(&tag)?;
@@ -320,11 +298,295 @@ fn decode_reflected_term(list: &models::rhoapi::EList) -> Option<RuntimeObservat
         },
         _ => children,
     };
-    let children = children
-        .iter()
-        .map(par_as_runtime_observation_value)
-        .collect::<Option<Vec<_>>>()?;
-    Some(RuntimeObservationValue::Term { constructor: label.to_string(), children })
+    Some((label.to_string(), children))
+}
+
+#[derive(Clone, Copy)]
+enum DecodeNode<'a> {
+    Par(&'a Par),
+    /// Retry a recognized tagged list as an ordinary list after one of the
+    /// tag-specific children proves undecodable. This is the recursive
+    /// decoder's exact fall-through behavior, represented as a tail step.
+    PlainList(&'a models::rhoapi::EList),
+}
+
+enum DecodeKont<'a> {
+    List(usize),
+    Tuple(usize),
+    Set(usize),
+    Map(usize),
+    BagSoup(usize),
+    RholangBag {
+        fallback: &'a models::rhoapi::EList,
+        counts: Vec<usize>,
+    },
+    ReflectedTerm {
+        fallback: &'a models::rhoapi::EList,
+        constructor: String,
+        children: usize,
+    },
+}
+
+struct DecodeTraversal;
+
+fn push_children<'a>(
+    children: &'a [Par],
+    kont: DecodeKont<'a>,
+    work: &mut Vec<Step<'a, DecodeTraversal>>,
+) {
+    work.push(Step::Combine(kont));
+    work.extend(
+        children
+            .iter()
+            .rev()
+            .map(|child| Step::Descend(DecodeNode::Par(child))),
+    );
+}
+
+/// Consume `count` child results without ever recursively dropping a partially
+/// decoded tree on the failure path.
+fn take_decoded(
+    vals: &mut Vec<Option<RuntimeObservationValue>>,
+    count: usize,
+) -> Option<Vec<RuntimeObservationValue>> {
+    let children = vals.split_off(vals.len() - count);
+    let mut decoded = Vec::with_capacity(count);
+    let mut failed = false;
+    for child in children {
+        match child {
+            Some(value) if !failed => decoded.push(value),
+            Some(value) => dismantle_runtime_observation_value(value),
+            None => failed = true,
+        }
+    }
+    if failed {
+        dismantle_runtime_observation_values(decoded);
+        None
+    } else {
+        Some(decoded)
+    }
+}
+
+fn dismantle_map(map: BTreeMap<RuntimeObservationValue, usize>) {
+    for (value, _) in map {
+        dismantle_runtime_observation_value(value);
+    }
+}
+
+impl Traversal for DecodeTraversal {
+    type Node<'t> = DecodeNode<'t>;
+    type Val = Option<RuntimeObservationValue>;
+    type Kont<'t> = DecodeKont<'t>;
+    type State = ();
+    type Err = Infallible;
+
+    // A recognized tagged list may tail exactly once to its plain-list image.
+    const MAX_TAILS_PER_DESCENT: usize = 1;
+
+    fn descend<'t>(
+        &mut self,
+        _state: &mut Self::State,
+        node: Self::Node<'t>,
+        work: &mut Vec<Step<'t, Self>>,
+        vals: &mut Vec<Self::Val>,
+    ) -> Result<(), Self::Err> {
+        let par = match node {
+            DecodeNode::Par(par) => par,
+            DecodeNode::PlainList(list) => {
+                push_children(&list.ps, DecodeKont::List(list.ps.len()), work);
+                return Ok(());
+            },
+        };
+
+        if let Some(value) = par_as_unforgeable_observation(par) {
+            vals.push(Some(value));
+            return Ok(());
+        }
+
+        if let Some(arity) = ac_bag_soup_arity(par) {
+            work.push(Step::Combine(DecodeKont::BagSoup(arity)));
+            for send in par.sends.iter().rev() {
+                // `ac_bag_soup_arity` validated one datum on every send.
+                work.push(Step::Descend(DecodeNode::Par(&send.data[0])));
+            }
+            return Ok(());
+        }
+
+        if par_is_empty_nil(par) {
+            vals.push(Some(RuntimeObservationValue::Bag(Vec::new())));
+            return Ok(());
+        }
+
+        let value = match single_expr_instance(par) {
+            Some(ExprInstance::GBool(value)) => Some(RuntimeObservationValue::Bool(*value)),
+            Some(ExprInstance::GInt(value)) => Some(RuntimeObservationValue::Int(*value)),
+            Some(ExprInstance::GString(value)) => {
+                Some(RuntimeObservationValue::Text(value.clone()))
+            },
+            Some(ExprInstance::GUri(value)) => Some(RuntimeObservationValue::Uri(value.clone())),
+            Some(ExprInstance::GByteArray(value)) => {
+                Some(RuntimeObservationValue::Bytes(value.clone()))
+            },
+            Some(ExprInstance::GDouble(value)) => Some(RuntimeObservationValue::DoubleBits(*value)),
+            Some(ExprInstance::GBigInt(value)) => {
+                Some(RuntimeObservationValue::BigIntBytes(value.clone()))
+            },
+            Some(ExprInstance::GBigRat(value)) => Some(RuntimeObservationValue::BigRationalBytes {
+                numerator: value.numerator.clone(),
+                denominator: value.denominator.clone(),
+            }),
+            Some(ExprInstance::GFixedPoint(value)) => {
+                Some(RuntimeObservationValue::FixedPointBytes {
+                    unscaled: value.unscaled.clone(),
+                    scale: value.scale,
+                })
+            },
+            Some(ExprInstance::EListBody(list))
+                if list.remainder.is_none() && !list.connective_used =>
+            {
+                if let Some((constructor, children)) = reflected_term_plan(list) {
+                    push_children(
+                        children,
+                        DecodeKont::ReflectedTerm {
+                            fallback: list,
+                            constructor,
+                            children: children.len(),
+                        },
+                        work,
+                    );
+                } else if let Some((entries, counts)) = rholang_bag_plan(list) {
+                    work.push(Step::Combine(DecodeKont::RholangBag { fallback: list, counts }));
+                    for entry in entries.ps.iter().rev() {
+                        // `rholang_bag_plan` validated this exact shape.
+                        let value = &list_body(entry).expect("validated bag entry").ps[0];
+                        work.push(Step::Descend(DecodeNode::Par(value)));
+                    }
+                } else {
+                    push_children(&list.ps, DecodeKont::List(list.ps.len()), work);
+                }
+                return Ok(());
+            },
+            Some(ExprInstance::ETupleBody(tuple)) if !tuple.connective_used => {
+                push_children(&tuple.ps, DecodeKont::Tuple(tuple.ps.len()), work);
+                return Ok(());
+            },
+            Some(ExprInstance::ESetBody(set))
+                if set.remainder.is_none() && !set.connective_used =>
+            {
+                push_children(&set.ps, DecodeKont::Set(set.ps.len()), work);
+                return Ok(());
+            },
+            Some(ExprInstance::EMapBody(map))
+                if map.remainder.is_none() && !map.connective_used =>
+            {
+                if !map
+                    .kvs
+                    .iter()
+                    .all(|pair| pair.key.is_some() && pair.value.is_some())
+                {
+                    vals.push(None);
+                    return Ok(());
+                }
+                work.push(Step::Combine(DecodeKont::Map(map.kvs.len())));
+                for pair in map.kvs.iter().rev() {
+                    // The complete structural pass above validated both fields before any child
+                    // was scheduled, preserving the recursive decoder's fail-closed behavior.
+                    let key = pair.key.as_ref().expect("validated map key");
+                    let value = pair.value.as_ref().expect("validated map value");
+                    work.push(Step::Descend(DecodeNode::Par(value)));
+                    work.push(Step::Descend(DecodeNode::Par(key)));
+                }
+                return Ok(());
+            },
+            _ => None,
+        };
+        vals.push(value);
+        Ok(())
+    }
+
+    fn combine<'t>(
+        &mut self,
+        _state: &mut Self::State,
+        kont: Self::Kont<'t>,
+        vals: &mut Vec<Self::Val>,
+    ) -> Result<Outcome<Self::Val, Self::Node<'t>>, Self::Err> {
+        let outcome = match kont {
+            DecodeKont::List(count) => {
+                Outcome::Value(take_decoded(vals, count).map(RuntimeObservationValue::List))
+            },
+            DecodeKont::Tuple(count) => {
+                Outcome::Value(take_decoded(vals, count).map(RuntimeObservationValue::Tuple))
+            },
+            DecodeKont::Set(count) => {
+                Outcome::Value(take_decoded(vals, count).map(|mut values| {
+                    values.sort();
+                    RuntimeObservationValue::Set(values)
+                }))
+            },
+            DecodeKont::Map(count) => {
+                let decoded = take_decoded(vals, count * 2);
+                Outcome::Value(decoded.map(|values| {
+                    let mut values = values.into_iter();
+                    let mut entries = Vec::with_capacity(count);
+                    while let Some(key) = values.next() {
+                        let value = values.next().expect("map arity is even");
+                        entries.push((key, value));
+                    }
+                    entries.sort();
+                    RuntimeObservationValue::Map(entries)
+                }))
+            },
+            DecodeKont::BagSoup(count) => {
+                let decoded = take_decoded(vals, count);
+                Outcome::Value(decoded.and_then(|values| {
+                    let mut counts = BTreeMap::<RuntimeObservationValue, usize>::new();
+                    for value in values {
+                        let slot = counts.entry(value).or_insert(0);
+                        let Some(next) = slot.checked_add(1) else {
+                            dismantle_map(counts);
+                            return None;
+                        };
+                        *slot = next;
+                    }
+                    Some(RuntimeObservationValue::Bag(counts.into_iter().collect()))
+                }))
+            },
+            DecodeKont::RholangBag { fallback, counts: multiplicities } => {
+                let Some(values) = take_decoded(vals, multiplicities.len()) else {
+                    return Ok(Outcome::Tail(DecodeNode::PlainList(fallback)));
+                };
+                let mut counts = BTreeMap::<RuntimeObservationValue, usize>::new();
+                for (value, count) in values.into_iter().zip(multiplicities) {
+                    let slot = counts.entry(value).or_insert(0);
+                    let Some(next) = slot.checked_add(count) else {
+                        dismantle_map(counts);
+                        return Ok(Outcome::Tail(DecodeNode::PlainList(fallback)));
+                    };
+                    *slot = next;
+                }
+                Outcome::Value(Some(RuntimeObservationValue::Bag(counts.into_iter().collect())))
+            },
+            DecodeKont::ReflectedTerm { fallback, constructor, children } => {
+                let Some(children) = take_decoded(vals, children) else {
+                    return Ok(Outcome::Tail(DecodeNode::PlainList(fallback)));
+                };
+                Outcome::Value(Some(RuntimeObservationValue::Term { constructor, children }))
+            },
+        };
+        Ok(outcome)
+    }
+
+    fn arity(kont: &Self::Kont<'_>) -> usize {
+        match kont {
+            DecodeKont::List(count)
+            | DecodeKont::Tuple(count)
+            | DecodeKont::Set(count)
+            | DecodeKont::BagSoup(count) => *count,
+            DecodeKont::Map(count) => count * 2,
+            DecodeKont::RholangBag { counts, .. } => counts.len(),
+            DecodeKont::ReflectedTerm { children, .. } => *children,
+        }
+    }
 }
 
 /// Pull one closed Rho ground value out of a `Par`.
@@ -333,69 +595,9 @@ fn decode_reflected_term(list: &models::rhoapi::EList) -> Option<RuntimeObservat
 /// public resting data values: scalars, unforgeable names, closed collection
 /// bodies, and rholang's tagged bag ABI.
 pub fn par_as_runtime_observation_value(par: &Par) -> Option<RuntimeObservationValue> {
-    if let Some(value) = par_as_unforgeable_observation(par) {
-        return Some(value);
-    }
-
-    // Stage AC2b: a bag-VALUED AC RHS lands on OUT as the bare process-soup carrier
-    // (`@"ac:{op}"!(⟦e⟧) | …`) — the SAME shape a `HashBag` reflects to — not an `EList`. Decode
-    // it to a multiset `Bag`. The `"ac:"` channel + sends-only shape are disjoint from every
-    // `single_expr_instance` head below, so this claims only the AC carrier.
-    if let Some(entries) = decode_ac_bag_soup(par) {
-        return Some(RuntimeObservationValue::Bag(entries));
-    }
-
-    // A-S5.5 (AM-3): the EMPTY bag reflects as `Par::default()` (Nil) — the zero-send
-    // degenerate of the process-soup carrier above (`decode_ac_bag_soup` requires ≥ 1
-    // send, so Nil falls through to here). It decodes as the empty multiset `Bag`, which
-    // is how a driven `op{}` — e.g. the redeclared Ambient `OutRule`'s singleton firing
-    // `m[{n[{out(m,p)}]}] ⇒ {n[{p}], m[{}]}` — observes: `m[{}]`'s second child is Nil.
-    // No other reflected value is the empty `Par`, so the claim is unambiguous.
-    if par_is_empty_nil(par) {
-        return Some(RuntimeObservationValue::Bag(Vec::new()));
-    }
-
-    match single_expr_instance(par)? {
-        ExprInstance::GBool(value) => Some(RuntimeObservationValue::Bool(*value)),
-        ExprInstance::GInt(value) => Some(RuntimeObservationValue::Int(*value)),
-        ExprInstance::GString(value) => Some(RuntimeObservationValue::Text(value.clone())),
-        ExprInstance::GUri(value) => Some(RuntimeObservationValue::Uri(value.clone())),
-        ExprInstance::GByteArray(value) => Some(RuntimeObservationValue::Bytes(value.clone())),
-        ExprInstance::GDouble(value) => Some(RuntimeObservationValue::DoubleBits(*value)),
-        ExprInstance::GBigInt(value) => Some(RuntimeObservationValue::BigIntBytes(value.clone())),
-        ExprInstance::GBigRat(value) => Some(RuntimeObservationValue::BigRationalBytes {
-            numerator: value.numerator.clone(),
-            denominator: value.denominator.clone(),
-        }),
-        ExprInstance::GFixedPoint(value) => Some(RuntimeObservationValue::FixedPointBytes {
-            unscaled: value.unscaled.clone(),
-            scale: value.scale,
-        }),
-        ExprInstance::EListBody(list) if list.remainder.is_none() && !list.connective_used => {
-            // Try the reflected-term ABI first (head = a `mettail.term.` private
-            // name), then the rholang bag ABI (head = the bag tag), else a plain
-            // list. The three head shapes are disjoint, so ordering only decides
-            // which decoder claims a match, never correctness.
-            if let Some(term) = decode_reflected_term(list) {
-                Some(term)
-            } else if let Some(entries) = decode_rholang_bag(list) {
-                Some(RuntimeObservationValue::Bag(entries))
-            } else {
-                Some(RuntimeObservationValue::List(decode_runtime_values(&list.ps)?))
-            }
-        },
-        ExprInstance::ETupleBody(tuple) if !tuple.connective_used => {
-            Some(RuntimeObservationValue::Tuple(decode_runtime_values(&tuple.ps)?))
-        },
-        ExprInstance::ESetBody(set) if set.remainder.is_none() && !set.connective_used => {
-            let mut values = decode_runtime_values(&set.ps)?;
-            values.sort();
-            Some(RuntimeObservationValue::Set(values))
-        },
-        ExprInstance::EMapBody(map) if map.remainder.is_none() && !map.connective_used => {
-            Some(RuntimeObservationValue::Map(decode_runtime_map(&map.kvs)?))
-        },
-        _ => None,
+    match drive(&mut DecodeTraversal, &mut (), Step::Descend(DecodeNode::Par(par))) {
+        Ok(value) => value,
+        Err(never) => match never {},
     }
 }
 
@@ -415,22 +617,216 @@ pub const RENDER_BUDGET_CHARS: usize = 512;
 /// Hex, lowercase, no separators — the spelling [`crate::speculation`]'s digests already use.
 fn hex(bytes: &[u8]) -> String {
     let mut rendered = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        rendered.push_str(&format!("{byte:02x}"));
-    }
+    write_hex(&mut rendered, bytes);
     rendered
 }
 
 /// The de-Bruijn index a reflected Peano numeral carries (`^Z ⟼ 0`, `^S(n) ⟼ n + 1`).
 fn peano_index(value: &RuntimeObservationValue) -> usize {
-    match value {
-        RuntimeObservationValue::Term { constructor, children }
-            if constructor == PEANO_SUCC_REFLECT_LABEL =>
-        {
-            children.first().map(peano_index).unwrap_or(0) + 1
-        },
-        _ => 0,
+    let mut value = value;
+    let mut index = 0usize;
+    while let RuntimeObservationValue::Term { constructor, children } = value {
+        if constructor != PEANO_SUCC_REFLECT_LABEL {
+            break;
+        }
+        let Some(child) = children.first() else {
+            break;
+        };
+        index = index.checked_add(1).expect("Peano numeral exceeds usize");
+        value = child;
     }
+    index
+}
+
+enum RenderTask<'a> {
+    Value(&'a RuntimeObservationValue),
+    Text(&'static str),
+    Count(usize),
+}
+
+fn push_sequence<'a>(
+    work: &mut Vec<RenderTask<'a>>,
+    values: &'a [RuntimeObservationValue],
+    close: &'static str,
+) {
+    work.push(RenderTask::Text(close));
+    for (index, value) in values.iter().enumerate().rev() {
+        work.push(RenderTask::Value(value));
+        if index > 0 {
+            work.push(RenderTask::Text(", "));
+        }
+    }
+}
+
+fn write_hex(rendered: &mut String, bytes: &[u8]) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    rendered.reserve(bytes.len() * 2);
+    for byte in bytes {
+        rendered.push(HEX[(byte >> 4) as usize] as char);
+        rendered.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+}
+
+/// Release an owned observation tree without invoking the enum's recursive,
+/// derived destructor on a nested child. This is the by-move companion to the
+/// borrowing decoder and renderer PDAs.
+fn dismantle_runtime_observation_value(root: RuntimeObservationValue) {
+    let mut work = vec![root];
+    while let Some(value) = work.pop() {
+        match value {
+            RuntimeObservationValue::List(children)
+            | RuntimeObservationValue::Tuple(children)
+            | RuntimeObservationValue::Set(children)
+            | RuntimeObservationValue::Term { children, .. } => work.extend(children),
+            RuntimeObservationValue::Map(entries) => {
+                for (key, value) in entries {
+                    work.push(key);
+                    work.push(value);
+                }
+            },
+            RuntimeObservationValue::Bag(entries) => {
+                work.extend(entries.into_iter().map(|(value, _)| value));
+            },
+            _ => {},
+        }
+    }
+}
+
+fn dismantle_runtime_observation_values(values: Vec<RuntimeObservationValue>) {
+    for value in values {
+        dismantle_runtime_observation_value(value);
+    }
+}
+
+fn render_observation_text_iterative(value: &RuntimeObservationValue) -> String {
+    let mut rendered = String::new();
+    let mut work = vec![RenderTask::Value(value)];
+    while let Some(task) = work.pop() {
+        match task {
+            RenderTask::Text(text) => rendered.push_str(text),
+            RenderTask::Count(count) => {
+                write!(rendered, "{count}").expect("String writes cannot fail")
+            },
+            RenderTask::Value(value) => match value {
+                RuntimeObservationValue::Int(value) => {
+                    write!(rendered, "{value}").expect("String writes cannot fail")
+                },
+                RuntimeObservationValue::Bool(value) => {
+                    write!(rendered, "{value}").expect("String writes cannot fail")
+                },
+                RuntimeObservationValue::Text(value) => {
+                    write!(rendered, "{value:?}").expect("String writes cannot fail")
+                },
+                RuntimeObservationValue::TermDisplay(value) => rendered.push_str(value),
+                RuntimeObservationValue::Bytes(value) => {
+                    rendered.push_str("0x");
+                    write_hex(&mut rendered, value);
+                },
+                RuntimeObservationValue::Uri(value) => {
+                    write!(rendered, "Uri({value:?})").expect("String writes cannot fail")
+                },
+                RuntimeObservationValue::DoubleBits(value) => {
+                    write!(rendered, "DoubleBits(0x{value:016x})")
+                        .expect("String writes cannot fail")
+                },
+                RuntimeObservationValue::BigIntBytes(value) => {
+                    rendered.push_str("BigInt(0x");
+                    write_hex(&mut rendered, value);
+                    rendered.push(')');
+                },
+                RuntimeObservationValue::BigRationalBytes { numerator, denominator } => {
+                    rendered.push_str("BigRat(0x");
+                    write_hex(&mut rendered, numerator);
+                    rendered.push_str("/0x");
+                    write_hex(&mut rendered, denominator);
+                    rendered.push(')');
+                },
+                RuntimeObservationValue::FixedPointBytes { unscaled, scale } => {
+                    rendered.push_str("FixedPoint(0x");
+                    write_hex(&mut rendered, unscaled);
+                    write!(rendered, " scale {scale})").expect("String writes cannot fail");
+                },
+                RuntimeObservationValue::PrivateName(value) => {
+                    rendered.push_str("Private(0x");
+                    write_hex(&mut rendered, value);
+                    rendered.push(')');
+                },
+                RuntimeObservationValue::DeployId(value) => {
+                    rendered.push_str("DeployId(0x");
+                    write_hex(&mut rendered, value);
+                    rendered.push(')');
+                },
+                RuntimeObservationValue::DeployerId(value) => {
+                    rendered.push_str("DeployerId(0x");
+                    write_hex(&mut rendered, value);
+                    rendered.push(')');
+                },
+                RuntimeObservationValue::SysAuthToken => rendered.push_str("SysAuthToken"),
+                RuntimeObservationValue::List(values) => {
+                    rendered.push('[');
+                    push_sequence(&mut work, values, "]");
+                },
+                RuntimeObservationValue::Tuple(values) => {
+                    rendered.push('(');
+                    push_sequence(&mut work, values, ")");
+                },
+                RuntimeObservationValue::Set(values) => {
+                    rendered.push_str("Set{");
+                    push_sequence(&mut work, values, "}");
+                },
+                RuntimeObservationValue::Map(entries) => {
+                    rendered.push('{');
+                    work.push(RenderTask::Text("}"));
+                    for (index, (key, value)) in entries.iter().enumerate().rev() {
+                        work.push(RenderTask::Value(value));
+                        work.push(RenderTask::Text(": "));
+                        work.push(RenderTask::Value(key));
+                        if index > 0 {
+                            work.push(RenderTask::Text(", "));
+                        }
+                    }
+                },
+                RuntimeObservationValue::Bag(entries) => {
+                    rendered.push_str("Bag{");
+                    work.push(RenderTask::Text("}"));
+                    for (index, (value, count)) in entries.iter().enumerate().rev() {
+                        work.push(RenderTask::Count(*count));
+                        work.push(RenderTask::Text(" * "));
+                        work.push(RenderTask::Value(value));
+                        if index > 0 {
+                            work.push(RenderTask::Text(", "));
+                        }
+                    }
+                },
+                RuntimeObservationValue::Term { constructor, children } => {
+                    match (constructor.as_str(), children.as_slice()) {
+                        (LAMBDA_REFLECT_LABEL, [body]) => {
+                            rendered.push_str("λ.");
+                            work.push(RenderTask::Value(body));
+                        },
+                        (BOUND_VAR_REFLECT_LABEL, [index]) => {
+                            write!(rendered, "{}", peano_index(index))
+                                .expect("String writes cannot fail");
+                        },
+                        (FREE_VAR_REFLECT_LABEL, [name]) => {
+                            work.push(RenderTask::Value(name));
+                        },
+                        _ => {
+                            rendered.push_str(constructor);
+                            if !children.is_empty() {
+                                rendered.push('(');
+                                push_sequence(&mut work, children, ")");
+                            }
+                        },
+                    }
+                },
+                // Forward-compatible fallback for future non-recursive variants
+                // of this non-exhaustive enum.
+                _ => write!(rendered, "{value}").expect("String writes cannot fail"),
+            },
+        }
+    }
+    rendered
 }
 
 /// Render a decoded observation in the **machine's neutral notation**.
@@ -438,7 +834,7 @@ fn peano_index(value: &RuntimeObservationValue) -> usize {
 /// This is the entry point every datum-producing path uses. See the module header for why it
 /// takes no presentation hook.
 pub fn render_observation_text(value: &RuntimeObservationValue) -> String {
-    render_observation_text_with(value, &render_observation_text)
+    render_observation_text_iterative(value)
 }
 
 /// [`render_observation_text`], with children routed through `child` so a **presentation**
@@ -499,6 +895,7 @@ pub fn render_par_text(par: &Par) -> String {
         );
     };
     let rendered = render_observation_text(&value);
+    dismantle_runtime_observation_value(value);
     let count = rendered.chars().count();
     if count <= RENDER_BUDGET_CHARS {
         return format!("⟦{rendered}⟧");

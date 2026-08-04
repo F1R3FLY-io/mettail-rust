@@ -12,9 +12,8 @@ use std::sync::Arc;
 use crate::guard_par_substrate::{GuardRefusalLedger, SubstrateGuardMatcher};
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use mettail_rholang_codegen::ValidatedRhoProgram;
-// Every remaining use in this module is inside a `runtime-report` item; the DECODER that used
-// it unconditionally now lives in `crate::observation`.
-#[cfg(feature = "runtime-report")]
+// The decoder and the refusal-reporting helper are unconditional: both are used by the minimal
+// runtime surface as well as by `runtime-report` adapters.
 use mettail_runtime::RuntimeObservationValue;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{BindPattern, Expr, ListParWithRandom, Par, TaggedContinuation};
