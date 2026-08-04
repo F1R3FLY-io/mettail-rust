@@ -40,7 +40,7 @@
 //! `Term` fall-through is untouched, so a shape M-2 does not recognize keeps
 //! reading as a plain pattern rather than silently becoming a modality.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use super::{Bool, Proc};
 
@@ -131,21 +131,7 @@ pub fn classify(formula: &Proc) -> FormulaShape<'_> {
 /// Every arm is an implication in the safe direction, so the judgement can only
 /// ever be *incomplete*, never *unsound*.
 pub fn is_statically_false(formula: &Proc) -> bool {
-    match classify(formula) {
-        FormulaShape::Falsum => true,
-        FormulaShape::Conjunction(left, right) => {
-            is_statically_false(left) || is_statically_false(right)
-        },
-        FormulaShape::Disjunction(left, right) => {
-            is_statically_false(left) && is_statically_false(right)
-        },
-        FormulaShape::Negation(inner) => is_statically_true(inner),
-        FormulaShape::Implication(antecedent, consequent) => {
-            is_statically_true(antecedent) && is_statically_false(consequent)
-        },
-        FormulaShape::Separation(parts) => parts.into_iter().any(is_statically_false),
-        FormulaShape::Verum | FormulaShape::Term => false,
-    }
+    analyze_formula(formula, None).static_facts.is_false
 }
 
 /// Is `formula` VALID by construction — is `t matches φ` true for EVERY `t`?
@@ -161,20 +147,207 @@ pub fn is_statically_false(formula: &Proc) -> bool {
 /// a matcher detail this crate does not own. Declining costs nothing; guessing
 /// could unsoundly fold a guard.
 pub fn is_statically_true(formula: &Proc) -> bool {
-    match classify(formula) {
-        FormulaShape::Verum => true,
-        FormulaShape::Conjunction(left, right) => {
-            is_statically_true(left) && is_statically_true(right)
-        },
-        FormulaShape::Disjunction(left, right) => {
-            is_statically_true(left) || is_statically_true(right)
-        },
-        FormulaShape::Negation(inner) => is_statically_false(inner),
-        FormulaShape::Implication(antecedent, consequent) => {
-            is_statically_false(antecedent) || is_statically_true(consequent)
-        },
-        FormulaShape::Falsum | FormulaShape::Separation(_) | FormulaShape::Term => false,
+    analyze_formula(formula, None).static_facts.is_true
+}
+
+/// The two conservative, syntactic truth judgements for one formula.
+///
+/// Computing the pair together is not only stack-safe; it also avoids the old mutual recursion's
+/// repeated walk of the same subtree at every `not` and `implies` boundary. The pointer-keyed
+/// table is an analysis cache, not semantic identity: keys are used only while the borrowed AST
+/// is alive, and the returned verdict depends solely on constructor shape and child verdicts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct StaticFacts {
+    is_false: bool,
+    is_true: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FormulaFacts {
+    static_facts: StaticFacts,
+    host_verdict: Option<bool>,
+}
+
+#[derive(Clone, Copy)]
+enum StaticBuild {
+    Conjunction,
+    Disjunction,
+    Negation,
+    Implication,
+    Separation(usize),
+}
+
+impl StaticBuild {
+    fn arity(self) -> usize {
+        match self {
+            Self::Negation => 1,
+            Self::Conjunction | Self::Disjunction | Self::Implication => 2,
+            Self::Separation(arity) => arity,
+        }
     }
+}
+
+enum StaticWork<'formula> {
+    Visit(&'formula Proc),
+    Build { key: *const Proc, op: StaticBuild },
+}
+
+/// Analyze static truth and, when `target` is supplied, the host verdict in one post-order PDA.
+///
+/// Invariant: every `Visit` or `Build` produces exactly one [`FormulaFacts`] value. A `Build`
+/// consumes its declared arity and produces one replacement, so the final value stack contains
+/// exactly the root facts. Shared `Arc` subterms are evaluated once. The target is canonicalized
+/// lazily—only if a non-settled term-pattern node is actually reached—and then reused for every
+/// such node instead of being rebuilt once per recursive call as before.
+fn analyze_formula(root: &Proc, target: Option<&Proc>) -> FormulaFacts {
+    let mut work = vec![StaticWork::Visit(root)];
+    let mut values = Vec::<FormulaFacts>::new();
+    let mut by_node = HashMap::<*const Proc, FormulaFacts>::new();
+    let mut canonical_target = None::<Proc>;
+
+    while let Some(step) = work.pop() {
+        match step {
+            StaticWork::Visit(formula) => {
+                let key = formula as *const Proc;
+                if let Some(facts) = by_node.get(&key).copied() {
+                    values.push(facts);
+                    continue;
+                }
+
+                match classify(formula) {
+                    FormulaShape::Verum => {
+                        let facts = FormulaFacts {
+                            static_facts: StaticFacts { is_false: false, is_true: true },
+                            host_verdict: Some(true),
+                        };
+                        by_node.insert(key, facts);
+                        values.push(facts);
+                    },
+                    FormulaShape::Falsum => {
+                        let facts = FormulaFacts {
+                            static_facts: StaticFacts { is_false: true, is_true: false },
+                            host_verdict: Some(false),
+                        };
+                        by_node.insert(key, facts);
+                        values.push(facts);
+                    },
+                    FormulaShape::Term => {
+                        let host_verdict = target.and_then(|target| {
+                            let canonical_target = canonical_target.get_or_insert_with(|| {
+                                crate::rholang::runtime::canon_for_term_equality(target)
+                            });
+                            let pattern = crate::rholang::runtime::canon_for_term_equality(formula);
+                            canonical_target.match_pattern(&pattern).map(|_| true)
+                        });
+                        let facts = FormulaFacts {
+                            static_facts: StaticFacts::default(),
+                            host_verdict,
+                        };
+                        by_node.insert(key, facts);
+                        values.push(facts);
+                    },
+                    FormulaShape::Conjunction(left, right) => {
+                        work.push(StaticWork::Build { key, op: StaticBuild::Conjunction });
+                        work.push(StaticWork::Visit(right));
+                        work.push(StaticWork::Visit(left));
+                    },
+                    FormulaShape::Disjunction(left, right) => {
+                        work.push(StaticWork::Build { key, op: StaticBuild::Disjunction });
+                        work.push(StaticWork::Visit(right));
+                        work.push(StaticWork::Visit(left));
+                    },
+                    FormulaShape::Negation(inner) => {
+                        work.push(StaticWork::Build { key, op: StaticBuild::Negation });
+                        work.push(StaticWork::Visit(inner));
+                    },
+                    FormulaShape::Implication(antecedent, consequent) => {
+                        work.push(StaticWork::Build { key, op: StaticBuild::Implication });
+                        work.push(StaticWork::Visit(consequent));
+                        work.push(StaticWork::Visit(antecedent));
+                    },
+                    FormulaShape::Separation(parts) => {
+                        work.push(StaticWork::Build {
+                            key,
+                            op: StaticBuild::Separation(parts.len()),
+                        });
+                        work.extend(parts.into_iter().rev().map(StaticWork::Visit));
+                    },
+                }
+            },
+            StaticWork::Build { key, op } => {
+                let arity = op.arity();
+                let split = values
+                    .len()
+                    .checked_sub(arity)
+                    .expect("formula PDA: continuation underflow");
+                let children = values.split_off(split);
+                let (static_facts, unsettled_host_verdict) = match op {
+                    StaticBuild::Conjunction => (
+                        StaticFacts {
+                            is_false: children[0].static_facts.is_false
+                                || children[1].static_facts.is_false,
+                            is_true: children[0].static_facts.is_true
+                                && children[1].static_facts.is_true,
+                        },
+                        kleene_and(children[0].host_verdict, children[1].host_verdict),
+                    ),
+                    StaticBuild::Disjunction => (
+                        StaticFacts {
+                            is_false: children[0].static_facts.is_false
+                                && children[1].static_facts.is_false,
+                            is_true: children[0].static_facts.is_true
+                                || children[1].static_facts.is_true,
+                        },
+                        kleene_or(children[0].host_verdict, children[1].host_verdict),
+                    ),
+                    StaticBuild::Negation => (
+                        StaticFacts {
+                            is_false: children[0].static_facts.is_true,
+                            is_true: children[0].static_facts.is_false,
+                        },
+                        children[0].host_verdict.map(|value| !value),
+                    ),
+                    StaticBuild::Implication => (
+                        StaticFacts {
+                            is_false: children[0].static_facts.is_true
+                                && children[1].static_facts.is_false,
+                            is_true: children[0].static_facts.is_false
+                                || children[1].static_facts.is_true,
+                        },
+                        kleene_or(
+                            children[0].host_verdict.map(|value| !value),
+                            children[1].host_verdict,
+                        ),
+                    ),
+                    StaticBuild::Separation(_) => (
+                        StaticFacts {
+                            is_false: children.iter().any(|child| child.static_facts.is_false),
+                            // Deliberately undecided even when every component is statically true;
+                            // see `is_statically_true`'s matcher-semantics argument above.
+                            is_true: false,
+                        },
+                        None,
+                    ),
+                };
+                // These are the old entry-point short-circuits, applied at every node in the
+                // same bottom-up pass. They make `false and ?`, `true or ?`, and a separation
+                // with a statically false part decidable without visiting a machine matcher.
+                let host_verdict = if static_facts.is_false {
+                    Some(false)
+                } else if static_facts.is_true {
+                    Some(true)
+                } else {
+                    unsettled_host_verdict
+                };
+                let facts = FormulaFacts { static_facts, host_verdict };
+                by_node.insert(key, facts);
+                values.push(facts);
+            },
+        }
+    }
+
+    assert_eq!(values.len(), 1, "formula PDA: the final value stack must contain one result");
+    values.pop().expect("formula PDA: missing root result")
 }
 
 /// The HOST verdict for `target matches formula`, or `None` when the host
@@ -261,60 +434,7 @@ pub fn is_statically_true(formula: &Proc) -> bool {
 /// [`is_statically_false`]/[`is_statically_true`], so the host never declines a
 /// formula whose value is syntactically determined.
 pub fn host_matches_verdict(target: &Proc, formula: &Proc) -> Option<bool> {
-    // A statically-determined formula needs no matcher at all, and answering it
-    // here means a `{φ|ψ}` buried under a settled connective (e.g. `false and
-    // {φ|ψ}`) does not force the whole guard to be deferred.
-    if is_statically_false(formula) {
-        return Some(false);
-    }
-    if is_statically_true(formula) {
-        return Some(true);
-    }
-    match classify(formula) {
-        FormulaShape::Verum => Some(true),
-        FormulaShape::Falsum => Some(false),
-        // The propositional arms use KLEENE strong three-valued logic, with `None`
-        // reading as "unknown". That is strictly more informative than propagating
-        // `None` on first sight of an undecided operand, and it is still sound:
-        // Kleene's tables answer a value only where EVERY completion of the unknown
-        // operand gives that value. Concretely, `⊥ ∧ ?` is `false` and `⊤ ∨ ?` is
-        // `true` whatever `?` turns out to be — and those are common shapes here,
-        // because the positive-only term arm makes "unknown" the ordinary answer
-        // for a non-matching sub-pattern (`"bye" or "hi"` on the target `"hi"` is
-        // TRUE and must be answered as such).
-        FormulaShape::Conjunction(left, right) => {
-            kleene_and(host_matches_verdict(target, left), host_matches_verdict(target, right))
-        },
-        FormulaShape::Disjunction(left, right) => {
-            kleene_or(host_matches_verdict(target, left), host_matches_verdict(target, right))
-        },
-        FormulaShape::Negation(inner) => host_matches_verdict(target, inner).map(|v| !v),
-        // `φ ⇒ ψ ≡ ¬φ ∨ ψ`, evaluated in the same three-valued logic.
-        FormulaShape::Implication(antecedent, consequent) => kleene_or(
-            host_matches_verdict(target, antecedent).map(|v| !v),
-            host_matches_verdict(target, consequent),
-        ),
-        // Deferred to the machine — see the doc comment.
-        FormulaShape::Separation(_) => None,
-        // ★ POSITIVE-ONLY. See the doc comment for the containment proof: a host
-        // match implies a machine match, but a host NON-match implies nothing, so
-        // only the success direction may be reported as a verdict.
-        //
-        // Both operands are canonicalized first, so an `@`-send sugar difference
-        // cannot make the operands disagree notationally where they agree
-        // semantically.
-        FormulaShape::Term => {
-            let target = crate::rholang::runtime::canon_for_term_equality(target);
-            let pattern = crate::rholang::runtime::canon_for_term_equality(formula);
-            match target.match_pattern(&pattern) {
-                Some(_bindings) => Some(true),
-                // Declined, NOT `Some(false)`. Operationally identical at every
-                // call site (neither fires the COMM), but it keeps the invariant
-                // "a host verdict is always the machine's verdict" exactly true.
-                None => None,
-            }
-        },
-    }
+    analyze_formula(formula, Some(target)).host_verdict
 }
 
 /// Kleene strong conjunction over `Option<bool>` (`None` = unknown).
