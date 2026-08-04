@@ -34,4 +34,10 @@ num-rational = { version = "0.4", features = ["num-bigint-std"] }
 num-traits = "0.2"
 
 [dev-dependencies]
+libc = "0.2"
 proptest = "1"
+
+[[test]]
+name = "formula_pda_stack_gate"
+path = "tests/formula_pda_stack_gate.rs"
+harness = false

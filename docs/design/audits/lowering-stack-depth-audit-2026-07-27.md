@@ -640,6 +640,7 @@ B/level, bisected 16 → 4,096 (width subjects 4 → 65,536):
 | `lower_neg` | `Int::NegInt` ⇄ `lower_int_value` (§4.1.2) | **0** | **1** |
 | `lower_width` | sibling count | **1** | **0** |
 | `lower_new` − `new_build` | the `PNew` arm, minus its own builder | **1** | **0** |
+| `lower_formula` | exact production formula PDA source, 512 → 4,096 | **0–1** | **0** |
 
 A reading of 0 or 1 B/level is one 4 KiB bisection bucket across a 4,080-step ladder — the
 instrument's floor. Several readings are NEGATIVE before clamping, which is what a flat subject
@@ -668,8 +669,8 @@ The gate's earlier claim that a plain `drop(term)` is correct here — on the gr
 |---|---|---|---|---|
 | `par_drop` | `drop_in_place::<Par>` — `prost`'s DERIVED recursive `Drop` | `models` (f1r3node) | 368 | 95 |
 | `ast_drop` | the `language!` iterative `Drop`, ACROSS a cross-type hop | `macros/src/gen/` | 271 | 96 |
-| `render` | `observation::render_par_text` — decode + format | this crate | 3,665 | 911 |
-| `lower_formula` | `formula::is_statically_false` ⇄ `is_statically_true` | `languages/src/` | 4,094 | 978 |
+| ~~`render`~~ | ~~recursive observation decode + format~~ — converted by the observation PDA | this crate | ~~3,665~~ → **0** | ~~911~~ → **0** |
+| ~~`lower_formula`~~ | ~~`is_statically_false` ⇄ `is_statically_true`~~ — converted by the one-pass formula PDA | `languages/src/` | ~~4,094~~ → **0** | ~~978~~ → **0** |
 | `parse_depth` | the WPDA parser (§6) | `prattail` | 1,408 | 303 |
 
 ★ **The two `Drop`s belong to the DERIVED-IMPL class and are not reachable by the pushdown
@@ -685,10 +686,22 @@ iterative `Drop`, and `lower_add` (a pure `Proc::Add(Arc<Proc>, …)` chain) is 
 worklist does not follow the hop through `List`. The generated teardown is iterative *within* a
 type and recursive *across* types.
 
-`lower_formula`'s slope is **not** the formula compiler — that was converted, and
-`Job::Formula`/`Kont::Formula*` drive it from the same work stack. It is the syntactic
-static-falsity judgement `lower_proc`'s `Matches` arm consults *before* lowering, a mutually
-recursive pair in another crate.
+**Living disposition (2026-08-03).** `lower_formula`'s slope was not the formula compiler — that
+was already driven by `Job::Formula`/`Kont::Formula*` — but the syntactic static-falsity
+judgement consulted before lowering. `languages/src/rholang/formula.rs` now computes
+static-false, static-true, and the optional host verdict together with one explicit post-order
+`Visit`/`Build` PDA. Repeated debug bisections put both endpoints inside a common reliable
+**28 KiB** bound (individual runs differ by at most one 4 KiB bucket in either direction), while
+release reads 20 / 20 KiB at depth 512 / 4,096. This is **zero slope within instrument
+resolution** in both profiles. The bounded executable oracle
+imports the production source rather than a copy and covers all constructors and all three
+separation spellings; a 32,768-level witness survives. Rocq's `FormulaPdaEquivalence` proves the
+recursive specification and instruction/value-stack machine equal for every formula,
+continuation, and arbitrary-arity separation, with no admissions. The full generated-language
+LLVM test binary exceeds this host's 4 GiB validation envelope, so the local executable evidence
+uses the exact formula source with a minimal generated-AST carrier; the production adapter remains
+type-checked in the actual crate and the full `lower_formula` subject remains in the zero-slope
+gate for higher-memory CI.
 
 ### 9.5 ★ The whole binary — and a superseded attribution
 

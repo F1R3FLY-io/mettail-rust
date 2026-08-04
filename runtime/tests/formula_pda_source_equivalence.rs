@@ -6,69 +6,15 @@
 //! test-only syntax carrier containing every constructor the classifier reads. The PDA code under
 //! test is therefore not copied or reimplemented; only its generated-AST adapter is minimized.
 
-#[path = "../../languages/src/rholang/formula.rs"]
-pub mod production_formula;
-
-pub use rholang::{Bool, Proc};
-
-mod rholang {
-    use std::sync::Arc;
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub enum Bool {
-        BoolLit(bool),
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct Parts(Vec<Proc>);
-
-    impl Parts {
-        pub fn new(parts: impl IntoIterator<Item = Proc>) -> Self {
-            Self(parts.into_iter().collect())
-        }
-
-        pub fn iter_elements(&self) -> impl Iterator<Item = &Proc> {
-            self.0.iter()
-        }
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub enum Proc {
-        CastBool(Arc<Bool>),
-        And(Arc<Proc>, Arc<Proc>),
-        Or(Arc<Proc>, Arc<Proc>),
-        Not(Arc<Proc>),
-        Implies(Arc<Proc>, Arc<Proc>),
-        SpatialPPar(Arc<Proc>, Arc<Proc>),
-        PParInfix(Arc<Proc>, Arc<Proc>),
-        PPar(Parts),
-        PZero,
-        Term(i64),
-    }
-
-    impl Proc {
-        pub fn match_pattern(&self, pattern: &Self) -> Option<()> {
-            (self == pattern).then_some(())
-        }
-    }
-
-    pub mod runtime {
-        use super::Proc;
-
-        pub fn canon_for_term_equality(term: &Proc) -> Proc {
-            term.clone()
-        }
-    }
-
-    pub use crate::production_formula as formula;
-}
+#[path = "support/formula_pda_carrier.rs"]
+mod rholang;
 
 use rholang::{
     formula::{
         bool_formula, classify, host_matches_verdict, is_statically_false, is_statically_true,
         FormulaShape,
     },
-    Parts,
+    Parts, Proc,
 };
 use std::sync::Arc;
 

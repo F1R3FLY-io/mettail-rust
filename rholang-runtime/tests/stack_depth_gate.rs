@@ -626,8 +626,14 @@ fn ceiling(debug: usize, release: usize) -> usize {
 /// two traversals measures neither.
 #[test]
 fn lowering_is_depth_independent() {
-    let converted_depth: &[&str] =
-        &["lower_leak", "lower_depth", "lower_add", "lower_par", "lower_neg"];
+    let converted_depth: &[&str] = &[
+        "lower_leak",
+        "lower_depth",
+        "lower_add",
+        "lower_par",
+        "lower_neg",
+        "lower_formula",
+    ];
     let converted_width: &[&str] = &["lower_width"];
 
     for name in converted_depth {
@@ -646,15 +652,16 @@ fn lowering_is_depth_independent() {
 ///
 /// The whole `rholang` binary went from **7,277 to 2,567 B/level** on its main thread (release,
 /// bisected `ulimit -s` at depths 100 and 400, `RUST_MIN_STACK` pinned so only the main thread
-/// binds). The gate's own lowering subjects went to **0**. The 2,567 that remain are *four other
-/// traversals*, and none of them is reachable by the pushdown transform this conversion applied:
+/// binds). Those are the historical pre-closure measurements. The gate's lowering subjects went
+/// to **0**, and the table records the later disposition of the other traversals rather than
+/// silently deleting their former slopes:
 ///
 /// | subject | traversal | owner | debug | release |
 /// |---|---|---|---|---|
 /// | `par_drop` | `drop_in_place::<Par>` — `prost`'s DERIVED recursive `Drop` | `models` (f1r3node) | 368 | 95 |
 /// | ~~`ast_drop`~~ | ~~the `language!` iterative `Drop`~~ — **CONVERTED by #162**, now −1 / 0 | `macros/src/gen/` | ~~271~~ | ~~96~~ |
-/// | `render` | `observation::render_par_text` — decode + format, both recursive | this crate | 3,674 | 911 |
-/// | `lower_formula` | `formula::is_statically_false` ⇄ `is_statically_true` | `languages/src/` | 4,097 | 978 |
+/// | ~~`render`~~ | ~~recursive observation decode + format~~ — **CONVERTED by the observation PDA** | `runtime` / `rholang-runtime` | ~~3,674~~ → **0** | ~~911~~ → **0** |
+/// | ~~`lower_formula`~~ | ~~mutual `is_statically_false` ⇄ `is_statically_true` recursion~~ — **CONVERTED by the one-pass formula PDA** | `languages/src/` | ~~4,097~~ → **0** | ~~978~~ → **0** |
 ///
 /// ★ **Why the two `Drop`s are not this conversion's to fix, stated precisely.** A pushdown
 /// transform rewrites a traversal *whose text you own* into a worklist. `drop_in_place::<Par>` has
@@ -722,15 +729,20 @@ fn lowering_is_depth_independent() {
 /// places in the tree precisely because it *explained the numbers*, and the next reader is better
 /// served by knowing which explanation the numbers do NOT distinguish.
 ///
-/// `lower_formula`'s slope is likewise not the formula compiler — that WAS converted, and
-/// `Job::Formula`/`Kont::Formula*` drive it from the same work stack. It is the syntactic
-/// static-falsity judgement `lower_proc`'s `Matches` arm consults before lowering, which is a
-/// mutually recursive pair in another crate.
+/// `lower_formula` was the same kind of cross-boundary residue: its formula compiler already used
+/// `Job::Formula`/`Kont::Formula*`, but the syntactic static-falsity judgement consulted before
+/// lowering was still a mutually recursive pair in another crate. It now runs one explicit
+/// `Visit`/`Build` post-order PDA that computes static-false, static-true, and host verdicts
+/// together. `runtime/tests/formula_pda_source_equivalence.rs` imports that exact production
+/// source and checks it against the recursive oracle, `formula_pda_stack_gate.rs` measures zero
+/// main-thread slope within its 4 KiB resolution from depth 512 to 4,096, and the Rocq
+/// `FormulaPdaEquivalence` theorem proves the recursive/PDA equality for every constructor and
+/// arbitrary-arity separation.
 ///
-/// **"The lowering is fixed" and "`rholang` is depth-independent" are different claims, and M-2
-/// only makes the first.** Each row above needs its own conversion and its own move into
-/// [`lowering_is_depth_independent`]. A subject leaves this list by being converted, never by
-/// having its ceiling raised.
+/// **"The lowering is fixed" and "`rholang` is depth-independent" are different claims.** The
+/// observation and formula rows therefore received their own conversions before moving into
+/// constant-stack gates. A subject leaves this list by being converted, never by having its
+/// ceiling raised.
 ///
 /// Ceilings are ~1.5× the measured values, per profile, as everywhere else in this file.
 ///
@@ -870,12 +882,6 @@ fn par_hash_excess_over_the_unhashed_pipeline_is_the_whole_slope() {
 #[test]
 fn observation_rendering_is_depth_independent() {
     assert_depth_independent("render", 1024 * 1024);
-}
-
-/// See [`residue_par_drop_has_not_got_worse`].
-#[test]
-fn residue_static_falsity_judgement_has_not_got_worse() {
-    assert_slope_below("lower_formula", ceiling(6_500, 1_500), 512, 4096);
 }
 
 // ---------------------------------------------------------------------------
