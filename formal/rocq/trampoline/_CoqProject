@@ -6,6 +6,7 @@
 #   1. CekTransitions          — Formal transition rules (10 rules),
 #                                configurations, frames, abstraction function
 #   2. TrampolineEquivalence   — CEK.1: parse_rec = parse_tramp
+#   2a. EvaluatorSccPdaEquivalence — native evaluator SCC simulation
 #   3. WpdsSimulation          — CEK.2: forward simulation by WPDS,
 #                                CEK.3: dead rule soundness corollary
 #   4. TailCallCorrectness     — CEK.4: tail_wrap = full push/pop
@@ -14,6 +15,7 @@
 # Dependency order:
 #   CekTransitions.v           — (standalone)
 #   TrampolineEquivalence.v    — (standalone)
+#   EvaluatorSccPdaEquivalence.v — (standalone)
 #   WpdsSimulation.v           — (standalone)
 #   TailCallCorrectness.v      — (standalone)
 #   Defunctionalization.v       — (standalone)
@@ -25,6 +27,7 @@
 # Source files (no dependencies between them)
 theories/CekTransitions.v
 theories/TrampolineEquivalence.v
+theories/EvaluatorSccPdaEquivalence.v
 theories/WpdsSimulation.v
 theories/TailCallCorrectness.v
 theories/Defunctionalization.v
