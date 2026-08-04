@@ -158,7 +158,7 @@ pub use native_contract::{
 /// The observation ABI's inverse and its renderer. Unconditional — see [`observation`].
 pub use observation::{
     par_as_runtime_observation_value, render_observation_text, render_observation_text_with,
-    render_par_text, RENDER_BUDGET_CHARS,
+    render_par_text, ObservationTermNotation, RENDER_BUDGET_CHARS,
 };
 #[cfg(feature = "rholang-runtime")]
 pub use rholang_ast::{

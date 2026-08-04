@@ -644,18 +644,27 @@ enum RenderTask<'a> {
     Count(usize),
 }
 
-fn push_sequence<'a>(
+fn push_sequence_with<'a>(
     work: &mut Vec<RenderTask<'a>>,
     values: &'a [RuntimeObservationValue],
+    separator: &'static str,
     close: &'static str,
 ) {
     work.push(RenderTask::Text(close));
     for (index, value) in values.iter().enumerate().rev() {
         work.push(RenderTask::Value(value));
         if index > 0 {
-            work.push(RenderTask::Text(", "));
+            work.push(RenderTask::Text(separator));
         }
     }
+}
+
+fn push_sequence<'a>(
+    work: &mut Vec<RenderTask<'a>>,
+    values: &'a [RuntimeObservationValue],
+    close: &'static str,
+) {
+    push_sequence_with(work, values, ", ", close);
 }
 
 fn write_hex(rendered: &mut String, bytes: &[u8]) {
@@ -698,7 +707,25 @@ fn dismantle_runtime_observation_values(values: Vec<RuntimeObservationValue>) {
     }
 }
 
-fn render_observation_text_iterative(value: &RuntimeObservationValue) -> String {
+/// A guest presentation's stack-safe spelling for one constructor application.
+///
+/// The layout owns no child strings: the renderer emits the children through its existing PDA,
+/// between `open`/`close` and separated by `separator`. This deliberately small interface makes
+/// it impossible for a presentation callback to recurse through the observation tree. For
+/// example, λ-calculus `App(f, a)` uses `("(", " ", ")")`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObservationTermNotation {
+    pub open: &'static str,
+    pub separator: &'static str,
+    pub close: &'static str,
+}
+
+type TermNotationHook = dyn Fn(&str, usize) -> Option<ObservationTermNotation>;
+
+fn render_observation_text_iterative(
+    value: &RuntimeObservationValue,
+    term_notation: Option<&TermNotationHook>,
+) -> String {
     let mut rendered = String::new();
     let mut work = vec![RenderTask::Value(value)];
     while let Some(task) = work.pop() {
@@ -812,10 +839,22 @@ fn render_observation_text_iterative(value: &RuntimeObservationValue) -> String 
                             work.push(RenderTask::Value(name));
                         },
                         _ => {
-                            rendered.push_str(constructor);
-                            if !children.is_empty() {
-                                rendered.push('(');
-                                push_sequence(&mut work, children, ")");
+                            if let Some(notation) = term_notation
+                                .and_then(|notation| notation(constructor, children.len()))
+                            {
+                                rendered.push_str(notation.open);
+                                push_sequence_with(
+                                    &mut work,
+                                    children,
+                                    notation.separator,
+                                    notation.close,
+                                );
+                            } else {
+                                rendered.push_str(constructor);
+                                if !children.is_empty() {
+                                    rendered.push('(');
+                                    push_sequence(&mut work, children, ")");
+                                }
                             }
                         },
                     }
@@ -834,37 +873,21 @@ fn render_observation_text_iterative(value: &RuntimeObservationValue) -> String 
 /// This is the entry point every datum-producing path uses. See the module header for why it
 /// takes no presentation hook.
 pub fn render_observation_text(value: &RuntimeObservationValue) -> String {
-    render_observation_text_iterative(value)
+    render_observation_text_iterative(value, None)
 }
 
-/// [`render_observation_text`], with children routed through `child` so a **presentation**
-/// layer can add guest-surface sugar and still inherit the reserved-label rendering below.
+/// [`render_observation_text`], with a layout-only hook through which a **presentation** layer
+/// can add guest-surface sugar and still inherit the reserved-label rendering below.
 ///
-/// ★ Never call this from a path that produces a datum. See the module header.
+/// Unlike the former child-rendering callback, this interface is stack-safe by construction: the
+/// hook sees only a constructor label and arity and cannot descend into children. Returning a
+/// layout keeps all child traversal inside the same explicit PDA. Never call this from a path
+/// that produces a datum; see the module header.
 pub fn render_observation_text_with(
     value: &RuntimeObservationValue,
-    child: &dyn Fn(&RuntimeObservationValue) -> String,
+    term_notation: &TermNotationHook,
 ) -> String {
-    let RuntimeObservationValue::Term { constructor, children } = value else {
-        // Every non-`Term` arm already has a deterministic, bounded `Display`.
-        return value.to_string();
-    };
-    // The sugar below is confined to RESERVED reflected-ABI labels — `^`-prefixed, hence
-    // unforgeable against any user constructor (which is a Rust `Ident`) — and to the exact
-    // child arities the ABI emits. A reserved label with an unexpected arity, and every
-    // reserved label without sugar (`^multilambda` among them, whose runtime child shape this
-    // renderer does not claim to know), falls to the default arm: `Label(c₁, …, cₙ)`, which is
-    // a complete and honest rendering, just an unsweetened one.
-    match (constructor.as_str(), children.as_slice()) {
-        (LAMBDA_REFLECT_LABEL, [body]) => format!("λ.{}", child(body)),
-        (BOUND_VAR_REFLECT_LABEL, [index]) => peano_index(index).to_string(),
-        (FREE_VAR_REFLECT_LABEL, [name]) => child(name),
-        _ if children.is_empty() => constructor.clone(),
-        _ => {
-            let inner = children.iter().map(child).collect::<Vec<_>>().join(", ");
-            format!("{constructor}({inner})")
-        },
-    }
+    render_observation_text_iterative(value, Some(term_notation))
 }
 
 /// Render an arbitrary resting `Par` as the short, stable text a diagnostic carries.

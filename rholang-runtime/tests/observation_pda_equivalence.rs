@@ -5,7 +5,7 @@
 
 use mettail_rholang_runtime::{
     par_as_runtime_observation_value, render_observation_text, render_observation_text_with,
-    render_par_text, RHOLANG_BAG_ABI_TAG,
+    render_par_text, ObservationTermNotation, RHOLANG_BAG_ABI_TAG,
 };
 use mettail_runtime::RuntimeObservationValue;
 use models::rhoapi::Par;
@@ -16,7 +16,38 @@ use models::rust::utils::{
 };
 
 fn recursive_render_oracle(value: &RuntimeObservationValue) -> String {
-    render_observation_text_with(value, &recursive_render_oracle)
+    use RuntimeObservationValue as V;
+    let V::Term { constructor, children } = value else {
+        return value.to_string();
+    };
+    match (constructor.as_str(), children.as_slice()) {
+        ("^lambda", [body]) => format!("λ.{}", recursive_render_oracle(body)),
+        ("^bound", [index]) => {
+            let mut index = index;
+            let mut value = 0usize;
+            while let V::Term { constructor, children } = index {
+                if constructor != "^S" {
+                    break;
+                }
+                let Some(child) = children.first() else {
+                    break;
+                };
+                value += 1;
+                index = child;
+            }
+            value.to_string()
+        },
+        ("^free", [name]) => recursive_render_oracle(name),
+        _ if children.is_empty() => constructor.clone(),
+        _ => format!(
+            "{constructor}({})",
+            children
+                .iter()
+                .map(recursive_render_oracle)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 fn reflected(label: &str, children: Vec<Par>) -> Par {
@@ -95,6 +126,34 @@ fn iterative_renderer_matches_the_bounded_recursive_oracle() {
             "renderer mismatch at corpus row {row}"
         );
     }
+}
+
+#[test]
+fn layout_only_guest_renderer_survives_a_deep_application_spine() {
+    use RuntimeObservationValue as V;
+    const DEPTH: usize = 16_384;
+
+    let mut value = V::Int(0);
+    for _ in 0..DEPTH {
+        value = V::Term {
+            constructor: "App".into(),
+            children: vec![value, V::Int(1)],
+        };
+    }
+
+    let rendered = render_observation_text_with(&value, &|constructor, arity| {
+        (constructor == "App" && arity == 2).then_some(ObservationTermNotation {
+            open: "(",
+            separator: " ",
+            close: ")",
+        })
+    });
+    assert_eq!(rendered.bytes().filter(|byte| *byte == b'(').count(), DEPTH);
+    assert!(rendered.starts_with('(') && rendered.ends_with(')'));
+
+    // `RuntimeObservationValue`'s derived destructor is the next independently tracked closure
+    // item. Do not let that known recursive traversal contaminate this renderer witness.
+    std::mem::forget(value);
 }
 
 #[test]

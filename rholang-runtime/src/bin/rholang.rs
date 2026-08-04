@@ -68,7 +68,7 @@ use mettail_rholang_runtime::speculation::server::{LookaheadEngine, SpeculationG
 use mettail_rholang_runtime::{
     lower_rholang_proc_with_resolver, par_as_runtime_observation_value,
     render_observation_text_with, run_normalized_par_with_lookahead_engine,
-    DriveObservationChannels, PlannedRhoBackend, RholangAstLowerError,
+    DriveObservationChannels, ObservationTermNotation, PlannedRhoBackend, RholangAstLowerError,
 };
 use mettail_runtime::{clear_var_cache, Language, RuntimeObservationValue};
 use models::rhoapi::Par;
@@ -492,8 +492,9 @@ fn church_reading(value: &RuntimeObservationValue) -> Option<String> {
 /// Render a decoded observation to compact surface syntax, adding the λ-calculus guest's own
 /// surface for its `App` constructor so a normal form reads as `(f a)` rather than `App(f, a)`.
 ///
-/// ★ Everything else delegates to [`render_observation_text_with`], the library's neutral
-/// renderer, which recurses back through here so the sugar survives nesting.
+/// ★ Everything delegates to [`render_observation_text_with`], whose explicit work stack applies
+/// the layout at every nesting level. The hook receives no child values, so it cannot reintroduce
+/// native recursion.
 ///
 /// The split is not "λ-specific vs structural" — it is **guest constructor vs reserved ABI
 /// label**. `^lambda`, `^bound`, `^Z`/`^S` are reserved reflected-ABI tags shared by every
@@ -506,10 +507,13 @@ fn church_reading(value: &RuntimeObservationValue) -> Option<String> {
 /// to print as a Rust `Debug` dump with the message re-quoted inside it. `Display` renders the
 /// same values as `0x…` hex and plain text, and is bounded and deterministic.
 fn render_obs(value: &RuntimeObservationValue) -> String {
-    if let Some((fun, arg)) = app_parts(value) {
-        return format!("({} {})", render_obs(fun), render_obs(arg));
-    }
-    render_observation_text_with(value, &render_obs)
+    render_observation_text_with(value, &|constructor, arity| {
+        (constructor == "App" && arity == 2).then_some(ObservationTermNotation {
+            open: "(",
+            separator: " ",
+            close: ")",
+        })
+    })
 }
 
 /// Render a slice of raw ledger `Par`s (decoding each) for the `^drive-err`/`^drive-fuel` reports.
