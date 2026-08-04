@@ -275,13 +275,15 @@ fn par_drop_body(depth: usize) {
     drop(term);
 }
 
-/// ★ THE RESIDUE, subject 2: rendering the observation.
+/// Observation decoding and rendering, isolated from both recursive teardowns.
 ///
 /// `rholang`'s main thread lowers, runs, and then RENDERS what it observed, through
 /// `observation::render_par_text` — which decodes the `Par` back to a
-/// `RuntimeObservationValue` and formats it, both recursively. Same construction as
-/// [`par_drop_body`]: lower, then render, so the ladder isolates the renderer against
-/// `lower_depth`'s.
+/// `RuntimeObservationValue` and formats it. Same construction as [`lower_depth_body`]: lower,
+/// render, dismantle the `Par`, and forget the generated AST. Forgetting the input is
+/// deliberate: `nested_list`'s cross-category `Proc`/`List` teardown has its own measured
+/// slope (`ast_drop`), and including it here would make this subject measure the maximum of two
+/// unrelated traversals.
 fn render_body(depth: usize) {
     let term = nested_list(depth);
     let env = BoundEnv::new();
@@ -290,7 +292,7 @@ fn render_body(depth: usize) {
     // Consume the rendering so it cannot be optimized away.
     assert!(!rendered.is_empty(), "stack_depth_probe: the renderer produced nothing");
     dismantle(par);
-    drop(term);
+    std::mem::forget(term);
 }
 
 /// ★ THE RESIDUE, subject 3: the AST's own teardown across a CROSS-TYPE hop.

@@ -864,10 +864,12 @@ fn par_hash_excess_over_the_unhashed_pipeline_is_the_whole_slope() {
     println!("  lower_depth (the unhashed control): {lower_growth} B of growth, 512 → 4,096");
 }
 
-/// See [`residue_par_drop_has_not_got_worse`].
+/// Observation decoding, rendering, and their temporary-value teardown must use constant native
+/// stack. The child deliberately removes `Par` and AST teardown from the subject; both have
+/// separate probes and would otherwise contaminate this measurement.
 #[test]
-fn residue_render_has_not_got_worse() {
-    assert_slope_below("render", ceiling(5_500, 1_500), 512, 4096);
+fn observation_rendering_is_depth_independent() {
+    assert_depth_independent("render", 1024 * 1024);
 }
 
 /// See [`residue_par_drop_has_not_got_worse`].
