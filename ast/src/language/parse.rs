@@ -662,7 +662,8 @@ fn parse_refinement_type_body(input: ParseStream, name: Ident) -> SynResult<Refi
 
     // Parse: | predicate
     brace_content.parse::<Token![|]>()?;
-    let predicate = parse_refinement_pred_implies(&brace_content)?;
+    let predicate_tokens = brace_content.parse::<TokenStream>()?;
+    let predicate = parse_refinement_predicate_tokens(predicate_tokens)?;
 
     Ok(RefinementTypeDef { name, var, base_type, predicate })
 }
@@ -676,268 +677,534 @@ fn parse_refinement_type_body(input: ParseStream, name: Ident) -> SynResult<Refi
 //   not      ~ / !
 //   atom     variable, literal, relation, quantified, parenthesized, linear
 
-/// Parse refinement predicate: entry point (lowest precedence = implies).
-fn parse_refinement_pred_implies(input: ParseStream) -> SynResult<RefinementPredicate> {
-    let mut lhs = parse_refinement_pred_or(input)?;
-    while input.peek(Token![=>]) {
-        input.parse::<Token![=>]>()?;
-        let rhs = parse_refinement_pred_or(input)?;
-        lhs = RefinementPredicate::Implies(Box::new(lhs), Box::new(rhs));
-    }
-    Ok(lhs)
+#[derive(Clone, Copy)]
+enum RefinementBinaryOperator {
+    Implies,
+    Or,
+    And,
 }
 
-/// Parse refinement predicate: disjunction (`||`).
-fn parse_refinement_pred_or(input: ParseStream) -> SynResult<RefinementPredicate> {
-    let mut lhs = parse_refinement_pred_and(input)?;
-    while input.peek(Token![||]) {
-        input.parse::<Token![||]>()?;
-        let rhs = parse_refinement_pred_and(input)?;
-        lhs = RefinementPredicate::Or(Box::new(lhs), Box::new(rhs));
-    }
-    Ok(lhs)
+enum RefinementOperator {
+    Binary(RefinementBinaryOperator),
+    Not,
+    Quantified {
+        quantifier: Quantifier,
+        var: Ident,
+        domain: Option<Ident>,
+        bound: Option<usize>,
+    },
 }
 
-/// Parse refinement predicate: conjunction (`&&`).
-fn parse_refinement_pred_and(input: ParseStream) -> SynResult<RefinementPredicate> {
-    let mut lhs = parse_refinement_pred_not(input)?;
-    while input.peek(Token![&&]) {
-        input.parse::<Token![&&]>()?;
-        let rhs = parse_refinement_pred_not(input)?;
-        lhs = RefinementPredicate::And(Box::new(lhs), Box::new(rhs));
-    }
-    Ok(lhs)
+struct RefinementParseState {
+    input: std::collections::VecDeque<proc_macro2::TokenTree>,
+    operators: Vec<RefinementOperator>,
+    values: Vec<RefinementPredicate>,
+    expects_operand: bool,
 }
 
-/// Parse refinement predicate: negation (`~` or `!`).
-fn parse_refinement_pred_not(input: ParseStream) -> SynResult<RefinementPredicate> {
-    if input.peek(Token![~]) {
-        input.parse::<Token![~]>()?;
-        let inner = parse_refinement_pred_not(input)?;
-        Ok(RefinementPredicate::Not(Box::new(inner)))
-    } else if input.peek(Token![!]) && !input.peek(Token![!=]) {
-        input.parse::<Token![!]>()?;
-        let inner = parse_refinement_pred_not(input)?;
-        Ok(RefinementPredicate::Not(Box::new(inner)))
+impl RefinementParseState {
+    fn new(tokens: TokenStream) -> Self {
+        Self {
+            input: tokens.into_iter().collect(),
+            operators: Vec::new(),
+            values: Vec::new(),
+            expects_operand: true,
+        }
+    }
+
+    fn push_operand(&mut self, value: RefinementPredicate) -> SynResult<()> {
+        self.values.push(value);
+        self.expects_operand = false;
+        while matches!(
+            self.operators.last(),
+            Some(RefinementOperator::Not | RefinementOperator::Quantified { .. })
+        ) {
+            self.reduce_one()?;
+        }
+        Ok(())
+    }
+
+    fn push_binary(&mut self, operator: RefinementBinaryOperator) -> SynResult<()> {
+        let precedence = refinement_precedence(operator);
+        while matches!(
+            self.operators.last(),
+            Some(RefinementOperator::Binary(previous))
+                if refinement_precedence(*previous) >= precedence
+        ) {
+            self.reduce_one()?;
+        }
+        self.operators.push(RefinementOperator::Binary(operator));
+        self.expects_operand = true;
+        Ok(())
+    }
+
+    fn reduce_one(&mut self) -> SynResult<()> {
+        let operator = self.operators.pop().ok_or_else(|| {
+            syn::Error::new(proc_macro2::Span::call_site(), "missing refinement operator")
+        })?;
+        match operator {
+            RefinementOperator::Not => {
+                let inner = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing operand after refinement negation",
+                    )
+                })?;
+                self.values.push(RefinementPredicate::Not(Box::new(inner)));
+            },
+            RefinementOperator::Quantified { quantifier, var, domain, bound } => {
+                let body = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        var.span(),
+                        "missing body after quantified refinement predicate",
+                    )
+                })?;
+                self.values.push(RefinementPredicate::Quantified {
+                    quantifier,
+                    var,
+                    domain,
+                    bound,
+                    body: Box::new(body),
+                });
+            },
+            RefinementOperator::Binary(operator) => {
+                let right = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing right refinement operand",
+                    )
+                })?;
+                let left = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing left refinement operand",
+                    )
+                })?;
+                self.values.push(match operator {
+                    RefinementBinaryOperator::Implies => {
+                        RefinementPredicate::Implies(Box::new(left), Box::new(right))
+                    },
+                    RefinementBinaryOperator::Or => {
+                        RefinementPredicate::Or(Box::new(left), Box::new(right))
+                    },
+                    RefinementBinaryOperator::And => {
+                        RefinementPredicate::And(Box::new(left), Box::new(right))
+                    },
+                });
+            },
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> SynResult<RefinementPredicate> {
+        if self.expects_operand {
+            return Err(syn::Error::new(
+                refinement_front_span(&self.input),
+                "expected refinement predicate operand",
+            ));
+        }
+        while !self.operators.is_empty() {
+            self.reduce_one()?;
+        }
+        if self.values.len() != 1 {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "malformed refinement predicate",
+            ));
+        }
+        Ok(self
+            .values
+            .pop()
+            .expect("one refinement root remains after reduction"))
+    }
+}
+
+fn refinement_precedence(operator: RefinementBinaryOperator) -> u8 {
+    match operator {
+        RefinementBinaryOperator::Implies => 1,
+        RefinementBinaryOperator::Or => 2,
+        RefinementBinaryOperator::And => 3,
+    }
+}
+
+fn refinement_front_span(
+    input: &std::collections::VecDeque<proc_macro2::TokenTree>,
+) -> proc_macro2::Span {
+    input
+        .front()
+        .map(proc_macro2::TokenTree::span)
+        .unwrap_or_else(proc_macro2::Span::call_site)
+}
+
+fn refinement_punct(tree: Option<&proc_macro2::TokenTree>, expected: char) -> bool {
+    matches!(tree, Some(proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == expected)
+}
+
+fn refinement_underscore(tree: Option<&proc_macro2::TokenTree>) -> bool {
+    matches!(tree, Some(proc_macro2::TokenTree::Ident(ident)) if ident == "_")
+        || refinement_punct(tree, '_')
+}
+
+fn refinement_punct_pair(
+    input: &std::collections::VecDeque<proc_macro2::TokenTree>,
+    first: char,
+    second: char,
+    require_joint: bool,
+) -> bool {
+    let Some(proc_macro2::TokenTree::Punct(first_punct)) = input.front() else {
+        return false;
+    };
+    if first_punct.as_char() != first
+        || (require_joint && first_punct.spacing() != proc_macro2::Spacing::Joint)
+    {
+        return false;
+    }
+    refinement_punct(input.get(1), second)
+}
+
+fn refinement_take_punct(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+    expected: char,
+    message: &str,
+) -> SynResult<()> {
+    match input.pop_front() {
+        Some(proc_macro2::TokenTree::Punct(punct)) if punct.as_char() == expected => Ok(()),
+        Some(tree) => Err(syn::Error::new(tree.span(), message)),
+        None => Err(syn::Error::new(proc_macro2::Span::call_site(), message)),
+    }
+}
+
+fn refinement_take_ident(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+    message: &str,
+) -> SynResult<Ident> {
+    match input.pop_front() {
+        Some(proc_macro2::TokenTree::Ident(ident)) => Ok(ident),
+        Some(tree) => Err(syn::Error::new(tree.span(), message)),
+        None => Err(syn::Error::new(proc_macro2::Span::call_site(), message)),
+    }
+}
+
+fn refinement_take_pair(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+    first: char,
+    second: char,
+) {
+    debug_assert!(refinement_punct(input.front(), first));
+    debug_assert!(refinement_punct(input.get(1), second));
+    input.pop_front();
+    input.pop_front();
+}
+
+fn refinement_parse_bound(group: proc_macro2::Group) -> SynResult<usize> {
+    let mut input: std::collections::VecDeque<_> = group.stream().into_iter().collect();
+    let key = refinement_take_ident(&mut input, "expected 'k' in refinement bound")?;
+    if key != "k" {
+        return Err(syn::Error::new(key.span(), "expected 'k'"));
+    }
+    refinement_take_punct(&mut input, '=', "expected '=' after 'k'")?;
+    let literal = match input.pop_front() {
+        Some(proc_macro2::TokenTree::Literal(literal)) => literal,
+        Some(tree) => return Err(syn::Error::new(tree.span(), "expected integer bound")),
+        None => return Err(syn::Error::new(group.span(), "expected integer bound")),
+    };
+    if let Some(tree) = input.front() {
+        return Err(syn::Error::new(tree.span(), "unexpected token after refinement bound"));
+    }
+    syn::parse2::<syn::LitInt>(TokenStream::from(proc_macro2::TokenTree::Literal(literal)))?
+        .base10_parse::<usize>()
+}
+
+fn refinement_pred_arg(ident: Ident) -> PredArg {
+    if ident
+        .to_string()
+        .chars()
+        .next()
+        .unwrap_or('a')
+        .is_uppercase()
+    {
+        PredArg::Constant(ident)
     } else {
-        parse_refinement_pred_atom(input)
+        PredArg::Var(ident)
     }
 }
 
-/// Parse refinement predicate: atomic term.
-///
-/// Handles:
-/// - Parenthesized subexpressions: `(expr)`
-/// - Quantifiers: `forall`/`exists` var [_{k=N}] [in domain]. body
-/// - Relation queries: `rel(arg1, arg2, ...)`
-/// - Linear comparisons: `var > 0`, `3*x + 2*y <= 7`
-/// - Equality/inequality: `a == b`, `a != b`
-fn parse_refinement_pred_atom(input: ParseStream) -> SynResult<RefinementPredicate> {
-    // Parenthesized subexpression
-    if input.peek(syn::token::Paren) {
-        let paren_content;
-        syn::parenthesized!(paren_content in input);
-        return parse_refinement_pred_implies(&paren_content);
-    }
-
-    // Must be an identifier: could be quantifier, relation, or linear term
-    let fork = input.fork();
-    let ident: Ident = fork.parse()?;
-    let ident_str = ident.to_string();
-
-    // Quantifiers: forall / exists
-    if ident_str == "forall" || ident_str == "exists" {
-        input.parse::<Ident>()?; // consume the keyword
-        let quantifier = if ident_str == "forall" {
-            Quantifier::ForAll
-        } else {
-            Quantifier::Exists
-        };
-
-        // Optional bound: _{k=N}
-        let bound = if input.peek(Token![_]) {
-            input.parse::<Token![_]>()?;
-            let brace_content;
-            syn::braced!(brace_content in input);
-            let k_ident = brace_content.parse::<Ident>()?;
-            if k_ident != "k" {
-                return Err(syn::Error::new(k_ident.span(), "expected 'k'"));
-            }
-            brace_content.parse::<Token![=]>()?;
-            let lit: syn::LitInt = brace_content.parse()?;
-            Some(lit.base10_parse::<usize>()?)
-        } else {
-            None
-        };
-
-        // Quantified variable
-        let var = input.parse::<Ident>()?;
-
-        // Optional domain: `in relation`
-        let domain = if input.peek(Ident) {
-            let next_fork = input.fork();
-            let next_ident: Ident = next_fork.parse()?;
-            if next_ident == "in" {
-                input.parse::<Ident>()?; // consume "in"
-                Some(input.parse::<Ident>()?)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // Dot separator
-        input.parse::<Token![.]>()?;
-
-        // Body (may be parenthesized)
-        let body = parse_refinement_pred_atom(input)?;
-
-        return Ok(RefinementPredicate::Quantified {
-            quantifier,
-            var,
-            domain,
-            bound,
-            body: Box::new(body),
-        });
-    }
-
-    // Check if this is a relation query: ident(args)
-    if fork.peek(syn::token::Paren) {
-        input.parse::<Ident>()?; // consume the relation name
-        let paren_content;
-        syn::parenthesized!(paren_content in input);
-        let mut args = Vec::new();
-        while !paren_content.is_empty() {
-            let arg_ident = paren_content.parse::<Ident>()?;
-            let first_char = arg_ident.to_string().chars().next().unwrap_or('a');
-            if first_char.is_uppercase() {
-                args.push(PredArg::Constant(arg_ident));
-            } else {
-                args.push(PredArg::Var(arg_ident));
-            }
-            if paren_content.peek(Token![,]) {
-                paren_content.parse::<Token![,]>()?;
-            }
+fn refinement_parse_relation_args(group: proc_macro2::Group) -> SynResult<Vec<PredArg>> {
+    let mut input: std::collections::VecDeque<_> = group.stream().into_iter().collect();
+    let mut arguments = Vec::new();
+    while !input.is_empty() {
+        arguments.push(refinement_pred_arg(refinement_take_ident(
+            &mut input,
+            "expected relation argument",
+        )?));
+        if refinement_punct(input.front(), ',') {
+            input.pop_front();
         }
-        return Ok(RefinementPredicate::Relation { name: ident, args, negated: false });
+    }
+    Ok(arguments)
+}
+
+fn refinement_parse_linear_rhs_tokens(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+) -> SynResult<i64> {
+    let negative = refinement_punct(input.front(), '-');
+    if negative {
+        input.pop_front();
+    }
+    let literal = match input.pop_front() {
+        Some(proc_macro2::TokenTree::Literal(literal)) => literal,
+        Some(tree) => return Err(syn::Error::new(tree.span(), "expected integer literal")),
+        None => {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "expected integer literal",
+            ));
+        },
+    };
+    let value =
+        syn::parse2::<syn::LitInt>(TokenStream::from(proc_macro2::TokenTree::Literal(literal)))?
+            .base10_parse::<i64>()?;
+    Ok(if negative { -value } else { value })
+}
+
+fn refinement_parse_leaf(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+) -> SynResult<RefinementPredicate> {
+    let ident = refinement_take_ident(input, "expected refinement predicate identifier")?;
+    if matches!(input.front(), Some(proc_macro2::TokenTree::Group(group)) if group.delimiter() == proc_macro2::Delimiter::Parenthesis)
+    {
+        let Some(proc_macro2::TokenTree::Group(group)) = input.pop_front() else {
+            unreachable!("relation lookahead requires a parenthesis group")
+        };
+        let arguments = refinement_parse_relation_args(group)?;
+        return Ok(RefinementPredicate::Relation {
+            name: ident,
+            args: arguments,
+            negated: false,
+        });
     }
 
-    // Linear arithmetic or simple variable comparison
-    // Parse: ident followed by comparison operator
-    // We need to handle: `x > 0`, `x >= 0`, `x == y`, etc.
-    input.parse::<Ident>()?; // consume the first identifier
+    let linear_relation = if refinement_punct_pair(input, '>', '=', false) {
+        refinement_take_pair(input, '>', '=');
+        Some(LinearRelation::Ge)
+    } else if refinement_punct(input.front(), '>') {
+        input.pop_front();
+        Some(LinearRelation::Gt)
+    } else if refinement_punct_pair(input, '<', '=', false) {
+        refinement_take_pair(input, '<', '=');
+        Some(LinearRelation::Le)
+    } else if refinement_punct(input.front(), '<') {
+        input.pop_front();
+        Some(LinearRelation::Lt)
+    } else {
+        None
+    };
+    if let Some(relation) = linear_relation {
+        let rhs = refinement_parse_linear_rhs_tokens(input)?;
+        return Ok(RefinementPredicate::Linear { terms: vec![(ident, 1)], relation, rhs });
+    }
 
-    // Check for comparison operators
-    if input.peek(Token![>]) && input.peek2(Token![=]) {
-        input.parse::<Token![>]>()?;
-        input.parse::<Token![=]>()?;
-        let rhs = parse_linear_rhs(input)?;
-        return Ok(RefinementPredicate::Linear {
-            terms: vec![(ident, 1)],
-            relation: LinearRelation::Ge,
-            rhs,
-        });
-    }
-    if input.peek(Token![>]) {
-        input.parse::<Token![>]>()?;
-        let rhs = parse_linear_rhs(input)?;
-        return Ok(RefinementPredicate::Linear {
-            terms: vec![(ident, 1)],
-            relation: LinearRelation::Gt,
-            rhs,
-        });
-    }
-    if input.peek(Token![<]) && input.peek2(Token![=]) {
-        input.parse::<Token![<]>()?;
-        input.parse::<Token![=]>()?;
-        let rhs = parse_linear_rhs(input)?;
-        return Ok(RefinementPredicate::Linear {
-            terms: vec![(ident, 1)],
-            relation: LinearRelation::Le,
-            rhs,
-        });
-    }
-    if input.peek(Token![<]) {
-        input.parse::<Token![<]>()?;
-        let rhs = parse_linear_rhs(input)?;
-        return Ok(RefinementPredicate::Linear {
-            terms: vec![(ident, 1)],
-            relation: LinearRelation::Lt,
-            rhs,
-        });
-    }
-    if input.peek(Token![==]) {
-        input.parse::<Token![==]>()?;
-        // Could be term equality or linear equality
-        if input.peek(syn::LitInt) {
-            let rhs = parse_linear_rhs(input)?;
+    let equality = if refinement_punct_pair(input, '=', '=', true) {
+        refinement_take_pair(input, '=', '=');
+        Some(true)
+    } else if refinement_punct_pair(input, '!', '=', true) {
+        refinement_take_pair(input, '!', '=');
+        Some(false)
+    } else {
+        None
+    };
+    if let Some(is_equal) = equality {
+        if matches!(input.front(), Some(proc_macro2::TokenTree::Literal(_)))
+            || (refinement_punct(input.front(), '-')
+                && matches!(input.get(1), Some(proc_macro2::TokenTree::Literal(_))))
+        {
+            let rhs = refinement_parse_linear_rhs_tokens(input)?;
             return Ok(RefinementPredicate::Linear {
                 terms: vec![(ident, 1)],
-                relation: LinearRelation::Eq,
+                relation: if is_equal {
+                    LinearRelation::Eq
+                } else {
+                    LinearRelation::Neq
+                },
                 rhs,
             });
         }
-        let rhs_ident = input.parse::<Ident>()?;
-        let first_char = rhs_ident.to_string().chars().next().unwrap_or('a');
-        let rhs_arg = if first_char.is_uppercase() {
-            PredArg::Constant(rhs_ident)
+        let right = refinement_pred_arg(refinement_take_ident(
+            input,
+            "expected term after equality operator",
+        )?);
+        let left = refinement_pred_arg(ident);
+        return Ok(if is_equal {
+            RefinementPredicate::TermEq(left, right)
         } else {
-            PredArg::Var(rhs_ident)
-        };
-        let first_char_lhs = ident.to_string().chars().next().unwrap_or('a');
-        let lhs_arg = if first_char_lhs.is_uppercase() {
-            PredArg::Constant(ident)
-        } else {
-            PredArg::Var(ident)
-        };
-        return Ok(RefinementPredicate::TermEq(lhs_arg, rhs_arg));
-    }
-    if input.peek(Token![!=]) {
-        input.parse::<Token![!=]>()?;
-        if input.peek(syn::LitInt) {
-            let rhs = parse_linear_rhs(input)?;
-            return Ok(RefinementPredicate::Linear {
-                terms: vec![(ident, 1)],
-                relation: LinearRelation::Neq,
-                rhs,
-            });
-        }
-        let rhs_ident = input.parse::<Ident>()?;
-        let first_char = rhs_ident.to_string().chars().next().unwrap_or('a');
-        let rhs_arg = if first_char.is_uppercase() {
-            PredArg::Constant(rhs_ident)
-        } else {
-            PredArg::Var(rhs_ident)
-        };
-        let first_char_lhs = ident.to_string().chars().next().unwrap_or('a');
-        let lhs_arg = if first_char_lhs.is_uppercase() {
-            PredArg::Constant(ident)
-        } else {
-            PredArg::Var(ident)
-        };
-        return Ok(RefinementPredicate::TermNeq(lhs_arg, rhs_arg));
+            RefinementPredicate::TermNeq(left, right)
+        });
     }
 
-    // Bare identifier — treat as zero-argument relation query
     Ok(RefinementPredicate::Relation {
         name: ident,
-        args: vec![],
+        args: Vec::new(),
         negated: false,
     })
 }
 
-/// Parse the right-hand side of a linear comparison (integer literal).
-fn parse_linear_rhs(input: ParseStream) -> SynResult<i64> {
-    let negative = if input.peek(Token![-]) {
-        input.parse::<Token![-]>()?;
-        true
+fn refinement_parse_binary(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+) -> Option<RefinementBinaryOperator> {
+    let operator = if refinement_punct_pair(input, '=', '>', true) {
+        RefinementBinaryOperator::Implies
+    } else if refinement_punct_pair(input, '|', '|', true) {
+        RefinementBinaryOperator::Or
+    } else if refinement_punct_pair(input, '&', '&', true) {
+        RefinementBinaryOperator::And
     } else {
-        false
+        return None;
     };
-    let lit: syn::LitInt = input.parse()?;
-    let val = lit.base10_parse::<i64>()?;
-    Ok(if negative { -val } else { val })
+    input.pop_front();
+    input.pop_front();
+    Some(operator)
+}
+
+fn refinement_parse_quantifier(
+    state: &mut RefinementParseState,
+    quantifier: Quantifier,
+) -> SynResult<()> {
+    let bound = if refinement_underscore(state.input.front()) {
+        state.input.pop_front();
+        let group = match state.input.pop_front() {
+            Some(proc_macro2::TokenTree::Group(group))
+                if group.delimiter() == proc_macro2::Delimiter::Brace =>
+            {
+                group
+            },
+            Some(tree) => return Err(syn::Error::new(tree.span(), "expected bound braces")),
+            None => {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "expected bound braces",
+                ));
+            },
+        };
+        Some(refinement_parse_bound(group)?)
+    } else {
+        None
+    };
+    let var = refinement_take_ident(&mut state.input, "expected quantified variable")?;
+    let domain = match state.input.front() {
+        Some(proc_macro2::TokenTree::Ident(keyword)) if keyword == "in" => {
+            state.input.pop_front();
+            Some(refinement_take_ident(
+                &mut state.input,
+                "expected quantifier domain after 'in'",
+            )?)
+        },
+        _ => None,
+    };
+    refinement_take_punct(&mut state.input, '.', "expected '.' after refinement quantifier")?;
+    state
+        .operators
+        .push(RefinementOperator::Quantified { quantifier, var, domain, bound });
+    Ok(())
+}
+
+fn parse_refinement_predicate_tokens(tokens: TokenStream) -> SynResult<RefinementPredicate> {
+    enum Task {
+        Run(RefinementParseState),
+        ResumeGroup(RefinementParseState),
+    }
+
+    let mut tasks = vec![Task::Run(RefinementParseState::new(tokens))];
+    let mut completed = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::ResumeGroup(mut state) => {
+                let expression = completed
+                    .pop()
+                    .expect("group parse precedes its continuation");
+                state.push_operand(expression)?;
+                tasks.push(Task::Run(state));
+            },
+            Task::Run(mut state) => loop {
+                if state.expects_operand {
+                    if refinement_punct(state.input.front(), '~')
+                        || (refinement_punct(state.input.front(), '!')
+                            && !refinement_punct_pair(&state.input, '!', '=', true))
+                    {
+                        if matches!(
+                            state.operators.last(),
+                            Some(RefinementOperator::Quantified { .. })
+                        ) {
+                            return Err(syn::Error::new(
+                                refinement_front_span(&state.input),
+                                "expected atomic quantified refinement body",
+                            ));
+                        }
+                        state.input.pop_front();
+                        state.operators.push(RefinementOperator::Not);
+                        continue;
+                    }
+
+                    if let Some(proc_macro2::TokenTree::Group(group)) = state.input.front() {
+                        if group.delimiter() != proc_macro2::Delimiter::Parenthesis {
+                            return Err(syn::Error::new(
+                                group.span(),
+                                "expected parenthesized refinement predicate",
+                            ));
+                        }
+                        let Some(proc_macro2::TokenTree::Group(group)) = state.input.pop_front()
+                        else {
+                            unreachable!("group lookahead and removal agree")
+                        };
+                        tasks.push(Task::ResumeGroup(state));
+                        tasks.push(Task::Run(RefinementParseState::new(group.stream())));
+                        break;
+                    }
+
+                    let keyword = match state.input.front() {
+                        Some(proc_macro2::TokenTree::Ident(ident)) => Some(ident.to_string()),
+                        _ => None,
+                    };
+                    match keyword.as_deref() {
+                        Some("forall") | Some("exists") => {
+                            state.input.pop_front();
+                            refinement_parse_quantifier(
+                                &mut state,
+                                if keyword.as_deref() == Some("forall") {
+                                    Quantifier::ForAll
+                                } else {
+                                    Quantifier::Exists
+                                },
+                            )?;
+                        },
+                        Some(_) => {
+                            let leaf = refinement_parse_leaf(&mut state.input)?;
+                            state.push_operand(leaf)?;
+                        },
+                        None => {
+                            return Err(syn::Error::new(
+                                refinement_front_span(&state.input),
+                                "expected refinement predicate",
+                            ));
+                        },
+                    }
+                } else if state.input.is_empty() {
+                    completed.push(state.finish()?);
+                    break;
+                } else if let Some(operator) = refinement_parse_binary(&mut state.input) {
+                    state.push_binary(operator)?;
+                } else {
+                    return Err(syn::Error::new(
+                        refinement_front_span(&state.input),
+                        "expected refinement predicate operator",
+                    ));
+                }
+            },
+        }
+    }
+    debug_assert_eq!(completed.len(), 1);
+    completed.pop().ok_or_else(|| {
+        syn::Error::new(proc_macro2::Span::call_site(), "empty refinement predicate")
+    })
 }
 
 /// Public wrapper for `parse_types` for use by `fragment.rs`.
@@ -1201,150 +1468,6 @@ fn parse_sync_block(input: ParseStream) -> SynResult<Vec<SyncConstraint>> {
     Ok(constraints)
 }
 
-/// Parse a tree constraint expression.
-///
-/// Supports both keyword and Unicode operator forms at each position.
-/// Grammar:
-/// ```text
-/// tree_expr ::= tree_atom (("and" | "∧" | "or" | "∨") tree_expr)?
-/// tree_atom ::= ("forall" | "∀") children_of? Symbol "{" tree_expr "}"
-///             | ("exists" | "∃") "child"
-///             | ("not" | "¬") tree_atom
-///             | ("match" | "∈") "{" symbol ("|" symbol)* "}"
-///             | "(" tree_expr ")"
-///             | Symbol
-/// children_of ::= ("children" "of" | "↓")
-/// ```
-fn parse_tree_constraint_expr(input: ParseStream) -> SynResult<TreeConstraintExpr> {
-    let left = parse_tree_constraint_atom(input)?;
-
-    // Check for binary operators: and/∧, or/∨
-    if input.peek(Ident) {
-        let fork = input.fork();
-        if let Ok(kw) = fork.parse::<Ident>() {
-            let kw_str = kw.to_string();
-            if kw_str == "and" || kw_str == "\u{2227}" {
-                // ∧ = U+2227
-                let _ = input.parse::<Ident>()?;
-                let right = parse_tree_constraint_expr(input)?;
-                return Ok(TreeConstraintExpr::And(Box::new(left), Box::new(right)));
-            } else if kw_str == "or" || kw_str == "\u{2228}" {
-                // ∨ = U+2228
-                let _ = input.parse::<Ident>()?;
-                let right = parse_tree_constraint_expr(input)?;
-                return Ok(TreeConstraintExpr::Or(Box::new(left), Box::new(right)));
-            }
-        }
-    }
-
-    Ok(left)
-}
-
-/// Parse an atomic tree constraint expression (unary/leaf).
-fn parse_tree_constraint_atom(input: ParseStream) -> SynResult<TreeConstraintExpr> {
-    if input.peek(Ident) {
-        let fork = input.fork();
-        let kw = fork.parse::<Ident>()?;
-        let kw_str = kw.to_string();
-
-        match kw_str.as_str() {
-            // forall / ∀
-            "forall" | "\u{2200}" => {
-                let _ = input.parse::<Ident>()?; // consume forall/∀
-
-                // Check for "children of" / "↓"
-                let fork2 = input.fork();
-                let next = fork2.parse::<Ident>()?;
-                let next_str = next.to_string();
-
-                if next_str == "children" {
-                    let _ = input.parse::<Ident>()?; // consume "children"
-                    let of_kw = input.parse::<Ident>()?; // consume "of"
-                    if of_kw != "of" {
-                        return Err(syn::Error::new(
-                            of_kw.span(),
-                            "expected 'of' after 'children'",
-                        ));
-                    }
-                    let symbol = input.parse::<Ident>()?;
-                    let body_content;
-                    syn::braced!(body_content in input);
-                    let body = parse_tree_constraint_expr(&body_content)?;
-                    Ok(TreeConstraintExpr::ForallChildren {
-                        symbol: symbol.to_string(),
-                        body: Box::new(body),
-                    })
-                } else if next_str == "\u{2193}" {
-                    // ↓ = U+2193
-                    let _ = input.parse::<Ident>()?; // consume "↓"
-                    let symbol = input.parse::<Ident>()?;
-                    let body_content;
-                    syn::braced!(body_content in input);
-                    let body = parse_tree_constraint_expr(&body_content)?;
-                    Ok(TreeConstraintExpr::ForallChildren {
-                        symbol: symbol.to_string(),
-                        body: Box::new(body),
-                    })
-                } else {
-                    // forall Symbol { body } (shorthand: symbol is next token)
-                    let _ = input.parse::<Ident>()?; // consume symbol
-                    let body_content;
-                    syn::braced!(body_content in input);
-                    let body = parse_tree_constraint_expr(&body_content)?;
-                    Ok(TreeConstraintExpr::ForallChildren {
-                        symbol: next_str,
-                        body: Box::new(body),
-                    })
-                }
-            },
-            // exists / ∃
-            "exists" | "\u{2203}" => {
-                let _ = input.parse::<Ident>()?; // consume exists/∃
-                let next = input.parse::<Ident>()?;
-                if next != "child" {
-                    return Err(syn::Error::new(
-                        next.span(),
-                        "expected 'child' after 'exists'/'∃'",
-                    ));
-                }
-                Ok(TreeConstraintExpr::ExistsChild)
-            },
-            // not / ¬
-            "not" | "\u{00AC}" => {
-                let _ = input.parse::<Ident>()?; // consume not/¬
-                let inner = parse_tree_constraint_atom(input)?;
-                Ok(TreeConstraintExpr::Not(Box::new(inner)))
-            },
-            // match / ∈
-            "match" | "\u{2208}" => {
-                let _ = input.parse::<Ident>()?; // consume match/∈
-                let body_content;
-                syn::braced!(body_content in input);
-                let mut symbols = Vec::new();
-                while !body_content.is_empty() {
-                    symbols.push(body_content.parse::<Ident>()?.to_string());
-                    if body_content.peek(Token![|]) {
-                        let _ = body_content.parse::<Token![|]>()?;
-                    }
-                }
-                Ok(TreeConstraintExpr::Match(symbols))
-            },
-            // Plain atom: symbol name
-            _ => {
-                let _ = input.parse::<Ident>()?;
-                Ok(TreeConstraintExpr::Atom(kw_str))
-            },
-        }
-    } else if input.peek(syn::token::Paren) {
-        // Parenthesized sub-expression
-        let paren_content;
-        syn::parenthesized!(paren_content in input);
-        parse_tree_constraint_expr(&paren_content)
-    } else {
-        Err(input.error("expected tree constraint expression"))
-    }
-}
-
 /// Parse `tree_invariants { ... }` block with structural constraints.
 fn parse_tree_invariants_block(input: ParseStream) -> SynResult<Vec<TreeInvariant>> {
     let _ = input.parse::<Ident>()?; // consume "tree_invariants"
@@ -1356,12 +1479,287 @@ fn parse_tree_invariants_block(input: ParseStream) -> SynResult<Vec<TreeInvarian
     while !content.is_empty() {
         let name = content.parse::<Ident>()?;
         let _ = content.parse::<Token![:]>()?;
-        let constraint = parse_tree_constraint_expr(&content)?;
+        let mut constraint_tokens = TokenStream::new();
+        while !content.is_empty() && !content.peek(Token![;]) {
+            constraint_tokens.extend(std::iter::once(content.parse::<proc_macro2::TokenTree>()?));
+        }
+        let constraint = parse_tree_constraint_tokens(constraint_tokens)?;
         let _ = content.parse::<Token![;]>()?;
         invariants.push(TreeInvariant { name, constraint });
     }
 
     Ok(invariants)
+}
+
+#[derive(Clone, Copy)]
+enum TreeConstraintOperator {
+    And,
+    Or,
+    Not,
+}
+
+struct TreeConstraintParseState {
+    input: std::collections::VecDeque<proc_macro2::TokenTree>,
+    operators: Vec<TreeConstraintOperator>,
+    values: Vec<TreeConstraintExpr>,
+    expects_operand: bool,
+}
+
+impl TreeConstraintParseState {
+    fn new(tokens: TokenStream) -> Self {
+        Self {
+            input: tokens.into_iter().collect(),
+            operators: Vec::new(),
+            values: Vec::new(),
+            expects_operand: true,
+        }
+    }
+
+    fn push_operand(&mut self, value: TreeConstraintExpr) -> SynResult<()> {
+        self.values.push(value);
+        self.expects_operand = false;
+        while matches!(self.operators.last(), Some(TreeConstraintOperator::Not)) {
+            self.reduce_one()?;
+        }
+        Ok(())
+    }
+
+    fn push_binary(&mut self, operator: TreeConstraintOperator) {
+        debug_assert!(matches!(operator, TreeConstraintOperator::And | TreeConstraintOperator::Or));
+        // The historical grammar recursed on the entire right-hand expression,
+        // so both operators have equal precedence and associate to the right.
+        self.operators.push(operator);
+        self.expects_operand = true;
+    }
+
+    fn reduce_one(&mut self) -> SynResult<()> {
+        let operator = self.operators.pop().ok_or_else(|| {
+            syn::Error::new(proc_macro2::Span::call_site(), "missing tree-constraint operator")
+        })?;
+        match operator {
+            TreeConstraintOperator::Not => {
+                let inner = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing tree-constraint negation operand",
+                    )
+                })?;
+                self.values.push(TreeConstraintExpr::Not(Box::new(inner)));
+            },
+            TreeConstraintOperator::And | TreeConstraintOperator::Or => {
+                let right = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing right tree-constraint operand",
+                    )
+                })?;
+                let left = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing left tree-constraint operand",
+                    )
+                })?;
+                self.values.push(match operator {
+                    TreeConstraintOperator::And => {
+                        TreeConstraintExpr::And(Box::new(left), Box::new(right))
+                    },
+                    TreeConstraintOperator::Or => {
+                        TreeConstraintExpr::Or(Box::new(left), Box::new(right))
+                    },
+                    TreeConstraintOperator::Not => unreachable!(),
+                });
+            },
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> SynResult<TreeConstraintExpr> {
+        if self.expects_operand {
+            return Err(syn::Error::new(
+                refinement_front_span(&self.input),
+                "expected tree constraint expression",
+            ));
+        }
+        while !self.operators.is_empty() {
+            self.reduce_one()?;
+        }
+        if self.values.len() != 1 {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "malformed tree constraint expression",
+            ));
+        }
+        Ok(self
+            .values
+            .pop()
+            .expect("one tree-constraint root remains after reduction"))
+    }
+}
+
+fn tree_constraint_parse_match(group: proc_macro2::Group) -> SynResult<Vec<String>> {
+    let mut input: std::collections::VecDeque<_> = group.stream().into_iter().collect();
+    let mut symbols = Vec::new();
+    while !input.is_empty() {
+        symbols
+            .push(refinement_take_ident(&mut input, "expected symbol in tree match")?.to_string());
+        if refinement_punct(input.front(), '|') {
+            input.pop_front();
+        }
+    }
+    Ok(symbols)
+}
+
+fn tree_constraint_take_group(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+    delimiter: proc_macro2::Delimiter,
+    message: &str,
+) -> SynResult<proc_macro2::Group> {
+    match input.pop_front() {
+        Some(proc_macro2::TokenTree::Group(group)) if group.delimiter() == delimiter => Ok(group),
+        Some(tree) => Err(syn::Error::new(tree.span(), message)),
+        None => Err(syn::Error::new(proc_macro2::Span::call_site(), message)),
+    }
+}
+
+fn tree_constraint_parse_forall_header(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+) -> SynResult<(String, proc_macro2::Group)> {
+    let next = refinement_take_ident(input, "expected symbol after tree forall")?;
+    let symbol = if next == "children" {
+        let of = refinement_take_ident(input, "expected 'of' after 'children'")?;
+        if of != "of" {
+            return Err(syn::Error::new(of.span(), "expected 'of' after 'children'"));
+        }
+        refinement_take_ident(input, "expected symbol after 'children of'")?.to_string()
+    } else if next == "↓" {
+        refinement_take_ident(input, "expected symbol after '↓'")?.to_string()
+    } else {
+        next.to_string()
+    };
+    let body = tree_constraint_take_group(
+        input,
+        proc_macro2::Delimiter::Brace,
+        "expected braced tree forall body",
+    )?;
+    Ok((symbol, body))
+}
+
+fn parse_tree_constraint_tokens(tokens: TokenStream) -> SynResult<TreeConstraintExpr> {
+    enum Task {
+        Run(TreeConstraintParseState),
+        ResumeGroup(TreeConstraintParseState),
+        ResumeForall {
+            state: TreeConstraintParseState,
+            symbol: String,
+        },
+    }
+
+    let mut tasks = vec![Task::Run(TreeConstraintParseState::new(tokens))];
+    let mut completed = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::ResumeGroup(mut state) => {
+                let expression = completed
+                    .pop()
+                    .expect("group parse precedes its continuation");
+                state.push_operand(expression)?;
+                tasks.push(Task::Run(state));
+            },
+            Task::ResumeForall { mut state, symbol } => {
+                let body = completed
+                    .pop()
+                    .expect("forall body parse precedes its continuation");
+                state.push_operand(TreeConstraintExpr::ForallChildren {
+                    symbol,
+                    body: Box::new(body),
+                })?;
+                tasks.push(Task::Run(state));
+            },
+            Task::Run(mut state) => loop {
+                if state.expects_operand {
+                    if let Some(proc_macro2::TokenTree::Group(group)) = state.input.front() {
+                        if group.delimiter() != proc_macro2::Delimiter::Parenthesis {
+                            return Err(syn::Error::new(
+                                group.span(),
+                                "expected parenthesized tree constraint",
+                            ));
+                        }
+                        let group = tree_constraint_take_group(
+                            &mut state.input,
+                            proc_macro2::Delimiter::Parenthesis,
+                            "expected parenthesized tree constraint",
+                        )?;
+                        tasks.push(Task::ResumeGroup(state));
+                        tasks.push(Task::Run(TreeConstraintParseState::new(group.stream())));
+                        break;
+                    }
+
+                    let keyword = refinement_take_ident(
+                        &mut state.input,
+                        "expected tree constraint expression",
+                    )?;
+                    match keyword.to_string().as_str() {
+                        "forall" | "∀" => {
+                            let (symbol, body) =
+                                tree_constraint_parse_forall_header(&mut state.input)?;
+                            tasks.push(Task::ResumeForall { state, symbol });
+                            tasks.push(Task::Run(TreeConstraintParseState::new(body.stream())));
+                            break;
+                        },
+                        "exists" | "∃" => {
+                            let child = refinement_take_ident(
+                                &mut state.input,
+                                "expected 'child' after 'exists'/'∃'",
+                            )?;
+                            if child != "child" {
+                                return Err(syn::Error::new(
+                                    child.span(),
+                                    "expected 'child' after 'exists'/'∃'",
+                                ));
+                            }
+                            state.push_operand(TreeConstraintExpr::ExistsChild)?;
+                        },
+                        "not" | "¬" => {
+                            state.operators.push(TreeConstraintOperator::Not);
+                        },
+                        "match" | "∈" => {
+                            let group = tree_constraint_take_group(
+                                &mut state.input,
+                                proc_macro2::Delimiter::Brace,
+                                "expected braced tree match set",
+                            )?;
+                            state.push_operand(TreeConstraintExpr::Match(
+                                tree_constraint_parse_match(group)?,
+                            ))?;
+                        },
+                        _ => state.push_operand(TreeConstraintExpr::Atom(keyword.to_string()))?,
+                    }
+                } else if state.input.is_empty() {
+                    completed.push(state.finish()?);
+                    break;
+                } else {
+                    let operator = refinement_take_ident(
+                        &mut state.input,
+                        "expected tree constraint operator",
+                    )?;
+                    match operator.to_string().as_str() {
+                        "and" | "∧" => state.push_binary(TreeConstraintOperator::And),
+                        "or" | "∨" => state.push_binary(TreeConstraintOperator::Or),
+                        _ => {
+                            return Err(syn::Error::new(
+                                operator.span(),
+                                "expected 'and'/'∧' or 'or'/'∨'",
+                            ));
+                        },
+                    }
+                }
+            },
+        }
+    }
+    debug_assert_eq!(completed.len(), 1);
+    completed.pop().ok_or_else(|| {
+        syn::Error::new(proc_macro2::Span::call_site(), "empty tree constraint expression")
+    })
 }
 
 /// Everything a `tokens { … }` block contributes to the language definition.
@@ -2637,34 +3035,6 @@ pub(crate) fn rust_token_allowed(role: ConnectiveRole) -> bool {
     active_role_available(&role)
 }
 
-/// Peek-and-consume any identifier in the active map that has the given role.
-///
-/// Returns `true` (and consumes the token) if successful; `false` otherwise.
-fn try_consume_role_keyword(input: ParseStream, role: ConnectiveRole) -> bool {
-    if !has_active_connective_map() {
-        return false;
-    }
-    if !active_role_available(&role) {
-        return false;
-    }
-    if !input.peek(Ident::peek_any) {
-        return false;
-    }
-    // Peek the identifier without consuming
-    let fork = input.fork();
-    let id_result = fork.parse::<Ident>();
-    if let Ok(id) = id_result {
-        if let Some(kw_role) = active_role_of(&id.to_string()) {
-            if kw_role == role {
-                // Now actually consume from the real input
-                let _ = input.parse::<Ident>();
-                return true;
-            }
-        }
-    }
-    false
-}
-
 /// Parse a behavioral predicate expression (implication level).
 ///
 /// Grammar (precedence low→high):
@@ -2690,285 +3060,499 @@ fn try_consume_role_keyword(input: ParseStream, role: ConnectiveRole) -> bool {
 /// hardcoded Rust connective token unconsumed, CONN02 fires — the user
 /// opted out of that role and trying to use the Rust spelling is an error.
 fn parse_behavioral_pred(input: ParseStream) -> SynResult<BehavioralPred> {
-    let result = parse_pred_implies(input)?;
-    check_conn02_unlisted_token(input)?;
-    Ok(result)
+    let tokens = input.parse::<TokenStream>()?;
+    parse_behavioral_predicate_tokens(tokens)
 }
 
-/// Layer D cleanup: when an active `ConnectiveMap` is present, scan the
-/// remaining input for stranded forbidden Rust connective tokens and emit
-/// CONN02 if any is found.
-///
-/// This runs at the *trailing edge* of `parse_behavioral_pred`. By that
-/// point, all tokens that the parser was willing to consume have been
-/// consumed. Any leftover Rust connective is one the user wrote but the
-/// active map does not declare.
-fn check_conn02_unlisted_token(input: ParseStream) -> SynResult<()> {
-    if !has_active_connective_map() {
-        return Ok(());
+#[derive(Clone, Copy)]
+enum BehavioralBinaryOperator {
+    Entails,
+    ImpliedBy,
+    Iff,
+    Or,
+    And,
+}
+
+enum BehavioralOperator {
+    Binary(BehavioralBinaryOperator),
+    Not,
+    Quantified {
+        quantifier: Quantifier,
+        var: Ident,
+        domain: Option<Ident>,
+        bound: Option<usize>,
+    },
+}
+
+struct BehavioralParseState {
+    input: std::collections::VecDeque<proc_macro2::TokenTree>,
+    operators: Vec<BehavioralOperator>,
+    values: Vec<BehavioralPred>,
+    expects_operand: bool,
+}
+
+impl BehavioralParseState {
+    fn new(tokens: TokenStream) -> Self {
+        Self {
+            input: tokens.into_iter().collect(),
+            operators: Vec::new(),
+            values: Vec::new(),
+            expects_operand: true,
+        }
     }
-    if input.peek(Token![&&]) && !active_role_available(&ConnectiveRole::And) {
-        return Err(syn::Error::new(
-            input.span(),
-            "CONN02: connective token `&&` (role `and`) is not declared in the \
-             active `connectives {}` block",
-        ));
+
+    fn push_operand(&mut self, value: BehavioralPred) -> SynResult<()> {
+        self.values.push(value);
+        self.expects_operand = false;
+        if matches!(self.operators.last(), Some(BehavioralOperator::Not)) {
+            self.reduce_one()?;
+        }
+        Ok(())
     }
-    if input.peek(Token![||]) && !active_role_available(&ConnectiveRole::Or) {
-        return Err(syn::Error::new(
-            input.span(),
-            "CONN02: connective token `||` (role `or`) is not declared in the \
-             active `connectives {}` block",
-        ));
+
+    fn push_binary(&mut self, operator: BehavioralBinaryOperator) -> SynResult<()> {
+        let precedence = behavioral_precedence(operator);
+        let left_associative =
+            matches!(operator, BehavioralBinaryOperator::Or | BehavioralBinaryOperator::And);
+        while matches!(
+            self.operators.last(),
+            Some(BehavioralOperator::Binary(previous))
+                if behavioral_precedence(*previous) > precedence
+                    || (left_associative && behavioral_precedence(*previous) == precedence)
+        ) {
+            self.reduce_one()?;
+        }
+        self.operators.push(BehavioralOperator::Binary(operator));
+        self.expects_operand = true;
+        Ok(())
     }
-    if input.peek(Token![~]) && !active_role_available(&ConnectiveRole::Not) {
-        return Err(syn::Error::new(
-            input.span(),
-            "CONN02: connective token `~` (role `not`) is not declared in the \
-             active `connectives {}` block",
-        ));
+
+    fn reduce_one(&mut self) -> SynResult<()> {
+        let operator = self.operators.pop().ok_or_else(|| {
+            syn::Error::new(proc_macro2::Span::call_site(), "missing behavioral operator")
+        })?;
+        match operator {
+            BehavioralOperator::Not => {
+                let inner = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing behavioral negation operand",
+                    )
+                })?;
+                self.values.push(BehavioralPred::Not(Box::new(inner)));
+            },
+            BehavioralOperator::Quantified { quantifier, var, domain, bound } => {
+                let body = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(var.span(), "missing quantified behavioral body")
+                })?;
+                self.values.push(BehavioralPred::Quantified {
+                    quantifier,
+                    var,
+                    domain,
+                    bound,
+                    body: Box::new(body),
+                });
+            },
+            BehavioralOperator::Binary(operator) => {
+                let right = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing right behavioral operand",
+                    )
+                })?;
+                let left = self.values.pop().ok_or_else(|| {
+                    syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        "missing left behavioral operand",
+                    )
+                })?;
+                self.values.push(match operator {
+                    BehavioralBinaryOperator::Entails => {
+                        BehavioralPred::Implies(Box::new(left), Box::new(right))
+                    },
+                    BehavioralBinaryOperator::ImpliedBy => {
+                        BehavioralPred::Implies(Box::new(right), Box::new(left))
+                    },
+                    BehavioralBinaryOperator::Iff => {
+                        let forward = BehavioralPred::Implies(
+                            Box::new(left.clone()),
+                            Box::new(right.clone()),
+                        );
+                        let backward = BehavioralPred::Implies(Box::new(right), Box::new(left));
+                        BehavioralPred::And(Box::new(forward), Box::new(backward))
+                    },
+                    BehavioralBinaryOperator::Or => {
+                        BehavioralPred::Or(Box::new(left), Box::new(right))
+                    },
+                    BehavioralBinaryOperator::And => {
+                        BehavioralPred::And(Box::new(left), Box::new(right))
+                    },
+                });
+            },
+        }
+        Ok(())
     }
-    if input.peek(Token![!]) && !active_role_available(&ConnectiveRole::Not) {
-        return Err(syn::Error::new(
-            input.span(),
-            "CONN02: connective token `!` (role `not`) is not declared in the \
-             active `connectives {}` block",
-        ));
+
+    fn finish(mut self) -> SynResult<BehavioralPred> {
+        if self.expects_operand {
+            return Err(syn::Error::new(
+                refinement_front_span(&self.input),
+                "expected behavioral predicate operand",
+            ));
+        }
+        while !self.operators.is_empty() {
+            self.reduce_one()?;
+        }
+        if self.values.len() != 1 {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "malformed behavioral predicate",
+            ));
+        }
+        Ok(self
+            .values
+            .pop()
+            .expect("one behavioral root remains after reduction"))
     }
-    if input.peek(Token![=>]) && !active_role_available(&ConnectiveRole::Entails) {
-        return Err(syn::Error::new(
-            input.span(),
-            "CONN02: connective token `=>` (role `entails`) is not declared in the \
-             active `connectives {}` block",
-        ));
+}
+
+fn behavioral_precedence(operator: BehavioralBinaryOperator) -> u8 {
+    match operator {
+        BehavioralBinaryOperator::Entails
+        | BehavioralBinaryOperator::ImpliedBy
+        | BehavioralBinaryOperator::Iff => 1,
+        BehavioralBinaryOperator::Or => 2,
+        BehavioralBinaryOperator::And => 3,
     }
+}
+
+fn behavioral_conn02(role: ConnectiveRole, span: proc_macro2::Span) -> syn::Error {
+    let token = match role {
+        ConnectiveRole::And => "&&",
+        ConnectiveRole::Or => "||",
+        ConnectiveRole::Not => "~",
+        ConnectiveRole::Entails => "=>",
+        _ => "connective",
+    };
+    let role_name = match role {
+        ConnectiveRole::And => "and",
+        ConnectiveRole::Or => "or",
+        ConnectiveRole::Not => "not",
+        ConnectiveRole::Entails => "entails",
+        _ => "unknown",
+    };
+    syn::Error::new(
+        span,
+        format!(
+            "CONN02: connective token `{token}` (role `{role_name}`) is not declared in the active `connectives {{}}` block"
+        ),
+    )
+}
+
+fn behavioral_parse_bound(group: proc_macro2::Group) -> SynResult<usize> {
+    let mut input: std::collections::VecDeque<_> = group.stream().into_iter().collect();
+    let _key = refinement_take_ident(&mut input, "expected bound key")?;
+    refinement_take_punct(&mut input, '=', "expected '=' after bound key")?;
+    let literal = match input.pop_front() {
+        Some(proc_macro2::TokenTree::Literal(literal)) => literal,
+        Some(tree) => return Err(syn::Error::new(tree.span(), "expected integer bound")),
+        None => return Err(syn::Error::new(group.span(), "expected integer bound")),
+    };
+    if let Some(tree) = input.front() {
+        return Err(syn::Error::new(tree.span(), "unexpected token after behavioral bound"));
+    }
+    syn::parse2::<syn::LitInt>(TokenStream::from(proc_macro2::TokenTree::Literal(literal)))?
+        .base10_parse::<usize>()
+}
+
+fn behavioral_parse_quantifier(
+    state: &mut BehavioralParseState,
+    quantifier: Quantifier,
+) -> SynResult<()> {
+    let var = refinement_take_ident(&mut state.input, "expected quantified variable")?;
+    let bound = if refinement_underscore(state.input.front()) {
+        state.input.pop_front();
+        let group = match state.input.pop_front() {
+            Some(proc_macro2::TokenTree::Group(group))
+                if group.delimiter() == proc_macro2::Delimiter::Brace =>
+            {
+                group
+            },
+            Some(tree) => return Err(syn::Error::new(tree.span(), "expected bound braces")),
+            None => {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "expected bound braces",
+                ));
+            },
+        };
+        Some(behavioral_parse_bound(group)?)
+    } else {
+        None
+    };
+    let domain = match state.input.front() {
+        Some(proc_macro2::TokenTree::Ident(keyword)) if keyword == "in" => {
+            state.input.pop_front();
+            Some(refinement_take_ident(
+                &mut state.input,
+                "expected quantifier domain after 'in'",
+            )?)
+        },
+        _ => None,
+    };
+    refinement_take_punct(&mut state.input, '.', "expected '.' after behavioral quantifier")?;
+    state
+        .operators
+        .push(BehavioralOperator::Quantified { quantifier, var, domain, bound });
     Ok(())
 }
 
-/// Implication (right-associative, lowest precedence).
-fn parse_pred_implies(input: ParseStream) -> SynResult<BehavioralPred> {
-    let lhs = parse_pred_or(input)?;
-
-    // Check for "=>" (fat arrow — implication).
-    // Only consume `=>` if either no connective map is active or the
-    // active map declares `Entails` — otherwise CONN02 closed-world semantics.
-    if input.peek(Token![=>]) && rust_token_allowed(ConnectiveRole::Entails) {
-        let _ = input.parse::<Token![=>]>()?;
-        let rhs = parse_pred_implies(input)?; // right-associative
-        return Ok(BehavioralPred::Implies(Box::new(lhs), Box::new(rhs)));
+fn behavioral_parse_ac_match(group: proc_macro2::Group) -> SynResult<BehavioralPred> {
+    let mut input: std::collections::VecDeque<_> = group.stream().into_iter().collect();
+    let bag = refinement_take_ident(&mut input, "expected AC-match bag variable")?;
+    refinement_take_punct(&mut input, ',', "expected ',' after AC-match bag")?;
+    let set = match input.pop_front() {
+        Some(proc_macro2::TokenTree::Group(group))
+            if group.delimiter() == proc_macro2::Delimiter::Brace =>
+        {
+            group
+        },
+        Some(tree) => return Err(syn::Error::new(tree.span(), "expected AC-match element set")),
+        None => {
+            return Err(syn::Error::new(group.span(), "expected AC-match element set"));
+        },
+    };
+    if let Some(tree) = input.front() {
+        return Err(syn::Error::new(tree.span(), "unexpected token after AC-match set"));
     }
-
-    // Custom keyword (e.g., `entails`, `implies`) from `connectives {}`.
-    if try_consume_role_keyword(input, ConnectiveRole::Entails) {
-        let rhs = parse_pred_implies(input)?; // right-associative
-        return Ok(BehavioralPred::Implies(Box::new(lhs), Box::new(rhs)));
-    }
-    if try_consume_role_keyword(input, ConnectiveRole::ImpliedBy) {
-        // Reverse implication: a implied_by b ≡ b => a
-        let rhs = parse_pred_implies(input)?;
-        return Ok(BehavioralPred::Implies(Box::new(rhs), Box::new(lhs)));
-    }
-    if try_consume_role_keyword(input, ConnectiveRole::Iff) {
-        // Biconditional: a iff b ≡ (a => b) ∧ (b => a)
-        let rhs = parse_pred_implies(input)?;
-        let forward = BehavioralPred::Implies(Box::new(lhs.clone()), Box::new(rhs.clone()));
-        let backward = BehavioralPred::Implies(Box::new(rhs), Box::new(lhs));
-        return Ok(BehavioralPred::And(Box::new(forward), Box::new(backward)));
-    }
-
-    Ok(lhs)
-}
-
-/// Disjunction (`||` or declared `or` keyword).
-///
-/// Layer D cleanup: when an active `ConnectiveMap` is present, the
-/// hardcoded `||` token is only accepted if the map also declares the
-/// `Or` role. Otherwise the parser breaks the loop and the unconsumed
-/// `||` later triggers a CONN02 diagnostic in `parse_behavioral_pred`.
-fn parse_pred_or(input: ParseStream) -> SynResult<BehavioralPred> {
-    let mut result = parse_pred_and(input)?;
-
-    loop {
-        if input.peek(Token![||]) && rust_token_allowed(ConnectiveRole::Or) {
-            let _ = input.parse::<Token![||]>()?;
-        } else if try_consume_role_keyword(input, ConnectiveRole::Or) {
-            // consumed
-        } else {
+    let mut set_input: std::collections::VecDeque<_> = set.stream().into_iter().collect();
+    let mut elements = Vec::new();
+    let mut rest = None;
+    while !set_input.is_empty() {
+        let ellipsis = refinement_punct(set_input.front(), '.')
+            && refinement_punct(set_input.get(1), '.')
+            && refinement_punct(set_input.get(2), '.');
+        if ellipsis {
+            set_input.pop_front();
+            set_input.pop_front();
+            set_input.pop_front();
+            rest = Some(refinement_take_ident(&mut set_input, "expected AC-match rest variable")?);
+            if refinement_punct(set_input.front(), ',') {
+                set_input.pop_front();
+            }
+            if let Some(tree) = set_input.front() {
+                return Err(syn::Error::new(tree.span(), "unexpected token after AC-match rest"));
+            }
             break;
         }
-        let rhs = parse_pred_and(input)?;
-        result = BehavioralPred::Or(Box::new(result), Box::new(rhs));
-    }
-
-    Ok(result)
-}
-
-/// Conjunction (`&&` or declared `and` keyword).
-///
-/// Layer D cleanup: see `parse_pred_or` for the closed-world rationale.
-fn parse_pred_and(input: ParseStream) -> SynResult<BehavioralPred> {
-    let mut result = parse_pred_not(input)?;
-
-    loop {
-        if input.peek(Token![&&]) && rust_token_allowed(ConnectiveRole::And) {
-            let _ = input.parse::<Token![&&]>()?;
-        } else if try_consume_role_keyword(input, ConnectiveRole::And) {
-            // consumed
-        } else {
-            break;
+        elements.push(refinement_take_ident(&mut set_input, "expected AC-match element variable")?);
+        if refinement_punct(set_input.front(), ',') {
+            set_input.pop_front();
         }
-        let rhs = parse_pred_not(input)?;
-        result = BehavioralPred::And(Box::new(result), Box::new(rhs));
     }
-
-    Ok(result)
+    if elements.is_empty() {
+        return Err(syn::Error::new(
+            group.span(),
+            "ac_match requires at least one element variable",
+        ));
+    }
+    Ok(BehavioralPred::AcMatch { bag, elements, rest })
 }
 
-/// Negation (`~`, `!`, or declared `not` keyword).
-///
-/// Layer D cleanup: when an active `ConnectiveMap` omits `Not`, the
-/// hardcoded `~` and `!` tokens are not consumed; they later trigger a
-/// CONN02 diagnostic in `parse_behavioral_pred`.
-fn parse_pred_not(input: ParseStream) -> SynResult<BehavioralPred> {
-    if input.peek(Token![~]) && rust_token_allowed(ConnectiveRole::Not) {
-        let _ = input.parse::<Token![~]>()?;
-        let inner = parse_pred_atom(input)?;
-        Ok(BehavioralPred::Not(Box::new(inner)))
-    } else if input.peek(Token![!]) && rust_token_allowed(ConnectiveRole::Not) {
-        let _ = input.parse::<Token![!]>()?;
-        let inner = parse_pred_atom(input)?;
-        Ok(BehavioralPred::Not(Box::new(inner)))
-    } else if try_consume_role_keyword(input, ConnectiveRole::Not) {
-        let inner = parse_pred_atom(input)?;
-        Ok(BehavioralPred::Not(Box::new(inner)))
-    } else {
-        parse_pred_atom(input)
-    }
-}
-
-/// Atomic predicate: relation query, quantifier, or parenthesized expression.
-fn parse_pred_atom(input: ParseStream) -> SynResult<BehavioralPred> {
-    // Parenthesized subexpression
-    if input.peek(syn::token::Paren) {
-        let content;
-        syn::parenthesized!(content in input);
-        return parse_behavioral_pred(&content);
-    }
-
-    let ident = input.parse::<Ident>()?;
-
-    // AC-match: ac_match(bag, {x, y, ...rest})
+fn behavioral_parse_leaf(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+) -> SynResult<BehavioralPred> {
+    let ident = refinement_take_ident(input, "expected behavioral predicate identifier")?;
     if ident == "ac_match" {
-        let content;
-        syn::parenthesized!(content in input);
-        let bag = content.parse::<Ident>()?;
-        let _ = content.parse::<Token![,]>()?;
-
-        // Parse the element set: { x, y, ...rest }
-        let set_content;
-        syn::braced!(set_content in content);
-        let mut elements = Vec::new();
-        let mut rest = None;
-
-        while !set_content.is_empty() {
-            // Check for "..." (rest pattern)
-            if set_content.peek(Token![...]) {
-                let _ = set_content.parse::<Token![...]>()?;
-                rest = Some(set_content.parse::<Ident>()?);
-                // Trailing comma is optional after rest
-                if set_content.peek(Token![,]) {
-                    let _ = set_content.parse::<Token![,]>()?;
-                }
-                break;
-            }
-
-            elements.push(set_content.parse::<Ident>()?);
-            if set_content.peek(Token![,]) {
-                let _ = set_content.parse::<Token![,]>()?;
-            }
-        }
-
-        if elements.is_empty() {
-            return Err(syn::Error::new(
-                ident.span(),
-                "ac_match requires at least one element variable",
-            ));
-        }
-
-        return Ok(BehavioralPred::AcMatch { bag, elements, rest });
+        let group = match input.pop_front() {
+            Some(proc_macro2::TokenTree::Group(group))
+                if group.delimiter() == proc_macro2::Delimiter::Parenthesis =>
+            {
+                group
+            },
+            Some(tree) => return Err(syn::Error::new(tree.span(), "expected AC-match arguments")),
+            None => return Err(syn::Error::new(ident.span(), "expected AC-match arguments")),
+        };
+        return behavioral_parse_ac_match(group);
     }
-
-    // Quantifier: forall/exists var [bound] [in domain]. body
-    if ident == "forall" || ident == "exists" {
-        let quantifier = if ident == "forall" {
-            Quantifier::ForAll
-        } else {
-            Quantifier::Exists
+    if matches!(input.front(), Some(proc_macro2::TokenTree::Group(group)) if group.delimiter() == proc_macro2::Delimiter::Parenthesis)
+    {
+        let Some(proc_macro2::TokenTree::Group(group)) = input.pop_front() else {
+            unreachable!("relation lookahead requires a parenthesis group")
         };
-        let var = input.parse::<Ident>()?;
-
-        // Optional bound: _{k=N}
-        let bound = if input.peek(Token![_]) {
-            let _ = input.parse::<Token![_]>()?;
-            let bound_content;
-            syn::braced!(bound_content in input);
-            let _k = bound_content.parse::<Ident>()?;
-            let _ = bound_content.parse::<Token![=]>()?;
-            let n: syn::LitInt = bound_content.parse()?;
-            Some(n.base10_parse::<usize>()?)
-        } else {
-            None
-        };
-
-        // Optional domain: "in" relation_name
-        let domain = if input.peek(Token![in]) {
-            let _ = input.parse::<Token![in]>()?;
-            Some(input.parse::<Ident>()?)
-        } else {
-            None
-        };
-
-        let _ = input.parse::<Token![.]>()?;
-        let body = parse_behavioral_pred(input)?;
-
-        return Ok(BehavioralPred::Quantified {
-            quantifier,
-            var,
-            domain,
-            bound,
-            body: Box::new(body),
-        });
-    }
-
-    // Relation query: rel(args...)
-    if input.peek(syn::token::Paren) {
-        let args_content;
-        syn::parenthesized!(args_content in input);
-        let mut args = Vec::new();
-        while !args_content.is_empty() {
-            let arg = args_content.parse::<Ident>()?;
-            // Lowercase first char → variable, uppercase → constant
-            if arg.to_string().starts_with(|c: char| c.is_uppercase()) {
-                args.push(PredArg::Constant(arg));
-            } else {
-                args.push(PredArg::Var(arg));
-            }
-            if args_content.peek(Token![,]) {
-                let _ = args_content.parse::<Token![,]>()?;
-            }
-        }
         return Ok(BehavioralPred::RelationQuery {
             relation_name: ident,
-            args,
+            args: refinement_parse_relation_args(group)?,
             negated: false,
         });
     }
-
-    // Bare identifier as nullary relation query (no args)
     Ok(BehavioralPred::RelationQuery {
         relation_name: ident,
-        args: vec![],
+        args: Vec::new(),
         negated: false,
+    })
+}
+
+fn behavioral_keyword_role(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+) -> Option<ConnectiveRole> {
+    let Some(proc_macro2::TokenTree::Ident(keyword)) = input.front() else {
+        return None;
+    };
+    let role = active_role_of(&keyword.to_string())?;
+    input.pop_front();
+    Some(role)
+}
+
+fn behavioral_parse_binary(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+) -> SynResult<Option<BehavioralBinaryOperator>> {
+    let hardcoded = if refinement_punct_pair(input, '=', '>', true) {
+        Some((ConnectiveRole::Entails, BehavioralBinaryOperator::Entails))
+    } else if refinement_punct_pair(input, '|', '|', true) {
+        Some((ConnectiveRole::Or, BehavioralBinaryOperator::Or))
+    } else if refinement_punct_pair(input, '&', '&', true) {
+        Some((ConnectiveRole::And, BehavioralBinaryOperator::And))
+    } else {
+        None
+    };
+    if let Some((role, operator)) = hardcoded {
+        if !rust_token_allowed(role.clone()) {
+            return Err(behavioral_conn02(role, refinement_front_span(input)));
+        }
+        input.pop_front();
+        input.pop_front();
+        return Ok(Some(operator));
+    }
+    Ok(match behavioral_keyword_role(input) {
+        Some(ConnectiveRole::Entails) => Some(BehavioralBinaryOperator::Entails),
+        Some(ConnectiveRole::ImpliedBy) => Some(BehavioralBinaryOperator::ImpliedBy),
+        Some(ConnectiveRole::Iff) => Some(BehavioralBinaryOperator::Iff),
+        Some(ConnectiveRole::Or) => Some(BehavioralBinaryOperator::Or),
+        Some(ConnectiveRole::And) => Some(BehavioralBinaryOperator::And),
+        Some(role) => {
+            return Err(syn::Error::new(
+                refinement_front_span(input),
+                format!("connective role {role:?} is not binary"),
+            ));
+        },
+        None => None,
+    })
+}
+
+fn parse_behavioral_predicate_tokens(tokens: TokenStream) -> SynResult<BehavioralPred> {
+    enum Task {
+        Run(BehavioralParseState),
+        ResumeGroup(BehavioralParseState),
+    }
+
+    let mut tasks = vec![Task::Run(BehavioralParseState::new(tokens))];
+    let mut completed = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::ResumeGroup(mut state) => {
+                let expression = completed
+                    .pop()
+                    .expect("group parse precedes its continuation");
+                state.push_operand(expression)?;
+                tasks.push(Task::Run(state));
+            },
+            Task::Run(mut state) => loop {
+                if state.expects_operand {
+                    let hardcoded_not = refinement_punct(state.input.front(), '~')
+                        || refinement_punct(state.input.front(), '!');
+                    if hardcoded_not {
+                        if !rust_token_allowed(ConnectiveRole::Not) {
+                            return Err(behavioral_conn02(
+                                ConnectiveRole::Not,
+                                refinement_front_span(&state.input),
+                            ));
+                        }
+                        if matches!(state.operators.last(), Some(BehavioralOperator::Not)) {
+                            return Err(syn::Error::new(
+                                refinement_front_span(&state.input),
+                                "expected atomic predicate after negation",
+                            ));
+                        }
+                        state.input.pop_front();
+                        state.operators.push(BehavioralOperator::Not);
+                        continue;
+                    }
+
+                    if let Some(proc_macro2::TokenTree::Ident(keyword)) = state.input.front() {
+                        if let Some(ConnectiveRole::Not) = active_role_of(&keyword.to_string()) {
+                            if matches!(state.operators.last(), Some(BehavioralOperator::Not)) {
+                                return Err(syn::Error::new(
+                                    keyword.span(),
+                                    "expected atomic predicate after negation",
+                                ));
+                            }
+                            state.input.pop_front();
+                            state.operators.push(BehavioralOperator::Not);
+                            continue;
+                        }
+                    }
+
+                    if let Some(proc_macro2::TokenTree::Group(group)) = state.input.front() {
+                        if group.delimiter() != proc_macro2::Delimiter::Parenthesis {
+                            return Err(syn::Error::new(
+                                group.span(),
+                                "expected parenthesized behavioral predicate",
+                            ));
+                        }
+                        let Some(proc_macro2::TokenTree::Group(group)) = state.input.pop_front()
+                        else {
+                            unreachable!("group lookahead and removal agree")
+                        };
+                        tasks.push(Task::ResumeGroup(state));
+                        tasks.push(Task::Run(BehavioralParseState::new(group.stream())));
+                        break;
+                    }
+
+                    let keyword = match state.input.front() {
+                        Some(proc_macro2::TokenTree::Ident(ident)) => Some(ident.to_string()),
+                        _ => None,
+                    };
+                    match keyword.as_deref() {
+                        Some("forall") | Some("exists") => {
+                            state.input.pop_front();
+                            behavioral_parse_quantifier(
+                                &mut state,
+                                if keyword.as_deref() == Some("forall") {
+                                    Quantifier::ForAll
+                                } else {
+                                    Quantifier::Exists
+                                },
+                            )?;
+                        },
+                        Some(_) => {
+                            let leaf = behavioral_parse_leaf(&mut state.input)?;
+                            state.push_operand(leaf)?;
+                        },
+                        None => {
+                            return Err(syn::Error::new(
+                                refinement_front_span(&state.input),
+                                "expected behavioral predicate",
+                            ));
+                        },
+                    }
+                } else if state.input.is_empty() {
+                    completed.push(state.finish()?);
+                    break;
+                } else if let Some(operator) = behavioral_parse_binary(&mut state.input)? {
+                    state.push_binary(operator)?;
+                } else {
+                    return Err(syn::Error::new(
+                        refinement_front_span(&state.input),
+                        "expected behavioral predicate operator",
+                    ));
+                }
+            },
+        }
+    }
+    debug_assert_eq!(completed.len(), 1);
+    completed.pop().ok_or_else(|| {
+        syn::Error::new(proc_macro2::Span::call_site(), "empty behavioral predicate")
     })
 }
 
@@ -4150,3 +4734,15 @@ mod premise_recursive_oracle;
 #[cfg(test)]
 #[path = "../../tests/support/pattern_parser_recursive_oracle.rs"]
 mod pattern_parser_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../../tests/support/refinement_parser_recursive_oracle.rs"]
+mod refinement_parser_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../../tests/support/behavioral_parser_recursive_oracle.rs"]
+mod behavioral_parser_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../../tests/support/tree_constraint_parser_recursive_oracle.rs"]
+mod tree_constraint_parser_recursive_oracle;
