@@ -1452,7 +1452,6 @@ impl std::fmt::Display for LinearRelation {
 ///
 /// Supports the same operator precedence as `BehavioralPred`:
 /// implies < or < and < not < atom.
-#[derive(Debug, Clone)]
 pub enum RefinementPredicate {
     /// Linear arithmetic: `a₁*x₁ + a₂*x₂ + ... ⊕ c`
     ///
@@ -1498,77 +1497,7 @@ pub enum RefinementPredicate {
 
 impl std::fmt::Display for RefinementPredicate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RefinementPredicate::Linear { terms, relation, rhs } => {
-                for (i, (var, coeff)) in terms.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, " + ")?;
-                    }
-                    if *coeff == 1 {
-                        write!(f, "{}", var)?;
-                    } else {
-                        write!(f, "{}*{}", coeff, var)?;
-                    }
-                }
-                write!(f, " {} {}", relation, rhs)
-            },
-            RefinementPredicate::Relation { name, args, negated } => {
-                if *negated {
-                    write!(f, "~")?;
-                }
-                write!(f, "{}(", name)?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    match arg {
-                        PredArg::Var(v) => write!(f, "{}", v)?,
-                        PredArg::Constant(c) => write!(f, "{}", c)?,
-                    }
-                }
-                write!(f, ")")
-            },
-            RefinementPredicate::Quantified { quantifier, var, domain, bound, body } => {
-                match quantifier {
-                    Quantifier::ForAll => write!(f, "forall")?,
-                    Quantifier::Exists => write!(f, "exists")?,
-                }
-                if let Some(k) = bound {
-                    write!(f, "_{{k={}}}", k)?;
-                }
-                write!(f, " {}", var)?;
-                if let Some(d) = domain {
-                    write!(f, " in {}", d)?;
-                }
-                write!(f, ". ({})", body)
-            },
-            RefinementPredicate::And(a, b) => write!(f, "({} && {})", a, b),
-            RefinementPredicate::Or(a, b) => write!(f, "({} || {})", a, b),
-            RefinementPredicate::Not(a) => write!(f, "~{}", a),
-            RefinementPredicate::Implies(a, b) => write!(f, "({} => {})", a, b),
-            RefinementPredicate::TermEq(a, b) => {
-                let a_str = match a {
-                    PredArg::Var(v) => v.to_string(),
-                    PredArg::Constant(c) => c.to_string(),
-                };
-                let b_str = match b {
-                    PredArg::Var(v) => v.to_string(),
-                    PredArg::Constant(c) => c.to_string(),
-                };
-                write!(f, "{} == {}", a_str, b_str)
-            },
-            RefinementPredicate::TermNeq(a, b) => {
-                let a_str = match a {
-                    PredArg::Var(v) => v.to_string(),
-                    PredArg::Constant(c) => c.to_string(),
-                };
-                let b_str = match b {
-                    PredArg::Var(v) => v.to_string(),
-                    PredArg::Constant(c) => c.to_string(),
-                };
-                write!(f, "{} != {}", a_str, b_str)
-            },
-        }
+        super::lifecycle::fmt_refinement_predicate(self, f)
     }
 }
 
@@ -1584,7 +1513,6 @@ impl std::fmt::Display for RefinementPredicate {
 /// | `Behavioral`  | Relation queries / quantified formulas      |
 /// | `Unification` | Structural term unification                 |
 /// | `Product`     | ProductAlgebra composition of child domains |
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConstraintDomain {
     /// Pure linear arithmetic (e.g., `x > 0`, `3*x + 2*y <= 7`).
     Presburger,
@@ -1601,22 +1529,7 @@ pub enum ConstraintDomain {
 
 impl std::fmt::Display for ConstraintDomain {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConstraintDomain::Presburger => write!(f, "Presburger"),
-            ConstraintDomain::Lattice => write!(f, "Lattice"),
-            ConstraintDomain::Behavioral => write!(f, "Behavioral"),
-            ConstraintDomain::Unification => write!(f, "Unification"),
-            ConstraintDomain::Product(children) => {
-                write!(f, "Product(")?;
-                for (i, c) in children.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", c)?;
-                }
-                write!(f, ")")
-            },
-        }
+        super::lifecycle::fmt_constraint_domain(self, f)
     }
 }
 
@@ -1634,17 +1547,7 @@ impl RefinementPredicate {
     ///
     /// `Not(inner)` delegates to its child.
     pub fn classify(&self) -> ConstraintDomain {
-        match self {
-            RefinementPredicate::Linear { .. } => ConstraintDomain::Presburger,
-            RefinementPredicate::Relation { .. } => ConstraintDomain::Behavioral,
-            RefinementPredicate::Quantified { .. } => ConstraintDomain::Behavioral,
-            RefinementPredicate::TermEq(_, _) => ConstraintDomain::Unification,
-            RefinementPredicate::TermNeq(_, _) => ConstraintDomain::Unification,
-            RefinementPredicate::Not(inner) => inner.classify(),
-            RefinementPredicate::And(a, b)
-            | RefinementPredicate::Or(a, b)
-            | RefinementPredicate::Implies(a, b) => Self::merge_domains(a.classify(), b.classify()),
-        }
+        super::lifecycle::classify_refinement_predicate(self)
     }
 
     /// Return the pipeline-facing predicate kind string corresponding to
@@ -1667,44 +1570,6 @@ impl RefinementPredicate {
             ConstraintDomain::Behavioral => "Behavioral",
             ConstraintDomain::Unification => "Structural",
             ConstraintDomain::Product(_) => "Mixed",
-        }
-    }
-
-    /// Merge two [`ConstraintDomain`] values, producing `Product` when they
-    /// differ. Existing `Product` children are flattened.
-    fn merge_domains(a: ConstraintDomain, b: ConstraintDomain) -> ConstraintDomain {
-        if a == b {
-            return a;
-        }
-        let mut children = Vec::new();
-        Self::flatten_into(&a, &mut children);
-        Self::flatten_into(&b, &mut children);
-        // Deduplicate while preserving order.
-        let mut seen = Vec::new();
-        children.retain(|d| {
-            if seen.contains(d) {
-                false
-            } else {
-                seen.push(d.clone());
-                true
-            }
-        });
-        if children.len() == 1 {
-            children.into_iter().next().expect("non-empty after dedup")
-        } else {
-            ConstraintDomain::Product(children)
-        }
-    }
-
-    /// Flatten a `Product` into individual non-Product domains.
-    fn flatten_into(domain: &ConstraintDomain, out: &mut Vec<ConstraintDomain>) {
-        match domain {
-            ConstraintDomain::Product(children) => {
-                for c in children {
-                    Self::flatten_into(c, out);
-                }
-            },
-            other => out.push(other.clone()),
         }
     }
 }

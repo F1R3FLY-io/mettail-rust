@@ -1,7 +1,8 @@
 //! Stack-safe lifecycle and lowering machines for recursive language-model trees.
 
 use super::{
-    BehavioralPred, Condition, FreshnessCondition, FreshnessTarget, PredArg, Premise, Quantifier,
+    BehavioralPred, Condition, ConstraintDomain, FreshnessCondition, FreshnessTarget,
+    LinearRelation, PredArg, Premise, Quantifier, RefinementPredicate,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -1183,4 +1184,948 @@ pub(super) fn behavioral_pred_to_quantified_formula(
     Ok(values
         .pop()
         .expect("behavioral formula PDA produced no result"))
+}
+
+#[derive(Clone, Copy)]
+enum RefinementBinary {
+    And,
+    Or,
+    Implies,
+}
+
+enum RefinementCloneTask<'pred> {
+    Visit(&'pred RefinementPredicate),
+    Quantified(&'pred RefinementPredicate, usize),
+    Binary(RefinementBinary, usize),
+    Not(usize),
+}
+
+impl Clone for RefinementPredicate {
+    fn clone(&self) -> Self {
+        let mut tasks = vec![RefinementCloneTask::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                RefinementCloneTask::Visit(RefinementPredicate::Linear {
+                    terms,
+                    relation,
+                    rhs,
+                }) => values.push(RefinementPredicate::Linear {
+                    terms: terms.clone(),
+                    relation: relation.clone(),
+                    rhs: *rhs,
+                }),
+                RefinementCloneTask::Visit(RefinementPredicate::Relation {
+                    name,
+                    args,
+                    negated,
+                }) => values.push(RefinementPredicate::Relation {
+                    name: name.clone(),
+                    args: args.clone(),
+                    negated: *negated,
+                }),
+                RefinementCloneTask::Visit(
+                    source @ RefinementPredicate::Quantified { body, .. },
+                ) => {
+                    tasks.push(RefinementCloneTask::Quantified(source, values.len()));
+                    tasks.push(RefinementCloneTask::Visit(body));
+                },
+                RefinementCloneTask::Visit(RefinementPredicate::And(left, right)) => {
+                    tasks.push(RefinementCloneTask::Binary(RefinementBinary::And, values.len()));
+                    tasks.push(RefinementCloneTask::Visit(right));
+                    tasks.push(RefinementCloneTask::Visit(left));
+                },
+                RefinementCloneTask::Visit(RefinementPredicate::Or(left, right)) => {
+                    tasks.push(RefinementCloneTask::Binary(RefinementBinary::Or, values.len()));
+                    tasks.push(RefinementCloneTask::Visit(right));
+                    tasks.push(RefinementCloneTask::Visit(left));
+                },
+                RefinementCloneTask::Visit(RefinementPredicate::Not(inner)) => {
+                    tasks.push(RefinementCloneTask::Not(values.len()));
+                    tasks.push(RefinementCloneTask::Visit(inner));
+                },
+                RefinementCloneTask::Visit(RefinementPredicate::Implies(left, right)) => {
+                    tasks
+                        .push(RefinementCloneTask::Binary(RefinementBinary::Implies, values.len()));
+                    tasks.push(RefinementCloneTask::Visit(right));
+                    tasks.push(RefinementCloneTask::Visit(left));
+                },
+                RefinementCloneTask::Visit(RefinementPredicate::TermEq(left, right)) => {
+                    values.push(RefinementPredicate::TermEq(left.clone(), right.clone()));
+                },
+                RefinementCloneTask::Visit(RefinementPredicate::TermNeq(left, right)) => {
+                    values.push(RefinementPredicate::TermNeq(left.clone(), right.clone()));
+                },
+                RefinementCloneTask::Quantified(source, value_base) => {
+                    let RefinementPredicate::Quantified { quantifier, var, domain, bound, .. } =
+                        source
+                    else {
+                        unreachable!("quantified clone task carries a quantified predicate")
+                    };
+                    let body = values
+                        .pop()
+                        .expect("refinement clone PDA lost a quantified body");
+                    values.truncate(value_base);
+                    values.push(RefinementPredicate::Quantified {
+                        quantifier: quantifier.clone(),
+                        var: var.clone(),
+                        domain: domain.clone(),
+                        bound: *bound,
+                        body: Box::new(body),
+                    });
+                },
+                RefinementCloneTask::Binary(kind, value_base) => {
+                    let right = values
+                        .pop()
+                        .expect("refinement clone PDA lost a binary right operand");
+                    let left = values
+                        .pop()
+                        .expect("refinement clone PDA lost a binary left operand");
+                    values.truncate(value_base);
+                    values.push(match kind {
+                        RefinementBinary::And => {
+                            RefinementPredicate::And(Box::new(left), Box::new(right))
+                        },
+                        RefinementBinary::Or => {
+                            RefinementPredicate::Or(Box::new(left), Box::new(right))
+                        },
+                        RefinementBinary::Implies => {
+                            RefinementPredicate::Implies(Box::new(left), Box::new(right))
+                        },
+                    });
+                },
+                RefinementCloneTask::Not(value_base) => {
+                    let inner = values
+                        .pop()
+                        .expect("refinement clone PDA lost a negated operand");
+                    values.truncate(value_base);
+                    values.push(RefinementPredicate::Not(Box::new(inner)));
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("refinement clone PDA produced no result")
+    }
+}
+
+fn refinement_placeholder() -> RefinementPredicate {
+    RefinementPredicate::Linear {
+        terms: Vec::new(),
+        relation: LinearRelation::Eq,
+        rhs: 0,
+    }
+}
+
+fn take_refinement_children(
+    predicate: &mut RefinementPredicate,
+    work: &mut Vec<RefinementPredicate>,
+) {
+    let take = |child: &mut Box<RefinementPredicate>| {
+        *std::mem::replace(child, Box::new(refinement_placeholder()))
+    };
+    match predicate {
+        RefinementPredicate::Quantified { body, .. } | RefinementPredicate::Not(body) => {
+            work.push(take(body));
+        },
+        RefinementPredicate::And(left, right)
+        | RefinementPredicate::Or(left, right)
+        | RefinementPredicate::Implies(left, right) => {
+            work.push(take(left));
+            work.push(take(right));
+        },
+        RefinementPredicate::Linear { .. }
+        | RefinementPredicate::Relation { .. }
+        | RefinementPredicate::TermEq(..)
+        | RefinementPredicate::TermNeq(..) => {},
+    }
+}
+
+impl Drop for RefinementPredicate {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        take_refinement_children(self, &mut work);
+        while let Some(mut predicate) = work.pop() {
+            take_refinement_children(&mut predicate, &mut work);
+        }
+    }
+}
+
+enum RefinementDebugTask<'pred> {
+    Visit(&'pred RefinementPredicate, usize),
+    PredArg(&'pred PredArg, usize),
+    PredArgs(&'pred [PredArg], usize),
+    Ident(&'pred syn::Ident, usize),
+    OptionIdent(&'pred Option<syn::Ident>, usize),
+    OptionUsize(Option<usize>, usize),
+    Terms(&'pred [(syn::Ident, i64)], usize),
+    Term(&'pred (syn::Ident, i64), usize),
+    Quantifier(&'pred Quantifier),
+    Relation(&'pred LinearRelation),
+    Bool(bool),
+    I64(i64),
+    Usize(usize),
+    Text(&'static str),
+    Indent(usize),
+    CloseTuple(usize),
+    CloseStruct(usize),
+    CloseList(usize),
+}
+
+fn push_refinement_debug_field<'pred>(
+    tasks: &mut Vec<RefinementDebugTask<'pred>>,
+    name: &'static str,
+    value: RefinementDebugTask<'pred>,
+    indent: usize,
+) {
+    tasks.push(RefinementDebugTask::Text(",\n"));
+    tasks.push(value);
+    tasks.push(RefinementDebugTask::Text(name));
+    tasks.push(RefinementDebugTask::Indent(indent));
+}
+
+fn push_refinement_debug_tuple<'pred>(
+    tasks: &mut Vec<RefinementDebugTask<'pred>>,
+    value: RefinementDebugTask<'pred>,
+    indent: usize,
+) {
+    tasks.push(RefinementDebugTask::CloseTuple(indent));
+    tasks.push(RefinementDebugTask::Text(",\n"));
+    tasks.push(value);
+    tasks.push(RefinementDebugTask::Indent(indent + 1));
+}
+
+fn fmt_refinement_debug_at(
+    root: &RefinementPredicate,
+    root_indent: usize,
+    formatter: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    let pretty = formatter.alternate();
+    let mut tasks = vec![RefinementDebugTask::Visit(root, root_indent)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            RefinementDebugTask::Text(text) => formatter.write_str(text)?,
+            RefinementDebugTask::Indent(indent) => write_model_debug_indent(formatter, indent)?,
+            RefinementDebugTask::CloseTuple(indent) => {
+                write_model_debug_indent(formatter, indent)?;
+                formatter.write_str(")")?;
+            },
+            RefinementDebugTask::CloseStruct(indent) => {
+                write_model_debug_indent(formatter, indent)?;
+                formatter.write_str("}")?;
+            },
+            RefinementDebugTask::CloseList(indent) => {
+                write_model_debug_indent(formatter, indent)?;
+                formatter.write_str("]")?;
+            },
+            RefinementDebugTask::Ident(ident, indent) => {
+                fmt_model_ident(ident, indent, pretty, formatter)?;
+            },
+            RefinementDebugTask::Quantifier(quantifier) => write!(formatter, "{quantifier:?}")?,
+            RefinementDebugTask::Relation(relation) => write!(formatter, "{relation:?}")?,
+            RefinementDebugTask::Bool(value) => write!(formatter, "{value}")?,
+            RefinementDebugTask::I64(value) => write!(formatter, "{value}")?,
+            RefinementDebugTask::Usize(value) => write!(formatter, "{value}")?,
+            RefinementDebugTask::OptionIdent(None, _) => formatter.write_str("None")?,
+            RefinementDebugTask::OptionIdent(Some(ident), _) if !pretty => {
+                formatter.write_str("Some(")?;
+                tasks.push(RefinementDebugTask::Text(")"));
+                tasks.push(RefinementDebugTask::Ident(ident, 0));
+            },
+            RefinementDebugTask::OptionIdent(Some(ident), indent) => {
+                formatter.write_str("Some(\n")?;
+                push_refinement_debug_tuple(
+                    &mut tasks,
+                    RefinementDebugTask::Ident(ident, indent + 1),
+                    indent,
+                );
+            },
+            RefinementDebugTask::OptionUsize(None, _) => formatter.write_str("None")?,
+            RefinementDebugTask::OptionUsize(Some(value), _) if !pretty => {
+                write!(formatter, "Some({value})")?;
+            },
+            RefinementDebugTask::OptionUsize(Some(value), indent) => {
+                formatter.write_str("Some(\n")?;
+                push_refinement_debug_tuple(&mut tasks, RefinementDebugTask::Usize(value), indent);
+            },
+            RefinementDebugTask::PredArg(PredArg::Var(ident), _) if !pretty => {
+                formatter.write_str("Var(")?;
+                tasks.push(RefinementDebugTask::Text(")"));
+                tasks.push(RefinementDebugTask::Ident(ident, 0));
+            },
+            RefinementDebugTask::PredArg(PredArg::Constant(ident), _) if !pretty => {
+                formatter.write_str("Constant(")?;
+                tasks.push(RefinementDebugTask::Text(")"));
+                tasks.push(RefinementDebugTask::Ident(ident, 0));
+            },
+            RefinementDebugTask::PredArg(argument, indent) => {
+                formatter.write_str(match argument {
+                    PredArg::Var(_) => "Var(\n",
+                    PredArg::Constant(_) => "Constant(\n",
+                })?;
+                let ident = match argument {
+                    PredArg::Var(ident) | PredArg::Constant(ident) => ident,
+                };
+                push_refinement_debug_tuple(
+                    &mut tasks,
+                    RefinementDebugTask::Ident(ident, indent + 1),
+                    indent,
+                );
+            },
+            RefinementDebugTask::PredArgs([], _) => formatter.write_str("[]")?,
+            RefinementDebugTask::PredArgs(arguments, _) if !pretty => {
+                formatter.write_str("[")?;
+                tasks.push(RefinementDebugTask::Text("]"));
+                for (index, argument) in arguments.iter().enumerate().rev() {
+                    tasks.push(RefinementDebugTask::PredArg(argument, 0));
+                    if index != 0 {
+                        tasks.push(RefinementDebugTask::Text(", "));
+                    }
+                }
+            },
+            RefinementDebugTask::PredArgs(arguments, indent) => {
+                formatter.write_str("[\n")?;
+                tasks.push(RefinementDebugTask::CloseList(indent));
+                for argument in arguments.iter().rev() {
+                    tasks.push(RefinementDebugTask::Text(",\n"));
+                    tasks.push(RefinementDebugTask::PredArg(argument, indent + 1));
+                    tasks.push(RefinementDebugTask::Indent(indent + 1));
+                }
+            },
+            RefinementDebugTask::Term((ident, coefficient), _) if !pretty => {
+                formatter.write_str("(")?;
+                tasks.push(RefinementDebugTask::Text(")"));
+                tasks.push(RefinementDebugTask::I64(*coefficient));
+                tasks.push(RefinementDebugTask::Text(", "));
+                tasks.push(RefinementDebugTask::Ident(ident, 0));
+            },
+            RefinementDebugTask::Term((ident, coefficient), indent) => {
+                formatter.write_str("(\n")?;
+                tasks.push(RefinementDebugTask::CloseTuple(indent));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::I64(*coefficient));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::Ident(ident, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+            },
+            RefinementDebugTask::Terms([], _) => formatter.write_str("[]")?,
+            RefinementDebugTask::Terms(terms, _) if !pretty => {
+                formatter.write_str("[")?;
+                tasks.push(RefinementDebugTask::Text("]"));
+                for (index, term) in terms.iter().enumerate().rev() {
+                    tasks.push(RefinementDebugTask::Term(term, 0));
+                    if index != 0 {
+                        tasks.push(RefinementDebugTask::Text(", "));
+                    }
+                }
+            },
+            RefinementDebugTask::Terms(terms, indent) => {
+                formatter.write_str("[\n")?;
+                tasks.push(RefinementDebugTask::CloseList(indent));
+                for term in terms.iter().rev() {
+                    tasks.push(RefinementDebugTask::Text(",\n"));
+                    tasks.push(RefinementDebugTask::Term(term, indent + 1));
+                    tasks.push(RefinementDebugTask::Indent(indent + 1));
+                }
+            },
+            RefinementDebugTask::Visit(
+                RefinementPredicate::Linear { terms, relation, rhs },
+                indent,
+            ) if pretty => {
+                formatter.write_str("Linear {\n")?;
+                tasks.push(RefinementDebugTask::CloseStruct(indent));
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "rhs: ",
+                    RefinementDebugTask::I64(*rhs),
+                    indent + 1,
+                );
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "relation: ",
+                    RefinementDebugTask::Relation(relation),
+                    indent + 1,
+                );
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "terms: ",
+                    RefinementDebugTask::Terms(terms, indent + 1),
+                    indent + 1,
+                );
+            },
+            RefinementDebugTask::Visit(
+                RefinementPredicate::Relation { name, args, negated },
+                indent,
+            ) if pretty => {
+                formatter.write_str("Relation {\n")?;
+                tasks.push(RefinementDebugTask::CloseStruct(indent));
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "negated: ",
+                    RefinementDebugTask::Bool(*negated),
+                    indent + 1,
+                );
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "args: ",
+                    RefinementDebugTask::PredArgs(args, indent + 1),
+                    indent + 1,
+                );
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "name: ",
+                    RefinementDebugTask::Ident(name, indent + 1),
+                    indent + 1,
+                );
+            },
+            RefinementDebugTask::Visit(
+                RefinementPredicate::Quantified { quantifier, var, domain, bound, body },
+                indent,
+            ) if pretty => {
+                formatter.write_str("Quantified {\n")?;
+                tasks.push(RefinementDebugTask::CloseStruct(indent));
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "body: ",
+                    RefinementDebugTask::Visit(body, indent + 1),
+                    indent + 1,
+                );
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "bound: ",
+                    RefinementDebugTask::OptionUsize(*bound, indent + 1),
+                    indent + 1,
+                );
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "domain: ",
+                    RefinementDebugTask::OptionIdent(domain, indent + 1),
+                    indent + 1,
+                );
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "var: ",
+                    RefinementDebugTask::Ident(var, indent + 1),
+                    indent + 1,
+                );
+                push_refinement_debug_field(
+                    &mut tasks,
+                    "quantifier: ",
+                    RefinementDebugTask::Quantifier(quantifier),
+                    indent + 1,
+                );
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::And(left, right), indent) if pretty => {
+                formatter.write_str("And(\n")?;
+                tasks.push(RefinementDebugTask::CloseTuple(indent));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::Visit(right, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::Visit(left, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::Or(left, right), indent) if pretty => {
+                formatter.write_str("Or(\n")?;
+                tasks.push(RefinementDebugTask::CloseTuple(indent));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::Visit(right, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::Visit(left, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::Not(inner), indent) if pretty => {
+                formatter.write_str("Not(\n")?;
+                push_refinement_debug_tuple(
+                    &mut tasks,
+                    RefinementDebugTask::Visit(inner, indent + 1),
+                    indent,
+                );
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::Implies(left, right), indent)
+                if pretty =>
+            {
+                formatter.write_str("Implies(\n")?;
+                tasks.push(RefinementDebugTask::CloseTuple(indent));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::Visit(right, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::Visit(left, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::TermEq(left, right), indent)
+                if pretty =>
+            {
+                formatter.write_str("TermEq(\n")?;
+                tasks.push(RefinementDebugTask::CloseTuple(indent));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::PredArg(right, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::PredArg(left, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::TermNeq(left, right), indent)
+                if pretty =>
+            {
+                formatter.write_str("TermNeq(\n")?;
+                tasks.push(RefinementDebugTask::CloseTuple(indent));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::PredArg(right, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+                tasks.push(RefinementDebugTask::Text(",\n"));
+                tasks.push(RefinementDebugTask::PredArg(left, indent + 1));
+                tasks.push(RefinementDebugTask::Indent(indent + 1));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::Linear { terms, relation, rhs }, _) => {
+                formatter.write_str("Linear { terms: ")?;
+                tasks.push(RefinementDebugTask::Text(" }"));
+                tasks.push(RefinementDebugTask::I64(*rhs));
+                tasks.push(RefinementDebugTask::Text(", rhs: "));
+                tasks.push(RefinementDebugTask::Relation(relation));
+                tasks.push(RefinementDebugTask::Text(", relation: "));
+                tasks.push(RefinementDebugTask::Terms(terms, 0));
+            },
+            RefinementDebugTask::Visit(
+                RefinementPredicate::Relation { name, args, negated },
+                _,
+            ) => {
+                formatter.write_str("Relation { name: ")?;
+                tasks.push(RefinementDebugTask::Text(" }"));
+                tasks.push(RefinementDebugTask::Bool(*negated));
+                tasks.push(RefinementDebugTask::Text(", negated: "));
+                tasks.push(RefinementDebugTask::PredArgs(args, 0));
+                tasks.push(RefinementDebugTask::Text(", args: "));
+                tasks.push(RefinementDebugTask::Ident(name, 0));
+            },
+            RefinementDebugTask::Visit(
+                RefinementPredicate::Quantified { quantifier, var, domain, bound, body },
+                _,
+            ) => {
+                formatter.write_str("Quantified { quantifier: ")?;
+                tasks.push(RefinementDebugTask::Text(" }"));
+                tasks.push(RefinementDebugTask::Visit(body, 0));
+                tasks.push(RefinementDebugTask::Text(", body: "));
+                tasks.push(RefinementDebugTask::OptionUsize(*bound, 0));
+                tasks.push(RefinementDebugTask::Text(", bound: "));
+                tasks.push(RefinementDebugTask::OptionIdent(domain, 0));
+                tasks.push(RefinementDebugTask::Text(", domain: "));
+                tasks.push(RefinementDebugTask::Ident(var, 0));
+                tasks.push(RefinementDebugTask::Text(", var: "));
+                tasks.push(RefinementDebugTask::Quantifier(quantifier));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::And(left, right), _) => {
+                formatter.write_str("And(")?;
+                tasks.push(RefinementDebugTask::Text(")"));
+                tasks.push(RefinementDebugTask::Visit(right, 0));
+                tasks.push(RefinementDebugTask::Text(", "));
+                tasks.push(RefinementDebugTask::Visit(left, 0));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::Or(left, right), _) => {
+                formatter.write_str("Or(")?;
+                tasks.push(RefinementDebugTask::Text(")"));
+                tasks.push(RefinementDebugTask::Visit(right, 0));
+                tasks.push(RefinementDebugTask::Text(", "));
+                tasks.push(RefinementDebugTask::Visit(left, 0));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::Not(inner), _) => {
+                formatter.write_str("Not(")?;
+                tasks.push(RefinementDebugTask::Text(")"));
+                tasks.push(RefinementDebugTask::Visit(inner, 0));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::Implies(left, right), _) => {
+                formatter.write_str("Implies(")?;
+                tasks.push(RefinementDebugTask::Text(")"));
+                tasks.push(RefinementDebugTask::Visit(right, 0));
+                tasks.push(RefinementDebugTask::Text(", "));
+                tasks.push(RefinementDebugTask::Visit(left, 0));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::TermEq(left, right), _) => {
+                formatter.write_str("TermEq(")?;
+                tasks.push(RefinementDebugTask::Text(")"));
+                tasks.push(RefinementDebugTask::PredArg(right, 0));
+                tasks.push(RefinementDebugTask::Text(", "));
+                tasks.push(RefinementDebugTask::PredArg(left, 0));
+            },
+            RefinementDebugTask::Visit(RefinementPredicate::TermNeq(left, right), _) => {
+                formatter.write_str("TermNeq(")?;
+                tasks.push(RefinementDebugTask::Text(")"));
+                tasks.push(RefinementDebugTask::PredArg(right, 0));
+                tasks.push(RefinementDebugTask::Text(", "));
+                tasks.push(RefinementDebugTask::PredArg(left, 0));
+            },
+        }
+    }
+    Ok(())
+}
+
+impl std::fmt::Debug for RefinementPredicate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_refinement_debug_at(self, 0, formatter)
+    }
+}
+
+enum RefinementDisplayTask<'pred> {
+    Visit(&'pred RefinementPredicate),
+    Text(&'static str),
+}
+
+pub(super) fn fmt_refinement_predicate(
+    root: &RefinementPredicate,
+    formatter: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    let mut tasks = vec![RefinementDisplayTask::Visit(root)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            RefinementDisplayTask::Text(text) => formatter.write_str(text)?,
+            RefinementDisplayTask::Visit(RefinementPredicate::Linear { terms, relation, rhs }) => {
+                for (index, (variable, coefficient)) in terms.iter().enumerate() {
+                    if index != 0 {
+                        formatter.write_str(" + ")?;
+                    }
+                    if *coefficient == 1 {
+                        write!(formatter, "{variable}")?;
+                    } else {
+                        write!(formatter, "{coefficient}*{variable}")?;
+                    }
+                }
+                write!(formatter, " {relation} {rhs}")?;
+            },
+            RefinementDisplayTask::Visit(RefinementPredicate::Relation { name, args, negated }) => {
+                if *negated {
+                    formatter.write_str("~")?;
+                }
+                write!(formatter, "{name}(")?;
+                for (index, arg) in args.iter().enumerate() {
+                    if index != 0 {
+                        formatter.write_str(", ")?;
+                    }
+                    match arg {
+                        PredArg::Var(variable) | PredArg::Constant(variable) => {
+                            write!(formatter, "{variable}")?;
+                        },
+                    }
+                }
+                formatter.write_str(")")?;
+            },
+            RefinementDisplayTask::Visit(RefinementPredicate::Quantified {
+                quantifier,
+                var,
+                domain,
+                bound,
+                body,
+            }) => {
+                formatter.write_str(match quantifier {
+                    Quantifier::ForAll => "forall",
+                    Quantifier::Exists => "exists",
+                })?;
+                if let Some(bound) = bound {
+                    write!(formatter, "_{{k={bound}}}")?;
+                }
+                write!(formatter, " {var}")?;
+                if let Some(domain) = domain {
+                    write!(formatter, " in {domain}")?;
+                }
+                formatter.write_str(". (")?;
+                tasks.push(RefinementDisplayTask::Text(")"));
+                tasks.push(RefinementDisplayTask::Visit(body));
+            },
+            RefinementDisplayTask::Visit(RefinementPredicate::And(left, right)) => {
+                formatter.write_str("(")?;
+                tasks.push(RefinementDisplayTask::Text(")"));
+                tasks.push(RefinementDisplayTask::Visit(right));
+                tasks.push(RefinementDisplayTask::Text(" && "));
+                tasks.push(RefinementDisplayTask::Visit(left));
+            },
+            RefinementDisplayTask::Visit(RefinementPredicate::Or(left, right)) => {
+                formatter.write_str("(")?;
+                tasks.push(RefinementDisplayTask::Text(")"));
+                tasks.push(RefinementDisplayTask::Visit(right));
+                tasks.push(RefinementDisplayTask::Text(" || "));
+                tasks.push(RefinementDisplayTask::Visit(left));
+            },
+            RefinementDisplayTask::Visit(RefinementPredicate::Not(inner)) => {
+                formatter.write_str("~")?;
+                tasks.push(RefinementDisplayTask::Visit(inner));
+            },
+            RefinementDisplayTask::Visit(RefinementPredicate::Implies(left, right)) => {
+                formatter.write_str("(")?;
+                tasks.push(RefinementDisplayTask::Text(")"));
+                tasks.push(RefinementDisplayTask::Visit(right));
+                tasks.push(RefinementDisplayTask::Text(" => "));
+                tasks.push(RefinementDisplayTask::Visit(left));
+            },
+            RefinementDisplayTask::Visit(RefinementPredicate::TermEq(left, right)) => {
+                fmt_pred_arg_display(left, formatter)?;
+                formatter.write_str(" == ")?;
+                fmt_pred_arg_display(right, formatter)?;
+            },
+            RefinementDisplayTask::Visit(RefinementPredicate::TermNeq(left, right)) => {
+                fmt_pred_arg_display(left, formatter)?;
+                formatter.write_str(" != ")?;
+                fmt_pred_arg_display(right, formatter)?;
+            },
+        }
+    }
+    Ok(())
+}
+
+fn fmt_pred_arg_display(
+    argument: &PredArg,
+    formatter: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    match argument {
+        PredArg::Var(value) | PredArg::Constant(value) => write!(formatter, "{value}"),
+    }
+}
+
+pub(super) fn classify_refinement_predicate(root: &RefinementPredicate) -> ConstraintDomain {
+    let mut tasks = vec![root];
+    let mut domains = Vec::with_capacity(4);
+    let mut seen = [false; 4];
+    while let Some(predicate) = tasks.pop() {
+        let domain = match predicate {
+            RefinementPredicate::Linear { .. } => Some((0, ConstraintDomain::Presburger)),
+            RefinementPredicate::Relation { .. } | RefinementPredicate::Quantified { .. } => {
+                Some((2, ConstraintDomain::Behavioral))
+            },
+            RefinementPredicate::TermEq(..) | RefinementPredicate::TermNeq(..) => {
+                Some((3, ConstraintDomain::Unification))
+            },
+            RefinementPredicate::Not(inner) => {
+                tasks.push(inner);
+                None
+            },
+            RefinementPredicate::And(left, right)
+            | RefinementPredicate::Or(left, right)
+            | RefinementPredicate::Implies(left, right) => {
+                tasks.push(right);
+                tasks.push(left);
+                None
+            },
+        };
+        if let Some((index, domain)) = domain {
+            if !seen[index] {
+                seen[index] = true;
+                domains.push(domain);
+            }
+        }
+    }
+    if domains.len() == 1 {
+        domains
+            .pop()
+            .expect("a refinement predicate always has one leaf domain")
+    } else {
+        ConstraintDomain::Product(domains)
+    }
+}
+
+enum DomainCloneTask<'domain> {
+    Visit(&'domain ConstraintDomain),
+    Product { value_base: usize, child_count: usize },
+}
+
+impl Clone for ConstraintDomain {
+    fn clone(&self) -> Self {
+        let mut tasks = vec![DomainCloneTask::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                DomainCloneTask::Visit(ConstraintDomain::Presburger) => {
+                    values.push(ConstraintDomain::Presburger);
+                },
+                DomainCloneTask::Visit(ConstraintDomain::Lattice) => {
+                    values.push(ConstraintDomain::Lattice);
+                },
+                DomainCloneTask::Visit(ConstraintDomain::Behavioral) => {
+                    values.push(ConstraintDomain::Behavioral);
+                },
+                DomainCloneTask::Visit(ConstraintDomain::Unification) => {
+                    values.push(ConstraintDomain::Unification);
+                },
+                DomainCloneTask::Visit(ConstraintDomain::Product(children)) => {
+                    tasks.push(DomainCloneTask::Product {
+                        value_base: values.len(),
+                        child_count: children.len(),
+                    });
+                    for child in children.iter().rev() {
+                        tasks.push(DomainCloneTask::Visit(child));
+                    }
+                },
+                DomainCloneTask::Product { value_base, child_count } => {
+                    debug_assert_eq!(values.len(), value_base + child_count);
+                    let children = values.split_off(value_base);
+                    values.push(ConstraintDomain::Product(children));
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("domain clone PDA produced no result")
+    }
+}
+
+impl Drop for ConstraintDomain {
+    fn drop(&mut self) {
+        let mut work = match self {
+            ConstraintDomain::Product(children) => std::mem::take(children),
+            ConstraintDomain::Presburger
+            | ConstraintDomain::Lattice
+            | ConstraintDomain::Behavioral
+            | ConstraintDomain::Unification => return,
+        };
+        while let Some(mut domain) = work.pop() {
+            if let ConstraintDomain::Product(children) = &mut domain {
+                work.append(children);
+            }
+        }
+    }
+}
+
+impl PartialEq for ConstraintDomain {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = vec![(self, other)];
+        while let Some((left, right)) = work.pop() {
+            match (left, right) {
+                (ConstraintDomain::Presburger, ConstraintDomain::Presburger)
+                | (ConstraintDomain::Lattice, ConstraintDomain::Lattice)
+                | (ConstraintDomain::Behavioral, ConstraintDomain::Behavioral)
+                | (ConstraintDomain::Unification, ConstraintDomain::Unification) => {},
+                (ConstraintDomain::Product(left), ConstraintDomain::Product(right))
+                    if left.len() == right.len() =>
+                {
+                    work.extend(left.iter().zip(right).rev());
+                },
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl Eq for ConstraintDomain {}
+
+enum DomainDebugTask<'domain> {
+    Visit(&'domain ConstraintDomain, usize),
+    List(&'domain [ConstraintDomain], usize),
+    Text(&'static str),
+    Indent(usize),
+    CloseTuple(usize),
+    CloseList(usize),
+}
+
+fn fmt_constraint_domain_debug(
+    root: &ConstraintDomain,
+    formatter: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    let pretty = formatter.alternate();
+    let mut tasks = vec![DomainDebugTask::Visit(root, 0)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            DomainDebugTask::Text(text) => formatter.write_str(text)?,
+            DomainDebugTask::Indent(indent) => write_model_debug_indent(formatter, indent)?,
+            DomainDebugTask::CloseTuple(indent) => {
+                write_model_debug_indent(formatter, indent)?;
+                formatter.write_str(")")?;
+            },
+            DomainDebugTask::CloseList(indent) => {
+                write_model_debug_indent(formatter, indent)?;
+                formatter.write_str("]")?;
+            },
+            DomainDebugTask::Visit(ConstraintDomain::Presburger, _) => {
+                formatter.write_str("Presburger")?;
+            },
+            DomainDebugTask::Visit(ConstraintDomain::Lattice, _) => {
+                formatter.write_str("Lattice")?;
+            },
+            DomainDebugTask::Visit(ConstraintDomain::Behavioral, _) => {
+                formatter.write_str("Behavioral")?;
+            },
+            DomainDebugTask::Visit(ConstraintDomain::Unification, _) => {
+                formatter.write_str("Unification")?;
+            },
+            DomainDebugTask::Visit(ConstraintDomain::Product(children), indent) if pretty => {
+                formatter.write_str("Product(\n")?;
+                tasks.push(DomainDebugTask::CloseTuple(indent));
+                tasks.push(DomainDebugTask::Text(",\n"));
+                tasks.push(DomainDebugTask::List(children, indent + 1));
+                tasks.push(DomainDebugTask::Indent(indent + 1));
+            },
+            DomainDebugTask::Visit(ConstraintDomain::Product(children), _) => {
+                formatter.write_str("Product(")?;
+                tasks.push(DomainDebugTask::Text(")"));
+                tasks.push(DomainDebugTask::List(children, 0));
+            },
+            DomainDebugTask::List([], _) => formatter.write_str("[]")?,
+            DomainDebugTask::List(children, _) if !pretty => {
+                formatter.write_str("[")?;
+                tasks.push(DomainDebugTask::Text("]"));
+                for (index, child) in children.iter().enumerate().rev() {
+                    tasks.push(DomainDebugTask::Visit(child, 0));
+                    if index != 0 {
+                        tasks.push(DomainDebugTask::Text(", "));
+                    }
+                }
+            },
+            DomainDebugTask::List(children, indent) => {
+                formatter.write_str("[\n")?;
+                tasks.push(DomainDebugTask::CloseList(indent));
+                for child in children.iter().rev() {
+                    tasks.push(DomainDebugTask::Text(",\n"));
+                    tasks.push(DomainDebugTask::Visit(child, indent + 1));
+                    tasks.push(DomainDebugTask::Indent(indent + 1));
+                }
+            },
+        }
+    }
+    Ok(())
+}
+
+impl std::fmt::Debug for ConstraintDomain {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_constraint_domain_debug(self, formatter)
+    }
+}
+
+enum DomainDisplayTask<'domain> {
+    Visit(&'domain ConstraintDomain),
+    Text(&'static str),
+}
+
+pub(super) fn fmt_constraint_domain(
+    root: &ConstraintDomain,
+    formatter: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    let mut tasks = vec![DomainDisplayTask::Visit(root)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            DomainDisplayTask::Text(text) => formatter.write_str(text)?,
+            DomainDisplayTask::Visit(ConstraintDomain::Presburger) => {
+                formatter.write_str("Presburger")?;
+            },
+            DomainDisplayTask::Visit(ConstraintDomain::Lattice) => {
+                formatter.write_str("Lattice")?;
+            },
+            DomainDisplayTask::Visit(ConstraintDomain::Behavioral) => {
+                formatter.write_str("Behavioral")?;
+            },
+            DomainDisplayTask::Visit(ConstraintDomain::Unification) => {
+                formatter.write_str("Unification")?;
+            },
+            DomainDisplayTask::Visit(ConstraintDomain::Product(children)) => {
+                formatter.write_str("Product(")?;
+                tasks.push(DomainDisplayTask::Text(")"));
+                for (index, child) in children.iter().enumerate().rev() {
+                    tasks.push(DomainDisplayTask::Visit(child));
+                    if index != 0 {
+                        tasks.push(DomainDisplayTask::Text(", "));
+                    }
+                }
+            },
+        }
+    }
+    Ok(())
 }
