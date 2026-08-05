@@ -4218,7 +4218,7 @@ pub fn all_reserved_reflect_labels() -> Vec<&'static str> {
 /// already appears as a fixture in four places in this tree, and a language declaring
 /// natural-number constructors named `S`/`Z` collided from the macro frontend with no
 /// attacker involved. Traced, the collision was fail-closed rather than wrong-answer —
-/// [`shift_reflected_ground_term`] declines any σ value carrying an `S`/`Z` node under
+/// [`shift_reflected_ground_term_by`] declines any σ value carrying an `S`/`Z` node under
 /// a binder, and the `^gnd` short-circuit was permanently lost on such subtrees — but
 /// "a language that names its successor `Succ` reduces and one that names it `S` does
 /// not" is a name-dependent semantic difference, which is not a semantics anyone chose.
@@ -6639,7 +6639,6 @@ fn structural_ac_match_receiver_par(
 /// σ-injection reflects. Depth-agnostic — an element's argument may itself be a [`Self::Bag`] — so it
 /// captures the DEPTH-2 nesting of the Ambient `InRule`/`OutRule` (and any deeper future shape)
 /// uniformly. Built from the rewrite's AST [`Pattern`] via [`Self::from_pattern`].
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AcReconstructTemplate {
     /// A bare LHS variable — reconstructs to `σ[name]`.
     Var(String),
@@ -6680,6 +6679,216 @@ pub enum AcReconstructTemplate {
     },
 }
 
+impl Clone for AcReconstructTemplate {
+    fn clone(&self) -> Self {
+        enum Task<'template> {
+            Visit(&'template AcReconstructTemplate),
+            Node {
+                constructor: String,
+                child_count: usize,
+            },
+            Bag {
+                op: String,
+                rest: Option<String>,
+                element_count: usize,
+            },
+            Binder,
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(AcReconstructTemplate::Var(name)) => {
+                    values.push(Self::Var(name.clone()));
+                },
+                Task::Visit(AcReconstructTemplate::Node { constructor, children }) => {
+                    tasks.push(Task::Node {
+                        constructor: constructor.clone(),
+                        child_count: children.len(),
+                    });
+                    tasks.extend(children.iter().rev().map(Task::Visit));
+                },
+                Task::Visit(AcReconstructTemplate::Bag { op, elements, rest }) => {
+                    tasks.push(Task::Bag {
+                        op: op.clone(),
+                        rest: rest.clone(),
+                        element_count: elements.len(),
+                    });
+                    tasks.extend(elements.iter().rev().map(Task::Visit));
+                },
+                Task::Visit(AcReconstructTemplate::Binder { body }) => {
+                    tasks.push(Task::Binder);
+                    tasks.push(Task::Visit(body));
+                },
+                Task::Node { constructor, child_count } => {
+                    let first = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("template clone PDA lost a child result");
+                    let children = values.split_off(first);
+                    values.push(Self::Node { constructor, children });
+                },
+                Task::Bag { op, rest, element_count } => {
+                    let first = values
+                        .len()
+                        .checked_sub(element_count)
+                        .expect("template clone PDA lost a bag element result");
+                    let elements = values.split_off(first);
+                    values.push(Self::Bag { op, elements, rest });
+                },
+                Task::Binder => {
+                    let body = values.pop().expect("template clone PDA lost a binder body");
+                    values.push(Self::Binder { body: Box::new(body) });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("template clone PDA produced no result")
+    }
+}
+
+impl std::fmt::Debug for AcReconstructTemplate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        enum Task<'template> {
+            Text(&'static str),
+            String(&'template str),
+            OptionalString(&'template Option<String>),
+            Visit(&'template AcReconstructTemplate),
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Text(text) => formatter.write_str(text)?,
+                Task::String(value) => write!(formatter, "{value:?}")?,
+                Task::OptionalString(value) => write!(formatter, "{value:?}")?,
+                Task::Visit(Self::Var(name)) => {
+                    formatter.write_str("Var(")?;
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::String(name));
+                },
+                Task::Visit(Self::Node { constructor, children }) => {
+                    formatter.write_str("Node { constructor: ")?;
+                    tasks.push(Task::Text("] }"));
+                    for (index, child) in children.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(child));
+                        if index != 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                    tasks.push(Task::Text(", children: ["));
+                    tasks.push(Task::String(constructor));
+                },
+                Task::Visit(Self::Bag { op, elements, rest }) => {
+                    formatter.write_str("Bag { op: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::OptionalString(rest));
+                    tasks.push(Task::Text(", rest: "));
+                    tasks.push(Task::Text("]"));
+                    for (index, element) in elements.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(element));
+                        if index != 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                    tasks.push(Task::Text(", elements: ["));
+                    tasks.push(Task::String(op));
+                },
+                Task::Visit(Self::Binder { body }) => {
+                    formatter.write_str("Binder { body: ")?;
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Visit(body));
+                },
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PartialEq for AcReconstructTemplate {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = vec![(self, other)];
+        while let Some((left, right)) = work.pop() {
+            match (left, right) {
+                (Self::Var(left), Self::Var(right)) if left == right => {},
+                (
+                    Self::Node {
+                        constructor: left_constructor,
+                        children: left_children,
+                    },
+                    Self::Node {
+                        constructor: right_constructor,
+                        children: right_children,
+                    },
+                ) if left_constructor == right_constructor
+                    && left_children.len() == right_children.len() =>
+                {
+                    work.extend(left_children.iter().zip(right_children).rev());
+                },
+                (
+                    Self::Bag {
+                        op: left_op,
+                        elements: left_elements,
+                        rest: left_rest,
+                    },
+                    Self::Bag {
+                        op: right_op,
+                        elements: right_elements,
+                        rest: right_rest,
+                    },
+                ) if left_op == right_op
+                    && left_rest == right_rest
+                    && left_elements.len() == right_elements.len() =>
+                {
+                    work.extend(left_elements.iter().zip(right_elements).rev());
+                },
+                (Self::Binder { body: left }, Self::Binder { body: right }) => {
+                    work.push((left, right));
+                },
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl Eq for AcReconstructTemplate {}
+
+fn drain_owned_ac_template(
+    mut template: AcReconstructTemplate,
+    work: &mut Vec<AcReconstructTemplate>,
+) {
+    match &mut template {
+        AcReconstructTemplate::Node { children, .. } => work.append(children),
+        AcReconstructTemplate::Bag { elements, .. } => work.append(elements),
+        AcReconstructTemplate::Binder { body } => {
+            let child =
+                std::mem::replace(body, Box::new(AcReconstructTemplate::Var(String::new())));
+            work.push(*child);
+        },
+        AcReconstructTemplate::Var(_) => {},
+    }
+}
+
+impl Drop for AcReconstructTemplate {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        match self {
+            Self::Node { children, .. } => work.append(children),
+            Self::Bag { elements, .. } => work.append(elements),
+            Self::Binder { body } => {
+                let child = std::mem::replace(body, Box::new(Self::Var(String::new())));
+                work.push(*child);
+            },
+            Self::Var(_) => {},
+        }
+        while let Some(template) = work.pop() {
+            drain_owned_ac_template(template, &mut work);
+        }
+    }
+}
+
 impl AcReconstructTemplate {
     /// Convert an AST rewrite pattern into a σ-reconstruction template. Returns `None` for a node the
     /// nested structural-AC reconstruction does not model (a substitution / bare lambda / map / zip —
@@ -6689,59 +6898,82 @@ impl AcReconstructTemplate {
     /// `^lambda` M-reflect image; a multi-binder or a pre-scope-field binder stays `None`,
     /// fail-closed); every other `Apply` to [`Self::Node`]; a bare `Var` to [`Self::Var`].
     fn from_pattern(pattern: &Pattern, def: &LanguageDef) -> Option<Self> {
-        match pattern {
-            Pattern::Term(PatternTerm::Var(name)) => Some(Self::Var(name.to_string())),
-            Pattern::Term(PatternTerm::Apply { constructor, args }) => {
-                if let [Pattern::Collection { coll_type, elements, rest }] = args.as_slice() {
-                    // `op{ elements, ...rest }` — a bag. Only a HashBag (or an inferred kind) is
-                    // modeled; a Set/Map arg has a different carrier and is out of scope.
-                    if !matches!(coll_type, None | Some(CollectionType::HashBag)) {
-                        return None;
-                    }
-                    let mut element_templates = Vec::with_capacity(elements.len());
-                    for element in elements {
-                        element_templates.push(Self::from_pattern(element, def)?);
-                    }
-                    Some(Self::Bag {
-                        op: constructor.to_string(),
-                        elements: element_templates,
-                        rest: rest.as_ref().map(|r| r.to_string()),
-                    })
-                } else if let [Pattern::Term(PatternTerm::Lambda { body, .. })] = args.as_slice() {
-                    // A-S5.8 (F8-AM-1): `B(^x. body)` — a RHS-introduced binder scope. Accepted
-                    // ONLY for a declared surface SINGLE-binder constructor (the reflection
-                    // erases the ctor tag to `^lambda`, so the template must too); any other
-                    // constructor applied to a bare lambda is out of the modeled fragment
-                    // (fail-closed `None`, exactly the pre-A-S5.8 disposition).
-                    let label = constructor.to_string();
-                    let is_single_binder = def.terms.iter().any(|term| {
-                        term.label == label
-                            && crate::rho_net_subst_trs::is_binder_term(term)
-                            && !term.term_context.as_ref().is_some_and(|params| {
-                                params.iter().any(|param| {
-                                    matches!(param, TermParam::MultiAbstraction { .. })
-                                })
-                            })
-                    });
-                    if !is_single_binder {
-                        return None;
-                    }
-                    Some(Self::Binder {
-                        body: Box::new(Self::from_pattern(body, def)?),
-                    })
-                } else {
-                    let mut children = Vec::with_capacity(args.len());
-                    for arg in args {
-                        children.push(Self::from_pattern(arg, def)?);
-                    }
-                    Some(Self::Node {
-                        constructor: constructor.to_string(),
-                        children,
-                    })
-                }
+        enum Task<'pattern> {
+            Visit(&'pattern Pattern),
+            Node {
+                constructor: String,
+                child_count: usize,
             },
-            _ => None,
+            Bag {
+                op: String,
+                rest: Option<String>,
+                element_count: usize,
+            },
+            Binder,
         }
+
+        let mut tasks = vec![Task::Visit(pattern)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Pattern::Term(PatternTerm::Var(name))) => {
+                    values.push(Self::Var(name.to_string()));
+                },
+                Task::Visit(Pattern::Term(PatternTerm::Apply { constructor, args })) => {
+                    if let [Pattern::Collection { coll_type, elements, rest }] = args.as_slice() {
+                        if !matches!(coll_type, None | Some(CollectionType::HashBag)) {
+                            return None;
+                        }
+                        tasks.push(Task::Bag {
+                            op: constructor.to_string(),
+                            rest: rest.as_ref().map(ToString::to_string),
+                            element_count: elements.len(),
+                        });
+                        tasks.extend(elements.iter().rev().map(Task::Visit));
+                    } else if let [Pattern::Term(PatternTerm::Lambda { body, .. })] =
+                        args.as_slice()
+                    {
+                        let label = constructor.to_string();
+                        let is_single_binder = def.terms.iter().any(|term| {
+                            term.label == label
+                                && crate::rho_net_subst_trs::is_binder_term(term)
+                                && !term.term_context.as_ref().is_some_and(|params| {
+                                    params.iter().any(|param| {
+                                        matches!(param, TermParam::MultiAbstraction { .. })
+                                    })
+                                })
+                        });
+                        if !is_single_binder {
+                            return None;
+                        }
+                        tasks.push(Task::Binder);
+                        tasks.push(Task::Visit(body));
+                    } else {
+                        tasks.push(Task::Node {
+                            constructor: constructor.to_string(),
+                            child_count: args.len(),
+                        });
+                        tasks.extend(args.iter().rev().map(Task::Visit));
+                    }
+                },
+                Task::Visit(_) => return None,
+                Task::Node { constructor, child_count } => {
+                    let first = values.len().checked_sub(child_count)?;
+                    let children = values.split_off(first);
+                    values.push(Self::Node { constructor, children });
+                },
+                Task::Bag { op, rest, element_count } => {
+                    let first = values.len().checked_sub(element_count)?;
+                    let elements = values.split_off(first);
+                    values.push(Self::Bag { op, elements, rest });
+                },
+                Task::Binder => {
+                    let body = values.pop()?;
+                    values.push(Self::Binder { body: Box::new(body) });
+                },
+            }
+        }
+        (values.len() == 1).then(|| values.pop()).flatten()
     }
 
     /// Collect every LHS-variable name the template references (the `Var` leaves + each `Bag`'s
@@ -6750,26 +6982,21 @@ impl AcReconstructTemplate {
     /// `pub(crate)`: the A-S5.5 driver AC-carrier receivers (`crate::rho_net_drive`) compute
     /// the SAME referenced-name set to lay out their bind-pattern slots.
     pub(crate) fn collect_vars(&self, out: &mut HashSet<String>) {
-        match self {
-            Self::Var(name) => {
-                out.insert(name.clone());
-            },
-            Self::Node { children, .. } => {
-                for child in children {
-                    child.collect_vars(out);
-                }
-            },
-            Self::Bag { elements, rest, .. } => {
-                for element in elements {
-                    element.collect_vars(out);
-                }
-                if let Some(rest) = rest {
-                    out.insert(rest.clone());
-                }
-            },
-            // A-S5.8 (F8-AM-1b): a binder scope references exactly its body's variables (the
-            // binder itself is de-Bruijn-implicit — it binds no template name).
-            Self::Binder { body } => body.collect_vars(out),
+        let mut work = vec![self];
+        while let Some(template) = work.pop() {
+            match template {
+                Self::Var(name) => {
+                    out.insert(name.clone());
+                },
+                Self::Node { children, .. } => work.extend(children.iter().rev()),
+                Self::Bag { elements, rest, .. } => {
+                    work.extend(elements.iter().rev());
+                    if let Some(rest) = rest {
+                        out.insert(rest.clone());
+                    }
+                },
+                Self::Binder { body } => work.push(body),
+            }
         }
     }
 
@@ -6780,12 +7007,16 @@ impl AcReconstructTemplate {
     /// inline the async `^shift` the σ-slot shift rule requires), while the DRIVE carrier —
     /// which pre-computes shifted slots on fresh channels before its join — carries the rule.
     pub(crate) fn contains_binder(&self) -> bool {
-        match self {
-            Self::Var(_) => false,
-            Self::Node { children, .. } => children.iter().any(Self::contains_binder),
-            Self::Bag { elements, .. } => elements.iter().any(Self::contains_binder),
-            Self::Binder { .. } => true,
+        let mut work = vec![self];
+        while let Some(template) = work.pop() {
+            match template {
+                Self::Var(_) => {},
+                Self::Node { children, .. } => work.extend(children.iter().rev()),
+                Self::Bag { elements, .. } => work.extend(elements.iter().rev()),
+                Self::Binder { .. } => return true,
+            }
         }
+        false
     }
 }
 
@@ -6798,7 +7029,7 @@ impl AcReconstructTemplate {
 /// A-S5.8 (F8-AM-1b/1c): a [`AcReconstructTemplate::Binder`] wraps its instantiated body in the
 /// ctor-erased `^lambda` node, and every σ-slot value fetched UNDER `k` template binders is
 /// pre-shifted by `k` composed applications of the HOST de Bruijn shift
-/// ([`shift_reflected_ground_term`], the `^shift(Z, ·)` mirror) — PRE-SPLICE, per slot, never by
+/// ([`shift_reflected_ground_term_by`], the `^shift(Z, ·)` mirror) — PRE-SPLICE, per slot, never by
 /// shifting a composed body. A slot value the mirror cannot shift (a reserved shape `^shift` has
 /// no arm for, e.g. a `^multilambda`) fails closed (`None`).
 pub fn instantiate_ac_reconstruct_template(
@@ -6816,52 +7047,106 @@ fn instantiate_ac_reconstruct_template_at_depth(
     find_sigma: &impl Fn(&str) -> Option<GroundTerm>,
     binder_depth: usize,
 ) -> Option<GroundTerm> {
-    // `k` composed `^shift(Z, ·)` applications to one σ-slot value (identity at depth 0 and on
-    // `^bound`-free values).
-    let shifted_sigma = |name: &str| -> Option<GroundTerm> {
-        let mut value = find_sigma(name)?;
-        for _ in 0..binder_depth {
-            value = shift_reflected_ground_term(&value, 0)?;
-        }
-        Some(value)
-    };
-    match template {
-        AcReconstructTemplate::Var(name) => shifted_sigma(name),
-        AcReconstructTemplate::Node { constructor, children } => {
-            let mut ground_children = Vec::with_capacity(children.len());
-            for child in children {
-                ground_children.push(instantiate_ac_reconstruct_template_at_depth(
-                    child,
-                    find_sigma,
-                    binder_depth,
-                )?);
-            }
-            Some(GroundTerm::new(constructor.clone(), ground_children))
+    enum Task<'template> {
+        Visit {
+            template: &'template AcReconstructTemplate,
+            binder_depth: usize,
         },
-        AcReconstructTemplate::Bag { op, elements, rest } => {
-            let mut ground_children = Vec::with_capacity(elements.len());
-            for element in elements {
-                ground_children.push(instantiate_ac_reconstruct_template_at_depth(
-                    element,
-                    find_sigma,
-                    binder_depth,
-                )?);
-            }
-            if let Some(rest_var) = rest {
-                // The rest slot is a σ slot too (F8-AM-1c): its spliced children arrive
-                // pre-shifted by the SAME depth `k` (shifting a bag = shifting its elements at
-                // an unchanged cutoff — a bag crosses no binder).
-                let rest_ground = shifted_sigma(rest_var)?;
-                ground_children.extend(rest_ground.children.iter().cloned());
-            }
-            Some(GroundTerm::collection(CollectionType::HashBag, op.clone(), ground_children))
+        Node {
+            constructor: String,
+            child_count: usize,
         },
-        AcReconstructTemplate::Binder { body } => {
-            let ground_body =
-                instantiate_ac_reconstruct_template_at_depth(body, find_sigma, binder_depth + 1)?;
-            Some(GroundTerm::new(LAMBDA_REFLECT_LABEL, vec![ground_body]))
+        Bag {
+            op: String,
+            rest: Option<String>,
+            element_count: usize,
+            binder_depth: usize,
         },
+        Binder,
     }
+
+    let shifted_sigma = |name: &str, depth: usize| -> Option<GroundTerm> {
+        let value = find_sigma(name)?;
+        if depth == 0 {
+            Some(value)
+        } else {
+            shift_reflected_ground_term_by(&value, 0, depth)
+        }
+    };
+
+    let mut tasks = vec![Task::Visit { template, binder_depth }];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit {
+                template: AcReconstructTemplate::Var(name),
+                binder_depth,
+            } => {
+                values.push(shifted_sigma(name, binder_depth)?);
+            },
+            Task::Visit {
+                template: AcReconstructTemplate::Node { constructor, children },
+                binder_depth,
+            } => {
+                tasks.push(Task::Node {
+                    constructor: constructor.clone(),
+                    child_count: children.len(),
+                });
+                tasks.extend(
+                    children
+                        .iter()
+                        .rev()
+                        .map(|template| Task::Visit { template, binder_depth }),
+                );
+            },
+            Task::Visit {
+                template: AcReconstructTemplate::Bag { op, elements, rest },
+                binder_depth,
+            } => {
+                tasks.push(Task::Bag {
+                    op: op.clone(),
+                    rest: rest.clone(),
+                    element_count: elements.len(),
+                    binder_depth,
+                });
+                tasks.extend(
+                    elements
+                        .iter()
+                        .rev()
+                        .map(|template| Task::Visit { template, binder_depth }),
+                );
+            },
+            Task::Visit {
+                template: AcReconstructTemplate::Binder { body },
+                binder_depth,
+            } => {
+                tasks.push(Task::Binder);
+                tasks.push(Task::Visit {
+                    template: body,
+                    binder_depth: binder_depth + 1,
+                });
+            },
+            Task::Node { constructor, child_count } => {
+                let first = values.len().checked_sub(child_count)?;
+                let children = values.split_off(first);
+                values.push(GroundTerm::new(constructor, children));
+            },
+            Task::Bag { op, rest, element_count, binder_depth } => {
+                let first = values.len().checked_sub(element_count)?;
+                let mut elements = values.split_off(first);
+                if let Some(rest) = rest {
+                    let rest = shifted_sigma(&rest, binder_depth)?;
+                    elements.extend(rest.children.iter().cloned());
+                }
+                values.push(GroundTerm::collection(CollectionType::HashBag, op, elements));
+            },
+            Task::Binder => {
+                let body = values.pop()?;
+                values.push(GroundTerm::new(LAMBDA_REFLECT_LABEL, vec![body]));
+            },
+        }
+    }
+    (values.len() == 1).then(|| values.pop()).flatten()
 }
 
 /// A-S5.8: the HOST-side mirror of the in-Rho `^shift(c, t, ret)` receiver over the reflected
@@ -6877,65 +7162,107 @@ fn instantiate_ac_reconstruct_template_at_depth(
 /// `None` (fail-closed) exactly where the in-Rho `^shift` has NO arm and would stall: a
 /// `^multilambda`, a reserved reduction tag, a malformed `^bound` payload, or a non-HashBag
 /// collection — the host mirror never invents semantics the receiver family lacks.
-fn shift_reflected_ground_term(term: &GroundTerm, cutoff: usize) -> Option<GroundTerm> {
-    if let Some(kind) = &term.coll_type {
-        // Only the HashBag process-soup carrier has an in-Rho `^shift` arm (the A-S5.8
-        // soup/Nil arms); Set/Map carriers have none — fail closed.
-        if *kind != CollectionType::HashBag {
-            return None;
-        }
-        let mut children = Vec::with_capacity(term.children.len());
-        for child in &term.children {
-            children.push(shift_reflected_ground_term(child, cutoff)?);
-        }
-        return Some(GroundTerm::collection(
-            CollectionType::HashBag,
-            term.constructor.clone(),
-            children,
-        ));
-    }
-    match term.constructor.as_str() {
-        BOUND_VAR_REFLECT_LABEL => {
-            let [numeral] = term.children.as_slice() else {
-                return None;
-            };
-            let n = decode_peano_ground(numeral)?;
-            if n >= cutoff {
-                Some(GroundTerm::new(BOUND_VAR_REFLECT_LABEL, vec![encode_peano_ground(n + 1)]))
-            } else {
-                Some(term.clone())
-            }
+/// Apply `amount` composed de Bruijn shifts in one bottom-up pass. Repeating
+/// the one-step `^shift` mirror `amount` times increments every
+/// qualifying bound index by exactly `amount`; traversing the same ground tree
+/// once is equivalent and removes the former binder-depth multiplication.
+fn shift_reflected_ground_term_by(
+    term: &GroundTerm,
+    cutoff: usize,
+    amount: usize,
+) -> Option<GroundTerm> {
+    enum Task<'term> {
+        Visit {
+            term: &'term GroundTerm,
+            cutoff: usize,
         },
-        LAMBDA_REFLECT_LABEL => {
-            let [body] = term.children.as_slice() else {
-                return None;
-            };
-            Some(GroundTerm::new(
-                LAMBDA_REFLECT_LABEL,
-                vec![shift_reflected_ground_term(body, cutoff + 1)?],
-            ))
-        },
-        FREE_VAR_REFLECT_LABEL => Some(term.clone()),
-        // Reserved reduction machinery the in-Rho `^shift` has no arm for (it would stall):
-        // fail closed rather than guess. (`Z`/`S` are only meaningful UNDER `^bound`, which the
-        // `^bound` arm consumed; a bare numeral here is a malformed subject.)
-        MULTILAMBDA_REFLECT_LABEL
-        | SUBST_RESERVED_LABEL
-        | SHIFT_RESERVED_LABEL
-        | SHIFTK_RESERVED_LABEL
-        | CMP_RESERVED_LABEL
-        | PRED_RESERVED_LABEL
-        | PEANO_ZERO_REFLECT_LABEL
-        | PEANO_SUCC_REFLECT_LABEL => None,
-        _ => {
-            // A positional object constructor: structural descent, cutoff unchanged.
-            let mut children = Vec::with_capacity(term.children.len());
-            for child in &term.children {
-                children.push(shift_reflected_ground_term(child, cutoff)?);
-            }
-            Some(GroundTerm::new(term.constructor.clone(), children))
+        Assemble {
+            constructor: String,
+            coll_type: Option<CollectionType>,
+            child_count: usize,
         },
     }
+
+    let mut tasks = vec![Task::Visit { term, cutoff }];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit { term, cutoff } => {
+                if let Some(kind) = &term.coll_type {
+                    if *kind != CollectionType::HashBag {
+                        return None;
+                    }
+                    tasks.push(Task::Assemble {
+                        constructor: term.constructor.clone(),
+                        coll_type: Some(CollectionType::HashBag),
+                        child_count: term.children.len(),
+                    });
+                    tasks.extend(
+                        term.children
+                            .iter()
+                            .rev()
+                            .map(|term| Task::Visit { term, cutoff }),
+                    );
+                    continue;
+                }
+                match term.constructor.as_str() {
+                    BOUND_VAR_REFLECT_LABEL => {
+                        let [numeral] = term.children.as_slice() else {
+                            return None;
+                        };
+                        let n = decode_peano_ground(numeral)?;
+                        values.push(if n >= cutoff {
+                            GroundTerm::new(
+                                BOUND_VAR_REFLECT_LABEL,
+                                vec![encode_peano_ground(n + amount)],
+                            )
+                        } else {
+                            term.clone()
+                        });
+                    },
+                    LAMBDA_REFLECT_LABEL => {
+                        let [body] = term.children.as_slice() else {
+                            return None;
+                        };
+                        tasks.push(Task::Assemble {
+                            constructor: LAMBDA_REFLECT_LABEL.to_owned(),
+                            coll_type: None,
+                            child_count: 1,
+                        });
+                        tasks.push(Task::Visit { term: body, cutoff: cutoff + 1 });
+                    },
+                    FREE_VAR_REFLECT_LABEL => values.push(term.clone()),
+                    MULTILAMBDA_REFLECT_LABEL
+                    | SUBST_RESERVED_LABEL
+                    | SHIFT_RESERVED_LABEL
+                    | SHIFTK_RESERVED_LABEL
+                    | CMP_RESERVED_LABEL
+                    | PRED_RESERVED_LABEL
+                    | PEANO_ZERO_REFLECT_LABEL
+                    | PEANO_SUCC_REFLECT_LABEL => return None,
+                    _ => {
+                        tasks.push(Task::Assemble {
+                            constructor: term.constructor.clone(),
+                            coll_type: None,
+                            child_count: term.children.len(),
+                        });
+                        tasks.extend(
+                            term.children
+                                .iter()
+                                .rev()
+                                .map(|term| Task::Visit { term, cutoff }),
+                        );
+                    },
+                }
+            },
+            Task::Assemble { constructor, coll_type, child_count } => {
+                let first = values.len().checked_sub(child_count)?;
+                let children = values.split_off(first);
+                values.push(GroundTerm { constructor, children, coll_type });
+            },
+        }
+    }
+    (values.len() == 1).then(|| values.pop()).flatten()
 }
 
 /// Decode a reflected Peano numeral `S(S(…(Z)))` [`GroundTerm`] to its `usize`, `None` on any
@@ -7086,6 +7413,10 @@ fn find_var_ident(pattern: &Pattern, name: &str) -> Option<Ident> {
 #[cfg(test)]
 #[path = "../tests/support/rho_net_pattern_analysis_recursive_oracle.rs"]
 mod pattern_analysis_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/ac_template_recursive_oracle.rs"]
+mod ac_template_recursive_oracle;
 
 /// The recognized shape of a DEPTH-2 NESTED structural non-linear AC rewrite (the Ambient
 /// `InRule`/`OutRule`). Both are `k = 2` outer elements where EXACTLY ONE is NESTED (`PAmb N (PPar
@@ -7255,23 +7586,22 @@ pub(crate) fn nested_structural_ac_rule_shape(
 /// `...rest` remainder is `name`, recursively. Drives the AM-1 exactly-once outer-rest consumption
 /// check in [`nested_structural_ac_rule_shape`].
 fn count_template_name_occurrences(template: &AcReconstructTemplate, name: &str) -> usize {
-    match template {
-        AcReconstructTemplate::Var(var) => usize::from(var == name),
-        AcReconstructTemplate::Node { children, .. } => children
-            .iter()
-            .map(|child| count_template_name_occurrences(child, name))
-            .sum(),
-        AcReconstructTemplate::Bag { elements, rest, .. } => {
-            let rest_hit = usize::from(rest.as_deref() == Some(name));
-            rest_hit
-                + elements
-                    .iter()
-                    .map(|element| count_template_name_occurrences(element, name))
-                    .sum::<usize>()
-        },
-        // A-S5.8 (F8-AM-1b): a binder scope's references are its body's.
-        AcReconstructTemplate::Binder { body } => count_template_name_occurrences(body, name),
+    let mut count = 0;
+    let mut work = vec![template];
+    while let Some(template) = work.pop() {
+        match template {
+            AcReconstructTemplate::Var(var) => count += usize::from(var == name),
+            AcReconstructTemplate::Node { children, .. } => {
+                work.extend(children.iter().rev());
+            },
+            AcReconstructTemplate::Bag { elements, rest, .. } => {
+                count += usize::from(rest.as_deref() == Some(name));
+                work.extend(elements.iter().rev());
+            },
+            AcReconstructTemplate::Binder { body } => work.push(body),
+        }
     }
+    count
 }
 
 /// Build the receiver's match PATTERN for a nested structural-AC operand by walking the LHS root
