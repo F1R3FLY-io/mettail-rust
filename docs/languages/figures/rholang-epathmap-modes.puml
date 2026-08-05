@@ -1,0 +1,21 @@
+@startuml
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontColor #263238
+skinparam ArrowColor #455A64
+title Homogeneous EPathMap literal modes
+
+state "Empty {| |}" as Empty #ECEFF1
+state "Set mode\nPathMap<()>\n{| a, b |}" as Set #E3F2FD
+state "Map mode\nPathMap<Par>\n{| k: v |}" as Map #E8F5E9
+state "Refusal\nmixed set/map literal" as Error #FFCDD2
+
+[*] --> Empty
+Empty --> Set : first membership insertion
+Empty --> Map : first key/value insertion
+Set --> Set : set operation / zipper update
+Map --> Map : map operation / zipper update
+Set --> Error : key/value insertion
+Map --> Error : membership-only insertion
+Set --> Empty : remove last entry
+Map --> Empty : remove last entry
+@enduml

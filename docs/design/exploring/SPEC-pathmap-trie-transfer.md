@@ -1,258 +1,285 @@
-# SPEC: PathMap Trie Transfer — Task Specification
+# PathMap trie integration contract
 
-**Status:** Draft (for cross-project handoff)  
-**Source:** Analysis of f1r3node Rholang PathMap implementation (`new_parser_pathmap_fix` branch context)  
-**Audience:** Developer porting or reimplementing PathMap as a trie in another codebase
+**Status:** current cross-repository engineering contract, re-derived 2026-08-04
 
----
+**MeTTaIL baseline:** `51d84ae3`
 
-## 1. Objective
+**F1r3node baseline:** `d68d8b9c`
+**Audience:** maintainers changing Rholang path-map syntax, lowering, codecs, matching, or zipper operations
 
-Port or reimplement the **Rholang PathMap** as a **radix trie** (`pathmap` crate, v0.2.2) keyed by encoded paths with **`Par` payloads**, including optional **zipper** navigation and collection algebra (union, intersection, restriction, etc.).
-
-This document captures **observed behavior**, **architecture**, and **design gaps** discovered during review of `pathmap-demo.rho` and the Rust integration layer—not an idealized path/value split API.
-
----
-
-## 2. Executive Summary (Critical Semantics)
-
-| Question | Answer in current f1r3node implementation |
-|----------|---------------------------------------------|
-| Does PathMap store values? | **Yes** — trie type is `PathMap<Par>` (key → `Par`). |
-| Is there separate path vs value in `{| ... |}` syntax? | **No** — each literal element is one `Par`; no `path : value` form. |
-| For `["a", "b", "c"]`, is `"c"` the value? | **No** — all list elements are **path segments** via `par_to_path`. |
-| Is path identical to value? | **Not identical types** (bytes vs `Par`), but for **plain string lists** the value `Par` redundantly contains the same segments used to build the key. |
-| Can key be recovered from value? | **Mostly yes** for list entries: `par_to_path(value)` + `0xFF` separators. |
-| Can value be recovered from key alone? | **Only approximately** for simple strings (decode segments → rebuild list). Arbitrary `Par` shapes require the stored value. |
-
-**Demo mental model vs implementation:** `pathmap-demo.rho` treats the last segment as “status” (`done`, `todo`). The engine does **not** implement that split—it stores the **full list** as both trie key material and leaf `Par`.
+This document replaces the pre-integration transfer checklist that described `EPathMap` as a
+`Vec<Par>`, used the retired `0xFF` key separator, and assumed one `PathMap<Par>` mode. Those claims
+are historical and must not be used to design new code. The current contract is a homogeneous,
+prefix-compressed trie from construction through serialization and node execution.
 
 ---
 
-## 3. Reference Example (from `pathmap-demo.rho`)
+## 1. Notation
 
-```rholang
-{| ["backend", "api", "done"],
-   ["backend", "database", "in-progress"],
-   ["frontend", "ui", "todo"],
-   ["frontend", "tests", "todo"] |}
+| Symbol or term | Meaning |
+|---|---|
+| **AST** | abstract syntax tree |
+| **PDA** | pushdown automaton: finite control plus explicit heap stacks |
+| **EPM1** | EPathMap format, version 1; the canonical homogeneous trie snapshot |
+| **ACTree03** | PathMap's compact arena encoding used as EPM1 topology |
+| **set mode** | value-free path membership stored as `PathMap<()>` |
+| **map mode** | path-to-value association stored as `PathMap<Par>` |
+| **neutral empty** | `{| |}` before an insertion has selected set or map mode |
+| **canonical path** | the capless, injective, prefix-free byte encoding of one Rholang `Par` key |
+| **projection** | materializing every member outside the trie, such as a `Vec<Par>` entry list |
+
+The word *map* is overloaded in ordinary prose. Here **path map** means the PathMap trie. An
+ordinary hash map is named explicitly and is never the target `EPathMap` representation.
+
+---
+
+## 2. Representation law
+
+The node admits exactly three storage states:
+
+```text
+EPathMapRepr<Par> = Empty | Set(PathMap<()>) | Map(PathMap<Par>)
 ```
 
-**What the implementation actually stores (per entry):**
+| Rholang surface | Mode | Stored key | Stored value |
+|---|---|---|---|
+| `{| |}` | neutral empty | none | none |
+| `{| a, b, c |}` | set | `encode_trie_path(member)` | unit `()` |
+| `{| k1: v1, k2: v2 |}` | map | `encode_trie_path(key)` | associated `Par` |
 
-| Entry | Trie key (conceptual segments) | Stored value (`Par`) |
-|-------|-------------------------------|----------------------|
-| 1 | `backend` → `api` → `done` | `EList["backend", "api", "done"]` |
-| 2 | `backend` → `database` → `in-progress` | `EList["backend", "database", "in-progress"]` |
-| … | … | … |
+![Figure 1 — neutral empty specializes to one homogeneous PathMap mode](../../languages/figures/rholang-epathmap-modes.svg)
 
-**Zipper operations used in demo (must be ported or reimplemented):**
+*Figure 1. The first insertion selects the trie specialization. A value cannot mix set-only and
+key/value membership. Source:
+[rholang-epathmap-modes.puml](../../languages/figures/rholang-epathmap-modes.puml).*
 
-- `readZipper()` / `readZipperAt(path)`
-- `writeZipper()` / `writeZipperAt(path)`
-- `getSubtrie()` — prefix query
-- `setLeaf(pathPar)` — write entry at zipper position
-- `setSubtrie(pathmap)` — replace subtrie at prefix
-- `graft(zipper)` — merge another PathMap
-- `getLeaf()` — value at current path (when implemented against trie)
+This law has four direct consequences:
 
----
+1. Set mode does not retain a duplicate `Par` in each value slot. The canonical bytes are the
+   member.
+2. Map mode uses PathMap's value slot for the associated `Par`; it is not an `EMap` and is not a
+   list of pairs.
+3. Algebra, prefix queries, zippers, equality, hashing, and ordering operate on trie topology and
+   values directly.
+4. Mixed set/map membership is a typed refusal. It is never normalized into an option-valued map.
 
-## 4. Architecture (f1r3node)
+### 2.1 The empty edge case
 
-### 4.1 Layer stack
+`{| |}` cannot reveal an intended specialization at parse time. It therefore remains
+`EPathMapRepr::Empty` until the first operation that requires a mode:
 
-```
-Rholang source:  {| elem1, elem2, ... |}
-       ↓ parser + normalizer
-Protobuf/AST:    EPathMap { ps: Vec<Par>, remainder, locally_free, connective_used }
-       ↓ PathMapCrateTypeMapper::e_pathmap_to_rholang_pathmap
-Runtime trie:    pathmap::PathMap<Par>   (alias RholangPathMap)
-       ↓ optional
-Zipper API:      ReadZipperUntracked / WriteZipperUntracked (via RholangReadZipper / RholangWriteZipper)
-```
+- a membership insertion selects `PathMap<()>`;
+- a key/value insertion selects `PathMap<Par>`;
+- an operation with one typed and one neutral operand inherits the typed operand's mode;
+- an operation whose two neutral operands require a result mode refuses rather than guessing.
 
-### 4.2 Core types
-
-| Type | Location | Role |
-|------|----------|------|
-| `EPathMap` | `models` proto / `rhoapi` | Serializable collection: flat `ps: Vec<Par>` |
-| `RholangPathMap` | `models/src/rust/pathmap_integration.rs` | `PathMap<Par>` trie |
-| `PathMapCreationResult` | same | `{ map, connective_used, locally_free }` |
-| `EZipper` | `rhoapi` | `{ pathmap, current_path, is_write_zipper, ... }` |
-| `PathMapCrateTypeMapper` | `models/src/rust/pathmap_crate_type_mapper.rs` | `EPathMap` ↔ trie conversion |
-
-### 4.3 Path encoding (`par_to_path`)
-
-**File:** `models/src/rust/pathmap_integration.rs`
-
-```rust
-pub fn par_to_path(par: &Par) -> Vec<Vec<u8>>
-```
-
-Rules:
-
-1. **If `par` is a single `EList`:** each child element → one segment (S-expr encoded via `ParToSExpr` → `SExpr::encode()`).
-2. **Otherwise:** entire `par` → **one** segment (S-expr of whole term).
-
-**Trie key construction** (`create_pathmap_from_elements`):
-
-```rust
-let segments = par_to_path(par);
-let key: Vec<u8> = segments.into_iter().flat_map(|mut seg| {
-    seg.push(0xFF);  // segment separator — must not appear in encoded input
-    seg
-}).collect();
-map.insert(key, par.clone());
-```
-
-**Implication:** Key derivation and stored value use the **same source `par`** at insert time.
-
-### 4.4 EPathMap round-trip
-
-- **To trie:** `create_pathmap_from_elements(&e_pathmap.ps, remainder)`
-- **From trie:** `rholang_pathmap_to_e_pathmap` collects `map.iter()` → `ps` vector (values only; order depends on trie iteration)
-
-### 4.5 Dependency
-
-- **Crate:** `pathmap = "0.2.2"` (`models/Cargo.toml`)
-- Provides: radix trie, `join` / `meet` / `subtract` / `restrict`, zippers
+Removing the final entry may return the value to neutral empty only when no explicit value-free
+topology remains. Code must query `mode()` instead of inferring mode from `len() == 0`.
 
 ---
 
-## 5. Key Source Files (f1r3node)
+## 3. The two repository layers
 
-| Area | Path |
-|------|------|
-| Path encoding + trie build | `models/src/rust/pathmap_integration.rs` |
-| Proto ↔ trie mapper | `models/src/rust/pathmap_crate_type_mapper.rs` |
-| Zipper wrappers | `models/src/rust/pathmap_zipper.rs` |
-| Parser/normalizer | `rholang/src/rust/interpreter/compiler/normalizer/collection_normalize_matcher.rs` |
-| Runtime methods | `rholang/src/rust/interpreter/reduce.rs` (search: `readZipper`, `setLeaf`, `setSubtrie`, `getSubtrie`, `graft`) |
-| Demo contract | `rholang/examples/pathmap-demo.rho` |
-| Demo tests | `rholang/tests/demo_verification.rs` |
-| Integration tests | `models/tests/pathmap_integration_tests.rs` |
-| Zipper tests | `rholang/tests/zipper_*_spec.rs`, `rholang/tests/setsubtrie_spec.rs` |
+### 3.1 MeTTaIL syntax carrier
 
----
+`mettail_runtime::PathMapLit<K,V>` preserves unresolved source keys and values while generated
+binding, substitution, normalization, display, and semantic-hash PDAs operate on the Rholang AST.
+It has the same `Empty | Set | Map` mode law. Its internal deterministic source collection is not
+an `EPathMap`: canonical target bytes cannot be computed until a `Proc` is lowered with its bound
+environment to `Par`.
 
-## 6. Transfer Tasks (Suggested Checklist)
+The target boundary is `rholang-runtime/src/rholang_ast.rs:1890-1919,2372-2395,3421-3437`.
+The iterative lowerer:
 
-### Phase A — Data model
+1. schedules one child per set member or two children per map entry;
+2. lowers every child through the same explicit PDA;
+3. calls `EPathMap::new` or `EPathMap::new_map` exactly once;
+4. leaves the completed node value in F1r3node's homogeneous PathMap storage.
 
-- [ ] **A1.** Define trie type: `Trie<PathKey, Payload>` — in f1r3node, `PathKey = Vec<u8>`, `Payload = Par` (or your target language’s AST/value type).
-- [ ] **A2.** Implement `value_to_path(value) -> Vec<Segment>` mirroring `par_to_path` rules (list = multi-segment; atom = single segment).
-- [ ] **A3.** Implement `segments_to_key(segments) -> Vec<u8>` with **0xFF separator** (or document alternative separator strategy).
-- [ ] **A4.** Implement `insert(entry)`: `key = segments_to_key(value_to_path(entry))`, `trie[key] = entry`.
-- [ ] **A5.** Decide explicit API shape for target project:
-  - **Option 1 (current):** literal entries only; path/value conflation for lists.
-  - **Option 2 (recommended for new project):** explicit `{ path: [...], value: ... }` or path keys + leaf payload only.
+The transient PDA value stack is construction state, not an EPathMap projection. In particular,
+no already-built target trie is converted back to a `Vec<Par>` during lowering.
 
-### Phase B — Collection literal / serialization
+### 3.2 F1r3node trie carrier
 
-- [ ] **B1.** Parse `{| ... |}` as ordered set of elements (f1r3node sorts inner elements for canonical form).
-- [ ] **B2.** Support remainder / connective metadata if needed (`remainder`, `connective_used`, `locally_free`).
-- [ ] **B3.** Round-trip: literal → trie → literal; verify stable semantics for your chosen path/value model.
+At F1r3node baseline `d68d8b9c`:
 
-### Phase C — Trie algebra
+| Concern | Authoritative source |
+|---|---|
+| mode and EPM1 envelope | `models/src/rust/epathmap_trie_codec.rs:36-112` |
+| `EntryTrie` storage and caches | `models/src/rust/rhoapi_ext.rs:69-105` |
+| public `EPathMap` wrapper | `models/src/rust/rhoapi_ext.rs:2125-2513` |
+| set/map aliases and canonical keys | `models/src/rust/pathmap_integration.rs:1-40` |
+| protobuf schema record | `models/src/main/protobuf/RhoTypes.proto:321-364` |
+| protobuf PDA | `models/src/rust/rholang/protobuf_encoder.rs` and `protobuf_decoder.rs` |
+| bincode PDA | `models/src/rust/rholang/bincode_encoder.rs` and `bincode_decoder.rs` |
 
-Port tests from `models/tests/pathmap_integration_tests.rs`:
-
-- [ ] **C1.** Union (`join`)
-- [ ] **C2.** Intersection (`meet`)
-- [ ] **C3.** Subtraction (`subtract`)
-- [ ] **C4.** Restriction by prefix (`restrict`)
-
-### Phase D — Zipper API
-
-- [ ] **D1.** Read zipper at path prefix; `getSubtrie`, `hasVal`, `pathExists`, `getLeaf`
-- [ ] **D2.** Write zipper at path; `setLeaf`, `setSubtrie` (remove keys under prefix, re-insert with prepended `current_path`)
-- [ ] **D3.** `graft` — merge foreign trie at current position
-- [ ] **D4.** Path management: `createPath`, `prunePath`, `reset` (see `zipper_path_management_spec.rs`)
-
-**Note:** Some `setLeaf` paths in `reduce.rs` currently push to `EPathMap.ps` without full trie update—verify against trie when porting.
-
-### Phase E — Edge cases & validation
-
-- [ ] **E1.** Empty: `{||}`
-- [ ] **E2.** Single non-list: `{| 42 |}` — one segment key, value = `42`
-- [ ] **E3.** Single-element list: `{| ["some string"] |}` — path `["some string"]`, value = same list
-- [ ] **E4.** Prefix overlap: `["a","b"]` and `["a","b","c"]` coexist as distinct keys
-- [ ] **E5.** `readZipperAt(["backend"]).getSubtrie()` returns entries whose keys start with prefix (demo 1)
-- [ ] **E6.** Reconcile demo expectations if adopting explicit path+value model
+`EntryTrie` is a metadata-bearing owner around one PathMap root. It is not a shadow trie: the
+`repr` field is the entry store. Its maintained folds make `len`, entry stability,
+`locally_free` union, and `connective_used` queries constant-time without decoding all keys.
 
 ---
 
-## 7. Design Decisions for Target Project
+## 4. Canonical key encoding
 
-### 7.1 Why key and value both exist (even when redundant)
+The retired design joined S-expression segments with `0xFF`. The current key is
+`canonical_path::encode_trie_path(par)`.
 
-| Role | Key (bytes) | Value (payload) |
-|------|-------------|-----------------|
-| Purpose | Trie indexing, prefix ops | Canonical source term / rich AST |
-| Used by | `get`, prefix scan, algebra | Serialization, connectives, exact round-trip |
+The codec has two top-level shapes:
 
-For **string-only list entries**, duplication is mostly historical/convenience (single literal form, generic insert). A greenfield design should **not** duplicate unless needed.
+- a split-eligible, ground `EList` contributes one prefix-free segment per element followed by the
+  split terminator `0x00`;
+- every other `Par` contributes one bare segment, using the total `0x0F` escape arm when structural
+  ground encoding does not apply.
 
-### 7.2 Recommended greenfield API (if not tied to Rholang syntax)
+The split/bare cursor discriminator is necessary because the bare element `1` and singleton list
+`[1]` share the same element segment but have distinct complete keys. Zipper cursors therefore
+carry `Split`, `Bare`, or unresolved `Prefix` state; code must use the shared cursor-to-key helper
+rather than concatenate bytes locally.
 
-```
-Entry = { path: Vec<Segment>, value: Value }
-Trie key = encode(path)
-Trie value = value   // NOT full path list unless value truly is the path
+The codec obligations are:
+
+```math
+\operatorname{decode}(\operatorname{encode}(p)) = p
 ```
 
-Maps cleanly to demo semantics: `path = ["frontend","ui"]`, `value = "done"`.
-
-### 7.3 If must stay compatible with f1r3node
-
-- Keep `par_to_path` + `0xFF` encoding **byte-identical** for cross-node consensus.
-- Keep `EPathMap.ps` as `Vec<Par>` flat list for protobuf.
-- Document that list literals encode **path only** (all elements), not path+value.
-
----
-
-## 8. Known Gaps / Technical Debt (f1r3node)
-
-1. **Tests disagree with implementation:** Some tests build `["a", "value1"]` expecting path `["a"]` + value `"value1"`; `par_to_path` uses **all** list elements as path (see comments in `zipper_query_methods_spec.rs`).
-2. **`setLeaf` on `EPathMap`:** May append to `ps` without updating trie consistently—confirm in `reduce.rs` before relying on.
-3. **Display vs operations:** Zipper stores complete `EPathMap` with `current_path` as byte segments; display may show absolute paths while subtrie ops use prefix keys.
-4. **No documented pathmap spec in `docs/`** prior to this file—demo implies domain semantics (status field) not enforced by type system.
-
----
-
-## 9. Acceptance Criteria (Transfer Done When)
-
-1. Trie insert/lookup/remove matches `create_pathmap_from_elements` behavior for list and non-list entries.
-2. Prefix query equivalent to `getSubtrie` at `["backend"]` returns exactly the backend rows from demo PathMap.
-3. `setSubtrie` at prefix replaces all keys under prefix and inserts new entries with absolute paths.
-4. Collection algebra tests (union/intersection/subtraction/restriction) pass against reference vectors in `pathmap_integration_tests.rs`.
-5. Documented decision: **conflated path+value (f1r3node compatible)** vs **explicit path/value (demo-friendly)** — with migration notes.
-
----
-
-## 10. Prompt Snippet for New Chat
-
-Copy into a new session to resume:
-
-```
-I am porting the Rholang PathMap trie from f1r3node. Read SPEC-pathmap-trie-transfer.md.
-
-Key facts:
-- Runtime: pathmap::PathMap<Par>, keys = par_to_path(par) segments joined with 0xFF.
-- Literal {| ["a","b","c"] |} uses ALL list elements as path segments; stored value is the full Par (redundant for string lists).
-- EPathMap.ps is Vec<Par> flat list; trie built on demand via PathMapCrateTypeMapper.
-- Demo pathmap-demo.rho assumes last segment is "status" but implementation does NOT split path/value.
-
-Tasks: [pick Phase A–E from spec]. Target: [describe language/runtime].
-Compatibility required: [yes/no with f1r3node bytes].
+```math
+p \ne q \Longrightarrow \operatorname{encode}(p) \ne \operatorname{encode}(q)
 ```
 
+and no artificial traversal-depth limit may qualify either statement.
+
 ---
 
-## 11. References
+## 5. Trie-native serialization
 
-- Demo: `rholang/examples/pathmap-demo.rho`
-- Path encoding: `models/src/rust/pathmap_integration.rs` — `par_to_path`, `create_pathmap_from_elements`
-- Mapper: `models/src/rust/pathmap_crate_type_mapper.rs`
-- External crate: `pathmap` 0.2.2 (radix trie + zippers)
+New protobuf writers emit only field 9, `trie_snapshot`. Fields 1 and 8 are decoder-only legacy
+inputs. Both protobuf and bincode carry EPM1, whose payload consists of:
+
+1. magic and version;
+2. homogeneous mode;
+3. PathMap's prefix-compressed ACTree03 topology;
+4. a value count and, in map mode, the associated `Par` values in topology ordinal order.
+
+EPM1 is not an entry-list encoding. Set mode contains no `Par` value table. Map values are streamed
+by the generated protobuf PDA from a PathMap zipper; they are not first gathered into a vector.
+Bincode writes one canonical EPM1 byte slice and its stack-safe reader reconstructs the
+homogeneous trie.
+
+### 5.1 Why `trie_snapshot` exists
+
+`trie_snapshot` is a lazy `Arc<OnceLock<Vec<u8>>>` serialization memo:
+
+- the first request costs $`\Theta(t + v)`$ for trie topology size $`t`$ and encoded map-value size
+  $`v`$;
+- warm requests return the cached slice without rebuilding it;
+- clones share a cold or warm memo until one clone mutates;
+- mutation replaces both the snapshot and layout cells only on the mutated value.
+
+Lookup, equality, hashing, ordering, algebra, and zipper navigation do not force this cache. The
+memo therefore amortizes repeated wire writes without turning serialization bytes into the data
+model. The former global intern store and its `contains_par` memo were deleted; direct PathMap
+lookup is the membership mechanism.
+
+---
+
+## 6. Stack-safe traversal contract
+
+All user-depth recursion at the integration boundary uses an explicit PDA. This includes generated
+clone, drop, comparison, equality, hashing, normalization, substitution, matching, display,
+protobuf, and bincode families, plus handwritten reducer and spatial-matcher machines.
+
+**Algorithm 1 (Trie-aware post-order traversal).** Schedule trie members in the reverse of canonical
+PathMap order so a last-in/first-out work stack evaluates them in forward order.
+
+```pseudocode
+TRAVERSE_EPATHMAP(root)
+    push VISIT(root) on work
+    while work is not empty
+        instruction <- pop work
+        if instruction is VISIT(EPathMap set)
+            stream raw PathMap<()> keys in reverse trie order
+            push one DECODE_SET_KEY instruction per key
+        else if instruction is VISIT(EPathMap map)
+            stream borrowed PathMap<Par> key/value pairs in reverse trie order
+            push value and key work without cloning either collection
+        else
+            execute the ordinary generated node instruction
+    return the single completed result
+```
+
+Reverse streaming is important: allocating a forward `Vec<&Par>` merely to reverse its order
+would restore a width-proportional projection. Owned zipper iterators are used when destructive
+machines must move entries out of the trie. Neither strategy changes PathMap itself.
+
+Completion requires all of the following to stay absent:
+
+- `RUST_MIN_STACK` increases;
+- the `stacker` crate;
+- traversal-depth caps;
+- recursive fallback for deep inputs;
+- conversion of a completed EPathMap to an entry vector.
+
+---
+
+## 7. Algebra, lattice, and zipper rules
+
+Set operations delegate to the lawful `PathMap<()>` unit-value algebra. Map operations apply
+PathMap topology operations and resolve overlapping `Par` values through the operation's declared
+semantics. A cross-mode operation refuses before mutation.
+
+Prefix queries work on the branch at the zipper focus, while exact-key operations use the cursor's
+split/bare discriminator. Subtrie iterators return keys relative to their focus; callers that emit
+an absolute EPathMap must prepend the focus exactly once.
+
+The following are architectural defects, even if a focused example appears to work:
+
+- rebuilding algebra with `Vec`, `HashSet`, `HashMap`, or sorted pairs;
+- decoding every set key before an exact membership query;
+- comparing cached EPM1 snapshots instead of trie topology and values;
+- implementing a second path codec in MeTTaIL;
+- adding a PathMap fork to work around an integration bug.
+
+`runtime/src/pathmap_codec.rs` in MeTTaIL exports the old escaped-`0xFF` segment helper and has no
+production call site at baseline `51d84ae3`. It is not the F1r3node canonical codec and must not be
+used for EPathMap lowering or conformance. Its public-API retirement should be handled as an
+explicit compatibility cleanup, not silently folded into a codec change.
+
+---
+
+## 8. Verification obligations
+
+Every generated PDA must be checked against the retained recursive test oracle on shallow values,
+then exercised beyond native-stack-safe recursive depth. Formal evidence covers the generic
+machine invariant, mode transitions and refusal, set/map algebra laws, and the EPM1 envelope/value
+table. Executable PathMap parsing remains an explicit trusted boundary.
+
+The cross-repository gate must cover:
+
+1. neutral empty, set, and map lowering;
+2. mixed-membership refusal;
+3. exact-key lookup and prefix queries;
+4. algebra and zipper operations in both specializations;
+5. protobuf and bincode byte round trips;
+6. deep keys, deep map values, and wide tries;
+7. generated-PDA versus recursive-oracle equivalence;
+8. deterministic bytes, hashes, ordering, and replay-visible results.
+
+The scientific measurements and proofs are maintained in F1r3node's living
+`docs/design/stack-safety/stack-safety-report-2026-07-29.md`,
+`docs/design/pathmap/pathmap-report-2026-08-03.md`, and
+`docs/consensus/consensus-change-register.md`. This handoff states the contract; it does not copy
+their evolving evidence tables.
+
+---
+
+## 9. References
+
+- [Rholang language reference](../../languages/rholang.md) — the MeTTaIL syntax, lowering, and
+  execution boundary.
+- [Lookahead PathMap design history](lookahead-traces-as-a-pathmap.md) — a superseded proposal whose
+  current-state reconciliation explains which integration gaps closed.
+- F1r3node sources and living reports at sibling checkout
+  `/home/dylon/Workspace/f1r3fly.io/f1r3node-rust-mettail`, baseline `d68d8b9c`. These are outside
+  this repository. (no DOI registered)
+- The `pathmap` crate, version 0.2.2 with `arena_compact`, provides the radix trie, algebra, compact
+  arena, and zipper APIs. (no DOI registered)

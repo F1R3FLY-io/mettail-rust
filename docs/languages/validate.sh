@@ -67,6 +67,8 @@ doclint="$script_dir/doclint.py"
 failures=0
 skips=0
 tool_errors=0
+checks_run=0
+checks_passed=0
 
 # Never leave a __pycache__ beside the pages being audited: a tool that drops
 # bytecode into the directory it inspects is a tool whose droppings eventually
@@ -108,12 +110,13 @@ run_check() {
   local slug="$1"
   shift
   local out rc=0
+  checks_run=$((checks_run + 1))
   out="$("$@" 2>&1)" || rc=$?
   if [[ -n "$out" ]]; then
     printf '%s\n' "$out" | sed 's/^/       /'
   fi
   case "$rc" in
-    0) printf '  PASS  %s\n' "$slug" ;;
+    0) printf '  PASS  %s\n' "$slug"; checks_passed=$((checks_passed + 1)) ;;
     1) printf '  FAIL  %s\n' "$slug"; failures=$((failures + 1)) ;;
     3) printf '  SKIP  %s  (not verified — a skip is not a pass)\n' "$slug"
        skips=$((skips + 1)) ;;
@@ -330,9 +333,11 @@ run_check "algorithms-literate-pseudocode" \
 # ── 15. Code snippets parse ─────────────────────────────────────────────────
 run_check "code-snippets-valid" python3 "$doclint" code-snippets "${document_files[@]}"
 
-# ── 16. Roster coverage: every page is listed in the suite index ────────────
+# ── 16. Roster coverage: specs, pages, and completed index rows agree ───────
 check_roster() {
-  local rc=0 file name
+  local rc=0 file name spec page row
+
+  # Forward direction: every expository page is discoverable from the index.
   for file in "${suite_files[@]}"; do
     name="$(basename -- "$file")"
     [[ "$name" == "README.md" ]] && continue
@@ -341,6 +346,28 @@ check_roster() {
       rc=1
     fi
   done
+
+  # Reverse direction: derive the production-language domain from the macro invocations rather
+  # than maintaining another list. A checked roster row cannot substitute for the page itself.
+  while IFS= read -r spec; do
+    page="$(basename -- "${spec%.rs}.md")"
+    if [[ ! -f "$script_dir/$page" ]]; then
+      printf 'production language specification has no page: %s -> %s\n' \
+        "${spec#"$repo_root/"}" "$page" >&2
+      rc=1
+      continue
+    fi
+    row="$(rg -F "($page)" "$readme" || true)"
+    if [[ -z "$row" ]]; then
+      printf 'production language page is absent from the README roster: %s\n' "$page" >&2
+      rc=1
+    elif [[ "$row" != *"✅"* ]]; then
+      printf 'production language page is not marked complete in the README roster: %s\n' \
+        "$page" >&2
+      rc=1
+    fi
+  done < <(rg -l '^language![[:space:]]*\{' "$repo_root"/languages/src/*.rs | sort)
+
   return $rc
 }
 run_check "roster-coverage" check_roster
@@ -368,9 +395,11 @@ if [[ "$tool_errors" -gt 0 ]]; then
     "$tool_errors" >&2
 fi
 if [[ "$failures" -gt 0 ]]; then
-  printf 'FAILED: %d of 17 check(s) failed (%d of them tool errors), %d skipped (%d suite page(s), %d extra page(s), %d figure(s))\n' \
-    "$failures" "$tool_errors" "$skips" "${#suite_files[@]}" "${#extra_files[@]}" "$puml_count" >&2
+  printf 'FAILED: %d of %d check(s) failed (%d of them tool errors), %d skipped (%d suite page(s), %d extra page(s), %d figure(s))\n' \
+    "$failures" "$checks_run" "$tool_errors" "$skips" "${#suite_files[@]}" \
+    "${#extra_files[@]}" "$puml_count" >&2
   exit 1
 fi
-printf 'ok: languages suite validated — %d of 17 check(s) passed, %d skipped (%d suite page(s), %d extra page(s), %d figure(s))\n' \
-  "$((17 - failures - skips))" "$skips" "${#suite_files[@]}" "${#extra_files[@]}" "$puml_count"
+printf 'ok: languages suite validated — %d of %d check(s) passed, %d skipped (%d suite page(s), %d extra page(s), %d figure(s))\n' \
+  "$checks_passed" "$checks_run" "$skips" "${#suite_files[@]}" "${#extra_files[@]}" \
+  "$puml_count"

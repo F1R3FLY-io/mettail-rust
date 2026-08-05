@@ -1,0 +1,25 @@
+@startuml
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontColor #263238
+skinparam ArrowColor #455A64
+title Json numeric literal: exact carrier election
+
+actor Reader #E3F2FD
+rectangle "token text" as token #FFF3E0
+rectangle "contains `/`?" as slash #FFF8E1
+rectangle "parse numerator / denominator" as rational #E8F5E9
+rectangle "contains `.`?" as dot #FFF8E1
+rectangle "integer / 1" as integer #E8F5E9
+rectangle "concatenate digits / 10^fraction_length" as decimal #E8F5E9
+rectangle "CanonicalBigRat" as canonical #E0F2F1
+
+Reader --> token
+token --> slash
+slash --> rational : yes
+slash --> dot : no
+dot --> integer : no
+dot --> decimal : yes
+rational --> canonical
+integer --> canonical
+decimal --> canonical
+@enduml

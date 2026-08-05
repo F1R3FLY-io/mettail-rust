@@ -1,0 +1,32 @@
+@startuml
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontColor #263238
+skinparam ArrowColor #455A64
+skinparam componentStyle rectangle
+title Rholang specification: generated front end and execution split
+
+package "MeTTaIL specification" #E3F2FD {
+  rectangle "options + types + literals + tokens" as syntax #BBDEFB
+  rectangle "terms + equations + rewrites + logic" as theory #C8E6C9
+  rectangle "guard_slots" as guards #FFE0B2
+}
+package "Generated artifacts" #E0F2F1 {
+  rectangle "WPDA parser / Display / stack-safe term ops" as generated #B2DFDB
+  rectangle "Dovetail fold + withholding" as fold #D1C4E9
+  rectangle "rhoapi::Par lowering" as lower #B3E5FC
+}
+package "F1r3node" #FCE4EC {
+  rectangle "RhoRuntime reducer" as reducer #F8BBD0
+  database "RSpace COMM / joins / state" as rspace #FFCDD2
+}
+
+syntax --> generated
+theory --> generated
+guards --> generated
+generated --> fold : pure folds
+generated --> lower : process structure
+fold --> lower : fold-normal term
+lower --> reducer : normalized AST
+reducer --> rspace
+guards ..> reducer : residual where guard
+@enduml

@@ -1,0 +1,23 @@
+@startuml
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontColor #263238
+skinparam ArrowColor #455A64
+title Reflection and one guarded communication
+
+rectangle "process P" as p #E3F2FD
+rectangle "name @P\nNQuote(P)" as quote #FFF3E0
+rectangle "process *@P\nPDrop(NQuote(P))" as drop #E8F5E9
+rectangle "send c!(v)" as send #B3E5FC
+rectangle "receive for (x <- c where g(x)) { K }" as recv #D1C4E9
+rectangle "name + pattern + guard agree?" as guard #FFF8E1
+rectangle "K[v/x]" as cont #C8E6C9
+rectangle "resting send / receive" as rest #FFCDD2
+
+p --> quote : quote
+quote --> drop : dereference
+drop --> p : Exec equation/rewrite
+send --> guard
+recv --> guard
+guard --> cont : yes — one COMM
+guard --> rest : no — state is unchanged
+@enduml

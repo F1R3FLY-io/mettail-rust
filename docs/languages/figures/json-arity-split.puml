@@ -1,0 +1,24 @@
+@startuml
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontColor #263238
+skinparam ArrowColor #455A64
+skinparam activityBackgroundColor #E3F2FD
+skinparam activityDiamondBackgroundColor #FFF8E1
+title Ordered collection syntax without a sole-Vec codegen projection
+
+start
+:Read `[` or `{`;
+if (next token closes?) then (yes)
+  :JArrEmpty / JObjEmpty;
+else (no)
+  :Parse first Value / Field;
+  if (next token closes?) then (yes)
+    :JArr1 / JObj1;
+  else (comma)
+    :Parse remaining ordered Vec;
+    :JArr / JObj;
+  endif
+endif
+:Display preserves order and multiplicity;
+stop
+@enduml

@@ -1,0 +1,30 @@
+@startuml
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontColor #263238
+skinparam ArrowColor #455A64
+skinparam componentStyle rectangle
+title Json specification: source blocks to exact values
+
+rectangle "options\nno generated tests/simulator/Blockly" as options #ECEFF1
+rectangle "types\nValue · Field · Bool · BigRat · Str" as types #E3F2FD
+rectangle "literals\ntrue/false · exact decimal/rational · string" as literals #FFF3E0
+rectangle "terms\nnull · scalar · array · object · field" as terms #E8F5E9
+rectangle "equations / rewrites\nempty" as dynamics #F3E5F5
+rectangle "Generated Json AST + parser + Display" as generated #E0F2F1
+database "Exact term\n(no binary float)" as value #FFFDE7
+
+options --> generated
+types --> generated
+literals --> generated
+terms --> generated
+dynamics --> generated
+generated --> value : parse / display
+
+legend right
+  |= Colour |= Responsibility |
+  |<#E3F2FD> blue | carriers |
+  |<#FFF3E0> orange | lexical values |
+  |<#E8F5E9> green | JSON constructors |
+  |<#F3E5F5> purple | absent dynamics |
+endlegend
+@enduml

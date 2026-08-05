@@ -1,6 +1,6 @@
 # Language Specification References
 
-Last updated: 2026-07-27
+Last updated: 2026-08-04
 
 One page per bundled `language!` specification. Each page walks its `languages/src/*.rs` block
 **component by component** — what every fragment of the DSL (domain-specific language) means, what
@@ -50,12 +50,12 @@ MeTTaIL languages.
 |---|---|---:|---|---|---|
 | **Lambda** | `languages/src/lambda.rs` | 34 | `Term` | binders and higher-order abstract syntax, β-reduction via the `eval` meta-operator, congruence rules as reduction contexts | ✅ [lambda.md](lambda.md) |
 | **Monoid** | `languages/src/monoid.rs` | 94 | `M` | GSLT omnibus **L2** — the *equations* rung: `Assoc` / `UnitL` / `UnitR` with an empty `rewrites` block; the quotient an equational theory induces | ✅ [monoid.md](monoid.md) |
-| **Json** | `languages/src/json.rs` | 267 | `Value`, `Field`, `![bool] as Bool`, `![CanonicalBigRat] as BigRat`, `![str] as Str` | GSLT omnibus **L1** — the *types + terms* rung: native payload carriers, `literals { }` lexer classes, collection sorts | ☐ not yet written |
+| **Json** | `languages/src/json.rs` | 267 | `Value`, `Field`, `![bool] as Bool`, `![CanonicalBigRat] as BigRat`, `![str] as Str` | GSLT omnibus **L1** — the *types + terms* rung: native payload carriers, `literals { }` lexer classes, collection sorts | ✅ [json.md](json.md) |
 | **Turing** | `languages/src/turing.rs` | 191 | `Config`, `Tape`, `State`, `Sym`, `![u32] as UInt32` | GSLT omnibus **L9** — the paper's deliberate *non*-example: a single-tape machine as a GSLT, a `Vec(Sym)` zipper tape, and a `fold` helper that both fold lanes reject | ✅ [turing.md](turing.md) |
 | **Pi** | `languages/src/pi.rs` | 233 | `Proc`, `Name` | GSLT omnibus **L11** — the π-calculus: name restriction as a nominal binder, `HashBag` parallel composition with `*sep`, the typed COMM lane, and a documented surface delta (literal-led binder prefixes) | ✅ [pi.md](pi.md) |
-| **Ambient** | `languages/src/ambient.rs` | 75 | `Proc`, `Name` | Cardelli–Gordon mobile ambients: six structural-congruence *equations* with freshness premises (`x # N`), scope extrusion over an AC bag, and three capability rewrites with congruences | ✅ [ambient.md](ambient.md) |
-| **Calculator** | `languages/src/calculator.rs` | 789 | `Proc` plus the native numeric tower (`Int`, `UInt32`, `BigInt`, `BigRat`, `Fixed`, `Float`, `Bool`, `Str`) | `literals { }` with regex patterns and `eval` blocks, native `![…]` folds, numeric casts, `fold` / `step` evaluation modes | ✅ [calculator.md](calculator.md) |
-| **Rholang** | `languages/src/rholang.rs` | 3 242 | `Proc`, `Name`, `InputBind`, `ForRow` plus the native tower | the flagship: COMM as a rewrite, multi-binder receives, collections, guards, `options { }`, and hand-written `logic { }` | ☐ partially covered by [`../examples/rholang/01-language-spec.md`](../examples/rholang/01-language-spec.md) |
+| **Ambient** | `languages/src/ambient.rs` | 135 | `Proc`, `Name` | Cardelli–Gordon mobile ambients: six structural-congruence *equations* with freshness premises (`x # N`), scope extrusion over an AC bag, and three capability rewrites with congruences | ✅ [ambient.md](ambient.md) |
+| **Calculator** | `languages/src/calculator.rs` | 793 | `Proc` plus the native numeric tower (`Int`, `UInt32`, `BigInt`, `BigRat`, `Fixed`, `Float`, `Bool`, `Str`) | `literals { }` with regex patterns and `eval` blocks, native `![…]` folds, numeric casts, `fold` / `step` evaluation modes | ✅ [calculator.md](calculator.md) |
+| **Rholang** | `languages/src/rholang.rs` | 2 785 | `Proc`, `Name`, `InputBind`, `ForRow` plus the native tower | the flagship: COMM as a rewrite, multi-binder receives, collections, guards, `options { }`, and hand-written `logic { }` | ✅ [rholang.md](rholang.md) |
 
 Composition fixtures (`languages/src/composition/`) and the Rholang support modules
 (`languages/src/rholang/`) are not specifications in their own right; composition is documented in

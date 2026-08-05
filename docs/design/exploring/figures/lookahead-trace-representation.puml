@@ -1,60 +1,39 @@
 @startuml
-title Trace representation in the search: <latex>\Theta(d)</latex> copying per edge becomes <latex>\Theta(1)</latex> sharing
+title Implemented persistent ReductionTrace
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
+skinparam ArrowColor #374151
 skinparam ArrowThickness 1.2
 skinparam rectangle {
   BorderColor #1F2937
   FontColor #111827
 }
-skinparam note {
-  BackgroundColor #F9FAFB
-  BorderColor #9CA3AF
-}
 
-rectangle "TODAY — `Node.trace: Vec<RendezvousName>`" as A #FEE2E2 {
-  rectangle "node at depth 1\n""[ n0 ]""" as A1 #FECACA
-  rectangle "node at depth 2\n""[ n0, n1 ]""\n<i>n0 COPIED</i>" as A2 #FECACA
-  rectangle "node at depth 3\n""[ n0, n1, n2 ]""\n<i>n0, n1 COPIED</i>" as A3 #FECACA
-  rectangle "sibling at depth 3\n""[ n0, n1, n2' ]""\n<i>n0, n1 COPIED AGAIN</i>" as A3b #FECACA
-  A1 -down-> A2
-  A2 -down-> A3
-  A2 -down-> A3b
-}
+rectangle "Arc<[Par]> root\n[input, saturated initial]" as Root #DBEAFE
+rectangle "TraceLink 1\nrendezvous r1\nconfiguration S1" as L1 #EDE9FE
+rectangle "TraceLink 2a\nrendezvous r2\nconfiguration S2a" as L2A #DCFCE7
+rectangle "TraceLink 2b\nrendezvous r3\nconfiguration S2b" as L2B #FEF3C7
 
-note right of A3b
-  `extend_from_slice` copies every ancestor,
-  **two heap allocations per copied element**.
+L1 --> Root : parent / shared root
+L2A --> L1 : parent
+L2B --> L1 : parent
 
-  One line of depth <latex>D</latex> therefore costs
-  <latex>\Theta(D^2)</latex>, and the whole tree
-  <latex>\Theta(E \cdot d)</latex>.
+rectangle "MATERIALIZE leaf 2a\nfixed output array\nfill from tail toward root" as Mat #D1FAE5
+rectangle "DROP leaf 2b\ntry_unwrap unique suffix\nstop at shared L1" as Drop #FCE7F3
+
+L2A --> Mat
+L2B --> Drop
+
+note right of L2B #F9FAFB
+  EXTEND is one Arc allocation and
+  one parent reference, independent
+  of trace depth.
 end note
 
-rectangle "PROPOSED — `Option<Arc<TraceStep>>`" as B #DCFCE7 {
-  rectangle "**TraceStep**\nstep: `d0`\ndepth: 0\nparent: NIL" as B0 #BBF7D0
-  rectangle "**TraceStep**\nstep: `d1`\ndepth: 1" as B1 #BBF7D0
-  rectangle "**TraceStep**\nstep: `d2`\ndepth: 2" as B2 #BBF7D0
-  rectangle "**TraceStep**\nstep: `d2'`\ndepth: 2" as B2b #BBF7D0
-
-  B1 -up-> B0 : parent
-  B2 -up-> B1 : parent
-  B2b -up-> B1 : parent
-}
-
-note right of B2b
-  A child is **one** ""Arc::new"" plus a refcount
-  bump — <latex>\Theta(1)</latex> per edge, whatever the depth.
-
-  Siblings SHARE their ancestors instead of
-  copying them; the chain is immutable, so it is
-  safe to hold across the search's ""await"" points.
-
-  ""MATERIALISE"" runs <latex>\Theta(d)</latex> once per DELIVERED
-  LEAF — <latex>\Theta(E) + \Theta(L \cdot d)</latex> in total.
+note bottom of Mat #F9FAFB
+  Materialization is linear in the
+  delivered path length and consumes
+  constant native stack.
 end note
-
-A -[#DC2626,thickness=2]-> B : copy-on-extend\nbecomes\npoint-at-parent
-
 @enduml

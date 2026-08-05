@@ -1,5 +1,5 @@
 @startuml
-title What is collected today, and what the FIPS asks for
+title Implemented lookahead path: shared trace to prefix-compressed delivery
 
 skinparam backgroundColor #FEFEFE
 skinparam shadowing false
@@ -9,63 +9,27 @@ skinparam rectangle {
   BorderColor #1F2937
   FontColor #111827
 }
-skinparam note {
-  BackgroundColor #F9FAFB
-  BorderColor #9CA3AF
-}
 
-rectangle "TODAY — `delivery.rs`: a FLAT SET of entries" as NOW #FEE2E2 {
-  rectangle "**ESet**" as NOWSET #FEF2F2
-  rectangle "EList[ d0, d1, leaf_A ]" as E1 #FECACA
-  rectangle "EList[ d0, d2, leaf_B ]" as E2 #FECACA
-  rectangle "EList[ d3, d4, leaf_C ]" as E3 #FECACA
-  NOWSET --> E1
-  NOWSET --> E2
-  NOWSET --> E3
-}
+rectangle "BFS / graph search\nselect one COMM" as Search #DBEAFE
+rectangle "ReductionTrace\nArc root + parent-linked tail\ncomplete process configurations" as Trace #EDE9FE
+rectangle "Leaf materialization\n[input, initial, state1, ..., terminal]" as Entry #FEF3C7
+rectangle "EPathMap set mode\nPathMap<()>\none canonical key per trace" as Trie #DCFCE7
+rectangle "EPM1\nACTree03 prefix topology\nno Par value table" as Wire #D1FAE5
 
-note bottom of NOW
-  Each `d`<i>i</i> is a 32-byte content digest, and the module
-  header says why: **"a consumer KEYS on a trace —
-  it never destructures one."**
+Search --> Trace : extend in constant time
+Trace --> Entry : iterative leaf-to-root fill
+Entry --> Trie : encode_trie_path
+Trie --> Wire : protobuf or bincode
 
-  Consequences:
-  • the INPUT EXPRESSION appears nowhere
-  • `d0` is stored TWICE — no prefix is shared
-  • a trace cannot be walked as a reduction sequence
-  • the leaf is APPENDED to a list, not the end of a path
+note bottom of Trace #F5F3FF
+  Sibling branches share parent links.
+  Clone increments Arc; Drop unwraps
+  the unique suffix iteratively.
 end note
 
-rectangle "PROPOSED — an `EPathMap`: a PREFIX-COMPRESSED TRIE" as NEW #DCFCE7 {
-  rectangle "**root**\nthe INPUT EXPRESSION" as ROOT #DBEAFE
-  rectangle "redex-node `d0`\n<i>shared by two branches</i>" as D0 #EDE9FE
-  rectangle "redex-node `d1`" as D1 #EDE9FE
-  rectangle "redex-node `d2`" as D2 #EDE9FE
-  rectangle "redex-node `d3`" as D3 #EDE9FE
-  rectangle "leaf A\n<i>terminal segment</i>" as LA #DCFCE7
-  rectangle "leaf B\n<i>terminal segment</i>" as LB #DCFCE7
-  rectangle "leaf C\n<i>terminal segment</i>" as LC #DCFCE7
-
-  ROOT --> D0
-  ROOT --> D3
-  D0   --> D1
-  D0   --> D2
-  D1   --> LA
-  D2   --> LB
-  D3   --> LC
-}
-
-note bottom of NEW
-  The key is `enc(d0) ‖ enc(d1) ‖ … ‖ enc(leaf) ‖ 0x00`,
-  which is **byte-for-byte what the codec already builds**.
-
-  • INTERIOR nodes are the redexes
-  • the LEAF EXPRESSION is the terminal segment, before `0x00`
-  • branches that fired the same prefix SHARE those bytes
-  • interior and terminal are told apart by TAG BYTE:
-    `0x06` step · `0x0B` failure · `0x0C` truncated · `0x0F` reified
+note bottom of Trie #ECFDF5
+  PathMap owns canonical order,
+  deduplication, prefix compression,
+  algebra, and zipper navigation.
 end note
-
-NOW -[#DC2626,thickness=2]-> NEW : the same entries,\nstored so that the\nSTRUCTURE is preserved
-
 @enduml
