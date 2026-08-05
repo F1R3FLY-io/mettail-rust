@@ -67,7 +67,6 @@ use crate::buchi::{self, BuchiAutomaton};
 /// phi ::= true | false | p | ¬phi | phi ∧ phi | phi ∨ phi | phi → phi
 ///       | X phi | F phi | G phi | phi U phi | phi R phi | phi W phi
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LtlFormula {
     /// Boolean constant `true`.
     True,
@@ -100,6 +99,8 @@ pub enum LtlFormula {
     /// (if `phi` holds forever, the formula is satisfied).
     WeakUntil(Box<LtlFormula>, Box<LtlFormula>),
 }
+
+mod lifecycle;
 
 impl LtlFormula {
     /// Create an atomic proposition.
@@ -145,52 +146,29 @@ impl LtlFormula {
     /// Collect all atomic propositions in the formula.
     pub fn atoms(&self) -> HashSet<String> {
         let mut result = HashSet::new();
-        self.collect_atoms(&mut result);
+        let mut work = vec![self];
+        while let Some(formula) = work.pop() {
+            match formula {
+                LtlFormula::True | LtlFormula::False => {},
+                LtlFormula::Atom(name) => {
+                    result.insert(name.clone());
+                },
+                LtlFormula::Not(phi)
+                | LtlFormula::Next(phi)
+                | LtlFormula::Eventually(phi)
+                | LtlFormula::Always(phi) => work.push(phi),
+                LtlFormula::And(phi, psi)
+                | LtlFormula::Or(phi, psi)
+                | LtlFormula::Implies(phi, psi)
+                | LtlFormula::Until(phi, psi)
+                | LtlFormula::Release(phi, psi)
+                | LtlFormula::WeakUntil(phi, psi) => {
+                    work.push(psi);
+                    work.push(phi);
+                },
+            }
+        }
         result
-    }
-
-    fn collect_atoms(&self, acc: &mut HashSet<String>) {
-        match self {
-            LtlFormula::True | LtlFormula::False => {},
-            LtlFormula::Atom(name) => {
-                acc.insert(name.clone());
-            },
-            LtlFormula::Not(phi)
-            | LtlFormula::Next(phi)
-            | LtlFormula::Eventually(phi)
-            | LtlFormula::Always(phi) => {
-                phi.collect_atoms(acc);
-            },
-            LtlFormula::And(phi, psi)
-            | LtlFormula::Or(phi, psi)
-            | LtlFormula::Implies(phi, psi)
-            | LtlFormula::Until(phi, psi)
-            | LtlFormula::Release(phi, psi)
-            | LtlFormula::WeakUntil(phi, psi) => {
-                phi.collect_atoms(acc);
-                psi.collect_atoms(acc);
-            },
-        }
-    }
-}
-
-impl fmt::Display for LtlFormula {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LtlFormula::True => write!(f, "true"),
-            LtlFormula::False => write!(f, "false"),
-            LtlFormula::Atom(name) => write!(f, "{}", name),
-            LtlFormula::Not(phi) => write!(f, "!{}", phi),
-            LtlFormula::And(phi, psi) => write!(f, "({} & {})", phi, psi),
-            LtlFormula::Or(phi, psi) => write!(f, "({} | {})", phi, psi),
-            LtlFormula::Implies(phi, psi) => write!(f, "({} -> {})", phi, psi),
-            LtlFormula::Next(phi) => write!(f, "X{}", phi),
-            LtlFormula::Eventually(phi) => write!(f, "F{}", phi),
-            LtlFormula::Always(phi) => write!(f, "G{}", phi),
-            LtlFormula::Until(phi, psi) => write!(f, "({} U {})", phi, psi),
-            LtlFormula::Release(phi, psi) => write!(f, "({} R {})", phi, psi),
-            LtlFormula::WeakUntil(phi, psi) => write!(f, "({} W {})", phi, psi),
-        }
     }
 }
 
@@ -898,56 +876,118 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
 ///
 /// Returns a formula equivalent to `!phi` but with negation pushed to atoms.
 fn negate_ltl(phi: &LtlFormula) -> LtlFormula {
-    match phi {
-        LtlFormula::True => LtlFormula::False,
-        LtlFormula::False => LtlFormula::True,
-        LtlFormula::Atom(p) => LtlFormula::Not(Box::new(LtlFormula::Atom(p.clone()))),
-        LtlFormula::Not(inner) => {
-            // Double negation elimination.
-            (**inner).clone()
-        },
-        LtlFormula::And(phi, psi) => {
-            // !(phi & psi) = !phi | !psi
-            LtlFormula::Or(Box::new(negate_ltl(phi)), Box::new(negate_ltl(psi)))
-        },
-        LtlFormula::Or(phi, psi) => {
-            // !(phi | psi) = !phi & !psi
-            LtlFormula::And(Box::new(negate_ltl(phi)), Box::new(negate_ltl(psi)))
-        },
-        LtlFormula::Implies(phi, psi) => {
-            // !(phi -> psi) = phi & !psi
-            LtlFormula::And(phi.clone(), Box::new(negate_ltl(psi)))
-        },
-        LtlFormula::Next(phi) => {
-            // !X phi = X !phi
-            LtlFormula::Next(Box::new(negate_ltl(phi)))
-        },
-        LtlFormula::Eventually(phi) => {
-            // !F phi = G !phi
-            LtlFormula::Always(Box::new(negate_ltl(phi)))
-        },
-        LtlFormula::Always(phi) => {
-            // !G phi = F !phi
-            LtlFormula::Eventually(Box::new(negate_ltl(phi)))
-        },
-        LtlFormula::Until(phi, psi) => {
-            // !(phi U psi) = !phi R !psi
-            LtlFormula::Release(Box::new(negate_ltl(phi)), Box::new(negate_ltl(psi)))
-        },
-        LtlFormula::Release(phi, psi) => {
-            // !(phi R psi) = !phi U !psi
-            LtlFormula::Until(Box::new(negate_ltl(phi)), Box::new(negate_ltl(psi)))
-        },
-        LtlFormula::WeakUntil(phi, psi) => {
-            // !(phi W psi): phi W psi = (phi U psi) | G phi
-            // Negate: !((phi U psi) | G phi) = !(phi U psi) & !G phi
-            //       = (!phi R !psi) & F !phi
-            LtlFormula::And(
-                Box::new(LtlFormula::Release(Box::new(negate_ltl(phi)), Box::new(negate_ltl(psi)))),
-                Box::new(LtlFormula::Eventually(Box::new(negate_ltl(phi)))),
-            )
-        },
+    enum Task<'a> {
+        Negate(&'a LtlFormula),
+        Clone(&'a LtlFormula),
+        Unary(fn(Box<LtlFormula>) -> LtlFormula),
+        Binary(fn(Box<LtlFormula>, Box<LtlFormula>) -> LtlFormula),
+        WeakUntil,
     }
+
+    fn next(body: Box<LtlFormula>) -> LtlFormula {
+        LtlFormula::Next(body)
+    }
+    fn eventually(body: Box<LtlFormula>) -> LtlFormula {
+        LtlFormula::Eventually(body)
+    }
+    fn always(body: Box<LtlFormula>) -> LtlFormula {
+        LtlFormula::Always(body)
+    }
+    fn and(left: Box<LtlFormula>, right: Box<LtlFormula>) -> LtlFormula {
+        LtlFormula::And(left, right)
+    }
+    fn or(left: Box<LtlFormula>, right: Box<LtlFormula>) -> LtlFormula {
+        LtlFormula::Or(left, right)
+    }
+    fn until(left: Box<LtlFormula>, right: Box<LtlFormula>) -> LtlFormula {
+        LtlFormula::Until(left, right)
+    }
+    fn release(left: Box<LtlFormula>, right: Box<LtlFormula>) -> LtlFormula {
+        LtlFormula::Release(left, right)
+    }
+
+    let mut tasks = vec![Task::Negate(phi)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Negate(LtlFormula::True) => values.push(LtlFormula::False),
+            Task::Negate(LtlFormula::False) => values.push(LtlFormula::True),
+            Task::Negate(LtlFormula::Atom(atom)) => {
+                values.push(LtlFormula::Not(Box::new(LtlFormula::Atom(atom.clone()))));
+            },
+            Task::Negate(LtlFormula::Not(body)) => tasks.push(Task::Clone(body)),
+            Task::Negate(LtlFormula::And(left, right)) => {
+                tasks.push(Task::Binary(or));
+                tasks.push(Task::Negate(right));
+                tasks.push(Task::Negate(left));
+            },
+            Task::Negate(LtlFormula::Or(left, right)) => {
+                tasks.push(Task::Binary(and));
+                tasks.push(Task::Negate(right));
+                tasks.push(Task::Negate(left));
+            },
+            Task::Negate(LtlFormula::Implies(left, right)) => {
+                tasks.push(Task::Binary(and));
+                tasks.push(Task::Negate(right));
+                tasks.push(Task::Clone(left));
+            },
+            Task::Negate(LtlFormula::Next(body)) => {
+                tasks.push(Task::Unary(next));
+                tasks.push(Task::Negate(body));
+            },
+            Task::Negate(LtlFormula::Eventually(body)) => {
+                tasks.push(Task::Unary(always));
+                tasks.push(Task::Negate(body));
+            },
+            Task::Negate(LtlFormula::Always(body)) => {
+                tasks.push(Task::Unary(eventually));
+                tasks.push(Task::Negate(body));
+            },
+            Task::Negate(LtlFormula::Until(left, right)) => {
+                tasks.push(Task::Binary(release));
+                tasks.push(Task::Negate(right));
+                tasks.push(Task::Negate(left));
+            },
+            Task::Negate(LtlFormula::Release(left, right)) => {
+                tasks.push(Task::Binary(until));
+                tasks.push(Task::Negate(right));
+                tasks.push(Task::Negate(left));
+            },
+            Task::Negate(LtlFormula::WeakUntil(left, right)) => {
+                tasks.push(Task::WeakUntil);
+                tasks.push(Task::Negate(left));
+                tasks.push(Task::Negate(right));
+                tasks.push(Task::Negate(left));
+            },
+            Task::Clone(formula) => values.push(formula.clone()),
+            Task::Unary(build) => {
+                let body = values.pop().expect("LTL negation PDA lost a unary body");
+                values.push(build(Box::new(body)));
+            },
+            Task::Binary(build) => {
+                let right = values.pop().expect("LTL negation PDA lost a right operand");
+                let left = values.pop().expect("LTL negation PDA lost a left operand");
+                values.push(build(Box::new(left), Box::new(right)));
+            },
+            Task::WeakUntil => {
+                let negated_left_for_eventually = values
+                    .pop()
+                    .expect("LTL negation PDA lost a weak-until eventuality");
+                let negated_right = values
+                    .pop()
+                    .expect("LTL negation PDA lost a weak-until right operand");
+                let negated_left = values
+                    .pop()
+                    .expect("LTL negation PDA lost a weak-until left operand");
+                values.push(LtlFormula::And(
+                    Box::new(LtlFormula::Release(Box::new(negated_left), Box::new(negated_right))),
+                    Box::new(LtlFormula::Eventually(Box::new(negated_left_for_eventually))),
+                ));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("LTL negation PDA produced no formula")
 }
 
 /// Construct the union of two Buchi automata.

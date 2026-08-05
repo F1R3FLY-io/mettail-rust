@@ -600,7 +600,7 @@ mod tests {
             body: LetPropExpr::Or(Box::new(atom("edge", &["x", "y"])), Box::new(rec(&["x", "y"]))),
         };
         let mu = lower_to_mu_calculus(&pred).expect("should lower");
-        match mu {
+        match &mu {
             MuCalculusFormula::Mu { var, .. } => assert_eq!(var, "reachable"),
             other => panic!("expected Mu, got {:?}", other),
         }
@@ -620,7 +620,7 @@ mod tests {
         };
         // Triple-nested Not: positive → negative → positive → negative
         let mu = lower_to_mu_calculus(&pred).expect("should lower");
-        match mu {
+        match &mu {
             MuCalculusFormula::Nu { var, .. } => assert_eq!(var, "alwaysSafe"),
             other => panic!("expected Nu, got {:?}", other),
         }
@@ -846,10 +846,10 @@ mod tests {
             };
             let mu =
                 lower_to_mu_calculus(&pred).expect("quantifier-only body must lower via §4-(B)");
-            match mu {
+            match &mu {
                 MuCalculusFormula::Nu { var, body } => {
                     assert_eq!(var, "halt");
-                    assert!(matches!(*body, MuCalculusFormula::Box { child_idx: 0, .. }));
+                    assert!(matches!(body.as_ref(), MuCalculusFormula::Box { child_idx: 0, .. }));
                 },
                 other => panic!("expected Nu(Box ...), got {other:?}"),
             }

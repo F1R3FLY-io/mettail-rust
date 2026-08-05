@@ -410,7 +410,6 @@ impl<W: Semiring> fmt::Display for ParityAlternatingTreeAutomaton<W> {
 /// - `[[Box{k, phi}]]_rho` = {nodes whose all k-th children are in `[[phi]]_rho`}
 /// - `[[Mu{X, phi}]]_rho` = least fixpoint of `S -> [[phi]]_rho[X:=S]`
 /// - `[[Nu{X, phi}]]_rho` = greatest fixpoint of `S -> [[phi]]_rho[X:=S]`
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MuCalculusFormula {
     /// Propositional variable (references fixpoint binding).
     Var(String),
@@ -448,6 +447,9 @@ pub enum MuCalculusFormula {
     },
 }
 
+#[path = "parity_tree/mu_calculus_lifecycle.rs"]
+mod mu_calculus_lifecycle;
+
 /// Errors produced while compiling modal mu-calculus formulas to PATA.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MuCalculusCompileError {
@@ -466,28 +468,6 @@ impl fmt::Display for MuCalculusCompileError {
 }
 
 impl std::error::Error for MuCalculusCompileError {}
-
-impl fmt::Display for MuCalculusFormula {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MuCalculusFormula::Var(x) => write!(f, "{}", x),
-            MuCalculusFormula::True => write!(f, "true"),
-            MuCalculusFormula::False => write!(f, "false"),
-            MuCalculusFormula::Atom(a) => write!(f, "\"{}\"", a),
-            MuCalculusFormula::Not(phi) => write!(f, "~({})", phi),
-            MuCalculusFormula::And(phi, psi) => write!(f, "({} /\\ {})", phi, psi),
-            MuCalculusFormula::Or(phi, psi) => write!(f, "({} \\/ {})", phi, psi),
-            MuCalculusFormula::Diamond { child_idx, body } => {
-                write!(f, "<{}>.({})", child_idx, body)
-            },
-            MuCalculusFormula::Box { child_idx, body } => {
-                write!(f, "[{}].({})", child_idx, body)
-            },
-            MuCalculusFormula::Mu { var, body } => write!(f, "mu {}.{}", var, body),
-            MuCalculusFormula::Nu { var, body } => write!(f, "nu {}.{}", var, body),
-        }
-    }
-}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Analysis result
@@ -1002,7 +982,7 @@ pub fn try_mu_calculus_to_pata(
     Ok(automaton)
 }
 
-/// Recursive helper for `mu_calculus_to_pata`.
+/// Heap-backed compiler PDA for `mu_calculus_to_pata`.
 ///
 /// Returns the state ID representing the compiled formula.
 fn compile_formula(
@@ -1011,203 +991,249 @@ fn compile_formula(
     var_env: &mut HashMap<String, usize>,
     next_priority: &mut u32,
 ) -> Result<usize, MuCalculusCompileError> {
-    match formula {
-        MuCalculusFormula::True => {
-            // Accepting leaf: existential state with even priority, no transitions needed.
-            // Any tree node matches — we add a wildcard-like behavior by adding
-            // a transition for each symbol in the alphabet, or by using priority alone.
-            Ok(automaton.add_state(BranchingMode::Existential, 0, Some("true".to_string())))
+    enum Task<'formula> {
+        Visit(&'formula MuCalculusFormula),
+        Not,
+        And,
+        Or,
+        Diamond(usize),
+        Box(usize),
+        Mu {
+            var: &'formula str,
+            state: usize,
+            previous: Option<usize>,
         },
-
-        MuCalculusFormula::False => {
-            // Rejecting leaf: existential state with odd priority.
-            Ok(automaton.add_state(BranchingMode::Existential, 1, Some("false".to_string())))
-        },
-
-        MuCalculusFormula::Var(x) => var_env
-            .get(x)
-            .copied()
-            .ok_or_else(|| MuCalculusCompileError::UnboundVariable { var: x.clone() }),
-
-        MuCalculusFormula::Atom(a) => {
-            // Existential state that matches nodes with symbol `a`.
-            // Create a state and add a transition on symbol `a` with no child
-            // directions (matches the node itself, regardless of children).
-            let state =
-                automaton.add_state(BranchingMode::Existential, 0, Some(format!("atom:{}", a)));
-            automaton.add_transition(state, a.clone(), Vec::new());
-            Ok(state)
-        },
-
-        MuCalculusFormula::Not(phi) => {
-            // Complement: compile the inner formula, then create a new automaton
-            // that flips branching and priorities.
-            let inner = compile_formula(phi, automaton, var_env, next_priority)?;
-            // Create a state that mirrors the inner state with flipped branching.
-            let inner_branching = automaton.states[inner].branching;
-            let inner_priority = automaton.states[inner].priority;
-            let flipped_branching = match inner_branching {
-                BranchingMode::Existential => BranchingMode::Universal,
-                BranchingMode::Universal => BranchingMode::Existential,
-            };
-            // Flip priority parity: even <-> odd.
-            let flipped_priority = if inner_priority % 2 == 0 {
-                inner_priority + 1
-            } else {
-                inner_priority.saturating_sub(1)
-            };
-            let neg_state = automaton.add_state(
-                flipped_branching,
-                flipped_priority,
-                Some(format!("not:q{}", inner)),
-            );
-            // Copy transitions from the inner state, directing to the inner's
-            // targets (the negation is captured by the flipped branching/priority).
-            let inner_transitions: Vec<_> = automaton
-                .transitions
-                .iter()
-                .filter(|t| t.from == inner)
-                .cloned()
-                .collect();
-            for t in inner_transitions {
-                automaton.add_transition(neg_state, t.symbol, t.directions);
-            }
-            Ok(neg_state)
-        },
-
-        MuCalculusFormula::And(phi, psi) => {
-            // Universal state: both subformulas must be satisfied.
-            let phi_state = compile_formula(phi, automaton, var_env, next_priority)?;
-            let psi_state = compile_formula(psi, automaton, var_env, next_priority)?;
-            let and_state = automaton.add_state(
-                BranchingMode::Universal,
-                0,
-                Some(format!("and:q{},q{}", phi_state, psi_state)),
-            );
-            // Add transitions that direct to both subformula states.
-            // We use child_index 0 as a convention for "current node" evaluation.
-            // Each subformula gets its own transition.
-            automaton.add_transition(
-                and_state,
-                "_and_left".to_string(),
-                vec![(0, phi_state, BooleanWeight::one())],
-            );
-            automaton.add_transition(
-                and_state,
-                "_and_right".to_string(),
-                vec![(0, psi_state, BooleanWeight::one())],
-            );
-            Ok(and_state)
-        },
-
-        MuCalculusFormula::Or(phi, psi) => {
-            // Existential state: at least one subformula must be satisfied.
-            let phi_state = compile_formula(phi, automaton, var_env, next_priority)?;
-            let psi_state = compile_formula(psi, automaton, var_env, next_priority)?;
-            let or_state = automaton.add_state(
-                BranchingMode::Existential,
-                0,
-                Some(format!("or:q{},q{}", phi_state, psi_state)),
-            );
-            automaton.add_transition(
-                or_state,
-                "_or_left".to_string(),
-                vec![(0, phi_state, BooleanWeight::one())],
-            );
-            automaton.add_transition(
-                or_state,
-                "_or_right".to_string(),
-                vec![(0, psi_state, BooleanWeight::one())],
-            );
-            Ok(or_state)
-        },
-
-        MuCalculusFormula::Diamond { child_idx, body } => {
-            // Existential modality: some `child_idx`-th child satisfies `body`.
-            let body_state = compile_formula(body, automaton, var_env, next_priority)?;
-            let diamond_state = automaton.add_state(
-                BranchingMode::Existential,
-                0,
-                Some(format!("diamond:{}:q{}", child_idx, body_state)),
-            );
-            // Transition directs the `child_idx`-th child to `body_state`.
-            automaton.add_transition(
-                diamond_state,
-                format!("_diamond_{}", child_idx),
-                vec![(*child_idx, body_state, BooleanWeight::one())],
-            );
-            Ok(diamond_state)
-        },
-
-        MuCalculusFormula::Box { child_idx, body } => {
-            // Universal modality: all `child_idx`-th children satisfy `body`.
-            let body_state = compile_formula(body, automaton, var_env, next_priority)?;
-            let box_state = automaton.add_state(
-                BranchingMode::Universal,
-                0,
-                Some(format!("box:{}:q{}", child_idx, body_state)),
-            );
-            automaton.add_transition(
-                box_state,
-                format!("_box_{}", child_idx),
-                vec![(*child_idx, body_state, BooleanWeight::one())],
-            );
-            Ok(box_state)
-        },
-
-        MuCalculusFormula::Mu { var, body } => {
-            // Least fixpoint: mu X. phi
-            // Odd priority => must eventually stabilize (liveness).
-            let priority = *next_priority | 1; // ensure odd
-            *next_priority = priority + 1;
-            let mu_state = automaton.add_state(
-                BranchingMode::Existential,
-                priority,
-                Some(format!("mu:{}", var)),
-            );
-            // Bind the variable to this state before compiling the body
-            // (the body may reference X).
-            let previous = var_env.insert(var.clone(), mu_state);
-            let body_state = compile_formula(body, automaton, var_env, next_priority)?;
-            if let Some(prev_state) = previous {
-                var_env.insert(var.clone(), prev_state);
-            } else {
-                var_env.remove(var);
-            }
-            // Wire the mu state to the body: transition to the body's start state.
-            automaton.add_transition(
-                mu_state,
-                format!("_mu_{}", var),
-                vec![(0, body_state, BooleanWeight::one())],
-            );
-            Ok(mu_state)
-        },
-
-        MuCalculusFormula::Nu { var, body } => {
-            // Greatest fixpoint: nu X. phi
-            // Even priority => invariant (safety).
-            let priority = *next_priority & !1; // ensure even
-            *next_priority = priority + 2;
-            let nu_state = automaton.add_state(
-                BranchingMode::Existential,
-                priority,
-                Some(format!("nu:{}", var)),
-            );
-            let previous = var_env.insert(var.clone(), nu_state);
-            let body_state = compile_formula(body, automaton, var_env, next_priority)?;
-            if let Some(prev_state) = previous {
-                var_env.insert(var.clone(), prev_state);
-            } else {
-                var_env.remove(var);
-            }
-            automaton.add_transition(
-                nu_state,
-                format!("_nu_{}", var),
-                vec![(0, body_state, BooleanWeight::one())],
-            );
-            Ok(nu_state)
+        Nu {
+            var: &'formula str,
+            state: usize,
+            previous: Option<usize>,
         },
     }
+
+    let mut tasks = vec![Task::Visit(formula)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(MuCalculusFormula::True) => values.push(automaton.add_state(
+                BranchingMode::Existential,
+                0,
+                Some("true".to_string()),
+            )),
+            Task::Visit(MuCalculusFormula::False) => values.push(automaton.add_state(
+                BranchingMode::Existential,
+                1,
+                Some("false".to_string()),
+            )),
+            Task::Visit(MuCalculusFormula::Var(var)) => {
+                values.push(
+                    var_env.get(var).copied().ok_or_else(|| {
+                        MuCalculusCompileError::UnboundVariable { var: var.clone() }
+                    })?,
+                );
+            },
+            Task::Visit(MuCalculusFormula::Atom(atom)) => {
+                let state = automaton.add_state(
+                    BranchingMode::Existential,
+                    0,
+                    Some(format!("atom:{atom}")),
+                );
+                automaton.add_transition(state, atom.clone(), Vec::new());
+                values.push(state);
+            },
+            Task::Visit(MuCalculusFormula::Not(body)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(MuCalculusFormula::And(left, right)) => {
+                tasks.push(Task::And);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(MuCalculusFormula::Or(left, right)) => {
+                tasks.push(Task::Or);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(MuCalculusFormula::Diamond { child_idx, body }) => {
+                tasks.push(Task::Diamond(*child_idx));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(MuCalculusFormula::Box { child_idx, body }) => {
+                tasks.push(Task::Box(*child_idx));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(MuCalculusFormula::Mu { var, body }) => {
+                let priority = *next_priority | 1;
+                *next_priority = priority + 1;
+                let state = automaton.add_state(
+                    BranchingMode::Existential,
+                    priority,
+                    Some(format!("mu:{var}")),
+                );
+                let previous = var_env.insert(var.clone(), state);
+                tasks.push(Task::Mu { var, state, previous });
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(MuCalculusFormula::Nu { var, body }) => {
+                let priority = *next_priority & !1;
+                *next_priority = priority + 2;
+                let state = automaton.add_state(
+                    BranchingMode::Existential,
+                    priority,
+                    Some(format!("nu:{var}")),
+                );
+                let previous = var_env.insert(var.clone(), state);
+                tasks.push(Task::Nu { var, state, previous });
+                tasks.push(Task::Visit(body));
+            },
+            Task::Not => {
+                let inner = values
+                    .pop()
+                    .expect("mu-calculus compiler lost a negated state");
+                let inner_state = &automaton.states[inner];
+                let flipped_branching = match inner_state.branching {
+                    BranchingMode::Existential => BranchingMode::Universal,
+                    BranchingMode::Universal => BranchingMode::Existential,
+                };
+                let flipped_priority = if inner_state.priority % 2 == 0 {
+                    inner_state.priority + 1
+                } else {
+                    inner_state.priority.saturating_sub(1)
+                };
+                let state = automaton.add_state(
+                    flipped_branching,
+                    flipped_priority,
+                    Some(format!("not:q{inner}")),
+                );
+                let transitions: Vec<_> = automaton
+                    .transitions
+                    .iter()
+                    .filter(|transition| transition.from == inner)
+                    .cloned()
+                    .collect();
+                for transition in transitions {
+                    automaton.add_transition(state, transition.symbol, transition.directions);
+                }
+                values.push(state);
+            },
+            Task::And => {
+                let right = values
+                    .pop()
+                    .expect("mu-calculus compiler lost a right state");
+                let left = values
+                    .pop()
+                    .expect("mu-calculus compiler lost a left state");
+                let state = automaton.add_state(
+                    BranchingMode::Universal,
+                    0,
+                    Some(format!("and:q{left},q{right}")),
+                );
+                automaton.add_transition(
+                    state,
+                    "_and_left".to_string(),
+                    vec![(0, left, BooleanWeight::one())],
+                );
+                automaton.add_transition(
+                    state,
+                    "_and_right".to_string(),
+                    vec![(0, right, BooleanWeight::one())],
+                );
+                values.push(state);
+            },
+            Task::Or => {
+                let right = values
+                    .pop()
+                    .expect("mu-calculus compiler lost a right state");
+                let left = values
+                    .pop()
+                    .expect("mu-calculus compiler lost a left state");
+                let state = automaton.add_state(
+                    BranchingMode::Existential,
+                    0,
+                    Some(format!("or:q{left},q{right}")),
+                );
+                automaton.add_transition(
+                    state,
+                    "_or_left".to_string(),
+                    vec![(0, left, BooleanWeight::one())],
+                );
+                automaton.add_transition(
+                    state,
+                    "_or_right".to_string(),
+                    vec![(0, right, BooleanWeight::one())],
+                );
+                values.push(state);
+            },
+            Task::Diamond(child_idx) => {
+                let body = values
+                    .pop()
+                    .expect("mu-calculus compiler lost a modal state");
+                let state = automaton.add_state(
+                    BranchingMode::Existential,
+                    0,
+                    Some(format!("diamond:{child_idx}:q{body}")),
+                );
+                automaton.add_transition(
+                    state,
+                    format!("_diamond_{child_idx}"),
+                    vec![(child_idx, body, BooleanWeight::one())],
+                );
+                values.push(state);
+            },
+            Task::Box(child_idx) => {
+                let body = values
+                    .pop()
+                    .expect("mu-calculus compiler lost a modal state");
+                let state = automaton.add_state(
+                    BranchingMode::Universal,
+                    0,
+                    Some(format!("box:{child_idx}:q{body}")),
+                );
+                automaton.add_transition(
+                    state,
+                    format!("_box_{child_idx}"),
+                    vec![(child_idx, body, BooleanWeight::one())],
+                );
+                values.push(state);
+            },
+            Task::Mu { var, state, previous } => {
+                let body = values
+                    .pop()
+                    .expect("mu-calculus compiler lost a fixpoint body");
+                if let Some(previous) = previous {
+                    var_env.insert(var.to_owned(), previous);
+                } else {
+                    var_env.remove(var);
+                }
+                automaton.add_transition(
+                    state,
+                    format!("_mu_{var}"),
+                    vec![(0, body, BooleanWeight::one())],
+                );
+                values.push(state);
+            },
+            Task::Nu { var, state, previous } => {
+                let body = values
+                    .pop()
+                    .expect("mu-calculus compiler lost a fixpoint body");
+                if let Some(previous) = previous {
+                    var_env.insert(var.to_owned(), previous);
+                } else {
+                    var_env.remove(var);
+                }
+                automaton.add_transition(
+                    state,
+                    format!("_nu_{var}"),
+                    vec![(0, body, BooleanWeight::one())],
+                );
+                values.push(state);
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    Ok(values
+        .pop()
+        .expect("mu-calculus compiler produced no state"))
 }
 
 /// Check language inclusion: `L(a) subseteq L(b)`.
