@@ -8,6 +8,7 @@
 //! limits are explicit [`SaturationOutcome`] values, never silent.
 
 use crate::hash::{HashMap, HashSet};
+use std::rc::Rc;
 
 use crate::egraph::{EClassId, EGraph, ENode};
 use crate::key::SemanticHash;
@@ -596,11 +597,15 @@ impl<L: Clone + Eq + std::hash::Hash> CompiledRuleSet<L> {
 }
 
 fn pattern_contains_ac<L>(pattern: &Pattern<L>) -> bool {
-    match pattern {
-        Pattern::Var(_) => false,
-        Pattern::App { args, .. } => args.iter().any(pattern_contains_ac),
-        Pattern::AcApp { .. } => true,
+    let mut pending = vec![pattern];
+    while let Some(pattern) = pending.pop() {
+        match pattern {
+            Pattern::Var(_) => {},
+            Pattern::App { args, .. } => pending.extend(args.iter().rev()),
+            Pattern::AcApp { .. } => return true,
+        }
     }
+    false
 }
 
 fn compile_positional_segments<T, L>(
@@ -705,163 +710,312 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
         subst: &Subst,
         out: &mut Vec<(EClassId, Subst)>,
     ) {
-        let class = self.find(class);
-        match pattern {
-            Pattern::Var(name) => match subst.get(name) {
-                Some(&existing) if self.find(existing) == class => out.push((class, subst.clone())),
-                Some(_) => {}, // bound to a different class — no match
-                None => {
-                    let mut s = subst.clone();
-                    s.insert(name.clone(), class);
-                    out.push((class, s));
-                },
+        enum Goal<'a, L> {
+            Match {
+                pattern: &'a Pattern<L>,
+                class: EClassId,
             },
-            Pattern::App { op, args } => {
-                // Snapshot the class's nodes so the `&mut self` recursion below
-                // does not conflict with the node borrow.
-                let candidates: Vec<Vec<EClassId>> = self
-                    .nodes(class)
-                    .iter()
-                    .filter(|n| n.op == *op && n.children.len() == args.len())
-                    .map(|n| n.children.clone())
-                    .collect();
-                for children in candidates {
-                    self.match_children(args, &children, subst, class, out);
-                }
-            },
-            Pattern::AcApp { op, fixed, rest } => {
-                self.collect_ac_matches(op, fixed, rest, class, subst, out);
+            ContinuePair {
+                op: &'a L,
+                fixed: &'a [Pattern<L>],
+                rest: Option<&'a str>,
+                selection: Rc<[EClassId]>,
+                complement: Rc<[EClassId]>,
+                used: Vec<bool>,
+                depth: usize,
             },
         }
-    }
 
-    fn match_children(
-        &mut self,
-        patterns: &[Pattern<L>],
-        children: &[EClassId],
-        subst: &Subst,
-        root: EClassId,
-        out: &mut Vec<(EClassId, Subst)>,
-    ) {
-        if patterns.is_empty() {
-            out.push((root, subst.clone()));
-            return;
-        }
-        let mut child_matches = Vec::new();
-        self.collect_matches(&patterns[0], children[0], subst, &mut child_matches);
-        for (_, cs) in child_matches {
-            self.match_children(&patterns[1..], &children[1..], &cs, root, out);
-        }
-    }
-
-    /// Match an AC (`AcApp`) pattern against `class`: find each `op`-bag node with
-    /// at least `|fixed|` children, LAZILY enumerate size-`|fixed|` sub-multiset
-    /// selections of its children, pair each selection against the `fixed`
-    /// patterns over ALL permutations (the non-linear `Var` re-bind check in
-    /// [`collect_matches`] prunes disagreeing shared-variable pairings BY
-    /// EVIDENCE), and bind `rest` (if any) to a fresh canonical n-ary `op` node
-    /// over the multiset COMPLEMENT (budget-gated). Each surviving `(class,
-    /// subst)` is a DISTINCT alternative.
-    fn collect_ac_matches(
-        &mut self,
-        op: &L,
-        fixed: &[Pattern<L>],
-        rest: &Option<String>,
-        class: EClassId,
-        subst: &Subst,
-        out: &mut Vec<(EClassId, Subst)>,
-    ) {
-        let k = fixed.len();
-        // Snapshot the matching bag nodes (canonicalized children) so the
-        // `&mut self` recursion / complement materialization below does not
-        // conflict with the node borrow.
-        let bags: Vec<Vec<EClassId>> = self
-            .nodes(class)
-            .iter()
-            .filter(|n| n.op == *op && n.children.len() >= k)
-            .map(|n| n.children.iter().map(|&c| self.find(c)).collect())
-            .collect();
-
-        for bag in bags {
-            // Lazily enumerate (selection, complement) splits of size k.
-            for (selection, complement) in lazy_ac_select(&bag, k) {
-                // Pair the `fixed` patterns to the `selection` over ALL
-                // permutations. `pair_fixed` recurses `collect_matches` per
-                // position; the non-linear Var check prunes by evidence.
-                let mut paired: Vec<Subst> = Vec::new();
-                self.pair_fixed(fixed, &selection, subst, &mut paired);
-                if paired.is_empty() {
-                    continue;
-                }
-                // Bind `rest` to a fresh canonical n-ary `op` node over the
-                // complement (budget-gated). If the budget refuses the node, the
-                // whole match is dropped honestly (NodeLimit is reported by the
-                // caller via `node_limit_reached`).
-                let rest_binding = match rest {
-                    Some(_) => match self.add_canonical_bag(op.clone(), &complement) {
-                        Some(id) => Some(id),
-                        None => continue, // budget refused the complement node
+        impl<L> Clone for Goal<'_, L> {
+            fn clone(&self) -> Self {
+                match self {
+                    Goal::Match { pattern, class } => Goal::Match { pattern, class: *class },
+                    Goal::ContinuePair {
+                        op,
+                        fixed,
+                        rest,
+                        selection,
+                        complement,
+                        used,
+                        depth,
+                    } => Goal::ContinuePair {
+                        op,
+                        fixed,
+                        rest: *rest,
+                        selection: selection.clone(),
+                        complement: complement.clone(),
+                        used: used.clone(),
+                        depth: *depth,
                     },
-                    None => None,
-                };
-                for s in paired {
-                    let mut s = s;
-                    if let (Some(name), Some(id)) = (rest.as_ref(), rest_binding) {
-                        s.insert(name.clone(), id);
-                    }
-                    out.push((class, s));
                 }
             }
         }
-    }
 
-    /// Pair `fixed` patterns to `selection` children over every permutation,
-    /// recursing [`collect_matches`] per position. Produces one [`Subst`] per
-    /// surviving pairing (the non-linear `Var` re-bind check inside
-    /// `collect_matches` prunes pairings whose shared variables disagree).
-    ///
-    /// `selection` and `fixed` have equal length `k` (guaranteed by the caller).
-    /// Permutations are enumerated by picking, for `fixed[0]`, each not-yet-used
-    /// `selection` index, then recursing on the rest — `k!` orderings, tiny for
-    /// the rules in scope (`k = 2` for OpenRule).
-    fn pair_fixed(
-        &mut self,
-        fixed: &[Pattern<L>],
-        selection: &[EClassId],
-        subst: &Subst,
-        out: &mut Vec<Subst>,
-    ) {
-        // Recurse with an explicit "used selection index" mask.
-        let mut used = vec![false; selection.len()];
-        self.pair_fixed_rec(fixed, selection, &mut used, subst, out);
-    }
-
-    fn pair_fixed_rec(
-        &mut self,
-        fixed: &[Pattern<L>],
-        selection: &[EClassId],
-        used: &mut [bool],
-        subst: &Subst,
-        out: &mut Vec<Subst>,
-    ) {
-        if fixed.is_empty() {
-            out.push(subst.clone());
-            return;
+        enum Work<'a, L> {
+            Run {
+                goals: Vec<Goal<'a, L>>,
+                subst: Subst,
+            },
+            Bags {
+                op: &'a L,
+                fixed: &'a [Pattern<L>],
+                rest: Option<&'a str>,
+                bags: std::vec::IntoIter<Vec<EClassId>>,
+                goals: Vec<Goal<'a, L>>,
+                subst: Subst,
+            },
+            Selections {
+                op: &'a L,
+                fixed: &'a [Pattern<L>],
+                rest: Option<&'a str>,
+                selections: LazyAcSelect,
+                goals: Vec<Goal<'a, L>>,
+                subst: Subst,
+            },
+            PairChoices {
+                op: &'a L,
+                fixed: &'a [Pattern<L>],
+                rest: Option<&'a str>,
+                selection: Rc<[EClassId]>,
+                complement: Rc<[EClassId]>,
+                used: Vec<bool>,
+                depth: usize,
+                next_index: usize,
+                goals: Vec<Goal<'a, L>>,
+                subst: Subst,
+            },
         }
-        for i in 0..selection.len() {
-            if used[i] {
-                continue;
+
+        let output_root = self.find(class);
+        let mut work = vec![Work::Run {
+            goals: vec![Goal::Match { pattern, class: output_root }],
+            subst: subst.clone(),
+        }];
+
+        while let Some(task) = work.pop() {
+            match task {
+                Work::Run { mut goals, mut subst } => {
+                    let Some(goal) = goals.pop() else {
+                        out.push((output_root, subst));
+                        continue;
+                    };
+                    match goal {
+                        Goal::Match { pattern, class } => {
+                            let class = self.find(class);
+                            match pattern {
+                                Pattern::Var(name) => match subst.get(name) {
+                                    Some(&existing) if self.find(existing) == class => {
+                                        work.push(Work::Run { goals, subst });
+                                    },
+                                    Some(_) => {},
+                                    None => {
+                                        subst.insert(name.clone(), class);
+                                        work.push(Work::Run { goals, subst });
+                                    },
+                                },
+                                Pattern::App { op, args } => {
+                                    let candidates: Vec<Vec<EClassId>> = self
+                                        .nodes(class)
+                                        .iter()
+                                        .filter(|node| {
+                                            node.op == *op && node.children.len() == args.len()
+                                        })
+                                        .map(|node| node.children.clone())
+                                        .collect();
+                                    let mut original_goals = Some(goals);
+                                    let mut original_subst = Some(subst);
+                                    for (candidate_index, children) in
+                                        candidates.into_iter().enumerate().rev()
+                                    {
+                                        let mut branch_goals = if candidate_index == 0 {
+                                            original_goals
+                                                .take()
+                                                .expect("first candidate owns the goal stack")
+                                        } else {
+                                            original_goals
+                                                .as_ref()
+                                                .expect("later candidates clone the goal stack")
+                                                .clone()
+                                        };
+                                        for (pattern, class) in args.iter().zip(children).rev() {
+                                            branch_goals.push(Goal::Match { pattern, class });
+                                        }
+                                        let branch_subst = if candidate_index == 0 {
+                                            original_subst
+                                                .take()
+                                                .expect("first candidate owns the substitution")
+                                        } else {
+                                            original_subst
+                                                .as_ref()
+                                                .expect("later candidates clone the substitution")
+                                                .clone()
+                                        };
+                                        work.push(Work::Run {
+                                            goals: branch_goals,
+                                            subst: branch_subst,
+                                        });
+                                    }
+                                },
+                                Pattern::AcApp { op, fixed, rest } => {
+                                    let bags: Vec<Vec<EClassId>> = self
+                                        .nodes(class)
+                                        .iter()
+                                        .filter(|node| {
+                                            node.op == *op && node.children.len() >= fixed.len()
+                                        })
+                                        .map(|node| {
+                                            node.children
+                                                .iter()
+                                                .map(|&child| self.find(child))
+                                                .collect()
+                                        })
+                                        .collect();
+                                    work.push(Work::Bags {
+                                        op,
+                                        fixed,
+                                        rest: rest.as_deref(),
+                                        bags: bags.into_iter(),
+                                        goals,
+                                        subst,
+                                    });
+                                },
+                            }
+                        },
+                        Goal::ContinuePair {
+                            op,
+                            fixed,
+                            rest,
+                            selection,
+                            complement,
+                            used,
+                            depth,
+                        } => {
+                            if depth == fixed.len() {
+                                if let Some(name) = rest {
+                                    let Some(id) = self.add_canonical_bag(op.clone(), &complement)
+                                    else {
+                                        continue;
+                                    };
+                                    subst.insert(name.to_string(), id);
+                                }
+                                work.push(Work::Run { goals, subst });
+                            } else {
+                                work.push(Work::PairChoices {
+                                    op,
+                                    fixed,
+                                    rest,
+                                    selection,
+                                    complement,
+                                    used,
+                                    depth,
+                                    next_index: 0,
+                                    goals,
+                                    subst,
+                                });
+                            }
+                        },
+                    }
+                },
+                Work::Bags { op, fixed, rest, mut bags, goals, subst } => {
+                    if let Some(bag) = bags.next() {
+                        work.push(Work::Bags {
+                            op,
+                            fixed,
+                            rest,
+                            bags,
+                            goals: goals.clone(),
+                            subst: subst.clone(),
+                        });
+                        work.push(Work::Selections {
+                            op,
+                            fixed,
+                            rest,
+                            selections: lazy_ac_select(&bag, fixed.len()),
+                            goals,
+                            subst,
+                        });
+                    }
+                },
+                Work::Selections {
+                    op,
+                    fixed,
+                    rest,
+                    mut selections,
+                    goals,
+                    subst,
+                } => {
+                    if let Some((selection, complement)) = selections.next() {
+                        work.push(Work::Selections {
+                            op,
+                            fixed,
+                            rest,
+                            selections,
+                            goals: goals.clone(),
+                            subst: subst.clone(),
+                        });
+                        let mut branch_goals = goals;
+                        branch_goals.push(Goal::ContinuePair {
+                            op,
+                            fixed,
+                            rest,
+                            used: vec![false; selection.len()],
+                            selection: Rc::from(selection.into_boxed_slice()),
+                            complement: Rc::from(complement.into_boxed_slice()),
+                            depth: 0,
+                        });
+                        work.push(Work::Run { goals: branch_goals, subst });
+                    }
+                },
+                Work::PairChoices {
+                    op,
+                    fixed,
+                    rest,
+                    selection,
+                    complement,
+                    used,
+                    depth,
+                    mut next_index,
+                    goals,
+                    subst,
+                } => {
+                    while next_index < selection.len() && used[next_index] {
+                        next_index += 1;
+                    }
+                    if next_index == selection.len() {
+                        continue;
+                    }
+                    let selected = next_index;
+                    work.push(Work::PairChoices {
+                        op,
+                        fixed,
+                        rest,
+                        selection: selection.clone(),
+                        complement: complement.clone(),
+                        used: used.clone(),
+                        depth,
+                        next_index: selected + 1,
+                        goals: goals.clone(),
+                        subst: subst.clone(),
+                    });
+                    let mut branch_used = used;
+                    branch_used[selected] = true;
+                    let mut branch_goals = goals;
+                    branch_goals.push(Goal::ContinuePair {
+                        op,
+                        fixed,
+                        rest,
+                        selection: selection.clone(),
+                        complement,
+                        used: branch_used,
+                        depth: depth + 1,
+                    });
+                    branch_goals.push(Goal::Match {
+                        pattern: &fixed[depth],
+                        class: selection[selected],
+                    });
+                    work.push(Work::Run { goals: branch_goals, subst });
+                },
             }
-            let mut child_matches = Vec::new();
-            self.collect_matches(&fixed[0], selection[i], subst, &mut child_matches);
-            if child_matches.is_empty() {
-                continue;
-            }
-            used[i] = true;
-            for (_, cs) in child_matches {
-                self.pair_fixed_rec(&fixed[1..], selection, used, &cs, out);
-            }
-            used[i] = false;
         }
     }
 
@@ -931,14 +1085,24 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
     }
 
     fn rhs_vars_bound(pattern: &Pattern<L>, subst: &Subst) -> bool {
-        match pattern {
-            Pattern::Var(name) => subst.contains_key(name),
-            Pattern::App { args, .. } => args.iter().all(|arg| Self::rhs_vars_bound(arg, subst)),
-            Pattern::AcApp { fixed, rest, .. } => {
-                fixed.iter().all(|arg| Self::rhs_vars_bound(arg, subst))
-                    && rest.as_ref().is_none_or(|name| subst.contains_key(name))
-            },
+        let mut pending = vec![pattern];
+        while let Some(pattern) = pending.pop() {
+            match pattern {
+                Pattern::Var(name) => {
+                    if !subst.contains_key(name) {
+                        return false;
+                    }
+                },
+                Pattern::App { args, .. } => pending.extend(args.iter().rev()),
+                Pattern::AcApp { fixed, rest, .. } => {
+                    if rest.as_ref().is_some_and(|name| !subst.contains_key(name)) {
+                        return false;
+                    }
+                    pending.extend(fixed.iter().rev());
+                },
+            }
         }
+        true
     }
 
     fn batched_segment_matches(&self, segment: &PositionalRuleSegment<L>) -> BatchedSegmentMatches {
@@ -1052,34 +1216,61 @@ impl<L: Clone + Eq + std::hash::Hash + SemanticHash> EGraph<L> {
     /// derivation — the same AC-flattening RHS construction saturation uses, reused read-only.
     /// Adds no behavior and no production-path cost (production saturation is unchanged).
     pub fn instantiate(&mut self, pattern: &Pattern<L>, subst: &Subst) -> Option<EClassId> {
-        match pattern {
-            Pattern::Var(name) => subst.get(name).map(|&id| self.find(id)),
-            Pattern::App { op, args } => {
-                let mut children = Vec::with_capacity(args.len());
-                for a in args {
-                    children.push(self.instantiate(a, subst)?);
-                }
-                self.try_add_with_budget(ENode::new(op.clone(), children))
+        enum Task<'a, L> {
+            Visit(&'a Pattern<L>),
+            AssembleApp {
+                op: L,
+                child_count: usize,
             },
-            Pattern::AcApp { op, fixed, rest } => {
-                // Build the result bag from the instantiated `fixed` patterns plus
-                // the bound `rest` complement, then FLATTEN: any member that is
-                // itself an `op`-bag is spliced in (associativity), so the result
-                // is one flat canonical bag, not a bag-of-bags. This covers both
-                // the complement (always an `op`-bag) and any `fixed` pattern that
-                // instantiates to a parallel composition — e.g. opening `n[B | C]`
-                // binds the ambient body to the bag `{B, C}`, which must merge
-                // into the surrounding parallel rather than nest.
-                let mut children = Vec::with_capacity(fixed.len() + 1);
-                for f in fixed {
-                    children.push(self.instantiate(f, subst)?);
-                }
-                if let Some(name) = rest {
-                    children.push(self.find(*subst.get(name)?));
-                }
-                self.add_flattened_bag(op.clone(), &children)
+            AssembleAc {
+                op: L,
+                fixed_count: usize,
+                rest: Option<&'a str>,
             },
         }
+
+        let mut tasks = vec![Task::Visit(pattern)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Pattern::Var(name)) => {
+                    values.push(self.find(*subst.get(name)?));
+                },
+                Task::Visit(Pattern::App { op, args }) => {
+                    tasks.push(Task::AssembleApp { op: op.clone(), child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Visit(Pattern::AcApp { op, fixed, rest }) => {
+                    tasks.push(Task::AssembleAc {
+                        op: op.clone(),
+                        fixed_count: fixed.len(),
+                        rest: rest.as_deref(),
+                    });
+                    tasks.extend(fixed.iter().rev().map(Task::Visit));
+                },
+                Task::AssembleApp { op, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("instantiation PDA lost an application child");
+                    let children = values.split_off(first_child);
+                    values.push(self.try_add_with_budget(ENode::new(op, children))?);
+                },
+                Task::AssembleAc { op, fixed_count, rest } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(fixed_count)
+                        .expect("instantiation PDA lost an AC child");
+                    let mut children = values.split_off(first_child);
+                    if let Some(name) = rest {
+                        children.push(self.find(*subst.get(name)?));
+                    }
+                    values.push(self.add_flattened_bag(op, &children)?);
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop()
     }
 
     /// Equality saturation: apply `rules` to a fixpoint, or until the node budget
@@ -1870,6 +2061,14 @@ mod dv0_probe {
 #[cfg(test)]
 #[path = "../tests/support/pattern_lifecycle_recursive_oracle.rs"]
 mod pattern_lifecycle_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/rules_instantiation_recursive_oracle.rs"]
+mod instantiation_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/rules_matching_recursive_oracle.rs"]
+mod matching_recursive_oracle;
 
 #[cfg(test)]
 mod tests {

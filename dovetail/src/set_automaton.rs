@@ -524,11 +524,15 @@ impl<L: Clone + Eq + Hash> SetAutomaton<L> {
 }
 
 fn contains_ac<L>(pattern: &Pattern<L>) -> bool {
-    match pattern {
-        Pattern::Var(_) => false,
-        Pattern::App { args, .. } => args.iter().any(contains_ac),
-        Pattern::AcApp { .. } => true,
+    let mut pending = vec![pattern];
+    while let Some(pattern) = pending.pop() {
+        match pattern {
+            Pattern::Var(_) => {},
+            Pattern::App { args, .. } => pending.extend(args.iter().rev()),
+            Pattern::AcApp { .. } => return true,
+        }
     }
+    false
 }
 
 fn merge_substs<L: Clone + Eq + Hash>(
