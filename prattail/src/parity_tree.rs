@@ -118,12 +118,108 @@ impl<W: Semiring + fmt::Display> fmt::Display for ParityTreeTransition<W> {
 ///
 /// A term is a labeled, ranked tree. Each node has a symbol and zero or more
 /// children. Leaves are terms with zero children.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term {
     /// The symbol labeling this node.
     pub symbol: String,
     /// Child subtrees (empty for leaves).
     pub children: Vec<Term>,
+}
+
+impl Clone for Term {
+    fn clone(&self) -> Self {
+        struct CloneFrame<'term> {
+            source: &'term Term,
+            next_child: usize,
+            children: Vec<Term>,
+        }
+
+        let mut frames = vec![CloneFrame {
+            source: self,
+            next_child: 0,
+            children: Vec::with_capacity(self.children.len()),
+        }];
+        loop {
+            let frame = frames
+                .last_mut()
+                .expect("the root clone frame remains until cloning completes");
+            if let Some(child) = frame.source.children.get(frame.next_child) {
+                frame.next_child += 1;
+                frames.push(CloneFrame {
+                    source: child,
+                    next_child: 0,
+                    children: Vec::with_capacity(child.children.len()),
+                });
+                continue;
+            }
+
+            let frame = frames.pop().expect("the completed clone frame exists");
+            let cloned = Term {
+                symbol: frame.source.symbol.clone(),
+                children: frame.children,
+            };
+            if let Some(parent) = frames.last_mut() {
+                parent.children.push(cloned);
+            } else {
+                return cloned;
+            }
+        }
+    }
+}
+
+impl PartialEq for Term {
+    fn eq(&self, other: &Self) -> bool {
+        let mut work = vec![(self, other)];
+        while let Some((left, right)) = work.pop() {
+            if left.symbol != right.symbol || left.children.len() != right.children.len() {
+                return false;
+            }
+            work.extend(left.children.iter().zip(&right.children));
+        }
+        true
+    }
+}
+
+impl Eq for Term {}
+
+impl Drop for Term {
+    fn drop(&mut self) {
+        // Empty every descendant's child vector before that descendant is
+        // dropped, turning recursive structural destruction into an explicit
+        // heap-backed worklist.
+        let mut work = std::mem::take(&mut self.children);
+        while let Some(mut node) = work.pop() {
+            work.append(&mut node.children);
+        }
+    }
+}
+
+impl fmt::Debug for Term {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        enum Task<'term> {
+            Term(&'term Term),
+            Separator,
+            Close,
+        }
+
+        let mut work = vec![Task::Term(self)];
+        while let Some(task) = work.pop() {
+            match task {
+                Task::Term(term) => {
+                    write!(f, "Term {{ symbol: {:?}, children: [", term.symbol)?;
+                    work.push(Task::Close);
+                    for (index, child) in term.children.iter().enumerate().rev() {
+                        work.push(Task::Term(child));
+                        if index > 0 {
+                            work.push(Task::Separator);
+                        }
+                    }
+                },
+                Task::Separator => f.write_str(", ")?,
+                Task::Close => f.write_str("] }")?,
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Term {
@@ -143,12 +239,33 @@ impl Term {
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.children.is_empty() {
-            write!(f, "{}", self.symbol)
-        } else {
-            let children: Vec<String> = self.children.iter().map(|c| c.to_string()).collect();
-            write!(f, "{}({})", self.symbol, children.join(", "))
+        enum Task<'term> {
+            Term(&'term Term),
+            Separator,
+            Close,
         }
+
+        let mut work = vec![Task::Term(self)];
+        while let Some(task) = work.pop() {
+            match task {
+                Task::Term(term) => {
+                    f.write_str(&term.symbol)?;
+                    if !term.children.is_empty() {
+                        f.write_str("(")?;
+                        work.push(Task::Close);
+                        for (index, child) in term.children.iter().enumerate().rev() {
+                            work.push(Task::Term(child));
+                            if index > 0 {
+                                work.push(Task::Separator);
+                            }
+                        }
+                    }
+                },
+                Task::Separator => f.write_str(", ")?,
+                Task::Close => f.write_str(")")?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -717,20 +834,12 @@ pub fn evaluate_term(
             .push(&t.directions);
     }
 
-    // Recursive bottom-up evaluation.
-    // Returns a set of state IDs that accept this subterm.
-    fn eval_rec<'a>(
+    fn eval_node<'a>(
         term: &Term,
+        child_results: &[HashSet<usize>],
         automaton: &'a ParityAlternatingTreeAutomaton<BooleanWeight>,
         trans_index: &HashMap<(usize, &'a str), Vec<&Vec<(usize, usize, BooleanWeight)>>>,
     ) -> HashSet<usize> {
-        // First, recursively compute which states accept each child.
-        let child_results: Vec<HashSet<usize>> = term
-            .children
-            .iter()
-            .map(|child| eval_rec(child, automaton, trans_index))
-            .collect();
-
         let mut accepting_states = HashSet::new();
 
         for state in &automaton.states {
@@ -798,12 +907,46 @@ pub fn evaluate_term(
                 },
             }
         }
-
         accepting_states
     }
 
-    let accepting = eval_rec(term, automaton, &trans_index);
-    accepting.contains(&initial)
+    // Post-order PDA. Each frame is the recursive activation record made
+    // explicit: the node, the next child to enter, and completed child results.
+    // This preserves left-to-right evaluation while using heap space linear in
+    // tree depth instead of consuming the native call stack.
+    struct EvalFrame<'term> {
+        term: &'term Term,
+        next_child: usize,
+        child_results: Vec<HashSet<usize>>,
+    }
+
+    let mut frames = vec![EvalFrame {
+        term,
+        next_child: 0,
+        child_results: Vec::with_capacity(term.children.len()),
+    }];
+    loop {
+        let frame = frames
+            .last_mut()
+            .expect("the root frame remains until evaluation completes");
+        if let Some(child) = frame.term.children.get(frame.next_child) {
+            frame.next_child += 1;
+            frames.push(EvalFrame {
+                term: child,
+                next_child: 0,
+                child_results: Vec::with_capacity(child.children.len()),
+            });
+            continue;
+        }
+
+        let frame = frames.pop().expect("the completed frame exists");
+        let accepting = eval_node(frame.term, &frame.child_results, automaton, &trans_index);
+        if let Some(parent) = frames.last_mut() {
+            parent.child_results.push(accepting);
+        } else {
+            return accepting.contains(&initial);
+        }
+    }
 }
 
 /// Compile a mu-calculus formula into a parity alternating tree automaton.
