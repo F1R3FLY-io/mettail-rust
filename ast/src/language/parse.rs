@@ -3056,332 +3056,683 @@ fn parse_equation(input: ParseStream) -> SynResult<Equation> {
 /// Returns Pattern which can include Collection for {P, Q, ...rest} patterns
 /// and nested patterns in constructor arguments
 pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
-    // Parse #zip or #map metasyntax: #zip(a, b) or #map(coll, |x| body)
-    if input.peek(Token![*]) {
-        return parse_metasyntax_pattern(input);
+    parse_pattern_tokens(take_one_pattern_from_parse_stream(input)?)
+}
+
+fn pattern_punct(tree: &proc_macro2::TokenTree, expected: char) -> bool {
+    matches!(tree, proc_macro2::TokenTree::Punct(punct) if punct.as_char() == expected)
+}
+
+fn take_one_pattern_from_parse_stream(input: ParseStream) -> SynResult<TokenStream> {
+    fn take_tree(
+        input: ParseStream,
+        output: &mut TokenStream,
+    ) -> SynResult<proc_macro2::TokenTree> {
+        let tree = input.parse::<proc_macro2::TokenTree>()?;
+        output.extend(std::iter::once(tree.clone()));
+        Ok(tree)
     }
 
-    // Parse collection pattern: {P, Q, ...rest}
-    if input.peek(syn::token::Brace) {
-        let content;
-        syn::braced!(content in input);
+    let mut output = TokenStream::new();
+    while input.peek(Token![^]) {
+        let _ = take_tree(input, &mut output)?;
+        if input.peek(Ident) || input.peek(syn::token::Bracket) {
+            let _ = take_tree(input, &mut output)?;
+        } else {
+            return Err(input.error("expected lambda binder"));
+        }
+        let dot = take_tree(input, &mut output)?;
+        if !pattern_punct(&dot, '.') {
+            return Err(syn::Error::new(dot.span(), "expected `.` after lambda binder"));
+        }
+    }
+
+    let first = take_tree(input, &mut output)?;
+    let chainable = match &first {
+        proc_macro2::TokenTree::Group(group)
+            if matches!(
+                group.delimiter(),
+                proc_macro2::Delimiter::Parenthesis | proc_macro2::Delimiter::Brace
+            ) =>
+        {
+            false
+        },
+        proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '*' => {
+            let operator = take_tree(input, &mut output)?;
+            let proc_macro2::TokenTree::Ident(operator) = operator else {
+                return Err(syn::Error::new(operator.span(), "expected metasyntax operator"));
+            };
+            let arguments = take_tree(input, &mut output)?;
+            if !matches!(
+                arguments,
+                proc_macro2::TokenTree::Group(ref group)
+                    if group.delimiter() == proc_macro2::Delimiter::Parenthesis
+            ) {
+                return Err(syn::Error::new(arguments.span(), "expected metasyntax arguments"));
+            }
+            operator == "zip"
+        },
+        proc_macro2::TokenTree::Ident(_) => {
+            if input.peek(syn::token::Bracket) {
+                let _ = take_tree(input, &mut output)?;
+                false
+            } else {
+                true
+            }
+        },
+        _ => return Err(syn::Error::new(first.span(), "expected pattern")),
+    };
+
+    if chainable {
+        while input.peek(Token![.]) && input.peek2(Token![*]) {
+            let _ = take_tree(input, &mut output)?;
+            let _ = take_tree(input, &mut output)?;
+            let operator = take_tree(input, &mut output)?;
+            if !matches!(operator, proc_macro2::TokenTree::Ident(_)) {
+                return Err(syn::Error::new(operator.span(), "expected chained operator"));
+            }
+            let arguments = take_tree(input, &mut output)?;
+            if !matches!(
+                arguments,
+                proc_macro2::TokenTree::Group(ref group)
+                    if group.delimiter() == proc_macro2::Delimiter::Parenthesis
+            ) {
+                return Err(syn::Error::new(arguments.span(), "expected chained arguments"));
+            }
+        }
+    }
+
+    Ok(output)
+}
+
+fn take_pattern_tree(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+    output: &mut TokenStream,
+    expected: &str,
+) -> SynResult<proc_macro2::TokenTree> {
+    let tree = input.pop_front().ok_or_else(|| {
+        syn::Error::new(proc_macro2::Span::call_site(), format!("expected {expected}"))
+    })?;
+    output.extend(std::iter::once(tree.clone()));
+    Ok(tree)
+}
+
+/// Remove exactly one pattern's top-level token trees from `input`.
+/// Delimited children stay opaque here; the PDA schedules their contents later.
+fn take_one_pattern_tokens(
+    input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+) -> SynResult<TokenStream> {
+    let mut output = TokenStream::new();
+
+    // Lambda prefixes are right-nested but flat at this token-tree level.
+    while input.front().is_some_and(|tree| pattern_punct(tree, '^')) {
+        let _ = take_pattern_tree(input, &mut output, "`^`")?;
+        match input.front() {
+            Some(proc_macro2::TokenTree::Ident(_)) => {
+                let _ = take_pattern_tree(input, &mut output, "lambda binder")?;
+            },
+            Some(proc_macro2::TokenTree::Group(group))
+                if group.delimiter() == proc_macro2::Delimiter::Bracket =>
+            {
+                let _ = take_pattern_tree(input, &mut output, "multi-lambda binders")?;
+            },
+            Some(tree) => return Err(syn::Error::new(tree.span(), "expected lambda binder")),
+            None => {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "expected lambda binder",
+                ))
+            },
+        }
+        let dot = take_pattern_tree(input, &mut output, "`.` after lambda binder")?;
+        if !pattern_punct(&dot, '.') {
+            return Err(syn::Error::new(dot.span(), "expected `.` after lambda binder"));
+        }
+    }
+
+    let first = take_pattern_tree(input, &mut output, "pattern")?;
+    let chainable = match &first {
+        proc_macro2::TokenTree::Group(group)
+            if matches!(
+                group.delimiter(),
+                proc_macro2::Delimiter::Parenthesis | proc_macro2::Delimiter::Brace
+            ) =>
+        {
+            false
+        },
+        proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '*' => {
+            let operator = take_pattern_tree(input, &mut output, "metasyntax operator")?;
+            let proc_macro2::TokenTree::Ident(operator) = operator else {
+                return Err(syn::Error::new(operator.span(), "expected metasyntax operator"));
+            };
+            let arguments = take_pattern_tree(input, &mut output, "metasyntax arguments")?;
+            if !matches!(
+                arguments,
+                proc_macro2::TokenTree::Group(ref group)
+                    if group.delimiter() == proc_macro2::Delimiter::Parenthesis
+            ) {
+                return Err(syn::Error::new(arguments.span(), "expected metasyntax arguments"));
+            }
+            operator == "zip"
+        },
+        proc_macro2::TokenTree::Ident(_) => {
+            if matches!(
+                input.front(),
+                Some(proc_macro2::TokenTree::Group(group))
+                    if group.delimiter() == proc_macro2::Delimiter::Bracket
+            ) {
+                let _ = take_pattern_tree(input, &mut output, "indexed pattern")?;
+                false
+            } else {
+                true
+            }
+        },
+        _ => return Err(syn::Error::new(first.span(), "expected pattern")),
+    };
+
+    if chainable {
+        while input.front().is_some_and(|tree| pattern_punct(tree, '.'))
+            && input.get(1).is_some_and(|tree| pattern_punct(tree, '*'))
+        {
+            let _ = take_pattern_tree(input, &mut output, "`.`")?;
+            let _ = take_pattern_tree(input, &mut output, "`*`")?;
+            let operator = take_pattern_tree(input, &mut output, "chained metasyntax operator")?;
+            if !matches!(operator, proc_macro2::TokenTree::Ident(_)) {
+                return Err(syn::Error::new(operator.span(), "expected chained operator"));
+            }
+            let arguments = take_pattern_tree(input, &mut output, "chained metasyntax arguments")?;
+            if !matches!(
+                arguments,
+                proc_macro2::TokenTree::Group(ref group)
+                    if group.delimiter() == proc_macro2::Delimiter::Parenthesis
+            ) {
+                return Err(syn::Error::new(arguments.span(), "expected chained arguments"));
+            }
+        }
+    }
+
+    Ok(output)
+}
+
+fn parse_pattern_tokens(tokens: TokenStream) -> SynResult<Pattern> {
+    enum LambdaBinder {
+        One(Ident),
+        Many(Vec<Ident>),
+    }
+
+    enum Chain {
+        Map { params: Vec<Ident>, body: TokenStream },
+        Zip { other: TokenStream },
+    }
+
+    enum Task {
+        Parse(std::collections::VecDeque<proc_macro2::TokenTree>),
+        AssembleLambda(LambdaBinder),
+        AssembleCollection {
+            child_count: usize,
+            rest: Option<Ident>,
+        },
+        AssembleApply {
+            constructor: Ident,
+            child_count: usize,
+        },
+        AssembleEval {
+            span: proc_macro2::Span,
+            child_count: usize,
+        },
+        AssembleMap {
+            params: Vec<Ident>,
+        },
+        AssembleZip,
+        AssembleIndexed {
+            collection: Ident,
+            index: Ident,
+        },
+        ProcessChains(std::collections::VecDeque<Chain>),
+    }
+
+    fn token_stream(input: impl IntoIterator<Item = proc_macro2::TokenTree>) -> TokenStream {
+        input.into_iter().collect()
+    }
+
+    fn parse_task(stream: TokenStream) -> Task {
+        Task::Parse(stream.into_iter().collect())
+    }
+
+    fn expect_punct(
+        input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+        expected: char,
+        description: &str,
+    ) -> SynResult<()> {
+        let tree = input.pop_front().ok_or_else(|| {
+            syn::Error::new(proc_macro2::Span::call_site(), format!("expected {description}"))
+        })?;
+        if pattern_punct(&tree, expected) {
+            Ok(())
+        } else {
+            Err(syn::Error::new(tree.span(), format!("expected {description}")))
+        }
+    }
+
+    fn expect_ident(
+        input: &mut std::collections::VecDeque<proc_macro2::TokenTree>,
+        description: &str,
+    ) -> SynResult<Ident> {
+        let tree = input.pop_front().ok_or_else(|| {
+            syn::Error::new(proc_macro2::Span::call_site(), format!("expected {description}"))
+        })?;
+        if let proc_macro2::TokenTree::Ident(ident) = tree {
+            Ok(ident)
+        } else {
+            Err(syn::Error::new(tree.span(), format!("expected {description}")))
+        }
+    }
+
+    fn parse_ident_list(stream: TokenStream) -> SynResult<Vec<Ident>> {
+        let mut input: std::collections::VecDeque<_> = stream.into_iter().collect();
+        let mut ids = Vec::new();
+        while !input.is_empty() {
+            ids.push(expect_ident(&mut input, "binder identifier")?);
+            if input.is_empty() {
+                break;
+            }
+            expect_punct(&mut input, ',', "`,` between binders")?;
+        }
+        Ok(ids)
+    }
+
+    fn parse_closure_tokens(stream: TokenStream) -> SynResult<(Vec<Ident>, TokenStream)> {
+        let mut input: std::collections::VecDeque<_> = stream.into_iter().collect();
+        expect_punct(&mut input, '|', "`|` before closure parameters")?;
+        let mut params = Vec::new();
+        while !input.front().is_some_and(|tree| pattern_punct(tree, '|')) {
+            params.push(expect_ident(&mut input, "closure parameter")?);
+            if input.front().is_some_and(|tree| pattern_punct(tree, ',')) {
+                input.pop_front();
+            } else if !input.front().is_some_and(|tree| pattern_punct(tree, '|')) {
+                let span = input
+                    .front()
+                    .map(proc_macro2::TokenTree::span)
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                return Err(syn::Error::new(span, "expected `,` or `|` after closure parameter"));
+            }
+        }
+        expect_punct(&mut input, '|', "`|` after closure parameters")?;
+        if input.is_empty() {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "expected pattern after closure parameters",
+            ));
+        }
+        let body = take_one_pattern_tokens(&mut input)?;
+        if let Some(extra) = input.front() {
+            return Err(syn::Error::new(
+                extra.span(),
+                "unexpected tokens after closure body pattern",
+            ));
+        }
+        Ok((params, body))
+    }
+
+    fn parse_chains(
+        mut input: std::collections::VecDeque<proc_macro2::TokenTree>,
+    ) -> SynResult<std::collections::VecDeque<Chain>> {
+        let mut chains = std::collections::VecDeque::new();
+        while !input.is_empty() {
+            expect_punct(&mut input, '.', "`.` before chained metasyntax")?;
+            expect_punct(&mut input, '*', "`*` before chained metasyntax")?;
+            let operator = expect_ident(&mut input, "chained metasyntax operator")?;
+            let arguments = input.pop_front().ok_or_else(|| {
+                syn::Error::new(operator.span(), "expected chained metasyntax arguments")
+            })?;
+            let proc_macro2::TokenTree::Group(arguments) = arguments else {
+                return Err(syn::Error::new(arguments.span(), "expected parentheses"));
+            };
+            if arguments.delimiter() != proc_macro2::Delimiter::Parenthesis {
+                return Err(syn::Error::new(arguments.span(), "expected parentheses"));
+            }
+            match operator.to_string().as_str() {
+                "map" => {
+                    let (params, body) = parse_closure_tokens(arguments.stream())?;
+                    chains.push_back(Chain::Map { params, body });
+                },
+                "zip" => {
+                    let mut contents: std::collections::VecDeque<_> =
+                        arguments.stream().into_iter().collect();
+                    let other = take_one_pattern_tokens(&mut contents)?;
+                    if let Some(extra) = contents.front() {
+                        return Err(syn::Error::new(
+                            extra.span(),
+                            "unexpected tokens after chained zip operand",
+                        ));
+                    }
+                    chains.push_back(Chain::Zip { other });
+                },
+                name => {
+                    return Err(syn::Error::new(
+                        operator.span(),
+                        format!("Unknown chained metasyntax operator: #{name}"),
+                    ));
+                },
+            }
+        }
+        Ok(chains)
+    }
+
+    fn split_collection(stream: TokenStream) -> SynResult<(Vec<TokenStream>, Option<Ident>)> {
+        let mut segments = Vec::new();
+        let mut current = TokenStream::new();
+        for tree in stream {
+            if pattern_punct(&tree, ',') {
+                segments.push(std::mem::take(&mut current));
+            } else {
+                current.extend(std::iter::once(tree));
+            }
+        }
+        if !current.is_empty() {
+            segments.push(current);
+        }
 
         let mut elements = Vec::new();
         let mut rest = None;
-
-        // Parse elements and optional rest
-        while !content.is_empty() {
-            // Check for rest pattern: ...rest
-            if content.peek(Token![...]) {
-                let _ = content.parse::<Token![...]>()?;
-                rest = Some(content.parse::<Ident>()?);
-
-                // Optional trailing comma
-                if content.peek(Token![,]) {
-                    let _ = content.parse::<Token![,]>()?;
+        let segment_count = segments.len();
+        for (index, segment) in segments.into_iter().enumerate() {
+            let trees: Vec<_> = segment.clone().into_iter().collect();
+            let is_rest = trees.len() == 4
+                && trees[..3].iter().all(|tree| pattern_punct(tree, '.'))
+                && matches!(&trees[3], proc_macro2::TokenTree::Ident(_));
+            if is_rest {
+                if index + 1 != segment_count {
+                    return Err(syn::Error::new(
+                        trees[0].span(),
+                        "collection rest must be the final element",
+                    ));
                 }
-                break;
-            }
-
-            // Parse regular element as a nested pattern
-            elements.push(parse_pattern(&content)?);
-
-            // Parse comma separator
-            if content.peek(Token![,]) {
-                let _ = content.parse::<Token![,]>()?;
-            } else {
-                break;
-            }
-        }
-
-        return Ok(Pattern::Collection {
-            coll_type: None, // Inferred from enclosing constructor's grammar
-            elements,
-            rest,
-        });
-    }
-
-    // Parse parenthesized constructor pattern or just wrap expression
-    if input.peek(syn::token::Paren) {
-        let content;
-        syn::parenthesized!(content in input);
-
-        // Parse constructor name (or special keywords like 'subst', 'multisubst')
-        let constructor = content.parse::<Ident>()?;
-
-        // Check if this is a substitution (beta reduction)
-        // New unified syntax: (subst lamterm repl) where lamterm is ^x.body or ^[xs].body or a variable
-        // Old syntax (backward compat): (eval term var repl)
-        if constructor == "eval" {
-            let first = parse_pattern(&content)?;
-
-            if content.is_empty() {
-                return Err(syn::Error::new(
-                    constructor.span(),
-                    "eval requires at least 2 arguments",
-                ));
-            }
-
-            let second = parse_pattern(&content)?;
-
-            if content.is_empty() {
-                // New syntax: (subst lamterm repl) - 2 args
-                // lamterm can be ^x.body (Lambda), ^[xs].body (MultiLambda), or a variable
-                match &first {
-                    Pattern::Term(PatternTerm::Lambda { binder, body }) => {
-                        // Single lambda: extract binder and body for Subst
-                        return Ok(Pattern::Term(PatternTerm::Subst {
-                            term: body.clone(),
-                            var: binder.clone(),
-                            replacement: Box::new(second),
-                        }));
-                    },
-                    Pattern::Term(PatternTerm::MultiLambda { .. }) => {
-                        // Multi-lambda: use MultiSubst with single replacement (will be collection)
-                        return Ok(Pattern::Term(PatternTerm::MultiSubst {
-                            scope: Box::new(first),
-                            replacements: vec![second],
-                        }));
-                    },
-                    _ => {
-                        // Variable or other pattern: treat as scope, use MultiSubst
-                        // This handles both single and multi at runtime via unbind
-                        return Ok(Pattern::Term(PatternTerm::MultiSubst {
-                            scope: Box::new(first),
-                            replacements: vec![second],
-                        }));
-                    },
-                }
-            } else {
-                // Old syntax: (subst term var repl) - 3 args (backward compatibility)
-                let var = match &second {
-                    Pattern::Term(PatternTerm::Var(v)) => v.clone(),
-                    _ => return Err(syn::Error::new(
-                        constructor.span(),
-                        "In 3-arg eval syntax (subst term var repl), second argument must be a variable name"
-                    )),
+                let proc_macro2::TokenTree::Ident(ident) = &trees[3] else {
+                    unreachable!()
                 };
-                let replacement = parse_pattern(&content)?;
+                rest = Some(ident.clone());
+            } else {
+                let mut input: std::collections::VecDeque<_> = segment.into_iter().collect();
+                let element = take_one_pattern_tokens(&mut input)?;
+                if let Some(extra) = input.front() {
+                    return Err(syn::Error::new(
+                        extra.span(),
+                        "unexpected tokens after collection element pattern",
+                    ));
+                }
+                elements.push(element);
+            }
+        }
+        Ok((elements, rest))
+    }
 
-                if !content.is_empty() {
-                    return Err(syn::Error::new(constructor.span(), "eval takes 2 or 3 arguments"));
+    fn take_children(values: &mut Vec<Pattern>, child_count: usize) -> Vec<Pattern> {
+        let first = values
+            .len()
+            .checked_sub(child_count)
+            .expect("assembly follows all child parses");
+        values.split_off(first)
+    }
+
+    // Establish the root boundary once. Every child producer below either
+    // calls `take_one_pattern_tokens` or validates an exact delimited body, so
+    // repeating this scan in every `Task::Parse` would make a flat Lambda
+    // chain quadratic in its depth.
+    let mut root: std::collections::VecDeque<_> = tokens.into_iter().collect();
+    let root_pattern = take_one_pattern_tokens(&mut root)?;
+    if let Some(extra) = root.front() {
+        return Err(syn::Error::new(extra.span(), "unexpected tokens after pattern"));
+    }
+    let mut tasks = vec![parse_task(root_pattern)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Parse(mut input) => {
+                if input.front().is_some_and(|tree| pattern_punct(tree, '^')) {
+                    input.pop_front();
+                    let binder = match input.pop_front() {
+                        Some(proc_macro2::TokenTree::Ident(ident)) => LambdaBinder::One(ident),
+                        Some(proc_macro2::TokenTree::Group(group))
+                            if group.delimiter() == proc_macro2::Delimiter::Bracket =>
+                        {
+                            LambdaBinder::Many(parse_ident_list(group.stream())?)
+                        },
+                        Some(tree) => {
+                            return Err(syn::Error::new(tree.span(), "expected lambda binder"));
+                        },
+                        None => {
+                            return Err(syn::Error::new(
+                                proc_macro2::Span::call_site(),
+                                "expected lambda binder",
+                            ));
+                        },
+                    };
+                    expect_punct(&mut input, '.', "`.` after lambda binder")?;
+                    tasks.push(Task::AssembleLambda(binder));
+                    tasks.push(Task::Parse(input));
+                    continue;
                 }
 
-                return Ok(Pattern::Term(PatternTerm::Subst {
-                    term: Box::new(first),
-                    var,
-                    replacement: Box::new(replacement),
+                let first = input
+                    .pop_front()
+                    .expect("take_one_pattern_tokens found a pattern");
+                match first {
+                    proc_macro2::TokenTree::Group(group)
+                        if group.delimiter() == proc_macro2::Delimiter::Brace =>
+                    {
+                        let (elements, rest) = split_collection(group.stream())?;
+                        tasks.push(Task::AssembleCollection { child_count: elements.len(), rest });
+                        tasks.extend(elements.into_iter().rev().map(parse_task));
+                    },
+                    proc_macro2::TokenTree::Group(group)
+                        if group.delimiter() == proc_macro2::Delimiter::Parenthesis =>
+                    {
+                        let mut contents: std::collections::VecDeque<_> =
+                            group.stream().into_iter().collect();
+                        let constructor = expect_ident(&mut contents, "constructor name")?;
+                        let mut arguments = Vec::new();
+                        while !contents.is_empty() {
+                            arguments.push(take_one_pattern_tokens(&mut contents)?);
+                        }
+                        if constructor == "eval" {
+                            tasks.push(Task::AssembleEval {
+                                span: constructor.span(),
+                                child_count: arguments.len(),
+                            });
+                        } else {
+                            tasks.push(Task::AssembleApply {
+                                constructor,
+                                child_count: arguments.len(),
+                            });
+                        }
+                        tasks.extend(arguments.into_iter().rev().map(parse_task));
+                    },
+                    proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '*' => {
+                        let operator = expect_ident(&mut input, "metasyntax operator")?;
+                        let arguments = input.pop_front().ok_or_else(|| {
+                            syn::Error::new(operator.span(), "expected metasyntax arguments")
+                        })?;
+                        let proc_macro2::TokenTree::Group(arguments) = arguments else {
+                            return Err(syn::Error::new(arguments.span(), "expected parentheses"));
+                        };
+                        if arguments.delimiter() != proc_macro2::Delimiter::Parenthesis {
+                            return Err(syn::Error::new(arguments.span(), "expected parentheses"));
+                        }
+                        match operator.to_string().as_str() {
+                            "zip" => {
+                                let mut contents: std::collections::VecDeque<_> =
+                                    arguments.stream().into_iter().collect();
+                                let left = take_one_pattern_tokens(&mut contents)?;
+                                expect_punct(&mut contents, ',', "`,` between zip operands")?;
+                                let right = take_one_pattern_tokens(&mut contents)?;
+                                if let Some(extra) = contents.front() {
+                                    return Err(syn::Error::new(
+                                        extra.span(),
+                                        "unexpected tokens after second zip operand",
+                                    ));
+                                }
+                                let chains = parse_chains(input)?;
+                                tasks.push(Task::ProcessChains(chains));
+                                tasks.push(Task::AssembleZip);
+                                tasks.push(parse_task(right));
+                                tasks.push(parse_task(left));
+                            },
+                            "map" => {
+                                let mut contents: std::collections::VecDeque<_> =
+                                    arguments.stream().into_iter().collect();
+                                let collection = take_one_pattern_tokens(&mut contents)?;
+                                expect_punct(&mut contents, ',', "`,` before map closure")?;
+                                let (params, body) = parse_closure_tokens(token_stream(contents))?;
+                                tasks.push(Task::AssembleMap { params });
+                                tasks.push(parse_task(body));
+                                tasks.push(parse_task(collection));
+                            },
+                            name => {
+                                return Err(syn::Error::new(
+                                    operator.span(),
+                                    format!("Unknown metasyntax operator: #{name}"),
+                                ));
+                            },
+                        }
+                    },
+                    proc_macro2::TokenTree::Ident(collection) => {
+                        if matches!(
+                            input.front(),
+                            Some(proc_macro2::TokenTree::Group(group))
+                                if group.delimiter() == proc_macro2::Delimiter::Bracket
+                        ) {
+                            let proc_macro2::TokenTree::Group(indexed) =
+                                input.pop_front().expect("the bracket group was peeked")
+                            else {
+                                unreachable!()
+                            };
+                            let mut indexed: std::collections::VecDeque<_> =
+                                indexed.stream().into_iter().collect();
+                            let index = expect_ident(&mut indexed, "index binder")?;
+                            expect_punct(&mut indexed, ':', "`:=` after index binder")?;
+                            expect_punct(&mut indexed, '=', "`:=` after index binder")?;
+                            let element = take_one_pattern_tokens(&mut indexed)?;
+                            if let Some(extra) = indexed.front() {
+                                return Err(syn::Error::new(
+                                    extra.span(),
+                                    "unexpected tokens after indexed element pattern",
+                                ));
+                            }
+                            tasks.push(Task::AssembleIndexed { collection, index });
+                            tasks.push(parse_task(element));
+                        } else {
+                            values.push(Pattern::Term(PatternTerm::Var(collection)));
+                            tasks.push(Task::ProcessChains(parse_chains(input)?));
+                        }
+                    },
+                    tree => return Err(syn::Error::new(tree.span(), "expected pattern")),
+                }
+            },
+            Task::AssembleLambda(binder) => {
+                let body = Box::new(values.pop().expect("lambda assembly follows body parse"));
+                values.push(Pattern::Term(match binder {
+                    LambdaBinder::One(binder) => PatternTerm::Lambda { binder, body },
+                    LambdaBinder::Many(binders) => PatternTerm::MultiLambda { binders, body },
                 }));
-            }
-        }
-
-        // Parse arguments as nested patterns
-        // NOTE: Collections inside Apply are handled correctly - the Apply knows
-        // its constructor and can look up the collection type from grammar
-        let mut args = Vec::new();
-        while !content.is_empty() {
-            args.push(parse_pattern(&content)?);
-        }
-
-        // Create Apply PatternTerm with Pattern args
-        Ok(Pattern::Term(PatternTerm::Apply { constructor, args }))
-    } else if input.peek(Token![^]) {
-        // Lambda patterns - parse directly to support collections in body
-        input.parse::<Token![^]>()?;
-
-        // Check for multi-binder: ^[x0, x1, ...].body
-        if input.peek(syn::token::Bracket) {
-            let content;
-            syn::bracketed!(content in input);
-
-            // Parse comma-separated list of binders
-            let binders: syn::punctuated::Punctuated<Ident, Token![,]> =
-                content.parse_terminated(Ident::parse, Token![,])?;
-            let binders: Vec<Ident> = binders.into_iter().collect();
-
-            // Expect dot
-            input.parse::<Token![.]>()?;
-
-            // Parse body as pattern (supports collections)
-            let body = parse_pattern(input)?;
-
-            return Ok(Pattern::Term(PatternTerm::MultiLambda { binders, body: Box::new(body) }));
-        }
-
-        // Single binder: ^x.body
-        let binder = input.parse::<Ident>()?;
-        input.parse::<Token![.]>()?;
-        let body = parse_pattern(input)?;
-
-        Ok(Pattern::Term(PatternTerm::Lambda { binder, body: Box::new(body) }))
-    } else {
-        // Just a variable - but check for chained metasyntax like `var.#map(...)`
-        let var = input.parse::<Ident>()?;
-
-        // Indexed positional element: `args[i := S]`. Recognised HERE, immediately after
-        // the collection's name, because `[` can follow a bare pattern variable in no
-        // other position — the pattern grammar has no indexing and no array literal, so
-        // there is nothing to disambiguate against and no existing rule changes meaning.
-        if input.peek(syn::token::Bracket) {
-            let idx_content;
-            syn::bracketed!(idx_content in input);
-            let index = idx_content.parse::<Ident>()?;
-            // `:=` is two syn tokens; there is no `Token![:=]`. Spelling it as assignment
-            // rather than `,` keeps the direction readable — the element is REPLACED at
-            // that position, and on the LHS the same syntax reads as "binds at".
-            idx_content.parse::<Token![:]>()?;
-            idx_content.parse::<Token![=]>()?;
-            let element = parse_pattern(&idx_content)?;
-            if !idx_content.is_empty() {
-                return Err(idx_content.error(
-                    "expected `]` after `collection[index := pattern]` — the indexed form \
-                     takes exactly one index binder and one element pattern",
-                ));
-            }
-            return Ok(Pattern::IndexedVec {
-                collection: var,
-                index,
-                element: Box::new(element),
-            });
-        }
-
-        let base = Pattern::Term(PatternTerm::Var(var));
-
-        // Check for chained method-style metasyntax: var.#map(...)
-        if input.peek(Token![.]) && input.peek2(Token![*]) {
-            return parse_chained_metasyntax(input, base);
-        }
-
-        Ok(base)
-    }
-}
-
-/// Parse metasyntax patterns: #zip(a, b), #map(coll, |x| body), etc.
-fn parse_metasyntax_pattern(input: ParseStream) -> SynResult<Pattern> {
-    input.parse::<Token![*]>()?;
-    let op_name = input.parse::<Ident>()?;
-    let op_str = op_name.to_string();
-
-    match op_str.as_str() {
-        "zip" => {
-            // #zip(coll1, coll2)
-            let content;
-            syn::parenthesized!(content in input);
-
-            let coll1 = parse_pattern(&content)?;
-            content.parse::<Token![,]>()?;
-            let coll2 = parse_pattern(&content)?;
-
-            let base = Pattern::Zip {
-                first: Box::new(coll1),
-                second: Box::new(coll2),
-            };
-
-            // Check for chained metasyntax: #zip(a, b).#map(|x, y| ...)
-            if input.peek(Token![.]) && input.peek2(Token![*]) {
-                parse_chained_metasyntax(input, base)
-            } else {
-                Ok(base)
-            }
-        },
-        "map" => {
-            // #map(coll, |params| body) - prefix form
-            let content;
-            syn::parenthesized!(content in input);
-
-            let collection = parse_pattern(&content)?;
-            content.parse::<Token![,]>()?;
-
-            // Parse closure: |params| body
-            let (params, body) = parse_closure(&content)?;
-
-            Ok(Pattern::Map {
-                collection: Box::new(collection),
-                params,
-                body: Box::new(body),
-            })
-        },
-        _ => Err(syn::Error::new(
-            op_name.span(),
-            format!("Unknown metasyntax operator: #{}", op_str),
-        )),
-    }
-}
-
-/// Parse chained method-style metasyntax: base.#map(|x| body)
-fn parse_chained_metasyntax(input: ParseStream, base: Pattern) -> SynResult<Pattern> {
-    input.parse::<Token![.]>()?;
-    input.parse::<Token![*]>()?;
-    let op_name = input.parse::<Ident>()?;
-    let op_str = op_name.to_string();
-
-    match op_str.as_str() {
-        "map" => {
-            // base.#map(|params| body)
-            let content;
-            syn::parenthesized!(content in input);
-
-            let (params, body) = parse_closure(&content)?;
-
-            let result = Pattern::Map {
-                collection: Box::new(base),
-                params,
-                body: Box::new(body),
-            };
-
-            // Check for more chaining
-            if input.peek(Token![.]) && input.peek2(Token![*]) {
-                parse_chained_metasyntax(input, result)
-            } else {
-                Ok(result)
-            }
-        },
-        "zip" => {
-            // base.#zip(other) - less common but supported
-            let content;
-            syn::parenthesized!(content in input);
-
-            let other = parse_pattern(&content)?;
-
-            let result = Pattern::Zip {
-                first: Box::new(base),
-                second: Box::new(other),
-            };
-
-            if input.peek(Token![.]) && input.peek2(Token![*]) {
-                parse_chained_metasyntax(input, result)
-            } else {
-                Ok(result)
-            }
-        },
-        _ => Err(syn::Error::new(
-            op_name.span(),
-            format!("Unknown chained metasyntax operator: #{}", op_str),
-        )),
-    }
-}
-
-/// Parse a closure: |params| body or |param1, param2| body
-fn parse_closure(input: ParseStream) -> SynResult<(Vec<Ident>, Pattern)> {
-    input.parse::<Token![|]>()?;
-
-    // Parse comma-separated params
-    let mut params = Vec::new();
-    while !input.peek(Token![|]) {
-        params.push(input.parse::<Ident>()?);
-        if input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
-        } else {
-            break;
+            },
+            Task::AssembleCollection { child_count, rest } => {
+                let elements = take_children(&mut values, child_count);
+                values.push(Pattern::Collection { coll_type: None, elements, rest });
+            },
+            Task::AssembleApply { constructor, child_count } => {
+                let args = take_children(&mut values, child_count);
+                values.push(Pattern::Term(PatternTerm::Apply { constructor, args }));
+            },
+            Task::AssembleEval { span, child_count } => {
+                let mut args = take_children(&mut values, child_count).into_iter();
+                let first = args
+                    .next()
+                    .ok_or_else(|| syn::Error::new(span, "eval requires at least 2 arguments"))?;
+                let second = args
+                    .next()
+                    .ok_or_else(|| syn::Error::new(span, "eval requires at least 2 arguments"))?;
+                let third = args.next();
+                if args.next().is_some() {
+                    return Err(syn::Error::new(span, "eval takes 2 or 3 arguments"));
+                }
+                let result = if let Some(replacement) = third {
+                    let var = match &second {
+                        Pattern::Term(PatternTerm::Var(var)) => var.clone(),
+                        _ => {
+                            return Err(syn::Error::new(
+                                span,
+                                "In 3-arg eval syntax (subst term var repl), second argument must be a variable name",
+                            ));
+                        },
+                    };
+                    Pattern::Term(PatternTerm::Subst {
+                        term: Box::new(first),
+                        var,
+                        replacement: Box::new(replacement),
+                    })
+                } else {
+                    match &first {
+                        Pattern::Term(PatternTerm::Lambda { binder, body }) => {
+                            Pattern::Term(PatternTerm::Subst {
+                                term: body.clone(),
+                                var: binder.clone(),
+                                replacement: Box::new(second),
+                            })
+                        },
+                        Pattern::Term(PatternTerm::MultiLambda { .. }) => {
+                            Pattern::Term(PatternTerm::MultiSubst {
+                                scope: Box::new(first),
+                                replacements: vec![second],
+                            })
+                        },
+                        _ => Pattern::Term(PatternTerm::MultiSubst {
+                            scope: Box::new(first),
+                            replacements: vec![second],
+                        }),
+                    }
+                };
+                values.push(result);
+            },
+            Task::AssembleMap { params } => {
+                let body = Box::new(values.pop().expect("map assembly follows body parse"));
+                let collection =
+                    Box::new(values.pop().expect("map assembly follows collection parse"));
+                values.push(Pattern::Map { collection, params, body });
+            },
+            Task::AssembleZip => {
+                let second = Box::new(values.pop().expect("zip assembly follows right parse"));
+                let first = Box::new(values.pop().expect("zip assembly follows left parse"));
+                values.push(Pattern::Zip { first, second });
+            },
+            Task::AssembleIndexed { collection, index } => {
+                let element = Box::new(
+                    values
+                        .pop()
+                        .expect("indexed assembly follows element parse"),
+                );
+                values.push(Pattern::IndexedVec { collection, index, element });
+            },
+            Task::ProcessChains(mut chains) => {
+                if let Some(chain) = chains.pop_front() {
+                    tasks.push(Task::ProcessChains(chains));
+                    match chain {
+                        Chain::Map { params, body } => {
+                            tasks.push(Task::AssembleMap { params });
+                            tasks.push(parse_task(body));
+                        },
+                        Chain::Zip { other } => {
+                            tasks.push(Task::AssembleZip);
+                            tasks.push(parse_task(other));
+                        },
+                    }
+                }
+            },
         }
     }
 
-    input.parse::<Token![|]>()?;
-
-    // Parse body as pattern
-    let body = parse_pattern(input)?;
-
-    Ok((params, body))
+    debug_assert_eq!(values.len(), 1);
+    Ok(values.pop().expect("one root pattern is always emitted"))
 }
 
 fn parse_rewrites(input: ParseStream) -> SynResult<Vec<RewriteRule>> {
@@ -3774,3 +4125,7 @@ mod rewrite_fragment_tests {
 #[cfg(test)]
 #[path = "../../tests/support/premise_recursive_oracle.rs"]
 mod premise_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../../tests/support/pattern_parser_recursive_oracle.rs"]
+mod pattern_parser_recursive_oracle;
