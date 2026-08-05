@@ -701,8 +701,10 @@ where
                 action_kind: ForkActionKind::ConsumeAndReplaceWithEffect { effect },
             })
         },
-        RepairAction::Composite { steps } => composite_steps_to_fork_branch::<W>(
-            steps,
+        action @ RepairAction::Composite { .. } => composite_steps_to_fork_branch::<W>(
+            action
+                .into_composite_steps()
+                .expect("matched composite action without steps"),
             base_pos,
             result.new_pos,
             cur_bp,
@@ -725,8 +727,11 @@ fn flatten_repair_steps(
     out: &mut Vec<ResolvedRepairAction>,
 ) -> Option<()> {
     match action {
-        RepairAction::Composite { steps } => {
-            for step in steps {
+        action @ RepairAction::Composite { .. } => {
+            for step in action
+                .into_composite_steps()
+                .expect("matched composite action without steps")
+            {
                 flatten_repair_steps(step, token_id_map, out)?;
             }
         },

@@ -169,7 +169,6 @@ impl fmt::Display for Range {
 /// The optional `hint` field provides contextual fix suggestions (e.g.,
 /// "did you forget `)`?"). When `None`, no hint is shown — this is the
 /// common case for generated code, keeping it zero-alloc on the happy path.
-#[derive(Debug, Clone)]
 pub enum ParseError {
     UnexpectedToken {
         expected: Cow<'static, str>,
@@ -219,76 +218,8 @@ pub enum ParseError {
     },
 }
 
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ParseError::UnexpectedToken { expected, found, range, hint } => {
-                write!(
-                    f,
-                    "{}:{}: expected {}, found {}",
-                    range.start.line + 1,
-                    range.start.column + 1,
-                    expected,
-                    found
-                )?;
-                if let Some(h) = hint {
-                    write!(f, "\n  = hint: {}", h)?;
-                }
-                Ok(())
-            },
-            ParseError::UnexpectedEof { expected, range, hint } => {
-                write!(
-                    f,
-                    "{}:{}: unexpected end of input, expected {}",
-                    range.start.line + 1,
-                    range.start.column + 1,
-                    expected
-                )?;
-                if let Some(h) = hint {
-                    write!(f, "\n  = hint: {}", h)?;
-                }
-                Ok(())
-            },
-            ParseError::LexError { message, position } => {
-                write!(f, "{}:{}: {}", position.line + 1, position.column + 1, message)
-            },
-            ParseError::TrailingTokens { found, range, hint } => {
-                write!(
-                    f,
-                    "{}:{}: unexpected {} after parsing",
-                    range.start.line + 1,
-                    range.start.column + 1,
-                    found
-                )?;
-                if let Some(h) = hint {
-                    write!(f, "\n  = hint: {}", h)?;
-                }
-                Ok(())
-            },
-            ParseError::RecoveryApplied { original_error, repair_description, .. } => {
-                write!(f, "{} (recovered: {})", original_error, repair_description)
-            },
-            ParseError::AmbiguityBudget { budget, actual, range, hint } => {
-                // Engine-neutral wording (task #18, amdt #6): `actual` is a
-                // distinct-reading count under the pure engine and a cursor-
-                // frontier count under the classic lever, so do not label it
-                // "frontier of N cursors".
-                write!(
-                    f,
-                    "{}:{}: ambiguity budget {} exceeded (actual {})",
-                    range.start.line + 1,
-                    range.start.column + 1,
-                    budget,
-                    actual,
-                )?;
-                if let Some(h) = hint {
-                    write!(f, "\n  = hint: {}", h)?;
-                }
-                Ok(())
-            },
-        }
-    }
-}
+#[path = "runtime_types/parse_error_lifecycle.rs"]
+mod parse_error_lifecycle;
 
 impl ParseError {
     /// Get the source range where this error occurred.

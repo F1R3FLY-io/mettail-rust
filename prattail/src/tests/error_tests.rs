@@ -145,10 +145,10 @@ fn test_parse_error_implements_display() {
 fn test_parse_error_from_string() {
     // Verify From<String> for ParseError works
     let err: ParseError = "test error".to_string().into();
-    match err {
+    match &err {
         ParseError::LexError { message, position } => {
             assert_eq!(message, "test error");
-            assert_eq!(position, Position::zero());
+            assert_eq!(*position, Position::zero());
         },
         _ => panic!("From<String> should produce LexError variant"),
     }

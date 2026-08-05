@@ -292,7 +292,6 @@ impl RecoveryConfig {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// A recovery action recommended by the WFST repair analysis.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RepairAction {
     /// Skip tokens until a sync point is reached.
     ///
@@ -364,37 +363,19 @@ pub enum RepairAction {
     },
 }
 
-impl fmt::Display for RepairAction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RepairAction::SkipToSync { skip_count, sync_token } => {
-                write!(f, "skip {} tokens to sync token {}", skip_count, sync_token)
-            },
-            RepairAction::InsertToken { token } => write!(f, "insert token {}", token),
-            RepairAction::DeleteToken => write!(f, "delete token"),
-            RepairAction::SubstituteToken { replacement } => {
-                write!(f, "substitute with token {}", replacement)
-            },
-            RepairAction::SwapTokens { pos_a, pos_b } => {
-                write!(f, "swap tokens at positions {} and {}", pos_a, pos_b)
-            },
-            RepairAction::Composite { steps } => {
-                for (i, step) in steps.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", step)?;
-                }
-                Ok(())
-            },
-            RepairAction::CategorySwitch { from_category, to_category } => {
-                write!(f, "switch {} → {}", from_category, to_category)
-            },
-        }
-    }
-}
+#[path = "config/repair_action_lifecycle.rs"]
+mod repair_action_lifecycle;
 
 impl RepairAction {
+    /// Consume a composite action without recursively dropping or cloning its
+    /// step vector. Returns `None` for atomic actions.
+    pub(crate) fn into_composite_steps(mut self) -> Option<Vec<RepairAction>> {
+        match &mut self {
+            RepairAction::Composite { steps } => Some(std::mem::take(steps)),
+            _ => None,
+        }
+    }
+
     /// Produce a human-readable description of this repair action.
     ///
     /// Uses the `token_names` slice (indexed by `TokenId`) to resolve
@@ -402,27 +383,52 @@ impl RepairAction {
     /// error path only; happy-path parsing never invokes it.
     pub fn describe(&self, token_names: &[&str]) -> String {
         let name = |id: TokenId| -> &str { token_names.get(id as usize).copied().unwrap_or("?") };
-        match self {
-            RepairAction::SkipToSync { skip_count, sync_token } => {
-                format!("skip {} token(s) to '{}'", skip_count, name(*sync_token))
-            },
-            RepairAction::InsertToken { token } => {
-                format!("insert missing '{}'", name(*token))
-            },
-            RepairAction::DeleteToken => "delete unexpected token".to_string(),
-            RepairAction::SubstituteToken { replacement } => {
-                format!("expected '{}' here", name(*replacement))
-            },
-            RepairAction::SwapTokens { .. } => "swap adjacent tokens".to_string(),
-            RepairAction::Composite { steps } => steps
-                .iter()
-                .map(|s| s.describe(token_names))
-                .collect::<Vec<_>>()
-                .join(", "),
-            RepairAction::CategorySwitch { from_category, to_category } => {
-                format!("try parsing as {} (cast {} → {})", to_category, to_category, from_category)
-            },
+        enum Task<'action> {
+            Visit(&'action RepairAction),
+            Separator,
         }
+
+        let mut description = String::new();
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Separator => description.push_str(", "),
+                Task::Visit(RepairAction::Composite { steps }) => {
+                    for (index, step) in steps.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(step));
+                        if index > 0 {
+                            tasks.push(Task::Separator);
+                        }
+                    }
+                },
+                Task::Visit(RepairAction::SkipToSync { skip_count, sync_token }) => {
+                    description.push_str(&format!(
+                        "skip {} token(s) to '{}'",
+                        skip_count,
+                        name(*sync_token)
+                    ));
+                },
+                Task::Visit(RepairAction::InsertToken { token }) => {
+                    description.push_str(&format!("insert missing '{}'", name(*token)));
+                },
+                Task::Visit(RepairAction::DeleteToken) => {
+                    description.push_str("delete unexpected token");
+                },
+                Task::Visit(RepairAction::SubstituteToken { replacement }) => {
+                    description.push_str(&format!("expected '{}' here", name(*replacement)));
+                },
+                Task::Visit(RepairAction::SwapTokens { .. }) => {
+                    description.push_str("swap adjacent tokens");
+                },
+                Task::Visit(RepairAction::CategorySwitch { from_category, to_category }) => {
+                    description.push_str(&format!(
+                        "try parsing as {} (cast {} → {})",
+                        to_category, to_category, from_category
+                    ));
+                },
+            }
+        }
+        description
     }
 
     /// Return the semantic edit-distance cost of this repair action.
@@ -438,18 +444,20 @@ impl RepairAction {
     /// optimize parse quality and repair minimality.
     pub fn edit_cost(&self) -> crate::automata::semiring::EditWeight {
         use crate::automata::semiring::EditWeight;
-        match self {
-            RepairAction::SkipToSync { skip_count, .. } => EditWeight::new(*skip_count as u32),
-            RepairAction::DeleteToken => EditWeight::delete(),
-            RepairAction::InsertToken { .. } => EditWeight::insert(),
-            RepairAction::SubstituteToken { .. } => EditWeight::substitute(),
-            RepairAction::SwapTokens { .. } => EditWeight::new(1), // single edit operation
-            RepairAction::Composite { steps } => {
-                let total = steps.iter().map(|s| s.edit_cost().0).sum::<u32>();
-                EditWeight::new(total)
-            },
-            RepairAction::CategorySwitch { .. } => EditWeight::substitute(), // semantic substitution
+        let mut total = 0u32;
+        let mut work = vec![self];
+        while let Some(action) = work.pop() {
+            match action {
+                RepairAction::Composite { steps } => work.extend(steps.iter().rev()),
+                RepairAction::SkipToSync { skip_count, .. } => total += *skip_count as u32,
+                RepairAction::DeleteToken | RepairAction::SwapTokens { .. } => total += 1,
+                RepairAction::InsertToken { .. } => total += EditWeight::insert().0,
+                RepairAction::SubstituteToken { .. } | RepairAction::CategorySwitch { .. } => {
+                    total += EditWeight::substitute().0
+                },
+            }
         }
+        EditWeight::new(total)
     }
 }
 
