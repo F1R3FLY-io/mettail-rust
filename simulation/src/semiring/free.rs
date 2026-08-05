@@ -24,7 +24,6 @@ use mettail_prattail::automata::semiring::SemiringRef;
 /// Represents an unevaluated expression in the free semiring. The expression
 /// tree preserves the algebraic structure of how a weight was computed,
 /// enabling introspection, symbolic simplification, and deferred evaluation.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FreeExpr {
     /// Additive identity (semiring zero).
     Zero,
@@ -37,6 +36,8 @@ pub enum FreeExpr {
     /// Semiring multiplication: `a ⊗ b`.
     Times(Box<FreeExpr>, Box<FreeExpr>),
 }
+
+mod lifecycle;
 
 impl FreeExpr {
     /// Create a generator expression from a name.
@@ -55,90 +56,38 @@ impl FreeExpr {
     /// Does NOT apply commutativity, associativity, or distributivity
     /// (those would change the free semiring into a quotient).
     pub fn simplify(&self) -> Self {
-        // Trampoline-based iterative simplification to avoid stack overflow
-        // on deeply nested expressions.
-        enum Frame {
-            SimplifyPlus(Box<FreeExpr>),
-            SimplifyTimes(Box<FreeExpr>),
-            AssemblePlus(FreeExpr),
-            AssembleTimes(FreeExpr),
+        enum Frame<'expr> {
+            Visit(&'expr FreeExpr),
+            AssemblePlus,
+            AssembleTimes,
         }
 
-        let mut stack: Vec<Frame> = Vec::with_capacity(32);
-        let mut current = self.clone();
+        let mut stack = vec![Frame::Visit(self)];
         let mut result_stack: Vec<FreeExpr> = Vec::with_capacity(32);
-
-        // Initial decomposition
-        loop {
-            match current {
-                FreeExpr::Zero | FreeExpr::One | FreeExpr::Gen(_) => {
-                    result_stack.push(current.clone());
-                    break;
-                },
-                FreeExpr::Plus(left, right) => {
-                    stack.push(Frame::SimplifyPlus(right));
-                    current = *left;
-                },
-                FreeExpr::Times(left, right) => {
-                    stack.push(Frame::SimplifyTimes(right));
-                    current = *left;
-                },
-            }
-        }
-
         while let Some(frame) = stack.pop() {
             match frame {
-                Frame::SimplifyPlus(right) => {
-                    let left_result = result_stack
-                        .pop()
-                        .expect("result_stack should have the left operand");
-                    stack.push(Frame::AssemblePlus(left_result));
-                    current = *right;
-                    // Process the right operand
-                    loop {
-                        match current {
-                            FreeExpr::Zero | FreeExpr::One | FreeExpr::Gen(_) => {
-                                result_stack.push(current.clone());
-                                break;
-                            },
-                            FreeExpr::Plus(l, r) => {
-                                stack.push(Frame::SimplifyPlus(r));
-                                current = *l;
-                            },
-                            FreeExpr::Times(l, r) => {
-                                stack.push(Frame::SimplifyTimes(r));
-                                current = *l;
-                            },
-                        }
-                    }
+                Frame::Visit(FreeExpr::Zero) => result_stack.push(FreeExpr::Zero),
+                Frame::Visit(FreeExpr::One) => result_stack.push(FreeExpr::One),
+                Frame::Visit(FreeExpr::Gen(name)) => {
+                    result_stack.push(FreeExpr::Gen(name.clone()));
                 },
-                Frame::SimplifyTimes(right) => {
-                    let left_result = result_stack
-                        .pop()
-                        .expect("result_stack should have the left operand");
-                    stack.push(Frame::AssembleTimes(left_result));
-                    current = *right;
-                    loop {
-                        match current {
-                            FreeExpr::Zero | FreeExpr::One | FreeExpr::Gen(_) => {
-                                result_stack.push(current.clone());
-                                break;
-                            },
-                            FreeExpr::Plus(l, r) => {
-                                stack.push(Frame::SimplifyPlus(r));
-                                current = *l;
-                            },
-                            FreeExpr::Times(l, r) => {
-                                stack.push(Frame::SimplifyTimes(r));
-                                current = *l;
-                            },
-                        }
-                    }
+                Frame::Visit(FreeExpr::Plus(left, right)) => {
+                    stack.push(Frame::AssemblePlus);
+                    stack.push(Frame::Visit(right));
+                    stack.push(Frame::Visit(left));
                 },
-                Frame::AssemblePlus(left) => {
+                Frame::Visit(FreeExpr::Times(left, right)) => {
+                    stack.push(Frame::AssembleTimes);
+                    stack.push(Frame::Visit(right));
+                    stack.push(Frame::Visit(left));
+                },
+                Frame::AssemblePlus => {
                     let right = result_stack
                         .pop()
                         .expect("result_stack should have the right operand");
+                    let left = result_stack
+                        .pop()
+                        .expect("result_stack should have the left operand");
                     let simplified = match (&left, &right) {
                         (FreeExpr::Zero, _) => right,
                         (_, FreeExpr::Zero) => left,
@@ -146,10 +95,13 @@ impl FreeExpr {
                     };
                     result_stack.push(simplified);
                 },
-                Frame::AssembleTimes(left) => {
+                Frame::AssembleTimes => {
                     let right = result_stack
                         .pop()
                         .expect("result_stack should have the right operand");
+                    let left = result_stack
+                        .pop()
+                        .expect("result_stack should have the left operand");
                     let simplified = match (&left, &right) {
                         (FreeExpr::Zero, _) | (_, FreeExpr::Zero) => FreeExpr::Zero,
                         (FreeExpr::One, _) => right,
@@ -339,18 +291,6 @@ impl SemiringRef for FreeWeight {
 
     fn is_one_ref(&self) -> bool {
         self.expr == FreeExpr::One
-    }
-}
-
-impl fmt::Display for FreeExpr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FreeExpr::Zero => write!(f, "0"),
-            FreeExpr::One => write!(f, "1"),
-            FreeExpr::Gen(name) => write!(f, "{}", name),
-            FreeExpr::Plus(l, r) => write!(f, "({} + {})", l, r),
-            FreeExpr::Times(l, r) => write!(f, "({} * {})", l, r),
-        }
     }
 }
 
