@@ -47,11 +47,11 @@ use models::rust::utils::{
 };
 use syn::Ident;
 
-use crate::lower::{RhoLowering, scalar_contract_par_for};
+use crate::lower::{scalar_contract_par_for, RhoLowering};
 use crate::rho_net::{
-    RhoNetProgram, RhoNetRule, RhoNetRuleKind, behavioral_predicate_has_structural_component,
-    rule_id_equation, rule_id_join, rule_id_native, rule_id_rewrite, rule_id_scalar, rule_id_term,
-    term_requires_native_system_process,
+    behavioral_predicate_has_structural_component, rule_id_equation, rule_id_join, rule_id_native,
+    rule_id_rewrite, rule_id_scalar, rule_id_term, term_requires_native_system_process,
+    RhoNetProgram, RhoNetRule, RhoNetRuleKind,
 };
 
 /// Source-construct family that is out of scope for σ-receiver lowering this
@@ -7712,10 +7712,13 @@ fn single_binder_body_category(rule: &GrammarRule) -> Option<String> {
 /// recursively — the macros-side `extract_base_category` behavior). `None` for shapes a binder
 /// codomain never takes (fail-closed).
 fn base_category_name(ty: &TypeExpr) -> Option<String> {
-    match ty {
-        TypeExpr::Base(ident) => Some(ident.to_string()),
-        TypeExpr::Collection { element, .. } => base_category_name(element),
-        _ => None,
+    let mut ty = ty;
+    loop {
+        ty = match ty {
+            TypeExpr::Base(ident) => return Some(ident.to_string()),
+            TypeExpr::Collection { element, .. } => element,
+            _ => return None,
+        };
     }
 }
 
@@ -8200,6 +8203,7 @@ enum FloatConstructorShape {
 /// One restated constructor field — the (category, is_collection, is_optional) triple the
 /// handler's prefix-arm filter reads (`f.category == proc_cat && !f.is_collection &&
 /// !f.is_optional`), mirrored from the macros-side `FieldInfo` derivation.
+#[derive(Debug, PartialEq, Eq)]
 struct RestatedField {
     category: String,
     is_collection: bool,
@@ -8280,7 +8284,12 @@ fn restated_fields_from_params(
     in_optional: bool,
     out: &mut Vec<RestatedField>,
 ) {
-    for param in params {
+    let mut work: Vec<_> = params
+        .iter()
+        .rev()
+        .map(|param| (param, in_optional))
+        .collect();
+    while let Some((param, in_optional)) = work.pop() {
         match param {
             TermParam::Simple { ty, .. } => out.push(restated_field_from_type(ty, in_optional)),
             // The macros-side `field_info_for_guard_slot` marker category, byte-exact.
@@ -8290,7 +8299,7 @@ fn restated_fields_from_params(
                 is_optional: in_optional,
             }),
             TermParam::Optional { params: inner } => {
-                restated_fields_from_params(inner, true, out);
+                work.extend(inner.iter().rev().map(|param| (param, true)));
             },
             TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. }
                 if in_optional =>
@@ -8311,6 +8320,10 @@ fn restated_fields_from_params(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_metadata_recursive_oracle.rs"]
+mod metadata_recursive_oracle;
 
 /// Restate a grammar-item list as constructor fields — the mirror of the macros-side
 /// `variant_kind_from_items` field derivation (non-`Var` non-terminals and collections contribute
@@ -10044,8 +10057,8 @@ mod tests {
     #[test]
     fn lower_rhs_variable_uses_first_occurrence_de_bruijn_index() {
         let vars = vec![ident("a"), ident("b"), ident("c")]; // k = 3
-        // b is the second variable (occurrence index 1) ⇒ BoundVar(3 - 1) = 2.
-        // The fingerprint is unused for a bare variable RHS.
+                                                             // b is the second variable (occurrence index 1) ⇒ BoundVar(3 - 1) = 2.
+                                                             // The fingerprint is unused for a bare variable RHS.
         let par = lower_rhs(&var_pattern("b"), &vars, 3, "fp").expect("bound RHS variable");
         assert_eq!(boundvar_index(&par), Some(2));
         assert_eq!(rhs_var_index(3, 0), 3);
@@ -12958,8 +12971,8 @@ mod tests {
     #[test]
     fn swap_language_plans_to_installed_sigma_receiver() {
         use crate::backend::{
-            RhoDefaultBackendRequirements, plan_rho_default_backend,
-            suggest_rejected_rule_dispositions,
+            plan_rho_default_backend, suggest_rejected_rule_dispositions,
+            RhoDefaultBackendRequirements,
         };
         use crate::{RhoCoverageEvidence, RhoGuardCoverageEvidence};
 

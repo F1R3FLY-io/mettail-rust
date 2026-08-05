@@ -270,18 +270,23 @@ pub fn guard_disposition_covers(
 }
 
 fn pred_has_structural_component(pred: &BehavioralPred) -> bool {
-    match pred {
-        BehavioralPred::AcMatch { .. } => true,
-        BehavioralPred::Quantified { body, .. } | BehavioralPred::Not(body) => {
-            pred_has_structural_component(body)
-        },
-        BehavioralPred::And(left, right)
-        | BehavioralPred::Or(left, right)
-        | BehavioralPred::Implies(left, right) => {
-            pred_has_structural_component(left) || pred_has_structural_component(right)
-        },
-        BehavioralPred::RelationQuery { .. } | BehavioralPred::Top => false,
+    let mut work = vec![pred];
+    while let Some(pred) = work.pop() {
+        match pred {
+            BehavioralPred::AcMatch { .. } => return true,
+            BehavioralPred::Quantified { body, .. } | BehavioralPred::Not(body) => {
+                work.push(body);
+            },
+            BehavioralPred::And(left, right)
+            | BehavioralPred::Or(left, right)
+            | BehavioralPred::Implies(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+            BehavioralPred::RelationQuery { .. } | BehavioralPred::Top => {},
+        }
     }
+    false
 }
 
 fn guard_pred_obligation_kind(pred: &BehavioralPred) -> RhoGuardObligationKind {
@@ -319,35 +324,6 @@ fn collect_term_guard_obligations(
     declared_slots: &[GuardSlotDecl],
     out: &mut BTreeSet<RhoGuardObligation>,
 ) {
-    fn walk_params(
-        label: &str,
-        params: &[TermParam],
-        declared: &BTreeSet<String>,
-        out: &mut BTreeSet<RhoGuardObligation>,
-    ) {
-        for param in params {
-            match param {
-                TermParam::GuardBody { name } => {
-                    out.insert(RhoGuardObligation::new(
-                        format!("term:{label}:guard:{name}"),
-                        RhoGuardObligationKind::BehavioralPredicate,
-                    ));
-                },
-                // A category-typed parameter the author DECLARED to be a guard slot.
-                TermParam::Simple { name, .. } if declared.contains(&name.to_string()) => {
-                    out.insert(RhoGuardObligation::new(
-                        format!("term:{label}:guard:{name}"),
-                        RhoGuardObligationKind::BehavioralPredicate,
-                    ));
-                },
-                TermParam::Optional { params } => walk_params(label, params, declared, out),
-                TermParam::Simple { .. }
-                | TermParam::Abstraction { .. }
-                | TermParam::MultiAbstraction { .. } => {},
-            }
-        }
-    }
-
     if let Some(params) = rule.term_context.as_ref() {
         let label = rule.label.to_string();
         let declared: BTreeSet<String> = declared_slots
@@ -355,7 +331,37 @@ fn collect_term_guard_obligations(
             .filter(|decl| decl.label == label)
             .map(|decl| decl.param.to_string())
             .collect();
-        walk_params(&label, params, &declared, out);
+        collect_term_param_guard_obligations(&label, params, &declared, out);
+    }
+}
+
+fn collect_term_param_guard_obligations(
+    label: &str,
+    params: &[TermParam],
+    declared: &BTreeSet<String>,
+    out: &mut BTreeSet<RhoGuardObligation>,
+) {
+    let mut work: Vec<_> = params.iter().rev().collect();
+    while let Some(param) = work.pop() {
+        match param {
+            TermParam::GuardBody { name } => {
+                out.insert(RhoGuardObligation::new(
+                    format!("term:{label}:guard:{name}"),
+                    RhoGuardObligationKind::BehavioralPredicate,
+                ));
+            },
+            // A category-typed parameter the author DECLARED to be a guard slot.
+            TermParam::Simple { name, .. } if declared.contains(&name.to_string()) => {
+                out.insert(RhoGuardObligation::new(
+                    format!("term:{label}:guard:{name}"),
+                    RhoGuardObligationKind::BehavioralPredicate,
+                ));
+            },
+            TermParam::Optional { params } => work.extend(params.iter().rev()),
+            TermParam::Simple { .. }
+            | TermParam::Abstraction { .. }
+            | TermParam::MultiAbstraction { .. } => {},
+        }
     }
 }
 
@@ -365,35 +371,29 @@ fn collect_premise_guard_obligations(
     premises: &[Premise],
     out: &mut BTreeSet<RhoGuardObligation>,
 ) {
-    fn walk(
-        owner_kind: &str,
-        owner_name: &str,
-        premise: &Premise,
-        index: usize,
-        out: &mut BTreeSet<RhoGuardObligation>,
-    ) {
-        match premise {
-            Premise::BehavioralGuard(pred) => {
-                out.insert(RhoGuardObligation::new(
-                    format!("{owner_kind}:{owner_name}:guard:{index}"),
-                    guard_pred_obligation_kind(pred),
-                ));
-            },
-            Premise::ForAll { body, .. } => walk(owner_kind, owner_name, body, index, out),
-            // ★ (#195) `CongruenceWithheld` carries no guard obligation for the same
-            // reason `Congruence` does not: neither is a semantic predicate. It is
-            // listed explicitly (not defaulted) so the day a polarity acquires an
-            // obligation, the compiler asks about BOTH.
-            Premise::Freshness(_)
-            | Premise::Congruence { .. }
-            | Premise::CongruenceWithheld { .. }
-            | Premise::RelationQuery { .. }
-            | Premise::SyntheticInjGuard { .. } => {},
-        }
-    }
-
     for (index, premise) in premises.iter().enumerate() {
-        walk(owner_kind, owner_name, premise, index, out);
+        let mut premise = premise;
+        loop {
+            match premise {
+                Premise::ForAll { body, .. } => premise = body,
+                Premise::BehavioralGuard(pred) => {
+                    out.insert(RhoGuardObligation::new(
+                        format!("{owner_kind}:{owner_name}:guard:{index}"),
+                        guard_pred_obligation_kind(pred),
+                    ));
+                    break;
+                },
+                // ★ (#195) `CongruenceWithheld` carries no guard obligation for the same
+                // reason `Congruence` does not: neither is a semantic predicate. It is
+                // listed explicitly (not defaulted) so the day a polarity acquires an
+                // obligation, the compiler asks about BOTH.
+                Premise::Freshness(_)
+                | Premise::Congruence { .. }
+                | Premise::CongruenceWithheld { .. }
+                | Premise::RelationQuery { .. }
+                | Premise::SyntheticInjGuard { .. } => break,
+            }
+        }
     }
 }
 
@@ -411,20 +411,29 @@ fn collect_rewrite_guard_obligations(
 /// parser's `GuardExpression` item. A language with no such slot never parses a predicate, so
 /// there is no built-in-predicate work to induce an obligation for.
 fn language_reaches_the_builtin_predicate_vocabulary(def: &LanguageDef) -> bool {
-    fn params_have_guard_body(params: &[TermParam]) -> bool {
-        params.iter().any(|param| match param {
-            TermParam::GuardBody { .. } => true,
-            TermParam::Optional { params } => params_have_guard_body(params),
-            TermParam::Simple { .. }
-            | TermParam::Abstraction { .. }
-            | TermParam::MultiAbstraction { .. } => false,
-        })
-    }
     def.terms
         .iter()
         .filter_map(|rule| rule.term_context.as_ref())
         .any(|params| params_have_guard_body(params))
 }
+
+fn params_have_guard_body(params: &[TermParam]) -> bool {
+    let mut work: Vec<_> = params.iter().collect();
+    while let Some(param) = work.pop() {
+        match param {
+            TermParam::GuardBody { .. } => return true,
+            TermParam::Optional { params } => work.extend(params),
+            TermParam::Simple { .. }
+            | TermParam::Abstraction { .. }
+            | TermParam::MultiAbstraction { .. } => {},
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+#[path = "../tests/support/backend_recursive_oracle.rs"]
+mod recursive_oracle;
 
 fn collect_guard_config_obligations(
     guard_config: &GuardConfig,
@@ -2155,15 +2164,21 @@ mod tests {
             "RhoNativeSystemProcess",
         );
         assert_eq!(
-            RhoRejectedRuleDispositionKind::NativeHandler.lowering_lane().as_str(),
+            RhoRejectedRuleDispositionKind::NativeHandler
+                .lowering_lane()
+                .as_str(),
             "RhoNativeHandler",
         );
         assert_eq!(
-            RhoRejectedRuleDispositionKind::ExternalContract.lowering_lane().as_str(),
+            RhoRejectedRuleDispositionKind::ExternalContract
+                .lowering_lane()
+                .as_str(),
             "RhoExternalContract",
         );
         assert_eq!(
-            RhoRejectedRuleDispositionKind::RhoAstContract.lowering_lane().as_str(),
+            RhoRejectedRuleDispositionKind::RhoAstContract
+                .lowering_lane()
+                .as_str(),
             "RhoAstContract",
         );
     }
