@@ -144,14 +144,39 @@ impl<L> Default for PatternCompiler<L> {
 
 impl<L: Clone + Eq + Hash> PatternCompiler<L> {
     fn compile(&mut self, pattern: &Pattern<L>) -> StateId {
-        match pattern {
-            Pattern::Var(name) => self.intern(StateKey::Var(name.clone())),
-            Pattern::App { op, args } => {
-                let args = args.iter().map(|arg| self.compile(arg)).collect();
-                self.intern(StateKey::App { op: op.clone(), args })
-            },
-            Pattern::AcApp { .. } => unreachable!("AcApp rejected before state compilation"),
+        enum Task<'a, L> {
+            Visit(&'a Pattern<L>),
+            Assemble { op: L, child_count: usize },
         }
+
+        let mut tasks = vec![Task::Visit(pattern)];
+        let mut states = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Pattern::Var(name)) => {
+                    states.push(self.intern(StateKey::Var(name.clone())));
+                },
+                Task::Visit(Pattern::App { op, args }) => {
+                    tasks.push(Task::Assemble { op: op.clone(), child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Visit(Pattern::AcApp { .. }) => {
+                    unreachable!("AcApp rejected before state compilation")
+                },
+                Task::Assemble { op, child_count } => {
+                    let first_child = states
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("pattern-compiler PDA lost a child state");
+                    let args = states.split_off(first_child);
+                    states.push(self.intern(StateKey::App { op, args }));
+                },
+            }
+        }
+        debug_assert_eq!(states.len(), 1);
+        states
+            .pop()
+            .expect("pattern-compiler PDA produced no root state")
     }
 
     fn intern(&mut self, key: StateKey<L>) -> StateId {
@@ -526,6 +551,10 @@ fn merge_substs<L: Clone + Eq + Hash>(
 }
 
 #[cfg(test)]
+#[path = "../tests/support/set_automaton_compile_recursive_oracle.rs"]
+mod compile_recursive_oracle;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::egraph::ENode;
@@ -556,7 +585,10 @@ mod tests {
         let view = automaton.view();
 
         assert_eq!(view.entry_count(), 1);
-        assert!(view.variable_root_entries().is_empty(), "an App-rooted pattern has no variable root");
+        assert!(
+            view.variable_root_entries().is_empty(),
+            "an App-rooted pattern has no variable root"
+        );
 
         let root = view.entry_root_state(0);
         match view.node(root) {
@@ -773,15 +805,19 @@ mod tests {
     fn extend_equals_batch_on_the_concatenated_sequence() {
         // The T-INCR invariant, field-for-field (PartialEq covers entries, the
         // retained interner, variable_roots, and app_roots).
-        let base: Vec<(PatternId, Pattern<String>)> =
-            (0..8).map(|i| (PatternId(i), chain_pattern(i, 1))).collect();
-        let appended: Vec<(PatternId, Pattern<String>)> =
-            (0..3).map(|i| (PatternId(8 + i), chain_pattern(i, 2))).collect();
+        let base: Vec<(PatternId, Pattern<String>)> = (0..8)
+            .map(|i| (PatternId(i), chain_pattern(i, 1)))
+            .collect();
+        let appended: Vec<(PatternId, Pattern<String>)> = (0..3)
+            .map(|i| (PatternId(8 + i), chain_pattern(i, 2)))
+            .collect();
 
-        let mut incremental = SetAutomaton::compile_structural(base.clone())
-            .expect("the base ladder compiles");
+        let mut incremental =
+            SetAutomaton::compile_structural(base.clone()).expect("the base ladder compiles");
         let base_state_count = incremental.view().state_count();
-        incremental.extend(appended.clone()).expect("the extension compiles");
+        incremental
+            .extend(appended.clone())
+            .expect("the extension compiles");
 
         let batch = SetAutomaton::compile_structural(base.into_iter().chain(appended))
             .expect("the concatenated ladder compiles");
@@ -794,12 +830,14 @@ mod tests {
 
     #[test]
     fn extend_is_stateid_prefix_stable_and_appends_only_unshared_states() {
-        let base: Vec<(PatternId, Pattern<String>)> =
-            (0..4).map(|i| (PatternId(i), chain_pattern(i, 1))).collect();
+        let base: Vec<(PatternId, Pattern<String>)> = (0..4)
+            .map(|i| (PatternId(i), chain_pattern(i, 1)))
+            .collect();
         let mut automaton =
             SetAutomaton::compile_structural(base).expect("the base ladder compiles");
-        let before: Vec<StateId> =
-            (0..automaton.view().entry_count()).map(|e| automaton.view().entry_root_state(e)).collect();
+        let before: Vec<StateId> = (0..automaton.view().entry_count())
+            .map(|e| automaton.view().entry_root_state(e))
+            .collect();
         let before_states = automaton.view().state_count();
 
         // `R0(S(x))` again under a NEW id: fully shared — zero new states, and the
@@ -809,7 +847,9 @@ mod tests {
             .expect("a fully-shared extension compiles");
         assert_eq!(automaton.view().state_count(), before_states, "nothing new interned");
         assert_eq!(
-            automaton.view().entry_root_state(automaton.view().entry_count() - 1),
+            automaton
+                .view()
+                .entry_root_state(automaton.view().entry_count() - 1),
             before[0],
             "the duplicate pattern shares the existing root state"
         );
@@ -838,8 +878,9 @@ mod tests {
         // The design §4.5 diagonal worst case: N single-pattern extensions must equal
         // the one-shot batch compile, and the interned-state count stays bounded by
         // the total pattern nodes (the size-optimality bound `states ≤ raw nodes`).
-        let patterns: Vec<(PatternId, Pattern<String>)> =
-            (0..16).map(|i| (PatternId(i), chain_pattern(i % 5, 1 + i / 5))).collect();
+        let patterns: Vec<(PatternId, Pattern<String>)> = (0..16)
+            .map(|i| (PatternId(i), chain_pattern(i % 5, 1 + i / 5)))
+            .collect();
         let raw_nodes: usize = patterns
             .iter()
             .map(|(_, p)| {
@@ -857,7 +898,9 @@ mod tests {
         let mut diagonal = SetAutomaton::compile_structural(patterns[..1].to_vec())
             .expect("the first pattern compiles");
         for pattern in &patterns[1..] {
-            diagonal.extend([pattern.clone()]).expect("each diagonal step compiles");
+            diagonal
+                .extend([pattern.clone()])
+                .expect("each diagonal step compiles");
         }
         let batch =
             SetAutomaton::compile_structural(patterns).expect("the batch sequence compiles");
@@ -870,16 +913,19 @@ mod tests {
 
     #[test]
     fn extend_rejects_ac_atomically() {
-        let mut automaton =
-            SetAutomaton::compile_structural([(PatternId(0), chain_pattern(0, 1))])
-                .expect("the base compiles");
+        let mut automaton = SetAutomaton::compile_structural([(PatternId(0), chain_pattern(0, 1))])
+            .expect("the base compiles");
         let before = automaton.clone();
         let err = automaton
             .extend([
                 (PatternId(1), chain_pattern(1, 1)),
                 (
                     PatternId(2),
-                    Pattern::ac("par".to_string(), vec![Pattern::var("x")], Some("rest".to_string())),
+                    Pattern::ac(
+                        "par".to_string(),
+                        vec![Pattern::var("x")],
+                        Some("rest".to_string()),
+                    ),
                 ),
             ])
             .expect_err("an AC pattern in the extension must fail closed");
@@ -901,7 +947,9 @@ mod tests {
         let mut incremental =
             SetAutomaton::compile_structural([(PatternId(0), chain_pattern(0, 1))])
                 .expect("the base compiles");
-        incremental.extend([(PatternId(1), chain_pattern(0, 2))]).expect("the extension compiles");
+        incremental
+            .extend([(PatternId(1), chain_pattern(0, 2))])
+            .expect("the extension compiles");
         let batch = SetAutomaton::compile_structural([
             (PatternId(0), chain_pattern(0, 1)),
             (PatternId(1), chain_pattern(0, 2)),

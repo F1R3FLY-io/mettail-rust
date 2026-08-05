@@ -16,7 +16,6 @@ use crate::set_automaton::{
 };
 
 /// A pattern over operator labels `L` with named pattern variables.
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Pattern<L> {
     /// A pattern variable, binding to an e-class.
     Var(String),
@@ -37,6 +36,170 @@ pub enum Pattern<L> {
         fixed: Vec<Pattern<L>>,
         rest: Option<String>,
     },
+}
+
+impl<L: Clone> Clone for Pattern<L> {
+    fn clone(&self) -> Self {
+        enum Task<'a, L> {
+            Visit(&'a Pattern<L>),
+            AssembleApp {
+                op: L,
+                child_count: usize,
+            },
+            AssembleAc {
+                op: L,
+                child_count: usize,
+                rest: Option<String>,
+            },
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Pattern::Var(name)) => values.push(Pattern::Var(name.clone())),
+                Task::Visit(Pattern::App { op, args }) => {
+                    tasks.push(Task::AssembleApp { op: op.clone(), child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Visit(Pattern::AcApp { op, fixed, rest }) => {
+                    tasks.push(Task::AssembleAc {
+                        op: op.clone(),
+                        child_count: fixed.len(),
+                        rest: rest.clone(),
+                    });
+                    tasks.extend(fixed.iter().rev().map(Task::Visit));
+                },
+                Task::AssembleApp { op, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("Pattern clone PDA lost an application child");
+                    let args = values.split_off(first_child);
+                    values.push(Pattern::App { op, args });
+                },
+                Task::AssembleAc { op, child_count, rest } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("Pattern clone PDA lost an AC child");
+                    let fixed = values.split_off(first_child);
+                    values.push(Pattern::AcApp { op, fixed, rest });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("Pattern clone PDA produced no result")
+    }
+}
+
+impl<L: PartialEq> PartialEq for Pattern<L> {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some((left, right)) = pending.pop() {
+            match (left, right) {
+                (Pattern::Var(left), Pattern::Var(right)) if left == right => {},
+                (
+                    Pattern::App { op: left_op, args: left_args },
+                    Pattern::App { op: right_op, args: right_args },
+                ) if left_op == right_op && left_args.len() == right_args.len() => {
+                    pending.extend(left_args.iter().zip(right_args).rev());
+                },
+                (
+                    Pattern::AcApp {
+                        op: left_op,
+                        fixed: left_fixed,
+                        rest: left_rest,
+                    },
+                    Pattern::AcApp {
+                        op: right_op,
+                        fixed: right_fixed,
+                        rest: right_rest,
+                    },
+                ) if left_op == right_op
+                    && left_rest == right_rest
+                    && left_fixed.len() == right_fixed.len() =>
+                {
+                    pending.extend(left_fixed.iter().zip(right_fixed).rev());
+                },
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl<L: Eq> Eq for Pattern<L> {}
+
+impl<L: std::fmt::Debug> std::fmt::Debug for Pattern<L> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        enum Task<'a, L> {
+            Visit(&'a Pattern<L>),
+            Text(&'static str),
+            DebugLabel(&'a L),
+            DebugString(&'a Option<String>),
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Pattern::Var(name)) => write!(formatter, "Var({name:?})")?,
+                Task::Visit(Pattern::App { op, args }) => {
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Text("]"));
+                    for (index, arg) in args.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(arg));
+                        if index > 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                    tasks.push(Task::Text("args: ["));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::DebugLabel(op));
+                    tasks.push(Task::Text("App { op: "));
+                },
+                Task::Visit(Pattern::AcApp { op, fixed, rest }) => {
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::DebugString(rest));
+                    tasks.push(Task::Text("rest: "));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::Text("]"));
+                    for (index, pattern) in fixed.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(pattern));
+                        if index > 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                    tasks.push(Task::Text("fixed: ["));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::DebugLabel(op));
+                    tasks.push(Task::Text("AcApp { op: "));
+                },
+                Task::Text(text) => formatter.write_str(text)?,
+                Task::DebugLabel(label) => write!(formatter, "{label:?}")?,
+                Task::DebugString(value) => write!(formatter, "{value:?}")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<L> Drop for Pattern<L> {
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        match self {
+            Pattern::Var(_) => {},
+            Pattern::App { args, .. } => pending.append(args),
+            Pattern::AcApp { fixed, .. } => pending.append(fixed),
+        }
+        while let Some(mut pattern) = pending.pop() {
+            match &mut pattern {
+                Pattern::Var(_) => {},
+                Pattern::App { args, .. } => pending.append(args),
+                Pattern::AcApp { fixed, .. } => pending.append(fixed),
+            }
+        }
+    }
 }
 
 impl<L> Pattern<L> {
@@ -191,7 +354,8 @@ pub type NativeOpId = u32;
 /// the generated `dovetail_report_for` build (`E0373`: "closure may outlive the
 /// current function"). Naming it restores the original, strictly-more-general
 /// contract.
-pub type NativeDispatch<'a, L> = dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId> + 'a;
+pub type NativeDispatch<'a, L> =
+    dyn Fn(NativeOpId, &mut EGraph<L>, &Subst) -> Option<EClassId> + 'a;
 
 /// A native-computed rewrite rule `lhs ~> ⟨native op⟩`.
 ///
@@ -333,7 +497,12 @@ impl SatReport {
         rule_firings: Vec<RuleFiring>,
         rewrite_justifications: Vec<RewriteJustification>,
     ) -> Self {
-        SatReport { outcome, stats, rule_firings, rewrite_justifications }
+        SatReport {
+            outcome,
+            stats,
+            rule_firings,
+            rewrite_justifications,
+        }
     }
 }
 
@@ -1699,6 +1868,10 @@ mod dv0_probe {
 }
 
 #[cfg(test)]
+#[path = "../tests/support/pattern_lifecycle_recursive_oracle.rs"]
+mod pattern_lifecycle_recursive_oracle;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::egraph::EGraphConfig;
@@ -2542,10 +2715,10 @@ mod tests {
             op: 0,
             label: Some("NlComm".into()),
         }];
-        let dispatch =
-            |_op: NativeOpId, eg: &mut EGraph<String>, _subst: &Subst| -> Option<EClassId> {
-                Some(eg.add(ENode::leaf("reduct".into())))
-            };
+        let dispatch = |_op: NativeOpId,
+                        eg: &mut EGraph<String>,
+                        _subst: &Subst|
+         -> Option<EClassId> { Some(eg.add(ENode::leaf("reduct".into()))) };
         let rep = eg.saturate_with_native(&[], &native, &dispatch, 20);
         assert_eq!(rep.outcome, SaturationOutcome::Converged);
         assert!(

@@ -26,7 +26,7 @@ fn pattern_ac_builds_acapp_with_fixed_and_rest() {
         ],
         Some("rest".to_string()),
     );
-    match pat {
+    match &pat {
         Pattern::AcApp { op, fixed, rest } => {
             assert_eq!(op, "par", "AC op label preserved");
             assert_eq!(fixed.len(), 2, "two fixed sub-patterns");
@@ -43,7 +43,7 @@ fn pattern_ac_builds_acapp_with_fixed_and_rest() {
 fn pattern_ac_without_rest() {
     let pat: Pattern<String> =
         Pattern::ac("par".into(), vec![Pattern::var("P"), Pattern::var("Q")], None);
-    match pat {
+    match &pat {
         Pattern::AcApp { op, fixed, rest } => {
             assert_eq!(op, "par");
             assert_eq!(fixed.len(), 2);
