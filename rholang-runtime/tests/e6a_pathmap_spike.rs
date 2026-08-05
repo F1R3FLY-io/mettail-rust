@@ -2,15 +2,14 @@
 //! possible in-Rho probes of the PathMap-backed subject index, on live
 //! counting f1r3node runtimes (`bench-naive-baseline` quarantine):
 //!
-//! * (U1, refutation arm) an [`EPathMap`] RECEIVE PATTERN cannot destructure
-//!   sub-entries — the spatial matcher has no `EPathmapBody` arm
-//!   (`spatial_matcher.rs:633` falls through `_ => None`), so the pattern
-//!   never fires; a bare free-var pattern binds the WHOLE value and the value
-//!   round-trips byte-identically;
+//! * (U1, homogeneous-mode arm) a set-mode [`EPathMap`] receive pattern does
+//!   not cross-match the map-mode subject index, while a map-mode pattern does
+//!   bind a native value slot through the PathMap matcher PDA; a bare free-var
+//!   pattern still binds the whole value byte-identically;
 //! * (U1, positive arm + U2/U3) the process-context QUERY CHAIN works end to
 //!   end: persistent index publish → machine-side per-op site enumeration
-//!   (`readZipperAt(..).getSubtrie()`) → per-site guard (`pathExists`) + σ
-//!   extraction (`descendFirst().getLeaf()` + `EList`/`ETuple` match) →
+//!   (`readZipperAt(..).getSubtrie()`) → exact map-key guards (`contains`) + σ
+//!   extraction (`atPath`) →
 //!   accept fires in the `build_accept_send` ABI, with ZERO `loc:`/`col:`/
 //!   `cap:` traffic (`matching_tau == 0`) and a deterministic COMM profile;
 //! * (U2) THREE repeated runs produce bit-identical observed multisets,
@@ -20,7 +19,8 @@ use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::{EPathMap, Expr, Par, ReceiveBind};
 use models::rust::utils::{
-    new_boundvar_par, new_freevar_par, new_gstring_par, new_receive_par, new_send_par,
+    new_boundvar_par, new_elist_par, new_freevar_par, new_gstring_par, new_receive_par,
+    new_send_par,
 };
 
 use mettail_rholang_codegen::{reflect_ground_term_par, GroundTerm, InRhoMatchingRuleset};
@@ -29,6 +29,8 @@ use mettail_rholang_runtime::{
     e6a_index_channel, e6a_sites_channel, e6a_tag_string, entry_query_match_par, entry_query_shape,
     pathmap_spread_term_par, sites_non_ancestral, BenchWorkloadParams, CommCounterSnapshot,
 };
+use models::rust::epathmap_trie_codec::EPathMapMode;
+use rholang::rust::interpreter::matcher::spatial_matcher::SpatialMatcherContext;
 use rholang::rust::interpreter::rho_runtime::RhoRuntime;
 
 use dovetail::rules::Pattern;
@@ -40,6 +42,35 @@ const OUT: &str = "OUT";
 
 fn quoted(name: &str) -> Par {
     new_gstring_par(name.to_string(), Vec::new(), false)
+}
+
+fn epathmap_par(pathmap: EPathMap, connective_used: bool) -> Par {
+    let mut par = Par::default();
+    par.exprs = vec![Expr {
+        expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+    }];
+    par.connective_used = connective_used;
+    par
+}
+
+fn single_epathmap(par: &Par) -> &EPathMap {
+    match par.exprs.as_slice() {
+        [Expr {
+            expr_instance: Some(ExprInstance::EPathmapBody(pathmap)),
+        }] => pathmap,
+        other => panic!("expected one EPathMap expression, got {other:?}"),
+    }
+}
+
+fn string_path(parts: &[&str]) -> Par {
+    new_elist_par(
+        parts.iter().map(|part| quoted(part)).collect(),
+        Vec::new(),
+        false,
+        None,
+        Vec::new(),
+        false,
+    )
 }
 
 fn workload(name: &str) -> BenchWorkloadParams {
@@ -150,29 +181,28 @@ fn sorted_renderings(pars: &[Par]) -> Vec<String> {
     rendered
 }
 
-/// (U1) An EPathMap-literal receive PATTERN (free var inside, connective
-/// marked) never fires against an EPathMap datum — receive-pattern
-/// destructuring of sub-entries is IMPOSSIBLE on this machine — while a bare
-/// free-var pattern binds the WHOLE value, which round-trips byte-identically.
+/// (U1) A set-mode EPathMap pattern cannot cross-match the map-mode subject
+/// index. A bare free-variable pattern still binds the whole map value, which
+/// round-trips byte-identically.
 #[tokio::test]
-async fn u1_receive_pattern_cannot_destructure_epathmap() {
+async fn u1_set_pattern_does_not_cross_match_map_index() {
     let subject = two_swap_subject();
-    let (publish, built) =
-        pathmap_spread_term_par(&subject, FP, ROOT_SITE).expect("the 7-node index fits the caps");
+    let (publish, built) = pathmap_spread_term_par(&subject, FP, ROOT_SITE);
     assert_eq!(built.site_entries, 7, "one «s» entry per node");
-    assert_eq!(built.value_entries, 7, "every «v» entry of this small subject fits");
-    assert!(built.omitted_value_locations.is_empty());
+    assert_eq!(built.value_entries, 7, "one native «v» map entry per node");
 
-    // Destructuring attempt: pattern = {| free-var |} (connective marked).
+    assert_eq!(
+        single_epathmap(&built.index).mode(),
+        EPathMapMode::Map,
+        "the subject index stores path/value pairs"
+    );
+
+    // Cross-mode attempt: set pattern = {| free-var |} (connective marked).
+    let set_pattern = EPathMap::new(vec![new_freevar_par(0, Vec::new())], Vec::new(), true, None);
+    assert_eq!(set_pattern.mode(), EPathMapMode::Set);
     let mut destructuring_pattern = Par::default();
     destructuring_pattern.exprs = vec![Expr {
-        // Use the public constructor: the wrapper's trie representation is private.
-        expr_instance: Some(ExprInstance::EPathmapBody(EPathMap::new(
-            vec![new_freevar_par(0, Vec::new())],
-            Vec::new(),
-            true,
-            None,
-        ))),
+        expr_instance: Some(ExprInstance::EPathmapBody(set_pattern)),
     }];
     destructuring_pattern.connective_used = true;
     let destructuring_receive = new_receive_par(
@@ -243,12 +273,75 @@ async fn u1_receive_pattern_cannot_destructure_epathmap() {
         "the bound EPathMap round-trips byte-identically through bind + forward"
     );
 
-    // The destructuring receive did NOT fire: no witness, and its consume rests.
+    // The cross-mode receive did NOT fire: no witness, and its consume rests.
     let witness = runtime.get_data(&quoted("u1:witness")).await;
     assert!(
         witness.is_empty(),
-        "an EPathMap-literal pattern must never destructure-match (spatial_matcher.rs:633 \
-         falls through None); got {witness:?}"
+        "homogeneous EPathMap modes must not cross-match; got {witness:?}"
+    );
+}
+
+/// (U1, positive arm) A map-mode pattern with a concrete key and a dynamic
+/// value traverses the native EPathMap matcher and binds the PathMap value
+/// slot. This keeps the historical cross-mode refusal from being mistaken for
+/// a lack of EPathMap receive-pattern support.
+#[test]
+fn u1_map_pattern_binds_native_value_slot() {
+    let key = quoted("u1:key");
+    let value = quoted("u1:value");
+    let target = epathmap_par(
+        EPathMap::new_map([(key.clone(), value.clone())], Vec::new(), false, None),
+        false,
+    );
+    let pattern = epathmap_par(
+        EPathMap::new_map([(key, new_freevar_par(0, Vec::new()))], Vec::new(), true, None),
+        true,
+    );
+
+    let mut matcher = SpatialMatcherContext::new();
+    assert!(
+        matcher.spatial_match_result(target, pattern).is_some(),
+        "a homogeneous map-mode pattern must traverse the native EPathMap matcher"
+    );
+    assert_eq!(matcher.free_map.get(&0), Some(&value));
+}
+
+/// The native map layout crosses both retired codec ceilings: symbol bytes and
+/// path-segment count. Reflected subtrees occupy value slots at exact location
+/// keys even when those keys are prefixes of deeper entries.
+#[test]
+fn native_map_index_crosses_legacy_symbol_and_depth_boundaries() {
+    let long_constructor = "Constructor".repeat(9); // 99 bytes; the old cap was 62.
+    let long_root = "root".repeat(20); // 80 bytes; the old cap was 62.
+    let mut subject = GroundTerm::nullary(long_constructor);
+    for _ in 0..72 {
+        subject = GroundTerm::new("Node", vec![subject]);
+    }
+
+    let built = mettail_rholang_runtime::build_pathmap_index(&subject, FP, &long_root);
+    let index = single_epathmap(&built.index);
+    assert_eq!(index.mode(), EPathMapMode::Map);
+    assert_eq!(built.site_entries, 73);
+    assert_eq!(built.value_entries, 73);
+    assert_eq!(index.len(), 146, "two native map keys per subject node");
+
+    let root_value_key = string_path(&["v", &long_root]);
+    assert_eq!(
+        index
+            .get_map_value(&root_value_key)
+            .expect("the index is map-mode"),
+        Some(&reflect_ground_term_par(&subject, FP)),
+        "the reflected root subtree is stored directly in the map value slot"
+    );
+
+    let root_tag = e6a_tag_string(FP, "Node");
+    let root_site_key = string_path(&[&root_tag, &long_root]);
+    assert_eq!(
+        index
+            .get_map_value(&root_site_key)
+            .expect("the index is map-mode"),
+        Some(&Par::default()),
+        "the compressed tag/location key uses Nil as its membership marker"
     );
 }
 
@@ -257,8 +350,7 @@ async fn u1_receive_pattern_cannot_destructure_epathmap() {
 async fn drive_flat_two_swap() -> (Vec<String>, Vec<String>, CommCounterSnapshot) {
     let subject = two_swap_subject();
     let ruleset = swap_ruleset();
-    let (publish, built) =
-        pathmap_spread_term_par(&subject, FP, ROOT_SITE).expect("index fits the caps");
+    let (publish, _built) = pathmap_spread_term_par(&subject, FP, ROOT_SITE);
     let discovery = discovery_call_par(&ruleset, FP, ROOT_SITE);
     let shape = entry_query_shape(&ruleset.automaton.view(), 0).expect("Swap(x,y) is linear");
 
@@ -270,18 +362,8 @@ async fn drive_flat_two_swap() -> (Vec<String>, Vec<String>, CommCounterSnapshot
     assert!(sites_non_ancestral(&sites));
     let mut program = publish.append(discovery);
     for site in &sites {
-        program = program.append(
-            entry_query_match_par(
-                &shape,
-                FP,
-                ROOT_SITE,
-                site,
-                "sa:swap",
-                OUT,
-                &built.omitted_value_locations,
-            )
-            .expect("no σ position is cap-omitted"),
-        );
+        program =
+            program.append(entry_query_match_par(&shape, FP, ROOT_SITE, site, "sa:swap", OUT));
         program = program.append(sigma_echo_receiver("sa:swap", 2));
     }
 
@@ -372,8 +454,7 @@ async fn nested_query_chain_fires_two_sites_from_the_index() {
         ],
     );
     let ruleset = nested_ruleset();
-    let (publish, built) =
-        pathmap_spread_term_par(&subject, FP, ROOT_SITE).expect("index fits the caps");
+    let (publish, _built) = pathmap_spread_term_par(&subject, FP, ROOT_SITE);
     let discovery = discovery_call_par(&ruleset, FP, ROOT_SITE);
     let shape = entry_query_shape(&ruleset.automaton.view(), 0).expect("f(g(x)) is linear");
     assert_eq!(shape.guards.len(), 2, "root f + nested g descent");
@@ -382,18 +463,7 @@ async fn nested_query_chain_fires_two_sites_from_the_index() {
     let sites = ["site0/Pair.0".to_string(), "site0/Pair.1".to_string()];
     let mut program = publish.append(discovery);
     for site in &sites {
-        program = program.append(
-            entry_query_match_par(
-                &shape,
-                FP,
-                ROOT_SITE,
-                site,
-                "sa:fg",
-                OUT,
-                &built.omitted_value_locations,
-            )
-            .expect("no σ position is cap-omitted"),
-        );
+        program = program.append(entry_query_match_par(&shape, FP, ROOT_SITE, site, "sa:fg", OUT));
         program = program.append(sigma_echo_receiver("sa:fg", 1));
     }
 
@@ -431,25 +501,14 @@ async fn nested_query_chain_fires_two_sites_from_the_index() {
 async fn guard_failing_sites_fire_nothing_and_never_abort() {
     let subject = two_swap_subject();
     let ruleset = swap_ruleset();
-    let (publish, built) =
-        pathmap_spread_term_par(&subject, FP, ROOT_SITE).expect("index fits the caps");
+    let (publish, _built) = pathmap_spread_term_par(&subject, FP, ROOT_SITE);
     let shape = entry_query_shape(&ruleset.automaton.view(), 0).expect("linear");
 
     // Root site: head is Pair, not Swap (guard false). Stale site: no node.
     let mut program = publish;
     for site in ["site0".to_string(), "site0/Pair.0/Swap.9".to_string()] {
-        program = program.append(
-            entry_query_match_par(
-                &shape,
-                FP,
-                ROOT_SITE,
-                &site,
-                "sa:swap",
-                OUT,
-                &built.omitted_value_locations,
-            )
-            .expect("query builds"),
-        );
+        program =
+            program.append(entry_query_match_par(&shape, FP, ROOT_SITE, &site, "sa:swap", OUT));
     }
     program = program.append(sigma_echo_receiver("sa:swap", 2));
 

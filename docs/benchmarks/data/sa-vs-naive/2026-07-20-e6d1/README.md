@@ -1,5 +1,9 @@
 # 2026-07-20-e6d1 — E-6d #1: E-6a corpus re-measure after the EPathMap P1+P2 fix
 
+> **Historical measurement record.** This report describes the exact 2026-07-20 implementation,
+> including its set-encoded values, intern-store experiment, and retired codec cap. The current
+> E-6a revalidation uses native homogeneous `PathMap<Par>` storage and the capless canonical codec.
+
 Pre-registered pgmcp **experiment 148** (criteria FROZEN before the run). Re-run of the full
 E-6a measured corpus (same workloads, seeds, 33-rep/3-warmup protocol, `taskset -c 0-7` as
 `../2026-07-19-e6a/` and `../2026-07-19-e6a-postfix/`) against f1r3node-rust-mettail branch

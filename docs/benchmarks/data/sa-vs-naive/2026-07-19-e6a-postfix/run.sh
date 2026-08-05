@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# HISTORICAL PROTOCOL ONLY: the cap/DNF expectation and RUST_MIN_STACK setting
+# below reproduce the 2026-07-19 environment. The current native PathMap<Par>
+# treatment is capless and does not require an enlarged Rust thread stack.
 # E-6a POST-FIX re-measurement — identical protocol to ../2026-07-19-e6a/run.sh
 # (33 reps/cell, first 3 warmups, deterministic seeds, pinned to CPUs 0-7),
 # re-run after the f1r3node-rust-mettail `fix/epathmap-trie-cache` fix

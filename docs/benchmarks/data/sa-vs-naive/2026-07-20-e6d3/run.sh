@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# HISTORICAL PROTOCOL ONLY: the cap/DNF expectation and RUST_MIN_STACK setting
+# below reproduce the 2026-07-20 environment. The current native PathMap<Par>
+# treatment is capless and does not require an enlarged Rust thread stack.
 # E-6d #3 re-measurement (pgmcp experiment 150) — identical protocol to
 # ../2026-07-19-e6a/run.sh, ../2026-07-19-e6a-postfix/run.sh,
 # ../2026-07-20-e6d1/run.sh and ../2026-07-20-e6d2/run.sh (33 reps/cell, first

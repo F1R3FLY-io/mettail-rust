@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# HISTORICAL PROTOCOL ONLY: the cap/DNF expectation and RUST_MIN_STACK setting
+# below reproduce the 2026-07-19 environment. The current native PathMap<Par>
+# treatment is capless and does not require an enlarged Rust thread stack.
 # E-6a (pgmcp experiment 145) — the pre-registered measurement run:
 # PathMap-index TREATMENT vs current spread+drive CONTROL, driver-style
 # JSON lines, 33 reps/cell (first 3 warmups), deterministic seeds, pinned

@@ -11,29 +11,25 @@
 //! channels, sites located by the HOST-side `collect_redex_sites` walk). The
 //! treatment replaces BOTH the per-node spread and the host site walk:
 //!
-//! 1. [`pathmap_spread_term_par`] publishes ONE persistent [`EPathMap`] VALUE
-//!    — the subject index — on [`e6a_index_channel`]. Entries mirror
+//! 1. [`pathmap_spread_term_par`] publishes ONE persistent map-mode [`EPathMap`]
+//!    VALUE — the subject index — on [`e6a_index_channel`]. Entries mirror
 //!    `spread_child_location`'s site derivation, with each site's `/`-joined
 //!    location SEGMENTED into its components (`["site0", "Pair.0", "Swap.1"]`)
 //!    so the trie shares prefixes the way the paths-subspaces reading
-//!    prescribes. Two families per subject node at location ℓ with head
-//!    constructor `f` and subtree `t`:
+//!    prescribes. Two key families per subject node at location ℓ with head
+//!    constructor `f` and subtree `t`, both stored directly in the same
+//!    `PathMap<Par>` specialization:
 //!
-//!    * «s» (site/tag): `[tag(f), c₀, …, c_d]` — op-FIRST, so ONE
+//!    * «s» (site/tag): `[tag(f), c₀, …, c_d] ↦ Nil` — op-FIRST, so ONE
 //!      `readZipperAt([tag(op)]).getSubtrie()` query selects every candidate
 //!      site of a rule-root op;
-//!    * «v» (value): `["v", c₀, …, c_d, @val, (⟦t⟧,)]` — the σ carrier: the
-//!      reflected subtree [`reflect_ground_term_par`], wrapped in a 1-TUPLE,
-//!      rides as the last list element after the [`VALUE_LEAF_SENTINEL`]
-//!      (`@val`) segment, recovered in-process by
-//!      `readZipperAt(["v", c₀…c_d, @val]).descendFirst().getLeaf()` (the
-//!      stored trie VALUE is the ORIGINAL entry `Par`, lossless). The `@val`
-//!      sentinel guarantees that below the `["v", c₀…c_d, @val]` prefix there
-//!      is EXACTLY the value tuple — even when the σ position binds a NON-LEAF
-//!      subtree whose DEEPER «v» entries would otherwise share the `["v",
-//!      c₀…c_d]` prefix (they carry a `{op}.{i}` descent component at the
-//!      sentinel's position, never `@val`). See [`VALUE_LEAF_SENTINEL`] for the
-//!      full root cause (the `lambda_chain` binder-body σ fire-0).
+//!    * «v» (value): `["v", c₀, …, c_d] ↦ ⟦t⟧` — the reflected subtree is the
+//!      native `PathMap<Par>` VALUE, recovered by the exact-key
+//!      `atPath(["v", c₀…c_d])` lookup. Values are never appended to keys,
+//!      projected through `Vec<Par>`, or rebuilt from a set representation.
+//!      A value at a prefix and values at deeper descendant keys coexist
+//!      natively, so the former set-encoding sentinel and `descendFirst()`
+//!      workaround are unnecessary.
 //!
 //! 2. [`discovery_call_par`] installs, per rule-root op, the MACHINE-side
 //!    site enumeration (`getSubtrie` on the op prefix, result published on
@@ -44,8 +40,8 @@
 //!    verifies pairwise NON-ANCESTRY ([`sites_non_ancestral`], fail-closed),
 //!    and instantiates one [`entry_query_match_par`] per (entry, candidate
 //!    site): guards re-verify the head tag at the site and every nested
-//!    descent position (`pathExists`), σ binds from the «v» family
-//!    (`descendFirst().getLeaf()` + an `EList`/`ETuple` match), and the
+//!    descent position (`contains`), σ binds from the «v» family through exact
+//!    native map lookup (`atPath`), and the
 //!    accept fires in the exact `build_accept_send` ABI (σ slots in
 //!    pattern-DFS first-occurrence order, then `@out`). This is the
 //!    pre-registered REDUCED form: discovery and matching are machine-side;
@@ -61,27 +57,13 @@
 //! so co-installed per-site query processes cannot contend, at any nesting
 //! depth.
 //!
-//! # Machine caps (discovered in Phase 0/1, enforced host-side)
+//! # Capless native representation
 //!
-//! The reducer's trie-key encoder (`models/src/rust/path_map_encoder.rs`)
-//! PANICS outside its envelope, and `e_pathmap_to_rholang_pathmap` re-encodes
-//! EVERY entry on EVERY query-method call, so an index containing even one
-//! over-cap entry would abort the injection. The caps:
-//!
-//! * S-expression SYMBOL length 1..=63 bytes (`encode_into`, panic) — and
-//!   `Tag::Symbol(63)` encodes as byte `0xC0 + 63 = 0xFF`, COLLIDING with the
-//!   0xFF segment separator the reducer splits child segments on, so the SAFE
-//!   symbol budget is 1..=62 bytes;
-//! * list ARITY ≤ 63 (`encode_into`, panic) — this caps the entry's segment
-//!   count (site depth) and the σ tuple's token count.
-//!
-//! [`pathmap_spread_term_par`] therefore validates every «s» entry against the
-//! caps (an over-cap «s» entry fails the whole cell closed — recorded as a
-//! DNF-by-machine-cap) and OMITS any «v» entry that does not fit (recording
-//! the omitted locations; a query needing σ at an omitted location fails
-//! closed at harness build time via [`e6a_omitted_value_locations`]). The
-//! E-6a corpus σ positions all bind leaf/small subtrees, which fit; what the
-//! caps genuinely exclude is recorded honestly by the driver.
+//! The current canonical path codec is length-delimited and stack-safe. It has
+//! neither the retired 62-byte S-expression symbol ceiling nor the retired
+//! 63-element list-arity ceiling, and PathMap zipper methods operate directly
+//! on the retained trie. The treatment therefore inserts every subject node
+//! without artificial depth, symbol-length, or value-shape exclusions.
 //!
 //! # Determinism
 //!
@@ -97,10 +79,8 @@ use std::time::{Duration, Instant};
 use crypto::rust::hash::blake2b512_random::Blake2b512Random;
 use models::create_bit_vector;
 use models::rhoapi::expr::ExprInstance;
-use models::rhoapi::{EAnd, EList, EMethod, EPathMap, ETuple, Expr, MatchCase, Par, ReceiveBind};
-use models::rust::canonical_path::encode_trie_path;
+use models::rhoapi::{EAnd, EList, EMethod, EPathMap, Expr, MatchCase, Par, ReceiveBind};
 use models::rust::epathmap_trie_codec::EPathMapMode;
-use models::rust::par_to_sexpr::ParToSExpr;
 use models::rust::utils::{
     new_boundvar_par, new_elist_par, new_freevar_par, new_gbool_par, new_gstring_par,
     new_match_par, new_receive_par, new_send_par, new_wildcard_par,
@@ -124,53 +104,11 @@ use crate::bench_support::{
 /// value entry. Distinct from every tag segment (tags start `t.`).
 const VALUE_FAMILY: &str = "v";
 
-/// The «v» value-leaf SENTINEL segment, interposed between a value entry's
-/// LOCATION components and its σ-value tuple: `["v", c₀…c_d, @val, (⟦t⟧,)]`.
-///
-/// # Why (root cause of the `lambda_chain` fire-0)
-///
-/// σ-retrieval is `readZipperAt(["v", c₀…c_d, @val]).descendFirst().getLeaf()`.
-/// Without the sentinel the query prefix was `["v", c₀…c_d]`, and the design
-/// (see the retired module-rustdoc claim) ASSUMED exactly one entry sits below
-/// it. That holds only when the σ position binds a LEAF subterm. When it binds
-/// a NON-LEAF (e.g. `lambda_chain`'s β rule `App(Lam(fun), arg) ~> eval fun
-/// arg` binds `fun` = the lambda BODY `^bound(Z)`, and `arg` = the chain tail),
-/// the subject node has CHILDREN, so DEEPER «v» entries share the `["v",
-/// c₀…c_d]` prefix (`["v", c₀…c_d, {op}.{i}, …]`). Their next segment is a
-/// descent-component `GString` (canonical-codec tag `0x04`), which sorts BEFORE
-/// the value tuple's `ETuple` segment (tag `0x0C`), so `descendFirst`
-/// (byte-lex-smallest child) selected a DEEPER descent branch and `getLeaf`
-/// returned Nil — the σ match then never fired. (Under the reducer's former
-/// S-expression trie codec a list/arity tag byte sorted BEFORE a symbol tag
-/// byte, so the tuple WAS picked first and the bug was latent; the f1r3node
-/// "Job-A" canonical-path re-key flipped that ordering. The bug is INDEPENDENT
-/// of the E-2-D `^gnd`/`^nog` marker — the marker enlarges the tuple's CONTENT
-/// but never changes the descent CHOICE, since the tuple's leading `0x0C` and
-/// the descent `GString`'s leading `0x04` are both marker-invariant.)
-///
-/// The sentinel makes each location's σ value uniquely addressable: below
-/// `["v", c₀…c_d, @val]` there is EXACTLY the value tuple (a deeper «v» entry
-/// carries a `{op}.{i}` component at that position, never `@val`), so
-/// `descendFirst` unambiguously descends the tuple regardless of σ arity. It is
-/// collision-free with every location component (`root_site` = `site0`; every
-/// descent component is `{op}.{index}`, which always contains a `.` — `@val`
-/// contains none) and with the family discriminant (`v`).
-const VALUE_LEAF_SENTINEL: &str = "@val";
-
-/// The SAFE S-expression symbol budget: the encoder panics outside 1..=63 and
-/// `Symbol(63)`'s tag byte is `0xFF` (the segment separator), so 62 is the
-/// largest collision-free symbol length.
-const MAX_SYMBOL_BYTES: usize = 62;
-
-/// The encoder's list-arity cap (inclusive; `encode_into` panics above it).
-const MAX_LIST_ARITY: usize = 63;
-
 /// How many leading fingerprint characters the E-6a tag strings carry. The tag
 /// is an E-6a-LOCAL trie key (both the index build and every query derive it
-/// through [`e6a_tag_string`]) — it deliberately does NOT reuse the full
-/// `mettail.term.{fp}.{ctor}` reflect-tag string, whose unbounded fingerprint
-/// could blow the symbol cap. One language per counting runtime (the bench
-/// discipline), so the 8-char prefix cannot collide across languages.
+/// through [`e6a_tag_string`]). One language per counting runtime (the bench
+/// discipline), so the 8-char prefix cannot collide across languages. The
+/// prefix is an experiment namespace choice, not a codec limit.
 const TAG_FINGERPRINT_PREFIX: usize = 8;
 
 /// The deterministic E-6a tag STRING of a constructor: `t.{fp≤8}.{ctor}`.
@@ -206,23 +144,6 @@ fn ground_list(elements: Vec<Par>) -> Par {
     new_elist_par(elements, Vec::new(), false, None, Vec::new(), false)
 }
 
-/// A ground 1-`ETuple` wrapping `inner` — the σ-carrier wrapper: the tuple's
-/// S-expression `(tuple …)` is `(`-headed, so the reducer's `parse_sexpr`
-/// parses it as a LIST of small symbols instead of one giant symbol, keeping
-/// every symbol under the 62-byte cap for any subtree whose token shape fits
-/// the arity cap (validated host-side by [`entry_fits_machine_caps`]).
-fn ground_tuple(inner: Par) -> Par {
-    let mut par = Par::default();
-    par.exprs = vec![Expr {
-        expr_instance: Some(ExprInstance::ETupleBody(ETuple {
-            ps: vec![inner],
-            locally_free: Vec::new(),
-            connective_used: false,
-        })),
-    }];
-    par
-}
-
 /// A `Par` carrying one method call `target.method_name(args…)`, free in the
 /// De Bruijn indices `free`.
 fn method_par(target: Par, method_name: &str, arguments: Vec<Par>, free: &[usize]) -> Par {
@@ -243,167 +164,45 @@ fn method_par(target: Par, method_name: &str, arguments: Vec<Par>, free: &[usize
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Host-side mirror of the reducer's trie-key caps
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Split an S-expression body on depth-0 spaces — the exact tokenization of
-/// the reducer's `split_sexpr` (parens and double-quotes drive depth/string
-/// state; brackets are ordinary symbol characters).
-fn split_sexpr_tokens(s: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut depth = 0i32;
-    let mut in_string = false;
-    let mut escape = false;
-    for ch in s.chars() {
-        if escape {
-            current.push(ch);
-            escape = false;
-            continue;
-        }
-        match ch {
-            '\\' if in_string => escape = true,
-            '"' => {
-                in_string = !in_string;
-                current.push(ch);
-            },
-            '(' if !in_string => {
-                depth += 1;
-                current.push(ch);
-            },
-            ')' if !in_string => {
-                depth -= 1;
-                current.push(ch);
-            },
-            ' ' | '\t' | '\n' if !in_string && depth == 0 => {
-                if !current.is_empty() {
-                    parts.push(std::mem::take(&mut current));
-                }
-            },
-            _ => current.push(ch),
-        }
-    }
-    if !current.is_empty() {
-        parts.push(current);
-    }
-    parts
-}
-
-/// NOTE: the reducer's `split_sexpr` does NOT push the quote characters into
-/// the token (`'"' => in_string = !in_string` without a push), so a quoted
-/// symbol loses its quotes during tokenization inside lists — but a TOP-LEVEL
-/// quoted string (`parse_sexpr` on `"…"`) keeps them (it never tokenizes).
-/// [`split_sexpr_tokens`] above deliberately KEEPS quotes so the host-side
-/// length check is CONSERVATIVE (an over-estimate can only fail closed).
-///
-/// Whether one S-expression STRING fits the reducer's encode caps: parsed the
-/// way `parse_sexpr` parses it, every symbol must be 1..=[`MAX_SYMBOL_BYTES`]
-/// bytes and every list arity ≤ [`MAX_LIST_ARITY`].
-fn sexpr_string_fits(s: &str) -> bool {
-    let s = s.trim();
-    if !s.starts_with('(') {
-        let len = s.len();
-        return (1..=MAX_SYMBOL_BYTES).contains(&len);
-    }
-    if s.starts_with('(') && s.ends_with(')') {
-        let inner = &s[1..s.len() - 1];
-        let tokens = split_sexpr_tokens(inner);
-        if tokens.len() > MAX_LIST_ARITY {
-            return false;
-        }
-        return tokens.iter().all(|token| sexpr_string_fits(token));
-    }
-    (1..=MAX_SYMBOL_BYTES).contains(&s.len())
-}
-
-/// Whether one INDEX ENTRY (an `EList` of elements) fits the machine caps:
-/// element count ≤ [`MAX_LIST_ARITY`] (the entry's segment count) and every
-/// element's S-expression fits ([`sexpr_string_fits`]).
-fn entry_fits_machine_caps(elements: &[Par]) -> bool {
-    if elements.len() > MAX_LIST_ARITY {
-        return false;
-    }
-    elements
-        .iter()
-        .all(|element| sexpr_string_fits(&ParToSExpr::par_to_sexpr(element)))
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // The index value + the ONE persistent publish (the treatment "spread")
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A built subject index: the [`EPathMap`] VALUE plus the build metadata the
-/// harness needs for honest accounting and fail-closed σ checks.
+/// A built subject index and its accounting metadata.
 #[derive(Debug, Clone)]
 pub struct PathmapIndex {
     /// The index EPathMap VALUE (publish with [`pathmap_spread_term_par`]).
     pub index: Par,
     /// «s» entries (one per subject node).
     pub site_entries: usize,
-    /// «v» entries actually included (≤ node count).
+    /// «v» entries (one per subject node).
     pub value_entries: usize,
-    /// Locations whose «v» entry was OMITTED because its encoding would blow
-    /// the machine caps. A query needing σ at one of these fails closed at
-    /// harness build time.
-    pub omitted_value_locations: BTreeSet<String>,
 }
 
-fn push_index_entries(
+/// Append the two native map entries for one subject node at `components`.
+fn push_index_entries_for_node(
     term: &GroundTerm,
     language_fingerprint: &str,
-    components: &mut Vec<String>,
-    entries: &mut Vec<Par>,
-    value_entries: &mut usize,
-    omitted: &mut BTreeSet<String>,
-) -> Result<(), String> {
-    // «s»: [ tag(f), c₀, …, c_d ] — MUST fit (else the cell fails closed).
+    components: &[String],
+    entries: &mut Vec<(Par, Par)>,
+) {
+    // «s»: [tag(f), c₀, …, c_d] ↦ Nil. The key supplies the compressed
+    // tag/location index; the value slot is deliberately empty.
     let mut s_elements: Vec<Par> = Vec::with_capacity(1 + components.len());
     s_elements.push(quoted(&e6a_tag_string(language_fingerprint, &term.constructor)));
-    for component in components.iter() {
+    for component in components {
         s_elements.push(quoted(component));
     }
-    if !entry_fits_machine_caps(&s_elements) {
-        return Err(format!(
-            "E-6a index «s» entry exceeds the machine trie-key caps at location `{}` \
-             (site depth {} — symbol ≤ {MAX_SYMBOL_BYTES} bytes, arity ≤ {MAX_LIST_ARITY}): \
-             the cell fails closed (DNF-by-machine-cap)",
-            components.join("/"),
-            components.len(),
-        ));
-    }
-    entries.push(ground_list(s_elements));
+    entries.push((ground_list(s_elements), Par::default()));
 
-    // «v»: [ "v", c₀, …, c_d, @val, (⟦t⟧,) ] — OMITTED (recorded) when over-cap.
-    // The `@val` sentinel isolates the σ value below `["v", c₀…c_d, @val]` so it
-    // stays uniquely addressable when the σ position binds a NON-LEAF (deeper
-    // «v» entries share `["v", c₀…c_d]`); see [`VALUE_LEAF_SENTINEL`].
-    let mut v_elements: Vec<Par> = Vec::with_capacity(3 + components.len());
+    // «v»: ["v", c₀, …, c_d] ↦ ⟦t⟧. PathMap natively supports a value at a
+    // prefix that also owns deeper descendants, so neither a sentinel nor a
+    // tuple-in-the-key encoding is needed.
+    let mut v_elements: Vec<Par> = Vec::with_capacity(1 + components.len());
     v_elements.push(quoted(VALUE_FAMILY));
-    for component in components.iter() {
+    for component in components {
         v_elements.push(quoted(component));
     }
-    v_elements.push(quoted(VALUE_LEAF_SENTINEL));
-    v_elements.push(ground_tuple(reflect_ground_term_par(term, language_fingerprint)));
-    if entry_fits_machine_caps(&v_elements) {
-        entries.push(ground_list(v_elements));
-        *value_entries += 1;
-    } else {
-        omitted.insert(components.join("/"));
-    }
-
-    for (index, child) in term.children.iter().enumerate() {
-        components.push(child_component(&term.constructor, index));
-        push_index_entries(
-            child,
-            language_fingerprint,
-            components,
-            entries,
-            value_entries,
-            omitted,
-        )?;
-        components.pop();
-    }
-    Ok(())
+    entries.push((ground_list(v_elements), reflect_ground_term_par(term, language_fingerprint)));
 }
 
 /// The `{op}.{index}` component of one descent step — the SAME derivation as
@@ -420,57 +219,69 @@ fn child_component(op: &str, index: usize) -> String {
         .to_string()
 }
 
-/// Build the subject index for `subject` at root site `root_site` — two entry
-/// families per node (see the module rustdoc). Fails closed when any «s»
-/// entry exceeds the machine caps.
+/// Build the map-mode subject index for `subject` at root site `root_site` —
+/// two native key/value entries per node (see the module rustdoc).
+///
+/// The traversal is an explicit depth-first PDA. It retains one frame and one
+/// location component per subject depth and therefore cannot overflow the Rust
+/// call stack on a deeply nested term.
 pub fn build_pathmap_index(
     subject: &GroundTerm,
     language_fingerprint: &str,
     root_site: &str,
-) -> Result<PathmapIndex, String> {
+) -> PathmapIndex {
     let node_count = e6a_node_count(subject);
-    let mut entries: Vec<Par> = Vec::with_capacity(2 * node_count);
+    let mut entries: Vec<(Par, Par)> = Vec::with_capacity(2 * node_count);
     let mut components: Vec<String> = vec![root_site.to_string()];
-    let mut value_entries = 0usize;
-    let mut omitted: BTreeSet<String> = BTreeSet::new();
-    push_index_entries(
-        subject,
-        language_fingerprint,
-        &mut components,
-        &mut entries,
-        &mut value_entries,
-        &mut omitted,
-    )?;
-    // E-2-D (reflected-ABI v2): the reducer NORMALIZES an `EPathMap` to its TRIE-CANONICAL entry
-    // order (`canonical_path`: "trie order = canonical order", a lexicographic walk over each
-    // entry's `encode_trie_path` bytes) on reduction. Emit the entries in that canonical order
-    // HOST-side too, so the whole-value bind+forward round-trip stays byte-identical: the
-    // hereditary-ground marker enlarged each «v» value, which reordered the trie walk relative to
-    // the DFS traversal order these were pushed in (they coincided pre-marker). Sorting by the
-    // f1r3node-exposed `encode_trie_path` reproduces the reducer's order exactly (no f1r3node edit).
-    entries.sort_by_cached_key(encode_trie_path);
+    push_index_entries_for_node(subject, language_fingerprint, &components, &mut entries);
+
+    // Each frame stores the next child to visit. The shared component vector
+    // is extended on descent and truncated on return, mirroring recursive DFS
+    // with O(depth) auxiliary storage and no per-node path clone.
+    let mut stack: Vec<(&GroundTerm, usize)> = vec![(subject, 0)];
+    while let Some((term, next_child)) = stack.last_mut() {
+        if *next_child < term.children.len() {
+            let index = *next_child;
+            *next_child += 1;
+            let child = &term.children[index];
+            components.push(child_component(&term.constructor, index));
+            push_index_entries_for_node(child, language_fingerprint, &components, &mut entries);
+            stack.push((child, 0));
+        } else {
+            stack.pop();
+            if !stack.is_empty() {
+                components.pop();
+            }
+        }
+    }
+
     let index = Par::default().with_exprs(vec![Expr {
         // `EPathMap` is a hand-maintained `extern_path` wrapper with a private
         // trie representation, so out-of-crate struct literals are intentionally
         // impossible. Construct through the mode-aware public API.
-        expr_instance: Some(ExprInstance::EPathmapBody(EPathMap::new(
+        expr_instance: Some(ExprInstance::EPathmapBody(EPathMap::new_map(
             entries,
             Vec::new(),
             false,
             None,
         ))),
     }]);
-    Ok(PathmapIndex {
+    PathmapIndex {
         index,
         site_entries: node_count,
-        value_entries,
-        omitted_value_locations: omitted,
-    })
+        value_entries: node_count,
+    }
 }
 
 /// Node count of a subject (up to 2 index entries are built per node).
 pub fn e6a_node_count(term: &GroundTerm) -> usize {
-    1 + term.children.iter().map(e6a_node_count).sum::<usize>()
+    let mut count = 0usize;
+    let mut stack = vec![term];
+    while let Some(term) = stack.pop() {
+        count += 1;
+        stack.extend(term.children.iter());
+    }
+    count
 }
 
 /// THE treatment "spread": ONE PERSISTENT produce of the subject index on
@@ -484,8 +295,8 @@ pub fn pathmap_spread_term_par(
     subject: &GroundTerm,
     language_fingerprint: &str,
     root_site: &str,
-) -> Result<(Par, PathmapIndex), String> {
-    let built = build_pathmap_index(subject, language_fingerprint, root_site)?;
+) -> (Par, PathmapIndex) {
+    let built = build_pathmap_index(subject, language_fingerprint, root_site);
     let publish = new_send_par(
         quoted(&e6a_index_channel(language_fingerprint, root_site)),
         vec![built.index.clone()],
@@ -495,18 +306,7 @@ pub fn pathmap_spread_term_par(
         Vec::new(),
         false,
     );
-    Ok((publish, built))
-}
-
-/// The locations whose «v» entry the cap validator would omit for `subject` —
-/// the harness-side fail-closed check for σ positions (deterministic mirror of
-/// the build walk; exposed separately so query building needs no index value).
-pub fn e6a_omitted_value_locations(
-    subject: &GroundTerm,
-    language_fingerprint: &str,
-    root_site: &str,
-) -> Result<BTreeSet<String>, String> {
-    Ok(build_pathmap_index(subject, language_fingerprint, root_site)?.omitted_value_locations)
+    (publish, built)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -582,10 +382,10 @@ pub fn discovery_call_par(
     call
 }
 
-/// Decode a machine-enumerated per-op subtrie value (read back from
-/// [`e6a_sites_channel`]) into its candidate SITE strings: each entry is the
-/// «s» list `[GString(tag), GString(c₀), …, GString(c_d)]`; the site string is
-/// the `/`-join of the components. Fails loudly on anything else;
+/// Decode a machine-enumerated per-op map subtrie (read back from
+/// [`e6a_sites_channel`]) into its candidate SITE strings. Each key is the «s»
+/// list `[GString(tag), GString(c₀), …, GString(c_d)]`; its associated value is
+/// intentionally Nil. The site string is the `/`-join of the components.
 /// `expected_tag` pins that the subtrie really is the queried op's family.
 pub fn decode_sites_par(sites_value: &Par, expected_tag: &str) -> Result<Vec<String>, String> {
     let [expr] = sites_value.exprs.as_slice() else {
@@ -594,35 +394,46 @@ pub fn decode_sites_par(sites_value: &Par, expected_tag: &str) -> Result<Vec<Str
     let Some(ExprInstance::EPathmapBody(pathmap)) = &expr.expr_instance else {
         return Err(format!("sites value is not an EPathMap: {expr:?}"));
     };
-    if pathmap.mode() == EPathMapMode::Map {
-        return Err("sites value is a map-mode EPathMap; expected a set subtrie".to_string());
+    if pathmap.mode() != EPathMapMode::Map {
+        return Err(format!(
+            "sites value has {:?} storage; expected a map subtrie",
+            pathmap.mode()
+        ));
     }
-    let mut sites: Vec<String> = Vec::with_capacity(pathmap.len());
-    pathmap.entry_trie().try_for_each_entry(|entry| {
-        let [entry_expr] = entry.exprs.as_slice() else {
-            return Err(format!("subtrie entry is not a single expr: {entry:?}"));
-        };
-        let Some(ExprInstance::EListBody(list)) = &entry_expr.expr_instance else {
-            return Err(format!("subtrie entry is not an EList: {entry_expr:?}"));
-        };
-        if list.ps.len() < 2 {
-            return Err(format!("subtrie entry has no site components: {list:?}"));
-        }
-        let tag = single_gstring(&list.ps[0])
-            .ok_or_else(|| format!("subtrie entry tag is not a GString: {:?}", list.ps[0]))?;
-        if tag != expected_tag {
-            return Err(format!("subtrie entry tag `{tag}` != expected `{expected_tag}`"));
-        }
-        let mut components: Vec<&str> = Vec::with_capacity(list.ps.len() - 1);
-        for component_par in &list.ps[1..] {
-            components.push(single_gstring(component_par).ok_or_else(|| {
-                format!("subtrie entry component is not a GString: {component_par:?}")
-            })?);
-        }
-        sites.push(components.join("/"));
-        Ok(())
-    })?;
-    Ok(sites)
+    let mut decoded: Vec<Result<String, String>> = Vec::with_capacity(pathmap.len());
+    pathmap
+        .for_each_map_entry(|entry, value| {
+            decoded.push(decode_site_entry(entry, value, expected_tag));
+        })
+        .map_err(|error| format!("cannot enumerate sites map: {error}"))?;
+    decoded.into_iter().collect()
+}
+
+fn decode_site_entry(entry: &Par, value: &Par, expected_tag: &str) -> Result<String, String> {
+    if value != &Par::default() {
+        return Err(format!("site-index value is not Nil: {value:?}"));
+    }
+    let [entry_expr] = entry.exprs.as_slice() else {
+        return Err(format!("subtrie entry is not a single expr: {entry:?}"));
+    };
+    let Some(ExprInstance::EListBody(list)) = &entry_expr.expr_instance else {
+        return Err(format!("subtrie entry is not an EList: {entry_expr:?}"));
+    };
+    if list.ps.len() < 2 {
+        return Err(format!("subtrie entry has no site components: {list:?}"));
+    }
+    let tag = single_gstring(&list.ps[0])
+        .ok_or_else(|| format!("subtrie entry tag is not a GString: {:?}", list.ps[0]))?;
+    if tag != expected_tag {
+        return Err(format!("subtrie entry tag `{tag}` != expected `{expected_tag}`"));
+    }
+    let mut components: Vec<&str> = Vec::with_capacity(list.ps.len() - 1);
+    for component_par in &list.ps[1..] {
+        components.push(single_gstring(component_par).ok_or_else(|| {
+            format!("subtrie entry component is not a GString: {component_par:?}")
+        })?);
+    }
+    Ok(components.join("/"))
 }
 
 fn single_gstring(par: &Par) -> Option<&str> {
@@ -641,14 +452,17 @@ fn single_gstring(par: &Par) -> Option<&str> {
 /// SUBSPACE). Ancestral candidate sets fail closed — the treatment keeps the
 /// conservative refusal honestly for them.
 pub fn sites_non_ancestral(sites: &[String]) -> bool {
-    for (i, a) in sites.iter().enumerate() {
-        for b in sites.iter().skip(i + 1) {
-            if a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/")) {
-                return false;
-            }
-        }
-    }
-    true
+    let mut ordered: Vec<&str> = sites.iter().map(String::as_str).collect();
+    ordered.sort_unstable();
+    ordered.windows(2).all(|pair| {
+        let [ancestor, descendant] = pair else {
+            unreachable!("windows(2)")
+        };
+        ancestor != descendant
+            && !descendant
+                .strip_prefix(ancestor)
+                .is_some_and(|suffix| suffix.starts_with('/'))
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -673,35 +487,64 @@ pub struct EntryQueryShape {
 
 fn collect_query_shape(
     view: &SetAutomatonView<'_, String>,
-    state: StateId,
-    relative: &mut Vec<String>,
+    root: StateId,
     guards: &mut Vec<(Vec<String>, String)>,
     sigma_positions: &mut Vec<Vec<String>>,
-    names: &mut Vec<String>,
+    names: &mut BTreeSet<String>,
 ) -> Result<(), String> {
-    match view.node(state) {
-        AutomatonNode::Var(name) => {
-            if names.iter().any(|seen| seen == name) {
-                return Err(format!(
-                    "E-6a query codegen is LINEAR-only (repeated var `{name}`) — fail closed"
-                ));
-            }
-            names.push(name.to_string());
-            sigma_positions.push(relative.clone());
-            Ok(())
+    enum Job {
+        Visit {
+            state: StateId,
+            component: Option<String>,
         },
-        AutomatonNode::App { op, args } => {
-            let op = op.to_string();
-            let args = args.to_vec();
-            guards.push((relative.clone(), op.clone()));
-            for (index, arg) in args.into_iter().enumerate() {
-                relative.push(child_component(&op, index));
-                collect_query_shape(view, arg, relative, guards, sigma_positions, names)?;
-                relative.pop();
-            }
-            Ok(())
-        },
+        Leave,
     }
+
+    let mut relative: Vec<String> = Vec::new();
+    let mut jobs = vec![Job::Visit { state: root, component: None }];
+    while let Some(job) = jobs.pop() {
+        match job {
+            Job::Leave => {
+                relative
+                    .pop()
+                    .expect("every leave follows a component descent");
+            },
+            Job::Visit { state, component } => {
+                let entered = component.is_some();
+                if let Some(component) = component {
+                    relative.push(component);
+                }
+                match view.node(state) {
+                    AutomatonNode::Var(name) => {
+                        if !names.insert(name.to_string()) {
+                            return Err(format!(
+                                "E-6a query codegen is LINEAR-only (repeated var `{name}`) — \
+                                 fail closed"
+                            ));
+                        }
+                        sigma_positions.push(relative.clone());
+                        if entered {
+                            relative.pop();
+                        }
+                    },
+                    AutomatonNode::App { op, args } => {
+                        let op = op.to_string();
+                        guards.push((relative.clone(), op.clone()));
+                        if entered {
+                            jobs.push(Job::Leave);
+                        }
+                        for (index, arg) in args.iter().copied().enumerate().rev() {
+                            jobs.push(Job::Visit {
+                                state: arg,
+                                component: Some(child_component(&op, index)),
+                            });
+                        }
+                    },
+                }
+            },
+        }
+    }
+    Ok(())
 }
 
 /// Read one compiled entry's [`EntryQueryShape`] off the automaton view.
@@ -711,12 +554,10 @@ pub fn entry_query_shape(
 ) -> Result<EntryQueryShape, String> {
     let mut guards: Vec<(Vec<String>, String)> = Vec::new();
     let mut sigma_positions: Vec<Vec<String>> = Vec::new();
-    let mut names: Vec<String> = Vec::new();
-    let mut relative: Vec<String> = Vec::new();
+    let mut names: BTreeSet<String> = BTreeSet::new();
     collect_query_shape(
         view,
         view.entry_root_state(entry),
-        &mut relative,
         &mut guards,
         &mut sigma_positions,
         &mut names,
@@ -741,60 +582,48 @@ fn query_path_list(first: &str, components: &[String]) -> Par {
     ground_list(elements)
 }
 
-/// The «v» value-leaf query PREFIX `Par` `["v", c₀, …, c_d, @val]` — the
-/// sentinel-terminated prefix below which sits EXACTLY the σ-value tuple (see
-/// [`VALUE_LEAF_SENTINEL`]). Both the σ-existence guard and the σ chain address
-/// the value through THIS prefix so `descendFirst` cannot mis-descend into a
-/// deeper «v» entry when the σ position binds a non-leaf subtree.
+/// The exact «v» map key `["v", c₀, …, c_d]` associated with the reflected
+/// subtree at that subject location.
 fn value_query_path(components: &[String]) -> Par {
-    let mut elements: Vec<Par> = Vec::with_capacity(2 + components.len());
+    let mut elements: Vec<Par> = Vec::with_capacity(1 + components.len());
     elements.push(quoted(VALUE_FAMILY));
     for component in components {
         elements.push(quoted(component));
     }
-    elements.push(quoted(VALUE_LEAF_SENTINEL));
     ground_list(elements)
 }
 
-/// `idx.readZipperAt([tag(op), c₀…c_d]).pathExists()` — TRUE iff the subject
-/// node at the location exists with head constructor `op`.
+/// `idx.contains([tag(op), c₀…c_d])` — TRUE iff the subject node at the
+/// location exists with head constructor `op`. This is an exact native map-key
+/// lookup, not a prefix scan.
 fn tag_guard_expr(tag: &str, components: &[String]) -> Par {
-    let zipper = method_par(
+    method_par(
         new_boundvar_par(0, create_bit_vector(&[0]), false),
-        "readZipperAt",
+        "contains",
         vec![query_path_list(tag, components)],
         &[0],
-    );
-    method_par(zipper, "pathExists", Vec::new(), &[0])
+    )
 }
 
-/// `idx.readZipperAt(["v", c₀…c_d, @val]).pathExists()` — the σ-position
-/// existence guard (defensive totality: keeps `getLeaf` unreachable on any
-/// malformed or cap-omitted index entry rather than aborting the injection).
+/// `idx.contains(["v", c₀…c_d])` — exact σ-position key existence.
 fn value_exists_guard_expr(components: &[String]) -> Par {
-    let zipper = method_par(
+    method_par(
         new_boundvar_par(0, create_bit_vector(&[0]), false),
-        "readZipperAt",
+        "contains",
         vec![value_query_path(components)],
         &[0],
-    );
-    method_par(zipper, "pathExists", Vec::new(), &[0])
+    )
 }
 
-/// `idx.readZipperAt(["v", c₀…c_d, @val]).descendFirst().getLeaf()` — navigate
-/// to the σ value below the sentinel-terminated prefix and return the ORIGINAL
-/// entry `Par` `["v", c₀, …, c_d, @val, (⟦t⟧,)]`. The `@val` sentinel makes the
-/// value tuple the SOLE child below the prefix even when the σ position binds a
-/// non-leaf subtree (see [`VALUE_LEAF_SENTINEL`]).
+/// `idx.atPath(["v", c₀…c_d])` — one exact map lookup returning the reflected
+/// subtree directly from the `PathMap<Par>` value slot.
 fn sigma_chain_expr(components: &[String]) -> Par {
-    let zipper = method_par(
+    method_par(
         new_boundvar_par(0, create_bit_vector(&[0]), false),
-        "readZipperAt",
+        "atPath",
         vec![value_query_path(components)],
         &[0],
-    );
-    let descended = method_par(zipper, "descendFirst", Vec::new(), &[0]);
-    method_par(descended, "getLeaf", Vec::new(), &[0])
+    )
 }
 
 /// Conjoin ≥ 1 guard exprs with `EAnd` (left fold).
@@ -822,8 +651,8 @@ fn and_all(mut conjuncts: Vec<Par>) -> Par {
 /// ```text
 /// for(@idx <- e6a:idx:ρ){
 ///   match (tag-guards ∧ σ-existence-guards) {
-///     true => match [σ-chain₀, …, σ-chainₖ₋₁] {
-///       [[…, (s₀,)], …, […, (sₖ₋₁,)]] => accept!(s₀, …, sₖ₋₁, @out)
+///     true => match [idx.atPath(v-key₀), …, idx.atPath(v-keyₖ₋₁)] {
+///       [s₀, …, sₖ₋₁] => accept!(s₀, …, sₖ₋₁, @out)
 ///     }
 ///     _ => Nil
 ///   }
@@ -838,9 +667,6 @@ fn and_all(mut conjuncts: Vec<Par>) -> Par {
 /// * a guard-failing site fires NOTHING (`_ => Nil`) — the discovery
 ///   pre-filter is re-VERIFIED on the machine, so a stale site can never
 ///   fire a wrong match.
-///
-/// Fails closed (Err) when a σ position's «v» entry was cap-omitted
-/// (`omitted_value_locations`).
 pub fn entry_query_match_par(
     shape: &EntryQueryShape,
     language_fingerprint: &str,
@@ -848,23 +674,12 @@ pub fn entry_query_match_par(
     site: &str,
     accept_channel: &str,
     out_channel: &str,
-    omitted_value_locations: &BTreeSet<String>,
-) -> Result<Par, String> {
-    // ── σ positions must have «v» entries (cap-omission fails closed) ───────
+) -> Par {
     let sigma_components: Vec<Vec<String>> = shape
         .sigma_positions
         .iter()
         .map(|relative| absolute_components(site, relative))
         .collect();
-    for components in &sigma_components {
-        let location = components.join("/");
-        if omitted_value_locations.contains(&location) {
-            return Err(format!(
-                "E-6a query at site `{site}` needs σ at `{location}`, whose «v» entry was \
-                 omitted by the machine-cap validator — fail closed"
-            ));
-        }
-    }
 
     // ── the guard conjunction (evaluated under idx = BoundVar(0)) ────────────
     let mut conjuncts: Vec<Par> = Vec::with_capacity(shape.guards.len() + sigma_components.len());
@@ -895,44 +710,12 @@ pub fn entry_query_match_par(
     }];
     sigma_target.locally_free = create_bit_vector(&[0]);
     sigma_target.connective_used = false;
-    // Pattern: per slot, the «v» entry list ["v", c₀, …, c_d, @val, (⟦t⟧,)]
-    // matched as [_ × (d+3), (s,)] — wildcards for the family+components+@val
-    // sentinel, a 1-tuple pattern binding the σ slot.
+    // Pattern: bind each exact map value directly in σ order.
     let mut sigma_pattern = Par::default();
     sigma_pattern.exprs = vec![Expr {
         expr_instance: Some(ExprInstance::EListBody(EList {
-            ps: sigma_components
-                .iter()
-                .enumerate()
-                .map(|(slot, components)| {
-                    let arity = components.len() + 3; // "v" + components + @val + tuple
-                    let mut elements: Vec<Par> = Vec::with_capacity(arity);
-                    for _ in 0..arity - 1 {
-                        elements.push(new_wildcard_par(Vec::new(), true));
-                    }
-                    let mut tuple = Par::default();
-                    tuple.exprs = vec![Expr {
-                        expr_instance: Some(ExprInstance::ETupleBody(ETuple {
-                            ps: vec![new_freevar_par(slot as i32, Vec::new())],
-                            locally_free: Vec::new(),
-                            connective_used: true,
-                        })),
-                    }];
-                    tuple.connective_used = true;
-                    elements.push(tuple);
-
-                    let mut entry = Par::default();
-                    entry.exprs = vec![Expr {
-                        expr_instance: Some(ExprInstance::EListBody(EList {
-                            ps: elements,
-                            locally_free: Vec::new(),
-                            connective_used: true,
-                            remainder: None,
-                        })),
-                    }];
-                    entry.connective_used = true;
-                    entry
-                })
+            ps: (0..k)
+                .map(|slot| new_freevar_par(slot as i32, Vec::new()))
                 .collect(),
             locally_free: Vec::new(),
             connective_used: true,
@@ -999,7 +782,7 @@ pub fn entry_query_match_par(
     );
 
     // ── the idx bind (ONE query COMM against the persistent index) ──────────
-    Ok(new_receive_par(
+    new_receive_par(
         vec![ReceiveBind {
             patterns: vec![new_freevar_par(0, Vec::new())],
             source: Some(quoted(&e6a_index_channel(language_fingerprint, root_site))),
@@ -1014,7 +797,7 @@ pub fn entry_query_match_par(
         false,
         Vec::new(),
         false,
-    ))
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1045,9 +828,6 @@ pub struct E6aDriveOutcome {
     /// The treatment's static spread-send count: the ONE persistent index
     /// publish + the per-op discovery-result sends (`1 + #ops`).
     pub treatment_spread_sends: usize,
-    /// «v» entries the machine-cap validator omitted (empty for every admitted
-    /// corpus cell; recorded for honesty).
-    pub omitted_value_locations: BTreeSet<String>,
     /// Host-side emission span (index build + discovery + query codegen).
     pub emission: Duration,
     /// Counting-runtime construction span.
@@ -1139,8 +919,7 @@ pub async fn drive_e6a_treatment(
 
     // ── emission, phase 1 ───────────────────────────────────────────────────
     let emission_started = Instant::now();
-    let (publish, built) = pathmap_spread_term_par(subject, language_fingerprint, root_site)
-        .map_err(E6aDriveFailure::new)?;
+    let (publish, _built) = pathmap_spread_term_par(subject, language_fingerprint, root_site);
     let discovery = discovery_call_par(ruleset, language_fingerprint, root_site);
     let treatment_spread_sends = count_send_nodes(&publish) + count_send_nodes(&discovery);
 
@@ -1220,18 +999,14 @@ pub async fn drive_e6a_treatment(
             .iter()
             .filter(|site| site_filter.is_none_or(|filter| filter.contains(*site)))
         {
-            phase2 = phase2.append(
-                entry_query_match_par(
-                    &shape,
-                    language_fingerprint,
-                    root_site,
-                    site,
-                    &accept_channel,
-                    out_channel,
-                    &built.omitted_value_locations,
-                )
-                .map_err(E6aDriveFailure::new)?,
-            );
+            phase2 = phase2.append(entry_query_match_par(
+                &shape,
+                language_fingerprint,
+                root_site,
+                site,
+                &accept_channel,
+                out_channel,
+            ));
         }
     }
     emission += emission2_started.elapsed();
@@ -1269,56 +1044,23 @@ pub async fn drive_e6a_treatment(
         result,
         machine_sites,
         treatment_spread_sends,
-        omitted_value_locations: built.omitted_value_locations,
         emission,
         bringup,
     })
 }
 
-/// Count the `Send` nodes of a `Par`, recursively over every `Par`-carrying
-/// position — the STATIC "spread sends" component of the E-6a primary metric
+/// Count the `Send` nodes of a `Par` through the canonical structural-child
+/// table — the STATIC "spread sends" component of the E-6a primary metric
 /// (control: sends of the per-node spread; treatment: the one index publish +
 /// the per-op discovery-result sends).
 pub fn count_send_nodes(par: &Par) -> usize {
-    fn visit_opt(par: &Option<Par>, count: &mut usize) {
-        if let Some(par) = par {
-            visit(par, count);
-        }
-    }
-    fn visit(par: &Par, count: &mut usize) {
-        for send in &par.sends {
-            *count += 1;
-            visit_opt(&send.chan, count);
-            for datum in &send.data {
-                visit(datum, count);
-            }
-        }
-        for receive in &par.receives {
-            for bind in &receive.binds {
-                for pattern in &bind.patterns {
-                    visit(pattern, count);
-                }
-                visit_opt(&bind.source, count);
-            }
-            visit_opt(&receive.body, count);
-            visit_opt(&receive.condition, count);
-        }
-        for new in &par.news {
-            visit_opt(&new.p, count);
-        }
-        for match_node in &par.matches {
-            visit_opt(&match_node.target, count);
-            for case in &match_node.cases {
-                visit_opt(&case.pattern, count);
-                visit_opt(&case.source, count);
-                visit_opt(&case.guard, count);
-            }
-        }
-        for bundle in &par.bundles {
-            visit_opt(&bundle.body, count);
-        }
-    }
+    use models::rust::rholang::par_children::par_child_pars;
+
     let mut count = 0usize;
-    visit(par, &mut count);
+    let mut stack = vec![par];
+    while let Some(par) = stack.pop() {
+        count += par.sends.len();
+        par_child_pars(par, &mut stack);
+    }
     count
 }

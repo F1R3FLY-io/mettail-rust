@@ -12,7 +12,34 @@ Measured at mettail-rust `c979fb63` + the uncommitted E-6a working tree
 `pathmap_index` COMM-class extension of `bench_support.rs`/`workloads.rs`),
 all quarantined behind `bench-naive-baseline` — no production surface.
 
-## Arms
+## Historical status and current applicability
+
+This directory is a reproducibility record for the 2026-07-19 baseline, not a description of the
+current EPathMap architecture. At that baseline, the experiment attributed a receive-pattern
+refusal to a missing `EPathmapBody` spatial-matcher arm and measured a projected `ps` representation
+with an escaped-`0xFF` key separator. Those causal claims are superseded.
+
+The first revalidation at MeTTaIL `717b835b` against f1r3node-rust-mettail `d68d8b9c` passed the
+then-current quarantined spike 5/5 under a 10 GiB RSS cap, but source inspection overturned its
+interpretation. The old fixture built both the subject index and its one-entry pattern in set mode;
+it did not fire because the pattern had no remainder with which to absorb the other index entries,
+not because EPathMap matching was unavailable. The current matcher has a native, stack-safe
+`EPathmapBody` PDA arm for both homogeneous specializations.
+
+The subsequent treatment correction makes the subject index genuinely map-mode: tag/location keys
+map to Nil and location keys map directly to reflected subtree `Par` values. The current spike
+passes 7/7 under the same 10 GiB cap, including a positive map-pattern value binding and a 73-node
+case that crosses both retired codec ceilings. Exact guards use `contains`; σ extraction uses
+`atPath`. Values no longer ride inside set keys, and the former tuple, sentinel, `descendFirst`,
+cap-validator, omission set, and false DNF path are absent.
+
+Current EPathMap keys use the capless canonical path codec, storage remains homogeneous
+`Empty | PathMap<()> | PathMap<Par>`, and the old `ps` projection is absent. Therefore the historical
+wall-time, whole-trie rebuild, `0xFF` collision, and 62-byte safe-cap observations below must not be
+used as present-day performance or capacity claims. The raw results remain valuable evidence about
+the named historical commits and are retained unchanged.
+
+## Historical arms
 
 * **control** — the CURRENT spread+drive path: per-node `spread_term_par`
   (`loc:` head-tag send per node + `col:`/`cap:` collapse fold) + the cell's
@@ -29,6 +56,10 @@ all quarantined behind `bench-naive-baseline` — no production surface.
   QUERY-MATCH processes (`pathExists` guard chains + `descendFirst().getLeaf()`
   σ extraction + `build_accept_send`-ABI accepts) against the persistent
   index. Zero `loc:`/`col:`/`cap:` traffic; `collect_redex_sites` never runs.
+
+The treatment description above is retained verbatim in substance because it identifies the arm
+that produced the archived raw measurements. It is not the implementation used by the current
+revalidation.
 
 ## Layout
 
@@ -55,7 +86,7 @@ all quarantined behind `bench-naive-baseline` — no production surface.
   non-destructive reads of the persistent index), with fired sets equal to the
   control and to the directly-computed expected multisets
   (`tests/rho_net_e6a_equivalence.rs`, 5/5).
-* HONEST COSTS: (i) the exploratory inj-wall secondary is SLOWER under the
+* HISTORICAL COSTS: (i) the exploratory inj-wall secondary is SLOWER under the
   treatment in every cell (2.5–40×) — the reducer's `EPathMap` methods rebuild
   the whole trie from `ps` on EVERY call (`e_pathmap_to_rholang_pathmap`) and
   the prefix-scanning methods iterate the whole map, so a query is O(index);

@@ -141,10 +141,9 @@ pub use bench_support::{
 #[cfg(feature = "bench-naive-baseline")]
 pub use e6a_support::{
     build_pathmap_index, count_send_nodes, decode_sites_par, discovery_call_par,
-    drive_e6a_treatment, e6a_entry_root_ops, e6a_index_channel, e6a_node_count,
-    e6a_omitted_value_locations, e6a_sites_channel, e6a_tag_string, entry_query_match_par,
-    entry_query_shape, pathmap_spread_term_par, sites_non_ancestral, E6aDriveFailure,
-    E6aDriveOutcome, EntryQueryShape, PathmapIndex,
+    drive_e6a_treatment, e6a_entry_root_ops, e6a_index_channel, e6a_node_count, e6a_sites_channel,
+    e6a_tag_string, entry_query_match_par, entry_query_shape, pathmap_spread_term_par,
+    sites_non_ancestral, E6aDriveFailure, E6aDriveOutcome, EntryQueryShape, PathmapIndex,
 };
 pub use guard_discharge::{
     all_operands_ground, classify as classify_guard_discharge, is_binder_closed, machine_verdict,

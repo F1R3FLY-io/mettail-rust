@@ -1,5 +1,9 @@
 # E-6a post-fix re-measurement — after the f1r3node EPathMap trie-cache fix
 
+> **Historical measurement record.** This report describes the exact 2026-07-19 implementation,
+> including its set-encoded values and retired codec cap. The current E-6a revalidation uses native
+> homogeneous `PathMap<Par>` storage, exact-key lookup, and the capless canonical codec.
+
 Re-run of the full E-6a measured corpus (same workloads, seeds, and 33-rep protocol as
 `../2026-07-19-e6a/`; `taskset -c 0-7`, performance governor) against the f1r3node-rust-mettail
 branch `fix/epathmap-trie-cache` @ `84a0fbe4` (stacked on `fix/split-byte-width-range` @
