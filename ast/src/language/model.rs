@@ -1671,7 +1671,6 @@ pub struct TreeInvariant {
 ///
 /// Supports both keyword (`forall`, `exists`, `not`, `and`, `or`, `match`)
 /// and Unicode operator (`∀`, `∃`, `¬`, `∧`, `∨`, `∈`, `↓`) forms.
-#[derive(Debug, Clone)]
 pub enum TreeConstraintExpr {
     /// `forall children of Symbol { body }` / `∀ ↓ Symbol { body }`
     ForallChildren {

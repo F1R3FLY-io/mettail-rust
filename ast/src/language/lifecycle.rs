@@ -2,7 +2,7 @@
 
 use super::{
     BehavioralPred, Condition, ConstraintDomain, FreshnessCondition, FreshnessTarget,
-    LinearRelation, PredArg, Premise, Quantifier, RefinementPredicate,
+    LinearRelation, PredArg, Premise, Quantifier, RefinementPredicate, TreeConstraintExpr,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -2128,4 +2128,304 @@ pub(super) fn fmt_constraint_domain(
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum TreeConstraintBinary {
+    And,
+    Or,
+}
+
+enum TreeConstraintCloneTask<'expr> {
+    Visit(&'expr TreeConstraintExpr),
+    ForallChildren(&'expr str, usize),
+    Not(usize),
+    Binary(TreeConstraintBinary, usize),
+}
+
+impl Clone for TreeConstraintExpr {
+    fn clone(&self) -> Self {
+        let mut tasks = vec![TreeConstraintCloneTask::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                TreeConstraintCloneTask::Visit(TreeConstraintExpr::ForallChildren {
+                    symbol,
+                    body,
+                }) => {
+                    tasks.push(TreeConstraintCloneTask::ForallChildren(symbol, values.len()));
+                    tasks.push(TreeConstraintCloneTask::Visit(body));
+                },
+                TreeConstraintCloneTask::Visit(TreeConstraintExpr::ExistsChild) => {
+                    values.push(TreeConstraintExpr::ExistsChild);
+                },
+                TreeConstraintCloneTask::Visit(TreeConstraintExpr::Not(inner)) => {
+                    tasks.push(TreeConstraintCloneTask::Not(values.len()));
+                    tasks.push(TreeConstraintCloneTask::Visit(inner));
+                },
+                TreeConstraintCloneTask::Visit(TreeConstraintExpr::Match(symbols)) => {
+                    values.push(TreeConstraintExpr::Match(symbols.clone()));
+                },
+                TreeConstraintCloneTask::Visit(TreeConstraintExpr::Atom(symbol)) => {
+                    values.push(TreeConstraintExpr::Atom(symbol.clone()));
+                },
+                TreeConstraintCloneTask::Visit(TreeConstraintExpr::And(left, right)) => {
+                    tasks.push(TreeConstraintCloneTask::Binary(
+                        TreeConstraintBinary::And,
+                        values.len(),
+                    ));
+                    tasks.push(TreeConstraintCloneTask::Visit(right));
+                    tasks.push(TreeConstraintCloneTask::Visit(left));
+                },
+                TreeConstraintCloneTask::Visit(TreeConstraintExpr::Or(left, right)) => {
+                    tasks.push(TreeConstraintCloneTask::Binary(
+                        TreeConstraintBinary::Or,
+                        values.len(),
+                    ));
+                    tasks.push(TreeConstraintCloneTask::Visit(right));
+                    tasks.push(TreeConstraintCloneTask::Visit(left));
+                },
+                TreeConstraintCloneTask::ForallChildren(symbol, value_base) => {
+                    let body = values
+                        .pop()
+                        .expect("tree-constraint clone PDA lost a forall body");
+                    values.truncate(value_base);
+                    values.push(TreeConstraintExpr::ForallChildren {
+                        symbol: symbol.to_owned(),
+                        body: Box::new(body),
+                    });
+                },
+                TreeConstraintCloneTask::Not(value_base) => {
+                    let inner = values
+                        .pop()
+                        .expect("tree-constraint clone PDA lost a negated operand");
+                    values.truncate(value_base);
+                    values.push(TreeConstraintExpr::Not(Box::new(inner)));
+                },
+                TreeConstraintCloneTask::Binary(kind, value_base) => {
+                    let right = values
+                        .pop()
+                        .expect("tree-constraint clone PDA lost a binary right operand");
+                    let left = values
+                        .pop()
+                        .expect("tree-constraint clone PDA lost a binary left operand");
+                    values.truncate(value_base);
+                    values.push(match kind {
+                        TreeConstraintBinary::And => {
+                            TreeConstraintExpr::And(Box::new(left), Box::new(right))
+                        },
+                        TreeConstraintBinary::Or => {
+                            TreeConstraintExpr::Or(Box::new(left), Box::new(right))
+                        },
+                    });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("tree-constraint clone PDA produced no result")
+    }
+}
+
+fn take_tree_constraint_children(
+    expression: &mut TreeConstraintExpr,
+    work: &mut Vec<TreeConstraintExpr>,
+) {
+    let take = |child: &mut Box<TreeConstraintExpr>| {
+        *std::mem::replace(child, Box::new(TreeConstraintExpr::ExistsChild))
+    };
+    match expression {
+        TreeConstraintExpr::ForallChildren { body, .. } | TreeConstraintExpr::Not(body) => {
+            work.push(take(body));
+        },
+        TreeConstraintExpr::And(left, right) | TreeConstraintExpr::Or(left, right) => {
+            work.push(take(left));
+            work.push(take(right));
+        },
+        TreeConstraintExpr::ExistsChild
+        | TreeConstraintExpr::Match(_)
+        | TreeConstraintExpr::Atom(_) => {},
+    }
+}
+
+impl Drop for TreeConstraintExpr {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        take_tree_constraint_children(self, &mut work);
+        while let Some(mut expression) = work.pop() {
+            take_tree_constraint_children(&mut expression, &mut work);
+        }
+    }
+}
+
+enum TreeConstraintDebugTask<'expr> {
+    Visit(&'expr TreeConstraintExpr, usize),
+    String(&'expr str),
+    Strings(&'expr [String], usize),
+    Text(&'static str),
+    Indent(usize),
+    CloseTuple(usize),
+    CloseStruct(usize),
+    CloseList(usize),
+}
+
+fn fmt_tree_constraint_debug(
+    root: &TreeConstraintExpr,
+    formatter: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    let pretty = formatter.alternate();
+    let mut tasks = vec![TreeConstraintDebugTask::Visit(root, 0)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            TreeConstraintDebugTask::Text(text) => formatter.write_str(text)?,
+            TreeConstraintDebugTask::Indent(indent) => {
+                write_model_debug_indent(formatter, indent)?;
+            },
+            TreeConstraintDebugTask::CloseTuple(indent) => {
+                write_model_debug_indent(formatter, indent)?;
+                formatter.write_str(")")?;
+            },
+            TreeConstraintDebugTask::CloseStruct(indent) => {
+                write_model_debug_indent(formatter, indent)?;
+                formatter.write_str("}")?;
+            },
+            TreeConstraintDebugTask::CloseList(indent) => {
+                write_model_debug_indent(formatter, indent)?;
+                formatter.write_str("]")?;
+            },
+            TreeConstraintDebugTask::String(value) => write!(formatter, "{value:?}")?,
+            TreeConstraintDebugTask::Strings([], _) => formatter.write_str("[]")?,
+            TreeConstraintDebugTask::Strings(strings, _) if !pretty => {
+                formatter.write_str("[")?;
+                tasks.push(TreeConstraintDebugTask::Text("]"));
+                for (index, value) in strings.iter().enumerate().rev() {
+                    tasks.push(TreeConstraintDebugTask::String(value));
+                    if index != 0 {
+                        tasks.push(TreeConstraintDebugTask::Text(", "));
+                    }
+                }
+            },
+            TreeConstraintDebugTask::Strings(strings, indent) => {
+                formatter.write_str("[\n")?;
+                tasks.push(TreeConstraintDebugTask::CloseList(indent));
+                for value in strings.iter().rev() {
+                    tasks.push(TreeConstraintDebugTask::Text(",\n"));
+                    tasks.push(TreeConstraintDebugTask::String(value));
+                    tasks.push(TreeConstraintDebugTask::Indent(indent + 1));
+                }
+            },
+            TreeConstraintDebugTask::Visit(
+                TreeConstraintExpr::ForallChildren { symbol, body },
+                indent,
+            ) if pretty => {
+                formatter.write_str("ForallChildren {\n")?;
+                tasks.push(TreeConstraintDebugTask::CloseStruct(indent));
+                tasks.push(TreeConstraintDebugTask::Text(",\n"));
+                tasks.push(TreeConstraintDebugTask::Visit(body, indent + 1));
+                tasks.push(TreeConstraintDebugTask::Text("body: "));
+                tasks.push(TreeConstraintDebugTask::Indent(indent + 1));
+                tasks.push(TreeConstraintDebugTask::Text(",\n"));
+                tasks.push(TreeConstraintDebugTask::String(symbol));
+                tasks.push(TreeConstraintDebugTask::Text("symbol: "));
+                tasks.push(TreeConstraintDebugTask::Indent(indent + 1));
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::ExistsChild, _) => {
+                formatter.write_str("ExistsChild")?;
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::Not(inner), indent) if pretty => {
+                formatter.write_str("Not(\n")?;
+                tasks.push(TreeConstraintDebugTask::CloseTuple(indent));
+                tasks.push(TreeConstraintDebugTask::Text(",\n"));
+                tasks.push(TreeConstraintDebugTask::Visit(inner, indent + 1));
+                tasks.push(TreeConstraintDebugTask::Indent(indent + 1));
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::Match(symbols), indent)
+                if pretty =>
+            {
+                formatter.write_str("Match(\n")?;
+                tasks.push(TreeConstraintDebugTask::CloseTuple(indent));
+                tasks.push(TreeConstraintDebugTask::Text(",\n"));
+                tasks.push(TreeConstraintDebugTask::Strings(symbols, indent + 1));
+                tasks.push(TreeConstraintDebugTask::Indent(indent + 1));
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::Atom(symbol), indent) if pretty => {
+                formatter.write_str("Atom(\n")?;
+                tasks.push(TreeConstraintDebugTask::CloseTuple(indent));
+                tasks.push(TreeConstraintDebugTask::Text(",\n"));
+                tasks.push(TreeConstraintDebugTask::String(symbol));
+                tasks.push(TreeConstraintDebugTask::Indent(indent + 1));
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::And(left, right), indent)
+                if pretty =>
+            {
+                formatter.write_str("And(\n")?;
+                tasks.push(TreeConstraintDebugTask::CloseTuple(indent));
+                tasks.push(TreeConstraintDebugTask::Text(",\n"));
+                tasks.push(TreeConstraintDebugTask::Visit(right, indent + 1));
+                tasks.push(TreeConstraintDebugTask::Indent(indent + 1));
+                tasks.push(TreeConstraintDebugTask::Text(",\n"));
+                tasks.push(TreeConstraintDebugTask::Visit(left, indent + 1));
+                tasks.push(TreeConstraintDebugTask::Indent(indent + 1));
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::Or(left, right), indent)
+                if pretty =>
+            {
+                formatter.write_str("Or(\n")?;
+                tasks.push(TreeConstraintDebugTask::CloseTuple(indent));
+                tasks.push(TreeConstraintDebugTask::Text(",\n"));
+                tasks.push(TreeConstraintDebugTask::Visit(right, indent + 1));
+                tasks.push(TreeConstraintDebugTask::Indent(indent + 1));
+                tasks.push(TreeConstraintDebugTask::Text(",\n"));
+                tasks.push(TreeConstraintDebugTask::Visit(left, indent + 1));
+                tasks.push(TreeConstraintDebugTask::Indent(indent + 1));
+            },
+            TreeConstraintDebugTask::Visit(
+                TreeConstraintExpr::ForallChildren { symbol, body },
+                _,
+            ) => {
+                formatter.write_str("ForallChildren { symbol: ")?;
+                tasks.push(TreeConstraintDebugTask::Text(" }"));
+                tasks.push(TreeConstraintDebugTask::Visit(body, 0));
+                tasks.push(TreeConstraintDebugTask::Text(", body: "));
+                tasks.push(TreeConstraintDebugTask::String(symbol));
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::Not(inner), _) => {
+                formatter.write_str("Not(")?;
+                tasks.push(TreeConstraintDebugTask::Text(")"));
+                tasks.push(TreeConstraintDebugTask::Visit(inner, 0));
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::Match(symbols), _) => {
+                formatter.write_str("Match(")?;
+                tasks.push(TreeConstraintDebugTask::Text(")"));
+                tasks.push(TreeConstraintDebugTask::Strings(symbols, 0));
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::Atom(symbol), _) => {
+                formatter.write_str("Atom(")?;
+                tasks.push(TreeConstraintDebugTask::Text(")"));
+                tasks.push(TreeConstraintDebugTask::String(symbol));
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::And(left, right), _) => {
+                formatter.write_str("And(")?;
+                tasks.push(TreeConstraintDebugTask::Text(")"));
+                tasks.push(TreeConstraintDebugTask::Visit(right, 0));
+                tasks.push(TreeConstraintDebugTask::Text(", "));
+                tasks.push(TreeConstraintDebugTask::Visit(left, 0));
+            },
+            TreeConstraintDebugTask::Visit(TreeConstraintExpr::Or(left, right), _) => {
+                formatter.write_str("Or(")?;
+                tasks.push(TreeConstraintDebugTask::Text(")"));
+                tasks.push(TreeConstraintDebugTask::Visit(right, 0));
+                tasks.push(TreeConstraintDebugTask::Text(", "));
+                tasks.push(TreeConstraintDebugTask::Visit(left, 0));
+            },
+        }
+    }
+    Ok(())
+}
+
+impl std::fmt::Debug for TreeConstraintExpr {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_tree_constraint_debug(self, formatter)
+    }
 }
