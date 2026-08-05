@@ -25,7 +25,7 @@ syn = { workspace = true }
 proc-macro2 = { workspace = true }
 # Runtime re-exports PraTTaIL predicate parser/behavioral-predicate helpers.
 mettail-prattail = { package = "prattail", path = "../prattail" }
-# PathMap trie (M-RHO) — pin matches f1r3node-rust `models` 0.2.2; backs PathMapLit/pathmap_bridge/codec.
+# PathMap trie (M-RHO) — pin matches f1r3node-rust `models` 0.2.2; backs PathMapLit/pathmap_bridge.
 pathmap = { workspace = true }
 # Main-branch numeric types (BigInt, BigRat, FixedPoint).
 num-bigint = "0.4"

@@ -137,7 +137,6 @@ pub use pathmap_lit::{
     PathMapMode, PathMapModeError,
 };
 mod pathmap_bridge;
-mod pathmap_codec;
 pub use pathmap::PathMap as RawPathMap;
 pub use pathmap_bridge::{
     homogeneous_lit_from_trie_and_keys, homogeneous_trie_and_key_index,
@@ -145,7 +144,6 @@ pub use pathmap_bridge::{
     trie_merge_lit, trie_put_encoded, trie_restrict_lit, trie_subtract_lit, HomogeneousPathTrie,
     PathTrie,
 };
-pub use pathmap_codec::{flatten_segments, unflatten_segments, ESCAPE_BYTE, SEGMENT_DELIM};
 
 mod hashset_lit;
 pub use hashset_lit::HashSetLit;

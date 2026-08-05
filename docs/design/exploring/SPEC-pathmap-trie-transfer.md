@@ -24,7 +24,7 @@ prefix-compressed trie from construction through serialization and node executio
 | **ACTree03** | PathMap's compact arena encoding used as EPM1 topology |
 | **set mode** | value-free path membership stored as `PathMap<()>` |
 | **map mode** | path-to-value association stored as `PathMap<Par>` |
-| **neutral empty** | `{| |}` before an insertion has selected set or map mode |
+| **neutral empty** | `{\| \|}` before an insertion has selected set or map mode |
 | **canonical path** | the capless, injective, prefix-free byte encoding of one Rholang `Par` key |
 | **projection** | materializing every member outside the trie, such as a `Vec<Par>` entry list |
 
@@ -43,9 +43,9 @@ EPathMapRepr<Par> = Empty | Set(PathMap<()>) | Map(PathMap<Par>)
 
 | Rholang surface | Mode | Stored key | Stored value |
 |---|---|---|---|
-| `{| |}` | neutral empty | none | none |
-| `{| a, b, c |}` | set | `encode_trie_path(member)` | unit `()` |
-| `{| k1: v1, k2: v2 |}` | map | `encode_trie_path(key)` | associated `Par` |
+| `{\| \|}` | neutral empty | none | none |
+| `{\| a, b, c \|}` | set | `encode_trie_path(member)` | unit `()` |
+| `{\| k1: v1, k2: v2 \|}` | map | `encode_trie_path(key)` | associated `Par` |
 
 ![Figure 1 — neutral empty specializes to one homogeneous PathMap mode](../../languages/figures/rholang-epathmap-modes.svg)
 
@@ -239,10 +239,11 @@ The following are architectural defects, even if a focused example appears to wo
 - implementing a second path codec in MeTTaIL;
 - adding a PathMap fork to work around an integration bug.
 
-`runtime/src/pathmap_codec.rs` in MeTTaIL exports the old escaped-`0xFF` segment helper and has no
-production call site at baseline `51d84ae3`. It is not the F1r3node canonical codec and must not be
-used for EPathMap lowering or conformance. Its public-API retirement should be handled as an
-explicit compatibility cleanup, not silently folded into a codec change.
+The former `runtime/src/pathmap_codec.rs` exported an escaped-`0xFF` segment helper but had no
+production call site at baseline `51d84ae3`. It was not the F1r3node canonical codec and was
+removed as an explicit compatibility cleanup after a workspace-wide caller census. Consequently,
+MeTTaIL exposes no second, plausibly reusable PathMap codec: Rholang EPathMap lowering must use the
+canonical F1r3node cursor and EPM1 implementation.
 
 ---
 

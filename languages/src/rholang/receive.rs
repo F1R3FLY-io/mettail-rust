@@ -1934,6 +1934,16 @@ mod zipper_pattern_tests {
         lit
     }
 
+    /// Opaque zipper focus used by the structural receive matcher tests.
+    ///
+    /// These tests exercise focus equality, not target EPathMap encoding. The
+    /// canonical cursor bytes are reducer-owned and are produced only after
+    /// lowering into f1r3node, so deriving them from the source `Proc` here
+    /// would recreate the retired duplicate codec.
+    fn synthetic_focus(id: u8) -> Vec<u8> {
+        vec![id]
+    }
+
     fn read_zipper_proc(lit: crate::rholang::pathmap::ProcPathMap, focus: Vec<u8>) -> Proc {
         Proc::CastReadZipper(std::sync::Arc::new(ReadZipper::Lit(std::sync::Arc::new(
             ReadZipperLit(lit, focus),
@@ -1952,7 +1962,7 @@ mod zipper_pattern_tests {
         let key = path_key(&[1]);
         let y_pat = Proc::parse("y").expect("pattern var");
         let lit_pat = pathmap_with_value(key.clone(), y_pat);
-        let focus = crate::rholang::pathmap::encode_proc_path_entry(&key).expect("focus");
+        let focus = synthetic_focus(1);
         let pattern = read_zipper_proc(lit_pat, focus.clone());
         let lit_val = pathmap_with_value(key, int(42));
         let value = read_zipper_proc(lit_val, focus);
@@ -1965,9 +1975,8 @@ mod zipper_pattern_tests {
     fn read_zipper_pattern_blocks_focus_mismatch() {
         let key = path_key(&[1]);
         let lit = pathmap_with_value(key.clone(), int(1));
-        let focus_a = crate::rholang::pathmap::encode_proc_path_entry(&key).expect("focus");
-        let focus_b =
-            crate::rholang::pathmap::encode_proc_path_entry(&path_key(&[2])).expect("focus");
+        let focus_a = synthetic_focus(1);
+        let focus_b = synthetic_focus(2);
         let pattern = read_zipper_proc(lit.clone(), focus_a);
         let value = read_zipper_proc(lit, focus_b);
         let body = int(0);
@@ -1980,7 +1989,7 @@ mod zipper_pattern_tests {
         let key = path_key(&[1]);
         let y_pat = Proc::parse("y").expect("pattern var");
         let lit_pat = pathmap_with_value(key.clone(), y_pat);
-        let focus = crate::rholang::pathmap::encode_proc_path_entry(&key).expect("focus");
+        let focus = synthetic_focus(1);
         let pattern = write_zipper_proc(lit_pat, focus.clone());
         let lit_val = pathmap_with_value(key, int(42));
         let value = write_zipper_proc(lit_val, focus);

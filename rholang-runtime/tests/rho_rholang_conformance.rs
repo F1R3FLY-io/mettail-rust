@@ -3772,12 +3772,12 @@ async fn c4_a_subtrie_walk_is_bounded_by_the_count_not_by_nil() {
 ///
 /// ## ⚠ The Rholang consequence, which was the whole reason this mattered
 ///
-/// Rholang pathmap keys are BARE by default — `{| 1 : 10 |}` has key `1`, and
-/// `encode_proc_path_entry` gives a bare `Proc` one segment. The witness recorded that pointing
-/// `lower_pathmap` at `EPathmapBody` would therefore make the enumeration surface C4 exists to
-/// unlock HANG rather than work. **That blocker is gone.** What still blocks C4 is the carrier's
-/// missing VALUE SLOT, and only that — see
-/// [`divergence_g_target_pathmap_and_zippers_use_their_native_carriers`].
+/// Rholang pathmap keys are BARE by default — `{| 1 : 10 |}` has key `1`. The current lowerer
+/// transfers that key directly into f1r3node's `EPathmapBody`, whose canonical path encoder keeps
+/// the bare `Par` distinct from a singleton list. The witness once predicted that this change would
+/// make C4 hang and then identified a missing value slot as a second blocker. Both premises are now
+/// retired: map-mode values occupy native `PathMap<Par>` slots, and the strict-successor walk below
+/// proves that all bare keys advance exactly once.
 ///
 /// ⚠ **STILL BOUNDED BY CONSTRUCTION.** Every step below is a fixed, small number; nothing here can
 /// hang however the walk behaves.
