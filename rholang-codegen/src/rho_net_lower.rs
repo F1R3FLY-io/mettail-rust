@@ -1646,78 +1646,68 @@ fn resolve_channel(name: &str) -> Result<Par, RhoNetLoweringError> {
 /// no receiver representation and stays fail-closed (`Substitution`); the binder
 /// firing lives in the RHS ([`reflect_term_par`]), not the LHS.
 pub(crate) fn lower_lhs_vars(pattern: &Pattern) -> Result<Vec<Ident>, UnsupportedFamily> {
+    enum Task<'a> {
+        Visit(&'a Pattern),
+        ExitBinders(&'a [Ident]),
+    }
+
     let mut vars = Vec::new();
     let mut seen = HashSet::new();
-    let mut bound = Vec::new();
-    collect_lhs_vars(pattern, &mut vars, &mut seen, &mut bound)?;
+    // Counts, rather than a linear binder-name stack, make a bound-variable query O(1) while
+    // preserving shadowing: an exit decrements the exact names its matching entry introduced.
+    let mut bound_counts: HashMap<String, usize> = HashMap::new();
+    let mut tasks = vec![Task::Visit(pattern)];
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Pattern::Term(PatternTerm::Var(ident))) => {
+                let name = ident.to_string();
+                if !bound_counts.contains_key(&name) && seen.insert(name) {
+                    vars.push(ident.clone());
+                }
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Apply { args, .. })) => {
+                tasks.extend(args.iter().rev().map(Task::Visit));
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Lambda { binder, body })) => {
+                *bound_counts.entry(binder.to_string()).or_insert(0) += 1;
+                tasks.push(Task::ExitBinders(std::slice::from_ref(binder)));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(Pattern::Term(PatternTerm::MultiLambda { binders, body })) => {
+                for binder in binders {
+                    *bound_counts.entry(binder.to_string()).or_insert(0) += 1;
+                }
+                tasks.push(Task::ExitBinders(binders));
+                tasks.push(Task::Visit(body));
+            },
+            Task::Visit(Pattern::Term(
+                PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. },
+            )) => return Err(UnsupportedFamily::Substitution),
+            Task::Visit(Pattern::Collection { .. }) => {
+                return Err(UnsupportedFamily::CollectionAc);
+            },
+            Task::Visit(Pattern::Map { .. }) => return Err(UnsupportedFamily::MapAc),
+            Task::Visit(Pattern::Zip { .. }) => return Err(UnsupportedFamily::ZipAc),
+            Task::Visit(Pattern::IndexedVec { .. }) => {
+                return Err(UnsupportedFamily::IndexedVecOrdered);
+            },
+            Task::ExitBinders(binders) => {
+                for binder in binders {
+                    let name = binder.to_string();
+                    let count = bound_counts
+                        .get_mut(&name)
+                        .expect("LHS-variable PDA exited an inactive binder");
+                    *count -= 1;
+                    if *count == 0 {
+                        bound_counts.remove(&name);
+                    }
+                }
+            },
+        }
+    }
+
     Ok(vars)
-}
-
-fn collect_lhs_vars(
-    pattern: &Pattern,
-    vars: &mut Vec<Ident>,
-    seen: &mut HashSet<String>,
-    bound: &mut Vec<String>,
-) -> Result<(), UnsupportedFamily> {
-    match pattern {
-        Pattern::Term(term) => collect_lhs_vars_term(term, vars, seen, bound),
-        Pattern::Collection { .. } => Err(UnsupportedFamily::CollectionAc),
-        Pattern::Map { .. } => Err(UnsupportedFamily::MapAc),
-        Pattern::Zip { .. } => Err(UnsupportedFamily::ZipAc),
-        Pattern::IndexedVec { .. } => Err(UnsupportedFamily::IndexedVecOrdered),
-    }
-}
-
-fn collect_lhs_vars_term(
-    term: &PatternTerm,
-    vars: &mut Vec<Ident>,
-    seen: &mut HashSet<String>,
-    bound: &mut Vec<String>,
-) -> Result<(), UnsupportedFamily> {
-    match term {
-        PatternTerm::Var(ident) => {
-            // A bound occurrence (in scope of an enclosing binder) is delivered by the
-            // binder, not by σ — it is never a free σ-slot.
-            if bound.contains(&ident.to_string()) {
-                return Ok(());
-            }
-            if seen.insert(ident.to_string()) {
-                vars.push(ident.clone());
-            }
-            Ok(())
-        },
-        PatternTerm::Apply { args, .. } => {
-            for arg in args {
-                collect_lhs_vars(arg, vars, seen, bound)?;
-            }
-            Ok(())
-        },
-        // A binder brings `binder`/`binders` into scope over `body`: push them onto the
-        // De Bruijn environment, collect the body's FREE σ-slots, then pop (the binder
-        // leaves scope). The binder itself is excluded from σ.
-        PatternTerm::Lambda { binder, body } => {
-            bound.push(binder.to_string());
-            let result = collect_lhs_vars(body, vars, seen, bound);
-            bound.pop();
-            result
-        },
-        PatternTerm::MultiLambda { binders, body } => {
-            for binder in binders {
-                bound.push(binder.to_string());
-            }
-            let result = collect_lhs_vars(body, vars, seen, bound);
-            for _ in binders {
-                bound.pop();
-            }
-            result
-        },
-        // A substitution in a MATCH (LHS) position has no flat-receiver representation
-        // (the set automaton matches structure, not a substitution result). The binder
-        // firing is a RHS construct; a subst LHS fails closed.
-        PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. } => {
-            Err(UnsupportedFamily::Substitution)
-        },
-    }
 }
 
 /// Lower the RHS pattern to a `Par`, substituting each LHS variable reference
@@ -4435,7 +4425,7 @@ pub const FLOAT_MERGE_RESERVED_LABEL: &str = "^float-merge";
 /// occurrence that names an in-scope binder reflects to a distinguished bound-var
 /// leaf (`EList[GPrivate(reflect_tag(^bound)), GString(name)]`), NOT a σ-slot
 /// `BoundVar`; a free variable reflects to its σ-slot index; any other free name
-/// fails closed. This is the RHS dual of [`collect_lhs_vars_term`]'s De Bruijn
+/// fails closed. This is the RHS dual of [`lower_lhs_vars`]'s De Bruijn
 /// environment.
 fn reflect_term_par_env(
     pattern: &Pattern,
@@ -4546,7 +4536,7 @@ fn reflect_term_par_env(
         // host-computed CONTRACTUM — is commented out below; the seed needs the RAW captured body,
         // which the host-contractum path cannot supply. So a substitution node reaching THIS reflector
         // (only a NESTED subst — a top-level one is routed to the seed) has no in-Rho image this slice
-        // and fails closed, exactly like the LHS subst arm (`collect_lhs_vars_term`).
+        // and fails closed, exactly like the LHS subst arm (`lower_lhs_vars`).
         Pattern::Term(PatternTerm::MultiSubst { .. })
         | Pattern::Term(PatternTerm::Subst { .. }) => {
             // RETIRED (host-σ-slot reduct): `reflect_subst_scope_slot(scope, vars, k)`.
@@ -7546,6 +7536,10 @@ mod nested_match_pattern_recursive_oracle;
 #[cfg(test)]
 #[path = "../tests/support/spread_term_recursive_oracle.rs"]
 mod spread_term_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/lower_lhs_vars_recursive_oracle.rs"]
+mod lower_lhs_vars_recursive_oracle;
 
 /// The recognized shape of a DEPTH-2 NESTED structural non-linear AC rewrite (the Ambient
 /// `InRule`/`OutRule`). Both are `k = 2` outer elements where EXACTLY ONE is NESTED (`PAmb N (PPar
