@@ -331,8 +331,14 @@ impl RhoNetProgram {
 
     fn add_scalar_lowering(&mut self, lowering: &RhoLowering) {
         for abi in &lowering.scalar_contract_abi {
-            let input = RhoNetChannel::set_automaton_trace(&self.language_fingerprint, format!("scalar/{}", abi.rule_label));
-            let output = RhoNetChannel::location(&self.language_fingerprint, format!("scalar/{}/result", abi.rule_label));
+            let input = RhoNetChannel::set_automaton_trace(
+                &self.language_fingerprint,
+                format!("scalar/{}", abi.rule_label),
+            );
+            let output = RhoNetChannel::location(
+                &self.language_fingerprint,
+                format!("scalar/{}/result", abi.rule_label),
+            );
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:{}", abi.rule_label),
                 format!("{}:{}", self.language_fingerprint, abi.rule_label),
@@ -356,8 +362,14 @@ impl RhoNetProgram {
     fn add_constructor_rules(&mut self, terms: &[GrammarRule]) {
         for (index, term) in terms.iter().enumerate() {
             let label = term.label.to_string();
-            let syntax = RhoNetChannel::set_automaton_trace(&self.language_fingerprint, format!("term/{index}/{label}/syntax"));
-            let output = RhoNetChannel::location(&self.language_fingerprint, format!("term/{index}/{label}/value"));
+            let syntax = RhoNetChannel::set_automaton_trace(
+                &self.language_fingerprint,
+                format!("term/{index}/{label}/syntax"),
+            );
+            let output = RhoNetChannel::location(
+                &self.language_fingerprint,
+                format!("term/{index}/{label}/value"),
+            );
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:term:{index}:{label}"),
                 format!(
@@ -397,10 +409,18 @@ impl RhoNetProgram {
                 continue;
             }
 
-            let constructed = RhoNetChannel::location(&self.language_fingerprint, format!("term/{index}/{label}/value"));
-            let dispatch =
-                RhoNetChannel::set_automaton_trace(&self.language_fingerprint, format!("native/{index}/{label}/dispatch"));
-            let output = RhoNetChannel::location(&self.language_fingerprint, format!("native/{index}/{label}/result"));
+            let constructed = RhoNetChannel::location(
+                &self.language_fingerprint,
+                format!("term/{index}/{label}/value"),
+            );
+            let dispatch = RhoNetChannel::set_automaton_trace(
+                &self.language_fingerprint,
+                format!("native/{index}/{label}/dispatch"),
+            );
+            let output = RhoNetChannel::location(
+                &self.language_fingerprint,
+                format!("native/{index}/{label}/result"),
+            );
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:native:{index}:{label}"),
                 format!(
@@ -441,23 +461,26 @@ impl RhoNetProgram {
         for (item_index, item) in term.items.iter().enumerate() {
             match item {
                 GrammarItem::NonTerminal { ident, .. } => {
-                    let channel = RhoNetChannel::location(&self.language_fingerprint, format!(
-                        "term/{index}/{label}/item/{item_index}/{ident}"
-                    ));
+                    let channel = RhoNetChannel::location(
+                        &self.language_fingerprint,
+                        format!("term/{index}/{label}/item/{item_index}/{ident}"),
+                    );
                     inputs.push(channel.name.clone());
                     self.push_channel(channel);
                 },
                 GrammarItem::Binder { category } => {
-                    let channel = RhoNetChannel::location(&self.language_fingerprint, format!(
-                        "term/{index}/{label}/binder/{item_index}/{category}"
-                    ));
+                    let channel = RhoNetChannel::location(
+                        &self.language_fingerprint,
+                        format!("term/{index}/{label}/binder/{item_index}/{category}"),
+                    );
                     inputs.push(channel.name.clone());
                     self.push_channel(channel);
                 },
                 GrammarItem::Collection { element_type, .. } => {
-                    let channel = RhoNetChannel::location(&self.language_fingerprint, format!(
-                        "term/{index}/{label}/collection/{item_index}/{element_type}"
-                    ));
+                    let channel = RhoNetChannel::location(
+                        &self.language_fingerprint,
+                        format!("term/{index}/{label}/collection/{item_index}/{element_type}"),
+                    );
                     inputs.push(channel.name.clone());
                     self.push_channel(channel);
                 },
@@ -476,28 +499,36 @@ impl RhoNetProgram {
         for param in params {
             match param {
                 TermParam::Simple { name, .. } => {
-                    let channel =
-                        RhoNetChannel::location(&self.language_fingerprint, format!("term/{index}/{label}/param/{name}"));
+                    let channel = RhoNetChannel::location(
+                        &self.language_fingerprint,
+                        format!("term/{index}/{label}/param/{name}"),
+                    );
                     inputs.push(channel.name.clone());
                     self.push_channel(channel);
                 },
                 TermParam::Abstraction { binder, body, .. } => {
-                    let binder_channel = RhoNetChannel::location(&self.language_fingerprint, format!(
-                        "term/{index}/{label}/binder-param/{binder}"
-                    ));
-                    let body_channel =
-                        RhoNetChannel::location(&self.language_fingerprint, format!("term/{index}/{label}/param/{body}"));
+                    let binder_channel = RhoNetChannel::location(
+                        &self.language_fingerprint,
+                        format!("term/{index}/{label}/binder-param/{binder}"),
+                    );
+                    let body_channel = RhoNetChannel::location(
+                        &self.language_fingerprint,
+                        format!("term/{index}/{label}/param/{body}"),
+                    );
                     inputs.push(binder_channel.name.clone());
                     inputs.push(body_channel.name.clone());
                     self.push_channel(binder_channel);
                     self.push_channel(body_channel);
                 },
                 TermParam::MultiAbstraction { binder, body, .. } => {
-                    let binder_channel = RhoNetChannel::location(&self.language_fingerprint, format!(
-                        "term/{index}/{label}/multi-binder-param/{binder}"
-                    ));
-                    let body_channel =
-                        RhoNetChannel::location(&self.language_fingerprint, format!("term/{index}/{label}/param/{body}"));
+                    let binder_channel = RhoNetChannel::location(
+                        &self.language_fingerprint,
+                        format!("term/{index}/{label}/multi-binder-param/{binder}"),
+                    );
+                    let body_channel = RhoNetChannel::location(
+                        &self.language_fingerprint,
+                        format!("term/{index}/{label}/param/{body}"),
+                    );
                     inputs.push(binder_channel.name.clone());
                     inputs.push(body_channel.name.clone());
                     self.push_channel(binder_channel);
@@ -515,8 +546,10 @@ impl RhoNetProgram {
         for (index, equation) in equations.iter().enumerate() {
             let name = equation.name.to_string();
             let input = self.pattern_trace_channel(&equation.left);
-            let output =
-                RhoNetChannel::location(&self.language_fingerprint, format!("equation/{index}/{name}/structural-result"));
+            let output = RhoNetChannel::location(
+                &self.language_fingerprint,
+                format!("equation/{index}/{name}/structural-result"),
+            );
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:equation:{index}:{name}"),
                 format!(
@@ -566,7 +599,10 @@ impl RhoNetProgram {
             }
             let name = rewrite.name.to_string();
             let input = self.pattern_trace_channel(&rewrite.left);
-            let output = RhoNetChannel::location(&self.language_fingerprint, format!("rewrite/{index}/{name}/rhs"));
+            let output = RhoNetChannel::location(
+                &self.language_fingerprint,
+                format!("rewrite/{index}/{name}/rhs"),
+            );
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:rewrite:{index}:{name}"),
                 format!(
@@ -605,7 +641,10 @@ impl RhoNetProgram {
 
     fn add_join_patterns(&mut self, channels: &ChannelConfig) {
         for channel in &channels.channel_categories {
-            self.push_channel(RhoNetChannel::location(&self.language_fingerprint, format!("channel/{}", channel.category)));
+            self.push_channel(RhoNetChannel::location(
+                &self.language_fingerprint,
+                format!("channel/{}", channel.category),
+            ));
         }
 
         for join in &channels.join_patterns {
@@ -613,15 +652,18 @@ impl RhoNetProgram {
             let mut inputs = Vec::new();
             let mut signature = String::new();
             for param in &join.channel_params {
-                let input = RhoNetChannel::location(&self.language_fingerprint, format!(
-                    "join/{label}/input/{}:{}",
-                    param.param_name, param.category
-                ));
+                let input = RhoNetChannel::location(
+                    &self.language_fingerprint,
+                    format!("join/{label}/input/{}:{}", param.param_name, param.category),
+                );
                 signature.push_str(&format!("{}:{};", param.param_name, param.category));
                 inputs.push(input.name.clone());
                 self.push_channel(input);
             }
-            let output = RhoNetChannel::location(&self.language_fingerprint, format!("join/{label}/continuation"));
+            let output = RhoNetChannel::location(
+                &self.language_fingerprint,
+                format!("join/{label}/continuation"),
+            );
             let rhs = RhoNetRhsTemplate::new(
                 format!("rhs:join:{label}"),
                 format!(
@@ -678,25 +720,26 @@ impl RhoNetProgram {
     }
 
     fn add_term_guard_predicates_for_rule(&mut self, rule: &GrammarRule) {
-        fn walk(program: &mut RhoNetProgram, label: &str, params: &[TermParam]) {
-            for param in params {
-                match param {
-                    TermParam::GuardBody { name } => {
-                        program.push_semantic_predicate(RhoNetSemanticPredicate::new(
-                            format!("term:{label}:guard:{name}"),
-                            RhoNetSemanticPredicateQuality::RuntimeObservation,
-                        ));
-                    },
-                    TermParam::Optional { params } => walk(program, label, params),
-                    TermParam::Simple { .. }
-                    | TermParam::Abstraction { .. }
-                    | TermParam::MultiAbstraction { .. } => {},
-                }
-            }
-        }
-
         if let Some(params) = rule.term_context.as_ref() {
-            walk(self, &rule.label.to_string(), params);
+            self.add_term_guard_predicates_for_params(&rule.label.to_string(), params);
+        }
+    }
+
+    fn add_term_guard_predicates_for_params(&mut self, label: &str, params: &[TermParam]) {
+        let mut work: Vec<_> = params.iter().rev().collect();
+        while let Some(param) = work.pop() {
+            match param {
+                TermParam::GuardBody { name } => {
+                    self.push_semantic_predicate(RhoNetSemanticPredicate::new(
+                        format!("term:{label}:guard:{name}"),
+                        RhoNetSemanticPredicateQuality::RuntimeObservation,
+                    ));
+                },
+                TermParam::Optional { params } => work.extend(params.iter().rev()),
+                TermParam::Simple { .. }
+                | TermParam::Abstraction { .. }
+                | TermParam::MultiAbstraction { .. } => {},
+            }
         }
     }
 
@@ -730,73 +773,89 @@ impl RhoNetProgram {
         inputs: &mut Vec<String>,
         semantic_guards: &mut Vec<String>,
     ) {
-        match premise {
-            Premise::Freshness(_) => self.push_consistency_input(
-                format!("{owner_kind}/{owner_name}/freshness/{index}"),
-                premise,
-                inputs,
-            ),
-            Premise::RelationQuery { .. } => self.push_consistency_input(
-                format!("{owner_kind}/{owner_name}/relation/{index}"),
-                premise,
-                inputs,
-            ),
-            Premise::SyntheticInjGuard { .. } => self.push_consistency_input(
-                format!("{owner_kind}/{owner_name}/synthetic-injection/{index}"),
-                premise,
-                inputs,
-            ),
-            Premise::Congruence { source, target } => {
-                let channel = RhoNetChannel::location(&self.language_fingerprint, format!(
-                    "{owner_kind}/{owner_name}/contextual-premise/{index}/{source}-to-{target}"
-                ));
-                inputs.push(channel.name.clone());
-                self.push_channel(channel);
-            },
-            // ★★ (#195) A WITHHELD congruence contributes NO input channel and NO
-            // channel declaration — the whole point of the declaration is that the
-            // inference it spells out is never drawn, so there is nothing for a join to
-            // wait on. `plan` additionally emits no `RhoNetRule` for the owning rewrite
-            // at all (see `add_rewrites`), so a withholding is invisible to the in-Rho
-            // net rather than a rule that fires and does nothing.
-            //
-            // ⚠ CONSENSUS-VISIBLE SURFACE, MEASURED NEUTRAL: this arm can only be
-            // reached by a language that declares `S ~/> T`, and no production language
-            // does (Ambient/Calculator/Json/Lambda/Monoid/Pi/Rholang/Turing: zero), so
-            // every shipped Rho net plan is byte-identical across #195.
-            Premise::CongruenceWithheld { .. } => {},
-            Premise::ForAll { body, .. } => {
-                self.push_consistency_input(
-                    format!("{owner_kind}/{owner_name}/forall/{index}"),
-                    premise,
-                    inputs,
-                );
-                self.add_premise_input(
-                    owner_kind,
-                    owner_name,
-                    index,
-                    body,
-                    inputs,
-                    semantic_guards,
-                );
-            },
-            Premise::BehavioralGuard(pred) => {
-                let id = format!("{owner_kind}:{owner_name}:guard:{index}");
-                if behavioral_predicate_has_structural_component(pred) {
-                    let channel = RhoNetChannel::consistency(&self.language_fingerprint, format!(
-                        "{owner_kind}/{owner_name}/structural-guard/{index}/{}",
-                        fingerprint_fragment("behavioral", &behavioral_predicate_identity(pred))
-                    ));
+        let mut premise = premise;
+        loop {
+            match premise {
+                Premise::Freshness(_) => {
+                    self.push_consistency_input(
+                        format!("{owner_kind}/{owner_name}/freshness/{index}"),
+                        premise,
+                        inputs,
+                    );
+                    break;
+                },
+                Premise::RelationQuery { .. } => {
+                    self.push_consistency_input(
+                        format!("{owner_kind}/{owner_name}/relation/{index}"),
+                        premise,
+                        inputs,
+                    );
+                    break;
+                },
+                Premise::SyntheticInjGuard { .. } => {
+                    self.push_consistency_input(
+                        format!("{owner_kind}/{owner_name}/synthetic-injection/{index}"),
+                        premise,
+                        inputs,
+                    );
+                    break;
+                },
+                Premise::Congruence { source, target } => {
+                    let channel = RhoNetChannel::location(
+                        &self.language_fingerprint,
+                        format!(
+                        "{owner_kind}/{owner_name}/contextual-premise/{index}/{source}-to-{target}"
+                    ),
+                    );
                     inputs.push(channel.name.clone());
                     self.push_channel(channel);
-                } else {
-                    self.push_semantic_predicate(RhoNetSemanticPredicate::new(
-                        id.clone(),
-                        semantic_predicate_quality(pred),
-                    ));
-                    semantic_guards.push(id);
-                }
-            },
+                    break;
+                },
+                // ★★ (#195) A WITHHELD congruence contributes NO input channel and NO
+                // channel declaration — the whole point of the declaration is that the
+                // inference it spells out is never drawn, so there is nothing for a join to
+                // wait on. `plan` additionally emits no `RhoNetRule` for the owning rewrite
+                // at all (see `add_rewrites`), so a withholding is invisible to the in-Rho
+                // net rather than a rule that fires and does nothing.
+                //
+                // ⚠ CONSENSUS-VISIBLE SURFACE, MEASURED NEUTRAL: this arm can only be
+                // reached by a language that declares `S ~/> T`, and no production language
+                // does (Ambient/Calculator/Json/Lambda/Monoid/Pi/Rholang/Turing: zero), so
+                // every shipped Rho net plan is byte-identical across #195.
+                Premise::CongruenceWithheld { .. } => break,
+                Premise::ForAll { body, .. } => {
+                    self.push_consistency_input(
+                        format!("{owner_kind}/{owner_name}/forall/{index}"),
+                        premise,
+                        inputs,
+                    );
+                    premise = body;
+                },
+                Premise::BehavioralGuard(pred) => {
+                    let id = format!("{owner_kind}:{owner_name}:guard:{index}");
+                    if behavioral_predicate_has_structural_component(pred) {
+                        let channel = RhoNetChannel::consistency(
+                            &self.language_fingerprint,
+                            format!(
+                                "{owner_kind}/{owner_name}/structural-guard/{index}/{}",
+                                fingerprint_fragment(
+                                    "behavioral",
+                                    &behavioral_predicate_identity(pred)
+                                )
+                            ),
+                        );
+                        inputs.push(channel.name.clone());
+                        self.push_channel(channel);
+                    } else {
+                        self.push_semantic_predicate(RhoNetSemanticPredicate::new(
+                            id.clone(),
+                            semantic_predicate_quality(pred),
+                        ));
+                        semantic_guards.push(id);
+                    }
+                    break;
+                },
+            }
         }
     }
 
@@ -806,11 +865,14 @@ impl RhoNetProgram {
         premise: &Premise,
         inputs: &mut Vec<String>,
     ) {
-        let channel = RhoNetChannel::consistency(&self.language_fingerprint, format!(
-            "{}/{}",
-            name,
-            fingerprint_fragment("premise", &premises_identity(std::slice::from_ref(premise)))
-        ));
+        let channel = RhoNetChannel::consistency(
+            &self.language_fingerprint,
+            format!(
+                "{}/{}",
+                name,
+                fingerprint_fragment("premise", &premises_identity(std::slice::from_ref(premise)))
+            ),
+        );
         inputs.push(channel.name.clone());
         self.push_channel(channel);
     }
@@ -1060,7 +1122,11 @@ pub(crate) fn lhs_pattern_trace_channel(
 /// `:`, so no label can spell it. The absence of a residual occurrence is nevertheless
 /// CHECKED by the caller rather than assumed, and the debug cross-check against the full
 /// batch derivation is the final arbiter.
-pub fn rescope_channel_fingerprint(name: &str, from_fingerprint: &str, to_fingerprint: &str) -> String {
+pub fn rescope_channel_fingerprint(
+    name: &str,
+    from_fingerprint: &str,
+    to_fingerprint: &str,
+) -> String {
     name.replace(from_fingerprint, to_fingerprint)
 }
 
@@ -1078,20 +1144,28 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 }
 
 pub(crate) fn behavioral_predicate_has_structural_component(pred: &BehavioralPred) -> bool {
-    match pred {
-        BehavioralPred::AcMatch { .. } => true,
-        BehavioralPred::Quantified { body, .. } | BehavioralPred::Not(body) => {
-            behavioral_predicate_has_structural_component(body)
-        },
-        BehavioralPred::And(left, right)
-        | BehavioralPred::Or(left, right)
-        | BehavioralPred::Implies(left, right) => {
-            behavioral_predicate_has_structural_component(left)
-                || behavioral_predicate_has_structural_component(right)
-        },
-        BehavioralPred::RelationQuery { .. } | BehavioralPred::Top => false,
+    let mut work = vec![pred];
+    while let Some(pred) = work.pop() {
+        match pred {
+            BehavioralPred::AcMatch { .. } => return true,
+            BehavioralPred::Quantified { body, .. } | BehavioralPred::Not(body) => {
+                work.push(body);
+            },
+            BehavioralPred::And(left, right)
+            | BehavioralPred::Or(left, right)
+            | BehavioralPred::Implies(left, right) => {
+                work.push(right);
+                work.push(left);
+            },
+            BehavioralPred::RelationQuery { .. } | BehavioralPred::Top => {},
+        }
     }
+    false
 }
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_recursive_oracle.rs"]
+mod recursive_oracle;
 
 fn semantic_predicate_quality(pred: &BehavioralPred) -> RhoNetSemanticPredicateQuality {
     match pred {
@@ -1232,11 +1306,10 @@ mod tests {
         let in_channel = RhoNetChannel::set_automaton_trace(TEST_FP, "root/f/0").name;
         let out_channel = RhoNetChannel::location(TEST_FP, "root").name;
         let mut program = RhoNetProgram::new("lang-fp");
-        program.channels =
-            vec![
-                RhoNetChannel::set_automaton_trace(TEST_FP, "root/f/0"),
-                RhoNetChannel::location(TEST_FP, "root"),
-            ];
+        program.channels = vec![
+            RhoNetChannel::set_automaton_trace(TEST_FP, "root/f/0"),
+            RhoNetChannel::location(TEST_FP, "root"),
+        ];
         program.semantic_predicates = vec![RhoNetSemanticPredicate::new(
             "guard:is-ground",
             RhoNetSemanticPredicateQuality::RejectSafeApprox,
@@ -1483,8 +1556,10 @@ mod tests {
     #[test]
     fn validation_reports_duplicate_ids() {
         let mut program = RhoNetProgram::new("lang-fp");
-        program.channels =
-            vec![RhoNetChannel::location(TEST_FP, "root"), RhoNetChannel::location(TEST_FP, "root")];
+        program.channels = vec![
+            RhoNetChannel::location(TEST_FP, "root"),
+            RhoNetChannel::location(TEST_FP, "root"),
+        ];
         program.semantic_predicates = vec![
             RhoNetSemanticPredicate::new("guard", RhoNetSemanticPredicateQuality::ExactDecidable),
             RhoNetSemanticPredicate::new(
