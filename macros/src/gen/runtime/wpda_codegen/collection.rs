@@ -52,11 +52,12 @@ fn collect_binder_collection_infos<'a>(
     positions: &'a [BinderPosition],
     out: &mut Vec<&'a CollectionSepInfo>,
 ) {
-    for position in positions {
+    let mut work: Vec<&BinderPosition> = positions.iter().rev().collect();
+    while let Some(position) = work.pop() {
         match position {
             BinderPosition::ParamParse { collection: Some(info), .. } => out.push(info),
-            BinderPosition::OptionalGroup { positions: inner, .. } => {
-                collect_binder_collection_infos(inner, out);
+            BinderPosition::OptionalGroup { positions: inner_positions, .. } => {
+                work.extend(inner_positions.iter().rev());
             },
             _ => {},
         }
@@ -70,13 +71,14 @@ fn binder_collection_infos(shape: &BinderShape) -> Vec<&CollectionSepInfo> {
 }
 
 fn collect_binder_close_delimiters(positions: &[BinderPosition], closes: &mut BTreeSet<String>) {
-    for position in positions {
+    let mut work: Vec<&BinderPosition> = positions.iter().rev().collect();
+    while let Some(position) = work.pop() {
         match position {
             BinderPosition::BinderListLoop { close, inner_positions, .. } => {
                 if !close.is_empty() {
                     closes.insert(close.clone());
                 }
-                collect_binder_close_delimiters(inner_positions, closes);
+                work.extend(inner_positions.iter().rev());
             },
             BinderPosition::ParamParse { collection: Some(info), .. } => {
                 if !info.close.is_empty() {
@@ -84,7 +86,7 @@ fn collect_binder_close_delimiters(positions: &[BinderPosition], closes: &mut BT
                 }
             },
             BinderPosition::OptionalGroup { positions: inner, .. } => {
-                collect_binder_close_delimiters(inner, closes);
+                work.extend(inner.iter().rev());
             },
             _ => {},
         }
@@ -122,14 +124,18 @@ pub(crate) fn collect_structural_delimiters(
 }
 
 fn has_binder_internal_collection_slot(positions: &[BinderPosition]) -> bool {
-    positions.iter().any(|position| match position {
-        BinderPosition::ParamParse { collection: Some(_), .. } => true,
-        BinderPosition::BinderListLoop { collection_param_cat: Some(_), .. } => true,
-        BinderPosition::OptionalGroup { positions: inner, .. } => {
-            has_binder_internal_collection_slot(inner)
-        },
-        _ => false,
-    })
+    let mut work: Vec<&BinderPosition> = positions.iter().rev().collect();
+    while let Some(position) = work.pop() {
+        match position {
+            BinderPosition::ParamParse { collection: Some(_), .. }
+            | BinderPosition::BinderListLoop { collection_param_cat: Some(_), .. } => return true,
+            BinderPosition::OptionalGroup { positions: inner_positions, .. } => {
+                work.extend(inner_positions.iter().rev());
+            },
+            _ => {},
+        }
+    }
+    false
 }
 
 /// Stage 3 (2026-06-27): the SINGLE key/value-separator resolver for collection
@@ -1572,24 +1578,12 @@ mod tests {
     #[test]
     fn kv_sep_for_genuine_kv_containers_is_unchanged() {
         let map_delims = CollectionCategory::map_defaults();
-        assert_eq!(
-            kv_sep_for(&CollectionType::HashMap, Some(&map_delims)).as_deref(),
-            Some(":"),
-        );
-        assert_eq!(
-            kv_sep_for(&CollectionType::PathMap, Some(&map_delims)).as_deref(),
-            Some(":"),
-        );
+        assert_eq!(kv_sep_for(&CollectionType::HashMap, Some(&map_delims)).as_deref(), Some(":"),);
+        assert_eq!(kv_sep_for(&CollectionType::PathMap, Some(&map_delims)).as_deref(), Some(":"),);
         // No declared delimiters in scope (the inline-binder and lexer-terminal
         // sources) ⇒ the per-type default.
-        assert_eq!(
-            kv_sep_for(&CollectionType::HashMap, None).as_deref(),
-            Some(":"),
-        );
-        assert_eq!(
-            kv_sep_for(&CollectionType::PathMap, None).as_deref(),
-            Some(":"),
-        );
+        assert_eq!(kv_sep_for(&CollectionType::HashMap, None).as_deref(), Some(":"),);
+        assert_eq!(kv_sep_for(&CollectionType::PathMap, None).as_deref(), Some(":"),);
         assert_eq!(kv_sep_for(&CollectionType::Vec, None), None);
         // A user-overridden spelling still wins for a genuine kv container.
         let custom = mettail_ast::language::CollectionDelimiters {
@@ -1598,10 +1592,7 @@ mod tests {
             sep: ",".to_string(),
             key_val_sep: Some("=>".to_string()),
         };
-        assert_eq!(
-            kv_sep_for(&CollectionType::HashMap, Some(&custom)).as_deref(),
-            Some("=>"),
-        );
+        assert_eq!(kv_sep_for(&CollectionType::HashMap, Some(&custom)).as_deref(), Some("=>"),);
         assert_eq!(kv_sep_for(&CollectionType::Vec, Some(&custom)), None);
     }
 

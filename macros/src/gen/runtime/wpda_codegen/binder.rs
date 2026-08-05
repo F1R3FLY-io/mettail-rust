@@ -103,7 +103,6 @@ pub struct BinderShape {
 }
 
 /// A single position in a multi-step rule's syntax pattern.
-#[derive(Debug, Clone)]
 pub enum BinderPosition {
     /// `Literal("text")` — consume + advance position.
     Literal(String),
@@ -268,7 +267,6 @@ pub struct CollectionSepInfo {
 }
 
 /// What kind of arg the action body extracts at each position (in push order).
-#[derive(Debug, Clone)]
 pub enum ActionArgKind {
     /// `ActionArg::Ident { name }` — single binder name.
     BinderName,
@@ -315,6 +313,13 @@ pub enum ActionArgKind {
         coll_kind: CollectionType,
     },
 }
+
+#[path = "binder/model_lifecycle.rs"]
+mod model_lifecycle;
+
+#[cfg(test)]
+#[path = "../../../../tests/support/binder_model_lifecycle.rs"]
+mod model_lifecycle_tests;
 
 /// Try to classify a `GrammarRule` as a multi-step rule (binder, multi-Param,
 /// or guard-bearing).
@@ -1275,7 +1280,8 @@ pub(crate) fn cat_idx_tokens(
 }
 
 fn first_param_cat_from_positions(positions: &[BinderPosition]) -> Option<&str> {
-    for position in positions {
+    let mut work: Vec<&BinderPosition> = positions.iter().rev().collect();
+    while let Some(position) = work.pop() {
         match position {
             BinderPosition::ParamParse { cat, .. } => return Some(cat.as_str()),
             BinderPosition::BinderListLoop { collection_param_cat: Some(cat), .. } => {
@@ -1283,9 +1289,7 @@ fn first_param_cat_from_positions(positions: &[BinderPosition]) -> Option<&str> 
             },
             BinderPosition::BinderListLoop { inner_positions, .. }
             | BinderPosition::OptionalGroup { positions: inner_positions, .. } => {
-                if let Some(cat) = first_param_cat_from_positions(inner_positions) {
-                    return Some(cat);
-                }
+                work.extend(inner_positions.iter().rev());
             },
             // `IdentTextCapture` joins the no-category group: it consumes a TOKEN, not a
             // nonterminal, so it contributes no parseable category to this lookup —
@@ -3351,13 +3355,7 @@ pub(crate) fn emit_binder_action_entry(
     // through [`cat_idx_tokens`], which substitutes a spanned `compile_error!`
     // exactly where the wrong index would have gone.
     let lookup_cat_idx = |name: &str| -> TokenStream {
-        cat_idx_tokens(
-            name,
-            categories,
-            "a binder rule's action entry",
-            &shape.label,
-            rule_span,
-        )
+        cat_idx_tokens(name, categories, "a binder rule's action entry", &shape.label, rule_span)
     };
     let result_cat_idx = lookup_cat_idx(&shape.result_cat);
     // ANY_CAT = u16::MAX; matches mettail_prattail::wpda_runtime::ANY_CAT
@@ -4007,9 +4005,9 @@ pub(crate) fn constructed_field_shapes(shape: &BinderShape) -> Vec<FieldShape> {
             ActionArgKind::GuestBody { .. } => Some(FieldShapeTag::GuestBody),
             ActionArgKind::Term(cat) => Some(FieldShapeTag::Term(cat.clone())),
             ActionArgKind::Predicate => Some(FieldShapeTag::Predicate),
-            ActionArgKind::CollectionDrain { elem_cat, coll_kind } => Some(
-                FieldShapeTag::Collection(elem_cat.clone(), coll_kind.clone()),
-            ),
+            ActionArgKind::CollectionDrain { elem_cat, coll_kind } => {
+                Some(FieldShapeTag::Collection(elem_cat.clone(), coll_kind.clone()))
+            },
             // Both fold into the trailing `Scope`; neither is a field.
             ActionArgKind::BinderName | ActionArgKind::BinderList => None,
             // Handled by the caller, which flattens it.
@@ -4044,7 +4042,10 @@ pub(crate) fn constructed_field_shapes(shape: &BinderShape) -> Vec<FieldShape> {
         }
     }
     if shape.has_binder {
-        out.push(FieldShape { tag: FieldShapeTag::Scope, optional: false });
+        out.push(FieldShape {
+            tag: FieldShapeTag::Scope,
+            optional: false,
+        });
     }
     out
 }
@@ -4107,10 +4108,7 @@ pub(crate) fn declared_field_shapes(layout: &crate::gen::capture::FieldLayout) -
 ///
 /// It runs entirely on the macro's own data: no build of the generated crate,
 /// no test fixture, no grammar corpus. Every language that compiles is gated.
-pub(crate) fn field_order_disagreement(
-    rule: &GrammarRule,
-    shape: &BinderShape,
-) -> Option<String> {
+pub(crate) fn field_order_disagreement(rule: &GrammarRule, shape: &BinderShape) -> Option<String> {
     let term_context = rule.term_context.as_deref()?;
     let layout = crate::gen::capture::field_layout(term_context, rule.syntax_pattern.as_deref());
     let declared = declared_field_shapes(&layout);
@@ -4436,8 +4434,10 @@ mod tests {
             &categories,
             Span::call_site(),
         )
-        .expect("the fixture shape must yield an action entry in BOTH arms; a `None` here \
-                 would make the mutation and the control agree vacuously")
+        .expect(
+            "the fixture shape must yield an action entry in BOTH arms; a `None` here \
+                 would make the mutation and the control agree vacuously",
+        )
         .to_string()
     }
 
@@ -4470,10 +4470,7 @@ mod tests {
             !emitted.contains("compile_error"),
             "a declared category must NOT refuse. Got: {emitted}",
         );
-        assert!(
-            emitted.contains("1u16"),
-            "`Ghost` is index 1 of [Term, Ghost]. Got: {emitted}",
-        );
+        assert!(emitted.contains("1u16"), "`Ghost` is index 1 of [Term, Ghost]. Got: {emitted}",);
     }
 
     /// ★ THE FAILS-OPEN WITNESS. Index 0 is `Term`, the FIRST declared category —
@@ -4536,10 +4533,11 @@ mod tests {
     fn the_resolver_resolves_a_declared_category() {
         let categories = vec!["Term".to_string(), "Num".to_string()];
         assert_eq!(resolve_cat_idx("Num", &categories, "a site", "R"), Ok(1u16));
-        assert_eq!(cat_idx_tokens("Num", &categories, "a site", "R", Span::call_site())
-            .to_string(), "1u16");
+        assert_eq!(
+            cat_idx_tokens("Num", &categories, "a site", "R", Span::call_site()).to_string(),
+            "1u16"
+        );
     }
-
 
     // ═══════════════════════════════════════════════════════════════════════
     // Task #139 RED — the DEFINITION's field order and the CONSTRUCTION's
@@ -4641,7 +4639,9 @@ mod tests {
                     name: Ident::new("n", Span::call_site()),
                     ty: TypeExpr::Base(Ident::new("Name", Span::call_site())),
                 },
-                TermParam::GuardBody { name: Ident::new("guard", Span::call_site()) },
+                TermParam::GuardBody {
+                    name: Ident::new("guard", Span::call_site()),
+                },
                 TermParam::Abstraction {
                     binder: Ident::new("x", Span::call_site()),
                     body: Ident::new("p", Span::call_site()),
@@ -4697,16 +4697,9 @@ mod tests {
         let shape = classify_binder_in(rule, &language)
             .expect("the fixture is literal-led and multi-position, so it must classify");
         let categories: Vec<String> = categories.iter().map(|c| (*c).to_string()).collect();
-        emit_binder_action_entry(
-            0u16,
-            0u16,
-            &shape,
-            &rule.category,
-            &categories,
-            Span::call_site(),
-        )
-        .expect("a classified binder shape must yield an action entry")
-        .to_string()
+        emit_binder_action_entry(0u16, 0u16, &shape, &rule.category, &categories, Span::call_site())
+            .expect("a classified binder shape must yield an action entry")
+            .to_string()
     }
 
     /// The variant `gen/types/enums.rs` writes for `rule`, as tokens.
@@ -4727,8 +4720,7 @@ mod tests {
         // is pinned exactly rather than compared to its own former self.
         let variant = emitted_variant_for(&rule);
         assert_eq!(
-            variant,
-            "Guarded (mettail_runtime :: BehavioralPred , std :: sync :: Arc < Proc >)",
+            variant, "Guarded (mettail_runtime :: BehavioralPred , std :: sync :: Arc < Proc >)",
             "the variant's field 0 must be the GUARD (syntax position 0) and field 1 the \
              PROC (syntax position 1). Got: {variant}",
         );
@@ -4774,7 +4766,10 @@ mod tests {
     #[test]
     fn the_fixture_really_does_declare_and_write_its_parameters_in_different_orders() {
         let rule = guard_order_rule();
-        let term_context = rule.term_context.as_deref().expect("fixture has a term context");
+        let term_context = rule
+            .term_context
+            .as_deref()
+            .expect("fixture has a term context");
 
         let declared: Vec<String> = term_context
             .iter()
@@ -4878,10 +4873,7 @@ mod tests {
         shape.action_args.swap(0, 1);
         let message = field_order_disagreement(&rule, &shape)
             .expect("a transposed construction must be refused");
-        assert!(
-            message.contains("Guarded"),
-            "the refusal must NAME the rule. Got: {message}",
-        );
+        assert!(message.contains("Guarded"), "the refusal must NAME the rule. Got: {message}",);
         assert!(
             message.contains("Predicate") && message.contains("Term(\"Proc\")"),
             "the refusal must show BOTH field sequences so the reader can see which two \

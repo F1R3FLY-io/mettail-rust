@@ -167,19 +167,22 @@ fn ident_param_names(rule: &GrammarRule) -> Vec<String> {
 /// Does `positions` (or any `#opt(...)` group nested in it) consume `param` as an
 /// identifier token?
 fn binder_consumes(positions: &[BinderPosition], param: &str) -> bool {
-    positions.iter().any(|pos| match pos {
-        BinderPosition::IdentTextCapture { param_name } => param_name == param,
-        BinderPosition::OptionalGroup { positions, .. } => binder_consumes(positions, param),
-        _ => false,
-    })
+    let mut work: Vec<&BinderPosition> = positions.iter().rev().collect();
+    while let Some(position) = work.pop() {
+        match position {
+            BinderPosition::IdentTextCapture { param_name } if param_name == param => return true,
+            BinderPosition::OptionalGroup { positions: inner_positions, .. } => {
+                work.extend(inner_positions.iter().rev());
+            },
+            _ => {},
+        }
+    }
+    false
 }
 
 /// Check one rule. Returns every violation it carries (a rule may declare more
 /// than one `Ident` param, and reporting only the first would hide the rest).
-pub(crate) fn check_rule(
-    rule: &GrammarRule,
-    language: &LanguageDef,
-) -> Vec<IdentRoutingViolation> {
+pub(crate) fn check_rule(rule: &GrammarRule, language: &LanguageDef) -> Vec<IdentRoutingViolation> {
     let pratt = super::infix::classify_rule_public(rule);
     check_against(rule, pratt.as_ref(), Some(language))
 }
@@ -353,7 +356,10 @@ mod tests {
     }
 
     fn simple(name: &str, ty: &str) -> TermParam {
-        TermParam::Simple { name: id(name), ty: TypeExpr::Base(id(ty)) }
+        TermParam::Simple {
+            name: id(name),
+            ty: TypeExpr::Base(id(ty)),
+        }
     }
 
     fn vec_param(name: &str, elem: &str) -> TermParam {
@@ -391,7 +397,10 @@ mod tests {
     }
 
     fn language_with(rules: Vec<GrammarRule>) -> LanguageDef {
-        LanguageDef { terms: rules, ..crate::gen::empty_language_for_tests() }
+        LanguageDef {
+            terms: rules,
+            ..crate::gen::empty_language_for_tests()
+        }
     }
 
     /// `Call`'s exact shape: operand-leading, `m:Ident` between the trigger and a
@@ -401,14 +410,7 @@ mod tests {
             "Call",
             "Num",
             vec![simple("recv", "Num"), simple("m", "Ident"), vec_param("args", "Num")],
-            vec![
-                param("recv"),
-                lit("."),
-                param("m"),
-                lit("("),
-                sep("args", ","),
-                lit(")"),
-            ],
+            vec![param("recv"), lit("."), param("m"), lit("("), sep("args", ","), lit(")")],
         )
     }
 
@@ -481,7 +483,10 @@ mod tests {
 
         let violations = check_against(&r, Some(&info), Some(&lang));
         assert_eq!(
-            violations.iter().map(|v| v.fault.clone()).collect::<Vec<_>>(),
+            violations
+                .iter()
+                .map(|v| v.fault.clone())
+                .collect::<Vec<_>>(),
             vec![IdentRoutingFault::MixfixPartNotACapture],
             "the gate must reject the pre-#131 shape, and name the ROOT fault",
         );
