@@ -19,7 +19,7 @@ use crate::{
     language::{Equation, FreshnessTarget, LanguageDef, Premise},
     pattern::{Pattern, PatternTerm},
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// S2 — THE reserved-reflect-namespace predicate, defined once.
 ///
@@ -407,74 +407,54 @@ fn walk_behavioral_pred(
 }
 
 fn validate_pattern(pattern: &Pattern, language: &LanguageDef) -> Result<(), ValidationError> {
-    match pattern {
-        Pattern::Term(pt) => validate_pattern_term(pt, language),
-        Pattern::Collection { elements, .. } => {
-            // Validate collection pattern
-            // NOTE: Collections no longer have constructors - they get context from
-            // the enclosing PatternTerm::Apply. Validation of collection type
-            // compatibility happens when we process the parent Apply.
-
-            // Recursively validate element patterns
-            for elem in elements {
-                validate_pattern(elem, language)?;
-            }
-
-            Ok(())
-        },
-        Pattern::Map { collection, body, .. } => {
-            validate_pattern(collection, language)?;
-            validate_pattern(body, language)?;
-            Ok(())
-        },
-        Pattern::Zip { first, second } => {
-            validate_pattern(first, language)?;
-            validate_pattern(second, language)?;
-            Ok(())
-        },
-        Pattern::IndexedVec { element, .. } => validate_pattern(element, language),
+    enum Node<'pattern> {
+        Pattern(&'pattern Pattern),
+        Term(&'pattern PatternTerm),
     }
-}
 
-fn validate_pattern_term(pt: &PatternTerm, language: &LanguageDef) -> Result<(), ValidationError> {
-    match pt {
-        PatternTerm::Var(_) => Ok(()),
-        PatternTerm::Apply { constructor, args } => {
-            // Check that constructor references a known rule
-            let constructor_name = constructor.to_string();
-            let found = language
-                .terms
-                .iter()
-                .any(|r| r.label.to_string() == constructor_name);
-
-            if !found {
-                return Err(ValidationError::UnknownConstructor {
-                    name: constructor_name,
-                    span: constructor.span(),
-                });
-            }
-
-            // Recursively validate args (which are Patterns)
-            for arg in args {
-                validate_pattern(arg, language)?;
-            }
-            Ok(())
-        },
-        PatternTerm::Lambda { body, .. } => validate_pattern(body, language),
-        PatternTerm::MultiLambda { body, .. } => validate_pattern(body, language),
-        PatternTerm::Subst { term, replacement, .. } => {
-            validate_pattern(term, language)?;
-            validate_pattern(replacement, language)?;
-            Ok(())
-        },
-        PatternTerm::MultiSubst { scope, replacements } => {
-            validate_pattern(scope, language)?;
-            for repl in replacements {
-                validate_pattern(repl, language)?;
-            }
-            Ok(())
-        },
+    let mut work = vec![Node::Pattern(pattern)];
+    while let Some(node) = work.pop() {
+        match node {
+            Node::Pattern(Pattern::Term(term)) => work.push(Node::Term(term)),
+            Node::Pattern(Pattern::Collection { elements, .. }) => {
+                work.extend(elements.iter().rev().map(Node::Pattern));
+            },
+            Node::Pattern(Pattern::Map { collection, body, .. }) => {
+                work.push(Node::Pattern(body));
+                work.push(Node::Pattern(collection));
+            },
+            Node::Pattern(Pattern::Zip { first, second }) => {
+                work.push(Node::Pattern(second));
+                work.push(Node::Pattern(first));
+            },
+            Node::Pattern(Pattern::IndexedVec { element, .. }) => {
+                work.push(Node::Pattern(element));
+            },
+            Node::Term(PatternTerm::Var(_)) => {},
+            Node::Term(PatternTerm::Apply { constructor, args }) => {
+                if !language.terms.iter().any(|rule| rule.label == *constructor) {
+                    return Err(ValidationError::UnknownConstructor {
+                        name: constructor.to_string(),
+                        span: constructor.span(),
+                    });
+                }
+                work.extend(args.iter().rev().map(Node::Pattern));
+            },
+            Node::Term(PatternTerm::Lambda { body, .. })
+            | Node::Term(PatternTerm::MultiLambda { body, .. }) => {
+                work.push(Node::Pattern(body));
+            },
+            Node::Term(PatternTerm::Subst { term, replacement, .. }) => {
+                work.push(Node::Pattern(replacement));
+                work.push(Node::Pattern(term));
+            },
+            Node::Term(PatternTerm::MultiSubst { scope, replacements }) => {
+                work.extend(replacements.iter().rev().map(Node::Pattern));
+                work.push(Node::Pattern(scope));
+            },
+        }
     }
+    Ok(())
 }
 
 /// Validate a single premise against the known pattern variables.
@@ -485,72 +465,59 @@ fn validate_premise(
     pattern_vars: &HashSet<String>,
     bound_vars: &HashSet<String>,
 ) -> Result<(), ValidationError> {
-    match premise {
-        Premise::Freshness(freshness) => {
-            let var_name = freshness.var.to_string();
-            let (term_name, term_span) = match &freshness.term {
-                FreshnessTarget::Var(id) => (id.to_string(), id.span()),
-                FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
-            };
-
-            let all_vars_in_scope =
-                |name: &str| pattern_vars.contains(name) || bound_vars.contains(name);
-
-            if !all_vars_in_scope(&var_name) {
-                return Err(ValidationError::FreshnessVariableNotInEquation {
-                    var: var_name,
-                    span: freshness.var.span(),
-                });
-            }
-
-            if !all_vars_in_scope(&term_name) {
-                return Err(ValidationError::FreshnessTermNotInEquation {
-                    var: var_name,
-                    term: term_name,
-                    span: term_span,
-                });
-            }
-
-            if var_name == term_name {
-                return Err(ValidationError::FreshnessSelfReference {
-                    var: var_name,
-                    span: freshness.var.span(),
-                });
-            }
-        },
-        Premise::ForAll { collection, param, body } => {
-            let coll_name = collection.to_string();
-            if !pattern_vars.contains(&coll_name) {
-                return Err(ValidationError::FreshnessVariableNotInEquation {
-                    var: coll_name,
-                    span: collection.span(),
-                });
-            }
-            let mut inner_bound = bound_vars.clone();
-            inner_bound.insert(param.to_string());
-            validate_premise(body, pattern_vars, &inner_bound)?;
-        },
-        // ★ (#195) The two congruence POLARITIES validate identically: both name a
-        // source/target metavariable pair that the enclosing rule's own patterns bind,
-        // so there is no additional scope obligation. They are listed as one arm rather
-        // than defaulted, so a future obligation on either cannot be added to one and
-        // forgotten on the other.
-        Premise::Congruence { .. }
-        | Premise::CongruenceWithheld { .. }
-        | Premise::RelationQuery { .. } => {},
-        // Phase A (2026-05-16): synthetic-injection guard is emitted
-        // exclusively by codegen for auto-injected NormCast rules. It
-        // references the auto-injected rule's inner_var (which IS in
-        // pattern_vars by construction) and an exclusion list of
-        // grammar-derived constructor labels. No user-facing validation
-        // needed; codegen-emitted variant.
-        Premise::SyntheticInjGuard { .. } => {},
-        Premise::BehavioralGuard(_) => {
-            // Behavioral guards are evaluated at runtime via LogicT;
-            // no pattern-variable validation needed here.
-        },
+    let mut premise = premise;
+    let mut bound_vars = bound_vars.clone();
+    loop {
+        match premise {
+            Premise::Freshness(freshness) => {
+                let var_name = freshness.var.to_string();
+                let (term_name, term_span) = match &freshness.term {
+                    FreshnessTarget::Var(id) | FreshnessTarget::CollectionRest(id) => {
+                        (id.to_string(), id.span())
+                    },
+                };
+                let all_vars_in_scope =
+                    |name: &str| pattern_vars.contains(name) || bound_vars.contains(name);
+                if !all_vars_in_scope(&var_name) {
+                    return Err(ValidationError::FreshnessVariableNotInEquation {
+                        var: var_name,
+                        span: freshness.var.span(),
+                    });
+                }
+                if !all_vars_in_scope(&term_name) {
+                    return Err(ValidationError::FreshnessTermNotInEquation {
+                        var: var_name,
+                        term: term_name,
+                        span: term_span,
+                    });
+                }
+                if var_name == term_name {
+                    return Err(ValidationError::FreshnessSelfReference {
+                        var: var_name,
+                        span: freshness.var.span(),
+                    });
+                }
+            },
+            Premise::ForAll { collection, param, body } => {
+                let coll_name = collection.to_string();
+                if !pattern_vars.contains(&coll_name) {
+                    return Err(ValidationError::FreshnessVariableNotInEquation {
+                        var: coll_name,
+                        span: collection.span(),
+                    });
+                }
+                bound_vars.insert(param.to_string());
+                premise = body;
+                continue;
+            },
+            Premise::Congruence { .. }
+            | Premise::CongruenceWithheld { .. }
+            | Premise::RelationQuery { .. }
+            | Premise::SyntheticInjGuard { .. }
+            | Premise::BehavioralGuard(_) => {},
+        }
+        return Ok(());
     }
-    Ok(())
 }
 
 /// Validate freshness conditions in an equation
@@ -583,81 +550,119 @@ fn validate_rewrite_freshness(rw: &RewriteRule) -> Result<(), ValidationError> {
 
 /// Collect all variable names from a Pattern
 fn collect_pattern_vars(pattern: &Pattern, vars: &mut HashSet<String>) {
-    match pattern {
-        Pattern::Term(pt) => collect_pattern_term_vars(pt, vars),
-        Pattern::Collection { elements, rest, .. } => {
-            for elem in elements {
-                collect_pattern_vars(elem, vars);
-            }
-            if let Some(rest_var) = rest {
-                vars.insert(rest_var.to_string());
-            }
-        },
-        Pattern::Map { collection, params, body } => {
-            collect_pattern_vars(collection, vars);
-            // params are bound, so only collect from body excluding params
-            let mut body_vars = HashSet::new();
-            collect_pattern_vars(body, &mut body_vars);
-            for param in params {
-                body_vars.remove(&param.to_string());
-            }
-            vars.extend(body_vars);
-        },
-        Pattern::Zip { first, second } => {
-            collect_pattern_vars(first, vars);
-            collect_pattern_vars(second, vars);
-        },
-        Pattern::IndexedVec { collection, index, element } => {
-            vars.insert(collection.to_string());
-            vars.insert(index.to_string());
-            collect_pattern_vars(element, vars);
-        },
+    enum Task<'pattern> {
+        Pattern(&'pattern Pattern),
+        Term(&'pattern PatternTerm),
+        MapBody(&'pattern [syn::Ident], &'pattern Pattern),
+        ExitOne(&'pattern syn::Ident),
+        ExitMany(&'pattern [syn::Ident]),
+    }
+
+    let mut tasks = vec![Task::Pattern(pattern)];
+    let mut bound: HashMap<String, usize> = HashMap::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Pattern(pattern) => match pattern {
+                Pattern::Term(term) => tasks.push(Task::Term(term)),
+                Pattern::Collection { elements, .. } => {
+                    tasks.extend(elements.iter().rev().map(Task::Pattern));
+                    if let Pattern::Collection { rest: Some(rest), .. } = pattern {
+                        let name = rest.to_string();
+                        if !bound.contains_key(&name) {
+                            vars.insert(name);
+                        }
+                    }
+                },
+                Pattern::Map { collection, params, body } => {
+                    tasks.push(Task::MapBody(params, body));
+                    tasks.push(Task::Pattern(collection));
+                },
+                Pattern::Zip { first, second } => {
+                    tasks.push(Task::Pattern(second));
+                    tasks.push(Task::Pattern(first));
+                },
+                Pattern::IndexedVec { collection, index, element } => {
+                    for ident in [collection, index] {
+                        let name = ident.to_string();
+                        if !bound.contains_key(&name) {
+                            vars.insert(name);
+                        }
+                    }
+                    tasks.push(Task::Pattern(element));
+                },
+            },
+            Task::Term(term) => match term {
+                PatternTerm::Var(ident) => {
+                    let name = ident.to_string();
+                    if !bound.contains_key(&name) {
+                        vars.insert(name);
+                    }
+                },
+                PatternTerm::Apply { args, .. } => {
+                    tasks.extend(args.iter().rev().map(Task::Pattern));
+                },
+                PatternTerm::Lambda { binder, body } => {
+                    let name = binder.to_string();
+                    if !bound.contains_key(&name) {
+                        vars.insert(name.clone());
+                    }
+                    *bound.entry(name).or_default() += 1;
+                    tasks.push(Task::ExitOne(binder));
+                    tasks.push(Task::Pattern(body));
+                },
+                PatternTerm::MultiLambda { binders, body } => {
+                    for binder in binders {
+                        let name = binder.to_string();
+                        if !bound.contains_key(&name) {
+                            vars.insert(name.clone());
+                        }
+                        *bound.entry(name).or_default() += 1;
+                    }
+                    tasks.push(Task::ExitMany(binders));
+                    tasks.push(Task::Pattern(body));
+                },
+                PatternTerm::Subst { term: value, var, replacement } => {
+                    let name = var.to_string();
+                    if !bound.contains_key(&name) {
+                        vars.insert(name);
+                    }
+                    tasks.push(Task::Pattern(replacement));
+                    tasks.push(Task::Pattern(value));
+                },
+                PatternTerm::MultiSubst { scope, replacements } => {
+                    tasks.extend(replacements.iter().rev().map(Task::Pattern));
+                    tasks.push(Task::Pattern(scope));
+                },
+            },
+            Task::MapBody(params, body) => {
+                for param in params {
+                    *bound.entry(param.to_string()).or_default() += 1;
+                }
+                tasks.push(Task::ExitMany(params));
+                tasks.push(Task::Pattern(body));
+            },
+            Task::ExitOne(ident) => {
+                let name = ident.to_string();
+                let depth = bound.get_mut(&name).expect("entered binder must be active");
+                *depth -= 1;
+                if *depth == 0 {
+                    bound.remove(&name);
+                }
+            },
+            Task::ExitMany(idents) => {
+                for ident in idents {
+                    let name = ident.to_string();
+                    let depth = bound.get_mut(&name).expect("entered binder must be active");
+                    *depth -= 1;
+                    if *depth == 0 {
+                        bound.remove(&name);
+                    }
+                }
+            },
+        }
     }
 }
 
-/// Collect all variable names from a PatternTerm
-fn collect_pattern_term_vars(pt: &PatternTerm, vars: &mut HashSet<String>) {
-    match pt {
-        PatternTerm::Var(ident) => {
-            vars.insert(ident.to_string());
-        },
-        PatternTerm::Apply { args, .. } => {
-            for arg in args {
-                collect_pattern_vars(arg, vars);
-            }
-        },
-        PatternTerm::Lambda { binder, body } => {
-            // Include the binder as a valid pattern variable (for freshness conditions)
-            vars.insert(binder.to_string());
-            // Collect body vars, but remove binder from free vars (it's bound)
-            let mut body_vars = HashSet::new();
-            collect_pattern_vars(body, &mut body_vars);
-            body_vars.remove(&binder.to_string());
-            vars.extend(body_vars);
-        },
-        PatternTerm::MultiLambda { binders, body } => {
-            // Include all binders as valid pattern variables (for freshness conditions)
-            for binder in binders {
-                vars.insert(binder.to_string());
-            }
-            // Collect body vars, but remove binders from free vars (they're bound)
-            let mut body_vars = HashSet::new();
-            collect_pattern_vars(body, &mut body_vars);
-            for binder in binders {
-                body_vars.remove(&binder.to_string());
-            }
-            vars.extend(body_vars);
-        },
-        PatternTerm::Subst { term, var, replacement } => {
-            collect_pattern_vars(term, vars);
-            vars.insert(var.to_string());
-            collect_pattern_vars(replacement, vars);
-        },
-        PatternTerm::MultiSubst { scope, replacements } => {
-            collect_pattern_vars(scope, vars);
-            for repl in replacements {
-                collect_pattern_vars(repl, vars);
-            }
-        },
-    }
-}
+#[cfg(test)]
+#[path = "../../tests/support/pattern_validation_oracle.rs"]
+mod tests;

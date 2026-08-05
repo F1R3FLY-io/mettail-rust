@@ -133,76 +133,110 @@ impl TypeChecker {
         pattern: &Pattern,
         context: &mut HashMap<String, String>,
     ) -> Result<String, ValidationError> {
-        match pattern {
-            Pattern::Term(pt) => self.infer_type_from_pattern_term(pt, context),
-            Pattern::Collection { elements, .. } => {
-                // Collections no longer have constructors - they get their type
-                // from the enclosing PatternTerm::Apply.
-                // Here we validate elements and return the collection category sentinel.
-                for elem in elements {
-                    let _ = self.infer_type_from_pattern(elem, context)?;
-                }
-                // Collection type is determined by enclosing Apply
-                Ok("Collection".to_string())
-            },
-            Pattern::Map { collection, body, .. } => {
-                // Map doesn't change the type
-                let _ = self.infer_type_from_pattern(collection, context)?;
-                self.infer_type_from_pattern(body, context)
-            },
-            Pattern::Zip { first, second } => {
-                // Zip combines types
-                let _ = self.infer_type_from_pattern(first, context)?;
-                let _ = self.infer_type_from_pattern(second, context)?;
-                Ok("?".to_string())
-            },
-            // The whole pattern denotes the COLLECTION (it is `args` with one position
-            // rewritten), so its type is the collection's, not the element's.
-            Pattern::IndexedVec { element, .. } => {
-                let _ = self.infer_type_from_pattern(element, context)?;
-                Ok("?".to_string())
-            },
+        enum Task<'pattern> {
+            Pattern(&'pattern Pattern),
+            Term(&'pattern PatternTerm),
+            AssemblePattern(&'pattern Pattern, usize),
+            AssembleTerm(&'pattern PatternTerm, usize),
         }
-    }
 
-    /// Infer the type/category of a PatternTerm with a variable context
-    fn infer_type_from_pattern_term(
-        &self,
-        pt: &PatternTerm,
-        context: &mut HashMap<String, String>,
-    ) -> Result<String, ValidationError> {
-        match pt {
-            PatternTerm::Var(name) => {
-                let name_str = name.to_string();
-                if let Some(ty) = context.get(&name_str) {
-                    Ok(ty.clone())
-                } else {
-                    Ok("?".to_string())
-                }
-            },
-            PatternTerm::Apply { constructor, args } => {
-                let ctor_name = constructor.to_string();
-                if let Some(ctor_type) = self.constructors.get(&ctor_name) {
-                    // Check argument types match
-                    for (arg, param) in args.iter().zip(&ctor_type.arg_categories) {
-                        let arg_type = self.infer_type_from_pattern(arg, context)?;
-                        if arg_type != "?" && arg_type != *param {
-                            // Type mismatch
-                        }
-                    }
-                    Ok(ctor_type.result_category.clone())
-                } else {
-                    Err(ValidationError::UnknownConstructor {
-                        name: ctor_name,
-                        span: constructor.span(),
-                    })
-                }
-            },
-            PatternTerm::Lambda { body, .. } => self.infer_type_from_pattern(body, context),
-            PatternTerm::MultiLambda { body, .. } => self.infer_type_from_pattern(body, context),
-            PatternTerm::Subst { term, .. } => self.infer_type_from_pattern(term, context),
-            PatternTerm::MultiSubst { scope, .. } => self.infer_type_from_pattern(scope, context),
+        let mut tasks = vec![Task::Pattern(pattern)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Pattern(pattern) => match pattern {
+                    Pattern::Term(term) => {
+                        tasks.push(Task::AssemblePattern(pattern, values.len()));
+                        tasks.push(Task::Term(term));
+                    },
+                    Pattern::Collection { elements, .. } => {
+                        tasks.push(Task::AssemblePattern(pattern, values.len()));
+                        tasks.extend(elements.iter().rev().map(Task::Pattern));
+                    },
+                    Pattern::Map { collection, body, .. } => {
+                        tasks.push(Task::AssemblePattern(pattern, values.len()));
+                        tasks.push(Task::Pattern(body));
+                        tasks.push(Task::Pattern(collection));
+                    },
+                    Pattern::Zip { first, second } => {
+                        tasks.push(Task::AssemblePattern(pattern, values.len()));
+                        tasks.push(Task::Pattern(second));
+                        tasks.push(Task::Pattern(first));
+                    },
+                    Pattern::IndexedVec { element, .. } => {
+                        tasks.push(Task::AssemblePattern(pattern, values.len()));
+                        tasks.push(Task::Pattern(element));
+                    },
+                },
+                Task::Term(term) => match term {
+                    PatternTerm::Var(name) => values.push(
+                        context
+                            .get(&name.to_string())
+                            .cloned()
+                            .unwrap_or_else(|| "?".to_string()),
+                    ),
+                    PatternTerm::Apply { constructor, args } => {
+                        let constructor_name = constructor.to_string();
+                        let Some(constructor_type) = self.constructors.get(&constructor_name)
+                        else {
+                            return Err(ValidationError::UnknownConstructor {
+                                name: constructor_name,
+                                span: constructor.span(),
+                            });
+                        };
+                        tasks.push(Task::AssembleTerm(term, values.len()));
+                        let paired_arguments =
+                            args.len().min(constructor_type.arg_categories.len());
+                        tasks.extend(args[..paired_arguments].iter().rev().map(Task::Pattern));
+                    },
+                    PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
+                        tasks.push(Task::AssembleTerm(term, values.len()));
+                        tasks.push(Task::Pattern(body));
+                    },
+                    PatternTerm::Subst { term: value, .. } => {
+                        tasks.push(Task::AssembleTerm(term, values.len()));
+                        tasks.push(Task::Pattern(value));
+                    },
+                    PatternTerm::MultiSubst { scope, .. } => {
+                        tasks.push(Task::AssembleTerm(term, values.len()));
+                        tasks.push(Task::Pattern(scope));
+                    },
+                },
+                Task::AssemblePattern(pattern, value_base) => {
+                    let inferred = match pattern {
+                        Pattern::Term(_) => values.pop().unwrap_or_else(|| "?".to_string()),
+                        Pattern::Collection { .. } => "Collection".to_string(),
+                        Pattern::Map { .. } => values.pop().unwrap_or_else(|| "?".to_string()),
+                        Pattern::Zip { .. } | Pattern::IndexedVec { .. } => "?".to_string(),
+                    };
+                    values.truncate(value_base);
+                    values.push(inferred);
+                },
+                Task::AssembleTerm(term, value_base) => {
+                    let inferred = match term {
+                        PatternTerm::Var(_) => {
+                            unreachable!("variables produce their value directly")
+                        },
+                        PatternTerm::Apply { constructor, .. } => self
+                            .constructors
+                            .get(&constructor.to_string())
+                            .expect("constructor was checked before visiting its arguments")
+                            .result_category
+                            .clone(),
+                        PatternTerm::Lambda { .. }
+                        | PatternTerm::MultiLambda { .. }
+                        | PatternTerm::Subst { .. }
+                        | PatternTerm::MultiSubst { .. } => {
+                            values.pop().unwrap_or_else(|| "?".to_string())
+                        },
+                    };
+                    values.truncate(value_base);
+                    values.push(inferred);
+                },
+            }
         }
+        debug_assert_eq!(values.len(), 1);
+        Ok(values.pop().unwrap_or_else(|| "?".to_string()))
     }
 
     /// Check that an equation is well-typed (both sides have same type)
