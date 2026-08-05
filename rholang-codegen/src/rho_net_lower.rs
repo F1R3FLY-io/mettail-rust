@@ -7418,6 +7418,10 @@ mod pattern_analysis_recursive_oracle;
 #[path = "../tests/support/ac_template_recursive_oracle.rs"]
 mod ac_template_recursive_oracle;
 
+#[cfg(test)]
+#[path = "../tests/support/nested_match_pattern_recursive_oracle.rs"]
+mod nested_match_pattern_recursive_oracle;
+
 /// The recognized shape of a DEPTH-2 NESTED structural non-linear AC rewrite (the Ambient
 /// `InRule`/`OutRule`). Both are `k = 2` outer elements where EXACTLY ONE is NESTED (`PAmb N (PPar
 /// {…})`, whose second argument is a HashBag carrying the capability `in(m,·)`/`out(m,·)`), sharing a
@@ -7620,48 +7624,71 @@ fn count_template_name_occurrences(template: &AcReconstructTemplate, name: &str)
 /// structural-AC / nested-structural-AC rule's CHECK pattern with this SAME builder in
 /// `Match`-case position over the driven value (plan v2 §4.3.1), so the driver's redex
 /// checks can never drift from the installed receivers' operand patterns.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn nested_match_pattern_for(
+trait NestedMatchPatternPolicy {
+    fn variable(&mut self, variable: &Ident) -> Par;
+    fn remainder(&mut self, remainder: Option<&Ident>) -> Par;
+}
+
+/// Shared bottom-up PDA for the two nested-AC receiver pattern layouts. The
+/// policies allocate only leaf/remainder slots; constructor tagging, marker
+/// absorption, soup sends, child ordering, and result assembly live here once.
+fn build_nested_match_pattern(
     pattern: &Pattern,
-    nonlinear_var: &Ident,
-    spliced_rest: &Ident,
-    spliced_rest_slot: usize,
-    next_guard_slot: &mut usize,
-    occurrence_levels: &mut Vec<usize>,
+    policy: &mut impl NestedMatchPatternPolicy,
     language_fingerprint: &str,
 ) -> Par {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(v)) if v == nonlinear_var => {
-            // A cross-level channel occurrence — a distinct GUARD σ slot.
-            let slot = *next_guard_slot;
-            *next_guard_slot += 1;
-            occurrence_levels.push(slot);
-            new_freevar_par(slot as i32, Vec::new())
+    enum Task<'pattern> {
+        Visit(&'pattern Pattern),
+        AssembleBag {
+            soup: Par,
+            element_channel: String,
+            element_count: usize,
         },
-        // Any other bare variable (`N`, `P`, `R`, …) rides the host-computed reduct — a wildcard.
-        Pattern::Term(PatternTerm::Var(_)) => new_wildcard_par(Vec::new(), true),
-        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
-            if let [Pattern::Collection { elements, rest, .. }] = args.as_slice() {
-                // `op{ elements, ...rest }` — the process-soup pattern. The remainder is the bound
-                // SPLICED-rest σ slot iff this is the OUTER bag (`rest == spliced_rest`); a nested-bag
-                // remainder (e.g. `rest1`) rides the reduct, so it is a wildcard.
-                let element_channel =
-                    ac_soup_channel(language_fingerprint, &constructor.to_string());
-                let mut soup = if rest.as_ref() == Some(spliced_rest) {
-                    new_freevar_par(spliced_rest_slot as i32, Vec::new())
+        AssembleNode {
+            prefix: Vec<Par>,
+            child_count: usize,
+        },
+    }
+
+    let mut tasks = vec![Task::Visit(pattern)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Pattern::Term(PatternTerm::Var(variable))) => {
+                values.push(policy.variable(variable));
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Apply { constructor, args })) => {
+                if let [Pattern::Collection { elements, rest, .. }] = args.as_slice() {
+                    let element_channel =
+                        ac_soup_channel(language_fingerprint, &constructor.to_string());
+                    let soup = policy.remainder(rest.as_ref());
+                    tasks.push(Task::AssembleBag {
+                        soup,
+                        element_channel,
+                        element_count: elements.len(),
+                    });
+                    tasks.extend(elements.iter().rev().map(Task::Visit));
                 } else {
-                    new_wildcard_par(Vec::new(), true)
-                };
-                for element in elements {
-                    let element_pattern = nested_match_pattern_for(
-                        element,
-                        nonlinear_var,
-                        spliced_rest,
-                        spliced_rest_slot,
-                        next_guard_slot,
-                        occurrence_levels,
+                    let label = constructor.to_string();
+                    let mut prefix = Vec::with_capacity(args.len() + 2);
+                    prefix.push(GPrivateBuilder::new_par_from_string(reflect_tag(
                         language_fingerprint,
-                    );
+                        &label,
+                    )));
+                    if is_marked_object_label(&label) {
+                        prefix.push(new_wildcard_par(Vec::new(), true));
+                    }
+                    tasks.push(Task::AssembleNode { prefix, child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                }
+            },
+            Task::Visit(_) => values.push(new_wildcard_par(Vec::new(), true)),
+            Task::AssembleBag { mut soup, element_channel, element_count } => {
+                let first = values
+                    .len()
+                    .checked_sub(element_count)
+                    .expect("nested match PDA lost a bag element result");
+                for element_pattern in values.drain(first..) {
                     let send_pattern = new_send_par(
                         new_gstring_par(element_channel.clone(), Vec::new(), false),
                         vec![element_pattern],
@@ -7673,38 +7700,72 @@ pub(crate) fn nested_match_pattern_for(
                     );
                     soup = soup.append(send_pattern);
                 }
-                soup
-            } else {
-                // A plain constructor node → the tagged `EList[ GPrivate(tag), <arg patterns> ]`.
-                let label = constructor.to_string();
-                let tag =
-                    GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &label));
-                let mut items = Vec::with_capacity(args.len() + 2);
-                items.push(tag);
-                // E-2-D: a marked-object node carries the marker at index 1 — absorb it with a
-                // wildcard so this drive-AC-carrier bind/check pattern matches the reflected
-                // operand (the arg patterns keep their positions, a wildcard binds nothing).
-                if is_marked_object_label(&label) {
-                    items.push(new_wildcard_par(Vec::new(), true));
-                }
-                for arg in args {
-                    items.push(nested_match_pattern_for(
-                        arg,
-                        nonlinear_var,
-                        spliced_rest,
-                        spliced_rest_slot,
-                        next_guard_slot,
-                        occurrence_levels,
-                        language_fingerprint,
-                    ));
-                }
-                new_elist_par(items, Vec::new(), true, None, Vec::new(), true)
-            }
-        },
-        // A nested structural-AC rule LHS has no other node kinds (subst / lambda / map / zip); a
-        // defensive wildcard keeps the walk total (the recognizer already rejected such shapes).
-        _ => new_wildcard_par(Vec::new(), true),
+                values.push(soup);
+            },
+            Task::AssembleNode { mut prefix, child_count } => {
+                let first = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("nested match PDA lost a constructor child result");
+                prefix.extend(values.drain(first..));
+                values.push(new_elist_par(prefix, Vec::new(), true, None, Vec::new(), true));
+            },
+        }
     }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("nested match PDA produced no result")
+}
+
+struct ReportNestedMatchPolicy<'a> {
+    nonlinear_var: &'a Ident,
+    spliced_rest: &'a Ident,
+    spliced_rest_slot: usize,
+    next_guard_slot: &'a mut usize,
+    occurrence_levels: &'a mut Vec<usize>,
+}
+
+impl NestedMatchPatternPolicy for ReportNestedMatchPolicy<'_> {
+    fn variable(&mut self, variable: &Ident) -> Par {
+        if variable == self.nonlinear_var {
+            let slot = *self.next_guard_slot;
+            *self.next_guard_slot += 1;
+            self.occurrence_levels.push(slot);
+            new_freevar_par(slot as i32, Vec::new())
+        } else {
+            new_wildcard_par(Vec::new(), true)
+        }
+    }
+
+    fn remainder(&mut self, remainder: Option<&Ident>) -> Par {
+        if remainder == Some(self.spliced_rest) {
+            new_freevar_par(self.spliced_rest_slot as i32, Vec::new())
+        } else {
+            new_wildcard_par(Vec::new(), true)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn nested_match_pattern_for(
+    pattern: &Pattern,
+    nonlinear_var: &Ident,
+    spliced_rest: &Ident,
+    spliced_rest_slot: usize,
+    next_guard_slot: &mut usize,
+    occurrence_levels: &mut Vec<usize>,
+    language_fingerprint: &str,
+) -> Par {
+    build_nested_match_pattern(
+        pattern,
+        &mut ReportNestedMatchPolicy {
+            nonlinear_var,
+            spliced_rest,
+            spliced_rest_slot,
+            next_guard_slot,
+            occurrence_levels,
+        },
+        language_fingerprint,
+    )
 }
 
 /// Build the DEPTH-2 nested structural-AC σ-receiver for a [`NestedStructuralAcShape`]: a persistent
@@ -8976,6 +9037,49 @@ pub(crate) struct NestedBindState {
     pub(crate) occurrence_levels: Vec<usize>,
 }
 
+struct BindingNestedMatchPolicy<'a> {
+    nonlinear_var: &'a Ident,
+    referenced: &'a HashSet<String>,
+    state: &'a mut NestedBindState,
+}
+
+impl NestedMatchPatternPolicy for BindingNestedMatchPolicy<'_> {
+    fn variable(&mut self, variable: &Ident) -> Par {
+        let name = variable.to_string();
+        if variable == self.nonlinear_var {
+            let slot = self.state.next_level;
+            self.state.next_level += 1;
+            self.state.occurrence_levels.push(slot);
+            self.state.slot_of.entry(name).or_insert(slot);
+            new_freevar_par(slot as i32, Vec::new())
+        } else if self.referenced.contains(&name) {
+            let slot = self.state.next_level;
+            self.state.next_level += 1;
+            self.state.slot_of.entry(name).or_insert(slot);
+            new_freevar_par(slot as i32, Vec::new())
+        } else {
+            new_wildcard_par(Vec::new(), true)
+        }
+    }
+
+    fn remainder(&mut self, remainder: Option<&Ident>) -> Par {
+        match remainder {
+            Some(remainder) => {
+                let name = remainder.to_string();
+                if self.referenced.contains(&name) {
+                    let slot = self.state.next_level;
+                    self.state.next_level += 1;
+                    self.state.slot_of.entry(name).or_insert(slot);
+                    new_freevar_par(slot as i32, Vec::new())
+                } else {
+                    new_wildcard_par(Vec::new(), true)
+                }
+            },
+            None => Par::default(),
+        }
+    }
+}
+
 /// Build the SPREAD nested-AC receiver's match PATTERN by walking the LHS root pattern, BINDING every
 /// σ slot the reduct needs (unlike the report-path [`nested_match_pattern_for`], which wildcards
 /// every non-`M`, non-spliced-rest position because the report delivers the reduct host-side): each
@@ -8999,93 +9103,11 @@ pub(crate) fn nested_match_bind_pattern_for(
     state: &mut NestedBindState,
     language_fingerprint: &str,
 ) -> Par {
-    match pattern {
-        // A cross-level channel occurrence — a distinct GUARD σ slot (its FIRST occurrence is the
-        // reduct's `M` slot; every occurrence is a guard conjunct).
-        Pattern::Term(PatternTerm::Var(v)) if v == nonlinear_var => {
-            let slot = state.next_level;
-            state.next_level += 1;
-            state.occurrence_levels.push(slot);
-            state.slot_of.entry(v.to_string()).or_insert(slot);
-            new_freevar_par(slot as i32, Vec::new())
-        },
-        // A reduct-referenced (non-channel) var — bound at its single occurrence.
-        Pattern::Term(PatternTerm::Var(v)) if referenced.contains(&v.to_string()) => {
-            let slot = state.next_level;
-            state.next_level += 1;
-            // The recognizer guarantees a non-`M` var occurs once, so `or_insert` records it once;
-            // it is defensive against a would-be repeat (which representability already rejects).
-            state.slot_of.entry(v.to_string()).or_insert(slot);
-            new_freevar_par(slot as i32, Vec::new())
-        },
-        // Any other bare variable the reduct does not use — a wildcard (a dropped argument).
-        Pattern::Term(PatternTerm::Var(_)) => new_wildcard_par(Vec::new(), true),
-        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
-            if let [Pattern::Collection { elements, rest, .. }] = args.as_slice() {
-                // `op{ elements, ...rest }` — the process-soup pattern. The remainder binds a σ slot
-                // iff the reduct references this rest (the inner `rest1` OR the outer spliced
-                // `rest2`); an unreferenced rest is a wildcard.
-                let element_channel =
-                    ac_soup_channel(language_fingerprint, &constructor.to_string());
-                let mut soup = match rest {
-                    Some(r) if referenced.contains(&r.to_string()) => {
-                        let slot = state.next_level;
-                        state.next_level += 1;
-                        state.slot_of.entry(r.to_string()).or_insert(slot);
-                        new_freevar_par(slot as i32, Vec::new())
-                    },
-                    Some(_) => new_wildcard_par(Vec::new(), true),
-                    None => Par::default(),
-                };
-                for element in elements {
-                    let element_pattern = nested_match_bind_pattern_for(
-                        element,
-                        nonlinear_var,
-                        referenced,
-                        state,
-                        language_fingerprint,
-                    );
-                    let send_pattern = new_send_par(
-                        new_gstring_par(element_channel.clone(), Vec::new(), false),
-                        vec![element_pattern],
-                        false,
-                        Vec::new(),
-                        true,
-                        Vec::new(),
-                        true,
-                    );
-                    soup = soup.append(send_pattern);
-                }
-                soup
-            } else {
-                // A plain constructor node → the tagged `EList[ GPrivate(tag), <arg patterns> ]`.
-                let label = constructor.to_string();
-                let tag =
-                    GPrivateBuilder::new_par_from_string(reflect_tag(language_fingerprint, &label));
-                let mut items = Vec::with_capacity(args.len() + 2);
-                items.push(tag);
-                // E-2-D: a marked-object node carries the marker at index 1 — absorb it with a
-                // wildcard so this drive-AC-carrier bind/check pattern matches the reflected
-                // operand (the arg patterns keep their positions, a wildcard binds nothing).
-                if is_marked_object_label(&label) {
-                    items.push(new_wildcard_par(Vec::new(), true));
-                }
-                for arg in args {
-                    items.push(nested_match_bind_pattern_for(
-                        arg,
-                        nonlinear_var,
-                        referenced,
-                        state,
-                        language_fingerprint,
-                    ));
-                }
-                new_elist_par(items, Vec::new(), true, None, Vec::new(), true)
-            }
-        },
-        // A nested structural-AC rule LHS has no other node kinds (the recognizer rejected subst /
-        // lambda / map / zip); a defensive wildcard keeps the walk total.
-        _ => new_wildcard_par(Vec::new(), true),
-    }
+    build_nested_match_pattern(
+        pattern,
+        &mut BindingNestedMatchPolicy { nonlinear_var, referenced, state },
+        language_fingerprint,
+    )
 }
 
 /// Reflect a nested-AC reduct [`AcReconstructTemplate`] to a receiver-BODY `Par` whose leaves are the
