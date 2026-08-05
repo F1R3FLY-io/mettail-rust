@@ -361,7 +361,7 @@ fn generate_type_handler(
 }
 
 /// Field kind for inference generation
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum InferFieldKind {
     Simple,
     /// A container of subterms. Ordered inference uses the shared collection
@@ -377,7 +377,7 @@ enum InferFieldKind {
 /// generated recursion must gate on `if let Some(__v) = #name.as_ref()`
 /// so the recursion only fires when the optional was matched. Top-level
 /// (non-optional) fields use `Direct` and bind unconditionally.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InferFieldWrap {
     Direct,
     Optional,
@@ -396,7 +396,8 @@ fn collect_inference_fields(
     wrap: InferFieldWrap,
     out: &mut Vec<(syn::Ident, syn::Ident, InferFieldKind, InferFieldWrap)>,
 ) {
-    for param in params {
+    let mut tasks: Vec<_> = params.iter().rev().map(|param| (param, wrap)).collect();
+    while let Some((param, wrap)) = tasks.pop() {
         match param {
             TermParam::Simple { ty, .. } => {
                 let i = *flat_idx;
@@ -448,7 +449,12 @@ fn collect_inference_fields(
                 // Inner params each consume their own flat slot. Mark
                 // recursion as Optional-wrapped so the emitter gates the
                 // sub-call on `if let Some(__v) = field.as_ref() { ... }`.
-                collect_inference_fields(inner, all_cats, flat_idx, InferFieldWrap::Optional, out);
+                tasks.extend(
+                    inner
+                        .iter()
+                        .rev()
+                        .map(|param| (param, InferFieldWrap::Optional)),
+                );
             },
         }
     }
@@ -459,13 +465,28 @@ fn collect_inference_fields(
 /// emission so positional `_` placeholders match the variant's actual
 /// field layout.
 fn flat_term_param_count(params: &[TermParam]) -> usize {
-    params
-        .iter()
-        .map(|p| match p {
-            TermParam::Optional { params: inner } => flat_term_param_count(inner),
-            _ => 1,
-        })
-        .sum()
+    let mut count = 0;
+    let mut stack: Vec<_> = params.iter().collect();
+    while let Some(param) = stack.pop() {
+        if let TermParam::Optional { params: inner } = param {
+            stack.extend(inner);
+        } else {
+            count += 1;
+        }
+    }
+    count
+}
+
+fn contains_guard_param(params: &[TermParam]) -> bool {
+    let mut stack: Vec<_> = params.iter().collect();
+    while let Some(param) = stack.pop() {
+        match param {
+            TermParam::GuardBody { .. } => return true,
+            TermParam::Optional { params: inner } => stack.extend(inner),
+            _ => {},
+        }
+    }
+    false
 }
 
 /// Push one field's child positions onto the ordered inference worklist.
@@ -635,16 +656,7 @@ fn generate_var_inference_arm(
     let has_guard_slot = rule
         .term_context
         .as_ref()
-        .map(|ctx| {
-            fn has_guard(params: &[TermParam]) -> bool {
-                params.iter().any(|p| match p {
-                    TermParam::GuardBody { .. } => true,
-                    TermParam::Optional { params: inner } => has_guard(inner),
-                    _ => false,
-                })
-            }
-            has_guard(ctx)
-        })
+        .map(|ctx| contains_guard_param(ctx))
         .unwrap_or(false);
 
     // Three cases for destructure pattern:
@@ -828,16 +840,7 @@ fn generate_var_type_inference_arm(
     let has_guard_slot = rule
         .term_context
         .as_ref()
-        .map(|ctx| {
-            fn has_guard(params: &[TermParam]) -> bool {
-                params.iter().any(|p| match p {
-                    TermParam::GuardBody { .. } => true,
-                    TermParam::Optional { params: inner } => has_guard(inner),
-                    _ => false,
-                })
-            }
-            has_guard(ctx)
-        })
+        .map(|ctx| contains_guard_param(ctx))
         .unwrap_or(false);
 
     let _ = has_guard_slot;
@@ -897,12 +900,19 @@ fn generate_var_type_inference_arm(
 
 /// Extract the base category from a type expression
 fn extract_base_cat(ty: &TypeExpr) -> syn::Ident {
-    match ty {
-        TypeExpr::Base(ident) => ident.clone(),
-        TypeExpr::Collection { element, .. } => extract_base_cat(element),
-        TypeExpr::Arrow { codomain, .. } => extract_base_cat(codomain),
-        TypeExpr::MultiBinder(inner) => extract_base_cat(inner),
-        TypeExpr::Refined { base, .. } => extract_base_cat(base),
-        TypeExpr::Map { value, .. } => extract_base_cat(value),
+    let mut ty = ty;
+    loop {
+        ty = match ty {
+            TypeExpr::Base(ident) => return ident.clone(),
+            TypeExpr::Collection { element, .. } => element,
+            TypeExpr::Arrow { codomain, .. } => codomain,
+            TypeExpr::MultiBinder(inner) => inner,
+            TypeExpr::Refined { base, .. } => base,
+            TypeExpr::Map { value, .. } => value,
+        };
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/support/var_inference_recursive_oracle.rs"]
+mod recursive_oracle;
