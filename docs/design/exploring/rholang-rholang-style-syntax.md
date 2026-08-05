@@ -29,8 +29,8 @@ identically at the source level.
 
 Semantics, equations, congruence, and rewrite rules are unchanged.
 User-facing collection operations are receiver-first methods only; each
-method-call rule (`MGet`, `LNth`, `RZGetLeaf`, …) is the canonical AST
-constructor and carries its own `fold` semantics inline.
+method-call rule (`MGet`, `LNth`, `RZGetLeaf`, …) is the canonical abstract
+syntax tree (AST) constructor and carries its own `fold` semantics inline.
 
 ---
 
@@ -43,7 +43,7 @@ Prior to this change, rholang used:
 | Zero process | `{}` | `Nil` |
 | Parallel composition | `{ P \| Q }` (braced) or `P \| Q` (bare infix) | `P \| Q` |
 | Body of `for`/`new` | `{ … }` | `{ … }` |
-| Map literal | `map(k₁:v₁, k₂:v₂)` | `{k₁: v₁, k₂: v₂}` |
+| Map literal | `map(k1:v1, k2:v2)` | `{k1: v1, k2: v2}` |
 | Map ops | `get(m, k)`, `put(m, k, v)`, `keys(m)`, … | `m.get(k)`, `m.set(k, v)`, `m.keys()`, … |
 
 Two collisions surfaced once we wanted Rholang-style map literals:
@@ -60,62 +60,32 @@ Two collisions surfaced once we wanted Rholang-style map literals:
 
 Replace `PZero . |- "{}" : Proc;` with:
 
-```rust
+```text
 PZero . |- "Nil" : Proc;
 ```
 
 This frees `{}` for the empty Map literal and matches Rholang.
 
-### 3.2 No top-level braced `PPar`
+### 3.2 Braced `PPar` and `Map` ambiguity
 
-The braced rule
+The user-facing grammar retains both the braced parallel-composition rule and
+the infix convenience rule:
 
-```rust
+```text
 PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
-```
 
-is **removed** from the user-facing grammar. The infix rule
-
-```rust
 PParInfix . a:Proc, b:Proc |- a "|" b : Proc ![{
     crate::rholang::runtime::merge_pp_parallel(a.clone(), b.clone())
 }] fold;
 ```
 
-remains the canonical surface syntax for parallel composition. `PParInfix`
-folds into the multiset `Proc::PPar(HashBag<Proc>)` via `merge_pp_parallel` at
-the Datalog/ascent stage.
+`PParInfix` folds into the multiset `Proc::PPar(HashBag<Proc>)` via
+`merge_pp_parallel` during generated normalization. The old internal-only
+`PParInternal`/`__ppar` rule was deleted by `8c946bff`: it neither parsed at any
+arity nor printed a genuine `Proc::PPar`, which already used the braced rule.
 
-To keep equations and congruence rules that match on `Proc::PPar(...)`
-compiling, the AST constructor is retained behind an internal-only grammar
-rule using a reserved label `__ppar` (it never appears in user input):
-
-```rust
-PParInternal . ps:HashBag(Proc) |- "__ppar" "(" ps.*sep(",") ")" : Proc;
-```
-
-> ⚠★ **WHAT SHIPPED INVERTED THIS SECTION'S DISPOSITION — both halves.** The two
-> paragraphs above are the *proposal*, retained so the reasoning stays legible.
-> `8c946bff` settled it the other way, by measurement:
->
-> | rule | this proposal said | what shipped |
-> |---|---|---|
-> | `PPar … \|- "{" ps.*sep("\|") "}"` | **removed** from the user-facing grammar | ★ **RETAINED** |
-> | `PParInternal … \|- "__ppar" "(" … ")"` | **retained** as the internal surface | ★ **DELETED** |
->
-> The `__ppar` rule was a five-month vestige, dead in **both** directions:
-> `__ppar(Nil, Nil)` did not parse at any arity (`TrailingTokens { found:
-> "Ident", byte_offset: 5 }`, with or without a space), and a genuine
-> `Proc::PPar` bag never displayed through it — `display.rs:147` emits `"{"`, so
-> the bag rendered as `{@a!(0) | Nil}` **even while the rule existed**. The
-> rule's own justifying comment ("round-trip parsing of normalized AST") was
-> therefore stale and false when written, not merely outdated. `1a3f3490` (May
-> 2026) created the vestige: it introduced the braced rule, renamed the
-> pre-existing keyword rule to `PParInternal`, and gave it a fold degenerating
-> it into the new one — after which no commit ever added a use.
-
-⚠ **`{}` is NOT reserved exclusively for `Map`** — the claim this section used to
-make. Measured, `{}` yields **two** readings and both survive:
+Consequently, `{}` is intentionally ambiguous between an empty `Map` and an
+empty parallel composition. Measured, both readings survive:
 
 ```
 parse_via_wpda_all("{}") → 2 readings
@@ -137,7 +107,7 @@ now pinned by `par_reading_count_pins`. What `{}` no longer means is `PZero`
 
 `Map` overrides the default collection delimiters:
 
-```rust
+```text
 ![HashMap<Proc, Proc>] as Map {
     open_parts: ["{"],
     close_parts: ["}"],
@@ -146,11 +116,11 @@ now pinned by `par_reading_count_pins`. What `{}` no longer means is `PZero`
 }
 ```
 
-This produces literal forms `{}`, `{k: v}`, `{k₁: v₁, k₂: v₂, …}`. We also
+This produces literal forms `{}`, `{k: v}`, `{k1: v1, k2: v2, ...}`. We also
 expose an explicit alias `Map()` for the empty case, useful in chained method
 calls (e.g. `Map().set("a", 1).set("b", 2)`):
 
-```rust
+```text
 MapEmpty . |- "Map" "(" ")" : Proc ![{
     Proc::CastMap(Box::new(Map::MapLit(Default::default())))
 }] fold;
@@ -168,15 +138,16 @@ Each preserves the exact semantics of the former prefix builtins:
 | `m.contains(k)` | `MContains(m, k)` |
 | `m.delete(k)` | `MDelete(m, k)` |
 | `m.union(n)` | `MUnion(m, n)` |
-| `m.size()` | `MSize(m)` → `CastInt(NumLit(...))` when folded |
+| `m.size()` | `MSize(m)`, which folds to `CastInt(NumLit(...))` |
 | `m.keys()` | `MKeys(m)` |
 | `m.values()` | `MValues(m)` |
 
 These rules use the `[mixfix-trigger leading-terminal]` pattern introduced
 into `prattail` to permit chained method calls of the form
 `Map().set(1, 10).get(1)` etc. The mixfix detector accepts both the standard
-shape (≥2 NTs with ≥2 terminals) and the zero-operand-after-trigger shape
-(1 NT with ≥3 terminals) needed for unary methods like `m.size()`.
+shape (at least 2 nonterminals with at least 2 terminals) and the
+zero-operand-after-trigger shape (1 nonterminal with at least 3 terminals)
+needed for unary methods like `m.size()`.
 
 ### 3.5 Pattern positions
 
@@ -210,7 +181,7 @@ consistency with `Map`/`List`.
 Each rule is a zero/one/two-operand-after-trigger mixfix that reuses the same
 prattail `leading_terminals` dispatch as the Map method sugars (§3.4). Unary
 methods (`.length()`, `.size()`) compile inline via the extended mixfix
-detector (1 NT + ≥3 terminals).
+detector (1 nonterminal plus at least 3 terminals).
 
 `Len`'s native body is extended to a fourth arm handling `Proc::CastBag(_)`:
 the result is the bag's total element count (sum of all multiplicities,
@@ -223,7 +194,7 @@ receiver category at parse time. We therefore make `MUnion`'s `fold` action
 inspect the (already-folded) receiver and lower to either `MergeMap` or
 `UnionBag`:
 
-```rust
+```text
 MUnion . a:Proc, b:Proc
 |- a "." "union" "(" b ")" : Proc ![{
     match &a {
@@ -234,8 +205,8 @@ MUnion . a:Proc, b:Proc
 }] fold;
 ```
 
-`MSize` follows the same pattern (`CastMap` → constant-fold to a `CastInt` of
-the entry count; `CastBag` → defer to `Len`, which handles bag-size
+`MSize` follows the same pattern (`CastMap` constant-folds to a `CastInt` of
+the entry count; `CastBag` defers to `Len`, which handles bag-size
 normalization). Since `fold` rules in this codebase fire on terms that are
 already in canonical-literal form, the static match is sufficient — any other
 shape returns `Proc::Err`, matching the existing prefix-builtin behaviour
@@ -247,7 +218,7 @@ Rholang spells `Name::NQuote(Proc::PZero)` as `@Nil` (rather than `@(Nil)`).
 We add the same shorthand by introducing a Name-category fold rule that lowers
 to the canonical `NQuote(PZero)` AST:
 
-```rust
+```text
 NQuoteNil .
 |- "@" "Nil" : Name ![{
     Name::NQuote(Box::new(Proc::PZero))
@@ -261,7 +232,7 @@ inner Name parser sees `Nil` as a bare keyword it does not accept). To make
 `@Nil!(q)` and `@Nil!!(q)` write the way Rholang does, we add two dedicated
 send-sugar rules in `Proc`:
 
-```rust
+```text
 POutputNil . q:Proc
 |- "@" "Nil" "!" "(" q ")" : Proc ![{
     Proc::POutput(
@@ -284,7 +255,8 @@ They fold to the same `POutput` / `PPersistOutput` AST shape that
 `Proc`-category rules now share the `@` first token (`POutputNil`,
 `PPersistOutputNil`, `POutputQuoted`); the prattail dispatcher tries each
 through its generated `parse_<label>` standalone function in declaration order
-(NFA-style — first success wins). See §4.2 for the dispatcher change.
+(nondeterministic finite automaton (NFA) style — first success wins). See §4.2
+for the dispatcher change.
 
 ### 3.8 Generalised `@P` shorthand for arbitrary `P:Proc`
 
@@ -292,7 +264,7 @@ Rholang lets `@` quote *any* process, not just `Nil` — `@1`, `@"k"`, `@*x`,
 `@(P|Q)`, etc. are all valid Names. We add a single fold rule that
 generalises both `NQuote` (`@(P)`) and `NQuoteNil` (`@Nil`):
 
-```rust
+```text
 NQuoteShort . p:Proc
 |- "@" p : Name ![{
     Name::NQuote(Box::new(p.clone()))
@@ -327,7 +299,7 @@ send side (`@1!(q)`, `@"k"!!(q)`), we likewise add generalised send sugars
 parallel to `POutputNil` / `PPersistOutputNil`, with the same `prefix(220)`
 cap on the inner `p:Proc`:
 
-```rust
+```text
 POutputShort . p:Proc, q:Proc
 |- "@" p "!" "(" q ")" : Proc ![{
     Proc::POutput(
@@ -360,18 +332,12 @@ choice is semantically transparent.
 
 ### 4.1 `{` opener
 
-After removing braced `PPar`, the only top-level rule that opens with `{` at
-an expression position is the `Map` literal. Disambiguation is therefore not
-required at parse time — `{` always begins a `Map` literal.
-
-The body braces of `for`/`new`/`contract` are matched as part of those rules'
-own grammar (`for(…) { p }`, `new … in { p }`) and never participate in the
-expression-level `{` dispatch.
-
-A single-process body group (`{ P }` at expression position, e.g. inside a
-function-call argument like `int({1 + 2}, 8)`) is no longer supported; the
-expression must be written bare: `int(1 + 2, 8)`. Inside a `for`/`new` body
-this never bit, since the keyword-prefixed rule already opens its own braces.
+At expression position, `{` can begin either a `Map` literal or a braced
+`PPar`. The parser preserves all successful readings instead of deciding from
+the opener. Later semantic context may select a reading; the empty spelling
+`{}` deliberately remains ambiguous. Body braces for `for`, `new`, and a
+future `contract` are part of those keyword-prefixed rules and do not enter
+this expression-level choice.
 
 ### 4.2 `@` opener with multiple frame-pushing rules
 
@@ -382,22 +348,38 @@ fast-path frame-push for `frame_pushing[0]`, silently dropping all other
 frame-pushing alternatives — only the first declared rule could fire for a
 shared FIRST token.
 
-The fix promotes any token group containing more than one frame-pushing rule
-(or any frame-pushing rule alongside an inlineable rule) to a true NFA dispatch
-that calls the generated standalone `parse_<label>` function for each
-candidate. Each `parse_<label>` recurses through the regular `parse_<cat>`
-entry, so inner sub-parses still run through the trampoline with correct
-binding-power tracking. The first parser that succeeds (declaration order)
-wins; if none succeed, the first error is reported. The legacy single-frame
-fast path is retained for the common case of exactly one frame-pushing rule
-per token.
+The implementation promotes any token group containing more than one
+frame-pushing rule (or any frame-pushing rule alongside an inlineable rule) to
+a true NFA dispatch that calls the generated standalone `parse_<label>`
+function for each candidate. Each `parse_<label>` recurses through the regular
+`parse_<cat>` entry, so inner sub-parses still run through the trampoline with
+correct binding-power tracking. The first parser that succeeds (declaration
+order) wins; if none succeed, the first error is reported. The legacy
+single-frame fast path is retained for the common case of exactly one
+frame-pushing rule per token.
+
+**Algorithm 1 (Shared-opener parser selection).**
+
+```pseudocode
+Input: the candidates registered for the current first token
+If exactly one frame-pushing candidate exists and no inline candidate competes:
+    take the direct frame-push path
+Otherwise:
+    try each generated standalone parser in declaration order
+    return the first successful reading
+    if every candidate fails, return the first diagnostic
+```
+
+This procedure preserves the common single-candidate fast path while making
+every declared shared-opener alternative reachable.
 
 ### 4.3 Decoupling unary-prefix dispatch from `prefix_bp`
 
 Previously, `prattail` conflated two distinct properties:
 
 1. *Operand binding power*: the `min_bp` passed to the rule's inner
-   `parse_<cat>` call.  Set via the DSL annotation `prefix(N)` or a
+   `parse_<cat>` call. Set via the domain-specific language (DSL) annotation
+   `prefix(N)` or a
    default of `max_infix_bp + 2`.
 2. *Same-category unary-prefix dispatch*: rules of shape
    `[Terminal, NonTerminal(same_category)]` participate in a dedicated
@@ -437,15 +419,10 @@ which there is no sensible default, so an annotation is required.
 
 - `Proc::PZero` displays as `Nil`.
 - `Proc::PParInfix(a, b)` displays as `a | b`.
-- `Proc::PPar(bag)` displays as `{p₁ | p₂ | …}` through the **braced** rule —
-  `display.rs:147` emits `"{"`. ⚠★ This bullet previously claimed it displayed
-  through an "internal-only template `__ppar(p₁, p₂, …)`" that "round-trips
-  through the parser". That was **false when written and never true**: run as a
-  falsifiable claim against the pre-deletion tree, with the `__ppar` rule still
-  present, a genuine bag rendered `{@a!(0) | Nil}`. `8c946bff` deleted the rule
-  on exactly that evidence — see the correction box in §3.2. Tests that compare
-  PPar normal forms use `term_eq` or substring containment rather than exact
-  display matching.
+- `Proc::PPar(bag)` displays through the braced rule, such as
+  `{p1 | p2 | ...}`; the deleted `__ppar` template was never a reachable
+  parser or printer surface. Tests that compare PPar normal forms use `term_eq`
+  or substring containment rather than exact display matching.
 - Map normal forms display as `{k: v, …}` via the macro-generated display
   template from the collection delimiters override.
 
@@ -463,7 +440,7 @@ corresponding prefix-form calls.
   (`8c946bff` — this line previously said the opposite of both; see §3.2), eight Map method-call
   sugars, three List method sugars (`LLength`, `LNth`, `LConcat`), three
   bag-specific Bag method sugars (`BCount`, `BDiff`, `BRemove`),
-  polymorphic `MUnion` / `MSize` (Map ∪ Bag), `Len` extended to `CastBag`,
+  polymorphic `MUnion` / `MSize` across Map and Bag, `Len` extended to `CastBag`,
   `NQuoteNil` Name shorthand, `POutputNil` / `PPersistOutputNil` send
   sugars, generalised `NQuoteShort` Name shorthand and
   `POutputShort` / `PPersistOutputShort` send sugars for arbitrary
@@ -471,10 +448,11 @@ corresponding prefix-form calls.
 - [x] `languages/tests/rholang_tests.rs` — strip outer `{…}` wraps in test
   inputs, switch `map(…)` literals to `{…}` form, switch `mod map` to method
   syntax + brace literals, refit `assert_never_reaches` helper for the new
-  display, regression tests for `@Nil` (`*@Nil → Nil`,
-  `for(x <- @Nil){x} | @Nil!(0) → 0`, `@Nil!!(0)` parses), regression tests
-  for `@P` (`*@1 → 1`, `*@"hello" → "hello"`, `*@true → true`,
-  `for(x <- @1){x} | @1!(42) → 42`, `*@*y → *y` via `QuoteDrop`, plus the
+  display, regression tests for `@Nil` (`*@Nil` evaluates to `Nil`,
+  `for(x <- @Nil){x} | @Nil!(0)` evaluates to `0`, `@Nil!!(0)` parses),
+  regression tests for `@P` (`*@1` evaluates to `1`, `*@"hello"` evaluates to
+  `"hello"`, `*@true` evaluates to `true`, `for(x <- @1){x} | @1!(42)`
+  evaluates to `42`, and `*@*y` evaluates to `*y` via `QuoteDrop`, plus the
   documented greedy-precedence cases), new `mod list` + `mod bag`
   sub-modules covering `.length()`, `.nth(i)`, `.concat(r)`, `.size()`
   (via extended `Len`), `.count(e)`, `.diff(b)`, `.remove(e)`, and
@@ -521,7 +499,5 @@ corresponding prefix-form calls.
 
 ## 8. Status
 
-**Implemented** (May 2026). Tests pass under
-`cargo test -p mettail-languages --test rholang_tests`. Once the design doc
-review is complete this document moves to
-`docs/design/made/native-types/`.
+**Implemented** (May 2026; documentation conformance re-audited August 2026).
+The surface tests run under `cargo test -p languages --test rholang_tests`.

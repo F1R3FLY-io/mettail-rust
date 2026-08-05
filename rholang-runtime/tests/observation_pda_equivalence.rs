@@ -156,6 +156,43 @@ fn layout_only_guest_renderer_survives_a_deep_application_spine() {
 }
 
 #[test]
+fn guest_layout_preserves_reserved_label_sugar_inside_collections() {
+    use RuntimeObservationValue as V;
+
+    let zero = V::Term {
+        constructor: "^Z".into(),
+        children: Vec::new(),
+    };
+    let one = V::Term {
+        constructor: "^S".into(),
+        children: vec![zero],
+    };
+    let value = V::List(vec![V::Term {
+        constructor: "^lambda".into(),
+        children: vec![V::Term {
+            constructor: "App".into(),
+            children: vec![
+                V::Term {
+                    constructor: "^bound".into(),
+                    children: vec![one],
+                },
+                V::Int(2),
+            ],
+        }],
+    }]);
+
+    let rendered = render_observation_text_with(&value, &|constructor, arity| {
+        (constructor == "App" && arity == 2).then_some(ObservationTermNotation {
+            open: "(",
+            separator: " ",
+            close: ")",
+        })
+    });
+
+    assert_eq!(rendered, "[λ.(1 2)]");
+}
+
+#[test]
 fn decoder_preserves_collection_term_and_bag_images() {
     use RuntimeObservationValue as V;
 
