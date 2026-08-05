@@ -67,59 +67,148 @@ pub fn clear_pred_fact_snapshot() {
 /// the type remains passive per the design decision.
 pub fn evaluate_pred_with_bindings(pred: &BehavioralPred, bindings: &[(String, String)]) -> bool {
     let mut env: HashMap<String, String> = bindings.iter().cloned().collect();
-    eval_pred(pred, &mut env)
+    eval_pred_iterative(pred, &mut env)
 }
 
-fn eval_pred(pred: &BehavioralPred, env: &mut HashMap<String, String>) -> bool {
-    match pred {
-        BehavioralPred::Top => true,
-        BehavioralPred::RelationQuery { relation_name, args, negated } => {
-            let resolved: Vec<String> = args
-                .iter()
-                .map(|a| match a {
-                    PredArg::Var(v) => env.get(v).cloned().unwrap_or_else(|| v.clone()),
-                    PredArg::IntLit(n) => n.to_string(),
-                    PredArg::StringLit(s) => s.clone(),
-                })
-                .collect();
-            let hit = PRED_FACT_SNAPSHOT.with(|snap| {
-                snap.borrow()
-                    .get(relation_name)
-                    .map(|tuples| tuples.contains(&resolved))
-                    .unwrap_or(false)
-            });
-            if *negated {
-                !hit
-            } else {
-                hit
-            }
-        },
-        BehavioralPred::And(a, b) => eval_pred(a, env) && eval_pred(b, env),
-        BehavioralPred::Or(a, b) => eval_pred(a, env) || eval_pred(b, env),
-        BehavioralPred::Not(inner) => !eval_pred(inner, env),
-        BehavioralPred::Implies(p, c) => !eval_pred(p, env) || eval_pred(c, env),
-        BehavioralPred::Quantified { quantifier, var, domain, body } => {
-            let values = enumerate_quantified_domain(var, domain.as_ref(), body, env);
-            match quantifier {
-                Quantifier::ForAll => values.into_iter().all(|value| {
+enum EvalTask<'pred> {
+    Eval(&'pred BehavioralPred),
+    Not,
+    AndRight(&'pred BehavioralPred),
+    OrRight(&'pred BehavioralPred),
+    ImpliesRight(&'pred BehavioralPred),
+    QuantifiedBody {
+        quantifier: Quantifier,
+        var: &'pred str,
+        body: &'pred BehavioralPred,
+        remaining: std::vec::IntoIter<String>,
+        previous: Option<String>,
+    },
+}
+
+/// Heap-backed evaluator preserving the recursive evaluator's left-to-right
+/// short-circuit and quantifier-binding semantics.
+fn eval_pred_iterative(pred: &BehavioralPred, env: &mut HashMap<String, String>) -> bool {
+    let mut tasks = vec![EvalTask::Eval(pred)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            EvalTask::Eval(BehavioralPred::Top) => values.push(true),
+            EvalTask::Eval(BehavioralPred::RelationQuery { relation_name, args, negated }) => {
+                let resolved: Vec<String> = args.iter().map(|arg| resolve_arg(arg, env)).collect();
+                let hit = PRED_FACT_SNAPSHOT.with(|snap| {
+                    snap.borrow()
+                        .get(relation_name)
+                        .is_some_and(|tuples| tuples.contains(&resolved))
+                });
+                values.push(if *negated { !hit } else { hit });
+            },
+            EvalTask::Eval(BehavioralPred::And(left, right)) => {
+                tasks.push(EvalTask::AndRight(right));
+                tasks.push(EvalTask::Eval(left));
+            },
+            EvalTask::Eval(BehavioralPred::Or(left, right)) => {
+                tasks.push(EvalTask::OrRight(right));
+                tasks.push(EvalTask::Eval(left));
+            },
+            EvalTask::Eval(BehavioralPred::Not(inner)) => {
+                tasks.push(EvalTask::Not);
+                tasks.push(EvalTask::Eval(inner));
+            },
+            EvalTask::Eval(BehavioralPred::Implies(premise, conclusion)) => {
+                tasks.push(EvalTask::ImpliesRight(conclusion));
+                tasks.push(EvalTask::Eval(premise));
+            },
+            EvalTask::Eval(BehavioralPred::Quantified { quantifier, var, domain, body }) => {
+                let mut remaining =
+                    enumerate_quantified_domain(var, domain.as_ref(), body, env).into_iter();
+                if let Some(value) = remaining.next() {
                     let previous = env.insert(var.clone(), value);
-                    let result = eval_pred(body, env);
+                    tasks.push(EvalTask::QuantifiedBody {
+                        quantifier: *quantifier,
+                        var,
+                        body,
+                        remaining,
+                        previous,
+                    });
+                    tasks.push(EvalTask::Eval(body));
+                } else {
+                    values.push(matches!(quantifier, Quantifier::ForAll));
+                }
+            },
+            // Runtime AC matching needs structural multiset values, while this
+            // evaluator only has string-valued fact snapshots. Fail closed.
+            EvalTask::Eval(BehavioralPred::AcMatch { .. }) => values.push(false),
+            EvalTask::Not => {
+                let value = values.pop().expect("Not continuation requires one value");
+                values.push(!value);
+            },
+            EvalTask::AndRight(right) => {
+                let left = values
+                    .pop()
+                    .expect("And continuation requires its left value");
+                if left {
+                    tasks.push(EvalTask::Eval(right));
+                } else {
+                    values.push(false);
+                }
+            },
+            EvalTask::OrRight(right) => {
+                let left = values
+                    .pop()
+                    .expect("Or continuation requires its left value");
+                if left {
+                    values.push(true);
+                } else {
+                    tasks.push(EvalTask::Eval(right));
+                }
+            },
+            EvalTask::ImpliesRight(conclusion) => {
+                let premise = values
+                    .pop()
+                    .expect("Implies continuation requires its premise value");
+                if premise {
+                    tasks.push(EvalTask::Eval(conclusion));
+                } else {
+                    values.push(true);
+                }
+            },
+            EvalTask::QuantifiedBody {
+                quantifier,
+                var,
+                body,
+                mut remaining,
+                previous,
+            } => {
+                let value = values
+                    .pop()
+                    .expect("quantifier continuation requires its body value");
+                let short_circuit = match quantifier {
+                    Quantifier::ForAll => !value,
+                    Quantifier::Exists => value,
+                };
+                if short_circuit {
                     restore_binding(env, var, previous);
-                    result
-                }),
-                Quantifier::Exists => values.into_iter().any(|value| {
-                    let previous = env.insert(var.clone(), value);
-                    let result = eval_pred(body, env);
+                    values.push(value);
+                } else if let Some(next) = remaining.next() {
+                    env.insert(var.to_string(), next);
+                    tasks.push(EvalTask::QuantifiedBody {
+                        quantifier,
+                        var,
+                        body,
+                        remaining,
+                        previous,
+                    });
+                    tasks.push(EvalTask::Eval(body));
+                } else {
                     restore_binding(env, var, previous);
-                    result
-                }),
-            }
-        },
-        // Runtime AC matching needs structural multiset values, while this
-        // evaluator only has string-valued fact snapshots. Fail closed instead
-        // of admitting a guard whose decomposition cannot be checked here.
-        BehavioralPred::AcMatch { .. } => false,
+                    values.push(matches!(quantifier, Quantifier::ForAll));
+                }
+            },
+        }
     }
+    debug_assert!(tasks.is_empty());
+    debug_assert_eq!(values.len(), 1);
+    values.pop().unwrap_or(false)
 }
 
 fn restore_binding(env: &mut HashMap<String, String>, var: &str, previous: Option<String>) {
@@ -170,72 +259,77 @@ fn infer_domain_values(
     env: &HashMap<String, String>,
 ) -> Vec<String> {
     let mut values = BTreeSet::new();
-    collect_domain_values(var, pred, env, &mut values);
+    collect_domain_values_iterative(var, pred, env, &mut values);
     values.into_iter().collect()
 }
 
-fn collect_domain_values(
+fn collect_domain_values_iterative(
     var: &str,
     pred: &BehavioralPred,
     env: &HashMap<String, String>,
     values: &mut BTreeSet<String>,
 ) {
-    match pred {
-        BehavioralPred::RelationQuery { relation_name, args, .. } => {
-            let positions: Vec<usize> = args
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, arg)| match arg {
-                    PredArg::Var(v) if v == var => Some(idx),
-                    _ => None,
-                })
-                .collect();
-            if positions.is_empty() {
-                return;
-            }
-            PRED_FACT_SNAPSHOT.with(|snap| {
-                if let Some(tuples) = snap.borrow().get(relation_name) {
-                    for tuple in tuples {
-                        if tuple_matches_bound_args(tuple, args, var, env) {
-                            for idx in &positions {
-                                if let Some(value) = tuple.get(*idx) {
-                                    values.insert(value.clone());
+    let mut work = vec![pred];
+    while let Some(pred) = work.pop() {
+        match pred {
+            BehavioralPred::RelationQuery { relation_name, args, .. } => {
+                let positions: Vec<usize> = args
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, arg)| match arg {
+                        PredArg::Var(v) if v == var => Some(idx),
+                        _ => None,
+                    })
+                    .collect();
+                if positions.is_empty() {
+                    continue;
+                }
+                PRED_FACT_SNAPSHOT.with(|snap| {
+                    if let Some(tuples) = snap.borrow().get(relation_name) {
+                        for tuple in tuples {
+                            if tuple_matches_bound_args(tuple, args, var, env) {
+                                for idx in &positions {
+                                    if let Some(value) = tuple.get(*idx) {
+                                        values.insert(value.clone());
+                                    }
                                 }
                             }
                         }
                     }
+                });
+            },
+            BehavioralPred::Quantified { var: inner_var, domain, body, .. } => {
+                if let Some(QuantifiedDomain::Enumerated(elements)) = domain {
+                    for arg in elements {
+                        if let PredArg::Var(v) = arg {
+                            if v == var {
+                                values.insert(resolve_arg(arg, env));
+                            }
+                        }
+                    }
                 }
-            });
-        },
-        BehavioralPred::Quantified { var: inner_var, domain, body, .. } => {
-            if let Some(QuantifiedDomain::Enumerated(elements)) = domain {
-                for arg in elements {
+                if inner_var != var {
+                    work.push(body);
+                }
+            },
+            BehavioralPred::And(a, b)
+            | BehavioralPred::Or(a, b)
+            | BehavioralPred::Implies(a, b) => {
+                work.push(b);
+                work.push(a);
+            },
+            BehavioralPred::Not(inner) => work.push(inner),
+            BehavioralPred::AcMatch { bag, elements, .. } => {
+                for arg in std::iter::once(bag).chain(elements.iter()) {
                     if let PredArg::Var(v) = arg {
                         if v == var {
                             values.insert(resolve_arg(arg, env));
                         }
                     }
                 }
-            }
-            if inner_var != var {
-                collect_domain_values(var, body, env, values);
-            }
-        },
-        BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) | BehavioralPred::Implies(a, b) => {
-            collect_domain_values(var, a, env, values);
-            collect_domain_values(var, b, env, values);
-        },
-        BehavioralPred::Not(inner) => collect_domain_values(var, inner, env, values),
-        BehavioralPred::AcMatch { bag, elements, .. } => {
-            for arg in std::iter::once(bag).chain(elements.iter()) {
-                if let PredArg::Var(v) = arg {
-                    if v == var {
-                        values.insert(resolve_arg(arg, env));
-                    }
-                }
-            }
-        },
-        BehavioralPred::Top => {},
+            },
+            BehavioralPred::Top => {},
+        }
     }
 }
 

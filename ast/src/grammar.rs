@@ -1998,245 +1998,400 @@ fn is_end_of_syntax_pattern(input: ParseStream) -> bool {
 
 /// Parse a single syntax expression (literal, param, or pattern op)
 pub(crate) fn parse_syntax_expr(input: ParseStream) -> SynResult<SyntaxExpr> {
-    // Check for pattern operation: *name(...)
-    if input.peek(Token![*]) {
-        // L9-4: `*flt(bind, open, close)` routes to `SyntaxExpr::GuestBody`
-        // (a guest-body capture), NOT the generic `SyntaxExpr::Op` wrapper the
-        // other `*` meta-ops produce.
-        let fork = input.fork();
-        let _ = fork.parse::<Token![*]>();
-        if fork.parse::<Ident>().map(|n| n == "flt").unwrap_or(false) {
-            return parse_flt_op(input);
-        }
-        return parse_pattern_op_expr(input);
-    }
+    build_raw_syntax(parse_raw_syntax(input)?)
+}
 
-    // Check for identifier (could be param or start of method chain)
+/// A shallow parse retains nested token groups as owned streams. Semantic
+/// descent happens later on an explicit work stack, so arbitrarily nested
+/// `*map`/`*opt` syntax never consumes the native call stack.
+enum RawSyntax {
+    Param(Ident),
+    TokenKind { name: Ident, bind: Ident },
+    Literal(String),
+    GuestBody(proc_macro2::TokenStream),
+    Op(RawOp),
+}
+
+struct RawOp {
+    root: RawOpRoot,
+    chains: Vec<RawChain>,
+}
+
+enum RawOpRoot {
+    Var(Ident),
+    Named {
+        name: Ident,
+        content: proc_macro2::TokenStream,
+    },
+}
+
+struct RawChain {
+    name: Ident,
+    content: proc_macro2::TokenStream,
+}
+
+fn parse_raw_syntax(input: ParseStream) -> SynResult<RawSyntax> {
+    if input.peek(Token![*]) {
+        let op = parse_raw_named_op(input)?;
+        if let RawOpRoot::Named { name, content } = &op.root {
+            if name == "flt" {
+                return Ok(RawSyntax::GuestBody(content.clone()));
+            }
+        }
+        return Ok(RawSyntax::Op(op));
+    }
     if input.peek(Ident) {
         let id = input.parse::<Ident>()?;
-
-        // L9-3: `v@Tok` bind form — `v` binds the text of a token of the custom
-        // KIND `Tok`. A bare `Tok` (no bind) is parsed as `Param(Tok)` below and
-        // reclassified to `TokenKind{bind:None}` by the post-parse pass when
-        // `Tok` is a declared token name (decision D-1; `v:Tok` is NOT supported
-        // — a colon collides with the `:Category` rule terminator).
-        //
-        // The `peek2(Ident)` guard is LOAD-BEARING: the guards block's
-        // per-predicate annotation form `<pattern> @[selectivity(..), cost(..)]`
-        // ALSO follows a param with `@`, but with a `[` (not an identifier).
-        // Without the guard, `y @[...]` consumed the `@` as a capture start and
-        // then failed with "expected identifier" on the `[`. Requiring an
-        // identifier after `@` keeps `v@Tok` a capture while leaving `@[...]`
-        // for the annotation parser (the pre-L9-3 behavior).
         if input.peek(Token![@]) && input.peek2(Ident) {
             let _ = input.parse::<Token![@]>()?;
-            let tok = input.parse::<Ident>()?;
-            return Ok(SyntaxExpr::TokenKind { name: tok, bind: Some(id) });
+            return Ok(RawSyntax::TokenKind { name: input.parse()?, bind: id });
         }
-
-        // Check for method chain: ident.#name(...)
         if input.peek(Token![.]) && input.peek2(Token![*]) {
-            let _ = input.parse::<Token![.]>()?;
-            let op = parse_pattern_op_with_receiver(input, PatternOp::Var(id))?;
-            return Ok(SyntaxExpr::Op(op));
+            return Ok(RawSyntax::Op(RawOp {
+                root: RawOpRoot::Var(id),
+                chains: parse_raw_chains(input)?,
+            }));
         }
-
-        // Just a parameter reference
-        return Ok(SyntaxExpr::Param(id));
+        return Ok(RawSyntax::Param(id));
     }
-
-    // String literal
     if input.peek(syn::LitStr) {
-        let lit = input.parse::<syn::LitStr>()?;
-        return Ok(SyntaxExpr::Literal(lit.value()));
+        return Ok(RawSyntax::Literal(input.parse::<syn::LitStr>()?.value()));
     }
-
     Err(syn::Error::new(
         input.span(),
         "Expected parameter reference (identifier), quoted literal (string), or pattern operation (#sep, #map, etc.)",
     ))
 }
 
-/// Parse a pattern operation starting with #
-fn parse_pattern_op_expr(input: ParseStream) -> SynResult<SyntaxExpr> {
-    let op = parse_pattern_op(input)?;
-    Ok(SyntaxExpr::Op(op))
-}
-
-/// Parse a pattern operation: #name(args)
-fn parse_pattern_op(input: ParseStream) -> SynResult<PatternOp> {
+fn parse_raw_named_op(input: ParseStream) -> SynResult<RawOp> {
     let _ = input.parse::<Token![*]>()?;
     let name = input.parse::<Ident>()?;
-    let name_str = name.to_string();
-
     let content;
     syn::parenthesized!(content in input);
+    let content = content.parse::<proc_macro2::TokenStream>()?;
+    Ok(RawOp {
+        root: RawOpRoot::Named { name, content },
+        chains: parse_raw_chains(input)?,
+    })
+}
 
-    let op = match name_str.as_str() {
-        "sep" => parse_sep_op(&content)?,
-        "zip" => parse_zip_op(&content)?,
-        "map" => parse_map_op(&content)?,
-        "opt" => parse_opt_op(&content)?,
-        _ => {
-            return Err(syn::Error::new(
-                name.span(),
-                format!(
-                    "Unknown pattern operation: #{}. Expected #sep, #zip, #map, or #opt",
-                    name_str
-                ),
-            ));
-        },
-    };
-
-    // Check for method chain continuation: .#name(...)
-    if input.peek(Token![.]) && input.peek2(Token![*]) {
+fn parse_raw_chains(input: ParseStream) -> SynResult<Vec<RawChain>> {
+    let mut chains = Vec::new();
+    while input.peek(Token![.]) && input.peek2(Token![*]) {
         let _ = input.parse::<Token![.]>()?;
-        return parse_pattern_op_with_receiver(input, op);
+        let _ = input.parse::<Token![*]>()?;
+        let name = input.parse::<Ident>()?;
+        let content;
+        syn::parenthesized!(content in input);
+        chains.push(RawChain { name, content: content.parse()? });
     }
-
-    Ok(op)
+    Ok(chains)
 }
 
-/// Parse pattern operation with a receiver (method chain style)
-fn parse_pattern_op_with_receiver(input: ParseStream, receiver: PatternOp) -> SynResult<PatternOp> {
-    let _ = input.parse::<Token![*]>()?;
-    let name = input.parse::<Ident>()?;
-    let name_str = name.to_string();
+struct RawSyntaxSequence(Vec<RawSyntax>);
 
-    let content;
-    syn::parenthesized!(content in input);
-
-    let op = match name_str.as_str() {
-        "sep" => {
-            // receiver.#sep("sep") - receiver must be a collection or result of map
-            let separator = content.parse::<syn::LitStr>()?.value();
-
-            // Extract collection name from receiver
-            let collection = match &receiver {
-                PatternOp::Var(id) => id.clone(),
-                PatternOp::Map { .. } | PatternOp::Zip { .. } => {
-                    // For Map/Zip, preserve the chain as source
-                    return Ok(PatternOp::Sep {
-                        collection: Ident::new("__chain__", proc_macro2::Span::call_site()),
-                        separator,
-                        source: Some(Box::new(receiver)),
-                    });
-                },
-                _ => {
-                    return Err(syn::Error::new(
-                        name.span(),
-                        "#sep receiver must be a collection parameter or result of #map/#zip",
-                    ));
-                },
-            };
-            PatternOp::Sep { collection, separator, source: None }
-        },
-        "map" => {
-            // receiver.#map(|x| expr)
-            let (params, body) = parse_map_closure(&content)?;
-            PatternOp::Map { source: Box::new(receiver), params, body }
-        },
-        _ => {
-            return Err(syn::Error::new(
-                name.span(),
-                format!(
-                    "Cannot chain #{} after pattern operation. Expected #sep or #map",
-                    name_str
-                ),
-            ));
-        },
-    };
-
-    // Check for further chaining
-    if input.peek(Token![.]) && input.peek2(Token![*]) {
-        let _ = input.parse::<Token![.]>()?;
-        return parse_pattern_op_with_receiver(input, op);
+impl syn::parse::Parse for RawSyntaxSequence {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let mut expressions = Vec::new();
+        while !input.is_empty() {
+            expressions.push(parse_raw_syntax(input)?);
+        }
+        Ok(Self(expressions))
     }
-
-    Ok(op)
 }
 
-/// Parse #sep(coll, "sep")
-fn parse_sep_op(content: ParseStream) -> SynResult<PatternOp> {
-    let collection = content.parse::<Ident>()?;
-    let _ = content.parse::<Token![,]>()?;
-    let separator = content.parse::<syn::LitStr>()?.value();
-    Ok(PatternOp::Sep { collection, separator, source: None })
+struct RawMapContent {
+    source: RawOp,
+    params: Vec<Ident>,
+    body: Vec<RawSyntax>,
 }
 
-/// L9-4: parse `*flt(bind, open, close)` → [`SyntaxExpr::GuestBody`]. `bind` is
-/// the FltNode capture name; `open`/`close` are the opener/closer token KINDS
-/// (e.g. `FltOpenBacktick` / `FltCloseBacktick`).
-fn parse_flt_op(input: ParseStream) -> SynResult<SyntaxExpr> {
-    let _ = input.parse::<Token![*]>()?; // *
-    let _ = input.parse::<Ident>()?; // flt
-    let content;
-    syn::parenthesized!(content in input);
-    let bind = content.parse::<Ident>()?;
-    let _ = content.parse::<Token![,]>()?;
-    let open = content.parse::<Ident>()?;
-    let _ = content.parse::<Token![,]>()?;
-    let close = content.parse::<Ident>()?;
-    Ok(SyntaxExpr::GuestBody { open, close, bind })
+impl syn::parse::Parse for RawMapContent {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let source = if input.peek(Token![*]) {
+            parse_raw_named_op(input)?
+        } else {
+            RawOp {
+                root: RawOpRoot::Var(input.parse()?),
+                chains: Vec::new(),
+            }
+        };
+        let _ = input.parse::<Token![,]>()?;
+        let (params, body) = parse_raw_map_closure(input)?;
+        Ok(Self { source, params, body })
+    }
 }
 
-/// Parse #zip(a, b)
-fn parse_zip_op(content: ParseStream) -> SynResult<PatternOp> {
-    let left = content.parse::<Ident>()?;
-    let _ = content.parse::<Token![,]>()?;
-    let right = content.parse::<Ident>()?;
-    Ok(PatternOp::Zip { left, right })
+struct RawMapClosure {
+    params: Vec<Ident>,
+    body: Vec<RawSyntax>,
 }
 
-/// Parse #map(source, |x| expr)
-fn parse_map_op(content: ParseStream) -> SynResult<PatternOp> {
-    // Source can be an identifier or a pattern op
-    let source = if content.peek(Token![*]) {
-        parse_pattern_op(content)?
-    } else {
-        let id = content.parse::<Ident>()?;
-        PatternOp::Var(id)
-    };
-
-    let _ = content.parse::<Token![,]>()?;
-    let (params, body) = parse_map_closure(content)?;
-
-    Ok(PatternOp::Map { source: Box::new(source), params, body })
+impl syn::parse::Parse for RawMapClosure {
+    fn parse(input: ParseStream) -> SynResult<Self> {
+        let (params, body) = parse_raw_map_closure(input)?;
+        Ok(Self { params, body })
+    }
 }
 
-/// Parse |x| expr or |x, y| expr (closure in #map)
-fn parse_map_closure(input: ParseStream) -> SynResult<(Vec<Ident>, Vec<SyntaxExpr>)> {
+fn parse_raw_map_closure(input: ParseStream) -> SynResult<(Vec<Ident>, Vec<RawSyntax>)> {
     let _ = input.parse::<Token![|]>()?;
-
-    let mut params = Vec::new();
-    params.push(input.parse::<Ident>()?);
-
+    let mut params = vec![input.parse::<Ident>()?];
     while input.peek(Token![,]) {
         let _ = input.parse::<Token![,]>()?;
         if input.peek(Token![|]) {
             break;
         }
-        params.push(input.parse::<Ident>()?);
+        params.push(input.parse()?);
     }
-
     let _ = input.parse::<Token![|]>()?;
-
-    // Parse body - could be multiple syntax exprs
     let mut body = Vec::new();
     while !input.is_empty() {
-        body.push(parse_syntax_expr(input)?);
+        body.push(parse_raw_syntax(input)?);
     }
-
     Ok((params, body))
 }
 
-/// Parse #opt(expr)
-fn parse_opt_op(content: ParseStream) -> SynResult<PatternOp> {
-    let mut inner = Vec::new();
-    while !content.is_empty() {
-        inner.push(parse_syntax_expr(content)?);
+fn build_raw_syntax(root: RawSyntax) -> SynResult<SyntaxExpr> {
+    enum Task {
+        Syntax(RawSyntax),
+        Op(RawOp),
+        WrapOp,
+        FinishMap {
+            params: Vec<Ident>,
+            body_len: usize,
+            chains: Vec<RawChain>,
+        },
+        FinishOpt {
+            body_len: usize,
+            chains: Vec<RawChain>,
+        },
+        ApplyChains(std::vec::IntoIter<RawChain>),
+        FinishChainMap {
+            receiver: PatternOp,
+            params: Vec<Ident>,
+            body_len: usize,
+            remaining: std::vec::IntoIter<RawChain>,
+        },
     }
-    Ok(PatternOp::Opt { inner })
+    enum Value {
+        Syntax(SyntaxExpr),
+        Op(PatternOp),
+    }
+
+    fn pop_op(values: &mut Vec<Value>) -> PatternOp {
+        match values
+            .pop()
+            .expect("operation continuation requires a value")
+        {
+            Value::Op(op) => op,
+            Value::Syntax(_) => unreachable!("operation continuation received syntax"),
+        }
+    }
+    fn pop_body(values: &mut Vec<Value>, len: usize) -> Vec<SyntaxExpr> {
+        let mut body = Vec::with_capacity(len);
+        for _ in 0..len {
+            match values.pop().expect("body continuation requires a value") {
+                Value::Syntax(expr) => body.push(expr),
+                Value::Op(_) => unreachable!("body continuation received an operation"),
+            }
+        }
+        body.reverse();
+        body
+    }
+    fn schedule_body(tasks: &mut Vec<Task>, body: Vec<RawSyntax>) {
+        tasks.extend(body.into_iter().rev().map(Task::Syntax));
+    }
+
+    let mut tasks = vec![Task::Syntax(root)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Syntax(RawSyntax::Param(id)) => {
+                values.push(Value::Syntax(SyntaxExpr::Param(id)));
+            },
+            Task::Syntax(RawSyntax::TokenKind { name, bind }) => {
+                values.push(Value::Syntax(SyntaxExpr::TokenKind { name, bind: Some(bind) }));
+            },
+            Task::Syntax(RawSyntax::Literal(value)) => {
+                values.push(Value::Syntax(SyntaxExpr::Literal(value)));
+            },
+            Task::Syntax(RawSyntax::GuestBody(content)) => {
+                struct FltContent {
+                    bind: Ident,
+                    open: Ident,
+                    close: Ident,
+                }
+                impl syn::parse::Parse for FltContent {
+                    fn parse(input: ParseStream) -> SynResult<Self> {
+                        let bind = input.parse()?;
+                        let _ = input.parse::<Token![,]>()?;
+                        let open = input.parse()?;
+                        let _ = input.parse::<Token![,]>()?;
+                        Ok(Self { bind, open, close: input.parse()? })
+                    }
+                }
+                let parsed: FltContent = syn::parse2(content)?;
+                values.push(Value::Syntax(SyntaxExpr::GuestBody {
+                    open: parsed.open,
+                    close: parsed.close,
+                    bind: parsed.bind,
+                }));
+            },
+            Task::Syntax(RawSyntax::Op(op)) => {
+                tasks.push(Task::WrapOp);
+                tasks.push(Task::Op(op));
+            },
+            Task::WrapOp => {
+                let op = pop_op(&mut values);
+                values.push(Value::Syntax(SyntaxExpr::Op(op)));
+            },
+            Task::Op(RawOp { root: RawOpRoot::Var(id), chains }) => {
+                values.push(Value::Op(PatternOp::Var(id)));
+                tasks.push(Task::ApplyChains(chains.into_iter()));
+            },
+            Task::Op(RawOp {
+                root: RawOpRoot::Named { name, content },
+                chains,
+            }) => match name.to_string().as_str() {
+                "sep" => {
+                    struct SepContent {
+                        collection: Ident,
+                        separator: String,
+                    }
+                    impl syn::parse::Parse for SepContent {
+                        fn parse(input: ParseStream) -> SynResult<Self> {
+                            let collection = input.parse()?;
+                            let _ = input.parse::<Token![,]>()?;
+                            Ok(Self {
+                                collection,
+                                separator: input.parse::<syn::LitStr>()?.value(),
+                            })
+                        }
+                    }
+                    let parsed: SepContent = syn::parse2(content)?;
+                    values.push(Value::Op(PatternOp::Sep {
+                        collection: parsed.collection,
+                        separator: parsed.separator,
+                        source: None,
+                    }));
+                    tasks.push(Task::ApplyChains(chains.into_iter()));
+                },
+                "zip" => {
+                    struct ZipContent {
+                        left: Ident,
+                        right: Ident,
+                    }
+                    impl syn::parse::Parse for ZipContent {
+                        fn parse(input: ParseStream) -> SynResult<Self> {
+                            let left = input.parse()?;
+                            let _ = input.parse::<Token![,]>()?;
+                            Ok(Self { left, right: input.parse()? })
+                        }
+                    }
+                    let parsed: ZipContent = syn::parse2(content)?;
+                    values
+                        .push(Value::Op(PatternOp::Zip { left: parsed.left, right: parsed.right }));
+                    tasks.push(Task::ApplyChains(chains.into_iter()));
+                },
+                "map" => {
+                    let parsed: RawMapContent = syn::parse2(content)?;
+                    let body_len = parsed.body.len();
+                    tasks.push(Task::FinishMap { params: parsed.params, body_len, chains });
+                    schedule_body(&mut tasks, parsed.body);
+                    tasks.push(Task::Op(parsed.source));
+                },
+                "opt" => {
+                    let parsed: RawSyntaxSequence = syn::parse2(content)?;
+                    let body_len = parsed.0.len();
+                    tasks.push(Task::FinishOpt { body_len, chains });
+                    schedule_body(&mut tasks, parsed.0);
+                },
+                _ => {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        format!(
+                            "Unknown pattern operation: #{}. Expected #sep, #zip, #map, or #opt",
+                            name
+                        ),
+                    ));
+                },
+            },
+            Task::FinishMap { params, body_len, chains } => {
+                let body = pop_body(&mut values, body_len);
+                let source = pop_op(&mut values);
+                values.push(Value::Op(PatternOp::Map { source: Box::new(source), params, body }));
+                tasks.push(Task::ApplyChains(chains.into_iter()));
+            },
+            Task::FinishOpt { body_len, chains } => {
+                let inner = pop_body(&mut values, body_len);
+                values.push(Value::Op(PatternOp::Opt { inner }));
+                tasks.push(Task::ApplyChains(chains.into_iter()));
+            },
+            Task::ApplyChains(mut chains) => {
+                let receiver = pop_op(&mut values);
+                let Some(chain) = chains.next() else {
+                    values.push(Value::Op(receiver));
+                    continue;
+                };
+                match chain.name.to_string().as_str() {
+                    "sep" => {
+                        let separator = syn::parse2::<syn::LitStr>(chain.content)?.value();
+                        let op = match &receiver {
+                            PatternOp::Var(collection) => PatternOp::Sep {
+                                collection: collection.clone(),
+                                separator,
+                                source: None,
+                            },
+                            PatternOp::Map { .. } | PatternOp::Zip { .. } => PatternOp::Sep {
+                                collection: Ident::new("__chain__", proc_macro2::Span::call_site()),
+                                separator,
+                                source: Some(Box::new(receiver)),
+                            },
+                            _ => {
+                                return Err(syn::Error::new(
+                                    chain.name.span(),
+                                    "#sep receiver must be a collection parameter or result of #map/#zip",
+                                ));
+                            },
+                        };
+                        values.push(Value::Op(op));
+                        tasks.push(Task::ApplyChains(chains));
+                    },
+                    "map" => {
+                        let parsed: RawMapClosure = syn::parse2(chain.content)?;
+                        let body_len = parsed.body.len();
+                        tasks.push(Task::FinishChainMap {
+                            receiver,
+                            params: parsed.params,
+                            body_len,
+                            remaining: chains,
+                        });
+                        schedule_body(&mut tasks, parsed.body);
+                    },
+                    _ => {
+                        return Err(syn::Error::new(
+                            chain.name.span(),
+                            format!(
+                                "Cannot chain #{} after pattern operation. Expected #sep or #map",
+                                chain.name
+                            ),
+                        ));
+                    },
+                }
+            },
+            Task::FinishChainMap { receiver, params, body_len, remaining } => {
+                let body = pop_body(&mut values, body_len);
+                values.push(Value::Op(PatternOp::Map { source: Box::new(receiver), params, body }));
+                tasks.push(Task::ApplyChains(remaining));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    match values.pop().expect("syntax parser must produce one value") {
+        Value::Syntax(expr) => Ok(expr),
+        Value::Op(_) => unreachable!("top-level builder must wrap operations as syntax"),
+    }
 }
 
 /// Convert term context to old-style items and bindings for backward compatibility.
@@ -2749,3 +2904,7 @@ mod fixture_tests {
 #[cfg(test)]
 #[path = "../tests/support/term_param_recursive_oracle.rs"]
 mod term_param_recursive_oracle;
+
+#[cfg(test)]
+#[path = "../tests/support/syntax_pattern_recursive_oracle.rs"]
+mod syntax_pattern_recursive_oracle;

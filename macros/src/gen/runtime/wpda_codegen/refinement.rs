@@ -146,47 +146,103 @@ fn bound_local_ident(var: &Ident) -> Ident {
     format_ident!("__refinement_{}", var)
 }
 
-/// Recursively lower a `RefinementPredicate` to a `bool` expression. The
+/// Iteratively lower a `RefinementPredicate` to a `bool` expression. The
 /// caller has already opened a scope in which `bound` is bound to a
 /// `&NativeTy` reference; references to the user's `var` lower to `*bound`
 /// (deref to the underlying value) wherever a value is needed.
 fn lower_refinement_body(pred: &RefinementPredicate, var: &Ident, bound: &Ident) -> TokenStream {
-    match pred {
-        RefinementPredicate::Linear { terms, relation, rhs } => {
-            lower_linear(terms, relation, *rhs, var, bound)
-        },
-        RefinementPredicate::And(a, b) => {
-            let ae = lower_refinement_body(a, var, bound);
-            let be = lower_refinement_body(b, var, bound);
-            quote! { ((#ae) && (#be)) }
-        },
-        RefinementPredicate::Or(a, b) => {
-            let ae = lower_refinement_body(a, var, bound);
-            let be = lower_refinement_body(b, var, bound);
-            quote! { ((#ae) || (#be)) }
-        },
-        RefinementPredicate::Not(inner) => {
-            let ie = lower_refinement_body(inner, var, bound);
-            quote! { (!(#ie)) }
-        },
-        RefinementPredicate::Implies(a, b) => {
-            let ae = lower_refinement_body(a, var, bound);
-            let be = lower_refinement_body(b, var, bound);
-            quote! { ((!(#ae)) || (#be)) }
-        },
-        RefinementPredicate::TermEq(a, b) => lower_term_cmp(a, b, var, bound, true),
-        RefinementPredicate::TermNeq(a, b) => lower_term_cmp(a, b, var, bound, false),
-        RefinementPredicate::Relation { name, args, negated } => {
-            lower_relation(name, args, *negated, var, bound)
-        },
-        RefinementPredicate::Quantified {
-            quantifier,
-            var: qvar,
-            domain,
-            bound: k,
-            body,
-        } => lower_quantified(quantifier.clone(), qvar, domain.as_ref(), *k, body, var, bound),
+    enum Task<'pred> {
+        Visit(&'pred RefinementPredicate),
+        Binary(BinaryOp),
+        Not,
     }
+    #[derive(Clone, Copy)]
+    enum BinaryOp {
+        And,
+        Or,
+        Implies,
+    }
+
+    let mut tasks = vec![Task::Visit(pred)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        let emitted = match task {
+            Task::Visit(RefinementPredicate::Linear { terms, relation, rhs }) => {
+                Some(lower_linear(terms, relation, *rhs, var, bound))
+            },
+            Task::Visit(RefinementPredicate::And(a, b)) => {
+                tasks.push(Task::Binary(BinaryOp::And));
+                tasks.push(Task::Visit(b));
+                tasks.push(Task::Visit(a));
+                None
+            },
+            Task::Visit(RefinementPredicate::Or(a, b)) => {
+                tasks.push(Task::Binary(BinaryOp::Or));
+                tasks.push(Task::Visit(b));
+                tasks.push(Task::Visit(a));
+                None
+            },
+            Task::Visit(RefinementPredicate::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+                None
+            },
+            Task::Visit(RefinementPredicate::Implies(a, b)) => {
+                tasks.push(Task::Binary(BinaryOp::Implies));
+                tasks.push(Task::Visit(b));
+                tasks.push(Task::Visit(a));
+                None
+            },
+            Task::Visit(RefinementPredicate::TermEq(a, b)) => {
+                Some(lower_term_cmp(a, b, var, bound, true))
+            },
+            Task::Visit(RefinementPredicate::TermNeq(a, b)) => {
+                Some(lower_term_cmp(a, b, var, bound, false))
+            },
+            Task::Visit(RefinementPredicate::Relation { name, args, negated }) => {
+                Some(lower_relation(name, args, *negated, var, bound))
+            },
+            Task::Visit(RefinementPredicate::Quantified {
+                quantifier,
+                var: qvar,
+                domain,
+                bound: limit,
+                body,
+            }) => Some(lower_quantified(
+                quantifier.clone(),
+                qvar,
+                domain.as_ref(),
+                *limit,
+                body,
+                var,
+                bound,
+            )),
+            Task::Binary(op) => {
+                let right = values
+                    .pop()
+                    .expect("right refinement operand must be lowered");
+                let left = values
+                    .pop()
+                    .expect("left refinement operand must be lowered");
+                Some(match op {
+                    BinaryOp::And => quote! { ((#left) && (#right)) },
+                    BinaryOp::Or => quote! { ((#left) || (#right)) },
+                    BinaryOp::Implies => quote! { ((!(#left)) || (#right)) },
+                })
+            },
+            Task::Not => {
+                let inner = values
+                    .pop()
+                    .expect("negated refinement operand must be lowered");
+                Some(quote! { (!(#inner)) })
+            },
+        };
+        if let Some(emitted) = emitted {
+            values.push(emitted);
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().unwrap_or_default()
 }
 
 /// Lower `Linear { terms, relation, rhs }`. Only single-bound-var form is
@@ -430,10 +486,30 @@ fn lower_quantified(
 /// TermEq / TermNeq leaves inside a quantifier body encode as a named atom
 /// with a serialized form (the relation_query callback decides truth).
 fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStream {
-    match pred {
-        RefinementPredicate::Relation { name, args, negated } => {
-            let name_str = name.to_string();
-            let arg_exprs: Vec<TokenStream> = args
+    enum Task<'pred> {
+        Visit(&'pred RefinementPredicate),
+        Quantified {
+            quantifier: Quantifier,
+            var: String,
+            domain: TokenStream,
+        },
+        Binary(BinaryOp),
+        Not,
+    }
+    #[derive(Clone, Copy)]
+    enum BinaryOp {
+        And,
+        Or,
+        Implies,
+    }
+
+    let mut tasks = vec![Task::Visit(pred)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        let emitted = match task {
+            Task::Visit(RefinementPredicate::Relation { name, args, negated }) => {
+                let name_str = name.to_string();
+                let arg_exprs: Vec<TokenStream> = args
                 .iter()
                 .map(|a| match a {
                     PredArg::Var(v) => {
@@ -450,120 +526,164 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                     },
                 })
                 .collect();
-            let atom = quote! {
-                mettail_prattail::logict::QuantifiedFormula::atom(
-                    #name_str.to_string(),
-                    vec![#(#arg_exprs),*],
-                )
-            };
-            if *negated {
-                quote! { mettail_prattail::logict::QuantifiedFormula::not(#atom) }
-            } else {
-                atom
-            }
-        },
-        RefinementPredicate::Quantified { quantifier, var, domain, bound, body } => {
-            let body_expr = refinement_pred_to_quantified_formula(body);
-            let var_str = var.to_string();
-            let Some(d) = domain else {
-                let msg = format!(
-                    "nested quantifier over `{}` requires explicit `in <domain>` clause",
-                    var,
+                let atom = quote! {
+                    mettail_prattail::logict::QuantifiedFormula::atom(
+                        #name_str.to_string(),
+                        vec![#(#arg_exprs),*],
+                    )
+                };
+                if *negated {
+                    Some(quote! { mettail_prattail::logict::QuantifiedFormula::not(#atom) })
+                } else {
+                    Some(atom)
+                }
+            },
+            Task::Visit(RefinementPredicate::Quantified {
+                quantifier,
+                var,
+                domain,
+                bound,
+                body,
+            }) => {
+                let var_str = var.to_string();
+                let Some(d) = domain else {
+                    let msg = format!(
+                        "nested quantifier over `{}` requires explicit `in <domain>` clause",
+                        var,
+                    );
+                    values.push(quote! { { compile_error!(#msg); mettail_prattail::logict::QuantifiedFormula::atom(String::new(), vec![]) } });
+                    continue;
+                };
+                let d_str = d.to_string();
+                let domain_expr = match bound {
+                    Some(b) => quote! {
+                        mettail_prattail::logict::QuantifiedDomain::Bounded {
+                            relation: #d_str.to_string(),
+                            limit: #b,
+                        }
+                    },
+                    None => quote! {
+                        mettail_prattail::logict::QuantifiedDomain::Relation(#d_str.to_string())
+                    },
+                };
+                tasks.push(Task::Quantified {
+                    quantifier: quantifier.clone(),
+                    var: var_str,
+                    domain: domain_expr,
+                });
+                tasks.push(Task::Visit(body));
+                None
+            },
+            Task::Visit(RefinementPredicate::And(a, b)) => {
+                tasks.push(Task::Binary(BinaryOp::And));
+                tasks.push(Task::Visit(b));
+                tasks.push(Task::Visit(a));
+                None
+            },
+            Task::Visit(RefinementPredicate::Or(a, b)) => {
+                tasks.push(Task::Binary(BinaryOp::Or));
+                tasks.push(Task::Visit(b));
+                tasks.push(Task::Visit(a));
+                None
+            },
+            Task::Visit(RefinementPredicate::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+                None
+            },
+            Task::Visit(RefinementPredicate::Implies(a, b)) => {
+                tasks.push(Task::Binary(BinaryOp::Implies));
+                tasks.push(Task::Visit(b));
+                tasks.push(Task::Visit(a));
+                None
+            },
+            Task::Visit(RefinementPredicate::Linear { terms, relation, rhs }) => {
+                // Linear inside a quantifier body: encode as a named atom whose
+                // relation_query callback decides truth. Quantified refinements
+                // with linear leaves are an unusual combination — a richer
+                // surface would require a custom evaluation hook.
+                let repr = format!(
+                    "{}{}{}",
+                    terms
+                        .iter()
+                        .map(|(v, c)| format!("{}*{}", c, v))
+                        .collect::<Vec<_>>()
+                        .join("+"),
+                    relation,
+                    rhs,
                 );
-                return quote! { { compile_error!(#msg); mettail_prattail::logict::QuantifiedFormula::atom(String::new(), vec![]) } };
-            };
-            let d_str = d.to_string();
-            let domain_expr = match bound {
-                Some(b) => quote! {
-                    mettail_prattail::logict::QuantifiedDomain::Bounded {
-                        relation: #d_str.to_string(),
-                        limit: #b,
-                    }
-                },
-                None => quote! {
-                    mettail_prattail::logict::QuantifiedDomain::Relation(#d_str.to_string())
-                },
-            };
-            let ctor = match quantifier {
-                Quantifier::ForAll => {
-                    quote! { mettail_prattail::logict::QuantifiedFormula::forall }
-                },
-                Quantifier::Exists => {
-                    quote! { mettail_prattail::logict::QuantifiedFormula::exists }
-                },
-            };
-            quote! {
-                #ctor(
-                    #var_str.to_string(),
-                    #domain_expr,
-                    #body_expr,
-                )
-            }
-        },
-        RefinementPredicate::And(a, b) => {
-            let ae = refinement_pred_to_quantified_formula(a);
-            let be = refinement_pred_to_quantified_formula(b);
-            quote! { mettail_prattail::logict::QuantifiedFormula::and(#ae, #be) }
-        },
-        RefinementPredicate::Or(a, b) => {
-            let ae = refinement_pred_to_quantified_formula(a);
-            let be = refinement_pred_to_quantified_formula(b);
-            quote! { mettail_prattail::logict::QuantifiedFormula::or(#ae, #be) }
-        },
-        RefinementPredicate::Not(inner) => {
-            let ie = refinement_pred_to_quantified_formula(inner);
-            quote! { mettail_prattail::logict::QuantifiedFormula::not(#ie) }
-        },
-        RefinementPredicate::Implies(a, b) => {
-            let ae = refinement_pred_to_quantified_formula(a);
-            let be = refinement_pred_to_quantified_formula(b);
-            quote! { mettail_prattail::logict::QuantifiedFormula::implies(#ae, #be) }
-        },
-        RefinementPredicate::Linear { terms, relation, rhs } => {
-            // Linear inside a quantifier body: encode as a named atom whose
-            // relation_query callback decides truth. Quantified refinements
-            // with linear leaves are an unusual combination — a richer
-            // surface would require a custom evaluation hook.
-            let repr = format!(
-                "{}{}{}",
-                terms
-                    .iter()
-                    .map(|(v, c)| format!("{}*{}", c, v))
-                    .collect::<Vec<_>>()
-                    .join("+"),
-                relation,
-                rhs,
-            );
-            quote! {
-                mettail_prattail::logict::QuantifiedFormula::atom(
-                    #repr.to_string(),
-                    vec![],
-                )
-            }
-        },
-        RefinementPredicate::TermEq(a, b) | RefinementPredicate::TermNeq(a, b) => {
-            let a_str = match a {
-                PredArg::Var(v) => v.to_string(),
-                PredArg::Constant(c) => c.to_string(),
-            };
-            let b_str = match b {
-                PredArg::Var(v) => v.to_string(),
-                PredArg::Constant(c) => c.to_string(),
-            };
-            let op = if matches!(pred, RefinementPredicate::TermEq(_, _)) {
-                "=="
-            } else {
-                "!="
-            };
-            let repr = format!("{}{}{}", a_str, op, b_str);
-            quote! {
-                mettail_prattail::logict::QuantifiedFormula::atom(
-                    #repr.to_string(),
-                    vec![],
-                )
-            }
-        },
+                Some(quote! {
+                    mettail_prattail::logict::QuantifiedFormula::atom(
+                        #repr.to_string(),
+                        vec![],
+                    )
+                })
+            },
+            Task::Visit(RefinementPredicate::TermEq(a, b))
+            | Task::Visit(RefinementPredicate::TermNeq(a, b)) => {
+                let a_str = match a {
+                    PredArg::Var(v) => v.to_string(),
+                    PredArg::Constant(c) => c.to_string(),
+                };
+                let b_str = match b {
+                    PredArg::Var(v) => v.to_string(),
+                    PredArg::Constant(c) => c.to_string(),
+                };
+                let op = if matches!(pred, RefinementPredicate::TermEq(_, _)) {
+                    "=="
+                } else {
+                    "!="
+                };
+                let repr = format!("{}{}{}", a_str, op, b_str);
+                Some(quote! {
+                    mettail_prattail::logict::QuantifiedFormula::atom(
+                        #repr.to_string(),
+                        vec![],
+                    )
+                })
+            },
+            Task::Quantified { quantifier, var, domain } => {
+                let body = values
+                    .pop()
+                    .expect("quantifier body formula must be lowered");
+                let ctor = match quantifier {
+                    Quantifier::ForAll => {
+                        quote! { mettail_prattail::logict::QuantifiedFormula::forall }
+                    },
+                    Quantifier::Exists => {
+                        quote! { mettail_prattail::logict::QuantifiedFormula::exists }
+                    },
+                };
+                Some(quote! { #ctor(#var.to_string(), #domain, #body) })
+            },
+            Task::Binary(op) => {
+                let right = values.pop().expect("right formula operand must be lowered");
+                let left = values.pop().expect("left formula operand must be lowered");
+                Some(match op {
+                    BinaryOp::And => {
+                        quote! { mettail_prattail::logict::QuantifiedFormula::and(#left, #right) }
+                    },
+                    BinaryOp::Or => {
+                        quote! { mettail_prattail::logict::QuantifiedFormula::or(#left, #right) }
+                    },
+                    BinaryOp::Implies => {
+                        quote! { mettail_prattail::logict::QuantifiedFormula::implies(#left, #right) }
+                    },
+                })
+            },
+            Task::Not => {
+                let inner = values
+                    .pop()
+                    .expect("negated formula operand must be lowered");
+                Some(quote! { mettail_prattail::logict::QuantifiedFormula::not(#inner) })
+            },
+        };
+        if let Some(emitted) = emitted {
+            values.push(emitted);
+        }
     }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().unwrap_or_default()
 }
 
 /// Look up a `RefinementTypeDef` by category name. Used by action emitters

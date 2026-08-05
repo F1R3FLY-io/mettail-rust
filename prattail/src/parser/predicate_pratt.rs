@@ -338,7 +338,195 @@ impl PredicateParser {
     /// Parse a complete predicate expression up to the first
     /// terminator (or end of input).
     pub fn parse_top(&mut self) -> Result<BehavioralPred, ParseError> {
-        self.parse_implication()
+        #[derive(Clone, Copy)]
+        enum Entry {
+            Full,
+            QuantifierOrAtom,
+        }
+        #[derive(Clone, Copy)]
+        enum BinaryOp {
+            Implies,
+            ImpliedBy,
+            Iff,
+        }
+        #[derive(Clone, Copy)]
+        enum VariadicOp {
+            And,
+            Or,
+        }
+        enum Task {
+            Parse(Entry),
+            ExpectComma,
+            ExpectRParen,
+            Not,
+            Binary(BinaryOp),
+            Variadic {
+                op: VariadicOp,
+                clauses: Vec<BehavioralPred>,
+            },
+            Quantified {
+                quantifier: Quantifier,
+                var: String,
+                domain: Option<QuantifiedDomain>,
+            },
+        }
+
+        let mut tasks = vec![Task::Parse(Entry::Full)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Parse(entry) => {
+                    let full = matches!(entry, Entry::Full);
+                    if full && self.peek_keyword_role("entails") {
+                        self.consume();
+                        self.expect_lparen()?;
+                        tasks.push(Task::Binary(BinaryOp::Implies));
+                        tasks.push(Task::ExpectRParen);
+                        tasks.push(Task::Parse(Entry::Full));
+                        tasks.push(Task::ExpectComma);
+                        tasks.push(Task::Parse(Entry::Full));
+                    } else if full && self.peek_keyword_role("implied_by") {
+                        self.consume();
+                        self.expect_lparen()?;
+                        tasks.push(Task::Binary(BinaryOp::ImpliedBy));
+                        tasks.push(Task::ExpectRParen);
+                        tasks.push(Task::Parse(Entry::Full));
+                        tasks.push(Task::ExpectComma);
+                        tasks.push(Task::Parse(Entry::Full));
+                    } else if full && self.peek_keyword_role("iff") {
+                        self.consume();
+                        self.expect_lparen()?;
+                        tasks.push(Task::Binary(BinaryOp::Iff));
+                        tasks.push(Task::ExpectRParen);
+                        tasks.push(Task::Parse(Entry::Full));
+                        tasks.push(Task::ExpectComma);
+                        tasks.push(Task::Parse(Entry::Full));
+                    } else if full
+                        && (self.peek_keyword_role("or") || self.peek_keyword_role("and"))
+                    {
+                        let op = if self.peek_keyword_role("or") {
+                            VariadicOp::Or
+                        } else {
+                            VariadicOp::And
+                        };
+                        self.consume();
+                        self.expect_lparen()?;
+                        tasks.push(Task::Variadic { op, clauses: Vec::new() });
+                        tasks.push(Task::Parse(Entry::Full));
+                    } else if full && self.peek_keyword_role("not") {
+                        self.consume();
+                        tasks.push(Task::Not);
+                        if self.peek_lparen() {
+                            self.consume();
+                            tasks.push(Task::ExpectRParen);
+                            tasks.push(Task::Parse(Entry::Full));
+                        } else {
+                            tasks.push(Task::Parse(Entry::QuantifierOrAtom));
+                        }
+                    } else if self.peek_keyword_role("forall") || self.peek_keyword_role("exists") {
+                        let quantifier = if self.peek_keyword_role("forall") {
+                            Quantifier::ForAll
+                        } else {
+                            Quantifier::Exists
+                        };
+                        self.consume();
+                        self.expect_lparen()?;
+                        let var = self.expect_ident()?;
+                        let domain = if self.peek_in_keyword() {
+                            self.consume();
+                            Some(self.parse_domain()?)
+                        } else if self.peek_comma() {
+                            let save = self.pos;
+                            self.consume();
+                            if self.peek_domain_lookahead() {
+                                let candidate = self.parse_domain()?;
+                                if self.peek_comma() {
+                                    self.consume();
+                                    Some(candidate)
+                                } else {
+                                    self.pos = save;
+                                    self.consume();
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        tasks.push(Task::Quantified { quantifier, var, domain });
+                        tasks.push(Task::ExpectRParen);
+                        tasks.push(Task::Parse(Entry::Full));
+                    } else if self.peek_lparen() {
+                        self.consume();
+                        tasks.push(Task::ExpectRParen);
+                        tasks.push(Task::Parse(Entry::Full));
+                    } else {
+                        values.push(self.parse_atom_leaf()?);
+                    }
+                },
+                Task::ExpectComma => self.expect_comma()?,
+                Task::ExpectRParen => self.expect_rparen()?,
+                Task::Not => {
+                    let inner = values.pop().expect("not continuation requires an operand");
+                    values.push(BehavioralPred::Not(Box::new(inner)));
+                },
+                Task::Binary(op) => {
+                    let right = values
+                        .pop()
+                        .expect("binary continuation requires right operand");
+                    let left = values
+                        .pop()
+                        .expect("binary continuation requires left operand");
+                    values.push(match op {
+                        BinaryOp::Implies => {
+                            BehavioralPred::Implies(Box::new(left), Box::new(right))
+                        },
+                        BinaryOp::ImpliedBy => {
+                            BehavioralPred::Implies(Box::new(right), Box::new(left))
+                        },
+                        BinaryOp::Iff => BehavioralPred::And(
+                            Box::new(BehavioralPred::Implies(
+                                Box::new(left.clone()),
+                                Box::new(right.clone()),
+                            )),
+                            Box::new(BehavioralPred::Implies(Box::new(right), Box::new(left))),
+                        ),
+                    });
+                },
+                Task::Variadic { op, mut clauses } => {
+                    clauses.push(
+                        values
+                            .pop()
+                            .expect("variadic continuation requires a clause"),
+                    );
+                    if self.peek_comma() {
+                        self.consume();
+                        tasks.push(Task::Variadic { op, clauses });
+                        tasks.push(Task::Parse(Entry::Full));
+                    } else {
+                        self.expect_rparen()?;
+                        values.push(match op {
+                            VariadicOp::And => fold_and(clauses),
+                            VariadicOp::Or => fold_or(clauses),
+                        });
+                    }
+                },
+                Task::Quantified { quantifier, var, domain } => {
+                    let body = values
+                        .pop()
+                        .expect("quantifier continuation requires a body");
+                    values.push(BehavioralPred::Quantified {
+                        quantifier,
+                        var,
+                        domain,
+                        body: Box::new(body),
+                    });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        Ok(values.pop().expect("parser must produce one predicate"))
     }
 
     // ── Role resolution ────────────────────────────────────────────
@@ -377,154 +565,6 @@ impl PredicateParser {
             _ => return false,
         };
         self.is_role(kw, role)
-    }
-
-    // ── Parser layers ──────────────────────────────────────────────
-
-    /// Layer 1: implication-like forms (`entails`, `implied_by`, `iff`).
-    fn parse_implication(&mut self) -> Result<BehavioralPred, ParseError> {
-        if self.peek_keyword_role("entails") {
-            self.consume();
-            self.expect_lparen()?;
-            let p = self.parse_implication()?;
-            self.expect_comma()?;
-            let c = self.parse_implication()?;
-            self.expect_rparen()?;
-            return Ok(BehavioralPred::Implies(Box::new(p), Box::new(c)));
-        }
-        if self.peek_keyword_role("implied_by") {
-            self.consume();
-            self.expect_lparen()?;
-            let c = self.parse_implication()?;
-            self.expect_comma()?;
-            let p = self.parse_implication()?;
-            self.expect_rparen()?;
-            return Ok(BehavioralPred::Implies(Box::new(p), Box::new(c)));
-        }
-        if self.peek_keyword_role("iff") {
-            self.consume();
-            self.expect_lparen()?;
-            let a = self.parse_implication()?;
-            self.expect_comma()?;
-            let b = self.parse_implication()?;
-            self.expect_rparen()?;
-            return Ok(BehavioralPred::And(
-                Box::new(BehavioralPred::Implies(Box::new(a.clone()), Box::new(b.clone()))),
-                Box::new(BehavioralPred::Implies(Box::new(b), Box::new(a))),
-            ));
-        }
-        self.parse_or()
-    }
-
-    /// Layer 2: `or(...)` variadic disjunction.
-    fn parse_or(&mut self) -> Result<BehavioralPred, ParseError> {
-        if self.peek_keyword_role("or") {
-            self.consume();
-            self.expect_lparen()?;
-            let mut clauses = vec![self.parse_implication()?];
-            while self.peek_comma() {
-                self.consume();
-                clauses.push(self.parse_implication()?);
-            }
-            self.expect_rparen()?;
-            return Ok(fold_or(clauses));
-        }
-        self.parse_and()
-    }
-
-    /// Layer 3: `and(...)` variadic conjunction plus top-level comma.
-    fn parse_and(&mut self) -> Result<BehavioralPred, ParseError> {
-        if self.peek_keyword_role("and") {
-            self.consume();
-            self.expect_lparen()?;
-            let mut clauses = vec![self.parse_implication()?];
-            while self.peek_comma() {
-                self.consume();
-                clauses.push(self.parse_implication()?);
-            }
-            self.expect_rparen()?;
-            return Ok(fold_and(clauses));
-        }
-        // Top-level comma-separated conjunction is handled by the
-        // caller (see `parse_top_level_conjunction`).
-        self.parse_not()
-    }
-
-    /// Layer 4: `not(...)` function-call form and prefix `not`/`!`.
-    fn parse_not(&mut self) -> Result<BehavioralPred, ParseError> {
-        if self.peek_keyword_role("not") {
-            self.consume();
-            // Function-call form: not(P)
-            if self.peek_lparen() {
-                self.consume();
-                let inner = self.parse_implication()?;
-                self.expect_rparen()?;
-                return Ok(BehavioralPred::Not(Box::new(inner)));
-            }
-            // Prefix form: not P
-            let inner = self.parse_quantifier()?;
-            return Ok(BehavioralPred::Not(Box::new(inner)));
-        }
-        self.parse_quantifier()
-    }
-
-    /// Layer 5: `forall(var, domain, body)` / `exists(var, domain, body)`.
-    fn parse_quantifier(&mut self) -> Result<BehavioralPred, ParseError> {
-        let q = if self.peek_keyword_role("forall") {
-            self.consume();
-            Quantifier::ForAll
-        } else if self.peek_keyword_role("exists") {
-            self.consume();
-            Quantifier::Exists
-        } else {
-            return self.parse_atom();
-        };
-        self.expect_lparen()?;
-        let var = self.expect_ident()?;
-        // Optional domain clause. Syntax:
-        //   forall(v, body)                — no domain
-        //   forall(v, domain, body)        — comma separator
-        //   forall(v in domain, body)      — `in` / `∈` keyword
-        let domain = if self.peek_keyword_role("entails") && false {
-            None
-        } else if self.peek_in_keyword() {
-            self.consume();
-            Some(self.parse_domain()?)
-        } else if self.peek_comma() {
-            // Lookahead to determine if the next token(s) form a
-            // domain expression followed by another comma (i.e., the
-            // three-arg form) or are the body (two-arg form).
-            //
-            // The domain form is: int literal | ident | { ... }
-            // If that's followed by a `,`, it's a domain; otherwise
-            // it's part of the body.
-            let save = self.pos;
-            self.consume(); // consume the first comma
-            if self.peek_domain_lookahead() {
-                let dom = self.parse_domain()?;
-                if self.peek_comma() {
-                    self.consume(); // consume the comma after the domain
-                    Some(dom)
-                } else {
-                    // Not actually a domain — restore position.
-                    self.pos = save;
-                    self.consume(); // consume the comma again
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        let body = self.parse_implication()?;
-        self.expect_rparen()?;
-        Ok(BehavioralPred::Quantified {
-            quantifier: q,
-            var,
-            domain,
-            body: Box::new(body),
-        })
     }
 
     fn peek_in_keyword(&self) -> bool {
@@ -579,15 +619,7 @@ impl PredicateParser {
 
     /// Layer 6: atomic predicates — relation calls, infix comparisons,
     /// set membership.
-    fn parse_atom(&mut self) -> Result<BehavioralPred, ParseError> {
-        // Parenthesized expression
-        if self.peek_lparen() {
-            self.consume();
-            let inner = self.parse_implication()?;
-            self.expect_rparen()?;
-            return Ok(inner);
-        }
-
+    fn parse_atom_leaf(&mut self) -> Result<BehavioralPred, ParseError> {
         // Relation application: `name(args)` (peek required)
         if self.peek_ident_followed_by_lparen() {
             let name = self.expect_ident()?;

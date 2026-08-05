@@ -35,27 +35,31 @@ use super::prefix::{classify_atomic, first_set_of_category, AtomicShape, Literal
 pub(crate) fn collect_sequence_separators(
     language: &LanguageDef,
 ) -> std::collections::BTreeSet<String> {
-    fn walk_sp(sp: &[SyntaxExpr], out: &mut std::collections::BTreeSet<String>) {
-        for e in sp {
-            if let SyntaxExpr::Op(op) = e {
-                walk_op(op, out);
-            }
-        }
+    enum Node<'syntax> {
+        Expr(&'syntax SyntaxExpr),
+        Op(&'syntax PatternOp),
     }
-    fn walk_op(op: &PatternOp, out: &mut std::collections::BTreeSet<String>) {
-        match op {
-            PatternOp::Sep { separator, source, .. } => {
-                out.insert(separator.clone());
-                if let Some(s) = source {
-                    walk_op(s, out);
-                }
-            },
-            PatternOp::Map { source, body, .. } => {
-                walk_op(source, out);
-                walk_sp(body, out);
-            },
-            PatternOp::Opt { inner } => walk_sp(inner, out),
-            PatternOp::Zip { .. } | PatternOp::Var(_) => {},
+    fn walk_sp(sp: &[SyntaxExpr], out: &mut std::collections::BTreeSet<String>) {
+        let mut work: Vec<Node<'_>> = sp.iter().rev().map(Node::Expr).collect();
+        while let Some(node) = work.pop() {
+            match node {
+                Node::Expr(SyntaxExpr::Op(op)) => work.push(Node::Op(op)),
+                Node::Expr(_) => {},
+                Node::Op(op) => match op {
+                    PatternOp::Sep { separator, source, .. } => {
+                        out.insert(separator.clone());
+                        if let Some(s) = source {
+                            work.push(Node::Op(s));
+                        }
+                    },
+                    PatternOp::Map { source, body, .. } => {
+                        work.extend(body.iter().rev().map(Node::Expr));
+                        work.push(Node::Op(source));
+                    },
+                    PatternOp::Opt { inner } => work.extend(inner.iter().rev().map(Node::Expr)),
+                    PatternOp::Zip { .. } | PatternOp::Var(_) => {},
+                },
+            }
         }
     }
     let mut seps = std::collections::BTreeSet::new();

@@ -74,6 +74,14 @@ const TERM_FAMILY: &[&str] = &[
     "RuntimeObservationValue",
     "BodyAtom",
     "Query",
+    "TermParam",
+    "SyntaxExpr",
+    "PatternOp",
+    "Condition",
+    "BehavioralPred",
+    "RefinementPredicate",
+    "ConstraintDomain",
+    "TreeConstraintExpr",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

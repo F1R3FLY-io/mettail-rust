@@ -261,65 +261,73 @@ pub fn analyze_join_pattern(spec: &MultiChannelGuardSpec) -> JoinPatternReport {
 /// Walk a `BehavioralPred` and collect every free variable name
 /// (excluding quantifier-bound variables).
 fn collect_predicate_free_vars(pred: &BehavioralPred) -> HashSet<String> {
+    enum Task<'pred> {
+        Visit(&'pred BehavioralPred),
+        LeaveBound(String, bool),
+    }
     let mut free = HashSet::new();
     let mut bound = HashSet::new();
-    collect_predicate_free_vars_inner(pred, &mut free, &mut bound);
-    free
-}
-
-fn collect_predicate_free_vars_inner(
-    pred: &BehavioralPred,
-    free: &mut HashSet<String>,
-    bound: &mut HashSet<String>,
-) {
-    match pred {
-        BehavioralPred::RelationQuery { args, .. } => {
-            for arg in args {
-                if let PredArg::Var(id) = arg {
-                    let name = id.to_string();
+    let mut work = vec![Task::Visit(pred)];
+    while let Some(task) = work.pop() {
+        let Task::Visit(pred) = task else {
+            let Task::LeaveBound(name, inserted) = task else {
+                unreachable!()
+            };
+            if inserted {
+                bound.remove(&name);
+            }
+            continue;
+        };
+        match pred {
+            BehavioralPred::RelationQuery { args, .. } => {
+                for arg in args {
+                    if let PredArg::Var(id) = arg {
+                        let name = id.to_string();
+                        if !bound.contains(&name) {
+                            free.insert(name);
+                        }
+                    }
+                }
+            },
+            BehavioralPred::Quantified { var, body, .. } => {
+                let var_name = var.to_string();
+                let inserted = bound.insert(var_name.clone());
+                work.push(Task::LeaveBound(var_name, inserted));
+                work.push(Task::Visit(body));
+            },
+            BehavioralPred::AcMatch { bag, elements, rest } => {
+                // The AST `AcMatch` carries `Ident` directly (not
+                // `PredArg`), so every reference is a variable.
+                let bag_name = bag.to_string();
+                if !bound.contains(&bag_name) {
+                    free.insert(bag_name);
+                }
+                for elem in elements {
+                    let name = elem.to_string();
                     if !bound.contains(&name) {
                         free.insert(name);
                     }
                 }
-            }
-        },
-        BehavioralPred::Quantified { var, body, .. } => {
-            let var_name = var.to_string();
-            let inserted = bound.insert(var_name.clone());
-            collect_predicate_free_vars_inner(body, free, bound);
-            if inserted {
-                bound.remove(&var_name);
-            }
-        },
-        BehavioralPred::AcMatch { bag, elements, rest } => {
-            // The AST `AcMatch` carries `Ident` directly (not
-            // `PredArg`), so every reference is a variable.
-            let bag_name = bag.to_string();
-            if !bound.contains(&bag_name) {
-                free.insert(bag_name);
-            }
-            for elem in elements {
-                let name = elem.to_string();
-                if !bound.contains(&name) {
-                    free.insert(name);
+                if let Some(rest_id) = rest {
+                    let name = rest_id.to_string();
+                    if !bound.contains(&name) {
+                        free.insert(name);
+                    }
                 }
-            }
-            if let Some(rest_id) = rest {
-                let name = rest_id.to_string();
-                if !bound.contains(&name) {
-                    free.insert(name);
-                }
-            }
-        },
-        BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) | BehavioralPred::Implies(a, b) => {
-            collect_predicate_free_vars_inner(a, free, bound);
-            collect_predicate_free_vars_inner(b, free, bound);
-        },
-        BehavioralPred::Not(inner) => {
-            collect_predicate_free_vars_inner(inner, free, bound);
-        },
-        BehavioralPred::Top => {},
+            },
+            BehavioralPred::And(a, b)
+            | BehavioralPred::Or(a, b)
+            | BehavioralPred::Implies(a, b) => {
+                work.push(Task::Visit(b));
+                work.push(Task::Visit(a));
+            },
+            BehavioralPred::Not(inner) => {
+                work.push(Task::Visit(inner));
+            },
+            BehavioralPred::Top => {},
+        }
     }
+    free
 }
 
 #[cfg(test)]

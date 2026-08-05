@@ -37,127 +37,164 @@ use quote::quote;
 /// `mettail_runtime::BehavioralPred` equal to the given AST predicate
 /// at macro-expansion time.
 pub fn lower_pred_expr(pred: &AstPred) -> TokenStream {
-    match pred {
-        AstPred::RelationQuery { relation_name, args, negated } => {
-            let name_str = relation_name.to_string();
-            let arg_exprs: Vec<TokenStream> = args.iter().map(lower_arg_expr).collect();
-            let neg = *negated;
-            quote! {
-                mettail_runtime::BehavioralPred::RelationQuery {
-                    relation_name: #name_str.to_string(),
-                    args: vec![#(#arg_exprs),*],
-                    negated: #neg,
-                }
-            }
+    enum Task<'pred> {
+        Visit(&'pred AstPred),
+        Quantified {
+            quantifier: AstQ,
+            var: String,
+            domain: TokenStream,
         },
-        AstPred::Quantified { quantifier, var, domain, bound, body } => {
-            let q_expr = match quantifier {
-                AstQ::ForAll => quote! { mettail_runtime::Quantifier::ForAll },
-                AstQ::Exists => quote! { mettail_runtime::Quantifier::Exists },
-            };
-            let var_str = var.to_string();
-            // AST uses separate `domain` and `bound` fields; runtime
-            // collapses these into a single `Option<QuantifiedDomain>`
-            // with `Named(name) | Bounded(k)` variants.
-            let dom_expr = match (domain, bound) {
-                (Some(n), Some(k)) => {
-                    // Bounded named domain: prefer the bound limit
-                    // (matches §11 decidability semantics).
-                    let _ = n;
-                    quote! {
-                        Some(mettail_runtime::QuantifiedDomain::Bounded(#k))
-                    }
-                },
-                (Some(n), None) => {
-                    let s = n.to_string();
-                    quote! {
-                        Some(mettail_runtime::QuantifiedDomain::Named(#s.to_string()))
-                    }
-                },
-                (None, Some(k)) => quote! {
-                    Some(mettail_runtime::QuantifiedDomain::Bounded(#k))
-                },
-                (None, None) => quote! { None },
-            };
-            let body_expr = lower_pred_expr(body);
-            quote! {
-                mettail_runtime::BehavioralPred::Quantified {
-                    quantifier: #q_expr,
-                    var: #var_str.to_string(),
-                    domain: #dom_expr,
-                    body: Box::new(#body_expr),
-                }
-            }
-        },
-        AstPred::And(a, b) => {
-            let ae = lower_pred_expr(a);
-            let be = lower_pred_expr(b);
-            quote! {
-                mettail_runtime::BehavioralPred::And(
-                    Box::new(#ae),
-                    Box::new(#be),
-                )
-            }
-        },
-        AstPred::Or(a, b) => {
-            let ae = lower_pred_expr(a);
-            let be = lower_pred_expr(b);
-            quote! {
-                mettail_runtime::BehavioralPred::Or(
-                    Box::new(#ae),
-                    Box::new(#be),
-                )
-            }
-        },
-        AstPred::Not(inner) => {
-            let ie = lower_pred_expr(inner);
-            quote! {
-                mettail_runtime::BehavioralPred::Not(Box::new(#ie))
-            }
-        },
-        AstPred::Implies(p, c) => {
-            let pe = lower_pred_expr(p);
-            let ce = lower_pred_expr(c);
-            quote! {
-                mettail_runtime::BehavioralPred::Implies(
-                    Box::new(#pe),
-                    Box::new(#ce),
-                )
-            }
-        },
-        AstPred::AcMatch { bag, elements, rest } => {
-            let bag_str = bag.to_string();
-            let bag_expr = quote! {
-                mettail_runtime::PredArg::Var(#bag_str.to_string())
-            };
-            let elem_exprs: Vec<TokenStream> = elements
-                .iter()
-                .map(|e| {
-                    let s = e.to_string();
-                    quote! {
-                        mettail_runtime::PredArg::Var(#s.to_string())
+        Binary(BinaryOp),
+        Not,
+    }
+    #[derive(Clone, Copy)]
+    enum BinaryOp {
+        And,
+        Or,
+        Implies,
+    }
+
+    let mut tasks = vec![Task::Visit(pred)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        let emitted = match task {
+            Task::Visit(AstPred::RelationQuery { relation_name, args, negated }) => {
+                let name_str = relation_name.to_string();
+                let arg_exprs: Vec<TokenStream> = args.iter().map(lower_arg_expr).collect();
+                let neg = *negated;
+                Some(quote! {
+                    mettail_runtime::BehavioralPred::RelationQuery {
+                        relation_name: #name_str.to_string(),
+                        args: vec![#(#arg_exprs),*],
+                        negated: #neg,
                     }
                 })
-                .collect();
-            let rest_expr = match rest {
-                None => quote! { None },
-                Some(r) => {
-                    let s = r.to_string();
-                    quote! { Some(#s.to_string()) }
-                },
-            };
-            quote! {
-                mettail_runtime::BehavioralPred::AcMatch {
-                    bag: #bag_expr,
-                    elements: vec![#(#elem_exprs),*],
-                    rest: #rest_expr,
-                }
-            }
-        },
-        AstPred::Top => {
-            quote! { mettail_runtime::BehavioralPred::Top }
-        },
+            },
+            Task::Visit(AstPred::Quantified { quantifier, var, domain, bound, body }) => {
+                let var_str = var.to_string();
+                // AST uses separate `domain` and `bound` fields; runtime
+                // collapses these into a single `Option<QuantifiedDomain>`
+                // with `Named(name) | Bounded(k)` variants.
+                let dom_expr = match (domain, bound) {
+                    (Some(n), Some(k)) => {
+                        // Bounded named domain: prefer the bound limit
+                        // (matches §11 decidability semantics).
+                        let _ = n;
+                        quote! {
+                            Some(mettail_runtime::QuantifiedDomain::Bounded(#k))
+                        }
+                    },
+                    (Some(n), None) => {
+                        let s = n.to_string();
+                        quote! {
+                            Some(mettail_runtime::QuantifiedDomain::Named(#s.to_string()))
+                        }
+                    },
+                    (None, Some(k)) => quote! {
+                        Some(mettail_runtime::QuantifiedDomain::Bounded(#k))
+                    },
+                    (None, None) => quote! { None },
+                };
+                tasks.push(Task::Quantified {
+                    quantifier: quantifier.clone(),
+                    var: var_str,
+                    domain: dom_expr,
+                });
+                tasks.push(Task::Visit(body));
+                None
+            },
+            Task::Visit(AstPred::And(a, b)) => {
+                tasks.push(Task::Binary(BinaryOp::And));
+                tasks.push(Task::Visit(b));
+                tasks.push(Task::Visit(a));
+                None
+            },
+            Task::Visit(AstPred::Or(a, b)) => {
+                tasks.push(Task::Binary(BinaryOp::Or));
+                tasks.push(Task::Visit(b));
+                tasks.push(Task::Visit(a));
+                None
+            },
+            Task::Visit(AstPred::Not(inner)) => {
+                tasks.push(Task::Not);
+                tasks.push(Task::Visit(inner));
+                None
+            },
+            Task::Visit(AstPred::Implies(a, b)) => {
+                tasks.push(Task::Binary(BinaryOp::Implies));
+                tasks.push(Task::Visit(b));
+                tasks.push(Task::Visit(a));
+                None
+            },
+            Task::Visit(AstPred::AcMatch { bag, elements, rest }) => {
+                let bag_str = bag.to_string();
+                let bag_expr = quote! {
+                    mettail_runtime::PredArg::Var(#bag_str.to_string())
+                };
+                let elem_exprs: Vec<TokenStream> = elements
+                    .iter()
+                    .map(|e| {
+                        let s = e.to_string();
+                        quote! { mettail_runtime::PredArg::Var(#s.to_string()) }
+                    })
+                    .collect();
+                let rest_expr = rest.as_ref().map_or_else(
+                    || quote! { None },
+                    |rest| {
+                        let value = rest.to_string();
+                        quote! { Some(#value.to_string()) }
+                    },
+                );
+                Some(quote! {
+                    mettail_runtime::BehavioralPred::AcMatch {
+                        bag: #bag_expr,
+                        elements: vec![#(#elem_exprs),*],
+                        rest: #rest_expr,
+                    }
+                })
+            },
+            Task::Visit(AstPred::Top) => Some(quote! { mettail_runtime::BehavioralPred::Top }),
+            Task::Quantified { quantifier, var, domain } => {
+                let body_expr = values.pop().expect("quantifier body must be lowered first");
+                let q_expr = match quantifier {
+                    AstQ::ForAll => quote! { mettail_runtime::Quantifier::ForAll },
+                    AstQ::Exists => quote! { mettail_runtime::Quantifier::Exists },
+                };
+                Some(quote! {
+                    mettail_runtime::BehavioralPred::Quantified {
+                        quantifier: #q_expr,
+                        var: #var.to_string(),
+                        domain: #domain,
+                        body: Box::new(#body_expr),
+                    }
+                })
+            },
+            Task::Binary(op) => {
+                let right = values.pop().expect("right operand must be lowered first");
+                let left = values.pop().expect("left operand must be lowered first");
+                Some(match op {
+                    BinaryOp::And => quote! {
+                        mettail_runtime::BehavioralPred::And(Box::new(#left), Box::new(#right))
+                    },
+                    BinaryOp::Or => quote! {
+                        mettail_runtime::BehavioralPred::Or(Box::new(#left), Box::new(#right))
+                    },
+                    BinaryOp::Implies => quote! {
+                        mettail_runtime::BehavioralPred::Implies(Box::new(#left), Box::new(#right))
+                    },
+                })
+            },
+            Task::Not => {
+                let inner = values.pop().expect("negated operand must be lowered first");
+                Some(quote! { mettail_runtime::BehavioralPred::Not(Box::new(#inner)) })
+            },
+        };
+        if let Some(emitted) = emitted {
+            values.push(emitted);
+        }
     }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().unwrap_or_default()
 }
 
 /// Lower a `mettail_ast::language::PredArg` to a `TokenStream` that

@@ -496,7 +496,8 @@ impl RhoNetProgram {
         params: &[TermParam],
         inputs: &mut Vec<String>,
     ) {
-        for param in params {
+        let mut work: Vec<&TermParam> = params.iter().rev().collect();
+        while let Some(param) = work.pop() {
             match param {
                 TermParam::Simple { name, .. } => {
                     let channel = RhoNetChannel::location(
@@ -536,7 +537,7 @@ impl RhoNetProgram {
                 },
                 TermParam::GuardBody { .. } => {},
                 TermParam::Optional { params } => {
-                    self.add_constructor_term_param_inputs(index, label, params, inputs);
+                    work.extend(params.iter().rev());
                 },
             }
         }

@@ -721,37 +721,42 @@ fn allowed_vocab(lang: &LanguageDef, per_cat: &[Vec<GrammarRule>]) -> BTreeSet<S
     v.insert("(".to_string());
     v.insert(")".to_string());
 
-    fn walk_sp(sp: &[SyntaxExpr], v: &mut BTreeSet<String>) {
-        for e in sp {
-            match e {
-                SyntaxExpr::Literal(s) => {
-                    v.insert(s.clone());
-                },
-                SyntaxExpr::Op(op) => walk_op(op, v),
-                SyntaxExpr::Param(_) => {},
-                // L9-3/L9-4: a custom-kind capture (`b@Tok`) / a guest-body
-                // capture (`*flt(node, open, close)`) matches variable token
-                // text delimited by CUSTOM token kinds (the FLT opener/closer),
-                // not FIXED literal terminals — neither contributes to the
-                // allowed vocabulary.
-                SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {},
-            }
-        }
+    enum Node<'syntax> {
+        Expr(&'syntax SyntaxExpr),
+        Op(&'syntax PatternOp),
     }
-    fn walk_op(op: &PatternOp, v: &mut BTreeSet<String>) {
-        match op {
-            PatternOp::Sep { separator, source, .. } => {
-                v.insert(separator.clone());
-                if let Some(s) = source {
-                    walk_op(s, v);
-                }
-            },
-            PatternOp::Map { source, body, .. } => {
-                walk_op(source, v);
-                walk_sp(body, v);
-            },
-            PatternOp::Opt { inner } => walk_sp(inner, v),
-            PatternOp::Zip { .. } | PatternOp::Var(_) => {},
+    fn walk_sp(sp: &[SyntaxExpr], v: &mut BTreeSet<String>) {
+        let mut work: Vec<Node<'_>> = sp.iter().rev().map(Node::Expr).collect();
+        while let Some(node) = work.pop() {
+            match node {
+                Node::Expr(e) => match e {
+                    SyntaxExpr::Literal(s) => {
+                        v.insert(s.clone());
+                    },
+                    SyntaxExpr::Op(op) => work.push(Node::Op(op)),
+                    SyntaxExpr::Param(_) => {},
+                    // L9-3/L9-4: a custom-kind capture (`b@Tok`) / a guest-body
+                    // capture (`*flt(node, open, close)`) matches variable token
+                    // text delimited by CUSTOM token kinds (the FLT opener/closer),
+                    // not FIXED literal terminals — neither contributes to the
+                    // allowed vocabulary.
+                    SyntaxExpr::TokenKind { .. } | SyntaxExpr::GuestBody { .. } => {},
+                },
+                Node::Op(op) => match op {
+                    PatternOp::Sep { separator, source, .. } => {
+                        v.insert(separator.clone());
+                        if let Some(s) = source {
+                            work.push(Node::Op(s));
+                        }
+                    },
+                    PatternOp::Map { source, body, .. } => {
+                        work.extend(body.iter().rev().map(Node::Expr));
+                        work.push(Node::Op(source));
+                    },
+                    PatternOp::Opt { inner } => work.extend(inner.iter().rev().map(Node::Expr)),
+                    PatternOp::Zip { .. } | PatternOp::Var(_) => {},
+                },
+            }
         }
     }
 
@@ -1893,7 +1898,6 @@ proptest! {
     }
 }
 
-
 #[cfg(test)]
 mod corpus_hygiene {
     //! What the archived `grammar_generality_prop` corpus actually contains.
@@ -1962,8 +1966,10 @@ mod corpus_hygiene {
         let entries = archived_entries();
         assert_eq!(entries.len(), 3, "the archived corpus no longer holds three entries");
 
-        let normalized: Vec<String> =
-            entries.iter().map(|(_, text)| normalize_spans(text)).collect();
+        let normalized: Vec<String> = entries
+            .iter()
+            .map(|(_, text)| normalize_spans(text))
+            .collect();
 
         assert_eq!(
             normalized[0], normalized[1],

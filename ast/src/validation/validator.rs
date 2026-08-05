@@ -368,42 +368,42 @@ pub fn validate_guard_config(language: &LanguageDef) -> Result<(), ValidationErr
     Ok(())
 }
 
-/// Recursively walk a `BehavioralPred` looking up each predicate name
+/// Iteratively walk a `BehavioralPred` looking up each predicate name
 /// in the closed-world resolution table.
 fn walk_behavioral_pred(
     pred: &crate::language::BehavioralPred,
     table: &HashSet<String>,
 ) -> Result<(), ValidationError> {
     use crate::language::BehavioralPred;
-    match pred {
-        BehavioralPred::RelationQuery { relation_name, .. } => {
-            let name = relation_name.to_string();
-            if !table.contains(&name) {
-                let mut available: Vec<String> = table.iter().cloned().collect();
-                available.sort();
-                return Err(ValidationError::UnknownGuardPredicate {
-                    name,
-                    available,
-                    span: relation_name.span(),
-                });
-            }
-            Ok(())
-        },
-        BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) | BehavioralPred::Implies(a, b) => {
-            walk_behavioral_pred(a, table)?;
-            walk_behavioral_pred(b, table)
-        },
-        BehavioralPred::Not(inner) => walk_behavioral_pred(inner, table),
-        BehavioralPred::Quantified { body, .. } => walk_behavioral_pred(body, table),
-        BehavioralPred::AcMatch { .. } => {
-            // AcMatch is a structural form, not a named predicate.
-            Ok(())
-        },
-        BehavioralPred::Top => {
-            // Always-true identity predicate; no named predicate to resolve.
-            Ok(())
-        },
+    let mut work = vec![pred];
+    while let Some(pred) = work.pop() {
+        match pred {
+            BehavioralPred::RelationQuery { relation_name, .. } => {
+                let name = relation_name.to_string();
+                if !table.contains(&name) {
+                    let mut available: Vec<String> = table.iter().cloned().collect();
+                    available.sort();
+                    return Err(ValidationError::UnknownGuardPredicate {
+                        name,
+                        available,
+                        span: relation_name.span(),
+                    });
+                }
+            },
+            BehavioralPred::And(a, b)
+            | BehavioralPred::Or(a, b)
+            | BehavioralPred::Implies(a, b) => {
+                work.push(b);
+                work.push(a);
+            },
+            BehavioralPred::Not(inner) | BehavioralPred::Quantified { body: inner, .. } => {
+                work.push(inner);
+            },
+            // AcMatch is structural rather than named; Top is the identity.
+            BehavioralPred::AcMatch { .. } | BehavioralPred::Top => {},
+        }
     }
+    Ok(())
 }
 
 fn validate_pattern(pattern: &Pattern, language: &LanguageDef) -> Result<(), ValidationError> {
