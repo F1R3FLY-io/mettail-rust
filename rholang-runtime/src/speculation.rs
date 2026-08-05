@@ -1643,7 +1643,7 @@ pub fn content_fingerprint(state: &SpeculativeState) -> Vec<String> {
         sources.sort();
         lines.push(format!(
             "data {} => [{}]",
-            hex(&Blake2b256Hash::new(&prost_bytes(channel)).bytes()),
+            hex(&Blake2b256Hash::new(&protobuf_bytes(channel)).bytes()),
             sources.join(", ")
         ));
     }
@@ -1669,7 +1669,7 @@ pub fn content_fingerprint(state: &SpeculativeState) -> Vec<String> {
         group.extend(
             channels
                 .iter()
-                .map(|channel| hex(&Blake2b256Hash::new(&prost_bytes(channel)).bytes())),
+                .map(|channel| hex(&Blake2b256Hash::new(&protobuf_bytes(channel)).bytes())),
         );
         lines.push(format!("cont [{}] => [{}]", group.join(" & "), sources.join(", ")));
     }
@@ -1699,7 +1699,7 @@ pub fn content_fingerprint_digest(state: &SpeculativeState) -> Blake2b256Hash {
         }
         records.sort_unstable();
 
-        let channel_body = prost_bytes(channel);
+        let channel_body = protobuf_bytes(channel);
         let mut line = Vec::with_capacity(1 + 8 + channel_body.len() + 8 + 33 * records.len());
         line.push(b'd');
         line.extend_from_slice(&(channel_body.len() as u64).to_le_bytes());
@@ -1730,7 +1730,7 @@ pub fn content_fingerprint_digest(state: &SpeculativeState) -> Blake2b256Hash {
         line.push(b'c');
         line.extend_from_slice(&(channels.len() as u64).to_le_bytes());
         for channel in channels {
-            let body = prost_bytes(channel);
+            let body = protobuf_bytes(channel);
             line.extend_from_slice(&(body.len() as u64).to_le_bytes());
             line.extend_from_slice(&body);
         }
@@ -1751,7 +1751,7 @@ pub fn content_fingerprint_digest(state: &SpeculativeState) -> Blake2b256Hash {
     Blake2b256Hash::new(&bytes)
 }
 
-fn prost_bytes(par: &Par) -> Vec<u8> {
+fn protobuf_bytes(par: &Par) -> Vec<u8> {
     use prost::Message;
     par.encode_to_vec()
 }
