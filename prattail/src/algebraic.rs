@@ -111,7 +111,6 @@ impl<W: Semiring> ControlFlowGraph<W> {
 /// Represents the algebraic structure of all paths through a CFG region.
 /// Evaluating the expression over a `StarSemiring` yields the abstract
 /// summary of the paths.
-#[derive(Debug, Clone)]
 pub enum PathExpr<W: Semiring> {
     /// A single edge weight (base case).
     Atom(W),
@@ -126,6 +125,9 @@ pub enum PathExpr<W: Semiring> {
     /// Empty path (multiplicative identity).
     One,
 }
+
+#[path = "algebraic/path_expr_lifecycle.rs"]
+mod path_expr_lifecycle;
 
 impl<W: Semiring> PathExpr<W> {
     /// Smart constructor for `Seq` that avoids unnecessary boxing when

@@ -80,7 +80,6 @@ impl fmt::Display for Register {
 /// - The input cost (from the semiring)
 /// - Semiring operations (plus, times)
 /// - Semiring constants (zero, one)
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegisterExpr {
     /// The current value of a register.
     Reg(Register),
@@ -96,6 +95,9 @@ pub enum RegisterExpr {
     Times(Box<RegisterExpr>, Box<RegisterExpr>),
 }
 
+#[path = "cra/register_expr_lifecycle.rs"]
+mod register_expr_lifecycle;
+
 impl RegisterExpr {
     /// Shorthand for a register reference.
     pub fn reg(index: usize) -> Self {
@@ -110,19 +112,6 @@ impl RegisterExpr {
     /// Shorthand for multiplication.
     pub fn times(a: RegisterExpr, b: RegisterExpr) -> Self {
         RegisterExpr::Times(Box::new(a), Box::new(b))
-    }
-}
-
-impl fmt::Display for RegisterExpr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RegisterExpr::Reg(r) => write!(f, "{}", r),
-            RegisterExpr::InputCost => write!(f, "cost"),
-            RegisterExpr::Zero => write!(f, "0"),
-            RegisterExpr::One => write!(f, "1"),
-            RegisterExpr::Plus(a, b) => write!(f, "({} + {})", a, b),
-            RegisterExpr::Times(a, b) => write!(f, "({} * {})", a, b),
-        }
     }
 }
 
@@ -256,22 +245,44 @@ impl<W: Semiring> fmt::Display for CostRegisterAutomaton<W> {
 /// Evaluate a single register expression against the current register values
 /// and input cost.
 fn eval_expr<W: Semiring>(expr: &RegisterExpr, registers: &[W], input_cost: &W) -> W {
-    match expr {
-        RegisterExpr::Reg(r) => registers[r.index],
-        RegisterExpr::InputCost => *input_cost,
-        RegisterExpr::Zero => W::zero(),
-        RegisterExpr::One => W::one(),
-        RegisterExpr::Plus(a, b) => {
-            let va = eval_expr(a, registers, input_cost);
-            let vb = eval_expr(b, registers, input_cost);
-            va.plus(&vb)
-        },
-        RegisterExpr::Times(a, b) => {
-            let va = eval_expr(a, registers, input_cost);
-            let vb = eval_expr(b, registers, input_cost);
-            va.times(&vb)
-        },
+    enum Task<'expr> {
+        Visit(&'expr RegisterExpr),
+        Plus,
+        Times,
     }
+
+    let mut tasks = vec![Task::Visit(expr)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(RegisterExpr::Reg(register)) => values.push(registers[register.index]),
+            Task::Visit(RegisterExpr::InputCost) => values.push(*input_cost),
+            Task::Visit(RegisterExpr::Zero) => values.push(W::zero()),
+            Task::Visit(RegisterExpr::One) => values.push(W::one()),
+            Task::Visit(RegisterExpr::Plus(left, right)) => {
+                tasks.push(Task::Plus);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Visit(RegisterExpr::Times(left, right)) => {
+                tasks.push(Task::Times);
+                tasks.push(Task::Visit(right));
+                tasks.push(Task::Visit(left));
+            },
+            Task::Plus => {
+                let right = values.pop().expect("CRA evaluator lost a right operand");
+                let left = values.pop().expect("CRA evaluator lost a left operand");
+                values.push(left.plus(&right));
+            },
+            Task::Times => {
+                let right = values.pop().expect("CRA evaluator lost a right operand");
+                let left = values.pop().expect("CRA evaluator lost a left operand");
+                values.push(left.times(&right));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("CRA evaluator produced no value")
 }
 
 pub fn evaluate_stream<W: Semiring>(cra: &CostRegisterAutomaton<W>, stream: &[(String, W)]) -> W {
