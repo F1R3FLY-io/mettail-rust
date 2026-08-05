@@ -1729,6 +1729,53 @@ fn collides_with_drive_frame(name: &str) -> bool {
         && name.len() > 1
 }
 
+/// Fold the positional Var/Apply subset of a pattern with an explicit post-order PDA.
+///
+/// Callers supply the leaf action, constructor validation/tag selection, result assembly, and the
+/// diagnostic for unsupported metasyntax. Constructor validation runs before its children, matching
+/// recursive fail-fast order; assembled child results remain in left-to-right source order.
+fn fold_positional_pattern<T>(
+    pattern: &Pattern,
+    mut variable: impl FnMut(&Ident) -> Result<T, String>,
+    mut constructor: impl FnMut(&Ident, usize) -> Result<String, String>,
+    mut assemble: impl FnMut(String, Vec<T>) -> T,
+    mut unsupported: impl FnMut(&Pattern) -> String,
+) -> Result<T, String> {
+    enum Task<'a> {
+        Visit(&'a Pattern),
+        Assemble { tag: String, child_count: usize },
+    }
+
+    let mut tasks = vec![Task::Visit(pattern)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Pattern::Term(PatternTerm::Var(name))) => {
+                values.push(variable(name)?);
+            },
+            Task::Visit(Pattern::Term(PatternTerm::Apply { constructor: op, args })) => {
+                let tag = constructor(op, args.len())?;
+                tasks.push(Task::Assemble { tag, child_count: args.len() });
+                tasks.extend(args.iter().rev().map(Task::Visit));
+            },
+            Task::Visit(other) => return Err(unsupported(other)),
+            Task::Assemble { tag, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("positional-pattern PDA lost a child result");
+                let children = values.split_off(first_child);
+                values.push(assemble(tag, children));
+            },
+        }
+    }
+
+    debug_assert_eq!(values.len(), 1);
+    Ok(values
+        .pop()
+        .expect("positional-pattern PDA produced no result"))
+}
+
 /// Transcribe one fireable rewrite's LHS to its driver redex-arm `Match` pattern
 /// (plan v1 §4.3.1): constructor applications become tagged-`EList` patterns
 /// ([`pat_tagged`]) with BINDER constructors remapped to their reflected tag
@@ -1750,10 +1797,17 @@ fn transcribe_lhs_pattern(
     fingerprint: &str,
     order: &mut Vec<String>,
 ) -> Result<Par, String> {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(name)) => {
+    let term_by_label: HashMap<String, _> = def
+        .terms
+        .iter()
+        .map(|term| (term.label.to_string(), term))
+        .collect();
+    let mut seen: HashSet<String> = order.iter().cloned().collect();
+    fold_positional_pattern(
+        pattern,
+        |name| {
             let name = name.to_string();
-            if order.contains(&name) {
+            if !seen.insert(name.clone()) {
                 return Err(format!(
                     "repeated LHS variable {name:?} (a non-linear POSITIONAL redex arm is \
                      not driver-supported; MatchCase.guard equalities ride the AC carrier \
@@ -1770,59 +1824,55 @@ fn transcribe_lhs_pattern(
             order.push(name);
             Ok(pat_free(level))
         },
-        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+        |constructor, arity| {
             let label = constructor.to_string();
-            let term = def
-                .terms
-                .iter()
-                .find(|term| term.label == label)
+            let term = term_by_label
+                .get(&label)
+                .copied()
                 .ok_or_else(|| format!("unknown constructor {label:?} in a redex-arm LHS"))?;
-            let tag = if is_binder_term(term) {
+            if is_binder_term(term) {
                 if is_multi_binder_term(term) {
                     return Err(format!(
                         "multi-binder constructor {label:?} has no driver arm this stage"
                     ));
                 }
-                if args.len() != 1 {
+                if arity != 1 {
                     return Err(format!(
-                        "binder constructor {label:?} applied to {} argument(s) in a redex-arm \
-                         LHS (the reflected binder node has exactly one child, its body)",
-                        args.len()
+                        "binder constructor {label:?} applied to {arity} argument(s) in a redex-arm \
+                         LHS (the reflected binder node has exactly one child, its body)"
                     ));
                 }
-                LAMBDA_REFLECT_LABEL
+                Ok(LAMBDA_REFLECT_LABEL.to_string())
             } else {
-                label.as_str()
-            };
-            let mut children = Vec::with_capacity(args.len());
-            for arg in args {
-                children.push(transcribe_lhs_pattern(arg, def, fingerprint, order)?);
+                Ok(label)
             }
-            Ok(pat_tagged(fingerprint, tag, children))
         },
-        Pattern::Term(PatternTerm::Lambda { .. })
-        | Pattern::Term(PatternTerm::MultiLambda { .. }) => {
-            Err("a literal binder pattern in a redex-arm LHS is not driver-supported this \
-                 stage"
-                .to_string())
+        |tag, children| pat_tagged(fingerprint, &tag, children),
+        |unsupported| match unsupported {
+            Pattern::Term(PatternTerm::Lambda { .. } | PatternTerm::MultiLambda { .. }) => {
+                "a literal binder pattern in a redex-arm LHS is not driver-supported this stage"
+                    .to_string()
+            },
+            Pattern::Term(PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. }) => {
+                "a substitution node in a redex-arm LHS has no matching image".to_string()
+            },
+            Pattern::Collection { .. } => {
+                "a collection inside a POSITIONAL redex-arm LHS has no σ-ABI image (a \
+                 collection-rooted LHS rides the A-S5.5 AC carrier arms instead)"
+                    .to_string()
+            },
+            Pattern::Map { .. } => "a map (AC) LHS is not driver-supported this stage".to_string(),
+            Pattern::Zip { .. } => "a zip (AC) LHS is not driver-supported this stage".to_string(),
+            Pattern::IndexedVec { .. } => {
+                "an indexed-vec (ORDERED) LHS is not driver-supported this stage — and it must \
+                 not be routed to the AC carrier, which may permute the payload"
+                    .to_string()
+            },
+            Pattern::Term(PatternTerm::Var(_) | PatternTerm::Apply { .. }) => {
+                unreachable!("the positional fold handles Var and Apply")
+            },
         },
-        Pattern::Term(PatternTerm::Subst { .. })
-        | Pattern::Term(PatternTerm::MultiSubst { .. }) => {
-            Err("a substitution node in a redex-arm LHS has no matching image".to_string())
-        },
-        Pattern::Collection { .. } => {
-            Err("a collection inside a POSITIONAL redex-arm LHS has no σ-ABI image (a \
-             collection-rooted LHS rides the A-S5.5 AC carrier arms instead)"
-                .to_string())
-        },
-        Pattern::Map { .. } => Err("a map (AC) LHS is not driver-supported this stage".to_string()),
-        Pattern::Zip { .. } => Err("a zip (AC) LHS is not driver-supported this stage".to_string()),
-        Pattern::IndexedVec { .. } => {
-            Err("an indexed-vec (ORDERED) LHS is not driver-supported this stage — and it must \
-             not be routed to the AC carrier, which may permute the payload"
-                .to_string())
-        },
-    }
+    )
 }
 
 /// REBUILD the redex node from the arm's own σ pattern (every child bound), used as the
@@ -1835,31 +1885,29 @@ fn rebuild_from_pattern(
     fingerprint: &str,
     env: &Env,
 ) -> Result<Node, String> {
-    match pattern {
-        Pattern::Term(PatternTerm::Var(name)) => Ok(env.var(&name.to_string())),
-        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+    let term_by_label: HashMap<String, _> = def
+        .terms
+        .iter()
+        .map(|term| (term.label.to_string(), term))
+        .collect();
+    fold_positional_pattern(
+        pattern,
+        |name| Ok(env.var(&name.to_string())),
+        |constructor, _| {
             let label = constructor.to_string();
-            let term = def
-                .terms
-                .iter()
-                .find(|term| term.label == label)
+            let term = term_by_label
+                .get(&label)
+                .copied()
                 .ok_or_else(|| format!("unknown constructor {label:?} in a redex-arm rebuild"))?;
-            let tag = if is_binder_term(term) {
-                LAMBDA_REFLECT_LABEL
+            Ok(if is_binder_term(term) {
+                LAMBDA_REFLECT_LABEL.to_string()
             } else {
-                label.as_str()
-            };
-            let mut children = Vec::with_capacity(args.len());
-            for arg in args {
-                children.push(rebuild_from_pattern(arg, def, fingerprint, env)?);
-            }
-            Ok(tagged(fingerprint, tag, children))
+                label
+            })
         },
-        _ => {
-            Err("redex-arm rebuild reached a shape the transcription admitted incorrectly"
-                .to_string())
-        },
-    }
+        |tag, children| tagged(fingerprint, &tag, children),
+        |_| "redex-arm rebuild reached a shape the transcription admitted incorrectly".to_string(),
+    )
 }
 
 /// Validate (admission-time) that a fireable rewrite's LHS transcribes AND that its σ
@@ -3099,6 +3147,10 @@ pub(crate) fn hashbag_collection_ops(def: &LanguageDef) -> Vec<String> {
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "../tests/support/rho_net_drive_pattern_recursive_oracle.rs"]
+mod pattern_recursive_oracle;
 
 #[cfg(test)]
 mod tests {
