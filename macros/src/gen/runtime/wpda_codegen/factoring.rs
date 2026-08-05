@@ -268,7 +268,6 @@ pub(crate) struct GroupMember {
 /// other). Under the F0 stance (`S1F5_ACCEPT_CONTINUE == false`) no leaf
 /// ever repeats an item because exhausted members are routed to
 /// `interior_accepts` instead of leafing out.
-#[derive(Debug)]
 pub(crate) enum SpineTree {
     Interior {
         item: SpineItem,
@@ -280,6 +279,13 @@ pub(crate) enum SpineTree {
     },
 }
 
+#[path = "factoring/spine_tree_lifecycle.rs"]
+mod spine_tree_lifecycle;
+
+#[cfg(test)]
+#[path = "../../../../tests/support/spine_tree_lifecycle.rs"]
+mod spine_tree_lifecycle_tests;
+
 impl SpineTree {
     pub(crate) fn item(&self) -> &SpineItem {
         match self {
@@ -288,38 +294,44 @@ impl SpineTree {
     }
 
     pub(crate) fn leaf_count(&self) -> usize {
-        match self {
-            SpineTree::Leaf { .. } => 1,
-            SpineTree::Interior { children, .. } => {
-                children.iter().map(SpineTree::leaf_count).sum()
-            },
+        let mut count = 0usize;
+        let mut work = vec![self];
+        while let Some(node) = work.pop() {
+            match node {
+                SpineTree::Leaf { .. } => count += 1,
+                SpineTree::Interior { children, .. } => work.extend(children.iter().rev()),
+            }
         }
+        count
     }
 
     pub(crate) fn leaves(&self) -> Vec<&GroupMember> {
-        match self {
-            SpineTree::Leaf { member, .. } => vec![member],
-            SpineTree::Interior { children, .. } => {
-                let mut out = Vec::with_capacity(children.len());
-                for child in children {
-                    out.extend(child.leaves());
-                }
-                out
-            },
+        let mut out = Vec::new();
+        let mut work = vec![self];
+        while let Some(node) = work.pop() {
+            match node {
+                SpineTree::Leaf { member, .. } => out.push(member),
+                SpineTree::Interior { children, .. } => work.extend(children.iter().rev()),
+            }
         }
+        out
     }
 
     /// The leaf for `rule_idx` together with its leaf EDGE item, if present.
     // dead_code: model accessor, exercised only by the `#[cfg(test)]` INV-8 assertions.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn leaf_for(&self, rule_idx: u16) -> Option<(&SpineItem, &GroupMember)> {
-        match self {
-            SpineTree::Leaf { item, member } if member.rule_idx == rule_idx => Some((item, member)),
-            SpineTree::Leaf { .. } => None,
-            SpineTree::Interior { children, .. } => {
-                children.iter().find_map(|child| child.leaf_for(rule_idx))
-            },
+        let mut work = vec![self];
+        while let Some(node) = work.pop() {
+            match node {
+                SpineTree::Leaf { item, member } if member.rule_idx == rule_idx => {
+                    return Some((item, member));
+                },
+                SpineTree::Leaf { .. } => {},
+                SpineTree::Interior { children, .. } => work.extend(children.iter().rev()),
+            }
         }
+        None
     }
 }
 
@@ -3818,23 +3830,49 @@ mod tests {
     /// accept leaves / twins) render natively — position in the child list
     /// IS the emitted branch order.
     fn render(tree: &SpineTree) -> String {
-        fn item(it: &SpineItem) -> String {
-            match it {
-                SpineItem::Literal { text, .. } => format!("L({text})"),
+        use std::fmt::Write as _;
+
+        enum Task<'tree> {
+            Visit(&'tree SpineTree),
+            Text(&'static str),
+        }
+
+        fn write_item(out: &mut String, item: &SpineItem) {
+            match item {
+                SpineItem::Literal { text, .. } => {
+                    write!(out, "L({text})").expect("writing into String cannot fail");
+                },
                 SpineItem::ParamParse { cat_src_idx, cur_bp } => {
-                    format!("P({cat_src_idx},{cur_bp})")
+                    write!(out, "P({cat_src_idx},{cur_bp})")
+                        .expect("writing into String cannot fail");
                 },
             }
         }
-        match tree {
-            SpineTree::Leaf { item: it, member } => {
-                format!("{}=>r{}", item(it), member.rule_idx)
-            },
-            SpineTree::Interior { item: it, children } => {
-                let inner: Vec<String> = children.iter().map(render).collect();
-                format!("{}[{}]", item(it), inner.join(" "))
-            },
+
+        let mut out = String::new();
+        let mut tasks = vec![Task::Visit(tree)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Text(text) => out.push_str(text),
+                Task::Visit(SpineTree::Leaf { item, member }) => {
+                    write_item(&mut out, item);
+                    write!(&mut out, "=>r{}", member.rule_idx)
+                        .expect("writing into String cannot fail");
+                },
+                Task::Visit(SpineTree::Interior { item, children }) => {
+                    write_item(&mut out, item);
+                    out.push('[');
+                    tasks.push(Task::Text("]"));
+                    for (index, child) in children.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(child));
+                        if index > 0 {
+                            tasks.push(Task::Text(" "));
+                        }
+                    }
+                },
+            }
         }
+        out
     }
 
     /// Forest rendering in the normative A1 root order — a single-root
