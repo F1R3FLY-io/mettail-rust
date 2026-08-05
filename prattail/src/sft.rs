@@ -1345,45 +1345,8 @@ pub enum OutputTerm<A: BooleanAlgebra, B: BooleanAlgebra> {
     _Input(std::convert::Infallible, std::marker::PhantomData<fn(A)>),
 }
 
-impl<A: BooleanAlgebra, B: BooleanAlgebra> Clone for OutputTerm<A, B> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Eps => Self::Eps,
-            Self::Id => Self::Id,
-            Self::Const(v) => Self::Const(v.clone()),
-            Self::Concat(x, y) => Self::Concat(x.clone(), y.clone()),
-            Self::_Input(never, _) => match *never {},
-        }
-    }
-}
-
-impl<A: BooleanAlgebra, B: BooleanAlgebra> fmt::Debug for OutputTerm<A, B> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Eps => write!(f, "Eps"),
-            Self::Id => write!(f, "Id"),
-            Self::Const(v) => write!(f, "Const({:?})", v),
-            Self::Concat(x, y) => write!(f, "Concat({:?}, {:?})", x, y),
-            Self::_Input(never, _) => match *never {},
-        }
-    }
-}
-
-impl<A: BooleanAlgebra, B: BooleanAlgebra> PartialEq for OutputTerm<A, B>
-where
-    B::Domain: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Eps, Self::Eps) | (Self::Id, Self::Id) => true,
-            (Self::Const(a), Self::Const(b)) => a == b,
-            (Self::Concat(x1, y1), Self::Concat(x2, y2)) => x1 == x2 && y1 == y2,
-            _ => false,
-        }
-    }
-}
-
-impl<A: BooleanAlgebra, B: BooleanAlgebra> Eq for OutputTerm<A, B> where B::Domain: Eq {}
+#[path = "sft/output_term_lifecycle.rs"]
+mod output_term_lifecycle;
 
 impl<A: BooleanAlgebra, B: BooleanAlgebra> OutputTerm<A, B> {
     /// Apply this output term to one input element, yielding the output sequence.
@@ -1392,17 +1355,21 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> OutputTerm<A, B> {
     where
         A::Domain: Clone + Into<B::Domain>,
     {
-        match self {
-            Self::Eps => Vec::new(),
-            Self::Id => vec![input.clone().into()],
-            Self::Const(v) => v.clone(),
-            Self::Concat(x, y) => {
-                let mut out = x.apply(input);
-                out.extend(y.apply(input));
-                out
-            },
-            Self::_Input(never, _) => match *never {},
+        let mut out = Vec::new();
+        let mut work = vec![self];
+        while let Some(term) = work.pop() {
+            match term {
+                Self::Eps => {},
+                Self::Id => out.push(input.clone().into()),
+                Self::Const(values) => out.extend(values.iter().cloned()),
+                Self::Concat(left, right) => {
+                    work.push(right);
+                    work.push(left);
+                },
+                Self::_Input(never, _) => match *never {},
+            }
         }
+        out
     }
 
     /// Apply to a whole input sequence, concatenating the per-element outputs
@@ -1422,15 +1389,7 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> OutputTerm<A, B> {
     /// generator either ignores the input (`Eps`/`Const`) or is a structural
     /// marker (`Id`/`Concat`); used by `then` for the `Id ∘ next` case.
     fn retype_input<A2: BooleanAlgebra>(&self) -> OutputTerm<A2, B> {
-        match self {
-            Self::Eps => OutputTerm::Eps,
-            Self::Id => OutputTerm::Id,
-            Self::Const(v) => OutputTerm::Const(v.clone()),
-            Self::Concat(x, y) => {
-                OutputTerm::Concat(Box::new(x.retype_input()), Box::new(y.retype_input()))
-            },
-            Self::_Input(never, _) => match *never {},
-        }
+        output_term_lifecycle::retype_input(self)
     }
 
     /// Precise sequential composition: `self : A→B*` followed by `next : B→C*`,
@@ -1441,15 +1400,42 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> OutputTerm<A, B> {
     where
         B::Domain: Clone + Into<C::Domain>,
     {
-        match self {
-            Self::Eps => OutputTerm::Eps,
-            Self::Const(bs) => OutputTerm::Const(next.apply_all(bs)),
-            Self::Id => next.retype_input::<A>(),
-            Self::Concat(x, y) => {
-                OutputTerm::Concat(Box::new(x.then(next)), Box::new(y.then(next)))
-            },
-            Self::_Input(never, _) => match *never {},
+        enum Task<'term, A: BooleanAlgebra, B: BooleanAlgebra> {
+            Visit(&'term OutputTerm<A, B>),
+            Concat(usize),
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(OutputTerm::Eps) => values.push(OutputTerm::Eps),
+                Task::Visit(OutputTerm::Const(outputs)) => {
+                    values.push(OutputTerm::Const(next.apply_all(outputs)))
+                },
+                Task::Visit(OutputTerm::Id) => values.push(next.retype_input::<A>()),
+                Task::Visit(OutputTerm::Concat(left, right)) => {
+                    tasks.push(Task::Concat(values.len()));
+                    tasks.push(Task::Visit(right));
+                    tasks.push(Task::Visit(left));
+                },
+                Task::Visit(OutputTerm::_Input(never, _)) => match *never {},
+                Task::Concat(base) => {
+                    let right = values
+                        .pop()
+                        .expect("output-term composition lost a right term");
+                    let left = values
+                        .pop()
+                        .expect("output-term composition lost a left term");
+                    values.truncate(base);
+                    values.push(OutputTerm::Concat(Box::new(left), Box::new(right)));
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("output-term composition produced no term")
     }
 
     /// Smart `Concat` that absorbs the `Eps` unit (monoid normalization).
@@ -1481,12 +1467,14 @@ where
     /// lower to a `FlatMap` evaluating the term — the term stays the source of
     /// truth for static analysis and composition.
     fn from(term: OutputTerm<A, B>) -> Self {
-        match term {
-            OutputTerm::Eps => OutputFunction::Epsilon,
-            OutputTerm::Id => OutputFunction::Identity,
-            OutputTerm::Const(v) => OutputFunction::Constant(v),
-            other => OutputFunction::FlatMap(Arc::new(move |input: &A::Domain| other.apply(input))),
+        match &term {
+            OutputTerm::Eps => return OutputFunction::Epsilon,
+            OutputTerm::Id => return OutputFunction::Identity,
+            OutputTerm::Const(v) => return OutputFunction::Constant(v.clone()),
+            OutputTerm::Concat(..) => {},
+            OutputTerm::_Input(never, _) => match *never {},
         }
+        OutputFunction::FlatMap(Arc::new(move |input: &A::Domain| term.apply(input)))
     }
 }
 
@@ -2044,8 +2032,9 @@ mod tests {
         // precise symbolic terms, no opaque closure.
         let next: OT = OutputTerm::Const(vec![100]);
         assert!(OT::Eps.then(&next).is_eps());
-        match OT::Const(vec![1, 2]).then(&next) {
-            OutputTerm::Const(v) => assert_eq!(v, vec![100, 100]),
+        let composed = OT::Const(vec![1, 2]).then(&next);
+        match &composed {
+            OutputTerm::Const(v) => assert_eq!(v.as_slice(), [100, 100]),
             other => panic!("expected precise Const, got {other:?}"),
         }
     }
