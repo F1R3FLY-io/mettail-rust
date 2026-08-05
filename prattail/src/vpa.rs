@@ -1639,7 +1639,6 @@ where
 /// # Type Parameter
 ///
 /// * `T` — the token type (e.g., a generated `Token` enum).
-#[derive(Debug, Clone)]
 pub enum TokenTree<T> {
     /// A leaf token (non-delimiter or unmatched delimiter).
     Token(T, crate::runtime_types::Range),
@@ -1652,6 +1651,110 @@ pub enum TokenTree<T> {
         /// Child nodes between the delimiters.
         children: Vec<TokenTree<T>>,
     },
+}
+
+impl<T: Clone> Clone for TokenTree<T> {
+    fn clone(&self) -> Self {
+        enum Task<'a, T> {
+            Visit(&'a TokenTree<T>),
+            AssembleGroup {
+                open: (T, crate::runtime_types::Range),
+                close: (T, crate::runtime_types::Range),
+                child_count: usize,
+            },
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TokenTree::Token(token, range)) => {
+                    values.push(TokenTree::Token(token.clone(), *range));
+                },
+                Task::Visit(TokenTree::Group { open, close, children }) => {
+                    tasks.push(Task::AssembleGroup {
+                        open: open.clone(),
+                        close: close.clone(),
+                        child_count: children.len(),
+                    });
+                    tasks.extend(children.iter().rev().map(Task::Visit));
+                },
+                Task::AssembleGroup { open, close, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("token-tree clone PDA lost a child result");
+                    let children = values.split_off(first_child);
+                    values.push(TokenTree::Group { open, close, children });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("token-tree clone PDA produced no result")
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for TokenTree<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        enum Task<'a, T> {
+            Visit(&'a TokenTree<T>),
+            Text(&'static str),
+            DebugToken(&'a T),
+            DebugRange(&'a crate::runtime_types::Range),
+            DebugPair(&'a (T, crate::runtime_types::Range)),
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(TokenTree::Token(token, range)) => {
+                    tasks.push(Task::Text(")"));
+                    tasks.push(Task::DebugRange(range));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::DebugToken(token));
+                    tasks.push(Task::Text("Token("));
+                },
+                Task::Visit(TokenTree::Group { open, close, children }) => {
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Text("]"));
+                    for (index, child) in children.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(child));
+                        if index > 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                    tasks.push(Task::Text("children: ["));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::DebugPair(close));
+                    tasks.push(Task::Text("close: "));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::DebugPair(open));
+                    tasks.push(Task::Text("Group { open: "));
+                },
+                Task::Text(text) => formatter.write_str(text)?,
+                Task::DebugToken(token) => write!(formatter, "{token:?}")?,
+                Task::DebugRange(range) => write!(formatter, "{range:?}")?,
+                Task::DebugPair(pair) => write!(formatter, "{pair:?}")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<T> Drop for TokenTree<T> {
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        if let TokenTree::Group { children, .. } = self {
+            pending.append(children);
+        }
+        while let Some(mut tree) = pending.pop() {
+            if let TokenTree::Group { children, .. } = &mut tree {
+                pending.append(children);
+            }
+        }
+    }
 }
 
 /// Build a token tree from a flat token stream and skip table.
@@ -1673,43 +1776,73 @@ pub fn build_token_tree<T: Clone>(
     skip_table: &[Option<usize>],
     classify: impl Fn(&T) -> SymbolKind,
 ) -> Vec<TokenTree<T>> {
-    /// Recursive helper that builds children within the half-open range
-    /// `[start, end)` of the token stream.
-    fn build_range<T: Clone>(
-        tokens: &[(T, crate::runtime_types::Range)],
-        skip_table: &[Option<usize>],
-        classify: &dyn Fn(&T) -> SymbolKind,
-        start: usize,
+    struct Frame<T> {
+        index: usize,
         end: usize,
-    ) -> Vec<TokenTree<T>> {
-        let mut result = Vec::new();
-        let mut i = start;
-        while i < end {
-            match classify(&tokens[i].0) {
-                SymbolKind::Call => {
-                    if let Some(closer) = skip_table[i] {
-                        let children = build_range(tokens, skip_table, classify, i + 1, closer);
-                        result.push(TokenTree::Group {
-                            open: tokens[i].clone(),
-                            close: tokens[closer].clone(),
-                            children,
-                        });
-                        i = closer + 1;
-                    } else {
-                        // Unmatched opener — demote to leaf.
-                        result.push(TokenTree::Token(tokens[i].0.clone(), tokens[i].1));
-                        i += 1;
-                    }
-                },
-                _ => {
-                    result.push(TokenTree::Token(tokens[i].0.clone(), tokens[i].1));
-                    i += 1;
-                },
-            }
-        }
-        result
+        nodes: Vec<TokenTree<T>>,
+        group: Option<((T, crate::runtime_types::Range), (T, crate::runtime_types::Range))>,
     }
-    build_range(tokens, skip_table, &classify, 0, tokens.len())
+
+    let mut frames = vec![Frame {
+        index: 0,
+        end: tokens.len(),
+        nodes: Vec::new(),
+        group: None,
+    }];
+    loop {
+        let complete = {
+            let frame = frames
+                .last()
+                .expect("token-tree builder always has a root frame");
+            frame.index >= frame.end
+        };
+        if complete {
+            let Frame { nodes, group, .. } =
+                frames.pop().expect("completed token-tree frame exists");
+            let Some((open, close)) = group else {
+                debug_assert!(frames.is_empty());
+                return nodes;
+            };
+            frames
+                .last_mut()
+                .expect("a group frame has a parent")
+                .nodes
+                .push(TokenTree::Group { open, close, children: nodes });
+            continue;
+        }
+
+        let index = frames.last().expect("active token-tree frame exists").index;
+        match classify(&tokens[index].0) {
+            SymbolKind::Call => match skip_table[index] {
+                Some(closer) => {
+                    frames
+                        .last_mut()
+                        .expect("active token-tree frame exists")
+                        .index = closer + 1;
+                    frames.push(Frame {
+                        index: index + 1,
+                        end: closer,
+                        nodes: Vec::new(),
+                        group: Some((tokens[index].clone(), tokens[closer].clone())),
+                    });
+                },
+                None => {
+                    let frame = frames.last_mut().expect("active token-tree frame exists");
+                    frame
+                        .nodes
+                        .push(TokenTree::Token(tokens[index].0.clone(), tokens[index].1));
+                    frame.index += 1;
+                },
+            },
+            _ => {
+                let frame = frames.last_mut().expect("active token-tree frame exists");
+                frame
+                    .nodes
+                    .push(TokenTree::Token(tokens[index].0.clone(), tokens[index].1));
+                frame.index += 1;
+            },
+        }
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

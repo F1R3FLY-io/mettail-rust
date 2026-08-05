@@ -295,12 +295,104 @@ impl<W: Semiring> fmt::Display for TreeAutomaton<W> {
 /// # assert_eq!(term.arity(), 2);
 /// # assert_eq!(term.size(), 4);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term {
     /// Function symbol (constructor label).
     pub symbol: String,
     /// Child subterms (empty for leaves / constants).
     pub children: Vec<Term>,
+}
+
+impl Clone for Term {
+    fn clone(&self) -> Self {
+        enum Task<'a> {
+            Visit(&'a Term),
+            Assemble { symbol: &'a str, child_count: usize },
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(term) => {
+                    tasks.push(Task::Assemble {
+                        symbol: &term.symbol,
+                        child_count: term.children.len(),
+                    });
+                    tasks.extend(term.children.iter().rev().map(Task::Visit));
+                },
+                Task::Assemble { symbol, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("tree term clone PDA lost a child result");
+                    let children = values.split_off(first_child);
+                    values.push(Term::new(symbol, children));
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("tree term clone PDA produced no result")
+    }
+}
+
+impl PartialEq for Term {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some((left, right)) = pending.pop() {
+            if left.symbol != right.symbol || left.children.len() != right.children.len() {
+                return false;
+            }
+            pending.extend(left.children.iter().zip(&right.children).rev());
+        }
+        true
+    }
+}
+
+impl Eq for Term {}
+
+impl fmt::Debug for Term {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        enum Task<'a> {
+            Visit(&'a Term),
+            Text(&'static str),
+            DebugString(&'a str),
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(term) => {
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Text("]"));
+                    for (index, child) in term.children.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(child));
+                        if index > 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                    tasks.push(Task::Text("children: ["));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::DebugString(&term.symbol));
+                    tasks.push(Task::Text("Term { symbol: "));
+                },
+                Task::Text(text) => formatter.write_str(text)?,
+                Task::DebugString(value) => write!(formatter, "{value:?}")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Term {
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        pending.append(&mut self.children);
+        while let Some(mut term) = pending.pop() {
+            pending.append(&mut term.children);
+        }
+    }
 }
 
 impl Term {
@@ -329,18 +421,43 @@ impl Term {
 
     /// Count total nodes in this term tree.
     pub fn size(&self) -> usize {
-        1 + self.children.iter().map(|c| c.size()).sum::<usize>()
+        let mut size = 0usize;
+        let mut pending = vec![self];
+        while let Some(term) = pending.pop() {
+            size += 1;
+            pending.extend(term.children.iter().rev());
+        }
+        size
     }
 }
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.children.is_empty() {
-            write!(f, "{}", self.symbol)
-        } else {
-            let children: Vec<String> = self.children.iter().map(|c| c.to_string()).collect();
-            write!(f, "{}({})", self.symbol, children.join(", "))
+        enum Task<'a> {
+            Visit(&'a Term),
+            Text(&'static str),
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(term) => {
+                    f.write_str(&term.symbol)?;
+                    if !term.children.is_empty() {
+                        f.write_str("(")?;
+                        tasks.push(Task::Text(")"));
+                        for (index, child) in term.children.iter().enumerate().rev() {
+                            tasks.push(Task::Visit(child));
+                            if index > 0 {
+                                tasks.push(Task::Text(", "));
+                            }
+                        }
+                    }
+                },
+                Task::Text(text) => f.write_str(text)?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -383,54 +500,62 @@ pub fn bottom_up_evaluate<W: Semiring>(
     automaton: &TreeAutomaton<W>,
     term: &Term,
 ) -> HashMap<usize, W> {
-    // 1. Recursively evaluate all children first.
-    let child_maps: Vec<HashMap<usize, W>> = term
-        .children
-        .iter()
-        .map(|child| bottom_up_evaluate(automaton, child))
-        .collect();
-
-    // 2. Find all matching transitions for this node's symbol and arity,
-    //    where each child state is reachable in the corresponding child.
-    let mut result: HashMap<usize, W> = HashMap::new();
-
-    for trans in &automaton.transitions {
-        // Symbol must match.
-        if trans.symbol != term.symbol {
-            continue;
-        }
-        // Arity must match.
-        if trans.child_states.len() != term.children.len() {
-            continue;
-        }
-
-        // For each required child state qᵢ, check that child i reached qᵢ
-        // and accumulate the product of transition weight with all child weights.
-        let mut combined_weight = trans.weight;
-        let mut all_children_match = true;
-
-        for (i, &required_state) in trans.child_states.iter().enumerate() {
-            match child_maps[i].get(&required_state) {
-                Some(child_weight) => {
-                    combined_weight = combined_weight.times(child_weight);
-                },
-                None => {
-                    all_children_match = false;
-                    break;
-                },
-            }
-        }
-
-        if all_children_match {
-            // Accumulate via semiring plus (combine alternative derivations).
-            result
-                .entry(trans.target_state)
-                .and_modify(|existing| *existing = existing.plus(&combined_weight))
-                .or_insert(combined_weight);
-        }
+    enum Task<'a> {
+        Visit(&'a Term),
+        Evaluate(&'a Term),
     }
 
-    result
+    let mut tasks = vec![Task::Visit(term)];
+    let mut values: Vec<HashMap<usize, W>> = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(term) => {
+                tasks.push(Task::Evaluate(term));
+                tasks.extend(term.children.iter().rev().map(Task::Visit));
+            },
+            Task::Evaluate(term) => {
+                let first_child = values
+                    .len()
+                    .checked_sub(term.children.len())
+                    .expect("bottom-up WTA PDA lost a child result");
+                let child_maps = values.split_off(first_child);
+                let mut result = HashMap::new();
+                for trans in &automaton.transitions {
+                    if trans.symbol != term.symbol
+                        || trans.child_states.len() != term.children.len()
+                    {
+                        continue;
+                    }
+                    let mut combined_weight = trans.weight;
+                    let mut all_children_match = true;
+                    for (child_map, &required_state) in child_maps.iter().zip(&trans.child_states) {
+                        match child_map.get(&required_state) {
+                            Some(child_weight) => {
+                                combined_weight = combined_weight.times(child_weight);
+                            },
+                            None => {
+                                all_children_match = false;
+                                break;
+                            },
+                        }
+                    }
+                    if all_children_match {
+                        result
+                            .entry(trans.target_state)
+                            .and_modify(|existing: &mut W| {
+                                *existing = existing.plus(&combined_weight)
+                            })
+                            .or_insert(combined_weight);
+                    }
+                }
+                values.push(result);
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("a WTA evaluation always produces one root map")
 }
 
 /// Propagate information top-down through a weighted tree automaton.
@@ -477,80 +602,44 @@ pub fn top_down_propagate<W: Semiring>(
         annotations.push(HashMap::new());
     }
 
-    // Propagate recursively, starting at the root (pre-order index 0).
-    propagate_recursive(automaton, term, root_states, &mut annotations, 0);
+    let mut pending = vec![(term, root_states.clone())];
+    let mut node_index = 0usize;
+    while let Some((term, current_states)) = pending.pop() {
+        for (&state, weight) in &current_states {
+            annotations[node_index]
+                .entry(state)
+                .and_modify(|existing| *existing = existing.plus(weight))
+                .or_insert(*weight);
+        }
 
-    annotations
-}
-
-/// Recursive helper for top-down propagation.
-///
-/// `node_index` is the pre-order index of the current node in the
-/// `annotations` vector.
-///
-/// Returns the next available pre-order index after this subtree.
-fn propagate_recursive<W: Semiring>(
-    automaton: &TreeAutomaton<W>,
-    term: &Term,
-    current_states: &HashMap<usize, W>,
-    annotations: &mut [HashMap<usize, W>],
-    node_index: usize,
-) -> usize {
-    // Record the current node's state assignment.
-    for (&state, weight) in current_states {
-        annotations[node_index]
-            .entry(state)
-            .and_modify(|existing| *existing = existing.plus(weight))
-            .or_insert(*weight);
-    }
-
-    if term.children.is_empty() {
-        // Leaf node — no children to propagate to.
-        return node_index + 1;
-    }
-
-    // For each parent state, find transitions that target it and use them
-    // to assign states to children.
-    let num_children = term.children.len();
-    let mut child_state_maps: Vec<HashMap<usize, W>> = Vec::with_capacity(num_children);
-    for _ in 0..num_children {
-        child_state_maps.push(HashMap::new());
-    }
-
-    for (&parent_state, parent_weight) in current_states {
-        for trans in &automaton.transitions {
-            // Transition must target the parent state.
-            if trans.target_state != parent_state {
-                continue;
-            }
-            // Symbol must match.
-            if trans.symbol != term.symbol {
-                continue;
-            }
-            // Arity must match.
-            if trans.child_states.len() != num_children {
-                continue;
-            }
-
-            // Propagate: assign each child state with weight = parent_weight ⊗ trans.weight.
-            let propagated_weight = parent_weight.times(&trans.weight);
-            for (i, &child_state) in trans.child_states.iter().enumerate() {
-                child_state_maps[i]
-                    .entry(child_state)
-                    .and_modify(|existing| *existing = existing.plus(&propagated_weight))
-                    .or_insert(propagated_weight);
+        let mut child_state_maps = vec![HashMap::new(); term.children.len()];
+        for (&parent_state, parent_weight) in &current_states {
+            for trans in &automaton.transitions {
+                if trans.target_state != parent_state
+                    || trans.symbol != term.symbol
+                    || trans.child_states.len() != term.children.len()
+                {
+                    continue;
+                }
+                let propagated_weight = parent_weight.times(&trans.weight);
+                for (child_map, &child_state) in
+                    child_state_maps.iter_mut().zip(&trans.child_states)
+                {
+                    child_map
+                        .entry(child_state)
+                        .and_modify(|existing: &mut W| {
+                            *existing = existing.plus(&propagated_weight)
+                        })
+                        .or_insert(propagated_weight);
+                }
             }
         }
+        pending.extend(term.children.iter().zip(child_state_maps).rev());
+        node_index += 1;
     }
+    debug_assert_eq!(node_index, annotations.len());
 
-    // Recurse into children in pre-order.
-    let mut next_index = node_index + 1;
-    for (i, child) in term.children.iter().enumerate() {
-        next_index =
-            propagate_recursive(automaton, child, &child_state_maps[i], annotations, next_index);
-    }
-
-    next_index
+    annotations
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1021,7 +1110,8 @@ fn collect_nonterminal_children(
     cat_to_state: &HashMap<String, usize>,
     out: &mut Vec<usize>,
 ) {
-    for item in items {
+    let mut pending: Vec<&crate::SyntaxItemSpec> = items.iter().rev().collect();
+    while let Some(item) = pending.pop() {
         match item {
             crate::SyntaxItemSpec::NonTerminal { category, .. } => {
                 if let Some(&sid) = cat_to_state.get(category) {
@@ -1029,24 +1119,16 @@ fn collect_nonterminal_children(
                 }
             },
             crate::SyntaxItemSpec::Optional { inner } => {
-                collect_nonterminal_children(inner, cat_to_state, out);
+                pending.extend(inner.iter().rev());
             },
             crate::SyntaxItemSpec::Sep { body, .. } => {
-                collect_nonterminal_children(
-                    std::slice::from_ref(body.as_ref()),
-                    cat_to_state,
-                    out,
-                );
+                pending.push(body.as_ref());
             },
             crate::SyntaxItemSpec::Map { body_items } => {
-                collect_nonterminal_children(body_items, cat_to_state, out);
+                pending.extend(body_items.iter().rev());
             },
             crate::SyntaxItemSpec::Zip { body, .. } => {
-                collect_nonterminal_children(
-                    std::slice::from_ref(body.as_ref()),
-                    cat_to_state,
-                    out,
-                );
+                pending.push(body.as_ref());
             },
             crate::SyntaxItemSpec::Binder { category, .. } => {
                 if let Some(&sid) = cat_to_state.get(category) {
@@ -1095,19 +1177,39 @@ pub fn token_tree_to_term<T: std::fmt::Debug>(
     tt: &crate::vpa::TokenTree<T>,
     token_to_symbol: &dyn Fn(&T) -> String,
 ) -> Term {
-    match tt {
-        crate::vpa::TokenTree::Token(tok, _range) => Term {
-            symbol: token_to_symbol(tok),
-            children: vec![],
-        },
-        crate::vpa::TokenTree::Group { open, children, .. } => Term {
-            symbol: token_to_symbol(&open.0),
-            children: children
-                .iter()
-                .map(|child| token_tree_to_term(child, token_to_symbol))
-                .collect(),
-        },
+    enum Task<'a, T> {
+        Visit(&'a crate::vpa::TokenTree<T>),
+        Assemble { symbol: String, child_count: usize },
     }
+
+    let mut tasks = vec![Task::Visit(tt)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(crate::vpa::TokenTree::Token(token, _)) => {
+                values.push(Term::leaf(token_to_symbol(token)));
+            },
+            Task::Visit(crate::vpa::TokenTree::Group { open, children, .. }) => {
+                tasks.push(Task::Assemble {
+                    symbol: token_to_symbol(&open.0),
+                    child_count: children.len(),
+                });
+                tasks.extend(children.iter().rev().map(Task::Visit));
+            },
+            Task::Assemble { symbol, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("token-tree conversion PDA lost a child result");
+                let children = values.split_off(first_child);
+                values.push(Term::new(symbol, children));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("a token-tree node always produces one term")
 }
 
 /// Validation error for token trees that do not match the grammar WTA.
@@ -1202,6 +1304,10 @@ pub fn validate_token_tree<W: Semiring, T: std::fmt::Debug>(
         }),
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/tree_automaton_recursive_oracle.rs"]
+mod recursive_oracle;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Tests
