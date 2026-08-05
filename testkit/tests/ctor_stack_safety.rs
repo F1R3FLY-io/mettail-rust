@@ -1,4 +1,6 @@
-use mettail_testkit::ctor::{Schema, SCHEMA_BEGIN, SCHEMA_END};
+use mettail_testkit::ctor::{
+    canonicalize_debug, parse_debug_value, render_debug, Schema, SCHEMA_BEGIN, SCHEMA_END,
+};
 
 #[test]
 fn field_spec_parse_and_lifecycle_survive_depth_20k_on_a_256k_stack() {
@@ -26,4 +28,33 @@ fn field_spec_parse_and_lifecycle_survive_depth_20k_on_a_256k_stack() {
         .expect("small-stack worker starts")
         .join()
         .expect("field-spec parsing and lifecycle must not overflow the native stack");
+}
+
+#[test]
+fn debug_node_parse_render_and_lifecycle_survive_depth_20k_on_a_256k_stack() {
+    const DEPTH: usize = 20_000;
+    let sample = parse_debug_value("Pair(a, [1])").expect("bounded sample parses");
+    assert_eq!(
+        format!("{sample:?}"),
+        "Call { head: \"Pair\", args: [Ident(\"a\"), List([Int(1)])] }"
+    );
+
+    std::thread::Builder::new()
+        .name("debug-node-pda-small-stack".into())
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let source = format!("{}Leaf{}", "Node(".repeat(DEPTH), ")".repeat(DEPTH));
+            let node = parse_debug_value(&source).expect("deep Debug text parses iteratively");
+            assert_eq!(render_debug(&node), source);
+            assert_eq!(canonicalize_debug(&source), source);
+
+            let cloned = node.clone();
+            assert_eq!(node, cloned);
+            assert!(format!("{cloned:?}").len() > source.len());
+            drop(cloned);
+            drop(node);
+        })
+        .expect("small-stack worker starts")
+        .join()
+        .expect("DebugNode parsing and lifecycle must not overflow the native stack");
 }

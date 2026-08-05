@@ -311,7 +311,6 @@ fn parse_field_spec(descriptor: &str) -> Result<FieldSpec, String> {
 /// This is a purely SYNTACTIC tree. It carries no idea which enum a `Call` head belongs to
 /// — that is exactly the information `Debug` erased, and it is supplied by the [`Schema`]
 /// during emission.
-#[derive(Debug, Clone, PartialEq)]
 pub enum DebugNode {
     /// `Ident(a, b, …)`
     Call { head: String, args: Vec<DebugNode> },
@@ -417,6 +416,45 @@ struct Parser {
     pos: usize,
 }
 
+enum ParseSequence {
+    Call(String),
+    List,
+    Tuple,
+}
+
+enum ParseFrame {
+    Named(String),
+    Sequence {
+        kind: ParseSequence,
+        close: char,
+        items: Vec<DebugNode>,
+    },
+    Struct {
+        head: String,
+        fields: Vec<(String, DebugNode)>,
+        name: String,
+    },
+    BraceFirst,
+    Set {
+        items: Vec<DebugNode>,
+    },
+    MapKey {
+        entries: Vec<(DebugNode, DebugNode)>,
+    },
+    MapValue {
+        entries: Vec<(DebugNode, DebugNode)>,
+        key: DebugNode,
+    },
+}
+
+fn build_parse_sequence(kind: ParseSequence, items: Vec<DebugNode>) -> DebugNode {
+    match kind {
+        ParseSequence::Call(head) => DebugNode::Call { head, args: items },
+        ParseSequence::List => DebugNode::List(items),
+        ParseSequence::Tuple => DebugNode::Tuple(items),
+    }
+}
+
 impl Parser {
     fn new(text: &str) -> Parser {
         Parser { src: text.chars().collect(), pos: 0 }
@@ -506,201 +544,281 @@ impl Parser {
     }
 
     fn parse_value(&mut self) -> Result<DebugNode, String> {
-        self.skip_ws();
-        match self.peek() {
-            None => Err("unexpected end of input where a value was expected".to_string()),
-            Some('"') => self.parse_string().map(DebugNode::Str),
-            Some('[') => {
-                let items = self.parse_delimited('[', ']')?;
-                Ok(DebugNode::List(items))
-            },
-            Some('{') => self.parse_brace_group(),
-            Some('(') => {
-                let items = self.parse_delimited('(', ')')?;
-                Ok(DebugNode::Tuple(items))
-            },
-            Some(c) if c == '-' || c.is_ascii_digit() => self.parse_number(),
-            Some(c) if c.is_alphabetic() || c == '_' => {
-                let head = self.take_path_head()?;
-                if self.peek() == Some('(') {
-                    let args = self.parse_delimited('(', ')')?;
-                    Ok(DebugNode::Call { head, args })
-                } else if self.struct_follows() {
-                    self.bump(); // the space
-                    let fields = self.parse_struct_fields()?;
-                    Ok(DebugNode::Struct { head, fields })
-                } else {
-                    Ok(DebugNode::Ident(head))
-                }
-            },
-            Some(c) => Err(format!("unexpected character {c:?} at byte {}", self.pos)),
-        }
-    }
-
-    fn parse_delimited(&mut self, open: char, close: char) -> Result<Vec<DebugNode>, String> {
-        self.expect(open)?;
-        let mut items = Vec::new();
+        let mut frames = Vec::new();
+        let mut value = None;
         loop {
-            self.skip_ws();
-            if self.peek() == Some(close) {
-                self.bump();
-                break;
+            if value.is_none() {
+                self.skip_ws();
+                value = match self.peek() {
+                    None => {
+                        return Err("unexpected end of input where a value was expected".to_string())
+                    },
+                    Some('"') => Some(DebugNode::Str(self.parse_string()?)),
+                    Some('[') => {
+                        self.bump();
+                        self.skip_ws();
+                        if self.peek() == Some(']') {
+                            self.bump();
+                            Some(DebugNode::List(Vec::new()))
+                        } else {
+                            frames.push(ParseFrame::Sequence {
+                                kind: ParseSequence::List,
+                                close: ']',
+                                items: Vec::new(),
+                            });
+                            self.prepare_argument(&mut frames)?;
+                            None
+                        }
+                    },
+                    Some('{') => {
+                        self.bump();
+                        self.skip_ws();
+                        if self.peek() == Some('}') {
+                            self.bump();
+                            Some(DebugNode::Map(Vec::new()))
+                        } else {
+                            frames.push(ParseFrame::BraceFirst);
+                            None
+                        }
+                    },
+                    Some('(') => {
+                        self.bump();
+                        self.skip_ws();
+                        if self.peek() == Some(')') {
+                            self.bump();
+                            Some(DebugNode::Tuple(Vec::new()))
+                        } else {
+                            frames.push(ParseFrame::Sequence {
+                                kind: ParseSequence::Tuple,
+                                close: ')',
+                                items: Vec::new(),
+                            });
+                            self.prepare_argument(&mut frames)?;
+                            None
+                        }
+                    },
+                    Some(c) if c == '-' || c.is_ascii_digit() => Some(self.parse_number()?),
+                    Some(c) if c.is_alphabetic() || c == '_' => {
+                        let head = self.take_path_head()?;
+                        if self.peek() == Some('(') {
+                            self.bump();
+                            self.skip_ws();
+                            if self.peek() == Some(')') {
+                                self.bump();
+                                Some(DebugNode::Call { head, args: Vec::new() })
+                            } else {
+                                frames.push(ParseFrame::Sequence {
+                                    kind: ParseSequence::Call(head),
+                                    close: ')',
+                                    items: Vec::new(),
+                                });
+                                self.prepare_argument(&mut frames)?;
+                                None
+                            }
+                        } else if self.struct_follows() {
+                            self.bump();
+                            self.expect('{')?;
+                            self.skip_ws();
+                            if self.peek() == Some('}') {
+                                self.bump();
+                                Some(DebugNode::Struct { head, fields: Vec::new() })
+                            } else {
+                                let name = self.take_ident()?;
+                                self.expect(':')?;
+                                frames.push(ParseFrame::Struct { head, fields: Vec::new(), name });
+                                None
+                            }
+                        } else {
+                            Some(DebugNode::Ident(head))
+                        }
+                    },
+                    Some(c) => {
+                        return Err(format!("unexpected character {c:?} at byte {}", self.pos))
+                    },
+                };
+                if value.is_none() {
+                    continue;
+                }
             }
-            items.push(self.parse_call_argument()?);
-            self.skip_ws();
-            match self.peek() {
-                Some(',') => {
-                    self.bump();
+
+            let completed = value.take().expect("parser PDA has a completed value");
+            let Some(frame) = frames.pop() else {
+                return Ok(completed);
+            };
+            match frame {
+                ParseFrame::Named(name) => {
+                    value = Some(DebugNode::Named { name, value: Box::new(completed) });
                 },
-                Some(c) if c == close => {
-                    self.bump();
-                    break;
+                ParseFrame::Sequence { kind, close, mut items } => {
+                    items.push(completed);
+                    self.skip_ws();
+                    match self.peek() {
+                        Some(',') => {
+                            self.bump();
+                            self.skip_ws();
+                            if self.peek() == Some(close) {
+                                self.bump();
+                                value = Some(build_parse_sequence(kind, items));
+                            } else {
+                                frames.push(ParseFrame::Sequence { kind, close, items });
+                                self.prepare_argument(&mut frames)?;
+                            }
+                        },
+                        Some(c) if c == close => {
+                            self.bump();
+                            value = Some(build_parse_sequence(kind, items));
+                        },
+                        other => {
+                            return Err(format!(
+                                "expected `,` or `{close}` at byte {}, found {:?}",
+                                self.pos, other
+                            ))
+                        },
+                    }
                 },
-                other => {
-                    return Err(format!(
-                        "expected `,` or `{close}` at byte {}, found {:?}",
-                        self.pos, other
-                    ))
+                ParseFrame::Struct { head, mut fields, name } => {
+                    fields.push((name, completed));
+                    self.skip_ws();
+                    match self.peek() {
+                        Some(',') => {
+                            self.bump();
+                            self.skip_ws();
+                            if self.peek() == Some('}') {
+                                self.bump();
+                                value = Some(DebugNode::Struct { head, fields });
+                            } else {
+                                let name = self.take_ident()?;
+                                self.expect(':')?;
+                                frames.push(ParseFrame::Struct { head, fields, name });
+                            }
+                        },
+                        Some('}') => {
+                            self.bump();
+                            value = Some(DebugNode::Struct { head, fields });
+                        },
+                        other => {
+                            return Err(format!(
+                                "expected `,` or `}}` in a struct at byte {}, found {:?}",
+                                self.pos, other
+                            ))
+                        },
+                    }
+                },
+                ParseFrame::BraceFirst => {
+                    self.skip_ws();
+                    if self.peek() == Some(':') {
+                        self.bump();
+                        frames.push(ParseFrame::MapValue { entries: Vec::new(), key: completed });
+                    } else {
+                        let items = vec![completed];
+                        self.continue_set(items, &mut frames, &mut value)?;
+                    }
+                },
+                ParseFrame::Set { mut items } => {
+                    items.push(completed);
+                    self.continue_set(items, &mut frames, &mut value)?;
+                },
+                ParseFrame::MapKey { entries } => {
+                    self.expect(':')?;
+                    frames.push(ParseFrame::MapValue { entries, key: completed });
+                },
+                ParseFrame::MapValue { mut entries, key } => {
+                    entries.push((key, completed));
+                    self.continue_map(entries, &mut frames, &mut value)?;
                 },
             }
         }
-        Ok(items)
     }
 
-    /// One argument of a call or list, which may be `name=value`.
-    ///
-    /// A hand-written `Debug` may label its arguments — `LexWeight(primary=…, src=0,
-    /// rule=0)`. The `=` is checked AFTER parsing an identifier and only when the
-    /// identifier is followed directly by `=`, so a bare nullary constructor is unaffected.
-    fn parse_call_argument(&mut self) -> Result<DebugNode, String> {
+    fn prepare_argument(&mut self, frames: &mut Vec<ParseFrame>) -> Result<(), String> {
         self.skip_ws();
         let save = self.pos;
         if matches!(self.peek(), Some(c) if c.is_alphabetic() || c == '_') {
             if let Ok(name) = self.take_ident() {
                 if self.peek() == Some('=') && self.peek_at(1) != Some('=') {
                     self.bump();
-                    let value = self.parse_value()?;
-                    return Ok(DebugNode::Named { name, value: Box::new(value) });
+                    frames.push(ParseFrame::Named(name));
+                    return Ok(());
                 }
             }
             self.pos = save;
         }
-        self.parse_value()
+        Ok(())
     }
 
-    /// `{ … }` is a map when its first element is `k: v`, and a set otherwise.
-    ///
-    /// The distinction cannot be made from the delimiter alone: `HashMap`'s `Debug` writes
-    /// `{k: v}` and `HashSet`'s writes `{v}`. Both occur in this repository's corpora, so
-    /// the decision is made by looking for a top-level `:` in the FIRST element.
-    fn parse_brace_group(&mut self) -> Result<DebugNode, String> {
-        self.expect('{')?;
+    fn continue_set(
+        &mut self,
+        items: Vec<DebugNode>,
+        frames: &mut Vec<ParseFrame>,
+        value: &mut Option<DebugNode>,
+    ) -> Result<(), String> {
         self.skip_ws();
-        if self.peek() == Some('}') {
-            self.bump();
-            // An empty brace group is ambiguous between an empty map and an empty set. It is
-            // reported as an empty MAP, and every consumer that wants a set accepts an empty
-            // map as an empty set — stated here so the choice is not silent.
-            return Ok(DebugNode::Map(Vec::new()));
-        }
-        let first = self.parse_value()?;
-        self.skip_ws();
-        if self.peek() == Some(':') {
-            self.bump();
-            let first_value = self.parse_value()?;
-            let mut entries = vec![(first, first_value)];
-            loop {
-                self.skip_ws();
-                match self.peek() {
-                    Some(',') => {
-                        self.bump();
-                        self.skip_ws();
-                        if self.peek() == Some('}') {
-                            self.bump();
-                            break;
-                        }
-                        let k = self.parse_value()?;
-                        self.skip_ws();
-                        self.expect(':')?;
-                        let v = self.parse_value()?;
-                        entries.push((k, v));
-                    },
-                    Some('}') => {
-                        self.bump();
-                        break;
-                    },
-                    other => {
-                        return Err(format!(
-                            "expected `,` or `}}` in a map at byte {}, found {:?}",
-                            self.pos, other
-                        ))
-                    },
-                }
-            }
-            Ok(DebugNode::Map(entries))
-        } else {
-            let mut items = vec![first];
-            loop {
-                self.skip_ws();
-                match self.peek() {
-                    Some(',') => {
-                        self.bump();
-                        self.skip_ws();
-                        if self.peek() == Some('}') {
-                            self.bump();
-                            break;
-                        }
-                        items.push(self.parse_value()?);
-                    },
-                    Some('}') => {
-                        self.bump();
-                        break;
-                    },
-                    other => {
-                        return Err(format!(
-                            "expected `,` or `}}` in a set at byte {}, found {:?}",
-                            self.pos, other
-                        ))
-                    },
-                }
-            }
-            Ok(DebugNode::Set(items))
-        }
-    }
-
-    fn parse_struct_fields(&mut self) -> Result<Vec<(String, DebugNode)>, String> {
-        self.expect('{')?;
-        let mut fields = Vec::new();
-        loop {
-            self.skip_ws();
-            if self.peek() == Some('}') {
+        match self.peek() {
+            Some(',') => {
                 self.bump();
-                break;
-            }
-            let name = self.take_ident()?;
-            self.skip_ws();
-            self.expect(':')?;
-            let value = self.parse_value()?;
-            fields.push((name, value));
-            self.skip_ws();
-            match self.peek() {
-                Some(',') => {
+                self.skip_ws();
+                if self.peek() == Some('}') {
                     self.bump();
-                },
-                Some('}') => {
-                    self.bump();
-                    break;
-                },
-                other => {
-                    return Err(format!(
-                        "expected `,` or `}}` in a struct at byte {}, found {:?}",
-                        self.pos, other
-                    ))
-                },
-            }
+                    *value = Some(DebugNode::Set(items));
+                } else {
+                    frames.push(ParseFrame::Set { items });
+                }
+                Ok(())
+            },
+            Some('}') => {
+                self.bump();
+                *value = Some(DebugNode::Set(items));
+                Ok(())
+            },
+            other => Err(format!(
+                "expected `,` or `}}` in a set at byte {}, found {:?}",
+                self.pos, other
+            )),
         }
-        Ok(fields)
     }
+
+    fn continue_map(
+        &mut self,
+        entries: Vec<(DebugNode, DebugNode)>,
+        frames: &mut Vec<ParseFrame>,
+        value: &mut Option<DebugNode>,
+    ) -> Result<(), String> {
+        self.skip_ws();
+        match self.peek() {
+            Some(',') => {
+                self.bump();
+                self.skip_ws();
+                if self.peek() == Some('}') {
+                    self.bump();
+                    *value = Some(DebugNode::Map(entries));
+                } else {
+                    frames.push(ParseFrame::MapKey { entries });
+                }
+                Ok(())
+            },
+            Some('}') => {
+                self.bump();
+                *value = Some(DebugNode::Map(entries));
+                Ok(())
+            },
+            other => Err(format!(
+                "expected `,` or `}}` in a map at byte {}, found {:?}",
+                self.pos, other
+            )),
+        }
+    }
+
+    /*
+     * The old recursive-descent helpers (`parse_delimited`, `parse_call_argument`,
+     * `parse_brace_group`, and `parse_struct_fields`) were folded into the
+     * explicit frame machine above. Keeping recursive twins in production would
+     * defeat the source census; bounded oracle twins belong under `tests/`.
+     */
+    /*
+    fn retired_recursive_helpers(&mut self) {
+        let _ = self;
+    }
+    */
 
     fn parse_string(&mut self) -> Result<String, String> {
         self.expect('"')?;
@@ -1550,96 +1668,97 @@ pub fn render_debug(node: &DebugNode) -> String {
 }
 
 fn render_into(node: &DebugNode, out: &mut String) {
-    match node {
-        DebugNode::Call { head, args } => {
-            out.push_str(head);
-            out.push('(');
-            for (i, arg) in args.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                render_into(arg, out);
+    enum Task<'node> {
+        Visit(&'node DebugNode),
+        Text(&'static str),
+        Name(&'node str),
+    }
+
+    let mut tasks = vec![Task::Visit(node)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Text(text) => out.push_str(text),
+            Task::Name(name) => out.push_str(name),
+            Task::Visit(node) => match node {
+                DebugNode::Call { head, args } => {
+                    out.push_str(head);
+                    out.push('(');
+                    push_render_sequence(&mut tasks, args, ")");
+                },
+                DebugNode::Struct { head, fields } => {
+                    out.push_str(head);
+                    out.push_str(" { ");
+                    tasks.push(Task::Text(" }"));
+                    for (index, (name, value)) in fields.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(value));
+                        tasks.push(Task::Text(": "));
+                        tasks.push(Task::Name(name));
+                        if index != 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                },
+                DebugNode::Ident(name) => out.push_str(name),
+                DebugNode::Str(value) => out.push_str(&quote_rust(value)),
+                DebugNode::Int(value) => out.push_str(&value.to_string()),
+                // `{:?}`, not `{}`. `Display` for `f64` prints `0` for zero while `Debug`
+                // prints `0.0`, which is the source text being round-tripped.
+                DebugNode::Float(value) => out.push_str(&format!("{value:?}")),
+                DebugNode::Ratio(numerator, denominator) => {
+                    out.push_str(&numerator.to_string());
+                    out.push('/');
+                    out.push_str(&denominator.to_string());
+                },
+                DebugNode::List(items) => {
+                    out.push('[');
+                    push_render_sequence(&mut tasks, items, "]");
+                },
+                DebugNode::Set(items) => {
+                    out.push('{');
+                    push_render_sequence(&mut tasks, items, "}");
+                },
+                DebugNode::Map(entries) => {
+                    out.push('{');
+                    tasks.push(Task::Text("}"));
+                    for (index, (key, value)) in entries.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(value));
+                        tasks.push(Task::Text(": "));
+                        tasks.push(Task::Visit(key));
+                        if index != 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                },
+                DebugNode::Tuple(items) => {
+                    out.push('(');
+                    push_render_sequence(&mut tasks, items, ")");
+                },
+                DebugNode::Named { name, value } => {
+                    out.push_str(name);
+                    out.push('=');
+                    tasks.push(Task::Visit(value));
+                },
+                DebugNode::Range(low, high) => {
+                    out.push_str(&low.to_string());
+                    out.push_str("..");
+                    out.push_str(&high.to_string());
+                },
+            },
+        }
+    }
+
+    fn push_render_sequence<'node>(
+        tasks: &mut Vec<Task<'node>>,
+        children: &'node [DebugNode],
+        close: &'static str,
+    ) {
+        tasks.push(Task::Text(close));
+        for (index, child) in children.iter().enumerate().rev() {
+            tasks.push(Task::Visit(child));
+            if index != 0 {
+                tasks.push(Task::Text(", "));
             }
-            out.push(')');
-        },
-        DebugNode::Struct { head, fields } => {
-            out.push_str(head);
-            out.push_str(" { ");
-            for (i, (name, value)) in fields.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                out.push_str(name);
-                out.push_str(": ");
-                render_into(value, out);
-            }
-            out.push_str(" }");
-        },
-        DebugNode::Ident(name) => out.push_str(name),
-        DebugNode::Str(s) => out.push_str(&quote_rust(s)),
-        DebugNode::Int(n) => out.push_str(&n.to_string()),
-        // `{:?}`, not `{}`. `Display` for `f64` prints `0` for zero while `Debug` prints
-        // `0.0`, and `Debug` is what wrote the text being round-tripped — measured on
-        // `prattail/proptest-regressions/automata/lex_weight.txt`, whose
-        // `TropicalWeight(0.0)` re-printed as `TropicalWeight(0)` until this was fixed.
-        DebugNode::Float(x) => out.push_str(&format!("{x:?}")),
-        DebugNode::Ratio(n, d) => {
-            out.push_str(&n.to_string());
-            out.push('/');
-            out.push_str(&d.to_string());
-        },
-        DebugNode::List(items) => {
-            out.push('[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                render_into(item, out);
-            }
-            out.push(']');
-        },
-        DebugNode::Set(items) => {
-            out.push('{');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                render_into(item, out);
-            }
-            out.push('}');
-        },
-        DebugNode::Map(entries) => {
-            out.push('{');
-            for (i, (k, v)) in entries.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                render_into(k, out);
-                out.push_str(": ");
-                render_into(v, out);
-            }
-            out.push('}');
-        },
-        DebugNode::Tuple(items) => {
-            out.push('(');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                render_into(item, out);
-            }
-            out.push(')');
-        },
-        DebugNode::Named { name, value } => {
-            out.push_str(name);
-            out.push('=');
-            render_into(value, out);
-        },
-        DebugNode::Range(a, b) => {
-            out.push_str(&a.to_string());
-            out.push_str("..");
-            out.push_str(&b.to_string());
-        },
+        }
     }
 }
 
@@ -1685,7 +1804,7 @@ pub fn render_bindings(bindings: &[Binding]) -> String {
 pub fn canonicalize_debug(text: &str) -> String {
     let normalized = normalize_unique_ids(text);
     match parse_debug_value(&normalized) {
-        Ok(node) => render_debug(&sort_brace_groups(node)),
+        Ok(node) => render_debug(&sort_brace_groups(&node)),
         // Not a parseable `Debug` value: return the normalised text unchanged rather than
         // guessing. A promoted test comparing two unparseable texts still compares them.
         Err(_) => normalized,
@@ -1701,7 +1820,7 @@ pub fn canonicalize_shrinks_to(text: &str) -> String {
                 .into_iter()
                 .map(|b| Binding {
                     name: b.name,
-                    value: sort_brace_groups(b.value),
+                    value: sort_brace_groups(&b.value),
                 })
                 .collect();
             render_bindings(&sorted)
@@ -1710,44 +1829,6 @@ pub fn canonicalize_shrinks_to(text: &str) -> String {
     }
 }
 
-fn sort_brace_groups(node: DebugNode) -> DebugNode {
-    match node {
-        DebugNode::Call { head, args } => DebugNode::Call {
-            head,
-            args: args.into_iter().map(sort_brace_groups).collect(),
-        },
-        DebugNode::Struct { head, fields } => DebugNode::Struct {
-            head,
-            fields: fields
-                .into_iter()
-                .map(|(name, value)| (name, sort_brace_groups(value)))
-                .collect(),
-        },
-        // A LIST is ordered by construction (`Vec`), so its order is part of the term and is
-        // left alone. Only brace groups — the hash containers — are sorted.
-        DebugNode::List(items) => {
-            DebugNode::List(items.into_iter().map(sort_brace_groups).collect())
-        },
-        DebugNode::Tuple(items) => {
-            DebugNode::Tuple(items.into_iter().map(sort_brace_groups).collect())
-        },
-        DebugNode::Set(items) => {
-            let mut sorted: Vec<DebugNode> = items.into_iter().map(sort_brace_groups).collect();
-            sorted.sort_by_key(render_debug);
-            DebugNode::Set(sorted)
-        },
-        DebugNode::Map(entries) => {
-            let mut sorted: Vec<(DebugNode, DebugNode)> = entries
-                .into_iter()
-                .map(|(k, v)| (sort_brace_groups(k), sort_brace_groups(v)))
-                .collect();
-            sorted.sort_by_key(|(k, v)| (render_debug(k), render_debug(v)));
-            DebugNode::Map(sorted)
-        },
-        DebugNode::Named { name, value } => DebugNode::Named {
-            name,
-            value: Box::new(sort_brace_groups(*value)),
-        },
-        leaf => leaf,
-    }
+fn sort_brace_groups(node: &DebugNode) -> DebugNode {
+    lifecycle::clone_with_sorted_braces(node)
 }
