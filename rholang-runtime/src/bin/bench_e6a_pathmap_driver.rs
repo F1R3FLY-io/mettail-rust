@@ -1,5 +1,5 @@
-//! E-6a (pgmcp experiment 145) — the JSON-lines COUNTER driver for the
-//! PathMap-index treatment vs the current spread+drive control
+//! E-8a (pgmcp experiment 170) — the corrective JSON-lines timing driver for the
+//! native `PathMap<Par>` subject-index treatment vs the current spread+drive control
 //! (`bench-naive-baseline` + the demo-language features; see the `[[bin]]`
 //! registration in `Cargo.toml`).
 //!
@@ -9,11 +9,12 @@
 //! 1. ONE run-header JSON line (`{"e6a_header":{…}}`) — git sha, hostname,
 //!    governor, affinity, cell identity, and the cell's STATIC spread-send
 //!    counts for both arms;
-//! 2. one `{"e6a_rep":{…}}` JSON line PER REP — the pre-registered PRIMARY
-//!    metric `spread_plus_matching_comms_per_normalization`
-//!    (control: static spread sends + `matching_tau` COMMs;
-//!    treatment: the 1+#ops index/discovery sends + `pathmap_index` COMMs),
-//!    its two components, the full COMM classification snapshot, spatial
+//! 2. one `{"e6a_rep":{…}}` JSON line PER REP — including the pre-registered
+//!    PRIMARY timing source `inj_ns` (recorded as `inj_ms_per_normalization` in
+//!    pgmcp), plus the diagnostic counter
+//!    `spread_plus_matching_comms_per_normalization` (control: static spread
+//!    sends + `matching_tau` COMMs; treatment: the 1+#ops index/discovery sends
+//!    + `pathmap_index` COMMs), the full COMM classification snapshot, spatial
 //!    match-attempt counters, the bench-local consumed-cost read, phase
 //!    timers, program sizes, and (treatment) the machine-enumerated site
 //!    counts per op. The first `--warmups` reps are flagged
@@ -214,7 +215,7 @@ fn header_line(args: &DriverArgs, control_spread_sends: usize) -> String {
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0);
     format!(
-        "{{\"e6a_header\":{{\"experiment\":145,\"git_sha\":{},\"hostname\":{},\
+        "{{\"e6a_header\":{{\"experiment\":170,\"git_sha\":{},\"hostname\":{},\
          \"scaling_governor\":{},\"cpus_allowed_list\":{},\"unix_time_secs\":{unix_time_secs},\
          \"workload\":{},\"arm\":{},\"n\":{},\"reps\":{},\"warmups\":{},\
          \"control_matcher\":{},\"control_spread_sends_static\":{control_spread_sends}}}}}",
@@ -272,12 +273,12 @@ fn rep_line(
     emission: Duration,
     bringup: Duration,
 ) -> String {
-    let primary = spread_sends as u64 + matching_comms;
+    let spread_plus_matching_comms = spread_sends as u64 + matching_comms;
     format!(
         "{{\"e6a_rep\":{{\"workload\":{},\"arm\":{},\"n\":{},\"rep\":{rep},\
          \"is_warmup\":{is_warmup},\
          \"spread_sends\":{spread_sends},\"matching_comms\":{matching_comms},\
-         \"spread_plus_matching_comms_per_normalization\":{primary},\
+         \"spread_plus_matching_comms_per_normalization\":{spread_plus_matching_comms},\
          \"comm\":{},\"attempts\":{},\"successes\":{},\"consumed_cost_units\":{},\
          \"observed_count\":{},\"build_ns\":{},\"inj_ns\":{},\"readback_ns\":{},\
          \"emission_ns\":{},\"bringup_ns\":{},\
