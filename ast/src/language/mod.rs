@@ -13,6 +13,7 @@ use std::fmt::Display;
 
 mod model;
 pub use model::*;
+mod lifecycle;
 mod parse;
 pub use parse::*;
 

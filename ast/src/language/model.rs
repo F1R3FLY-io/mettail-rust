@@ -104,7 +104,6 @@ pub struct TypedParam {
 
 /// A premise in a propositional context (part of a conjunction)
 /// Used in both equations and rewrites for unified judgement syntax
-#[derive(Debug, Clone)]
 pub enum Premise {
     /// Freshness: x # P (x is fresh in P)
     Freshness(FreshnessCondition),
@@ -306,7 +305,6 @@ pub struct FreshnessCondition {
 }
 
 /// Condition types for rewrite rules
-#[derive(Debug, Clone)]
 pub enum Condition {
     /// Freshness condition: if x # Q then
     Freshness(FreshnessCondition),
@@ -379,7 +377,6 @@ pub enum PredArg {
 ///
 /// - Gap 3 in `docs/design/predicated-types.md` §22
 /// - `prattail::logict::evaluate_quantified()` for runtime evaluation
-#[derive(Debug, Clone)]
 pub enum BehavioralPred {
     /// Simple relation query: `R(args)` or `~R(args)`.
     /// Checks whether a tuple exists (or does not exist) in an Ascent relation.
@@ -460,120 +457,7 @@ impl BehavioralPred {
     /// clauses; callers that need a formula can use this method to reject
     /// unsupported shapes without a macro-expansion panic.
     pub fn try_to_quantified_formula(&self) -> Result<proc_macro2::TokenStream, String> {
-        use quote::quote;
-        match self {
-            BehavioralPred::RelationQuery { relation_name, args, negated } => {
-                let rel_str = relation_name.to_string();
-                let arg_exprs: Vec<_> = args
-                    .iter()
-                    .map(|a| match a {
-                        PredArg::Var(v) => {
-                            let v_str = v.to_string();
-                            quote! { prattail::logict::QuantifiedArg::Var(#v_str.to_string()) }
-                        },
-                        PredArg::Constant(c) => {
-                            let c_str = c.to_string();
-                            quote! { prattail::logict::QuantifiedArg::Constant(#c_str.to_string()) }
-                        },
-                    })
-                    .collect();
-                let atom = quote! {
-                    prattail::logict::QuantifiedFormula::atom(
-                        #rel_str,
-                        vec![#(#arg_exprs),*],
-                    )
-                };
-                if *negated {
-                    Ok(quote! { prattail::logict::QuantifiedFormula::not(#atom) })
-                } else {
-                    Ok(atom)
-                }
-            },
-            BehavioralPred::Quantified { quantifier, var, domain, bound, body } => {
-                let var_str = var.to_string();
-                let body_expr = body.try_to_quantified_formula()?;
-                let domain_expr = if let Some(dom) = domain {
-                    let dom_str = dom.to_string();
-                    if let Some(b) = bound {
-                        quote! {
-                            prattail::logict::QuantifiedDomain::Bounded {
-                                relation: #dom_str.to_string(),
-                                limit: #b,
-                            }
-                        }
-                    } else {
-                        quote! {
-                            prattail::logict::QuantifiedDomain::Relation(#dom_str.to_string())
-                        }
-                    }
-                } else {
-                    // No explicit domain — use var name as relation (convention)
-                    let var_rel = var.to_string();
-                    quote! {
-                        prattail::logict::QuantifiedDomain::Relation(#var_rel.to_string())
-                    }
-                };
-                match quantifier {
-                    Quantifier::ForAll => Ok(quote! {
-                        prattail::logict::QuantifiedFormula::forall(
-                            #var_str,
-                            #domain_expr,
-                            #body_expr,
-                        )
-                    }),
-                    Quantifier::Exists => Ok(quote! {
-                        prattail::logict::QuantifiedFormula::exists(
-                            #var_str,
-                            #domain_expr,
-                            #body_expr,
-                        )
-                    }),
-                }
-            },
-            BehavioralPred::And(a, b) => {
-                let a_expr = a.try_to_quantified_formula()?;
-                let b_expr = b.try_to_quantified_formula()?;
-                Ok(quote! {
-                    prattail::logict::QuantifiedFormula::and(#a_expr, #b_expr)
-                })
-            },
-            BehavioralPred::Or(a, b) => {
-                let a_expr = a.try_to_quantified_formula()?;
-                let b_expr = b.try_to_quantified_formula()?;
-                Ok(quote! {
-                    prattail::logict::QuantifiedFormula::or(#a_expr, #b_expr)
-                })
-            },
-            BehavioralPred::Not(inner) => {
-                let inner_expr = inner.try_to_quantified_formula()?;
-                Ok(quote! {
-                    prattail::logict::QuantifiedFormula::not(#inner_expr)
-                })
-            },
-            BehavioralPred::Implies(a, b) => {
-                let a_expr = a.try_to_quantified_formula()?;
-                let b_expr = b.try_to_quantified_formula()?;
-                Ok(quote! {
-                    prattail::logict::QuantifiedFormula::implies(#a_expr, #b_expr)
-                })
-            },
-            BehavioralPred::AcMatch { .. } => {
-                Err("ac_match behavioral predicates require specialized Ascent partition lowering and cannot be embedded in QuantifiedFormula".to_string())
-            },
-            BehavioralPred::Top => {
-                // Top is the always-true identity predicate used when the guard
-                // slot is declared at language-spec time but the actual
-                // predicate is per-instance runtime data. The Ascent rule
-                // body has no join clause for Top (the rule fires
-                // unconditionally on its structural pattern).
-                Ok(quote! {
-                    prattail::logict::QuantifiedFormula::atom(
-                        "__top__",
-                        vec![],
-                    )
-                })
-            },
-        }
+        super::lifecycle::behavioral_pred_to_quantified_formula(self)
     }
 }
 
