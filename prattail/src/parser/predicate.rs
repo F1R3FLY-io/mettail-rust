@@ -107,7 +107,7 @@ mod tests {
         let src = SliceTokenSource::with_texts(&kinds, &texts_refs);
         let (pred, new_pos) =
             parse_predicate_via_token_source(&src, 0).expect("parse should succeed");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "halts");
                 assert_eq!(args.len(), 1);
@@ -175,11 +175,12 @@ mod tests {
         let (kinds, texts) = build_tokens(&["p", "(", "x", "+", "y", ")"]);
         let texts_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
         let src = SliceTokenSource::with_texts(&kinds, &texts_refs);
-        if let Ok((BehavioralPred::RelationQuery { args, .. }, _)) =
-            parse_predicate_via_token_source(&src, 0)
-        {
+        if let Ok((predicate, _)) = parse_predicate_via_token_source(&src, 0) {
+            let BehavioralPred::RelationQuery { args, .. } = &predicate else {
+                return;
+            };
             // Every argument is a flat leaf by construction; there is no compound arg to find.
-            for arg in &args {
+            for arg in args {
                 assert!(
                     matches!(
                         arg,

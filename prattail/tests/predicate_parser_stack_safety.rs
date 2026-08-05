@@ -12,13 +12,14 @@ fn predicate_parser_handles_depth_20k_on_a_256k_stack() {
             source.push_str("ready()");
             source.push_str(&")".repeat(DEPTH));
 
-            let mut predicate = parse_predicate_from_str(&source, PredicateParserConfig::default())
+            let predicate = parse_predicate_from_str(&source, PredicateParserConfig::default())
                 .expect("deep predicate parses");
             let mut depth = 0;
+            let mut cursor = &predicate;
             loop {
-                match predicate {
+                match cursor {
                     BehavioralPred::Not(inner) => {
-                        predicate = *inner;
+                        cursor = inner;
                         depth += 1;
                     },
                     BehavioralPred::RelationQuery { relation_name, args, negated } => {

@@ -883,11 +883,11 @@ mod tests {
     #[test]
     fn parse_nullary_relation() {
         let pred = parse("halts").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { relation_name, args, negated } => {
                 assert_eq!(relation_name, "halts");
                 assert!(args.is_empty());
-                assert!(!negated);
+                assert!(!*negated);
             },
             _ => panic!("expected RelationQuery, got {:?}", pred),
         }
@@ -896,7 +896,7 @@ mod tests {
     #[test]
     fn parse_unary_relation() {
         let pred = parse("halts(x)").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "halts");
                 assert_eq!(args.len(), 1);
@@ -909,7 +909,7 @@ mod tests {
     #[test]
     fn parse_binary_relation() {
         let pred = parse("reachable(x, y)").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "reachable");
                 assert_eq!(args.len(), 2);
@@ -921,7 +921,7 @@ mod tests {
     #[test]
     fn parse_relation_with_int_literal() {
         let pred = parse("gt(x, 5)").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { args, .. } => {
                 assert_eq!(args[1], PredArg::IntLit(5));
             },
@@ -934,7 +934,7 @@ mod tests {
     #[test]
     fn parse_conjunction() {
         let pred = parse("and(halts(x), safe(x))").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::And(_, _) => {},
             _ => panic!("expected And, got {:?}", pred),
         }
@@ -944,9 +944,9 @@ mod tests {
     fn parse_variadic_conjunction() {
         let pred = parse("and(a, b, c)").expect("ok");
         // Should fold to And(a, And(b, c))
-        match pred {
+        match &pred {
             BehavioralPred::And(_, rhs) => {
-                assert!(matches!(*rhs, BehavioralPred::And(_, _)));
+                assert!(matches!(rhs.as_ref(), BehavioralPred::And(_, _)));
             },
             _ => panic!("expected nested And"),
         }
@@ -980,12 +980,12 @@ mod tests {
     fn parse_implied_by_swaps_args() {
         let pred = parse("implied_by(safe(x), halts(x))").expect("ok");
         // implied_by(S, H) == entails(H, S) == Implies(H, S)
-        match pred {
+        match &pred {
             BehavioralPred::Implies(p, c) => {
-                if let BehavioralPred::RelationQuery { relation_name, .. } = *p {
+                if let BehavioralPred::RelationQuery { relation_name, .. } = p.as_ref() {
                     assert_eq!(relation_name, "halts");
                 }
-                if let BehavioralPred::RelationQuery { relation_name, .. } = *c {
+                if let BehavioralPred::RelationQuery { relation_name, .. } = c.as_ref() {
                     assert_eq!(relation_name, "safe");
                 }
             },
@@ -996,10 +996,10 @@ mod tests {
     #[test]
     fn parse_iff_desugars_to_conjunction_of_implies() {
         let pred = parse("iff(a, b)").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::And(lhs, rhs) => {
-                assert!(matches!(*lhs, BehavioralPred::Implies(_, _)));
-                assert!(matches!(*rhs, BehavioralPred::Implies(_, _)));
+                assert!(matches!(lhs.as_ref(), BehavioralPred::Implies(_, _)));
+                assert!(matches!(rhs.as_ref(), BehavioralPred::Implies(_, _)));
             },
             _ => panic!("expected And(Implies, Implies)"),
         }
@@ -1010,7 +1010,7 @@ mod tests {
     #[test]
     fn parse_equality() {
         let pred = parse("x == y").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { relation_name, .. } => {
                 assert_eq!(relation_name, "eq");
             },
@@ -1021,7 +1021,7 @@ mod tests {
     #[test]
     fn parse_less_than() {
         let pred = parse("x < 5").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "lt");
                 assert_eq!(args[1], PredArg::IntLit(5));
@@ -1033,7 +1033,7 @@ mod tests {
     #[test]
     fn parse_greater_equal() {
         let pred = parse("x >= 0").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { relation_name, .. } => {
                 assert_eq!(relation_name, "ge");
             },
@@ -1046,7 +1046,7 @@ mod tests {
     #[test]
     fn parse_forall_named_domain() {
         let pred = parse("forall(y, nodes, safe(y))").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::Quantified {
                 quantifier: Quantifier::ForAll,
                 var,
@@ -1063,7 +1063,7 @@ mod tests {
     #[test]
     fn parse_exists_no_domain() {
         let pred = parse("exists(y, safe(y))").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::Quantified {
                 quantifier: Quantifier::Exists,
                 var,
@@ -1079,12 +1079,12 @@ mod tests {
     #[test]
     fn parse_forall_bounded() {
         let pred = parse("forall(y, 100, safe(y))").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::Quantified {
                 domain: Some(QuantifiedDomain::Bounded(k)),
                 ..
             } => {
-                assert_eq!(k, 100);
+                assert_eq!(*k, 100);
             },
             _ => panic!("expected Bounded domain"),
         }
@@ -1093,7 +1093,7 @@ mod tests {
     #[test]
     fn parse_forall_enumerated() {
         let pred = parse("forall(y, {a, b, c}, safe(y))").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::Quantified {
                 domain: Some(QuantifiedDomain::Enumerated(es)),
                 ..
@@ -1109,7 +1109,7 @@ mod tests {
     #[test]
     fn parse_in_keyword() {
         let pred = parse("x in PosInt").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "PosInt");
                 assert_eq!(args[0], PredArg::Var("x".to_string()));
@@ -1132,7 +1132,7 @@ mod tests {
     #[test]
     fn parse_unicode_in() {
         let pred = parse("x ∈ PosInt").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { relation_name, .. } => {
                 assert_eq!(relation_name, "PosInt");
             },
@@ -1145,7 +1145,7 @@ mod tests {
     #[test]
     fn parse_rewrite_closure() {
         let pred = parse("x ->* y").expect("ok");
-        match pred {
+        match &pred {
             BehavioralPred::RelationQuery { relation_name, .. } => {
                 assert_eq!(relation_name, "rewrites_to");
             },
@@ -1174,7 +1174,7 @@ mod tests {
             vec![("and", vec!["&&"]), ("or", vec!["||"]), ("not", vec!["!"])],
         )
         .expect("c-like ok");
-        match b {
+        match &b {
             BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "and");
                 assert!(args.is_empty());
@@ -1197,7 +1197,8 @@ mod tests {
         // parse as a disjunction.
         let result = parse_with_map("or", vec![("and", vec!["and"]), ("not", vec!["not"])]);
         // `or` becomes a bare identifier (a nullary relation named "or").
-        match result.unwrap() {
+        let predicate = result.unwrap();
+        match &predicate {
             BehavioralPred::RelationQuery { relation_name, .. } => {
                 assert_eq!(relation_name, "or");
             },
