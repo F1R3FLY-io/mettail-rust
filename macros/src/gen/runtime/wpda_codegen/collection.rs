@@ -153,6 +153,7 @@ fn has_binder_internal_collection_slot(positions: &[BinderPosition]) -> bool {
 /// ★ ROOT 3 (2026-07-29, #151) — why the type gate is load-bearing. Until this
 /// fix the resolver read `declared.key_val_sep` *before* looking at `coll_type`:
 ///
+// ignore-justification: historical pre-fix expression intentionally names the surrounding generator's `declared` and `coll_type` bindings and enum variants; making it standalone would obscure the exact faulty branch order being documented.
 /// ```ignore
 /// declared.and_then(|d| d.key_val_sep.clone())
 ///     .or_else(|| match coll_type { HashMap | PathMap => Some(":"), _ => None })

@@ -53,6 +53,7 @@ Definition generated_language_inventory : list (string * list RewriteRequirement
   ("class3opt", [ReqCollectionPattern; ReqZipPattern; ReqBinderPattern; ReqRhoCommHandlerContract]);
   ("commdemo", [ReqDirectionalRewrite; ReqCollectionPattern; ReqBinderPattern; ReqSubstitutionPattern; ReqRhoCommHandlerContract]);
   ("congruencelanedemo", [ReqDirectionalRewrite; ReqCongruencePremise]);
+  ("congruencewithholdingdemo", [ReqDirectionalRewrite]);
   ("ctxdemo", [ReqDirectionalRewrite; ReqCongruencePremise]);
   ("discoverycanary", [ReqFoldNativeHandler]);
   ("extmath", [ReqDirectionalRewrite; ReqCongruencePremise; ReqFoldNativeHandler]);

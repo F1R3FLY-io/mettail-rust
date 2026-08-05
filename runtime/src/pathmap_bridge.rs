@@ -146,6 +146,7 @@ where
 ///
 /// This used to iterate `key_index` directly:
 ///
+// ignore-justification: historical pre-fix loop intentionally depends on the surrounding function's `key_index`, `trie`, and `out` bindings; the fragment documents the precise nondeterministic iteration that was removed.
 /// ```ignore
 /// for (enc, k) in key_index {                  // ⚠ std::HashMap iteration
 ///     if let Some(v) = trie.get_val_at(&enc) { out.insert(k, v.clone()); }

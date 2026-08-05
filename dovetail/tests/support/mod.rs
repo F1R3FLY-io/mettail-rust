@@ -317,10 +317,13 @@ fn oracle_node(
     partials
         .into_iter()
         .map(|(weight, children)| {
+            let mut op_bytes = Vec::new();
+            node.op.write_content(&mut op_bytes);
             let mut key_bytes = Vec::new();
-            node.op.write_content(&mut key_bytes);
+            write_ordered_framed(&mut key_bytes, &op_bytes);
+            key_bytes.extend_from_slice(&(children.len() as u64).to_be_bytes());
             for child in &children {
-                write_ordered_framed(&mut key_bytes, child.key.as_bytes());
+                key_bytes.extend_from_slice(child.key.as_bytes());
             }
             OracleDerivation {
                 weight,
