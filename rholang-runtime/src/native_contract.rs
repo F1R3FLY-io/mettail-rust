@@ -44,13 +44,13 @@ use std::future::Future;
 use std::pin::Pin;
 
 use mettail_rholang_codegen::{
+    BandAllocationError, GroundTerm, NATIVE_HANDLER_BAND, NativeHandlerSpec,
     check_body_refs_pairwise_distinct, native_contract_body_ref, native_contract_channel,
-    reflect_ground_term_par, BandAllocationError, GroundTerm, NativeHandlerSpec,
-    NATIVE_HANDLER_BAND,
+    reflect_ground_term_par,
 };
+use models::rhoapi::Par;
 use models::rhoapi::expr::ExprInstance;
 use models::rhoapi::g_unforgeable::UnfInstance;
-use models::rhoapi::Par;
 use models::rust::utils::new_gstring_par;
 use prost::Message;
 use rholang::rust::interpreter::contract_call::ContractCall;
@@ -108,51 +108,80 @@ pub fn par_to_ground_term(
     par: &Par,
     expected_fingerprint: &str,
 ) -> Result<GroundTerm, NativeContractError> {
-    if !par.sends.is_empty()
-        || !par.receives.is_empty()
-        || !par.news.is_empty()
-        || !par.matches.is_empty()
-        || !par.bundles.is_empty()
-        || !par.connectives.is_empty()
-        || !par.unforgeables.is_empty()
-    {
-        return Err(NativeContractError::OperandNotReflectedTerm);
+    enum DecodeTask<'par> {
+        Visit(&'par Par),
+        Assemble { label: String, child_count: usize },
     }
-    let [expr] = par.exprs.as_slice() else {
-        return Err(NativeContractError::OperandNotReflectedTerm);
-    };
-    let Some(ExprInstance::EListBody(list)) = expr.expr_instance.as_ref() else {
-        return Err(NativeContractError::OperandNotReflectedTerm);
-    };
-    if list.remainder.is_some() || list.connective_used {
-        return Err(NativeContractError::OperandNotReflectedTerm);
+
+    let mut tasks = vec![DecodeTask::Visit(par)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            DecodeTask::Visit(par) => {
+                if !par.sends.is_empty()
+                    || !par.receives.is_empty()
+                    || !par.news.is_empty()
+                    || !par.matches.is_empty()
+                    || !par.bundles.is_empty()
+                    || !par.connectives.is_empty()
+                    || !par.unforgeables.is_empty()
+                {
+                    return Err(NativeContractError::OperandNotReflectedTerm);
+                }
+                let [expr] = par.exprs.as_slice() else {
+                    return Err(NativeContractError::OperandNotReflectedTerm);
+                };
+                let Some(ExprInstance::EListBody(list)) = expr.expr_instance.as_ref() else {
+                    return Err(NativeContractError::OperandNotReflectedTerm);
+                };
+                if list.remainder.is_some() || list.connective_used {
+                    return Err(NativeContractError::OperandNotReflectedTerm);
+                }
+                let Some((head, children)) = list.ps.split_first() else {
+                    return Err(NativeContractError::OperandNotReflectedTerm);
+                };
+                let tag =
+                    private_name_tag(head).ok_or(NativeContractError::OperandNotReflectedTerm)?;
+                let (fingerprint, label) = mettail_rholang_codegen::parse_reflected_tag(&tag)
+                    .ok_or(NativeContractError::OperandNotReflectedTerm)?;
+                if fingerprint != expected_fingerprint {
+                    return Err(NativeContractError::FingerprintMismatch {
+                        expected: expected_fingerprint.to_string(),
+                        actual: fingerprint.to_string(),
+                    });
+                }
+                // E-2-D metadata is not a GroundTerm operand.
+                let children = match children.first() {
+                    Some(first)
+                        if mettail_rholang_codegen::is_ground_marker_par(first, fingerprint) =>
+                    {
+                        &children[1..]
+                    },
+                    _ => children,
+                };
+                tasks.push(DecodeTask::Assemble {
+                    label: label.to_string(),
+                    child_count: children.len(),
+                });
+                for child in children.iter().rev() {
+                    tasks.push(DecodeTask::Visit(child));
+                }
+            },
+            DecodeTask::Assemble { label, child_count } => {
+                let first = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("reflected-term decoder PDA lost a child result");
+                let children = values.split_off(first);
+                values.push(GroundTerm::new(label, children));
+            },
+        }
     }
-    let Some((head, children)) = list.ps.split_first() else {
-        return Err(NativeContractError::OperandNotReflectedTerm);
-    };
-    let tag = private_name_tag(head).ok_or(NativeContractError::OperandNotReflectedTerm)?;
-    let (fingerprint, label) = mettail_rholang_codegen::parse_reflected_tag(&tag)
-        .ok_or(NativeContractError::OperandNotReflectedTerm)?;
-    if fingerprint != expected_fingerprint {
-        return Err(NativeContractError::FingerprintMismatch {
-            expected: expected_fingerprint.to_string(),
-            actual: fingerprint.to_string(),
-        });
-    }
-    // E-2-D (reflected-ABI v2): a marked-object node carries the `^gnd`/`^nog` hereditary-ground
-    // marker at index 1 — skip it so `par_to_ground_term ∘ reflect_ground_term_par` stays the
-    // identity on positional ground terms (the marker is codegen metadata, not a σ operand).
-    let children = match children.first() {
-        Some(first) if mettail_rholang_codegen::is_ground_marker_par(first, fingerprint) => {
-            &children[1..]
-        },
-        _ => children,
-    };
-    let children = children
-        .iter()
-        .map(|child| par_to_ground_term(child, expected_fingerprint))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(GroundTerm::new(label, children))
+
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .ok_or(NativeContractError::OperandNotReflectedTerm)
 }
 
 /// Build the system-process [`Definition`] for one registrable native rule: a deterministic,
