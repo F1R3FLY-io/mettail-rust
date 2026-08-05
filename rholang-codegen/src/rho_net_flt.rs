@@ -27,7 +27,7 @@
 //! graft in. A rendered delimiter inside a fill can never re-open the grammar (fills never
 //! concatenate into source text) — the FIP No-Injection property, enforced by construction.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use mettail_ast::types::CollectionType;
 use models::create_bit_vector;
@@ -39,10 +39,10 @@ use models::rust::utils::{
 };
 
 use crate::rho_net_lower::{
-    ground_marker_tag_par, is_ground_marker_par, is_marked_object_label, par_carries_ground_marker,
-    reflect_ground_term_par, reflect_tag, GroundTerm, BOUND_VAR_REFLECT_LABEL,
-    FREE_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
-    PEANO_ZERO_REFLECT_LABEL,
+    BOUND_VAR_REFLECT_LABEL, FREE_VAR_REFLECT_LABEL, GroundTerm, LAMBDA_REFLECT_LABEL,
+    PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL, assemble_positional_ground_node,
+    is_ground_marker_par, is_marked_object_label, par_carries_ground_marker,
+    reflect_ground_term_par, reflect_tag,
 };
 
 // ── Public types ────────────────────────────────────────────────────────────────────────────
@@ -121,7 +121,10 @@ impl std::fmt::Display for FltReflectError {
                 write!(f, "FLT hole ${{{hole}}} declared as :{expected} but used as :{found}")
             },
             FltReflectError::ArityMismatch { hole } => {
-                write!(f, "FLT hole ${{{hole}}} cannot be placed at its occurrence (no flat positional image)")
+                write!(
+                    f,
+                    "FLT hole ${{{hole}}} cannot be placed at its occurrence (no flat positional image)"
+                )
             },
         }
     }
@@ -230,52 +233,74 @@ impl<'a> PatternWalk<'a> {
 
     /// Reflect one node, returning `(par, contains_hole)`.
     fn reflect_node(&mut self, term: &GroundTerm) -> Result<(Par, bool), FltReflectError> {
-        // A `^free` leaf: a hole (→ FreeVar) or a genuine free literal (→ ground reflection).
-        if term.constructor == FREE_VAR_REFLECT_LABEL {
-            let name = free_var_name(term)?;
-            if self.is_hole(&name) {
-                let level = self.assign_level(&name);
-                return Ok((new_freevar_par(level, Vec::new()), true));
+        enum PatternTask<'term> {
+            Visit(&'term GroundTerm),
+            Assemble {
+                term: &'term GroundTerm,
+                child_count: usize,
+            },
+        }
+
+        // One post-order analysis gives every node its first declared hole in
+        // left-to-right pre-order. The construction PDA can then collapse each
+        // maximal hole-free subtree through the optimized ground reflector once,
+        // avoiding both repeated scans and O(n²) reflection on deep spines.
+        let first_hole = analyze_first_hole(term, |name| self.is_hole(name));
+        let mut tasks = vec![PatternTask::Visit(term)];
+        let mut values: Vec<(Par, bool)> = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                PatternTask::Visit(term) => {
+                    let hole = first_hole
+                        .get(&(term as *const GroundTerm))
+                        .copied()
+                        .flatten();
+                    let Some(hole) = hole else {
+                        values.push((reflect_ground_term_par(term, self.fingerprint), false));
+                        continue;
+                    };
+
+                    if term.constructor == FREE_VAR_REFLECT_LABEL {
+                        let name = free_var_name(term)?;
+                        debug_assert_eq!(name, hole);
+                        let level = self.assign_level(&name);
+                        values.push((new_freevar_par(level, Vec::new()), true));
+                    } else if term.coll_type.is_some() {
+                        return Err(FltReflectError::ArityMismatch { hole: hole.to_string() });
+                    } else {
+                        tasks
+                            .push(PatternTask::Assemble { term, child_count: term.children.len() });
+                        for child in term.children.iter().rev() {
+                            tasks.push(PatternTask::Visit(child));
+                        }
+                    }
+                },
+                PatternTask::Assemble { term, child_count } => {
+                    let first = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("FLT pattern PDA lost a child result");
+                    let child_values = values.split_off(first);
+                    let tag = GPrivateBuilder::new_par_from_string(reflect_tag(
+                        self.fingerprint,
+                        &term.constructor,
+                    ));
+                    let mut elements = Vec::with_capacity(child_values.len() + 2);
+                    elements.push(tag);
+                    if is_marked_object_label(&term.constructor) {
+                        elements.push(new_wildcard_par(Vec::new(), true));
+                    }
+                    elements.extend(child_values.into_iter().map(|(child, _)| child));
+                    values.push((
+                        new_elist_par(elements, Vec::new(), true, None, Vec::new(), true),
+                        true,
+                    ));
+                },
             }
-            return Ok((reflect_ground_term_par(term, self.fingerprint), false));
         }
 
-        // A hole-free subtree is fully ground-determined: byte-for-byte the ground reflection
-        // (real E-2-D marker). This is the ONLY path a hole-free child of a hole-bearing node
-        // takes, so a captured ground subpattern keeps its real `^gnd`/`^nog` marker.
-        if !ground_term_contains_hole(term, self.holes) {
-            return Ok((reflect_ground_term_par(term, self.fingerprint), false));
-        }
-
-        // A hole inside an AC-collection carrier has no flat positional image in the v1 subset:
-        // fail closed rather than mis-reflect (the carrier is order-independent, not a tagged
-        // EList). Hole-free collections took the ground path above.
-        if term.coll_type.is_some() {
-            return Err(FltReflectError::ArityMismatch {
-                hole: first_hole_name_in(term, self.holes).unwrap_or_else(|| "^free".to_string()),
-            });
-        }
-
-        // A hole-bearing object/constructor node → a connective pattern EList. (C1) its marker
-        // slot is a Wildcard; children are reflected in order.
-        let mut child_pars = Vec::with_capacity(term.children.len());
-        for child in &term.children {
-            let (child_par, _child_hole) = self.reflect_node(child)?;
-            child_pars.push(child_par);
-        }
-        let tag =
-            GPrivateBuilder::new_par_from_string(reflect_tag(self.fingerprint, &term.constructor));
-        let mut elements = Vec::with_capacity(child_pars.len() + 2);
-        elements.push(tag);
-        if is_marked_object_label(&term.constructor) {
-            // (C1): the E-2-D index-1 hereditary-ground marker becomes a wildcard over a
-            // hole-bearing node.
-            elements.push(new_wildcard_par(Vec::new(), true));
-        }
-        elements.extend(child_pars);
-        // An FLT pattern carries only FreeVar/Wildcard connectives + ground reflections, none of
-        // which contribute a locally-free (de-Bruijn) index — so the pattern's free-set is empty.
-        Ok((new_elist_par(elements, Vec::new(), true, None, Vec::new(), true), true))
+        debug_assert_eq!(values.len(), 1);
+        Ok(values.pop().expect("FLT pattern PDA produced no result"))
     }
 }
 
@@ -429,59 +454,55 @@ fn reflect_construction_node(
     fills: &BTreeMap<String, Par>,
     fingerprint: &str,
 ) -> Result<(Par, bool), FltReflectError> {
-    // A `^free(name)` hole → splice the typed fill. Its ground bit is read from the fill's OWN
-    // marker (`^gnd` at index 1) — a non-marked / `^bound`-carrying / `^nog` fill reads false, the
-    // conservative under-approximation C2 relies on.
-    if term.constructor == FREE_VAR_REFLECT_LABEL {
-        let name = free_var_name(term)?;
-        let fill = fills
-            .get(&name)
-            .ok_or(FltReflectError::UnknownHole { hole: name })?;
-        let is_ground = par_carries_ground_marker(fill, fingerprint);
-        return Ok((fill.clone(), is_ground));
+    enum ConstructionTask<'term> {
+        Visit(&'term GroundTerm),
+        Assemble {
+            term: &'term GroundTerm,
+            child_count: usize,
+        },
     }
 
-    // An AC-collection carrier: a hole-free collection reflects as its ground carrier
-    // ([`reflect_ground_term_par`], conservatively NOT ground for a parent's marker, matching
-    // `reflect_ground_term_marked`); a hole INSIDE a collection has no flat image in the v1 subset.
-    if term.coll_type.is_some() {
-        if let Some(hole) = first_fill_hole_in(term, fills) {
-            return Err(FltReflectError::ArityMismatch { hole });
+    let mut tasks = vec![ConstructionTask::Visit(term)];
+    let mut values: Vec<(Par, bool)> = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            ConstructionTask::Visit(term) => {
+                if term.constructor == FREE_VAR_REFLECT_LABEL {
+                    let name = free_var_name(term)?;
+                    let fill = fills
+                        .get(&name)
+                        .ok_or(FltReflectError::UnknownHole { hole: name })?;
+                    values.push((fill.clone(), par_carries_ground_marker(fill, fingerprint)));
+                } else if term.coll_type.is_some() {
+                    if let Some(hole) = first_fill_hole_in(term, fills) {
+                        return Err(FltReflectError::ArityMismatch { hole });
+                    }
+                    values.push((reflect_ground_term_par(term, fingerprint), false));
+                } else {
+                    tasks.push(ConstructionTask::Assemble {
+                        term,
+                        child_count: term.children.len(),
+                    });
+                    for child in term.children.iter().rev() {
+                        tasks.push(ConstructionTask::Visit(child));
+                    }
+                }
+            },
+            ConstructionTask::Assemble { term, child_count } => {
+                let first = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("FLT construction PDA lost a child result");
+                let children = values.split_off(first);
+                values.push(assemble_positional_ground_node(term, children, fingerprint));
+            },
         }
-        return Ok((reflect_ground_term_par(term, fingerprint), false));
     }
 
-    // An object / constructor node: reflect children (recomputing their ground bits), then
-    // interpose the RECOMPUTED marker at index 1 for a marked-object label. Byte-for-byte
-    // `reflect_ground_term_marked` when no fill is spliced under this node.
-    let tag = GPrivateBuilder::new_par_from_string(reflect_tag(fingerprint, &term.constructor));
-    let mut elements = Vec::with_capacity(term.children.len() + 2);
-    let mut locally_free = tag.locally_free.clone();
-    elements.push(tag);
-    let marker_slot = is_marked_object_label(&term.constructor).then(|| {
-        elements.push(Par::default());
-        elements.len() - 1
-    });
-    let mut children_ground = true;
-    for child in &term.children {
-        let (child_par, child_ground) = reflect_construction_node(child, fills, fingerprint)?;
-        children_ground &= child_ground;
-        locally_free = union(locally_free, child_par.locally_free.clone());
-        elements.push(child_par);
-    }
-    let is_ground = match term.constructor.as_str() {
-        BOUND_VAR_REFLECT_LABEL => false,
-        FREE_VAR_REFLECT_LABEL => true,
-        _ => children_ground,
-    };
-    if let Some(index) = marker_slot {
-        // C2: the RECOMPUTED marker over the FILLED subtree, never a stale template `^gnd`.
-        elements[index] = ground_marker_tag_par(fingerprint, is_ground);
-    }
-    Ok((
-        new_elist_par(elements, locally_free.clone(), false, None, locally_free, false),
-        is_ground,
-    ))
+    debug_assert_eq!(values.len(), 1);
+    Ok(values
+        .pop()
+        .expect("FLT construction PDA produced no result"))
 }
 
 // ── P4 — runtime-Peano binder reflectors + the D-A host-side oshift ──────────────────────────
@@ -862,48 +883,70 @@ fn free_var_name(term: &GroundTerm) -> Result<String, FltReflectError> {
     }
 }
 
-/// Is any `^free(name)` leaf with `name ∈ holes` present anywhere in `term`?
-fn ground_term_contains_hole(term: &GroundTerm, holes: &[FltHole]) -> bool {
-    if term.constructor == FREE_VAR_REFLECT_LABEL {
-        return term
-            .children
-            .first()
-            .is_some_and(|name_node| holes.iter().any(|h| h.name == name_node.constructor));
+/// Analyze declared-hole reachability once, bottom-up.
+///
+/// Each entry stores the first hole in the same left-to-right pre-order the
+/// recursive reflector used. A `^free` envelope is terminal for this analysis:
+/// an undeclared free literal cannot expose a nested hole through its payload.
+fn analyze_first_hole<'term>(
+    root: &'term GroundTerm,
+    is_hole: impl Fn(&str) -> bool,
+) -> HashMap<*const GroundTerm, Option<&'term str>> {
+    enum Task<'term> {
+        Visit(&'term GroundTerm),
+        Assemble(&'term GroundTerm),
     }
-    term.children
-        .iter()
-        .any(|child| ground_term_contains_hole(child, holes))
+
+    let mut tasks = vec![Task::Visit(root)];
+    let mut analysis = HashMap::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(term) if term.constructor == FREE_VAR_REFLECT_LABEL => {
+                let first = term
+                    .children
+                    .first()
+                    .map(|name| name.constructor.as_str())
+                    .filter(|name| is_hole(name));
+                analysis.insert(term as *const GroundTerm, first);
+            },
+            Task::Visit(term) => {
+                tasks.push(Task::Assemble(term));
+                for child in term.children.iter().rev() {
+                    tasks.push(Task::Visit(child));
+                }
+            },
+            Task::Assemble(term) => {
+                let first = term.children.iter().find_map(|child| {
+                    analysis
+                        .get(&(child as *const GroundTerm))
+                        .copied()
+                        .flatten()
+                });
+                analysis.insert(term as *const GroundTerm, first);
+            },
+        }
+    }
+    analysis
 }
 
 /// The first (pre-order) `^free(name)` leaf whose `name` is a key of `fills`, for error reporting
 /// on the construction side.
 fn first_fill_hole_in(term: &GroundTerm, fills: &BTreeMap<String, Par>) -> Option<String> {
-    if term.constructor == FREE_VAR_REFLECT_LABEL {
-        if let Some(name_node) = term.children.first() {
-            if fills.contains_key(&name_node.constructor) {
-                return Some(name_node.constructor.clone());
+    let mut work = vec![term];
+    while let Some(term) = work.pop() {
+        if term.constructor == FREE_VAR_REFLECT_LABEL {
+            if let Some(name_node) = term.children.first() {
+                if fills.contains_key(&name_node.constructor) {
+                    return Some(name_node.constructor.clone());
+                }
             }
+            continue;
         }
-        return None;
-    }
-    term.children
-        .iter()
-        .find_map(|child| first_fill_hole_in(child, fills))
-}
-
-/// The first (pre-order) hole name occurring in `term`, for error reporting.
-fn first_hole_name_in(term: &GroundTerm, holes: &[FltHole]) -> Option<String> {
-    if term.constructor == FREE_VAR_REFLECT_LABEL {
-        if let Some(name_node) = term.children.first() {
-            if holes.iter().any(|h| h.name == name_node.constructor) {
-                return Some(name_node.constructor.clone());
-            }
+        for child in term.children.iter().rev() {
+            work.push(child);
         }
-        return None;
     }
-    term.children
-        .iter()
-        .find_map(|child| first_hole_name_in(child, holes))
+    None
 }
 
 /// Validate the declared hole set (C5): a hole re-declared with a conflicting category fails
@@ -932,8 +975,8 @@ fn validate_hole_declarations(holes: &[FltHole]) -> Result<(), FltReflectError> 
 mod tests {
     use super::*;
     use crate::rho_net_lower::{
-        reflected_tag_string, BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL,
-        PEANO_SUCC_REFLECT_LABEL, PEANO_ZERO_REFLECT_LABEL,
+        BOUND_VAR_REFLECT_LABEL, LAMBDA_REFLECT_LABEL, PEANO_SUCC_REFLECT_LABEL,
+        PEANO_ZERO_REFLECT_LABEL, ground_marker_tag_par, reflected_tag_string,
     };
     use models::rust::utils::{new_freevar_par, new_wildcard_par};
 
