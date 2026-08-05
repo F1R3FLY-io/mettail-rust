@@ -1,5 +1,5 @@
-//! E-8a (pgmcp experiment 170) — the corrective JSON-lines timing driver for the
-//! native `PathMap<Par>` subject-index treatment vs the current spread+drive control
+//! E-8 series — the JSON-lines timing driver for the native `PathMap<Par>`
+//! subject-index treatment vs the current spread+drive control
 //! (`bench-naive-baseline` + the demo-language features; see the `[[bin]]`
 //! registration in `Cargo.toml`).
 //!
@@ -66,6 +66,7 @@ impl Arm {
 }
 
 struct DriverArgs {
+    experiment: u64,
     workload: WorkloadKind,
     arm: Arm,
     n: u64,
@@ -78,8 +79,10 @@ fn usage() -> String {
     let mut text = String::with_capacity(1024);
     text.push_str(
         "bench_e6a_pathmap_driver — E-6a PathMap-index counter driver (JSON lines)\n\n\
-         USAGE:\n  bench_e6a_pathmap_driver --workload <name> --arm <control|treatment> \\\n    \
-         --n <int> --reps <int> [--warmups <int, default 3>] [--out <path>]\n\n\
+         USAGE:\n  bench_e6a_pathmap_driver --experiment <pgmcp-id> --workload <name> \\\n    \
+         --arm <control|treatment> --n <int> --reps <total-int> \\\n    \
+         [--warmups <int, default 3>] [--out <path>]\n\n\
+         `--reps` includes warmups; measured samples = reps - warmups.\n\n\
          E-6a corpus cells (pre-registered):\n  \
          swap_comb n ∈ {4, 16, 64} · multi_rule_shared n ∈ {402, 803} · \
          nested_spine n ∈ {2, 8, 16} · lambda_chain n ∈ {4, 8}\n\n\
@@ -95,6 +98,7 @@ fn usage() -> String {
 }
 
 fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
+    let mut experiment: Option<u64> = None;
     let mut workload: Option<WorkloadKind> = None;
     let mut arm: Option<Arm> = None;
     let mut n: Option<u64> = None;
@@ -112,6 +116,13 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
             .get(index + 1)
             .ok_or_else(|| format!("flag {flag} requires a value\n\n{}", usage()))?;
         match flag {
+            "--experiment" => {
+                experiment = Some(
+                    value
+                        .parse::<u64>()
+                        .map_err(|e| format!("--experiment: {e}"))?,
+                );
+            },
             "--workload" => {
                 workload = ALL_WORKLOADS
                     .iter()
@@ -144,6 +155,8 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
         }
         index += 2;
     }
+    let experiment =
+        experiment.ok_or_else(|| format!("--experiment is required\n\n{}", usage()))?;
     let workload = workload.ok_or_else(|| format!("--workload is required\n\n{}", usage()))?;
     let arm = arm.ok_or_else(|| format!("--arm is required\n\n{}", usage()))?;
     let n = n.ok_or_else(|| format!("--n is required\n\n{}", usage()))?;
@@ -151,11 +164,24 @@ fn parse_args(args: &[String]) -> Result<DriverArgs, String> {
     if reps == 0 {
         return Err("--reps must be >= 1".to_string());
     }
+    if reps <= warmups {
+        return Err(format!(
+            "--reps ({reps}) must exceed --warmups ({warmups}) so at least one measured sample remains"
+        ));
+    }
     workload.admitted_size(n)?;
     if e6a_control_matcher(workload).is_none() {
         return Err(format!("workload `{}` is out of E-6a scope", workload.name()));
     }
-    Ok(DriverArgs { workload, arm, n, reps, warmups, out })
+    Ok(DriverArgs {
+        experiment,
+        workload,
+        arm,
+        n,
+        reps,
+        warmups,
+        out,
+    })
 }
 
 fn escape_json_into(value: &str, out: &mut String) {
@@ -215,10 +241,12 @@ fn header_line(args: &DriverArgs, control_spread_sends: usize) -> String {
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0);
     format!(
-        "{{\"e6a_header\":{{\"experiment\":170,\"git_sha\":{},\"hostname\":{},\
+        "{{\"e6a_header\":{{\"experiment\":{},\"git_sha\":{},\"hostname\":{},\
          \"scaling_governor\":{},\"cpus_allowed_list\":{},\"unix_time_secs\":{unix_time_secs},\
          \"workload\":{},\"arm\":{},\"n\":{},\"reps\":{},\"warmups\":{},\
+         \"measured_reps\":{},\
          \"control_matcher\":{},\"control_spread_sends_static\":{control_spread_sends}}}}}",
+        args.experiment,
         json_string(&git_sha()),
         json_string(&read_trimmed("/proc/sys/kernel/hostname")),
         json_string(&read_trimmed("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")),
@@ -228,6 +256,7 @@ fn header_line(args: &DriverArgs, control_spread_sends: usize) -> String {
         args.n,
         args.reps,
         args.warmups,
+        args.reps - args.warmups,
         json_string(e6a_control_matcher(args.workload).expect("in scope").name()),
     )
 }
