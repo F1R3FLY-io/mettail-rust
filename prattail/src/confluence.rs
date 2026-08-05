@@ -44,6 +44,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 // NOTE: Semiring import will be used when critical pair weight analysis is implemented.
 #[allow(unused_imports)]
@@ -59,7 +60,6 @@ use crate::repair::{RepairAction, RepairKind, RepairSet, RepairSuggestion};
 /// Terms are built from variables, constants (nullary functions), and
 /// function applications `f(t₁, ..., tₙ)`. This representation is shared
 /// with the termination analysis module.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Term {
     /// A variable, identified by name (e.g., `"x"`, `"y"`).
     Var(String),
@@ -70,6 +70,125 @@ pub enum Term {
         /// Subterm arguments (empty for constants).
         args: Vec<Term>,
     },
+}
+
+impl Clone for Term {
+    fn clone(&self) -> Self {
+        enum Task<'a> {
+            Visit(&'a Term),
+            Assemble { symbol: &'a str, child_count: usize },
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Term::Var(name)) => values.push(Term::Var(name.clone())),
+                Task::Visit(Term::App { symbol, args }) => {
+                    tasks.push(Task::Assemble { symbol, child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Assemble { symbol, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("Term clone PDA lost a child result");
+                    let args = values.split_off(first_child);
+                    values.push(Term::App { symbol: symbol.to_string(), args });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("Term clone PDA produced no result")
+    }
+}
+
+impl PartialEq for Term {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some((left, right)) = pending.pop() {
+            match (left, right) {
+                (Term::Var(left), Term::Var(right)) if left == right => {},
+                (
+                    Term::App { symbol: left_symbol, args: left_args },
+                    Term::App { symbol: right_symbol, args: right_args },
+                ) if left_symbol == right_symbol && left_args.len() == right_args.len() => {
+                    pending.extend(left_args.iter().zip(right_args).rev());
+                },
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl Eq for Term {}
+
+impl Hash for Term {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let mut pending = vec![self];
+        while let Some(term) = pending.pop() {
+            std::mem::discriminant(term).hash(state);
+            match term {
+                Term::Var(name) => {
+                    name.hash(state);
+                },
+                Term::App { symbol, args } => {
+                    symbol.hash(state);
+                    args.len().hash(state);
+                    pending.extend(args.iter().rev());
+                },
+            }
+        }
+    }
+}
+
+impl fmt::Debug for Term {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        enum Task<'a> {
+            Visit(&'a Term),
+            Text(&'static str),
+            DebugString(&'a str),
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Term::Var(name)) => write!(formatter, "Var({name:?})")?,
+                Task::Visit(Term::App { symbol, args }) => {
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Text("]"));
+                    for (index, arg) in args.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(arg));
+                        if index > 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                    tasks.push(Task::Text("args: ["));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::DebugString(symbol));
+                    tasks.push(Task::Text("App { symbol: "));
+                },
+                Task::Text(text) => formatter.write_str(text)?,
+                Task::DebugString(value) => write!(formatter, "{value:?}")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Term {
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        if let Term::App { args, .. } = self {
+            pending.append(args);
+        }
+        while let Some(mut term) = pending.pop() {
+            if let Term::App { args, .. } = &mut term {
+                pending.append(args);
+            }
+        }
+    }
 }
 
 impl Term {
@@ -96,55 +215,82 @@ impl Term {
     /// Collect all variable names occurring in this term.
     pub fn variables(&self) -> Vec<&str> {
         let mut vars = Vec::new();
-        self.collect_variables(&mut vars);
-        vars
-    }
-
-    fn collect_variables<'a>(&'a self, acc: &mut Vec<&'a str>) {
-        match self {
-            Term::Var(name) => acc.push(name.as_str()),
-            Term::App { args, .. } => {
-                for arg in args {
-                    arg.collect_variables(acc);
-                }
-            },
+        let mut pending = vec![self];
+        while let Some(term) = pending.pop() {
+            match term {
+                Term::Var(name) => vars.push(name.as_str()),
+                Term::App { args, .. } => pending.extend(args.iter().rev()),
+            }
         }
+        vars
     }
 
     /// Apply a substitution to this term, returning a new term.
     pub fn apply_substitution(&self, subst: &HashMap<String, Term>) -> Term {
-        match self {
-            Term::Var(name) => {
-                if let Some(replacement) = subst.get(name) {
-                    replacement.clone()
-                } else {
-                    self.clone()
-                }
-            },
-            Term::App { symbol, args } => Term::App {
-                symbol: symbol.clone(),
-                args: args.iter().map(|a| a.apply_substitution(subst)).collect(),
-            },
+        enum Task<'a> {
+            Visit(&'a Term),
+            Assemble { symbol: &'a str, child_count: usize },
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Term::Var(name)) => values.push(
+                    subst
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| Term::Var(name.clone())),
+                ),
+                Task::Visit(Term::App { symbol, args }) => {
+                    tasks.push(Task::Assemble { symbol, child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Assemble { symbol, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("Term substitution PDA lost a child result");
+                    let args = values.split_off(first_child);
+                    values.push(Term::App { symbol: symbol.to_string(), args });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("Term substitution PDA produced no result")
     }
 }
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Term::Var(name) => write!(f, "{}", name),
-            Term::App { symbol, args } if args.is_empty() => write!(f, "{}", symbol),
-            Term::App { symbol, args } => {
-                write!(f, "{}(", symbol)?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", arg)?;
-                }
-                write!(f, ")")
-            },
+        enum Task<'a> {
+            Visit(&'a Term),
+            Text(&'static str),
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Term::Var(name)) => f.write_str(name)?,
+                Task::Visit(Term::App { symbol, args }) => {
+                    f.write_str(symbol)?;
+                    if !args.is_empty() {
+                        f.write_str("(")?;
+                        tasks.push(Task::Text(")"));
+                        for (index, arg) in args.iter().enumerate().rev() {
+                            tasks.push(Task::Visit(arg));
+                            if index > 0 {
+                                tasks.push(Task::Text(", "));
+                            }
+                        }
+                    }
+                },
+                Task::Text(text) => f.write_str(text)?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -289,58 +435,83 @@ type Position = Vec<usize>;
 
 /// Retrieve the subterm at a given position, or `None` if the position is invalid.
 fn subterm_at<'a>(term: &'a Term, pos: &[usize]) -> Option<&'a Term> {
-    if pos.is_empty() {
-        return Some(term);
+    let mut term = term;
+    for &index in pos {
+        match term {
+            Term::Var(_) => return None,
+            Term::App { args, .. } => term = args.get(index)?,
+        }
     }
-    match term {
-        Term::Var(_) => None,
-        Term::App { args, .. } => {
-            let idx = pos[0];
-            if idx < args.len() {
-                subterm_at(&args[idx], &pos[1..])
-            } else {
-                None
-            }
-        },
-    }
+    Some(term)
 }
 
 /// Enumerate all positions of non-variable subterms in a term.
 ///
 /// Each position is a path of argument indices from the root.
 fn non_var_positions(term: &Term) -> Vec<Position> {
-    let mut positions = Vec::new();
-    collect_non_var_positions(term, &mut Vec::new(), &mut positions);
-    positions
-}
-
-fn collect_non_var_positions(term: &Term, current: &mut Vec<usize>, acc: &mut Vec<Position>) {
-    match term {
-        Term::Var(_) => {
-            // Variables are excluded — we only want non-variable subterms.
-        },
-        Term::App { args, .. } => {
-            acc.push(current.clone());
-            for (i, arg) in args.iter().enumerate() {
-                current.push(i);
-                collect_non_var_positions(arg, current, acc);
-                current.pop();
-            }
-        },
+    enum Task<'a> {
+        Visit(&'a Term),
+        Push(usize),
+        Pop,
     }
+
+    let mut positions = Vec::new();
+    let mut current = Vec::new();
+    let mut tasks = vec![Task::Visit(term)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Term::Var(_)) => {},
+            Task::Visit(Term::App { args, .. }) => {
+                positions.push(current.clone());
+                for (index, arg) in args.iter().enumerate().rev() {
+                    tasks.push(Task::Pop);
+                    tasks.push(Task::Visit(arg));
+                    tasks.push(Task::Push(index));
+                }
+            },
+            Task::Push(index) => current.push(index),
+            Task::Pop => {
+                current
+                    .pop()
+                    .expect("non-variable position PDA path underflow");
+            },
+        }
+    }
+    positions
 }
 
 /// Rename all variables in a term by appending the given suffix.
 ///
 /// Used to ensure two rules being overlapped have disjoint variable sets.
 fn rename_variables(term: &Term, suffix: &str) -> Term {
-    match term {
-        Term::Var(name) => Term::Var(format!("{}{}", name, suffix)),
-        Term::App { symbol, args } => Term::App {
-            symbol: symbol.clone(),
-            args: args.iter().map(|a| rename_variables(a, suffix)).collect(),
-        },
+    enum Task<'a> {
+        Visit(&'a Term),
+        Assemble { symbol: &'a str, child_count: usize },
     }
+
+    let mut tasks = vec![Task::Visit(term)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Term::Var(name)) => values.push(Term::Var(format!("{name}{suffix}"))),
+            Task::Visit(Term::App { symbol, args }) => {
+                tasks.push(Task::Assemble { symbol, child_count: args.len() });
+                tasks.extend(args.iter().rev().map(Task::Visit));
+            },
+            Task::Assemble { symbol, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("variable-renaming PDA lost a child result");
+                let args = values.split_off(first_child);
+                values.push(Term::App { symbol: symbol.to_string(), args });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("variable-renaming PDA produced no result")
 }
 
 /// Compose two substitutions: apply `second` to the range of `first`, then
@@ -380,7 +551,7 @@ fn unify(s: &Term, t: &Term) -> Option<HashMap<String, Term>> {
             continue;
         }
 
-        match (lhs, rhs) {
+        match (&lhs, &rhs) {
             (Term::Var(x), t) => {
                 // Occurs check: x must not appear in t.
                 if occurs(&x, &t) {
@@ -393,7 +564,7 @@ fn unify(s: &Term, t: &Term) -> Option<HashMap<String, Term>> {
                     m
                 };
                 subst = compose_substitutions(&subst, &singleton);
-                subst.insert(x, t);
+                subst.insert(x.clone(), t.clone());
             },
             (t, Term::Var(x)) => {
                 if occurs(&x, &t) {
@@ -405,14 +576,14 @@ fn unify(s: &Term, t: &Term) -> Option<HashMap<String, Term>> {
                     m
                 };
                 subst = compose_substitutions(&subst, &singleton);
-                subst.insert(x, t);
+                subst.insert(x.clone(), t.clone());
             },
             (Term::App { symbol: f, args: f_args }, Term::App { symbol: g, args: g_args }) => {
                 if f != g || f_args.len() != g_args.len() {
                     return None;
                 }
-                for (a, b) in f_args.into_iter().zip(g_args.into_iter()) {
-                    worklist.push_back((a, b));
+                for (a, b) in f_args.iter().zip(g_args) {
+                    worklist.push_back((a.clone(), b.clone()));
                 }
             },
         }
@@ -423,36 +594,64 @@ fn unify(s: &Term, t: &Term) -> Option<HashMap<String, Term>> {
 
 /// Occurs check: does variable `var` appear anywhere in `term`?
 fn occurs(var: &str, term: &Term) -> bool {
-    match term {
-        Term::Var(name) => name == var,
-        Term::App { args, .. } => args.iter().any(|a| occurs(var, a)),
+    let mut pending = vec![term];
+    while let Some(term) = pending.pop() {
+        match term {
+            Term::Var(name) if name == var => return true,
+            Term::Var(_) => {},
+            Term::App { args, .. } => pending.extend(args.iter().rev()),
+        }
     }
+    false
 }
 
 /// Try to apply the first matching rewrite rule to the leftmost-outermost
 /// redex in `term`. Returns `Some(reduct)` if a rule fired, `None` if no
 /// rule applies anywhere.
 fn rewrite_once(term: &Term, rules: &[RewriteRule]) -> Option<Term> {
-    // Try to match at the root first (outermost).
-    for rule in rules {
-        if let Some(subst) = match_term(&rule.lhs, term) {
-            return Some(rule.rhs.apply_substitution(&subst));
+    enum Task<'a> {
+        Visit(&'a Term),
+        Push(usize),
+        Pop,
+    }
+
+    let mut path = Vec::new();
+    let mut tasks = vec![Task::Visit(term)];
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(candidate) => {
+                for rule in rules {
+                    if let Some(subst) = match_term(&rule.lhs, candidate) {
+                        let reduct = rule.rhs.apply_substitution(&subst);
+                        let mut rewritten = term.clone();
+                        let mut target = &mut rewritten;
+                        for &index in &path {
+                            target = match target {
+                                Term::Var(_) => {
+                                    unreachable!("rewrite PDA retained an invalid term path")
+                                },
+                                Term::App { args, .. } => &mut args[index],
+                            };
+                        }
+                        *target = reduct;
+                        return Some(rewritten);
+                    }
+                }
+                if let Term::App { args, .. } = candidate {
+                    for (index, arg) in args.iter().enumerate().rev() {
+                        tasks.push(Task::Pop);
+                        tasks.push(Task::Visit(arg));
+                        tasks.push(Task::Push(index));
+                    }
+                }
+            },
+            Task::Push(index) => path.push(index),
+            Task::Pop => {
+                path.pop().expect("rewrite PDA path underflow");
+            },
         }
     }
-    // Recurse into subterms (leftmost first).
-    match term {
-        Term::Var(_) => None,
-        Term::App { symbol, args } => {
-            for (i, arg) in args.iter().enumerate() {
-                if let Some(reduct) = rewrite_once(arg, rules) {
-                    let mut new_args = args.clone();
-                    new_args[i] = reduct;
-                    return Some(Term::App { symbol: symbol.clone(), args: new_args });
-                }
-            }
-            None
-        },
-    }
+    None
 }
 
 /// One-way pattern matching: check if `pattern` matches `term`, producing
@@ -468,30 +667,30 @@ fn match_term(pattern: &Term, term: &Term) -> Option<HashMap<String, Term>> {
 }
 
 fn match_term_inner(pattern: &Term, term: &Term, subst: &mut HashMap<String, Term>) -> bool {
-    match pattern {
-        Term::Var(name) => {
-            if let Some(existing) = subst.get(name) {
-                existing == term
-            } else {
-                subst.insert(name.clone(), term.clone());
-                true
-            }
-        },
-        Term::App { symbol: f, args: f_args } => match term {
-            Term::Var(_) => false,
-            Term::App { symbol: g, args: g_args } => {
-                if f != g || f_args.len() != g_args.len() {
-                    return false;
-                }
-                for (p, t) in f_args.iter().zip(g_args.iter()) {
-                    if !match_term_inner(p, t, subst) {
+    let mut pending = vec![(pattern, term)];
+    while let Some((pattern, term)) = pending.pop() {
+        match pattern {
+            Term::Var(name) => {
+                if let Some(existing) = subst.get(name) {
+                    if existing != term {
                         return false;
                     }
+                } else {
+                    subst.insert(name.clone(), term.clone());
                 }
-                true
             },
-        },
+            Term::App { symbol: left_symbol, args: left_args } => match term {
+                Term::Var(_) => return false,
+                Term::App { symbol: right_symbol, args: right_args } => {
+                    if left_symbol != right_symbol || left_args.len() != right_args.len() {
+                        return false;
+                    }
+                    pending.extend(left_args.iter().zip(right_args).rev());
+                },
+            },
+        }
     }
+    true
 }
 
 /// Reduce a term to normal form (or as far as possible within `max_steps`).
@@ -695,42 +894,57 @@ pub fn check_confluence(rules: &[RewriteRule], max_steps: usize) -> ConfluenceAn
 /// structural similarity are more likely to benefit from an equation or
 /// oriented rewrite than terms with entirely different root symbols.
 fn structural_similarity(t1: &Term, t2: &Term) -> f64 {
-    match (t1, t2) {
-        (Term::Var(a), Term::Var(b)) => {
-            if a == b {
-                1.0
-            } else {
-                0.5
-            }
-        },
-        (Term::Var(_), Term::App { .. }) | (Term::App { .. }, Term::Var(_)) => 0.25,
-        (Term::App { symbol: f, args: f_args }, Term::App { symbol: g, args: g_args }) => {
-            if f != g {
-                // Different root symbols — minimal similarity.
-                // Still check if any subterms share structure.
-                if f_args.is_empty() && g_args.is_empty() {
-                    return 0.0;
-                }
-                return 0.1;
-            }
-            // Same root symbol.
-            if f_args.is_empty() && g_args.is_empty() {
-                return 1.0;
-            }
-            if f_args.len() != g_args.len() {
-                return 0.3;
-            }
-            // Recursively score sub-arguments.
-            let arg_sim: f64 = f_args
-                .iter()
-                .zip(g_args.iter())
-                .map(|(a, b)| structural_similarity(a, b))
-                .sum();
-            let avg_arg_sim = arg_sim / f_args.len() as f64;
-            // Root symbol match contributes 0.5, argument similarity 0.5.
-            0.5 + 0.5 * avg_arg_sim
-        },
+    enum Task<'a> {
+        Visit(&'a Term, &'a Term),
+        Average(usize),
     }
+
+    let mut tasks = vec![Task::Visit(t1, t2)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Term::Var(left), Term::Var(right)) => {
+                values.push(if left == right { 1.0 } else { 0.5 });
+            },
+            Task::Visit(Term::Var(_), Term::App { .. })
+            | Task::Visit(Term::App { .. }, Term::Var(_)) => values.push(0.25),
+            Task::Visit(
+                Term::App { symbol: left_symbol, args: left_args },
+                Term::App { symbol: right_symbol, args: right_args },
+            ) => {
+                if left_symbol != right_symbol {
+                    values.push(if left_args.is_empty() && right_args.is_empty() {
+                        0.0
+                    } else {
+                        0.1
+                    });
+                } else if left_args.is_empty() && right_args.is_empty() {
+                    values.push(1.0);
+                } else if left_args.len() != right_args.len() {
+                    values.push(0.3);
+                } else {
+                    tasks.push(Task::Average(left_args.len()));
+                    tasks.extend(
+                        left_args
+                            .iter()
+                            .zip(right_args)
+                            .rev()
+                            .map(|(left, right)| Task::Visit(left, right)),
+                    );
+                }
+            },
+            Task::Average(child_count) => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("similarity PDA lost a child result");
+                let sum: f64 = values.drain(first_child..).sum();
+                values.push(0.5 + 0.5 * (sum / child_count as f64));
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values.pop().expect("similarity PDA produced no result")
 }
 
 /// Decide an orientation preference for a new rewrite rule between two terms.
@@ -740,10 +954,15 @@ fn structural_similarity(t1: &Term, t2: &Term) -> f64 {
 /// Returns `(lhs, rhs)` in the suggested orientation.
 fn orient_terms<'a>(t1: &'a Term, t2: &'a Term) -> (&'a Term, &'a Term) {
     fn node_count(t: &Term) -> usize {
-        match t {
-            Term::Var(_) => 1,
-            Term::App { args, .. } => 1 + args.iter().map(node_count).sum::<usize>(),
+        let mut count = 0usize;
+        let mut pending = vec![t];
+        while let Some(term) = pending.pop() {
+            count += 1;
+            if let Term::App { args, .. } = term {
+                pending.extend(args.iter().rev());
+            }
         }
+        count
     }
     if node_count(t1) >= node_count(t2) {
         (t1, t2)

@@ -43,6 +43,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::hash::Hash;
 
 use crate::confluence::{ConfluenceAnalysis, CriticalPair, JoinabilityResult, RewriteRule, Term};
 use crate::repair::{RepairAction, RepairKind, RepairSuggestion};
@@ -272,20 +273,36 @@ impl EGraph {
         Some(self.add(canonical))
     }
 
-    /// Recursively add a `confluence::Term` to the e-graph (bottom-up).
+    /// Add a `confluence::Term` to the e-graph bottom-up with an explicit PDA.
     pub fn add_term(&mut self, term: &Term) -> EClassId {
-        match term {
-            Term::Var(name) => {
-                // Variables are added as nullary e-nodes with __var_ prefix
-                let enode = ENode::leaf(format!("__var_{}", name));
-                self.add(enode)
-            },
-            Term::App { symbol, args } => {
-                let children: Vec<EClassId> = args.iter().map(|a| self.add_term(a)).collect();
-                let enode = ENode::with_children(symbol.as_str(), children);
-                self.add(enode)
-            },
+        enum Task<'a> {
+            Visit(&'a Term),
+            Assemble { symbol: &'a str, child_count: usize },
         }
+
+        let mut tasks = vec![Task::Visit(term)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Term::Var(name)) => {
+                    values.push(self.add(ENode::leaf(format!("__var_{name}"))));
+                },
+                Task::Visit(Term::App { symbol, args }) => {
+                    tasks.push(Task::Assemble { symbol, child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Assemble { symbol, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("term insertion PDA lost a child result");
+                    let children = values.split_off(first_child);
+                    values.push(self.add(ENode::with_children(symbol, children)));
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("a term always produces one e-class")
     }
 
     /// Assert that two e-classes are equal. Defers congruence closure to `rebuild()`.
@@ -469,7 +486,6 @@ impl EGraph {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Pattern for e-matching: term with pattern variables.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Pattern {
     /// A pattern variable (binds to an e-class).
     Var(String),
@@ -477,27 +493,182 @@ pub enum Pattern {
     App { symbol: String, args: Vec<Pattern> },
 }
 
+impl Clone for Pattern {
+    fn clone(&self) -> Self {
+        enum Task<'a> {
+            Visit(&'a Pattern),
+            Assemble { symbol: &'a str, child_count: usize },
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Pattern::Var(name)) => values.push(Pattern::Var(name.clone())),
+                Task::Visit(Pattern::App { symbol, args }) => {
+                    tasks.push(Task::Assemble { symbol, child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Assemble { symbol, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("Pattern clone PDA lost a child result");
+                    let args = values.split_off(first_child);
+                    values.push(Pattern::App { symbol: symbol.to_string(), args });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("Pattern clone PDA produced no result")
+    }
+}
+
+impl PartialEq for Pattern {
+    fn eq(&self, other: &Self) -> bool {
+        let mut pending = vec![(self, other)];
+        while let Some((left, right)) = pending.pop() {
+            match (left, right) {
+                (Pattern::Var(left), Pattern::Var(right)) if left == right => {},
+                (
+                    Pattern::App { symbol: left_symbol, args: left_args },
+                    Pattern::App { symbol: right_symbol, args: right_args },
+                ) if left_symbol == right_symbol && left_args.len() == right_args.len() => {
+                    pending.extend(left_args.iter().zip(right_args).rev());
+                },
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl Eq for Pattern {}
+
+impl std::hash::Hash for Pattern {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let mut pending = vec![self];
+        while let Some(pattern) = pending.pop() {
+            std::mem::discriminant(pattern).hash(state);
+            match pattern {
+                Pattern::Var(name) => name.hash(state),
+                Pattern::App { symbol, args } => {
+                    symbol.hash(state);
+                    args.len().hash(state);
+                    pending.extend(args.iter().rev());
+                },
+            }
+        }
+    }
+}
+
+impl fmt::Debug for Pattern {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        enum Task<'a> {
+            Visit(&'a Pattern),
+            Text(&'static str),
+            DebugString(&'a str),
+        }
+
+        let mut tasks = vec![Task::Visit(self)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Pattern::Var(name)) => write!(formatter, "Var({name:?})")?,
+                Task::Visit(Pattern::App { symbol, args }) => {
+                    tasks.push(Task::Text(" }"));
+                    tasks.push(Task::Text("]"));
+                    for (index, arg) in args.iter().enumerate().rev() {
+                        tasks.push(Task::Visit(arg));
+                        if index > 0 {
+                            tasks.push(Task::Text(", "));
+                        }
+                    }
+                    tasks.push(Task::Text("args: ["));
+                    tasks.push(Task::Text(", "));
+                    tasks.push(Task::DebugString(symbol));
+                    tasks.push(Task::Text("App { symbol: "));
+                },
+                Task::Text(text) => formatter.write_str(text)?,
+                Task::DebugString(value) => write!(formatter, "{value:?}")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Pattern {
+    fn drop(&mut self) {
+        let mut pending = Vec::new();
+        if let Pattern::App { args, .. } = self {
+            pending.append(args);
+        }
+        while let Some(mut pattern) = pending.pop() {
+            if let Pattern::App { args, .. } = &mut pattern {
+                pending.append(args);
+            }
+        }
+    }
+}
+
 impl Pattern {
     /// Convert a `Term` into a `Pattern`. Variables become pattern variables.
     pub fn from_term(term: &Term) -> Self {
-        match term {
-            Term::Var(name) => Pattern::Var(name.clone()),
-            Term::App { symbol, args } => Pattern::App {
-                symbol: symbol.clone(),
-                args: args.iter().map(Pattern::from_term).collect(),
-            },
+        enum Task<'a> {
+            Visit(&'a Term),
+            Assemble { symbol: &'a str, child_count: usize },
         }
+
+        let mut tasks = vec![Task::Visit(term)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Term::Var(name)) => values.push(Pattern::Var(name.clone())),
+                Task::Visit(Term::App { symbol, args }) => {
+                    tasks.push(Task::Assemble { symbol, child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Assemble { symbol, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("term-to-pattern PDA lost a child result");
+                    let args = values.split_off(first_child);
+                    values.push(Pattern::App { symbol: symbol.to_string(), args });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("a term always produces one pattern")
     }
 
     /// Convert a `Pattern` back into a `Term`.
     pub fn to_term(&self) -> Term {
-        match self {
-            Pattern::Var(name) => Term::Var(name.clone()),
-            Pattern::App { symbol, args } => Term::App {
-                symbol: symbol.clone(),
-                args: args.iter().map(Pattern::to_term).collect(),
-            },
+        enum Task<'a> {
+            Visit(&'a Pattern),
+            Assemble { symbol: &'a str, child_count: usize },
         }
+
+        let mut tasks = vec![Task::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Pattern::Var(name)) => values.push(Term::Var(name.clone())),
+                Task::Visit(Pattern::App { symbol, args }) => {
+                    tasks.push(Task::Assemble { symbol, child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Assemble { symbol, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("pattern-to-term PDA lost a child result");
+                    let args = values.split_off(first_child);
+                    values.push(Term::App { symbol: symbol.to_string(), args });
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop().expect("a pattern always produces one term")
     }
 }
 
@@ -574,85 +745,108 @@ impl EGraph {
         subst: &Subst,
         results: &mut Vec<(EClassId, Subst)>,
     ) {
-        let class_id = self.find(class_id);
-        match pattern {
-            Pattern::Var(name) => {
-                match subst.get(name) {
-                    Some(&existing) if self.find(existing) == class_id => {
-                        results.push((class_id, subst.clone()));
-                    },
-                    Some(_) => { /* variable bound to a different class — no match */ },
+        #[derive(Clone, Copy)]
+        struct Goal<'a> {
+            pattern: &'a Pattern,
+            class: EClassId,
+        }
+
+        let output_root = self.find(class_id);
+        let mut work = vec![(vec![Goal { pattern, class: output_root }], subst.clone())];
+        while let Some((mut goals, mut subst)) = work.pop() {
+            let Some(Goal { pattern, class }) = goals.pop() else {
+                results.push((output_root, subst));
+                continue;
+            };
+            let class = self.find(class);
+            match pattern {
+                Pattern::Var(name) => match subst.get(name) {
+                    Some(&existing) if self.find(existing) == class => work.push((goals, subst)),
+                    Some(_) => {},
                     None => {
-                        let mut new_subst = subst.clone();
-                        new_subst.insert(name.clone(), class_id);
-                        results.push((class_id, new_subst));
+                        subst.insert(name.clone(), class);
+                        work.push((goals, subst));
                     },
-                }
-            },
-            Pattern::App { symbol, args } => {
-                let class = match self.classes.get(&class_id) {
-                    Some(c) => c,
-                    None => return,
-                };
-                // Try each e-node in the class
-                for enode in &class.nodes {
-                    if enode.symbol == *symbol && enode.children.len() == args.len() {
-                        // Recursively match children, collecting all substitutions
-                        self.match_children(args, &enode.children, subst, class_id, results);
+                },
+                Pattern::App { symbol, args } => {
+                    let Some(class_data) = self.classes.get(&class) else {
+                        continue;
+                    };
+                    let candidates: Vec<&[EClassId]> = class_data
+                        .nodes
+                        .iter()
+                        .filter(|node| node.symbol == *symbol && node.children.len() == args.len())
+                        .map(|node| node.children.as_slice())
+                        .collect();
+                    let mut original_goals = Some(goals);
+                    let mut original_subst = Some(subst);
+                    for (candidate_index, children) in candidates.into_iter().enumerate().rev() {
+                        let mut branch_goals = if candidate_index == 0 {
+                            original_goals
+                                .take()
+                                .expect("first candidate owns the goal stack")
+                        } else {
+                            original_goals
+                                .as_ref()
+                                .expect("later candidates clone the goal stack")
+                                .clone()
+                        };
+                        branch_goals.extend(
+                            args.iter()
+                                .zip(children)
+                                .rev()
+                                .map(|(pattern, &class)| Goal { pattern, class }),
+                        );
+                        let branch_subst = if candidate_index == 0 {
+                            original_subst
+                                .take()
+                                .expect("first candidate owns the substitution")
+                        } else {
+                            original_subst
+                                .as_ref()
+                                .expect("later candidates clone the substitution")
+                                .clone()
+                        };
+                        work.push((branch_goals, branch_subst));
                     }
-                }
-            },
-        }
-    }
-
-    /// Recursively match pattern children against e-node children,
-    /// collecting all valid substitutions.
-    fn match_children(
-        &self,
-        patterns: &[Pattern],
-        children: &[EClassId],
-        subst: &Subst,
-        root_class: EClassId,
-        results: &mut Vec<(EClassId, Subst)>,
-    ) {
-        if patterns.is_empty() {
-            // All children matched — record the substitution
-            results.push((root_class, subst.clone()));
-            return;
-        }
-
-        let pattern = &patterns[0];
-        let child_id = children[0];
-
-        // Collect matches for this child
-        let mut child_matches = Vec::new();
-        self.collect_matches(pattern, child_id, subst, &mut child_matches);
-
-        // For each child match, continue with remaining children
-        for (_, child_subst) in child_matches {
-            self.match_children(&patterns[1..], &children[1..], &child_subst, root_class, results);
+                },
+            }
         }
     }
 
     /// Budget-aware RHS instantiation used by saturation.
     fn try_instantiate_pattern(&mut self, pattern: &Pattern, subst: &Subst) -> Option<EClassId> {
-        match pattern {
-            Pattern::Var(name) => match subst.get(name) {
-                Some(&id) => Some(id),
-                None => {
-                    let enode = ENode::leaf(format!("__var_{}", name));
-                    self.try_add_with_budget(enode)
-                },
-            },
-            Pattern::App { symbol, args } => {
-                let mut children = Vec::with_capacity(args.len());
-                for arg in args {
-                    children.push(self.try_instantiate_pattern(arg, subst)?);
-                }
-                let enode = ENode::with_children(symbol.as_str(), children);
-                self.try_add_with_budget(enode)
-            },
+        enum Task<'a> {
+            Visit(&'a Pattern),
+            Assemble { symbol: &'a str, child_count: usize },
         }
+
+        let mut tasks = vec![Task::Visit(pattern)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(Pattern::Var(name)) => {
+                    values.push(match subst.get(name) {
+                        Some(&id) => id,
+                        None => self.try_add_with_budget(ENode::leaf(format!("__var_{name}")))?,
+                    });
+                },
+                Task::Visit(Pattern::App { symbol, args }) => {
+                    tasks.push(Task::Assemble { symbol, child_count: args.len() });
+                    tasks.extend(args.iter().rev().map(Task::Visit));
+                },
+                Task::Assemble { symbol, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("pattern instantiation PDA lost a child result");
+                    let children = values.split_off(first_child);
+                    values.push(self.try_add_with_budget(ENode::with_children(symbol, children))?);
+                },
+            }
+        }
+        debug_assert_eq!(values.len(), 1);
+        values.pop()
     }
 
     fn apply_matches_bounded(
@@ -891,27 +1085,48 @@ impl EGraph {
         id: EClassId,
         best: &HashMap<EClassId, (C, usize)>,
     ) -> Term {
-        let id = self.find(id);
-        let (_, node_idx) = best.get(&id).expect("reconstruct: class not in DP table");
-        let class = self.classes.get(&id).expect("reconstruct: class not found");
-        let enode = &class.nodes[*node_idx];
-
-        // Check for variable e-nodes
-        if enode.children.is_empty() && enode.symbol.starts_with("__var_") {
-            return Term::Var(enode.symbol[6..].to_string());
+        enum Task {
+            Visit(EClassId),
+            Assemble { symbol: String, child_count: usize },
         }
 
-        let args: Vec<Term> = enode
-            .children
-            .iter()
-            .map(|&child| self.reconstruct_term(self.find(child), best))
-            .collect();
-
-        if args.is_empty() {
-            Term::constant(&enode.symbol)
-        } else {
-            Term::app(&enode.symbol, args)
+        let mut tasks = vec![Task::Visit(id)];
+        let mut values = Vec::new();
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(id) => {
+                    let id = self.find(id);
+                    let (_, node_idx) = best.get(&id).expect("reconstruct: class not in DP table");
+                    let class = self.classes.get(&id).expect("reconstruct: class not found");
+                    let enode = &class.nodes[*node_idx];
+                    if enode.children.is_empty() && enode.symbol.starts_with("__var_") {
+                        values.push(Term::Var(enode.symbol[6..].to_string()));
+                    } else {
+                        tasks.push(Task::Assemble {
+                            symbol: enode.symbol.clone(),
+                            child_count: enode.children.len(),
+                        });
+                        tasks.extend(enode.children.iter().rev().copied().map(Task::Visit));
+                    }
+                },
+                Task::Assemble { symbol, child_count } => {
+                    let first_child = values
+                        .len()
+                        .checked_sub(child_count)
+                        .expect("term reconstruction PDA lost a child result");
+                    let args = values.split_off(first_child);
+                    values.push(if args.is_empty() {
+                        Term::constant(symbol)
+                    } else {
+                        Term::app(symbol, args)
+                    });
+                },
+            }
         }
+        debug_assert_eq!(values.len(), 1);
+        values
+            .pop()
+            .expect("an extracted e-class always reconstructs one term")
     }
 
     /// Extract the smallest term by AST size.
@@ -1242,6 +1457,10 @@ pub fn analyze_from_bundle(
             .collect(),
     })
 }
+
+#[cfg(test)]
+#[path = "../tests/support/egraph_term_recursive_oracle.rs"]
+mod term_recursive_oracle;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Tests

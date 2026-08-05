@@ -183,8 +183,11 @@ pub fn extract_dependency_pairs(rules: &[RewriteRule]) -> Vec<DependencyPair> {
 
         for subterm in rhs_subterms {
             // Mark the subterm's root with #.
-            let target_marked = match subterm {
-                Term::App { symbol, args } => Term::App { symbol: format!("{}#", symbol), args },
+            let target_marked = match &subterm {
+                Term::App { symbol, args } => Term::App {
+                    symbol: format!("{}#", symbol),
+                    args: args.clone(),
+                },
                 // collect_defined_subterms only yields App terms.
                 Term::Var(_) => unreachable!(),
             };
@@ -208,16 +211,14 @@ fn collect_defined_subterms<'a>(
     defined_symbols: &HashSet<&str>,
     acc: &mut Vec<Term>,
 ) {
-    match term {
-        Term::App { symbol, args } => {
+    let mut pending = vec![term];
+    while let Some(term) = pending.pop() {
+        if let Term::App { symbol, args } = term {
             if defined_symbols.contains(symbol.as_str()) {
                 acc.push(term.clone());
             }
-            for arg in args {
-                collect_defined_subterms(arg, defined_symbols, acc);
-            }
-        },
-        Term::Var(_) => {},
+            pending.extend(args.iter().rev());
+        }
     }
 }
 
@@ -272,13 +273,34 @@ pub fn build_dependency_graph(pairs: &[DependencyPair]) -> Vec<DependencyScc> {
 /// This prevents accidental variable capture when unifying terms from different
 /// dependency pairs.
 fn rename_variables(term: &Term, suffix: &str) -> Term {
-    match term {
-        Term::Var(name) => Term::Var(format!("{}{}", name, suffix)),
-        Term::App { symbol, args } => Term::App {
-            symbol: symbol.clone(),
-            args: args.iter().map(|a| rename_variables(a, suffix)).collect(),
-        },
+    enum Task<'a> {
+        Visit(&'a Term),
+        Assemble { symbol: &'a str, child_count: usize },
     }
+
+    let mut tasks = vec![Task::Visit(term)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Term::Var(name)) => values.push(Term::Var(format!("{name}{suffix}"))),
+            Task::Visit(Term::App { symbol, args }) => {
+                tasks.push(Task::Assemble { symbol, child_count: args.len() });
+                tasks.extend(args.iter().rev().map(Task::Visit));
+            },
+            Task::Assemble { symbol, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("dependency-pair renaming PDA lost a child result");
+                let args = values.split_off(first_child);
+                values.push(Term::App { symbol: symbol.to_string(), args });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("dependency-pair renaming PDA produced no result")
 }
 
 /// First-order unification with occurs check.
@@ -298,20 +320,20 @@ fn unify(t1: &Term, t2: &Term) -> Option<HashMap<String, Term>> {
             continue;
         }
 
-        match (lhs, rhs) {
+        match (&lhs, &rhs) {
             (Term::Var(x), t) | (t, Term::Var(x)) => {
                 // Occurs check: x must not appear in t.
                 if occurs(&x, &t) {
                     return None;
                 }
-                subst.insert(x, t);
+                subst.insert(x.clone(), t.clone());
             },
             (Term::App { symbol: s1, args: a1 }, Term::App { symbol: s2, args: a2 }) => {
                 if s1 != s2 || a1.len() != a2.len() {
                     return None;
                 }
-                for (arg1, arg2) in a1.into_iter().zip(a2.into_iter()) {
-                    worklist.push((arg1, arg2));
+                for (arg1, arg2) in a1.iter().zip(a2) {
+                    worklist.push((arg1.clone(), arg2.clone()));
                 }
             },
         }
@@ -322,27 +344,50 @@ fn unify(t1: &Term, t2: &Term) -> Option<HashMap<String, Term>> {
 
 /// Apply a substitution to a term, chasing variable bindings to fixpoint.
 fn apply_subst(term: &Term, subst: &HashMap<String, Term>) -> Term {
-    match term {
-        Term::Var(name) => {
-            if let Some(bound) = subst.get(name) {
-                apply_subst(bound, subst)
-            } else {
-                term.clone()
-            }
-        },
-        Term::App { symbol, args } => Term::App {
-            symbol: symbol.clone(),
-            args: args.iter().map(|a| apply_subst(a, subst)).collect(),
-        },
+    enum Task<'a> {
+        Visit(&'a Term),
+        Assemble { symbol: &'a str, child_count: usize },
     }
+
+    let mut tasks = vec![Task::Visit(term)];
+    let mut values = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            Task::Visit(Term::Var(name)) => match subst.get(name) {
+                Some(bound) => tasks.push(Task::Visit(bound)),
+                None => values.push(Term::Var(name.clone())),
+            },
+            Task::Visit(Term::App { symbol, args }) => {
+                tasks.push(Task::Assemble { symbol, child_count: args.len() });
+                tasks.extend(args.iter().rev().map(Task::Visit));
+            },
+            Task::Assemble { symbol, child_count } => {
+                let first_child = values
+                    .len()
+                    .checked_sub(child_count)
+                    .expect("dependency-pair substitution PDA lost a child result");
+                let args = values.split_off(first_child);
+                values.push(Term::App { symbol: symbol.to_string(), args });
+            },
+        }
+    }
+    debug_assert_eq!(values.len(), 1);
+    values
+        .pop()
+        .expect("dependency-pair substitution PDA produced no result")
 }
 
 /// Occurs check: does variable `var` appear anywhere in `term`?
 fn occurs(var: &str, term: &Term) -> bool {
-    match term {
-        Term::Var(name) => name == var,
-        Term::App { args, .. } => args.iter().any(|a| occurs(var, a)),
+    let mut pending = vec![term];
+    while let Some(term) = pending.pop() {
+        match term {
+            Term::Var(name) if name == var => return true,
+            Term::Var(_) => {},
+            Term::App { args, .. } => pending.extend(args.iter().rev()),
+        }
     }
+    false
 }
 
 /// Tarjan's SCC algorithm on a graph of `n` nodes with adjacency list `adj`.
